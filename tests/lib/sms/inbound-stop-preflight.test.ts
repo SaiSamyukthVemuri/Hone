@@ -16,7 +16,14 @@ const allProven = (): InboundStopFacts => ({
   env: { TWILIO_WEBHOOK_BASE_URL: BASE, TWILIO_AUTH_TOKEN: "x", NEXT_PUBLIC_APP_ORIGIN: BASE },
   recentSignatureVerifiedCallbacks: 16,
   endpointProbe: { status: 405, redirectedTo: null },
-  service: { inboundRequestUrl: URL_OK, inboundMethod: "POST", useInboundWebhookOnNumber: false, numberSmsUrl: null, accountSid: ACCOUNT },
+  service: {
+    inboundRequestUrl: URL_OK,
+    inboundMethod: "POST",
+    useInboundWebhookOnNumber: false,
+    numberSmsUrl: null,
+    numberSmsApplicationSid: null,
+    accountSid: ACCOUNT,
+  },
   honeAccountSid: ACCOUNT,
   mappedStudioId: "studio-b",
   expectedStudioId: "studio-b",
@@ -64,7 +71,6 @@ describe("evaluateInboundStopPreflight", () => {
     expect(r.blockers).toEqual([
       "base_url",
       "inbound_reaches",
-      "inbound_method",
       "signing_account",
       "studio_mapping",
       "stop_forwarded",
@@ -77,10 +83,13 @@ describe("evaluateInboundStopPreflight", () => {
   const failing: Array<[string, (f: InboundStopFacts) => void, string | string[]]> = [
     ["the www URL on the service", (f) => (f.service!.inboundRequestUrl = "https://www.hone.example/api/twilio/inbound-sms"), "inbound_reaches"],
     ["a trailing slash on the service URL", (f) => (f.service!.inboundRequestUrl = `${URL_OK}/`), "inbound_reaches"],
-    ["GET inbound method", (f) => (f.service!.inboundMethod = "GET"), "inbound_method"],
-    ["the number's webhook overrides, and points elsewhere", (f) => Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: "https://elsewhere.example/sms" }), ["inbound_reaches", "inbound_method"]],
-    ["use_inbound_webhook_on_number not reported (null = unknown, never false)", (f) => (f.service!.useInboundWebhookOnNumber = null), ["inbound_reaches", "inbound_method"]],
-    ["the flag on, the number's URL not reported", (f) => Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: undefined }), ["inbound_reaches", "inbound_method"]],
+    ["GET inbound method on the service", (f) => (f.service!.inboundMethod = "GET"), "inbound_reaches"],
+    ["the service's inbound method not reported", (f) => (f.service!.inboundMethod = null), "inbound_reaches"],
+    ["a TwiML application overriding the number", (f) => Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: URL_OK, numberSmsMethod: "POST", numberSmsApplicationSid: `AP${"5".repeat(32)}` }), "inbound_reaches"],
+    ["the number's application sid not reported", (f) => Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: URL_OK, numberSmsMethod: "POST", numberSmsApplicationSid: undefined }), "inbound_reaches"],
+    ["the number's webhook overrides, and points elsewhere", (f) => Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: "https://elsewhere.example/sms" }), "inbound_reaches"],
+    ["use_inbound_webhook_on_number not reported (null = unknown, never false)", (f) => (f.service!.useInboundWebhookOnNumber = null), "inbound_reaches"],
+    ["the flag on, the number's URL not reported", (f) => Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: undefined }), "inbound_reaches"],
     ["a service in a subaccount", (f) => (f.service!.accountSid = `AC${"2".repeat(32)}`), "signing_account"],
     ["the service mapped to another studio", (f) => (f.mappedStudioId = "studio-a"), "studio_mapping"],
     ["the service mapped to no studio", (f) => (f.mappedStudioId = null), "studio_mapping"],
@@ -130,15 +139,17 @@ describe("evaluateInboundStopPreflight", () => {
 
   it("the number's own webhook, when it overrides and is exactly the expected URL, passes (with its own method)", () => {
     const f = allProven();
-    Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: URL_OK, numberSmsMethod: "POST", inboundRequestUrl: null });
+    Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: URL_OK, numberSmsMethod: "POST", numberSmsApplicationSid: null, inboundRequestUrl: null });
     expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
     f.service!.numberSmsMethod = "GET";
-    expect(evaluateInboundStopPreflight(f).blockers).toEqual(["inbound_method"]);
+    const r = evaluateInboundStopPreflight(f);
+    expect(r.blockers).toEqual(["inbound_reaches"]);
+    expect(r.checks.find((c) => c.id === "inbound_reaches")?.detail).toMatch(/GET, not POST/);
   });
 
   it("a number-level override is decided without the (irrelevant) service URL", () => {
     const f = allProven();
-    f.service = { useInboundWebhookOnNumber: true, numberSmsUrl: URL_OK, numberSmsMethod: "POST", accountSid: ACCOUNT };
+    f.service = { useInboundWebhookOnNumber: true, numberSmsUrl: URL_OK, numberSmsMethod: "POST", numberSmsApplicationSid: null, accountSid: ACCOUNT };
     expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
   });
 
@@ -146,9 +157,17 @@ describe("evaluateInboundStopPreflight", () => {
     const f = allProven();
     f.service = { useInboundWebhookOnNumber: false, inboundMethod: "POST", accountSid: ACCOUNT };
     const r = evaluateInboundStopPreflight(f);
-    expect(r.blockers).toEqual(["inbound_reaches", "inbound_method"]);
+    expect(r.blockers).toEqual(["inbound_reaches"]);
     // Not read is UNKNOWN, never reported as "disabled".
     expect(r.checks.find((c) => c.id === "inbound_reaches")?.status).toBe("unknown");
+  });
+
+  it("a TwiML application on the number is reported as overriding, and fails", () => {
+    const f = allProven();
+    Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: URL_OK, numberSmsMethod: "POST", numberSmsApplicationSid: `AP${"5".repeat(32)}` });
+    const c = evaluateInboundStopPreflight(f).checks.find((x) => x.id === "inbound_reaches");
+    expect(c).toMatchObject({ status: "fail" });
+    expect(c?.detail).toMatch(/application/);
   });
 
   it("inbound DISABLED (flag off, no inbound_request_url) fails and says so", () => {
@@ -161,7 +180,7 @@ describe("evaluateInboundStopPreflight", () => {
 
   it("the flag on while the number has no URL fails (undocumented, never assumed)", () => {
     const f = allProven();
-    Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: null });
+    Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: null, numberSmsApplicationSid: null });
     const c = evaluateInboundStopPreflight(f).checks.find((x) => x.id === "inbound_reaches");
     expect(c).toMatchObject({ status: "fail" });
     expect(c?.detail).toMatch(/no sms_url/);

@@ -98,10 +98,12 @@ export type InboundStopFacts = {
     useInboundWebhookOnNumber?: boolean | null;
     /** OwnedNumberFacts.numberSmsUrl; undefined = not reported, null = none. */
     numberSmsUrl?: string | null;
-    /** The service's inbound_method (when the service routes inbound). */
+    /** MessagingServiceConfig.inboundMethod; null/undefined = not reported. */
     inboundMethod?: string | null;
-    /** The number's sms_method (when the number routes inbound). */
+    /** OwnedNumberFacts.numberSmsMethod; null/undefined = not reported. */
     numberSmsMethod?: string | null;
+    /** OwnedNumberFacts.numberSmsApplicationSid; undefined = not reported, null = none. */
+    numberSmsApplicationSid?: string | null;
     /** The account that owns the service; must be the account of TWILIO_AUTH_TOKEN. */
     accountSid?: string | null;
   };
@@ -167,15 +169,18 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
     svc && (svc.inboundRequestUrl !== undefined || svc.useInboundWebhookOnNumber === true)
       ? {
           serviceInboundUrl: svc.inboundRequestUrl ?? null,
+          serviceInboundMethod: svc.inboundMethod ?? null,
           useInboundWebhookOnNumber: svc.useInboundWebhookOnNumber ?? null,
           numberSmsUrl: svc.numberSmsUrl,
+          numberSmsMethod: svc.numberSmsMethod,
+          numberSmsApplicationSid: svc.numberSmsApplicationSid,
         }
       : null;
   const effective = routing ? effectiveInbound(routing) : null;
   const reaches = routing && expected.ok ? inboundReaches(routing, expected.url) : routing ? "no" : "unknown";
   checks.push(
     reaches === "yes"
-      ? check("inbound_reaches", "pass", `inbound (${effective?.kind}) posts to the expected URL`)
+      ? check("inbound_reaches", "pass", `inbound (${effective?.kind}) POSTs to the expected URL`)
       : reaches === "unknown"
         ? check(
             "inbound_reaches",
@@ -189,19 +194,16 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
               ? "inbound is DISABLED on the service (no inbound_request_url): every STOP is lost"
               : effective?.kind === "number_url_missing"
                 ? "use_inbound_webhook_on_number is on but the number has no sms_url"
-                : "effective inbound URL is not exactly the expected URL",
+                : effective?.kind === "application_override"
+                  ? "a TwiML application on the number overrides its sms_* URLs: inbound never reaches Hone"
+                  : (effective?.kind === "service" || effective?.kind === "number") && effective.method !== "POST"
+                    ? `inbound method is ${effective.method}, not POST: the route only accepts POST`
+                    : "effective inbound URL is not exactly the expected URL",
           ),
   );
 
-  const method =
-    effective?.kind === "service" ? svc?.inboundMethod : effective?.kind === "number" ? svc?.numberSmsMethod : undefined;
-  checks.push(
-    method === undefined || method === null
-      ? check("inbound_method", "unknown", "method of the effective inbound route not read")
-      : method.toUpperCase() === "POST"
-        ? check("inbound_method", "pass", "inbound method POST")
-        : check("inbound_method", "fail", "inbound method is not POST: the route only accepts POST"),
-  );
+  // The method is part of inboundReaches since #863 ed7334da: no separate check.
+
   checks.push(
     !svc?.accountSid || !f.honeAccountSid
       ? check("signing_account", "unknown", "service account or Hone account not confirmed")
