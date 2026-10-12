@@ -331,6 +331,49 @@ describe("OWNER-ONLY READ", () => {
   });
 });
 
+describe("SUPPORT QUEUE (platform-only, service_role)", () => {
+  it("lists open incidents across studios with the studio name, and recent resolutions only when asked", async () => {
+    await resolveAll(A.studioId);
+    await resolveAll(B.studioId);
+    const a = await beginEmail(A, apptA);
+    await settleEmail(a, "refused", null, "validation_error");
+    const b = await beginEmail(B, apptB);
+    await settleEmail(b, "refused", null, "validation_error");
+    const open = await q<{ studio_id: string; studio_name: string; resolved_at: string | null }>(
+      `select * from public.support_delivery_incidents(false) where studio_id = any($1::uuid[])`,
+      [[A.studioId, B.studioId]],
+    );
+    expect(open.map((r) => r.studio_name).sort()).toEqual(["Harness incidents-a", "Harness incidents-b"]);
+    expect(open.every((r) => r.resolved_at === null)).toBe(true);
+    const withResolved = await q(
+      `select * from public.support_delivery_incidents(true) where studio_id = $1 and resolved_at is not null`,
+      [A.studioId],
+    );
+    expect(withResolved.length).toBeGreaterThan(0);
+  });
+
+  it("counts Resend receipts by outcome, including the unattributed ones only support sees", async () => {
+    await q(
+      `select * from public.process_email_provider_event(
+         (select receipt_id from public.record_email_provider_event($1, 'email.delivered', $2, null, now(), null, null, null, null)))`,
+      [`msg_${randomUUID().replace(/-/g, "")}`, randomUUID()],
+    );
+    const rows = await q<{ processing_state: string; processing_result: string; receipts: number }>(
+      `select * from public.support_email_receipt_outcomes()`,
+    );
+    expect(rows.find((r) => r.processing_result === "unmatched_email_id")?.receipts).toBeGreaterThan(0);
+  });
+
+  it("is closed to every browser role", async () => {
+    for (const fn of ["public.support_delivery_incidents(boolean)", "public.support_email_receipt_outcomes()"]) {
+      for (const [role, expected] of [["anon", false], ["authenticated", false], ["service_role", true]] as const) {
+        const r = await q<{ ok: boolean }>(`select has_function_privilege($1, $2, 'execute') as ok`, [role, fn]);
+        expect(r[0]!.ok, `${role} execute ${fn}`).toBe(expected);
+      }
+    }
+  });
+});
+
 describe("HEARTBEAT and HEALTH", () => {
   it("records each sweep run and refuses an impossible one", async () => {
     expect(await q(`select public.record_email_sweep_run(4, 3, 1) as r`)).toEqual([{ r: "recorded" }]);

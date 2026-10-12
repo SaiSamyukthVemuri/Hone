@@ -29,6 +29,8 @@ const SERVICE_ROLE_COMMANDS = [
   "record_email_sweep_run(integer, integer, integer)",
   "email_delivery_health()",
   "resolve_delivery_incident(uuid, text)",
+  "support_delivery_incidents(boolean)",
+  "support_email_receipt_outcomes()",
 ] as const;
 const OWNER_COMMAND = "owner_delivery_incidents(uuid)";
 const TRIGGER_FUNCTIONS = ["email_outbound_messages_open_incident()", "sms_outbound_messages_open_incident()"] as const;
@@ -78,6 +80,8 @@ describe("0215 is one transaction with a lock timeout and writes no rows", () =>
         "record_email_sweep_run",
         "resolve_delivery_incident",
         "sms_outbound_messages_open_incident",
+        "support_delivery_incidents",
+        "support_email_receipt_outcomes",
       ].sort(),
     );
     const altered = new Set([...TOP_LEVEL.matchAll(/alter table (public\.[a-z_]+)/g)].map((m) => m[1]));

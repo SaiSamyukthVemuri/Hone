@@ -30,7 +30,9 @@
 --
 --   4. owner_delivery_incidents -- the studio OWNER'S read of their own
 --      incidents (authenticated, owner of that studio, nothing else), and
---      resolve_delivery_incident -- platform support's close (service_role).
+--      platform support's queue: support_delivery_incidents and
+--      support_email_receipt_outcomes (reads) and resolve_delivery_incident
+--      (close), all service_role.
 --
 -- WHAT THIS IS NOT. No notification is sent and no ops alert is raised from
 -- the database. No browser holds a table privilege; the owner read returns
@@ -351,6 +353,68 @@ begin
 end;
 $$;
 
+-- support_delivery_incidents: platform support's cross-studio queue. Open
+-- incidents first, then those resolved in the last 14 days when asked, with
+-- the studio's name. Operational metadata only. service_role only: the /admin
+-- console calls it after its own admin check.
+
+create or replace function public.support_delivery_incidents(
+  p_include_resolved boolean
+) returns table (
+  incident_id         uuid,
+  studio_id           uuid,
+  studio_name         text,
+  channel             text,
+  purpose             text,
+  failure_class       text,
+  occurrences         integer,
+  first_seen_at       timestamptz,
+  last_seen_at        timestamptz,
+  last_reason         text,
+  last_appointment_id uuid,
+  resolved_at         timestamptz,
+  resolution          text
+)
+language sql
+stable
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+  select d.id, d.studio_id, s.name, d.channel, d.purpose, d.failure_class,
+         d.occurrences, d.first_seen_at, d.last_seen_at, d.last_reason,
+         d.last_appointment_id, d.resolved_at, d.resolution
+    from public.delivery_incidents d
+    join public.studios s on s.id = d.studio_id
+   where d.resolved_at is null
+      or (coalesce(p_include_resolved, false)
+          and d.resolved_at > now() - interval '14 days')
+   order by d.resolved_at is not null, d.last_seen_at desc
+   limit 300;
+$$;
+
+-- support_email_receipt_outcomes: what happened to the last seven days of
+-- Resend receipts, by outcome. The unattributed and quarantined rows are
+-- platform-only by construction (0212), and this is where support sees them.
+
+create or replace function public.support_email_receipt_outcomes()
+returns table (
+  processing_state  text,
+  processing_result text,
+  receipts          integer,
+  last_received_at  timestamptz
+)
+language sql
+stable
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+  select e.processing_state, e.processing_result, count(*)::integer, max(e.received_at)
+    from public.email_provider_events e
+   where e.received_at > now() - interval '7 days'
+   group by e.processing_state, e.processing_result
+   order by e.processing_state, e.processing_result;
+$$;
+
 -- ---------------------------------------------------------------------------
 -- Privileges
 -- ---------------------------------------------------------------------------
@@ -378,6 +442,16 @@ revoke execute on function public.resolve_delivery_incident(uuid, text) from ano
 revoke execute on function public.resolve_delivery_incident(uuid, text) from authenticated;
 revoke execute on function public.resolve_delivery_incident(uuid, text) from service_role;
 
+revoke execute on function public.support_delivery_incidents(boolean) from public;
+revoke execute on function public.support_delivery_incidents(boolean) from anon;
+revoke execute on function public.support_delivery_incidents(boolean) from authenticated;
+revoke execute on function public.support_delivery_incidents(boolean) from service_role;
+
+revoke execute on function public.support_email_receipt_outcomes() from public;
+revoke execute on function public.support_email_receipt_outcomes() from anon;
+revoke execute on function public.support_email_receipt_outcomes() from authenticated;
+revoke execute on function public.support_email_receipt_outcomes() from service_role;
+
 revoke execute on function public.owner_delivery_incidents(uuid) from public;
 revoke execute on function public.owner_delivery_incidents(uuid) from anon;
 revoke execute on function public.owner_delivery_incidents(uuid) from authenticated;
@@ -386,6 +460,8 @@ revoke execute on function public.owner_delivery_incidents(uuid) from service_ro
 grant execute on function public.record_email_sweep_run(integer, integer, integer) to service_role;
 grant execute on function public.email_delivery_health() to service_role;
 grant execute on function public.resolve_delivery_incident(uuid, text) to service_role;
+grant execute on function public.support_delivery_incidents(boolean) to service_role;
+grant execute on function public.support_email_receipt_outcomes() to service_role;
 grant execute on function public.owner_delivery_incidents(uuid) to authenticated;
 
 revoke all privileges on function public.email_outbound_messages_open_incident()
@@ -403,6 +479,10 @@ comment on table public.delivery_sweep_heartbeat is
   'DELIVERY-VISIBILITY-01: the last run of the email delivery-event recovery sweep (record_email_sweep_run). A missing row means no sweep has ever run, which email_delivery_health reports as a null last run, never as healthy.';
 comment on function public.owner_delivery_incidents(uuid) is
   'The signed-in owner of a studio reads its open incidents and those resolved in the last 14 days. Anyone else is refused with 42501. authenticated only.';
+comment on function public.support_delivery_incidents(boolean) is
+  'Platform support''s cross-studio incident queue: open incidents, and those resolved in the last 14 days when asked, with the studio name. service_role only.';
+comment on function public.support_email_receipt_outcomes() is
+  'Seven days of Resend receipts counted by processing outcome, including the unattributed and quarantined ones that only platform support sees. service_role only.';
 comment on function public.resolve_delivery_incident(uuid, text) is
   'Platform support closes an open incident as fixed | acknowledged | not_actionable. Returns resolved | already_resolved | not_found | invalid_input. service_role only.';
 comment on function public.record_email_sweep_run(integer, integer, integer) is

@@ -20,7 +20,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 > `0215_delivery_incidents.sql` adds:
 > - `delivery_incidents`: one open incident per studio, channel, purpose and failure class, opened or extended by an AFTER trigger on each delivery ledger in the same transaction as the failure;
 > - `delivery_sweep_heartbeat`;
-> - `record_email_sweep_run`, `email_delivery_health` and `resolve_delivery_incident` (all `service_role` only), and `owner_delivery_incidents` (authenticated, owner of that studio only).
+> - `record_email_sweep_run`, `email_delivery_health`, `resolve_delivery_incident`, `support_delivery_incidents` and `support_email_receipt_outcomes` (all `service_role` only), and `owner_delivery_incidents` (authenticated, owner of that studio only).
 >
 > It writes no data and redefines no existing function. It adds one trigger to `sms_outbound_messages` and one to `email_outbound_messages`.
 >

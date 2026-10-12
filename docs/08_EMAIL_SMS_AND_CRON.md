@@ -163,6 +163,7 @@ Pinned by `tests/db/email-delivery-events.db.test.ts` (replay, order permutation
 - Retry-in-progress and ambiguous states (`unknown`, `delivery_delayed`, `accepted`, `sent`) are **not** incidents. They surface through health as unknown, never as success.
 - `resolve_delivery_incident` (service_role) closes one as fixed, acknowledged or not_actionable, and the next failure opens a new one.
 - The studio **owner** reads their own incidents through `owner_delivery_incidents(studio)`: operational metadata only, with no client identity, address or message. Another studio's owner, non-owner members (receptionists included), anon and service_role are refused with 42501.
+- Platform support reads the cross-studio queue through `support_delivery_incidents` and `support_email_receipt_outcomes` (service_role). The second gives seven days of Resend receipts by outcome, including the unattributed and quarantined ones that belong to no studio.
 
 **Recovery sweep and heartbeat: `GET /api/cron/email-delivery-sweep`** (CRON_SECRET bearer). It drains up to 50 receipts whose processing never finished, records `delivery_sweep_heartbeat`, and reads `email_delivery_health()`:
 - the pending backlog and its oldest age;
