@@ -128,6 +128,16 @@ export function outboundSmsFence(
   return { allowed: true };
 }
 
+/**
+ * True when a send could reach the provider at all: the deployment is not
+ * fenced and the account credentials are present. A caller that must not
+ * spend an attempt on a request that would never be made checks this BEFORE
+ * claiming (D5 recovery). Reads presence only; never logs or returns values.
+ */
+export function smsProviderConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
+  return outboundSmsFence(env).allowed && Boolean(env.TWILIO_ACCOUNT_SID) && Boolean(env.TWILIO_AUTH_TOKEN);
+}
+
 /** Twilio's numeric error code from a parsed error body, or undefined. */
 function providerErrorCodeOf(parsed: unknown): number | undefined {
   if (typeof parsed !== "object" || parsed === null) return undefined;

@@ -10,6 +10,7 @@ import {
   normalizePhoneForSms,
   outboundSmsFence,
   sendSmsSafely,
+  smsProviderConfigured,
   type SendSmsResult,
 } from "./twilio";
 import {
@@ -349,7 +350,10 @@ export async function sendRecoveredConfirmationSmsToClient(
     routeReader: input.routeReader,
     // One look: the next recovery run is this send's retry.
     routeLooks: 1,
-    beforeClaim: input.revalidate,
+    // A request that could never be made (no credentials) must not spend the
+    // attempt that ends recovery: refuse before the claim, still owed.
+    beforeClaim: async () =>
+      smsProviderConfigured() ? input.revalidate() : { ok: false, reason: "twilio_not_configured" },
     afterClaim: input.revalidate,
     buildBody: (_phone, startsAt) => {
       if (!startsAt) throw new Error("recovered confirmation without a re-read start");

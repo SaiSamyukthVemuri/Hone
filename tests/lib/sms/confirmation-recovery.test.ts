@@ -624,3 +624,17 @@ describe("run bounds and a live horizon", () => {
     expect(providerCalls()).toBe(0);
   });
 });
+
+describe("a provider that could never be reached spends nothing", () => {
+  it("missing credentials: refused before the claim, still owed, and sent once they return", async () => {
+    db = [appt()];
+    delete process.env.TWILIO_AUTH_TOKEN;
+    expect(await run()).toMatchObject({ sent: 0, skipped: { twilio_not_configured: 1 } });
+    expect(events).not.toContain("claim_sms_send");
+    expect(db[0].sms_confirmation_send_attempts).toBe(0);
+    process.env.TWILIO_AUTH_TOKEN = "token";
+    events = [];
+    expect(await run()).toMatchObject({ sent: 1 });
+    expect(providerCalls()).toBe(1);
+  });
+});
