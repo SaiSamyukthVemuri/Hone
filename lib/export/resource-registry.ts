@@ -543,6 +543,8 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     excludedColumns: [
       { column: "studio_id", reason: "tenant_key" },
       { column: "user_id", reason: "internal_state", note: "Supabase auth user identifier. Platform identity, not studio content." },
+      { column: "default_machine_id", reason: "pending_review", note: "Migration 0223. A UI default, not a treatment record: what was actually used is on treatment_setup_readings. It is also an opaque uuid pointing at studio_machines, whose own export disposition is still pending, so emitting it would hand a studio an identifier it cannot resolve inside the archive. Unlike default_machine_frequency below, it is not self-describing. Revisit with the MPX-02 export decision." },
+      { column: "default_machine_mode", reason: "pending_review", note: "Migration 0223. The mode half of the same UI default, meaningful only alongside default_machine_id. Held with it rather than emitted on its own." },
       { column: "terms_accepted_at", reason: "internal_state", note: "Hone platform agreement acceptance, not studio-owned client content." },
       { column: "terms_version", reason: "internal_state", note: "See terms_accepted_at." },
       { column: "privacy_accepted_at", reason: "internal_state", note: "See terms_accepted_at." },
@@ -1111,6 +1113,20 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     fieldReviewRequired: true,
     reason:
       "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the payment-consent decisions and the metadata recorded with them.",
+  },
+  studio_machines: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    reason:
+      "Introduced by migration 0223 (MPX-02, #829). The studio's own list of physical electrolysis machines: a display name, the catalogue profile and version it was registered against, the options physically fitted, and a retirement instant. It holds NO client or clinical data and no provider identifier. It is plainly studio-owned content and a studio export should probably carry it, but that is a product decision this lane was not asked to make, so nothing is claimed here. Whoever takes it should note that treatment_setup_readings references this table, so exporting the readings without the machines would leave an unresolvable identifier in the archive.",
+  },
+  treatment_setup_readings: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    reason:
+      "Introduced by migration 0223 (MPX-02, #829). What a machine actually showed for one treatment block: one row per settings group, stage and field, each carrying its own native unit, the machine's decimal precision, the profile version it was captured under, and who or what observed it. Append-only - UPDATE is refused by trigger. This is clinical treatment content of the same class as electrolysis_entries and laser_entries, both of which ARE exported, so the likely answer is that it should be too. It is left pending rather than assumed for two reasons: the field set is model-specific, so a CSV header list cannot be written until at least one machine profile passes its evidence review; and #828's HIPAA gate governs what may leave the system in a patient-identifiable archive. No finding is made here about either.",
   },
   pending_booking_payment_sessions: {
     kind: "pending",
