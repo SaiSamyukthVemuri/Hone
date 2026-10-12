@@ -1,4 +1,4 @@
-import type { DestinationReadiness } from "@/lib/sms/sender-readiness";
+import { NOT_HIPAA_COVERAGE, type DestinationReadiness } from "@/lib/sms/sender-readiness";
 
 // SMS-SENDER-READY-01 (#824): whether the studio's OWN number can text
 // Canadian recipients and US recipients, stated separately because they are
@@ -53,6 +53,9 @@ export function SmsSenderReadinessPanel({ rows }: { rows: DestinationReadiness[]
         This is about a number the studio owns. It does not change how Hone sends
         texts today, and a number that exists or passed one test is not
         registered for US texting by itself.
+      </p>
+      <p className="mt-1 text-xs text-neutral-500" data-testid="sms-readiness-not-hipaa">
+        {NOT_HIPAA_COVERAGE}
       </p>
     </div>
   );

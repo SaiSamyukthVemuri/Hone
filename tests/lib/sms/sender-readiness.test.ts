@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import {
+  DESTINATION_RULES,
   destinationReadiness,
+  NOT_HIPAA_COVERAGE,
   READINESS_LABELS,
   studioSenderReadiness,
   type UsRegistrationEvidence,
@@ -64,44 +66,63 @@ describe("before there is a studio sender", () => {
   });
 });
 
-describe("an ACTIVE Canadian number", () => {
-  it("serves Canadian recipients; US recipients need a US-registered sender, which a Canadian number never is", () => {
-    for (const reg of [NOT_RECORDED, { state: "approved" } as UsRegistrationEvidence]) {
-      const [ca, us] = studioSenderReadiness(row({ phone_number: "+16045550123" }), reg);
-      expect(ca).toMatchObject({ state: "active", senderCountry: "CA" });
-      expect(us).toMatchObject({ state: "requires_information", senderCountry: "CA" });
-      expect(us.detail).toMatch(/10DLC|toll-free/);
+// THE MATRIX, cell by cell (Twilio documentation, checked 2026-10-12):
+// A2P 10DLC is for long-code traffic TO THE US, Canadian and US long codes
+// alike; toll-free verification is for the US and Canada.
+describe("the destination matrix (Codex P2 4244008035, 4244008038)", () => {
+  const SENDERS = { CA: "+16045550123", US: "+12125550123", toll_free: "+18885550123" } as const;
+  const EXPECTED = {
+    CA: { CA: "none", US: "a2p_10dlc" },
+    US: { CA: "none", US: "a2p_10dlc" },
+    toll_free: { CA: "toll_free_verification", US: "toll_free_verification" },
+  } as const;
+  const STATES: Array<[UsRegistrationEvidence, string]> = [
+    [NOT_RECORDED, "requires_information"],
+    [{ state: "pending" }, "pending"],
+    [{ state: "requires_information", missing: "a sample message" }, "requires_information"],
+    [{ state: "approved" }, "active"],
+    [{ state: "rejected" }, "failed"],
+    [{ state: "suspended" }, "suspended"],
+    [{ state: "unreadable" } as unknown as UsRegistrationEvidence, "unavailable"],
+  ];
+
+  it("is exactly the documented table", () => {
+    expect(DESTINATION_RULES).toEqual(EXPECTED);
+  });
+
+  for (const [kind, phone] of Object.entries(SENDERS) as Array<[keyof typeof SENDERS, string]>) {
+    for (const destination of ["CA", "US"] as const) {
+      const rule = EXPECTED[kind][destination];
+      it(`${kind} sender -> ${destination} recipients: ${rule}`, () => {
+        for (const [evidence, ifRequired] of STATES) {
+          if ((evidence as { state: string }).state === "unreadable") continue;
+          const r = destinationReadiness(destination, row({ phone_number: phone }), evidence);
+          expect(r.senderCountry).toBe(kind);
+          // No registration needed: Active whatever the evidence says.
+          expect(r.state, `${evidence.state}`).toBe(rule === "none" ? "active" : ifRequired);
+        }
+      });
     }
-  });
-});
+  }
 
-describe("an ACTIVE US number", () => {
-  const us = row({ phone_number: "+12125550123" });
-
-  it("with NO recorded registration (every studio today): Requires information for both destinations", () => {
-    const [caR, usR] = studioSenderReadiness(us, NOT_RECORDED);
-    expect([caR.state, usR.state]).toEqual(["requires_information", "requires_information"]);
-    expect(usR.detail).toMatch(/not registered by itself/);
+  it("a registered Canadian long code serves US recipients; unregistered, it does not", () => {
+    expect(destinationReadiness("US", row({ phone_number: SENDERS.CA }), { state: "approved" }).state).toBe("active");
+    const unregistered = destinationReadiness("US", row({ phone_number: SENDERS.CA }), NOT_RECORDED);
+    expect(unregistered.state).toBe("requires_information");
+    expect(unregistered.detail).toMatch(/A2P 10DLC/);
+    expect(unregistered.detail).toMatch(/not registered by itself/);
   });
 
-  it("follows the registration evidence, and only APPROVED is Active", () => {
-    const expected: Array<[UsRegistrationEvidence, string]> = [
-      [{ state: "pending" }, "pending"],
-      [{ state: "requires_information", missing: "a campaign description" }, "requires_information"],
-      [{ state: "approved" }, "active"],
-      [{ state: "rejected" }, "failed"],
-      [{ state: "suspended" }, "suspended"],
-    ];
-    for (const [reg, state] of expected) {
-      expect(destinationReadiness("US", us, reg).state, reg.state).toBe(state);
+  it("a US long code needs no 10DLC for Canadian recipients", () => {
+    expect(destinationReadiness("CA", row({ phone_number: SENDERS.US }), NOT_RECORDED)).toMatchObject({ state: "active", senderCountry: "US" });
+  });
+
+  it("a toll-free number needs verification for BOTH destinations", () => {
+    for (const d of ["CA", "US"] as const) {
+      const r = destinationReadiness(d, row({ phone_number: SENDERS.toll_free }), NOT_RECORDED);
+      expect(r.state).toBe("requires_information");
+      expect(r.detail).toMatch(/toll-free verification/);
     }
-    expect(destinationReadiness("US", us, { state: "requires_information", missing: "a campaign description" }).detail).toContain("a campaign description");
-  });
-
-  it("a toll-free number is held to toll-free verification", () => {
-    const tf = destinationReadiness("US", row({ phone_number: "+18885550123" }), NOT_RECORDED);
-    expect(tf).toMatchObject({ state: "requires_information", senderCountry: "toll_free" });
-    expect(tf.detail).toMatch(/toll-free verification/);
   });
 });
 
@@ -133,5 +154,7 @@ describe("the panel", () => {
     expect(html).toContain(READINESS_LABELS.requires_information);
     expect(html).toContain("(Hone support)");
     expect(html).not.toMatch(/<form|<button|action=/);
+    // Never a HIPAA statement (#828).
+    expect(html).toContain(NOT_HIPAA_COVERAGE);
   });
 });

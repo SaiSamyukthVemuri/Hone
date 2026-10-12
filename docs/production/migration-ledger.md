@@ -33,9 +33,9 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 > **NOT APPLIED, NOT MERGED.**
 
 > **0217 IS AUTHORED AND PENDING, on `feat/sms-sender-reg-01` only** (stacked on #841, which has no migration).
-> `0217_studio_sms_sender_registrations.sql` adds one table (`studio_sms_sender_registrations`) and one service_role-only command.
-> - **The table:** support-recorded US registration evidence (10DLC or toll-free verification) for a studio's live sender. The owner reads it without the provider reference.
-> - **The command:** `record_studio_sms_sender_registration`, which resolves the studio's live sender itself.
+> `0217_studio_sms_sender_registrations.sql` adds one table (`studio_sms_sender_registrations`), one service_role-only command and one service_role-only snapshot read.
+> - **The table:** support-recorded US registration evidence (10DLC or toll-free verification) for the number a studio's sender holds, one row per (sender, number, kind); the kind is the number's, enforced by a check. The owner reads it without the provider reference.
+> - **The command:** `record_studio_sms_sender_registration`, which resolves the studio's live sender itself, compares the sender AND number the operator verified, refuses a sender with no number, and derives the kind from the number.
 > - **Out of scope:** no provider call, no activation, no existing object altered, no row written.
 >
 > **NUMBERING.** A fresh census on 2026-10-12 (recorded in `/home/sam/hone-migration-coordination.md`) found:
