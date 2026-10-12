@@ -12,6 +12,28 @@ import {
   removePractitionerAction,
   revokeInvitationAction,
 } from "./actions";
+import { setReceptionistActiveAction } from "./receptionist-actions";
+
+type ReceptionistRow = {
+  id: string;
+  display_name: string;
+  email: string | null;
+  active: boolean;
+};
+
+// STUDIO-READY-02d (#824): read under the OWNER's own session. The 0216 policy
+// lets an owner read their studio's receptionist rows, and nobody else's.
+async function getReceptionists(studioId: string): Promise<ReceptionistRow[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("studio_receptionists")
+    .select("id, display_name, email, active")
+    .eq("studio_id", studioId)
+    .order("active", { ascending: false })
+    .order("display_name", { ascending: true });
+  if (error) throw new Error(`Failed to load the front desk team: ${error.message}`);
+  return (data ?? []) as ReceptionistRow[];
+}
 
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
@@ -56,9 +78,10 @@ export default async function TeamSettingsPage() {
     );
   }
 
-  const [practitioners, invitations] = await Promise.all([
+  const [practitioners, invitations, receptionists] = await Promise.all([
     getPractitionersForStudio(studio.id),
     getPendingInvitations(studio.id),
+    getReceptionists(studio.id),
   ]);
 
   return (
@@ -83,7 +106,59 @@ export default async function TeamSettingsPage() {
       </section>
 
       <PendingInvitations invitations={invitations} />
+
+      <FrontDesk receptionists={receptionists} />
     </div>
+  );
+}
+
+function FrontDesk({ receptionists }: { receptionists: ReceptionistRow[] }) {
+  const active = receptionists.filter((r) => r.active).length;
+  return (
+    <section className="flex flex-col gap-4">
+      <div>
+        <h2 id="front-desk" className="scroll-mt-24 text-xl font-medium">
+          Front desk
+        </h2>
+        <p className="mt-1 text-sm text-neutral-500">
+          Receptionists see the schedule and client contact details, and whether intake and consent are complete.
+          They never see treatment records, clinical notes, images or payments, and they are never booked as a
+          practitioner.
+          {receptionists.length === 0 ? " No receptionists yet." : ` ${active} active.`}
+        </p>
+      </div>
+      {receptionists.length > 0 && (
+        <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+          {receptionists.map((r) => (
+            <li key={r.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-baseline gap-2">
+                  <span className="font-medium">{r.display_name}</span>
+                  <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+                    receptionist
+                  </span>
+                  {!r.active && <span className="text-xs text-neutral-500">inactive</span>}
+                </div>
+                {r.email && <div className="truncate text-xs text-neutral-500">{r.email}</div>}
+              </div>
+              <form action={setReceptionistActiveAction}>
+                <input type="hidden" name="id" value={r.id} />
+                <input type="hidden" name="active" value={r.active ? "false" : "true"} />
+                <button
+                  type="submit"
+                  className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+                >
+                  {r.active ? "Deactivate" : "Reactivate"}
+                </button>
+              </form>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-xs text-neutral-500">
+        Inviting a receptionist is not available yet. It arrives with the invitation update.
+      </p>
+    </section>
   );
 }
 
