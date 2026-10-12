@@ -19,6 +19,24 @@ export function localDateKey(iso: string, timeZone: string): string {
   );
 }
 
+/**
+ * Every local calendar date that the interval [startIso, endIso) touches in
+ * `timeZone`. The end is exclusive, so a closure ending at local midnight does
+ * not count for the next day. Bounded at 400 days.
+ */
+export function localDaysOverlapped(startIso: string, endIso: string, timeZone: string): string[] {
+  const first = localDateKey(startIso, timeZone);
+  const endMs = Date.parse(endIso);
+  if (!(endMs > Date.parse(startIso))) return [first];
+  const last = localDateKey(new Date(endMs - 1).toISOString(), timeZone);
+  const out: string[] = [];
+  for (const k of localCalendarDays(first, 400)) {
+    out.push(k);
+    if (k >= last) break;
+  }
+  return out;
+}
+
 /** The display label of a local calendar date, independent of any offset. */
 export function localDateLabel(key: string): string {
   return new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "long", month: "short", day: "numeric" }).format(

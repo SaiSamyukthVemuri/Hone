@@ -6,9 +6,12 @@ import { searchFrontDeskContacts } from "@/lib/receptionist/projections";
 // never health answers, signed content, notes or any other clinical column.
 export const dynamic = "force-dynamic";
 
-function date(iso: string | null): string {
+/** A completion date, in the STUDIO's timezone, never the server's. */
+function date(iso: string | null, timeZone: string): string {
   if (!iso) return "—";
-  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date(iso));
+  return new Intl.DateTimeFormat("en-US", { timeZone, month: "short", day: "numeric", year: "numeric" }).format(
+    new Date(iso),
+  );
 }
 
 export default async function FrontDeskContactsPage({
@@ -68,9 +71,9 @@ export default async function FrontDeskContactsPage({
                   <td className="px-4 py-2">{c.email ?? "—"}</td>
                   <td className="px-4 py-2">
                     {c.intake_status === "none" ? "Not started" : c.intake_status.replace(/_/g, " ")}
-                    {c.intake_submitted_at ? ` · ${date(c.intake_submitted_at)}` : ""}
+                    {c.intake_submitted_at ? ` · ${date(c.intake_submitted_at, studio.timezone)}` : ""}
                   </td>
-                  <td className="px-4 py-2">{c.consent_accepted_at ? `Signed ${date(c.consent_accepted_at)}` : "Not signed"}</td>
+                  <td className="px-4 py-2">{c.consent_accepted_at ? `Signed ${date(c.consent_accepted_at, studio.timezone)}` : "Not signed"}</td>
                 </tr>
               ))}
             </tbody>

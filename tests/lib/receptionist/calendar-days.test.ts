@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { localCalendarDays, localDateKey, localDateLabel } from "@/lib/receptionist/calendar-days";
+import { localCalendarDays, localDateKey, localDateLabel, localDaysOverlapped } from "@/lib/receptionist/calendar-days";
 
 // STUDIO-READY-02d (#824), Codex P2 4243875499 on #845: the front-desk schedule
 // must show seven DISTINCT local days across a daylight-saving change.
@@ -29,6 +29,33 @@ describe("localCalendarDays", () => {
     const start = Date.parse("2026-11-01T04:30:00Z");
     const stepped = [0, 1].map((i) => localDateKey(new Date(start + i * 86_400_000).toISOString(), "America/Toronto"));
     expect(stepped).toEqual(["2026-11-01", "2026-11-01"]);
+  });
+});
+
+describe("localDaysOverlapped (Codex P2 4243898525 on #845)", () => {
+  const LA = "America/Los_Angeles";
+
+  it("a closure spanning three local days counts on all three", () => {
+    // 2026-10-20 18:00 PDT to 2026-10-22 10:00 PDT.
+    expect(localDaysOverlapped("2026-10-21T01:00:00Z", "2026-10-22T17:00:00Z", LA)).toEqual([
+      "2026-10-20",
+      "2026-10-21",
+      "2026-10-22",
+    ]);
+  });
+
+  it("the end is exclusive: a closure ending exactly at local midnight does not count for the next day", () => {
+    // 2026-10-20 20:00 PDT to 2026-10-21 00:00 PDT.
+    expect(localDaysOverlapped("2026-10-21T03:00:00Z", "2026-10-21T07:00:00Z", LA)).toEqual(["2026-10-20"]);
+  });
+
+  it("is computed in the studio's timezone, not UTC", () => {
+    // 23:00Z to 01:00Z the next day: one UTC midnight, but a single LA day.
+    expect(localDaysOverlapped("2026-10-20T23:00:00Z", "2026-10-21T01:00:00Z", LA)).toEqual(["2026-10-20"]);
+    expect(localDaysOverlapped("2026-10-20T23:00:00Z", "2026-10-21T01:00:00Z", "UTC")).toEqual([
+      "2026-10-20",
+      "2026-10-21",
+    ]);
   });
 });
 
