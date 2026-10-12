@@ -97,9 +97,14 @@ test("A · US studio: prepare, charge, receipt and refund in USD", async ({ page
   const [attempt] = await getSessionPaymentAttemptRows(b.sessionId);
   expect(attempt).toBeDefined();
   configureFakeStripeOutcome(idempotencySelectorForAttempt(attempt.id), "success");
+  await expect(region.getByTestId("ready-charge-section")).toContainText(
+    /saved card will be charged \$185\.00 USD\./,
+  );
   await runCharge.click();
-  await region.getByRole("button", { name: /confirm: run charge/i }).click();
-  await expect(region.getByTestId("payment-summary-paid")).toContainText(/Paid · \$185\.00/, {
+  const confirm = region.getByRole("button", { name: /confirm: run charge/i });
+  await expect(confirm).toHaveText("Confirm: run charge ($185.00 USD)");
+  await confirm.click();
+  await expect(region.getByTestId("payment-summary-paid")).toContainText(/Paid · \$185\.00 USD/, {
     timeout: 30_000,
   });
 
