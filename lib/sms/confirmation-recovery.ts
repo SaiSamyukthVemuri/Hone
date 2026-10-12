@@ -61,6 +61,13 @@ import { sendRecoveredConfirmationSmsToClient, type SmsSendResult } from "./send
 // studio's confirmation switch and the 24-hour maximum age (against the
 // current time).
 //
+// DIRECTION. Each studio is scanned oldest-first in even 15-minute slots and
+// newest-first in odd ones, so a run cut off by its time budget does not keep
+// starving the same rows. Residual: rows in the middle of a window that two
+// consecutive runs both fail to reach within their budgets wait for a later
+// run. A persisted per-studio cursor would close it, and needs a store this
+// candidate does not add.
+//
 // STUDIOS SHARE A RUN. Each listed studio gets an equal share of the
 // provider-attempt cap, and the studio a run starts with rotates every
 // 15-minute slot, so one studio's backlog never holds another's confirmations
@@ -236,7 +243,9 @@ export async function recoverOwedConfirmations(opts: {
   const attempted = () => run.sent + run.failed;
   // An equal share per studio, and a rotating first studio.
   const perStudio = Math.max(1, Math.floor(RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN / studioIds.length));
-  const first = Math.floor(opts.nowMs / RECOVERY_SLOT_MS) % studioIds.length;
+  const slot = Math.floor(opts.nowMs / RECOVERY_SLOT_MS);
+  const first = slot % studioIds.length;
+  const newestFirst = slot % 2 === 1;
   const ordered = [...studioIds.slice(first), ...studioIds.slice(0, first)];
 
   studios: for (const studioId of ordered) {
@@ -244,7 +253,7 @@ export async function recoverOwedConfirmations(opts: {
     let after: { createdAt: string; id: string } | null = null;
     for (;;) {
       if (attempted() >= RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN || outOfTime()) break studios;
-      const rows = await readOwedPage(opts.admin, studioId, w, after, pageSize);
+      const rows = await readOwedPage(opts.admin, studioId, w, after, pageSize, newestFirst);
       if (rows === null) {
         skip("read_failed");
         continue studios;
@@ -331,6 +340,7 @@ async function readOwedPage(
   w: ReturnType<typeof owedWindow>,
   after: { createdAt: string; id: string } | null,
   pageSize: number,
+  newestFirst: boolean,
 ): Promise<OwedConfirmationRow[] | null> {
   try {
     let q = admin
@@ -350,13 +360,14 @@ async function readOwedPage(
     // rows sharing a created_at are never skipped.
     if (after) {
       // Values are double-quoted: a timestamp holds PostgREST's reserved ':'.
+      const op = newestFirst ? "lt" : "gt";
       q = q.or(
-        `created_at.gt."${after.createdAt}",and(created_at.eq."${after.createdAt}",id.gt."${after.id}")`,
+        `created_at.${op}."${after.createdAt}",and(created_at.eq."${after.createdAt}",id.${op}."${after.id}")`,
       );
     }
     const { data, error } = await q
-      .order("created_at", { ascending: true })
-      .order("id", { ascending: true })
+      .order("created_at", { ascending: !newestFirst })
+      .order("id", { ascending: !newestFirst })
       .limit(pageSize);
     if (error || !Array.isArray(data)) return null;
     const one = <T>(v: T | T[] | null): T | null => (Array.isArray(v) ? (v[0] ?? null) : v);

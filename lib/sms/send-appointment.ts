@@ -350,8 +350,9 @@ export async function sendRecoveredConfirmationSmsToClient(
     studio: input.studio,
     client: input.client,
     routeReader: input.routeReader,
-    // One look: the next recovery run is this send's retry.
-    routeLooks: 1,
+    // The confirmation's own re-reads of an unreadable route (3 looks): a row
+    // in its last eligible slot has no later run. The recovery pass remembers
+    // a studio-wide refusal for the run, so this costs one studio, not a row.
     // A request that could never be made (no credentials) must not spend the
     // attempt that ends recovery: refuse before the claim, still owed.
     beforeClaim: async () =>

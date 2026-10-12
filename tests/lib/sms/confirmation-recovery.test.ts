@@ -169,13 +169,16 @@ function admin(): SupabaseClient {
         },
         or(expr: string) {
           // Exactly the keyset form the recovery pass builds.
-          const m = /^created_at\.gt\."([^"]+)",and\(created_at\.eq\."([^"]+)",id\.gt\."([^"]+)"\)$/.exec(expr);
+          const m = /^created_at\.(gt|lt)\."([^"]+)",and\(created_at\.eq\."([^"]+)",id\.(gt|lt)\."([^"]+)"\)$/.exec(expr);
           expect(m, `unexpected or(): ${expr}`).not.toBeNull();
-          const [, gtAt, eqAt, gtId] = m!;
-          expect(eqAt).toBe(gtAt);
+          const [, op, at, eqAt, idOp, id] = m!;
+          expect(eqAt).toBe(at);
+          expect(idOp).toBe(op);
+          const sign = op === "gt" ? 1 : -1;
           filters.push((r) => {
             const t = Date.parse(r.created_at);
-            return t > Date.parse(gtAt) || (t === Date.parse(gtAt) && r.id > gtId);
+            const a = Date.parse(at);
+            return sign * (t - a) > 0 || (t === a && sign * (r.id < id ? -1 : r.id > id ? 1 : 0) > 0);
           });
           return q;
         },
@@ -641,11 +644,11 @@ describe("FAIRNESS: rows that keep refusing never starve the rest", () => {
     expect(db.filter((x) => x.studio_id === A).every((x) => x.sms_confirmation_send_attempts === 0)).toBe(true);
   });
 
-  it("an unreadable snapshot is looked at once per run, not once per row", async () => {
+  it("an unreadable snapshot costs one row's looks per run (3), not looks per row", async () => {
     db = Array.from({ length: 5 }, (_, i) => appt({ id: `r-${i}`, created_at: iso(NOW - (60 + i) * 60_000) }));
     snapshot = { data: null, error: { code: "PGRST202" } };
     expect(await run()).toMatchObject({ sent: 0, skipped: { sms_route_sender_read_failed: 5 } });
-    expect(events.filter((e) => e === SNAPSHOT_RPC)).toHaveLength(1);
+    expect(events.filter((e) => e === SNAPSHOT_RPC)).toHaveLength(3);
   });
 });
 
@@ -877,14 +880,14 @@ describe("the first studio rotates per 15-minute slot", () => {
     const served: string[] = [];
     for (const slot of [0, 1]) {
       const at = NOW + slot * 15 * 60_000;
+      events = [];
       db = [appt({ id: "a-1", created_at: iso(at - HOUR), starts_at: iso(at + 48 * HOUR) }), appt({ id: "b-1", studio_id: B2, created_at: iso(at - HOUR), starts_at: iso(at + 48 * HOUR) })];
-      let calls = 0;
-      // Time runs out once the first send is done.
+      // Time runs out once the first message has gone.
       const r = await recoverOwedConfirmations({
         admin: admin(),
         nowMs: at,
         env: both,
-        clock: () => (calls++ < 6 ? at : at + 10 * 60_000),
+        clock: () => (providerCalls() > 0 ? at + 10 * 60_000 : at),
         manageUrlFor: () => "https://app.example/manage/x",
       });
       expect(r).toMatchObject({ sent: 1 });
@@ -941,5 +944,59 @@ describe("the intake link the original confirmation would carry", () => {
     };
     await run();
     expect(stamps).toEqual([]);
+  });
+});
+
+describe("scan direction alternates per slot; an unreadable route is re-read", () => {
+  it("a run cut off by its budget serves the oldest row in an even slot and the newest in an odd one", async () => {
+    const even = Math.floor(NOW / (15 * 60_000)) % 2 === 0 ? NOW : NOW + 15 * 60_000;
+    const served: string[] = [];
+    for (const at of [even, even + 15 * 60_000]) {
+      events = [];
+      db = [
+        appt({ id: "old", created_at: iso(at - 10 * HOUR), starts_at: iso(at + 48 * HOUR) }),
+        appt({ id: "mid", created_at: iso(at - 5 * HOUR), starts_at: iso(at + 48 * HOUR) }),
+        appt({ id: "new", created_at: iso(at - HOUR), starts_at: iso(at + 48 * HOUR) }),
+      ];
+      const r = await recoverOwedConfirmations({
+        admin: admin(),
+        nowMs: at,
+        env: ENABLED,
+        clock: () => (providerCalls() > 0 ? at + 10 * 60_000 : at),
+        manageUrlFor: () => "https://app.example/manage/x",
+      });
+      expect(r).toMatchObject({ sent: 1 });
+      served.push(db.find((x) => x.sms_confirmation_sent_at)!.id);
+    }
+    expect(served).toEqual(["old", "new"]);
+  });
+
+  it("newest-first pages through ties without skipping", async () => {
+    const odd = Math.floor(NOW / (15 * 60_000)) % 2 === 1 ? NOW : NOW + 15 * 60_000;
+    const same = iso(odd - 2 * HOUR);
+    db = [
+      ...Array.from({ length: 5 }, (_, i) => appt({ id: `t1-${i}`, created_at: same, starts_at: iso(odd + 48 * HOUR) })),
+      ...Array.from({ length: 5 }, (_, i) => appt({ id: `t0-${i}`, created_at: same, client_opted_out_at: iso(odd - 60_000), starts_at: iso(odd + 48 * HOUR) })),
+    ];
+    const r = await recoverOwedConfirmations({
+      admin: admin(),
+      nowMs: odd,
+      env: ENABLED,
+      clock: () => odd,
+      pageSize: 2,
+      manageUrlFor: () => "https://app.example/manage/x",
+    });
+    expect(r).toMatchObject({ considered: 10, sent: 5, skipped: { client_opted_out: 5 } });
+  });
+
+  it("an unreadable route is looked at again in the same run (no later slot may exist)", async () => {
+    db = [appt()];
+    let reads = 0;
+    snapshot = () => {
+      reads += 1;
+      return reads === 1 ? { data: null, error: { code: "57014" } } : readyStudioA();
+    };
+    expect(await run()).toMatchObject({ sent: 1 });
+    expect(reads).toBe(2);
   });
 });
