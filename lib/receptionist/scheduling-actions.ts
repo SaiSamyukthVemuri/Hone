@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { requireReceptionistWithStudio } from "@/lib/receptionist/identity";
-import { utcInstantFromLocal } from "@/lib/booking/tz";
+import { localDateString, localTimeString, utcInstantFromLocal } from "@/lib/booking/tz";
 import { generateAppointmentToken, hashAppointmentToken } from "@/lib/booking/appointment-token";
 import { dispatchBookingNotifications } from "@/lib/booking/booking-notifications";
 import { notifyAppointmentMoved, type MoveNotificationKind } from "@/lib/email/notify-appointment-moved";
@@ -71,11 +71,22 @@ const RESULT_COPY: Record<string, string> = {
   no_change: "Choose a different time or practitioner.",
 };
 const SLOT_TAKEN = "That time is no longer available. Choose another time.";
+const NO_SUCH_TIME = "Choose a valid date and time. That time does not exist on that day in the studio's time zone.";
 
+/**
+ * The studio-local wall time as a UTC instant, or null when it is not a real
+ * local time. A spring-forward gap time (02:30 on the transition day) has no
+ * instant: utcInstantFromLocal maps it to a DIFFERENT real time on purpose, so
+ * it is refused here rather than booked at a time the receptionist did not
+ * choose (Codex P2 4244647534 on #862). A fall-back repeated time round-trips
+ * to its first occurrence and is accepted.
+ */
 function instant(date: string, time: string, timezone: string): Date | null {
   if (!DATE.test(date) || !TIME.test(time)) return null;
   const d = utcInstantFromLocal(date, time, timezone);
-  return Number.isNaN(d.getTime()) ? null : d;
+  if (Number.isNaN(d.getTime())) return null;
+  if (localDateString(d, timezone) !== date || localTimeString(d, timezone) !== time) return null;
+  return d;
 }
 
 export async function bookFrontDeskAppointmentAction(
@@ -90,7 +101,7 @@ export async function bookFrontDeskAppointmentAction(
   }
   const { studio } = await requireReceptionistWithStudio();
   const start = instant(field(formData, "date"), field(formData, "time"), studio.timezone);
-  if (!start) return { ok: false, message: "Choose a date and time." };
+  if (!start) return { ok: false, message: NO_SUCH_TIME };
   if (start.getTime() <= Date.now()) return { ok: false, message: RESULT_COPY.invalid_time };
 
   const supabase = await createClient();
@@ -187,7 +198,7 @@ export async function moveFrontDeskAppointmentAction(
   }
   const { studio } = await requireReceptionistWithStudio();
   const start = instant(field(formData, "date"), field(formData, "time"), studio.timezone);
-  if (!start) return { ok: false, message: "Choose a date and time." };
+  if (!start) return { ok: false, message: NO_SUCH_TIME };
   if (start.getTime() <= Date.now()) return { ok: false, message: RESULT_COPY.invalid_time };
   // Resolve the required app origin BEFORE the mutation, exactly as the
   // practitioner move does (§7.6), so a bad deployment origin cannot turn a

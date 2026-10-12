@@ -91,6 +91,18 @@ describe("booking", () => {
     expect(ctx.rpc).not.toHaveBeenCalled();
   });
 
+  it("refuses a nonexistent spring-forward local time instead of booking a different one (Codex P2 4244647534)", async () => {
+    // Los Angeles skips 02:00-03:00 on 2031-03-09.
+    const r = await bookFrontDeskAppointmentAction(null, form({ ...ok, date: "2031-03-09", time: "02:30" }));
+    expect(r?.ok).toBe(false);
+    expect(r?.message).toMatch(/does not exist/);
+    expect(ctx.rpc).not.toHaveBeenCalled();
+    // The repeated fall-back hour is real and books its first occurrence.
+    ctx.rpc.mockResolvedValue({ data: [{ result: "created", appointment_id: APPT }], error: null });
+    await bookFrontDeskAppointmentAction(null, form({ ...ok, date: "2031-11-02", time: "01:30" }));
+    expect(ctx.rpc.mock.calls[0][1].p_starts_at).toBe("2031-11-02T08:30:00.000Z");
+  });
+
   it("maps the command's refusals to safe copy and never notifies", async () => {
     for (const [result, copy] of [
       ["not_authorized", /no longer have front-desk access/],
@@ -172,6 +184,12 @@ describe("moving", () => {
     ctx.notifyMoved.mockResolvedValue("degraded");
     const r = await moveFrontDeskAppointmentAction(null, form({ ...ok, practitioner_id: PRACT }));
     expect(r?.message).toBe("Appointment moved and reassigned, but the client notification could not be delivered.");
+  });
+
+  it("refuses a nonexistent spring-forward time on a move too", async () => {
+    const r = await moveFrontDeskAppointmentAction(null, form({ ...ok, date: "2031-03-09", time: "02:15" }));
+    expect(r?.message).toMatch(/does not exist/);
+    expect(ctx.rpc).not.toHaveBeenCalled();
   });
 
   it("resolves the app origin BEFORE the command: a missing origin refuses the move instead of committing it (Codex P2 4244612012)", async () => {
