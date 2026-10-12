@@ -9,6 +9,7 @@ import {
   dropFettStudio,
   seedFettReceptionist,
   seedFettStudio,
+  setFettCapacityState,
 } from "./helpers/fett-fixture";
 
 // Proves the Fett rehearsal fixture (#824) instead of asserting it:
@@ -286,6 +287,127 @@ describe("Fett rehearsal fixture — teardown", () => {
       expect(
         await count(`select count(*) n from auth.users where id = $1`, [userId]),
       ).toBe(0);
+    }
+  });
+});
+
+describe("Fett rehearsal fixture — practitioner capacity is the demo-critical bit", () => {
+  // Both 0134/0136 flags default FALSE, so a studio seeded without them is
+  // LEGACY: ONE studio-wide resource. Five practitioners in that studio cannot
+  // hold parallel appointments — exactly what a Fett demo must show. These
+  // tests prove the fixture's default actually buys that, by booking the SAME
+  // instant for TWO different practitioners.
+  const bookParallel = async (
+    studioId: string,
+    practitionerId: string,
+    clientId: string,
+    serviceId: string,
+  ) =>
+    adminQuery(
+      `insert into public.appointments
+         (studio_id, practitioner_id, client_id, service_id,
+          starts_at, ends_at, duration_minutes, status)
+       values ($1, $2, $3, $4,
+               date_trunc('hour', now()) + interval '10 days',
+               date_trunc('hour', now()) + interval '10 days 1 hour',
+               60, 'confirmed')`,
+      [studioId, practitionerId, clientId, serviceId],
+    );
+
+  it("defaults to LIVE, and two practitioners CAN hold the same instant", async () => {
+    const fett = await seedFettStudio({ treatingCount: 2 });
+    try {
+      expect(fett.capacityState).toBe("live");
+      const flags = await adminQuery(
+        `select practitioner_capacity_enabled c, practitioner_capacity_booking_enabled b
+           from public.studios where id = $1`,
+        [fett.studioId],
+      );
+      expect(flags.rows[0].c).toBe(true);
+      expect(flags.rows[0].b).toBe(true);
+
+      const client = await adminQuery(
+        `select id from public.clients where studio_id = $1 limit 1`,
+        [fett.studioId],
+      );
+      // Same instant, two DIFFERENT practitioners. This is the demo.
+      await bookParallel(
+        fett.studioId,
+        fett.treating[0].practitionerId,
+        client.rows[0].id,
+        fett.services.treatmentId,
+      );
+      await bookParallel(
+        fett.studioId,
+        fett.treating[1].practitionerId,
+        client.rows[0].id,
+        fett.services.treatmentId,
+      );
+      expect(
+        await count(
+          `select count(*) n from public.appointments where studio_id = $1`,
+          [fett.studioId],
+        ),
+      ).toBe(2);
+    } finally {
+      await dropFettStudio(fett);
+    }
+  });
+
+  it("LEGACY is one studio-wide resource: the second parallel booking is REFUSED", async () => {
+    // THE CONTROL. Without it, the LIVE test above could pass on a schema that
+    // never enforced a studio-wide exclusion at all, and the fixture's default
+    // would be proving nothing.
+    const fett = await seedFettStudio({ treatingCount: 2, capacity: "legacy" });
+    try {
+      expect(fett.capacityState).toBe("legacy");
+      const client = await adminQuery(
+        `select id from public.clients where studio_id = $1 limit 1`,
+        [fett.studioId],
+      );
+      await bookParallel(
+        fett.studioId,
+        fett.treating[0].practitionerId,
+        client.rows[0].id,
+        fett.services.treatmentId,
+      );
+      await expect(
+        bookParallel(
+          fett.studioId,
+          fett.treating[1].practitionerId,
+          client.rows[0].id,
+          fett.services.treatmentId,
+        ),
+      ).rejects.toThrow();
+      expect(
+        await count(
+          `select count(*) n from public.appointments where studio_id = $1`,
+          [fett.studioId],
+        ),
+      ).toBe(1);
+    } finally {
+      await dropFettStudio(fett);
+    }
+  });
+
+  it("rejects the invalid state capacity=false + booking=true (0136:52 CHECK)", async () => {
+    const fett = await seedFettStudio({ treatingCount: 1, days: [1] });
+    try {
+      await expect(
+        adminQuery(
+          `update public.studios
+              set practitioner_capacity_enabled = false,
+                  practitioner_capacity_booking_enabled = true
+            where id = $1`,
+          [fett.studioId],
+        ),
+      ).rejects.toThrow();
+      // And the helper never produces that state for any of its three inputs.
+      for (const s of ["legacy", "ready", "live"] as const) {
+        await setFettCapacityState(fett.studioId, s);
+      }
+    } finally {
+      await dropFettStudio(fett);
     }
   });
 });

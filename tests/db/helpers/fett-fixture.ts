@@ -37,6 +37,19 @@ import {
 //   * studio-wide weekly availability, open the given local hours on the
 //     requested days (default Mon–Fri 09:00–17:00). Capacity-ON studios with
 //     no availability rows read as CLOSED, so the rehearsal needs real rows.
+//   * the PRACTITIONER-CAPACITY STATE, defaulting to LIVE. This is load-bearing
+//     and easy to miss. 0134/0136 model concurrency with TWO studio flags whose
+//     three valid states are:
+//         LEGACY                        capacity=false booking=false
+//         CAPACITY_READY_BOOKING_PAUSED capacity=true  booking=false
+//         LIVE                          capacity=true  booking=true
+//     (capacity=false + booking=true is rejected by the CHECK at 0136:52.)
+//     BOTH DEFAULT FALSE, so a studio seeded without them is LEGACY — ONE
+//     studio-wide resource. Five practitioners in a LEGACY studio therefore
+//     CANNOT hold parallel appointments, which is precisely what a Fett demo
+//     must show. The fixture defaults to "live" because Fett's premise is 5+
+//     practitioners; pass capacity: "legacy" to rehearse today's default
+//     studio instead.
 //
 // WHAT THIS FIXTURE CANNOT SEED ON THE 0210 CHAIN — named, not papered over.
 // Each is a real gap in the Friday demo surface, owned by another lane:
@@ -100,6 +113,9 @@ export type FettCapabilities = {
   receptionist: boolean;
 };
 
+/** The three valid practitioner-capacity states (0134/0136). */
+export type FettCapacityState = "legacy" | "ready" | "live";
+
 export type FettStudio = SeededStudio & {
   name: string;
   ownerEmail: string;
@@ -111,6 +127,8 @@ export type FettStudio = SeededStudio & {
   services: { consultationId: string; treatmentId: string };
   receptionist: FettReceptionist | null;
   capabilities: FettCapabilities;
+  /** Which of the three 0134/0136 states the studio was left in. */
+  capacityState: FettCapacityState;
 };
 
 /** Probe the live schema for the receptionist limb. Read-only; safe to call
@@ -186,6 +204,9 @@ export type SeedFettOptions = {
   /** Attempt the receptionist limb when the chain supports it. Default true;
    *  it is a NO-OP returning receptionist: null on an unsupporting chain. */
   withReceptionist?: boolean;
+  /** Practitioner-capacity state. Default "live" — see the header. "legacy"
+   *  leaves both flags false, i.e. one studio-wide resource. */
+  capacity?: FettCapacityState;
 };
 
 /**
@@ -206,6 +227,7 @@ export async function seedFettStudio(
     close = "17:00",
     days = WEEKDAYS,
     withReceptionist = true,
+    capacity = "live",
   } = opts;
 
   const studioId = randomUUID();
@@ -261,6 +283,10 @@ export async function seedFettStudio(
 
   await seedFettAvailability(studioId, { open, close, days });
 
+  // Both flags default FALSE (LEGACY = one studio-wide resource), so this is
+  // what makes five practitioners genuinely schedulable in parallel.
+  await setFettCapacityState(studioId, capacity);
+
   const capabilities = await detectFettCapabilities();
   const receptionist = withReceptionist
     ? await seedFettReceptionist(studioId, capabilities)
@@ -286,7 +312,30 @@ export async function seedFettStudio(
     services: { consultationId, treatmentId },
     receptionist,
     capabilities,
+    capacityState: capacity,
   };
+}
+
+/**
+ * Put the studio into one of the three valid practitioner-capacity states.
+ *
+ * Ordering matters: `capacity=false + booking=true` is rejected by the CHECK
+ * at `0136:52`, so the two columns are always written in ONE statement rather
+ * than sequentially — a two-step update would transiently violate it.
+ */
+export async function setFettCapacityState(
+  studioId: string,
+  state: FettCapacityState,
+): Promise<void> {
+  const capacity = state !== "legacy";
+  const booking = state === "live";
+  await adminQuery(
+    `update public.studios
+        set practitioner_capacity_enabled = $2,
+            practitioner_capacity_booking_enabled = $3
+      where id = $1`,
+    [studioId, capacity, booking],
+  );
 }
 
 /** Studio-wide (practitioner_id NULL) weekly availability for the given days. */
