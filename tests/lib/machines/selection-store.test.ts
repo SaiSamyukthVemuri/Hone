@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DATABASE_PERSISTENCE,
   NO_PERSISTENCE,
   PersistenceUnavailableError,
   ScopeMismatchError,
@@ -103,11 +104,22 @@ describe("the real store refuses to pretend", () => {
   });
 });
 
-describe("persisted behaviour and test-store behaviour are distinguishable", () => {
-  it("the real capability says nothing persists, and why", () => {
+describe("database, test-store and degraded are three distinguishable states", () => {
+  // These three were two before the storage migration landed. The point is
+  // unchanged: a double must never render as a real column, and a failure must
+  // never render as a kept choice.
+  it("the DATABASE capability is the only one that claims a real column", () => {
+    expect(DATABASE_PERSISTENCE.persisted).toBe(true);
+    expect(DATABASE_PERSISTENCE.kind).toBe("database");
+  });
+
+  it("the degraded capability says nothing persists, and why", () => {
     expect(NO_PERSISTENCE.persisted).toBe(false);
     expect(NO_PERSISTENCE.kind).toBe("none");
-    expect(NO_PERSISTENCE.reason).toMatch(/does not exist in the database yet/i);
+    // It is now reported for a FAILED read or an unauthenticated caller, not
+    // because the column is missing - so the wording must not blame the schema.
+    expect(NO_PERSISTENCE.reason).toMatch(/lasts for\s+this form only/i);
+    expect(NO_PERSISTENCE.reason).not.toMatch(/does not exist/i);
   });
 
   it("the test capability is labelled as a test store, not as a database", () => {
@@ -115,26 +127,61 @@ describe("persisted behaviour and test-store behaviour are distinguishable", () 
     expect(TEST_STORE_PERSISTENCE.reason).toMatch(/not a database/i);
   });
 
-  it("no capability claims a database today", () => {
-    for (const cap of [NO_PERSISTENCE, TEST_STORE_PERSISTENCE]) {
-      expect(cap.kind).not.toBe("database");
-    }
+  it("every kind is distinct, so the UI can never conflate them", () => {
+    const kinds = [NO_PERSISTENCE, DATABASE_PERSISTENCE, TEST_STORE_PERSISTENCE].map(
+      (c) => c.kind,
+    );
+    expect(new Set(kinds).size).toBe(3);
   });
 });
 
-describe("the device inventory reports its own absence honestly", () => {
-  it("returns no devices, and says the source does not exist", async () => {
-    const inv = await listStudioDevices("studio-A");
+describe("the device inventory distinguishes empty from unreadable", () => {
+  /** A client whose read succeeds and returns no rows. */
+  const emptyDb = {
+    rpc: async () => ({ data: null, error: null }),
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          is: () => ({ order: async () => ({ data: [], error: null }) }),
+          order: () => ({ limit: async () => ({ data: [], error: null }) }),
+        }),
+      }),
+    }),
+  } as unknown as Parameters<typeof listStudioDevices>[0];
+
+  /** A client whose read FAILS. Emptiness here means nothing about the studio. */
+  const brokenDb = {
+    rpc: async () => ({ data: null, error: { message: "boom" } }),
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          is: () => ({
+            order: async () => ({ data: null, error: { message: "boom" } }),
+          }),
+          order: () => ({
+            limit: async () => ({ data: null, error: { message: "boom" } }),
+          }),
+        }),
+      }),
+    }),
+  } as unknown as Parameters<typeof listStudioDevices>[0];
+
+  it("a studio with nothing registered says so, and is NOT 'unreadable'", async () => {
+    const inv = await listStudioDevices(emptyDb, "studio-A");
     expect(inv.devices).toEqual([]);
-    expect(inv.source).toBe("no-inventory-table");
-    expect(inventoryUnavailable(inv)).toBe(true);
-    expect(inv.reason).toMatch(/no machine inventory exists in the database yet/i);
+    expect(inv.source).toBe("empty-for-studio");
+    expect(inventoryUnavailable(inv)).toBe(false);
+    expect(inv.reason).toMatch(/no machine registered yet/i);
   });
 
-  it("distinguishes a missing source from a studio that registered nothing", () => {
-    expect(inventoryUnavailable({ devices: [], source: "empty-for-studio", reason: "" })).toBe(
-      false,
-    );
+  it("a FAILED read warns against adding a duplicate", async () => {
+    // The distinction that matters: an empty picker after a failed read would
+    // invite a second registration of a machine that already exists.
+    const inv = await listStudioDevices(brokenDb, "studio-A");
+    expect(inv.devices).toEqual([]);
+    expect(inv.source).toBe("unreadable");
+    expect(inventoryUnavailable(inv)).toBe(true);
+    expect(inv.reason).toMatch(/do not add a\s+duplicate/i);
   });
 
   it("writes down what has to exist, without encoding a migration number", () => {
@@ -142,7 +189,7 @@ describe("the device inventory reports its own absence honestly", () => {
     expect(INVENTORY_SOURCE.columns).toContain("machine_profile_version");
     // A number here would be a reservation this lane has not been granted.
     expect(JSON.stringify(INVENTORY_SOURCE)).not.toMatch(/\b02\d\d\b/);
-    expect(INVENTORY_SOURCE.note).toMatch(/fresh\s+census/i);
+    expect(INVENTORY_SOURCE.note).toMatch(/never here/i);
   });
 });
 

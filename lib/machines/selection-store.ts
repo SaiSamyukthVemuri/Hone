@@ -13,18 +13,13 @@
  *    `own_practitioner_in_studio(p_studio_id)` and returns NULL for a
  *    non-member rather than trusting the studio it was handed.
  *
- * 2. `PersistenceCapability` makes the difference between a REAL store and a
- *    TEST store a value the UI can read, instead of an assumption. The server
- *    adapter reports `persisted: false` today because there is no column; an
- *    in-memory store used by tests reports `kind: "test-store"`. A panel that
- *    rendered "remembered" while backed by a test double would be the exact
- *    dishonesty this type exists to prevent, and a test asserts the real
- *    adapter never claims persistence.
- *
- * NO MIGRATION IS ASSUMED. A fresh census on 2026-10-12 found 0211-0222 all
- * claimed across open PRs and worktrees - 0219 went to G1 - so the first free
- * number was 0223 at that moment. It must be re-censused before anyone authors
- * against it, and nothing in this file encodes it.
+ * 2. `PersistenceCapability` makes WHERE a selection lives a value the UI can
+ *    read, instead of an assumption. The database-backed store reports
+ *    `kind: "database"`; an in-memory double used by tests reports
+ *    `kind: "test-store"`; and `kind: "none"` is the DEGRADED state - no
+ *    authenticated caller, or a read that failed. A panel backed by a double
+ *    rendering the same "yes" a real column would is the dishonesty this type
+ *    exists to prevent.
  */
 
 import type {
@@ -33,6 +28,11 @@ import type {
   StoredSelection,
 } from "./selection";
 import { selectionKey } from "./selection";
+import {
+  readRememberedMachine,
+  rememberMachine,
+  type MachineDb,
+} from "./machine-queries";
 
 // ---------------------------------------------------------------------------
 
@@ -45,13 +45,28 @@ export type PersistenceCapability = {
   reason: string;
 };
 
-/** The real capability today: none. Stated once, read by the UI. */
+/**
+ * No persistence. Since 0223 this is the DEGRADED state rather than the normal
+ * one: it is reported when there is no authenticated caller, or when the
+ * remembered-machine read itself failed, so the UI never claims a choice is
+ * kept when it is not.
+ */
 export const NO_PERSISTENCE: PersistenceCapability = {
   persisted: false,
   kind: "none",
   reason:
-    "A remembered machine needs a stored field that does not exist in the " +
-    "database yet, so your choice lasts for this form only.",
+    "Your machine could not be remembered just now, so this choice lasts for " +
+    "this form only.",
+};
+
+/**
+ * The real capability once 0223 is applied: a remembered machine lives in
+ * `practitioners.default_machine_id` and survives every later request.
+ */
+export const DATABASE_PERSISTENCE: PersistenceCapability = {
+  persisted: true,
+  kind: "database",
+  reason: "",
 };
 
 /** What a test double reports. Never produced by server code. */
@@ -112,12 +127,11 @@ export function createVerifyingStore(
 }
 
 /**
- * The store the server actually has: reads nothing, refuses to pretend a write
- * happened.
+ * The DEGRADED store: reads nothing, refuses to pretend a write happened.
  *
- * `read` returning null is truthful - there is nowhere for a selection to have
- * been stored. `write` throwing is the honest half: a no-op write would let the
- * UI report a remembered choice that no later request can find.
+ * Used when there is no authenticated caller. `write` throws rather than
+ * no-opping, because a silent no-op would let the UI report a remembered
+ * choice that no later request can find.
  */
 export function createUnavailableStore(
   capability: PersistenceCapability = NO_PERSISTENCE,
@@ -152,5 +166,44 @@ export function createMemoryStore(): SelectionStore & {
     },
     keys: () => [...rows.keys()],
     size: () => rows.size,
+  };
+}
+
+/**
+ * The REAL store, backed by 0223's `set_own_default_machine` command and the
+ * practitioner's own row.
+ *
+ * Note what it does NOT do: it performs no ownership check of its own. The
+ * command resolves the caller through `own_practitioner_in_studio` and returns
+ * NULL for a non-member, so the authority is the database's. Wrapping this in
+ * `createVerifyingStore` adds a second, earlier refusal - deliberate
+ * repetition, so a future caller that forgets the scope check is still caught.
+ *
+ * A write the database declines (non-member) throws rather than resolving, so
+ * the caller cannot mistake a refusal for a stored choice.
+ */
+export function createDatabaseStore(
+  db: MachineDb,
+  practitionerIdFor: (scope: SelectionScope) => string,
+): SelectionStore {
+  return {
+    async read(scope) {
+      const got = await readRememberedMachine(db, practitionerIdFor(scope));
+      if (!got.ok) throw new PersistenceUnavailableError(got.error);
+      if (!got.value.machineId) return null;
+      return { deviceId: got.value.machineId, modeKey: got.value.modeKey };
+    },
+    async write(scope, selection) {
+      const wrote = await rememberMachine(db, {
+        studioId: scope.studioId,
+        machineId: selection?.deviceId ?? null,
+        modeKey: selection?.modeKey ?? null,
+      });
+      if (!wrote.ok) throw new PersistenceUnavailableError(wrote.error);
+      if (!wrote.value) {
+        // The command returned NULL: no active membership in that studio.
+        throw new ScopeMismatchError();
+      }
+    },
   };
 }
