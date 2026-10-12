@@ -89,6 +89,17 @@ and its [HIPAA projects](https://supabase.com/docs/guides/platform/hipaa-project
 
 ### 2.2 Vercel (G-04, G-07, G-16)
 
+**Account facts, read-only (Vercel API, 2026-10-12):**
+- The authenticated account belongs to **one** team, "Build", which owns
+  project `hone-z2uf` (domains `hone.care`, `www.hone.care`).
+- **Vercel Authentication (SSO protection) is ON** for "all deployments
+  except custom domains". Preview URLs therefore require a Vercel login;
+  this is relevant to G-16.
+- Password protection and trusted IPs are off.
+- **Not readable here:** the team's plan (Hobby, Pro or Enterprise) and
+  whether the HIPAA add-on is held. Both stay UNKNOWN until read in
+  Billing.
+
 1. Confirm the team plan. A BAA is available to **Pro and Enterprise**;
    Pro buys the HIPAA add-on from Billing
    ([compliance](https://vercel.com/docs/security/compliance)).
@@ -247,10 +258,24 @@ Nothing here is authorized until Sam approves that row.
 | D-5 | Twilio BAA | Security or Enterprise Edition through Twilio sales | Sales cycle | Request an edition quote; list the products in use |
 | D-6 | Preview isolation | None (engineering) | Days | Approve a separate preview project with synthetic data |
 
+**Account-specific status at a glance (2026-10-12)**
+
+| Provider | Verified | Unknown |
+|---|---|---|
+| Supabase | Org on **Pro** (issue #828 baseline, read-only, 2026-10-11); hosted migrations at `0210` | BAA, HIPAA add-on, org MFA enforcement, PITR, SSL enforcement, network restrictions, connection logging, auth session settings, SMTP provider |
+| Vercel | One team, project `hone-z2uf`; SSO protection on for previews | Plan; HIPAA add-on; which features the BAA covers; log retention and drains |
+| Twilio | The BAA needs Security or Enterprise Edition (public FAQ) | Account edition; products in use per subaccount; retention |
+| Resend | Cannot sign a BAA (public FAQ) | n/a: patient email must move or be shown PHI-free |
+| AWS (candidate) | SES is HIPAA-eligible (public list) | No account known; BAA, pricing, setup time |
+| Sentry, PostHog, Upstash | Public BAA or eligibility statements exist | Hone's plans; whether a BAA is needed if PHI stays out |
+
 **Engineering already under way, in this lane** (drafts, not merged or
 deployed; neither depends on a decision above):
 - G-07 Vercel analytics URL redaction: #842;
 - G-12 isolated restore drill: #848.
+- G-13 clinical access audit: contract proposed in
+  [clinical-access-audit-contract.md](./clinical-access-audit-contract.md);
+  migration 0219 requested.
 
 **Consequence for Friday (2026-10-16).** Several of these depend on vendor
 turnaround that this packet cannot vouch for. Unless each gate is met and
