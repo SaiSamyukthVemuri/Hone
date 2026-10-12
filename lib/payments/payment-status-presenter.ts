@@ -203,13 +203,17 @@ export function portalCardCopy(capability: PortalCardCapability): string {
  */
 export function portalCardCopyGatedOnCountry(
   capability: PortalCardCapability,
-  country: { tone: "ok" | "attention" | "blocked" | "unknown" },
+  country: { tone: "ok" | "attention" | "blocked" | "unknown"; detail: string },
 ): string {
+  // Codex P2 4249448355: keep the verdict's OWN reason. "Blocked" covers a
+  // mismatch, a persisted conflict AND a US account Stripe has not confirmed
+  // yet (which needs a refresh, not support), so one generic sentence would
+  // misdirect the owner. describePaymentCountry already words each case.
   if (capability === "available" && country.tone === "blocked") {
-    return "Portal card-on-file is not available: this studio's Stripe account country does not match its payment settings. Contact Hone support.";
+    return `Portal card-on-file is not available. ${country.detail}`;
   }
   if (capability === "available" && country.tone === "unknown") {
-    return "Portal card-on-file status could not be determined: the studio's payment country could not be verified.";
+    return `Portal card-on-file status could not be determined. ${country.detail}`;
   }
   return portalCardCopy(capability);
 }
