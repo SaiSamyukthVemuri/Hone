@@ -161,10 +161,12 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
   );
 
   const svc = f.service;
+  // The service URL is needed only when the number does NOT override it: with
+  // use_inbound_webhook_on_number on, effectiveInbound never reads it.
   const routing =
-    svc && svc.inboundRequestUrl !== undefined
+    svc && (svc.inboundRequestUrl !== undefined || svc.useInboundWebhookOnNumber === true)
       ? {
-          serviceInboundUrl: svc.inboundRequestUrl,
+          serviceInboundUrl: svc.inboundRequestUrl ?? null,
           useInboundWebhookOnNumber: svc.useInboundWebhookOnNumber ?? null,
           numberSmsUrl: svc.numberSmsUrl,
         }

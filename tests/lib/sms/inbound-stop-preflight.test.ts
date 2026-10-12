@@ -136,6 +136,21 @@ describe("evaluateInboundStopPreflight", () => {
     expect(evaluateInboundStopPreflight(f).blockers).toEqual(["inbound_method"]);
   });
 
+  it("a number-level override is decided without the (irrelevant) service URL", () => {
+    const f = allProven();
+    f.service = { useInboundWebhookOnNumber: true, numberSmsUrl: URL_OK, numberSmsMethod: "POST", accountSid: ACCOUNT };
+    expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
+  });
+
+  it("with the flag OFF, an unread service URL is still unknown", () => {
+    const f = allProven();
+    f.service = { useInboundWebhookOnNumber: false, inboundMethod: "POST", accountSid: ACCOUNT };
+    const r = evaluateInboundStopPreflight(f);
+    expect(r.blockers).toEqual(["inbound_reaches", "inbound_method"]);
+    // Not read is UNKNOWN, never reported as "disabled".
+    expect(r.checks.find((c) => c.id === "inbound_reaches")?.status).toBe("unknown");
+  });
+
   it("inbound DISABLED (flag off, no inbound_request_url) fails and says so", () => {
     const f = allProven();
     f.service!.inboundRequestUrl = null;
