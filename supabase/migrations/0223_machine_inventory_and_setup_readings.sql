@@ -379,8 +379,10 @@ create table if not exists public.treatment_setup_readings (
            ('practitioner-entered', 'machine-displayed',
             'device-computed', 'estimated')),
 
-  recorded_by_practitioner_id uuid
-    references public.practitioners(id) on delete set null,
+  -- WHO OBSERVED IT. The composite same-studio constraint below is what
+  -- enforces that this practitioner belongs to the reading's own studio; the
+  -- column carries no inline simple FK on purpose. See the constraint.
+  recorded_by_practitioner_id uuid,
   recorded_at timestamptz not null default now(),
 
   -- A number OR a reasoned absence. Never both, never neither.
@@ -389,6 +391,29 @@ create table if not exists public.treatment_setup_readings (
     or (value_numeric is null and absence_reason is not null)
   )
 );
+
+-- 0179'S ACTOR LAW, APPLIED RATHER THAN EXEMPTED.
+--
+-- `recorded_by_practitioner_id` is an ACTOR column: it records who observed the
+-- reading. 0179 upgraded every actor FK in the schema from a simple reference
+-- to a COMPOSITE same-studio one, so a studio's record cannot name a
+-- practitioner from another studio, and it enforces that in the catalog instead
+-- of trusting the writer. A simple `references practitioners(id)` here would
+-- have been a tenth exemption from a law with nine, and
+-- tests/db/actor-fk-integrity.db.test.ts is the guard that says so.
+--
+-- `on delete restrict`, matching 0179: clinical provenance must not be erasable
+-- by deleting the practitioner. `set null` would quietly lose who recorded a
+-- reading, which is the opposite of what a treatment record is for.
+--
+-- Added VALIDATED rather than `not valid` because the table is created empty in
+-- this same transaction, so there is no existing row to validate against.
+
+alter table public.treatment_setup_readings
+  add constraint treatment_setup_readings_recorded_by_same_studio_fk
+  foreign key (recorded_by_practitioner_id, studio_id)
+  references public.practitioners (id, studio_id)
+  on delete restrict;
 
 -- One reading per field per group per block. `coalesce` because a mode-level
 -- field has no stage and NULL would not collide with itself in a plain unique.
