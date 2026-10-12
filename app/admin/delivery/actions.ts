@@ -10,6 +10,7 @@ import { logAdminAction } from "@/lib/audit/admin-actions";
 // (migration 0215, resolve_delivery_incident). Admin-only: the same
 // ADMIN_EMAILS allowlist as every /admin action, re-checked here (the layout
 // guard is defense in depth). Every attempt is audited, blocked ones included.
+// Every attempt is audited: blocked, invalid input, failed and succeeded.
 // The command closes an incident only while it is open, so two admins cannot
 // clobber each other's resolution, and the next failure of the same kind opens
 // a new incident rather than reviving this one.
@@ -35,11 +36,21 @@ export async function resolveDeliveryIncidentAction(formData: FormData): Promise
 
   const incidentId = formData.get("incident_id");
   const resolution = formData.get("resolution");
-  if (typeof incidentId !== "string" || !UUID_RE.test(incidentId)) {
-    throw new Error("Missing incident id.");
-  }
-  if (typeof resolution !== "string" || !RESOLUTIONS.has(resolution)) {
-    throw new Error("Unknown resolution.");
+  const idOk = typeof incidentId === "string" && UUID_RE.test(incidentId);
+  const resolutionOk = typeof resolution === "string" && RESOLUTIONS.has(resolution);
+  if (!idOk || !resolutionOk) {
+    // Audited like every other attempt (Codex P2 4244834158). Only WHICH
+    // field was rejected is logged, never the submitted values.
+    await logAdminAction({
+      actorUserId: user.id,
+      actorEmail: user.email ?? null,
+      targetType: "delivery_incident",
+      targetId: idOk ? (incidentId as string) : null,
+      action: "delivery_incident_resolved",
+      outcome: "failed",
+      metadata: { result: "invalid_input", invalid: !idOk ? "incident_id" : "resolution" },
+    });
+    throw new Error(!idOk ? "Missing incident id." : "Unknown resolution.");
   }
 
   const admin = createAdminClient();

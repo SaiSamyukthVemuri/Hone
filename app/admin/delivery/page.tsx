@@ -51,7 +51,9 @@ export default async function DeliveryQueuePage() {
   const incidents = (incidentsRes.data ?? []) as SupportIncident[];
   const open = incidents.filter((i) => i.resolved_at === null);
   const resolved = incidents.filter((i) => i.resolved_at !== null);
-  const outcomes = (outcomesRes.data ?? []) as ReceiptOutcome[];
+  // An unreadable summary is UNKNOWN, never "no recent events" (Codex P2 4244834156).
+  const outcomes: ReceiptOutcome[] | null =
+    outcomesRes.error || !Array.isArray(outcomesRes.data) ? null : (outcomesRes.data as ReceiptOutcome[]);
   const findings = health ? healthFindings(health) : [];
   const concerns = (concernsRes.data ?? []) as SupportConcern[];
 
@@ -97,26 +99,34 @@ export default async function DeliveryQueuePage() {
           <summary className="cursor-pointer text-neutral-600 dark:text-neutral-400">
             Resend events in the last 7 days, by outcome
           </summary>
-          <table className="mt-2 text-xs">
-            <thead>
-              <tr className="text-left text-neutral-500">
-                <th className="pr-4">State</th>
-                <th className="pr-4">Result</th>
-                <th className="pr-4">Events</th>
-                <th>Latest</th>
-              </tr>
-            </thead>
-            <tbody>
-              {outcomes.map((o) => (
-                <tr key={`${o.processing_state}/${o.processing_result}`}>
-                  <td className="pr-4">{o.processing_state}</td>
-                  <td className="pr-4">{o.processing_result ?? "pending"}</td>
-                  <td className="pr-4">{o.receipts}</td>
-                  <td>{when(o.last_received_at)}</td>
+          {outcomes === null ? (
+            <p className="mt-2 text-xs text-red-800 dark:text-red-300">
+              The event summary could not be read. Treat it as unknown, not as no events.
+            </p>
+          ) : outcomes.length === 0 ? (
+            <p className="mt-2 text-xs text-neutral-500">No Resend events received in the last 7 days.</p>
+          ) : (
+            <table className="mt-2 text-xs">
+              <thead>
+                <tr className="text-left text-neutral-500">
+                  <th className="pr-4">State</th>
+                  <th className="pr-4">Result</th>
+                  <th className="pr-4">Events</th>
+                  <th>Latest</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {outcomes.map((o) => (
+                  <tr key={`${o.processing_state}/${o.processing_result}`}>
+                    <td className="pr-4">{o.processing_state}</td>
+                    <td className="pr-4">{o.processing_result ?? "pending"}</td>
+                    <td className="pr-4">{o.receipts}</td>
+                    <td>{when(o.last_received_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </details>
       </section>
 
