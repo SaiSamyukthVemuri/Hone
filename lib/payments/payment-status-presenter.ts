@@ -121,6 +121,32 @@ export function connectBannerCopy(
   };
 }
 
+/**
+ * PAY-CCY-04 (Codex P2 4249120309). Stripe saying "charges enabled" is not
+ * readiness when the studio's payment country says otherwise: a persisted
+ * country conflict or mismatch BLOCKS charging (0214 guard + the charge path),
+ * and an unverifiable country is never ready. Same gate as the owner
+ * console's payments panel: blocked -> "Charges are blocked", unknown -> not
+ * ready. "ok" and "attention" (a legacy Canadian account not yet observed,
+ * still chargeable) leave the banner unchanged.
+ */
+export function gateConnectBannerOnCountry(
+  banner: ReturnType<typeof connectBannerCopy>,
+  country: { tone: "ok" | "attention" | "blocked" | "unknown"; detail: string },
+): ReturnType<typeof connectBannerCopy> {
+  if (country.tone === "blocked") {
+    return { tone: "warning", headline: "Charges are blocked", detail: country.detail };
+  }
+  if (country.tone === "unknown" && banner.tone === "ready") {
+    return {
+      tone: "info",
+      headline: "Payment country could not be verified",
+      detail: country.detail,
+    };
+  }
+  return banner;
+}
+
 // ---------------------------------------------------------------------------
 // 3. Portal card-on-file capability (first blocker wins)
 // ---------------------------------------------------------------------------
