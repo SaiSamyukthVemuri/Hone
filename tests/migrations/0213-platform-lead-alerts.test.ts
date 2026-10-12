@@ -123,7 +123,7 @@ describe("the alert table", () => {
     expect(columns).toEqual([
       "id", "lead_kind", "demo_request_id", "waitlist_id", "event_at", "status",
       "attempt_count", "next_attempt_at", "claim_token", "claimed_at", "lease_expires_at",
-      "send_generation", "idempotency_key", "retry_requested_at", "provider_message_id",
+      "send_generation", "idempotency_key", "retry_requested_at", "first_attempted_at", "provider_message_id",
       "accepted_at", "failed_at", "last_error_code", "last_error_at", "last_provider_error",
       "created_at", "updated_at",
     ]);
@@ -189,6 +189,15 @@ describe("the commands", () => {
     expect(normalise(definition("settle_platform_lead_alert"))).toContain(
       "if v_alert.status <> 'sending' or v_alert.claim_token is distinct from p_claim_token then return 'stale_claim';",
     );
+  });
+
+  it("THE REPLAY WINDOW bounds every automatic path at 20 hours after the first attempt", () => {
+    const claim = normalise(definition("claim_platform_lead_alert"));
+    expect(claim).toContain("and (a.first_attempted_at is null or a.first_attempted_at > v_now - interval '20 hours')");
+    expect(claim).toContain("first_attempted_at = coalesce(a.first_attempted_at, v_now)");
+    expect(normalise(definition("settle_platform_lead_alert"))).toContain("or v_alert.first_attempted_at <= v_now - interval '20 hours' then");
+    expect(normalise(definition("expire_platform_lead_alerts")).match(/a\.first_attempted_at <= v_now - interval '20 hours'/g)).toHaveLength(2);
+    expect(normalise(definition("requeue_platform_lead_alert"))).toContain("first_attempted_at = null");
   });
 
   it("no command takes or returns an address to send to", () => {

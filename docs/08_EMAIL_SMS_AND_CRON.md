@@ -326,8 +326,10 @@ to the prospect.
 - **Claim → send → settle.** One worker leases an alert (`FOR UPDATE SKIP LOCKED`, 120 s
   lease); only the current claim token may settle it. At most five attempts, backing off
   2 min, 10 min, 1 h, 6 h. A provider refusal the same request would meet again fails at
-  once. An abandoned lease is re-claimed under the same key. Alerts unsent 72 hours after
-  the lead become a visible `failed: expired`.
+  once. An abandoned lease is re-claimed under the same key. **Replay window:** automatic
+  attempts end 20 hours after the first one (the provider keeps an idempotency key about
+  24 hours), whatever the sweep cadence; alerts unsent by then, or 72 hours after the lead,
+  become a visible `failed: expired`, and only the operator's Retry (a new key) sends again.
 - **States are honest.** `accepted` means the provider accepted the message. It is not a
   delivery receipt.
 - **Recipient.** `LEAD_ALERT_EMAIL`, exactly one address that is also on `ADMIN_EMAILS`.

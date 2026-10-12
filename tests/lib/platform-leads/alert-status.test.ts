@@ -92,7 +92,7 @@ describe("describeLeadAlert", () => {
     expect(describeLeadAlert({ status: "failed", attempt_count: 5, last_error_code: "expired" })).toMatchObject({
       tone: "problem",
       label: "Alert failed",
-      detail: "It was not sent within 72 hours.",
+      detail: "It was not sent within its automatic retry window. Use Retry to send it under a new key.",
     });
   });
 });

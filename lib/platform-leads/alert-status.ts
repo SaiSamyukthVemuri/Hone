@@ -49,7 +49,7 @@ const REASON: Record<LeadAlertErrorCode, string> = {
   provider_exception: "The email provider gave no usable answer.",
   render_failed: "The alert email could not be composed.",
   lease_expired: "A send attempt stopped before it finished.",
-  expired: "It was not sent within 72 hours.",
+  expired: "It was not sent within its automatic retry window. Use Retry to send it under a new key.",
 };
 
 export function isLeadAlertConfigCode(code: unknown): code is LeadAlertConfigCode {

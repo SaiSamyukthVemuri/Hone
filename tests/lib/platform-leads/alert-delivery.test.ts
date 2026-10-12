@@ -236,6 +236,28 @@ describe("sweepPlatformLeadAlerts", () => {
     expect(JSON.stringify(ops.calls[0])).toContain("platform_lead_alerts_expired");
   });
 
+  it("a lost settle FAILS the run and stops it (Codex P2 4243922093)", async () => {
+    let claims = 0;
+    const admin = {
+      rpc: async (fn: string) => {
+        if (fn === "expire_platform_lead_alerts") return { data: 0, error: null };
+        if (fn === "claim_platform_lead_alert") {
+          claims += 1;
+          return { data: [{ ...CLAIMED, claim_token: `t${claims}` }], error: null };
+        }
+        return { data: null, error: { code: "08006", message: "connection lost" } };
+      },
+    } as unknown as SupabaseClient;
+    const summary = await sweepPlatformLeadAlerts({
+      admin,
+      transport: transport(async () => ({ data: { id: "m" }, error: null })),
+      env: ENV,
+      appOrigin: () => "https://hone.example",
+    });
+    expect(summary).toMatchObject({ ok: false, attempted: 1, accepted: 0, other: 0 });
+    expect(claims).toBe(1);
+  });
+
   it("is bounded per run", async () => {
     let claims = 0;
     const admin = {

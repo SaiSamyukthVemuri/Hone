@@ -458,7 +458,12 @@ export async function sweepPlatformLeadAlerts(
     for (let i = 0; i < max && Date.now() - started < budget; i += 1) {
       const result = await claimAndSend(admin, ready, null);
       if (result === "none") break;
-      if (result === "claim_error") {
+      if (result === "claim_error" || result === "settle_error") {
+        // The database did not record this run's work (a lost settle leaves
+        // the alert leased until its lease expires): the run FAILED, and the
+        // route answers 500 so the scheduler sees it. Stop rather than keep
+        // claiming against a database that is not answering.
+        if (result === "settle_error") summary.attempted += 1;
         summary.ok = false;
         break;
       }

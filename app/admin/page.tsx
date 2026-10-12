@@ -14,6 +14,7 @@ import { markDemoContactedAction } from "./actions";
 import { leadAlertConfigurationStatus } from "@/lib/platform-leads/alert-delivery";
 import { leadAnchorId } from "@/lib/platform-leads/alert-status";
 import {
+  failedPageFrom,
   LeadAlertCell,
   LeadAlertsCard,
   loadLeadAlerts,
@@ -232,7 +233,12 @@ async function loadConsole(): Promise<{
   };
 }
 
-export default async function AdminIndexPage() {
+export default async function AdminIndexPage({
+  searchParams,
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = (await searchParams) ?? {};
   const { studios, overview, practitioners, waitlist, waitlistTotal, demoRequests } =
     await loadConsole();
   // PR B (smart payment status): platform payment summary: capability
@@ -251,6 +257,7 @@ export default async function AdminIndexPage() {
     createAdminClient(),
     demoRequests.map((r) => r.id),
     waitlist.map((r) => r.id),
+    failedPageFrom(params.leadAlertsFailedPage),
   );
   const leadAlertConfig = leadAlertConfigurationStatus();
 

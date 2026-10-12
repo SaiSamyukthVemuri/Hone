@@ -582,6 +582,61 @@ describe("expiry, configuration blockers and the operator's retry", () => {
     ).rejects.toMatchObject({ code: "22023" });
   });
 
+  it("THE REPLAY WINDOW: no automatic attempt 20 hours after the first, whatever the cadence (Codex P2 4243922090)", async () => {
+    const r = await recordDemo();
+    const first = await claim(r.alert_id);
+    const a1 = await alertRow(r.alert_id!);
+    expect(a1.first_attempted_at.toISOString()).toBe(a1.claimed_at.toISOString());
+    expect(await settle(r.alert_id!, first.claim_token, "retry", "provider_timeout")).toBe("retry_scheduled");
+    // A later attempt inside the window keeps the window's start.
+    await makeDue(r.alert_id!);
+    const second = await claim(r.alert_id);
+    expect((await alertRow(r.alert_id!)).first_attempted_at.toISOString()).toBe(a1.first_attempted_at.toISOString());
+    await settle(r.alert_id!, second.claim_token, "retry", "provider_timeout");
+
+    // The first attempt is now 21 hours old: the provider may no longer
+    // recognise the key, so nothing claims it, even though it is due.
+    await adminQuery(
+      "update public.platform_lead_alerts set first_attempted_at = clock_timestamp() - interval '21 hours', next_attempt_at = clock_timestamp() - interval '1 second' where id = $1",
+      [r.alert_id],
+    );
+    expect((await claim(r.alert_id)).result).toBe("none");
+    expect((await claim(null)).result).toBe("none");
+    await adminQuery("select public.expire_platform_lead_alerts()");
+    expect(await alertRow(r.alert_id!)).toMatchObject({ status: "failed", last_error_code: "expired", attempt_count: 2 });
+
+    // Only the operator's retry sends again, and under a NEW key generation.
+    expect((await adminQuery("select public.requeue_platform_lead_alert($1) r", [r.alert_id])).rows[0].r).toBe("requeued");
+    expect(await alertRow(r.alert_id!)).toMatchObject({ first_attempted_at: null, attempt_count: 0, idempotency_key: `lead-alert/${r.alert_id}/2` });
+    expect((await claim(r.alert_id)).idempotency_key).toBe(`lead-alert/${r.alert_id}/2`);
+  });
+
+  it("a retryable failure that settles past the replay window is final", async () => {
+    const r = await recordDemo();
+    const c = await claim(r.alert_id);
+    await adminQuery("update public.platform_lead_alerts set first_attempted_at = clock_timestamp() - interval '21 hours' where id = $1", [r.alert_id]);
+    expect(await settle(r.alert_id!, c.claim_token, "retry", "provider_timeout")).toBe("failed");
+  });
+
+  it("an abandoned attempt past the replay window is never re-leased; expiry fails it", async () => {
+    const r = await recordDemo();
+    await claim(r.alert_id);
+    await adminQuery(
+      "update public.platform_lead_alerts set first_attempted_at = clock_timestamp() - interval '21 hours', lease_expires_at = clock_timestamp() - interval '1 second' where id = $1",
+      [r.alert_id],
+    );
+    expect((await claim(null)).result).toBe("none");
+    await adminQuery("select public.expire_platform_lead_alerts()");
+    expect(await alertRow(r.alert_id!)).toMatchObject({ status: "failed", last_error_code: "lease_expired" });
+  });
+
+  it("the first attempt and the attempt count move together", async () => {
+    const r = await recordDemo();
+    await expect(
+      adminQuery("update public.platform_lead_alerts set first_attempted_at = now() where id = $1", [r.alert_id]),
+    ).rejects.toMatchObject({ code: "23514" });
+  });
+
   it("the operator's retry: failed only, a fresh budget, window and key", async () => {
     const old = await insertAged(80);
     await adminQuery("select public.expire_platform_lead_alerts()");

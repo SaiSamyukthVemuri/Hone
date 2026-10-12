@@ -34,8 +34,22 @@ export type LeadAlertRow = {
 const ALERT_COLUMNS =
   "id, lead_kind, demo_request_id, waitlist_id, status, attempt_count, next_attempt_at, accepted_at, failed_at, last_error_code, last_error_at, created_at";
 
+/** Failed alerts per page of the card's retry list. */
+export const FAILED_PAGE_SIZE = 10;
+
+/**
+ * The page of the failed list to show, from the URL. Every failed alert must
+ * stay reachable for Retry, so the list pages rather than truncates.
+ */
+export function failedPageFrom(raw: string | string[] | undefined): number {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  const n = Number.parseInt(value ?? "", 10);
+  return Number.isFinite(n) && n >= 1 && n <= 10_000 ? n : 1;
+}
+
 export type LeadAlertsView = {
   loadError: boolean;
+  failedPage: number;
   byDemoRequest: Map<string, LeadAlertRow>;
   byWaitlist: Map<string, LeadAlertRow>;
   counts: Record<LeadAlertStatus, number>;
@@ -49,6 +63,7 @@ function emptyView(loadError: boolean): LeadAlertsView {
     byWaitlist: new Map(),
     counts: { pending: 0, sending: 0, accepted: 0, failed: 0 },
     failed: [],
+    failedPage: 1,
   };
 }
 
@@ -56,7 +71,9 @@ export async function loadLeadAlerts(
   admin: SupabaseClient,
   demoRequestIds: string[],
   waitlistIds: string[],
+  failedPage = 1,
 ): Promise<LeadAlertsView> {
+  const from = (failedPage - 1) * FAILED_PAGE_SIZE;
   try {
     const forLeads = async (column: "demo_request_id" | "waitlist_id", ids: string[]) =>
       ids.length === 0
@@ -80,7 +97,8 @@ export async function loadLeadAlerts(
         .select(ALERT_COLUMNS)
         .eq("status", "failed")
         .order("failed_at", { ascending: false })
-        .limit(10),
+        .order("id", { ascending: true })
+        .range(from, from + FAILED_PAGE_SIZE - 1),
     ]);
     if (
       demo.error || waitlist.error || pending.error || sending.error ||
@@ -103,6 +121,7 @@ export async function loadLeadAlerts(
       failed: failed.count ?? 0,
     };
     view.failed = (failedRows.data ?? []) as LeadAlertRow[];
+    view.failedPage = failedPage;
     return view;
   } catch {
     return emptyView(true);
@@ -206,9 +225,10 @@ export function LeadAlertsCard({
         Accepted means the email provider accepted the message. It does not
         confirm that it reached the inbox.
       </p>
-      {!view.loadError && view.failed.length > 0 && (
-        <div className="mt-4">
+      {!view.loadError && view.counts.failed > 0 && (
+        <div className="mt-4" data-testid="lead-alerts-failed">
           <h3 className="text-sm font-medium">Failed alerts</h3>
+          <FailedPager page={view.failedPage} shown={view.failed.length} total={view.counts.failed} />
           <ul className="mt-2 flex flex-col gap-2 text-sm">
             {view.failed.map((a) => (
               <li key={a.id} className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -235,5 +255,29 @@ export function LeadAlertsCard({
         </div>
       )}
     </section>
+  );
+}
+
+/** Newer/older links over the failed list, so no failed alert is out of reach. */
+function FailedPager({ page, shown, total }: { page: number; shown: number; total: number }) {
+  const first = shown === 0 ? 0 : (page - 1) * FAILED_PAGE_SIZE + 1;
+  const last = (page - 1) * FAILED_PAGE_SIZE + shown;
+  const hasOlder = last < total;
+  return (
+    <p className="mt-1 flex flex-wrap gap-3 text-xs opacity-80">
+      <span>
+        Showing {first}–{last} of {total}, most recent first.
+      </span>
+      {page > 1 && (
+        <a className="underline" href={`/admin?leadAlertsFailedPage=${page - 1}#lead-alerts`}>
+          Newer
+        </a>
+      )}
+      {hasOlder && (
+        <a className="underline" href={`/admin?leadAlertsFailedPage=${page + 1}#lead-alerts`}>
+          Older
+        </a>
+      )}
+    </p>
   );
 }

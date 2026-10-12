@@ -37,7 +37,8 @@
 --      this is not a delivery receipt), retry later (with backoff), or failed.
 --   7. expire_platform_lead_alerts() -- retires alerts that can no longer be
 --      sent automatically: unsent 72 hours after the lead (or after the
---      operator's explicit retry), or whose fifth attempt was abandoned.
+--      operator's explicit retry), unsent 20 hours after their FIRST attempt
+--      (see THE REPLAY WINDOW), or whose fifth attempt was abandoned.
 --   8. record_platform_lead_alerts_unconfigured(code, alert) -- records that no
 --      attempt could be made because SERVER configuration is missing (the
 --      recipient, its allowlisting, the email transport or the console
@@ -56,6 +57,15 @@
 --     bounds repeats, and a refused submission saves nothing and alerts nobody.
 --   * An early-access address is unique (0004), so a repeated signup is a
 --     duplicate: nothing saved, nothing alerted.
+--
+-- THE REPLAY WINDOW. Every retry of one alert reuses one provider idempotency
+-- key, so a retry after an attempt whose answer was lost asks the provider to
+-- REPLAY the first answer rather than send again. The provider keeps a key for
+-- about 24 hours. An automatic retry later than that could therefore send a
+-- second email under the "same" key. So automatic attempts end 20 hours after
+-- the first one (the backoff schedule spends about 7 hours of that), whatever
+-- the sweep's cadence; after that the alert is a visible failure, and only the
+-- operator's explicit retry, under a NEW key generation, can send it again.
 --
 -- NO CATCH-UP. Nothing here reads or alerts on an existing lead. Only a lead
 -- saved through one of the two commands has an alert, so the leads already in
@@ -100,6 +110,8 @@ create table public.platform_lead_alerts (
   idempotency_key      text        generated always as
                          ('lead-alert/' || id::text || '/' || send_generation::text) stored,
   retry_requested_at   timestamptz,
+  -- The first attempt of the current generation: the replay window's start.
+  first_attempted_at   timestamptz,
   provider_message_id  text,
   accepted_at          timestamptz,
   failed_at            timestamptz,
@@ -123,6 +135,8 @@ create table public.platform_lead_alerts (
     check (attempt_count between 0 and 5),
   constraint platform_lead_alerts_generation_ck
     check (send_generation >= 1),
+  constraint platform_lead_alerts_first_attempt_ck
+    check ((attempt_count = 0) = (first_attempted_at is null)),
   -- A lease exists exactly while an attempt is in flight.
   constraint platform_lead_alerts_lease_ck
     check ((status = 'sending'
@@ -331,6 +345,9 @@ begin
      and a.status in ('pending', 'sending')
      and a.attempt_count < 5
      and coalesce(a.retry_requested_at, a.event_at) > v_now - interval '72 hours'
+     -- THE REPLAY WINDOW: never an automatic attempt the provider could not
+     -- recognise as a replay of the first.
+     and (a.first_attempted_at is null or a.first_attempted_at > v_now - interval '20 hours')
      and ((a.status = 'pending' and a.next_attempt_at <= v_now)
        or (a.status = 'sending' and a.lease_expires_at <= v_now))
    order by a.created_at
@@ -351,6 +368,7 @@ begin
          claimed_at       = v_now,
          lease_expires_at = v_now + make_interval(secs => p_lease_seconds),
          attempt_count    = a.attempt_count + 1,
+         first_attempted_at = coalesce(a.first_attempted_at, v_now),
          -- A re-lease means the previous worker never settled: say so.
          last_error_code  = case when v_prior = 'sending' then 'lease_expired'
                                  else a.last_error_code end,
@@ -413,7 +431,8 @@ begin
     return 'invalid_input';
   end if;
 
-  select a.status, a.claim_token, a.attempt_count, a.event_at, a.retry_requested_at
+  select a.status, a.claim_token, a.attempt_count, a.event_at, a.retry_requested_at,
+         a.first_attempted_at
     into v_alert
     from public.platform_lead_alerts a
    where a.id = p_alert_id
@@ -445,7 +464,8 @@ begin
 
   if p_outcome = 'fail'
      or v_alert.attempt_count >= 5
-     or coalesce(v_alert.retry_requested_at, v_alert.event_at) <= v_now - interval '72 hours' then
+     or coalesce(v_alert.retry_requested_at, v_alert.event_at) <= v_now - interval '72 hours'
+     or v_alert.first_attempted_at <= v_now - interval '20 hours' then
     update public.platform_lead_alerts a
        set status               = 'failed',
            failed_at            = v_now,
@@ -507,11 +527,13 @@ begin
                                  else 'expired' end,
          last_error_at    = v_now
    where (a.status = 'pending'
-          and coalesce(a.retry_requested_at, a.event_at) <= v_now - interval '72 hours')
+          and (coalesce(a.retry_requested_at, a.event_at) <= v_now - interval '72 hours'
+               or a.first_attempted_at <= v_now - interval '20 hours'))
       or (a.status = 'sending'
           and a.lease_expires_at <= v_now
           and (a.attempt_count >= 5
-               or coalesce(a.retry_requested_at, a.event_at) <= v_now - interval '72 hours'));
+               or coalesce(a.retry_requested_at, a.event_at) <= v_now - interval '72 hours'
+               or a.first_attempted_at <= v_now - interval '20 hours'));
   get diagnostics v_count = row_count;
   return v_count;
 end;
@@ -592,6 +614,7 @@ begin
      set status             = 'pending',
          failed_at          = null,
          attempt_count      = 0,
+         first_attempted_at = null,
          next_attempt_at    = v_now,
          retry_requested_at = v_now,
          send_generation    = a.send_generation + 1
@@ -668,11 +691,11 @@ comment on function public.record_platform_demo_request(text, text, text, text, 
 comment on function public.record_platform_early_access_signup(text) is
   'LEAD-ALERT-01 (0213): saves an early-access signup and its operator alert intent in one transaction; an address already on the list returns duplicate and creates no alert. service_role only.';
 comment on function public.claim_platform_lead_alert(uuid, integer) is
-  'LEAD-ALERT-01 (0213): leases one due or abandoned operator alert (SKIP LOCKED), counting one attempt (at most five, within 72 hours), and returns the lead fields the alert email needs (notes only as present/absent). service_role only.';
+  'LEAD-ALERT-01 (0213): leases one due or abandoned operator alert (SKIP LOCKED), counting one attempt (at most five, within 72 hours of the lead and 20 hours of the first attempt), and returns the lead fields the alert email needs (notes only as present/absent). service_role only.';
 comment on function public.settle_platform_lead_alert(uuid, uuid, text, text, text, text) is
   'LEAD-ALERT-01 (0213): records an attempt''s outcome for the CURRENT claim token only (stale_claim otherwise): accepted, retry with backoff, or failed. service_role only.';
 comment on function public.expire_platform_lead_alerts() is
-  'LEAD-ALERT-01 (0213): fails alerts unsent 72 hours after their lead (or the operator''s retry), or abandoned on their fifth attempt. service_role only.';
+  'LEAD-ALERT-01 (0213): fails alerts unsent 72 hours after their lead (or the operator''s retry) or 20 hours after their first attempt, or abandoned on their fifth attempt. service_role only.';
 comment on function public.record_platform_lead_alerts_unconfigured(text, uuid) is
   'LEAD-ALERT-01 (0213): records a configuration blocker on pending alerts without counting an attempt; never success. service_role only.';
 comment on function public.requeue_platform_lead_alert(uuid) is
