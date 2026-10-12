@@ -290,11 +290,12 @@ deployed; neither depends on a decision above):
 - G-12 isolated restore drill: #848.
 - G-09 Stripe Customer metadata without the client name: #857 (by agreement
   with the Audit lane).
-- Email subjects without client name, service, date or time: #859. This
-  reduces exposure but does **not** clear G-05.
+- Email subjects without client name, service, date, time, attendance or
+  treatment fact: #859. This reduces exposure but does **not** clear G-05.
+- PostHog token-path redaction derived from the canonical registry: #869.
 - G-13 clinical access audit: contract proposed in
   [clinical-access-audit-contract.md](./clinical-access-audit-contract.md);
-  shape agreed in principle with the RBAC lane; no migration number held (≥ 0221 at claim time).
+  shape agreed in principle with the RBAC lane; no migration number held (≥ 0222, via the shared register).
 
 **Consequence for Friday (2026-10-16).** Several of these depend on vendor
 turnaround that this packet cannot vouch for. Unless each gate is met and

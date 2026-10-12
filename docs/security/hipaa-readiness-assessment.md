@@ -193,6 +193,7 @@ Any resulting migration needs a fresh migration census
 | Date | Change |
 |---|---|
 | 2026-10-11 | First assessment (HIPAA-READY-01), source at `6c5eac80`. |
+| 2026-10-12 | Codex exact-head reviews: #857 clean at `20dda7a6`. Findings fixed on new heads (threads left for human disposition): #842 → `aedaa35e` (registry-derived token routes; 32+ char opaque segments), #848 → `5e34dcf2` (every Auth table incl. `auth.identities`; runtime token expiry; drill PASS 120/120 tables, 3/3 objects), #859 → `f7b68c87` (no-show and postcare subjects). New #869 (`28488f18`): PostHog token-path list derived from the canonical registry (it lacked `/invitation`). |
 | 2026-10-12 | Read-only Supabase account checks (Management API and pinned CLI `get` commands): plan, SSL, network restrictions, PITR, Postgres config, auth MFA/session/SMTP settings, org member MFA (G-02, G-03, G-10, G-11, F16). |
 | 2026-10-12 | G-09 draft #857; subject minimization draft #859; G-13 contract agreed in principle with the RBAC lane; G-16 Sentry gate taken by the Sentry lane; SMS readiness will state that registration is not HIPAA coverage. |
 | 2026-10-12 | G-07 fix draft #842 (CI run 38187266136 green at `14f2a6dc`); G-12 restore drill draft #848 (run 1 a true-positive FAIL, run 2 PASS: 99/99 tables, 3/3 objects). |
