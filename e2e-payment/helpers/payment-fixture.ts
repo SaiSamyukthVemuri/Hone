@@ -1,8 +1,13 @@
 import type { E2eSeed } from "../../e2e/helpers/seed";
-import { E2E_SUPABASE_URL, E2E_SERVICE_ROLE_KEY } from "../../e2e/helpers/local-env";
+import { E2E_DB_URL, E2E_SUPABASE_URL, E2E_SERVICE_ROLE_KEY } from "../../e2e/helpers/local-env";
 import { timezoneWithLocalMorning } from "../../e2e/helpers/timezone";
-import { adminQuery, closePool } from "../../tests/db/helpers/harness";
+import { adminQuery, closePool, resolveLocalDbUrl } from "../../tests/db/helpers/harness";
+import { assertSeedTargetsE2eDatabase } from "./db-target-guard";
 export { adminQuery } from "../../tests/db/helpers/harness";
+
+// Before ANY seed: the harness database must be the browser app's database.
+// Fails at import, so a misrouted run seeds nothing anywhere (see the guard).
+assertSeedTargetsE2eDatabase(resolveLocalDbUrl(), E2E_DB_URL);
 import {
   seedEligibleQuickCheckoutScenario,
   readClinicalIntegritySnapshot,
