@@ -92,6 +92,7 @@ describe("evaluateInboundStopPreflight", () => {
     ["the app origin on www", (f) => (f.env = { ...f.env, NEXT_PUBLIC_APP_ORIGIN: "https://www.hone.example" }), "one_base"],
     ["no app origin, so VERCEL_URL (an internal host)", (f) => (f.env = { ...f.env, NEXT_PUBLIC_APP_ORIGIN: undefined, VERCEL_URL: "hone-abc.vercel.app" }), "one_base"],
     ["the app origin not observed", (f) => (f.env = { ...f.env, NEXT_PUBLIC_APP_ORIGIN: undefined }), "one_base"],
+    ["an app origin with a path (getRequiredAppOrigin keeps it)", (f) => (f.env = { ...f.env, NEXT_PUBLIC_APP_ORIGIN: "https://hone.example/app" }), "one_base"],
   ];
   for (const [why, mutate, id] of failing) {
     it(`${why}: blocked on ${id}`, () => {

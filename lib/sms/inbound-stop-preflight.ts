@@ -191,13 +191,10 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
 
   // The origin adoption checks webhooks against, as getRequiredAppOrigin
   // derives it, must be the base the routes verify against.
-  const appOriginRaw = f.env.NEXT_PUBLIC_APP_ORIGIN ?? (f.env.VERCEL_URL ? `https://${f.env.VERCEL_URL}` : undefined);
-  let appOrigin: string | null = null;
-  try {
-    appOrigin = appOriginRaw ? new URL(appOriginRaw).origin : null;
-  } catch {
-    appOrigin = null;
-  }
+  // Normalized EXACTLY as getRequiredAppOrigin does (trailing slashes only):
+  // a path kept there is a path adoption's required URL carries too.
+  const appOriginRaw = f.env.NEXT_PUBLIC_APP_ORIGIN || (f.env.VERCEL_URL ? `https://${f.env.VERCEL_URL}` : undefined);
+  const appOrigin = appOriginRaw ? appOriginRaw.replace(/\/+$/, "") : null;
   checks.push(
     appOriginRaw === undefined || f.env.TWILIO_WEBHOOK_BASE_URL === undefined
       ? check("one_base", "unknown", "app origin (adoption's base) and TWILIO_WEBHOOK_BASE_URL (the routes' base) not both observed")
