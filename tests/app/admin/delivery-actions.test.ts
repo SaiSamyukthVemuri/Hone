@@ -59,11 +59,18 @@ describe("resolveDeliveryIncidentAction", () => {
     expect(h.rpcCalls).toEqual([]);
   });
 
-  it("refuses an unknown resolution or a malformed id before any command", async () => {
+  it("refuses an unknown resolution or a malformed id before any command, and audits both (Codex P2 4244834158)", async () => {
     h.email = "support@hone.test";
     await expect(resolveDeliveryIncidentAction(form({ incident_id: ID, resolution: "deleted" }))).rejects.toThrow();
     await expect(resolveDeliveryIncidentAction(form({ incident_id: "1; drop", resolution: "fixed" }))).rejects.toThrow();
     expect(h.rpcCalls).toEqual([]);
+    expect(h.audits).toEqual([
+      expect.objectContaining({ outcome: "failed", targetId: ID, metadata: { result: "invalid_input", invalid: "resolution" } }),
+      expect.objectContaining({ outcome: "failed", targetId: null, metadata: { result: "invalid_input", invalid: "incident_id" } }),
+    ]);
+    // The submitted values themselves are never logged.
+    expect(JSON.stringify(h.audits)).not.toContain("1; drop");
+    expect(JSON.stringify(h.audits)).not.toContain("deleted");
   });
 
   it("resolves through the service-role command and audits the outcome", async () => {
@@ -105,10 +112,17 @@ describe("closeDeliveryConcernAction (DELIVERY-VISIBILITY-04)", () => {
     expect(h.audits[0]).toMatchObject({ outcome: "succeeded", metadata: { resolution: "provider_issue", result: "closed" } });
   });
 
-  it("refuses an unknown resolution before any command", async () => {
+  it("refuses an unknown resolution or a malformed id before any command, and audits both", async () => {
     h.email = "support@hone.test";
     await expect(closeDeliveryConcernAction(form({ concern_id: ID, resolution: "deleted" }))).rejects.toThrow();
+    await expect(closeDeliveryConcernAction(form({ concern_id: "1; drop", resolution: "explained" }))).rejects.toThrow();
     expect(h.rpcCalls).toEqual([]);
+    expect(h.audits).toEqual([
+      expect.objectContaining({ action: "delivery_concern_closed", outcome: "failed", targetId: ID, metadata: { result: "invalid_input", invalid: "resolution" } }),
+      expect.objectContaining({ action: "delivery_concern_closed", outcome: "failed", targetId: null, metadata: { result: "invalid_input", invalid: "concern_id" } }),
+    ]);
+    expect(JSON.stringify(h.audits)).not.toContain("1; drop");
+    expect(JSON.stringify(h.audits)).not.toContain("deleted");
   });
 });
 
@@ -124,5 +138,11 @@ describe("the support queue page", () => {
 
   it("treats an unreadable health row as unknown, not healthy", () => {
     expect(PAGE).toContain("Treat it as unknown, not healthy.");
+  });
+
+  it("treats an unreadable event summary as unknown, never as no events (Codex P2 4244834156)", () => {
+    expect(PAGE).toMatch(/outcomesRes\.error \|\| !Array\.isArray\(outcomesRes\.data\) \? null/);
+    expect(PAGE).toContain("Treat it as unknown, not as no events.");
+    expect(PAGE).not.toContain("outcomesRes.data ?? []");
   });
 });
