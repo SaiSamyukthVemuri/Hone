@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FROM_ADDRESS, getResendTransport } from "@/lib/email/client";
+import { EMAIL_LEDGER_TAG } from "@/lib/email/resend-webhook";
 import {
   buildFromHeader,
   resolveReplyTo,
@@ -44,7 +45,20 @@ type AnyAppointment = Appointment;
 // errors. Callers MUST inspect `ok` before treating a send as delivered.
 export type EmailSendResult =
   | { ok: true; messageId?: string }
-  | { ok: false; error: string; retryable: boolean };
+  | {
+      ok: false;
+      error: string;
+      retryable: boolean;
+      /**
+       * DELIVERY-VISIBILITY-01. Whether the provider was reached, for the
+       * delivery ledger (lib/email/delivery-ledger.ts): `none` -- no request
+       * was made; `refused` -- the provider answered and did not take it;
+       * `ambiguous` -- a request was made and its answer was lost or was a
+       * server error, so it may have been sent. Optional so the existing
+       * callers, which read only `ok` / `retryable`, are unchanged.
+       */
+      attempt?: "none" | "refused" | "ambiguous";
+    };
 
 const RESEND_TIMEOUT_MS = 15_000;
 
@@ -106,6 +120,13 @@ export async function sendEmailSafely(opts: {
    * as Hone) omits it and keeps today's exact From with no Reply-To.
    */
   studioIdentity?: StudioEmailIdentity;
+  /**
+   * DELIVERY-VISIBILITY-01. The email_outbound_messages row this attempt was
+   * begun on. When present the message carries the Resend tag
+   * `hone_m = <row id>`, so its signed delivery events land on that row even
+   * if this call's own answer is lost. An opaque id: no content.
+   */
+  ledgerMessageId?: string | null;
 }): Promise<EmailSendResult> {
   // RESCHEDULE-E2E-01. The transport is RESOLVED, not imported: in production
   // `getResendTransport()` returns the same real Resend client this used to
@@ -121,6 +142,7 @@ export async function sendEmailSafely(opts: {
       ok: false,
       error: "Resend not configured (RESEND_API_KEY missing)",
       retryable: false,
+      attempt: "none",
     };
   }
 
@@ -129,6 +151,7 @@ export async function sendEmailSafely(opts: {
       ok: false,
       error: `Invalid recipient: ${opts.to || "(empty)"}`,
       retryable: false,
+      attempt: "none",
     };
   }
 
@@ -166,6 +189,9 @@ export async function sendEmailSafely(opts: {
   if (attachments.length > 0) {
     payload.attachments = attachments;
   }
+  if (opts.ledgerMessageId) {
+    payload.tags = [{ name: EMAIL_LEDGER_TAG, value: opts.ledgerMessageId }];
+  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), RESEND_TIMEOUT_MS);
@@ -186,11 +212,22 @@ export async function sendEmailSafely(opts: {
     clearTimeout(timeout);
 
     if (!result) {
-      return { ok: false, error: "Empty response from Resend", retryable: true };
+      return { ok: false, error: "Empty response from Resend", retryable: true, attempt: "ambiguous" };
     }
     if (result.error) {
       const c = classifyResendError(result.error);
-      return { ok: false, error: c.message, retryable: c.retryable };
+      // A 4xx (429 included) is the provider declining the request. A 5xx or
+      // an unfamiliar envelope may still have been accepted.
+      const status = result.error.statusCode;
+      const refused =
+        (typeof status === "number" && status >= 400 && status < 500) ||
+        (typeof status !== "number" && !c.retryable);
+      return {
+        ok: false,
+        error: c.message,
+        retryable: c.retryable,
+        attempt: refused ? "refused" : "ambiguous",
+      };
     }
     return { ok: true, messageId: result.data?.id };
   } catch (err) {
@@ -200,12 +237,13 @@ export async function sendEmailSafely(opts: {
         ok: false,
         error: `Resend timeout after ${RESEND_TIMEOUT_MS}ms`,
         retryable: true,
+        attempt: "ambiguous",
       };
     }
     const message = err instanceof Error ? err.message : "Unknown send error";
     // Network errors throw synchronously / asynchronously and rarely
     // carry structured shape; treat as retryable.
-    return { ok: false, error: message, retryable: true };
+    return { ok: false, error: message, retryable: true, attempt: "ambiguous" };
   }
 }
 
@@ -413,7 +451,7 @@ export async function sendBookingConfirmationToClient(params: {
   appBaseUrl: string;
 }): Promise<EmailSendResult> {
   if (!params.clientEmail) {
-    return { ok: false, error: "No client email on file", retryable: false };
+    return { ok: false, error: "No client email on file", retryable: false, attempt: "none" };
   }
   const start = new Date(params.appointment.starts_at);
   const end = new Date(params.appointment.ends_at);
@@ -569,13 +607,16 @@ type ReminderInput = {
   // that this send should carry the intake CTA. The template does not
   // re-derive eligibility.
   intakeUrl?: string | null;
+  // DELIVERY-VISIBILITY-01: the delivery-ledger row begun for this send, if
+  // any. Tags the message; changes nothing else about it.
+  ledgerMessageId?: string | null;
 };
 
 export async function send24hReminderToClient(
   p: ReminderInput,
 ): Promise<EmailSendResult> {
   if (!p.clientEmail) {
-    return { ok: false, error: "No client email on file", retryable: false };
+    return { ok: false, error: "No client email on file", retryable: false, attempt: "none" };
   }
   const start = new Date(p.appointment.starts_at);
   const end = new Date(p.appointment.ends_at);
@@ -596,14 +637,14 @@ export async function send24hReminderToClient(
     treatmentTimeLine: p.treatmentTimeLine,
     intakeUrl: p.intakeUrl ?? null,
   });
-  return sendEmailSafely({ studioIdentity: identityFor(p.studio), to: p.clientEmail, subject, html, text });
+  return sendEmailSafely({ studioIdentity: identityFor(p.studio), to: p.clientEmail, subject, html, text, ledgerMessageId: p.ledgerMessageId });
 }
 
 export async function send2hReminderToClient(
   p: ReminderInput,
 ): Promise<EmailSendResult> {
   if (!p.clientEmail) {
-    return { ok: false, error: "No client email on file", retryable: false };
+    return { ok: false, error: "No client email on file", retryable: false, attempt: "none" };
   }
   const start = new Date(p.appointment.starts_at);
   const end = new Date(p.appointment.ends_at);
@@ -624,7 +665,7 @@ export async function send2hReminderToClient(
     treatmentTimeLine: p.treatmentTimeLine,
     intakeUrl: p.intakeUrl ?? null,
   });
-  return sendEmailSafely({ studioIdentity: identityFor(p.studio), to: p.clientEmail, subject, html, text });
+  return sendEmailSafely({ studioIdentity: identityFor(p.studio), to: p.clientEmail, subject, html, text, ledgerMessageId: p.ledgerMessageId });
 }
 
 // STANDALONE intake-form reminder, sent by the reminder cron at the ~24h or
@@ -643,9 +684,10 @@ export async function sendIntakeReminderToClient(p: {
   startsAt: Date;
   timezone: string;
   intakeUrl: string;
+  ledgerMessageId?: string | null;
 }): Promise<EmailSendResult> {
   if (!p.clientEmail) {
-    return { ok: false, error: "No client email on file", retryable: false };
+    return { ok: false, error: "No client email on file", retryable: false, attempt: "none" };
   }
   const { subject, html, text } = buildIntakeReminderEmail({
     kind: p.kind,
@@ -654,7 +696,7 @@ export async function sendIntakeReminderToClient(p: {
     startsAt: p.startsAt,
     timezone: p.timezone,
   });
-  return sendEmailSafely({ studioIdentity: { displayName: p.studioName, replyTo: null }, to: p.clientEmail, subject, html, text });
+  return sendEmailSafely({ studioIdentity: { displayName: p.studioName, replyTo: null }, to: p.clientEmail, subject, html, text, ledgerMessageId: p.ledgerMessageId });
 }
 
 export async function sendNoShowFollowupToClient(params: {
@@ -664,7 +706,7 @@ export async function sendNoShowFollowupToClient(params: {
   rebookUrl: string | null;
 }): Promise<EmailSendResult> {
   if (!params.clientEmail) {
-    return { ok: false, error: "No client email on file", retryable: false };
+    return { ok: false, error: "No client email on file", retryable: false, attempt: "none" };
   }
   const { subject, html, text } = buildNoShowFollowupEmail({
     clientName: params.clientName,
@@ -703,7 +745,7 @@ export async function sendPostcareToClient(params: {
   reviewPromptText: string | null;
 }): Promise<EmailSendResult> {
   if (!params.clientEmail) {
-    return { ok: false, error: "No client email on file", retryable: false };
+    return { ok: false, error: "No client email on file", retryable: false, attempt: "none" };
   }
   // Contact-line priority: studios.postcare_contact_email overrides
   // studios.owner_email when set. Never the client's email; if
@@ -767,7 +809,7 @@ export async function sendIntakeUpdateRequestToClient(params: {
   intakeUrl: string;
 }): Promise<EmailSendResult> {
   if (!params.clientEmail) {
-    return { ok: false, error: "No client email on file", retryable: false };
+    return { ok: false, error: "No client email on file", retryable: false, attempt: "none" };
   }
   const { subject, html, text } = buildIntakeRequestEmail({
     studioName: params.studioName,

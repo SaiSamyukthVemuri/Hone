@@ -317,6 +317,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "isAuthorizedCronRequest",
   },
   {
+    path: "app/api/cron/email-delivery-sweep/route.ts",
+    purpose: "DELIVERY-VISIBILITY-01 email delivery-event recovery sweep and heartbeat.",
+    why: "No user session. The admin client is built only after the CRON_SECRET bearer verifies (isAuthorizedCronRequest). It drives ONLY the service-role-only claim/process receipt commands, record_email_sweep_run and email_delivery_health, plus a read of unresolved ops_alerts by event name for dedupe. It accepts no caller-supplied id.",
+    scopeGuard: "isAuthorizedCronRequest",
+  },
+  {
     path: "app/api/cron/calendar-reconcile/route.ts",
     purpose: "Google Calendar Phase B2.3-b reconciliation sweep (session-less; dormant — no cron registration).",
     why: "Runs with no user session; authorized by the CRON_SECRET bearer (isAuthorizedCronRequest). Never trusts a browser-supplied id — the eligible studio set is derived server-side and every reconcile read/actuation is studio-scoped; it only orchestrates the existing repair RPCs + prunes PHI-free telemetry, never enabling the worker or any flag.",

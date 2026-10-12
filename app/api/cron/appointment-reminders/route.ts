@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import {
+  beginAppointmentEmailMessage,
+  settleEmailMessage,
+  settleOutcomeForEmailSend,
+} from "@/lib/email/delivery-ledger";
 import { isAuthorizedCronRequest } from "@/lib/cron/auth";
 import {
   claimEmailSend,
@@ -325,6 +330,18 @@ async function sendReminderPass(opts: {
 
     let result: EmailSendResult;
 
+    // DELIVERY-VISIBILITY-01: one email delivery-ledger row per real attempt,
+    // begun only now -- after the 0080 claim, the live status re-check and the
+    // case decision -- so the row describes a send that is about to happen.
+    // Fail-soft: a null id sends exactly as before, untagged. The case-4
+    // standalone intake email is the same window slot, so it carries the same
+    // purpose.
+    const ledgerMessageId = await beginAppointmentEmailMessage(admin, {
+      studioId: appt.studio.id,
+      appointmentId: appt.id,
+      purpose: opts.kind === "24h" ? "appointment_reminder_24h" : "appointment_reminder_2h",
+    });
+
     if (wantsReminder) {
       // CASES 1/2/3 - the appointment reminder, carrying the intake CTA only
       // when intakeUrl is non-null.
@@ -388,6 +405,7 @@ async function sendReminderPass(opts: {
         rescheduleUrl,
         treatmentTimeLine,
         intakeUrl,
+        ledgerMessageId,
       });
     } else {
       // CASE 4 - the appointment reminder is off but intake reminders are on
@@ -405,9 +423,13 @@ async function sendReminderPass(opts: {
         startsAt: new Date(appt.starts_at),
         timezone: appt.studio.timezone,
         intakeUrl: intakeUrl as string,
+        ledgerMessageId,
       });
     }
 
+    if (ledgerMessageId) {
+      await settleEmailMessage(admin, ledgerMessageId, settleOutcomeForEmailSend(result));
+    }
     await recordEmailResult(admin, appt.id, emailType, result.ok);
     if (result.ok) {
       // Stamp the PR #303 intake-link display metadata ONLY when a link was
