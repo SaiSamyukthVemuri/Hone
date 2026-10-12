@@ -25,12 +25,21 @@ import {
 //
 // Durability: the receipt is written BEFORE the delivery is acknowledged. If
 // it cannot be written the route answers 500 and the provider retries the
-// same delivery (same svix-id) on its own schedule. Once it is written, the
-// answer is 200 whatever happens to processing: the receipt is durable, the
-// sweep finishes it, and a poison event must never keep the provider retrying
-// until it disables the endpoint. A retried delivery whose receipt is still
-// pending is processed again here; one already processed is acknowledged
-// as-is.
+// same delivery (same svix-id) on its own schedule.
+//
+// Recovery (Codex P2 4244387538): when THIS request's own processing attempt
+// fails and the receipt is still pending, the answer is also 500. Resend's
+// retry of that delivery is then the receipt's recovery trigger: it arrives
+// after the two-minute claim has expired (Resend's schedule is 5 s, 5 min,
+// 30 min, ...), finds the receipt pending, and claims it again. It never
+// depends on a later webhook for some other email or on a scheduled sweep.
+// Attempts are bounded in the database: after five, the receipt is
+// quarantined, the next retry finds it processed and is acknowledged with
+// 200, so a poison event cannot keep the provider retrying until it disables
+// the endpoint. Every other outcome (applied, stale, unmatched, ignored,
+// quarantined, or held by another worker that will answer for itself) is
+// acknowledged with 200. A retried delivery whose receipt is already
+// processed is acknowledged as-is.
 //
 // Attribution: process_email_provider_event attributes an event to a studio
 // only through the ledger row it matched. An unmatched or quarantined event
@@ -120,6 +129,13 @@ export async function POST(req: Request): Promise<Response> {
   const sweep = await drainEmailProviderEvents(admin, { limit: SWEEP_LIMIT });
   if (sweep && sweep.claimed > 0) {
     logEvent("resend_webhook_sweep", sweep);
+  }
+
+  if (processed === null) {
+    // This attempt failed and the receipt is still pending: ask the provider
+    // to deliver again, so its retry recovers the receipt (bounded: the
+    // database quarantines it after five attempts, and that retry gets 200).
+    return NextResponse.json({ ok: false, recorded: true }, { status: 500 });
   }
 
   return NextResponse.json({ ok: true });

@@ -97,7 +97,8 @@ A captured request therefore cannot be replayed later. A replay inside the windo
 
 **Durable before acknowledged.** `record_email_provider_event` writes one receipt per delivery, unique on `(provider, svix-id)`. Resend keeps that id across every retry of an event.
 - If the receipt cannot be written, the route answers **500** and Resend retries on its own schedule (roughly 27 hours, after which it may disable the endpoint).
-- Once the receipt is written, the answer is **200**, whatever happens to processing. A poison event must never keep the provider retrying until it disables the endpoint.
+- If the receipt is written but **this request's own processing attempt fails**, the answer is also **500**, so Resend's retry recovers the still-pending receipt (Codex P2 4244387538). Its next retry arrives after the two-minute claim has expired, and the recovery does not depend on another webhook or a scheduled sweep. Attempts are bounded in the database: after five the receipt is quarantined and the retry that follows gets **200**, so a poison event cannot keep the provider retrying until it disables the endpoint.
+- Every other outcome is acknowledged with **200**: applied, stale, unmatched, ignored, quarantined, or held by another worker that answers for itself.
 - A retried delivery whose receipt is still **pending** is processed again; one already processed is acknowledged as-is.
 
 **Exactly-once processing and crash recovery.**
@@ -173,7 +174,15 @@ Pinned by `tests/db/email-delivery-events.db.test.ts` (replay, order permutation
 
 Findings (`lib/email/delivery-health.ts`) have purpose-specific thresholds: a backlog older than 15 minutes is a warning and older than 6 hours is critical; exhausted, quarantined, unreported and sweep failures are warnings. Each finding is raised as an ops alert **at most once while an unresolved alert for that event is open**. A sweep or health read that fails is itself a finding, never a healthy run. **The route is not registered in `vercel.json`**: scheduling it belongs to the delivery-events activation.
 
-**Not yet:** an owner-facing screen, a support queue UI, emailed owner/support notifications (the HIPAA routing gate #828 applies to any patient-related email: Resend cannot sign a BAA), and producers beyond the reminder window.
+**Where people see it (DELIVERY-VISIBILITY-02).**
+- **Owner:** a "Message delivery" card on Settings → Launch (`components/delivery/OwnerDeliveryCard.tsx`, mounted by one line; it moves into the owner console when that lands). It reads `owner_delivery_incidents` with the owner's own session and renders **nothing** for anyone the database refuses. Each open incident shows once, with:
+  - a count and its first and last occurrence;
+  - a plain-English meaning and the next step (`lib/delivery/incidents.ts`), with a link to the latest appointment.
+
+  A bounce is the studio's to fix (check the address); a provider failure or refusal is Hone's. Until the Resend webhook is activated, the card says plainly that a bounce after sending cannot appear.
+- **Platform support:** `/admin/delivery`. It shows the delivery health (an unreadable row is shown as unknown, never healthy), Resend receipt outcomes and the cross-studio incident queue. Resolve is an admin-only server action, audited as `delivery_incident_resolved` (blocked attempts included).
+
+**Not yet:** emailed owner or support notifications (the HIPAA routing gate #828 applies to any patient-related email: Resend cannot sign a BAA), and producers beyond the reminder window.
 
 Pinned by `tests/db/delivery-incidents.db.test.ts`, `tests/migrations/0215-delivery-incidents.test.ts`, `tests/lib/email/delivery-ledger.test.ts`, `tests/lib/email/delivery-health.test.ts`, `tests/app/api/email-delivery-sweep.test.ts` and `tests/app/api/cron/reminder-email-ledger.test.ts`.
 
