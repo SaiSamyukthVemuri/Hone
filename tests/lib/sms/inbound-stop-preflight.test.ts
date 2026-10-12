@@ -23,7 +23,10 @@ const allProven = (): InboundStopFacts => ({
     numberSmsUrl: null,
     numberSmsApplicationSid: null,
     accountSid: ACCOUNT,
+    checkedNumber: "+14165550100",
   },
+  // Routed sends pin From to the checked number (draft #858).
+  routedFromNumber: "+14165550100",
   honeAccountSid: ACCOUNT,
   mappedStudioId: "studio-b",
   expectedStudioId: "studio-b",
@@ -149,7 +152,7 @@ describe("evaluateInboundStopPreflight", () => {
 
   it("a number-level override is decided without the (irrelevant) service URL", () => {
     const f = allProven();
-    f.service = { useInboundWebhookOnNumber: true, numberSmsUrl: URL_OK, numberSmsMethod: "POST", numberSmsApplicationSid: null, accountSid: ACCOUNT };
+    f.service = { useInboundWebhookOnNumber: true, numberSmsUrl: URL_OK, numberSmsMethod: "POST", numberSmsApplicationSid: null, accountSid: ACCOUNT, checkedNumber: "+14165550100" };
     expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
   });
 
@@ -160,6 +163,87 @@ describe("evaluateInboundStopPreflight", () => {
     expect(r.blockers).toEqual(["inbound_reaches"]);
     // Not read is UNKNOWN, never reported as "disabled".
     expect(r.checks.find((c) => c.id === "inbound_reaches")?.status).toBe("unknown");
+  });
+
+  describe("SENDER POOL: with the number override on, replies go to whichever number sent", () => {
+    const AP = `AP${"5".repeat(32)}`;
+    const numberRouted = (): InboundStopFacts => {
+      const f = allProven();
+      Object.assign(f.service!, {
+        useInboundWebhookOnNumber: true,
+        numberSmsUrl: URL_OK,
+        numberSmsMethod: "POST",
+        numberSmsApplicationSid: null,
+        checkedNumber: "+14165550100",
+      });
+      f.routedFromNumber = undefined;
+      return f;
+    };
+
+    it("pinned outbound (From = the checked number): ready without reading the pool", () => {
+      const f = numberRouted();
+      f.routedFromNumber = "+14165550100";
+      expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
+    });
+
+    it("not pinned and the pool unread: blocked (unknown)", () => {
+      const f = numberRouted();
+      const r = evaluateInboundStopPreflight(f);
+      expect(r.blockers).toEqual(["sender_pool"]);
+      expect(r.checks.find((c) => c.id === "sender_pool")?.status).toBe("unknown");
+    });
+
+    it("pinned to a DIFFERENT number than the one checked: not pinned", () => {
+      const f = numberRouted();
+      f.routedFromNumber = "+14165550199";
+      expect(evaluateInboundStopPreflight(f).blockers).toEqual(["sender_pool"]);
+    });
+
+    it("not pinned, every pool number correct: ready", () => {
+      const f = numberRouted();
+      f.service!.senderPool = [
+        { phoneNumber: "+14165550100", smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: null },
+        { phoneNumber: "+14165550101", smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: null },
+      ];
+      expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
+    });
+
+    for (const [why, bad] of [
+      ["another URL", { smsUrl: "https://elsewhere.example/sms", smsMethod: "POST", smsApplicationSid: null }],
+      ["GET", { smsUrl: URL_OK, smsMethod: "GET", smsApplicationSid: null }],
+      ["an application override", { smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: AP }],
+    ] as const) {
+      it(`not pinned, one pool number with ${why}: blocked (fail)`, () => {
+        const f = numberRouted();
+        f.service!.senderPool = [
+          { phoneNumber: "+14165550100", smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: null },
+          { phoneNumber: "+14165550101", ...bad },
+        ];
+        const r = evaluateInboundStopPreflight(f);
+        expect(r.blockers).toEqual(["sender_pool"]);
+        expect(r.checks.find((c) => c.id === "sender_pool")?.status).toBe("fail");
+      });
+    }
+
+    it("not pinned, an EMPTY pool list proves nothing: blocked (unknown)", () => {
+      const f = numberRouted();
+      f.service!.senderPool = [];
+      expect(evaluateInboundStopPreflight(f).checks.find((c) => c.id === "sender_pool")?.status).toBe("unknown");
+    });
+
+    it("not pinned, one pool number unreported: blocked (unknown)", () => {
+      const f = numberRouted();
+      f.service!.senderPool = [
+        { phoneNumber: "+14165550100", smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: null },
+        { phoneNumber: "+14165550101", smsUrl: undefined },
+      ];
+      expect(evaluateInboundStopPreflight(f).checks.find((c) => c.id === "sender_pool")?.status).toBe("unknown");
+    });
+
+    it("with the override OFF, the service URL serves every number: no pool check", () => {
+      const f = allProven();
+      expect(evaluateInboundStopPreflight(f).checks.find((c) => c.id === "sender_pool")).toBeUndefined();
+    });
   });
 
   it("a TwiML application on the number is reported as overriding, and fails", () => {

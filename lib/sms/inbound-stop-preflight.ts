@@ -106,7 +106,26 @@ export type InboundStopFacts = {
     numberSmsApplicationSid?: string | null;
     /** The account that owns the service; must be the account of TWILIO_AUTH_TOKEN. */
     accountSid?: string | null;
+    /** The number the numberSms* facts above were read from (E.164). */
+    checkedNumber?: string | null;
+    /**
+     * Every number in the service's sender pool, with its own number-level
+     * routing. Needed when use_inbound_webhook_on_number is on and outbound is
+     * not pinned to checkedNumber: the service may send from any of them, and
+     * a reply goes back to whichever did.
+     */
+    senderPool?: Array<{
+      phoneNumber: string;
+      smsUrl: string | null | undefined;
+      smsMethod?: string | null;
+      smsApplicationSid?: string | null;
+    }>;
   };
+  /**
+   * The From that routed sends pin (draft #858 posts the checked sender's
+   * phone_number as From beside the service). Undefined = not established.
+   */
+  routedFromNumber?: string | null;
   /** The account TWILIO_AUTH_TOKEN belongs to (TWILIO_ACCOUNT_SID), as confirmed by the operator. */
   honeAccountSid?: string | null;
   /** resolve_studio_by_sms_messaging_service(service) — must be the studio being cut over. */
@@ -203,6 +222,49 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
   );
 
   // The method is part of inboundReaches since #863 ed7334da: no separate check.
+
+  // ONE NUMBER OR ALL OF THEM. With the number-level override on, each pool
+  // number has its own webhook. Replies go to the number that sent, so either
+  // routed sends are pinned to the checked number, or every pool number must
+  // reach the expected URL too. With the override off, the service URL serves
+  // every number and there is nothing more to check.
+  if (svc?.useInboundWebhookOnNumber === true) {
+    const pinned =
+      !!svc.checkedNumber && !!f.routedFromNumber && svc.checkedNumber === f.routedFromNumber;
+    const pool = svc.senderPool;
+    const poolVerdict =
+      pool === undefined || !expected.ok
+        ? "unknown"
+        : pool.length === 0
+          ? "unknown"
+          : pool
+              .map((n) =>
+                inboundReaches(
+                  {
+                    serviceInboundUrl: svc.inboundRequestUrl ?? null,
+                    serviceInboundMethod: svc.inboundMethod ?? null,
+                    useInboundWebhookOnNumber: true,
+                    numberSmsUrl: n.smsUrl,
+                    numberSmsMethod: n.smsMethod,
+                    numberSmsApplicationSid: n.smsApplicationSid,
+                  },
+                  expected.url,
+                ),
+              )
+              .reduce<"yes" | "no" | "unknown">(
+                (acc, v) => (acc === "no" || v === "no" ? "no" : acc === "unknown" || v === "unknown" ? "unknown" : "yes"),
+                "yes",
+              );
+    checks.push(
+      pinned
+        ? check("sender_pool", "pass", "routed sends are pinned to the checked number, so replies return to it")
+        : poolVerdict === "yes"
+          ? check("sender_pool", "pass", `every pool number (${pool!.length}) reaches the expected URL by POST`)
+          : poolVerdict === "no"
+            ? check("sender_pool", "fail", "a pool number's own webhook does not reach the expected URL by POST")
+            : check("sender_pool", "unknown", "outbound not pinned to the checked number and the sender pool not fully read"),
+    );
+  }
 
   checks.push(
     !svc?.accountSid || !f.honeAccountSid
