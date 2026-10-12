@@ -262,7 +262,9 @@ export function buildNoShowFollowupEmail(p: NoShowFollowupProps): {
   html: string;
   text: string;
 } {
-  const subject = "We missed you today";
+  // SUBJECT RULE (HIPAA-READY-01, #828): no date, relative date or attendance
+  // fact in a subject (Codex P1 on #859). The body keeps "We missed you today."
+  const subject = `A message from ${p.studioName}`;
   const safeClient = escapeHtml(p.clientName);
   const safeStudio = escapeHtml(p.studioName);
 

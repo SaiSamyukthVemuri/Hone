@@ -107,7 +107,9 @@ export function buildPostcareEmail(p: PostcareEmailInputs): PostcareEmail {
   const warningHtml = textBlockToHtml(p.warningSignsText);
   const productsHtml = textBlockToHtml(p.productRecommendationsText);
 
-  const subject = `Aftercare for your appointment with ${p.studioName}`;
+  // SUBJECT RULE (HIPAA-READY-01, #828): "Aftercare for your appointment" told
+  // anyone who sees the inbox that a treatment took place. The body keeps it.
+  const subject = `A message from ${p.studioName}`;
 
   const htmlSections: string[] = [];
   htmlSections.push(

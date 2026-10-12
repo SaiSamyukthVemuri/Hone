@@ -6,9 +6,11 @@ import {
   buildClientConfirmationEmail,
   buildPractitionerNotificationEmail,
 } from "@/lib/email/templates/appointment";
+import { buildPostcareEmail } from "@/lib/email/templates/postcare";
 import {
   build24hReminderEmail,
   build2hReminderEmail,
+  buildNoShowFollowupEmail,
 } from "@/lib/email/templates/reminders";
 
 // HIPAA-READY-01 (issue #828), SUBJECT RULE. A subject persists in the inbox,
@@ -125,6 +127,36 @@ const cases: Array<[string, () => { subject: string; text: string }]> = [
   ["2h reminder", () => build2hReminderEmail(reminderProps)],
 ];
 
+// Builders whose body carries no service: checked for the subject rule only.
+const subjectOnlyCases: Array<[string, () => { subject: string }]> = [
+  [
+    "no-show follow-up (Codex P1 on #859: 'We missed you today')",
+    () =>
+      buildNoShowFollowupEmail({
+        clientName: CLIENT,
+        studioName: STUDIO,
+        rebookUrl: null,
+      }),
+  ],
+  [
+    "postcare ('Aftercare for your appointment' revealed a treatment)",
+    () =>
+      buildPostcareEmail({
+        clientName: CLIENT,
+        studioName: STUDIO,
+        studioEmail: null,
+        practitionerName: null,
+        serviceName: SERVICE,
+        startsAt: START,
+        timezone: TZ,
+        aftercareText: "Synthetic aftercare text.",
+        warningSignsText: null,
+        productRecommendationsText: null,
+        reviewUrl: null,
+      }),
+  ],
+];
+
 describe("email subjects carry no client name, service, date or time", () => {
   it.each(cases)("%s", (_label, build) => {
     const email = build();
@@ -133,8 +165,14 @@ describe("email subjects carry no client name, service, date or time", () => {
     expect(email.text).toContain(SERVICE);
   });
 
+  it.each(subjectOnlyCases)("%s", (_label, build) => {
+    assertMinimal(build().subject);
+  });
+
   it("the studio name stays in the subject (the From line already shows it)", () => {
-    for (const [, build] of cases) expect(build().subject).toContain(STUDIO);
+    for (const [, build] of [...cases, ...subjectOnlyCases]) {
+      expect(build().subject).toContain(STUDIO);
+    }
   });
 });
 

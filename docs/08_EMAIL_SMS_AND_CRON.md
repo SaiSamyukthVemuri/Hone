@@ -27,8 +27,9 @@ Provider: Resend. From-address pattern: `<Studio name> via hone <hello@hone.care
 A subject persists in the inbox, shows on a lock screen and is stored by
 the email provider.
 
-**Subjects never carry** the client's name, the service, or the appointment
-date or time.
+**Subjects never carry** the client's name, the service, the appointment
+date or time (relative dates such as "today" included), or an attendance
+fact.
 - Those stay in the body.
 - The studio name is allowed, because the From line already shows it.
 - Who cancelled appears by **role**, never by name, since the actor can be
@@ -42,6 +43,8 @@ date or time.
 | Cancellation, studio-facing | `Appointment cancelled by the <role> · <studio>` |
 | 24h and 2h reminders | `Appointment reminder from <studio>` |
 | Move or reassignment | `Your appointment with <studio> has been updated` |
+| No-show follow-up | `A message from <studio>` (the attendance fact stays in the body) |
+| Postcare | `A message from <studio>` ("Aftercare" revealed a treatment; it stays in the body) |
 
 The intake templates already followed a stricter rule (no studio name).
 
