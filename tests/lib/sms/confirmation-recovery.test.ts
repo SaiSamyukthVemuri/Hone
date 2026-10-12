@@ -22,6 +22,14 @@ import { STUDIO_ROUTING_ENV, type SendTimeRouteRead } from "@/lib/sms/send-time-
 
 vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: () => Promise.resolve() }));
 
+const stamps: Array<[string, { emailed: boolean }]> = [];
+vi.mock("@/lib/intake/queries", () => ({
+  stampIntakeLinkIssued: (_admin: unknown, id: string, o: { emailed: boolean }) => {
+    stamps.push([id, o]);
+    return Promise.resolve();
+  },
+}));
+
 const NOW = Date.parse("2026-10-12T12:00:00Z");
 const HOUR = 60 * 60 * 1000;
 const A = "studio-a";
@@ -33,6 +41,7 @@ const SNAPSHOT_RPC = "get_live_studio_sms_sender_registration_state";
 type Appt = {
   id: string;
   studio_id: string;
+  client_id: string;
   status: string;
   starts_at: string;
   created_at: string;
@@ -61,6 +70,9 @@ let preClaimRead: ((row: Appt) => void) | null;
 let failSelectFor: string | null;
 /** Each studio's confirmation switch as it is NOW (default on). */
 let switchOff: Set<string>;
+type Intake = { id: string; studio_id: string; client_id: string; status: string; created_at: string };
+let intakes: Intake[];
+let intakeReadFails: boolean;
 
 const studioRow = (id: string) => ({
   id,
@@ -77,6 +89,7 @@ function appt(over: Partial<Appt> = {}): Appt {
   return {
     id: "appt-1",
     studio_id: A,
+    client_id: "client-1",
     status: "confirmed",
     starts_at: iso(NOW + 48 * HOUR),
     created_at: iso(NOW - HOUR),
@@ -94,6 +107,26 @@ type Filter = (r: Appt) => boolean;
 function admin(): SupabaseClient {
   return {
     from(table: string) {
+      if (table === "client_intake_forms") {
+        events.push("intake_read");
+        const f: Array<(r: Intake) => boolean> = [];
+        const iq = {
+          select: () => iq,
+          eq: (col: keyof Intake, v: unknown) => {
+            f.push((r) => r[col] === v);
+            return iq;
+          },
+          is: () => iq,
+          order: () => iq,
+          limit: () => iq,
+          maybeSingle: () => {
+            if (intakeReadFails) return Promise.resolve({ data: null, error: { code: "57014" } });
+            const rows = intakes.filter((r) => f.every((x) => x(r))).sort((x, y) => (x.created_at < y.created_at ? 1 : -1));
+            return Promise.resolve({ data: rows[0] ? { id: rows[0].id, status: rows[0].status } : null, error: null });
+          },
+        };
+        return iq;
+      }
       expect(table).toBe("appointments");
       fromCalls += 1;
       const filters: Filter[] = [];
@@ -241,6 +274,7 @@ const run = (env: Record<string, string> = ENABLED, pageSize?: number) =>
     env,
     pageSize,
     clock: clock ?? (() => NOW),
+    intakeUrlFor: (intakeId) => `https://app.example/intake/${intakeId}`,
     manageUrlFor: (id, startsAt) => {
       manageUrls.push([id, startsAt.toISOString()]);
       return manageLinkFails ? null : `https://app.example/manage/${id}`;
@@ -272,6 +306,9 @@ beforeEach(() => {
   clock = undefined;
   switchOff = new Set();
   manageLinkFails = false;
+  intakes = [];
+  intakeReadFails = false;
+  stamps.length = 0;
   providerStatus = 201;
   snapshot = readyStudioA();
   vi.stubGlobal(
@@ -800,5 +837,109 @@ describe("a confirmation goes with its manage link or not at all", () => {
     expect(await run()).toMatchObject({ sent: 0, skipped: { recovery_manage_link_unavailable: 1 } });
     expect(events).not.toContain("claim_sms_send");
     expect(db[0].sms_confirmation_send_attempts).toBe(0);
+  });
+});
+
+describe("studios share a run", () => {
+  it("two routed studios with 60 owed rows each get an equal share of the 50-request cap", async () => {
+    const B2 = "studio-b2";
+    db = [
+      ...Array.from({ length: 60 }, (_, i) => appt({ id: `a-${String(i).padStart(2, "0")}`, created_at: iso(NOW - (200 - i) * 60_000) })),
+      ...Array.from({ length: 60 }, (_, i) => appt({ id: `b-${String(i).padStart(2, "0")}`, studio_id: B2, created_at: iso(NOW - (200 - i) * 60_000) })),
+    ];
+    snapshot = (studioId) => ({
+      data: {
+        senders: [{ id: `sender-${studioId}`, studio_id: studioId, status: "active", phone_number: "+14165550100", messaging_service_sid: MSID_A }],
+        registrations: [],
+      },
+      error: null,
+    });
+    process.env[STUDIO_ROUTING_ENV] = `${A},${B2}`;
+    const r = await run({ [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: `${A},${B2}` });
+    expect(r).toMatchObject({ sent: 50 });
+    const sentFor = (sid: string) => db.filter((x) => x.studio_id === sid && x.sms_confirmation_sent_at).length;
+    expect([sentFor(A), sentFor(B2)]).toEqual([25, 25]);
+  });
+});
+
+describe("the first studio rotates per 15-minute slot", () => {
+  it("when a run's time runs out after one studio, the next slot starts with the other", async () => {
+    const B2 = "studio-b2";
+    const both = { [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: `${A},${B2}` };
+    process.env[STUDIO_ROUTING_ENV] = `${A},${B2}`;
+    snapshot = (studioId) => ({
+      data: {
+        senders: [{ id: `sender-${studioId}`, studio_id: studioId, status: "active", phone_number: "+14165550100", messaging_service_sid: MSID_A }],
+        registrations: [],
+      },
+      error: null,
+    });
+    const served: string[] = [];
+    for (const slot of [0, 1]) {
+      const at = NOW + slot * 15 * 60_000;
+      db = [appt({ id: "a-1", created_at: iso(at - HOUR), starts_at: iso(at + 48 * HOUR) }), appt({ id: "b-1", studio_id: B2, created_at: iso(at - HOUR), starts_at: iso(at + 48 * HOUR) })];
+      let calls = 0;
+      // Time runs out once the first send is done.
+      const r = await recoverOwedConfirmations({
+        admin: admin(),
+        nowMs: at,
+        env: both,
+        clock: () => (calls++ < 6 ? at : at + 10 * 60_000),
+        manageUrlFor: () => "https://app.example/manage/x",
+      });
+      expect(r).toMatchObject({ sent: 1 });
+      served.push(db.find((x) => x.sms_confirmation_sent_at)!.studio_id);
+    }
+    expect(new Set(served).size).toBe(2);
+  });
+});
+
+describe("the intake link the original confirmation would carry", () => {
+  it("an in-progress intake: the link is in the message and stamped as issued", async () => {
+    db = [appt()];
+    intakes = [{ id: "intake-1", studio_id: A, client_id: "client-1", status: "in_progress", created_at: iso(NOW - HOUR) }];
+    expect(await run()).toMatchObject({ sent: 1 });
+    expect(providerBodies[0].get("Body")).toContain("https://app.example/intake/intake-1");
+    expect(stamps).toEqual([["intake-1", { emailed: false }]]);
+  });
+
+  it("a submitted intake, or none: no link and no stamp", async () => {
+    db = [appt()];
+    intakes = [{ id: "intake-2", studio_id: A, client_id: "client-1", status: "submitted", created_at: iso(NOW - HOUR) }];
+    expect(await run()).toMatchObject({ sent: 1 });
+    expect(providerBodies[0].get("Body")).not.toContain("/intake/");
+    expect(stamps).toEqual([]);
+  });
+
+  it("another studio's intake for the same client is never used", async () => {
+    db = [appt()];
+    intakes = [{ id: "intake-x", studio_id: "studio-other", client_id: "client-1", status: "in_progress", created_at: iso(NOW - HOUR) }];
+    await run();
+    expect(providerBodies[0].get("Body")).not.toContain("/intake/");
+  });
+
+  it("an intake read error: sent without the link, never blocked", async () => {
+    db = [appt()];
+    intakes = [{ id: "intake-1", studio_id: A, client_id: "client-1", status: "in_progress", created_at: iso(NOW - HOUR) }];
+    intakeReadFails = true;
+    expect(await run()).toMatchObject({ sent: 1 });
+    expect(providerBodies[0].get("Body")).not.toContain("/intake/");
+    expect(stamps).toEqual([]);
+  });
+
+  it("a refused row never reads the intake", async () => {
+    db = [appt({ client_opted_out_at: iso(NOW - 60_000) })];
+    await run();
+    expect(events).not.toContain("intake_read");
+  });
+
+  it("refused after the claim: no stamp", async () => {
+    db = [appt()];
+    intakes = [{ id: "intake-1", studio_id: A, client_id: "client-1", status: "in_progress", created_at: iso(NOW - HOUR) }];
+    afterClaimRead = (row) => {
+      row.status = "cancelled";
+    };
+    await run();
+    expect(stamps).toEqual([]);
   });
 });

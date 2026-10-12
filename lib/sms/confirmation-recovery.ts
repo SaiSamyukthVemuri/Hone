@@ -3,6 +3,7 @@ import type { Client, Studio } from "@/lib/types/database";
 import { classifyNanpNumber } from "./nanp";
 import { listedRoutingStudioIds, type SendTimeRouteReader } from "./send-time-route";
 import { normalizePhoneForSms } from "./twilio";
+import { stampIntakeLinkIssued } from "@/lib/intake/queries";
 import { sendRecoveredConfirmationSmsToClient, type SmsSendResult } from "./send-appointment";
 
 // ===========================================================================
@@ -60,6 +61,17 @@ import { sendRecoveredConfirmationSmsToClient, type SmsSendResult } from "./send
 // studio's confirmation switch and the 24-hour maximum age (against the
 // current time).
 //
+// STUDIOS SHARE A RUN. Each listed studio gets an equal share of the
+// provider-attempt cap, and the studio a run starts with rotates every
+// 15-minute slot, so one studio's backlog never holds another's confirmations
+// until they expire.
+//
+// THE INTAKE LINK. As the booking confirmation does, a recovered one carries
+// the client's intake link when their latest intake for the studio is still
+// in progress: read live at the pre-claim check (no intake is ever created
+// here), minted fresh, and stamped as issued once the message is sent. A read
+// error means no link, never a blocked confirmation.
+//
 // BOUNDS. At most RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN provider requests per
 // run, counting failures as well as sends, so a provider outage cannot turn
 // one run into a burst. The horizon is re-checked against the CURRENT time at
@@ -78,6 +90,8 @@ export const RECOVERY_GRACE_MS = 5 * 60 * 1000;
 /** The 2h reminder window ends 2h15m out (lib/cron/reminder-schedule). */
 export const RECOVERY_MIN_LEAD_MS = (2 * 60 + 15) * 60 * 1000;
 export const RECOVERY_PAGE_SIZE = 50;
+/** The scheduler's cadence; the first studio of a run rotates per slot. */
+export const RECOVERY_SLOT_MS = 15 * 60 * 1000;
 /** Wall time one run may spend; the scheduler fires every 15 minutes. */
 export const RECOVERY_RUN_TIME_BUDGET_MS = 4 * 60 * 1000;
 /** Provider requests per run: sends AND failed or possibly-sent attempts. */
@@ -94,6 +108,7 @@ export function confirmationRecoveryEnabled(env: Env = process.env): boolean {
 export type OwedConfirmationRow = {
   id: string;
   studio_id: string;
+  client_id: string;
   status: string;
   starts_at: string;
   created_at: string;
@@ -143,6 +158,37 @@ const STUDIO_WIDE_REFUSALS: ReadonlySet<string> = new Set([
   "sms_route_sender_identity_missing",
 ]);
 
+/**
+ * The client's intake link, if their latest intake for this studio is still in
+ * progress. Studio and client scoped; reads id and status only. Creates
+ * nothing. Any failure is "no link".
+ */
+async function readIntakeLink(
+  admin: SupabaseClient,
+  studioId: string,
+  clientId: string,
+  intakeUrlFor: ((intakeId: string) => string | null) | undefined,
+): Promise<{ id: string; url: string } | null> {
+  if (!intakeUrlFor) return null;
+  try {
+    const { data, error } = await admin
+      .from("client_intake_forms")
+      .select("id, status")
+      .eq("studio_id", studioId)
+      .eq("client_id", clientId)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const row = data as { id: string; status: string } | null;
+    if (error || !row || row.status !== "in_progress") return null;
+    const url = intakeUrlFor(row.id);
+    return url ? { id: row.id, url } : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The studio and recipient country a destination refusal applies to. */
 function destinationKey(studioId: string, phone: string | null): string | null {
   const n = classifyNanpNumber(normalizePhoneForSms(phone ?? null));
@@ -161,6 +207,8 @@ export async function recoverOwedConfirmations(opts: {
   manageUrlFor: (appointmentId: string, startsAt: Date) => string | null;
   env?: Env;
   routeReader?: SendTimeRouteReader;
+  /** Mints an intake link for an in-progress intake; absent, no link. */
+  intakeUrlFor?: (intakeId: string) => string | null;
   pageSize?: number;
   /** The current time at each re-read; defaults to the wall clock. */
   clock?: () => number;
@@ -186,8 +234,13 @@ export async function recoverOwedConfirmations(opts: {
   };
   let anyRead = false;
   const attempted = () => run.sent + run.failed;
+  // An equal share per studio, and a rotating first studio.
+  const perStudio = Math.max(1, Math.floor(RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN / studioIds.length));
+  const first = Math.floor(opts.nowMs / RECOVERY_SLOT_MS) % studioIds.length;
+  const ordered = [...studioIds.slice(first), ...studioIds.slice(0, first)];
 
-  studios: for (const studioId of studioIds) {
+  studios: for (const studioId of ordered) {
+    const atStart = attempted();
     let after: { createdAt: string; id: string } | null = null;
     for (;;) {
       if (attempted() >= RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN || outOfTime()) break studios;
@@ -199,6 +252,7 @@ export async function recoverOwedConfirmations(opts: {
       anyRead = true;
       for (const row of rows) {
         if (attempted() >= RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN || outOfTime()) break studios;
+        if (attempted() - atStart >= perStudio) continue studios;
         run.considered += 1;
         if (!isOwedConfirmation(row, opts.nowMs, studioIds) || !row.studio || !row.client) {
           skip("not_owed");
@@ -211,6 +265,8 @@ export async function recoverOwedConfirmations(opts: {
           continue;
         }
         const listedPhone = row.client.phone;
+        let intake: { id: string; url: string } | null = null;
+        let intakeRead = false;
         let result: SmsSendResult;
         try {
           result = await sendRecoveredConfirmationSmsToClient({
@@ -228,13 +284,29 @@ export async function recoverOwedConfirmations(opts: {
               if (check.ok && !opts.manageUrlFor(row.id, check.startsAt)) {
                 return { ok: false as const, reason: "recovery_manage_link_unavailable" };
               }
+              // Read once, at the pre-claim check, only for a row about to send.
+              if (check.ok && !intakeRead) {
+                intakeRead = true;
+                intake = await readIntakeLink(opts.admin, row.studio_id, row.client_id, opts.intakeUrlFor);
+              }
               return check;
             },
+            intakeUrlFor: () => intake?.url ?? null,
           });
         } catch {
           result = { ok: false, error: "recovery_threw", retryable: false };
         }
-        if (result.ok) run.sent += 1;
+        if (result.ok) {
+          run.sent += 1;
+          const issued = intake as { id: string; url: string } | null;
+          if (issued) {
+            try {
+              await stampIntakeLinkIssued(opts.admin, issued.id, { emailed: false });
+            } catch {
+              // Display metadata only; never fails the run.
+            }
+          }
+        }
         else if (result.skipped) {
           skip(result.reason);
           if (STUDIO_WIDE_REFUSALS.has(result.reason)) studioRefusal.set(studioId, result.reason);
@@ -264,7 +336,7 @@ async function readOwedPage(
     let q = admin
       .from("appointments")
       .select(
-        "id, studio_id, status, starts_at, created_at, sms_confirmation_sent_at, sms_confirmation_send_attempts, sms_confirmation_claimed_at, studio:studios(id, name, timezone, send_confirmation_sms, send_24h_sms_reminders, send_2h_sms_reminders), client:clients(phone, sms_consent_at, sms_opted_out_at)",
+        "id, studio_id, client_id, status, starts_at, created_at, sms_confirmation_sent_at, sms_confirmation_send_attempts, sms_confirmation_claimed_at, studio:studios(id, name, timezone, send_confirmation_sms, send_24h_sms_reminders, send_2h_sms_reminders), client:clients(phone, sms_consent_at, sms_opted_out_at)",
       )
       .eq("studio_id", studioId)
       .eq("status", "confirmed")

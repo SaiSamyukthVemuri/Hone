@@ -336,6 +336,8 @@ export type SendRecoveredConfirmationInput = Omit<SendConfirmationInput, "starts
   /** Re-reads status and start after the claim. */
   revalidate: () => Promise<{ ok: true; startsAt: Date } | { ok: false; reason: string }>;
   manageUrlFor: (startsAt: Date) => string | null;
+  /** The intake link the original confirmation would carry, read live; null for none. */
+  intakeUrlFor?: () => string | null;
 };
 
 export async function sendRecoveredConfirmationSmsToClient(
@@ -361,7 +363,7 @@ export async function sendRecoveredConfirmationSmsToClient(
         studioName: input.studio.name,
         startsAt,
         timezone: input.timezone,
-        intakeUrl: null,
+        intakeUrl: input.intakeUrlFor?.() ?? null,
         manageUrl: input.manageUrlFor(startsAt),
       });
     },

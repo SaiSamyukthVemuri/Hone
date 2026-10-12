@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isAuthorizedCronRequest } from "@/lib/cron/auth";
 import { generateCancellationToken } from "@/lib/booking/tokens";
+import { generateIntakeLinkUrl } from "@/lib/intake/queries";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { confirmationRecoveryEnabled, recoverOwedConfirmations } from "@/lib/sms/confirmation-recovery";
 
@@ -43,6 +44,13 @@ export async function GET(req: Request) {
   const run = await recoverOwedConfirmations({
     admin: createAdminClient(),
     nowMs: Date.now(),
+    intakeUrlFor: (intakeId) => {
+      try {
+        return generateIntakeLinkUrl(intakeId, origin);
+      } catch {
+        return null;
+      }
+    },
     manageUrlFor: (appointmentId, startsAt) => {
       try {
         const token = generateCancellationToken(appointmentId, startsAt);
