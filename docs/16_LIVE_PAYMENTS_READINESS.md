@@ -1440,7 +1440,7 @@ As of the app-wide payment-messaging work (PRs #332–#339) and the controlled l
 | `STRIPE_SECRET_KEY` | `sk_live_…` | runtime | |
 | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | `pk_live_…` | **build** | requires a fresh build |
 | `STRIPE_WEBHOOK_SECRET` | `whsec_…` (the **live** endpoint's secret) | runtime | |
-| `STRIPE_CONNECT_COUNTRY` | confirm `CA` | runtime | already defaults to `CA` |
+| `STRIPE_CONNECT_COUNTRY` | ~~confirm `CA`~~ | — | **No longer read** once PAY-CCY-03 (#836) is deployed: each Express account is created in its studio's verified country (`studio_payment_jurisdictions`, 0214), and a Canadian studio is created in CA by that record, not by this variable. See docs/10. Before #836 it still defaults to `CA`. |
 
 (`OPS_ALERT_EMAILS`, `RESEND_API_KEY`, `UPSTASH_REDIS_REST_URL/TOKEN` must already be set — alerts, receipts, heartbeat — and are unchanged.)
 
@@ -1448,7 +1448,7 @@ As of the app-wide payment-messaging work (PRs #332–#339) and the controlled l
 
 1. **Legal/accounting sign-off** complete (§17.14.2). If reworded, the copy-only PR is merged.
 2. **Create the live Connect webhook endpoint** (§17.14.4) → obtain `whsec_`.
-3. In Vercel **Production**, set **all four** live vars (§17.14.5) **in one batch, before any redeploy**; confirm `STRIPE_CONNECT_COUNTRY=CA`.
+3. In Vercel **Production**, set **all four** live vars (§17.14.5) **in one batch, before any redeploy**; confirm `STRIPE_CONNECT_COUNTRY=CA` only on a build without PAY-CCY-03 (#836); after it, confirm instead that the studio's payment jurisdiction is `CA`/`cad` (the variable is not read).
 4. Trigger **one fresh production build/deploy** (full build, so `pk_live_` is inlined).
 5. **Verify health** (go/no-go items 3–4).
 6. **NEVER deploy `sk_live_` while `STRIPE_ALLOW_LIVE_MODE` is false/unset** — that deploy hard-fails every Stripe route (`assertStripeKeyAllowed` throws).
@@ -1550,7 +1550,7 @@ This is the concise operator condensation of §17.14; §17.14 remains the author
 - [ ] `STRIPE_SECRET_KEY=sk_live_…`
 - [ ] `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_…` (build-time inlined → needs a fresh build)
 - [ ] `STRIPE_WEBHOOK_SECRET=whsec_…` (the live endpoint's)
-- [ ] Confirm `STRIPE_CONNECT_COUNTRY=CA`
+- [ ] Confirm the studio's payment jurisdiction is `CA`/`cad` (from PAY-CCY-03, #836, the account country comes from `studio_payment_jurisdictions`; `STRIPE_CONNECT_COUNTRY` is not read)
 - [ ] ⚠️ NEVER deploy `sk_live_` while `STRIPE_ALLOW_LIVE_MODE` is unset/false (hard-fails every Stripe route)
 
 #### 4. Fresh production deploy
