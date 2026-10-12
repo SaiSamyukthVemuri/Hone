@@ -144,6 +144,43 @@ describe("0218: conflicts and the role-aware chooser signal (Codex on #850)", ()
     expect(await memberships(claimant.id)).toEqual({ practitioners: 0, desk: 0 });
   });
 
+  it("no writer can leave two ACTIVE desk rows under one email: reactivating the old row is refused 23505 (P2 4244037190)", async () => {
+    const former = await seedAuthUser("desk-former");
+    const successor = await seedAuthUser("desk-successor");
+    const shared = `handover-${former.id.slice(0, 6)}@harness.local`;
+    const r = await adminQuery(
+      `select public.add_studio_receptionist($1, $2, $3, 'Former', $4) as id`,
+      [S.studioId, owner().practitionerId, former.id, shared],
+    );
+    const formerRow = await adminQuery(
+      `select id from public.studio_receptionists where studio_id = $1 and user_id = $2`,
+      [S.studioId, former.id],
+    ).then((q) => q.rows[0].id as string);
+    expect(r.rows.length).toBe(1);
+    await adminQuery(`select public.set_studio_receptionist_active($1, $2, $3, false)`, [
+      S.studioId,
+      owner().practitionerId,
+      formerRow,
+    ]);
+    // An INACTIVE row under the address does not block the new person.
+    await adminQuery(`update auth.users set email = $2 where id = $1`, [successor.id, shared]);
+    await invite(shared, "receptionist");
+    expect((await accept(successor.id)).status).toBe("linked");
+    expect(await memberships(successor.id)).toEqual({ practitioners: 0, desk: 1 });
+    // The owner tries to bring the old row back: the index refuses it.
+    const err = await adminQuery(`select public.set_studio_receptionist_active($1, $2, $3, true)`, [
+      S.studioId,
+      owner().practitionerId,
+      formerRow,
+    ]).catch((e: unknown) => e);
+    expect(errCode(err)).toBe("23505");
+    const active = await adminQuery(
+      `select count(*)::int as n from public.studio_receptionists where studio_id = $1 and lower(email) = lower($2) and active`,
+      [S.studioId, shared],
+    );
+    expect(active.rows[0].n).toBe(1);
+  });
+
   it("choose_studio is TRUE when the person now works the desk at a second studio", async () => {
     const u = await seedAuthUser("two-desks");
     const other = await seedSynthStudioB();
