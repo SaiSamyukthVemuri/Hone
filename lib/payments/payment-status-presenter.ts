@@ -193,6 +193,27 @@ export function portalCardCopy(capability: PortalCardCapability): string {
   }
 }
 
+/**
+ * PAY-CCY-04 (audit F3). The portal card copy follows the same country verdict
+ * as the portal action itself (app/portal/payment-method-actions.ts refuses a
+ * card on a blocked account, and retries on an unread country). So
+ * "available" is never claimed for a blocked or unverifiable payment country.
+ * Copy-level, so the PortalCardCapability union other surfaces switch on is
+ * unchanged.
+ */
+export function portalCardCopyGatedOnCountry(
+  capability: PortalCardCapability,
+  country: { tone: "ok" | "attention" | "blocked" | "unknown" },
+): string {
+  if (capability === "available" && country.tone === "blocked") {
+    return "Portal card-on-file is not available: this studio's Stripe account country does not match its payment settings. Contact Hone support.";
+  }
+  if (capability === "available" && country.tone === "unknown") {
+    return "Portal card-on-file status could not be determined: the studio's payment country could not be verified.";
+  }
+  return portalCardCopy(capability);
+}
+
 // Convenience for server components that already hold the connect input:
 // resolves the publishable-key gate from env (pure env read, no query).
 export function publishableKeyOk(): boolean {

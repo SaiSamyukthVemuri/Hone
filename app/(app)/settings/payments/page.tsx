@@ -9,7 +9,7 @@ import {
   gateConnectBannerOnCountry,
   deriveConnectCapability,
   derivePortalCardCapability,
-  portalCardCopy,
+  portalCardCopyGatedOnCountry,
   publishableKeyOk,
 } from "@/lib/payments/payment-status-presenter";
 import { PaymentsSettings, type StripeStatusView } from "./PaymentsSettings";
@@ -160,7 +160,7 @@ export default async function PaymentsSettingsPage() {
         status={status}
         runtimeMode={runtimeMode}
         banner={banner}
-        portalCardMessage={portalCardCopy(portalCard)}
+        portalCardMessage={portalCardCopyGatedOnCountry(portalCard, countrySummary)}
         bookingCardMessage={bookingCardCopy(bookingCardCollection())}
         paidServiceCount={paidServiceCount}
         hasCancellationPolicy={hasCancellationPolicy}
