@@ -31,6 +31,14 @@ export async function GET(req: Request) {
     // without one. Nothing was read or claimed.
     return NextResponse.json({ ok: false, ran: false, reason: "app_origin_unset" }, { status: 500 });
   }
+  // Signing must work before anything is read: a recovered confirmation is
+  // sent WITH its manage link or not at all. Presence is proved by signing a
+  // throwaway payload; the secret is never read out.
+  try {
+    generateCancellationToken("00000000-0000-4000-8000-000000000000", new Date(Date.now() + 60_000));
+  } catch {
+    return NextResponse.json({ ok: false, ran: false, reason: "signing_unavailable" }, { status: 500 });
+  }
   const { createAdminClient } = await import("@/lib/supabase/admin-server");
   const run = await recoverOwedConfirmations({
     admin: createAdminClient(),

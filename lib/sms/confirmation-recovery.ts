@@ -221,7 +221,15 @@ export async function recoverOwedConfirmations(opts: {
             client: row.client,
             routeReader: opts.routeReader,
             manageUrlFor: (startsAt) => opts.manageUrlFor(row.id, startsAt),
-            revalidate: () => revalidateOwed(opts.admin, row.id, clock(), listedPhone),
+            revalidate: async () => {
+              const check = await revalidateOwed(opts.admin, row.id, clock(), listedPhone);
+              // A confirmation goes WITH its manage link or not at all: refused
+              // before the claim, so nothing is spent and it stays owed.
+              if (check.ok && !opts.manageUrlFor(row.id, check.startsAt)) {
+                return { ok: false as const, reason: "recovery_manage_link_unavailable" };
+              }
+              return check;
+            },
           });
         } catch {
           result = { ok: false, error: "recovery_threw", retryable: false };

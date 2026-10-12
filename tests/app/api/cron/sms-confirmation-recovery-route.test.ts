@@ -25,7 +25,7 @@ vi.mock("@/lib/sms/confirmation-recovery", async (importOriginal) => {
 const { GET } = await import("@/app/api/cron/sms-confirmation-recovery/route");
 import { readFileSync } from "node:fs";
 
-const KEYS = ["CRON_SECRET", "SMS_CONFIRMATION_RECOVERY", "NEXT_PUBLIC_APP_URL", "APP_ORIGIN"] as const;
+const KEYS = ["CRON_SECRET", "SMS_CONFIRMATION_RECOVERY", "NEXT_PUBLIC_APP_ORIGIN", "APP_ORIGIN", "APPOINTMENT_SIGNING_SECRET"] as const;
 const saved: Record<string, string | undefined> = {};
 const req = (auth?: string) =>
   new Request("https://app.example/api/cron/sms-confirmation-recovery", {
@@ -61,6 +61,25 @@ describe("sms-confirmation-recovery route", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, ran: false, reason: "disabled" });
     expect(h.adminCreated + h.runs).toBe(0);
+  });
+
+  it("enabled but unable to sign manage links: refuses before creating a database client", async () => {
+    process.env.SMS_CONFIRMATION_RECOVERY = "on";
+    process.env.NEXT_PUBLIC_APP_ORIGIN = "https://app.example";
+    delete process.env.APPOINTMENT_SIGNING_SECRET;
+    const res = await GET(req("Bearer s3cret"));
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ ok: false, ran: false, reason: "signing_unavailable" });
+    expect(h.adminCreated + h.runs).toBe(0);
+  });
+
+  it("enabled with signing available: runs", async () => {
+    process.env.SMS_CONFIRMATION_RECOVERY = "on";
+    process.env.NEXT_PUBLIC_APP_ORIGIN = "https://app.example";
+    process.env.APPOINTMENT_SIGNING_SECRET = "x".repeat(48);
+    const res = await GET(req("Bearer s3cret"));
+    expect(res.status).toBe(200);
+    expect(h.runs).toBe(1);
   });
 
   it("is on no Vercel schedule (activation is a separate, approved scheduler step)", () => {

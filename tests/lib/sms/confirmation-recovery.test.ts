@@ -232,6 +232,7 @@ const readyStudioA = () => ({
 
 const ENABLED = { [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: A };
 const manageUrls: Array<[string, string]> = [];
+let manageLinkFails = false;
 let clock: (() => number) | undefined;
 const run = (env: Record<string, string> = ENABLED, pageSize?: number) =>
   recoverOwedConfirmations({
@@ -242,7 +243,7 @@ const run = (env: Record<string, string> = ENABLED, pageSize?: number) =>
     clock: clock ?? (() => NOW),
     manageUrlFor: (id, startsAt) => {
       manageUrls.push([id, startsAt.toISOString()]);
-      return `https://app.example/manage/${id}`;
+      return manageLinkFails ? null : `https://app.example/manage/${id}`;
     },
   });
 
@@ -270,6 +271,7 @@ beforeEach(() => {
   failSelectFor = null;
   clock = undefined;
   switchOff = new Set();
+  manageLinkFails = false;
   providerStatus = 201;
   snapshot = readyStudioA();
   vi.stubGlobal(
@@ -354,7 +356,8 @@ describe("WHEN THE SENDER BECOMES READY: an owed confirmation is delivered exact
       row.starts_at = moved; // moved in place between the select and the send
     };
     await run();
-    expect(manageUrls).toEqual([["appt-1", moved]]);
+    // Checked before the claim (start as then) and built after it (the move).
+    expect(manageUrls.at(-1)).toEqual(["appt-1", moved]);
   });
 
   it("two overlapping runs send it once", async () => {
@@ -787,5 +790,15 @@ describe("the switch, the age and the whole window", () => {
     clock = () => (t += 61_000);
     const r = await run();
     expect(r.ran && r.considered).toBeLessThan(10);
+  });
+});
+
+describe("a confirmation goes with its manage link or not at all", () => {
+  it("a manage link that cannot be minted: refused before the claim, still owed", async () => {
+    db = [appt()];
+    manageLinkFails = true;
+    expect(await run()).toMatchObject({ sent: 0, skipped: { recovery_manage_link_unavailable: 1 } });
+    expect(events).not.toContain("claim_sms_send");
+    expect(db[0].sms_confirmation_send_attempts).toBe(0);
   });
 });
