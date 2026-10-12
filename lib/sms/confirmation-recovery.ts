@@ -43,13 +43,18 @@ import { sendRecoveredConfirmationSmsToClient, type SmsSendResult } from "./send
 // and that confirmation is no longer owed. Closing that needs an atomic
 // validate-and-claim command (0206's pattern), i.e. a migration.
 //
-// FAIRNESS. Each listed studio is paged separately (keyset on created_at,
-// RECOVERY_PAGE_SIZE rows, at most RECOVERY_MAX_PAGES_PER_STUDIO pages), so
-// rows that keep refusing (an opted-out client, an unready sender) can neither
-// starve newer rows of the same studio nor another studio. Each studio's
-// sender snapshot is read ONCE per run, and a route is looked at once per row:
-// the next run is the retry. Rows sharing a created_at across a page boundary
-// are left to the next run.
+// FAIRNESS. Each listed studio is paged separately (keyset on the unique
+// (created_at, id), RECOVERY_PAGE_SIZE rows, at most
+// RECOVERY_MAX_PAGES_PER_STUDIO pages), so rows that keep refusing (an
+// opted-out client, an unready sender) can neither starve newer rows of the
+// same studio nor another studio. Each studio's sender snapshot is read ONCE
+// per run, and a route is looked at once per row: the next run is the retry.
+//
+// BOUNDS. At most RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN provider requests per
+// run, counting failures as well as sends, so a provider outage cannot turn
+// one run into a burst. The horizon is re-checked against the CURRENT time at
+// each re-read, so a slow run never confirms an appointment that has since
+// entered the 2h reminder window.
 //
 // ACTIVATION. Off unless SMS_CONFIRMATION_RECOVERY=on AND the studio is
 // listed in SMS_STUDIO_ROUTING_STUDIO_IDS. Both are unset everywhere, and the
@@ -64,7 +69,8 @@ export const RECOVERY_GRACE_MS = 5 * 60 * 1000;
 export const RECOVERY_MIN_LEAD_MS = (2 * 60 + 15) * 60 * 1000;
 export const RECOVERY_PAGE_SIZE = 50;
 export const RECOVERY_MAX_PAGES_PER_STUDIO = 10;
-export const RECOVERY_MAX_SENDS_PER_RUN = 50;
+/** Provider requests per run: sends AND failed or possibly-sent attempts. */
+export const RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN = 50;
 /** Post-claim re-read looks on a read failure, before releasing the claim. */
 export const RECOVERY_POST_CLAIM_LOOKS = 3;
 
@@ -130,7 +136,10 @@ export async function recoverOwedConfirmations(opts: {
   env?: Env;
   routeReader?: SendTimeRouteReader;
   pageSize?: number;
+  /** The current time at each re-read; defaults to the wall clock. */
+  clock?: () => number;
 }): Promise<RecoveryRun> {
+  const clock = opts.clock ?? Date.now;
   const env = opts.env ?? process.env;
   if (!confirmationRecoveryEnabled(env)) return { ran: false, reason: "disabled" };
   const studioIds = listedRoutingStudioIds(env);
@@ -155,11 +164,12 @@ export async function recoverOwedConfirmations(opts: {
     run.skipped[reason] = (run.skipped[reason] ?? 0) + 1;
   };
   let anyRead = false;
+  const attempted = () => run.sent + run.failed;
 
   studios: for (const studioId of studioIds) {
-    let after: string | null = null;
+    let after: { createdAt: string; id: string } | null = null;
     for (let page = 0; page < RECOVERY_MAX_PAGES_PER_STUDIO; page += 1) {
-      if (run.sent >= RECOVERY_MAX_SENDS_PER_RUN) break studios;
+      if (attempted() >= RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN) break studios;
       const rows = await readOwedPage(opts.admin, studioId, w, after, pageSize);
       if (rows === null) {
         skip("read_failed");
@@ -167,7 +177,7 @@ export async function recoverOwedConfirmations(opts: {
       }
       anyRead = true;
       for (const row of rows) {
-        if (run.sent >= RECOVERY_MAX_SENDS_PER_RUN) break studios;
+        if (attempted() >= RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN) break studios;
         run.considered += 1;
         if (!isOwedConfirmation(row, opts.nowMs, studioIds) || !row.studio || !row.client) {
           skip("not_owed");
@@ -183,7 +193,7 @@ export async function recoverOwedConfirmations(opts: {
             client: row.client,
             routeReader: reader,
             manageUrlFor: (startsAt) => opts.manageUrlFor(row.id, startsAt),
-            revalidate: () => revalidateOwed(opts.admin, row.id, opts.nowMs),
+            revalidate: () => revalidateOwed(opts.admin, row.id, clock()),
           });
         } catch {
           result = { ok: false, error: "recovery_threw", retryable: false };
@@ -193,7 +203,8 @@ export async function recoverOwedConfirmations(opts: {
         else run.failed += 1;
       }
       if (rows.length < pageSize) continue studios;
-      after = rows[rows.length - 1].created_at;
+      const last = rows[rows.length - 1];
+      after = { createdAt: last.created_at, id: last.id };
     }
   }
   if (!anyRead) return { ran: false, reason: "read_failed" };
@@ -205,7 +216,7 @@ async function readOwedPage(
   admin: SupabaseClient,
   studioId: string,
   w: ReturnType<typeof owedWindow>,
-  after: string | null,
+  after: { createdAt: string; id: string } | null,
   pageSize: number,
 ): Promise<OwedConfirmationRow[] | null> {
   try {
@@ -222,8 +233,18 @@ async function readOwedPage(
       .gte("created_at", w.createdAfterIso)
       .lte("created_at", w.createdBeforeIso)
       .gt("starts_at", w.startsAfterIso);
-    if (after) q = q.gt("created_at", after);
-    const { data, error } = await q.order("created_at", { ascending: true }).limit(pageSize);
+    // Strictly after the last row of the previous page on the UNIQUE key, so
+    // rows sharing a created_at are never skipped.
+    if (after) {
+      // Values are double-quoted: a timestamp holds PostgREST's reserved ':'.
+      q = q.or(
+        `created_at.gt."${after.createdAt}",and(created_at.eq."${after.createdAt}",id.gt."${after.id}")`,
+      );
+    }
+    const { data, error } = await q
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .limit(pageSize);
     if (error || !Array.isArray(data)) return null;
     const one = <T>(v: T | T[] | null): T | null => (Array.isArray(v) ? (v[0] ?? null) : v);
     return data.map((r) => {

@@ -96,7 +96,7 @@ function admin(): SupabaseClient {
       fromCalls += 1;
       const filters: Filter[] = [];
       let columns = "";
-      let order: { col: keyof Appt; asc: boolean } | null = null;
+      const order: Array<{ col: keyof Appt; asc: boolean }> = [];
       let studioFilter: unknown = null;
       const q = {
         select(c: string) {
@@ -129,7 +129,19 @@ function admin(): SupabaseClient {
           return q;
         },
         order(col: keyof Appt, o: { ascending: boolean }) {
-          order = { col, asc: o.ascending };
+          order.push({ col, asc: o.ascending });
+          return q;
+        },
+        or(expr: string) {
+          // Exactly the keyset form the recovery pass builds.
+          const m = /^created_at\.gt\."([^"]+)",and\(created_at\.eq\."([^"]+)",id\.gt\."([^"]+)"\)$/.exec(expr);
+          expect(m, `unexpected or(): ${expr}`).not.toBeNull();
+          const [, gtAt, eqAt, gtId] = m!;
+          expect(eqAt).toBe(gtAt);
+          filters.push((r) => {
+            const t = Date.parse(r.created_at);
+            return t > Date.parse(gtAt) || (t === Date.parse(gtAt) && r.id > gtId);
+          });
           return q;
         },
         limit(n: number) {
@@ -138,10 +150,16 @@ function admin(): SupabaseClient {
             return Promise.resolve({ data: null, error: { code: "57014" } });
           }
           let rows = db.filter((r) => filters.every((f) => f(r)));
-          if (order) {
-            const { col, asc } = order;
-            rows = [...rows].sort((x, y) => (String(x[col]) < String(y[col]) ? -1 : 1) * (asc ? 1 : -1));
-          }
+          // Ties beyond the requested order come back in REVERSE insertion
+          // order: a database promises nothing about them, so neither may we.
+          rows = [...rows].reverse().sort((x, y) => {
+            for (const { col, asc } of order) {
+              const a = String(x[col]);
+              const b = String(y[col]);
+              if (a !== b) return (a < b ? -1 : 1) * (asc ? 1 : -1);
+            }
+            return 0;
+          });
           expect(columns).toContain("client:clients(");
           const data = rows.slice(0, n).map((r) => ({
             ...r,
@@ -200,12 +218,14 @@ const readyStudioA = () => ({
 
 const ENABLED = { [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: A };
 const manageUrls: Array<[string, string]> = [];
+let clock: (() => number) | undefined;
 const run = (env: Record<string, string> = ENABLED, pageSize?: number) =>
   recoverOwedConfirmations({
     admin: admin(),
     nowMs: NOW,
     env,
     pageSize,
+    clock: clock ?? (() => NOW),
     manageUrlFor: (id, startsAt) => {
       manageUrls.push([id, startsAt.toISOString()]);
       return `https://app.example/manage/${id}`;
@@ -234,6 +254,7 @@ beforeEach(() => {
   preClaimRead = null;
   failRead = null;
   failSelectFor = null;
+  clock = undefined;
   providerStatus = 201;
   snapshot = readyStudioA();
   vi.stubGlobal(
@@ -570,5 +591,36 @@ describe("FAIRNESS: rows that keep refusing never starve the rest", () => {
     snapshot = { data: null, error: { code: "PGRST202" } };
     expect(await run()).toMatchObject({ sent: 0, skipped: { sms_route_sender_read_failed: 5 } });
     expect(events.filter((e) => e === SNAPSHOT_RPC)).toHaveLength(1);
+  });
+});
+
+describe("run bounds and a live horizon", () => {
+  it("TIED created_at across a page boundary: every tied row is reached, none skipped", async () => {
+    const same = iso(NOW - 2 * HOUR);
+    // 5 tied rows that keep refusing (opted out), then 3 tied owed rows, page size 2.
+    db = [
+      ...Array.from({ length: 5 }, (_, i) => appt({ id: `t0-${i}`, created_at: same, client_opted_out_at: iso(NOW - 60_000) })),
+      ...Array.from({ length: 3 }, (_, i) => appt({ id: `t1-${i}`, created_at: same })),
+    ];
+    const r = await run(ENABLED, 2);
+    expect(r).toMatchObject({ ran: true, considered: 8, sent: 3, skipped: { client_opted_out: 5 } });
+  });
+
+  it("a provider outage stops the run at the attempt cap, counting failures, not only sends", async () => {
+    db = Array.from({ length: 70 }, (_, i) => appt({ id: `o-${String(i).padStart(2, "0")}`, created_at: iso(NOW - (100 + i) * 60_000) }));
+    providerStatus = 400; // a definite refusal: attempt spent, not sent
+    const r = await run();
+    expect(providerCalls()).toBe(50);
+    expect(r).toMatchObject({ ran: true, sent: 0, failed: 50 });
+  });
+
+  it("a row that crosses into the reminder window during a slow run is not confirmed", async () => {
+    // Barely eligible at selection; by its re-read, time has moved on.
+    db = [appt({ starts_at: iso(NOW + RECOVERY_MIN_LEAD_MS + 60_000) })];
+    clock = () => NOW + 2 * 60_000;
+    const r = await run();
+    expect(r).toMatchObject({ sent: 0, skipped: { recovery_too_late: 1 } });
+    expect(events).not.toContain("claim_sms_send");
+    expect(providerCalls()).toBe(0);
   });
 });
