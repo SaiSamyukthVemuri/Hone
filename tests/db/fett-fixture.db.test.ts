@@ -134,12 +134,16 @@ describe("Fett rehearsal fixture — shape", () => {
   });
 });
 
-describe("Fett rehearsal fixture — the receptionist limb is optional", () => {
-  it("the capability probe is not vacuous: 'false' comes from a real constraint", async () => {
-    // (4) THE CONTROL. detectFettCapabilities answers `false` by finding a
-    // constraint that excludes 'receptionist'. If its query matched NOTHING,
-    // `.some()` would also be false — indistinguishable from a real exclusion.
-    // So prove the constraint it reads actually exists and is the right one.
+describe("Fett rehearsal fixture — the front-desk limb is optional", () => {
+  it("practitioners.role stays two-valued, and that is NOT a capability signal", async () => {
+    // Encoded as a test because an earlier version of this fixture probed
+    // exactly this constraint and drew the wrong conclusion from it. The RBAC
+    // lane corrected it: a receptionist is a row in `studio_receptionists`
+    // (0216:47), and `practitioners.role` stays
+    // `check (role in ('owner','practitioner'))` across 0216, 0218 AND 0220
+    // BY DESIGN — that unchanged CHECK is what makes a receptionist "denied by
+    // construction" as a treating practitioner. It is not evidence that
+    // receptionists are unsupported.
     const role = await adminQuery(
       `select pg_get_constraintdef(c.oid) as def
          from pg_constraint c
@@ -150,44 +154,183 @@ describe("Fett rehearsal fixture — the receptionist limb is optional", () => {
           and c.contype = 'c'
           and pg_get_constraintdef(c.oid) ilike '%role%'`,
     );
+    // Non-vacuous: the constraint must really exist and really enumerate the
+    // two live roles, or "excludes receptionist" would be meaningless.
     expect(role.rows.length).toBeGreaterThanOrEqual(1);
-    const defs = role.rows.map((r) => r.def.toLowerCase()).join(" | ");
-    // The constraint genuinely enumerates the two live roles...
+    const defs = role.rows.map((r: { def: string }) => r.def.toLowerCase()).join(" | ");
     expect(defs).toContain("owner");
     expect(defs).toContain("practitioner");
-    // ...and genuinely omits the third. THIS is what makes `false` meaningful.
     expect(defs).not.toContain("receptionist");
 
-    // Same vacuity check for the command probe: the pg_proc shape it uses must
-    // be able to find a function that DOES exist on this chain.
+    // And the probe must NOT be reading it. Whatever the role CHECK says, the
+    // capability answer comes from the receptionist's own surface.
+    const caps = await detectFettCapabilities();
+    expect(Object.keys(caps).sort()).toEqual([
+      "receptionist",
+      "receptionistCommand",
+      "receptionistTable",
+    ]);
+  });
+
+  it("the probe agrees with the real schema, so it is correct on ANY chain", async () => {
+    // Chain-adaptive on the RIGHT signal. On the 0210 production chain both
+    // halves are absent; on a chain carrying 0216 both are present. The test
+    // asserts AGREEMENT rather than a hard-coded answer, so it does not go red
+    // merely because the receptionist work landed.
+    const tbl = await adminQuery(
+      `select to_regclass('public.studio_receptionists') is not null as present`,
+    );
+    const cmd = await adminQuery(
+      `select count(*)::text as n
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public' and p.proname = 'add_studio_receptionist'`,
+    );
+    const caps = await detectFettCapabilities();
+    expect(caps.receptionistTable).toBe(tbl.rows[0].present === true);
+    expect(caps.receptionistCommand).toBe(cmd.rows[0].n !== "0");
+    expect(caps.receptionist).toBe(
+      caps.receptionistTable && caps.receptionistCommand,
+    );
+
+    // The pg_proc shape must be able to find a function that DOES exist here,
+    // or "command absent" could be a broken query rather than a real absence.
     const known = await adminQuery(
       `select count(*)::text as n
          from pg_proc p join pg_namespace n on n.oid = p.pronamespace
         where n.nspname = 'public' and p.proname = 'create_public_appointment'`,
     );
     expect(known.rows[0].n).not.toBe("0");
-
-    const caps = await detectFettCapabilities();
-    expect(caps.receptionistRole).toBe(false);
-    expect(caps.receptionistCommand).toBe(false);
-    expect(caps.receptionist).toBe(false);
   });
 
-  it("returns null rather than throwing when the chain cannot represent one", async () => {
-    // (3) The rehearsal must never die because #838/#850 are unmerged.
+  it("seeds a front-desk membership when the surface exists, null when it does not", async () => {
+    // The rehearsal must never die because #838/#850/#852 are unmerged.
     const fett = await seedFettStudio();
     try {
-      expect(fett.capabilities.receptionist).toBe(false);
-      expect(fett.receptionist).toBeNull();
-      // Called directly, it is a no-op returning null — not a throw.
-      await expect(seedFettReceptionist(fett.studioId)).resolves.toBeNull();
-      // And it wrote nothing: still exactly the six seeded practitioners.
+      if (!fett.capabilities.receptionist) {
+        expect(fett.receptionist).toBeNull();
+        // A no-op, not a throw — and it writes nothing.
+        await expect(
+          seedFettReceptionist({
+            studioId: fett.studioId,
+            practitionerId: fett.practitionerId,
+          }),
+        ).resolves.toBeNull();
+        expect(
+          await count(
+            `select count(*) n from public.practitioners where studio_id = $1`,
+            [fett.studioId],
+          ),
+        ).toBe(6);
+      } else {
+        // On a chain carrying 0216 the limb composes through the real command.
+        expect(fett.receptionist).not.toBeNull();
+        expect(fett.receptionist!.via).toBe("add_studio_receptionist");
+        expect(
+          await count(
+            `select count(*) n from public.studio_receptionists
+              where studio_id = $1 and id = $2`,
+            [fett.studioId, fett.receptionist!.receptionistId],
+          ),
+        ).toBe(1);
+        // Denied by construction: it must NOT have become a practitioner.
+        expect(
+          await count(
+            `select count(*) n from public.practitioners where studio_id = $1`,
+            [fett.studioId],
+          ),
+        ).toBe(6);
+      }
+    } finally {
+      await dropFettStudio(fett);
+    }
+  });
+});
+
+describe("Fett rehearsal fixture — practitioner capacity is the demo-critical bit", () => {
+  // Both 0134/0136 flags default FALSE, so a studio seeded without them is
+  // LEGACY: ONE studio-wide resource. Five practitioners in that studio cannot
+  // hold parallel appointments — exactly what a Fett demo must show.
+  //
+  // These book through the REAL practitioner-facing command
+  // (create_internal_appointment_v2), not a raw INSERT, so they exercise the
+  // availability validator, duration authority and buffer rules too — and they
+  // demonstrate the same path the rehearsal will drive.
+
+  it("defaults to LIVE, and two practitioners are booked at the SAME instant", async () => {
+    const fett = await seedFettStudio({ treatingCount: 2 });
+    try {
+      expect(fett.capacityState).toBe("live");
+      const flags = await adminQuery(
+        `select practitioner_capacity_enabled c, practitioner_capacity_booking_enabled b
+           from public.studios where id = $1`,
+        [fett.studioId],
+      );
+      expect(flags.rows[0].c).toBe(true);
+      expect(flags.rows[0].b).toBe(true);
+
+      const a = await bookFettInternal(fett, fett.treating[0].practitionerId);
+      const b = await bookFettInternal(fett, fett.treating[1].practitionerId);
+      expect(a.result).toBe("created");
+      expect(b.result).toBe("created");
+      // The SAME instant, for two DIFFERENT practitioners. This is the demo.
+      // pg returns timestamptz as a Date, so compare the INSTANT: toBe would
+      // fail on object identity for two equal timestamps.
+      expect(a.starts_at).toBeInstanceOf(Date);
+      expect(b.starts_at!.getTime()).toBe(a.starts_at!.getTime());
+      expect(a.appointment_id).not.toBe(b.appointment_id);
+
+      const n = await adminQuery(
+        `select count(*)::text n, count(distinct practitioner_id)::text p
+           from public.appointments where studio_id = $1`,
+        [fett.studioId],
+      );
+      expect(n.rows[0].n).toBe("2");
+      expect(n.rows[0].p).toBe("2");
+    } finally {
+      await dropFettStudio(fett);
+    }
+  });
+
+  it("LEGACY is one studio-wide resource: the second booking is REFUSED", async () => {
+    // THE CONTROL. Without it the LIVE case could be passing on a schema that
+    // never enforced a studio-wide exclusion, and the fixture's default would
+    // prove nothing. Measured refusal: the exclusion constraint
+    // `no_overlapping_appointments_studio_wide`.
+    const fett = await seedFettStudio({ treatingCount: 2, capacity: "legacy" });
+    try {
+      expect(fett.capacityState).toBe("legacy");
+      const first = await bookFettInternal(fett, fett.treating[0].practitionerId);
+      expect(first.result).toBe("created");
+      await expect(
+        bookFettInternal(fett, fett.treating[1].practitionerId),
+      ).rejects.toThrow(/no_overlapping_appointments_studio_wide/);
       expect(
         await count(
-          `select count(*) n from public.practitioners where studio_id = $1`,
+          `select count(*) n from public.appointments where studio_id = $1`,
           [fett.studioId],
         ),
-      ).toBe(6);
+      ).toBe(1);
+    } finally {
+      await dropFettStudio(fett);
+    }
+  });
+
+  it("rejects the invalid state capacity=false + booking=true (0136:52 CHECK)", async () => {
+    const fett = await seedFettStudio({ treatingCount: 1, days: [1] });
+    try {
+      await expect(
+        adminQuery(
+          `update public.studios
+              set practitioner_capacity_enabled = false,
+                  practitioner_capacity_booking_enabled = true
+            where id = $1`,
+          [fett.studioId],
+        ),
+      ).rejects.toThrow();
+      // And the helper never produces that state for any of its three inputs.
+      for (const s of ["legacy", "ready", "live"] as const) {
+        await setFettCapacityState(fett.studioId, s);
+      }
     } finally {
       await dropFettStudio(fett);
     }
@@ -288,97 +431,6 @@ describe("Fett rehearsal fixture — teardown", () => {
       expect(
         await count(`select count(*) n from auth.users where id = $1`, [userId]),
       ).toBe(0);
-    }
-  });
-});
-
-describe("Fett rehearsal fixture — practitioner capacity is the demo-critical bit", () => {
-  // Both 0134/0136 flags default FALSE, so a studio seeded without them is
-  // LEGACY: ONE studio-wide resource. Five practitioners in that studio cannot
-  // hold parallel appointments — exactly what a Fett demo must show.
-  //
-  // These book through the REAL practitioner-facing command
-  // (create_internal_appointment_v2), not a raw INSERT, so they exercise the
-  // availability validator, duration authority and buffer rules too — and they
-  // demonstrate the same path the rehearsal will drive.
-
-  it("defaults to LIVE, and two practitioners are booked at the SAME instant", async () => {
-    const fett = await seedFettStudio({ treatingCount: 2 });
-    try {
-      expect(fett.capacityState).toBe("live");
-      const flags = await adminQuery(
-        `select practitioner_capacity_enabled c, practitioner_capacity_booking_enabled b
-           from public.studios where id = $1`,
-        [fett.studioId],
-      );
-      expect(flags.rows[0].c).toBe(true);
-      expect(flags.rows[0].b).toBe(true);
-
-      const a = await bookFettInternal(fett, fett.treating[0].practitionerId);
-      const b = await bookFettInternal(fett, fett.treating[1].practitionerId);
-      expect(a.result).toBe("created");
-      expect(b.result).toBe("created");
-      // The SAME instant, for two DIFFERENT practitioners. This is the demo.
-      // pg returns timestamptz as a Date, so compare the INSTANT: toBe would
-      // fail on object identity for two equal timestamps.
-      expect(a.starts_at).toBeInstanceOf(Date);
-      expect(b.starts_at!.getTime()).toBe(a.starts_at!.getTime());
-      expect(a.appointment_id).not.toBe(b.appointment_id);
-
-      const n = await adminQuery(
-        `select count(*)::text n, count(distinct practitioner_id)::text p
-           from public.appointments where studio_id = $1`,
-        [fett.studioId],
-      );
-      expect(n.rows[0].n).toBe("2");
-      expect(n.rows[0].p).toBe("2");
-    } finally {
-      await dropFettStudio(fett);
-    }
-  });
-
-  it("LEGACY is one studio-wide resource: the second booking is REFUSED", async () => {
-    // THE CONTROL. Without it the LIVE case could be passing on a schema that
-    // never enforced a studio-wide exclusion, and the fixture's default would
-    // prove nothing. Measured refusal: the exclusion constraint
-    // `no_overlapping_appointments_studio_wide`.
-    const fett = await seedFettStudio({ treatingCount: 2, capacity: "legacy" });
-    try {
-      expect(fett.capacityState).toBe("legacy");
-      const first = await bookFettInternal(fett, fett.treating[0].practitionerId);
-      expect(first.result).toBe("created");
-      await expect(
-        bookFettInternal(fett, fett.treating[1].practitionerId),
-      ).rejects.toThrow(/no_overlapping_appointments_studio_wide/);
-      expect(
-        await count(
-          `select count(*) n from public.appointments where studio_id = $1`,
-          [fett.studioId],
-        ),
-      ).toBe(1);
-    } finally {
-      await dropFettStudio(fett);
-    }
-  });
-
-  it("rejects the invalid state capacity=false + booking=true (0136:52 CHECK)", async () => {
-    const fett = await seedFettStudio({ treatingCount: 1, days: [1] });
-    try {
-      await expect(
-        adminQuery(
-          `update public.studios
-              set practitioner_capacity_enabled = false,
-                  practitioner_capacity_booking_enabled = true
-            where id = $1`,
-          [fett.studioId],
-        ),
-      ).rejects.toThrow();
-      // And the helper never produces that state for any of its three inputs.
-      for (const s of ["legacy", "ready", "live"] as const) {
-        await setFettCapacityState(fett.studioId, s);
-      }
-    } finally {
-      await dropFettStudio(fett);
     }
   });
 });

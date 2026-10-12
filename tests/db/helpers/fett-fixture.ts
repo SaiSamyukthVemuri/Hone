@@ -54,14 +54,26 @@ import {
 // WHAT THIS FIXTURE CANNOT SEED ON THE 0210 CHAIN — named, not papered over.
 // Each is a real gap in the Friday demo surface, owned by another lane:
 //
-//   1. RESTRICTED RECEPTIONIST — schema-impossible today, not merely
-//      unseeded. practitioners.role carries
-//      check (role in ('owner','practitioner')) (0001_init.sql:24), and the
-//      string "receptionist" appears in NO migration on this chain. The
-//      receptionist limb is therefore OPTIONAL and FEATURE-DETECTED
-//      (seedFettReceptionist / detectFettCapabilities): it composes only when
-//      the chain admits the role, and the rehearsal must never gate on it.
-//      Owned by the RBAC lane (#838 0216, #850 0218), both unmerged.
+//   1. RESTRICTED RECEPTIONIST — absent on this chain, and absent as a
+//      SEPARATE TABLE rather than as a practitioners role. Corrected after the
+//      RBAC lane (ops01) pointed out that an earlier version of this fixture
+//      probed the wrong thing:
+//
+//        * a receptionist is a row in `public.studio_receptionists`
+//          (0216:47), created through `add_studio_receptionist` (0216:407);
+//        * `practitioners.role` stays `check (role in ('owner','practitioner'))`
+//          across 0216, 0218 AND 0220 — BY DESIGN. That unchanged CHECK is
+//          exactly what makes a receptionist "denied by construction" as a
+//          treating practitioner. It is NOT a sign that receptionists are
+//          unsupported;
+//        * 0218's three-valued `check (role in ('owner','practitioner',
+//          'receptionist'))` is on `pending_invitations` (0218:55) — the
+//          INVITATION role, not the practitioner role.
+//
+//      So the capability is detected from the TABLE and the COMMAND, never
+//      from `practitioners.role`. Probing the role would answer "false"
+//      forever and hide the real design. The limb stays OPTIONAL so the
+//      rehearsal never gates on #838/#850/#852.
 //   2. USD / payment jurisdiction — currency on this chain defaults to
 //      'cad' (0073_payment_charge_attempts.sql:113,
 //      0187_appointment_settlement.sql:126, 0064_manual_fee_protection.sql:141)
@@ -91,25 +103,34 @@ export type FettPractitioner = {
   displayName: string;
 };
 
-/** A receptionist seeded ONLY when the chain admits the role. `null` on the
- *  0210 chain — see note 1 in the header. */
+/** A front-desk membership, seeded ONLY when the chain carries the
+ *  receptionist surface. `null` on the 0210 chain — see note 1 in the header.
+ *
+ *  It has NO `practitionerId`, because a receptionist is not a practitioner.
+ *  That is the whole point of the separate table. */
 export type FettReceptionist = {
   userId: string;
-  practitionerId: string;
+  /** The `studio_receptionists` row id returned by the command. */
+  receptionistId: string;
   email: string;
   displayName: string;
-  /** How the row was created: the 0216 command, or a direct insert once the
-   *  role check admits 'receptionist'. Recorded so a test can say which. */
-  via: "add_studio_receptionist" | "direct_insert";
+  /** Only one path exists, and it is the real authority command. There is
+   *  deliberately no hand-built-row fallback: inserting a practitioners row
+   *  with role 'receptionist' would contradict the design AND fail the CHECK. */
+  via: "add_studio_receptionist";
 };
 
-/** What the CHAIN UNDER TEST supports — probed, never assumed. */
+/** What the CHAIN UNDER TEST supports — probed, never assumed.
+ *
+ *  Both signals come from the receptionist's own surface. `practitioners.role`
+ *  is deliberately NOT consulted: it stays two-valued on every chain, which is
+ *  the design, not a capability answer. */
 export type FettCapabilities = {
-  /** practitioners.role admits 'receptionist'. */
-  receptionistRole: boolean;
-  /** public.add_studio_receptionist(...) exists. */
+  /** `public.studio_receptionists` exists (0216:47). */
+  receptionistTable: boolean;
+  /** `public.add_studio_receptionist(uuid,uuid,uuid,text,text)` exists (0216:407). */
   receptionistCommand: boolean;
-  /** Either path can produce a receptionist. */
+  /** The chain can represent a front-desk membership: BOTH of the above. */
   receptionist: boolean;
 };
 
@@ -131,23 +152,18 @@ export type FettStudio = SeededStudio & {
   capacityState: FettCapacityState;
 };
 
-/** Probe the live schema for the receptionist limb. Read-only; safe to call
- *  before seeding. Reads the CHECK constraint text rather than attempting an
- *  insert, so it neither writes nor depends on an error message. */
+/** Probe the live schema for the receptionist surface. Read-only; safe to call
+ *  before seeding.
+ *
+ *  Asks about `studio_receptionists` and `add_studio_receptionist`. It does NOT
+ *  ask whether `practitioners.role` admits 'receptionist' — that is false on
+ *  every chain by design (see note 1), so a probe built on it would report "no
+ *  receptionist support" even on a chain that fully supports them. */
 export async function detectFettCapabilities(): Promise<FettCapabilities> {
-  const role = await adminQuery(
-    `select pg_get_constraintdef(c.oid) as def
-       from pg_constraint c
-       join pg_class t on t.oid = c.conrelid
-       join pg_namespace n on n.oid = t.relnamespace
-      where n.nspname = 'public'
-        and t.relname = 'practitioners'
-        and c.contype = 'c'
-        and pg_get_constraintdef(c.oid) ilike '%role%'`,
+  const tbl = await adminQuery(
+    `select to_regclass('public.studio_receptionists') is not null as present`,
   );
-  const receptionistRole = role.rows.some((r) =>
-    r.def.toLowerCase().includes("receptionist"),
-  );
+  const receptionistTable = tbl.rows[0].present === true;
   const cmd = await adminQuery(
     `select count(*)::text as n
        from pg_proc p join pg_namespace n on n.oid = p.pronamespace
@@ -155,9 +171,9 @@ export async function detectFettCapabilities(): Promise<FettCapabilities> {
   );
   const receptionistCommand = cmd.rows[0].n !== "0";
   return {
-    receptionistRole,
+    receptionistTable,
     receptionistCommand,
-    receptionist: receptionistRole || receptionistCommand,
+    receptionist: receptionistTable && receptionistCommand,
   };
 }
 
@@ -289,7 +305,10 @@ export async function seedFettStudio(
 
   const capabilities = await detectFettCapabilities();
   const receptionist = withReceptionist
-    ? await seedFettReceptionist(studioId, capabilities)
+    ? await seedFettReceptionist(
+        { studioId, practitionerId: ownerPractitionerId },
+        capabilities,
+      )
     : null;
 
   // One synthetic client so boundary/intake tests have a target row.
@@ -359,18 +378,18 @@ export async function seedFettAvailability(
 }
 
 /**
- * The OPTIONAL receptionist limb. Returns `null` when the chain cannot
- * represent a receptionist — the expected 0210 result.
+ * The OPTIONAL front-desk limb. Returns `null` when the chain does not carry
+ * the receptionist surface — the expected result on the 0210 production chain,
+ * and NOT a failure.
  *
- * Prefers the 0216 command when it exists so the fixture exercises the real
- * authority path rather than a hand-built row. Its argument names are NOT
- * known to this fixture, so the call is attempted by named-ish positional
- * shape and any failure degrades to `null` rather than throwing: a rehearsal
- * must not die because another lane's unmerged command has a different
- * signature.
+ * Goes through `add_studio_receptionist`, the real authority command, with its
+ * actual signature `(p_studio_id, p_owner_practitioner_id, p_user_id,
+ * p_display_name, p_email)` — five arguments, and it needs an EXISTING auth
+ * user plus the acting OWNER's practitioner id, so the auth user is seeded
+ * first. There is deliberately no hand-built-row fallback.
  */
 export async function seedFettReceptionist(
-  studioId: string,
+  fett: Pick<FettStudio, "studioId" | "practitionerId">,
   capabilities?: FettCapabilities,
 ): Promise<FettReceptionist | null> {
   const caps = capabilities ?? (await detectFettCapabilities());
@@ -378,42 +397,24 @@ export async function seedFettReceptionist(
 
   const email = fettEmail("receptionist");
   const displayName = "SYNTH-FETT receptionist";
-
-  if (caps.receptionistCommand) {
-    try {
-      const r = await adminQuery(
-        `select public.add_studio_receptionist($1, $2, $3) as id`,
-        [studioId, email, displayName],
-      );
-      const id = r.rows[0]?.id;
-      if (id) {
-        const u = await adminQuery(
-          `select user_id from public.practitioners where id = $1`,
-          [id],
-        );
-        return {
-          userId: u.rows[0]?.user_id ?? "",
-          practitionerId: id,
-          email,
-          displayName,
-          via: "add_studio_receptionist",
-        };
-      }
-    } catch {
-      // Signature mismatch against an unmerged lane — fall through.
-    }
-  }
-
-  if (!caps.receptionistRole) return null;
   const userId = await seedAuthUser(email);
-  const practitionerId = randomUUID();
-  await adminQuery(
-    `insert into public.practitioners
-       (id, studio_id, user_id, display_name, email, role, active)
-     values ($1, $2, $3, $4, $5, 'receptionist', true)`,
-    [practitionerId, studioId, userId, displayName, email],
+  const r = await adminQuery(
+    `select public.add_studio_receptionist($1, $2, $3, $4, $5) as id`,
+    [fett.studioId, fett.practitionerId, userId, displayName, email],
   );
-  return { userId, practitionerId, email, displayName, via: "direct_insert" };
+  const receptionistId = r.rows[0]?.id;
+  if (!receptionistId) {
+    // The command exists but declined. Leave no orphan auth user behind.
+    await adminQuery(`delete from auth.users where id = $1`, [userId]);
+    return null;
+  }
+  return {
+    userId,
+    receptionistId,
+    email,
+    displayName,
+    via: "add_studio_receptionist",
+  };
 }
 
 /**
