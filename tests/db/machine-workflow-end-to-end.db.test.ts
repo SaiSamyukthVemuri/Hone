@@ -699,7 +699,13 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
     expect(
       forAna.value[0]!.value,
       "Ana's panel showed another client's reading",
-    ).toMatchObject({ kind: "value", value: "70" });
+      // A NUMBER, not the text the SQL emits: toReading parses value_numeric
+      // once and carries the machine's precision separately in `decimals`.
+      // The ::text cast in latest_setup_for_client exists so the exact decimal
+      // survives JSON on the way here, not to change that contract - the new
+      // RPC path returning the SAME shape as the old PostgREST select is
+      // exactly what makes this swap safe.
+    ).toMatchObject({ kind: "value", value: 70 });
     expect(forAna.value[0]!.blockId).toBe(ana.blockId);
 
     // And Bea's chart shows Bea's.
@@ -708,7 +714,7 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
     );
     expect(forBea.ok).toBe(true);
     if (!forBea.ok) return;
-    expect(forBea.value[0]!.value).toMatchObject({ kind: "value", value: "410" });
+    expect(forBea.value[0]!.value).toMatchObject({ kind: "value", value: 410 });
     expect(forBea.value[0]!.blockId).toBe(beaBlockId);
   });
 
