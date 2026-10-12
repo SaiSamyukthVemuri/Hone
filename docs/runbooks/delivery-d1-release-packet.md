@@ -36,7 +36,7 @@ Two different changes:
 
 | Evidence | `0211` | `0212` |
 |---|---|---|
-| PR CI at the exact head | #827 run `38164242975` at `481e60c6`: **success**. Validate, DB integration and core browser passed; the other lanes were skipped by classification. | #832 at `ba8fc505`: see the CI note below this table. |
+| PR CI at the exact head | #827 run `38164242975` at `481e60c6`: **success**. Validate, DB integration and core browser passed; the other lanes were skipped by classification. | #832 run `38261065367` at `ba8fc505`: **11/11 success**. See the note below. |
 | Codex review | #827 and #832 are drafts and have no direct review. Both files were reviewed **byte-identical** inside #831, at `45a0fb8f` and `1d01521c`. Neither review opened a thread on `0211`. | Same reviews; no thread on `0212`'s SQL. The open #831 threads on `0212`'s *route* (4244387538, 4248920477) are fixed in #832 (`fd6f2f3d`, `ba8fc505`) and left open for the operator. |
 | Real-role DB proof, isolated stack, **exactly 0001–0212 at `ba8fc505`** (fresh `db reset`, pinned CLI 2.102.0) | `tests/db/client-sms-permission-guard.db.test.ts` passes, within the 4-suite run of **137/137** | `tests/db/email-delivery-events.db.test.ts`, `export-resource-registry`, `welcome-email-delivery`, within the same **137/137** |
 | Full DB suite on that same chain | **178/178 files pass** (one run): see the note below this table | same |
@@ -54,7 +54,7 @@ Two different changes:
 **CI note for #832 `ba8fc505`:**
 - the previous head, `fd6f2f3d`, was **11/11 green** (run `38206252401`);
 - `ba8fc505` changes only the webhook route, its test and one doc line. The migration bytes are unchanged;
-- the CI run for this head, `38261065367`, was **still queued** when this packet was written. It is not evidence until it settles; re-read it before approving.
+- **at this head, `ba8fc505`: run `38261065367`, 11/11 jobs green**, including validate, DB integration and browser.
 
 ## 3. Effects on existing permissions and behaviour
 
