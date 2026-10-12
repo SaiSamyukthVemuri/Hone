@@ -97,8 +97,8 @@ A captured request therefore cannot be replayed later. A replay inside the windo
 
 **Durable before acknowledged.** `record_email_provider_event` writes one receipt per delivery, unique on `(provider, svix-id)`. Resend keeps that id across every retry of an event.
 - If the receipt cannot be written, the route answers **500** and Resend retries on its own schedule (roughly 27 hours, after which it may disable the endpoint).
-- If the receipt is written but **this request's own processing attempt fails**, the answer is also **500**, so Resend's retry recovers the still-pending receipt (Codex P2 4244387538). Its next retry arrives after the two-minute claim has expired, and the recovery does not depend on another webhook or a scheduled sweep. Attempts are bounded in the database: after five the receipt is quarantined and the retry that follows gets **200**, so a poison event cannot keep the provider retrying until it disables the endpoint.
-- Every other outcome is acknowledged with **200**: applied, stale, unmatched, ignored, quarantined, or held by another worker that answers for itself.
+- If the receipt is written but is **still pending after this request**, the answer is also **500**, so Resend's retry recovers it (Codex P2 4244387538, 4244798597). That covers this request's own processing failing, and a claim (a failed attempt's, not yet expired) keeping it from trying. A retry that lands inside the two-minute claim answers 500 again, so the provider keeps retrying until one lands after it expires. The recovery does not depend on another webhook or a scheduled sweep. Attempts are bounded in the database: after five the receipt is quarantined and the retry that follows gets **200**, so a poison event cannot keep the provider retrying until it disables the endpoint.
+- Every other outcome is acknowledged with **200**: applied, stale, unmatched, ignored or quarantined.
 - A retried delivery whose receipt is still **pending** is processed again; one already processed is acknowledged as-is.
 
 **Exactly-once processing and crash recovery.**
