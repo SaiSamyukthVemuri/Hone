@@ -9,7 +9,7 @@ import {
   type PersistenceCapability,
 } from "@/lib/machines/selection-store";
 import type {
-  ReadingInputRow,
+  ReadingSubmission,
   RecordedReading,
 } from "@/lib/machines/machine-queries";
 import { MachineReadingEntry } from "./machine-reading-entry";
@@ -80,6 +80,23 @@ export type MachineFirstSetupPanelProps = {
   canManageMachines?: boolean;
   /** The studio's most recent recorded setup, for next-visit prep. */
   priorSetup?: RecordedReading[];
+  /**
+   * Persists the chosen machine as this practitioner's default. Supplied by
+   * the connected wrapper.
+   *
+   * WHY THIS PROP EXISTS. The buttons below used to call `setDeviceId` and
+   * nothing else, so a choice lived only in React state: the panel reported
+   * `data-persistence="database"` while the database default never changed,
+   * and a refresh silently restored the previous selection. The store and the
+   * action were both correct and tested - the UI simply never called them
+   * (Codex, 9c6fbbe5).
+   *
+   * Passing `null` forgets the selection, which is the "Change machine" path.
+   */
+  onSelectMachine?: (choice: {
+    deviceId: string | null;
+    modeKey: string | null;
+  }) => Promise<{ ok: boolean; error?: string }>;
   /** Records one settings group. Supplied by the connected wrapper. */
   onRecord?: (input: {
     blockId: string;
@@ -87,7 +104,7 @@ export type MachineFirstSetupPanelProps = {
     modeKey: string;
     groupKey: string;
     channels: number[];
-    readings: ReadingInputRow[];
+    readings: ReadingSubmission[];
   }) => Promise<{ ok: boolean; error?: string }>;
 };
 
@@ -114,9 +131,35 @@ export function MachineFirstSetupPanel({
   blockId = null,
   canManageMachines = false,
   priorSetup = [],
+  onSelectMachine,
   onRecord,
 }: MachineFirstSetupPanelProps) {
   const [deviceId, setDeviceId] = useState<string | null>(initialDeviceId);
+  // How many readings this panel has actually saved in this mount. Drives the
+  // "Recorded:" line, which previously claimed "nothing" even after a save.
+  const [savedCount, setSavedCount] = useState(0);
+  // A failed PERSIST of the selection must be visible: the choice still
+  // applies to this block, but it will not survive a reload, and saying
+  // nothing is what made the old behaviour look like it had worked.
+  const [selectionNote, setSelectionNote] = useState<string | null>(null);
+
+  /**
+   * Choose (or clear) the machine. Local state moves first so the form stays
+   * responsive, then the choice is persisted. If persistence fails the panel
+   * says so rather than silently reverting on the next load.
+   */
+  const chooseDevice = async (next: string | null) => {
+    setDeviceId(next);
+    setSelectionNote(null);
+    if (!onSelectMachine) return;
+    const out = await onSelectMachine({ deviceId: next, modeKey: null });
+    if (!out.ok) {
+      setSelectionNote(
+        out.error ??
+          "This machine applies to this block but could not be remembered for next time.",
+      );
+    }
+  };
 
   // Only a real scope can produce a selectable list, because a device belongs
   // to a studio and the filter is studio-scoped. Without identity the panel
@@ -126,6 +169,20 @@ export function MachineFirstSetupPanel({
   const mode = chosen ? (activeModes(chosen.profile)[0] ?? null) : null;
   const groups = chosen && mode ? nativeFieldGroups(chosen.profile, mode) : [];
   const blocked = withheld(catalogue);
+
+  /**
+   * onRecord, plus the one side effect the status line needs. Counting here
+   * rather than inside MachineReadingEntry keeps the claim and its evidence in
+   * the same component: the panel may only say something was recorded if a
+   * save it issued actually returned ok.
+   */
+  const recordAndCount: typeof onRecord = onRecord
+    ? async (input) => {
+        const out = await onRecord(input);
+        if (out.ok) setSavedCount((n) => n + input.readings.length);
+        return out;
+      }
+    : undefined;
 
   return (
     <section
@@ -140,7 +197,7 @@ export function MachineFirstSetupPanel({
         {chosen && (
           <button
             type="button"
-            onClick={() => setDeviceId(null)}
+            onClick={() => void chooseDevice(null)}
             className="text-xs font-medium text-neutral-600 underline hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
           >
             Change machine
@@ -167,7 +224,7 @@ export function MachineFirstSetupPanel({
               <button
                 key={device.deviceId}
                 type="button"
-                onClick={() => setDeviceId(device.deviceId)}
+                onClick={() => void chooseDevice(device.deviceId)}
                 data-testid={`machine-pick-${device.deviceId}`}
                 className="rounded-full border border-neutral-300 bg-white px-4 py-2 text-sm text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300"
               >
@@ -181,6 +238,15 @@ export function MachineFirstSetupPanel({
         </div>
       ) : (
         <div className="flex flex-col gap-3">
+          {selectionNote && (
+            <p
+              className="text-xs text-amber-700 dark:text-amber-500"
+              role="status"
+              data-testid="machine-selection-not-remembered"
+            >
+              {selectionNote}
+            </p>
+          )}
           <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
             {chosen.device.displayName}
             <span className="ml-2 font-normal text-neutral-600 dark:text-neutral-400">
@@ -196,13 +262,13 @@ export function MachineFirstSetupPanel({
           {/* ENTRY when we know which block is being charted; otherwise the
               field contract as a read-only reference. The panel never collects
               a reading it has nowhere to put. */}
-          {blockId && onRecord && mode ? (
+          {blockId && recordAndCount && mode ? (
             <MachineReadingEntry
               profile={chosen.profile}
               mode={mode}
               blockId={blockId}
               deviceId={chosen.device.deviceId}
-              onRecord={onRecord}
+              onRecord={recordAndCount!}
             />
           ) : (
             groups.map((group) => (
@@ -278,7 +344,11 @@ export function MachineFirstSetupPanel({
 
       <MachinePriorSetup readings={priorSetup} catalogue={catalogue} />
 
-      <PersistenceStatus hasScope={scope != null} persistence={persistence} />
+      <PersistenceStatus
+        hasScope={scope != null}
+        persistence={persistence}
+        savedCount={savedCount}
+      />
     </section>
   );
 }
@@ -295,9 +365,12 @@ export function MachineFirstSetupPanel({
 function PersistenceStatus({
   hasScope,
   persistence,
+  savedCount,
 }: {
   hasScope: boolean;
   persistence: PersistenceCapability;
+  /** Readings this panel has actually saved, so the line below is derived. */
+  savedCount: number;
 }) {
   return (
     <dl
@@ -325,8 +398,16 @@ function PersistenceStatus({
       <div className="flex gap-1.5">
         <dt className="font-medium">Recorded:</dt>
         <dd>
-          nothing from this panel. The treatment fields below are unchanged and
-          remain the record.
+          {/*
+            This line used to say "nothing from this panel" unconditionally,
+            which stopped being true the moment reading entry shipped: after a
+            successful save it contradicted both the success message and the
+            rows actually inserted, leaving a practitioner unsure whether the
+            settings were stored (Codex, 9c6fbbe5).
+          */}
+          {savedCount > 0
+            ? `${savedCount} setting${savedCount === 1 ? "" : "s"} saved to this block's machine record. The treatment fields below are separate and unchanged.`
+            : "nothing from this panel yet. The treatment fields below are unchanged and remain the record."}
         </dd>
       </div>
     </dl>

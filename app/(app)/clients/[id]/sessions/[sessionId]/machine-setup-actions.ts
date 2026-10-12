@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { activeModes, type MachineProfile } from "@/lib/machines/profile-contract";
+import { nativeFieldGroups } from "@/lib/machines/charting";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import {
   latestRecordedSetup,
@@ -12,6 +13,7 @@ import {
   retireStudioMachine,
   type MachineDb,
   type ReadingInputRow,
+  type ReadingSubmission,
   type RecordedReading,
 } from "@/lib/machines/machine-queries";
 import {
@@ -30,13 +32,28 @@ import {
   type PersistenceCapability,
 } from "@/lib/machines/selection-store";
 import { listStudioDevices } from "@/lib/machines/studio-devices";
+import { assertSessionForClient } from "@/lib/sessions/session-lineage";
 
 // MPX-03 — the machine workflow's server surface.
 //
-// IDENTITY IS DERIVED, NEVER SUBMITTED. `loadMachineSetupContext` takes NO
-// arguments; the write actions take only what is being written. There is no
-// studio id or practitioner id for a client to send, so there is nothing to
-// forge. Identity comes from `getCurrentPractitionerWithStudio`, which
+// IDENTITY IS DERIVED, NEVER SUBMITTED - BUT THE SUBJECT OF THE CHART IS NOT
+// IDENTITY, AND CONFLATING THE TWO CAUSED A REAL DEFECT.
+//
+// No action here accepts a studio id or a practitioner id: those are ACTOR
+// facts, they come from `getCurrentPractitionerWithStudio`, and there is
+// nothing for a client to forge.
+//
+// `loadMachineSetupContext` originally took no arguments at all, on the theory
+// that accepting nothing is safest. It is not: with no client in scope the
+// next-visit panel could only ask "what was recorded in this STUDIO", which in
+// a multi-client studio is the wrong record and showed one client's settings on
+// another's chart (Codex, 9c6fbbe5).
+//
+// Which client's chart is open is a ROUTE fact, not a claim of authority. The
+// correct handling is the one every other charting action in this directory
+// already uses since PR #286: take it, then AUTHORIZE it with
+// `assertSessionForClient` against the server-derived studio. Accepting a
+// parameter and trusting a parameter are different things. Identity comes from `getCurrentPractitionerWithStudio`, which
 // validates the auth token against GoTrue on every request and re-checks the
 // selected-studio cookie.
 //
@@ -104,11 +121,20 @@ const ANONYMOUS: MachineSetupContext = {
 };
 
 /** Everything the panel needs, derived entirely on the server. */
-export async function loadMachineSetupContext(): Promise<MachineSetupContext> {
+export async function loadMachineSetupContext(input: {
+  /** Route values. Authorized below against the server-derived studio. */
+  clientId: string;
+  sessionId: string;
+}): Promise<MachineSetupContext> {
   const scope = await identity();
   if (!scope) return ANONYMOUS;
 
   const who = await getCurrentPractitionerWithStudio();
+
+  // The session must belong to BOTH this studio AND this route client, or the
+  // prior-setup read below would be reading another client's chart. Throws.
+  await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
+
   const db = await machineDb();
   const catalogue = [...catalogueForRuntime()];
 
@@ -126,7 +152,7 @@ export async function loadMachineSetupContext(): Promise<MachineSetupContext> {
     persistence = NO_PERSISTENCE;
   }
 
-  const prior = await latestRecordedSetup(db, scope.studioId);
+  const prior = await latestRecordedSetup(db, scope.studioId, input.clientId);
 
   return {
     scope,
@@ -277,13 +303,20 @@ export async function retireMachineAction(
  * are validated against the server's own catalogue before the write, so a
  * field the model does not have never reaches the table.
  */
+const OBSERVATION_SOURCES = [
+  "practitioner-entered",
+  "machine-displayed",
+  "device-computed",
+  "estimated",
+] as const;
+
 export async function recordReadingsAction(input: {
   blockId: string;
   machineId: string;
   modeKey: string;
   groupKey: string;
   channels: number[];
-  readings: ReadingInputRow[];
+  readings: ReadingSubmission[];
 }): Promise<ActionResult & { written?: number }> {
   const scope = await identity();
   if (!scope) {
@@ -318,13 +351,52 @@ export async function recordReadingsAction(input: {
     };
   }
 
+  // DERIVE every field descriptor from the profile the registered machine was
+  // registered against. An unknown (group, stage, field) triple is refused
+  // rather than stored, because the immutability trigger would make a wrong
+  // one permanent.
+  const contract = new Map(
+    nativeFieldGroups(profile, mode).flatMap((g) =>
+      g.fields.map((f) => [`${f.stageKey ?? ""}::${f.key}`, f] as const),
+    ),
+  );
+
+  const rows: ReadingInputRow[] = [];
+  for (const r of input.readings) {
+    if (!OBSERVATION_SOURCES.includes(r.observationSource)) {
+      return {
+        ok: false,
+        code: "rejected",
+        error: "That is not a recognised way of observing a reading.",
+      };
+    }
+    const field = contract.get(`${r.stageKey ?? ""}::${r.fieldKey}`);
+    if (!field) {
+      return {
+        ok: false,
+        code: "rejected",
+        error: `${profile.manufacturer} ${profile.model} has no field "${r.fieldKey}" in this mode, so it cannot be recorded.`,
+      };
+    }
+    rows.push({
+      stageKey: field.stageKey,
+      fieldKey: field.key,
+      value: r.value,
+      // The machine's own unit and precision, from the profile. Not the
+      // caller's opinion of them.
+      nativeUnit: field.unit,
+      decimals: field.decimals,
+      observationSource: r.observationSource,
+    });
+  }
+
   const written = await recordSetupGroup(db, {
     blockId: input.blockId,
     machineId: input.machineId,
     modeKey: input.modeKey,
     groupKey: input.groupKey,
     channels: input.channels,
-    readings: input.readings,
+    readings: rows,
   });
   if (!written.ok) {
     return { ok: false, code: "rejected", error: written.error };

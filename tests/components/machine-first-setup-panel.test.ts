@@ -326,7 +326,10 @@ describe("the panel records nothing, structurally", () => {
 // ---------------------------------------------------------------------------
 
 describe("the connected wrapper makes NO request until asked", () => {
-  const html = renderToStaticMarkup(createElement(MachineFirstSetupConnected, {}));
+  const html = renderToStaticMarkup(createElement(MachineFirstSetupConnected, {
+    clientId: "client-ana",
+    sessionId: "session-1",
+  }));
 
   it("renders a trigger, not the panel", () => {
     // THE REGRESSION THIS PINS. The first version loaded on mount, which added
@@ -378,8 +381,15 @@ describe("the connected wrapper makes NO request until asked", () => {
       .split("\n")
       .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
       .join("\n");
-    // It calls the no-argument loader and invents no identity to pass.
-    expect(code).toContain("loadMachineSetupContext()");
+    // It passes the ROUTE SUBJECT - which chart is open - and invents no
+    // identity. Those are different things, and an earlier version of this
+    // test conflated them: it demanded a no-argument loader, which is exactly
+    // what made the prior-setup read fall back to the whole studio and show
+    // one client's settings on another's chart (Codex, 9c6fbbe5).
+    expect(code).toMatch(/loadMachineSetupContext\(\{\s*clientId,\s*sessionId\s*\}\)/);
+    // No ownership, in any spelling.
+    expect(code).not.toMatch(/studioId/);
+    expect(code).not.toMatch(/practitionerId/);
     expect(code).not.toMatch(/studioId:\s*["'`]/);
     expect(code).not.toMatch(/practitionerId:\s*["'`]/);
   });
@@ -441,6 +451,11 @@ describe("historical values are untouched by anything here", () => {
   it("the machine actions touch no clinical table", () => {
     // Readings live in their own table, written only through the owner/member
     // gated command. No existing treatment record is reachable from here.
+    //
+    // Anchored to `.from("<table>")` rather than a bare substring search: the
+    // substring form fails on any mention of the word, including the import
+    // path "@/lib/sessions/session-lineage", while a real table access inside
+    // a template string would look identical to it.
     for (const table of [
       "session_blocks",
       "electrolysis_entries",
@@ -448,7 +463,9 @@ describe("historical values are untouched by anything here", () => {
       "sessions",
       "clients",
     ]) {
-      expect(code, `machine setup must not touch ${table}`).not.toContain(table);
+      expect(code, `machine setup must not select from ${table}`).not.toMatch(
+        new RegExp(`\\.from\\(\\s*["'\`]${table}["'\`]`),
+      );
     }
   });
 

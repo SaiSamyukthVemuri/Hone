@@ -146,10 +146,38 @@ describe("0223 makes the commands the only write path", () => {
       }
       expect(CODE).toContain(`grant select on public.${table} to authenticated;`);
     }
-    // No insert/update/delete reaches the browser role.
-    expect(CODE).not.toMatch(/grant[^;]*insert[^;]*to authenticated/);
-    expect(CODE).not.toMatch(/grant[^;]*update[^;]*to authenticated/);
-    expect(CODE).not.toMatch(/grant[^;]*delete[^;]*to \w+/);
+    // NO WRITE PRIVILEGE ON THESE TABLES, TO ANY ROLE.
+    //
+    // This assertion used to name `authenticated` only - and so it missed the
+    // one role for which a table grant actually matters. service_role BYPASSES
+    // RLS, so `grant insert, update on studio_machines to service_role` (which
+    // this file happily allowed, and 0223 carried until Codex found it at
+    // 9c6fbbe5) handed a backend path a write door that never executes
+    // is_studio_owner. The guard checked the role RLS protects and skipped the
+    // role RLS does not.
+    //
+    // So the invariant is now stated positively, by parsing the privilege set
+    // each role actually receives, rather than by banning the spellings I
+    // happened to think of.
+    for (const table of ["studio_machines", "treatment_setup_readings"]) {
+      const grants = [
+        ...CODE.matchAll(
+          new RegExp(`grant\\s+([^;]*?)\\s+on\\s+public\\.${table}\\s+to\\s+(\\w+);`, "g"),
+        ),
+      ];
+      expect(grants.length, `${table} must have explicit grants`).toBeGreaterThan(0);
+      for (const [, privileges, role] of grants) {
+        const set = privileges!
+          .split(",")
+          .map((p) => p.trim().toLowerCase())
+          .sort();
+        expect(
+          set,
+          `${table} grants ${privileges} to ${role}; only SELECT is permitted ` +
+            `because the SECURITY DEFINER commands are the sole write path`,
+        ).toEqual(["select"]);
+      }
+    }
   });
 
   it("gives each new table a member-scoped SELECT policy and no write policy", () => {
@@ -188,13 +216,42 @@ describe("0223 makes the commands the only write path", () => {
 
   it("every command is SECURITY DEFINER with a pinned search_path", () => {
     const defs = CODE.match(/create or replace function[\s\S]*?\$\$;/g) ?? [];
-    expect(defs.length).toBe(5); // four commands plus the trigger function
+    // Four WRITE commands, the trigger function, and one READ query.
+    expect(defs.length).toBe(6);
+    // Every routine pins its search_path, definer or not.
     for (const d of defs) {
       expect(d).toMatch(/set search_path = pg_catalog, pg_temp/);
     }
-    // The trigger function is the one that is not security definer: it runs in
-    // the context of whoever is attempting the update, and only ever raises.
-    expect(defs.filter((d) => /security definer/.test(d))).toHaveLength(4);
+    // EXACTLY the four write commands are SECURITY DEFINER. The other two are
+    // invoker by deliberate choice, for different reasons:
+    //   * the trigger function runs as whoever attempts the update and only
+    //     ever raises;
+    //   * latest_setup_for_client only READS what the caller may already read,
+    //     so RLS must stay in force rather than be bypassed and
+    //     re-implemented. Making a read definer is how a read becomes a leak.
+    const definer = defs.filter((d) => /security definer/.test(d));
+    expect(definer).toHaveLength(4);
+    for (const name of [
+      "register_studio_machine",
+      "retire_studio_machine",
+      "set_own_default_machine",
+      "record_treatment_setup_group",
+    ]) {
+      expect(
+        definer.some((d) => d.includes(name)),
+        `${name} writes, so it must be SECURITY DEFINER and check ownership`,
+      ).toBe(true);
+    }
+    const invoker = defs.filter((d) => !/security definer/.test(d));
+    expect(invoker).toHaveLength(2);
+    for (const d of invoker) {
+      expect(d).toMatch(
+        /refuse_treatment_setup_reading_update|latest_setup_for_client/,
+      );
+    }
+    // And the read is explicit about it rather than defaulting.
+    const read = defs.find((d) => d.includes("latest_setup_for_client"))!;
+    expect(read).toMatch(/security invoker/);
   });
 });
 

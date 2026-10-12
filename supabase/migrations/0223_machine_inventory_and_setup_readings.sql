@@ -121,7 +121,19 @@ revoke all on public.studio_machines from anon;
 revoke all on public.studio_machines from authenticated;
 revoke all on public.studio_machines from service_role;
 grant select on public.studio_machines to authenticated;
-grant select, insert, update on public.studio_machines to service_role;
+-- service_role gets SELECT ONLY, deliberately.
+--
+-- It previously held insert and update here. That silently undid the paragraph
+-- above: service_role bypasses RLS, so any backend path using the service-role
+-- client could have written this table WITHOUT executing is_studio_owner, which
+-- is the one check the whole command-only design rests on. Found by Codex
+-- review at 9c6fbbe5.
+--
+-- Nothing needed the write grants. lib/machines/machine-queries.ts writes only
+-- through the RPCs below and uses .from() for reads; the browser spec seeds its
+-- fixture row over a direct postgres connection, not through PostgREST. So the
+-- grants bought nothing and cost the invariant.
+grant select on public.studio_machines to service_role;
 
 -- ---------------------------------------------------------------------------
 -- PART 1 COMMANDS — owner only
@@ -428,7 +440,7 @@ create index if not exists treatment_setup_readings_studio_recorded_idx
   on public.treatment_setup_readings (studio_id, recorded_at desc);
 
 comment on table public.treatment_setup_readings is
-  '0223. One row per (block, group, stage, field) holding what the machine actually showed, in the machine''s own unit and precision, under the profile version it was captured against. Append-only: UPDATE is refused by trigger, because a material setup change is a new reading rather than an edit of a previous observation. A recorded zero is a value; an absence carries a reason.';
+  '0223. One row per (block, group, stage, field) holding what the machine actually showed, in the machine''s own unit and precision, under the profile version it was captured against. WRITE-ONCE PER FIELD PER BLOCK: UPDATE is refused by trigger and the unique index refuses a second row for the same coordinates, so a recorded observation can be neither edited nor superseded within its block. A recorded zero is a value; an absence carries a reason. KNOWN LIMITATION, recorded deliberately: this comment previously claimed "a material setup change is a new reading rather than an edit", which the unique index does not permit - a setting changed mid-block cannot be recorded at all. Whether a revision dimension should exist is a clinical-record decision for product authority, not a schema tidy-up, because it also decides what the chart displays when one field holds two observations.';
 
 create or replace function public.refuse_treatment_setup_reading_update()
 returns trigger
@@ -465,7 +477,11 @@ revoke all on public.treatment_setup_readings from anon;
 revoke all on public.treatment_setup_readings from authenticated;
 revoke all on public.treatment_setup_readings from service_role;
 grant select on public.treatment_setup_readings to authenticated;
-grant select, insert on public.treatment_setup_readings to service_role;
+-- SELECT ONLY here too, and this one matters more: these are clinical rows and
+-- the immutability trigger makes every insert permanent. An unchecked
+-- service-role insert would have been an unattributable, unamendable clinical
+-- record. record_treatment_setup_group below is the only write path.
+grant select on public.treatment_setup_readings to service_role;
 
 -- ---------------------------------------------------------------------------
 -- PART 3 COMMAND — record one settings group
@@ -587,6 +603,85 @@ comment on function public.record_treatment_setup_group(uuid, uuid, text, text, 
   '0223. Records ONE settings group for one treatment block. The block determines the studio and the caller must be an active member of it, so a block or machine in another studio is refused. The machine is required and its profile identity is copied at record time. Readings are append-only; recording again for the same field raises a unique violation rather than overwriting.';
 
 -- ---------------------------------------------------------------------------
+-- PART 4 QUERY — this CLIENT's most recent recorded setup
+-- ---------------------------------------------------------------------------
+--
+-- WHY THIS EXISTS AS A DATABASE FUNCTION RATHER THAN A FILTERED SELECT.
+--
+-- The first version of the next-visit panel read the newest reading in the
+-- STUDIO and showed it as "Latest recorded setup". In a studio with more than
+-- one client that is simply the wrong record: open Ana's chart while Bea's
+-- block is newer and Ana's panel shows Bea's settings as guidance for Ana.
+-- Found by Codex review at 9c6fbbe5.
+--
+-- It is also a defect this directory has already fixed once. PR #286 removed
+-- `assertSessionInStudio` precisely because studio-only scoping "allowed the
+-- same-studio wrong-client write", and every charting write here has validated
+-- client lineage since. A studio-only READ reintroduced the same hole on the
+-- read side, where it is arguably worse: a wrong write is at least attributable.
+--
+-- The scoping therefore lives in SQL, over the lineage the schema already
+-- guarantees (0094: block in session), so no caller can forget it.
+--
+-- SECURITY INVOKER, deliberately, unlike the four commands above. This reads
+-- only what the caller may already read, so RLS must stay in force rather than
+-- be bypassed and re-implemented. The membership check below is a fail-closed
+-- second lock, not the only one.
+create or replace function public.latest_setup_for_client(
+  p_studio_id uuid,
+  p_client_id uuid
+)
+returns jsonb
+language sql
+stable
+security invoker
+set search_path = pg_catalog, pg_temp
+as $$
+  with newest as (
+    select r.session_block_id
+      from public.treatment_setup_readings r
+      join public.session_blocks b on b.id = r.session_block_id
+      join public.sessions sn on sn.id = b.session_id
+     where r.studio_id = p_studio_id
+       and sn.studio_id = p_studio_id
+       and sn.client_id = p_client_id
+       and public.is_studio_member(p_studio_id)
+     order by r.recorded_at desc
+     limit 1
+  )
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'id', r.id,
+        'session_block_id', r.session_block_id,
+        'studio_machine_id', r.studio_machine_id,
+        'machine_profile_id', r.machine_profile_id,
+        'machine_profile_version', r.machine_profile_version,
+        'mode_key', r.mode_key,
+        'group_key', r.group_key,
+        'channels', r.channels,
+        'stage_key', r.stage_key,
+        'field_key', r.field_key,
+        'value_numeric', r.value_numeric::text,
+        'absence_reason', r.absence_reason,
+        'native_unit', r.native_unit,
+        'decimals', r.decimals,
+        'observation_source', r.observation_source,
+        'recorded_by_practitioner_id', r.recorded_by_practitioner_id,
+        'recorded_at', r.recorded_at
+      )
+      order by r.field_key
+    ),
+    '[]'::jsonb
+  )
+    from public.treatment_setup_readings r
+   where r.session_block_id = (select session_block_id from newest);
+$$;
+
+comment on function public.latest_setup_for_client(uuid, uuid) is
+  '0223. The readings of the most recent block RECORDED FOR THIS CLIENT, as a jsonb array, for next-visit guidance. Scoped through session_blocks -> sessions.client_id so a studio-mate''s newer block can never be shown as this client''s setup. SECURITY INVOKER: RLS stays in force and is_studio_member is a fail-closed second lock. value_numeric is emitted as TEXT so a recorded zero and the machine''s own precision survive JSON.';
+
+-- ---------------------------------------------------------------------------
 -- GRANTS — re-asserted by name on every command
 -- ---------------------------------------------------------------------------
 --
@@ -620,6 +715,16 @@ revoke execute on function public.record_treatment_setup_group(uuid, uuid, text,
 grant execute on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb) to authenticated;
 
 -- The immutability trigger function is internal: nothing may call it directly.
+-- A READ, but granted exactly as explicitly as the writes: Supabase's ALTER
+-- DEFAULT PRIVILEGES hands EXECUTE to anon, authenticated AND service_role at
+-- create time, so all four are revoked by name first. This is the 0129 (anon)
+-- and 0164 (service_role) lesson, and it applies to a query just as much.
+revoke execute on function public.latest_setup_for_client(uuid, uuid) from public;
+revoke execute on function public.latest_setup_for_client(uuid, uuid) from anon;
+revoke execute on function public.latest_setup_for_client(uuid, uuid) from authenticated;
+revoke execute on function public.latest_setup_for_client(uuid, uuid) from service_role;
+grant execute on function public.latest_setup_for_client(uuid, uuid) to authenticated;
+
 revoke execute on function public.refuse_treatment_setup_reading_update() from public;
 revoke execute on function public.refuse_treatment_setup_reading_update() from anon;
 revoke execute on function public.refuse_treatment_setup_reading_update() from authenticated;

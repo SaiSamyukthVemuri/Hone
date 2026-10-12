@@ -70,7 +70,7 @@ async function registerMachine(studioId: string, displayName: string) {
   return id;
 }
 
-async function readingsFor(blockId: string) {
+async function readingsFor({ blockId }: { blockId: string }) {
   return sql<{
     field_key: string;
     value_numeric: string | null;
@@ -86,6 +86,22 @@ async function readingsFor(blockId: string) {
       where session_block_id = $1
       order by field_key`,
     [blockId],
+  );
+}
+
+/**
+ * Every reading in a studio, for the "nothing was recorded" claim. Separate
+ * from readingsFor({ blockId }) on purpose: the gate-closed branch has no block
+ * to name, and reaching for the nearest id in scope is what made that
+ * assertion vacuous in the first place.
+ */
+async function readingsInStudio(studioId: string) {
+  return sql<{ field_key: string; session_block_id: string }>(
+    `select field_key, session_block_id
+       from public.treatment_setup_readings
+      where studio_id = $1
+      order by field_key`,
+    [studioId],
   );
 }
 
@@ -159,8 +175,17 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
       ).toBeVisible({ timeout: T });
       expect(await page.locator('[data-testid^="machine-pick-"]').count()).toBe(0);
       // Nothing was recorded, because nothing could be.
-      const rows = await readingsFor(machineId);
-      expect(rows).toHaveLength(0);
+      //
+      // THIS ASSERTION WAS VACUOUS until Codex found it at 9c6fbbe5: it called
+      // readingsFor(machineId) while the helper filters session_block_id, so
+      // two unrelated UUIDs guaranteed an empty result and the expectation
+      // could not fail. It had already "passed" on three CI runners.
+      //
+      // Scoped to the STUDIO now, which is a stronger claim than the one
+      // originally intended - nothing was recorded anywhere in this studio, not
+      // merely nothing against this machine - and there is no id to mismatch.
+      const rows = await readingsInStudio(seed.studioId);
+      expect(rows, "a reading was recorded while no profile was selectable").toHaveLength(0);
     });
     test.info().annotations.push({
       type: "gate-closed",
@@ -231,7 +256,7 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
     await page.getByTestId("machine-reading-save").click();
     await expect(page.getByTestId("machine-reading-saved")).toBeVisible({ timeout: T });
 
-    const rows = await readingsFor(blockId);
+    const rows = await readingsFor({ blockId });
     expect(rows.map((r) => r.field_key)).toEqual(["current", "duration"]);
     const byField = new Map(rows.map((r) => [r.field_key, r]));
     // Native unit and the machine's precision survive the browser round trip.
@@ -248,7 +273,7 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
   await test.step("7: a recorded reading is IMMUTABLE — re-saving the same field is refused", async () => {
     // Not a UI claim: the database refuses it, so a second save cannot
     // overwrite the first observation.
-    const before = await readingsFor(blockId);
+    const before = await readingsFor({ blockId });
     let refused = false;
     try {
       await sql(
@@ -264,7 +289,7 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
       refused = true;
     }
     expect(refused, "a duplicate reading for the same field was accepted").toBe(true);
-    const after = await readingsFor(blockId);
+    const after = await readingsFor({ blockId });
     expect(after).toEqual(before);
   });
 
@@ -306,7 +331,7 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
   });
 
   await test.step("10: the earlier reading is unchanged by the new visit", async () => {
-    const rows = await readingsFor(blockId);
+    const rows = await readingsFor({ blockId });
     const byField = new Map(rows.map((r) => [r.field_key, r]));
     expect(byField.get("current")!.value_numeric).toBe("135");
     expect(byField.get("duration")!.value_numeric).toBe("300.5");
