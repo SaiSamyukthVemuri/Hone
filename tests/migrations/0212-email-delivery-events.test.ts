@@ -60,16 +60,6 @@ function tableOf(name: string): string {
 describe("0212 sits correctly in the migration sequence", () => {
   it("is no longer the repository maximum", () => {
     // HANDED OFF, per CLAUDE.md §2: only the CURRENT max may assert
-<<<<<<< HEAD
-    // `isRepoMax`. It left this file for 0213's own test when the lanes were
-    // stacked 0211 -> 0212 -> 0213 (shared census,
-    // /home/sam/hone-migration-coordination.md).
-    expect(isRepoMax(VERSION)).toBe(false);
-    // DERIVED, NOT PINNED: something sits above it, and everything above it is greater.
-    const above = versionsAbove(VERSION);
-    expect(above.length, "nothing sits above this migration").toBeGreaterThan(0);
-    expect(above.every((v) => Number(v) > Number(VERSION))).toBe(true);
-=======
     // `isRepoMax`, and that claim now lives in the newest migration's own test.
     expect(isRepoMax(VERSION)).toBe(false);
     const above = versionsAbove(VERSION);
@@ -78,7 +68,6 @@ describe("0212 sits correctly in the migration sequence", () => {
       above.every((v) => Number(v) > Number(VERSION)),
       "versionsAbove returned a version at or below its own",
     ).toBe(true);
->>>>>>> 91fb2e54f4966dc6e905199f36aa90794181a70f
   });
 
   it("is allocated exactly once", () => {
