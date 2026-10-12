@@ -1,0 +1,865 @@
+import { afterAll, describe, expect, it } from "vitest";
+
+import {
+  adminQuery,
+  asUser,
+  closePool,
+  seedMember,
+  seedSession,
+  seedStudio,
+  type SeededStudio,
+} from "./helpers/harness";
+
+// ===========================================================================
+// 0223 — machine inventory, the remembered selection, and setup readings.
+//
+// WHAT THIS FILE IS FOR. A source-contract test cannot see inside a plpgsql
+// body, and a clean apply proves only that the SQL parsed. Every command added
+// by 0223 is therefore CALLED here against a real database: that is the lesson
+// 0204 taught, where a command wrote to a column that did not exist, applied
+// clean, passed its source test, and had never once succeeded.
+//
+// SYNTHETIC PROFILE IDS THROUGHOUT. The curated catalogue offers zero profiles
+// because no exact model's evidence is complete, and 0223 deliberately does not
+// constrain `machine_profile_id` to a known set - activation is a reviewed
+// evidence decision, not applied SQL. So these fixtures use obviously
+// synthetic ids. Nothing here activates a real model or implies one is ready.
+// ===========================================================================
+
+const PROFILE = "fixture:db-multineedle";
+const VERSION = 2;
+
+afterAll(async () => {
+  await closePool();
+});
+
+/** Register one synthetic machine as the studio's owner. */
+async function registerMachine(
+  studio: SeededStudio,
+  displayName: string,
+  opts: { profile?: string; version?: number; options?: string[] } = {},
+): Promise<string> {
+  return asUser(studio.userId, async (q) => {
+    const r = await q(
+      `select public.register_studio_machine($1, $2, $3, $4, $5) as id`,
+      [
+        studio.studioId,
+        opts.profile ?? PROFILE,
+        opts.version ?? VERSION,
+        displayName,
+        opts.options ?? [],
+      ],
+    );
+    return r.rows[0].id as string;
+  });
+}
+
+const READINGS = [
+  {
+    field_key: "current",
+    value: "120",
+    native_unit: "µA",
+    decimals: 0,
+    observation_source: "practitioner-entered",
+  },
+  {
+    field_key: "duration",
+    value: "300.5",
+    native_unit: "s",
+    decimals: 1,
+    observation_source: "practitioner-entered",
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Part 1 — inventory ownership
+// ---------------------------------------------------------------------------
+
+describe("0223 · the studio's machine inventory is owner-written", () => {
+  it("an owner registers a machine and every member can read it", async () => {
+    const studio = await seedStudio("mpx-own");
+    const member = await seedMember(studio, "mpx-member");
+    const id = await registerMachine(studio, "Room 1");
+    expect(id).toBeTruthy();
+
+    // A plain practitioner reads it through RLS.
+    const seen = await asUser(member.userId, (q) =>
+      q(`select display_name, machine_profile_version from public.studio_machines where id = $1`, [
+        id,
+      ]),
+    );
+    expect(seen.rows).toHaveLength(1);
+    expect(seen.rows[0].display_name).toBe("Room 1");
+    expect(seen.rows[0].machine_profile_version).toBe(VERSION);
+  });
+
+  it("a NON-OWNER member cannot register one", async () => {
+    const studio = await seedStudio("mpx-nonowner");
+    const member = await seedMember(studio, "mpx-plain");
+    await expect(
+      asUser(member.userId, (q) =>
+        q(`select public.register_studio_machine($1, $2, $3, $4, $5)`, [
+          studio.studioId,
+          PROFILE,
+          VERSION,
+          "Smuggled",
+          [],
+        ]),
+      ),
+    ).rejects.toThrow(/only the studio owner/i);
+  });
+
+  it("an owner of ANOTHER studio cannot register into this one", async () => {
+    // The studio id is a filter, never an authorization claim.
+    const mine = await seedStudio("mpx-mine");
+    const theirs = await seedStudio("mpx-theirs");
+    await expect(
+      asUser(theirs.userId, (q) =>
+        q(`select public.register_studio_machine($1, $2, $3, $4, $5)`, [
+          mine.studioId,
+          PROFILE,
+          VERSION,
+          "Cross studio",
+          [],
+        ]),
+      ),
+    ).rejects.toThrow(/only the studio owner/i);
+  });
+
+  it("direct INSERT is refused for an authenticated member", async () => {
+    // The commands are the only write path; table DML is revoked.
+    const studio = await seedStudio("mpx-direct");
+    await expect(
+      asUser(studio.userId, (q) =>
+        q(
+          `insert into public.studio_machines
+             (studio_id, machine_profile_id, machine_profile_version, display_name)
+           values ($1, $2, $3, 'Forged')`,
+          [studio.studioId, PROFILE, VERSION],
+        ),
+      ),
+    ).rejects.toThrow(/permission denied/i);
+  });
+
+  it("a member of another studio cannot SEE this studio's machines", async () => {
+    const mine = await seedStudio("mpx-vis-a");
+    const other = await seedStudio("mpx-vis-b");
+    const id = await registerMachine(mine, "Private room");
+    const seen = await asUser(other.userId, (q) =>
+      q(`select id from public.studio_machines where id = $1`, [id]),
+    );
+    expect(seen.rows).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Part 2 — the remembered selection
+// ---------------------------------------------------------------------------
+
+describe("0223 · the remembered machine is per practitioner per studio", () => {
+  it("PERSISTS to the database and survives a fresh connection (reload)", async () => {
+    const studio = await seedStudio("mpx-remember");
+    const id = await registerMachine(studio, "Room 1");
+
+    await asUser(studio.userId, (q) =>
+      q(`select public.set_own_default_machine($1, $2, $3)`, [
+        studio.studioId,
+        id,
+        "galvanic",
+      ]),
+    );
+
+    // A SEPARATE connection and transaction - this is the reload proof. The
+    // value came out of Postgres, not out of a test double.
+    const reloaded = await asUser(studio.userId, (q) =>
+      q(
+        `select default_machine_id, default_machine_mode
+           from public.practitioners where id = $1`,
+        [studio.practitionerId],
+      ),
+    );
+    expect(reloaded.rows[0].default_machine_id).toBe(id);
+    expect(reloaded.rows[0].default_machine_mode).toBe("galvanic");
+  });
+
+  it("ISOLATES two practitioners in one studio", async () => {
+    const studio = await seedStudio("mpx-iso-one");
+    const member = await seedMember(studio, "mpx-iso-member");
+    const a = await registerMachine(studio, "Room A");
+    const b = await registerMachine(studio, "Room B");
+
+    await asUser(studio.userId, (q) =>
+      q(`select public.set_own_default_machine($1, $2, $3)`, [studio.studioId, a, "m1"]),
+    );
+    await asUser(member.userId, (q) =>
+      q(`select public.set_own_default_machine($1, $2, $3)`, [studio.studioId, b, "m2"]),
+    );
+
+    const rows = await adminQuery(
+      `select id, default_machine_id from public.practitioners
+        where id in ($1, $2)`,
+      [studio.practitionerId, member.practitionerId],
+    );
+    const byId = new Map(rows.rows.map((r) => [r.id, r.default_machine_id]));
+    expect(byId.get(studio.practitionerId)).toBe(a);
+    expect(byId.get(member.practitionerId)).toBe(b);
+  });
+
+  it("ISOLATES one person across two studios", async () => {
+    // One auth user, two studios, two practitioner rows. The remembered
+    // machine belongs to the (studio, practitioner) pair.
+    const first = await seedStudio("mpx-two-a");
+    const secondStudioId = (
+      await adminQuery(
+        `insert into public.studios (id, name, owner_email)
+         values (gen_random_uuid(), 'Harness mpx-two-b', 'mpx-two-b@harness.local')
+         returning id`,
+      )
+    ).rows[0].id as string;
+    const secondPractId = (
+      await adminQuery(
+        `insert into public.practitioners
+           (id, studio_id, user_id, display_name, email, role, active)
+         values (gen_random_uuid(), $1, $2, 'Same person', 'mpx-two-b@harness.local', 'owner', true)
+         returning id`,
+        [secondStudioId, first.userId],
+      )
+    ).rows[0].id as string;
+
+    const inFirst = await registerMachine(first, "First studio unit");
+    const inSecond = await asUser(first.userId, async (q) => {
+      const r = await q(`select public.register_studio_machine($1, $2, $3, $4, $5) as id`, [
+        secondStudioId,
+        PROFILE,
+        VERSION,
+        "Second studio unit",
+        [],
+      ]);
+      return r.rows[0].id as string;
+    });
+
+    await asUser(first.userId, (q) =>
+      q(`select public.set_own_default_machine($1, $2, $3)`, [
+        first.studioId,
+        inFirst,
+        "m",
+      ]),
+    );
+    await asUser(first.userId, (q) =>
+      q(`select public.set_own_default_machine($1, $2, $3)`, [
+        secondStudioId,
+        inSecond,
+        "m",
+      ]),
+    );
+
+    const rows = await adminQuery(
+      `select id, default_machine_id from public.practitioners where id in ($1, $2)`,
+      [first.practitionerId, secondPractId],
+    );
+    const byId = new Map(rows.rows.map((r) => [r.id, r.default_machine_id]));
+    expect(byId.get(first.practitionerId)).toBe(inFirst);
+    expect(byId.get(secondPractId)).toBe(inSecond);
+  });
+
+  it("REFUSES a machine from another studio", async () => {
+    const mine = await seedStudio("mpx-xs-a");
+    const theirs = await seedStudio("mpx-xs-b");
+    const theirMachine = await registerMachine(theirs, "Their room");
+    await expect(
+      asUser(mine.userId, (q) =>
+        q(`select public.set_own_default_machine($1, $2, $3)`, [
+          mine.studioId,
+          theirMachine,
+          "m",
+        ]),
+      ),
+    ).rejects.toThrow(/belongs to another studio/i);
+  });
+
+  it("returns NULL for a caller with no membership in that studio", async () => {
+    const mine = await seedStudio("mpx-nomem-a");
+    const theirs = await seedStudio("mpx-nomem-b");
+    const r = await asUser(mine.userId, (q) =>
+      q(`select public.set_own_default_machine($1, null, null) as pract`, [
+        theirs.studioId,
+      ]),
+    );
+    expect(r.rows[0].pract).toBeNull();
+  });
+
+  it("writes only the CALLER's own row, never another practitioner's", async () => {
+    const studio = await seedStudio("mpx-ownrow");
+    const member = await seedMember(studio, "mpx-ownrow-member");
+    const id = await registerMachine(studio, "Room 1");
+    await asUser(member.userId, (q) =>
+      q(`select public.set_own_default_machine($1, $2, $3)`, [studio.studioId, id, "m"]),
+    );
+    // The owner's own row is untouched: the command accepts no practitioner id.
+    const owner = await adminQuery(
+      `select default_machine_id from public.practitioners where id = $1`,
+      [studio.practitionerId],
+    );
+    expect(owner.rows[0].default_machine_id).toBeNull();
+  });
+
+  it("retiring a machine clears it from every practitioner default", async () => {
+    const studio = await seedStudio("mpx-retire");
+    const id = await registerMachine(studio, "Doomed room");
+    await asUser(studio.userId, (q) =>
+      q(`select public.set_own_default_machine($1, $2, $3)`, [studio.studioId, id, "m"]),
+    );
+    const retired = await asUser(studio.userId, (q) =>
+      q(`select public.retire_studio_machine($1) as done`, [id]),
+    );
+    expect(retired.rows[0].done).toBe(true);
+
+    const after = await adminQuery(
+      `select default_machine_id from public.practitioners where id = $1`,
+      [studio.practitionerId],
+    );
+    expect(after.rows[0].default_machine_id).toBeNull();
+
+    // And it cannot be chosen again.
+    await expect(
+      asUser(studio.userId, (q) =>
+        q(`select public.set_own_default_machine($1, $2, $3)`, [studio.studioId, id, "m"]),
+      ),
+    ).rejects.toThrow(/out of service/i);
+  });
+
+  it("a clearing write leaves the mode cleared too", async () => {
+    const studio = await seedStudio("mpx-clear");
+    const id = await registerMachine(studio, "Room 1");
+    await asUser(studio.userId, (q) =>
+      q(`select public.set_own_default_machine($1, $2, $3)`, [studio.studioId, id, "galvanic"]),
+    );
+    await asUser(studio.userId, (q) =>
+      q(`select public.set_own_default_machine($1, null, 'ignored')`, [studio.studioId]),
+    );
+    const after = await adminQuery(
+      `select default_machine_id, default_machine_mode
+         from public.practitioners where id = $1`,
+      [studio.practitionerId],
+    );
+    expect(after.rows[0].default_machine_id).toBeNull();
+    expect(after.rows[0].default_machine_mode).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Part 3 — readings
+// ---------------------------------------------------------------------------
+
+describe("0223 · native readings persist, and cannot be rewritten", () => {
+  it("PERSISTS a group with native units and precision intact", async () => {
+    const studio = await seedStudio("mpx-read");
+    const { blockId } = await seedSession(studio);
+    const machineId = await registerMachine(studio, "Room 1");
+
+    const wrote = await asUser(studio.userId, (q) =>
+      q(
+        `select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb) as n`,
+        [blockId, machineId, "galvanic", "g1", [1, 2], JSON.stringify(READINGS)],
+      ),
+    );
+    expect(wrote.rows[0].n).toBe(2);
+
+    // Reload through RLS on a fresh connection.
+    const back = await asUser(studio.userId, (q) =>
+      q(
+        `select field_key, value_numeric::text as v, native_unit, decimals,
+                machine_profile_id, machine_profile_version, channels,
+                observation_source, recorded_by_practitioner_id
+           from public.treatment_setup_readings
+          where session_block_id = $1
+          order by field_key`,
+        [blockId],
+      ),
+    );
+    expect(back.rows.map((r) => r.field_key)).toEqual(["current", "duration"]);
+    expect(back.rows[0].native_unit).toBe("µA");
+    expect(back.rows[0].v).toBe("120");
+    // Native precision survives the round trip: 300.5 is not truncated to 300.
+    expect(back.rows[1].v).toBe("300.5");
+    expect(back.rows[1].decimals).toBe(1);
+    // The profile identity was copied from the unit at record time.
+    expect(back.rows[0].machine_profile_id).toBe(PROFILE);
+    expect(back.rows[0].machine_profile_version).toBe(VERSION);
+    expect(back.rows[0].channels).toEqual([1, 2]);
+    expect(back.rows[0].recorded_by_practitioner_id).toBe(studio.practitionerId);
+  });
+
+  it("keeps a recorded ZERO as a value, and an absence as a reason", async () => {
+    const studio = await seedStudio("mpx-zero");
+    const { blockId } = await seedSession(studio);
+    const machineId = await registerMachine(studio, "Room 1");
+    await asUser(studio.userId, (q) =>
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+        blockId,
+        machineId,
+        "galvanic",
+        "g1",
+        [],
+        JSON.stringify([
+          {
+            field_key: "repeat",
+            value: "0",
+            native_unit: "count",
+            decimals: 0,
+            observation_source: "practitioner-entered",
+          },
+          {
+            field_key: "duration",
+            absence_reason: "not-recorded",
+            native_unit: "s",
+            decimals: 0,
+            observation_source: "practitioner-entered",
+          },
+        ]),
+      ]),
+    );
+    const back = await adminQuery(
+      `select field_key, value_numeric::text as v, absence_reason
+         from public.treatment_setup_readings
+        where session_block_id = $1 order by field_key`,
+      [blockId],
+    );
+    const byField = new Map(back.rows.map((r) => [r.field_key, r]));
+    // A zero is a VALUE, not an absence.
+    expect(byField.get("repeat").v).toBe("0");
+    expect(byField.get("repeat").absence_reason).toBeNull();
+    // An absence carries its reason and no number.
+    expect(byField.get("duration").v).toBeNull();
+    expect(byField.get("duration").absence_reason).toBe("not-recorded");
+  });
+
+  it("refuses a row that is neither a value nor a reasoned absence", async () => {
+    const studio = await seedStudio("mpx-xor");
+    const { blockId } = await seedSession(studio);
+    const machineId = await registerMachine(studio, "Room 1");
+    await expect(
+      asUser(studio.userId, (q) =>
+        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+          blockId,
+          machineId,
+          "galvanic",
+          "g1",
+          [],
+          JSON.stringify([
+            {
+              field_key: "nothing",
+              native_unit: "s",
+              decimals: 0,
+              observation_source: "practitioner-entered",
+            },
+          ]),
+        ]),
+      ),
+    ).rejects.toThrow(/treatment_setup_readings_value_xor/i);
+  });
+
+  it("preserves TWO settings groups when probes differ", async () => {
+    const studio = await seedStudio("mpx-groups");
+    const { blockId } = await seedSession(studio);
+    const machineId = await registerMachine(studio, "Room 1");
+    for (const [group, channels, current] of [
+      ["g1", [1, 2], "120"],
+      ["g2", [3], "90"],
+    ] as const) {
+      await asUser(studio.userId, (q) =>
+        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+          blockId,
+          machineId,
+          "galvanic",
+          group,
+          channels,
+          JSON.stringify([
+            {
+              field_key: "current",
+              value: current,
+              native_unit: "µA",
+              decimals: 0,
+              observation_source: "practitioner-entered",
+            },
+          ]),
+        ]),
+      );
+    }
+    const back = await adminQuery(
+      `select group_key, value_numeric::text as v, channels
+         from public.treatment_setup_readings
+        where session_block_id = $1 order by group_key`,
+      [blockId],
+    );
+    expect(back.rows).toHaveLength(2);
+    expect(back.rows[0].v).toBe("120");
+    expect(back.rows[1].v).toBe("90");
+    // Sixteen rows were never required: two groups, one reading each.
+    expect(back.rows[0].channels).toEqual([1, 2]);
+    expect(back.rows[1].channels).toEqual([3]);
+  });
+
+  it("IS IMMUTABLE — an update is refused even with admin rights", async () => {
+    const studio = await seedStudio("mpx-immutable");
+    const { blockId } = await seedSession(studio);
+    const machineId = await registerMachine(studio, "Room 1");
+    await asUser(studio.userId, (q) =>
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+        blockId,
+        machineId,
+        "galvanic",
+        "g1",
+        [],
+        JSON.stringify(READINGS),
+      ]),
+    );
+    // Not an RLS refusal: the trigger protects the observation from EVERY
+    // path, including a future application bug running as service_role.
+    await expect(
+      adminQuery(
+        `update public.treatment_setup_readings set value_numeric = 999
+          where session_block_id = $1`,
+        [blockId],
+      ),
+    ).rejects.toThrow(/immutable/i);
+
+    const unchanged = await adminQuery(
+      `select value_numeric::text as v from public.treatment_setup_readings
+        where session_block_id = $1 and field_key = 'current'`,
+      [blockId],
+    );
+    expect(unchanged.rows[0].v).toBe("120");
+  });
+
+  it("refuses a second reading for the same field rather than overwriting", async () => {
+    const studio = await seedStudio("mpx-dup");
+    const { blockId } = await seedSession(studio);
+    const machineId = await registerMachine(studio, "Room 1");
+    const once = () =>
+      asUser(studio.userId, (q) =>
+        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+          blockId,
+          machineId,
+          "galvanic",
+          "g1",
+          [],
+          JSON.stringify(READINGS),
+        ]),
+      );
+    await once();
+    await expect(once()).rejects.toThrow(
+      /treatment_setup_readings_field_uniq|duplicate key/i,
+    );
+  });
+});
+
+describe("0223 · cross-studio refusal on the reading path", () => {
+  it("refuses a block belonging to another studio", async () => {
+    const mine = await seedStudio("mpx-blk-a");
+    const theirs = await seedStudio("mpx-blk-b");
+    const theirBlock = (await seedSession(theirs)).blockId;
+    const myMachine = await registerMachine(mine, "My room");
+    await expect(
+      asUser(mine.userId, (q) =>
+        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+          theirBlock,
+          myMachine,
+          "galvanic",
+          "g1",
+          [],
+          JSON.stringify(READINGS),
+        ]),
+      ),
+    ).rejects.toThrow(/not an active member of this studio/i);
+  });
+
+  it("refuses a machine belonging to another studio", async () => {
+    const mine = await seedStudio("mpx-mach-a");
+    const theirs = await seedStudio("mpx-mach-b");
+    const myBlock = (await seedSession(mine)).blockId;
+    const theirMachine = await registerMachine(theirs, "Their room");
+    await expect(
+      asUser(mine.userId, (q) =>
+        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+          myBlock,
+          theirMachine,
+          "galvanic",
+          "g1",
+          [],
+          JSON.stringify(READINGS),
+        ]),
+      ),
+    ).rejects.toThrow(/belongs to another studio/i);
+  });
+
+  it("requires a machine: no machine, no reading", async () => {
+    const studio = await seedStudio("mpx-nomach");
+    const { blockId } = await seedSession(studio);
+    await expect(
+      asUser(studio.userId, (q) =>
+        q(`select public.record_treatment_setup_group($1, null, $2, $3, $4, $5::jsonb)`, [
+          blockId,
+          "galvanic",
+          "g1",
+          [],
+          JSON.stringify(READINGS),
+        ]),
+      ),
+    ).rejects.toThrow(/choose the machine/i);
+  });
+
+  it("a member of another studio cannot READ these readings", async () => {
+    const mine = await seedStudio("mpx-vis-r-a");
+    const other = await seedStudio("mpx-vis-r-b");
+    const { blockId } = await seedSession(mine);
+    const machineId = await registerMachine(mine, "Room 1");
+    await asUser(mine.userId, (q) =>
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+        blockId,
+        machineId,
+        "galvanic",
+        "g1",
+        [],
+        JSON.stringify(READINGS),
+      ]),
+    );
+    const seen = await asUser(other.userId, (q) =>
+      q(`select id from public.treatment_setup_readings where session_block_id = $1`, [
+        blockId,
+      ]),
+    );
+    expect(seen.rows).toEqual([]);
+  });
+
+  it("direct INSERT into readings is refused for an authenticated member", async () => {
+    const studio = await seedStudio("mpx-read-direct");
+    const { blockId } = await seedSession(studio);
+    await expect(
+      asUser(studio.userId, (q) =>
+        q(
+          `insert into public.treatment_setup_readings
+             (studio_id, session_block_id, machine_profile_id, machine_profile_version,
+              mode_key, group_key, field_key, value_numeric, native_unit, decimals,
+              observation_source)
+           values ($1, $2, 'forged', 1, 'm', 'g1', 'f', 1, 's', 0, 'practitioner-entered')`,
+          [studio.studioId, blockId],
+        ),
+      ),
+    ).rejects.toThrow(/permission denied/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Next visit
+// ---------------------------------------------------------------------------
+
+describe("0223 · next-visit retrieval returns the prior setup accurately", () => {
+  it("gives back the most recent block's readings for the client, with provenance", async () => {
+    const studio = await seedStudio("mpx-next");
+    const machineId = await registerMachine(studio, "Room 1");
+
+    // Two visits. The earlier one is backdated so ordering is unambiguous.
+    const first = await seedSession(studio);
+    await asUser(studio.userId, (q) =>
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+        first.blockId,
+        machineId,
+        "galvanic",
+        "g1",
+        [],
+        JSON.stringify([
+          {
+            field_key: "current",
+            value: "80",
+            native_unit: "µA",
+            decimals: 0,
+            observation_source: "practitioner-entered",
+          },
+        ]),
+      ]),
+    );
+    // Backdating is IMPOSSIBLE by design, and trying to is a second proof of
+    // immutability: a recorded_at cannot be moved any more than a value can.
+    // Ordering therefore rests on the real insert instants, which differ
+    // because each command runs in its own transaction.
+    await expect(
+      adminQuery(
+        `update public.treatment_setup_readings
+            set recorded_at = now() - interval '28 days'
+          where session_block_id = $1`,
+        [first.blockId],
+      ),
+    ).rejects.toThrow(/immutable/i);
+
+    const second = await seedSession(studio);
+    await asUser(studio.userId, (q) =>
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+        second.blockId,
+        machineId,
+        "galvanic",
+        "g1",
+        [],
+        JSON.stringify([
+          {
+            field_key: "current",
+            value: "135",
+            native_unit: "µA",
+            decimals: 0,
+            observation_source: "practitioner-entered",
+          },
+        ]),
+      ]),
+    );
+
+    // The clinical question: what was she set to most recently?
+    const latest = await asUser(studio.userId, (q) =>
+      q(
+        `select r.value_numeric::text as v, r.native_unit, r.mode_key,
+                r.machine_profile_id, r.machine_profile_version,
+                r.session_block_id, r.recorded_at
+           from public.treatment_setup_readings r
+          where r.studio_id = $1 and r.field_key = 'current'
+          order by r.recorded_at desc
+          limit 1`,
+        [studio.studioId],
+      ),
+    );
+    expect(latest.rows[0].v).toBe("135");
+    expect(latest.rows[0].native_unit).toBe("µA");
+    expect(latest.rows[0].session_block_id).toBe(second.blockId);
+    // Model identity and the version it was captured under come back with it,
+    // so a historical renderer can use the RECORDED contract.
+    expect(latest.rows[0].machine_profile_id).toBe(PROFILE);
+    expect(latest.rows[0].machine_profile_version).toBe(VERSION);
+  });
+
+  it("the earlier visit's value is still there, unchanged", async () => {
+    // Recording a new visit adds; it never edits what the last one said.
+    const studio = await seedStudio("mpx-hist");
+    const machineId = await registerMachine(studio, "Room 1");
+    const first = await seedSession(studio);
+    await asUser(studio.userId, (q) =>
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+        first.blockId,
+        machineId,
+        "galvanic",
+        "g1",
+        [],
+        JSON.stringify([
+          {
+            field_key: "current",
+            value: "80",
+            native_unit: "µA",
+            decimals: 0,
+            observation_source: "practitioner-entered",
+          },
+        ]),
+      ]),
+    );
+    const second = await seedSession(studio);
+    await asUser(studio.userId, (q) =>
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+        second.blockId,
+        machineId,
+        "galvanic",
+        "g1",
+        [],
+        JSON.stringify([
+          {
+            field_key: "current",
+            value: "135",
+            native_unit: "µA",
+            decimals: 0,
+            observation_source: "practitioner-entered",
+          },
+        ]),
+      ]),
+    );
+    const firstStill = await adminQuery(
+      `select value_numeric::text as v from public.treatment_setup_readings
+        where session_block_id = $1 and field_key = 'current'`,
+      [first.blockId],
+    );
+    expect(firstStill.rows[0].v).toBe("80");
+  });
+
+  it("a reading outlives the unit being retired", async () => {
+    // Retiring a machine must not erase what it recorded.
+    const studio = await seedStudio("mpx-outlive");
+    const { blockId } = await seedSession(studio);
+    const machineId = await registerMachine(studio, "Room 1");
+    await asUser(studio.userId, (q) =>
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+        blockId,
+        machineId,
+        "galvanic",
+        "g1",
+        [],
+        JSON.stringify(READINGS),
+      ]),
+    );
+    await asUser(studio.userId, (q) =>
+      q(`select public.retire_studio_machine($1)`, [machineId]),
+    );
+    const still = await adminQuery(
+      `select value_numeric::text as v, machine_profile_id, studio_machine_id
+         from public.treatment_setup_readings
+        where session_block_id = $1 and field_key = 'current'`,
+      [blockId],
+    );
+    expect(still.rows[0].v).toBe("120");
+    expect(still.rows[0].machine_profile_id).toBe(PROFILE);
+    expect(still.rows[0].studio_machine_id).toBe(machineId);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Existing values are not disturbed
+// ---------------------------------------------------------------------------
+
+describe("0223 · existing historical values are untouched", () => {
+  it("adds its columns as NULL and alters no existing block value", async () => {
+    const studio = await seedStudio("mpx-legacy");
+    const { blockId } = await seedSession(studio);
+    await adminQuery(
+      `update public.session_blocks
+          set apilus_modality = 'Multiplex', energy_level = 7.25,
+              machine_frequency = '13.56 MHz'
+        where id = $1`,
+      [blockId],
+    );
+    const machineId = await registerMachine(studio, "Room 1");
+    await asUser(studio.userId, (q) =>
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+        blockId,
+        machineId,
+        "galvanic",
+        "g1",
+        [],
+        JSON.stringify(READINGS),
+      ]),
+    );
+    const block = await adminQuery(
+      `select apilus_modality, energy_level::text as e, machine_frequency
+         from public.session_blocks where id = $1`,
+      [blockId],
+    );
+    // The legacy columns are exactly as they were. 0223 reads none of them and
+    // reinterprets none of them.
+    expect(block.rows[0].apilus_modality).toBe("Multiplex");
+    expect(block.rows[0].e).toBe("7.25");
+    expect(block.rows[0].machine_frequency).toBe("13.56 MHz");
+  });
+
+  it("a practitioner who never chose a machine has NULL defaults", async () => {
+    const studio = await seedStudio("mpx-nullcols");
+    const row = await adminQuery(
+      `select default_machine_id, default_machine_mode
+         from public.practitioners where id = $1`,
+      [studio.practitionerId],
+    );
+    expect(row.rows[0].default_machine_id).toBeNull();
+    expect(row.rows[0].default_machine_mode).toBeNull();
+  });
+});
