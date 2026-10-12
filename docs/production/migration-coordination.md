@@ -1,31 +1,57 @@
-# Migration number coordination — in-flight claims
+# Allocating a migration number across concurrent lanes
 
-**What this file is.** A register of migration numbers **claimed on unmerged
-heads**, so eight concurrent lanes do not collide. Owned by the DB/WAIT lane as
-migration-coordination owner for the #824 sprint.
+**This file is process and traps. It deliberately holds NO reservation table.**
 
-**What this file is NOT.** It is **not** a source of truth for repository or
-hosted migration state, and nothing here may be read as either.
+## The live register is not in this repository
+
+In-flight claims live in an append-only shared file on the build host:
+
+```
+~/hone-migration-coordination.md        # /home/sam/hone-migration-coordination.md
+```
+
+Lanes have coordinated through it since 2026-10-11 — `docs/production/migration-ledger.md`
+references it by path — and it is where a number is actually **allocated**.
+
+**A copy of its table does not belong here**, and this file does not keep one. Two
+registers would drift within a day, and the repository's own convention is one
+map per fact, not a second competing one. What belongs in the repository is the
+part that outlives any single sprint: the authorities, the procedure, and the
+traps that have each already cost a lane real time.
+
+---
+
+## Which question has which authority
 
 | Question | Authority | How to get it |
 |---|---|---|
 | repo max · next free · totals · duplicates | **DERIVED** from `supabase/migrations/*.sql` | `npm run migration:state -- --json` |
-| hosted max · when applied | **DECLARED** in `docs/production/migration-state.json` | read that file **on a current-production base** (see the trap below) |
+| hosted max · when applied | **DECLARED** in `docs/production/migration-state.json` | read it **on a current-production base** — see the trap below |
 | the narrative apply record | `docs/production/migration-ledger.md` | never rewritten |
-| **who claims an unmerged number** | **this file** | verify each row against its PR head before trusting it |
+| **who claims an unmerged number** | **`~/hone-migration-coordination.md`** | append your claim there |
 
-A claim is not derivable, because it lives on a head that is not in the tree —
-which is the same reason hosted state is declared rather than derived. That is
-the only thing this file adds.
+A claim is not derivable, because it lives on a head that is not in the tree.
+That is the same reason hosted state is declared rather than derived, and it is
+the only thing the shared register adds.
 
 ---
 
-## Verify before you trust a row
+## Allocating
 
-Every row below is **historical the moment it is written**. Re-derive:
+1. **Census all four sources** — hosted (naming the base you read it on), the
+   repository (derived), **every open PR's own head**, and **every worktree
+   including uncommitted files**. #824 requires the worktree dimension
+   explicitly, and an uncommitted migration in another lane's worktree is a real
+   claim that no `git` query against `origin` will show you.
+2. Take the first free number above every claim.
+3. **Append the claim to `~/hone-migration-coordination.md`** in the same change
+   that adds the migration file, with the number, the branch, the PR, the file
+   name and its sha256.
+4. Read the contiguity law below before assuming your number can go green.
+
+### Verify a number from heads, never from prose
 
 ```bash
-# what each open PR actually adds, read from its own head
 gh pr list --state open --limit 120 --json number,headRefName --jq '.[]|"\(.number) \(.headRefName)"' |
 while read -r n br; do
   git fetch -q origin "pull/$n/head"
@@ -34,89 +60,61 @@ while read -r n br; do
 done
 ```
 
-**Do not read a number off anyone's prose, including this file's, including your
-own earlier comment.** That exact mistake was made in this sprint: a lane
-posted the correct census, then four minutes later claimed a number from its
-own summary that had silently dropped a row, and repeated the bad claim twice
-before a peer caught it.
+Run it over **every** open PR, not the ones that look relevant. Expect
+stack-mates to repeat a number — a PR whose branch also contains a lower lane's
+file is stacked on it, which is **one** claim, not two.
 
-### THE TRAP: hosted state is per-worktree
+**Do not read a number off anyone's summary, including your own earlier
+comment.** That exact failure happened in this sprint: a lane posted a correct
+census, then four minutes later claimed a number from its own prose that had
+silently dropped a row, and repeated the bad claim twice before a peer caught
+it. A number you typed is not evidence.
+
+### TRAP: hosted state is per-worktree
 
 `docs/production/migration-state.json` is a **file in a branch**. Read it in a
-worktree sitting on an old base and it answers for that base. Measured
-2026-10-12: `/srv/hone/worktrees/db-acl01-payment-helpers` (HEAD `a5f3aa27`)
-reports `hosted_migration_max: 0202`, while the same file on current production
-`6c5eac80` reports **`0210`**. Eight numbers of drift, no error, no warning.
+worktree sitting on an old base and it answers for that base, with no error and
+no warning. Measured 2026-10-12: `/srv/hone/worktrees/db-acl01-payment-helpers`
+(HEAD `a5f3aa27`) reports `hosted_migration_max: 0202`, while the same file on
+production `6c5eac80` reports **`0210`** — eight numbers of drift.
 
-**Always state the base you read it on.** A census without a base is not a
-census.
-
----
-
-## Census — 2026-10-12, base `6c5eac80` (production)
-
-| Source | Value |
-|---|---|
-| Hosted (declared, on `6c5eac80`) | **0210** |
-| Repository (derived, on `6c5eac80`) | max **0210**, pending `[]`, next free `0211` |
-| Permanently skipped | `0158` only (`scripts/migration-state.mjs:43`) |
-| Worktrees scanned for claims incl. uncommitted | **276** |
-
-### Claims on unmerged heads, each read from its own PR head
-
-| № | PR | Branch | File |
-|---|---|---|---|
-| `0211` | #827 | `fix/g3-client-sms-field-guard` | `0211_client_sms_permission_guard.sql` |
-| `0212` | #832 | `feat/delivery-events-01-resend` | `0212_email_delivery_events.sql` |
-| `0213` | #831 | `feat/lead-alert-01-operator-email` | `0213_platform_lead_alerts.sql` |
-| `0214` | #833 | `feat/pay-ccy-02-studio-jurisdiction` | `0214_studio_payment_jurisdiction.sql` |
-| `0215` | #843 | `feat/delivery-visibility-01` | `0215_delivery_incidents.sql` |
-| `0216` | #838 | `feat/receptionist-foundation-824` | `0216_receptionist_membership_foundation.sql` |
-| `0217` | #844 | `feat/sms-sender-reg-01` | `0217_studio_sms_sender_registrations.sql` |
-| `0218` | #850 | `feat/receptionist-invitation-824` | `0218_receptionist_invitations.sql` |
-| **`0219`** | **#840 follow-on (G1)** | `feat/g1-public-practitioner-selection` | **ALLOCATED 2026-10-12** — public practitioner selection |
-
-**Stacked carriers are not second claims.** A PR whose branch also contains a
-lower-numbered lane's file is stacked on it: #832 and #831 and #843 all carry
-`0211`; #836/#839/#847 carry #833's `0214`; #845 carries #838's `0216`; #850
-carries `0216`. One claim each, held by the row above.
-
-**Two worktree observations, neither a claim.** `sms-01-r2` holds an
-**untracked** copy of `0210_sms_waitlist_join_acknowledgement.sql` — already
-applied and already on the chain, so it is a stale local copy, not a new
-number. `sentry-after-01-recovered` tracks `0211`/`0212` because it is stacked.
-
-**Below the hosted head, not in contention:** #674 (`0194`), #716 (`0199`).
+**State the base. A census without a base is not a census.**
 
 ---
 
-## Allocating a number
-
-1. Re-derive the census from **all four** sources — hosted (naming the base),
-   repository, every open PR's own head, and every worktree **including
-   uncommitted files**. #824 requires the worktree dimension explicitly.
-2. Take the first free number above every claim.
-3. Add the row here **in the same change** that adds the migration file.
-4. **Read the contiguity law before assuming your number can go green.**
-
-### The contiguity law decides your schedule, not just your number
+## The contiguity law decides your schedule, not just your number
 
 `tests/docs/canonical-production-facts.test.ts:568-578` requires the pending
 suffix to be **contiguous** from `hosted + 1` to repo max, admitting only
-permanently-skipped slots. Its failure message is *"the pending suffix has a
-HOLE in it"*.
+permanently-skipped slots (`scripts/migration-state.mjs:43` — `0158` only). Its
+failure message is *"the pending suffix has a HOLE in it"*.
 
-So a high number is a **queue position**, not a free-standing choice: `0219`
-cannot go green on a branch that lacks `0211`–`0218`. It goes green stacked on
-them, or after they land. Neither `migration-state.mjs` nor
-`npm run verify:prepush` catches a gap — only that guard does, so a lane can
-look clean locally and still be structurally unmergeable.
+So a high number is a **queue position**, not a free-standing choice: a `0219`
+cannot go green on a branch lacking `0211`–`0218`. Neither
+`migration-state.mjs` nor `npm run verify:prepush` catches a gap — only that one
+guard does, so a lane can look clean locally and still be structurally
+unmergeable.
 
-**Do not weaken that guard to make a number convenient.** Build a coherent
-chain instead; an integration branch carrying `0211`–`0218` is the sanctioned
-way to prove a `0219` migration locally without waiting for eight merges.
+**Never weaken that guard to make a number convenient.** Prove a high number on
+an **isolated integration branch** that carries the numbers beneath it from
+their own heads, leaving every reviewed branch untouched. That gives a coherent
+chain locally without waiting for the merges and without relaxing anything.
 
-### Apply order is lexical
+Apply order is **lexical** (`supabase db push`), so a number's position is also
+its apply position.
 
-`supabase db push` orders by filename, so a higher number applies later. A
-claim's position in this table is therefore also its apply position.
+## Merge-time conflicts are predictable — forecast them before you merge
+
+Integrating several lanes' numbers at once concentrates conflicts in a few
+shared files rather than in the migrations. Measured on this sprint's
+`0211`–`0218`: the migration SQL files never conflicted and were **byte-identical
+across every carrier**, while `docs/production/migration-ledger.md` conflicted
+for four of five lanes because each appends its own pending block — resolve by
+**union**, dropping no lane's entry. The current-max migration's own test also
+conflicts whenever two lanes both perform the CLAUDE.md §2 `isRepoMax` handoff;
+inspect before resolving, because that one is typically **comment-only** with no
+assertion differing.
+
+Shared files nearly every lane touches, which auto-merge but are worth watching:
+`lib/export/resource-registry.ts`, `tests/security/service-role-allowlist.ts`,
+`lib/supabase/middleware.ts`.
