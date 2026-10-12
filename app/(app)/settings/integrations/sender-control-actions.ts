@@ -4,11 +4,11 @@ import { revalidatePath } from "next/cache";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
-import { fakeSmsProvisioningProvider } from "@/lib/sms/provider";
 import {
   runSenderAdoption,
   runSenderProvision,
   runSenderSearch,
+  senderControlsFakeProvider,
   senderControlsGate,
   type SearchResult,
 } from "@/lib/sms/sender-controls";
@@ -18,6 +18,8 @@ import {
 // provisioning armed, only in the explicit fake mode) and passes the
 // process-wide FAKE provider explicitly. It never resolves a provider, so no
 // path here can reach the Twilio adapter, buy a number or send a real text.
+// The fake is the controls' own, seeded with a demo account inventory so that
+// adoption can succeed (lib/sms/sender-controls.ts, Codex P2 4250699100).
 
 /** A synthetic destination for the fake provider's provisioning proof. */
 const FAKE_TEST_DESTINATION = "+14165550199";
@@ -36,6 +38,15 @@ async function ownerContext(): Promise<
   return { ok: true, studioId: studio.id, actorUserId: practitioner.user_id };
 }
 
+/** The owner-facing words for a refusal reason. */
+function refusal(reason: string, country: string): string {
+  if (reason === "number_country_mismatch" || reason === "area_code_country_mismatch") {
+    const name = country === "US" ? "a United States" : "a Canadian";
+    return `That is not ${name} number. Choose a number in the country selected.`;
+  }
+  return reason;
+}
+
 const str = (f: FormData, k: string) => {
   const v = f.get(k);
   return typeof v === "string" ? v.trim() : "";
@@ -48,7 +59,7 @@ export async function searchSenderNumbersAction(
   const ctx = await ownerContext();
   if (!ctx.ok) return { ok: false, reason: ctx.message };
   return runSenderSearch(
-    { provider: fakeSmsProvisioningProvider() },
+    { provider: senderControlsFakeProvider(getRequiredAppOrigin()) },
     { country: str(formData, "country"), areaCode: str(formData, "area_code") || null },
   );
 }
@@ -60,7 +71,7 @@ export async function provisionSenderNumberAction(
   const ctx = await ownerContext();
   if (!ctx.ok) return { ok: false, message: ctx.message };
   const out = await runSenderProvision(
-    { admin: createAdminClient(), provider: fakeSmsProvisioningProvider(), appOrigin: getRequiredAppOrigin(), testDestination: FAKE_TEST_DESTINATION },
+    { admin: createAdminClient(), provider: senderControlsFakeProvider(getRequiredAppOrigin()), appOrigin: getRequiredAppOrigin(), testDestination: FAKE_TEST_DESTINATION },
     {
       studioId: ctx.studioId,
       actorUserId: ctx.actorUserId,
@@ -72,7 +83,7 @@ export async function provisionSenderNumberAction(
   revalidatePath("/settings/integrations");
   return out.ok
     ? { ok: true, message: out.result === "activated" ? `Studio number ${out.phoneNumber} is set up (fake provider).` : "This studio already has an active number." }
-    : { ok: false, message: `Not set up: ${"reason" in out ? String(out.reason) : out.result}.` };
+    : { ok: false, message: `Not set up: ${"reason" in out ? refusal(String(out.reason), str(formData, "country")) : out.result}.` };
 }
 
 export async function adoptSenderNumberAction(
@@ -82,7 +93,7 @@ export async function adoptSenderNumberAction(
   const ctx = await ownerContext();
   if (!ctx.ok) return { ok: false, message: ctx.message };
   const out = await runSenderAdoption(
-    { admin: createAdminClient(), provider: fakeSmsProvisioningProvider(), appOrigin: getRequiredAppOrigin(), testDestination: FAKE_TEST_DESTINATION },
+    { admin: createAdminClient(), provider: senderControlsFakeProvider(getRequiredAppOrigin()), appOrigin: getRequiredAppOrigin(), testDestination: FAKE_TEST_DESTINATION },
     {
       studioId: ctx.studioId,
       actorUserId: ctx.actorUserId,
@@ -94,5 +105,5 @@ export async function adoptSenderNumberAction(
   revalidatePath("/settings/integrations");
   return out.ok
     ? { ok: true, message: out.result === "adopted" ? `Existing number ${out.phoneNumber} adopted (fake provider).` : "This studio already has an active number." }
-    : { ok: false, message: `Not adopted: ${"reason" in out ? String(out.reason) : out.result}.` };
+    : { ok: false, message: `Not adopted: ${"reason" in out ? refusal(String(out.reason), str(formData, "country")) : out.result}.` };
 }

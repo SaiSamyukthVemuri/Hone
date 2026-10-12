@@ -30,8 +30,9 @@ describe("the actions can only reach the fake provider (source guard)", () => {
   const actions = strip(readFileSync("app/(app)/settings/integrations/sender-control-actions.ts", "utf8"));
   const lib = strip(readFileSync("lib/sms/sender-controls.ts", "utf8"));
 
-  it("the actions pass the process FAKE explicitly and never resolve a provider", () => {
-    expect(actions).toMatch(/fakeSmsProvisioningProvider\(\)/);
+  it("the actions pass the controls' own seeded FAKE explicitly and never resolve a provider", () => {
+    expect(actions.match(/senderControlsFakeProvider\(getRequiredAppOrigin\(\)\)/g)).toHaveLength(3);
+    expect(lib).toMatch(/new FakeSmsProvisioningProvider\(\{/);
     for (const forbidden of ["resolveProvisioningProvider", "twilioProvisioningProvider", "twilio-provider"]) {
       expect(actions, forbidden).not.toContain(forbidden);
       expect(lib, forbidden).not.toContain(forbidden);
@@ -45,5 +46,20 @@ describe("the actions can only reach the fake provider (source guard)", () => {
       expect(body.slice(firstAwait, firstAwait + 30), name).toContain("ownerContext()");
     }
     expect(actions).toMatch(/const gate = senderControlsGate\(\);\s*\n\s*if \(!gate\.open\)/);
+  });
+});
+
+describe("numberMatchesCountry / areaCodeMatchesCountry (Codex P2 4250699105)", () => {
+  it("uses the NANP classifier: CA is CA, US is US, toll-free and other NANP are neither", async () => {
+    const { numberMatchesCountry, areaCodeMatchesCountry } = await import("@/lib/sms/sender-controls");
+    expect(numberMatchesCountry("+14165550101", "CA")).toBe(true);
+    expect(numberMatchesCountry("+14165550101", "US")).toBe(false);
+    expect(numberMatchesCountry("+12125550101", "US")).toBe(true);
+    expect(numberMatchesCountry("+18885550101", "US")).toBe(false);
+    expect(numberMatchesCountry("+18765550101", "US")).toBe(false);
+    expect(numberMatchesCountry("not a number", "CA")).toBe(false);
+    expect(areaCodeMatchesCountry("604", "CA")).toBe(true);
+    expect(areaCodeMatchesCountry("604", "US")).toBe(false);
+    expect(areaCodeMatchesCountry("12", "US")).toBe(false);
   });
 });

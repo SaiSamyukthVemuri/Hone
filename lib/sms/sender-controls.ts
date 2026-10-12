@@ -1,6 +1,10 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { liveProvisioningArmed } from "./provider";
+import { liveProvisioningArmed, FakeSmsProvisioningProvider } from "./provider";
+import { classifyNanpNumber } from "./nanp";
+import { DEMO_ADOPTION_INVENTORY } from "./sender-controls-demo";
+
+export { DEMO_ADOPTION_INVENTORY };
 import type { SmsProvisioningProvider, AvailableNumberCandidate } from "./provider/types";
 import {
   provisionStudioSmsSender,
@@ -68,6 +72,64 @@ export function isSenderCountry(value: unknown): value is SenderCountry {
   return typeof value === "string" && (SENDER_COUNTRIES as readonly string[]).includes(value);
 }
 
+// ---------------------------------------------------------------------------
+// The number must belong to the country chosen (Codex P2 4250699105)
+// ---------------------------------------------------------------------------
+// A studio choosing "United States" must never end up with a Canadian number
+// recorded as US (or the reverse): the readiness model and every later send
+// rule read that country. The existing NANP classifier decides, BEFORE any
+// claim is taken. Toll-free and other-NANP numbers are not studio sender
+// numbers in this flow.
+
+/** Does this +1 number (or this area code) belong to `country`? */
+export function numberMatchesCountry(phoneNumber: string, country: SenderCountry): boolean {
+  const n = classifyNanpNumber(phoneNumber);
+  return n.ok && n.country === country;
+}
+
+/** Refused before any claim: the number or area code is another country's. */
+export type CountryRefusal = { ok: false; result: "refused"; reason: "number_country_mismatch" };
+
+export function areaCodeMatchesCountry(areaCode: string, country: SenderCountry): boolean {
+  return /^[2-9][0-9]{2}$/.test(areaCode) && numberMatchesCountry(`+1${areaCode}2000000`, country);
+}
+
+// ---------------------------------------------------------------------------
+// The fake account this surface demonstrates (Codex P2 4250699100)
+// ---------------------------------------------------------------------------
+// Adoption takes a number the provider ACCOUNT already owns. The process-wide
+// fake owns nothing, so every adoption through the panel would fail after
+// taking the durable claim. The controls therefore use their OWN fake, seeded
+// with one Canadian and one US number held in one demo Messaging Service wired
+// to this app's own webhook URLs: adoption can succeed, and search and
+// purchase never offer or buy those numbers (the fake treats owned numbers as
+// taken). Synthetic 555-01xx numbers; nothing here is a real account.
+
+const controlsFakes = new Map<string, FakeSmsProvisioningProvider>();
+
+/** The seeded fake for one app origin (its webhook URLs are part of the seed). */
+export function senderControlsFakeProvider(appOrigin: string): FakeSmsProvisioningProvider {
+  const origin = appOrigin.replace(/\/+$/, "");
+  let fake = controlsFakes.get(origin);
+  if (!fake) {
+    const u = urls(origin);
+    const { CA, US } = DEMO_ADOPTION_INVENTORY.numbers;
+    fake = new FakeSmsProvisioningProvider({
+      preOwnedNumbers: { [CA.phoneNumber]: CA.phoneNumberSid, [US.phoneNumber]: US.phoneNumberSid },
+      accountServices: [
+        {
+          sid: DEMO_ADOPTION_INVENTORY.messagingServiceSid,
+          numbers: [CA.phoneNumber, US.phoneNumber],
+          inboundUrl: u.inbound,
+          statusUrl: u.status,
+        },
+      ],
+    });
+    controlsFakes.set(origin, fake);
+  }
+  return fake;
+}
+
 export type SenderControlsDeps = {
   admin: SupabaseClient;
   /** Always a fake in this slice; passed explicitly, never resolved here. */
@@ -86,6 +148,9 @@ export async function runSenderSearch(
   input: { country: string; areaCode: string | null },
 ): Promise<SearchResult> {
   if (!isSenderCountry(input.country)) return { ok: false, reason: "invalid_input" };
+  if (input.areaCode && !areaCodeMatchesCountry(input.areaCode, input.country)) {
+    return { ok: false, reason: "area_code_country_mismatch" };
+  }
   const out = await searchAvailableSenderNumbers({
     provider: deps.provider,
     country: input.country,
@@ -95,7 +160,8 @@ export async function runSenderSearch(
   // Only the safe candidate shape crosses back to the browser.
   return {
     ok: true,
-    candidates: out.candidates.map((c) => ({
+    // Only numbers of the chosen country are ever offered.
+    candidates: out.candidates.filter((c) => numberMatchesCountry(c.phoneNumber, input.country as SenderCountry)).map((c) => ({
       phoneNumber: c.phoneNumber,
       formatted: c.formatted,
       locality: c.locality,
@@ -116,8 +182,15 @@ function urls(appOrigin: string) {
 export async function runSenderProvision(
   deps: SenderControlsDeps,
   input: { studioId: string; actorUserId: string; country: string; areaCode: string | null; phoneNumber: string },
-): Promise<ProvisionOutcome> {
+): Promise<ProvisionOutcome | CountryRefusal> {
   if (!isSenderCountry(input.country)) return { ok: false, result: "refused", reason: "invalid_input" };
+  // Before any claim: the number, and any area code, are the chosen country's.
+  if (
+    !numberMatchesCountry(input.phoneNumber, input.country) ||
+    (input.areaCode && !areaCodeMatchesCountry(input.areaCode, input.country))
+  ) {
+    return { ok: false, result: "refused", reason: "number_country_mismatch" };
+  }
   const u = urls(deps.appOrigin);
   return provisionStudioSmsSender({
     store: createProvisioningStore(deps.admin),
@@ -139,8 +212,11 @@ export async function runSenderProvision(
 export async function runSenderAdoption(
   deps: SenderControlsDeps,
   input: { studioId: string; actorUserId: string; country: string; phoneNumber: string; messagingServiceSid: string },
-): Promise<AdoptionOutcome> {
+): Promise<AdoptionOutcome | CountryRefusal> {
   if (!isSenderCountry(input.country)) return { ok: false, result: "refused", reason: "invalid_input" };
+  if (!numberMatchesCountry(input.phoneNumber, input.country)) {
+    return { ok: false, result: "refused", reason: "number_country_mismatch" };
+  }
   const u = urls(deps.appOrigin);
   return adoptExistingStudioSmsSender({
     store: createProvisioningStore(deps.admin),

@@ -254,7 +254,9 @@ Settings → Integrations can show an owner **Set up a studio number** panel:
 - in production (`VERCEL_ENV=production`), where the resolver would hand back the fake and could write a fake sender into production data;
 - whenever live provisioning is armed (`HONE_SMS_PROVISIONING_LIVE` plus credentials), where a click could buy a number.
 
-**The provider.** The actions pass the process-wide **fake** provider explicitly and never resolve one, so nothing is bought, registered or sent.
+**The provider.** The actions pass the controls' own **fake** provider explicitly and never resolve one, so nothing is bought, registered or sent. That fake is seeded with a synthetic demo account inventory (`lib/sms/sender-controls-demo.ts`): +14165550142 (CA) and +12125550142 (US) in one demo messaging service, so adoption can succeed. Search never offers those numbers and purchase never buys them.
+
+**The country.** A number, or area code, that does not belong to the selected country is refused before any claim (`number_country_mismatch`). With no area code, the fake proposes the country's own numbers.
 
 **Authority.**
 - The database's claim re-derives the owner from the actor user id.

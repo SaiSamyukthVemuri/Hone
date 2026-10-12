@@ -7,6 +7,7 @@ import {
   searchSenderNumbersAction,
   type SenderControlResult,
 } from "./sender-control-actions";
+import { DEMO_ADOPTION_INVENTORY } from "@/lib/sms/sender-controls-demo";
 import type { SearchResult } from "@/lib/sms/sender-controls";
 
 // SMS-SENDER-CONTROL-01 (#824): rendered only when the page's gate is open,
@@ -63,6 +64,11 @@ export function SmsSenderControls() {
 
       <details className="mt-4 text-sm">
         <summary>Use a number the studio already has (support-assisted)</summary>
+        <p className="mt-2 text-xs text-amber-800 dark:text-amber-300" data-testid="sms-sender-demo-inventory">
+          Fake provider: the demo account owns {DEMO_ADOPTION_INVENTORY.numbers.CA.phoneNumber} (Canada) and{" "}
+          {DEMO_ADOPTION_INVENTORY.numbers.US.phoneNumber} (United States), both in messaging service{" "}
+          {DEMO_ADOPTION_INVENTORY.messagingServiceSid}. The number must match the country chosen.
+        </p>
         <form action={adoptAction} className="mt-2 flex flex-wrap items-end gap-2">
           <label className="flex flex-col">
             Country

@@ -155,3 +155,82 @@ describe("adopt (fake provider)", () => {
     expect((await liveSenders(s.studioId)).filter((r) => r.status === "active")).toEqual([]);
   });
 });
+
+// Codex P2 4250699105: the number must belong to the country chosen, checked
+// BEFORE any claim, and the fake's default area code is the country's own.
+describe("the number belongs to the country chosen", () => {
+  const claims = async (studioId: string) =>
+    Number((await adminQuery("select count(*)::int n from public.studio_sms_senders where studio_id = $1", [studioId])).rows[0].n);
+
+  it("United States with no area code: the search offers US numbers and the provisioned sender is a US number", async () => {
+    const s = await seedStudio("ctl-us-default");
+    const provider = new FakeSmsProvisioningProvider();
+    const found = await controls.runSenderSearch({ provider }, { country: "US", areaCode: null });
+    expect(found.ok).toBe(true);
+    const candidates = found.ok ? found.candidates : [];
+    expect(candidates.length).toBeGreaterThan(0);
+    for (const c of candidates) expect(controls.numberMatchesCountry(c.phoneNumber, "US"), c.phoneNumber).toBe(true);
+    const out = await controls.runSenderProvision(deps(provider), {
+      studioId: s.studioId, actorUserId: s.userId, country: "US", areaCode: null, phoneNumber: candidates[0].phoneNumber,
+    });
+    expect(out).toMatchObject({ ok: true, result: "activated" });
+    expect(await liveSenders(s.studioId)).toEqual([{ status: "active", phone_number: candidates[0].phoneNumber, country: "US" }]);
+  });
+
+  it("a Canadian number submitted as US (or the reverse) is refused before any claim; nothing is written", async () => {
+    const s = await seedStudio("ctl-mismatch");
+    const provider = new FakeSmsProvisioningProvider();
+    for (const [country, phoneNumber, areaCode] of [
+      ["US", "+14165550101", null],
+      ["CA", "+12125550101", null],
+      ["CA", "+14165550101", "212"],
+      ["US", "+18885550101", null],
+    ] as const) {
+      const out = await controls.runSenderProvision(deps(provider), {
+        studioId: s.studioId, actorUserId: s.userId, country, areaCode, phoneNumber,
+      });
+      expect(out, `${country} ${phoneNumber} ${areaCode}`).toEqual({ ok: false, result: "refused", reason: "number_country_mismatch" });
+    }
+    const adopt = await controls.runSenderAdoption(deps(provider), {
+      studioId: s.studioId, actorUserId: s.userId, country: "US", phoneNumber: "+14165550142", messagingServiceSid: "MG" + "d0".repeat(16),
+    });
+    expect(adopt).toEqual({ ok: false, result: "refused", reason: "number_country_mismatch" });
+    expect(await claims(s.studioId)).toBe(0);
+    expect(provider.calls.purchase).toBe(0);
+    expect(await controls.runSenderSearch({ provider }, { country: "US", areaCode: "416" })).toEqual({ ok: false, reason: "area_code_country_mismatch" });
+  });
+});
+
+// Codex P2 4250699100: the panel's fake account owns something to adopt, and
+// adopting never blocks the provisioning path for another studio.
+describe("the controls' seeded fake account", () => {
+  it("adopts the demo Canadian number through the panel's own fake, without a purchase", async () => {
+    const s = await seedStudio("ctl-demo-adopt");
+    const provider = controls.senderControlsFakeProvider(ORIGIN);
+    const { CA } = controls.DEMO_ADOPTION_INVENTORY.numbers;
+    const out = await controls.runSenderAdoption(deps(provider), {
+      studioId: s.studioId, actorUserId: s.userId, country: "CA", phoneNumber: CA.phoneNumber,
+      messagingServiceSid: controls.DEMO_ADOPTION_INVENTORY.messagingServiceSid,
+    });
+    expect(out).toMatchObject({ ok: true, result: "adopted", phoneNumber: CA.phoneNumber });
+    expect(provider.calls.purchase).toBe(0);
+    expect(await liveSenders(s.studioId)).toEqual([{ status: "active", phone_number: CA.phoneNumber, country: "CA" }]);
+  });
+
+  it("the demo numbers are never offered for purchase, and another studio can still provision", async () => {
+    const s = await seedStudio("ctl-demo-provision");
+    const provider = controls.senderControlsFakeProvider(ORIGIN);
+    const found = await controls.runSenderSearch({ provider }, { country: "US", areaCode: "212" });
+    const numbers = found.ok ? found.candidates.map((c) => c.phoneNumber) : [];
+    expect(numbers).not.toContain(controls.DEMO_ADOPTION_INVENTORY.numbers.US.phoneNumber);
+    // Other tests' separate fakes share this database: pick a number no live sender holds.
+    const held = new Set(
+      (await adminQuery("select phone_number from public.studio_sms_senders where phone_number is not null")).rows.map((r) => r.phone_number as string),
+    );
+    const pick = numbers.find((n) => !held.has(n))!;
+    const out = await controls.runSenderProvision(deps(provider), {
+      studioId: s.studioId, actorUserId: s.userId, country: "US", areaCode: "212", phoneNumber: pick,
+    });
+    expect(out, JSON.stringify(out)).toMatchObject({ ok: true, result: "activated" });
+  });
+});

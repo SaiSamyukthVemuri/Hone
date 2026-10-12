@@ -227,7 +227,9 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
     this.calls.search += 1;
     if (this.script.searchFails) return this.fail(this.script.searchFails);
 
-    const area = input.areaCode ?? "416";
+    // A default area code OF THE COUNTRY asked for: never a Canadian number
+    // labelled US (Codex P2 4250699105).
+    const area = input.areaCode ?? (input.country === "US" ? "212" : "416");
     const taken = new Set([
       ...(this.script.unavailableNumbers ?? []),
       ...this.ownedNumbers(),
@@ -242,7 +244,7 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
         phoneNumber,
         formatted: `(${area}) ${line.slice(0, 3)}-${line.slice(3)}`,
         locality: "Testville",
-        region: "ON",
+        region: input.country === "US" ? "NY" : "ON",
         country: input.country,
         smsCapable: true,
         mmsCapable: true,
