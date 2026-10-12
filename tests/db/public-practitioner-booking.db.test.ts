@@ -386,6 +386,55 @@ describe("0222 — scoping must NOT loosen anything", () => {
   });
 });
 
+describe("0222 — the audit row survives the move to the shared helper", () => {
+  it("writes exactly one 'created' audit row, identical in shape to v1's", async () => {
+    // v2 routes its audit through write_appointment_audit instead of inlining
+    // the INSERT, so it does not become a ninth appointment_audit writer (that
+    // set is pinned by tests/db/appointment-audit-invariant.db.test.ts). The
+    // row must be unchanged by that move: same actor_type, actor_id, action and
+    // details, with studio_id trigger-derived.
+    const viaV2 = await seedFettStudio({ treatingCount: 1 });
+    const viaV1 = await seedFettStudio({ treatingCount: 1 });
+    try {
+      const b2 = await bookPublicV2(viaV2, viaV2.treating[0].practitionerId);
+      expect(b2.result).toBe("created");
+      const b1 = await bookPublicV1(viaV1);
+      expect(b1.result).toBe("created");
+
+      const rows = async (studioId: string) =>
+        (
+          await adminQuery(
+            `select a.actor_type, a.actor_id, a.action, a.details, a.studio_id
+               from public.appointment_audit a
+              where a.studio_id = $1
+              order by a.created_at`,
+            [studioId],
+          )
+        ).rows;
+
+      const r2 = await rows(viaV2.studioId);
+      const r1 = await rows(viaV1.studioId);
+      expect(r2).toHaveLength(1);
+      expect(r1).toHaveLength(1);
+
+      expect(r2[0].actor_type).toBe("client");
+      expect(r2[0].actor_id).toBeNull();
+      expect(r2[0].action).toBe("created");
+      expect(r2[0].details.source).toBe("public_booking");
+      expect(r2[0].studio_id).toBe(viaV2.studioId);
+
+      // Field-for-field equal to what v1 writes, except the studio it belongs to.
+      expect(r2[0].actor_type).toBe(r1[0].actor_type);
+      expect(r2[0].actor_id).toBe(r1[0].actor_id);
+      expect(r2[0].action).toBe(r1[0].action);
+      expect(r2[0].details).toEqual(r1[0].details);
+    } finally {
+      await dropFettStudio(viaV2);
+      await dropFettStudio(viaV1);
+    }
+  });
+});
+
 describe("0222 — the existing public booking flow is untouched", () => {
   it("v1 still books, and v1 still refuses a studio-wide conflict", async () => {
     // 0170's command and validator are left in place. This proves 0222 did not

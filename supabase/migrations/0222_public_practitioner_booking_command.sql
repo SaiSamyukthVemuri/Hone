@@ -715,15 +715,33 @@ begin
   -- the route writes today (app/book/[slug]/actions.ts:875-881); the email is
   -- READ FROM the client row rather than accepted from the caller, so no PII
   -- crosses the command boundary and no arbitrary audit JSON can be injected.
-  insert into public.appointment_audit
-    (appointment_id, actor_type, actor_id, action, details)
-  values
-    (v_appt_id, 'client', null, 'created',
-     jsonb_build_object(
-       'source', 'public_booking',
-       'email',  v_email,
-       'notes',  p_notes
-     ));
+  -- AUDIT, through the SHARED HELPER rather than an inlined INSERT.
+  --
+  -- This is the one place v2 deliberately departs from carrying 0170 verbatim,
+  -- and it is a deviation TOWARDS this schema's own convention.
+  -- tests/db/appointment-audit-invariant.db.test.ts PINS the exact set of
+  -- functions that insert into appointment_audit, and an inlined INSERT here
+  -- would make v2 a NINTH writer. That guard exists because appointment_audit
+  -- is append-only history: growing the writer census must be a conscious act,
+  -- and it caught this.
+  --
+  -- The repair commands of 0173 already took this route, and that file records
+  -- why: "a future audit change has one insertion point to migrate, and this
+  -- list stays legible". write_appointment_audit is a pure pass-through insert
+  -- of exactly these five columns, so THE ROW IS IDENTICAL — same
+  -- appointment_id, actor_type 'client', null actor_id, action 'created' and
+  -- the same details object. studio_id is trigger-derived in both shapes.
+  perform public.write_appointment_audit(
+    v_appt_id,
+    'client',
+    null,
+    'created',
+    jsonb_build_object(
+      'source', 'public_booking',
+      'email',  v_email,
+      'notes',  p_notes
+    )
+  );
 
   return query select 'created'::text, v_appt_id, v_starts_at, v_ends_at,
                       v_service_dur, v_owner_id, v_created_at;

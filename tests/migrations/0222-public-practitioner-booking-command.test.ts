@@ -130,6 +130,20 @@ describe("0222 — the three validator changes are present and correctly shaped"
     expect(EXECUTABLE).toMatch(/else[\s\S]*?public\.validate_public_booking_slot\(/);
   });
 
+  it("writes its audit row through the SHARED helper, not an inlined INSERT", () => {
+    // tests/db/appointment-audit-invariant.db.test.ts PINS the set of functions
+    // that insert into appointment_audit, because that table is append-only
+    // history and growing the writer census must be a conscious act. An inlined
+    // INSERT here would make create_public_appointment_v2 a ninth writer — and
+    // it did, until CI caught it. The helper is a pure pass-through of the same
+    // five columns, so the row is identical.
+    expect(EXECUTABLE).toMatch(/perform public\.write_appointment_audit\(/);
+    expect(
+      EXECUTABLE,
+      "0222 must not inline an appointment_audit INSERT — use write_appointment_audit",
+    ).not.toMatch(/insert into public\.appointment_audit/i);
+  });
+
   it("keeps the shared studio constraints that genuinely apply", () => {
     // studio_blockouts has no practitioner column — studio-wide by schema.
     expect(EXECUTABLE).toMatch(/public\.studio_blockouts b/);
