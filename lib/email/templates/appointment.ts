@@ -267,7 +267,7 @@ Open in Hone: ${p.appointmentUrl}
 // cancellation path (never a browser-supplied value); see the derivation at each
 // call site (public token cancel = the appointment's client; practitioner cancel =
 // the authenticated practitioner/owner; an automated cancel = the system).
-export type CancellationActorRole = "client" | "practitioner" | "owner" | "system";
+export type CancellationActorRole = "client" | "practitioner" | "owner" | "receptionist" | "system";
 
 // Human-readable role label for the practitioner-facing email. "owner" reads as
 // "Studio owner" so the recipient never sees an internal enum value.
@@ -279,6 +279,8 @@ export function cancellationActorRoleLabel(role: CancellationActorRole): string 
       return "Practitioner";
     case "owner":
       return "Studio owner";
+    case "receptionist":
+      return "Front desk";
     case "system":
       return "System";
   }

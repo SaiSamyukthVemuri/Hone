@@ -399,7 +399,7 @@ export type AppointmentStatus =
   | "completed"
   | "no_show";
 
-export type CancelledBy = "client" | "practitioner" | "owner";
+export type CancelledBy = "client" | "practitioner" | "owner" | "receptionist";
 
 export type Appointment = {
   id: string;
@@ -440,6 +440,10 @@ export type Appointment = {
   // `cancelled_by_practitioner_id` complements it with WHICH practitioner.
   created_by_practitioner_id?: string | null;
   cancelled_by_practitioner_id?: string | null;
+  // 0220: the receptionist twins. At most one creator kind and one canceller
+  // kind per row (CHECKs). NULL unless the front desk created or cancelled it.
+  created_by_receptionist_id?: string | null;
+  cancelled_by_receptionist_id?: string | null;
   // The outside-hours override authoriser and their role AT THE TIME. Both
   // commands that can set booked_outside_availability refuse a non-owner, so
   // the role is always 'owner' when written. Cleared together with the flag
@@ -741,12 +745,15 @@ export type AppointmentAudit = {
   // and never accepted from the caller. This is what keeps a detached row
   // tenant-authorizable, appointment_audit_member_read now reads it directly.
   studio_id: string;
-  actor_type: "practitioner" | "client" | "system";
+  actor_type: "practitioner" | "client" | "system" | "receptionist";
   actor_id: string | null;
   // Migration 0174: durable, same-studio-validated practitioner correlation.
   // NULL for client and system actors, never invented for a non-practitioner.
   // Complements, and does not replace, the historical bare actor_id above.
   actor_practitioner_id: string | null;
+  // Migration 0220: the receptionist twin, derived and same-studio-validated
+  // the same way. NULL for every actor but a receptionist.
+  actor_receptionist_id: string | null;
   action: string;
   details: Record<string, unknown> | null;
   // Migration 0174: DATABASE-derived at INSERT. A caller-supplied value is

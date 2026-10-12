@@ -46,10 +46,16 @@ describe("the receptionist", () => {
     expect([r.schedule_view, r.client_contacts, r.intake_status]).toEqual(["yes", "yes", "yes"]);
   });
 
-  it("booking is stated as NOT YET available, never promised", () => {
-    expect([r.schedule_book_move, r.schedule_cancel]).toEqual(["not_yet", "not_yet"]);
-    expect(accessSummary("receptionist").cannot).toContain("Book and move appointments (not available yet)");
-    expect(accessSummary("receptionist").cannot).toContain("Cancel appointments (not available yet)");
+  it("books, moves and cancels for any treating practitioner, as the 0220 commands allow (STUDIO-READY-02c)", () => {
+    expect([r.schedule_book_move, r.schedule_cancel]).toEqual(["any", "any"]);
+    expect(accessSummary("receptionist").can).toContain("Book and move appointments (anyone's in the studio)");
+    expect(accessSummary("receptionist").can).toContain("Cancel appointments (anyone's in the studio)");
+  });
+
+  it("the stated booking authority is the enforced one: the actions call exactly the 0220 receptionist commands", () => {
+    const actions = readFileSync(path.join(process.cwd(), "lib/receptionist/scheduling-actions.ts"), "utf8");
+    const rpcs = [...actions.matchAll(/\.rpc\("([a-z_]+)"/g)].map((m) => m[1]).sort();
+    expect(rpcs).toEqual(["receptionist_cancel_appointment", "receptionist_create_appointment", "receptionist_move_appointment"]);
   });
 });
 
@@ -95,10 +101,15 @@ describe("the definitions match the enforcement they describe", () => {
     expect(read("app/(app)/calendar/[id]/manual-fee-actions.ts")).toMatch(/OWNER-ONLY, consistently across session payments and fees/);
   });
 
-  it("the front desk reads only through the three 0216 projections", () => {
+  it("the front desk reads only through the 0216 projections and the 0220 booking-options projection", () => {
     const projections = read("lib/receptionist/projections.ts");
     const rpcs = [...projections.matchAll(/\.rpc\("([a-z_]+)"/g)].map((m) => m[1]).sort();
-    expect(rpcs).toEqual(["receptionist_calendar", "receptionist_calendar_closures", "receptionist_client_contacts"]);
+    expect(rpcs).toEqual([
+      "receptionist_booking_options",
+      "receptionist_calendar",
+      "receptionist_calendar_closures",
+      "receptionist_client_contacts",
+    ]);
   });
 
   it("the team page renders a summary for practitioners AND receptionists", () => {

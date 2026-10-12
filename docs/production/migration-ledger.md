@@ -14,7 +14,28 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-12, post-0210 apply; `0210` APPLIED, `0216` and `0218` AUTHORED AND PENDING on the STUDIO-READY-02a/02b branches)
+## Current state (verified 2026-10-12, post-0210 apply; `0210` APPLIED, `0216`, `0218` and `0220` AUTHORED AND PENDING on the STUDIO-READY-02a/02b/02c branches)
+
+> **`0220` IS AUTHORED AND PENDING, stacked on `0218`.** STUDIO-READY-02c (#824)
+> authors `0220_receptionist_scheduling.sql`: receptionist scheduling over the
+> shared core.
+> - `create_internal_appointment_v2`, `move_or_reassign_appointment` and
+>   `practitioner_cancel_appointment` keep their signatures and grants, and become
+>   wrappers over one internal core each (`create_`/`move_`/`cancel_appointment_core`).
+>   Each core is the `0174` body with a server-resolved actor kind. The existing
+>   suites pin the practitioner behaviour.
+> - Three new `authenticated`-only receptionist commands, plus one booking-form
+>   projection, derive the actor from `receptionist_actor_id`.
+> - `appointments` gains two **nullable, no-default** receptionist attribution
+>   columns, so `create_public_appointment`'s explicit INSERT is unaffected.
+>   `cancelled_by` and `appointment_audit.actor_type` widen to admit `receptionist`,
+>   and the audit trigger derives `actor_receptionist_id`.
+> - `revert_appointment_outcome` (B4) is re-emitted from its live body with only
+>   two assignments added: a revert clears both canceller attribution columns.
+> - No public path is re-emitted. No data.
+>
+> **NOT APPLIED, NOT MERGED.** `0219` is DB/WAIT's queue position (G1, #824), so
+> this branch carries a hole there by construction. The block below records `0218`.
 
 > **`0218` IS AUTHORED AND PENDING, stacked on `0216`.** STUDIO-READY-02b (#824)
 > authors `0218_receptionist_invitations.sql`. It adds four agreement-evidence
@@ -70,10 +91,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0210** (`0210_sms_waitlist_join_acknowledgement.sql`) — unchanged by this branch; no apply was performed or claimed. |
-| **Repo migration max** | **0218**: `0218_receptionist_invitations.sql` (STUDIO-READY-02b), stacked on `0216_receptionist_membership_foundation.sql` (STUDIO-READY-02a, #824). `0217` is held by #844 (SMS sender registrations) and is not on this branch. No data. |
+| **Repo migration max** | **0220**: `0220_receptionist_scheduling.sql` (STUDIO-READY-02c), stacked on `0218_receptionist_invitations.sql` (STUDIO-READY-02b) and `0216_receptionist_membership_foundation.sql` (STUDIO-READY-02a, #824). `0217` is held by #844 (SMS sender registrations) and `0219` by DB/WAIT (G1); neither is on this branch. No data. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **`0216`** and **`0218`** on this branch, **NOT applied**. They follow a pending sequence held by other lanes: `0211` (#827), `0212` (#832), `0213` (#831), `0214` (#833), `0215` (#843) and `0217` (#844). This branch does not carry those files, so the parity guard reports a hole **by construction** until it integrates after them, in order `0211` → … → `0218`. It renumbers if that order changes. `repo > hosted` is the MIGRATION-FIRST PENDING shape: `0216` and `0218` are pending, not applied. |
-| **Next free migration** | Next free number is **0219**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
+| **Pending migrations** | **`0216`**, **`0218`** and **`0220`** on this branch, **NOT applied**. They follow a pending sequence held by other lanes: `0211` (#827), `0212` (#832), `0213` (#831), `0214` (#833), `0215` (#843), `0217` (#844) and `0219` (DB/WAIT, G1). This branch does not carry those files, so the parity guard reports a hole **by construction** until it integrates after them, in order `0211` → … → `0220`. It renumbers if that order changes. `repo > hosted` is the MIGRATION-FIRST PENDING shape: `0216`, `0218` and `0220` are pending, not applied. |
+| **Next free migration** | Next free number is **0221**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. No Supabase command was run against it for this change. |
 
 ## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, repo == hosted)

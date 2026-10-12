@@ -673,6 +673,8 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "capacity_enabled", reason: "internal_state", note: "Feature-state snapshot at booking time." },
       { column: "created_by_practitioner_id", reason: "pending_review", note: "Booking attribution (migration 0174)." },
       { column: "cancelled_by_practitioner_id", reason: "pending_review", note: "Cancellation attribution (migration 0174)." },
+      { column: "created_by_receptionist_id", reason: "pending_review", note: "Front-desk booking attribution (migration 0220)." },
+      { column: "cancelled_by_receptionist_id", reason: "pending_review", note: "Front-desk cancellation attribution (migration 0220)." },
       { column: "outside_availability_authorized_by_practitioner_id", reason: "pending_review", note: "Override authorization (migration 0174)." },
       { column: "outside_availability_authorized_role", reason: "pending_review", note: "Override authorization (migration 0174)." },
       { column: "outside_availability_authorized_at", reason: "pending_review", note: "Override authorization (migration 0174)." },

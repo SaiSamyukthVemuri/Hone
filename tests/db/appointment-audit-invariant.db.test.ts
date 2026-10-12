@@ -263,13 +263,23 @@ describe("the set of installed appointment_audit writers is pinned", () => {
   // it: it is superseded by reschedule_appointment_v2 and the app no longer
   // calls it. Listing it here is the honest alternative to a completeness
   // claim that quietly excludes it.
+  // 0220 (STUDIO-READY-02c): the three internal commands became wrappers over
+  // ONE shared core each, so the core is now the function that INSERTs. This is
+  // a MOVE of each writer, never an addition: the receptionist commands write
+  // through the same three cores and are not writers themselves. CORE_OF maps
+  // each core back to the command B2 drives.
+  const CORE_OF: Record<string, string> = {
+    create_appointment_core: "create_internal_appointment_v2",
+    move_appointment_core: "move_or_reassign_appointment",
+    cancel_appointment_core: "practitioner_cancel_appointment",
+  };
   const EXPECTED_WRITERS = [
-    "create_internal_appointment_v2",
+    "cancel_appointment_core",
+    "create_appointment_core",
     "create_public_appointment",
     "mark_appointment_complete",
     "mark_appointment_no_show",
-    "move_or_reassign_appointment",
-    "practitioner_cancel_appointment",
+    "move_appointment_core",
     "public_cancel_appointment_with_token",
     // B6 / 0175: `reschedule_appointment` (legacy v1) left this list when the
     // three caller-less legacy RPCs were dropped. It is a REMOVAL from the
@@ -342,7 +352,7 @@ describe("the set of installed appointment_audit writers is pinned", () => {
   });
 
   it("the eight commands B2 drives are a strict subset of the installed writers", () => {
-    const DRIVEN = EXPECTED_WRITERS.filter(
+    const DRIVEN = EXPECTED_WRITERS.map((n) => CORE_OF[n] ?? n).filter(
       (n) =>
         n !== "reschedule_appointment" &&
         // B4 / 0173. `write_appointment_audit` is a shared INSERT helper, not a
@@ -354,7 +364,10 @@ describe("the set of installed appointment_audit writers is pinned", () => {
         n !== "write_appointment_audit",
     );
     expect(DRIVEN).toHaveLength(8);
-    for (const d of DRIVEN) expect(EXPECTED_WRITERS).toContain(d);
+    for (const d of DRIVEN) {
+      const core = Object.keys(CORE_OF).find((c) => CORE_OF[c] === d);
+      expect(EXPECTED_WRITERS).toContain(core ?? d);
+    }
   });
 });
 
