@@ -67,6 +67,15 @@ type SendSmsParams = {
    * to (lib/sms/delivery-ledger.ts builds it). Omitted, Twilio reports nothing.
    */
   statusCallbackUrl?: string | null;
+  /**
+   * WILLOW-ROUTING-CANDIDATE-01: the studio's own messaging service, resolved
+   * at send time by lib/sms/send-time-route.ts. OPTIONAL: absent, the sender is
+   * chosen from the environment exactly as before (the platform sender every
+   * studio uses today). Present, it is the ONLY sender: the environment is
+   * never consulted, so a studio-routed message can never fall back to the
+   * platform identity, and a blank value is refused before any request.
+   */
+  messagingServiceSid?: string;
 };
 
 const TWILIO_API_BASE = "https://api.twilio.com/2010-04-01";
@@ -133,8 +142,10 @@ function providerErrorCodeOf(parsed: unknown): number | undefined {
  *     either returns ok:false with retryable:false. The caller's job
  *     is to surface this once on startup (settings → launch) rather
  *     than blow up booking.
- *   - Uses TWILIO_MESSAGING_SERVICE_SID when set; otherwise falls
- *     back to TWILIO_FROM_NUMBER. Missing both also returns ok:false.
+ *   - With `messagingServiceSid` (a studio-routed send), uses exactly that
+ *     and never the environment. Without it, uses
+ *     TWILIO_MESSAGING_SERVICE_SID when set; otherwise falls back to
+ *     TWILIO_FROM_NUMBER. Missing both also returns ok:false.
  *   - `statusCallbackUrl`, when given, becomes Twilio's StatusCallback,
  *     so delivery reports reach /api/twilio/message-status.
  *
@@ -170,8 +181,17 @@ export async function sendSmsSafely(
     };
   }
 
-  const messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID;
-  const fromNumber = process.env.TWILIO_FROM_NUMBER;
+  const routed = params.messagingServiceSid !== undefined;
+  if (routed && (typeof params.messagingServiceSid !== "string" || params.messagingServiceSid.trim() === "")) {
+    return {
+      ok: false,
+      error: "twilio_missing_sender",
+      retryable: false,
+      attempt: "none",
+    };
+  }
+  const messagingServiceSid = routed ? params.messagingServiceSid : process.env.TWILIO_MESSAGING_SERVICE_SID;
+  const fromNumber = routed ? undefined : process.env.TWILIO_FROM_NUMBER;
   if (!messagingServiceSid && !fromNumber) {
     return {
       ok: false,

@@ -19,6 +19,11 @@ import {
   smsStatusCallbackUrl,
   type AppointmentSmsPurpose,
 } from "./delivery-ledger";
+import {
+  resolveSendTimeRoute,
+  type SendTimeRoute,
+  type SendTimeRouteReader,
+} from "./send-time-route";
 
 // SMS send helpers used by the booking, reschedule, and reminder cron
 // paths. Each top-level function follows the strict claim-then-send-
@@ -288,6 +293,8 @@ type SendConfirmationInput = {
   // pre-date the PR 0025 token backfill); in that case the SMS omits
   // the manage line entirely.
   manageUrl: string | null;
+  /** WILLOW-ROUTING-CANDIDATE-01: the send-time route reader (tests inject one). */
+  routeReader?: SendTimeRouteReader;
 };
 
 export async function sendBookingConfirmationSmsToClient(
@@ -299,6 +306,7 @@ export async function sendBookingConfirmationSmsToClient(
     smsType: "confirmation",
     studio: input.studio,
     client: input.client,
+    routeReader: input.routeReader,
     // Body builder does not depend on the phone; the callback API is
     // shared with the reminder helpers below to keep sendOne uniform.
     buildBody: () =>
@@ -355,6 +363,8 @@ export type SendReminderInput = {
    * the booking confirmation's are.
    */
   ledgerBudget?: LedgerBudget;
+  /** WILLOW-ROUTING-CANDIDATE-01: the send-time route reader (tests inject one). */
+  routeReader?: SendTimeRouteReader;
 };
 
 export async function send24hReminderSmsToClient(
@@ -484,6 +494,13 @@ async function sendReminder(
     return { ok: false, skipped: true, reason: fence.reason };
   }
 
+  // (0) WHICH SENDER, before the claim: a refusal spends no attempt and
+  // reaches no provider, so the next fire reconsiders the row intact.
+  const route = await sendTimeRouteFor(args.studio.id, gate.normalizedPhone, args.appointmentId, smsType, args.routeReader);
+  if (!route.ok) {
+    return { ok: false, skipped: true, reason: `sms_route_${route.reason}` };
+  }
+
   // (1) Validate and claim in ONE transaction. A refusal spends no attempt;
   // an unreachable command spends none either (it rolled back), and is
   // retried on a later fire.
@@ -525,6 +542,7 @@ async function sendReminder(
       to: gate.normalizedPhone,
       body,
       budget: args.ledgerBudget,
+      route,
     });
   } catch {
     // sendSmsSafely and the ledger never throw, so an exception here came from
@@ -693,6 +711,8 @@ async function sendWithLedgerRow(args: {
   to: string;
   body: string;
   budget?: LedgerBudget;
+  /** The send-time route; studio mode names the only sender this may use. */
+  route: SendTimeRoute & { ok: true };
 }): Promise<LedgeredAttempt> {
   const messageId = await boundedLedgerStep(
     "begin",
@@ -709,6 +729,9 @@ async function sendWithLedgerRow(args: {
     to: args.to,
     body: args.body,
     statusCallbackUrl: messageId ? smsStatusCallbackUrl(messageId) : null,
+    // Platform mode passes no sender, so the environment chooses exactly as
+    // before; studio mode passes the studio's own and nothing else.
+    ...(args.route.mode === "studio" ? { messagingServiceSid: args.route.messagingServiceSid } : {}),
   });
   return { result, messageId };
 }
@@ -747,7 +770,40 @@ type SendOneArgs = {
   client: ConsentGateInput["client"];
   buildBody: (normalizedPhone: string) => string;
   to: (normalizedPhone: string) => string;
+  routeReader?: SendTimeRouteReader;
 };
+
+/**
+ * WILLOW-ROUTING-CANDIDATE-01: the send-time route, after the consent gate and
+ * the fence and BEFORE any claim. Every studio is on the platform sender until
+ * listed in SMS_STUDIO_ROUTING_STUDIO_IDS (lib/sms/send-time-route.ts); a
+ * listed studio sends only from its own ready sender, or not at all. A refusal
+ * claims nothing and calls no provider, so it is logged here and nowhere else.
+ */
+async function sendTimeRouteFor(
+  studioId: string,
+  recipientE164: string,
+  appointmentId: string,
+  smsType: SmsType,
+  reader: SendTimeRouteReader | undefined,
+): Promise<SendTimeRoute> {
+  const route = await resolveSendTimeRoute({ studioId, recipientE164, reader });
+  if (!route.ok) {
+    console.error(
+      JSON.stringify({
+        event: "sms_route_refused",
+        appointmentId,
+        smsType,
+        reason: route.reason,
+        readiness: route.readiness ?? null,
+        attemptClaimed: false,
+        providerCalled: false,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+  return route;
+}
 
 /**
  * The confirmation send path (the reminders use sendReminder, which adds
@@ -781,6 +837,12 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
     return { ok: false, skipped: true, reason: fence.reason };
   }
 
+  const to = args.to(gate.normalizedPhone);
+  const route = await sendTimeRouteFor(args.studio.id, to, args.appointmentId, args.smsType, args.routeReader);
+  if (!route.ok) {
+    return { ok: false, skipped: true, reason: `sms_route_${route.reason}` };
+  }
+
   const claimed = await claimSmsSend(args.admin, args.appointmentId, args.smsType);
   if (!claimed) {
     return { ok: false, skipped: true, reason: "not_claimed" };
@@ -796,7 +858,6 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
 
   try {
     const body = args.buildBody(gate.normalizedPhone);
-    const to = args.to(gate.normalizedPhone);
     attempt = await sendWithLedgerRow({
       admin: args.admin,
       studioId: args.studio.id,
@@ -804,6 +865,7 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
       smsType: args.smsType,
       to,
       body,
+      route,
     });
     const result = attempt.result;
     success = result.ok;
