@@ -20,22 +20,33 @@ import { RECOVERY_ROUTE_BY_ERROR_CODE, type SenderRead } from "./sender-status";
 // plus "Unavailable" when the sender could not be read: a read that did not
 // answer is never reported as any of the six.
 //
-// WHAT "ACTIVE" REQUIRES, and what it does not:
-//   * Canada: an ACTIVE 0191 sender whose number is Canadian. A US number
-//     serving Canadian recipients is held to the US-registration rule, because
-//     the number's own carrier rules apply to everything it sends.
-//   * United States: an ACTIVE sender whose number is US (10DLC) or toll-free,
-//     AND recorded registration evidence that is approved — the 10DLC brand,
-//     campaign and number association, or toll-free verification. A Canadian
-//     number is never a registered US sender, and relabelling it cannot make
-//     it one.
-//   A number existing, or passing one test send, establishes neither.
+// WHAT "ACTIVE" REQUIRES: ONE MATRIX, sender kind x destination, taken from
+// Twilio's own documentation (checked 2026-10-12; see DESTINATION_RULES):
 //
-// REGISTRATION EVIDENCE IS NOT STORED YET. Nothing in Hone records 10DLC or
-// toll-free verification today, so every caller currently passes
-// `{ state: "not_recorded" }` and US readiness is therefore "Requires
-// information" for every studio. That is the true answer, not a placeholder:
-// storing evidence is a later slice with its own migration and proof.
+//                         Canadian recipients     US recipients
+//   Canadian long code    no registration         A2P 10DLC registration
+//   US long code          no registration         A2P 10DLC registration
+//   Toll-free             toll-free verification  toll-free verification
+//
+//   * A2P 10DLC is scoped to traffic TO the US: "Anyone sending SMS/MMS
+//     messages over a 10DLC number from an application to the US must
+//     register for A2P 10DLC", and "US and Canadian 10-digit long code (10DLC)
+//     phone numbers must be registered before you can use them to send
+//     messages from your application to US-based recipients". So a REGISTERED
+//     Canadian long code may serve US recipients, and a US long code serving
+//     Canadian recipients needs no 10DLC registration.
+//   * "Toll-free numbers must be verified before you can use them to send
+//     messages to the United States or Canada."
+//   A number existing, or passing one test send, establishes none of this.
+//
+// NOT A HIPAA STATEMENT. "Active" here means sender and registration
+// eligibility only. Texting patient information also needs a provider account
+// covered by a BAA (#828); nothing in this model knows or implies that.
+//
+// REGISTRATION EVIDENCE: the caller passes the evidence for the ONE kind of
+// registration the sender's number uses (10DLC for a long code, toll-free
+// verification for a toll-free number). Nothing in this PR stores it, so the
+// page passes `{ state: "not_recorded" }`; #844 (0217) records it.
 //
 // This module reads nothing and sends nothing. It is the input the later
 // send-time refusal will consume, so the panel and the refusal cannot disagree.
@@ -99,13 +110,46 @@ function make(
   return { destination, state, label: READINESS_LABELS[state], detail, nextAction, actor, senderCountry };
 }
 
-/** The registration part of a US-registered sender's readiness. */
+/** What a sender kind needs before it may text a destination. */
+export type RegistrationRequirement = "none" | "a2p_10dlc" | "toll_free_verification";
+
+/**
+ * THE MATRIX (Twilio documentation, checked 2026-10-12):
+ *   - A2P 10DLC is required for application traffic over a 10DLC number TO
+ *     THE US, for US and Canadian long codes alike
+ *     (twilio.com/docs/messaging/compliance/a2p-10dlc, "Who needs to register";
+ *     twilio.com/docs/usage/tutorials/how-to-use-your-free-trial-account).
+ *   - Toll-free numbers must be verified before messaging the US or Canada
+ *     (same trial guide, "Toll-free verification (US and Canada only)";
+ *     twilio.com/docs/messaging/compliance/toll-free/console-onboarding).
+ * One table, so the panel, the tests and any later send-time check read the
+ * same rule. `other_nanp` senders are refused before this is consulted.
+ */
+export const DESTINATION_RULES: Readonly<
+  Record<Exclude<NanpCountry, "other_nanp">, Record<DestinationCountry, RegistrationRequirement>>
+> = {
+  CA: { CA: "none", US: "a2p_10dlc" },
+  US: { CA: "none", US: "a2p_10dlc" },
+  toll_free: { CA: "toll_free_verification", US: "toll_free_verification" },
+};
+
+const SENDER_KIND_NAME: Record<Exclude<NanpCountry, "other_nanp">, string> = {
+  CA: "Canadian number",
+  US: "US number",
+  toll_free: "toll-free number",
+};
+
+/** Fixed: readiness is never a statement about HIPAA coverage (#828). */
+export const NOT_HIPAA_COVERAGE =
+  "Registration is not HIPAA coverage: texting patient information also needs a BAA-covered provider account.";
+
+/** The registration part of readiness, when the matrix requires one. */
 function fromRegistration(
   destination: DestinationCountry,
   evidence: UsRegistrationEvidence,
   senderCountry: NanpCountry,
 ): DestinationReadiness {
-  const kind = senderCountry === "toll_free" ? "toll-free verification" : "US 10DLC brand and campaign registration";
+  const kind = senderCountry === "toll_free" ? "toll-free verification" : "A2P 10DLC brand and campaign registration";
   switch (evidence.state) {
     case "approved":
       return make(destination, "active", `The studio's number has approved ${kind}.`, null, "none", senderCountry);
@@ -200,22 +244,14 @@ export function destinationReadiness(
     );
   }
 
-  if (destination === "CA") {
-    if (senderCountry === "CA") {
-      return make(destination, "active", "The studio's Canadian number can text Canadian recipients.", null, "none", senderCountry);
-    }
-    // A US long code or toll-free number is held to its own registration.
-    return fromRegistration(destination, usRegistration, senderCountry);
-  }
-
-  // destination === "US"
-  if (senderCountry === "CA") {
+  const rule = DESTINATION_RULES[senderCountry][destination];
+  if (rule === "none") {
     return make(
       destination,
-      "requires_information",
-      "The studio's number is Canadian. Texting US recipients needs a US number with 10DLC registration, or a verified toll-free number.",
-      "Contact Hone support to plan US texting.",
-      "support",
+      "active",
+      `The studio's ${SENDER_KIND_NAME[senderCountry]} can text ${DESTINATION_NAME[destination]} recipients.`,
+      null,
+      "none",
       senderCountry,
     );
   }
