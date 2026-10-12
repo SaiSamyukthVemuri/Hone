@@ -14,7 +14,32 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, repo == hosted)
+## Current state (verified 2026-10-12, post-0210 apply; hosted `0210`, `0217` AUTHORED AND PENDING on the SMS-SENDER-REG-01 branch)
+
+> **0217 IS AUTHORED AND PENDING, on `feat/sms-sender-reg-01` only** (stacked on #841, which has no migration).
+> `0217_studio_sms_sender_registrations.sql` adds one table (`studio_sms_sender_registrations`), one service_role-only command and one service_role-only snapshot read.
+> - **The table:** support-recorded US registration evidence (10DLC or toll-free verification) for the number a studio's sender holds, one row per (sender, number, kind); the kind is the number's, enforced by a check. The owner reads it without the provider reference.
+> - **The command:** `record_studio_sms_sender_registration`, which resolves the studio's live sender itself, compares the sender AND number the operator verified, refuses a sender with no number, and derives the kind from the number.
+> - **Out of scope:** no provider call, no activation, no existing object altered, no row written.
+>
+> **NUMBERING.** A fresh census on 2026-10-12 (recorded in `/home/sam/hone-migration-coordination.md`) found:
+> - `0211` #827, `0212` #832 and `0213` #831, all pending;
+> - `0214` in the PAY-CCY branches, `0215` held by DELIVERY-VISIBILITY-01, and `0216` the receptionist foundation.
+>
+> On this branch alone the pending suffix therefore has a **hole at `0211`-`0216`**. The canonical-facts contiguity guard reports that correctly, and it is not weakened. `0217` applies only after `0211`-`0216`, or after an agreed renumber.
+>
+> **`0209` and `0210` are APPLIED AND FROZEN**, carried byte-identical.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0210** (`0210_sms_waitlist_join_acknowledgement.sql`), applied 2026-10-11 from #822's reviewed head. |
+| **Repo migration max** | **0217** — `0217_studio_sms_sender_registrations.sql`, authored on `feat/sms-sender-reg-01`. No data; no existing object altered. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **`0217`** only on this branch, **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING, with `0211`-`0216` absent from this tree. |
+| **Next free migration** | Next free number is **0218**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. |
+
+## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, repo == hosted)
 
 > **0210 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #822 HEAD, BEFORE ANY MERGE.**
 > `0210_sms_waitlist_join_acknowledgement.sql` was applied to production on

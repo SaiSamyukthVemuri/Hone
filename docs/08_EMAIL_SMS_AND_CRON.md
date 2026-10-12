@@ -243,6 +243,31 @@ A new waitlist invitation is **also texted** to an eligible prospect, beside its
   - a refused or lost text raises one `sms_send_failed` warning (purpose `waitlist_join_acknowledgement`), before the best-effort settle.
 - **The ledger.** Purpose `waitlist_join_acknowledgement`, subject `waitlist_entry_id`. The subject is tied to the studio by a composite key, there is at most one row per entry (unique index), and it is write-once.
 
+### Studio number controls (SMS-SENDER-CONTROL-01, #824) — fake provider only
+
+Settings → Integrations can show an owner **Set up a studio number** panel:
+- **Find numbers:** search CA or US candidates by area code.
+- **Use this number:** provision the chosen number. This runs `provisionStudioSmsSender`, so it goes through the 0191 claim, fence, purchase, finalize and test.
+- **Adopt an existing number:** a support-assisted path through `adoptExistingStudioSmsSender`.
+
+**The gate.** The panel and every action open **only** when `HONE_SMS_SENDER_CONTROLS=fake`, and stay shut in either of these cases:
+- in production (`VERCEL_ENV=production`), where the resolver would hand back the fake and could write a fake sender into production data;
+- whenever live provisioning is armed (`HONE_SMS_PROVISIONING_LIVE` plus credentials), where a click could buy a number.
+
+**The provider.** The actions pass the controls' own **fake** provider explicitly and never resolve one, so nothing is bought, registered or sent. That fake is seeded with a synthetic demo account inventory (`lib/sms/sender-controls-demo.ts`): +14165550142 (CA) and +12125550142 (US) in one demo messaging service, so adoption can succeed. Search never offers those numbers and purchase never buys them.
+
+**One webhook base.** Every Twilio webhook URL Hone configures (provisioning) or requires (adoption) is built by `lib/sms/webhook-base.ts`: `TWILIO_WEBHOOK_BASE_URL` when set, else the app origin. The signature-verifying routes (`/api/twilio/inbound-sms`, `/api/twilio/message-status`) rebuild the signed URL through the same module. A configured URL therefore always verifies, and parity tests pin this.
+
+**Effective inbound route.** Adoption compares where inbound texts, STOP included, ACTUALLY go (`lib/sms/inbound-routing.ts`). Per Twilio's Services resource documentation (checked 2026-10-12), with `use_inbound_webhook_on_number` on, the number's own `sms_url` overrides the service's `inbound_request_url`. With it off and `inbound_request_url` null, inbound is disabled. `readMessagingServiceConfig` reports the flag, and an unreported flag is `null`. `lookupOwnedNumber` reports the number's `sms_url` from the record it already reads. An unreported flag or URL is UNKNOWN: a blocker, refused before the claim as `inbound_routing_unknown` (uncertain), never treated as false.
+
+**Adoption is checked before the claim.** The provider's read-only ownership lookup and messaging-service config read run BEFORE the durable claim. A number the account does not own, a number in another or no service, or a service not wired to Hone's webhooks is refused with nothing written (`uncertain: false`). An incomplete or failed provider answer is refused as `uncertain: true`, to retry later. Without this, a typo would claim a write-once number (0191), park it in `error`, and wedge the studio's setup. Only a submission that passes reaches the claim. A later failure there (for example its proof text) is reported as failed and never as active.
+
+**The country.** A number, or area code, that does not belong to the selected country is refused before any claim (`number_country_mismatch`). With no area code, the fake proposes the country's own numbers.
+
+**Authority.**
+- The database's claim re-derives the owner from the actor user id.
+- Live provisioning, number purchase, US registration submission and WAIT routing (#716, held) are separate owner-approved decisions.
+
 ### SMS RPC grants hardened (PR #141 / migration 0062)
 
 `claim_sms_send` and related SMS RPCs are `revoke from public, anon, authenticated; grant to service_role only`. The action layer always invokes via `createAdminClient()`. Audit grep on every caller is part of the PR template's security checklist.
