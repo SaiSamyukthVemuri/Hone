@@ -35,6 +35,8 @@ const fake = vi.hoisted(() => ({
   links: [] as string[],
   alerts: [] as Array<{ severity: string; event: string; details: Record<string, unknown> }>,
   nextEvent: null as unknown,
+  /** Runs once, after the next jurisdiction read returns (see the mock below). */
+  afterJurisdictionRead: null as null | ((studioId: string) => Promise<void>),
 }));
 
 function account(id: string) {
@@ -83,6 +85,22 @@ vi.mock("@/lib/ops/alerts", () => ({
   },
 }));
 vi.mock("@/lib/analytics/server", () => ({ captureServerEvent: () => undefined }));
+// The REAL jurisdiction read, plus an optional hook run AFTER it returns, so a
+// test can commit an operator change between onboarding's read and its claim
+// (Codex P1 4244982189).
+vi.mock("@/lib/billing/payment-jurisdiction-server", async (importActual) => {
+  const real = await importActual<typeof import("@/lib/billing/payment-jurisdiction-server")>();
+  return {
+    ...real,
+    getStudioPaymentJurisdiction: async (studioId: string) => {
+      const read = await real.getStudioPaymentJurisdiction(studioId);
+      const hook = fake.afterJurisdictionRead;
+      fake.afterJurisdictionRead = null;
+      if (hook) await hook(studioId);
+      return read;
+    },
+  };
+});
 
 const saved = {
   url: process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -117,6 +135,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   fake.reportCountry = null;
+  fake.afterJurisdictionRead = null;
   fake.creates = [];
   fake.links = [];
   fake.alerts = [];
@@ -223,6 +242,25 @@ describe("K1 + K2 the account is created in the studio's country, and recorded",
     } finally {
       process.env.STRIPE_CONNECT_COUNTRY = previous;
     }
+  });
+
+  // Codex P1 4244982189. The read happens before the claim; a change that
+  // commits in between must not create the account for the stale country.
+  it("an operator change committed between the read and the claim: the account is created in the NEW country", async () => {
+    const { createOrLoadConnectedAccountForStudio } = await account_ts();
+    const s = await studio("race");
+    fake.afterJurisdictionRead = async (studioId) => {
+      const r = await adminQuery(
+        `select out_result from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','race',false)`,
+        [studioId],
+      );
+      expect(r.rows[0].out_result).toBe("changed");
+    };
+    const out = await createOrLoadConnectedAccountForStudio(s.studioId);
+    expect(fake.afterJurisdictionRead).toBeNull(); // the hook really ran
+    expect(fake.creates.map((c) => c.country)).toEqual(["US"]);
+    expect((await bound(s.studioId))?.stripe_account_country).toBe("US");
+    expect(await tryPrepare(s, "usd", out.stripeAccountId)).toBe("ok");
   });
 });
 
