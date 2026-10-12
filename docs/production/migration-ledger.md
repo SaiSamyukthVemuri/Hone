@@ -14,15 +14,29 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-11, post-0210 apply; hosted `0210`; `0211`, `0212`, `0213` AUTHORED AND PENDING, stacked in that order)
+## Current state (verified 2026-10-12, post-0210 apply; hosted `0210`; `0211`, `0212`, `0213`, `0214` AUTHORED AND PENDING, in that order)
 
-> **THIS TREE IS THE STACKED INTEGRATION OF THREE DRAFT LANES**, coordinated through the shared
-> census (`/home/sam/hone-migration-coordination.md`): `0211` G3 (PR #827, head `481e60c6`),
-> `0212` DELIVERY-EVENTS-01 (PR #832, head `b5d50e78`, itself stacked on #827) and `0213`
-> LEAD-ALERT-01 (PR #831), on top of #832's head. `0211` and `0212` are carried **byte-identical** to their PR heads (pinned by
-> `tests/migrations/0213-platform-lead-alerts.test.ts`). The pending suffix above hosted `0210` is
-> therefore **contiguous**: `0211`, `0212`, `0213`. Apply strictly in that order, each migration-first
-> under its own approval from its own reviewed head; none is applied.
+> **THIS TREE IS AN ISOLATED SYNTHETIC INTEGRATION BRANCH** (`integration/fett-synthetic-824`),
+> built for #824 to prove a higher migration locally against a coherent chain. It is NOT a
+> release candidate and nothing here is applied. Each number is carried **byte-identical** to
+> its own PR head and every reviewed branch is **unmodified**; the integration is by normal
+> merge into this branch only:
+>
+> * `0211` G3 — PR #827
+> * `0212` DELIVERY-EVENTS-01 — PR #832 (stacked on #827)
+> * `0213` LEAD-ALERT-01 — PR #831
+> * `0214` PAY-CCY-02 — PR #833
+>
+> The pending suffix above hosted `0210` is therefore **contiguous** on this branch:
+> `0211`, `0212`, `0213`, `0214`. Each lane's own branch states its own contiguity position
+> honestly and those statements are preserved below; on a single lane's branch the suffix
+> has holes, and that is correct for that branch. **No contiguity guard is weakened** —
+> the chain is made coherent by carrying the numbers beneath, never by relaxing
+> `tests/docs/canonical-production-facts.test.ts`.
+>
+> Apply order is lexical and strictly `0211` → `0212` → `0213` → `0214`, each
+> migration-first under its own approval **from its own reviewed head, not from this
+> branch**. Coordinated through `~/hone-migration-coordination.md`.
 
 ### Pending `0211` — G3 client SMS permission guard (PR #827)
 
@@ -75,6 +89,17 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. |
 
 ## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, repo == hosted)
+
+### Pending `0214` — PAY-CCY-02 studio payment jurisdiction (PR #833)
+
+> What 0214 adds: `studio_payment_jurisdictions` (CA/cad backfill for every existing
+> studio, CA/cad default for new ones), the audited service_role-only
+> `set_studio_payment_jurisdiction`, the live ledgers' currency CHECKs widened to
+> `('cad','usd')` with an insert guard tying each attempt to its studio's currency and
+> its account's country, attempt money immutability, settlement currency from the
+> studio, and `record_stripe_account_jurisdiction` with three observation columns on
+> `studio_payment_settings`. Historical rows are not rewritten.
+>
 
 > **0210 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #822 HEAD, BEFORE ANY MERGE.**
 > `0210_sms_waitlist_join_acknowledgement.sql` was applied to production on
@@ -134,10 +159,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0210** (`0210_sms_waitlist_join_acknowledgement.sql`), applied 2026-10-11 from #822's reviewed head. |
-| **Repo migration max** | **0210** — repo and hosted are equal, so this is the PARITY shape with **nothing pending**. |
+| **Repo migration max** | **0214** — `0214_studio_payment_jurisdiction.sql`, authored on the PAY-CCY-02 branch and NOT applied. This is the MIGRATION-FIRST PENDING shape, with a gap: 0211–0213 are reserved by other lanes and are not in this tree. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **none.** |
-| **Next free migration** | Next free number is **0211**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
+| **Pending migrations** | **`0214`** on this branch, applied only after `0211`–`0213` (other lanes' reservations) are applied or renumbered by agreement. |
+| **Next free migration** | Next free number is **0215**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
 | **Reviewed release head** | `3096e1f41dd00291e14885c16b8061e078b4b05d` (PR #822) — CI green (run 38107988921), explicit exact-head review clean ("Reviewed commit `3096e1f41d`"), 3 of 3 review threads resolved, operator shepherd `CANDIDATE_READY_FOR_HUMAN_REVIEW` (2026-10-11T08:08:55Z). |
 | **Production application SHA at apply time** | `0e16257ed7332d512cc4d500377a790d7c66b9b5` (the #820 merge). **No application behaviour was deployed by this apply.** |

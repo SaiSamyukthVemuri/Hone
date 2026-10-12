@@ -323,7 +323,11 @@ export async function prepareSessionPaymentChargeAction(
       // execution and any later refund all read THIS column; nothing downstream
       // recomputes it from the service menu.
       amount_cents: decision.amountCents,
-      currency: "cad",
+      // PAY-CCY-02. The studio's charge currency, read server-side by the
+      // eligibility helper from studio_payment_jurisdictions. Like the amount,
+      // an immutable fact of this attempt from here on (0214); the database
+      // refuses it if the studio's currency changed since the read.
+      currency: eligibility.paymentCurrency,
       status: "ready",
       client_payment_method_id: eligibility.card.id,
       card_authorization_signature_id:
