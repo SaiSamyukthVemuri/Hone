@@ -107,6 +107,7 @@ describe("the studio's own sender, or nothing", () => {
       ok: true,
       mode: "studio",
       messagingServiceSid: MSID_A,
+      fromNumber: CA_SENDER_NUMBER,
       senderId: "sender-a-1",
       destination: "CA",
     });

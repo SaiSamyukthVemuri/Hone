@@ -46,11 +46,19 @@ type Appt = {
 let db: Appt[];
 let events: string[];
 let providerBodies: URLSearchParams[];
-let snapshot: { data: unknown; error: unknown };
+type Snapshot = { data: unknown; error: unknown };
+let snapshot: Snapshot | ((studioId: string) => Snapshot);
+/** Whether a status/start re-read fails, by phase: before the claim, or while it is held. */
+let failRead: ((phase: "pre" | "post") => boolean) | null;
 let fromCalls: number;
 /** Called after the select and before the claim: a concurrent change. */
 let beforeClaim: ((id: string) => void) | null;
+/** Called on a re-read made while the claim is held. */
 let afterClaimRead: ((row: Appt) => void) | null;
+/** Called on a re-read made BEFORE the claim. */
+let preClaimRead: ((row: Appt) => void) | null;
+/** A studio whose owed-rows page read fails. */
+let failSelectFor: string | null;
 
 const studioRow = (id: string) => ({
   id,
@@ -89,6 +97,7 @@ function admin(): SupabaseClient {
       const filters: Filter[] = [];
       let columns = "";
       let order: { col: keyof Appt; asc: boolean } | null = null;
+      let studioFilter: unknown = null;
       const q = {
         select(c: string) {
           columns = c;
@@ -99,6 +108,7 @@ function admin(): SupabaseClient {
           return q;
         },
         eq(col: keyof Appt, v: unknown) {
+          if (col === "studio_id") studioFilter = v;
           filters.push((r) => r[col] === v);
           return q;
         },
@@ -124,6 +134,9 @@ function admin(): SupabaseClient {
         },
         limit(n: number) {
           events.push("select_owed");
+          if (failSelectFor !== null && studioFilter === failSelectFor) {
+            return Promise.resolve({ data: null, error: { code: "57014" } });
+          }
           let rows = db.filter((r) => filters.every((f) => f(r)));
           if (order) {
             const { col, asc } = order;
@@ -138,9 +151,12 @@ function admin(): SupabaseClient {
           return Promise.resolve({ data, error: null });
         },
         maybeSingle() {
-          events.push("revalidate");
           const row = db.find((r) => filters.every((f) => f(r)));
-          if (row && afterClaimRead) afterClaimRead(row);
+          const phase = row && row.sms_confirmation_claimed_at !== null ? "post" : "pre";
+          events.push(`revalidate_${phase}`);
+          if (failRead?.(phase)) return Promise.resolve({ data: null, error: { code: "57014" } });
+          if (row && phase === "post" && afterClaimRead) afterClaimRead(row);
+          if (row && phase === "pre" && preClaimRead) preClaimRead(row);
           return Promise.resolve({ data: row ? { status: row.status, starts_at: row.starts_at } : null, error: null });
         },
       };
@@ -148,7 +164,9 @@ function admin(): SupabaseClient {
     },
     rpc(fn: string, args: Record<string, unknown> = {}) {
       events.push(fn);
-      if (fn === SNAPSHOT_RPC) return Promise.resolve(snapshot);
+      if (fn === SNAPSHOT_RPC) {
+        return Promise.resolve(typeof snapshot === "function" ? snapshot(String(args.p_studio_id)) : snapshot);
+      }
       const row = db.find((r) => r.id === args.p_appointment_id);
       if (fn === "claim_sms_send") {
         if (beforeClaim) beforeClaim(String(args.p_appointment_id));
@@ -182,11 +200,12 @@ const readyStudioA = () => ({
 
 const ENABLED = { [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: A };
 const manageUrls: Array<[string, string]> = [];
-const run = (env: Record<string, string> = ENABLED) =>
+const run = (env: Record<string, string> = ENABLED, pageSize?: number) =>
   recoverOwedConfirmations({
     admin: admin(),
     nowMs: NOW,
     env,
+    pageSize,
     manageUrlFor: (id, startsAt) => {
       manageUrls.push([id, startsAt.toISOString()]);
       return `https://app.example/manage/${id}`;
@@ -212,6 +231,9 @@ beforeEach(() => {
   fromCalls = 0;
   beforeClaim = null;
   afterClaimRead = null;
+  preClaimRead = null;
+  failRead = null;
+  failSelectFor = null;
   providerStatus = 201;
   snapshot = readyStudioA();
   vi.stubGlobal(
@@ -276,11 +298,12 @@ describe("WHEN THE SENDER BECOMES READY: an owed confirmation is delivered exact
     snapshot = readyStudioA();
     const r2 = await run();
     expect(r2).toMatchObject({ ran: true, considered: 1, sent: 1, failed: 0 });
-    expect(events.indexOf(SNAPSHOT_RPC)).toBeLessThan(events.indexOf("claim_sms_send"));
-    expect(events.indexOf("claim_sms_send")).toBeLessThan(events.indexOf("revalidate"));
-    expect(events.indexOf("revalidate")).toBeLessThan(events.indexOf("provider"));
+    expect(events.indexOf(SNAPSHOT_RPC)).toBeLessThan(events.indexOf("revalidate_pre"));
+    expect(events.indexOf("revalidate_pre")).toBeLessThan(events.indexOf("claim_sms_send"));
+    expect(events.indexOf("claim_sms_send")).toBeLessThan(events.indexOf("revalidate_post"));
+    expect(events.indexOf("revalidate_post")).toBeLessThan(events.indexOf("provider"));
     expect(providerBodies[0].get("MessagingServiceSid")).toBe(MSID_A);
-    expect(providerBodies[0].has("From")).toBe(false);
+    expect(providerBodies[0].get("From")).toBe("+14165550100");
     expect(db[0].sms_confirmation_sent_at).not.toBeNull();
 
     events = [];
@@ -426,6 +449,24 @@ describe("races after the selection", () => {
 });
 
 describe("the database read failing", () => {
+  it("one studio's page read failing never stops another studio's recovery", async () => {
+    const B2 = "studio-b2";
+    db = [appt({ id: "a-1" }), appt({ id: "b-1", studio_id: B2 })];
+    failSelectFor = A;
+    snapshot = (studioId) => ({
+      data: {
+        senders: [{ id: `sender-${studioId}`, studio_id: studioId, status: "active", phone_number: "+14165550100", messaging_service_sid: MSID_A }],
+        registrations: [],
+      },
+      error: null,
+    });
+    process.env[STUDIO_ROUTING_ENV] = `${A},${B2}`;
+    const r = await run({ [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: `${A},${B2}` });
+    expect(r).toMatchObject({ ran: true, sent: 1, skipped: { read_failed: 1 } });
+    expect(db.find((x) => x.id === "b-1")!.sms_confirmation_sent_at).not.toBeNull();
+    expect(db.find((x) => x.id === "a-1")!.sms_confirmation_send_attempts).toBe(0);
+  });
+
   it("is a run that did nothing, never a throw", async () => {
     db = [appt()];
     const broken = {
@@ -442,3 +483,92 @@ describe("the database read failing", () => {
 // Type-only guard: the snapshot answer shape the reader consumes.
 const _shape: SendTimeRouteRead = { ok: false };
 void _shape;
+
+describe("eligibility survives an unreadable or refused re-read BEFORE the claim", () => {
+  it("cancelled before the claim: nothing claimed, nothing spent", async () => {
+    db = [appt()];
+    preClaimRead = (row) => {
+      row.status = "cancelled";
+    };
+    expect(await run()).toMatchObject({ sent: 0, skipped: { recovery_not_confirmed: 1 } });
+    expect(events).not.toContain("claim_sms_send");
+    expect(db[0].sms_confirmation_send_attempts).toBe(0);
+  });
+
+  it("an unreadable re-read before the claim: nothing spent, and the next run sends it", async () => {
+    db = [appt()];
+    failRead = (phase) => phase === "pre";
+    expect(await run()).toMatchObject({ sent: 0, skipped: { recovery_revalidate_failed: 1 } });
+    expect(events).not.toContain("claim_sms_send");
+    expect(db[0].sms_confirmation_send_attempts).toBe(0);
+    failRead = null;
+    events = [];
+    expect(await run()).toMatchObject({ sent: 1 });
+    expect(providerCalls()).toBe(1);
+  });
+
+  it("a post-claim re-read that fails once is looked at again, and sends", async () => {
+    db = [appt()];
+    let failures = 1;
+    failRead = (phase) => phase === "post" && failures-- > 0;
+    expect(await run()).toMatchObject({ sent: 1 });
+    expect(events.filter((e) => e === "revalidate_post")).toHaveLength(2);
+  });
+
+  it("RESIDUAL (documented): a post-claim re-read failing every look releases the claim with its attempt spent", async () => {
+    db = [appt()];
+    failRead = (phase) => phase === "post";
+    expect(await run()).toMatchObject({ sent: 0, skipped: { recovery_revalidate_failed: 1 } });
+    expect(events.filter((e) => e === "revalidate_post")).toHaveLength(3);
+    expect(providerCalls()).toBe(0);
+    expect(db[0].sms_confirmation_claimed_at).toBeNull();
+    expect(db[0].sms_confirmation_send_attempts).toBe(1);
+  });
+});
+
+describe("FAIRNESS: rows that keep refusing never starve the rest", () => {
+  const minutesAgo = (m: number) => iso(NOW - m * 60_000);
+
+  it("60 older opted-out rows ahead of an owed one: the owed one is still sent, in one run", async () => {
+    db = [
+      ...Array.from({ length: 60 }, (_, i) =>
+        appt({ id: `stop-${i}`, created_at: minutesAgo(600 - i), client_opted_out_at: minutesAgo(1) }),
+      ),
+      appt({ id: "owed", created_at: minutesAgo(30) }),
+    ];
+    const r = await run(ENABLED, 50);
+    expect(r).toMatchObject({ ran: true, considered: 61, sent: 1, skipped: { client_opted_out: 60 } });
+    expect(db.find((x) => x.id === "owed")!.sms_confirmation_sent_at).not.toBeNull();
+  });
+
+  it("an unready studio's backlog never starves another routed studio, and its snapshot is read once", async () => {
+    const B2 = "studio-b2";
+    db = [
+      ...Array.from({ length: 60 }, (_, i) => appt({ id: `a-${i}`, created_at: minutesAgo(600 - i) })),
+      appt({ id: "b-1", studio_id: B2, created_at: minutesAgo(30) }),
+    ];
+    snapshot = (studioId) =>
+      studioId === A
+        ? { data: { senders: [], registrations: [] }, error: null }
+        : {
+            data: {
+              senders: [{ id: "sender-b2", studio_id: B2, status: "active", phone_number: "+14165550111", messaging_service_sid: MSID_A }],
+              registrations: [],
+            },
+            error: null,
+          };
+    process.env[STUDIO_ROUTING_ENV] = `${A},${B2}`;
+    const r = await run({ [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: `${A},${B2}` }, 50);
+    expect(r).toMatchObject({ ran: true, sent: 1, skipped: { sms_route_no_active_sender: 60 } });
+    expect(db.find((x) => x.id === "b-1")!.sms_confirmation_sent_at).not.toBeNull();
+    expect(events.filter((e) => e === SNAPSHOT_RPC)).toHaveLength(2);
+    expect(db.filter((x) => x.studio_id === A).every((x) => x.sms_confirmation_send_attempts === 0)).toBe(true);
+  });
+
+  it("an unreadable snapshot is looked at once per run, not once per row", async () => {
+    db = Array.from({ length: 5 }, (_, i) => appt({ id: `r-${i}`, created_at: iso(NOW - (60 + i) * 60_000) }));
+    snapshot = { data: null, error: { code: "PGRST202" } };
+    expect(await run()).toMatchObject({ sent: 0, skipped: { sms_route_sender_read_failed: 5 } });
+    expect(events.filter((e) => e === SNAPSHOT_RPC)).toHaveLength(1);
+  });
+});

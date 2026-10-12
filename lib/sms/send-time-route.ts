@@ -126,6 +126,12 @@ export type SendTimeRoute =
       ok: true;
       mode: "studio";
       messagingServiceSid: string;
+      /**
+       * The exact number whose readiness was checked, sent as `From` beside the
+       * service: a service is a POOL, and without it the provider may choose
+       * another number in it (lib/sms/provider/types.ts, fromPhoneNumber).
+       */
+      fromNumber: string;
       senderId: string;
       destination: DestinationCountry;
     }
@@ -183,6 +189,7 @@ export function decideStudioRoute(input: {
     return { ok: false, reason: "sender_identity_missing" };
   }
 
+  const senderNumber = classifyNanpNumber(sender.phone_number);
   const recipient = classifyNanpNumber(recipientE164);
   if (!recipient.ok || (recipient.country !== "CA" && recipient.country !== "US")) {
     return { ok: false, reason: "recipient_unroutable" };
@@ -200,7 +207,17 @@ export function decideStudioRoute(input: {
   if (readiness.state !== "active") {
     return { ok: false, reason: "destination_not_ready", readiness: readiness.state };
   }
-  return { ok: true, mode: "studio", messagingServiceSid: sid, senderId: sender.id, destination };
+  // Readiness "active" already required a classifiable number; checked again
+  // here so the From the provider receives is the canonical E.164.
+  if (!senderNumber.ok) return { ok: false, reason: "destination_not_ready", readiness: "failed" };
+  return {
+    ok: true,
+    mode: "studio",
+    messagingServiceSid: sid,
+    fromNumber: senderNumber.e164,
+    senderId: sender.id,
+    destination,
+  };
 }
 
 /**

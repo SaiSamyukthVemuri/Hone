@@ -326,9 +326,10 @@ export async function sendBookingConfirmationSmsToClient(
  * D5: a confirmation the booking request owed but could not send (see
  * lib/sms/confirmation-recovery.ts). The same gate, fence, route, claim and
  * provider as the booking confirmation, plus a re-read of the appointment
- * AFTER the claim: it must still be confirmed and still start after the
- * recovery horizon, and the message and its manage link are built from that
- * re-read start.
+ * BEFORE the claim (a refusal or an unreadable row spends nothing, so it stays
+ * owed) and AGAIN AFTER it (it must still be confirmed and still start after
+ * the recovery horizon). The message and its manage link are built from the
+ * post-claim start.
  */
 export type SendRecoveredConfirmationInput = Omit<SendConfirmationInput, "startsAt" | "manageUrl" | "intakeUrl"> & {
   /** Re-reads status and start after the claim. */
@@ -346,6 +347,9 @@ export async function sendRecoveredConfirmationSmsToClient(
     studio: input.studio,
     client: input.client,
     routeReader: input.routeReader,
+    // One look: the next recovery run is this send's retry.
+    routeLooks: 1,
+    beforeClaim: input.revalidate,
     afterClaim: input.revalidate,
     buildBody: (_phone, startsAt) => {
       if (!startsAt) throw new Error("recovered confirmation without a re-read start");
@@ -771,7 +775,9 @@ async function sendWithLedgerRow(args: {
     statusCallbackUrl: messageId ? smsStatusCallbackUrl(messageId) : null,
     // Platform mode passes no sender, so the environment chooses exactly as
     // before; studio mode passes the studio's own and nothing else.
-    ...(args.route.mode === "studio" ? { messagingServiceSid: args.route.messagingServiceSid } : {}),
+    ...(args.route.mode === "studio"
+      ? { messagingServiceSid: args.route.messagingServiceSid, fromNumber: args.route.fromNumber }
+      : {}),
   });
   return { result, messageId };
 }
@@ -818,6 +824,13 @@ type SendOneArgs = {
    * provider call; the attempt it spent keeps recovery from ever retrying it.
    */
   afterClaim?: () => Promise<{ ok: true; startsAt: Date } | { ok: false; reason: string }>;
+  /**
+   * D5: the same re-validation BEFORE the claim, so a refusal or an unreadable
+   * appointment spends no attempt and the confirmation stays owed.
+   */
+  beforeClaim?: () => Promise<{ ok: true; startsAt: Date } | { ok: false; reason: string }>;
+  /** Route looks on an unreadable answer; defaults per sms type. */
+  routeLooks?: number;
 };
 
 /**
@@ -850,6 +863,7 @@ async function sendTimeRouteFor(
   appointmentId: string,
   smsType: SmsType,
   reader: SendTimeRouteReader | undefined,
+  maxLooks: number = ROUTE_READ_ATTEMPTS[smsType],
 ): Promise<SendTimeRoute> {
   const read = reader ?? liveSendTimeRouteReader(admin);
   let looks = 0;
@@ -857,7 +871,7 @@ async function sendTimeRouteFor(
   for (;;) {
     looks += 1;
     route = await resolveSendTimeRoute({ studioId, recipientE164, reader: read });
-    if (route.ok || route.reason !== "sender_read_failed" || looks >= ROUTE_READ_ATTEMPTS[smsType]) break;
+    if (route.ok || route.reason !== "sender_read_failed" || looks >= maxLooks) break;
     await new Promise((r) => setTimeout(r, ROUTE_READ_BACKOFF_MS[looks - 1] ?? 0));
   }
   if (!route.ok) {
@@ -911,9 +925,27 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
   }
 
   const to = args.to(gate.normalizedPhone);
-  const route = await sendTimeRouteFor(args.admin, args.studio.id, to, args.appointmentId, args.smsType, args.routeReader);
+  const route = await sendTimeRouteFor(
+    args.admin,
+    args.studio.id,
+    to,
+    args.appointmentId,
+    args.smsType,
+    args.routeReader,
+    args.routeLooks,
+  );
   if (!route.ok) {
     return { ok: false, skipped: true, reason: `sms_route_${route.reason}` };
+  }
+
+  if (args.beforeClaim) {
+    let pre: { ok: true; startsAt: Date } | { ok: false; reason: string };
+    try {
+      pre = await args.beforeClaim();
+    } catch {
+      pre = { ok: false, reason: "revalidate_failed" };
+    }
+    if (!pre.ok) return { ok: false, skipped: true, reason: pre.reason };
   }
 
   const claimed = await claimSmsSend(args.admin, args.appointmentId, args.smsType);

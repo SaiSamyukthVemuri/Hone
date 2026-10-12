@@ -212,7 +212,8 @@ describe.each(PATHS)("%s: a routed studio sends from its own sender, after the r
     expect(claim).toBeGreaterThan(route);
     expect(provider).toBeGreaterThan(claim);
     expect(providerBodies[0].get("MessagingServiceSid")).toBe(MSID_A);
-    expect(providerBodies[0].has("From")).toBe(false);
+    // The exact pool member whose readiness was checked, never the platform's.
+    expect(providerBodies[0].get("From")).toBe("+14165550100");
     expect(JSON.stringify([...providerBodies[0]])).not.toContain(PLATFORM_MSID);
     expect(JSON.stringify([...providerBodies[0]])).not.toContain(PLATFORM_FROM);
   });
@@ -367,6 +368,28 @@ describe("the provider module: a routed sender is the only sender", () => {
     await sendSmsSafely({ to: CA_RECIPIENT, body: "x", messagingServiceSid: MSID_A });
     expect(providerBodies[0].get("MessagingServiceSid")).toBe(MSID_A);
     expect(providerBodies[0].has("From")).toBe(false);
+  });
+
+  it("PINNED SENDER: a routed send names the exact pool member as From, beside its service", async () => {
+    await sendSmsSafely({ to: CA_RECIPIENT, body: "x", messagingServiceSid: MSID_A, fromNumber: "+14165550100" });
+    expect(providerBodies[0].get("MessagingServiceSid")).toBe(MSID_A);
+    expect(providerBodies[0].get("From")).toBe("+14165550100");
+  });
+
+  it("a From without a routed service, or a malformed one, is refused before any request", async () => {
+    for (const params of [
+      { to: CA_RECIPIENT, body: "x", fromNumber: "+14165550100" },
+      { to: CA_RECIPIENT, body: "x", messagingServiceSid: MSID_A, fromNumber: "4165550100" },
+      { to: CA_RECIPIENT, body: "x", messagingServiceSid: MSID_A, fromNumber: "" },
+    ]) {
+      expect(await sendSmsSafely(params)).toEqual({
+        ok: false,
+        error: "twilio_invalid_sender",
+        retryable: false,
+        attempt: "none",
+      });
+    }
+    expect(events).toEqual([]);
   });
 
   it("no routed sender: the platform keys choose, exactly as before", async () => {
