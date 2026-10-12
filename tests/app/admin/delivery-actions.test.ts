@@ -112,10 +112,17 @@ describe("closeDeliveryConcernAction (DELIVERY-VISIBILITY-04)", () => {
     expect(h.audits[0]).toMatchObject({ outcome: "succeeded", metadata: { resolution: "provider_issue", result: "closed" } });
   });
 
-  it("refuses an unknown resolution before any command", async () => {
+  it("refuses an unknown resolution or a malformed id before any command, and audits both", async () => {
     h.email = "support@hone.test";
     await expect(closeDeliveryConcernAction(form({ concern_id: ID, resolution: "deleted" }))).rejects.toThrow();
+    await expect(closeDeliveryConcernAction(form({ concern_id: "1; drop", resolution: "explained" }))).rejects.toThrow();
     expect(h.rpcCalls).toEqual([]);
+    expect(h.audits).toEqual([
+      expect.objectContaining({ action: "delivery_concern_closed", outcome: "failed", targetId: ID, metadata: { result: "invalid_input", invalid: "resolution" } }),
+      expect.objectContaining({ action: "delivery_concern_closed", outcome: "failed", targetId: null, metadata: { result: "invalid_input", invalid: "concern_id" } }),
+    ]);
+    expect(JSON.stringify(h.audits)).not.toContain("1; drop");
+    expect(JSON.stringify(h.audits)).not.toContain("deleted");
   });
 });
 

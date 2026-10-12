@@ -100,11 +100,21 @@ export async function closeDeliveryConcernAction(formData: FormData): Promise<vo
 
   const concernId = formData.get("concern_id");
   const resolution = formData.get("resolution");
-  if (typeof concernId !== "string" || !UUID_RE.test(concernId)) {
-    throw new Error("Missing concern id.");
-  }
-  if (typeof resolution !== "string" || !CONCERN_RESOLUTIONS.has(resolution)) {
-    throw new Error("Unknown resolution.");
+  const idOk = typeof concernId === "string" && UUID_RE.test(concernId);
+  const resolutionOk = typeof resolution === "string" && CONCERN_RESOLUTIONS.has(resolution);
+  if (!idOk || !resolutionOk) {
+    // Audited like resolveDeliveryIncidentAction (Codex P2 4244834158): which
+    // field was rejected, never the submitted values.
+    await logAdminAction({
+      actorUserId: user.id,
+      actorEmail: user.email ?? null,
+      targetType: "delivery_concern",
+      targetId: idOk ? (concernId as string) : null,
+      action: "delivery_concern_closed",
+      outcome: "failed",
+      metadata: { result: "invalid_input", invalid: !idOk ? "concern_id" : "resolution" },
+    });
+    throw new Error(!idOk ? "Missing concern id." : "Unknown resolution.");
   }
 
   const admin = createAdminClient();
