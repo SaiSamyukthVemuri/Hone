@@ -208,12 +208,7 @@ export function AppointmentSettlementControls({
       {open && (
         <div className="mt-3 flex flex-col gap-2">
           <label className="text-xs text-neutral-700 dark:text-neutral-300">
-            {open === "waived"
-              ? "Amount waived"
-              : open === "still_owes"
-                ? "Amount still owed"
-                : "Amount collected"}
-            {currency ? ` (${currencyLabel(currency)})` : ""}
+            {settlementAmountLabel(open, currency)}
             <input
               inputMode="decimal"
               value={amount}
@@ -263,6 +258,24 @@ export function AppointmentSettlementControls({
 
 // Local, deliberately strict. The server re-parses and the database bounds the
 // value, so this exists to give immediate feedback, never to decide anything.
+/**
+ * The amount field's label, naming the studio's currency. Codex P2
+ * 4249009847: a failed studio-currency read (null) is said out loud, exactly
+ * like the recorded line, never left blank and never assumed Canadian.
+ */
+export function settlementAmountLabel(
+  method: SettlementMethod,
+  currency: PaymentCurrency | null,
+): string {
+  const what =
+    method === "waived"
+      ? "Amount waived"
+      : method === "still_owes"
+        ? "Amount still owed"
+        : "Amount collected";
+  return `${what} (${currency ? currencyLabel(currency) : "currency unknown"})`;
+}
+
 function parseAmountToCents(raw: string): number | null {
   const text = raw.trim();
   if (!/^\d{1,5}(\.\d{1,2})?$/.test(text)) return null;

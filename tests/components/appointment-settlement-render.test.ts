@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
@@ -150,5 +152,28 @@ describe("settlement amounts carry their currency", () => {
     const html = render({ settledMethod: "paid_cash", settledAmountCents: 4500, settledCurrency: null, currency: null });
     expect(html).toContain("$45.00 (currency unknown)");
     expect(html).not.toContain("CAD");
+  });
+});
+
+// Codex P2 4249009847. The entry label names the studio's currency, and a
+// failed studio-currency read says so instead of rendering nothing.
+describe("the settlement amount field names its currency", () => {
+  it("USD, CAD, and an unknown currency said out loud", async () => {
+    const { settlementAmountLabel } = await import("@/components/appointment-settlement-controls");
+    expect(settlementAmountLabel("paid_cash", "usd")).toBe("Amount collected (USD)");
+    expect(settlementAmountLabel("paid_e_transfer", "cad")).toBe("Amount collected (CAD)");
+    expect(settlementAmountLabel("still_owes", "usd")).toBe("Amount still owed (USD)");
+    expect(settlementAmountLabel("waived", "cad")).toBe("Amount waived (CAD)");
+    expect(settlementAmountLabel("paid_cash", null)).toBe("Amount collected (currency unknown)");
+    expect(settlementAmountLabel("paid_other_external", null)).not.toMatch(/CAD|USD/);
+  });
+
+  it("the field renders that label, not a hand-written one", () => {
+    const src = readFileSync(
+      path.join(process.cwd(), "components/appointment-settlement-controls.tsx"),
+      "utf8",
+    );
+    expect(src).toContain("{settlementAmountLabel(open, currency)}");
+    expect(src).not.toMatch(/: ""\}\s*\n\s*<input/);
   });
 });
