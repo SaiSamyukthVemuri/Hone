@@ -87,12 +87,21 @@ questions, recorded so that no later PR invents an answer and attributes it to v
 Each is a question for the operator or for the October 7 roadmap, **not** a gap to be
 filled by inference.
 
+**A term leaves this list only against a named authority, never against an
+observation.** Where the repository already carries a *governing* definition —
+a `CANONICAL_ROADMAP.md` row, a CHECK constraint, a declared vocabulary — the
+term is not open, and listing it here would invite a later PR to invent a second
+one. That is the opposite of this section's purpose. So a row may be NARROWED to
+the part the authority does not settle, with the authority cited inline. What may
+never narrow a row is what today's code merely happens to do; that belongs in
+`WAIT_V4_PR1_CONTRACT_AND_COMPATIBILITY.md` §3 as a compatibility constraint.
+
 | Term | Used in | What is undefined |
 |---|---|---|
 | **queue priority** | bullets 3, 8 | How it is computed and ordered. Bullet 8 requires keep-place to *preserve* it; nothing defines it. |
 | **weekly intake room** | bullets 3, 5, 10 | The *counting rule* is given (new-client consultation bookings committed in the trailing seven days, across all channels). **The cap itself is not** — what number the count is compared against, and where that number is configured. |
 | **clean-time count** | bullet 3 | Undefined. It decides the `Both` tie-break and has no definition anywhere in this repository. |
-| **Kind / Both** | bullet 3 | The weekday/weekend "kind" vocabulary is used as if established. `Both` behaviour is partly given; the enumeration is not. |
+| **Kind / Both** — *selection behaviour only* | bullet 3 | **The enumeration is NOT open; do not reopen it.** `weekdays / weekends / both` is established and pinned in three places: `docs/roadmap/CANONICAL_ROADMAP.md:1363` ("Required structured weekdays / weekends / both, using the existing preference vocabulary. No duplicate policy/weekday authority."), `lib/waitlist/join-profile.ts:85` (`AVAILABILITY_PREFERENCES`, under an explicit "VOCABULARY THAT MUST NOT DRIFT" header), and `0193_waitlist_admission_authority.sql:223` (`check (preference in ('weekdays', 'weekends', 'both'))`). PR3 **reuses** it — the roadmap row forbids a duplicate weekday authority outright. What remains undefined is only the *selection* behaviour this contract builds on top: how far `Both` looks ahead, and the **clean-time count** its fallback compares (row above). |
 | **authoritative booking notice** | bullet 4 | Which setting is authoritative, and its precedence against studio/service-level notice. |
 | **compatible times**, **eligible people** | bullet 3 | The eligibility predicate for both operands of `K = min(...)`. |
 | **protects treatment capacity** | bullet 4 | The ranking's first key. `Treatment-length` is defined; the *protection rule* that consumes it is not. |
