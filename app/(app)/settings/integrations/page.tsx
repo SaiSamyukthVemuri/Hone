@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { GoogleCalendarCard } from "../profile/GoogleCalendarCard";
 import { getOwnConnectionReadiness } from "@/lib/google-calendar/connection";
 import { SmsSenderStatusCard } from "./SmsSenderStatusCard";
+import { SmsSenderReadinessPanel } from "./SmsSenderReadinessPanel";
+import { studioSenderReadiness } from "@/lib/sms/sender-readiness";
 import {
   presentSenderStatus,
   readOwnStudioSmsSender,
@@ -89,6 +91,12 @@ export default async function IntegrationsSettingsPage() {
           nothing more: it starts no provisioning, constructs no provider, and
           offers no control. */}
       <SmsSenderStatusCard view={presentSenderStatus(smsRead)} />
+      {/* SMS-SENDER-READY-01: the same read, per recipient country. Hone stores
+          no US registration evidence yet, so it is passed as not recorded:
+          US readiness is "Requires information" until a later slice records it. */}
+      <SmsSenderReadinessPanel
+        rows={studioSenderReadiness(smsRead, { state: "not_recorded" })}
+      />
     </section>
   );
 }
