@@ -189,6 +189,15 @@ export async function moveFrontDeskAppointmentAction(
   const start = instant(field(formData, "date"), field(formData, "time"), studio.timezone);
   if (!start) return { ok: false, message: "Choose a date and time." };
   if (start.getTime() <= Date.now()) return { ok: false, message: RESULT_COPY.invalid_time };
+  // Resolve the required app origin BEFORE the mutation, exactly as the
+  // practitioner move does (§7.6), so a bad deployment origin cannot turn a
+  // committed move into a post-commit false failure (Codex P2 4244612012 on #862).
+  let appOrigin: string;
+  try {
+    appOrigin = getRequiredAppOrigin();
+  } catch {
+    return { ok: false, message: "Could not move the appointment. Please try again." };
+  }
 
   const supabase = await createClient();
   const { data, error } = await supabase.rpc("receptionist_move_appointment", {
@@ -215,7 +224,7 @@ export async function moveFrontDeskAppointmentAction(
   const status = await notifyAppointmentMoved(createAdminClient(), {
     appointmentId,
     studioId: studio.id,
-    appOrigin: getRequiredAppOrigin(),
+    appOrigin,
     resultKind: kind as MoveNotificationKind,
   });
   revalidatePath("/front-desk");

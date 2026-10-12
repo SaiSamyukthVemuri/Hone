@@ -19,6 +19,7 @@ const ctx = vi.hoisted(() => ({
   notifyMoved: vi.fn(),
   sendCancel: vi.fn(),
   guard: vi.fn(),
+  origin: vi.fn(() => "https://app.test"),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -28,7 +29,7 @@ vi.mock("@/lib/receptionist/identity", () => ({ requireReceptionistWithStudio: c
 vi.mock("@/lib/booking/booking-notifications", () => ({ dispatchBookingNotifications: ctx.dispatch }));
 vi.mock("@/lib/email/notify-appointment-moved", () => ({ notifyAppointmentMoved: ctx.notifyMoved }));
 vi.mock("@/lib/email/send-appointment", () => ({ sendCancellationEmail: ctx.sendCancel }));
-vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => "https://app.test" }));
+vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: ctx.origin }));
 
 const { bookFrontDeskAppointmentAction, moveFrontDeskAppointmentAction, cancelFrontDeskAppointmentAction } = await import(
   "@/lib/receptionist/scheduling-actions"
@@ -171,6 +172,15 @@ describe("moving", () => {
     ctx.notifyMoved.mockResolvedValue("degraded");
     const r = await moveFrontDeskAppointmentAction(null, form({ ...ok, practitioner_id: PRACT }));
     expect(r?.message).toBe("Appointment moved and reassigned, but the client notification could not be delivered.");
+  });
+
+  it("resolves the app origin BEFORE the command: a missing origin refuses the move instead of committing it (Codex P2 4244612012)", async () => {
+    ctx.origin.mockImplementationOnce(() => {
+      throw new Error("missing origin");
+    });
+    const r = await moveFrontDeskAppointmentAction(null, form(ok));
+    expect(r).toEqual({ ok: false, message: "Could not move the appointment. Please try again." });
+    expect(ctx.rpc).not.toHaveBeenCalled();
   });
 
   it("refuses stale and deactivated-practitioner moves with safe copy and no notification", async () => {
