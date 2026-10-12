@@ -202,6 +202,12 @@ export const BROWSER_GROUPS = {
       // or stale Server Action and recovers. A diff to app/book/** selects this
       // group, which is the diff that can break it.
       "public-booking-error-containment.spec.ts",
+      // G1: the public practitioner picker — options, scoped slots, parallel
+      // booking by two practitioners at one instant, and the same
+      // practitioner's taken instant not being offered. It drives
+      // /book/[slug], so a diff to app/book/** selects the group that can
+      // break it.
+      "public-practitioner-picker.spec.ts",
     ],
   },
   calendar: {

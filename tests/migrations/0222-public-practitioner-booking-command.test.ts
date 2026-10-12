@@ -20,9 +20,14 @@ const EXECUTABLE = sql.replace(/--[^\n]*/g, " ").replace(/\/\*[\s\S]*?\*\//g, " 
 const TOP_LEVEL = EXECUTABLE.replace(/\$\$[\s\S]*?\$\$/g, " <body> ");
 
 describe("0222 sits correctly in the migration sequence", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    expect(isRepoMax(VERSION), "0222 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
+  it("is no longer the repo max — it handed off to 0225", () => {
+    // CLAUDE.md §2 handoff, on this branch only. 0225 (the new-client write
+    // side) now sits above 0222. On a branch without 0225, 0222 is the max and
+    // asserts it there.
+    expect(isRepoMax(VERSION)).toBe(false);
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above 0222").toBeGreaterThan(0);
+    expect(above.every((v) => Number(v) > Number(VERSION))).toBe(true);
   });
 
   it("is allocated exactly once", () => {
