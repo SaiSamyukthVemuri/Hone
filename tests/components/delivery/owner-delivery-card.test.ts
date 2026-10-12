@@ -19,11 +19,13 @@ const h: { answer: { data: unknown; error: unknown }; calls: Array<[string, unkn
   calls: [],
 };
 
+const c: { answer: { data: unknown; error: unknown } } = { answer: { data: [], error: null } };
+
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
     rpc: (fn: string, args: unknown) => {
       h.calls.push([fn, args]);
-      return Promise.resolve(h.answer);
+      return Promise.resolve(fn === "owner_delivery_concerns" ? c.answer : h.answer);
     },
   }),
 }));
@@ -55,6 +57,7 @@ const incident = (over: Record<string, unknown> = {}) => ({
 
 afterEach(() => {
   h.answer = { data: [], error: null };
+  c.answer = { data: [], error: null };
   h.calls = [];
   delete process.env.RESEND_WEBHOOK_SECRET;
 });
@@ -62,7 +65,10 @@ afterEach(() => {
 describe("OwnerDeliveryCard", () => {
   it("reads its own studio through the owner RPC, with the user's session", async () => {
     await render();
-    expect(h.calls).toEqual([["owner_delivery_incidents", { p_studio_id: STUDIO }]]);
+    expect(h.calls).toEqual([
+      ["owner_delivery_incidents", { p_studio_id: STUDIO }],
+      ["owner_delivery_concerns", { p_studio_id: STUDIO }],
+    ]);
   });
 
   it("renders nothing ONLY when the database refuses the caller", async () => {
@@ -108,6 +114,29 @@ describe("OwnerDeliveryCard", () => {
     expect(html).toContain(`/calendar/${APPT}`);
     // Resolved incidents are not shown as open problems.
     expect(html.match(/not delivered/g)).toHaveLength(1);
+  });
+});
+
+describe("owner-reported concerns on the card (DELIVERY-VISIBILITY-04)", () => {
+  it("lists the owner's open concerns with what the ledger said when reported", async () => {
+    c.answer = {
+      data: [
+        { concern_id: "k1", appointment_id: APPT, channel: "email", purpose: "appointment_postcare", ledger_status_at_report: "delivered", reported_at: "2026-10-12T16:00:00Z", state: "open" },
+        { concern_id: "k2", appointment_id: APPT, channel: "sms", purpose: "appointment_reminder_2h", ledger_status_at_report: "no_record", reported_at: "2026-10-10T16:00:00Z", state: "closed" },
+      ],
+      error: null,
+    };
+    const html = await render();
+    expect(html).toContain("client says they did not receive it (1 open)");
+    expect(html).toContain("Postcare email");
+    expect(html).toContain("not that it was seen");
+    expect(html).not.toContain("2-hour reminder text");
+  });
+
+  it("treats a failed concern read as unknown too, never as healthy", async () => {
+    c.answer = { data: null, error: { message: "network" } };
+    const html = await render();
+    expect(html).toContain("Delivery status is unavailable right now");
   });
 });
 

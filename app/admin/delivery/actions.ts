@@ -65,3 +65,57 @@ export async function resolveDeliveryIncidentAction(formData: FormData): Promise
 
   revalidatePath("/admin/delivery");
 }
+
+// DELIVERY-VISIBILITY-04. Support closes an owner-reported delivery concern
+// (0221, close_delivery_concern). Same gate and audit as resolving an
+// incident; only the resolution word and the command's result are logged.
+const CONCERN_RESOLUTIONS = new Set(["explained", "resent_by_studio", "provider_issue", "not_actionable"]);
+
+export async function closeDeliveryConcernAction(formData: FormData): Promise<void> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user || !isAdmin(user.email)) {
+    await logAdminAction({
+      actorUserId: user?.id ?? null,
+      actorEmail: user?.email ?? null,
+      action: "delivery_concern_closed",
+      targetType: "delivery_concern",
+      outcome: "blocked",
+    });
+    throw new Error("Unauthorized.");
+  }
+
+  const concernId = formData.get("concern_id");
+  const resolution = formData.get("resolution");
+  if (typeof concernId !== "string" || !UUID_RE.test(concernId)) {
+    throw new Error("Missing concern id.");
+  }
+  if (typeof resolution !== "string" || !CONCERN_RESOLUTIONS.has(resolution)) {
+    throw new Error("Unknown resolution.");
+  }
+
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("close_delivery_concern", {
+    p_concern_id: concernId,
+    p_resolution: resolution,
+  });
+  const result = typeof data === "string" ? data : null;
+  const succeeded = !error && (result === "closed" || result === "already_closed");
+
+  await logAdminAction({
+    actorUserId: user.id,
+    actorEmail: user.email ?? null,
+    targetType: "delivery_concern",
+    targetId: concernId,
+    action: "delivery_concern_closed",
+    outcome: succeeded ? "succeeded" : "failed",
+    metadata: { resolution, result: result ?? "error" },
+  });
+  if (!succeeded) {
+    throw new Error("Failed to close the concern.");
+  }
+
+  revalidatePath("/admin/delivery");
+}

@@ -215,3 +215,78 @@ test.describe("platform support queue", () => {
     await expect(CARD()(ownerPage).getByText("1 open delivery problem.", { exact: false })).toBeVisible();
   });
 });
+
+test.describe("client says they didn't receive it (DELIVERY-VISIBILITY-04)", () => {
+  test.beforeEach(async ({ page }) => fenceSentry(page));
+
+  test("the owner reports it on the appointment, support sees what the ledger said and closes it; a practitioner gets no form", async ({
+    page,
+    browser,
+  }) => {
+    const s = await seedE2eStudio();
+    const appt = await seedAppointment(s);
+    // The reminder was accepted by the provider and later reported delivered.
+    const [row] = await sql<{ id: string }>(
+      `select public.begin_appointment_email_message($1, $2, 'appointment_reminder_24h') as id`,
+      [s.studioId, appt],
+    );
+    const emailId = randomUUID();
+    await sql(`select public.settle_email_message($1, 'accepted', $2, null, null)`, [row!.id, emailId]);
+    const [receipt] = await sql<{ receipt_id: string }>(
+      `select * from public.record_email_provider_event($1, 'email.delivered', $2, $3, now(), null, null, null, null)`,
+      [`msg_${randomUUID().replace(/-/g, "")}`, emailId, row!.id],
+    );
+    await sql(`select * from public.process_email_provider_event($1)`, [receipt!.receipt_id]);
+
+    const member = await seedE2eMember(s);
+    const memberPage = await (await browser.newContext()).newPage();
+    await fenceSentry(memberPage);
+    await loginByMagicLink(memberPage, member.email);
+    await memberPage.goto(`/calendar/${appt}`);
+    await expect(memberPage.getByText(/Client says they didn.t receive a message/)).toHaveCount(0);
+
+    await loginByMagicLink(page, s.ownerEmail);
+    await page.goto(`/calendar/${appt}`);
+    await page.getByText(/Client says they didn.t receive a message/).click();
+    await page.getByLabel("Which message?").selectOption("email:appointment_reminder_24h");
+    await page.getByRole("button", { name: "Report to Hone support" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Reported." })).toContainText(
+      "the provider reported it delivered to the client's mail server or carrier (not that it was seen)",
+    );
+    // The delivery record itself is unchanged.
+    const [m] = await sql<{ status: string }>(`select status from public.email_outbound_messages where id = $1`, [row!.id]);
+    expect(m!.status).toBe("delivered");
+
+    await page.goto(LAUNCH);
+    await expect(CARD()(page).getByText(/client says they did not receive it \(1 open\)/)).toBeVisible();
+
+    const { email: operatorEmail } = await seedOperatorAuthUser();
+    const support = await (await browser.newContext()).newPage();
+    await fenceSentry(support);
+    await support.goto("/login");
+    await support.getByLabel("I am using my invited email address").check();
+    await support.locator("#login-email").fill(operatorEmail);
+    const seen = await listMessageIds(operatorEmail);
+    await support.getByRole("button", { name: /send magic link/i }).click();
+    await support.goto(await waitForMagicLink(operatorEmail, E2E_APP_ORIGIN, { excludeIds: seen }));
+    await support.goto("/admin/delivery");
+    const concern = support.getByRole("listitem").filter({ hasText: s.studioName }).filter({ hasText: "24-hour reminder email" }).filter({ hasText: "When reported" });
+    await expect(concern).toContainText("When reported, the provider reported it delivered");
+    await concern.getByLabel("Concern resolution").selectOption("explained");
+    await concern.getByRole("button", { name: "Close concern" }).click();
+    await expect(concern).toHaveCount(0);
+
+    const closed = await sql<{ state: string; resolution: string }>(
+      `select state, resolution from public.delivery_concerns where appointment_id = $1`,
+      [appt],
+    );
+    expect(closed).toEqual([{ state: "closed", resolution: "explained" }]);
+    const audit = await sql<{ outcome: string }>(
+      `select outcome from public.admin_action_events
+        where action = 'delivery_concern_closed' and lower(actor_email) = lower($1)
+        order by created_at desc limit 1`,
+      [operatorEmail],
+    );
+    expect(audit[0]?.outcome).toBe("succeeded");
+  });
+});

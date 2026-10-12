@@ -181,6 +181,15 @@ Findings (`lib/email/delivery-health.ts`) have purpose-specific thresholds: a ba
   A bounce is the studio's to fix (check the address); a provider failure or refusal is Hone's. Until the Resend webhook is activated, the card says plainly that a bounce after sending cannot appear.
 - **Platform support:** `/admin/delivery`. It shows the delivery health (an unreadable row is shown as unknown, never healthy), Resend receipt outcomes and the cross-studio incident queue. Resolve is an admin-only server action, audited as `delivery_incident_resolved` (blocked attempts included).
 
+**Cancellation and postcare emails, and "client says they didn't receive it" (DELIVERY-VISIBILITY-04, migration 0221).**
+- The client's **cancellation notice** (practitioner cancel) and the **postcare email** now go through the same begin/tag/settle join, as `appointment_cancellation` and `appointment_postcare`. The join lives in one helper in `lib/email/send-appointment.ts`, and the callers pass only `ledger: { studioId, appointmentId }`. The studio's own copy of a cancellation is Hone talking to its customer, so it is **not** ledgered.
+- On an appointment page the **owner** can report "Client says they didn't receive a message", choosing one message from a closed list. `report_delivery_concern` records:
+  - who reported it and when, on the server's clock;
+  - **what the ledger said at that moment** (the latest attempt's status, or `no_record`).
+
+  It changes no delivery status, infers nothing, resends nothing and stores no free text. At most one concern is open per appointment, channel and purpose.
+- The owner's open concerns appear on the delivery card. Support sees them in `/admin/delivery` with the ledger status **then and now**, and closes them as explained, resent by the studio, provider issue or not actionable. The close is audited as `delivery_concern_closed`. The database refuses practitioners, front desk, other studios, anon and service_role.
+
 **Not yet:** emailed owner or support notifications (the HIPAA routing gate #828 applies to any patient-related email: Resend cannot sign a BAA), and producers beyond the reminder window.
 
 Pinned by `tests/db/delivery-incidents.db.test.ts`, `tests/migrations/0215-delivery-incidents.test.ts`, `tests/lib/email/delivery-ledger.test.ts`, `tests/lib/email/delivery-health.test.ts`, `tests/app/api/email-delivery-sweep.test.ts` and `tests/app/api/cron/reminder-email-ledger.test.ts`.

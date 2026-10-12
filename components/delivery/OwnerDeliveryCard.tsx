@@ -1,6 +1,17 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { describeIncident, type OwnerIncident } from "@/lib/delivery/incidents";
+import { concernLabel, ledgerStatusWords } from "@/lib/delivery/concerns";
+
+type OwnerConcern = {
+  concern_id: string;
+  appointment_id: string;
+  channel: string;
+  purpose: string;
+  ledger_status_at_report: string;
+  reported_at: string;
+  state: string;
+};
 
 // DELIVERY-VISIBILITY-02 — the studio owner's "Message delivery" card.
 //
@@ -37,13 +48,20 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
   let data: unknown = null;
   let errorCode: string | null = null;
   let failed = false;
+  let concerns: OwnerConcern[] | null = null;
   try {
     const supabase = await createClient();
-    const res = await supabase.rpc("owner_delivery_incidents", { p_studio_id: studioId });
+    const [res, concernsRes] = await Promise.all([
+      supabase.rpc("owner_delivery_incidents", { p_studio_id: studioId }),
+      supabase.rpc("owner_delivery_concerns", { p_studio_id: studioId }),
+    ]);
     data = res.data;
+    concerns = Array.isArray(concernsRes.data) ? (concernsRes.data as OwnerConcern[]) : null;
     if (res.error) {
       failed = true;
       errorCode = typeof res.error.code === "string" ? res.error.code : null;
+    } else if (concernsRes.error) {
+      failed = true;
     }
   } catch {
     failed = true;
@@ -54,6 +72,7 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
 
   const rows = data as OwnerIncident[];
   const open = rows.filter((r) => r.resolved_at === null);
+  const openConcerns = (concerns ?? []).filter((c) => c.state === "open");
   const emailEventsLive = Boolean(process.env.RESEND_WEBHOOK_SECRET);
 
   return (
@@ -77,6 +96,25 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
             : " Email bounce reports are not switched on yet, so an email that bounces after sending will not appear here."}
         </p>
       </header>
+
+      {openConcerns.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <p className="text-xs font-medium text-neutral-800 dark:text-neutral-200">
+            Reported by you: client says they did not receive it ({openConcerns.length} open)
+          </p>
+          <ul className="flex flex-col gap-1 text-xs text-neutral-600 dark:text-neutral-400">
+            {openConcerns.map((c) => (
+              <li key={c.concern_id}>
+                {concernLabel(c.channel, c.purpose)} · reported {formatWhen(c.reported_at, timezone)} · when reported,{" "}
+                {ledgerStatusWords(c.ledger_status_at_report)} ·{" "}
+                <Link href={`/calendar/${c.appointment_id}`} className="underline">
+                  appointment
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {open.length > 0 && (
         <ul className="flex flex-col gap-2">
