@@ -781,6 +781,22 @@ type SendOneArgs = {
  * listed studio sends only from its own ready sender, or not at all. A refusal
  * claims nothing and calls no provider, so it is logged here and nowhere else.
  */
+/**
+ * A confirmation is ONE-SHOT: booking and calendar callers send it once and
+ * nothing rescans unclaimed confirmations, so an UNREADABLE route is looked at
+ * again, briefly, before giving up. Free: it runs before the claim, spends no
+ * attempt and calls no provider. Only `sender_read_failed` is retried; every
+ * other refusal is a configuration fact that a second look cannot change, and
+ * a studio is listed for routing only once it is ready (the cutover gate).
+ * Reminders look once: the cron's next pass is their retry.
+ */
+const ROUTE_READ_ATTEMPTS: Record<SmsType, number> = {
+  confirmation: 3,
+  reminder_24h: 1,
+  reminder_2h: 1,
+};
+const ROUTE_READ_BACKOFF_MS = [60, 180] as const;
+
 async function sendTimeRouteFor(
   admin: SupabaseClient,
   studioId: string,
@@ -789,11 +805,15 @@ async function sendTimeRouteFor(
   smsType: SmsType,
   reader: SendTimeRouteReader | undefined,
 ): Promise<SendTimeRoute> {
-  const route = await resolveSendTimeRoute({
-    studioId,
-    recipientE164,
-    reader: reader ?? liveSendTimeRouteReader(admin),
-  });
+  const read = reader ?? liveSendTimeRouteReader(admin);
+  let looks = 0;
+  let route: SendTimeRoute;
+  for (;;) {
+    looks += 1;
+    route = await resolveSendTimeRoute({ studioId, recipientE164, reader: read });
+    if (route.ok || route.reason !== "sender_read_failed" || looks >= ROUTE_READ_ATTEMPTS[smsType]) break;
+    await new Promise((r) => setTimeout(r, ROUTE_READ_BACKOFF_MS[looks - 1] ?? 0));
+  }
   if (!route.ok) {
     console.error(
       JSON.stringify({
@@ -802,6 +822,7 @@ async function sendTimeRouteFor(
         smsType,
         reason: route.reason,
         readiness: route.readiness ?? null,
+        looks,
         attemptClaimed: false,
         providerCalled: false,
         timestamp: new Date().toISOString(),

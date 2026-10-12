@@ -283,13 +283,18 @@ const REFUSALS: Array<[string, SendTimeRouteRead, string]> = [
   ],
 ];
 
-describe.each(PATHS)("%s: every sender or destination refusal comes before the claim", (_label, send) => {
+/** Route looks a path takes on an UNREADABLE answer: a one-shot confirmation looks three times. */
+const LOOKS = { confirmation: 3, "24h reminder": 1 } as const;
+const looksFor = (label: keyof typeof LOOKS, reason: string, ev: string) =>
+  Array(reason === "sms_route_sender_read_failed" ? LOOKS[label] : 1).fill(ev);
+
+describe.each(PATHS)("%s: every sender or destination refusal comes before the claim", (label, send) => {
   for (const [why, answer, reason] of REFUSALS) {
     it(`${why}: refused after the read, with no claim and no provider call`, async () => {
       routeStudioA();
       const r = await send(reader(answer));
       expect(r).toEqual({ ok: false, skipped: true, reason });
-      expect(events).toEqual(["route_read"]);
+      expect(events).toEqual(looksFor(label, reason, "route_read"));
     });
   }
 
@@ -307,14 +312,21 @@ describe.each(PATHS)("%s: every sender or destination refusal comes before the c
       throw new Error("boom");
     });
     expect(r).toEqual({ ok: false, skipped: true, reason: "sms_route_sender_read_failed" });
-    expect(events).toEqual(["route_read"]);
+    expect(events).toEqual(looksFor(label, "sms_route_sender_read_failed", "route_read"));
+  });
+
+  it("a malformed sender row refuses instead of throwing into the send path", async () => {
+    routeStudioA();
+    const r = await send(reader({ ok: true, senders: [null as unknown as SendTimeSender], registrations: [] }));
+    expect(r).toEqual({ ok: false, skipped: true, reason: "sms_route_sender_read_failed" });
+    expect(events).toEqual(looksFor(label, "sms_route_sender_read_failed", "route_read"));
   });
 
   it("PRODUCTION TODAY (0217 unapplied): the snapshot read fails, and a routed studio refuses rather than falling back", async () => {
     routeStudioA();
     const r = await send(undefined);
     expect(r).toEqual({ ok: false, skipped: true, reason: "sms_route_sender_read_failed" });
-    expect(events).toEqual([SNAPSHOT_RPC]);
+    expect(events).toEqual(looksFor(label, "sms_route_sender_read_failed", SNAPSHOT_RPC));
     expect(providerBodies).toEqual([]);
   });
 });
@@ -391,7 +403,7 @@ const snapReg = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-describe.each(PATHS)("%s: through 0217's snapshot (the default reader)", (_label, send, claimRpc) => {
+describe.each(PATHS)("%s: through 0217's snapshot (the default reader)", (label, send, claimRpc) => {
   it("a ready snapshot: one snapshot read, then the claim, then the studio's own sender", async () => {
     routeStudioA();
     snapshot = snapshotOf([snapRow()]);
@@ -420,7 +432,7 @@ describe.each(PATHS)("%s: through 0217's snapshot (the default reader)", (_label
       snapshot = snap;
       const r = await send(undefined);
       expect(r).toEqual({ ok: false, skipped: true, reason: "sms_route_sender_read_failed" });
-      expect(events).toEqual([SNAPSHOT_RPC]);
+      expect(events).toEqual(looksFor(label, "sms_route_sender_read_failed", SNAPSHOT_RPC));
     });
   }
 
@@ -445,5 +457,32 @@ describe.each(PATHS)("%s: through 0217's snapshot (the default reader)", (_label
     await send(undefined);
     expect(events).not.toContain(SNAPSHOT_RPC);
     expect(providerBodies[0].get("From")).toBe(PLATFORM_FROM);
+  });
+});
+
+describe("a ONE-SHOT confirmation looks again at an unreadable route; a reminder does not", () => {
+  it("confirmation: unreadable, then readable on the second look: one claim, one send", async () => {
+    routeStudioA();
+    const answers: SendTimeRouteRead[] = [{ ok: false }, ready()];
+    const r = await confirmation(reader(() => answers.shift() ?? ready()));
+    expect(r).toMatchObject({ ok: true, messageSid: SID });
+    expect(events.filter((e) => e === "route_read")).toHaveLength(2);
+    expect(events.filter((e) => e === "claim_sms_send")).toHaveLength(1);
+    expect(events.indexOf("claim_sms_send")).toBeGreaterThan(events.lastIndexOf("route_read"));
+    expect(providerBodies[0].get("MessagingServiceSid")).toBe(MSID_A);
+  });
+
+  it("confirmation: a configuration refusal is NOT retried (a second look cannot change it)", async () => {
+    routeStudioA();
+    const r = await confirmation(reader({ ok: true, senders: [sender({ status: "suspended" })], registrations: [] }));
+    expect(r).toEqual({ ok: false, skipped: true, reason: "sms_route_no_active_sender" });
+    expect(events).toEqual(["route_read"]);
+  });
+
+  it("reminder: one look; the cron's next pass is its retry", async () => {
+    routeStudioA();
+    const r = await reminder(reader({ ok: false }));
+    expect(r).toEqual({ ok: false, skipped: true, reason: "sms_route_sender_read_failed" });
+    expect(events).toEqual(["route_read"]);
   });
 });

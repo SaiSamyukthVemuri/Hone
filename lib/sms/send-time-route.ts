@@ -155,6 +155,14 @@ export function decideStudioRoute(input: {
   if (!read.ok || !Array.isArray(read.senders) || !Array.isArray(read.registrations)) {
     return { ok: false, reason: "sender_read_failed" };
   }
+  // A row that is not an object is an answer this file does not understand:
+  // a refusal, never an exception thrown into the send path.
+  if (
+    read.senders.some((s) => !s || typeof s !== "object") ||
+    read.registrations.some((r) => !r || typeof r !== "object")
+  ) {
+    return { ok: false, reason: "sender_read_failed" };
+  }
   // Any row of another studio means the read is not the studio's own: refuse
   // outright rather than filter, so a broken reader can never pick a sender.
   if (read.senders.some((s) => s.studio_id !== studioId)) {
@@ -204,11 +212,10 @@ export async function resolveSendTimeRoute(input: {
   if (studioRoutingMode(input.studioId, input.env) === "platform") {
     return { ok: true, mode: "platform" };
   }
-  let read: SendTimeRouteRead;
   try {
-    read = await (input.reader ?? unavailableSendTimeRouteReader)(input.studioId);
+    const read = await (input.reader ?? unavailableSendTimeRouteReader)(input.studioId);
+    return decideStudioRoute({ studioId: input.studioId, recipientE164: input.recipientE164, read });
   } catch {
-    read = { ok: false };
+    return { ok: false, reason: "sender_read_failed" };
   }
-  return decideStudioRoute({ studioId: input.studioId, recipientE164: input.recipientE164, read });
 }

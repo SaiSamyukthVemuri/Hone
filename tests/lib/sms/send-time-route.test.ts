@@ -120,6 +120,16 @@ describe("the studio's own sender, or nothing", () => {
     });
   });
 
+  it("a malformed row (null, or not an object) refuses rather than throws", () => {
+    for (const bad of [null, 7, "row"]) {
+      expect(decide(read([bad as unknown as SendTimeSender]))).toEqual({ ok: false, reason: "sender_read_failed" });
+      expect(decide(read([sender()], [bad as unknown as SendTimeRegistration]))).toEqual({
+        ok: false,
+        reason: "sender_read_failed",
+      });
+    }
+  });
+
   it("WRONG STUDIO: Studio B's ready sender is never used for Studio A", () => {
     expect(decide(read([sender({ id: "sender-b-1", studio_id: B, messaging_service_sid: MSID_B })]))).toEqual({
       ok: false,
