@@ -118,6 +118,18 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: '.eq("studio_id", consumed.studioId)',
   },
   {
+    path: "lib/booking/booking-notifications.ts",
+    purpose: "Post-commit internal booking notifications (moved verbatim from app/(app)/calendar/actions.ts, STUDIO-READY-02c): records the confirmation email attempt and sends the confirmation SMS.",
+    why: "Called only after create_internal_appointment_v2 or receptionist_create_appointment has COMMITTED, with the appointment row that command returned. The service-role client stamps that one appointment's email-attempt columns (recordEmailAttempt) and passes itself to the SMS helper, which claims and records that one appointment's SMS. No caller-supplied id reaches it except that committed appointment.",
+    scopeGuard: "recordEmailAttempt(admin, p.appointment.id",
+  },
+  {
+    path: "lib/receptionist/scheduling-actions.ts",
+    purpose: "Front-desk book / move / cancel (STUDIO-READY-02c): post-commit notification reads only.",
+    why: "Every write is a 0220 receptionist command called with the receptionist's OWN session (createClient), which derives the actor from auth.uid() and refuses anyone who is not an active receptionist of the studio. The service-role client is constructed only AFTER that command has returned a committed result, and reads exactly that appointment and its client/service/practitioner/studio, each scoped by the server-resolved studio id, to send the same notifications the practitioner calendar sends. Nothing it reads is returned to the browser, and it writes nothing.",
+    scopeGuard: '.eq("studio_id", studioId)',
+  },
+  {
     path: "lib/google-calendar/connection.ts",
     purpose: "Google Calendar Phase A connection metadata + service-role writes (ciphertext table is browser-inaccessible).",
     why: "Callers pass the authenticated studio_id + practitioner_id (resolved via getCurrentPractitionerWithStudio in the actions/callback); every read/write is scoped to both ids so a row can never cross studios.",

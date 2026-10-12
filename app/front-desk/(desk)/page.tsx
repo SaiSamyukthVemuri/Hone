@@ -1,19 +1,30 @@
 import { requireReceptionistWithStudio } from "@/lib/receptionist/identity";
-import { getFrontDeskCalendar, type FrontDeskAppointment } from "@/lib/receptionist/projections";
+import {
+  getFrontDeskBookingOptions,
+  getFrontDeskCalendar,
+  type FrontDeskAppointment,
+} from "@/lib/receptionist/projections";
 import {
   localCalendarDays,
   localDateKey as dayKey,
   localDateLabel as dayLabel,
   localDaysOverlapped,
 } from "@/lib/receptionist/calendar-days";
+import { FrontDeskAppointmentChange } from "@/components/front-desk/appointment-change";
 
 // STUDIO-READY-02d (#824): the operational schedule, today plus six days, from
-// receptionist_calendar and receptionist_calendar_closures ONLY. Read-only:
-// receptionist booking, moving and cancelling come in a later slice (S4), over
-// the shared scheduling core.
+// receptionist_calendar and receptionist_calendar_closures ONLY. STUDIO-READY-02c
+// adds, per confirmed future appointment, a move/reassign and cancel control
+// over the 0220 receptionist commands (the shared scheduling core).
 export const dynamic = "force-dynamic";
 
 const DAYS = 7;
+
+function time24(iso: string, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(
+    new Date(iso),
+  );
+}
 
 function time(iso: string, timeZone: string): string {
   return new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit" }).format(new Date(iso));
@@ -29,7 +40,11 @@ export default async function FrontDeskSchedulePage() {
   const to = new Date(from);
   to.setUTCDate(to.getUTCDate() + DAYS + 2);
 
-  const { appointments, closures } = await getFrontDeskCalendar(studio.id, from.toISOString(), to.toISOString());
+  const [{ appointments, closures }, options] = await Promise.all([
+    getFrontDeskCalendar(studio.id, from.toISOString(), to.toISOString()),
+    getFrontDeskBookingOptions(studio.id),
+  ]);
+  const now = Date.now();
 
   const tz = studio.timezone;
   const today = dayKey(new Date().toISOString(), tz);
@@ -58,21 +73,27 @@ export default async function FrontDeskSchedulePage() {
         </p>
       </div>
       {keys.filter((k) => k >= today).map((k) => {
-        const rows = (byDay.get(k) ?? []).filter((a) => a.status !== "cancelled");
+        // Cancelled appointments stay listed, struck through, so a cancellation
+        // made here visibly lands (STUDIO-READY-02c); the count is active only.
+        const rows = byDay.get(k) ?? [];
+        const active = rows.filter((a) => a.status !== "cancelled").length;
         const blocked = closuresByDay.get(k) ?? 0;
         return (
           <section key={k} className="flex flex-col gap-2" aria-label={k}>
             <h2 className="text-sm font-medium">
               {dayLabel(k)}
               <span className="ml-2 text-xs font-normal text-neutral-500">
-                {rows.length === 0 ? "No appointments" : `${rows.length} appointment${rows.length === 1 ? "" : "s"}`}
+                {active === 0 ? "No appointments" : `${active} appointment${active === 1 ? "" : "s"}`}
                 {blocked > 0 ? ` · ${blocked} blocked period${blocked === 1 ? "" : "s"}` : ""}
               </span>
             </h2>
             {rows.length > 0 && (
               <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
                 {rows.map((a) => (
-                  <li key={a.appointment_id} className="flex flex-wrap items-center gap-3 px-4 py-2 text-sm">
+                  <li
+                    key={a.appointment_id}
+                    className={`flex flex-wrap items-center gap-3 px-4 py-2 text-sm ${a.status === "cancelled" ? "text-neutral-400 line-through decoration-neutral-300" : ""}`}
+                  >
                     <span className="w-36 shrink-0 tabular-nums">
                       {time(a.starts_at, tz)}–{time(a.ends_at, tz)}
                     </span>
@@ -88,6 +109,20 @@ export default async function FrontDeskSchedulePage() {
                     </span>
                     {a.status !== "confirmed" && (
                       <span className="text-xs text-neutral-500">{a.status.replace(/_/g, " ")}</span>
+                    )}
+                    {a.status === "confirmed" && new Date(a.starts_at).getTime() > now && (
+                      <FrontDeskAppointmentChange
+                        appointment={{
+                          id: a.appointment_id,
+                          startsAt: a.starts_at,
+                          endsAt: a.ends_at,
+                          practitionerId: a.practitioner_id,
+                        }}
+                        practitioners={options.practitioners}
+                        localDate={dayKey(a.starts_at, tz)}
+                        localTime={time24(a.starts_at, tz)}
+                        clientName={a.client_display_name ?? "this client"}
+                      />
                     )}
                   </li>
                 ))}

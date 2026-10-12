@@ -171,10 +171,15 @@ describe("practitioner notification helper threads the new field", () => {
 });
 
 describe("practitioner-side booking action passes null (it never asked)", () => {
+  // STUDIO-READY-02c: the internal booking dispatch moved verbatim into a
+  // shared module (the calendar and the front desk both call it). Neither
+  // internal surface asks the referral question.
   const CALENDAR_ACTIONS = read("app/(app)/calendar/actions.ts");
+  const DISPATCH = read("lib/booking/booking-notifications.ts");
 
   it("calendar bookAppointmentForClientAction sends referralSourceLabel: null", () => {
-    expect(CALENDAR_ACTIONS).toMatch(/referralSourceLabel:\s*null/);
+    expect(CALENDAR_ACTIONS).toMatch(/await dispatchBookingEmails\(/);
+    expect(DISPATCH).toMatch(/referralSourceLabel:\s*null/);
   });
 });
 
