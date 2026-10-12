@@ -53,15 +53,20 @@ export const STUDIO_ROUTING_ENV = "SMS_STUDIO_ROUTING_STUDIO_IDS";
 
 export type RoutingMode = "platform" | "studio";
 
-/** The cutover gate. Unset or empty: every studio stays on the platform sender. */
-export function studioRoutingMode(studioId: string, env: Readonly<Record<string, string | undefined>> = process.env): RoutingMode {
+/** The studios listed for routing; empty when the gate is unset. */
+export function listedRoutingStudioIds(env: Readonly<Record<string, string | undefined>> = process.env): string[] {
   const raw = env[STUDIO_ROUTING_ENV];
-  if (!raw || typeof studioId !== "string" || studioId.trim() === "") return "platform";
-  const listed = raw
+  if (!raw) return [];
+  return raw
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
-  return listed.includes(studioId) ? "studio" : "platform";
+}
+
+/** The cutover gate. Unset or empty: every studio stays on the platform sender. */
+export function studioRoutingMode(studioId: string, env: Readonly<Record<string, string | undefined>> = process.env): RoutingMode {
+  if (typeof studioId !== "string" || studioId.trim() === "") return "platform";
+  return listedRoutingStudioIds(env).includes(studioId) ? "studio" : "platform";
 }
 
 /** One sender row as the (future) send-time command returns it. */

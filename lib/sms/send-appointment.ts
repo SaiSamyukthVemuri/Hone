@@ -322,6 +322,45 @@ export async function sendBookingConfirmationSmsToClient(
   });
 }
 
+/**
+ * D5: a confirmation the booking request owed but could not send (see
+ * lib/sms/confirmation-recovery.ts). The same gate, fence, route, claim and
+ * provider as the booking confirmation, plus a re-read of the appointment
+ * AFTER the claim: it must still be confirmed and still start after the
+ * recovery horizon, and the message and its manage link are built from that
+ * re-read start.
+ */
+export type SendRecoveredConfirmationInput = Omit<SendConfirmationInput, "startsAt" | "manageUrl" | "intakeUrl"> & {
+  /** Re-reads status and start after the claim. */
+  revalidate: () => Promise<{ ok: true; startsAt: Date } | { ok: false; reason: string }>;
+  manageUrlFor: (startsAt: Date) => string | null;
+};
+
+export async function sendRecoveredConfirmationSmsToClient(
+  input: SendRecoveredConfirmationInput,
+): Promise<SmsSendResult> {
+  return sendOne({
+    admin: input.admin,
+    appointmentId: input.appointmentId,
+    smsType: "confirmation",
+    studio: input.studio,
+    client: input.client,
+    routeReader: input.routeReader,
+    afterClaim: input.revalidate,
+    buildBody: (_phone, startsAt) => {
+      if (!startsAt) throw new Error("recovered confirmation without a re-read start");
+      return buildBookingConfirmationSms({
+        studioName: input.studio.name,
+        startsAt,
+        timezone: input.timezone,
+        intakeUrl: null,
+        manageUrl: input.manageUrlFor(startsAt),
+      });
+    },
+    to: (normalizedPhone) => normalizedPhone,
+  });
+}
+
 /** A cron reminder window, as reminderWindowIso returns it. */
 export type ReminderWindow = { startIso: string; endIso: string };
 
@@ -769,9 +808,16 @@ type SendOneArgs = {
   smsType: SmsType;
   studio: ConsentGateInput["studio"];
   client: ConsentGateInput["client"];
-  buildBody: (normalizedPhone: string) => string;
+  /** `startsAt` is the start re-read after the claim, when `afterClaim` ran. */
+  buildBody: (normalizedPhone: string, startsAt?: Date) => string;
   to: (normalizedPhone: string) => string;
   routeReader?: SendTimeRouteReader;
+  /**
+   * D5 (a recovered confirmation only): re-validate the appointment AFTER the
+   * claim and before the provider. A refusal releases the claim with no
+   * provider call; the attempt it spent keeps recovery from ever retrying it.
+   */
+  afterClaim?: () => Promise<{ ok: true; startsAt: Date } | { ok: false; reason: string }>;
 };
 
 /**
@@ -875,6 +921,21 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
     return { ok: false, skipped: true, reason: "not_claimed" };
   }
 
+  let revalidatedStart: Date | undefined;
+  if (args.afterClaim) {
+    let check: { ok: true; startsAt: Date } | { ok: false; reason: string };
+    try {
+      check = await args.afterClaim();
+    } catch {
+      check = { ok: false, reason: "revalidate_failed" };
+    }
+    if (!check.ok) {
+      await recordSmsResult(args.admin, args.appointmentId, args.smsType, false);
+      return { ok: false, skipped: true, reason: check.reason };
+    }
+    revalidatedStart = check.startsAt;
+  }
+
   let success = false;
   let outcome: SmsSendResult = {
     ok: false,
@@ -884,7 +945,7 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
   let attempt: LedgeredAttempt | null = null;
 
   try {
-    const body = args.buildBody(gate.normalizedPhone);
+    const body = args.buildBody(gate.normalizedPhone, revalidatedStart);
     attempt = await sendWithLedgerRow({
       admin: args.admin,
       studioId: args.studio.id,
