@@ -6,9 +6,10 @@ import { describeIncident, type OwnerIncident } from "@/lib/delivery/incidents";
 //
 // Contract agreed with the #824 owner-console lane: a self-contained server
 // component, mounted by one line, that reads owner_delivery_incidents (0215)
-// with the signed-in user's OWN session. It renders nothing for anyone the
+// with the signed-in user's OWN session. It renders nothing ONLY for someone the
 // database refuses (42501: another studio's owner, a practitioner, a front-desk
-// user) or when the read fails, and it makes no provider call.
+// user). Any other failure is shown to the owner as UNAVAILABLE: a read that
+// failed must never look like "no problems". It makes no provider call.
 //
 // It shows operational metadata only: which kind of message, how often, when,
 // the latest appointment and what to do next. No client name, address, phone or
@@ -33,9 +34,23 @@ function formatWhen(iso: string, timezone?: string | null): string {
 }
 
 export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
-  const supabase = await createClient();
-  const { data, error } = await supabase.rpc("owner_delivery_incidents", { p_studio_id: studioId });
-  if (error || !Array.isArray(data)) return null;
+  let data: unknown = null;
+  let errorCode: string | null = null;
+  let failed = false;
+  try {
+    const supabase = await createClient();
+    const res = await supabase.rpc("owner_delivery_incidents", { p_studio_id: studioId });
+    data = res.data;
+    if (res.error) {
+      failed = true;
+      errorCode = typeof res.error.code === "string" ? res.error.code : null;
+    }
+  } catch {
+    failed = true;
+  }
+  // Not this studio's owner: the card does not exist for them.
+  if (errorCode === "42501") return null;
+  if (failed || !Array.isArray(data)) return <DeliveryStatusUnavailable />;
 
   const rows = data as OwnerIncident[];
   const open = rows.filter((r) => r.resolved_at === null);
@@ -99,6 +114,25 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
           })}
         </ul>
       )}
+    </section>
+  );
+}
+
+/** Shown to the owner when the read failed: unknown, never "no problems". */
+function DeliveryStatusUnavailable() {
+  return (
+    <section
+      aria-labelledby="owner-delivery-heading"
+      role="status"
+      className="flex flex-col gap-1 rounded-lg border border-neutral-300 p-4 dark:border-neutral-700"
+    >
+      <h3 id="owner-delivery-heading" className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+        Message delivery
+      </h3>
+      <p className="text-xs text-neutral-700 dark:text-neutral-300">
+        Delivery status is unavailable right now, so it is unknown whether any messages failed. Reload the page to
+        try again.
+      </p>
     </section>
   );
 }

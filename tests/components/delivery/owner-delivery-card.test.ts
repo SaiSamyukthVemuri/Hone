@@ -9,8 +9,9 @@ import { describeIncident, purposeLabel } from "@/lib/delivery/incidents";
 //
 // The card follows the contract agreed with the #824 owner-console lane: it
 // reads owner_delivery_incidents with the user's OWN session (no admin
-// client), renders NOTHING when the database refuses (42501) or the read
-// fails, and shows operational metadata only.
+// client), renders NOTHING only when the database refuses (42501), shows an
+// owner whose read FAILED that the status is unknown (never healthy), and
+// shows operational metadata only.
 // ===========================================================================
 
 const h: { answer: { data: unknown; error: unknown }; calls: Array<[string, unknown]> } = {
@@ -64,11 +65,23 @@ describe("OwnerDeliveryCard", () => {
     expect(h.calls).toEqual([["owner_delivery_incidents", { p_studio_id: STUDIO }]]);
   });
 
-  it("renders nothing when the database refuses the caller or the read fails", async () => {
+  it("renders nothing ONLY when the database refuses the caller", async () => {
     h.answer = { data: null, error: { code: "42501", message: "not the owner of this studio" } };
     expect(await render()).toBe("");
-    h.answer = { data: null, error: { message: "network" } };
-    expect(await render()).toBe("");
+  });
+
+  it("shows an owner whose read failed that the status is UNKNOWN, never healthy", async () => {
+    for (const answer of [
+      { data: null, error: { code: "PGRST301", message: "JWT expired" } },
+      { data: null, error: { message: "network" } },
+      { data: { not: "an array" }, error: null },
+    ]) {
+      h.answer = answer;
+      const html = await render();
+      expect(html).toContain("Delivery status is unavailable right now");
+      expect(html).toContain("unknown whether any messages failed");
+      expect(html).not.toContain("No delivery problems");
+    }
   });
 
   it("says plainly when there is nothing, and admits what it cannot see yet", async () => {
