@@ -791,6 +791,17 @@ export type Practitioner = {
   // seeds NEW treatment-area drafts. UI default only; the value
   // actually used stays on session_blocks.machine_frequency.
   default_machine_frequency: MachineFrequency | null;
+  // Migration 0223: the practitioner's remembered machine IN THIS STUDIO, and
+  // the mode she last worked in on it. One practitioners row is one
+  // (studio_id, user_id), so this is already per-practitioner-per-studio with
+  // no extra keying.
+  //
+  // A UI DEFAULT ONLY, never the clinical record: what was actually used lives
+  // on treatment_setup_readings. default_machine_id is cleared to null by the
+  // retire command when the unit goes out of service, so a stale remembered
+  // selection cannot outlive its machine.
+  default_machine_id: string | null;
+  default_machine_mode: string | null;
   created_at: string;
 };
 

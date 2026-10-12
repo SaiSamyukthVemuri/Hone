@@ -139,7 +139,25 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // because it drives that journey. RECORDED AS A DECISION per the note above,
     // with the cost explicitly ZERO: the spec skips itself unless
     // HONE_PERF_TIMING=1, so the lane gains a selection entry and no runtime.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(39);
+    //
+    // Now 40: MPX-03's machine-first-charting.spec.ts joined `sessions` because
+    // the machine panel lives IN the settings-block form, the same surface
+    // conditional-numbing-notes and repeat-client-fast-charting drive - and
+    // those two are exactly the specs an earlier version of that panel broke,
+    // so it must run in the lane that can break it.
+    //
+    // RECORDED AS A DECISION, with the cost stated in terms a reader can check
+    // against the file. ONE test() at 390px only, with ten steps. Its runtime
+    // depends on the SERVER's environment, which is unusual enough to state:
+    //   * without HONE_SYNTHETIC_MACHINE_PROFILE=1 in webServer.env it runs
+    //     steps 1-2 and the gate-closed branch - three page interactions and
+    //     one query, roughly 15-20s - and still asserts the claim that matters,
+    //     that no real model is offered;
+    //   * with the flag set it runs all ten, roughly 45-70s: four page loads,
+    //     one block save, one reading save and six queries.
+    // So about a minute at worst against a ~6 min target and a 15 min ceiling.
+    // The margin is not the concern; the visibility is.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(40);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {

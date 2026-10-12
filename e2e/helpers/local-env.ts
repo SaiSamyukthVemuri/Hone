@@ -169,6 +169,33 @@ export const E2E_WEB_SERVER_ENV: Record<string, string> = {
   // when the outer process asks for it, so ordinary e2e runs are unmeasured
   // and unaffected.
   ...(process.env.HONE_PERF_TIMING === "1" ? { HONE_PERF_TIMING: "1" } : {}),
+  // MPX-03's synthetic machine profile, forwarded on EXACTLY the same terms as
+  // HONE_PERF_TIMING above and for the same reason: webServer.env REPLACES
+  // process.env, so a variable the Next server must see has to be listed here.
+  //
+  // WHY THE SPREAD IS CONDITIONAL, and must stay that way. Every real machine
+  // model in lib/machines/catalogue.ts is evidence-gated and blocked, so the
+  // machine picker is empty by design and the workflow is undemonstrable
+  // without one active profile. The synthetic demo profile supplies one, and
+  // lib/machines/synthetic-profile.ts gates it three ways: `server-only`, this
+  // flag must equal exactly "1", and production is refused outright even if the
+  // flag leaks there.
+  //
+  // An UNCONDITIONAL entry here would arm it for every run of this lane, which
+  // is precisely what the gate exists to prevent: the ordinary extended run is
+  // itself the flag-OFF regression proof that no real model is ever offered.
+  // Forwarded only when the outer process asks, so one dedicated run can
+  // exercise selection/save/retrieval while every other run stays gate-closed.
+  //
+  // Agreed with the ops01 lane rather than taken unilaterally: the alternative
+  // was a run wrapper mutating this file at run time, which is worse, because a
+  // crash mid-run would leave a six-claimant tracked file modified in a
+  // worktree other lanes share.
+  //
+  // tests/ci/e2e-web-server-env.test.ts pins that this stays conditional.
+  ...(process.env.HONE_SYNTHETIC_MACHINE_PROFILE === "1"
+    ? { HONE_SYNTHETIC_MACHINE_PROFILE: "1" }
+    : {}),
   // REL-001 route fault injection. Server-only marker; the module's own guard
   // (lib/reliability/e2e-route-fault.ts) refuses it in any deployed runtime and
   // the fault page 404s without it, so it is safe to arm unconditionally for

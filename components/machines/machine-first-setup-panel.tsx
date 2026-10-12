@@ -168,6 +168,7 @@ export function MachineFirstSetupPanel({
                 key={device.deviceId}
                 type="button"
                 onClick={() => setDeviceId(device.deviceId)}
+                data-testid={`machine-pick-${device.deviceId}`}
                 className="rounded-full border border-neutral-300 bg-white px-4 py-2 text-sm text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300"
               >
                 {device.displayName}
