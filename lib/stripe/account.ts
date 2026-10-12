@@ -181,14 +181,15 @@ export async function createOrLoadConnectedAccountForStudio(
   // a stripe_account_id; reuse it.
   if (claim.already_provisioned && claim.out_stripe_account_id) {
     // PAY-CCY-03. An EXISTING account whose recorded country is not the
-    // studio's fails closed: no onboarding link is minted for it, and it is
-    // never swapped for a new one. An account Hone has not observed yet is
+    // studio's, or that Stripe has reported in two countries (0214's
+    // persisted conflict), fails closed: no onboarding link is minted for it,
+    // and it is never swapped for a new one. An account Hone has not observed yet is
     // let through; its country is recorded on the next refresh or
     // account.updated, and charging stays blocked for a non-CA studio until
     // then (0214 guard).
     const { data: bound, error: boundErr } = await admin
       .from("studio_payment_settings")
-      .select("stripe_account_country")
+      .select("stripe_account_country, stripe_account_country_conflict")
       .eq("studio_id", studioId)
       // The claim RPC is mode-scoped (0103) and was called with this mode.
       .eq("stripe_livemode", livemode)
@@ -202,10 +203,13 @@ export async function createOrLoadConnectedAccountForStudio(
       throw new Error(PAYMENT_COUNTRY_UNVERIFIED_ERROR);
     }
     const recorded = (bound?.stripe_account_country as string | null) ?? null;
-    if (recorded && recorded !== paymentCountry) {
+    const conflict =
+      (bound?.stripe_account_country_conflict as string | null) ?? null;
+    if ((recorded && recorded !== paymentCountry) || conflict) {
       logInternalStripeError("onboarding_refused_account_country_mismatch", {
         studioId,
         recordedAccountCountry: recorded,
+        conflictingAccountCountry: conflict,
         paymentCountry,
       });
       throw new Error(ACCOUNT_COUNTRY_MISMATCH_ERROR);
