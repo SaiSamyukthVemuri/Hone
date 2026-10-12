@@ -506,7 +506,7 @@ they must not be implemented twice; that was wrong and is withdrawn.*
 | The **scheduling-locked launch transaction** itself (§2.6) — reservations and invitations created together, delivery after commit | **v4 PR4**, per the §8 sequence. *An earlier revision of this table assigned it to PR2, contradicting §8; corrected.* |
 | Multi-practitioner **appointment** scheduling correctness — double-book prevention including buffers, per-practitioner availability, assignment, any-available selection | **#824 / #825** |
 | `lib/booking/slots.ts`, `lib/booking/public-slot-range.ts` — the candidate and exclusion path | **SHARED. Whoever lands first; the other composes rather than re-deriving.** |
-| "No partial appointment/reservation state" | **One implementation, agreed between the lanes before either writes it.** |
+| "No partial appointment/reservation state" | **SEPARATE implementations, coordinated discipline** — as §9 above states, this is one PROPERTY over DIFFERENT OPERATIONS. §2.6's round launch (reservations and invitations together) and #824/#825's appointment operations (booking, move, cancel, deactivation) each need **their own all-or-nothing implementation**; neither subsumes the other. What the lanes share is the transaction discipline and the lock mode/ordering (§3.3), agreed before either writes — **not one implementation serving both.** *An earlier revision of this row required a single shared implementation, contradicting §9; corrected.* |
 
 ### Verified at the time of writing
 

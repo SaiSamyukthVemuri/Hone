@@ -120,8 +120,11 @@ never narrow a row is what today's code merely happens to do; that belongs in
 1. **Quote it; do not paraphrase it into authority.** A restatement elsewhere is a
    reading aid. This file governs.
 2. **Never extend it from a summary** — including any summary produced earlier in a
-   Claude Code session. §3's terms stay open until the operator or the October 7
-   roadmap closes them.
+   Claude Code session. A §3 term is closed or narrowed only by the operator, by the
+   October 7 roadmap, or by a **verified named governing authority** under §3's own
+   rule above — a `CANONICAL_ROADMAP.md` row, a CHECK constraint, a declared
+   vocabulary, cited inline. What may **never** close one is a summary, or an
+   observation of what today's code merely happens to do.
 3. **Repository observations never qualify it.** What today's code does is a
    compatibility constraint, recorded separately in
    `WAIT_V4_PR1_CONTRACT_AND_COMPATIBILITY.md` §3.
