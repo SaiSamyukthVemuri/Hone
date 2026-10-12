@@ -1,12 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isAdmin } from "@/lib/admin";
 import { logAdminAction } from "@/lib/audit/admin-actions";
-import { deliverPlatformLeadAlert } from "@/lib/platform-leads/alert-delivery";
+import { schedulePlatformLeadAlert } from "@/lib/platform-leads/alert-delivery";
 
 export async function markDemoContactedAction(formData: FormData): Promise<void> {
   const supabase = await createClient();
@@ -101,7 +100,7 @@ export async function retryLeadAlertAction(formData: FormData): Promise<void> {
   }
   // 'not_failed' means another retry already took it; nothing more to do.
   if (requeued) {
-    after(() => deliverPlatformLeadAlert(id));
+    schedulePlatformLeadAlert(id);
   }
   revalidatePath("/admin");
 }
