@@ -609,13 +609,18 @@ begin
         null::timestamptz, null::timestamptz, v_appt.practitioner_id, null::uuid;
       return;
     end if;
-    -- The target must be an ACTIVE owner or practitioner of this studio, with
-    -- or without capacity mode (the capacity branch below re-checks it).
-    if v_reassign and not exists (
+    -- The treating practitioner after this move, whether reassigned or kept,
+    -- must be an ACTIVE owner or practitioner of this studio, with or without
+    -- capacity mode (Codex P2 4244379181 on #862): a time-only move must not
+    -- leave a booking on a deactivated practitioner either. The sentinels are
+    -- the capacity branch's own.
+    if not exists (
       select 1 from public.practitioners pr
        where pr.id = v_target and pr.studio_id = p_studio_id and pr.active = true
     ) then
-      return query select 'invalid_practitioner'::text, v_appt.id, v_appt.starts_at, v_appt.ends_at,
+      return query select
+        case when v_reassign then 'invalid_practitioner' else 'practitioner_reassignment_required' end,
+        v_appt.id, v_appt.starts_at, v_appt.ends_at,
         null::timestamptz, null::timestamptz, v_appt.practitioner_id, null::uuid;
       return;
     end if;

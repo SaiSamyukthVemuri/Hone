@@ -751,6 +751,9 @@ export type AppointmentAudit = {
   // NULL for client and system actors, never invented for a non-practitioner.
   // Complements, and does not replace, the historical bare actor_id above.
   actor_practitioner_id: string | null;
+  // Migration 0220: the receptionist twin, derived and same-studio-validated
+  // the same way. NULL for every actor but a receptionist.
+  actor_receptionist_id: string | null;
   action: string;
   details: Record<string, unknown> | null;
   // Migration 0174: DATABASE-derived at INSERT. A caller-supplied value is

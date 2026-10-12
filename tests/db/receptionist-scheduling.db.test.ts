@@ -249,6 +249,28 @@ describe("0220: what a receptionist may NOT do", () => {
     }
   });
 
+  it("cannot leave a booking on a DEACTIVATED practitioner with a time-only move, even with capacity mode OFF (Codex P2 4244379181)", async () => {
+    const b = await deskBook("2031-08-11 15:00");
+    const before = await appt(b.appointment_id as string);
+    await adminQuery(`update public.studios set practitioner_capacity_booking_enabled = false, practitioner_capacity_enabled = false where id = $1`, [S.studioId]);
+    await adminQuery(`update public.practitioners set active = false where id = $1`, [P1().practitionerId]);
+    try {
+      const m = await asDesk((q) =>
+        q(`select * from public.receptionist_move_appointment($1, $2, null, $3, $4, ${at("2031-08-11 17:00")})`, [
+          S.studioId,
+          b.appointment_id,
+          before.starts_at,
+          before.ends_at,
+        ]).then((r) => r.rows[0] as Row),
+      );
+      expect(m.result).toBe("practitioner_reassignment_required");
+      expect((await appt(b.appointment_id as string)).starts_at).toEqual(before.starts_at);
+    } finally {
+      await adminQuery(`update public.practitioners set active = true where id = $1`, [P1().practitionerId]);
+      await adminQuery(`update public.studios set practitioner_capacity_enabled = true, practitioner_capacity_booking_enabled = true where id = $1`, [S.studioId]);
+    }
+  });
+
   it("has NO override: the commands take no override argument, and the core refuses one for the receptionist kind", async () => {
     const args = await adminQuery(
       `select p.proname, pg_get_function_identity_arguments(p.oid) as args
