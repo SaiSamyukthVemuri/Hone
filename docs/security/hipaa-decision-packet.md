@@ -9,6 +9,51 @@
 >
 > Evidence and statuses: [hipaa-readiness-assessment.md](./hipaa-readiness-assessment.md).
 
+## 0. The only decisions that need Sam (reduced 2026-10-12)
+
+Routine engineering approvals are delegated to Codex, so the earlier list of
+D-0 to D-9 and Q2/Q4 is reduced to **four business decisions**. Everything
+else either has an engineering default (§0.2) or is a per-change hosted
+authorization (§0.3), which is an approval of a specific change, not an open
+question.
+
+| # | Business decision | Why only Sam can make it | What it unblocks |
+|---|---|---|---|
+| **B1** | **Will Hone serve HIPAA-covered studios, starting with the LA studio?** Ask the studio whether it bills insurance or sends HIPAA standard transactions (covered-entity test), and decide whether Hone accepts business-associate obligations at all. | Market and liability choice; a cash-pay studio may not be covered, and then none of B2–B4 is HIPAA-required | Whether B2–B4 happen now or later |
+| **B2** | **Approve a spend envelope** for the BAA-capable stack: Supabase **Team** (from $599/mo, public price) plus its HIPAA add-on (quote); the Vercel HIPAA add-on (price in Billing); Twilio **Security or Enterprise Edition** (sales quote); a BAA-capable email route such as Amazon SES under an AWS BAA (usage-priced); a separate synthetic preview project if wanted. | Recurring cost | Quotes, then the plan changes |
+| **B3** | **Legal: engage counsel and an advisor, appoint a privacy official, and authorize who signs BAAs.** Counsel drafts the studio-to-Hone BAA. | Signing authority and accountability | Executed agreements; risk analysis; policies |
+| **B4** | **Patient email posture for covered studios.** Either (a) keep detailed emails, but only once they run through a BAA-covered provider, or (b) switch covered studios to "sign in to see details" notifications. Until then, covered studios get no detail-bearing email. | Changes what patients receive; a product and liability trade-off | The D-4 transport route and the email copy |
+
+### 0.2 Engineering defaults adopted under the delegation
+
+The owning lane proceeds unless Sam objects:
+
+- **Access log (G-13, former Q2 and Q4):** the full log lives on the
+  platform/support path; an owner-scoped projection comes later;
+  practitioners do not see it in V1 (the RBAC lane's recommendation).
+- **Preview isolation (former D-6):** previews never use production data.
+  Today they are behind Vercel SSO; a separate synthetic preview project is
+  part of B2.
+- **Receipt subject (former D-7):** `Receipt from <studio>`, with the reason
+  and amount kept in the body and PDF, implemented by the Audit lane. It is
+  reversible copy. If Sam regards the 2026-07-04 copy approval as binding,
+  this moves into B4.
+- **Waitlist email preheader (former D-9):** the ENG/HIPAA lane owns the
+  presentation change. It versions the idempotency key first, with the
+  DB/WAIT lane reviewing the key change.
+- **Sentry environment gate (G-16):** deferred past 2026-10-16, Sentry lane.
+
+### 0.3 Hosted changes that need per-change authorization (not questions)
+
+These are release actions under #824's boundaries, each requested
+separately with its pre-check:
+- the Supabase hardening sequence in §2.1 (MFA enforcement, SSL, session
+  limits, password policy, then PITR and network restrictions);
+- plan purchases (after B2);
+- signing agreements (after B3).
+
+The former D-list in §5 and §6 is kept below as the detailed record.
+
 ## 1. Agreement chain
 
 ```
@@ -246,7 +291,7 @@ else needs a quote.
 | Upstash plan with BAA | Not stated | **Quote needed** |
 | Counsel (studio BAA, risk analysis review, policies) | Not applicable | **Quote needed** |
 
-## 5. Decisions for Sam, in recommended order
+## 5. Detailed decision record (superseded by §0 for what needs Sam)
 
 1. **D-0**: obtain the Los Angeles studio's covered-entity status and the
    workflows it wants. Ask counsel whether Hone acts as its business
@@ -332,7 +377,7 @@ deployed; neither depends on a decision above):
   `docs/security/email-provider-visible-inventory.md` (in #870).
 - G-13 clinical access audit: contract proposed in
   [clinical-access-audit-contract.md](./clinical-access-audit-contract.md);
-  shape agreed in principle with the RBAC lane; no migration number held (≥ 0223: #868 now claims 0222; allocated via the shared register).
+  shape agreed in principle with the RBAC lane; no migration number held (≥ 0224: #868 claims 0222 and #860 (MPX) holds 0223; allocated via the shared register).
 
 **Consequence for Friday (2026-10-16).** Several of these depend on vendor
 turnaround that this packet cannot vouch for. Unless each gate is met and

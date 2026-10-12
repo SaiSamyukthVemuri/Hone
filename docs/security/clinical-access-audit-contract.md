@@ -109,7 +109,7 @@ grants back only what is needed.
 ## 5. Proposed slicing
 
 1. **Contract agreed** (this document, with the RBAC lane).
-2. **Migration (number allocated at the time by the DB/WAIT coordination owner, ≥ 0223):** table, enum checks, append-only trigger, and
+2. **Migration (number allocated at the time by the DB/WAIT coordination owner, ≥ 0224):** table, enum checks, append-only trigger, and
    `record_clinical_access`, with grants pinned by
    `tests/security/clinical-rpc-grant-guard.test.ts`. Real-role DB tests:
    - a member writes no row directly;
@@ -155,4 +155,4 @@ grants back only what is needed.
   **0219** (DB/WAIT, G1 queue position) and **0220** (STUDIO-READY-02c,
   receptionist scheduling).
 - **G-13 holds no number.** Re-derive from PR heads *and* #824 claims at
-  claim time, through the shared register `~/hone-migration-coordination.md` and the DB/WAIT coordination owner. 0221 is allocated to DELIVERY-VISIBILITY-04 and 0222 is claimed by #868, so expect ≥ 0223.
+  claim time, through the shared register `~/hone-migration-coordination.md` and the DB/WAIT coordination owner. 0221 is allocated to DELIVERY-VISIBILITY-04 and 0222 is claimed by #868 and 0223 by #860, so expect ≥ 0224.
