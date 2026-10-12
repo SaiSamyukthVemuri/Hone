@@ -94,7 +94,7 @@ What this stack adds stays inside the boundary #828 asked for:
 - the webhook is configured and tested (§2);
 - the sweep is registered (§3).
 
-The demo states these limits on screen. The card's own copy already says when email bounce reporting is not switched on.
+The demo states these limits on screen. The card never claims bounce reporting is live: it states that a bounce appears only once Hone receives the provider's delivery reports, so no listed problem is not proof of delivery. A stored `RESEND_WEBHOOK_SECRET` is not treated as activation (Codex P2 4253217747). §2's controlled test is the activation evidence.
 
 ## 5. Decisions still open: exact steps, validation, rollback
 
