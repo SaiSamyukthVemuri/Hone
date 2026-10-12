@@ -13,7 +13,7 @@ const URL_OK = `${BASE}/api/twilio/inbound-sms`;
 const ACCOUNT = `AC${"1".repeat(32)}`;
 
 const allProven = (): InboundStopFacts => ({
-  env: { TWILIO_WEBHOOK_BASE_URL: BASE, TWILIO_AUTH_TOKEN: "x" },
+  env: { TWILIO_WEBHOOK_BASE_URL: BASE, TWILIO_AUTH_TOKEN: "x", NEXT_PUBLIC_APP_ORIGIN: BASE },
   recentSignatureVerifiedCallbacks: 16,
   endpointProbe: { status: 405, redirectedTo: null },
   service: { inboundRequestUrl: URL_OK, inboundMethod: "POST", useInboundWebhookOnNumber: false, accountSid: ACCOUNT },
@@ -69,6 +69,7 @@ describe("evaluateInboundStopPreflight", () => {
       "signing_account",
       "studio_mapping",
       "stop_forwarded",
+      "one_base",
     ]);
     expect(r.checks.find((c) => c.id === "signing_proven")?.status).toBe("pass");
     expect(r.checks.find((c) => c.id === "endpoint_reachable")?.status).toBe("pass");
@@ -88,6 +89,9 @@ describe("evaluateInboundStopPreflight", () => {
     ["an empty token", (f) => (f.env = { ...f.env, TWILIO_AUTH_TOKEN: "" }), "auth_token"],
     ["STOP consumed by the service", (f) => (f.stopForwardedToWebhook = false), "stop_forwarded"],
     ["no signature-verified callbacks", (f) => (f.recentSignatureVerifiedCallbacks = 0), "signing_proven"],
+    ["the app origin on www", (f) => (f.env = { ...f.env, NEXT_PUBLIC_APP_ORIGIN: "https://www.hone.example" }), "one_base"],
+    ["no app origin, so VERCEL_URL (an internal host)", (f) => (f.env = { ...f.env, NEXT_PUBLIC_APP_ORIGIN: undefined, VERCEL_URL: "hone-abc.vercel.app" }), "one_base"],
+    ["the app origin not observed", (f) => (f.env = { ...f.env, NEXT_PUBLIC_APP_ORIGIN: undefined }), "one_base"],
   ];
   for (const [why, mutate, id] of failing) {
     it(`${why}: blocked on ${id}`, () => {
@@ -105,15 +109,21 @@ describe("evaluateInboundStopPreflight", () => {
     expect(evaluateInboundStopPreflight(f).checks.find((c) => c.id === "endpoint_reachable")?.detail).toMatch(/redirects/);
   });
 
-  it("an http base: blocked on the base, and so on the service URL that can no longer match it", () => {
+  it("an http base: blocked on the base, and so on everything that must match it", () => {
     const f = allProven();
     f.env = { ...f.env, TWILIO_WEBHOOK_BASE_URL: "http://hone.example" };
-    expect(evaluateInboundStopPreflight(f).blockers).toEqual(["base_url", "service_inbound_url"]);
+    expect(evaluateInboundStopPreflight(f).blockers).toEqual(["base_url", "service_inbound_url", "one_base"]);
   });
 
   it("the service URL is compared to the URL built from the base, not to a constant", () => {
     const f = allProven();
-    f.env = { ...f.env, TWILIO_WEBHOOK_BASE_URL: "https://other.example" };
+    f.env = { ...f.env, TWILIO_WEBHOOK_BASE_URL: "https://other.example", NEXT_PUBLIC_APP_ORIGIN: "https://other.example" };
     expect(evaluateInboundStopPreflight(f).blockers).toEqual(["service_inbound_url"]);
+  });
+
+  it("an app origin with a trailing slash is the same base", () => {
+    const f = allProven();
+    f.env = { ...f.env, NEXT_PUBLIC_APP_ORIGIN: `${BASE}/` };
+    expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
   });
 });

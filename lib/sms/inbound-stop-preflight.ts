@@ -24,6 +24,12 @@
 // So the studio service must POST to EXACTLY expectedInboundWebhookUrl(env),
 // and Twilio must sign with the account whose token Hone holds.
 //
+// ONE BASE. The routes verify against TWILIO_WEBHOOK_BASE_URL, and that is the
+// authority. Sender adoption (#863) compares a service's webhooks against the
+// APP origin (NEXT_PUBLIC_APP_ORIGIN, else VERCEL_URL). If the two differ, a
+// service can pass adoption with an inbound URL every STOP is refused on, so
+// their agreement is a check of its own.
+//
 // Every fact is pass, fail or UNKNOWN, and UNKNOWN is a cutover blocker:
 // a STOP path that has not been shown to work is treated as not working.
 // ===========================================================================
@@ -181,6 +187,23 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
       : f.stopForwardedToWebhook
         ? check("stop_forwarded", "pass", "a live STOP to the studio number reached the route and stamped phone-wide")
         : check("stop_forwarded", "fail", "the service consumed STOP without forwarding it to Hone"),
+  );
+
+  // The origin adoption checks webhooks against, as getRequiredAppOrigin
+  // derives it, must be the base the routes verify against.
+  const appOriginRaw = f.env.NEXT_PUBLIC_APP_ORIGIN ?? (f.env.VERCEL_URL ? `https://${f.env.VERCEL_URL}` : undefined);
+  let appOrigin: string | null = null;
+  try {
+    appOrigin = appOriginRaw ? new URL(appOriginRaw).origin : null;
+  } catch {
+    appOrigin = null;
+  }
+  checks.push(
+    appOriginRaw === undefined || f.env.TWILIO_WEBHOOK_BASE_URL === undefined
+      ? check("one_base", "unknown", "app origin (adoption's base) and TWILIO_WEBHOOK_BASE_URL (the routes' base) not both observed")
+      : expected.ok && appOrigin !== null && `${appOrigin}${INBOUND_STOP_PATH}` === expected.url
+        ? check("one_base", "pass", "adoption and the routes use the same base")
+        : check("one_base", "fail", "adoption's app origin differs from TWILIO_WEBHOOK_BASE_URL: a service can pass adoption yet have every STOP refused"),
   );
 
   const blockers = checks.filter((c) => c.status !== "pass").map((c) => c.id);
