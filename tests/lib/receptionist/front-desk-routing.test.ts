@@ -8,14 +8,20 @@ import { isFrontDeskPath, resolveReceptionistMembership } from "@/lib/receptioni
 // tables were read, so a practitioner is also proved to pay no extra query.
 
 type Rows = Record<string, Array<Record<string, unknown>>>;
-const state: { user: { id: string; email: string } | null; rows: Rows; reads: string[] } = {
+const state: { user: { id: string; email: string } | null; rows: Rows; reads: string[]; failing: string[] } = {
   user: null,
   rows: {},
   reads: [],
+  failing: [],
 };
 
 function builder(table: string) {
-  const result = () => Promise.resolve({ data: state.rows[table] ?? [], error: null });
+  const result = () =>
+    Promise.resolve(
+      state.failing.includes(table)
+        ? { data: null, error: { code: "57014" } }
+        : { data: state.rows[table] ?? [], error: null },
+    );
   const b: Record<string, unknown> = {};
   for (const m of ["select", "eq", "limit", "order"]) b[m] = () => b;
   b.then = (ok: (v: unknown) => unknown, bad: (e: unknown) => unknown) => result().then(ok, bad);
@@ -44,6 +50,7 @@ beforeEach(() => {
   state.user = { id: "user-1", email: "person@example.test" };
   state.rows = {};
   state.reads = [];
+  state.failing = [];
 });
 
 describe("a receptionist-only user", () => {
@@ -103,6 +110,13 @@ describe("everyone else is unchanged", () => {
     state.rows = { practitioners: [], studio_receptionists: [] };
     expect(location(await go("/dashboard"))).toBe("/no-access");
     expect(location(await go("/front-desk"))).toBe("/no-access");
+  });
+
+  it("a FAILED receptionist read defers to /front-desk, whose own guard decides (Codex P2 4243919027)", async () => {
+    state.rows = { practitioners: [] };
+    state.failing = ["studio_receptionists"];
+    expect(location(await go("/front-desk"))).toBeNull();
+    expect(location(await go("/dashboard"))).toBe("/front-desk");
   });
 
   it("an anonymous visitor to /front-desk goes to /login", async () => {

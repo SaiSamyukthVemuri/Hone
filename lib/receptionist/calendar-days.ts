@@ -20,21 +20,19 @@ export function localDateKey(iso: string, timeZone: string): string {
 }
 
 /**
- * Every local calendar date that the interval [startIso, endIso) touches in
- * `timeZone`. The end is exclusive, so a closure ending at local midnight does
- * not count for the next day. Bounded at 400 days.
+ * The displayed local dates (`days`, ascending YYYY-MM-DD) that the interval
+ * [startIso, endIso) touches in `timeZone`. The end is exclusive, so a closure
+ * ending at local midnight does not count for the next day.
+ *
+ * It intersects with the DISPLAYED days rather than walking from the closure's
+ * start, so a closure of any length is handled, including one that began long
+ * before the window (Codex P2 4243919021 on #845).
  */
-export function localDaysOverlapped(startIso: string, endIso: string, timeZone: string): string[] {
+export function localDaysOverlapped(startIso: string, endIso: string, timeZone: string, days: readonly string[]): string[] {
   const first = localDateKey(startIso, timeZone);
   const endMs = Date.parse(endIso);
-  if (!(endMs > Date.parse(startIso))) return [first];
-  const last = localDateKey(new Date(endMs - 1).toISOString(), timeZone);
-  const out: string[] = [];
-  for (const k of localCalendarDays(first, 400)) {
-    out.push(k);
-    if (k >= last) break;
-  }
-  return out;
+  const last = endMs > Date.parse(startIso) ? localDateKey(new Date(endMs - 1).toISOString(), timeZone) : first;
+  return days.filter((k) => k >= first && k <= last);
 }
 
 /** The display label of a local calendar date, independent of any offset. */

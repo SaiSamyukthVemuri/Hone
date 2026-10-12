@@ -34,10 +34,11 @@ describe("localCalendarDays", () => {
 
 describe("localDaysOverlapped (Codex P2 4243898525 on #845)", () => {
   const LA = "America/Los_Angeles";
+  const WEEK = localCalendarDays("2026-10-19", 7); // Oct 19 to Oct 25
 
   it("a closure spanning three local days counts on all three", () => {
     // 2026-10-20 18:00 PDT to 2026-10-22 10:00 PDT.
-    expect(localDaysOverlapped("2026-10-21T01:00:00Z", "2026-10-22T17:00:00Z", LA)).toEqual([
+    expect(localDaysOverlapped("2026-10-21T01:00:00Z", "2026-10-22T17:00:00Z", LA, WEEK)).toEqual([
       "2026-10-20",
       "2026-10-21",
       "2026-10-22",
@@ -46,13 +47,28 @@ describe("localDaysOverlapped (Codex P2 4243898525 on #845)", () => {
 
   it("the end is exclusive: a closure ending exactly at local midnight does not count for the next day", () => {
     // 2026-10-20 20:00 PDT to 2026-10-21 00:00 PDT.
-    expect(localDaysOverlapped("2026-10-21T03:00:00Z", "2026-10-21T07:00:00Z", LA)).toEqual(["2026-10-20"]);
+    expect(localDaysOverlapped("2026-10-21T03:00:00Z", "2026-10-21T07:00:00Z", LA, WEEK)).toEqual(["2026-10-20"]);
+  });
+
+  it("a closure that began long before the window covers every displayed day it spans (Codex P2 4243919021)", () => {
+    // Began 2024-01-01 and ends 2026-10-23 10:00 PDT: two years before the window.
+    expect(localDaysOverlapped("2024-01-01T08:00:00Z", "2026-10-23T17:00:00Z", LA, WEEK)).toEqual([
+      "2026-10-19",
+      "2026-10-20",
+      "2026-10-21",
+      "2026-10-22",
+      "2026-10-23",
+    ]);
+  });
+
+  it("returns only displayed days", () => {
+    expect(localDaysOverlapped("2026-10-01T17:00:00Z", "2026-10-02T17:00:00Z", LA, WEEK)).toEqual([]);
   });
 
   it("is computed in the studio's timezone, not UTC", () => {
     // 23:00Z to 01:00Z the next day: one UTC midnight, but a single LA day.
-    expect(localDaysOverlapped("2026-10-20T23:00:00Z", "2026-10-21T01:00:00Z", LA)).toEqual(["2026-10-20"]);
-    expect(localDaysOverlapped("2026-10-20T23:00:00Z", "2026-10-21T01:00:00Z", "UTC")).toEqual([
+    expect(localDaysOverlapped("2026-10-20T23:00:00Z", "2026-10-21T01:00:00Z", LA, WEEK)).toEqual(["2026-10-20"]);
+    expect(localDaysOverlapped("2026-10-20T23:00:00Z", "2026-10-21T01:00:00Z", "UTC", WEEK)).toEqual([
       "2026-10-20",
       "2026-10-21",
     ]);

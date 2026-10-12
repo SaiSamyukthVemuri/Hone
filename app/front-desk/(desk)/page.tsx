@@ -43,7 +43,7 @@ export default async function FrontDeskSchedulePage() {
   const closuresByDay = new Map<string, number>();
   // A closure counts on EVERY local day it overlaps, not only the day it starts.
   for (const c of closures) {
-    for (const k of localDaysOverlapped(c.starts_at, c.ends_at, tz)) {
+    for (const k of localDaysOverlapped(c.starts_at, c.ends_at, tz, keys)) {
       closuresByDay.set(k, (closuresByDay.get(k) ?? 0) + 1);
     }
   }

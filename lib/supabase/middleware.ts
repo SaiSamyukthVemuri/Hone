@@ -230,13 +230,17 @@ export async function updateSession(request: NextRequest) {
       // read is RLS-scoped to the caller's own rows (0216), and the page
       // re-resolves membership itself (requireReceptionistWithStudio).
       if (activeStudioIds.length === 0) {
-        const { data: deskRows } = await supabase
+        const { data: deskRows, error: deskErr } = await supabase
           .from("studio_receptionists")
           .select("studio_id")
           .eq("user_id", user.id)
           .eq("active", true)
           .limit(1);
-        if ((deskRows ?? []).length > 0) {
+        // A FAILED read is not "no membership" (Codex P2 4243919027 on #845).
+        // Defer to /front-desk, whose guard re-reads the membership itself and
+        // fails loudly if the read still fails, rather than telling a real
+        // receptionist they have no access. This grants nothing: the page decides.
+        if (deskErr || (deskRows ?? []).length > 0) {
           if (isFrontDeskPath(pathname)) return supabaseResponse;
           const deskUrl = request.nextUrl.clone();
           deskUrl.pathname = FRONT_DESK_PATH;
