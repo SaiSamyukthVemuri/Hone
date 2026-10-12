@@ -190,7 +190,8 @@ export async function createOrLoadConnectedAccountForStudio(
       .from("studio_payment_settings")
       .select("stripe_account_country")
       .eq("studio_id", studioId)
-      .eq("stripe_livemode", claim.out_stripe_livemode ?? livemode)
+      // The claim RPC is mode-scoped (0103) and was called with this mode.
+      .eq("stripe_livemode", livemode)
       .eq("stripe_account_id", claim.out_stripe_account_id)
       .maybeSingle();
     if (boundErr) {
