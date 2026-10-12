@@ -175,8 +175,13 @@ describe("the sender a STOP arrives on never narrows who is opted out", () => {
         metadata: { source: "twilio_stop", suppression_scope: "phone_wide" },
       });
     }
-    // No audit row carries the raw numbers: only the masked forms.
-    expect(JSON.stringify(h.audits)).not.toContain("6475551234");
+    // No audit row carries either raw number, the person's (From) or the
+    // studio sender it arrived on (To): only the masked forms.
+    const stored = JSON.stringify(h.audits);
+    for (const raw of [PHONE, STUDIO_B_SENDER]) {
+      expect(stored).not.toContain(raw);
+      expect(stored).not.toContain(raw.replace(/^\+1/, ""));
+    }
   });
 });
 
