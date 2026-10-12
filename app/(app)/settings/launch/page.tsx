@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
-import { OwnerDeliveryCard } from "@/components/delivery/OwnerDeliveryCard";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { CONSENT_SETTINGS_HREF } from "@/lib/consent/launch-readiness";
 import {
@@ -365,8 +364,6 @@ export default async function LaunchChecklistPage() {
           </span>
         </p>
       </header>
-
-      <OwnerDeliveryCard studioId={studio.id} timezone={studio.timezone} />
 
       <div className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-700 dark:bg-amber-950/30">
         <p className="font-medium text-amber-900 dark:text-amber-100">

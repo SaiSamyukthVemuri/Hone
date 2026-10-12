@@ -29,6 +29,9 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/** Never "critical": a critical ops alert is emailed (see below, and #828). */
+const MAX_ALERT_SEVERITY = "warning" as const;
+
 /** Bounded per run; the next run takes the rest. */
 const SWEEP_LIMIT = 50;
 
@@ -63,12 +66,17 @@ export async function GET(req: Request) {
   } else {
     for (const finding of healthFindings(health)) {
       if (await hasOpenOpsAlert(admin, finding.event)) continue;
+      // Recorded at WARNING at most: recordOpsAlert emails every critical
+      // alert to OPS_ALERT_EMAILS, and emailed delivery alerts stay off until
+      // the #828 routing decision (D-4). A critical assessment is kept as a
+      // detail, so /admin and the ops_alerts row still show it.
       await recordOpsAlert({
-        severity: finding.severity,
+        severity: MAX_ALERT_SEVERITY,
         event: finding.event,
         message: finding.message,
         route: "/api/cron/email-delivery-sweep",
-        safeDetails: finding.details,
+        safeDetails:
+          finding.severity === "critical" ? { ...finding.details, assessed_severity: "critical" } : finding.details,
       });
       raised.push(finding.event);
     }
