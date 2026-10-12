@@ -14,7 +14,55 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-12, post-0210 apply; hosted `0210`; `0211`–`0225` AUTHORED AND PENDING, contiguous, in that order)
+## Current state (verified 2026-10-12, post-0211 apply; hosted `0211`; `0212`–`0225` AUTHORED AND PENDING, contiguous, in that order)
+
+> **0211 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #827 HEAD, BEFORE ANY MERGE.**
+> `0211_client_sms_permission_guard.sql` was applied to production on
+> 2026-10-12 under explicit per-change owner authorization (D1 / DEC-1), from
+> `481e60c60ae8c873a2e1b6e2a0ccc5b9dc0b8c11`. **#827 was NOT merged and no
+> application code was deployed.**
+>
+> **THE RULES ADOPTED WITH THE APPROVAL** (#827 "Remaining decisions" 1 and 2, as recommended):
+> - a member may record a client's withdrawal by a direct write, with source `practitioner`, stamped by the database clock;
+> - trusted roles also obey write-once consent and terminal opt-out, so any future START or re-subscribe flow needs its own migration.
+>
+> **THE GATES, EACH REQUIRED TO PASS BEFORE THE PUSH.**
+> - The file's sha256 `33232496322727b2db67e33f15a38bd6281898d112d4d6b4d3b25534766578c3` matched the authorized value.
+> - The linked project read `alhhybgqdmcdyzpybykj`, named **Hone**, in the link file, `linked-project.json` and `supabase projects list`.
+> - A **fresh detached throwaway** worktree at the reviewed head, with a clean tree, never a shared checkout.
+> - `supabase migration list --linked` showed remote max `0210` with `0211` as the **only** local-only row and **no** remote-only row, across 210 rows.
+> - The **dry run listed exactly `0211_client_sms_permission_guard.sql`**.
+> - The read-only preflight found **no** trigger on `public.clients`, and recorded 136 clients, 54 consents (54 with a source) and 0 opt-outs.
+> - The head carried green CI (run `38164242975`). The operator **accepted a missing shepherd receipt** for this migration-only apply: the shepherd returned `UNKNOWN` (`read_failed`) because `HONE_ENG_READ_TOKEN` was not set in the applying session. **It is recorded as UNKNOWN, never green.**
+>
+> **THE APPLY.** One `supabase db push --linked` (CLI 2.102.0), **without `--include-all`**, run once,
+> **exit code 0**. The only output beyond progress was the expected NOTICE from the file's own
+> `drop trigger if exists`. The client-side window, from the final gate assertions to the push
+> returning, was `2026-10-12T19:40:01.830Z`-`19:41:21.758Z`. It bounds the push from outside and is
+> **not** a server apply time, so `hosted_applied_at` stays null. Server bracket: `19:39:21.592596Z`
+> (0210, 209 rows) to `19:41:53.41194Z` (0211, 210 rows).
+>
+> **WHAT IT ADDED, AND ONLY THAT:**
+> - one `SECURITY INVOKER` function, `public.clients_sms_permission_guard()`: `prosecdef` false, `search_path` pinned to `pg_catalog, pg_temp`, execute revoked from `public`, `anon`, `authenticated` and `service_role`;
+> - one trigger, `clients_sms_permission_guard`, `BEFORE INSERT OR UPDATE OF sms_consent_at, sms_consent_source, sms_opted_out_at, sms_opt_out_source`, enabled (`O`).
+>
+> **WHAT IT DID NOT CHANGE:**
+> - no table, column, constraint, policy, index or grant; `authenticated` still holds INSERT and UPDATE on `clients`;
+> - **zero rows written**: 136 clients, 54 consents (54 sources) and 0 opt-outs after the apply, identical to the preflight.
+>
+> **POST-APPLY VERIFICATION, all read-only.**
+> - `supabase migration list --linked`: 210 rows, no mismatch. `0211` present exactly once, `0210` exactly once and not re-applied, nothing above `0211`.
+> - `verify-production.mjs`: **10 PASS, 1 FAIL, 1 INCOMPLETE**, with "Remote migration max: = 0211". The FAIL is the two accepted historical payment alerts (`session_payment_succeeded_write_zero_rows`, 2026-09-17 and 2026-09-27), unchanged. The INCOMPLETE is the scheduler heartbeat, with no Upstash env on the apply host.
+> - `check-stripe-gates.mjs`: **15 PASS, 0 FAIL**.
+> - **0** critical-or-error `ops_alerts` in the preceding hour, and 0 since 19:40Z.
+>
+> **`0212` (#832) WAS NOT APPLIED.** Its approval (DEC-2) is conditional on clean exact-head Codex
+> review evidence for `ba8fc5057c1ab3c331caec4be64801f5e8d901b0`, which was requested and was not
+> available at the time of this record.
+>
+> `0211` is now **FROZEN**. Any correction is a new forward migration; there is no
+> manual down-migration.
+
 <!-- integration: incoming lane's ledger prose, preserved verbatim -->
 <!-- integration: incoming lane's ledger prose, preserved verbatim -->
 
@@ -48,10 +96,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 
 | Field | Value |
 |---|---|
-| **Hosted (production) migration max** | **0210** (`0210_sms_waitlist_join_acknowledgement.sql`), applied 2026-10-11 from #822's reviewed head. |
-| **Repo migration max** | **0225**: `0225_public_new_client_practitioner_selection.sql` (DB/WAIT #874), above `0224_us_settlement_method_guard.sql` (Audit #872), `0223_machine_inventory_and_setup_readings.sql` (MPX #860) and `0222_public_practitioner_booking_command.sql` (DB/WAIT #868). This tree is the isolated synthetic Fett integration (`integration/fett-composed-824`): every pending migration `0211`–`0225` is carried byte-identical to its own owner PR head, proved by blob check. It is rehearsal evidence, never a release vehicle. |
+| **Hosted (production) migration max** | **0211** (`0211_client_sms_permission_guard.sql`), applied 2026-10-12 from #827's reviewed head. |
+| **Repo migration max** | **0225**: `0225_public_new_client_practitioner_selection.sql` (DB/WAIT #874), above `0224_us_settlement_method_guard.sql` (Audit #872), `0223_machine_inventory_and_setup_readings.sql` (MPX #860) and `0222_public_practitioner_booking_command.sql` (DB/WAIT #868). This tree is the isolated synthetic Fett integration (`integration/fett-composed-824`): every migration `0211`–`0225` (applied `0211` included) is carried byte-identical to its own owner PR head, proved by blob check. It is rehearsal evidence, never a release vehicle. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **`0211`–`0225`**, contiguous from hosted + 1, all **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING. Each applies from its own reviewed head, in this order, under its own approval. |
+| **Pending migrations** | **`0212`–`0225`**, contiguous from hosted + 1, all **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING. `0211` is APPLIED and FROZEN and carried byte-identical. Each pending migration applies from its own reviewed head, in this order, under its own approval. |
 | **Next free migration** | Next free number is **0226**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** here: availability is not allocation. The shared register (`~/hone-migration-coordination.md`) is the authority for in-flight claims. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. |
 
