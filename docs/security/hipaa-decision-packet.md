@@ -273,6 +273,10 @@ Nothing here is authorized until Sam approves that row.
 deployed; neither depends on a decision above):
 - G-07 Vercel analytics URL redaction: #842;
 - G-12 isolated restore drill: #848.
+- G-09 Stripe Customer metadata without the client name: #857 (by agreement
+  with the Audit lane).
+- Email subjects without client name, service, date or time: #859. This
+  reduces exposure but does **not** clear G-05.
 - G-13 clinical access audit: contract proposed in
   [clinical-access-audit-contract.md](./clinical-access-audit-contract.md);
   shape agreed in principle with the RBAC lane; no migration number held (≥ 0221 at claim time).
@@ -280,6 +284,19 @@ deployed; neither depends on a decision above):
 **Consequence for Friday (2026-10-16).** Several of these depend on vendor
 turnaround that this packet cannot vouch for. Unless each gate is met and
 evidenced, the meeting stays synthetic-only, as #824 already requires.
+
+**Lane agreements recorded on 2026-10-12** (none is a HIPAA claim):
+- **Delivery (Sentry lane):**
+  - the email ledger and incidents (0212, 0215) store ids and codes only;
+  - the receipt table is still Resend-shaped, and adding an SES path is
+    additive (an SNS verifier plus a widened provider check), done after D-4;
+  - the Sentry environment gate (G-16) is theirs.
+- **SMS lane:** readiness will state that "Registration is not HIPAA
+  coverage". "Active" means sender plus registration only.
+- **Audit lane:** no reader of `hone_client_name`. Any backfill of existing
+  Customers needs Sam's authorization.
+- **RBAC lane:** the G-13 contract shape is agreed in principle. Q2 and Q4
+  are Sam's.
 
 ## 7. Until the gate is met
 
