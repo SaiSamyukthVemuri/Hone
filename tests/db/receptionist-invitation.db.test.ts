@@ -127,6 +127,56 @@ describe("0218: a receptionist invitation becomes a receptionist membership, nev
   });
 });
 
+describe("0218: conflicts and the role-aware chooser signal (Codex on #850)", () => {
+  it("refuses a receptionist invitation when ANOTHER user holds an active desk row under that email (P2 4243953169)", async () => {
+    const holder = await seedAuthUser("desk-holder");
+    const claimant = await seedAuthUser("desk-claimant");
+    // The holder already works the desk under the shared address.
+    await adminQuery(
+      `select public.add_studio_receptionist($1, $2, $3, 'Holder', $4)`,
+      [S.studioId, owner().practitionerId, holder.id, `shared-${holder.id.slice(0, 6)}@harness.local`],
+    );
+    const shared = `shared-${holder.id.slice(0, 6)}@harness.local`;
+    await adminQuery(`update auth.users set email = $2 where id = $1`, [claimant.id, shared]);
+    const inv = await invite(shared, "receptionist");
+    expect(await accept(claimant.id)).toEqual({ status: "conflict", choose_studio: false });
+    expect(await inviteStatus(inv)).toBe("pending");
+    expect(await memberships(claimant.id)).toEqual({ practitioners: 0, desk: 0 });
+  });
+
+  it("choose_studio is TRUE when the person now works the desk at a second studio", async () => {
+    const u = await seedAuthUser("two-desks");
+    const other = await seedSynthStudioB();
+    try {
+      await adminQuery(`select public.add_studio_receptionist($1, $2, $3, 'Other desk', $4)`, [
+        other.studioId,
+        other.practitioners.find((p) => p.role === "owner")!.practitionerId,
+        u.id,
+        u.email,
+      ]);
+      await invite(u.email, "receptionist");
+      expect(await accept(u.id)).toMatchObject({ status: "linked", role: "receptionist", choose_studio: true });
+    } finally {
+      await adminQuery(`delete from public.studio_receptionists where studio_id = $1`, [other.studioId]);
+      await dropSynthStudio(other);
+    }
+  });
+
+  it("a practitioner of ANOTHER studio gets role 'receptionist' back, so the adapters route them to the front desk (P2 4243953164)", async () => {
+    const other = await seedSynthStudioB();
+    try {
+      const p = other.practitioners.find((x) => x.role !== "owner")!;
+      const email = (await adminQuery(`select email from auth.users where id = $1`, [p.userId])).rows[0].email as string;
+      await invite(email, "receptionist");
+      expect(await accept(p.userId)).toMatchObject({ status: "linked", role: "receptionist", choose_studio: false });
+      expect(await memberships(p.userId)).toEqual({ practitioners: 0, desk: 1 });
+    } finally {
+      await adminQuery(`delete from public.studio_receptionists where studio_id = $1`, [S.studioId]);
+      await dropSynthStudio(other);
+    }
+  });
+});
+
 describe("0218: an invitation never changes a person's role", () => {
   it("an ACTIVE practitioner invited as receptionist is 'already_linked' and stays a practitioner", async () => {
     const p = P1();

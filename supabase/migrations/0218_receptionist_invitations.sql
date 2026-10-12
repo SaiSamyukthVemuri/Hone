@@ -80,6 +80,20 @@ begin
     -- if this person is an active practitioner of the studio.
     perform public.studio_membership_kind_lock(p_invite.studio_id, p_uid);
 
+    -- Safe-conflict guard, the receptionist twin of 0141's practitioner one: a
+    -- DIFFERENT user already holds an ACTIVE front-desk row under the invited
+    -- email in this studio. Refuse before writing anything, and leave the
+    -- invitation pending for operator cleanup (Codex P2 4243953169 on #850).
+    if exists (
+      select 1 from public.studio_receptionists sr
+       where sr.studio_id = p_invite.studio_id
+         and lower(sr.email) = lower(p_email)
+         and sr.user_id is distinct from p_uid
+         and sr.active
+    ) then
+      return jsonb_build_object('status', 'conflict', 'choose_studio', false);
+    end if;
+
     select sr.id into v_desk_id
     from public.studio_receptionists sr
     where sr.studio_id = p_invite.studio_id and sr.user_id = p_uid
@@ -111,10 +125,16 @@ begin
     where id = p_invite.id;
 
     -- No studio_onboarding row: that state belongs to the practitioner side.
-    -- No studio chooser: receptionist selection is resolved per request.
+    -- choose_studio is role-aware: true when this person now works the front
+    -- desk at 2+ studios, so the adapters send them to the receptionist chooser
+    -- (/front-desk/select) instead of reopening a stale selection (Codex P2
+    -- 4243953164 on #850). Practitioner memberships elsewhere do not count here.
+    select count(*) into v_membership_count
+    from public.studio_receptionists where user_id = p_uid and active;
+
     return jsonb_build_object(
       'status', 'linked',
-      'choose_studio', false,
+      'choose_studio', v_membership_count > 1,
       'studio_name', p_studio_name, 'role', 'receptionist');
   end if;
 
