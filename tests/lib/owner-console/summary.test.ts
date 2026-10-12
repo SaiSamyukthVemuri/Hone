@@ -8,20 +8,25 @@ import {
   phonePanel,
   teamPanel,
 } from "@/lib/owner-console/summary";
-import type { SenderStatusView } from "@/lib/sms/sender-status";
+import type { DestinationReadiness, ReadinessState } from "@/lib/sms/sender-readiness";
+import type { PaymentCountrySummary } from "@/lib/billing/payment-jurisdiction";
 
 // STUDIO-READY-03a (#824): the owner console never turns an unanswered
 // authority into "ready", and the page stays owner-only and provider-free.
 
-const sender = (tone: SenderStatusView["tone"], headline = "H"): SenderStatusView => ({
-  status: null,
+const row = (destination: "CA" | "US", state: ReadinessState): DestinationReadiness => ({
+  destination,
+  state,
+  label: state === "active" ? "Active" : state === "unavailable" ? "Unavailable" : "Requires information",
+  detail: `${destination} detail`,
+  nextAction: state === "active" ? null : `${destination} next`,
+  actor: "none",
+  senderCountry: null,
+});
+const country = (tone: PaymentCountrySummary["tone"]): PaymentCountrySummary => ({
   tone,
-  headline,
-  detail: "D",
-  phoneNumber: null,
-  recovery: { kind: "none" } as unknown as SenderStatusView["recovery"],
-  errorCode: null,
-  lastTestOkAt: null,
+  heading: "United States · charges in USD",
+  detail: `country ${tone}`,
 });
 
 describe("the three-state rule", () => {
@@ -58,26 +63,50 @@ describe("the three-state rule", () => {
     });
   });
 
-  it("phone: only a live sender is ready; an unread sender is unknown", () => {
-    expect(phonePanel(sender("live")).tone).toBe("ready");
-    expect(phonePanel(sender("unknown")).tone).toBe("unknown");
-    for (const t of ["none", "working", "attention", "retired"] as const) {
-      expect(phonePanel(sender(t)).tone, t).toBe("attention");
-    }
+  it("phone: per recipient country (SMS-SENDER-READY-01); ready only when EVERY destination is active", () => {
+    expect(phonePanel([row("CA", "active"), row("US", "active")])).toMatchObject({
+      tone: "ready",
+      status: "Canada: Active · US: Active",
+    });
+    const usWaiting = phonePanel([row("CA", "active"), row("US", "requires_information")]);
+    expect(usWaiting).toMatchObject({ tone: "attention", status: "Canada: Active · US: Requires information" });
+    expect(usWaiting.detail).toBe("US detail US next");
+  });
+
+  it("phone: an unread destination is UNKNOWN, never ready; a proven gap still wins as attention", () => {
+    expect(phonePanel([row("CA", "active"), row("US", "unavailable")]).tone).toBe("unknown");
+    expect(phonePanel([row("CA", "unavailable"), row("US", "requires_information")]).tone).toBe("attention");
+    expect(phonePanel([]).tone).toBe("unknown");
   });
 
   it("payments: only a fully enabled account is ready; an unread status is unknown", () => {
-    expect(paymentsPanel("ready", "live")).toMatchObject({ tone: "ready", status: "Live payments ready" });
+    expect(paymentsPanel("ready", "live", null)).toMatchObject({ tone: "ready", status: "Live payments ready" });
     for (const m of ["live", "test"] as const) {
-      expect(paymentsPanel("unknown", m).tone).toBe("unknown");
+      expect(paymentsPanel("unknown", m, null).tone).toBe("unknown");
       for (const c of ["not_connected", "onboarding_started", "charges_disabled", "charges_enabled_payouts_pending"] as const) {
-        expect(paymentsPanel(c, m).tone, `${c} ${m}`).toBe("attention");
+        expect(paymentsPanel(c, m, null).tone, `${c} ${m}`).toBe("attention");
       }
     }
   });
 
+  it("payments: the payment COUNTRY gates Connect (PAY-CCY): blocked or unread can never read ready", () => {
+    const live = paymentsPanel("ready", "live", country("ok"));
+    expect(live).toMatchObject({ tone: "ready", status: "Live payments ready" });
+    expect(live.detail).toMatch(/^United States · charges in USD\./);
+    expect(paymentsPanel("ready", "live", country("blocked"))).toMatchObject({
+      tone: "attention",
+      status: "Charges blocked",
+    });
+    expect(paymentsPanel("ready", "live", country("unknown"))).toMatchObject({ tone: "unknown", status: "Unknown" });
+    expect(paymentsPanel("ready", "live", country("attention")).tone).toBe("attention");
+    // A Connect gap is not hidden by an unread country, and an unread Connect
+    // status is not upgraded by a country that needs attention.
+    expect(paymentsPanel("not_connected", "live", country("unknown"))).toMatchObject({ tone: "attention", status: "Not connected" });
+    expect(paymentsPanel("unknown", "live", country("attention")).tone).toBe("unknown");
+  });
+
   it("payments: TEST-mode readiness never reads as live readiness (Codex P2 4244007430)", () => {
-    const p = paymentsPanel("ready", "test");
+    const p = paymentsPanel("ready", "test", null);
     expect(p.tone).not.toBe("ready");
     expect(p.status).toBe("Test mode ready");
     expect(p.detail).toMatch(/no real money moves/);
@@ -101,9 +130,7 @@ describe("the three-state rule", () => {
   });
 
   it("panels without an authority yet say so, and link nowhere", () => {
-    for (const k of ["delivery", "notifications"] as const) {
-      expect(notYetAvailablePanel(k)).toMatchObject({ tone: "unavailable", status: "Not available yet", href: null });
-    }
+    expect(notYetAvailablePanel("notifications")).toMatchObject({ tone: "unavailable", status: "Not available yet", href: null });
   });
 });
 
@@ -131,5 +158,18 @@ describe("the console page", () => {
 
   it("a payment read error is passed on as unknown, never as not connected", () => {
     expect(PAGE).toMatch(/payment\.error\s*\?\s*undefined/);
+  });
+
+  it("composes the authorities it does not own instead of re-deriving them", () => {
+    // Delivery: the delivery lane's card, mounted as-is (#846), and no longer on Launch.
+    expect(PAGE).toMatch(/<OwnerDeliveryCard studioId=\{studio\.id\} timezone=\{studio\.timezone\} \/>/);
+    const LAUNCH = readFileSync(path.join(process.cwd(), "app/(app)/settings/launch/page.tsx"), "utf8");
+    expect(LAUNCH).not.toMatch(/OwnerDeliveryCard/);
+    // SMS: the per-country rows Integrations shows, from the owner's own session.
+    expect(PAGE).toMatch(/studioSenderReadiness\(sender, usRegistration\)/);
+    expect(PAGE).toMatch(/readOwnSenderRegistrations\(supabase, liveSender\.id\)/);
+    // Payments: the country summary, and a failed read is "could not verify".
+    expect(PAGE).toMatch(/getStudioPaymentCountryStatus\(studio\.id, livemode\)/);
+    expect(PAGE).toMatch(/describePaymentCountry\(\{ jurisdiction: null, account: \{ kind: "unknown" \} \}\)/);
   });
 });

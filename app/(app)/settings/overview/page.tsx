@@ -2,7 +2,12 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { getPractitionersForStudio, requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { getNewClientReadiness, type NewClientReadiness } from "@/lib/booking/new-client-readiness";
-import { presentSenderStatus, readOwnStudioSmsSender } from "@/lib/sms/sender-status";
+import { readOwnStudioSmsSender } from "@/lib/sms/sender-status";
+import { studioSenderReadiness, type DestinationReadiness } from "@/lib/sms/sender-readiness";
+import { readOwnSenderRegistrations, registrationEvidenceFor } from "@/lib/sms/sender-registration";
+import { getStudioPaymentCountryStatus } from "@/lib/billing/payment-jurisdiction-server";
+import { describePaymentCountry, type PaymentCountrySummary } from "@/lib/billing/payment-jurisdiction";
+import { OwnerDeliveryCard } from "@/components/delivery/OwnerDeliveryCard";
 import { currentRuntimeMode, deriveConnectCapability } from "@/lib/payments/payment-status-presenter";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import {
@@ -42,7 +47,8 @@ export default async function OwnerConsolePage() {
   }
 
   const supabase = await createClient();
-  const [readiness, practitioners, pending, sender, payment] = await Promise.all([
+  const livemode = inferStripeLivemode();
+  const [readiness, practitioners, pending, sender, payment, country] = await Promise.all([
     getNewClientReadiness(studio).then(
       (r): NewClientReadiness | null => r,
       () => null,
@@ -60,9 +66,31 @@ export default async function OwnerConsolePage() {
     readOwnStudioSmsSender(supabase, studio.id),
     supabase.rpc("get_studio_payment_settings_display", {
       p_studio_id: studio.id,
-      p_stripe_livemode: inferStripeLivemode(),
+      p_stripe_livemode: livemode,
     }),
+    // PAY-CCY-04: the payment country and the current-mode account country, the
+    // same read Settings -> Payments uses. A throw is "could not verify", never ok.
+    getStudioPaymentCountryStatus(studio.id, livemode).then(
+      (st): PaymentCountrySummary =>
+        describePaymentCountry({
+          jurisdiction: st.jurisdiction.ok ? st.jurisdiction.jurisdiction : null,
+          account: st.account,
+        }),
+      (): PaymentCountrySummary => describePaymentCountry({ jurisdiction: null, account: { kind: "unknown" } }),
+    ),
   ]);
+
+  // SMS-SENDER-READY-01 / REG-01: per recipient country, through the owner's OWN
+  // session, exactly as Settings -> Integrations reads it. A failed registration
+  // read is "unreadable" evidence, never "not recorded".
+  const liveSender = sender.ok ? sender.sender : null;
+  const usRegistration = liveSender
+    ? await readOwnSenderRegistrations(supabase, liveSender.id).then(
+        (rows) => registrationEvidenceFor(rows, liveSender.phone_number),
+        () => ({ state: "unreadable" }) as const,
+      )
+    : ({ state: "not_recorded" } as const);
+  const smsRows: DestinationReadiness[] = studioSenderReadiness(sender, usRegistration);
 
   const paymentRow = Array.isArray(payment.data) ? payment.data[0] : payment.data;
   const capability = deriveConnectCapability(
@@ -80,9 +108,8 @@ export default async function OwnerConsolePage() {
   const panels: ConsolePanel[] = [
     bookingPanel(readiness),
     teamPanel(practitioners == null || pending == null ? null : { practitioners, pendingInvitations: pending }),
-    phonePanel(presentSenderStatus(sender)),
-    paymentsPanel(capability, currentRuntimeMode()),
-    notYetAvailablePanel("delivery"),
+    phonePanel(smsRows),
+    paymentsPanel(capability, currentRuntimeMode(), country),
     notYetAvailablePanel("notifications"),
   ];
 
@@ -112,6 +139,11 @@ export default async function OwnerConsolePage() {
           </li>
         ))}
       </ul>
+      {/* DELIVERY-VISIBILITY-02 (#846): the delivery lane's own card is the
+          authority for message delivery problems; the console mounts it and
+          re-derives nothing. It renders null only for a 42501 refusal and says
+          "unavailable" for any other failed read. */}
+      <OwnerDeliveryCard studioId={studio.id} timezone={studio.timezone} />
     </div>
   );
 }

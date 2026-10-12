@@ -4,22 +4,26 @@
 // authority's answer into what the console shows. The authorities are the
 // modules that already own each truth, and nothing here re-derives one:
 //   booking setup -> getNewClientReadiness (lib/booking/new-client-readiness)
-//   phone / SMS   -> presentSenderStatus   (lib/sms/sender-status)
-//   payments      -> deriveConnectCapability (lib/payments/payment-status-presenter)
+//   phone / SMS   -> studioSenderReadiness (lib/sms/sender-readiness), per
+//                    recipient country, the same rows Settings -> Integrations shows
+//   payments      -> deriveConnectCapability (lib/payments/payment-status-presenter),
+//                    gated by describePaymentCountry (lib/billing/payment-jurisdiction)
+//   delivery      -> OwnerDeliveryCard (components/delivery), mounted by the page
 //
 // THE ONE RULE: an authority that could not answer is UNKNOWN. It is never
 // "ready" and never "needs setup" (contract §3; the same three-state rule
 // new-client-readiness applies).
 
 import type { NewClientReadiness } from "@/lib/booking/new-client-readiness";
-import type { SenderStatusView } from "@/lib/sms/sender-status";
+import type { DestinationReadiness } from "@/lib/sms/sender-readiness";
+import type { PaymentCountrySummary } from "@/lib/billing/payment-jurisdiction";
 import type { ConnectCapability, RuntimeMode } from "@/lib/payments/payment-status-presenter";
 
 /** "chosen" is a deliberate owner state: not ready, and not unfinished setup. */
 export type PanelTone = "ready" | "attention" | "chosen" | "unknown" | "unavailable";
 
 export type ConsolePanel = {
-  key: "booking" | "team" | "phone" | "payments" | "delivery" | "notifications";
+  key: "booking" | "team" | "phone" | "payments" | "notifications";
   title: string;
   tone: PanelTone;
   /** A short state, e.g. "Ready" or "2 steps left". */
@@ -80,11 +84,28 @@ export function teamPanel(input: { practitioners: number; pendingInvitations: nu
   return { ...base, tone: "ready", status: people, detail: `Invitations, roles and deactivation.${pending ? ` ${pending.slice(2)}.` : ""}` };
 }
 
-export function phonePanel(view: SenderStatusView): ConsolePanel {
+const COUNTRY: Record<DestinationReadiness["destination"], string> = { CA: "Canada", US: "US" };
+
+/**
+ * Text-message readiness PER RECIPIENT COUNTRY (SMS-SENDER-READY-01): the same
+ * rows, and so the same rule the send-time refusal consumes. Ready only when
+ * every destination is active. A row that could not be read is UNKNOWN, unless
+ * another row already proves something needs attention.
+ */
+export function phonePanel(rows: DestinationReadiness[]): ConsolePanel {
   const base = { key: "phone" as const, title: "Phone and text messages", href: "/settings/integrations" };
-  const tone: PanelTone =
-    view.tone === "live" ? "ready" : view.tone === "unknown" ? "unknown" : "attention";
-  return { ...base, tone, status: view.headline, detail: view.detail };
+  if (rows.length === 0) {
+    return { ...base, tone: "unknown", status: "Unknown", detail: "Text-message readiness could not be checked just now." };
+  }
+  const status = rows.map((r) => `${COUNTRY[r.destination]}: ${r.label}`).join(" · ");
+  const waiting = rows.find((r) => r.state !== "active" && r.state !== "unavailable");
+  const unread = rows.find((r) => r.state === "unavailable");
+  if (!waiting && !unread) {
+    return { ...base, tone: "ready", status, detail: "The studio can text clients in every supported country." };
+  }
+  const first = waiting ?? unread!;
+  const detail = [first.detail, first.nextAction].filter(Boolean).join(" ");
+  return { ...base, tone: waiting ? "attention" : "unknown", status, detail };
 }
 
 const CONNECT_COPY: Record<ConnectCapability, { tone: PanelTone; status: string; detail: string }> = {
@@ -100,7 +121,38 @@ const CONNECT_COPY: Record<ConnectCapability, { tone: PanelTone; status: string;
   unknown: { tone: "unknown", status: "Unknown", detail: "Payment status could not be read just now. Nothing is assumed." },
 };
 
-export function paymentsPanel(capability: ConnectCapability, mode: RuntimeMode): ConsolePanel {
+/**
+ * PAY-CCY (#833/#836/#839): the studio's payment COUNTRY gates the Connect status.
+ * A blocked country means no charge can happen whatever Connect says. An unread
+ * country is unknown, never ready. A country that is fine adds its heading
+ * ("United States · charges in USD"). Agreed with the PAY-CCY lane on #824.
+ */
+export function paymentsPanel(
+  capability: ConnectCapability,
+  mode: RuntimeMode,
+  country: PaymentCountrySummary | null,
+): ConsolePanel {
+  const connect = connectPanel(capability, mode);
+  if (country == null) return connect;
+  if (country.tone === "blocked") {
+    return { ...connect, tone: "attention", status: "Charges blocked", detail: `${country.heading}. ${country.detail}` };
+  }
+  if (country.tone === "unknown") {
+    return connect.tone === "attention"
+      ? { ...connect, detail: `${connect.detail} ${country.detail}` }
+      : { ...connect, tone: "unknown", status: "Unknown", detail: country.detail };
+  }
+  if (country.tone === "attention") {
+    return {
+      ...connect,
+      tone: connect.tone === "unknown" ? "unknown" : "attention",
+      detail: `${country.heading}. ${country.detail}`,
+    };
+  }
+  return { ...connect, detail: `${country.heading}. ${connect.detail}` };
+}
+
+function connectPanel(capability: ConnectCapability, mode: RuntimeMode): ConsolePanel {
   const base = { key: "payments" as const, title: "Payments", href: "/settings/payments" };
   // Test-mode readiness is never shown as live readiness: no real money can
   // move (Codex P2 4244007430 on #851; the same split as connectBannerCopy).
@@ -115,23 +167,18 @@ export function paymentsPanel(capability: ConnectCapability, mode: RuntimeMode):
   return { ...base, ...CONNECT_COPY[capability] };
 }
 
-/** Panels whose authority does not exist yet. Stated plainly, never implied to be fine. */
-export function notYetAvailablePanel(key: "delivery" | "notifications"): ConsolePanel {
-  return key === "delivery"
-    ? {
-        key,
-        title: "Message delivery problems",
-        tone: "unavailable",
-        status: "Not available yet",
-        detail: "Failed or undelivered messages will be listed here once delivery monitoring is in place.",
-        href: null,
-      }
-    : {
-        key,
-        title: "Alert recipients",
-        tone: "unavailable",
-        status: "Not available yet",
-        detail: "Choosing who is alerted about problems is not available yet.",
-        href: null,
-      };
+/**
+ * Panels whose authority does not exist yet. Stated plainly, never implied to be
+ * fine. Message delivery problems USED to be one; the page now mounts the
+ * delivery lane's OwnerDeliveryCard instead (DELIVERY-VISIBILITY-02, #846).
+ */
+export function notYetAvailablePanel(key: "notifications"): ConsolePanel {
+  return {
+    key,
+    title: "Alert recipients",
+    tone: "unavailable",
+    status: "Not available yet",
+    detail: "Choosing who is alerted about problems is not available yet.",
+    href: null,
+  };
 }
