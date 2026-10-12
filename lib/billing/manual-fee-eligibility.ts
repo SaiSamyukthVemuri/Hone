@@ -2,6 +2,8 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { liveChargeReasonBlockMessage } from "@/lib/billing/live-charge-reason-allowlist";
+import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
+import { JURISDICTION_UNVERIFIED_REASON } from "@/lib/billing/payment-jurisdiction";
 import {
   MANUAL_FEE_AMOUNT_CEILING_CENTS,
   type EligibilityAppointmentSummary,
@@ -64,8 +66,9 @@ export {
 // * No Stripe call. No PaymentMethod retrieve. No PaymentIntent create.
 //   The helper reads only Hone's own tables.
 // * No row writes. The prepare action does the writes.
-// * No fee currency lookup beyond the launch ceiling. Sam's policy
-//   pegs launch currency at 'cad' (also enforced by the table CHECK).
+// * The fee currency is the studio's (PAY-CCY-02,
+//   studio_payment_jurisdictions); the 0214 insert guard re-checks it and
+//   the account's country.
 // * No middleware allowlist changes.
 
 type Args = {
@@ -355,6 +358,12 @@ export async function getManualFeeChargeEligibility(
   //    onto the row).
   let amountCents: number | null = null;
   let currency: string | null = null;
+  // PAY-CCY-02. The fee is denominated in the studio's charge currency. An
+  // unread jurisdiction blocks rather than defaulting to CAD.
+  const jurisdictionRead = await getStudioPaymentJurisdiction(args.studioId);
+  if (!jurisdictionRead.ok) {
+    reasons.push(JURISDICTION_UNVERIFIED_REASON);
+  }
   const { data: studioRow, error: studioErr } = await admin
     .from("studios")
     .select("late_cancel_fee_cents, no_show_fee_cents")
@@ -387,9 +396,9 @@ export async function getManualFeeChargeEligibility(
       cents > MANUAL_FEE_AMOUNT_CEILING_CENTS
     ) {
       reasons.push("Configured fee amount is outside the allowed range.");
-    } else {
+    } else if (jurisdictionRead.ok) {
       amountCents = cents;
-      currency = "cad";
+      currency = jurisdictionRead.jurisdiction.currency;
     }
   }
 

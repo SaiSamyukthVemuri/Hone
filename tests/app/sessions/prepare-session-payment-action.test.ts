@@ -182,8 +182,9 @@ describe("prepare action: the inserted row shape", () => {
     expect(ACTION).toMatch(/status:\s*"ready"/);
   });
 
-  it("stamps currency='cad'", () => {
-    expect(ACTION).toMatch(/currency:\s*"cad"/);
+  it("stamps the studio's currency from server-read eligibility, never a literal (PAY-CCY-02)", () => {
+    expect(ACTION).toMatch(/currency:\s*eligibility\.paymentCurrency/);
+    expect(ACTION).not.toMatch(/currency:\s*"(cad|usd)"/);
   });
 
   it("stamps stripe_livemode from the deployment mode (PR #323; false in test env)", () => {

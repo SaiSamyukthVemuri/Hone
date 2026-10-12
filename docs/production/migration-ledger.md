@@ -14,7 +14,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-12, post-0211 apply; `0211` APPLIED, repo == hosted on this branch)
+## Current state (verified 2026-10-12, post-0211 apply; `0211` APPLIED, `0214` AUTHORED AND PENDING on the PAY-CCY-02 branch)
 
 > **0211 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #827 HEAD, BEFORE ANY MERGE.**
 > `0211_client_sms_permission_guard.sql` was applied to production on
@@ -63,13 +63,22 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 > `0211` is now **FROZEN**. Any correction is a new forward migration; there is no
 > manual down-migration.
 
+> **`0214_studio_payment_jurisdiction.sql` IS AUTHORED, NOT APPLIED (PAY-CCY-02, #833).** On this
+> branch the repository carries `0214` above the hosted `0211`; **`0212` (#832) and `0213` (#831) are
+> reserved by other lanes** and are not in this tree, so the pending suffix is **not contiguous** and the
+> contiguity guard in `tests/docs/canonical-production-facts.test.ts` stays red here until they land.
+> No apply is authorized: `0214` is applied only after `0212`–`0213`, migration-first, under its own
+> per-change authorization, with a read-only counts census first. What it adds is recorded in the
+> PAY-CCY-02 PR (#833) and in the file's header. **The 0211 apply record above is unchanged; only the
+> repo-max, pending and next-free rows below are updated for `0214` while it is pending.**
+
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0211** (`0211_client_sms_permission_guard.sql`), applied 2026-10-12 from #827's reviewed head. |
-| **Repo migration max** | **0211** on this branch, so repo and hosted are equal here: the PARITY shape. A branch stacked above it carries its own pending suffix. |
+| **Repo migration max** | **0214** — `0214_studio_payment_jurisdiction.sql`, authored on the PAY-CCY-02 branch and NOT applied. This is the MIGRATION-FIRST PENDING shape, with a gap: `0212`–`0213` are reserved by other lanes and are not in this tree. |
 | **Remote-only migrations** | **none**: no migration exists on production that this branch lacks. |
-| **Pending migrations** | **none** on this branch. |
-| **Next free migration** | Next free number is **0212**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. The coordination record already holds it for #832. |
+| **Pending migrations** | **`0214`** on this branch, applied only after `0212`–`0213` (other lanes' reservations) are applied or renumbered by agreement. |
+| **Next free migration** | Next free number is **0215**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
 | **Project ref** | `alhhybgqdmcdyzpybykj`, the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
 | **Reviewed release head** | `481e60c60ae8c873a2e1b6e2a0ccc5b9dc0b8c11` (PR #827): CI green (run `38164242975`), 0 review threads, migration bytes reviewed byte-identical inside #831. The shepherd was UNKNOWN (`read_failed`), and that was accepted by the operator for this migration-only apply. |
 | **Production application SHA at apply time** | `6c5eac80` (the #821 merge). **No application behaviour was deployed by this apply.** |

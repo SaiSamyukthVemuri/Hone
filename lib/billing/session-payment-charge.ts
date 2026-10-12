@@ -6,6 +6,11 @@ import { getSessionPaymentStripe } from "@/lib/stripe/session-payment-stripe";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { getChargeReadyCardAuthorizationStatus } from "@/lib/consent/current-card-authorization";
 import { buildChargeDescription } from "@/lib/billing/charge-description";
+import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
+import {
+  accountCountryChargeable,
+  accountCountryVerdict,
+} from "@/lib/billing/payment-jurisdiction";
 
 // ---------------------------------------------------------------------------
 // runSessionPaymentCharge (PR #173).
@@ -371,13 +376,36 @@ async function loadCardAndVerifyLineage(args: {
     // stripe_livemode !== livemode belt below stays as defense-in-depth).
     const { data: settings } = await admin
       .from("studio_payment_settings")
-      .select("stripe_account_id, stripe_livemode")
+      .select(
+        "stripe_account_id, stripe_livemode, stripe_account_country, stripe_account_country_conflict",
+      )
       .eq("studio_id", args.studioId)
       .eq("stripe_livemode", livemode)
       .maybeSingle();
     if (!settings) {
       reasons.push("Studio payment settings are missing.");
     } else {
+      // PAY-CCY-02. The connected account must still be in the studio's
+      // COUNTRY at the moment money moves: a mismatch observed after
+      // preparation (account.updated, a refresh) stops the charge here. This
+      // is a country check only; the amount and currency charged remain the
+      // attempt's own prepared facts, never re-read from configuration.
+      const jurisdictionRead = await getStudioPaymentJurisdiction(args.studioId);
+      if (!jurisdictionRead.ok) {
+        reasons.push("Studio payment country could not be verified.");
+      } else if (
+        !accountCountryChargeable(
+          accountCountryVerdict(
+            jurisdictionRead.jurisdiction.country,
+            (settings.stripe_account_country as string | null) ?? null,
+            (settings.stripe_account_country_conflict as string | null) ?? null,
+          ),
+        )
+      ) {
+        reasons.push(
+          "Studio's Stripe account country does not match the studio's payment country.",
+        );
+      }
       if (settings.stripe_account_id !== card.stripe_account_id) {
         reasons.push(
           "Studio is now connected to a different Stripe account.",

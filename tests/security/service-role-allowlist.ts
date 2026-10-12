@@ -614,6 +614,13 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: '.eq("studio_id"',
   },
   {
+    path: "lib/billing/payment-jurisdiction-server.ts",
+    purpose:
+      "PAY-CCY-02 (0214): the one server read of a studio's payment country and charge currency.",
+    why: "studio_payment_jurisdictions grants SELECT to service_role ONLY (revoked from public, anon and authenticated by name) and has no RLS policy, so there is no browser-role path to it by design. The read is a single SELECT of two columns scoped by the caller's server-resolved studio id (callers obtain it from getCurrentPractitionerWithStudio or an already studio-scoped helper); it writes nothing, and a failed or unparseable read is returned as unknown, never defaulted to Canada.",
+    scopeGuard: '.eq("studio_id", studioId)',
+  },
+  {
     path: "lib/booking/public-slot-range.ts",
     purpose: "Public availability read across a DATE RANGE, resolved once.",
     why:
