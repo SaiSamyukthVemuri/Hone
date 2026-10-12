@@ -520,6 +520,66 @@ create trigger appointment_settlements_currency_from_jurisdiction
   before insert on public.appointment_settlements
   for each row execute function public.appointment_settlements_currency_from_jurisdiction();
 
+-- 4f. A Stripe account is created in the country its provisioning claim was
+-- stamped with (Codex P1 4244982189).
+--
+-- The application used to read the studio's country BEFORE
+-- create_or_claim_stripe_account_provisioning, so an operator change from CA
+-- to US committed between that read and the claim let the account be created
+-- for the stale country. The claim's row is now stamped under FOR SHARE on the
+-- jurisdiction row, which the change command (section 3) holds FOR UPDATE:
+--   * a change that commits first is waited for, and the stamp is the NEW
+--     country;
+--   * a claim that commits first makes the change command see the attempt and
+--     return refused_payment_account.
+-- The application creates the account in the stamped country only. A row is
+-- stamped when it is inserted and whenever a new claim token is issued (the
+-- claim RPC's retry of a failed or abandoned attempt), so a pre-0214 attempt
+-- is stamped the first time it is claimed again; its stamp can never go stale,
+-- because an existing attempt refuses every later change.
+alter table public.stripe_account_provisioning_attempts
+  add column if not exists payment_country text;
+alter table public.stripe_account_provisioning_attempts
+  drop constraint if exists stripe_account_provisioning_attempts_payment_country_check;
+alter table public.stripe_account_provisioning_attempts
+  add constraint stripe_account_provisioning_attempts_payment_country_check
+  check (payment_country is null or payment_country in ('CA', 'US'));
+
+create or replace function public.stripe_account_provisioning_payment_country()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_country text;
+begin
+  if tg_op = 'UPDATE'
+     and new.processing_claim_token is not distinct from old.processing_claim_token then
+    new.payment_country := old.payment_country;
+    return new;
+  end if;
+  select j.payment_country
+    into v_country
+    from public.studio_payment_jurisdictions j
+   where j.studio_id = new.studio_id
+     for share;
+  if not found then
+    raise exception
+      'payment_jurisdiction_missing: studio % has no payment jurisdiction', new.studio_id
+      using errcode = 'check_violation';
+  end if;
+  new.payment_country := v_country;
+  return new;
+end;
+$$;
+
+drop trigger if exists stripe_account_provisioning_payment_country
+  on public.stripe_account_provisioning_attempts;
+create trigger stripe_account_provisioning_payment_country
+  before insert or update on public.stripe_account_provisioning_attempts
+  for each row execute function public.stripe_account_provisioning_payment_country();
+
 -- ---------------------------------------------------------------------------
 -- 5. Recording what Stripe says about an account
 -- ---------------------------------------------------------------------------
@@ -652,6 +712,8 @@ revoke all privileges on function public.payment_charge_attempts_money_immutable
   from public, anon, authenticated, service_role;
 revoke all privileges on function public.appointment_settlements_currency_from_jurisdiction()
   from public, anon, authenticated, service_role;
+revoke all privileges on function public.stripe_account_provisioning_payment_country()
+  from public, anon, authenticated, service_role;
 
 -- ---------------------------------------------------------------------------
 -- Comments
@@ -669,6 +731,8 @@ comment on column public.studio_payment_settings.stripe_account_country_conflict
   'When the contradicting country in stripe_account_country_conflict was last reported.';
 comment on column public.studio_payment_settings.stripe_account_default_currency is
   'The connected account''s default currency as Stripe last reported it. Informational; charges use the studio''s payment currency.';
+comment on column public.stripe_account_provisioning_attempts.payment_country is
+  'The studio''s payment country at the moment this attempt was claimed, stamped under a share lock on its jurisdiction row so it serializes with set_studio_payment_jurisdiction. Stripe accounts.create uses this country and no earlier read. Null only on a pre-0214 attempt never claimed since.';
 comment on column public.studio_payment_settings.stripe_account_observed_at is
   'When Stripe last reported this account''s country and default currency to Hone.';
 comment on function public.set_studio_payment_jurisdiction(uuid, text, text, text, text, boolean) is

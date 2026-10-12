@@ -243,6 +243,36 @@ export async function createOrLoadConnectedAccountForStudio(
     );
   }
 
+  // PAY-CCY-03 (Codex P1 4244982189). The country the account is created in
+  // is the one STAMPED ON THIS CLAIM (0214 §4f), not the read above: that
+  // read happened before the claim, and an operator change committed in
+  // between would otherwise create the account for the stale country. The
+  // stamp is taken under a share lock that serializes with the change
+  // command, and an existing claim refuses every later change, so it cannot
+  // go stale.
+  const { data: claimRow, error: claimRowErr } = await admin
+    .from("stripe_account_provisioning_attempts")
+    .select("payment_country")
+    .eq("id", claim.attempt_id)
+    .eq("studio_id", studioId)
+    .maybeSingle();
+  const claimCountry = (claimRow?.payment_country as string | null) ?? null;
+  if (claimRowErr || (claimCountry !== "CA" && claimCountry !== "US")) {
+    logInternalStripeError("provisioning_claim_country_unverified", {
+      studioId,
+      code: claimRowErr?.code ?? null,
+      claimCountry,
+    });
+    throw new Error(PAYMENT_COUNTRY_UNVERIFIED_ERROR);
+  }
+  if (claimCountry !== paymentCountry) {
+    logInternalStripeError("provisioning_claim_country_changed_since_read", {
+      studioId,
+      readCountry: paymentCountry,
+      claimCountry,
+    });
+  }
+
   // We own the claim. Call Stripe.accounts.create with the RPC-supplied
   // idempotency key so retries collapse on Stripe's side.
   let account: Stripe.Account;
@@ -250,7 +280,7 @@ export async function createOrLoadConnectedAccountForStudio(
     account = await stripe.accounts.create(
       {
         type: "express",
-        country: paymentCountry,
+        country: claimCountry,
         capabilities: {
           card_payments: { requested: true },
           transfers: { requested: true },
