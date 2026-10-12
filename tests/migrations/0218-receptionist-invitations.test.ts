@@ -96,6 +96,12 @@ describe("0218 changes only what it says", () => {
     expect(TOP_LEVEL).not.toMatch(/drop column|alter column/i);
   });
 
+  it("enforces one ACTIVE front-desk row per studio and email with a partial unique index (Codex P2 4244037190)", () => {
+    expect(flat(TOP_LEVEL)).toContain(
+      "create unique index if not exists studio_receptionists_active_email_uniq on public.studio_receptionists (studio_id, lower(email)) where active and email is not null;",
+    );
+  });
+
   it("writes no row at top level", () => {
     expect(TOP_LEVEL).not.toMatch(/^\s*(insert\s+into|update\s+public\.|delete\s+from)/im);
   });

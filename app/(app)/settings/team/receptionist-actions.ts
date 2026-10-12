@@ -37,6 +37,10 @@ export async function setReceptionistActiveAction(formData: FormData): Promise<v
     );
     if (data === "not_found") throw new Error("Receptionist not found in this studio.");
     if (data === "not_authorized") throw new Error("Only studio owners can manage the team.");
+    // 0218's one-active-row-per-email index (Codex P2 4244037190 on #850).
+    if (error?.code === "23505") {
+      throw new Error("Another active front-desk member already uses this email.");
+    }
     throw new Error("Could not update the receptionist. Please try again.");
   }
   revalidatePath("/settings/team");

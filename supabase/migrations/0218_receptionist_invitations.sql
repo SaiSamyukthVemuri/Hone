@@ -7,6 +7,10 @@
 --      that a practitioner's membership already carries, so accepting an
 --      invitation records the same terms/privacy acceptance for a receptionist.
 --   2. pending_invitations.role admits 'receptionist'.
+--   2b. At most ONE ACTIVE front-desk membership per studio and email, enforced
+--      by a partial unique index, so EVERY activation writer holds it:
+--      invitation acceptance, add_studio_receptionist and
+--      set_studio_receptionist_active (Codex P2 4244037190 on #850).
 --   3. link_invited_membership, the ONE function that turns an accepted
 --      invitation into a membership (0141), gains a receptionist branch. A
 --      receptionist invitation creates or reactivates a studio_receptionists
@@ -49,6 +53,19 @@ alter table public.pending_invitations
 alter table public.pending_invitations
   add constraint pending_invitations_role_check
   check (role in ('owner', 'practitioner', 'receptionist'));
+
+-- ---------------------------------------------------------------------------
+-- 2b) One ACTIVE front-desk membership per studio and email.
+--     The linker's 'conflict' pre-check below gives acceptance a clean answer.
+--     This index is what makes the rule hold for every OTHER writer, too:
+--     reactivating an old row under an address another user now holds is
+--     refused 23505. Inactive rows are history and stay unconstrained.
+--     studio_receptionists arrives in 0216 in this same release, so no
+--     existing row can violate it.
+-- ---------------------------------------------------------------------------
+create unique index if not exists studio_receptionists_active_email_uniq
+  on public.studio_receptionists (studio_id, lower(email))
+  where active and email is not null;
 
 -- ---------------------------------------------------------------------------
 -- 3) The linker. Signature unchanged, so create or replace swaps the body in
