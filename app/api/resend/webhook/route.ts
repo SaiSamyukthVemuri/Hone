@@ -27,19 +27,20 @@ import {
 // it cannot be written the route answers 500 and the provider retries the
 // same delivery (same svix-id) on its own schedule.
 //
-// Recovery (Codex P2 4244387538): when THIS request's own processing attempt
-// fails and the receipt is still pending, the answer is also 500. Resend's
-// retry of that delivery is then the receipt's recovery trigger: it arrives
-// after the two-minute claim has expired (Resend's schedule is 5 s, 5 min,
-// 30 min, ...), finds the receipt pending, and claims it again. It never
+// Recovery (Codex P2 4244387538, 4244798597): when the receipt is STILL
+// PENDING after this request -- its own claim or processing attempt failed,
+// or another holder's claim kept it from trying -- the answer is also 500.
+// Resend's retry of that delivery is then the receipt's recovery trigger.
+// A retry that lands while a failed attempt's two-minute claim is still held
+// answers 500 again, so the provider keeps retrying (5 s, 5 min, 30 min, ...)
+// until one lands after the claim has expired and reclaims it. It never
 // depends on a later webhook for some other email or on a scheduled sweep.
 // Attempts are bounded in the database: after five, the receipt is
-// quarantined, the next retry finds it processed and is acknowledged with
-// 200, so a poison event cannot keep the provider retrying until it disables
-// the endpoint. Every other outcome (applied, stale, unmatched, ignored,
-// quarantined, or held by another worker that will answer for itself) is
-// acknowledged with 200. A retried delivery whose receipt is already
-// processed is acknowledged as-is.
+// quarantined and the next retry finds it processed and gets 200, so a
+// poison event cannot keep the provider retrying until it disables the
+// endpoint. Only an applied, stale, unmatched, ignored or quarantined outcome
+// is acknowledged with 200, as is a retried delivery whose receipt is
+// already processed.
 //
 // Attribution: process_email_provider_event attributes an event to a studio
 // only through the ledger row it matched. An unmatched or quarantined event
@@ -131,9 +132,10 @@ export async function POST(req: Request): Promise<Response> {
     logEvent("resend_webhook_sweep", sweep);
   }
 
-  if (processed === null) {
-    // This attempt failed and the receipt is still pending: ask the provider
-    // to deliver again, so its retry recovers the receipt (bounded: the
+  if (processed === null || processed === "held") {
+    // The receipt is still pending: this attempt failed, or a claim (possibly
+    // a failed attempt's, not yet expired) kept it from trying. Ask the
+    // provider to deliver again, so a later retry recovers it (bounded: the
     // database quarantines it after five attempts, and that retry gets 200).
     return NextResponse.json({ ok: false, recorded: true }, { status: 500 });
   }
