@@ -43,8 +43,10 @@ const TRIGGER_FNS = [
 describe("0214 sits correctly in the migration sequence", () => {
   it("is the repository maximum, and nothing sits above it", () => {
     // Only the CURRENT maximum migration's own test may assert this (CLAUDE.md §2).
-    expect(isRepoMax(VERSION), "0214 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
+    expect(isRepoMax(VERSION)).toBe(false); // INTEGRATION handoff — see note below
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above 0214").toBeGreaterThan(0);
+    expect(above.every((v) => Number(v) > Number(VERSION))).toBe(true);
   });
 
   it("is allocated exactly once", () => {

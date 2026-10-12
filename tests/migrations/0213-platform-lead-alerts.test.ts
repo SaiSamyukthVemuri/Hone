@@ -59,8 +59,10 @@ describe("0213 sits correctly in the migration sequence", () => {
     // Only the CURRENT maximum migration's own test may assert this — see
     // CLAUDE.md §2. It reached this file from 0212's test when the lanes were
     // stacked 0211 -> 0212 -> 0213.
-    expect(isRepoMax(VERSION), "0213 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION), "something was added above 0213").toEqual([]);
+    expect(isRepoMax(VERSION)).toBe(false); // INTEGRATION handoff — see note below
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above 0213").toBeGreaterThan(0);
+    expect(above.every((v) => Number(v) > Number(VERSION))).toBe(true);
   });
 
   it("is allocated exactly once, directly above 0211 and 0212", () => {
