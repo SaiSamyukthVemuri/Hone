@@ -1052,6 +1052,12 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "The Hone product waitlist from migration 0004. Platform marketing, not studio content, and unrelated to new_client_waitlist_entries.",
   },
+  platform_lead_alerts: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "Hone's own operator-alert state for its sales leads, live since migration 0213 (LEAD-ALERT-01): one row per demo_requests or waitlist lead, holding only the alert's status, attempt count, lease and provider message id. The leads it points at are platform records excluded above, and the table carries no studio_id, so it is no studio's content.",
+  },
   calendar_sync_control: {
     kind: "excluded",
     category: "platform",
