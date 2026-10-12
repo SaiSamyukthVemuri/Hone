@@ -31,11 +31,10 @@ import { RECOVERY_ROUTE_BY_ERROR_CODE, type SenderRead } from "./sender-status";
 //     it one.
 //   A number existing, or passing one test send, establishes neither.
 //
-// REGISTRATION EVIDENCE IS NOT STORED YET. Nothing in Hone records 10DLC or
-// toll-free verification today, so every caller currently passes
-// `{ state: "not_recorded" }` and US readiness is therefore "Requires
-// information" for every studio. That is the true answer, not a placeholder:
-// storing evidence is a later slice with its own migration and proof.
+// REGISTRATION EVIDENCE is recorded by Hone support in 0217
+// (SMS-SENDER-REG-01) after checking the provider account, and read through
+// lib/sms/sender-registration.ts. With no record, US readiness is "Requires
+// information". Recording "approved" is evidence, not an activation.
 //
 // This module reads nothing and sends nothing. It is the input the later
 // send-time refusal will consume, so the panel and the refusal cannot disagree.
@@ -45,6 +44,8 @@ export type DestinationCountry = "CA" | "US";
 
 export type UsRegistrationEvidence =
   | { state: "not_recorded" }
+  /** The evidence read did not answer: never treated as "not recorded". */
+  | { state: "unreadable" }
   | { state: "pending" }
   | { state: "requires_information"; missing: string }
   | { state: "approved" }
@@ -107,6 +108,8 @@ function fromRegistration(
 ): DestinationReadiness {
   const kind = senderCountry === "toll_free" ? "toll-free verification" : "US 10DLC brand and campaign registration";
   switch (evidence.state) {
+    case "unreadable":
+      return make(destination, "unavailable", `Hone could not read the ${kind} record just now.`, "Try again in a moment.", "none", senderCountry);
     case "approved":
       return make(destination, "active", `The studio's number has approved ${kind}.`, null, "none", senderCountry);
     case "pending":

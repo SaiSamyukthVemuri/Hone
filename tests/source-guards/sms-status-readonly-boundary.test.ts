@@ -44,6 +44,8 @@ const SURFACES = [
   { name: "NANP classifier", rel: "lib/sms/nanp.ts" },
   { name: "sender readiness lib", rel: "lib/sms/sender-readiness.ts" },
   { name: "readiness panel", rel: "app/(app)/settings/integrations/SmsSenderReadinessPanel.tsx" },
+  // SMS-SENDER-REG-01: the owner's evidence read is held to the same boundary.
+  { name: "registration read lib", rel: "lib/sms/sender-registration.ts" },
 ] as const;
 
 describe("the comment stripper itself", () => {
