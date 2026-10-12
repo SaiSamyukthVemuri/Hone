@@ -11,6 +11,10 @@ import {
   accountCountryChargeable,
   accountCountryVerdict,
 } from "@/lib/billing/payment-jurisdiction";
+import {
+  compareProviderMoney,
+  providerMoneyMismatchDetails,
+} from "@/lib/billing/provider-money-facts";
 
 // ---------------------------------------------------------------------------
 // runSessionPaymentCharge (PR #173).
@@ -462,7 +466,10 @@ type SuccessPersistenceResult =
    * lib/billing/payment-receipt.ts. Nothing in this file grants it.
    */
   | { persisted: true; by: "concurrent_writer" }
-  | { persisted: false; reason: "db_error" | "zero_rows" };
+  // `provider_money_mismatch` (PAY-CCY-01): Stripe's succeeded PaymentIntent
+  // states a different amount or currency than the prepared attempt. Nothing
+  // was written; the row stays `pending_stripe` for manual review.
+  | { persisted: false; reason: "db_error" | "zero_rows" | "provider_money_mismatch" };
 
 // Snapshots a successful PaymentIntent back onto the attempt row.
 // Returns whether the success outcome was durably persisted: the
@@ -594,12 +601,57 @@ async function writeSucceededOutcome(args: {
    * re-read so a zero-row race cannot be blessed across a different charge kind.
    */
   expectedChargeReason: string | null;
+  /**
+   * PAY-CCY-01. The PREPARED money facts, read from the attempt row. The
+   * succeeded outcome is recorded only when Stripe's PaymentIntent states
+   * exactly this amount and currency.
+   */
+  expectedAmountCents: number | null;
+  expectedCurrency: string | null;
 }): Promise<SuccessPersistenceResult> {
   const admin = createAdminClient();
   const latestCharge =
     typeof args.pi.latest_charge === "string"
       ? args.pi.latest_charge
       : (args.pi.latest_charge?.id ?? null);
+
+  // PAY-CCY-01. CHECKED BEFORE THE WRITE, BECAUSE THE WRITE IS THE CLAIM.
+  //
+  // Stamping `succeeded` says "this attempt's money moved". If Stripe's
+  // PaymentIntent names a different amount or currency, that sentence would be
+  // false about the one row the receipt, the refund and every financial report
+  // read. So the row is left exactly as it is (`pending_stripe`, a valid
+  // reconciliation source) and a person is told. The money is real on Stripe
+  // either way; what this refuses is recording it as the prepared charge.
+  const prepared = {
+    amountCents: args.expectedAmountCents,
+    currency: args.expectedCurrency,
+  };
+  const provider = { amount: args.pi.amount, currency: args.pi.currency };
+  const money = compareProviderMoney(prepared, provider);
+  if (!money.ok) {
+    logInternal("session_payment_provider_money_mismatch", {
+      attemptId: args.attemptId,
+      mismatches: money.mismatches,
+    });
+    await recordOpsAlert({
+      severity: "critical",
+      event: "session_payment_provider_money_mismatch",
+      message:
+        "Stripe reported a succeeded PaymentIntent whose amount or currency does not equal the prepared attempt. Hone did NOT record it as succeeded; the row stays 'pending_stripe'. The charge may be real on Stripe. Manual reconciliation required.",
+      studioId: args.studioId,
+      clientId: args.clientId,
+      stripePaymentIntentId: args.pi.id,
+      route: "lib/billing/session-payment-charge:writeSucceededOutcome",
+      safeDetails: {
+        attempt_id: args.attemptId,
+        attempted_status: "succeeded",
+        ...providerMoneyMismatchDetails(prepared, provider, money.mismatches),
+      },
+    });
+    return { persisted: false, reason: "provider_money_mismatch" };
+  }
+
   const { data: updatedRows, error } = await admin
     .from("payment_charge_attempts")
     .update({
@@ -949,6 +1001,9 @@ async function reconcileExistingPaymentIntent(args: {
   paymentIntentId: string;
   /** Compared against the row on a zero-row recheck. */
   expectedChargeReason: string | null;
+  /** PAY-CCY-01. The prepared money facts the retrieved PI must equal. */
+  expectedAmountCents: number | null;
+  expectedCurrency: string | null;
 }): Promise<SessionPaymentChargeResult> {
   const stripe = getSessionPaymentStripe();
   let pi: Stripe.PaymentIntent;
@@ -993,6 +1048,8 @@ async function reconcileExistingPaymentIntent(args: {
       clientId: args.clientId,
       pi,
       expectedChargeReason: args.expectedChargeReason,
+      expectedAmountCents: args.expectedAmountCents,
+      expectedCurrency: args.expectedCurrency,
     });
     if (!persistence.persisted) {
       // PR #281: Stripe says succeeded but Hone could not persist it
@@ -1367,6 +1424,8 @@ export async function runSessionPaymentCharge(args: {
         stripeAccountId: card.stripe_account_id,
         paymentIntentId: claim.stripe_payment_intent_id,
         expectedChargeReason: attemptRow.charge_reason ?? null,
+        expectedAmountCents: attemptRow.amount_cents,
+        expectedCurrency: attemptRow.currency,
       });
     }
     // No PI id on the row. Check whether the claim is recent enough
@@ -1541,6 +1600,8 @@ export async function runSessionPaymentCharge(args: {
       clientId: attemptRow.client_id,
       pi,
       expectedChargeReason: attemptRow.charge_reason ?? null,
+      expectedAmountCents: attemptRow.amount_cents,
+      expectedCurrency: attemptRow.currency,
       // WHY SEVERAL INVOCATIONS CAN REACH HERE HOLDING THE SAME CHARGE.
       //
       // The `already_pending` branch above DELIBERATELY lets several requests
