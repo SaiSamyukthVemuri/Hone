@@ -125,6 +125,22 @@ describe("findings become DEDUPED ops alerts", () => {
     expect(JSON.stringify(h.alerts[0]!.safeDetails)).toBe('{"pending_receipts":3,"oldest_pending_seconds":3600}');
   });
 
+  it("never records a critical alert, because a critical ops alert is emailed (#828 gate)", async () => {
+    h.rpc = {
+      claim_email_provider_events: [ok([])],
+      record_email_sweep_run: [ok("recorded")],
+      email_delivery_health: [healthRow({ pending_receipts: 2, oldest_pending_seconds: 7 * 60 * 60 })],
+    };
+    const body = await (await call("Bearer sweep-test-secret")).json();
+    expect(body.raised).toEqual(["email_delivery_backlog_stale"]);
+    expect(h.alerts).toHaveLength(1);
+    expect(h.alerts[0]).toMatchObject({
+      severity: "warning",
+      safeDetails: { pending_receipts: 2, oldest_pending_seconds: 25200, assessed_severity: "critical" },
+    });
+    expect(h.alerts.every((a) => a.severity !== "critical")).toBe(true);
+  });
+
   it("treats a sweep or health read that failed as a finding, never as healthy", async () => {
     h.rpc = {
       claim_email_provider_events: [{ data: null, error: { message: "db down" } }],
