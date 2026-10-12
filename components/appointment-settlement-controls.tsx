@@ -13,7 +13,11 @@ import {
   SETTLEMENT_BADGE_LABEL,
   type SettlementMethod,
 } from "@/lib/billing/settlement-types";
-import { formatCadFromCents } from "@/lib/billing/cad-amount";
+import {
+  currencyLabel,
+  formatMoneyWithCurrency,
+  type PaymentCurrency,
+} from "@/lib/billing/payment-jurisdiction";
 
 // PAY-SETTLE. The outcome controls, rendered UNDER the existing Charge path
 // inside SessionPaymentPrepareCard.
@@ -37,6 +41,14 @@ type Props = {
   /** The live disposition, when one already exists. */
   settledMethod?: SettlementMethod | null;
   settledAmountCents?: number | null;
+  /**
+   * PAY-CCY-04. The currency the live disposition was RECORDED in (its own
+   * row, stamped by 0214), and the studio's currency for a new one. Required,
+   * so no caller can render an unlabelled amount by omission; null is shown
+   * as "(currency unknown)", never as Canadian.
+   */
+  settledCurrency: PaymentCurrency | null;
+  currency: PaymentCurrency | null;
   /** Hidden entirely once Hone has verified card money — see the card. */
   defaultAmountCents?: number | null;
   /**
@@ -62,6 +74,8 @@ export function AppointmentSettlementControls({
   isOwner,
   settledMethod = null,
   settledAmountCents = null,
+  settledCurrency,
+  currency,
   defaultAmountCents = null,
   onRecorded,
 }: Props) {
@@ -89,7 +103,7 @@ export function AppointmentSettlementControls({
           {SETTLEMENT_BADGE_LABEL[settledMethod]}
         </span>
         {typeof settledAmountCents === "number" && (
-          <> {"·"} {formatCadFromCents(settledAmountCents)}</>
+          <> {"·"} {formatMoneyWithCurrency(settledAmountCents, settledCurrency)}</>
         )}
         <p className="mt-1 text-neutral-500 dark:text-neutral-400">
           Recorded by the studio, not verified by Hone.
@@ -199,6 +213,7 @@ export function AppointmentSettlementControls({
               : open === "still_owes"
                 ? "Amount still owed"
                 : "Amount collected"}
+            {currency ? ` (${currencyLabel(currency)})` : ""}
             <input
               inputMode="decimal"
               value={amount}

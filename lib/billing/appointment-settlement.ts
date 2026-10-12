@@ -7,6 +7,7 @@ import {
   type AppointmentSettlement,
   type SettlementMethod,
 } from "@/lib/billing/settlement-types";
+import { parsePaymentCurrency } from "@/lib/billing/payment-jurisdiction";
 
 // PAY-SETTLE — the READ side of practitioner-attested dispositions.
 //
@@ -36,6 +37,7 @@ type Row = {
   appointment_id: string;
   method: string;
   amount_cents: number;
+  currency: string | null;
   quoted_amount_cents: number | null;
   recorded_at: string;
   supersedes_id: string | null;
@@ -53,7 +55,7 @@ export async function getAppointmentSettlements(
   const { data, error } = await supabase
     .from("appointment_settlements")
     .select(
-      "id, appointment_id, method, amount_cents, quoted_amount_cents, recorded_at, supersedes_id",
+      "id, appointment_id, method, amount_cents, currency, quoted_amount_cents, recorded_at, supersedes_id",
     )
     .eq("studio_id", studioId)
     // LIVE ONLY. The single-truth partial unique index guarantees at most one
@@ -74,6 +76,7 @@ export async function getAppointmentSettlements(
       appointmentId: r.appointment_id,
       method: r.method,
       amountCents: r.amount_cents,
+      currency: parsePaymentCurrency(r.currency),
       quotedAmountCents: r.quoted_amount_cents,
       recordedAt: r.recorded_at,
       supersedesId: r.supersedes_id,

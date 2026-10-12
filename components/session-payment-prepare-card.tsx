@@ -26,6 +26,7 @@ import {
   currencyLabel,
   currencyName,
   formatMoneyWithCurrency,
+  type PaymentCurrency,
 } from "@/lib/billing/payment-jurisdiction";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
@@ -225,6 +226,8 @@ export function SessionPaymentPrepareCard({
   appointmentId = null,
   settledMethod = null,
   settledAmountCents = null,
+  settledCurrency = null,
+  settlementCurrency = null,
   settlementQuotedAmountCents = null,
   canRecordSettlement = true,
   onSettlementRecorded,
@@ -248,6 +251,12 @@ export function SessionPaymentPrepareCard({
   // The live attested disposition, when one exists. Server-resolved.
   settledMethod?: SettlementMethod | null;
   settledAmountCents?: number | null;
+  // PAY-CCY-04. The live disposition's own recorded currency, and the
+  // studio's currency for recording a new one (server-resolved). When the
+  // studio currency is not passed, an eligible card falls back to its own
+  // eligibility.paymentCurrency; otherwise it is unknown, never Canadian.
+  settledCurrency?: PaymentCurrency | null;
+  settlementCurrency?: PaymentCurrency | null;
   // The appointment-resolved price, available with or without a session.
   settlementQuotedAmountCents?: number | null;
   // The UI's copy of the database's own rule: only a COMPLETED appointment can
@@ -537,6 +546,11 @@ export function SessionPaymentPrepareCard({
           isOwner={isOwner}
           settledMethod={settledMethod}
           settledAmountCents={settledAmountCents}
+          settledCurrency={settledCurrency}
+          currency={
+            settlementCurrency ??
+            (eligibility.eligible ? eligibility.paymentCurrency : null)
+          }
           defaultAmountCents={
             presentation.prepareFormAmount?.amountCents ??
             settlementQuotedAmountCents
