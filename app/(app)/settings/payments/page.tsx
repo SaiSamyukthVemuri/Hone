@@ -6,6 +6,7 @@ import {
   bookingCardCopy,
   connectBannerCopy,
   currentRuntimeMode,
+  gateConnectBannerOnCountry,
   deriveConnectCapability,
   derivePortalCardCapability,
   portalCardCopy,
@@ -124,8 +125,6 @@ export default async function PaymentsSettingsPage() {
         hasActiveAuthorizationTemplate: authTemplate != null,
         publishableKeyOk: publishableKeyOk(),
       });
-  const banner = connectBannerCopy(runtimeMode, connect);
-
   // PAY-CCY-04. The studio's payment country/currency and its Stripe account's
   // reported country, for the CURRENT deployment mode. Owner-only page (gated
   // above); the studio id is the server-resolved one.
@@ -140,6 +139,12 @@ export default async function PaymentsSettingsPage() {
     jurisdiction,
     account: countryStatus.account,
   });
+  // Codex P2 4249120309: Stripe's "ready" never outranks a blocked or
+  // unverifiable payment country.
+  const banner = gateConnectBannerOnCountry(
+    connectBannerCopy(runtimeMode, connect),
+    countrySummary,
+  );
 
   return (
     <section className="flex flex-col gap-8">
