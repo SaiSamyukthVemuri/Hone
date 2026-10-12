@@ -32,11 +32,26 @@ const TF = "+18885550123";
 const CA = "+16045550123";
 
 describe("the number decides which registration matters", () => {
-  it("US local -> 10DLC; toll-free -> verification; Canadian or invalid -> none", () => {
+  it("any long code (US or Canadian) -> 10DLC; toll-free -> verification; other or invalid -> none", () => {
     expect(registrationKindFor(US)).toBe("us_10dlc");
+    expect(registrationKindFor(CA)).toBe("us_10dlc");
     expect(registrationKindFor(TF)).toBe("toll_free_verification");
-    expect(registrationKindFor(CA)).toBeNull();
+    expect(registrationKindFor("+18765550123")).toBeNull();
     expect(registrationKindFor(null)).toBeNull();
+  });
+
+  it("a REGISTERED Canadian long code serves US recipients, end to end", () => {
+    const sender: SenderRead = {
+      ok: true,
+      sender: {
+        id: "x", studio_id: "s", provider: "twilio", status: "active", country: "CA", requested_area_code: null,
+        phone_number: CA, provisioned_at: null, last_test_ok_at: null, last_error_code: null, last_error_at: null,
+        released_at: null, created_at: "", updated_at: "",
+      },
+    };
+    const evidence = registrationEvidenceFor(read(row("us_10dlc", "approved")), CA);
+    expect(destinationReadiness("US", sender, evidence).state).toBe("active");
+    expect(destinationReadiness("CA", sender, { state: "not_recorded" }).state).toBe("active");
   });
 
   it("a row of the OTHER kind says nothing about this number", () => {
