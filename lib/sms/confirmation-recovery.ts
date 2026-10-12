@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Client, Studio } from "@/lib/types/database";
+import { classifyNanpNumber } from "./nanp";
 import { listedRoutingStudioIds, type SendTimeRouteReader } from "./send-time-route";
+import { normalizePhoneForSms } from "./twilio";
 import { sendRecoveredConfirmationSmsToClient, type SmsSendResult } from "./send-appointment";
 
 // ===========================================================================
@@ -39,11 +41,13 @@ import { sendRecoveredConfirmationSmsToClient, type SmsSendResult } from "./send
 // validate-and-claim command (0206's pattern), i.e. a migration.
 //
 // FAIRNESS. Each listed studio is paged separately (keyset on the unique
-// (created_at, id), RECOVERY_PAGE_SIZE rows, at most
-// RECOVERY_MAX_PAGES_PER_STUDIO pages), so rows that keep refusing (an
-// opted-out client, an unready sender) can neither starve newer rows of the
-// same studio nor another studio. A route is looked at once per row, the next
-// run being the retry.
+// (created_at, id), RECOVERY_PAGE_SIZE rows per page) through its WHOLE
+// 24-hour window: there is no page ceiling, so no owed row sits beyond reach.
+// What bounds a run is the window itself, RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN
+// and RECOVERY_RUN_TIME_BUDGET_MS. A refusing row costs no read beyond its
+// page: gate refusals are local, and route refusals are remembered for the
+// run per studio (studio-wide) or per studio and destination country. A route
+// is looked at once per row, the next run being the retry.
 //
 // FRESHNESS. An APPROVAL is never reused: every recovered send reads the
 // sender snapshot afresh, immediately before its claim, so a sender
@@ -52,7 +56,9 @@ import { sendRecoveredConfirmationSmsToClient, type SmsSendResult } from "./send
 // remembered for the rest of the run, and only to skip that studio's other
 // rows; destination refusals depend on the recipient and are not. The
 // client's STOP, consent and phone are re-read with the appointment, before
-// AND after the claim, so a STOP that lands mid-run is honoured.
+// AND after the claim, so a STOP that lands mid-run is honoured, as are the
+// studio's confirmation switch and the 24-hour maximum age (against the
+// current time).
 //
 // BOUNDS. At most RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN provider requests per
 // run, counting failures as well as sends, so a provider outage cannot turn
@@ -72,7 +78,8 @@ export const RECOVERY_GRACE_MS = 5 * 60 * 1000;
 /** The 2h reminder window ends 2h15m out (lib/cron/reminder-schedule). */
 export const RECOVERY_MIN_LEAD_MS = (2 * 60 + 15) * 60 * 1000;
 export const RECOVERY_PAGE_SIZE = 50;
-export const RECOVERY_MAX_PAGES_PER_STUDIO = 10;
+/** Wall time one run may spend; the scheduler fires every 15 minutes. */
+export const RECOVERY_RUN_TIME_BUDGET_MS = 4 * 60 * 1000;
 /** Provider requests per run: sends AND failed or possibly-sent attempts. */
 export const RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN = 50;
 /** Post-claim re-read looks on a read failure, before releasing the claim. */
@@ -136,6 +143,12 @@ const STUDIO_WIDE_REFUSALS: ReadonlySet<string> = new Set([
   "sms_route_sender_identity_missing",
 ]);
 
+/** The studio and recipient country a destination refusal applies to. */
+function destinationKey(studioId: string, phone: string | null): string | null {
+  const n = classifyNanpNumber(normalizePhoneForSms(phone ?? null));
+  return n.ok ? `${studioId}:${n.country}` : null;
+}
+
 export type RecoveryRun =
   | { ran: false; reason: "disabled" | "no_routed_studios" }
   | { ran: false; reason: "read_failed" }
@@ -158,8 +171,12 @@ export async function recoverOwedConfirmations(opts: {
   const studioIds = listedRoutingStudioIds(env);
   if (studioIds.length === 0) return { ran: false, reason: "no_routed_studios" };
 
-  // Studio-wide refusals seen this run; approvals are never remembered.
+  // Refusals seen this run, studio-wide or per destination country;
+  // approvals are never remembered.
   const studioRefusal = new Map<string, string>();
+  const destinationRefusal = new Map<string, string>();
+  const startedAt = clock();
+  const outOfTime = () => clock() - startedAt >= RECOVERY_RUN_TIME_BUDGET_MS;
 
   const w = owedWindow(opts.nowMs);
   const pageSize = opts.pageSize ?? RECOVERY_PAGE_SIZE;
@@ -172,8 +189,8 @@ export async function recoverOwedConfirmations(opts: {
 
   studios: for (const studioId of studioIds) {
     let after: { createdAt: string; id: string } | null = null;
-    for (let page = 0; page < RECOVERY_MAX_PAGES_PER_STUDIO; page += 1) {
-      if (attempted() >= RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN) break studios;
+    for (;;) {
+      if (attempted() >= RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN || outOfTime()) break studios;
       const rows = await readOwedPage(opts.admin, studioId, w, after, pageSize);
       if (rows === null) {
         skip("read_failed");
@@ -181,13 +198,14 @@ export async function recoverOwedConfirmations(opts: {
       }
       anyRead = true;
       for (const row of rows) {
-        if (attempted() >= RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN) break studios;
+        if (attempted() >= RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN || outOfTime()) break studios;
         run.considered += 1;
         if (!isOwedConfirmation(row, opts.nowMs, studioIds) || !row.studio || !row.client) {
           skip("not_owed");
           continue;
         }
-        const refused = studioRefusal.get(studioId);
+        const destKey = destinationKey(studioId, row.client.phone);
+        const refused = studioRefusal.get(studioId) ?? (destKey ? destinationRefusal.get(destKey) : undefined);
         if (refused) {
           skip(refused);
           continue;
@@ -212,6 +230,9 @@ export async function recoverOwedConfirmations(opts: {
         else if (result.skipped) {
           skip(result.reason);
           if (STUDIO_WIDE_REFUSALS.has(result.reason)) studioRefusal.set(studioId, result.reason);
+          else if (result.reason === "sms_route_destination_not_ready" && destKey) {
+            destinationRefusal.set(destKey, result.reason);
+          }
         } else run.failed += 1;
       }
       if (rows.length < pageSize) continue studios;
@@ -271,6 +292,8 @@ async function readOwedPage(
 type RevalidatedRow = {
   status: string;
   starts_at: string;
+  created_at: string;
+  studio: { send_confirmation_sms: boolean } | Array<{ send_confirmation_sms: boolean }> | null;
   client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at"> | Array<Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at">> | null;
 };
 
@@ -291,7 +314,9 @@ async function revalidateOwed(
     try {
       const { data, error } = await admin
         .from("appointments")
-        .select("status, starts_at, client:clients(phone, sms_consent_at, sms_opted_out_at)")
+        .select(
+          "status, starts_at, created_at, studio:studios(send_confirmation_sms), client:clients(phone, sms_consent_at, sms_opted_out_at)",
+        )
         .eq("id", appointmentId)
         .maybeSingle();
       if (!error && data) row = data as RevalidatedRow;
@@ -301,7 +326,13 @@ async function revalidateOwed(
   }
   if (!row) return { ok: false, reason: "recovery_revalidate_failed" };
   const client = Array.isArray(row.client) ? (row.client[0] ?? null) : row.client;
-  if (!client) return { ok: false, reason: "recovery_revalidate_failed" };
+  const studio = Array.isArray(row.studio) ? (row.studio[0] ?? null) : row.studio;
+  if (!client || !studio) return { ok: false, reason: "recovery_revalidate_failed" };
+  if (studio.send_confirmation_sms !== true) return { ok: false, reason: "studio_toggle_off" };
+  const created = Date.parse(row.created_at);
+  if (!Number.isFinite(created) || created < nowMs - RECOVERY_MAX_AGE_MS) {
+    return { ok: false, reason: "recovery_expired" };
+  }
   if (client.sms_opted_out_at) return { ok: false, reason: "client_opted_out" };
   if (!client.sms_consent_at) return { ok: false, reason: "client_no_consent" };
   if (client.phone !== listedPhone) return { ok: false, reason: "recovery_client_phone_changed" };

@@ -59,6 +59,8 @@ let afterClaimRead: ((row: Appt) => void) | null;
 let preClaimRead: ((row: Appt) => void) | null;
 /** A studio whose owed-rows page read fails. */
 let failSelectFor: string | null;
+/** Each studio's confirmation switch as it is NOW (default on). */
+let switchOff: Set<string>;
 
 const studioRow = (id: string) => ({
   id,
@@ -180,6 +182,8 @@ function admin(): SupabaseClient {
               ? {
                   status: row.status,
                   starts_at: row.starts_at,
+                  created_at: row.created_at,
+                  studio: { send_confirmation_sms: !switchOff.has(row.studio_id) },
                   // The client as it is NOW, not as the page saw it.
                   client: { phone: row.client_phone, sms_consent_at: "2026-10-01T00:00:00Z", sms_opted_out_at: row.client_opted_out_at },
                 }
@@ -265,6 +269,7 @@ beforeEach(() => {
   failRead = null;
   failSelectFor = null;
   clock = undefined;
+  switchOff = new Set();
   providerStatus = 201;
   snapshot = readyStudioA();
   vi.stubGlobal(
@@ -725,5 +730,62 @@ describe("FRESHNESS: an approval is never reused, and a STOP mid-run is honoured
     };
     expect(await run()).toMatchObject({ sent: 2 });
     expect(reads).toBe(2);
+  });
+});
+
+describe("the switch, the age and the whole window", () => {
+  it("the studio's confirmation switch turned off mid-run: refused before the claim", async () => {
+    db = [appt()];
+    preClaimRead = (row) => {
+      switchOff.add(row.studio_id);
+    };
+    expect(await run()).toMatchObject({ sent: 0, skipped: { studio_toggle_off: 1 } });
+    expect(events).not.toContain("claim_sms_send");
+  });
+
+  it("a row that passes the 24-hour age during a slow run is not confirmed", async () => {
+    db = [appt({ created_at: iso(NOW - RECOVERY_MAX_AGE_MS + 30_000) })];
+    clock = () => NOW + 60_000;
+    expect(await run()).toMatchObject({ sent: 0, skipped: { recovery_expired: 1 } });
+    expect(events).not.toContain("claim_sms_send");
+  });
+
+  it("NO PAGE CEILING: 500 refusing rows on one timestamp never hide the 501st", async () => {
+    const same = iso(NOW - 3 * HOUR);
+    db = [
+      ...Array.from({ length: 500 }, (_, i) =>
+        appt({ id: `s-${String(i).padStart(3, "0")}`, created_at: same, client_opted_out_at: iso(NOW - 60_000) }),
+      ),
+      appt({ id: "z-owed", created_at: same }),
+    ];
+    const r = await run(ENABLED, 50);
+    expect(r).toMatchObject({ ran: true, considered: 501, sent: 1 });
+    expect(db.find((x) => x.id === "z-owed")!.sms_confirmation_sent_at).not.toBeNull();
+  });
+
+  it("a destination refusal is remembered per country: US rows cost one read, the CA row still sends", async () => {
+    db = [
+      appt({ id: "us-1", client_phone: "+12125550101", created_at: iso(NOW - 4 * HOUR) }),
+      appt({ id: "us-2", client_phone: "+12125550102", created_at: iso(NOW - 3 * HOUR) }),
+      appt({ id: "us-3", client_phone: "+12125550103", created_at: iso(NOW - 2 * HOUR) }),
+      appt({ id: "ca-1", created_at: iso(NOW - HOUR) }),
+    ];
+    let reads = 0;
+    snapshot = () => {
+      reads += 1;
+      return readyStudioA(); // a Canadian long code with no US registration
+    };
+    const r = await run();
+    expect(r).toMatchObject({ sent: 1, skipped: { sms_route_destination_not_ready: 3 } });
+    expect(reads).toBe(2);
+    expect(db.find((x) => x.id === "ca-1")!.sms_confirmation_sent_at).not.toBeNull();
+  });
+
+  it("the run stops at its time budget", async () => {
+    db = Array.from({ length: 10 }, (_, i) => appt({ id: `t-${i}`, created_at: iso(NOW - (100 + i) * 60_000) }));
+    let t = NOW;
+    clock = () => (t += 61_000);
+    const r = await run();
+    expect(r.ran && r.considered).toBeLessThan(10);
   });
 });
