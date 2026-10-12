@@ -413,7 +413,12 @@ describe("reading metadata is DERIVED from the profile, never accepted", () => {
       ],
     });
     expect(out.ok).toBe(false);
-    expect(out.ok ? "" : out.error).toMatch(/no field "not_a_real_field"/i);
+    // The message now comes from lib/machines/validate-reading.ts rather than
+    // from a hand-rolled check at the call site, which is the improvement: one
+    // validator decides what a field is, for every caller. It quotes the field
+    // with single quotes, so assert the parts rather than my old wording.
+    expect(out.ok ? "" : out.error).toMatch(/has no field/i);
+    expect(out.ok ? "" : out.error).toMatch(/not_a_real_field/);
   });
 
   it("accepts no unit or precision from the caller, by type and by source", () => {
@@ -436,9 +441,16 @@ describe("reading metadata is DERIVED from the profile, never accepted", () => {
       ),
       "utf8",
     );
-    // The unit and precision come off the profile's field descriptor.
-    expect(action).toMatch(/nativeUnit: field\.unit/);
-    expect(action).toMatch(/decimals: field\.decimals/);
+    // The unit and precision come off the field the VALIDATOR resolved, not
+    // off anything the caller sent and not off a descriptor re-derived at the
+    // call site. `checked` is validateReading's successful outcome.
+    expect(action).toMatch(/nativeUnit: checked\.field\.unit/);
+    expect(action).toMatch(/decimals: checked\.field\.decimals/);
+    // And that the capture goes through the shared validator at all.
+    expect(action).toMatch(/validateReading\(/);
+    // Validated against the DEVICE's registered version, so a stale
+    // registration is refused rather than captured under today's contract.
+    expect(action).toMatch(/version: device\.profileVersion/);
   });
 });
 

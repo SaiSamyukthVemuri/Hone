@@ -237,7 +237,7 @@ export function MachineFirstSetupPanel({
           </div>
         </div>
       ) : (
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3" data-testid="machine-chosen">
           {selectionNote && (
             <p
               className="text-xs text-amber-700 dark:text-amber-500"
@@ -280,9 +280,29 @@ export function MachineFirstSetupPanel({
                     key={`${group.key}:${f.key}`}
                     className="text-sm text-neutral-700 dark:text-neutral-300"
                   >
-                    <span className="font-medium">{f.label}</span>
+                    {/*
+                      TESTIDS ON THE LABEL AND UNIT, not because a test is
+                      fussy, but because the field's advisory notes legitimately
+                      contain the field's own name - "Current is documented in
+                      microamps..." - so a page-wide getByText("Current") is a
+                      3-way strict-mode violation. Targeting the label by
+                      identity also makes the assertion mean what it says: the
+                      MACHINE'S OWN label and unit are rendered, which prose
+                      mentioning the word cannot satisfy.
+                    */}
+                    <span
+                      className="font-medium"
+                      data-testid={`field-label-${f.key}`}
+                    >
+                      {f.label}
+                    </span>
                     {f.unit && (
-                      <span className="ml-1 text-neutral-500">({f.unit})</span>
+                      <span
+                        className="ml-1 text-neutral-500"
+                        data-testid={`field-unit-${f.key}`}
+                      >
+                        ({f.unit})
+                      </span>
                     )}
                     <span className="ml-2 text-xs text-neutral-500">
                       {f.decimals === 0
@@ -348,6 +368,7 @@ export function MachineFirstSetupPanel({
         hasScope={scope != null}
         persistence={persistence}
         savedCount={savedCount}
+        rememberedDeviceId={deviceId}
       />
     </section>
   );
@@ -366,11 +387,23 @@ function PersistenceStatus({
   hasScope,
   persistence,
   savedCount,
+  rememberedDeviceId,
 }: {
   hasScope: boolean;
   persistence: PersistenceCapability;
   /** Readings this panel has actually saved, so the line below is derived. */
   savedCount: number;
+  /**
+   * The machine ACTUALLY remembered right now, or null.
+   *
+   * Separate from `persistence` on purpose. `persistence.persisted` says the
+   * store CAN keep a choice; it says nothing about whether one exists. Reading
+   * the answer off the capability made this line claim "Remembered: yes" for
+   * every authenticated practitioner with a working database - before any
+   * machine was chosen, and immediately after the selection was cleared
+   * (Codex, a66f5ec9).
+   */
+  rememberedDeviceId: string | null;
 }) {
   return (
     <dl
@@ -384,7 +417,9 @@ function PersistenceStatus({
           <dd>
             {persistence.kind === "test-store"
               ? "test store only. Not a database, and never reported to a practitioner."
-              : "yes, for you in this studio."}
+              : rememberedDeviceId
+                ? "yes, for you in this studio."
+                : "nothing yet. The machine you choose will be kept for you in this studio."}
           </dd>
         ) : (
           <dd>

@@ -105,6 +105,40 @@ async function readingsInStudio(studioId: string) {
   );
 }
 
+/**
+ * ANOTHER session for a client who already exists — the next visit.
+ *
+ * Deliberately NOT seedE2eDraftElectrolysisSession, which inserts a FRESH
+ * CLIENT on every call (`const clientId = randomUUID()`). Step 9 used it and so
+ * navigated to a different person's chart.
+ *
+ * Before the client-scoping fix that passed anyway, because the prior-setup
+ * read was studio-scoped and found the readings regardless of whose chart was
+ * open — i.e. the step was passing BECAUSE of the defect, and asserting
+ * nothing about same-client retrieval. Now that latest_setup_for_client filters
+ * by client_id, the old fixture makes the step hang until timeout, which reads
+ * like a broken feature and is a broken fixture. Found by Codex at a66f5ec9.
+ */
+async function seedNextVisitForSameClient(
+  studioId: string,
+  clientId: string,
+): Promise<{ sessionId: string }> {
+  const prac = (
+    await sql<{ id: string }>(
+      `select id from public.practitioners
+        where studio_id = $1 and role = 'owner' limit 1`,
+      [studioId],
+    )
+  )[0]!;
+  const rows = await sql<{ id: string }>(
+    `insert into public.sessions (studio_id, client_id, practitioner_id, modality)
+     values ($1, $2, $3, 'electrolysis')
+     returning id`,
+    [studioId, clientId, prac.id],
+  );
+  return { sessionId: rows[0]!.id };
+}
+
 async function openSettingsForm(page: Page, clientId: string, sessionId: string) {
   await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
   await page.getByTestId("add-settings-block-cta").click({ timeout: T });
@@ -204,18 +238,42 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
     await expect(page.getByTestId(`machine-pick-${machineId}`)).toBeVisible({
       timeout: T,
     });
-    await expect(page.getByText("Synthetic Demo Multineedle")).toBeVisible();
+    // Scoped to the BUTTON and then to the CHOSEN block. Page-wide text
+    // locators are what broke step 4 (3 matches, the field's advisory notes
+    // contain its name), and the same shape would bite here as soon as a
+    // prior-setup card renders the model too.
+    await expect(page.getByTestId(`machine-pick-${machineId}`)).toContainText(
+      "Synthetic Demo Multineedle",
+    );
     await page.getByTestId(`machine-pick-${machineId}`).click();
-    await expect(page.getByText("Room 1 demo")).toBeVisible({ timeout: T });
+    await expect(page.getByTestId("machine-chosen")).toContainText("Room 1 demo", {
+      timeout: T,
+    });
     await noOverflow(page);
   });
 
   await test.step("4: the chart shows that model's NATIVE fields", async () => {
     // Labels and units are the machine's own, from the profile - not this
     // spec's and not the schema's.
-    await expect(page.getByText("Current")).toBeVisible({ timeout: T });
-    await expect(page.getByText("(µA)")).toBeVisible();
-    await expect(page.getByText("Time")).toBeVisible();
+    //
+    // TARGETED BY TESTID, not by page text. getByText("Current") was a
+    // strict-mode violation with THREE matches: the field label, plus two
+    // advisory notes that legitimately contain the field's name ("Current is
+    // documented in microamps and per-probe..."). Found by the ops01 lane's
+    // gate-open diagnostic, which is the first run that ever reached this step
+    // with a selectable machine - the gate-closed half returns before here, so
+    // no amount of CI on the closed path could have caught it.
+    //
+    // It also makes the assertion stronger: prose mentioning the word cannot
+    // satisfy "the machine's own label is rendered".
+    await expect(page.getByTestId("field-label-current")).toHaveText("Current", {
+      timeout: T,
+    });
+    await expect(page.getByTestId("field-unit-current")).toHaveText("(µA)");
+    // "Time" is the GEMM's native name for duration - the profile's word, not
+    // the quantity's, which is the thing worth proving.
+    await expect(page.getByTestId("field-label-duration")).toHaveText("Time");
+    await expect(page.getByTestId("field-unit-duration")).toHaveText("(s)");
   });
 
   await test.step("5: save the settings block, so there is a block to record against", async () => {
@@ -298,7 +356,9 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
     await page.getByTestId(/^edit-area-/).first().click({ timeout: T });
     await openMachinePanel(page);
     // Chosen already, from the database rather than from component state.
-    await expect(page.getByText("Room 1 demo")).toBeVisible({ timeout: T });
+    await expect(page.getByTestId("machine-chosen")).toContainText("Room 1 demo", {
+      timeout: T,
+    });
     await expect(page.getByTestId("machine-first-status")).toHaveAttribute(
       "data-persistence",
       "database",
@@ -315,19 +375,40 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
   });
 
   await test.step("9: NEXT-VISIT RETRIEVAL — the prior setup is shown on a new visit", async () => {
-    const next = await seedE2eDraftElectrolysisSession(seed);
-    await page.goto(`/clients/${next.clientId}/sessions/${next.sessionId}`);
+    // THE SAME CLIENT, a later visit. This is the whole point of the step:
+    // next-visit guidance must come from THIS client's own history.
+    const next = await seedNextVisitForSameClient(seed.studioId, clientId);
+    await page.goto(`/clients/${clientId}/sessions/${next.sessionId}`);
     await page.getByTestId("add-settings-block-cta").click({ timeout: T });
     await openMachinePanel(page);
 
-    await expect(page.getByTestId("machine-prior-setup")).toBeVisible({ timeout: T });
-    await expect(page.getByText("Last recorded setup")).toBeVisible();
-    await expect(page.getByText("Synthetic Demo Multineedle")).toBeVisible();
+    const prior = page.getByTestId("machine-prior-setup");
+    await expect(prior).toBeVisible({ timeout: T });
+    // SCOPED TO THE CARD. A machine is also REMEMBERED from the previous visit
+    // here, so the chosen-machine block names the same model and a page-wide
+    // locator is a 2-match strict-mode violation. Found by auditing the rest of
+    // the file after step 4 failed, rather than waiting for the next run.
+    await expect(prior).toContainText("Last recorded setup");
+    await expect(prior).toContainText("Synthetic Demo Multineedle");
     // The values, in their own units, from the previous visit.
     await expect(page.getByTestId("machine-prior-setup")).toContainText("135");
     await expect(page.getByTestId("machine-prior-setup")).toContainText("300.5");
     await expect(page.getByTestId("machine-prior-setup")).toContainText("µA");
     await noOverflow(page);
+  });
+
+  await test.step("9b: ANOTHER client's chart does NOT show this setup", async () => {
+    // The negative half, without which step 9 would pass again the moment the
+    // prior-setup read regressed to studio scoping - which is exactly how the
+    // original defect hid. A studio-mate must see nothing from this client.
+    const stranger = await seedE2eDraftElectrolysisSession(seed);
+    await page.goto(`/clients/${stranger.clientId}/sessions/${stranger.sessionId}`);
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+    await openMachinePanel(page);
+    await expect(
+      page.getByTestId("machine-prior-setup"),
+      "another client's chart showed this client's recorded setup",
+    ).toHaveCount(0);
   });
 
   await test.step("10: the earlier reading is unchanged by the new visit", async () => {

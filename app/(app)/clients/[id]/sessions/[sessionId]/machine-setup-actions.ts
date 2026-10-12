@@ -3,7 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { activeModes, type MachineProfile } from "@/lib/machines/profile-contract";
-import { nativeFieldGroups } from "@/lib/machines/charting";
+import { validateReading } from "@/lib/machines/validate-reading";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import {
   latestRecordedSetup,
@@ -351,16 +351,29 @@ export async function recordReadingsAction(input: {
     };
   }
 
-  // DERIVE every field descriptor from the profile the registered machine was
-  // registered against. An unknown (group, stage, field) triple is refused
-  // rather than stored, because the immutability trigger would make a wrong
-  // one permanent.
-  const contract = new Map(
-    nativeFieldGroups(profile, mode).flatMap((g) =>
-      g.fields.map((f) => [`${f.stageKey ?? ""}::${f.key}`, f] as const),
-    ),
-  );
-
+  // VALIDATE EVERY READING THROUGH THE PROFILE-AWARE VALIDATOR, then take the
+  // field's unit and precision from what it resolved.
+  //
+  // An earlier version of this block derived the descriptor from
+  // nativeFieldGroups and checked only that the field EXISTS. That was a
+  // partial reimplementation of lib/machines/validate-reading.ts, which was
+  // already written for exactly this and checks more than I had:
+  //
+  //   * malformed_value - a negative current or duration. The database has no
+  //     equivalent constraint, so without this an impossible value becomes an
+  //     IMMUTABLE clinical row through the ordinary UI;
+  //   * stale_profile_version - the device is registered against a contract
+  //     version, and `version` below is the DEVICE's, not the catalogue's. A
+  //     direct action call bypasses selectableDevices, so without this the
+  //     action could derive version-N units while the RPC stamps the row with
+  //     the device's older version: a permanently mislabelled reading;
+  //   * unknown_field / unknown_mode / channel bounds /
+  //     mode_requires_installed_option, against the options the device
+  //     actually has.
+  //
+  // Both gaps found by Codex at a66f5ec9. The lesson is the same one twice:
+  // reach for the validator that exists rather than re-deriving a weaker
+  // version of it at the call site.
   const rows: ReadingInputRow[] = [];
   for (const r of input.readings) {
     if (!OBSERVATION_SOURCES.includes(r.observationSource)) {
@@ -370,23 +383,35 @@ export async function recordReadingsAction(input: {
         error: "That is not a recognised way of observing a reading.",
       };
     }
-    const field = contract.get(`${r.stageKey ?? ""}::${r.fieldKey}`);
-    if (!field) {
-      return {
-        ok: false,
-        code: "rejected",
-        error: `${profile.manufacturer} ${profile.model} has no field "${r.fieldKey}" in this mode, so it cannot be recorded.`,
-      };
+    const checked = validateReading(
+      {
+        profileId: profile.profileId,
+        // The DEVICE's registered version, so a stale registration is refused
+        // here rather than silently captured under today's contract.
+        version: device.profileVersion,
+        modeKey: input.modeKey,
+        stageKey: r.stageKey,
+        fieldKey: r.fieldKey,
+        value: r.value,
+        source: r.observationSource,
+      },
+      {
+        installedOptions: device.installedOptions,
+        catalogue: catalogueForRuntime(),
+      },
+    );
+    if (!checked.ok) {
+      return { ok: false, code: "rejected", error: checked.message };
     }
     rows.push({
-      stageKey: field.stageKey,
-      fieldKey: field.key,
-      value: r.value,
-      // The machine's own unit and precision, from the profile. Not the
-      // caller's opinion of them.
-      nativeUnit: field.unit,
-      decimals: field.decimals,
+      stageKey: r.stageKey,
+      fieldKey: r.fieldKey,
+      // The machine's own unit and precision, off the field the VALIDATOR
+      // resolved. Never the caller's opinion of them.
+      nativeUnit: checked.field.unit ?? "none",
+      decimals: checked.field.decimals,
       observationSource: r.observationSource,
+      value: checked.recorded,
     });
   }
 
