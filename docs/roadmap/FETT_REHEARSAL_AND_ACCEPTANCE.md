@@ -58,9 +58,9 @@ different practitioners**, with the `LEGACY` refusal as its control.
 
 | # | Required | Status on 0210 | Evidence |
 |---|---|---|---|
-| 1 | Five treating practitioners + owner | **Supported**, but only in `LIVE` capacity state | `practitioners` (`0001:18`); `0134`/`0136` flags, default off |
+| 1 | Five treating practitioners + owner | **Supported and proven**, but only in `LIVE` capacity state | `practitioners` (`0001:18`); `0134`/`0136` flags, default off; two same-instant bookings measured via `create_internal_appointment_v2` (§2.1) |
 | 2 | Restricted receptionist | **Not possible on this chain** | `practitioners.role` is `check (role in ('owner','practitioner'))` (`0001:24`); `receptionist` appears in no migration on the chain |
-| 3 | Simultaneous resource scheduling | **Per-practitioner only. There is no resource/room model.** | Of the **97** tables created on the chain, none is a resource, room, equipment, device, machine, chair or bay. Concurrency is modelled as practitioner capacity (`0134`/`0136`) |
+| 3 | Simultaneous resource scheduling | **Per-practitioner: works, and is proven. There is no resource/room model.** | Of the **97** tables created on the chain, none is a resource, room, equipment, device, machine, chair or bay. Concurrency is modelled as practitioner capacity (`0134`/`0136`) and demonstrated in §2.1 |
 | 4 | Intake / status | *Not verified by this lane* | Intake surfaces exist under `app/intake`; readiness owned by the ONB/intake lane |
 | 5 | Treatment recording | *Partly verified* — clinical records exist | `0119`, `0120` (finalization, corrections/amendments). Depth owned by the clinical lane |
 | 6 | Next-visit history | *Not verified by this lane* | Owned by the clinical/records lane |
@@ -68,6 +68,32 @@ different practitioners**, with the `LEGACY` refusal as its control.
 | 8 | Operational administration | *Not verified by this lane* | Owned by the studio-readiness lane (#824 / #825) |
 | 9 | USD flows | **Not supported on this chain** | `currency` defaults to **`'cad'`** (`0073:113`, `0187:126`, `0064:141`); `services` has **no** currency column. Owned by the Audit/USD lane (#833 `0214` and stack) |
 | 10 | Messaging / failure visibility | *Not verified by this lane* | Owned by the delivery lanes (#832, #843, #846, #849) |
+
+### 2.1 Practitioner-aware concurrent scheduling already works — on the staff path
+
+**Measured on a real 0210 stack, not inferred.**
+`public.create_internal_appointment_v2` — the current internal booking command
+(`0142` → `0146` → `0147` → `0152`; only the `_v2` name exists at runtime) —
+takes **`p_target_practitioner_id`**. On a `LIVE` fixture studio it created
+**two appointments at the same instant for two different practitioners**, both
+returning `result = 'created'`, two distinct `practitioner_id` values.
+
+The control: on the same fixture seeded `LEGACY`, the second booking is
+**refused** by exclusion constraint
+`no_overlapping_appointments_studio_wide`, leaving one appointment.
+
+So Friday **can** demonstrate five-practitioner concurrent scheduling through
+real product code. Proven by `tests/db/fett-fixture.db.test.ts`, which books
+through that command rather than INSERTing, so the availability validator,
+duration authority and buffer rules are exercised too.
+
+Two details that bite anyone reproducing this:
+
+* the cancellation token hash must match `^[a-f0-9]{64}$`
+  (`0090_appointment_token_hash.sql:89`) — a readable placeholder is rejected
+  by the CHECK;
+* `node-postgres` returns `timestamptz` as a **Date**, so comparing two equal
+  instants with `toBe` fails on object identity. Compare `getTime()`.
 
 ### A gap in the ordinary booking path, owned by this lane
 
@@ -110,8 +136,10 @@ proving.
 1. **Seed** the fixture at `LIVE`. Proves: a five-practitioner LA studio exists
    with real availability. Does **not** prove any production studio is
    configured this way.
-2. **Parallel booking** — book the same instant for two different
-   practitioners. Proves: genuinely concurrent practitioner scheduling. The
+2. **Parallel booking through the real command** — `bookFettInternal` →
+   `create_internal_appointment_v2`, same instant, two different
+   practitioners. Proves: genuinely concurrent practitioner scheduling on the
+   staff-facing path, through product code rather than a raw INSERT. The
    `LEGACY` control in the suite is what makes this meaningful.
 3. **Capacity pause** — flip to `CAPACITY_READY_BOOKING_PAUSED`. Proves: the
    emergency pause is instant and does not rematerialize existing parallel
@@ -146,9 +174,15 @@ any list: `0211` #827, `0212` #832, `0213` #831, `0214` #833, `0215` #843,
 `0216` #838, `0217` #844, `0218` #850. **Re-census before claiming a number**;
 this list is historical the moment it is written.
 
-Consequence for Friday: practitioner-aware public booking lands **after** eight
-other migrations, or not before the meeting. That is a sequencing fact to plan
-around, not a defect to fix in this lane.
+Consequence for Friday, stated precisely so it is not over-read:
+practitioner-aware **public** booking lands **after** eight other migrations,
+or not before the meeting. That is a sequencing fact to plan around, not a
+defect to fix in this lane.
+
+It does **not** mean multi-practitioner operation cannot be shown. §2.1 proves
+concurrent per-practitioner scheduling works today through the staff-facing
+command. What Friday cannot show is a **client** choosing their practitioner on
+the public booking page.
 
 ---
 
