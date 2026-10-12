@@ -243,6 +243,23 @@ A new waitlist invitation is **also texted** to an eligible prospect, beside its
   - a refused or lost text raises one `sms_send_failed` warning (purpose `waitlist_join_acknowledgement`), before the best-effort settle.
 - **The ledger.** Purpose `waitlist_join_acknowledgement`, subject `waitlist_entry_id`. The subject is tied to the studio by a composite key, there is at most one row per entry (unique index), and it is write-once.
 
+### Studio number controls (SMS-SENDER-CONTROL-01, #824) — fake provider only
+
+Settings → Integrations can show an owner **Set up a studio number** panel:
+- **Find numbers:** search CA or US candidates by area code.
+- **Use this number:** provision the chosen number. This runs `provisionStudioSmsSender`, so it goes through the 0191 claim, fence, purchase, finalize and test.
+- **Adopt an existing number:** a support-assisted path through `adoptExistingStudioSmsSender`.
+
+**The gate.** The panel and every action open **only** when `HONE_SMS_SENDER_CONTROLS=fake`, and stay shut in either of these cases:
+- in production (`VERCEL_ENV=production`), where the resolver would hand back the fake and could write a fake sender into production data;
+- whenever live provisioning is armed (`HONE_SMS_PROVISIONING_LIVE` plus credentials), where a click could buy a number.
+
+**The provider.** The actions pass the process-wide **fake** provider explicitly and never resolve one, so nothing is bought, registered or sent.
+
+**Authority.**
+- The database's claim re-derives the owner from the actor user id.
+- Live provisioning, number purchase, US registration submission and WAIT routing (#716, held) are separate owner-approved decisions.
+
 ### SMS RPC grants hardened (PR #141 / migration 0062)
 
 `claim_sms_send` and related SMS RPCs are `revoke from public, anon, authenticated; grant to service_role only`. The action layer always invokes via `createAdminClient()`. Audit grep on every caller is part of the PR template's security checklist.

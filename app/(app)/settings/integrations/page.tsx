@@ -5,6 +5,8 @@ import { GoogleCalendarCard } from "../profile/GoogleCalendarCard";
 import { getOwnConnectionReadiness } from "@/lib/google-calendar/connection";
 import { SmsSenderStatusCard } from "./SmsSenderStatusCard";
 import { SmsSenderReadinessPanel } from "./SmsSenderReadinessPanel";
+import { SmsSenderControls } from "./SmsSenderControls";
+import { senderControlsGate } from "@/lib/sms/sender-controls";
 import { studioSenderReadiness } from "@/lib/sms/sender-readiness";
 import {
   readOwnSenderRegistrations,
@@ -108,6 +110,11 @@ export default async function IntegrationsSettingsPage() {
           recipient country, with the US registration evidence support has
           recorded (none means "Requires information"). */}
       <SmsSenderReadinessPanel rows={studioSenderReadiness(smsRead, usRegistration)} />
+
+      {/* SMS-SENDER-CONTROL-01: owner controls, FAKE PROVIDER ONLY. The gate
+          is shut in production and whenever live provisioning is armed, so
+          nothing renders there; each action re-checks it. */}
+      {senderControlsGate().open ? <SmsSenderControls /> : null}
     </section>
   );
 }

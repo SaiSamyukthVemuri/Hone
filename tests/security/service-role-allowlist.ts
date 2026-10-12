@@ -353,6 +353,13 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "verifyCancellationToken",
   },
   {
+    path: "app/(app)/settings/integrations/sender-control-actions.ts",
+    purpose:
+      "SMS-SENDER-CONTROL-01 (#824): the studio owner's number provisioning and adoption controls, FAKE PROVIDER ONLY. The service-role client is the transport for the 0191 provisioning store (claim/finalize/fail/renew), whose definer commands re-derive membership and OWNER role from (studio_id, actor_user_id).",
+    why: "studio_sms_senders is revoked from every role including service_role (0191); the lifecycle is reachable only through its definer commands, which take the actor's user id and refuse a non-owner in the database. The action first re-checks senderControlsGate (never in production, never with live provisioning armed, only HONE_SMS_SENDER_CONTROLS=fake), then the page's owner role, resolves the studio server-side, and passes the process FAKE provider explicitly, so no path reaches a real provider.",
+    scopeGuard: "senderControlsGate",
+  },
+  {
     path: "app/book/[slug]/waitlist-actions.ts",
     purpose:
       "WAIT-02 public new-client waitlist join — the sole caller of join_new_client_waitlist (migration 0185), reached since 0210 through join_new_client_waitlist_with_phone_and_sms_answer (the successor of 0208's join_new_client_waitlist_with_sms_answer), which wraps 0204's guarded join, requires a sendable phone and records the visitor's explicit SMS answer on the entry it creates; and, with the same server-built client after the commit, the sole caller of claim_waitlist_join_ack_sms (0210) through lib/waitlist/delivery/join-ack-sms.ts.",
