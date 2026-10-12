@@ -91,7 +91,7 @@ The double-send gap is closed. The reminder cron now claims each row via `claim_
 **Route: `POST /api/resend/webhook`** (`app/api/resend/webhook/route.ts`, exact-path middleware exemption). It reads the raw body, then verifies the Svix signature (`svix-id`, `svix-timestamp`, `svix-signature`) with `RESEND_WEBHOOK_SECRET` in `lib/email/resend-webhook.ts`. The check is hand-rolled on `node:crypto`, like the Twilio check, and is held to the official Resend SDK verifier on the same fixtures. Refusals:
 - missing secret: 500, nothing written;
 - missing or invalid signature, or a timestamp more than **five minutes** from the server clock: 403 and zero database work;
-- a body over 256 KB: 413.
+- a body over 256 KB: 413. A declared `Content-Length` over the limit is refused before any read, and an undeclared body is counted as it streams and cancelled once it passes the limit, so the limit bounds memory and read work on this public endpoint.
 
 A captured request therefore cannot be replayed later. A replay inside the window carries the same `svix-id` and is deduplicated below.
 
