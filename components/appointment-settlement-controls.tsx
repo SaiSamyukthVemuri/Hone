@@ -8,14 +8,16 @@ import {
   type SettlementActionResult,
 } from "@/app/(app)/appointment-settlement-actions";
 import {
-  PRACTITIONER_METHODS,
   SETTLEMENT_ACTION_LABEL,
   SETTLEMENT_BADGE_LABEL,
+  practitionerMethodsFor,
+  settlementActionLabel,
   type SettlementMethod,
 } from "@/lib/billing/settlement-types";
 import {
   currencyLabel,
   formatMoneyWithCurrency,
+  type PaymentCountry,
   type PaymentCurrency,
 } from "@/lib/billing/payment-jurisdiction";
 
@@ -49,6 +51,13 @@ type Props = {
    */
   settledCurrency: PaymentCurrency | null;
   currency: PaymentCurrency | null;
+  /**
+   * PAY-CCY-07 (option B). The studio's payment COUNTRY, which decides which
+   * outcomes are offered and how "Paid another way" is worded. Required so no
+   * caller silently gets the Canadian list for a US studio; null (unread)
+   * keeps today's full list.
+   */
+  paymentCountry: PaymentCountry | null;
   /** Hidden entirely once Hone has verified card money — see the card. */
   defaultAmountCents?: number | null;
   /**
@@ -76,6 +85,7 @@ export function AppointmentSettlementControls({
   settledAmountCents = null,
   settledCurrency,
   currency,
+  paymentCountry,
   defaultAmountCents = null,
   onRecorded,
 }: Props) {
@@ -158,9 +168,10 @@ export function AppointmentSettlementControls({
     });
   };
 
+  const offered = practitionerMethodsFor(paymentCountry);
   const methods: SettlementMethod[] = isOwner
-    ? [...PRACTITIONER_METHODS, "waived"]
-    : [...PRACTITIONER_METHODS];
+    ? [...offered, "waived"]
+    : [...offered];
 
   return (
     <div
@@ -193,7 +204,7 @@ export function AppointmentSettlementControls({
                 : "border-neutral-300 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
             }`}
           >
-            {SETTLEMENT_ACTION_LABEL[m]}
+            {settlementActionLabel(m, paymentCountry)}
           </button>
         ))}
       </div>
