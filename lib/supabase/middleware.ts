@@ -1,6 +1,7 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { isAdmin } from "@/lib/admin";
+import { FRONT_DESK_PATH, isFrontDeskPath } from "@/lib/receptionist/membership";
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -221,6 +222,32 @@ export async function updateSession(request: NextRequest) {
       const usable =
         activeStudioIds.length === 1 ||
         (activeStudioIds.length > 1 && hasValidSelection);
+      // STUDIO-READY-02d (#824): a receptionist has NO practitioners row, so
+      // they arrive here with zero memberships. They may reach /front-desk and
+      // nothing else: every other path is sent to /front-desk instead of
+      // /no-access. Read only in the zero-practitioner branch, so a
+      // practitioner's request pays nothing and routes exactly as before. The
+      // read is RLS-scoped to the caller's own rows (0216), and the page
+      // re-resolves membership itself (requireReceptionistWithStudio).
+      if (activeStudioIds.length === 0) {
+        const { data: deskRows, error: deskErr } = await supabase
+          .from("studio_receptionists")
+          .select("studio_id")
+          .eq("user_id", user.id)
+          .eq("active", true)
+          .limit(1);
+        // A FAILED read is not "no membership" (Codex P2 4243919027 on #845).
+        // Defer to /front-desk, whose guard re-reads the membership itself and
+        // fails loudly if the read still fails, rather than telling a real
+        // receptionist they have no access. This grants nothing: the page decides.
+        if (deskErr || (deskRows ?? []).length > 0) {
+          if (isFrontDeskPath(pathname)) return supabaseResponse;
+          const deskUrl = request.nextUrl.clone();
+          deskUrl.pathname = FRONT_DESK_PATH;
+          deskUrl.search = "";
+          return NextResponse.redirect(deskUrl);
+        }
+      }
       if (!usable) {
         const url = request.nextUrl.clone();
         url.pathname = "/no-access";
