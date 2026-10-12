@@ -154,6 +154,55 @@ describe("refusals reach no database", () => {
     expect(res.status).toBe(413);
     expect(h.calls).toEqual([]);
   });
+
+  // Codex P2 4248920477: the limit bounds what is READ, not only what is verified.
+  it("refuses an oversized declared Content-Length with 413 without reading the body", async () => {
+    let pulled = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1;
+        controller.enqueue(new Uint8Array(1024));
+      },
+    });
+    const res = await POST(
+      new Request("https://hone.care/api/resend/webhook", {
+        method: "POST",
+        headers: { "content-length": String(10 * 1024 * 1024) },
+        body: stream,
+        duplex: "half",
+      } as RequestInit),
+    );
+    expect(res.status).toBe(413);
+    expect(pulled).toBeLessThanOrEqual(1);
+    expect(h.admins).toBe(0);
+  });
+
+  it("stops reading an undeclared stream as soon as it passes the limit, and cancels it", async () => {
+    let sent = 0;
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        sent += 64 * 1024;
+        controller.enqueue(new Uint8Array(64 * 1024));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const res = await POST(
+      new Request("https://hone.care/api/resend/webhook", { method: "POST", body: stream, duplex: "half" } as RequestInit),
+    );
+    expect(res.status).toBe(413);
+    expect(cancelled).toBe(true);
+    // An endless body: reading stopped one chunk past 256 KiB, not at the end.
+    expect(sent).toBeLessThanOrEqual(256 * 1024 + 3 * 64 * 1024);
+    expect(h.admins).toBe(0);
+  });
+
+  it("still verifies a multi-byte UTF-8 body exactly as signed", async () => {
+    const res = await deliver(payload("email.delivered", { note: "café ✓ – ünïcode" }));
+    expect(res.status).not.toBe(403);
+  });
 });
 
 describe("an accepted delivery is durable before it is acknowledged", () => {

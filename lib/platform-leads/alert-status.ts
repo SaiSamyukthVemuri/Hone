@@ -31,6 +31,7 @@ export const LEAD_ALERT_ERROR_CODES = [
   "provider_timeout",
   "provider_exception",
   "render_failed",
+  "recipient_changed",
   "lease_expired",
   "expired",
 ] as const;
@@ -48,6 +49,8 @@ const REASON: Record<LeadAlertErrorCode, string> = {
   provider_timeout: "The email provider did not answer in time.",
   provider_exception: "The email provider gave no usable answer.",
   render_failed: "The alert email could not be composed.",
+  recipient_changed:
+    "The alert recipient (LEAD_ALERT_EMAIL) changed after the first attempt, so a retry could not repeat it. Use Retry to send it to the current recipient under a new key.",
   lease_expired: "A send attempt stopped before it finished.",
   expired: "It was not sent within its automatic retry window. Use Retry to send it under a new key.",
 };

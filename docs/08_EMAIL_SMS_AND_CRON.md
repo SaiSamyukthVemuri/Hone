@@ -91,7 +91,7 @@ The double-send gap is closed. The reminder cron now claims each row via `claim_
 **Route: `POST /api/resend/webhook`** (`app/api/resend/webhook/route.ts`, exact-path middleware exemption). It reads the raw body, then verifies the Svix signature (`svix-id`, `svix-timestamp`, `svix-signature`) with `RESEND_WEBHOOK_SECRET` in `lib/email/resend-webhook.ts`. The check is hand-rolled on `node:crypto`, like the Twilio check, and is held to the official Resend SDK verifier on the same fixtures. Refusals:
 - missing secret: 500, nothing written;
 - missing or invalid signature, or a timestamp more than **five minutes** from the server clock: 403 and zero database work;
-- a body over 256 KB: 413.
+- a body over 256 KB: 413. A declared `Content-Length` over the limit is refused before any read, and an undeclared body is counted as it streams and cancelled once it passes the limit, so the limit bounds memory and read work on this public endpoint.
 
 A captured request therefore cannot be replayed later. A replay inside the window carries the same `svix-id` and is deduplicated below.
 
@@ -370,6 +370,13 @@ to the prospect.
 - **Sent after the response**, through the existing keyed Resend attempt
   (`sendOnceWithIdempotencyKey`), under the alert's `idempotency_key`
   (`lead-alert/<alert id>/<generation>`), identical on every retry of that generation.
+- **One key, one request.** The first attempt of a generation freezes the message it sends
+  (From, subject, HTML, text) and the SHA-256 of its recipient on the alert row
+  (`freeze_platform_lead_alert_message`, first writer wins under the current claim). Every
+  automatic retry sends those exact bytes, whatever changed in the renderer, origin or sender
+  since. If `LEAD_ALERT_EMAIL` changed mid-generation, the retry is not sent and the alert fails
+  as `recipient_changed`. The operator's **Retry** renders afresh under a new key. The frozen
+  message is cleared when the generation ends.
 - **Claim → send → settle.** One worker leases an alert (`FOR UPDATE SKIP LOCKED`, 120 s
   lease); only the current claim token may settle it. At most five attempts, backing off
   2 min, 10 min, 1 h, 6 h. A provider refusal the same request would meet again fails at

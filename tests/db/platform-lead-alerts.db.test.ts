@@ -69,6 +69,24 @@ function spy(sent: Sent[]): IdempotentEmailTransport {
   };
 }
 
+/** The fake transport, except that its FIRST request throws (an ambiguous attempt). */
+function throwingOnce(sent: Sent[]): IdempotentEmailTransport {
+  const inner = spy(sent);
+  let thrown = false;
+  return {
+    emails: {
+      send: async (payload, options) => {
+        if (!thrown) {
+          thrown = true;
+          sent.push({ payload, key: options?.idempotencyKey });
+          throw new Error("socket hang up");
+        }
+        return inner.emails.send(payload, options);
+      },
+    },
+  };
+}
+
 function deps(recipient: string | undefined, sent: Sent[] = []) {
   return {
     admin,
@@ -700,7 +718,8 @@ describe("the delivery worker, through the existing fake Resend transport", () =
   it("an ambiguous attempt (the request threw) is retried later under the SAME key, then accepted", async () => {
     const r = await recordDemo();
     const sent: Sent[] = [];
-    expect(await delivery.deliverPlatformLeadAlert(r.alert_id!, deps(THROW, sent))).toEqual({ result: "retry_scheduled" });
+    // The SAME recipient throughout: a retry repeats the first request exactly.
+    expect(await delivery.deliverPlatformLeadAlert(r.alert_id!, { ...deps(OPS, sent), transport: throwingOnce(sent) })).toEqual({ result: "retry_scheduled" });
     expect(await alertRow(r.alert_id!)).toMatchObject({ status: "pending", last_error_code: "provider_timeout", attempt_count: 1 });
     // Not due yet: the sweep leaves it alone.
     expect((await delivery.sweepPlatformLeadAlerts(deps(OPS, sent))).attempted).toBe(0);
@@ -754,11 +773,11 @@ describe("the delivery worker, through the existing fake Resend transport", () =
   it("missing or refused configuration: nothing sent, no attempt spent, the alert says why; fixed, it sends", async () => {
     const r = await recordDemo();
     const sent: Sent[] = [];
-    expect(await delivery.deliverPlatformLeadAlert(r.alert_id!, deps(undefined, sent))).toEqual({ result: "blocked", code: "recipient_not_configured" });
+    expect(await delivery.deliverPlatformLeadAlert(r.alert_id!, deps(undefined, sent))).toEqual({ result: "blocked", code: "recipient_not_configured", recorded: true });
     expect(await alertRow(r.alert_id!)).toMatchObject({ status: "pending", attempt_count: 0, last_error_code: "recipient_not_configured" });
 
-    expect(await delivery.deliverPlatformLeadAlert(r.alert_id!, deps("someone-else@example.test", sent))).toEqual({ result: "blocked", code: "recipient_not_allowlisted" });
-    expect(await delivery.deliverPlatformLeadAlert(r.alert_id!, { ...deps(OPS, sent), transport: null })).toEqual({ result: "blocked", code: "transport_not_configured" });
+    expect(await delivery.deliverPlatformLeadAlert(r.alert_id!, deps("someone-else@example.test", sent))).toEqual({ result: "blocked", code: "recipient_not_allowlisted", recorded: true });
+    expect(await delivery.deliverPlatformLeadAlert(r.alert_id!, { ...deps(OPS, sent), transport: null })).toEqual({ result: "blocked", code: "transport_not_configured", recorded: true });
     expect(
       await delivery.deliverPlatformLeadAlert(r.alert_id!, {
         ...deps(OPS, sent),
@@ -766,7 +785,7 @@ describe("the delivery worker, through the existing fake Resend transport", () =
           throw new Error("NEXT_PUBLIC_APP_ORIGIN is required in production.");
         },
       }),
-    ).toEqual({ result: "blocked", code: "app_origin_not_configured" });
+    ).toEqual({ result: "blocked", code: "app_origin_not_configured", recorded: true });
     expect(sent).toHaveLength(0);
     expect((await alertRow(r.alert_id!)).attempt_count).toBe(0);
 
@@ -828,8 +847,116 @@ describe("the delivery worker, through the existing fake Resend transport", () =
       `Ops <${OPS}>`,
     ]) {
       const out = await delivery.deliverPlatformLeadAlert(r.alert_id!, deps(configured, sent));
-      expect(out, configured).toEqual({ result: "blocked", code: "recipient_not_allowlisted" });
+      expect(out, configured).toEqual({ result: "blocked", code: "recipient_not_allowlisted", recorded: true });
     }
     expect(sent).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Codex P2 4244387544: ONE KEY, ONE REQUEST. The first attempt of a generation
+// freezes what it sends; every automatic retry sends exactly that.
+// ---------------------------------------------------------------------------
+describe("the payload is frozen per generation", () => {
+  const MESSAGE = { from: "Hone <hello@hone.care>", subject: "s", html: "<p>h</p>", text: "t" };
+  const DIGEST = "a".repeat(64);
+  const freeze = async (id: string, token: string, message: unknown = MESSAGE, digest: string | null = DIGEST) =>
+    (await adminQuery("select * from public.freeze_platform_lead_alert_message($1, $2, $3, $4)", [id, token, message === null ? null : JSON.stringify(message), digest])).rows[0] as {
+      result: string;
+      message: unknown;
+      recipient_sha256: string | null;
+    };
+
+  it("first writer wins, under the current claim only; a stale claim or a malformed message freezes nothing", async () => {
+    const r = await recordDemo();
+    const c = await claim(r.alert_id);
+    expect(c.frozen_message).toBeNull();
+    for (const bad of [
+      { ...MESSAGE, to: "someone@else.test" },
+      { from: "f", subject: "s", html: "h" },
+      { ...MESSAGE, text: 7 },
+    ]) {
+      expect((await freeze(r.alert_id!, c.claim_token, bad)).result, JSON.stringify(bad)).toBe("invalid_input");
+    }
+    expect((await freeze(r.alert_id!, c.claim_token, MESSAGE, "not-a-digest")).result).toBe("invalid_input");
+    expect((await freeze(r.alert_id!, randomUUID())).result).toBe("stale_claim");
+    expect(await freeze(r.alert_id!, c.claim_token)).toEqual({ result: "frozen", message: MESSAGE, recipient_sha256: DIGEST });
+    // A second render (another deploy, another origin) is discarded.
+    expect(await freeze(r.alert_id!, c.claim_token, { ...MESSAGE, html: "<p>other</p>" }, "b".repeat(64))).toEqual({
+      result: "existing",
+      message: MESSAGE,
+      recipient_sha256: DIGEST,
+    });
+    // The next claim of the same generation carries it.
+    await settle(r.alert_id!, c.claim_token, "retry", "provider_timeout");
+    await makeDue(r.alert_id!);
+    const c2 = await claim(r.alert_id);
+    expect(c2).toMatchObject({ idempotency_key: c.idempotency_key, frozen_message: MESSAGE, frozen_recipient_sha256: DIGEST });
+  });
+
+  it("end to end: the retry after an origin change sends the first attempt's bytes under the same key, and acceptance clears them", async () => {
+    const r = await recordDemo();
+    const sent: Sent[] = [];
+    expect(await delivery.deliverPlatformLeadAlert(r.alert_id!, { ...deps(OPS, sent), transport: throwingOnce(sent) })).toEqual({ result: "retry_scheduled" });
+    expect((await alertRow(r.alert_id!)).frozen_message).not.toBeNull();
+    await makeDue(r.alert_id!);
+    const moved = { ...deps(OPS, sent), appOrigin: () => "https://moved.lead-alert.test" };
+    expect(await delivery.sweepPlatformLeadAlerts(moved)).toMatchObject({ ok: true, attempted: 1, accepted: 1 });
+    expect(sent).toHaveLength(2);
+    expect(JSON.stringify(sent[1].payload)).toBe(JSON.stringify(sent[0].payload));
+    expect(sent[1].key).toBe(sent[0].key);
+    expect(JSON.stringify(sent[1].payload)).not.toContain("moved.lead-alert.test");
+    expect(await alertRow(r.alert_id!)).toMatchObject({ status: "accepted", frozen_message: null, frozen_recipient_sha256: null });
+  });
+
+  it("a recipient changed mid-generation is not sent: recipient_changed, final, and the operator's Retry renders afresh", async () => {
+    const r = await recordDemo();
+    const sent: Sent[] = [];
+    await delivery.deliverPlatformLeadAlert(r.alert_id!, { ...deps(OPS, sent), transport: throwingOnce(sent) });
+    await makeDue(r.alert_id!);
+    // HOLD is on the admin allowlist too: a legitimate configuration change.
+    const summary = await delivery.sweepPlatformLeadAlerts(deps(HOLD, sent));
+    expect(summary).toMatchObject({ attempted: 1, failed: 1 });
+    expect(sent).toHaveLength(1);
+    expect(await alertRow(r.alert_id!)).toMatchObject({
+      status: "failed",
+      last_error_code: "recipient_changed",
+      frozen_message: null,
+      frozen_recipient_sha256: null,
+    });
+    expect((await adminQuery("select public.requeue_platform_lead_alert($1) r", [r.alert_id])).rows[0].r).toBe("requeued");
+    const c = await claim(r.alert_id);
+    expect(c).toMatchObject({ idempotency_key: `lead-alert/${r.alert_id}/2`, frozen_message: null });
+  });
+
+  it("expiry and a final failure clear the frozen message", async () => {
+    const r = await recordDemo();
+    const c = await claim(r.alert_id);
+    await freeze(r.alert_id!, c.claim_token);
+    expect(await settle(r.alert_id!, c.claim_token, "fail", "provider_rejected")).toBe("failed");
+    expect((await alertRow(r.alert_id!)).frozen_message).toBeNull();
+
+    const r2 = await recordDemo();
+    const c2 = await claim(r2.alert_id);
+    await freeze(r2.alert_id!, c2.claim_token);
+    await settle(r2.alert_id!, c2.claim_token, "retry", "provider_timeout");
+    await adminQuery("update public.platform_lead_alerts set first_attempted_at = clock_timestamp() - interval '21 hours' where id = $1", [r2.alert_id]);
+    expect(Number((await adminQuery("select public.expire_platform_lead_alerts() n")).rows[0].n)).toBeGreaterThanOrEqual(1);
+    expect(await alertRow(r2.alert_id!)).toMatchObject({ status: "failed", last_error_code: "expired", frozen_message: null });
+  });
+
+  it("a frozen message cannot outlive its generation or exist without an attempt, even for a superuser", async () => {
+    const r = await recordDemo();
+    await expect(
+      adminQuery("update public.platform_lead_alerts set frozen_message = $2, frozen_recipient_sha256 = $3 where id = $1", [r.alert_id, JSON.stringify(MESSAGE), DIGEST]),
+    ).rejects.toMatchObject({ code: "23514" });
+  });
+
+  it("the freeze is service_role only", async () => {
+    for (const role of ["anon", "authenticated"] as const) {
+      await expect(
+        asRole(role, (q) => q("select * from public.freeze_platform_lead_alert_message($1, $2, $3, $4)", [randomUUID(), randomUUID(), JSON.stringify(MESSAGE), DIGEST])),
+      ).rejects.toMatchObject({ code: "42501" });
+    }
   });
 });

@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { FROM_ADDRESS, getResendTransport } from "@/lib/email/client";
@@ -41,6 +42,13 @@ import type {
 //   (lib/email/new-client-waitlist-send.ts), under the alert's own idempotency
 //   key: identical on every retry of the alert, so a retry after an attempt
 //   whose answer was lost asks the provider to replay rather than send again.
+// * ONE KEY, ONE REQUEST (Codex P2 4244387544): the first attempt of a
+//   generation FREEZES the message it sends (0213 freeze_platform_lead_alert_
+//   message) and every later attempt sends those bytes, whatever has changed
+//   in the renderer, origin or sender since. The recipient is still resolved
+//   from configuration at send time; only its digest is frozen, and a retry
+//   whose recipient has changed is not sent (recipient_changed, final: the
+//   operator's Retry renders afresh under a new key).
 // * SETTLE records what the provider said, for the current claim only:
 //   accepted (NOT a delivery receipt), retry later, or failed.
 //
@@ -134,8 +142,8 @@ const TERMINAL_PROVIDER_REFUSALS: ReadonlySet<string> = new Set([
   "invalid_to_address",
   "missing_required_field",
   "invalid_idempotency_key",
-  // The same key with a different payload. The payload is a pure function of
-  // the lead, so this is not expected; the operator's retry starts a new key.
+  // The same key with a different payload. The message is frozen per
+  // generation, so this is not expected; the operator's retry starts a new key.
   "invalid_idempotent_request",
 ]);
 
@@ -198,7 +206,28 @@ type ClaimRow = {
   practitioner_count: string | null;
   current_tool: string | null;
   has_notes: boolean | null;
+  frozen_message: FrozenMessage | null;
+  frozen_recipient_sha256: string | null;
 };
+
+/** What one generation sends, byte for byte, on every attempt. */
+export type FrozenMessage = { from: string; subject: string; html: string; text: string };
+
+export function recipientDigest(recipient: string): string {
+  return createHash("sha256").update(recipient, "utf8").digest("hex");
+}
+
+function isFrozenMessage(v: unknown): v is FrozenMessage {
+  if (!v || typeof v !== "object") return false;
+  const m = v as Record<string, unknown>;
+  return (
+    Object.keys(m).length === 4 &&
+    typeof m.from === "string" &&
+    typeof m.subject === "string" &&
+    typeof m.html === "string" &&
+    typeof m.text === "string"
+  );
+}
 
 export type LeadAlertAttemptResult =
   | "accepted"
@@ -209,6 +238,7 @@ export type LeadAlertAttemptResult =
   | "invalid_input"
   | "none"
   | "claim_error"
+  | "freeze_error"
   | "settle_error";
 
 function log(level: "info" | "error", payload: Record<string, unknown>): void {
@@ -307,37 +337,74 @@ async function claimAndSend(
   const row = (Array.isArray(data) ? data[0] : null) as ClaimRow | null;
   if (!row || row.result !== "claimed") return "none";
 
-  let rendered: ReturnType<typeof renderPlatformLeadAlert>;
-  try {
-    rendered = renderPlatformLeadAlert(
-      contentFromClaim(row),
-      leadConsoleUrl(ready.appOrigin, row.lead_kind, row.lead_id),
-    );
-  } catch {
-    return settle(admin, row, { outcome: "fail", errorCode: "render_failed" });
+  const digest = recipientDigest(ready.recipient);
+  let message: FrozenMessage;
+  if (row.frozen_message !== null && row.frozen_message !== undefined) {
+    // A later attempt of this generation: the frozen bytes, or nothing.
+    if (!isFrozenMessage(row.frozen_message) || row.frozen_recipient_sha256 !== digest) {
+      return settle(admin, row, { outcome: "fail", errorCode: "recipient_changed" });
+    }
+    message = row.frozen_message;
+  } else {
+    let rendered: ReturnType<typeof renderPlatformLeadAlert>;
+    try {
+      rendered = renderPlatformLeadAlert(
+        contentFromClaim(row),
+        leadConsoleUrl(ready.appOrigin, row.lead_kind, row.lead_id),
+      );
+    } catch {
+      return settle(admin, row, { outcome: "fail", errorCode: "render_failed" });
+    }
+    // Hone speaking to its own operator: Hone's From and no Reply-To. Nothing
+    // submitted reaches a header.
+    const frozen = await admin.rpc("freeze_platform_lead_alert_message", {
+      p_alert_id: row.alert_id,
+      p_claim_token: row.claim_token,
+      p_message: { from: FROM_ADDRESS, subject: rendered.subject, html: rendered.html, text: rendered.text },
+      p_recipient_sha256: digest,
+    });
+    const answer = (Array.isArray(frozen.data) ? frozen.data[0] : null) as
+      | { result?: string; message?: unknown; recipient_sha256?: string | null }
+      | null;
+    if (frozen.error || !answer) {
+      // Nothing is sent without a frozen message: the lease expires and the
+      // next claim freezes it. No request has been made under the key.
+      log("error", {
+        event: "platform_lead_alert_freeze_failed",
+        alert_id: row.alert_id,
+        attempt: row.attempt,
+        code: frozen.error?.code ?? null,
+      });
+      return "freeze_error";
+    }
+    if (answer.result === "stale_claim") return "stale_claim";
+    if (answer.result !== "frozen" && answer.result !== "existing") return "freeze_error";
+    // First writer wins: send what the database holds, never our own render.
+    if (!isFrozenMessage(answer.message) || answer.recipient_sha256 !== digest) {
+      return settle(admin, row, { outcome: "fail", errorCode: "recipient_changed" });
+    }
+    message = answer.message;
   }
 
-  // Hone speaking to its own operator: Hone's From, no Reply-To, and the ONE
-  // configured recipient. Nothing submitted reaches a header.
+  // The ONE configured recipient, and exactly the frozen bytes.
   const outcome = await sendOnceWithIdempotencyKey(
     ready.transport,
-    {
-      from: FROM_ADDRESS,
-      to: ready.recipient,
-      subject: rendered.subject,
-      html: rendered.html,
-      text: rendered.text,
-    },
+    { from: message.from, to: ready.recipient, subject: message.subject, html: message.html, text: message.text },
     row.idempotency_key,
   );
   return settle(admin, row, settlementFor(outcome));
 }
 
+/**
+ * Record a configuration blocker. A database failure here is a FAILED write,
+ * reported as one: it is never folded into "no alerts were blocked"
+ * (Codex P2 4244064458).
+ */
 async function recordBlocked(
   admin: SupabaseClient,
   code: LeadAlertConfigCode,
   alertId: string | null,
-): Promise<number> {
+): Promise<{ ok: true; count: number } | { ok: false }> {
   const { data, error } = await admin.rpc("record_platform_lead_alerts_unconfigured", {
     p_error_code: code,
     p_alert_id: alertId,
@@ -349,7 +416,7 @@ async function recordBlocked(
       blocked: code,
       code: error.code ?? null,
     });
-    return 0;
+    return { ok: false };
   }
   const count = Number(data) || 0;
   log("error", {
@@ -358,12 +425,13 @@ async function recordBlocked(
     blocked: code,
     alerts: count,
   });
-  return count;
+  return { ok: true, count };
 }
 
 export type LeadAlertDeliveryResult =
   | { result: LeadAlertAttemptResult }
-  | { result: "blocked"; code: LeadAlertConfigCode }
+  /** `recorded: false`: the blocker could not be written either. */
+  | { result: "blocked"; code: LeadAlertConfigCode; recorded: boolean }
   | { result: "threw" };
 
 /**
@@ -378,8 +446,8 @@ export async function deliverPlatformLeadAlert(
     const admin = deps.admin ?? createAdminClient();
     const ready = resolveLeadAlertReadiness(deps);
     if (!ready.ready) {
-      await recordBlocked(admin, ready.code, alertId);
-      return { result: "blocked", code: ready.code };
+      const record = await recordBlocked(admin, ready.code, alertId);
+      return { result: "blocked", code: ready.code, recorded: record.ok };
     }
     return { result: await claimAndSend(admin, ready, alertId) };
   } catch (err) {
@@ -448,7 +516,13 @@ export async function sweepPlatformLeadAlerts(
     const ready = resolveLeadAlertReadiness(opts);
     if (!ready.ready) {
       summary.blocked = ready.code;
-      summary.blockedAlerts = await recordBlocked(admin, ready.code, null);
+      const record = await recordBlocked(admin, ready.code, null);
+      if (record.ok) {
+        summary.blockedAlerts = record.count;
+      } else {
+        // The blocker was not persisted: the run FAILED (the route answers 500).
+        summary.ok = false;
+      }
       return summary;
     }
 
@@ -458,7 +532,7 @@ export async function sweepPlatformLeadAlerts(
     for (let i = 0; i < max && Date.now() - started < budget; i += 1) {
       const result = await claimAndSend(admin, ready, null);
       if (result === "none") break;
-      if (result === "claim_error" || result === "settle_error") {
+      if (result === "claim_error" || result === "settle_error" || result === "freeze_error") {
         // The database did not record this run's work (a lost settle leaves
         // the alert leased until its lease expires): the run FAILED, and the
         // route answers 500 so the scheduler sees it. Stop rather than keep
