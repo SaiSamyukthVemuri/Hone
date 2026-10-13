@@ -40,6 +40,12 @@ export type FakeStripeCall = {
   amountCents: number | null;
   currency: string | null;
   resultId: string;
+  // PAY-CCY-09 (Codex P2 4264919593). The synthetic CHARGE this call produced
+  // (pi_create: the PaymentIntent's latest_charge) or targeted (refund_create:
+  // the charge refunded). A provider id, not client data. It lets a test build
+  // and VERIFY provider lineage (refund -> charge -> PaymentIntent) from the
+  // processor's own record instead of trusting the application's row.
+  chargeId: string | null;
   // INVOCATION vs EFFECT (PR #419 concurrency pass). Every adapter call is
   // recorded (an "invocation"); replay=false marks the calls that actually
   // created a NEW synthetic processor result for a previously-unseen idempotency
@@ -163,6 +169,7 @@ function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiPar
     amountCents: params?.amount ?? null,
     currency: params?.currency ?? null,
     resultId: id,
+    chargeId: outcome === "success" ? chargeId : null,
     replay,
   });
   // Success → succeeded (+ latest_charge); decline → non-succeeded status the
@@ -205,6 +212,7 @@ export function createFakeStripe(): Stripe {
           amountCents: null,
           currency: null,
           resultId: id,
+          chargeId: `ch_test_e2e_${runId()}_r`,
           replay: false, // a read, not a keyed effect
         });
         const run = runId();
@@ -230,6 +238,7 @@ export function createFakeStripe(): Stripe {
           amountCents: null,
           currency: null,
           resultId: id,
+          chargeId: null,
           replay: false,
         });
         return { id, status: "canceled" };
@@ -271,6 +280,7 @@ export function createFakeStripe(): Stripe {
             amountCents: params?.amount ?? null,
             currency: params?.currency ?? null,
             resultId: `re_test_e2e_${run}_refused`,
+            chargeId: params?.charge ?? null,
             replay: false,
           });
           throw new StripeSdk.errors.StripeInvalidRequestError({
@@ -302,6 +312,7 @@ export function createFakeStripe(): Stripe {
           amountCents: params?.amount ?? null,
           currency: params?.currency ?? null,
           resultId: id,
+          chargeId: params?.charge ?? null,
           replay,
         });
         if (outcome === "processing") {

@@ -289,15 +289,16 @@ describe("fake-call recorder — invocation vs effect, run-isolated, test-safe",
   });
 
   it("the recorded shape carries no client/email/card/PHI fields", () => {
-    // The recorder type is method/key/account/amount/currency/resultId/replay only.
-    const keys = ["method", "idempotencyKey", "stripeAccount", "amountCents", "currency", "resultId", "replay"];
+    // The recorder type is method/key/account/amount/currency/resultId/chargeId/replay
+    // only. chargeId (PAY-CCY-09) is a synthetic provider id, not client data.
+    const keys = ["method", "idempotencyKey", "stripeAccount", "amountCents", "currency", "resultId", "chargeId", "replay"];
     const src = readFileSync(join(process.cwd(), "lib/stripe/e2e-fake-stripe.ts"), "utf8");
     for (const forbidden of ["email", "last4", "customer", "client_id", "card_", "signature", "cvc", "secret"]) {
       // no forbidden field is recorded (the FakeStripeCall type block)
       const typeBlock = src.slice(src.indexOf("export type FakeStripeCall"), src.indexOf("};", src.indexOf("export type FakeStripeCall")));
       expect(typeBlock.toLowerCase()).not.toContain(forbidden);
     }
-    expect(keys.length).toBe(7);
+    expect(keys.length).toBe(8);
   });
 });
 
@@ -339,7 +340,7 @@ describe("fake refunds: selectable outcomes match production's failure classes",
         { stripeAccount: "acct_test_r", idempotencyKey: KEY },
       );
     const refundCalls = () => getFakeStripeCalls(RUN).filter((c) => c.method === "refund_create");
-    return { refund, refundCalls };
+    return { refund, refundCalls, chargeId: charge.latest_charge };
   }
 
   it("decline: a genuine StripeError (production records 'failed'); no refund exists", async () => {
@@ -369,5 +370,14 @@ describe("fake refunds: selectable outcomes match production's failure classes",
     const r = (await refund()) as unknown as { status: string; currency: string; amount: number };
     expect(r).toMatchObject({ status: "succeeded", currency: "usd", amount: 18500 });
     expect(refundCalls()).toHaveLength(1);
+  });
+
+  // Codex P2 4264919593: lineage is recorded by the processor itself.
+  it("lineage: the create records the charge it produced; the refund records the charge it targeted", async () => {
+    const { refund, refundCalls, chargeId } = await setup("success");
+    await refund();
+    const [create] = getFakeStripeCalls(RUN).filter((c) => c.method === "pi_create" && !c.replay);
+    expect(create.chargeId).toBe(chargeId);
+    expect(refundCalls()[0].chargeId).toBe(chargeId);
   });
 });

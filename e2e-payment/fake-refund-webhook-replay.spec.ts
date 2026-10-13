@@ -21,6 +21,7 @@ import {
   paymentIntentSucceededEvent,
   processorRefund,
 } from "./helpers/fake-stripe-webhook";
+import { readStripeEgress, stripeEgressGuardArmed } from "./helpers/payment-env";
 import { seedStudio } from "../tests/db/helpers/harness";
 import {
   bindFakeStripeAccount,
@@ -37,7 +38,8 @@ import {
 // EVERYTHING HERE IS FAKE: a synthetic processor (lib/stripe/e2e-fake-stripe.ts)
 // on a disposable local stack; webhook events are built from the fake ledger and
 // signed with the stack's test secret (e2e-payment/helpers/fake-stripe-webhook.ts).
-// No real key, no network call to Stripe (asserted), no real money.
+// No real key, no network call to Stripe (asserted in the SERVER process by
+// e2e-payment/helpers/stripe-egress-guard.cjs, and in the browser), no real money.
 //
 // What is real: the application. The charge, receipt, refund and webhook
 // reconciliation code, their amount/currency checks (#834), idempotency, the
@@ -217,7 +219,31 @@ test("A · USD charge, receipt and refund in the UI; every webhook replay is ide
   });
   expect(forged.status).toBe(400);
 
-  expect(stripeNetwork).toEqual([]);
+  // NEGATIVE CONTROL (Codex P2 4264919593): a Hone row naming a charge the
+  // processor never produced gets NO event; the helper does not manufacture
+  // a matching one. Last in this test: the update moves updated_at.
+  const realCharge = (
+    await adminQuery(`select stripe_charge_id from public.payment_charge_attempts where id = $1`, [attemptId])
+  ).rows[0].stripe_charge_id as string;
+  await adminQuery(
+    `update public.payment_charge_attempts set stripe_charge_id = $2 where id = $1`,
+    [attemptId, `${realCharge}_wrong`],
+  );
+  try {
+    await expect(chargeRefundedEvent(attemptId)).rejects.toThrow(/provider lineage broken/);
+    await expect(paymentIntentSucceededEvent(attemptId)).rejects.toThrow(/provider lineage broken/);
+  } finally {
+    await adminQuery(
+      `update public.payment_charge_attempts set stripe_charge_id = $2 where id = $1`,
+      [attemptId, realCharge],
+    );
+  }
+  // Control: restored, the same row builds its event again.
+  expect(((await chargeRefundedEvent(attemptId)).data.object as { id: string }).id).toBe(realCharge);
+
+  expect(stripeNetwork).toEqual([]); // browser side
+  expect(stripeEgressGuardArmed()).toBe(true); // the guard IS in the payment server
+  expect(readStripeEgress()).toEqual([]); // SERVER side: the payment web server never reached Stripe
 });
 
 test("B · USD refund outcome UNKNOWN: pending until the charge.refunded webhook settles it, exactly once", async ({ page }) => {
@@ -251,7 +277,9 @@ test("B · USD refund outcome UNKNOWN: pending until the charge.refunded webhook
   expect(
     callsForAccount(b.accountId).filter((c) => c.method === "refund_create" && !c.replay),
   ).toHaveLength(1);
-  expect(stripeNetwork).toEqual([]);
+  expect(stripeNetwork).toEqual([]); // browser side
+  expect(stripeEgressGuardArmed()).toBe(true); // the guard IS in the payment server
+  expect(readStripeEgress()).toEqual([]); // SERVER side: the payment web server never reached Stripe
 });
 
 test("C · USD refund REFUSED by the processor: recorded failed, and no refund event can be forged", async ({ page }) => {
@@ -272,7 +300,9 @@ test("C · USD refund REFUSED by the processor: recorded failed, and no refund e
   // The processor made no refund, so the transport refuses to report one.
   expect(processorRefund(attemptId)).toBeNull();
   await expect(chargeRefundedEvent(attemptId)).rejects.toThrow(/made no refund/);
-  expect(stripeNetwork).toEqual([]);
+  expect(stripeNetwork).toEqual([]); // browser side
+  expect(stripeEgressGuardArmed()).toBe(true); // the guard IS in the payment server
+  expect(readStripeEgress()).toEqual([]); // SERVER side: the payment web server never reached Stripe
 });
 
 test("D · CANADIAN REGRESSION: charge, refund and replay in CAD are unchanged", async ({ page }) => {
@@ -288,5 +318,7 @@ test("D · CANADIAN REGRESSION: charge, refund and replay in CAD are unchanged",
     expect((await deliverStripeEvent(ev)).status).toBe(200);
   }
   expect(await attemptState(attemptId)).toEqual(refunded);
-  expect(stripeNetwork).toEqual([]);
+  expect(stripeNetwork).toEqual([]); // browser side
+  expect(stripeEgressGuardArmed()).toBe(true); // the guard IS in the payment server
+  expect(readStripeEgress()).toEqual([]); // SERVER side: the payment web server never reached Stripe
 });

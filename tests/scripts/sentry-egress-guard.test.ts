@@ -475,9 +475,13 @@ describe("every browser lane loads it, and nothing deployed can", () => {
 
   it("the payment, mobile and Google lanes inherit it (they spread the core env)", () => {
     for (const env of [PAYMENT_WEB_SERVER_ENV, GOOGLE_WEB_SERVER_ENV]) {
-      expect(env.NODE_OPTIONS).toBe(E2E_WEB_SERVER_ENV.NODE_OPTIONS);
+      // The payment lane (and mobile, which spreads it) APPENDS its Stripe
+      // egress guard as `--import` (PAY-CCY-09); the core Sentry options it
+      // inherits must still come first and unchanged.
+      expect(env.NODE_OPTIONS.startsWith(E2E_WEB_SERVER_ENV.NODE_OPTIONS)).toBe(true);
       expect(env.HONE_E2E_SENTRY_EGRESS_LOG).toBe(E2E_SENTRY_EGRESS_LOG);
     }
+    expect(GOOGLE_WEB_SERVER_ENV.NODE_OPTIONS).toBe(E2E_WEB_SERVER_ENV.NODE_OPTIONS);
   });
 
   it("globalSetup refuses, before any spec, a lane whose server env lost the guard", () => {
