@@ -30,11 +30,15 @@ const TOLL_FREE_SENDER_NUMBER = "+18885550100";
 const MSID_A = `MG${"a".repeat(32)}`;
 const MSID_B = `MG${"b".repeat(32)}`;
 
+// READINESS (#841 fe89a006): a Canadian or US LONG CODE is never an eligible
+// A2P route to CANADIAN recipients. The default ready sender is therefore a
+// toll-free number with complete, approved verification of that exact number,
+// which is Active for both Canadian and US recipients.
 const sender = (over: Partial<SendTimeSender> = {}): SendTimeSender => ({
   id: "sender-a-1",
   studio_id: A,
   status: "active",
-  phone_number: CA_SENDER_NUMBER,
+  phone_number: TOLL_FREE_SENDER_NUMBER,
   messaging_service_sid: MSID_A,
   ...over,
 });
@@ -49,7 +53,7 @@ const registration = (over: Partial<SendTimeRegistration> = {}): SendTimeRegistr
   ...over,
 });
 
-const read = (senders: SendTimeSender[], registrations: SendTimeRegistration[] = []): SendTimeRouteRead => ({
+const read = (senders: SendTimeSender[], registrations: SendTimeRegistration[] = [registration()]): SendTimeRouteRead => ({
   ok: true,
   senders,
   registrations,
@@ -103,12 +107,12 @@ describe("the cutover gate: every studio stays on the platform sender unless lis
 });
 
 describe("the studio's own sender, or nothing", () => {
-  it("a ready Canadian sender to a Canadian recipient routes through exactly that sender", () => {
+  it("a ready (verified toll-free) sender to a Canadian recipient routes through exactly that sender", () => {
     expect(decide(read([sender()]))).toEqual({
       ok: true,
       mode: "studio",
       messagingServiceSid: MSID_A,
-      fromNumber: CA_SENDER_NUMBER,
+      fromNumber: TOLL_FREE_SENDER_NUMBER,
       senderId: "sender-a-1",
       destination: "CA",
     });
@@ -165,6 +169,41 @@ describe("the studio's own sender, or nothing", () => {
         reason: "sender_identity_missing",
       });
     }
+  });
+});
+
+describe("THE CANADIAN RULE (#841 fe89a006): a long code is never an A2P route to Canada", () => {
+  const US_LONG_CODE = "+12065550100";
+  const tenDlc = (phone: string, id = "sender-a-1") =>
+    registration({ sender_id: id, phone_number: phone, kind: "us_10dlc", status: "approved" });
+
+  it("a Canadian long code to a Canadian recipient: refused before any claim", () => {
+    expect(decide(read([sender({ phone_number: CA_SENDER_NUMBER })], []), CA_RECIPIENT)).toEqual({
+      ok: false,
+      reason: "destination_not_ready",
+      readiness: "requires_information",
+    });
+  });
+
+  it("even with approved 10DLC for that exact long code, Canada is refused; the US is served", () => {
+    const r = read([sender({ phone_number: CA_SENDER_NUMBER })], [tenDlc(CA_SENDER_NUMBER)]);
+    expect(decide(r, CA_RECIPIENT)).toEqual({ ok: false, reason: "destination_not_ready", readiness: "requires_information" });
+    expect(decide(r, US_RECIPIENT)).toMatchObject({ ok: true, mode: "studio", fromNumber: CA_SENDER_NUMBER, destination: "US" });
+  });
+
+  it("a US long code with approved 10DLC serves US recipients only", () => {
+    const r = read([sender({ phone_number: US_LONG_CODE })], [tenDlc(US_LONG_CODE)]);
+    expect(decide(r, US_RECIPIENT)).toMatchObject({ ok: true, fromNumber: US_LONG_CODE, destination: "US" });
+    expect(decide(r, CA_RECIPIENT)).toEqual({ ok: false, reason: "destination_not_ready", readiness: "requires_information" });
+  });
+
+  it("verified toll-free serves both countries; unverified toll-free serves neither", () => {
+    const verified = read([sender()]);
+    expect(decide(verified, CA_RECIPIENT)).toMatchObject({ ok: true, destination: "CA" });
+    expect(decide(verified, US_RECIPIENT)).toMatchObject({ ok: true, destination: "US" });
+    const unverified = read([sender()], []);
+    expect(decide(unverified, CA_RECIPIENT)).toMatchObject({ ok: false, reason: "destination_not_ready" });
+    expect(decide(unverified, US_RECIPIENT)).toMatchObject({ ok: false, reason: "destination_not_ready" });
   });
 });
 

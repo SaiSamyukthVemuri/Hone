@@ -67,11 +67,15 @@ function admin(): SupabaseClient {
   } as unknown as SupabaseClient;
 }
 
+// READINESS (#841 fe89a006): long codes are never an A2P route to Canadian
+// recipients, so the ready sender is a toll-free number whose own complete
+// verification is approved (Active for Canadian and US recipients).
+const READY_NUMBER = "+18885550100";
 const sender = (over: Partial<SendTimeSender> = {}): SendTimeSender => ({
   id: "sender-a-1",
   studio_id: A,
   status: "active",
-  phone_number: "+14165550100",
+  phone_number: READY_NUMBER,
   messaging_service_sid: MSID_A,
   ...over,
 });
@@ -83,7 +87,15 @@ function reader(answer: SendTimeRouteRead | (() => SendTimeRouteRead)): SendTime
   };
 }
 
-const ready = (): SendTimeRouteRead => ({ ok: true, senders: [sender()], registrations: [] });
+const readyRegistration: SendTimeRegistration = {
+  studio_id: A,
+  sender_id: "sender-a-1",
+  phone_number: READY_NUMBER,
+  kind: "toll_free_verification",
+  status: "approved",
+  missing_information: null,
+};
+const ready = (): SendTimeRouteRead => ({ ok: true, senders: [sender()], registrations: [readyRegistration] });
 
 const studio = {
   id: A,
@@ -213,7 +225,7 @@ describe.each(PATHS)("%s: a routed studio sends from its own sender, after the r
     expect(provider).toBeGreaterThan(claim);
     expect(providerBodies[0].get("MessagingServiceSid")).toBe(MSID_A);
     // The exact pool member whose readiness was checked, never the platform's.
-    expect(providerBodies[0].get("From")).toBe("+14165550100");
+    expect(providerBodies[0].get("From")).toBe(READY_NUMBER);
     expect(JSON.stringify([...providerBodies[0]])).not.toContain(PLATFORM_MSID);
     expect(JSON.stringify([...providerBodies[0]])).not.toContain(PLATFORM_FROM);
   });
@@ -412,7 +424,7 @@ const snapRow = (over: Record<string, unknown> = {}) => ({
   id: "sender-a-1",
   studio_id: A,
   status: "active",
-  phone_number: "+14165550100",
+  phone_number: READY_NUMBER,
   messaging_service_sid: MSID_A,
   ...over,
 });
@@ -431,7 +443,7 @@ const snapReg = (over: Record<string, unknown> = {}) => ({
 describe.each(PATHS)("%s: through 0217's snapshot (the default reader)", (label, send, claimRpc) => {
   it("a ready snapshot: one snapshot read, then the claim, then the studio's own sender", async () => {
     routeStudioA();
-    snapshot = snapshotOf([snapRow()]);
+    snapshot = snapshotOf([snapRow()], [snapReg()]);
     const r = await send(undefined);
     expect(r).toMatchObject({ ok: true, messageSid: SID });
     expect(events.indexOf(SNAPSHOT_RPC)).toBe(0);
@@ -487,8 +499,20 @@ describe.each(PATHS)("%s: through 0217's snapshot (the default reader)", (label,
     expect(events).toEqual([SNAPSHOT_RPC]);
   });
 
+  it("THE CANADIAN RULE: a long code, even with approved 10DLC, is refused for a Canadian recipient before any claim", async () => {
+    routeStudioA();
+    snapshot = snapshotOf(
+      [snapRow({ phone_number: "+14165550100" })],
+      [snapReg({ phone_number: "+14165550100", kind: "us_10dlc" })],
+    );
+    const r = await send(undefined);
+    expect(r).toEqual({ ok: false, skipped: true, reason: "sms_route_destination_not_ready" });
+    expect(events).toEqual([SNAPSHOT_RPC]);
+    expect(providerBodies).toEqual([]);
+  });
+
   it("with the gate unset, the snapshot is never read", async () => {
-    snapshot = snapshotOf([snapRow()]);
+    snapshot = snapshotOf([snapRow()], [snapReg()]);
     await send(undefined);
     expect(events).not.toContain(SNAPSHOT_RPC);
     expect(providerBodies[0].get("From")).toBe(PLATFORM_FROM);

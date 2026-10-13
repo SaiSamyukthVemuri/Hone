@@ -258,13 +258,28 @@ function admin(): SupabaseClient {
   } as unknown as SupabaseClient;
 }
 
-const readyStudioA = () => ({
+// READINESS (#841 fe89a006): long codes are never an A2P route to Canadian
+// recipients. A READY sender is a toll-free number whose own complete
+// verification is approved (Active for Canadian and US recipients).
+const READY_NUMBER = "+18885550100";
+const approval = (studioId: string, senderId: string, phone: string, kind: string) => ({
+  sender_id: senderId,
+  studio_id: studioId,
+  phone_number: phone,
+  kind,
+  status: "approved",
+  missing_information: null,
+  provider_reference: "ref",
+  updated_at: "2026-10-01T00:00:00Z",
+});
+const readySnap = (studioId: string, senderId: string) => ({
   data: {
-    senders: [{ id: "sender-a-1", studio_id: A, status: "active", phone_number: "+14165550100", messaging_service_sid: MSID_A }],
-    registrations: [],
+    senders: [{ id: senderId, studio_id: studioId, status: "active", phone_number: READY_NUMBER, messaging_service_sid: MSID_A }],
+    registrations: [approval(studioId, senderId, READY_NUMBER, "toll_free_verification")],
   },
   error: null,
 });
+const readyStudioA = () => readySnap(A, "sender-a-1");
 
 const ENABLED = { [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: A };
 const manageUrls: Array<[string, string]> = [];
@@ -381,7 +396,7 @@ describe("WHEN THE SENDER BECOMES READY: an owed confirmation is delivered exact
     expect(events.indexOf("claim_sms_send")).toBeLessThan(events.indexOf("revalidate_post"));
     expect(events.indexOf("revalidate_post")).toBeLessThan(events.indexOf("provider"));
     expect(providerBodies[0].get("MessagingServiceSid")).toBe(MSID_A);
-    expect(providerBodies[0].get("From")).toBe("+14165550100");
+    expect(providerBodies[0].get("From")).toBe(READY_NUMBER);
     expect(db[0].sms_confirmation_sent_at).not.toBeNull();
 
     events = [];
@@ -532,13 +547,7 @@ describe("the database read failing", () => {
     const B2 = "studio-b2";
     db = [appt({ id: "a-1" }), appt({ id: "b-1", studio_id: B2 })];
     failSelectFor = A;
-    snapshot = (studioId) => ({
-      data: {
-        senders: [{ id: `sender-${studioId}`, studio_id: studioId, status: "active", phone_number: "+14165550100", messaging_service_sid: MSID_A }],
-        registrations: [],
-      },
-      error: null,
-    });
+    snapshot = (studioId) => readySnap(studioId, `sender-${studioId}`);
     process.env[STUDIO_ROUTING_ENV] = `${A},${B2}`;
     const r = await run({ [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: `${A},${B2}` });
     expect(r).toMatchObject({ ran: true, sent: 1, skipped: { read_failed: 1 } });
@@ -629,13 +638,7 @@ describe("FAIRNESS: rows that keep refusing never starve the rest", () => {
     snapshot = (studioId) =>
       studioId === A
         ? { data: { senders: [], registrations: [] }, error: null }
-        : {
-            data: {
-              senders: [{ id: "sender-b2", studio_id: B2, status: "active", phone_number: "+14165550111", messaging_service_sid: MSID_A }],
-              registrations: [],
-            },
-            error: null,
-          };
+        : readySnap(B2, "sender-b2");
     process.env[STUDIO_ROUTING_ENV] = `${A},${B2}`;
     const r = await run({ [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: `${A},${B2}` }, 50);
     expect(r).toMatchObject({ ran: true, sent: 1, skipped: { sms_route_no_active_sender: 60 } });
@@ -806,22 +809,32 @@ describe("the switch, the age and the whole window", () => {
     expect(db.find((x) => x.id === "z-owed")!.sms_confirmation_sent_at).not.toBeNull();
   });
 
-  it("a destination refusal is remembered per country: US rows cost one read, the CA row still sends", async () => {
+  it("a destination refusal is remembered per country: CA rows cost one read, the US row still sends", async () => {
+    // A US long code with approved 10DLC: US recipients are served, Canadian
+    // recipients never are (not an A2P route to Canada).
+    const US_LONG_CODE = "+12065550100";
     db = [
-      appt({ id: "us-1", client_phone: "+12125550101", created_at: iso(NOW - 4 * HOUR) }),
-      appt({ id: "us-2", client_phone: "+12125550102", created_at: iso(NOW - 3 * HOUR) }),
-      appt({ id: "us-3", client_phone: "+12125550103", created_at: iso(NOW - 2 * HOUR) }),
-      appt({ id: "ca-1", created_at: iso(NOW - HOUR) }),
+      appt({ id: "ca-1", created_at: iso(NOW - 4 * HOUR) }),
+      appt({ id: "ca-2", client_phone: "+16475550124", created_at: iso(NOW - 3 * HOUR) }),
+      appt({ id: "ca-3", client_phone: "+16475550125", created_at: iso(NOW - 2 * HOUR) }),
+      appt({ id: "us-1", client_phone: "+12125550101", created_at: iso(NOW - HOUR) }),
     ];
     let reads = 0;
     snapshot = () => {
       reads += 1;
-      return readyStudioA(); // a Canadian long code with no US registration
+      return {
+        data: {
+          senders: [{ id: "sender-a-1", studio_id: A, status: "active", phone_number: US_LONG_CODE, messaging_service_sid: MSID_A }],
+          registrations: [approval(A, "sender-a-1", US_LONG_CODE, "us_10dlc")],
+        },
+        error: null,
+      };
     };
     const r = await run();
     expect(r).toMatchObject({ sent: 1, skipped: { sms_route_destination_not_ready: 3 } });
     expect(reads).toBe(2);
-    expect(db.find((x) => x.id === "ca-1")!.sms_confirmation_sent_at).not.toBeNull();
+    expect(db.find((x) => x.id === "us-1")!.sms_confirmation_sent_at).not.toBeNull();
+    expect(db.filter((x) => x.id.startsWith("ca-")).every((x) => x.sms_confirmation_send_attempts === 0)).toBe(true);
   });
 
   it("the run stops at its time budget", async () => {
@@ -850,13 +863,7 @@ describe("studios share a run", () => {
       ...Array.from({ length: 60 }, (_, i) => appt({ id: `a-${String(i).padStart(2, "0")}`, created_at: iso(NOW - (200 - i) * 60_000) })),
       ...Array.from({ length: 60 }, (_, i) => appt({ id: `b-${String(i).padStart(2, "0")}`, studio_id: B2, created_at: iso(NOW - (200 - i) * 60_000) })),
     ];
-    snapshot = (studioId) => ({
-      data: {
-        senders: [{ id: `sender-${studioId}`, studio_id: studioId, status: "active", phone_number: "+14165550100", messaging_service_sid: MSID_A }],
-        registrations: [],
-      },
-      error: null,
-    });
+    snapshot = (studioId) => readySnap(studioId, `sender-${studioId}`);
     process.env[STUDIO_ROUTING_ENV] = `${A},${B2}`;
     const r = await run({ [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: `${A},${B2}` });
     expect(r).toMatchObject({ sent: 50 });
@@ -870,13 +877,7 @@ describe("the first studio rotates per 15-minute slot", () => {
     const B2 = "studio-b2";
     const both = { [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: `${A},${B2}` };
     process.env[STUDIO_ROUTING_ENV] = `${A},${B2}`;
-    snapshot = (studioId) => ({
-      data: {
-        senders: [{ id: `sender-${studioId}`, studio_id: studioId, status: "active", phone_number: "+14165550100", messaging_service_sid: MSID_A }],
-        registrations: [],
-      },
-      error: null,
-    });
+    snapshot = (studioId) => readySnap(studioId, `sender-${studioId}`);
     const served: string[] = [];
     for (const slot of [0, 1]) {
       const at = NOW + slot * 15 * 60_000;
