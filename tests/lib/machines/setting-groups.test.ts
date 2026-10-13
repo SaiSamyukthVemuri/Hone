@@ -4,6 +4,7 @@ import type { FieldGroup } from "@/lib/machines/charting";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
 import {
   addGroup,
+  groupIssues,
   assembleGroupSubmissions,
   channelChoices,
   draftKey,
@@ -257,5 +258,78 @@ describe("one submission per group, each a separate atomic capture", () => {
       withValues("g1", { current: "120" }, []),
     ]);
     expect(subs[0]!.channels).toEqual([]);
+  });
+});
+
+describe("one channel cannot belong to TWO groups", () => {
+  // The database cannot catch this: each RPC call carries its own
+  // internally-duplicate-free array, so two groups claiming the same probe are
+  // two individually VALID calls - and the result would permanently record one
+  // channel under two different settings. The UI is the only place it can be
+  // refused (Codex, f175e732).
+  //
+  // THE RULE ALREADY EXISTED. `settingGroupIssues` in charting.ts has treated
+  // a channel claimed by another group as invalid since before this surface
+  // could create two groups; this path simply did not call it. These tests
+  // assert the delegation, not a reimplementation.
+  it("reports the conflict, naming the group that already has it", () => {
+    const issues = groupIssues(MULTI, [
+      withValues("g1", { current: "120" }, [1, 2]),
+      withValues("g2", { current: "80" }, [2, 3]),
+    ]);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]!.groupId).toBe("g2");
+    expect(issues[0]!.problem).toMatch(/already recorded in g1/i);
+  });
+
+  it("reports nothing when the groups are disjoint", () => {
+    // The positive control: without it, "reports a conflict" could be
+    // satisfied by a function that always complains.
+    expect(
+      groupIssues(MULTI, [
+        withValues("g1", { current: "120" }, [1, 2]),
+        withValues("g2", { current: "80" }, [3, 4]),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("still reports a channel the model does not have", () => {
+    // The other half of the same existing rule, which this path also gets for
+    // free by delegating rather than reimplementing.
+    const issues = groupIssues(MULTI, [withValues("g1", {}, [9])]);
+    expect(issues[0]!.problem).toMatch(/outside 1\.\.4/);
+  });
+
+  it("reports channels on a model that has none", () => {
+    const issues = groupIssues(SINGLE, [withValues("g1", {}, [1])]);
+    expect(issues[0]!.problem).toMatch(/no independently controlled channels/i);
+  });
+});
+
+describe("a group already recorded is never resubmitted", () => {
+  // Captures are append-only, so resubmitting a group that succeeded would
+  // create a SECOND immutable revision of settings entered once -
+  // indistinguishable in the record from a genuine mid-treatment change
+  // (Codex, f175e732).
+  const two = [
+    withValues("g1", { current: "120" }, [1]),
+    withValues("g2", { current: "80" }, [2]),
+  ];
+
+  it("excludes it from the submissions on a retry", () => {
+    const retry = assembleGroupSubmissions([FIELDS], two, new Set(["g1"]));
+    expect(retry.map((s) => s.groupKey)).toEqual(["g2"]);
+  });
+
+  it("CONTROL: with nothing recorded yet, both are submitted", () => {
+    expect(
+      assembleGroupSubmissions([FIELDS], two).map((s) => s.groupKey),
+    ).toEqual(["g1", "g2"]);
+  });
+
+  it("submits nothing when every group has already been recorded", () => {
+    expect(
+      assembleGroupSubmissions([FIELDS], two, new Set(["g1", "g2"])),
+    ).toEqual([]);
   });
 });

@@ -2131,3 +2131,165 @@ describe("0223 - invalid channel and group combinations are refused BY THE DATAB
     expect(Number(out.rows[0].n)).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// NEXT-VISIT GUIDANCE RETURNS EVERY GROUP OF THE LATEST SETUP.
+//
+// `latest_setup_for_client` selected ONE capture - `order by recorded_at desc,
+// revision desc limit 1` - which was right while one setup meant one group and
+// wrong the moment the entry surface could record several. Both groups' rows
+// persisted and guidance showed only the last one, SILENTLY OMITTING the other
+// probes' settings (Codex, f175e732).
+//
+// THE NO-COMPOSITE INVARIANT IS THE REASON THE FIX IS SHAPED THIS WAY. The
+// original danger was a setup that never existed - a current from one capture
+// beside a duration from another. So the anchor pins one identity (block,
+// unit, profile version, mode) and takes each group's LATEST revision within
+// it. These tests hold both halves: nothing is hidden, and nothing is mixed.
+// ---------------------------------------------------------------------------
+describe("0223 - the latest setup includes every group, coherently", () => {
+  const recordGroup = (
+    userId: string,
+    blockId: string,
+    machineId: string,
+    group: string,
+    channels: number[],
+    value: string,
+  ) =>
+    asUser(userId, (q) =>
+      q(`select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb) as n`, [
+        blockId,
+        machineId,
+        "galvanic",
+        group,
+        channels,
+        JSON.stringify([ok("current", value)]),
+      ]),
+    );
+
+  type Row = {
+    group_key: string;
+    channels: number[];
+    revision: number;
+    value_numeric: string;
+    field_key: string;
+  };
+
+  const guidance = async (studio: SeededStudio): Promise<Row[]> => {
+    const r = await asUser(studio.userId, (q) =>
+      q(`select public.latest_setup_for_client($1,$2) as g`, [
+        studio.studioId,
+        studio.clientId,
+      ]),
+    );
+    return (r.rows[0].g as Row[]) ?? [];
+  };
+
+  it("returns BOTH groups, each with its own channels and value", () => {
+    // Deliberately written as the defect's inverse: before the fix this
+    // returned only g2 and the g1 assertion below failed.
+    return (async () => {
+      const { studio, blockId, machineId } = await scene("latest-two", 140);
+      await recordGroup(studio.userId, blockId, machineId, "g1", [1, 2], "120");
+      await recordGroup(studio.userId, blockId, machineId, "g2", [3, 4], "80");
+
+      const rows = await guidance(studio);
+      const byGroup = new Map(rows.map((r) => [r.group_key, r]));
+      expect(
+        [...byGroup.keys()].sort(),
+        "a group recorded in this setup must not be hidden from guidance",
+      ).toEqual(["g1", "g2"]);
+      expect(byGroup.get("g1")!.channels).toEqual([1, 2]);
+      expect(byGroup.get("g2")!.channels).toEqual([3, 4]);
+      expect(Number(byGroup.get("g1")!.value_numeric)).toBe(120);
+      expect(Number(byGroup.get("g2")!.value_numeric)).toBe(80);
+    })();
+  });
+
+  it("returns each group's LATEST revision, never a superseded one", async () => {
+    const { studio, blockId, machineId } = await scene("latest-rev", 141);
+    await recordGroup(studio.userId, blockId, machineId, "g1", [1], "120");
+    await recordGroup(studio.userId, blockId, machineId, "g2", [2], "80");
+    await recordGroup(studio.userId, blockId, machineId, "g1", [1], "135");
+
+    const rows = await guidance(studio);
+    const byGroup = new Map(rows.map((r) => [r.group_key, r]));
+    expect(byGroup.get("g1")!.revision, "g1's newer capture").toBe(2);
+    expect(Number(byGroup.get("g1")!.value_numeric)).toBe(135);
+    expect(byGroup.get("g2")!.revision, "g2 was not re-recorded").toBe(1);
+    expect(Number(byGroup.get("g2")!.value_numeric)).toBe(80);
+    // AND THE SUPERSEDED VALUE IS ABSENT. This is the assertion that would
+    // catch the fix over-reaching into "every revision of every group".
+    expect(
+      rows.map((r) => Number(r.value_numeric)).sort((a, b) => a - b),
+      "120 was superseded by 135 and must not be offered back",
+    ).toEqual([80, 135]);
+  });
+
+  it("does NOT mix an EARLIER setup's groups into the latest one", async () => {
+    // The composite the old `limit 1` was protecting against, restated for
+    // groups: a previous visit's capture must not appear beside this one's
+    // just because it shares a group key.
+    const studio = await seedStudio("latest-earlier");
+    await publish(142);
+    const machineId = await register(studio, 142);
+    const first = await seedSession(studio);
+    const second = await seedSession(studio);
+
+    await recordGroup(studio.userId, first.blockId, machineId, "g1", [1], "100");
+    await recordGroup(studio.userId, second.blockId, machineId, "g1", [2], "200");
+
+    const rows = await guidance(studio);
+    expect(rows, "one block's setup only").toHaveLength(1);
+    expect(Number(rows[0]!.value_numeric), "the newer block's").toBe(200);
+    expect(rows[0]!.channels).toEqual([2]);
+  });
+
+  it("does NOT mix groups recorded on a DIFFERENT machine", async () => {
+    // Two units in one block is unusual but representable, and "the setup she
+    // was last working at" cannot span two machines - that would be a setup
+    // that never existed.
+    const studio = await seedStudio("latest-two-machines");
+    const { blockId } = await seedSession(studio);
+    await publish(143);
+    const a = await register(studio, 143);
+    const b = await register(studio, 143);
+
+    await recordGroup(studio.userId, blockId, a, "g1", [1], "100");
+    await recordGroup(studio.userId, blockId, b, "g2", [2], "200");
+
+    const rows = await guidance(studio);
+    expect(rows, "only the newest machine's setup").toHaveLength(1);
+    expect(rows[0]!.group_key).toBe("g2");
+    expect(Number(rows[0]!.value_numeric)).toBe(200);
+  });
+
+  it("a single-group setup is unchanged, which is the ordinary case", async () => {
+    // The regression guard: most machines have no channels and record one
+    // group, and that path must look exactly as it did.
+    const { studio, blockId, machineId } = await scene("latest-one", 144);
+    await recordGroup(studio.userId, blockId, machineId, "g1", [], "120");
+    const rows = await guidance(studio);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.group_key).toBe("g1");
+    expect(rows[0]!.channels).toEqual([]);
+  });
+
+  it("a retired SESSION is still excluded from guidance", async () => {
+    // The pre-existing rule the rewrite had to carry forward: the anchor
+    // filters retired blocks and sessions, and widening the read must not have
+    // dropped that.
+    const { studio, sessionId, blockId, machineId } = await scene("latest-retired", 145);
+    await recordGroup(studio.userId, blockId, machineId, "g1", [1], "120");
+    await recordGroup(studio.userId, blockId, machineId, "g2", [2], "80");
+    expect(await guidance(studio), "present before retirement").toHaveLength(2);
+
+    await adminQuery(`update public.sessions set deleted_at = now() where id = $1`, [
+      sessionId,
+    ]);
+    expect(
+      await guidance(studio),
+      "a retired session's setup is not guidance, however many groups it had",
+    ).toEqual([]);
+  });
+});

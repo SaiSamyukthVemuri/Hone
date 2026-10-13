@@ -1525,10 +1525,32 @@ as $$
   -- A field the practitioner did not record in that capture is therefore simply
   -- ABSENT from the result. It is never filled in from an older capture, which
   -- is the behaviour that would quietly invent a setting.
-  with newest_capture as (
-    select c.id, c.studio_machine_id, c.machine_profile_id,
-           c.machine_profile_version, c.mode_key, c.group_key, c.channels,
-           c.revision, c.recorded_by_practitioner_id, c.recorded_at
+  -- EVERY SETTING GROUP OF THE LATEST SETUP, not one capture of it.
+  --
+  -- This selected a SINGLE capture: `order by recorded_at desc, revision desc
+  -- limit 1`. Correct while one setup meant one group, and wrong the moment
+  -- the entry surface could record several - a practitioner with probes at
+  -- different settings saves two groups, both sets of rows persist, and
+  -- next-visit guidance showed only the last one and SILENTLY OMITTED the
+  -- other probes' settings. Hiding recorded clinical settings is a worse
+  -- outcome than the composite this limit was protecting against
+  -- (Codex, f175e732).
+  --
+  -- THE NO-COMPOSITE INVARIANT STILL HOLDS, and the anchor's shape is why.
+  -- The danger was assembling a setup that never existed - a current from one
+  -- capture beside a duration from another. Returning several captures is not
+  -- that, PROVIDED each is intact and they all belong to one recorded setup.
+  -- So the anchor pins the identity: same block, same physical unit, same
+  -- profile version, same mode. One visit, one machine, one mode - and within
+  -- it the LATEST REVISION of each group, so a superseded value is never
+  -- offered back as guidance.
+  --
+  -- 0223 was editable for this: the declared hosted maximum is 0210, so this
+  -- migration is PENDING and not frozen. The defect is a read contract that
+  -- cannot express what the write path already stores correctly.
+  with anchor as (
+    select c.session_block_id, c.studio_machine_id, c.machine_profile_id,
+           c.machine_profile_version, c.mode_key, c.recorded_at
       from public.treatment_setup_captures c
       join public.session_blocks b on b.id = c.session_block_id
       join public.sessions sn on sn.id = b.session_id
@@ -1550,6 +1572,21 @@ as $$
        and public.is_studio_member(p_studio_id)
      order by c.recorded_at desc, c.revision desc
      limit 1
+  ),
+  -- Each group of that same setup, at its own highest revision.
+  newest_per_group as (
+    select distinct on (c.group_key) c.id
+      from public.treatment_setup_captures c
+      join anchor a
+        on a.session_block_id = c.session_block_id
+       and a.machine_profile_id = c.machine_profile_id
+       and a.machine_profile_version = c.machine_profile_version
+       and a.mode_key = c.mode_key
+       -- `is not distinct from`, because the column is nullable in principle;
+       -- an equality test would drop a group whose unit had been erased.
+       and a.studio_machine_id is not distinct from c.studio_machine_id
+     where c.studio_id = p_studio_id
+     order by c.group_key, c.revision desc
   )
   select coalesce(
     jsonb_agg(
@@ -1574,12 +1611,17 @@ as $$
         'recorded_by_practitioner_id', r.recorded_by_practitioner_id,
         'recorded_at', r.recorded_at
       )
-      order by r.field_key
+      -- GROUP FIRST, then field. With several groups a field-only ordering
+      -- interleaves them, so a consumer walking the array in order sees one
+      -- group's current beside another's duration. Every consumer groups by
+      -- `group_key` anyway, but an array whose order implies a pairing that
+      -- does not exist is a trap worth not setting.
+      order by r.group_key, r.field_key
     ),
     '[]'::jsonb
   )
     from public.treatment_setup_readings r
-   where r.capture_id = (select id from newest_capture);
+   where r.capture_id in (select id from newest_per_group);
 $$;
 
 comment on function public.latest_setup_for_client(uuid, uuid) is

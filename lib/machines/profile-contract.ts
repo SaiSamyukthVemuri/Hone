@@ -399,7 +399,20 @@ export type FrequencyContract =
 export type ManufacturerFamily =
   | "Dectro/Apilus"
   | "Silhouet-Tone"
-  | "Permanence/GEMM-16";
+  | "Permanence/GEMM-16"
+  /**
+   * SYNTHETIC FIXTURES, which are not a manufacturer and must not borrow one.
+   *
+   * The demo profiles previously declared `Permanence/GEMM-16`, because this
+   * vocabulary was closed to real families and something had to be chosen.
+   * That put a false claim in a shipped fixture: a synthetic single-probe
+   * model is not of the GEMM-16 family in any sense, and `family` is exactly
+   * the field a reader would trust to tell them what a profile IS.
+   *
+   * Safe to add because nothing reads `profile.family` - it is descriptive
+   * only; `mode.family` is a different field and is unaffected.
+   */
+  | "Synthetic/Demo";
 
 /**
  * One exact model at one contract version.
