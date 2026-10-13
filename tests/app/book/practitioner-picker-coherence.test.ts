@@ -24,6 +24,25 @@ const ACTIONS = readFileSync(
   "utf8",
 );
 
+// Slice one exported action's body by EXPORT BOUNDARIES, not by brace
+// matching. A hand-written /export async function NAME[\s\S]*?\n\}/ is wrong
+// here and silently so: these signatures put the parameter object's closing
+// brace at column zero --
+//
+//   export async function fetchPublicPractitionerOptionsAction(params: {
+//     slug: string;
+//   }): Promise<
+//
+// -- so `\n\}` matches THAT line and the "body" is just the parameter list,
+// which contains none of the logic under test. Two guards here passed review
+// while asserting against a two-line slice. Boundaries are unambiguous.
+function actionSource(name: string): string {
+  const start = ACTIONS.indexOf(`export async function ${name}`);
+  if (start < 0) return "";
+  const next = ACTIONS.indexOf("\nexport ", start + 1);
+  return ACTIONS.slice(start, next < 0 ? ACTIONS.length : next);
+}
+
 describe("G1: the sole-eligible gap is recorded, not silently fixed", () => {
   // Codex P2 at 12033879 is REAL and is NOT fixed in this lane. With exactly
   // one eligible practitioner the picker is hidden and practitionerId stays
@@ -127,10 +146,60 @@ describe("G1: the studio-wide jump is not offered against a chosen practitioner"
     // practitioner-aware, which needs its own slice -- see the comment on
     // nextAvailableApplies. This pins the boundary so a later edit does not
     // quietly reintroduce the per-day scan.
+    // Deliberately the PARAMETER list only: the claim is that the action takes
+    // no practitioner at all.
     const sig = ACTIONS.match(
       /export async function fetchNextAvailableDateAction\(params: \{[^}]*\}/,
     );
     expect(sig, "expected the action's parameter object").not.toBeNull();
     expect(sig![0]).not.toContain("practitionerId");
+  });
+});
+
+describe("G1: the public-assignment kill switch is enforced SERVER-SIDE", () => {
+  // THE P1. `practitioner_capacity_booking_enabled` (0136) defaults FALSE and
+  // `capacity=false + booking=true` is rejected by a CHECK (0136:52), so this
+  // one flag is the strictest correct gate: booking implies capacity. Shipping
+  // G1 without it would have activated practitioner selection on every open
+  // new-client studio, including every LEGACY studio.
+  //
+  // The gate must live in the ACTIONS, not only in the form, or a client could
+  // grant itself a surface the operator switched off. Three entry points touch
+  // a practitioner and all three are pinned here.
+  it("returns NO options while public assignment is disabled", () => {
+    const body = actionSource("fetchPublicPractitionerOptionsAction");
+    expect(body, "expected the options action").not.toBe("");
+    expect(body).toContain("practitioner_capacity_booking_enabled");
+    expect(
+      body,
+      "with assignment off the action must return an EMPTY option set, which " +
+        "is what keeps the picker from rendering at all",
+    ).toMatch(/practitioners:\s*\[\]/);
+  });
+
+  it("refuses to scope the GRID while public assignment is disabled", () => {
+    // Scoping the grid to a practitioner the commit path would then ignore is
+    // the page/command disagreement this lane exists to remove.
+    const body = actionSource("fetchPublicSlotsAction");
+    expect(body, "expected the slots action").not.toBe("");
+    expect(body).toContain("practitioner_capacity_booking_enabled");
+  });
+
+  it("REFUSES a practitioner it cannot honour, instead of silently substituting", () => {
+    // The second P1. This block used to fall back to "any available" when the
+    // submitted id did not validate -- which reads as forgiving and is worse:
+    // the visitor EXPLICITLY picked someone and the booking then succeeded
+    // with the ACTIVE OWNER instead, silently. A deactivated or unpinned
+    // practitioner, and a transient failure of the eligibility read, both land
+    // there. An ABSENT id still means "any available"; that is untouched.
+    const block = actionSource("publicBookAppointmentAction");
+    expect(block, "expected the booking action").not.toBe("");
+    expect(block).toContain("practitioner_capacity_booking_enabled");
+    // BOTH failure paths must refuse: assignment disabled, and id not offered.
+    const refusals = block.match(/PRACTITIONER_CHOICE_UNAVAILABLE_ERROR/g) ?? [];
+    expect(
+      refusals.length,
+      "both the disabled-assignment path and the not-offered path must refuse",
+    ).toBeGreaterThanOrEqual(2);
   });
 });
