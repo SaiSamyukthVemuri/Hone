@@ -438,13 +438,25 @@ declare
   v_local_date  date;
   v_today       date;
   v_created_at  timestamptz;
+  v_booking_on  boolean;
   v_win_start   timestamptz;
   v_win_end     timestamptz;
 begin
   -- Lock order matches create_internal_appointment_v2 (0152:13-23): the studio
   -- row first, then the studio capacity advisory lock, then the service row.
-  select s.timezone, coalesce(s.public_booking_horizon_months, 3)
-    into v_tz, v_horizon
+  -- G1 / CODEX P1 — THE KILL SWITCH IS READ IN THE LOCKING SELECT ITSELF.
+  --
+  -- `practitioner_capacity_booking_enabled` (0136) is the operator's control
+  -- over whether the PUBLIC path may assign a practitioner. The application
+  -- also checks it, and an application check CANNOT close this race: an
+  -- operator disabling the switch after the TypeScript read but before this
+  -- RPC wins the row lock would leave the booking accepted. Reading it HERE,
+  -- in the same `for update` that takes the studio row lock, means the value
+  -- used is the one committed as of this transaction's lock acquisition and it
+  -- cannot change while the transaction lives.
+  select s.timezone, coalesce(s.public_booking_horizon_months, 3),
+         coalesce(s.practitioner_capacity_booking_enabled, false)
+    into v_tz, v_horizon, v_booking_on
     from public.studios s
    where s.id = p_studio_id
    for update;
@@ -559,6 +571,19 @@ begin
   -- PRACTITIONER ASSIGNMENT — two paths. The legacy one is preserved VERBATIM.
   -- =====================================================================
   if p_practitioner_id is not null then
+    -- THE SWITCH, FIRST, AND UNDER THE LOCK TAKEN AT THE TOP. A disabled
+    -- studio may not receive a practitioner-scoped booking at all, so this
+    -- precedes every other practitioner check: there is nothing to validate
+    -- about an assignment that is not permitted. Refusing rather than silently
+    -- dropping to "any available" is deliberate -- a caller that named a
+    -- practitioner must not be told the booking succeeded as something else.
+    if not v_booking_on then
+      return query select 'practitioner_assignment_disabled'::text,
+                          null::uuid, null::timestamptz,
+                          null::timestamptz, null::integer, null::uuid, null::timestamptz;
+      return;
+    end if;
+
     -- CHOSEN BY THE CLIENT. Validated before it is trusted: it must be THIS
     -- studio's, active, and a treating role. A receptionist cannot reach here
     -- twice over — the role filter excludes it, and a receptionist is not a

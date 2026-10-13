@@ -193,12 +193,29 @@ describe("0222 — the capacity model decides whether a pick buys parallelism", 
   it("LEGACY: the second is REFUSED, because the studio is one resource", async () => {
     // THE CONTROL. Without it the LIVE case could pass on a command that never
     // checked availability at all.
+    //
+    // REWRITTEN FOR THE KILL SWITCH (Codex P1), and the rewrite makes this test
+    // MORE faithful rather than less. It used to pass a practitioner to a
+    // LEGACY studio, which the command now refuses outright with
+    // `practitioner_assignment_disabled`: a studio that has not enabled public
+    // assignment may not receive a practitioner-scoped booking at all. A legacy
+    // studio's real public path sends NULL, so the one-resource property is now
+    // proved on NULL — which is the path that actually exists — and the refusal
+    // of a submitted practitioner is asserted separately below.
     const fett = await seedFettStudio({ treatingCount: 2, capacity: "legacy" });
     try {
       const c2 = await seedClient(fett.studioId, "SYNTH-FETT client 2");
-      const first = await bookPublicV2(fett, fett.treating[0].practitionerId);
+
+      // THE NEW CONTRACT, asserted first so it cannot rot unnoticed: a legacy
+      // studio refuses a submitted practitioner instead of quietly attributing
+      // the booking to them.
+      const disabled = await bookPublicV2(fett, fett.treating[0].practitionerId);
+      expect(disabled.result).toBe("practitioner_assignment_disabled");
+      expect(disabled.appointment_id).toBeNull();
+
+      const first = await bookPublicV2(fett, null);
       expect(first.result).toBe("created");
-      const second = await bookPublicV2(fett, fett.treating[1].practitionerId, c2);
+      const second = await bookPublicV2(fett, null, c2);
       expect(second.result).not.toBe("created");
       expect(second.appointment_id).toBeNull();
       expect(
@@ -318,10 +335,16 @@ describe("0222 — scoping must NOT loosen anything", () => {
 
       // 14:00 local is inside the studio-wide 09:00-17:00 window and OUTSIDE
       // the retained scoped 10:00-12:00 one.
+      // NULL, not `p1`. After Codex's P1 the command refuses a submitted
+      // practitioner on a capacity-OFF studio, and this test is about WHICH
+      // WINDOW governs such a studio — not about assignment. NULL is what a
+      // legacy studio's public path sends, and it is what makes `v_cap_on`
+      // false, which is the condition under test. Passing `p1` here would now
+      // refuse for an unrelated reason and prove nothing about the window.
       const late = await adminQuery(
         `select * from public.create_public_appointment_v2(
-           $1, $2, $3, ${FETT_DEMO_SLOT_SQL} + interval '4 hours', $4, null, null, $5)`,
-        [fett.studioId, fett.clientId, fett.services.treatmentId, tok(), p1],
+           $1, $2, $3, ${FETT_DEMO_SLOT_SQL} + interval '4 hours', $4, null, null, null)`,
+        [fett.studioId, fett.clientId, fett.services.treatmentId, tok()],
       );
       expect(
         late.rows[0].result,

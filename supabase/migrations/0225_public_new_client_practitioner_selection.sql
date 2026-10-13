@@ -143,6 +143,96 @@ begin
     return;
   end if;
 
+  -- =====================================================================
+  -- G1 / CODEX P1 + P2 — THE PRACTITIONER IS SETTLED BEFORE ANY CLIENT ROW
+  -- EXISTS, AND UNDER THE LOCK `assert_new_client_admission` ALREADY HOLDS.
+  -- =====================================================================
+  --
+  -- TWO DEFECTS SHARED ONE CAUSE: this wrapper forwarded `p_practitioner_id`
+  -- to the delegate without ever examining it, and it created the client
+  -- FIRST.
+  --
+  -- P1, the switch race. The delegate checked only structural capacity, so an
+  -- operator disabling `practitioner_capacity_booking_enabled` (0136) after
+  -- the TypeScript check but before this transaction won the studio lock left
+  -- the practitioner accepted and the booking committed. An application check
+  -- cannot close that window; only a check inside this transaction can.
+  --
+  -- P2, the orphan client. The delegate RETURNS `invalid_practitioner` or
+  -- `not_eligible` rather than raising -- deliberately, because the invited
+  -- path needs a definite answer rather than an aborted transaction. But a
+  -- returned refusal does not undo work already done, so a client row
+  -- (contact details, and possibly SMS consent) committed while no appointment
+  -- was created and the visitor saw an error.
+  --
+  -- Both are answered by refusing HERE, before the resolve-or-create below,
+  -- which is the same placement and the same reason as the admission gate
+  -- immediately above.
+  --
+  -- WHY THIS IS AIRTIGHT RATHER THAN MERELY NARROWER: the mutations that could
+  -- invalidate a practitioner mid-transaction both serialise on the studios
+  -- row. `set_practitioner_active` and the service-eligibility writer each
+  -- begin with `lock_studio_and_assert_owner`, which is
+  -- `perform 1 from public.studios where id = $1 for update` (0150:47). This
+  -- transaction already holds that row, so no deactivation and no unpin can
+  -- commit between this gate and the delegate's own re-check. The delegate
+  -- cannot reach a different verdict, so it cannot reject after the insert.
+  --
+  -- The checks are the delegate's own, deliberately duplicated rather than
+  -- reworded: `validate_public_booking_slot_v2` (0222) uses exactly this
+  -- active-practitioner test and exactly this list-exists-then-membership
+  -- eligibility rule. Two engines answering one question must answer it the
+  -- same way.
+  --
+  -- The invited branch passes NULL (the caller nulls it; an offer already names
+  -- its practitioner), so applying this unconditionally changes nothing there
+  -- while keeping the refusal total rather than branch-dependent.
+  if p_practitioner_id is not null then
+    if not coalesce(
+      (select s.practitioner_capacity_booking_enabled
+         from public.studios s where s.id = p_studio_id), false) then
+      return query select 'practitioner_assignment_disabled'::text,
+                          null::uuid, null::timestamptz, null::timestamptz,
+                          null::integer, null::uuid, null::timestamptz, null::uuid,
+                          null::text, null::text, null::timestamptz, null::timestamptz;
+      return;
+    end if;
+
+    if not exists (
+      select 1 from public.practitioners pr
+       where pr.id = p_practitioner_id
+         and pr.studio_id = p_studio_id
+         and pr.active = true
+    ) then
+      return query select 'invalid_practitioner'::text,
+                          null::uuid, null::timestamptz, null::timestamptz,
+                          null::integer, null::uuid, null::timestamptz, null::uuid,
+                          null::text, null::text, null::timestamptz, null::timestamptz;
+      return;
+    end if;
+
+    -- Eligibility is enforced only when the service HAS a list, matching 0222
+    -- and 0170: a studio that never configured `service_practitioners` keeps
+    -- working.
+    if p_service_id is not null
+       and exists (
+         select 1 from public.service_practitioners sp
+          where sp.service_id = p_service_id
+       )
+       and not exists (
+         select 1 from public.service_practitioners sp
+          where sp.service_id = p_service_id
+            and sp.practitioner_id = p_practitioner_id
+       )
+    then
+      return query select 'not_eligible'::text,
+                          null::uuid, null::timestamptz, null::timestamptz,
+                          null::integer, null::uuid, null::timestamptz, null::uuid,
+                          null::text, null::text, null::timestamptz, null::timestamptz;
+      return;
+    end if;
+  end if;
+
   if v_client_id is null then
     -- RE-RESOLVE UNDER THE LOCK. The caller's own lookup ran before this
     -- transaction, so another booking could have created this client since. The
