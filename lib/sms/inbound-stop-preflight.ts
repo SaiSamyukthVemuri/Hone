@@ -249,6 +249,15 @@ export type InboundStopFacts = {
         settings: Array<{
           /** The Setting's share of matching traffic, 0-100; only non-zero shares are ever used. */
           percentage: number | null;
+          /**
+           * The EFFECTIVE auth scheme Twilio uses to authenticate itself to the
+           * endpoint (Codex P1 4264160015; Settings and AuthProfiles docs,
+           * checked 2026-10-13): auth.value.scheme for source INLINE, or the
+           * referenced AuthProfile's type for source REFERENCE. OAUTH2 |
+           * BASIC | DIGEST | NONE; null = not read (including an unread
+           * AuthProfile). Never the credentials themselves.
+           */
+          authScheme: string | null;
           /** signature.type: "ACCOUNT_AUTH_TOKEN" | "SHARED_KEY" | "NONE". */
           signatureType: string | null;
           /** signature.algorithm: "HMAC_SHA1" | "HMAC_SHA256". */
@@ -384,6 +393,12 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
   // route verifies ONLY the account auth token with HMAC-SHA1, so every Setting
   // that can receive traffic (non-zero percentage, Codex P2 4254655911) must
   // be ACCOUNT_AUTH_TOKEN + HMAC_SHA1.
+  // AUTHENTICATION (Codex P1 4264160015): every such Setting must also use auth
+  // scheme NONE. The route authenticates Twilio only by that signature and has
+  // no OAuth2, Basic or Digest support; with OAuth2, a failed token exchange
+  // makes Twilio DROP matching webhooks for up to 300 s (error 97001), so a
+  // STOP is lost while every signature and retry fact still reads correct.
+  // Supporting OAuth2 would need its own design and proof.
   const rules = f.webhookRules;
   const allSettings = rules?.matched ? rules.settings : [];
   const sharesKnown = allSettings.length > 0 && allSettings.every((x) => x.percentage !== null);
@@ -400,20 +415,35 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
         : live.some((x) => x.signatureType === null || x.signatureAlgorithm === null)
           ? "unknown"
           : "yes";
+  const KNOWN_UNSUPPORTED_AUTH = ["OAUTH2", "BASIC", "DIGEST"];
+  const auth: "yes" | "no" | "unknown" =
+    !sharesKnown || live.length === 0
+      ? "unknown"
+      : live.some((x) => x.authScheme !== null && KNOWN_UNSUPPORTED_AUTH.includes(x.authScheme))
+        ? "no"
+        : live.some((x) => x.authScheme !== "NONE")
+          ? "unknown"
+          : "yes";
   checks.push(
     rules === undefined
       ? check("webhook_rules", "unknown", "account Webhook Rules not read: a matching Rule overrides URL overrides and decides signing")
       : !rules.matched
         ? check("webhook_rules", "pass", "no exact, prefix or default Webhook Rule matches the inbound URL")
-        : signing === "yes"
-          ? check("webhook_rules", "pass", "every Setting receiving traffic signs with the account auth token, HMAC-SHA1")
+        : auth === "no"
+          ? check(
+              "webhook_rules",
+              "fail",
+              "a Setting receiving traffic authenticates with OAUTH2, BASIC or DIGEST: the route supports only auth scheme NONE, and an OAuth2 token failure drops STOPs for up to 300 s",
+            )
+          : signing === "yes" && auth === "yes"
+          ? check("webhook_rules", "pass", "every Setting receiving traffic uses auth scheme NONE and signs with the account auth token, HMAC-SHA1")
           : signing === "no"
             ? check(
                 "webhook_rules",
                 "fail",
                 "a Setting receiving traffic does not sign with the account auth token by HMAC-SHA1 (SHARED_KEY, NONE or HMAC_SHA256): the route refuses every STOP",
               )
-            : check("webhook_rules", "unknown", "a Webhook Rule matches but its Settings' shares or signing are not reported"),
+            : check("webhook_rules", "unknown", "a Webhook Rule matches but its Settings' shares, auth scheme or signing are not reported (or the auth scheme is unrecognised)"),
   );
 
   // PROPAGATION: only meaningful once the Rules are read (unread Rules already

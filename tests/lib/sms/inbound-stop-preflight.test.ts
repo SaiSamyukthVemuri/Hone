@@ -386,7 +386,7 @@ describe("evaluateInboundStopPreflight", () => {
       const ruleSetting = (totalTimeoutMs: number | null | undefined) => ({
         matched: true as const,
         settings: [
-          { percentage: 100, signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", retryOn: ["HTTP_5XX"], retryCount: 2, totalTimeoutMs },
+          { percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", retryOn: ["HTTP_5XX"], retryCount: 2, totalTimeoutMs },
         ],
       });
 
@@ -415,6 +415,7 @@ describe("evaluateInboundStopPreflight", () => {
     describe("account Webhook Rules take precedence and decide signing (Codex P1s 4254537039, 4254655904; P2 4254655911)", () => {
       type Setting = {
         percentage: number | null;
+        authScheme: string | null;
         signatureType: string | null;
         signatureAlgorithm: string | null;
         retryOn: string[] | null;
@@ -422,6 +423,7 @@ describe("evaluateInboundStopPreflight", () => {
       };
       const setting = (over: Partial<Setting> = {}): Setting => ({
         percentage: 100,
+        authScheme: "NONE",
         signatureType: "ACCOUNT_AUTH_TOKEN",
         signatureAlgorithm: "HMAC_SHA1",
         retryOn: ["HTTP_5XX"],
@@ -806,5 +808,77 @@ describe("stop_forwarded requires OBSERVED suppression, not mere forwarding (Cod
     const f = allProven();
     f.liveStopObservation = undefined;
     expect(stop(f)?.status).toBe("unknown");
+  });
+});
+
+describe("a matching Setting must authenticate with scheme NONE (Codex P1 4264160015)", () => {
+  type MatchedSetting = Extract<NonNullable<InboundStopFacts["webhookRules"]>, { matched: true }>["settings"][number];
+  const setting = (over: Partial<MatchedSetting> = {}): MatchedSetting => ({
+    percentage: 100,
+    authScheme: "NONE",
+    signatureType: "ACCOUNT_AUTH_TOKEN",
+    signatureAlgorithm: "HMAC_SHA1",
+    retryOn: ["HTTP_5XX"],
+    retryCount: 2,
+    ...over,
+  });
+  const withRule = (...settings: MatchedSetting[]): InboundStopFacts => {
+    const f = allProven();
+    f.webhookRules = { matched: true, settings };
+    return f;
+  };
+  const rulesCheck = (f: InboundStopFacts) => evaluateInboundStopPreflight(f).checks.find((c) => c.id === "webhook_rules");
+
+  it("NONE with account-token HMAC-SHA1 signing and 5xx retries: ready through every gate", () => {
+    const r = evaluateInboundStopPreflight(withRule(setting()));
+    expect(r.blockers).toEqual([]);
+    expect(r.ready).toBe(true);
+  });
+
+  for (const scheme of ["OAUTH2", "BASIC", "DIGEST"]) {
+    it(`${scheme}: refused even though its signature and retry fields are perfect`, () => {
+      const f = withRule(setting({ authScheme: scheme }));
+      expect(rulesCheck(f)?.status).toBe("fail");
+      expect(rulesCheck(f)?.detail).toMatch(/OAUTH2, BASIC or DIGEST/);
+      expect(evaluateInboundStopPreflight(f).ready).toBe(false);
+    });
+  }
+
+  for (const [why, scheme] of [
+    ["not read (an unread AuthProfile)", null],
+    ["unrecognised", "BEARER"],
+    ["lower-case, not Twilio's enum", "none"],
+  ] as const) {
+    it(`auth scheme ${why}: unknown, never a pass from the signature and retry fields alone`, () => {
+      const f = withRule(setting({ authScheme: scheme }));
+      expect(rulesCheck(f)?.status).toBe("unknown");
+      expect(evaluateInboundStopPreflight(f).blockers).toEqual(["webhook_rules"]);
+    });
+  }
+
+  it("a 30% OAUTH2 share beside a 70% NONE share: refused", () => {
+    expect(rulesCheck(withRule(setting({ percentage: 70 }), setting({ percentage: 30, authScheme: "OAUTH2" })))?.status).toBe("fail");
+  });
+
+  it("an OAUTH2 Setting with a 0% share receives no traffic: not counted", () => {
+    expect(rulesCheck(withRule(setting({ percentage: 100 }), setting({ percentage: 0, authScheme: "OAUTH2" })))?.status).toBe("pass");
+  });
+
+  it("an unsupported scheme is reported as such even when the signing is also wrong", () => {
+    expect(rulesCheck(withRule(setting({ authScheme: "OAUTH2", signatureType: "SHARED_KEY" })))?.detail).toMatch(/OAUTH2, BASIC or DIGEST/);
+  });
+
+  it("SETTINGS DRIFT: facts that were ready stop being ready once the Setting moves to OAUTH2, and the change itself must settle", () => {
+    const before = withRule(setting());
+    expect(evaluateInboundStopPreflight(before).ready).toBe(true);
+    const after = withRule(setting({ authScheme: "OAUTH2" }));
+    after.webhookPropagation = { ruleOperationStatuses: [], secondsSinceLastConfigChange: 10 };
+    const r = evaluateInboundStopPreflight(after);
+    expect(r.ready).toBe(false);
+    expect(r.blockers).toEqual(expect.arrayContaining(["webhook_rules", "webhook_propagation"]));
+    // Moving back to NONE is trusted only after the change has propagated.
+    const back = withRule(setting());
+    back.webhookPropagation = { ruleOperationStatuses: [], secondsSinceLastConfigChange: 10 };
+    expect(evaluateInboundStopPreflight(back).blockers).toEqual(["webhook_propagation"]);
   });
 });
