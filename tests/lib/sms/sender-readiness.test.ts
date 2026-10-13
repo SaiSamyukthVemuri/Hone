@@ -158,3 +158,40 @@ describe("the panel", () => {
     expect(html).toContain(NOT_HIPAA_COVERAGE);
   });
 });
+
+// Codex P2 4253281361 (and the Codex decision on #863): Active needs COMPLETE,
+// verified registration for this exact number, number-level included. Pending,
+// failed and unknown stay blocked; they are never coerced to complete.
+describe("only complete registration is Active", () => {
+  const US_LONG = "+12125550123";
+  const TF = "+18885550123";
+  const read = (phone: string) => row({ phone_number: phone });
+
+  it("approved says number-level registration is complete, for a long code and a toll-free number", () => {
+    const long = destinationReadiness("US", read(US_LONG), { state: "approved" });
+    expect(long.state).toBe("active");
+    expect(long.detail).toMatch(/the number's own registration/);
+    const tf = destinationReadiness("US", read(TF), { state: "approved" });
+    expect(tf.state).toBe("active");
+    expect(tf.detail).toMatch(/verification of the studio's number is complete/);
+  });
+
+  it("anything short of complete blocks US: pending, failed, suspended, missing, nothing recorded", () => {
+    for (const [evidence, state] of [
+      [{ state: "pending" }, "pending"],
+      [{ state: "rejected" }, "failed"],
+      [{ state: "suspended" }, "suspended"],
+      [{ state: "requires_information", missing: "the number's registration" }, "requires_information"],
+      [{ state: "not_recorded" }, "requires_information"],
+    ] as const) {
+      const r = destinationReadiness("US", read(US_LONG), evidence);
+      expect(r.state, evidence.state).toBe(state);
+      expect(r.state).not.toBe("active");
+    }
+    expect(destinationReadiness("US", read(US_LONG), { state: "pending" }).detail).toMatch(/the number's own registration is still under review/);
+  });
+
+  it("an unreadable sender is Unavailable, never Active", () => {
+    expect(destinationReadiness("US", { ok: false }, { state: "approved" }).state).toBe("unavailable");
+  });
+});
