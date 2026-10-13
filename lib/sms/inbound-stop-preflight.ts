@@ -1,5 +1,5 @@
 import { effectiveInbound, inboundReaches } from "./inbound-routing";
-import { normalizeTwilioWebhookUrl, twilioWebhookUrl } from "./webhook-base";
+import { configuredTwilioWebhookBase, normalizeTwilioWebhookUrl, twilioWebhookUrl } from "./webhook-base";
 
 // ===========================================================================
 // WILLOW-STOP-PREFLIGHT-01 (#824): will a STOP sent to a STUDIO's number reach
@@ -108,12 +108,15 @@ export type ExpectedInboundUrl =
  * TWILIO_WEBHOOK_BASE_URL exactly as the route rebuilds the signed URL. The
  * base must be a bare https origin: a path in it would be counted twice by the
  * route (base + full request pathname), and a query or fragment would change
- * what Twilio signs.
+ * what Twilio signs. The URL is the RAW base plus the path, exactly as
+ * canonicalTwilioSignedUrl builds it (Codex P2 4251745257): URL.origin would
+ * drop an explicit :443 or lowercase the host, naming a URL the route never
+ * verifies against.
  */
 export function expectedInboundWebhookUrl(env: Env = process.env): ExpectedInboundUrl {
   const raw = env.TWILIO_WEBHOOK_BASE_URL;
   if (!raw || raw.trim() === "") return { ok: false, reason: "base_unset" };
-  const base = raw.replace(/\/+$/, "");
+  const base = configuredTwilioWebhookBase(env) ?? "";
   let u: URL;
   try {
     u = new URL(base);
@@ -124,7 +127,7 @@ export function expectedInboundWebhookUrl(env: Env = process.env): ExpectedInbou
   if (u.pathname !== "/" || u.search !== "" || u.hash !== "" || u.username || u.password) {
     return { ok: false, reason: "base_has_path_query_or_fragment" };
   }
-  return { ok: true, url: `${u.origin}${INBOUND_STOP_PATH}` };
+  return { ok: true, url: `${base}${INBOUND_STOP_PATH}` };
 }
 
 /** One observed fact; `undefined` means it was not (or could not be) read. */
@@ -134,10 +137,22 @@ export type InboundStopFacts = {
   /**
    * Indirect proof that the base URL and auth token validate REAL Twilio
    * signatures in this deployment: ledger rows whose provider_status_at was
-   * stamped by the signature-verified /api/twilio/message-status route, in a
-   * recent window. Built from the same base and token as the inbound route.
+   * stamped by the signature-verified /api/twilio/message-status route, which
+   * is built from the same base and token as the inbound route. A callback
+   * proves only the credentials it was verified with, so it counts only when
+   * it postdates the CURRENT token and base (Codex P1 4251931839): a rotation
+   * or base change since then leaves signing unproven. A null field = not read.
    */
-  recentSignatureVerifiedCallbacks?: number;
+  signatureProof?: {
+    /** ISO time of the newest signature-verified callback. */
+    lastVerifiedCallbackAt: string | null;
+    /**
+     * ISO time the current TWILIO_AUTH_TOKEN and TWILIO_WEBHOOK_BASE_URL both
+     * became active on the production deployment (the later of the two env
+     * changes and the deployment that picked them up).
+     */
+    credentialsActiveSince: string | null;
+  };
   /** GET on the expected URL from outside: 405 = the POST route, no redirect. */
   endpointProbe?: { status: number; redirectedTo: string | null };
   /** The studio's service, read-only (provider.readMessagingServiceConfig and console). */
@@ -211,8 +226,14 @@ export type InboundStopFacts = {
    * pass. Until then a STOP may be signed or retried by the OLD configuration.
    */
   webhookPropagation?: {
-    /** Every Operation for a Rule matching (or formerly matching) the URL is COMPLETED. */
-    ruleOperationsCompleted: boolean | null;
+    /**
+     * The status of the LATEST Operation for each Rule matching (or formerly
+     * matching) the URL: PENDING | RUNNING | COMPLETED | CANCELLED | FAILED
+     * (Track webhook rule changes, checked 2026-10-13). [] = no Rule was
+     * written. CANCELLED and FAILED are terminal: the change will never take
+     * effect, so waiting cannot help (Codex P2 4259396130).
+     */
+    ruleOperationStatuses: readonly string[] | null;
     /** Seconds since the last Rule, Setting, AuthProfile or SharedKey change. */
     secondsSinceLastConfigChange: number | null;
   };
@@ -246,11 +267,20 @@ export type InboundStopFacts = {
   mappedStudioId?: string | null;
   expectedStudioId?: string | null;
   /**
-   * Whether the service forwards STOP-family keywords to the inbound webhook
-   * (Twilio opt-out handling). Only observable on a live STOP; undefined until
-   * the approved first live verification.
+   * The approved first live STOP to the studio number, as observed in Hone
+   * (Codex P1 4251745248): forwarding alone proves nothing, the route must
+   * also have ACCEPTED it (200, i.e. signature verified) and stamped the
+   * phone-wide opt-out. Undefined until that verification; a null field =
+   * not read.
    */
-  stopForwardedToWebhook?: boolean;
+  liveStopObservation?: {
+    /** A request for that STOP reached the inbound route at all. */
+    reachedRoute: boolean | null;
+    /** The route's response status for it. */
+    routeStatus: number | null;
+    /** The phone-wide opt-out was stamped for that phone by that STOP. */
+    phoneWideOptOutStamped: boolean | null;
+  };
 };
 
 export type CheckStatus = "pass" | "fail" | "unknown";
@@ -277,12 +307,19 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
         : check("auth_token", "pass", "TWILIO_AUTH_TOKEN present"),
   );
 
+  const sp = f.signatureProof;
+  const lastVerified = sp?.lastVerifiedCallbackAt ? Date.parse(sp.lastVerifiedCallbackAt) : NaN;
+  const activeSince = sp?.credentialsActiveSince ? Date.parse(sp.credentialsActiveSince) : NaN;
   checks.push(
-    f.recentSignatureVerifiedCallbacks === undefined
+    sp === undefined
       ? check("signing_proven", "unknown", "no evidence that this deployment's base URL and token validate real Twilio signatures")
-      : f.recentSignatureVerifiedCallbacks > 0
-        ? check("signing_proven", "pass", `${f.recentSignatureVerifiedCallbacks} recent signature-verified delivery callbacks on the same base and token`)
-        : check("signing_proven", "unknown", "no recent signature-verified callbacks to prove the base URL and token"),
+      : Number.isNaN(activeSince)
+        ? check("signing_proven", "unknown", "when the current token and base became active is not read: a callback cannot be tied to them")
+        : Number.isNaN(lastVerified)
+          ? check("signing_proven", "unknown", "no signature-verified callback observed to prove the base URL and token")
+          : lastVerified > activeSince
+            ? check("signing_proven", "pass", "a signature-verified delivery callback arrived after the current token and base became active")
+            : check("signing_proven", "unknown", "every signature-verified callback predates the current token or base: wait for one under the current credentials"),
   );
 
   checks.push(
@@ -380,20 +417,32 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
   );
 
   // PROPAGATION: only meaningful once the Rules are read (unread Rules already
-  // block). Transient, so it is unknown ("wait"), never a misconfiguration.
+  // block). In flight it is unknown ("wait"); a terminal FAILED or CANCELLED
+  // Operation is a failure, since waiting cannot make it take effect.
   if (rules !== undefined) {
     const p = f.webhookPropagation;
     const PROPAGATION_SECONDS = 60;
+    const statuses = p?.ruleOperationStatuses ?? null;
+    const terminal = (statuses ?? []).filter((st) => st === "FAILED" || st === "CANCELLED");
+    const unrecognised = (statuses ?? []).filter((st) => !["PENDING", "RUNNING", "COMPLETED", "FAILED", "CANCELLED"].includes(st));
     checks.push(
-      p?.ruleOperationsCompleted === true && p.secondsSinceLastConfigChange !== null && p.secondsSinceLastConfigChange >= PROPAGATION_SECONDS
-        ? check("webhook_propagation", "pass", "Rule Operations COMPLETED and the configuration has been unchanged for at least 60 s")
-        : check(
+      terminal.length > 0
+        ? check(
             "webhook_propagation",
-            "unknown",
-            p === undefined || p.ruleOperationsCompleted === null || p.secondsSinceLastConfigChange === null
-              ? "Webhooks configuration propagation not read: confirm Rule Operations are COMPLETED and 60 s have passed since the last change"
-              : "Webhooks configuration still propagating (an Operation is not COMPLETED, or less than 60 s since the last change): wait, then re-read",
-          ),
+            "fail",
+            `a Rule Operation ended ${terminal.join(", ")}: that change will never take effect. Read the Operation's error, fix and re-apply the Rule, then re-read`,
+          )
+        : p === undefined || statuses === null || p.secondsSinceLastConfigChange === null
+          ? check("webhook_propagation", "unknown", "Webhooks configuration propagation not read: confirm Rule Operations are COMPLETED and 60 s have passed since the last change")
+          : unrecognised.length > 0
+            ? check("webhook_propagation", "unknown", `unrecognised Rule Operation status ${unrecognised.join(", ")}: re-read`)
+            : statuses.every((st) => st === "COMPLETED") && p.secondsSinceLastConfigChange >= PROPAGATION_SECONDS
+              ? check("webhook_propagation", "pass", "Rule Operations COMPLETED and the configuration has been unchanged for at least 60 s")
+              : check(
+                  "webhook_propagation",
+                  "unknown",
+                  "Webhooks configuration still propagating (an Operation is PENDING or RUNNING, or less than 60 s since the last change): wait, then re-read",
+                ),
     );
   }
 
@@ -532,12 +581,19 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
         : check("studio_mapping", "fail", "the service maps to another studio, or to none"),
   );
 
+  const stop = f.liveStopObservation;
   checks.push(
-    f.stopForwardedToWebhook === undefined
-      ? check("stop_forwarded", "unknown", "STOP forwarding by the service's opt-out handling not yet observed (first approved live verification)")
-      : f.stopForwardedToWebhook
-        ? check("stop_forwarded", "pass", "a live STOP to the studio number reached the route and stamped phone-wide")
-        : check("stop_forwarded", "fail", "the service consumed STOP without forwarding it to Hone"),
+    stop === undefined
+      ? check("stop_forwarded", "unknown", "STOP suppression not yet observed (first approved live verification)")
+      : stop.reachedRoute === false
+        ? check("stop_forwarded", "fail", "the service consumed STOP without forwarding it to Hone")
+        : stop.routeStatus !== null && stop.routeStatus !== 200
+          ? check("stop_forwarded", "fail", `the route answered ${stop.routeStatus} to the STOP: it was forwarded but not accepted, so nothing was suppressed`)
+          : stop.routeStatus === 200 && stop.phoneWideOptOutStamped === false
+            ? check("stop_forwarded", "fail", "the route accepted the STOP but no phone-wide opt-out was stamped")
+            : stop.reachedRoute === true && stop.routeStatus === 200 && stop.phoneWideOptOutStamped === true
+              ? check("stop_forwarded", "pass", "a live STOP to the studio number was accepted (200) and stamped the phone-wide opt-out")
+              : check("stop_forwarded", "unknown", "the live STOP's delivery, response status or phone-wide stamp was not read"),
   );
 
   // The URL #863's sender controls would configure and require, from the same

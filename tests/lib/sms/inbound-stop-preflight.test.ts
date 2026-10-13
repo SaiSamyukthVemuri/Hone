@@ -17,7 +17,8 @@ const ACCOUNT = `AC${"1".repeat(32)}`;
 
 const allProven = (): InboundStopFacts => ({
   env: { TWILIO_WEBHOOK_BASE_URL: BASE, TWILIO_AUTH_TOKEN: "x", NEXT_PUBLIC_APP_ORIGIN: BASE },
-  recentSignatureVerifiedCallbacks: 16,
+  // A signature-verified callback after the current token and base went live.
+  signatureProof: { lastVerifiedCallbackAt: "2026-10-12T10:00:00Z", credentialsActiveSince: "2026-10-01T00:00:00Z" },
   endpointProbe: { status: 405, redirectedTo: null },
   service: {
     inboundRequestUrl: URL_RETRY,
@@ -33,11 +34,12 @@ const allProven = (): InboundStopFacts => ({
   // No exact, prefix or default Webhook Rule matches the inbound URL.
   webhookRules: { matched: false },
   // The Webhooks configuration has settled (Operations COMPLETED, unchanged >= 60 s).
-  webhookPropagation: { ruleOperationsCompleted: true, secondsSinceLastConfigChange: 3600 },
+  webhookPropagation: { ruleOperationStatuses: ["COMPLETED"], secondsSinceLastConfigChange: 3600 },
   honeAccountSid: ACCOUNT,
   mappedStudioId: "studio-b",
   expectedStudioId: "studio-b",
-  stopForwardedToWebhook: true,
+  // The approved live STOP was accepted and stamped phone-wide.
+  liveStopObservation: { reachedRoute: true, routeStatus: 200, phoneWideOptOutStamped: true },
 });
 
 describe("expectedInboundWebhookUrl", () => {
@@ -71,15 +73,18 @@ describe("evaluateInboundStopPreflight", () => {
   it("TODAY'S PRODUCTION FACTS: not ready, and every unread studio-service fact is a blocker", () => {
     // Read-only, 2026-10-12: base and token are set (values not readable), 16
     // recent signature-verified callbacks, GET 405 on the apex URL, and no
-    // studio sender or service exists yet.
+    // studio sender or service exists yet. When the current token and base
+    // became active was NOT read, so the callbacks prove nothing yet (Codex P1
+    // 4251931839).
     const r = evaluateInboundStopPreflight({
       env: { TWILIO_WEBHOOK_BASE_URL: undefined, TWILIO_AUTH_TOKEN: "present" },
-      recentSignatureVerifiedCallbacks: 16,
+      signatureProof: { lastVerifiedCallbackAt: "2026-10-12T10:00:00Z", credentialsActiveSince: null },
       endpointProbe: { status: 405, redirectedTo: null },
     });
     expect(r.ready).toBe(false);
     expect(r.blockers).toEqual([
       "base_url",
+      "signing_proven",
       "inbound_reaches",
       "webhook_rules",
       "signing_account",
@@ -87,7 +92,7 @@ describe("evaluateInboundStopPreflight", () => {
       "stop_forwarded",
       "one_base",
     ]);
-    expect(r.checks.find((c) => c.id === "signing_proven")?.status).toBe("pass");
+    expect(r.checks.find((c) => c.id === "signing_proven")?.status).toBe("unknown");
     expect(r.checks.find((c) => c.id === "endpoint_reachable")?.status).toBe("pass");
   });
 
@@ -107,8 +112,8 @@ describe("evaluateInboundStopPreflight", () => {
     ["a redirecting endpoint", (f) => (f.endpointProbe = { status: 307, redirectedTo: "https://hone.example/x" }), "endpoint_reachable"],
     ["an endpoint answering 404", (f) => (f.endpointProbe = { status: 404, redirectedTo: null }), "endpoint_reachable"],
     ["an empty token", (f) => (f.env = { ...f.env, TWILIO_AUTH_TOKEN: "" }), "auth_token"],
-    ["STOP consumed by the service", (f) => (f.stopForwardedToWebhook = false), "stop_forwarded"],
-    ["no signature-verified callbacks", (f) => (f.recentSignatureVerifiedCallbacks = 0), "signing_proven"],
+    ["STOP consumed by the service", (f) => (f.liveStopObservation = { reachedRoute: false, routeStatus: null, phoneWideOptOutStamped: null }), "stop_forwarded"],
+    ["no signature-verified callbacks", (f) => (f.signatureProof = { lastVerifiedCallbackAt: null, credentialsActiveSince: "2026-10-01T00:00:00Z" }), "signing_proven"],
     ["the base not observed (controls fall back to the app origin, the route to the request URL)", (f) => (f.env = { ...f.env, TWILIO_WEBHOOK_BASE_URL: undefined }), ["base_url", "inbound_reaches", "one_base"]],
   ];
   for (const [why, mutate, ids] of failing) {
@@ -550,10 +555,13 @@ describe("evaluateInboundStopPreflight", () => {
     describe("PROPAGATION: a new Rule or Setting is not trusted until it has reached the delivery plane (Codex P1 4259214614)", () => {
       const prop = (f: InboundStopFacts) => evaluateInboundStopPreflight(f).checks.find((c) => c.id === "webhook_propagation");
       for (const [why, p, detail] of [
-        ["an Operation not yet COMPLETED", { ruleOperationsCompleted: false, secondsSinceLastConfigChange: 3600 }, /still propagating/],
-        ["a change 30 s ago", { ruleOperationsCompleted: true, secondsSinceLastConfigChange: 30 }, /still propagating/],
-        ["Operations not read", { ruleOperationsCompleted: null, secondsSinceLastConfigChange: 3600 }, /not read/],
-        ["the last change time not read", { ruleOperationsCompleted: true, secondsSinceLastConfigChange: null }, /not read/],
+        ["an Operation PENDING", { ruleOperationStatuses: ["COMPLETED", "PENDING"], secondsSinceLastConfigChange: 3600 }, /still propagating/],
+        ["an Operation RUNNING", { ruleOperationStatuses: ["RUNNING"], secondsSinceLastConfigChange: 3600 }, /still propagating/],
+        ["a change 30 s ago", { ruleOperationStatuses: ["COMPLETED"], secondsSinceLastConfigChange: 30 }, /still propagating/],
+        ["a Setting changed 30 s ago, no Rule written", { ruleOperationStatuses: [], secondsSinceLastConfigChange: 30 }, /still propagating/],
+        ["Operations not read", { ruleOperationStatuses: null, secondsSinceLastConfigChange: 3600 }, /not read/],
+        ["the last change time not read", { ruleOperationStatuses: ["COMPLETED"], secondsSinceLastConfigChange: null }, /not read/],
+        ["an unrecognised status", { ruleOperationStatuses: ["QUEUED"], secondsSinceLastConfigChange: 3600 }, /unrecognised/],
       ] as const) {
         it(`${why}: blocked as unknown ("wait"), never a misconfiguration`, () => {
           const f = allProven();
@@ -567,8 +575,31 @@ describe("evaluateInboundStopPreflight", () => {
 
       it("exactly 60 s and COMPLETED: settled", () => {
         const f = allProven();
-        f.webhookPropagation = { ruleOperationsCompleted: true, secondsSinceLastConfigChange: 60 };
+        f.webhookPropagation = { ruleOperationStatuses: ["COMPLETED"], secondsSinceLastConfigChange: 60 };
         expect(prop(f)?.status).toBe("pass");
+      });
+
+      it("no Rule written and settled for 60 s: settled", () => {
+        const f = allProven();
+        f.webhookPropagation = { ruleOperationStatuses: [], secondsSinceLastConfigChange: 60 };
+        expect(prop(f)?.status).toBe("pass");
+      });
+
+      for (const st of ["FAILED", "CANCELLED"]) {
+        it(`a ${st} Operation is a FAILURE, not a wait, even long after the change (Codex P2 4259396130)`, () => {
+          const f = allProven();
+          f.webhookPropagation = { ruleOperationStatuses: ["COMPLETED", st], secondsSinceLastConfigChange: 86400 };
+          const r = evaluateInboundStopPreflight(f);
+          expect(r.blockers).toEqual(["webhook_propagation"]);
+          expect(prop(f)?.status).toBe("fail");
+          expect(prop(f)?.detail).toMatch(new RegExp(`ended ${st}.*re-apply`));
+        });
+      }
+
+      it("a terminal Operation fails even when the change time was not read", () => {
+        const f = allProven();
+        f.webhookPropagation = { ruleOperationStatuses: ["FAILED"], secondsSinceLastConfigChange: null };
+        expect(prop(f)?.status).toBe("fail");
       });
 
       it("propagation facts absent: unknown", () => {
@@ -698,5 +729,82 @@ describe("evaluateInboundStopPreflight", () => {
     const c = evaluateInboundStopPreflight(f).checks.find((x) => x.id === "inbound_reaches");
     expect(c).toMatchObject({ status: "fail" });
     expect(c?.detail).toMatch(/no sms_url/);
+  });
+});
+
+describe("the base URL is used RAW, exactly as the route verifies (Codex P2 4251745257)", () => {
+  for (const base of ["https://hone.example:443", "https://Hone.Example"]) {
+    it(`${base}: the expected URL keeps the base verbatim, and the configured URL agrees`, () => {
+      const url = `${base}/api/twilio/inbound-sms`;
+      expect(expectedInboundWebhookUrl({ TWILIO_WEBHOOK_BASE_URL: base })).toEqual({ ok: true, url });
+      const f = allProven();
+      f.env = { ...f.env, TWILIO_WEBHOOK_BASE_URL: base };
+      f.service!.inboundRequestUrl = `${url}#rp=5xx`;
+      const r = evaluateInboundStopPreflight(f);
+      expect(r.blockers).toEqual([]);
+    });
+
+    it(`${base}: a service naming the normalised origin instead is refused`, () => {
+      const f = allProven();
+      f.env = { ...f.env, TWILIO_WEBHOOK_BASE_URL: base };
+      f.service!.inboundRequestUrl = `${URL_OK}#rp=5xx`;
+      expect(evaluateInboundStopPreflight(f).blockers).toEqual(["inbound_reaches"]);
+    });
+  }
+});
+
+describe("signing proof must postdate the CURRENT token and base (Codex P1 4251931839)", () => {
+  const sign = (f: InboundStopFacts) => evaluateInboundStopPreflight(f).checks.find((c) => c.id === "signing_proven");
+  for (const [why, proof] of [
+    ["callbacks only before a token rotation", { lastVerifiedCallbackAt: "2026-10-12T10:00:00Z", credentialsActiveSince: "2026-10-12T11:00:00Z" }],
+    ["the newest callback at the very instant of the change", { lastVerifiedCallbackAt: "2026-10-12T11:00:00Z", credentialsActiveSince: "2026-10-12T11:00:00Z" }],
+    ["the activation time not read", { lastVerifiedCallbackAt: "2026-10-12T10:00:00Z", credentialsActiveSince: null }],
+    ["an unparseable activation time", { lastVerifiedCallbackAt: "2026-10-12T10:00:00Z", credentialsActiveSince: "yesterday" }],
+    ["no callback observed", { lastVerifiedCallbackAt: null, credentialsActiveSince: "2026-10-12T11:00:00Z" }],
+  ] as const) {
+    it(`${why}: unknown, a blocker`, () => {
+      const f = allProven();
+      f.signatureProof = { ...proof };
+      expect(sign(f)?.status).toBe("unknown");
+      expect(evaluateInboundStopPreflight(f).blockers).toEqual(["signing_proven"]);
+    });
+  }
+
+  it("a callback one second after the current credentials went live: proven", () => {
+    const f = allProven();
+    f.signatureProof = { lastVerifiedCallbackAt: "2026-10-12T11:00:01Z", credentialsActiveSince: "2026-10-12T11:00:00Z" };
+    expect(sign(f)?.status).toBe("pass");
+  });
+
+  it("no proof gathered: unknown", () => {
+    const f = allProven();
+    f.signatureProof = undefined;
+    expect(sign(f)?.status).toBe("unknown");
+  });
+});
+
+describe("stop_forwarded requires OBSERVED suppression, not mere forwarding (Codex P1 4251745248)", () => {
+  const stop = (f: InboundStopFacts) => evaluateInboundStopPreflight(f).checks.find((c) => c.id === "stop_forwarded");
+  for (const [why, obs, status] of [
+    ["forwarded but rejected 403 (signature)", { reachedRoute: true, routeStatus: 403, phoneWideOptOutStamped: null }, "fail"],
+    ["forwarded but the route errored 500", { reachedRoute: true, routeStatus: 500, phoneWideOptOutStamped: false }, "fail"],
+    ["accepted 200 but nothing stamped", { reachedRoute: true, routeStatus: 200, phoneWideOptOutStamped: false }, "fail"],
+    ["consumed by the service", { reachedRoute: false, routeStatus: null, phoneWideOptOutStamped: null }, "fail"],
+    ["forwarded, status not read", { reachedRoute: true, routeStatus: null, phoneWideOptOutStamped: true }, "unknown"],
+    ["accepted 200, stamp not read", { reachedRoute: true, routeStatus: 200, phoneWideOptOutStamped: null }, "unknown"],
+    ["delivery not read", { reachedRoute: null, routeStatus: 200, phoneWideOptOutStamped: true }, "unknown"],
+  ] as const) {
+    it(`${why}: ${status}, a blocker`, () => {
+      const f = allProven();
+      f.liveStopObservation = { ...obs };
+      expect(stop(f)?.status).toBe(status);
+      expect(evaluateInboundStopPreflight(f).blockers).toEqual(["stop_forwarded"]);
+    });
+  }
+
+  it("not yet observed: unknown", () => {
+    const f = allProven();
+    f.liveStopObservation = undefined;
+    expect(stop(f)?.status).toBe("unknown");
   });
 });
