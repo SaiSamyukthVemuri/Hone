@@ -33,12 +33,13 @@ This section previously carried a "(through 2026-07-27)" heading while containin
 
 **Coverage gap, stated rather than hidden:** this table covers PRs **#357–#479**, **#601**,
 **#629**, **#630**, and — added by the 2026-08-26 reconciliation and kept current through each
-production refresh since — **every** first-parent merge in `b9e0003f..d5efa20a`, all
-**138** PR merges among them (**#632–#827**, plus **#631**, whose number sits below that floor but
+production refresh since — **every** first-parent merge in `b9e0003f..6f7281bb`, all
+**140** PR merges among them (**#632–#875**, plus **#631**, whose number sits below that floor but
 whose merge does not — see below). ⚠️ **EXTENDED 2026-10-12 by CANON-REFRESH-2026-10-12:**
 the range previously ended at `410e5039` (81 merges, the 2026-09-21 extension described next);
 **56** rows were backfilled from the first-parent graph and each merge's own diff, and the
-pre-existing `#773` row was moved, unchanged, to its first-parent position. ⚠️ **EXTENDED 2026-09-21 by PROD-TRUTH-01:** the
+pre-existing `#773` row was moved, unchanged, to its first-parent position. ⚠️ **EXTENDED 2026-10-13 by CANON-REFRESH-2026-10-13:** two rows added, `#834` and `#875`,
+taking the range through `6f7281bb` (140 merges). ⚠️ **EXTENDED 2026-09-21 by PROD-TRUTH-01:** the
 range previously ended at `bf6f09c4` and claimed 29 merges, so every production merge after that
 point was outside the document's own stated coverage and therefore invisible to it — a range
 complete at both ends can still be hollow. **45** rows were backfilled from the first-parent graph
@@ -61,7 +62,7 @@ historical completeness. Do not read a missing row as "not shipped".
 
 **The block is complete, not sampled — and completeness is over the GIT RANGE, not over a
 span of PR numbers.** It was enumerated mechanically
-(`git log --merges --first-parent b9e0003f..d5efa20a`, 138 merges; it was `b9e0003f..410e5039`, 81 merges, at the 2026-09-21 extension) rather than recalled, so the
+(`git log --merges --first-parent b9e0003f..6f7281bb`, 140 merges; 138 through `d5efa20a` on 2026-10-12; it was `b9e0003f..410e5039`, 81 merges, at the 2026-09-21 extension) rather than recalled, so the
 current state can be reconstructed from shipped history without a gap. Each row records whether
 the merge was **runtime-bearing**, decided by changed-path analysis rather than by the PR title.
 
@@ -74,6 +75,8 @@ enumeration of `b9e0003f..bf6f09c4` while omitting `#631` entirely.
 
 | PR | Migration | Status | What shipped | Notes |
 |---|---|---|---|---|
+| **#834** | none | **Merged · in the production build · deployed 2026-10-13** | PAY-CCY-01 (#824 US/USD 1/4): record a Stripe object only when its money equals the prepared attempt | Merged `6f7281bb1b`, Vercel deployment `2Q9aZM1QYN7WMn76MSxTBrFEaex5` success `2026-10-13T14:18:38Z`. 5 application files (`lib/billing/`, `lib/stripe/`), no migration. **Payment-integrity checks are live.** It changes no studio currency or Stripe configuration; **US/USD jurisdiction, accounts and activation remain pending** (#833, #836, #839, #847). |
+| **#875** | none | **Documentation / tests / CI only — NOT runtime-bearing** | docs(production): canonical snapshot refresh to d5efa20a (CANON-REFRESH-2026-10-12) | Merged `f91cdf0354`. 3 documentation files, 0 application files, no migration. |
 | **#827** | records applied **0211** | **Merged · in the production build** | G3: a studio member cannot manufacture a client's SMS consent or clear their STOP (0211, draft) | Merged `d5efa20ade`. **Row backfilled 2026-10-12 by CANON-REFRESH-2026-10-12**, from the first-parent graph and the merge's own diff: 2 application file(s) (`app/`, `lib/`, `components/`), 3 file(s) by A3's composed deployed predicate, migration(s) 0211. Runtime ENABLEMENT was not re-verified for this backfill and is not claimed here. |
 | **#821** | none | **Merged · in the production build** | MKT-03: homepage film opening and a cleanup of the whole marketing site | Merged `6c5eac8053`. **Row backfilled 2026-10-12 by CANON-REFRESH-2026-10-12**, from the first-parent graph and the merge's own diff: 30 application file(s) (`app/`, `lib/`, `components/`), 30 file(s) by A3's composed deployed predicate, no migration. Runtime ENABLEMENT was not re-verified for this backfill and is not claimed here. |
 | **#822** | records applied **0210** | **Merged · in the production build** | feat(waitlist): SMS-04 — required phone on new signups (wording v2) and the one join acknowledgement text (0210) | Merged `3ba7c07e47`. **Row backfilled 2026-10-12 by CANON-REFRESH-2026-10-12**, from the first-parent graph and the merge's own diff: 12 application file(s) (`app/`, `lib/`, `components/`), 13 file(s) by A3's composed deployed predicate, migration(s) 0210. Runtime ENABLEMENT was not re-verified for this backfill and is not claimed here. |
