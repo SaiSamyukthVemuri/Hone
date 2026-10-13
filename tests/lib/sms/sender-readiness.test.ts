@@ -72,8 +72,8 @@ describe("before there is a studio sender", () => {
 describe("the destination matrix (Codex P2 4244008035, 4244008038)", () => {
   const SENDERS = { CA: "+16045550123", US: "+12125550123", toll_free: "+18885550123" } as const;
   const EXPECTED = {
-    CA: { CA: "none", US: "a2p_10dlc" },
-    US: { CA: "none", US: "a2p_10dlc" },
+    CA: { CA: "not_canadian_a2p_route", US: "a2p_10dlc" },
+    US: { CA: "not_canadian_a2p_route", US: "a2p_10dlc" },
     toll_free: { CA: "toll_free_verification", US: "toll_free_verification" },
   } as const;
   const STATES: Array<[UsRegistrationEvidence, string]> = [
@@ -98,8 +98,8 @@ describe("the destination matrix (Codex P2 4244008035, 4244008038)", () => {
           if ((evidence as { state: string }).state === "unreadable") continue;
           const r = destinationReadiness(destination, row({ phone_number: phone }), evidence);
           expect(r.senderCountry).toBe(kind);
-          // No registration needed: Active whatever the evidence says.
-          expect(r.state, `${evidence.state}`).toBe(rule === "none" ? "active" : ifRequired);
+          // Not an eligible Canadian A2P route: blocked whatever the evidence says.
+          expect(r.state, `${evidence.state}`).toBe(rule === "not_canadian_a2p_route" ? "requires_information" : ifRequired);
         }
       });
     }
@@ -113,8 +113,34 @@ describe("the destination matrix (Codex P2 4244008035, 4244008038)", () => {
     expect(unregistered.detail).toMatch(/not registered by itself/);
   });
 
-  it("a US long code needs no 10DLC for Canadian recipients", () => {
-    expect(destinationReadiness("CA", row({ phone_number: SENDERS.US }), NOT_RECORDED)).toMatchObject({ state: "active", senderCountry: "US" });
+  // Codex P2 4253590276 / Codex decision on #841: transport capability, and US
+  // 10DLC not applying to Canada, are NOT Canadian A2P readiness.
+  it("a Canadian or US long code is never Active for Canadian recipients, even with complete US registration", () => {
+    for (const phone of [SENDERS.CA, SENDERS.US]) {
+      for (const evidence of [NOT_RECORDED, { state: "approved" } as UsRegistrationEvidence]) {
+        const r = destinationReadiness("CA", row({ phone_number: phone }), evidence);
+        expect(r.state).toBe("requires_information");
+        expect(r.actor).toBe("support");
+        // Source-qualified, not a blanket legal conclusion.
+        expect(r.detail).toMatch(/Twilio's guidance/);
+        expect(r.detail).toMatch(/verified toll-free/);
+        expect(r.detail).not.toMatch(/illegal|unlawful|prohibited by law/i);
+      }
+    }
+  });
+
+  it("a VERIFIED toll-free number is the Canadian route; unverified or pending it is not", () => {
+    expect(destinationReadiness("CA", row({ phone_number: SENDERS.toll_free }), { state: "approved" }).state).toBe("active");
+    for (const evidence of [NOT_RECORDED, { state: "pending" } as UsRegistrationEvidence, { state: "rejected" } as UsRegistrationEvidence]) {
+      expect(destinationReadiness("CA", row({ phone_number: SENDERS.toll_free }), evidence).state).not.toBe("active");
+    }
+  });
+
+  it("US registration gates are unchanged: a registered long code still serves US recipients", () => {
+    for (const phone of [SENDERS.CA, SENDERS.US]) {
+      expect(destinationReadiness("US", row({ phone_number: phone }), { state: "approved" }).state).toBe("active");
+      expect(destinationReadiness("US", row({ phone_number: phone }), { state: "pending" }).state).toBe("pending");
+    }
   });
 
   it("a toll-free number needs verification for BOTH destinations", () => {
@@ -146,7 +172,9 @@ describe("the panel", () => {
       createElement(SmsSenderReadinessPanel, { rows: studioSenderReadiness(row({ phone_number: "+16045550123" }), NOT_RECORDED) }),
     );
     expect(html).toContain('data-testid="sms-readiness-CA"');
-    expect(html).toContain('data-readiness-state="active"');
+    // A Canadian long code is not an eligible Canadian A2P route (Codex P2 4253590276).
+    expect(html).not.toContain('data-readiness-state="active"');
+    expect(html).toContain("verified toll-free number for Canadian clients");
     expect(html).toContain('data-testid="sms-readiness-US"');
     expect(html).toContain('data-readiness-state="requires_information"');
     expect(html).toContain("Canadian recipients");
