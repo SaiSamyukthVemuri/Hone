@@ -117,6 +117,14 @@ const EXISTING_CLIENT_NO_MATCH_ERROR =
 // Returned when client_type=new attempts to book a service that is
 // not a consultation. Explicit phrasing so the visitor understands
 // the constraint without exposing any record state.
+// G1. Shown when an explicitly chosen practitioner cannot be honoured: the
+// studio's public-assignment flag is off, or the choice no longer validates
+// (deactivated, unpinned from the service, or the eligibility read failed).
+// It names no practitioner and leaks no studio configuration, and it asks for
+// a retry rather than silently booking someone else.
+const PRACTITIONER_CHOICE_UNAVAILABLE_ERROR =
+  "That practitioner is no longer available for this service. Please choose a time again.";
+
 const NEW_CLIENT_MUST_BOOK_CONSULTATION_ERROR =
   "New clients must book a consultation first.";
 
@@ -233,6 +241,27 @@ export async function fetchPublicPractitionerOptionsAction(params: {
   if (!ready.bookable) {
     return { ok: false, error: UNAVAILABLE_PUBLIC_BOOKING_MESSAGE };
   }
+  // G1 — THE PUBLIC-ASSIGNMENT KILL SWITCH, AND THE WHOLE SURFACE HANGS OFF IT.
+  //
+  // `practitioner_capacity_booking_enabled` (0136) is the operator's control
+  // over whether the PUBLIC path may assign a practitioner at all. It defaults
+  // FALSE, and `capacity=false + booking=true` is rejected by a CHECK
+  // (0136:52), so this one flag is the strictest correct gate: booking implies
+  // capacity.
+  //
+  // Returning NO OPTIONS when it is off is what disables the picker, because
+  // the control renders only when there is more than one option. The gate lives
+  // HERE, server-side, and not only in the form: a client cannot grant itself
+  // the surface, and `submitPublicBookingAction` enforces the same flag again
+  // at commit.
+  //
+  // Without this, deploying G1 would have ACTIVATED public practitioner
+  // selection on every open new-client studio — including every LEGACY studio,
+  // where both flags are false — which is exactly the activation this lane was
+  // told not to perform. Caught in review, not by a test.
+  if (studio.practitioner_capacity_booking_enabled !== true) {
+    return { ok: true, practitioners: [] };
+  }
   return {
     ok: true,
     practitioners: await loadEligiblePractitioners(admin, studio.id, params.serviceId),
@@ -308,7 +337,14 @@ export async function fetchPublicSlotsAction(params: {
   // back to "any available" rather than erroring — the picker refines a page
   // that must keep working, and the command refuses independently at commit.
   let scopedPractitionerId: string | null = null;
-  if (params.practitionerId) {
+  if (
+    params.practitionerId &&
+    // The same kill switch as the options action. If public assignment is off,
+    // a submitted id buys NOTHING: scoping the grid to a practitioner the
+    // commit path will then ignore is the page/command disagreement this lane
+    // exists to remove.
+    studio.practitioner_capacity_booking_enabled === true
+  ) {
     const eligible = await loadEligiblePractitioners(
       admin,
       studio.id,
@@ -886,8 +922,33 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // submitted id is never trusted: it must still be one of the options this
   // studio+service would offer, and an unknown or ineligible one falls back to
   // "any available" exactly as an unpicked booking behaves.
+  //
+  // TWO P1s FROM REVIEW CHANGED THIS BLOCK, and both were about what happens
+  // when the submitted id does not validate.
+  //
+  // (1) THE KILL SWITCH. If `practitioner_capacity_booking_enabled` (0136) is
+  //     off, the public path may not assign a practitioner at all, so a
+  //     submitted id is refused outright rather than committed. The options
+  //     action returns nothing in that state, so a well-behaved form cannot
+  //     submit one — which is precisely why the server must check too.
+  //
+  // (2) A STALE CHOICE IS NOW AN ERROR, NOT A SILENT DOWNGRADE. This used to
+  //     fall back to "any available", which reads as forgiving and is worse:
+  //     the visitor EXPLICITLY picked someone, and the fallback let the
+  //     booking succeed with a DIFFERENT practitioner — the active owner —
+  //     without telling them. A deactivated or unpinned practitioner, or a
+  //     transient failure of the eligibility query, both land here. Refusing
+  //     lets them choose again; substituting silently books the wrong person.
+  //     An ABSENT id still means "any available", which is untouched.
   let chosenPractitionerId: string | null = null;
   if (clientType === "new" && submittedPractitionerId) {
+    if (studio.practitioner_capacity_booking_enabled !== true) {
+      logInternalBookingError("public_booking_practitioner_assignment_disabled", {
+        studioId: studio.id,
+        serviceId,
+      });
+      return { ok: false, error: PRACTITIONER_CHOICE_UNAVAILABLE_ERROR };
+    }
     const eligible = await loadEligiblePractitioners(admin, studio.id, serviceId);
     if (eligible.some((o) => o.id === submittedPractitionerId)) {
       chosenPractitionerId = submittedPractitionerId;
@@ -896,6 +957,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
         studioId: studio.id,
         serviceId,
       });
+      return { ok: false, error: PRACTITIONER_CHOICE_UNAVAILABLE_ERROR };
     }
   }
 

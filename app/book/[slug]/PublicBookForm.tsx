@@ -411,8 +411,19 @@ export function PublicBookForm({
   useEffect(() => {
     let cancelled = false;
     setPractitionerId("");
+    // G1 — CLEAR THE PREVIOUS SERVICE'S OPTIONS BEFORE THE REQUEST, NOT AFTER.
+    //
+    // Resetting only `practitionerId` left the PREVIOUS service's options
+    // rendered for the whole round trip. A visitor who picked one of those
+    // stale names in that window submitted a practitioner who is not offered
+    // for the service now selected — and the response replaced the options
+    // without ever reconciling the id that was already chosen. The server
+    // refuses such an id outright now, but showing a choice that is already
+    // invalid is the page telling the visitor something untrue, so the stale
+    // set goes immediately and the picker is simply absent until the real
+    // options land.
+    setPractitionerOptions([]);
     if (!pickerApplies || !serviceId) {
-      setPractitionerOptions([]);
       return;
     }
     void (async () => {
@@ -420,6 +431,13 @@ export function PublicBookForm({
       if (cancelled) return;
       const options = r.ok ? r.practitioners : [];
       setPractitionerOptions(options);
+      // And reconcile any id chosen while the request was in flight against
+      // what actually came back. The clear above makes this hard to reach, but
+      // "hard to reach" is not "impossible", and the cost of being wrong is a
+      // submission the server now rejects outright.
+      setPractitionerId((current) =>
+        current && !options.some((o) => o.id === current) ? "" : current,
+      );
       // G1 — THE SOLE-ELIGIBLE PRACTITIONER IS **NOT** AUTO-ASSIGNED HERE, and
       // this is a deliberate retreat from a fix that was already written.
       //

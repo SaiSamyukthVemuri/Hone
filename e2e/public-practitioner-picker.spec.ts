@@ -283,6 +283,34 @@ test("the picker offers only active, service-eligible practitioners", async ({ p
   expect(labels).not.toContain(C.displayName);
 });
 
+test("the public-assignment kill switch hides the picker entirely", async ({ page }) => {
+  // THE P1 FROM REVIEW. `practitioner_capacity_booking_enabled` (0136) is the
+  // operator's control over whether the PUBLIC path may assign a practitioner
+  // at all. It defaults FALSE, so every LEGACY studio is in that state, and
+  // shipping G1 without this gate would have ACTIVATED practitioner selection
+  // on every open new-client studio — the activation this lane was told not to
+  // perform.
+  //
+  // The gate is SERVER-SIDE: fetchPublicPractitionerOptionsAction returns no
+  // options while the flag is off, and the control renders only when there is
+  // more than one. So the proof is that the picker is absent even though this
+  // studio has TWO eligible, active practitioners and the grid still works.
+  await setStudioCapacityBookingEnabled(seed.studioId, false);
+  try {
+    await page.goto(`/book/${seed.slug}`);
+    await page.getByRole("button", { name: /new client/i }).first().click();
+    await page.getByLabel("Date").fill(bookDate);
+    await page.getByLabel("Service").selectOption(serviceId);
+
+    // The grid must still load: this gate removes a CHOICE, never booking.
+    await expect(page.getByRole("button", { name: /^\d{1,2}:\d{2}/ }).first()).toBeVisible();
+    await expect(page.getByTestId("practitioner-picker")).toHaveCount(0);
+  } finally {
+    // Restore for the rest of the suite, which runs serially on one worker.
+    await setStudioCapacityBookingEnabled(seed.studioId, true);
+  }
+});
+
 test("DIFFERENT practitioners hold the SAME instant, and the DB agrees", async ({ page }) => {
   const first = await bookPublicly(page, clientOne, { practitionerName: A.displayName });
   expect(await waitForAppointments(1, page)).toHaveLength(1);
