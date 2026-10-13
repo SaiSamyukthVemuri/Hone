@@ -1441,6 +1441,52 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     return { ok: false, error: archivedClientCollisionError(studio.name) };
   }
 
+  // G1 / CODEX P2 — THE PRE-INSERT PRACTITIONER REFUSALS BELONG HERE, beside
+  // the other refusals that legitimately produce NO client row.
+  //
+  // 0225's practitioner gate now runs BEFORE the resolve-or-create (that is the
+  // P2 orphan fix), so these three results come back with `client_id` NULL BY
+  // DESIGN. The missing-client guard immediately below treats a null client as
+  // "the command did not resolve one" and returns the generic error, which made
+  // the actionable practitioner message I added further down UNREACHABLE for
+  // the primary new-client case — a new email has no `resolvedClientId` to fall
+  // back on. The mapping was dead code exactly where it mattered most.
+  //
+  // So they are answered before that guard, which is the same placement
+  // `new_client_admission_refused` and `archived_client_collision` already use
+  // for the same reason. The later mapping is KEPT, not moved: on the
+  // EXISTING-client path `resolvedClientId` is non-null, the guard never fires,
+  // and that is the branch it serves.
+  //
+  // An invitation cannot reach here: 0225's gate only fires for a NON-NULL
+  // practitioner, and the action nulls the practitioner on an invited booking
+  // (an offer already names its clinician). The `consumedInvitationId` check is
+  // retained anyway so that if that ever changes, the invitation accounting
+  // keeps its existing path instead of being silently bypassed.
+  if (
+    !rpcErr &&
+    !consumedInvitationId &&
+    (rawCommandResult === "practitioner_assignment_disabled" ||
+      rawCommandResult === "invalid_practitioner" ||
+      rawCommandResult === "not_eligible")
+  ) {
+    logInternalBookingError("public_booking_practitioner_refused_pre_insert", {
+      code: rawCommandResult,
+      studioId: studio.id,
+    });
+    // Only the switch case is the visitor's to act on — choose again, or take
+    // "any available". A practitioner who is no longer valid, or not eligible
+    // for this service, is an operator-visible state and keeps the generic
+    // copy, exactly as it does in the later group.
+    return {
+      ok: false,
+      error:
+        rawCommandResult === "practitioner_assignment_disabled"
+          ? PRACTITIONER_CHOICE_UNAVAILABLE_ERROR
+          : PUBLIC_BOOKING_GENERIC_ERROR,
+    };
+  }
+
   // The id the COMMAND used - resolved under the lock, or created by it. For an
   // existing client it is the one this action already resolved.
   //
