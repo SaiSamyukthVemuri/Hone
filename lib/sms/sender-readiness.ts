@@ -21,12 +21,26 @@ import { RECOVERY_ROUTE_BY_ERROR_CODE, type SenderRead } from "./sender-status";
 // answer is never reported as any of the six.
 //
 // WHAT "ACTIVE" REQUIRES: ONE MATRIX, sender kind x destination, taken from
-// Twilio's own documentation (checked 2026-10-12; see DESTINATION_RULES):
+// Twilio's own documentation (checked 2026-10-12, Canada re-checked 2026-10-13;
+// see DESTINATION_RULES):
 //
-//                         Canadian recipients     US recipients
-//   Canadian long code    no registration         A2P 10DLC registration
-//   US long code          no registration         A2P 10DLC registration
-//   Toll-free             toll-free verification  toll-free verification
+//                         Canadian recipients          US recipients
+//   Canadian long code    not an eligible A2P route    A2P 10DLC registration
+//   US long code          not an eligible A2P route    A2P 10DLC registration
+//   Toll-free             toll-free verification       toll-free verification
+//
+//   * CANADA (Codex P2 4253590276; Codex decision on #841). Hone's appointment
+//     and waitlist texts are application-to-person (A2P). Twilio's guidance
+//     is that Canadian carriers restrict A2P traffic from long codes
+//     (twilio.com/docs/messaging/guides/best-practices-at-scale), and its
+//     Canada guidelines, while listing domestic long-code capability,
+//     recommend short codes or VERIFIED toll-free numbers for A2P
+//     (twilio.com/en-us/guidelines/ca/sms). So a long code's TRANSPORT
+//     capability, and US 10DLC registration not applying to Canada, are NOT
+//     Canadian A2P readiness: such a sender is "Requires information" for
+//     Canadian recipients, whatever its evidence. This is a readiness gate
+//     based on provider guidance, not a legal conclusion. It changes no live
+//     route and stops no message: nothing sends from this model.
 //
 //   * A2P 10DLC is scoped to traffic TO the US: "Anyone sending SMS/MMS
 //     messages over a 10DLC number from an application to the US must
@@ -129,8 +143,16 @@ function make(
   return { destination, state, label: READINESS_LABELS[state], detail, nextAction, actor, senderCountry };
 }
 
-/** What a sender kind needs before it may text a destination. */
-export type RegistrationRequirement = "none" | "a2p_10dlc" | "toll_free_verification";
+/**
+ * What a sender kind needs before it may text a destination.
+ * `not_canadian_a2p_route`: provider guidance does not support this sender
+ * type for A2P to that destination, so NO evidence makes it ready.
+ */
+export type RegistrationRequirement =
+  | "none"
+  | "a2p_10dlc"
+  | "toll_free_verification"
+  | "not_canadian_a2p_route";
 
 /**
  * THE MATRIX (Twilio documentation, checked 2026-10-12):
@@ -147,8 +169,8 @@ export type RegistrationRequirement = "none" | "a2p_10dlc" | "toll_free_verifica
 export const DESTINATION_RULES: Readonly<
   Record<Exclude<NanpCountry, "other_nanp">, Record<DestinationCountry, RegistrationRequirement>>
 > = {
-  CA: { CA: "none", US: "a2p_10dlc" },
-  US: { CA: "none", US: "a2p_10dlc" },
+  CA: { CA: "not_canadian_a2p_route", US: "a2p_10dlc" },
+  US: { CA: "not_canadian_a2p_route", US: "a2p_10dlc" },
   toll_free: { CA: "toll_free_verification", US: "toll_free_verification" },
 };
 
@@ -284,6 +306,16 @@ export function destinationReadiness(
   }
 
   const rule = DESTINATION_RULES[senderCountry][destination];
+  if (rule === "not_canadian_a2p_route") {
+    return make(
+      destination,
+      "requires_information",
+      `Twilio's guidance is that Canadian carriers restrict automated (A2P) texts sent from long codes, and it recommends short codes or verified toll-free numbers for automated texts to Canada. Hone therefore does not treat the studio's ${SENDER_KIND_NAME[senderCountry]} as ready for automated texts to Canadian clients.`,
+      "Contact Hone support about a verified toll-free number for Canadian clients.",
+      "support",
+      senderCountry,
+    );
+  }
   if (rule === "none") {
     return make(
       destination,
