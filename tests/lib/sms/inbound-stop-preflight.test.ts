@@ -295,6 +295,11 @@ describe("evaluateInboundStopPreflight", () => {
       ["an unknown edge", "#e=mars"],
       ["a duplicated key", "#ct=500&ct=600"],
       ["an empty pair", "#ct=500&"],
+      // Stricter rules of the shared normalizer (lib/sms/webhook-base.ts, #863):
+      ["a leading zero", "#ct=0500"],
+      ["a signed number", "#rc=+1"],
+      ["a duplicated retry-policy item", "#rp=5xx,5xx"],
+      ["a duplicated edge", "#e=dublin,dublin"],
     ] as const) {
       it(`${why} (${frag}) is never certified`, () => {
         const f = allProven();

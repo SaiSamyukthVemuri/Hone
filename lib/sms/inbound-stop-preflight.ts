@@ -1,5 +1,5 @@
 import { effectiveInbound, inboundReaches } from "./inbound-routing";
-import { twilioWebhookUrl } from "./webhook-base";
+import { normalizeTwilioWebhookUrl, twilioWebhookUrl } from "./webhook-base";
 
 // ===========================================================================
 // WILLOW-STOP-PREFLIGHT-01 (#824): will a STOP sent to a STUDIO's number reach
@@ -48,55 +48,18 @@ import { twilioWebhookUrl } from "./webhook-base";
 export const INBOUND_STOP_PATH = "/api/twilio/inbound-sms";
 
 /**
- * Twilio connection overrides (twilio.com/docs/usage/webhooks/webhooks-connection-overrides,
- * checked 2026-10-13): key=value pairs joined by `&` in the URL FRAGMENT, which
- * Twilio omits from the HTTP request AND from the signature, so the URL the
- * route verifies is the one without it. Only the DOCUMENTED syntax and values
- * are certified; anything else is never treated as the expected URL.
+ * Twilio connection overrides live in the URL FRAGMENT, which Twilio omits from
+ * the HTTP request AND from the signature. Parsing and validating them is the
+ * SMS lane's ONE strict normalizer (lib/sms/webhook-base.ts,
+ * normalizeTwilioWebhookUrl, #863), shared with inboundReaches and adoption so
+ * this preflight and adoption cannot disagree about which URL is which.
  */
-const intIn = (lo: number, hi: number) => (v: string) => /^\d+$/.test(v) && Number(v) >= lo && Number(v) <= hi;
-const listOf = (allowed: ReadonlySet<string>) => (v: string) => {
-  const items = v.split(",");
-  return items.length > 0 && items.every((x) => allowed.has(x));
-};
-/** Public and Interconnect Edge IDs (twilio.com/docs/global-infrastructure/edge-locations). */
-const TWILIO_EDGE_IDS: ReadonlySet<string> = new Set([
-  "sydney", "sao-paulo", "dublin", "frankfurt", "tokyo", "singapore", "ashburn", "umatilla", "roaming",
-  "ashburn-ix", "san-jose-ix", "sao-paulo-ix", "london-ix", "frankfurt-ix", "singapore-ix", "tokyo-ix", "sydney-ix",
-]);
-const TWILIO_CONNECTION_OVERRIDES: Readonly<Record<string, (v: string) => boolean>> = {
-  ct: intIn(100, 10000),
-  rt: intIn(100, 15000),
-  tt: intIn(100, 15000),
-  rc: intIn(0, 5),
-  rp: listOf(new Set(["4xx", "5xx", "ct", "rt", "all"])),
-  sni: (v) => v === "y" || v === "n",
-  e: listOf(TWILIO_EDGE_IDS),
-};
 
 /** Twilio's default total time for a webhook and its retries (connection-overrides docs). */
 const TWILIO_DEFAULT_TOTAL_TIME_MS = 15000;
 
-/** Marker substituted for a URL whose fragment is not valid connection overrides. */
+/** Marker substituted for a URL the shared normalizer rejects. */
 const INVALID_FRAGMENT = "invalid-fragment:";
-
-/** True when `fragment` is one or more documented key=value overrides, each key once. */
-function isValidConnectionOverrideFragment(fragment: string): boolean {
-  if (fragment === "") return false;
-  const seen = new Set<string>();
-  for (const pair of fragment.split("&")) {
-    const eq = pair.indexOf("=");
-    if (eq <= 0) return false;
-    const key = pair.slice(0, eq);
-    const value = pair.slice(eq + 1);
-    const valid = Object.prototype.hasOwnProperty.call(TWILIO_CONNECTION_OVERRIDES, key)
-      ? TWILIO_CONNECTION_OVERRIDES[key]
-      : undefined;
-    if (!valid || seen.has(key) || value === "" || !valid(value)) return false;
-    seen.add(key);
-  }
-  return true;
-}
 
 /**
  * Does Twilio REDELIVER a request the route answers with a 5xx? The STOP route
@@ -104,36 +67,34 @@ function isValidConnectionOverrideFragment(fragment: string): boolean {
  * safe if Twilio tries again. Twilio's documented DEFAULT retry policy is
  * `ct` (connect failures only), with a default retry count of 1; so a 5xx is
  * retried only when the URL's overrides name `rp` with 5xx or all and the
- * retry count is not 0. No fragment, or an invalid one, means no.
+ * retry count is not 0. No fragment, or an invalid one, means no. (The shared
+ * normalizer validates; the redelivery claim is this preflight's.)
  */
 export function redeliversServerErrors(url: string | null | undefined): boolean {
-  if (typeof url !== "string") return false;
-  const i = url.indexOf("#");
-  if (i < 0) return false;
-  const fragment = url.slice(i + 1);
-  if (!isValidConnectionOverrideFragment(fragment)) return false;
-  const pairs = new Map(fragment.split("&").map((p) => [p.slice(0, p.indexOf("=")), p.slice(p.indexOf("=") + 1)] as const));
-  const policy = (pairs.get("rp") ?? "").split(",");
-  const retries = pairs.has("rc") ? Number(pairs.get("rc")) : 1;
+  const n = normalizeTwilioWebhookUrl(url);
+  if (!n.ok || !n.overrides) return false;
+  const o = n.overrides;
+  const policy = o.rp ?? [];
+  const retries = o.rc ?? 1;
   // TOTAL TIME (Codex P1 4254745407): tt bounds every attempt AND every retry.
   // An explicit tt below Twilio's default (15000 ms) can expire before the
   // route's 500 or before the retry starts; whether it leaves a window depends
   // on how fast the route answers, which configuration cannot prove. So it is
   // not certified.
-  if (pairs.has("tt") && Number(pairs.get("tt")) < TWILIO_DEFAULT_TOTAL_TIME_MS) return false;
+  if (o.tt !== undefined && o.tt < TWILIO_DEFAULT_TOTAL_TIME_MS) return false;
   return (policy.includes("5xx") || policy.includes("all")) && retries >= 1;
 }
 
 /**
- * The URL Twilio actually requests and signs: the configured URL without a
- * fragment of documented connection overrides. Any other fragment (including
- * an empty one) is not certified, so the URL never matches the expected one.
+ * The URL Twilio actually requests and signs: the configured URL without its
+ * fragment of documented connection overrides (shared normalizer). A URL the
+ * normalizer rejects (an invalid or empty fragment) never matches the expected
+ * one.
  */
 export function signedFormOfConfiguredUrl<T extends string | null | undefined>(url: T): T | string {
   if (typeof url !== "string") return url;
-  const i = url.indexOf("#");
-  if (i < 0) return url;
-  return isValidConnectionOverrideFragment(url.slice(i + 1)) ? url.slice(0, i) : `${INVALID_FRAGMENT}${url}`;
+  const n = normalizeTwilioWebhookUrl(url);
+  return n.ok ? n.url : `${INVALID_FRAGMENT}${url}`;
 }
 
 type Env = Readonly<Record<string, string | undefined>>;
