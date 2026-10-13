@@ -3,21 +3,42 @@
 import { useActionState } from "react";
 import type { RecordSmsRegistrationResult } from "./actions";
 
+export type CurrentRecord = {
+  status: string;
+  missing_information: string | null;
+  provider_reference: string | null;
+};
+
 // SMS-SENDER-REG-01 (#824): the operator's record form, bound to ONE sender
 // and ONE number. The kind is that number's and is shown, never chosen
 // (Codex P2 4244484022). Every outcome, a refusal included, comes back as
 // state and is rendered here; nothing is thrown (Codex P2 4244484024).
+//
+// "approved" IS COMPLETE (Codex P2 4253281361, decision on #863): for A2P 10DLC
+// the brand, the campaign AND this number's own registration, which Twilio
+// completes separately after campaign approval; for toll-free, completed
+// verification of this number. A number still UNREGISTERED or
+// PENDING_REGISTRATION is recorded as pending, and a failed one as rejected.
+//
+// PREFILLED FROM THE CURRENT RECORD (Codex P2 4248698137). A submission
+// replaces the record for this number, so an untouched form must say what is
+// already recorded: re-submitting to add a reference can never quietly turn an
+// approval into "pending" or drop what is missing. The defaults apply only
+// when nothing is recorded yet.
 
 export function SmsRegistrationForm({
   action,
   senderId,
   phoneNumber,
   kindLabel,
+  current,
 }: {
   action: (previous: RecordSmsRegistrationResult | null, formData: FormData) => Promise<RecordSmsRegistrationResult>;
   senderId: string;
   phoneNumber: string;
   kindLabel: string;
+  /** The record for this sender, number and kind, if there is one. */
+  current: CurrentRecord | null;
 }) {
   const [state, formAction, pending] = useActionState<RecordSmsRegistrationResult | null, FormData>(action, null);
 
@@ -32,25 +53,40 @@ export function SmsRegistrationForm({
         </p>
         <label className="flex flex-col">
           Status
-          <select name="status" className="rounded border px-2 py-1" defaultValue="pending">
-            <option value="pending">pending</option>
-            <option value="requires_information">requires_information</option>
-            <option value="approved">approved</option>
-            <option value="rejected">rejected</option>
+          <select name="status" className="rounded border px-2 py-1" defaultValue={current?.status ?? "pending"}>
+            <option value="pending">pending: anything not yet complete, including this number&apos;s own registration</option>
+            <option value="requires_information">requires_information: something must be provided</option>
+            <option value="approved">approved: COMPLETE for this number (brand, campaign and the number registered)</option>
+            <option value="rejected">rejected: the registration or this number&apos;s registration failed</option>
             <option value="suspended">suspended</option>
           </select>
         </label>
         <label className="flex flex-col">
           Missing information
-          <input name="missing_information" maxLength={300} className="rounded border px-2 py-1" />
+          <input
+            name="missing_information"
+            maxLength={300}
+            defaultValue={current?.missing_information ?? ""}
+            className="rounded border px-2 py-1"
+          />
         </label>
         <label className="flex flex-col">
           Provider reference
-          <input name="provider_reference" maxLength={64} className="rounded border px-2 py-1" />
+          <input
+            name="provider_reference"
+            maxLength={64}
+            defaultValue={current?.provider_reference ?? ""}
+            className="rounded border px-2 py-1"
+          />
         </label>
         <button type="submit" disabled={pending} className="rounded-md border px-3 py-1">
-          Record for {phoneNumber}
+          {current ? `Update the record for ${phoneNumber}` : `Record for ${phoneNumber}`}
         </button>
+        {current ? (
+          <p className="w-full text-xs text-neutral-500" data-testid="admin-sms-registration-current">
+            Currently recorded: <strong>{current.status}</strong>. Submitting replaces it.
+          </p>
+        ) : null}
       </form>
       {state ? (
         <p

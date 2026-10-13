@@ -64,6 +64,28 @@ describe("the operator's registration section", () => {
     expect(other).not.toMatch(/<form/);
   });
 
+  it("an existing record PREFILLS the form, so re-submitting never silently downgrades it (Codex P2 4248698137)", () => {
+    const rec = {
+      sender_id: SENDER.id, studio_id: STUDIO, phone_number: SENDER.phone_number, kind: "us_10dlc" as const,
+      status: "requires_information" as const, missing_information: "a sample message", provider_reference: "CMabc123", updated_at: "x",
+    };
+    const html = render({ ok: true, senders: [SENDER], registrations: [rec] });
+    expect(html).toMatch(/<option value="requires_information" selected="">/);
+    expect(html).toContain('name="missing_information" value="a sample message"');
+    expect(html).toContain('name="provider_reference" value="CMabc123"');
+    expect(html).toContain("Currently recorded: <strong>requires_information</strong>");
+
+    const approved = render({ ok: true, senders: [SENDER], registrations: [{ ...rec, status: "approved", missing_information: null }] });
+    expect(approved).toMatch(/<option value="approved" selected="">/);
+    expect(approved).not.toMatch(/<option value="pending" selected="">/);
+  });
+
+  it("with no record (or only a record of another kind) the defaults apply", () => {
+    const none = render({ ok: true, senders: [SENDER], registrations: [] });
+    expect(none).toMatch(/<option value="pending" selected="">/);
+    expect(none).not.toContain("Currently recorded");
+  });
+
   it("refusals are form state, never thrown (Codex P2 4244484024)", async () => {
     const { readFileSync } = await import("node:fs");
     const section = readFileSync("app/admin/studios/[id]/SmsRegistrationSection.tsx", "utf8");
@@ -92,5 +114,24 @@ describe("parseLiveRegistrationState", () => {
     expect(parseLiveRegistrationState({ senders: [SENDER], registrations: [{ sender_id: "elsewhere", studio_id: STUDIO, kind: "us_10dlc", status: "approved" }] }, STUDIO)).toEqual({ ok: false });
     expect(parseLiveRegistrationState(null, STUDIO)).toEqual({ ok: false });
     expect(parseLiveRegistrationState({ senders: "x" }, STUDIO)).toEqual({ ok: false });
+  });
+});
+
+describe("approved means COMPLETE for this number (Codex P2 4253281361)", () => {
+  it("the form and its guidance say so", () => {
+    const html = render({ ok: true, senders: [SENDER], registrations: [] });
+    expect(html).toMatch(/approved: COMPLETE for this number \(brand, campaign and the number registered\)/);
+    expect(html).toMatch(/pending: anything not yet complete, including this number(&#x27;|')s own registration/);
+    expect(html).toMatch(/only when registration is complete for this exact number/);
+  });
+});
+
+describe("a replacement sender gets a fresh form (Codex P2 4253596170)", () => {
+  // The repo's unit tests run without a DOM; React's documented key semantics
+  // (a changed key remounts) do the reset, and this pins that the key exists.
+  it("the form is keyed by the sender and its number, so stale field values cannot carry over", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("app/admin/studios/[id]/SmsRegistrationSection.tsx", "utf8");
+    expect(src).toMatch(/<SmsRegistrationForm\s+(\/\/[^\n]*\n\s*)*key=\{`\$\{sender\.id\}:\$\{sender\.phone_number\}`\}/);
   });
 });
