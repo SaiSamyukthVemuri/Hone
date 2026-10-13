@@ -5,6 +5,10 @@ import type {
   ClaimRow,
   FailResult,
   FinalizeResult,
+  OwnerAuthority,
+  OwnerAuthorityReader,
+  ProviderResourceBinding,
+  SenderBindingReader,
   ProvisioningStore,
 } from "./provisioning";
 
@@ -71,10 +75,90 @@ function firstRow(data: unknown): Record<string, unknown> | null {
   return asRecord(data);
 }
 
+/**
+ * Returns BOTH ports from one object: the full store, and the read-only
+ * authority reader the inspect path needs. Callers hand each consumer only the
+ * narrower handle it should have.
+ */
 export function createProvisioningStore(
   admin: SupabaseClient,
-): ProvisioningStore {
+): ProvisioningStore & OwnerAuthorityReader & SenderBindingReader {
   return {
+    /**
+     * READ-ONLY, and deliberately a direct table read rather than an RPC:
+     * 0191 exposes no read-only authority function, and adding one would be a
+     * migration this correction does not need. The predicates mirror
+     * claim_studio_sms_provisioning exactly -- studio_id, user_id, active --
+     * so the two cannot answer differently for the same actor.
+     *
+     * FAILS CLOSED. A transport error or an unreadable row is `unavailable`,
+     * never `not_owner`: "we could not check" and "we checked and the answer is
+     * no" are different facts, and only one of them is safe to retry.
+     */
+    async readOwnerAuthority(input): Promise<OwnerAuthority> {
+      const studio = await admin
+        .from("studios")
+        .select("id")
+        .eq("id", input.studioId)
+        .maybeSingle();
+      if (studio.error) return "unavailable";
+      if (!studio.data) return "studio_not_found";
+
+      const { data, error } = await admin
+        .from("practitioners")
+        .select("role")
+        .eq("studio_id", input.studioId)
+        .eq("user_id", input.actorUserId)
+        .eq("active", true)
+        .maybeSingle();
+      if (error) return "unavailable";
+      if (!data) return "not_a_member";
+      return data.role === "owner" ? "owner" : "not_owner";
+    },
+
+    /**
+     * READ-ONLY tenancy authority for provider resources.
+     *
+     * The Messaging Service half uses 0191's own resolver, which is the
+     * attribution key that migration already established -- the same function
+     * that turns an inbound callback into exactly one studio.
+     *
+     * THE PHONE-NUMBER HALF HAS NO AUTHORITY YET, and it FAILS CLOSED rather
+     * than being reported as unbound. 0191 revokes every table privilege on
+     * `studio_sms_senders` from `service_role` by name, so there is no direct
+     * read, and it exposes no resolver keyed by `phone_number_sid` -- only a
+     * unique index. Answering `unbound` here would be a guess, and the guess
+     * that is wrong is a cross-tenant write.
+     *
+     * The smallest thing that closes it is a numbered migration adding
+     * `resolve_studio_by_sms_phone_number(text)` alongside the existing
+     * resolver. That is deliberately NOT done here: this pass assigns no
+     * migration number, and nothing is blocked today because this capability
+     * has no product callers.
+     */
+    async readProviderResourceBindings(input): Promise<{
+      phoneNumberSid: ProviderResourceBinding;
+      messagingServiceSid: ProviderResourceBinding;
+    }> {
+      const service = await admin.rpc("resolve_studio_by_sms_messaging_service", {
+        p_messaging_service_sid: input.messagingServiceSid,
+      });
+
+      const messagingServiceSid: ProviderResourceBinding = service.error
+        ? { kind: "unavailable", reason: "resolver_failed" }
+        : typeof service.data === "string" && service.data.length > 0
+          ? { kind: "bound", studioId: service.data }
+          : { kind: "unbound" };
+
+      return {
+        phoneNumberSid: {
+          kind: "unavailable",
+          reason: "no_phone_number_sid_resolver",
+        },
+        messagingServiceSid,
+      };
+    },
+
     async claim(input): Promise<ClaimRow> {
       const { data, error } = await admin.rpc("claim_studio_sms_provisioning", {
         p_studio_id: input.studioId,
