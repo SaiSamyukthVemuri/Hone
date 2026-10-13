@@ -410,3 +410,34 @@ describe("reference clearing and the replaced status", () => {
     expect(rows[0]).toEqual({ status: "suspended", provider_reference: null });
   });
 });
+
+// Codex P2 on #844 (6a6aa5ec): concurrent registration writes are SERIALIZED,
+// so each write's previous_status (which the audit records) is the real one.
+describe("concurrent registration writes take turns", () => {
+  it("a second writer waits for the first, then reports the first's status as the one it replaced", async () => {
+    const { Client } = await import("pg");
+    const { resolveLocalDbUrl } = await import("./helpers/harness");
+    const s = await seedStudio("reg-serial");
+    const num = phone();
+    const id = await seedActiveSender(s, num);
+    await record(s.studioId, "pending");
+    const one = new Client({ connectionString: resolveLocalDbUrl() });
+    const two = new Client({ connectionString: resolveLocalDbUrl() });
+    await Promise.all([one.connect(), two.connect()]);
+    try {
+      await one.query("begin");
+      const first = await one.query("select * from public.record_studio_sms_sender_registration($1, $2, $3, 'approved', null, null)", [s.studioId, id, num]);
+      expect(first.rows[0]).toMatchObject({ result: "recorded", previous_status: "pending" });
+      // The second writer starts WHILE the first is uncommitted and waits at the
+      // sender lock -- BEFORE it reads the status it will replace. With a
+      // shared lock it would read the stale "pending" and audit that.
+      const secondP = two.query("select * from public.record_studio_sms_sender_registration($1, $2, $3, 'suspended', null, null)", [s.studioId, id, num]);
+      await new Promise((r) => setTimeout(r, 300));
+      await one.query("commit");
+      const second = await secondP;
+      expect(second.rows[0]).toMatchObject({ result: "recorded", previous_status: "approved" });
+    } finally {
+      await Promise.all([one.end(), two.end()]);
+    }
+  });
+});
