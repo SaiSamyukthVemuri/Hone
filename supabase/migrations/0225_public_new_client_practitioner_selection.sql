@@ -231,6 +231,50 @@ begin
                           null::text, null::text, null::timestamptz, null::timestamptz;
       return;
     end if;
+  elsif p_entry_id is null
+    and coalesce(
+      (select s.practitioner_capacity_booking_enabled
+         from public.studios s where s.id = p_studio_id), false)
+  then
+    -- G1 / CODEX P2 — "ANY AVAILABLE" IS RESOLVED BEFORE THE CLIENT EXISTS.
+    --
+    -- The delegate now resolves an unspecified practitioner to someone
+    -- eligible and actually free, and REFUSES with
+    -- `no_practitioner_available` when nobody is. That refusal is returned
+    -- rather than raised, so reaching it after the resolve-or-create below
+    -- would commit a client row -- contact details, possibly SMS consent --
+    -- for a booking that never happened. That is the same orphan this gate
+    -- was built to prevent, arriving by a path the gate did not cover,
+    -- because the gate only looked at a SUBMITTED id.
+    --
+    -- Asking the shared resolver here is safe and not merely narrower: this
+    -- transaction already holds the studios row lock via
+    -- `assert_new_client_admission`, and every writer that could change the
+    -- answer -- `set_practitioner_active` and the service-eligibility writer --
+    -- takes that same row (0150:47). The appointment writers serialise on the
+    -- studio capacity advisory lock the delegate itself acquires. So the
+    -- delegate cannot reach a different verdict than this check.
+    --
+    -- The ANSWER is deliberately discarded: only its existence is needed here.
+    -- The delegate resolves again and re-validates at the transaction
+    -- boundary, which is where the authority belongs; caching the id across
+    -- that boundary would be trusting a value read before the delegate's own
+    -- locks.
+    if public.resolve_public_any_available_practitioner(
+         p_studio_id,
+         p_service_id,
+         p_starts_at,
+         p_starts_at + make_interval(mins => coalesce(
+           (select sv.default_duration_minutes from public.services sv
+             where sv.id = p_service_id and sv.studio_id = p_studio_id), 0))
+       ) is null
+    then
+      return query select 'no_practitioner_available'::text,
+                          null::uuid, null::timestamptz, null::timestamptz,
+                          null::integer, null::uuid, null::timestamptz, null::uuid,
+                          null::text, null::text, null::timestamptz, null::timestamptz;
+      return;
+    end if;
   end if;
 
   if v_client_id is null then

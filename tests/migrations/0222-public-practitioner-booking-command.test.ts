@@ -43,14 +43,47 @@ describe("0222 sits correctly in the migration sequence", () => {
 });
 
 describe("0222 is additive — the live public booking path is untouched", () => {
-  it("creates exactly the two _v2 functions and nothing else", () => {
+  it("creates exactly THREE functions and nothing else", () => {
+    // The census is PINNED EXACTLY, which is why it fired when the resolver
+    // was added rather than letting a third function in unnoticed. Updated
+    // deliberately, not relaxed: the list is still exhaustive and still sorted,
+    // so a fourth function reds this again.
+    //
+    // `resolve_public_any_available_practitioner` exists because BOTH
+    // create_public_appointment_v2 (resolving the default "Any available") and
+    // 0225's new-client wrapper (answering the same question BEFORE it inserts
+    // a client row, so a refusal cannot leave an orphan) need one answer. Two
+    // copies of that loop would be two engines answering one question.
     const created = [
       ...TOP_LEVEL.matchAll(/create or replace function public\.([a-z_0-9]+)/g),
     ].map((m) => m[1]);
     expect(created.sort()).toEqual([
       "create_public_appointment_v2",
+      "resolve_public_any_available_practitioner",
       "validate_public_booking_slot_v2",
     ]);
+  });
+
+  it("grants the resolver to service_role ONLY, revoking all four by name", () => {
+    // CLAUDE.md section 5: ALTER DEFAULT PRIVILEGES grants EXECUTE to anon,
+    // authenticated AND service_role at create time, so an authenticated-only
+    // command must revoke from all three explicitly plus public. Missed once in
+    // 0129 (anon) and again in 0164 (service_role); a new function is exactly
+    // where it gets missed a third time.
+    const sig = "resolve_public_any_available_practitioner(uuid, uuid, timestamptz, timestamptz)";
+    for (const role of ["public", "anon", "authenticated", "service_role"]) {
+      expect(
+        EXECUTABLE,
+        `the resolver must revoke execute from ${role} by name`,
+      ).toContain(`revoke execute on function public.${sig} from ${role};`);
+    }
+    expect(EXECUTABLE).toContain(
+      `grant execute on function public.${sig} to service_role;`,
+    );
+    // And never to a public-facing role.
+    expect(EXECUTABLE).not.toMatch(
+      new RegExp(`grant execute on function public\\.${sig.replace(/[()]/g, "\\$&")} to (anon|authenticated)`),
+    );
   });
 
   it("does NOT redefine 0170's command or validator", () => {

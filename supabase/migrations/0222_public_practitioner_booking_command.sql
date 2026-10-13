@@ -397,6 +397,85 @@ $$;
 -- ---------------------------------------------------------------------------
 -- (2) The practitioner-aware command.
 -- ---------------------------------------------------------------------------
+-- =====================================================================
+-- G1 / CODEX P2 — ONE RESOLVER FOR "ANY AVAILABLE", SHARED BY BOTH CALLERS.
+-- =====================================================================
+--
+-- Extracted rather than inlined twice. `create_public_appointment_v2` needs it
+-- to resolve the default choice, and `create_public_appointment_for_new_client_v2`
+-- (0225) needs the SAME answer BEFORE it inserts a client row -- otherwise a
+-- refusal from the delegate leaves an orphan client with contact details and
+-- possibly SMS consent, which is the defect 0225's pre-insert gate already
+-- exists to prevent. Two copies of this loop would be two engines answering one
+-- question, and this file's own history is a list of what that costs.
+--
+-- Returns the practitioner to assign, or NULL when nobody eligible is free at
+-- the instant. NULL is an ANSWER here, not an error: the caller decides whether
+-- that is a refusal (it is) and owns the result code.
+--
+-- AVAILABILITY IS NOT REIMPLEMENTED. Each candidate is offered to
+-- `validate_public_booking_slot_v2`, the same authority that re-validates the
+-- winner at the transaction boundary, so "available" cannot mean two things.
+--
+-- ELIGIBILITY IS THE SAME TWO-PART RULE as the validator and 0170: active,
+-- treating role, and -- only when the service HAS an eligibility list -- on it.
+-- A studio that never configured `service_practitioners` keeps working.
+--
+-- `order by pr.id` IS A STABLE TIEBREAK, NOT A PRODUCT CLAIM. Determinism is
+-- required so two identical requests cannot resolve differently; it does not
+-- say lower ids have priority. This file already refuses to invent "the oldest
+-- active owner receives all public bookings" and the same restraint applies.
+create or replace function public.resolve_public_any_available_practitioner(
+  p_studio_id  uuid,
+  p_service_id uuid,
+  p_starts_at  timestamptz,
+  p_ends_at    timestamptz
+)
+returns uuid
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_cand uuid;
+begin
+  for v_cand in
+    select pr.id
+      from public.practitioners pr
+     where pr.studio_id = p_studio_id
+       and pr.active = true
+       and pr.role in ('owner', 'practitioner')
+       and (
+         not exists (
+           select 1 from public.service_practitioners sp
+            where sp.service_id = p_service_id
+         )
+         or exists (
+           select 1 from public.service_practitioners sp
+            where sp.service_id = p_service_id
+              and sp.practitioner_id = pr.id
+         )
+       )
+     order by pr.id
+  loop
+    if public.validate_public_booking_slot_v2(
+         p_studio_id, v_cand, p_service_id, p_starts_at, p_ends_at
+       ) = 'ok'
+    then
+      return v_cand;
+    end if;
+  end loop;
+  return null;
+end;
+$$;
+
+revoke execute on function public.resolve_public_any_available_practitioner(uuid, uuid, timestamptz, timestamptz) from public;
+revoke execute on function public.resolve_public_any_available_practitioner(uuid, uuid, timestamptz, timestamptz) from anon;
+revoke execute on function public.resolve_public_any_available_practitioner(uuid, uuid, timestamptz, timestamptz) from authenticated;
+revoke execute on function public.resolve_public_any_available_practitioner(uuid, uuid, timestamptz, timestamptz) from service_role;
+grant execute on function public.resolve_public_any_available_practitioner(uuid, uuid, timestamptz, timestamptz) to service_role;
+
 create or replace function public.create_public_appointment_v2(
   p_studio_id               uuid,
   p_client_id               uuid,
@@ -605,6 +684,88 @@ begin
       return;
     end if;
     v_owner_id := p_practitioner_id;
+  elsif v_booking_on then
+    -- =================================================================
+    -- G1 / CODEX P2 — "ANY AVAILABLE" MUST RESOLVE TO SOMEONE ELIGIBLE.
+    -- =================================================================
+    --
+    -- THE DEFECT THIS REPLACES. With booking enabled, "Any available" (the
+    -- DEFAULT choice) submitted no practitioner and fell through to the legacy
+    -- owner path below. On a studio whose sole active owner is NOT pinned to
+    -- the service while other practitioners are, that picked the owner and the
+    -- validator then returned `not_eligible` -- so the page advertised eligible
+    -- practitioners, showed a grid, and its DEFAULT booking path failed every
+    -- time until the visitor explicitly chose a name.
+    --
+    -- Resolved against the AUTHORITATIVE RULE rather than a reimplementation of
+    -- it: each candidate is offered to `validate_public_booking_slot_v2`, the
+    -- same function that will re-validate the winner below, so "available"
+    -- cannot mean one thing here and another there. That function is `stable`
+    -- and the loop is bounded by the studio's eligible practitioners.
+    --
+    -- ELIGIBILITY IS THE SAME TWO-PART RULE used by the validator and by 0170:
+    -- active, treating role, and -- only when the service HAS an eligibility
+    -- list -- on that list. A studio that never configured
+    -- `service_practitioners` keeps working.
+    --
+    -- THE ORDER IS `pr.id` AND THAT IS NOT A PRODUCT CLAIM. Something must be
+    -- deterministic or two identical requests could resolve differently, but
+    -- this is a stable arbitrary tiebreak among equals, NOT a statement that
+    -- lower ids have priority. The same file already refuses to invent
+    -- "the oldest active owner receives all public bookings"; this comment
+    -- exists so the next reader does not mistake determinism for policy.
+    -- THE LEGACY ASSIGNMENT STILL WINS WHENEVER IT STILL WORKS, and my first
+    -- version of this got it wrong by resolving away from the owner
+    -- unconditionally. That reddened 0222's own equivalence control ("NULL
+    -- reproduces 0170 exactly"), and the control was right: the DEFAULT public
+    -- booking assigns the single active owner, and changing that for every
+    -- capacity-enabled studio is a product change nobody asked for. Codex's
+    -- finding is narrower -- resolve "when the legacy owner is ineligible" --
+    -- and so is this.
+    --
+    -- So: compute the legacy answer first, on exactly the same
+    -- EXACTLY-ONE-ACTIVE-OWNER terms as the flag-off branch below (0 or 2+
+    -- active owners is NULL, because this file refuses to invent "the oldest
+    -- active owner receives all public bookings"), and keep it if the
+    -- authoritative validator still accepts it.
+    with active_owners as materialized (
+      select pr.id
+        from public.practitioners pr
+       where pr.studio_id = p_studio_id
+         and pr.active = true
+         and pr.role = 'owner'
+       order by pr.id
+       limit 2
+    )
+    select case when count(*) = 1 then (array_agg(id))[1] else null end
+      into v_owner_id
+      from active_owners;
+
+    if v_owner_id is null
+       or public.validate_public_booking_slot_v2(
+            p_studio_id, v_owner_id, p_service_id, v_starts_at, v_ends_at
+          ) <> 'ok'
+    then
+      -- The legacy answer is unusable -- the owner is unpinned from this
+      -- service, inactive, busy at this instant, or ambiguous. ONLY NOW does
+      -- the resolver look wider. This is the case the finding describes, and
+      -- the only case whose behaviour changes.
+      v_owner_id := public.resolve_public_any_available_practitioner(
+        p_studio_id, p_service_id, v_starts_at, v_ends_at
+      );
+    end if;
+
+    -- NOBODY ELIGIBLE IS FREE AT THIS INSTANT. Refused, and deliberately NOT
+    -- degraded to the owner: attributing the booking to someone the service
+    -- does not permit is the silent misattribution this whole change exists to
+    -- stop. The page offered this time, so a refusal here means the page and
+    -- the chain disagreed -- which the caller logs rather than hides.
+    if v_owner_id is null then
+      return query select 'no_practitioner_available'::text, null::uuid,
+                          null::timestamptz, null::timestamptz, null::integer,
+                          null::uuid, null::timestamptz;
+      return;
+    end if;
   else
     -- Practitioner assignment is SERVER-DERIVED. The public surface offers no
     -- practitioner selection and this command takes no practitioner parameter, so
@@ -703,7 +864,19 @@ begin
   --
   -- NULL keeps the LEGACY validator, verbatim, so an existing public booking is
   -- validated by exactly the authority it is validated by today.
-  if p_practitioner_id is not null then
+  --
+  -- THE BRANCH FOLLOWS THE RESOLVED ASSIGNMENT, NOT THE PARAMETER. It used to
+  -- read `p_practitioner_id is not null`, which was right while NULL always
+  -- meant the legacy owner path. Now that "Any available" resolves to a
+  -- practitioner under the branch above, keying on the parameter would hand a
+  -- practitioner-SCOPED assignment to the STUDIO-WIDE validator -- the two
+  -- engines disagreeing again, one layer down.
+  --
+  -- Legacy is untouched: with booking off, `v_booking_on` is false and the
+  -- legacy validator still receives whatever the owner path produced, verbatim.
+  -- This is also the authoritative revalidation of a choice the browser or the
+  -- action may have resolved against stale state.
+  if p_practitioner_id is not null or (v_booking_on and v_owner_id is not null) then
     v_avail := public.validate_public_booking_slot_v2(
       p_studio_id, v_owner_id, p_service_id, v_starts_at, v_ends_at
     );
