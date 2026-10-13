@@ -5,6 +5,12 @@ import { useState } from "react";
 import { SectionLabel } from "@/components/ui/section-label";
 import { MACHINE_CATALOGUE } from "@/lib/machines/catalogue";
 import {
+  initialSelection,
+  selectionRequested,
+  selectionSettled,
+  type SelectionState,
+} from "@/lib/machines/selection-state";
+import {
   NO_PERSISTENCE,
   type PersistenceCapability,
 } from "@/lib/machines/selection-store";
@@ -134,57 +140,39 @@ export function MachineFirstSetupPanel({
   onSelectMachine,
   onRecord,
 }: MachineFirstSetupPanelProps) {
-  const [deviceId, setDeviceId] = useState<string | null>(initialDeviceId);
-  // WHAT THE DATABASE ACTUALLY HOLDS, tracked separately from the selection
-  // the practitioner is looking at.
+  // SELECTION, STORED FACT AND NOTE MOVE TOGETHER, under one rule.
   //
-  // THIS IS THE SECOND TIME THIS LINE HAS LIED, in a new way. First it read
-  // `persistence.persisted`, which is the store's CAPABILITY, so it said "yes"
-  // before anything was chosen. That was fixed by reading the selection - and
-  // the selection is OPTIMISTIC. `chooseDevice` sets it before persisting and
-  // leaves it set when the write fails, so a failed save still reported "yes",
-  // and a failed CLEAR reported "nothing" while the old database default was
-  // still there. Reporting capability and reporting intent are both wrong for
-  // the same reason: neither is the stored fact (Codex, 7cae831b).
-  //
-  // Seeded from the server's value and updated ONLY after a successful write.
-  const [persistedDeviceId, setPersistedDeviceId] = useState<string | null>(
-    initialDeviceId,
+  // They were three independent useState calls, and the status line was wrong
+  // twice because two of them drifted apart: `deviceId` is optimistic and
+  // `persistedDeviceId` is not, so every branch of `chooseDevice` had to
+  // remember which was which. The rule now lives in lib/machines/selection-state,
+  // where it has an exhaustive truth table, and this component only applies it.
+  // That module's header records both failures.
+  const [selection, setSelection] = useState<SelectionState>(() =>
+    initialSelection(initialDeviceId),
   );
+  const deviceId = selection.selected;
+  const selectionNote = selection.note;
   // How many readings this panel has actually saved in this mount. Drives the
   // "Recorded:" line, which previously claimed "nothing" even after a save.
   const [savedCount, setSavedCount] = useState(0);
-  // A failed PERSIST of the selection must be visible: the choice still
-  // applies to this block, but it will not survive a reload, and saying
-  // nothing is what made the old behaviour look like it had worked.
-  const [selectionNote, setSelectionNote] = useState<string | null>(null);
-
   /**
-   * Choose (or clear) the machine. Local state moves first so the form stays
-   * responsive, then the choice is persisted. If persistence fails the panel
-   * says so rather than silently reverting on the next load.
+   * Choose (or clear) the machine.
+   *
+   * A failed persist must be VISIBLE: the choice still applies to this block,
+   * but it will not survive a reload, and saying nothing is what made the old
+   * behaviour look like it had worked.
    */
   const chooseDevice = async (next: string | null) => {
-    setDeviceId(next);
-    setSelectionNote(null);
-    if (!onSelectMachine) {
-      // No persistence wired at all (a test-store or unavailable store): the
-      // selection applies locally and nothing claims otherwise.
-      setPersistedDeviceId(next);
-      return;
-    }
-    const out = await onSelectMachine({ deviceId: next, modeKey: null });
-    if (out.ok) {
-      // ONLY NOW is it the stored fact.
-      setPersistedDeviceId(next);
-      return;
-    }
-    setSelectionNote(
-      out.error ??
-        (next === null
-          ? "This machine is no longer selected here, but clearing it for next time failed - it is still remembered."
-          : "This machine applies to this block but could not be remembered for next time."),
-    );
+    // Step 1: the optimistic move, so the form stays responsive.
+    setSelection((prev) => selectionRequested(prev, next));
+    // Step 2: the acknowledged outcome. `null` means no persister is wired,
+    // which is NOT the same as a successful write and must not be reported as
+    // one - `selectionSettled` is what keeps those apart.
+    const write = onSelectMachine
+      ? await onSelectMachine({ deviceId: next, modeKey: null })
+      : null;
+    setSelection((prev) => selectionSettled(prev, next, write));
   };
 
   // Only a real scope can produce a selectable list, because a device belongs
@@ -224,6 +212,7 @@ export function MachineFirstSetupPanel({
           <button
             type="button"
             onClick={() => void chooseDevice(null)}
+            data-testid="machine-change"
             className="text-xs font-medium text-neutral-600 underline hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
           >
             Change machine
@@ -401,7 +390,7 @@ export function MachineFirstSetupPanel({
         hasScope={scope != null}
         persistence={persistence}
         savedCount={savedCount}
-        rememberedDeviceId={persistedDeviceId}
+        rememberedDeviceId={selection.persisted}
       />
     </section>
   );

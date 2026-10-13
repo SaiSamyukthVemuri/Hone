@@ -846,6 +846,7 @@ set search_path = pg_catalog, pg_temp
 as $$
 declare
   v_studio uuid;
+  v_session_id uuid;
   v_pract uuid;
   v_machine_studio uuid;
   v_profile_id text;
@@ -895,25 +896,50 @@ begin
   -- session keeps live-looking blocks. A stale page or a crafted call could
   -- then append an IMMUTABLE capture to a session that had been removed -
   -- unamendable by construction, and attached to a record nobody can see.
-  -- LOCKED WHILE VALIDATED, because reading liveness is not holding it.
+  -- LOCK BOTH PARENTS IN A FIXED ORDER, THEN RE-CHECK LIVENESS.
   --
-  -- A plain lookup can observe both rows live and then have the retirement
-  -- transaction commit before this capture inserts - leaving an IMMUTABLE
-  -- capture attached to a record that was retired a millisecond later, which
-  -- is the exact state the check exists to prevent. The window is small and
-  -- the consequence is permanent, which is the worst combination.
+  -- Reading that two rows are live is not the same as holding them that way. A
+  -- plain lookup can observe both live and then have the retirement
+  -- transaction commit before this capture inserts, leaving an IMMUTABLE
+  -- capture attached to a record retired a millisecond later - the exact state
+  -- the check exists to prevent. Small window, permanent consequence.
   --
-  -- FOR SHARE rather than FOR KEY SHARE: `soft_delete_session` stamps
-  -- `deleted_at`, a non-key UPDATE, which takes FOR NO KEY UPDATE on the row.
-  -- FOR KEY SHARE does NOT conflict with that and would let the retirement
-  -- proceed; FOR SHARE does conflict, so recording and retirement serialise.
+  -- PARENT BEFORE CHILD: session, then block. Not a new convention - 0166's
+  -- `assert_block_in_session` already states it in as many words ("Parent
+  -- (session) is resolved first, then the block - a stable order, so two
+  -- concurrent commands cannot deadlock against each other"), and this follows
+  -- it rather than leaving the order to the planner.
+  --
+  -- The cycle cannot form against today's retirement commands either way:
+  -- `soft_delete_session` (0167) updates only `sessions` and
+  -- `soft_delete_session_block` (0166) only `session_blocks`, so neither holds
+  -- one while waiting for the other. A future command touching both is the
+  -- hazard the fixed order is for.
+  --
+  -- FOR SHARE, not FOR KEY SHARE. Retirement stamps `deleted_at`, a non-key
+  -- UPDATE, which takes FOR NO KEY UPDATE on the row. FOR KEY SHARE does NOT
+  -- conflict with that, so it would let retirement proceed underneath us - a
+  -- lock that reads as protection without being one.
+  select b.session_id into v_session_id
+    from public.session_blocks b
+   where b.id = p_block_id;
+
+  if v_session_id is null then
+    raise exception 'Unknown treatment block.' using errcode = 'no_data_found';
+  end if;
+
+  perform 1 from public.sessions s where s.id = v_session_id for share;
+  perform 1 from public.session_blocks b where b.id = p_block_id for share;
+
+  -- RE-CHECKED AFTER THE LOCKS ARE HELD, in its own statement, so the liveness
+  -- this proceeds on is the state at lock time rather than at first read. A
+  -- retirement that committed while we waited is seen here and refused.
   select b.studio_id into v_studio
     from public.session_blocks b
     join public.sessions sn on sn.id = b.session_id
    where b.id = p_block_id
      and b.deleted_at is null
-     and sn.deleted_at is null
-     for share of b, sn;
+     and sn.deleted_at is null;
 
   if v_studio is null then
     raise exception 'Unknown treatment block.' using errcode = 'no_data_found';

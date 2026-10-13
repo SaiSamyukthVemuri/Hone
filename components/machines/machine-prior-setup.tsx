@@ -1,5 +1,4 @@
 import { SectionLabel } from "@/components/ui/section-label";
-import { unitLabel } from "@/lib/machines/charting";
 import type { RecordedReading } from "@/lib/machines/machine-queries";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
 import { findMode, modeFields } from "@/lib/machines/profile-contract";
@@ -44,13 +43,13 @@ export function MachinePriorSetup({ readings, catalogue }: MachinePriorSetupProp
   const historical = profile ? first.profileVersion !== profile.version : true;
   const mode = profile ? findMode(profile, first.modeKey) : undefined;
 
-  const labels = new Map<string, { label: string; unit: string }>();
+  // LABELS ONLY, NO UNITS. The unit always comes from the reading itself
+  // (see the render below), so this map deliberately does not carry one -
+  // the component cannot print today's unit because it never holds it.
+  const labels = new Map<string, { label: string }>();
   if (mode && !historical) {
     for (const { field } of modeFields(mode)) {
-      labels.set(field.key, {
-        label: field.nativeLabel,
-        unit: unitLabel(field.unit),
-      });
+      labels.set(field.key, { label: field.nativeLabel });
     }
   }
 
@@ -99,22 +98,27 @@ export function MachinePriorSetup({ readings, catalogue }: MachinePriorSetupProp
                   </span>{" "}
                   <span className="font-medium">{formatValue(r)}</span>
                   {/*
-                    THE RECORDED UNIT, falling back when the catalogue's is
-                    deliberately unavailable.
-                    `named` is intentionally undefined when the recorded
-                    profile version differs from today's, or the profile has
-                    left the catalogue - that is correct, because today's
-                    labels must not be put on a historical reading. But
-                    suppressing the UNIT too showed bare numbers like "120"
-                    with no µA, mA or ms, which defeats the entire reason the
-                    reading stores its own native unit. The reading's unit is
-                    not today's opinion; it is what the machine displayed at
-                    capture time, so it is exactly what a historical setup
-                    should show (Codex, 7cae831b).
+                    ALWAYS THE RECORDED UNIT. Never the catalogue's, not even
+                    as a preference when the versions appear to match.
+                    This first suppressed the unit with the label, showing bare
+                    numbers like "120" with no µA, mA or ms - which defeats the
+                    entire reason a reading stores its own native unit. The
+                    repair fell back to `r.nativeUnit`, which still PREFERRED
+                    today's metadata whenever a version matched, and that is
+                    the same defect one step quieter: the published database
+                    contract is immutable per version, but the application
+                    catalogue is a source file that can have a unit edited
+                    without a version bump, and nothing enforces agreement
+                    between the two for the same version number. Today's
+                    opinion would then be printed on an older measurement.
+                    `nativeUnit` is what the contract said at capture time, so
+                    it is the only unit that cannot go obsolete. Where the
+                    catalogue is honest the two strings are identical and
+                    nothing is lost (Codex, 87c88017).
                   */}
-                  {named?.unit ?? r.nativeUnit ? (
+                  {r.nativeUnit ? (
                     <span className="ml-0.5 text-neutral-500">
-                      {named?.unit ?? r.nativeUnit}
+                      {r.nativeUnit}
                     </span>
                   ) : null}
                 </li>
