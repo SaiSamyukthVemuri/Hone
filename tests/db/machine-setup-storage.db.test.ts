@@ -723,14 +723,22 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
     // a profile version nobody has published a contract for.
     const studio = await seedStudio("mpx-nocontract");
     const { blockId } = await seedSession(studio);
-    // Register at a version whose contract the helper did NOT publish.
-    const machineId = await asUser(studio.userId, async (q) => {
-      const r = await q(
-        `select public.register_studio_machine($1, $2, $3, $4, $5) as id`,
-        [studio.studioId, PROFILE, 97, "Unpublished", []],
-      );
-      return r.rows[0].id as string;
-    });
+
+    // TWO LAYERS NOW, and this test is about the SECOND one.
+    //
+    // Registration itself refuses an unpublished version since the review
+    // finding about consume-only authority, so a machine can no longer BE
+    // registered against one directly - that refusal is proved in
+    // machine-contract-authority.db.test.ts. To still exercise the RECORDING
+    // guard, register legitimately and then repoint the unit at a version
+    // nobody published, which is the state a stale row or a later contract
+    // change could produce.
+    const machineId = await registerMachine(studio, "Repointed");
+    await adminQuery(
+      `update public.studio_machines set machine_profile_version = 97 where id = $1`,
+      [machineId],
+    );
+
     await expect(
       asUser(studio.userId, (q) =>
         q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [

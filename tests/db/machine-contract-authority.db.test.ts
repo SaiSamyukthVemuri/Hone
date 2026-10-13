@@ -402,6 +402,249 @@ describe("0223 · the command refuses FORGED readings, not just bad UI input", (
 });
 
 // ---------------------------------------------------------------------------
+describe("0223 · RETIREMENT of a parent session, not just a block", () => {
+  // soft_delete_session_block (0166) retires an area; soft_delete_session
+  // (0167) retires a whole session and leaves its child blocks alone. Checking
+  // only the BLOCK was the gap: a removed session kept live-looking blocks, so
+  // its captures stayed both writable and offerable.
+  it("REFUSES a capture against a block whose SESSION is retired", async () => {
+    const studio = await seedStudio("retire-write");
+    const { sessionId, blockId } = await seedSession(studio);
+    await publish(60);
+    const machineId = await register(studio, 60);
+
+    // POSITIVE CONTROL first: while the session is live, recording works.
+    const before = await recordAs(studio.userId, blockId, machineId, "g", [
+      ok("current", "100"),
+    ]);
+    expect(Number(before.rows[0].n)).toBe(1);
+
+    // Retire the SESSION only. The block is untouched and still looks live.
+    await adminQuery(`update public.sessions set deleted_at = now() where id = $1`, [
+      sessionId,
+    ]);
+    const stillLive = await adminQuery(
+      `select deleted_at is null as live from public.session_blocks where id = $1`,
+      [blockId],
+    );
+    expect(
+      stillLive.rows[0].live,
+      "the block must still look live, or this test proves nothing",
+    ).toBe(true);
+
+    await expect(
+      recordAs(studio.userId, blockId, machineId, "g", [ok("current", "150")]),
+    ).rejects.toThrow(/Unknown treatment block/i);
+  });
+
+  it("does NOT offer a retired SESSION's capture as guidance", async () => {
+    const studio = await seedStudio("retire-guide");
+    await publish(61);
+    const machineId = await register(studio, 61);
+
+    // An earlier capture in a session that STAYS live.
+    const kept = await seedSession(studio);
+    await recordAs(studio.userId, kept.blockId, machineId, "g", [ok("current", "60")]);
+
+    // A later capture in a session that is then retired.
+    const removed = await seedSession(studio);
+    await recordAs(studio.userId, removed.blockId, machineId, "g", [
+      ok("current", "999"),
+    ]);
+    await adminQuery(`update public.sessions set deleted_at = now() where id = $1`, [
+      removed.sessionId,
+    ]);
+
+    const guide = await asUser(studio.userId, (q) =>
+      q(`select public.latest_setup_for_client($1,$2) as r`, [
+        studio.studioId,
+        studio.clientId,
+      ]),
+    );
+    const rows = (guide.rows[0].r ?? []) as Array<{ value_numeric: string }>;
+    expect(
+      rows.map((r) => r.value_numeric),
+      "a retired session's capture was offered as guidance",
+    ).toEqual(["60"]);
+
+    // ...and the retired session's readings REMAIN in the record.
+    const kept2 = await adminQuery(
+      `select count(*)::int as n from public.treatment_setup_readings
+        where session_block_id = $1`,
+      [removed.blockId],
+    );
+    expect(kept2.rows[0].n).toBe(1);
+  });
+
+  it("does NOT include a retired SESSION's captures in history", async () => {
+    const studio = await seedStudio("retire-hist");
+    const { sessionId, blockId } = await seedSession(studio);
+    await publish(62);
+    const machineId = await register(studio, 62);
+    await recordAs(studio.userId, blockId, machineId, "g", [ok("current", "100")]);
+
+    const before = await asUser(studio.userId, (q) =>
+      q(`select public.setup_capture_history_for_block($1) as r`, [blockId]),
+    );
+    expect((before.rows[0].r ?? []).length).toBe(1);
+
+    await adminQuery(`update public.sessions set deleted_at = now() where id = $1`, [
+      sessionId,
+    ]);
+    const after = await asUser(studio.userId, (q) =>
+      q(`select public.setup_capture_history_for_block($1) as r`, [blockId]),
+    );
+    expect(after.rows[0].r).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("0223 · an EMPTY capture cannot erase prior guidance", () => {
+  it("refuses an empty readings array instead of allocating a blank capture", async () => {
+    // The dangerous part was not the empty row. `latest_setup_for_client`
+    // picks the NEWEST capture and then aggregates ITS readings, so a blank
+    // capture became the newest and made valid guidance vanish as [] - a
+    // direct authenticated call could erase a client's next-visit setup
+    // without deleting anything.
+    const studio = await seedStudio("empty-cap");
+    const { blockId } = await seedSession(studio);
+    await publish(70);
+    const machineId = await register(studio, 70);
+    await recordAs(studio.userId, blockId, machineId, "g", [ok("current", "120")]);
+
+    await expect(
+      recordAs(studio.userId, blockId, machineId, "g", []),
+    ).rejects.toThrow(/At least one reading is required/i);
+
+    // No blank capture exists...
+    const blanks = await adminQuery(
+      `select count(*)::int as n from public.treatment_setup_captures c
+        where c.session_block_id = $1
+          and not exists (select 1 from public.treatment_setup_readings r
+                           where r.capture_id = c.id)`,
+      [blockId],
+    );
+    expect(blanks.rows[0].n).toBe(0);
+
+    // ...and the guidance still stands.
+    const guide = await asUser(studio.userId, (q) =>
+      q(`select public.latest_setup_for_client($1,$2) as r`, [
+        studio.studioId,
+        studio.clientId,
+      ]),
+    );
+    const rows = (guide.rows[0].r ?? []) as Array<{ value_numeric: string }>;
+    expect(rows.map((r) => r.value_numeric)).toEqual(["120"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("0223 · registration refuses an unpublished version ITSELF", () => {
+  it("the RPC refuses, not only the server action", async () => {
+    // An owner can call this RPC directly - it is granted to `authenticated`
+    // because it must resolve her own ownership - so a check that lives only
+    // in the server action would leave a PERMANENT inventory row whose
+    // settings can never be recorded.
+    const studio = await seedStudio("reg-nocontract");
+    await expect(
+      asUser(studio.userId, (q) =>
+        q(`select public.register_studio_machine($1,$2,$3,$4,$5)`, [
+          studio.studioId,
+          PROFILE,
+          8888, // never published
+          "Unpublishable",
+          [],
+        ]),
+      ),
+    ).rejects.toThrow(/No field contract is published/i);
+
+    // And nothing was left behind.
+    const rows = await adminQuery(
+      `select count(*)::int as n from public.studio_machines
+        where studio_id = $1 and machine_profile_version = 8888`,
+      [studio.studioId],
+    );
+    expect(rows.rows[0].n).toBe(0);
+  });
+
+  it("POSITIVE CONTROL: it registers once the contract is published", async () => {
+    const studio = await seedStudio("reg-withcontract");
+    await publish(80);
+    const id = await register(studio, 80);
+    expect(id).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("0223 · republish compares field IDENTITIES, not counts", () => {
+  it("a DUPLICATE element cannot hide an omitted field", async () => {
+    // THE HOLE THIS CLOSES, and it is worth stating precisely because the old
+    // check looked thorough. It counted matches and compared counts both
+    // ways. Against published {A, B}, an incoming [A, A] gives matches = 2,
+    // incoming = 2 and published = 2 - so dropping B passed as an idempotent
+    // no-op. Counting is not comparing.
+    await publish(90, {
+      fields: [
+        { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
+        { field_key: "duration", native_unit: "s", decimals: 1, quantity: "duration" },
+      ],
+    });
+    await expect(
+      publish(90, {
+        fields: [
+          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
+          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
+        ],
+      }),
+    ).rejects.toThrow(/listed more than once/i);
+
+    // Both published fields survive untouched.
+    const rows = await adminQuery(
+      `select field_key from public.machine_profile_field_contract
+        where machine_profile_id = $1 and machine_profile_version = 90
+        order by field_key`,
+      [PROFILE],
+    );
+    expect(rows.rows.map((r: { field_key: string }) => r.field_key)).toEqual([
+      "current",
+      "duration",
+    ]);
+  });
+
+  it("a duplicate is refused even on a FIRST publication", async () => {
+    await expect(
+      publish(91, {
+        fields: [
+          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
+          { field_key: "current", native_unit: "mA", decimals: 3, quantity: "current" },
+        ],
+      }),
+    ).rejects.toThrow(/listed more than once/i);
+    const rows = await adminQuery(
+      `select count(*)::int as n from public.machine_profile_mode_contract
+        where machine_profile_version = 91`,
+    );
+    expect(rows.rows[0].n).toBe(0);
+  });
+
+  it("an ADDED field is still refused, and the set check is symmetric", async () => {
+    await publish(92, {
+      fields: [
+        { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
+      ],
+    });
+    await expect(
+      publish(92, {
+        fields: [
+          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
+          { field_key: "duration", native_unit: "s", decimals: 1, quantity: "duration" },
+        ],
+      }),
+    ).rejects.toThrow(/already published with different fields/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
 describe("0223 · concurrent captures stay DISTINCT and COHERENT", () => {
   it("four simultaneous captures get consecutive revisions and never interleave", async () => {
     // THE RACE THE ADVISORY LOCK EXISTS FOR. Without it, concurrent callers

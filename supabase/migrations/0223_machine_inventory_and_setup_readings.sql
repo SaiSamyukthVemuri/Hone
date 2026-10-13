@@ -166,6 +166,24 @@ begin
       using errcode = 'check_violation';
   end if;
 
+  -- CONSUME-ONLY, ENFORCED HERE AND NOT ONLY IN THE SERVER ACTION.
+  --
+  -- registerMachineAction checks this too, but an owner can call this RPC
+  -- directly - it is granted to `authenticated` because it must resolve the
+  -- caller's own ownership - and would then create a PERMANENT inventory row
+  -- whose settings can never be recorded, because recording fails closed
+  -- without a published contract. A boundary that only the application
+  -- enforces is not a boundary.
+  if not exists (
+    select 1 from public.machine_profile_mode_contract c
+     where c.machine_profile_id = btrim(p_machine_profile_id)
+       and c.machine_profile_version = p_machine_profile_version
+  ) then
+    raise exception
+      'No field contract is published for that machine profile version, so a unit cannot be registered against it.'
+      using errcode = 'check_violation';
+  end if;
+
   insert into public.studio_machines
     (studio_id, machine_profile_id, machine_profile_version,
      display_name, installed_options)
@@ -788,15 +806,34 @@ declare
   v_mode text;
   v_channel smallint;
 begin
-  if p_readings is null or jsonb_typeof(p_readings) <> 'array' then
-    raise exception 'Readings must be a JSON array.' using errcode = 'check_violation';
+  -- A NON-EMPTY array, and the emptiness check is not cosmetic.
+  --
+  -- An empty array previously allocated a capture with no readings and
+  -- returned 0. Because `latest_setup_for_client` picks the NEWEST capture and
+  -- then aggregates its rows, that empty capture became the newest and made
+  -- valid prior guidance vanish as `[]` - a direct authenticated call could
+  -- erase a client's next-visit setup without deleting anything. The server
+  -- action already refused this; the command has to as well.
+  if p_readings is null or jsonb_typeof(p_readings) <> 'array'
+     or jsonb_array_length(p_readings) = 0 then
+    raise exception 'At least one reading is required.'
+      using errcode = 'check_violation';
   end if;
 
   -- The block decides the studio. Nothing the caller sends does.
+  --
+  -- RESOLVED THROUGH ITS SESSION, and both records must be live. Checking only
+  -- `b.deleted_at` was not enough: `soft_delete_session` (0167) stamps
+  -- `sessions.deleted_at` and leaves the child blocks alone, so a retired
+  -- session keeps live-looking blocks. A stale page or a crafted call could
+  -- then append an IMMUTABLE capture to a session that had been removed -
+  -- unamendable by construction, and attached to a record nobody can see.
   select b.studio_id into v_studio
     from public.session_blocks b
+    join public.sessions sn on sn.id = b.session_id
    where b.id = p_block_id
-     and b.deleted_at is null;
+     and b.deleted_at is null
+     and sn.deleted_at is null;
 
   if v_studio is null then
     raise exception 'Unknown treatment block.' using errcode = 'no_data_found';
@@ -1107,7 +1144,8 @@ declare
   v_count integer := 0;
   v_existing_mode record;
   v_incoming_count integer;
-  v_same integer;
+  v_incoming_distinct integer;
+  v_diff integer;
 begin
   if v_profile = '' then
     raise exception 'A profile id is required.' using errcode = 'check_violation';
@@ -1122,6 +1160,30 @@ begin
   if p_fields is null or jsonb_typeof(p_fields) <> 'array'
      or jsonb_array_length(p_fields) = 0 then
     raise exception 'Fields must be a non-empty JSON array.'
+      using errcode = 'check_violation';
+  end if;
+
+  -- NO FIELD MAY BE LISTED TWICE, on a FIRST publication or a republish.
+  --
+  -- Checked before the published/not-published split because it guards both.
+  -- On a republish it is what broke the comparison that used to live below:
+  -- that version counted matches and compared counts both ways, which a
+  -- DUPLICATE element defeats - against published {A, B}, an incoming [A, A]
+  -- gives matches = 2, incoming = 2 and published = 2, so dropping B was
+  -- accepted as an idempotent no-op. Counting is not comparing.
+  --
+  -- On a FIRST publication the primary key would catch it anyway, but with a
+  -- constraint name instead of a sentence, and only after the mode row had
+  -- been inserted.
+  select count(*),
+         count(distinct (btrim(coalesce(f->>'stage_key', '')),
+                         btrim(coalesce(f->>'field_key', ''))))
+    into v_incoming_count, v_incoming_distinct
+    from jsonb_array_elements(p_fields) as f;
+
+  if v_incoming_count <> v_incoming_distinct then
+    raise exception
+      'The same field is listed more than once in this contract.'
       using errcode = 'check_violation';
   end if;
 
@@ -1141,31 +1203,42 @@ begin
         using errcode = 'restrict_violation';
     end if;
 
-    select count(*) into v_incoming_count
-      from jsonb_array_elements(p_fields);
+    -- EXACT SET EQUALITY, in both directions, on the FULL content of every
+    -- field - not on counts. An extra field, a missing field or a changed unit
+    -- or precision all land in one side of the symmetric difference.
+    select count(*) into v_diff
+      from (
+        (select btrim(coalesce(f->>'stage_key', '')) as stage_key,
+                btrim(coalesce(f->>'field_key', '')) as field_key,
+                btrim(coalesce(f->>'native_unit', '')) as native_unit,
+                (f->>'decimals')::smallint as decimals,
+                btrim(coalesce(f->>'quantity', '')) as quantity
+           from jsonb_array_elements(p_fields) as f)
+        except
+        (select c.stage_key, c.field_key, c.native_unit, c.decimals, c.quantity
+           from public.machine_profile_field_contract c
+          where c.machine_profile_id = v_profile
+            and c.machine_profile_version = p_machine_profile_version
+            and c.mode_key = v_mode)
+      ) only_incoming;
 
-    -- Every incoming field must already exist with identical content...
-    select count(*) into v_same
-      from jsonb_array_elements(p_fields) as f
-      join public.machine_profile_field_contract c
-        on c.machine_profile_id = v_profile
-       and c.machine_profile_version = p_machine_profile_version
-       and c.mode_key = v_mode
-       and c.stage_key = btrim(coalesce(f->>'stage_key', ''))
-       and c.field_key = btrim(coalesce(f->>'field_key', ''))
-       and c.native_unit = btrim(coalesce(f->>'native_unit', ''))
-       and c.decimals = (f->>'decimals')::smallint
-       and c.quantity = btrim(coalesce(f->>'quantity', ''));
+    select v_diff + count(*) into v_diff
+      from (
+        (select c.stage_key, c.field_key, c.native_unit, c.decimals, c.quantity
+           from public.machine_profile_field_contract c
+          where c.machine_profile_id = v_profile
+            and c.machine_profile_version = p_machine_profile_version
+            and c.mode_key = v_mode)
+        except
+        (select btrim(coalesce(f->>'stage_key', '')) as stage_key,
+                btrim(coalesce(f->>'field_key', '')) as field_key,
+                btrim(coalesce(f->>'native_unit', '')) as native_unit,
+                (f->>'decimals')::smallint as decimals,
+                btrim(coalesce(f->>'quantity', '')) as quantity
+           from jsonb_array_elements(p_fields) as f)
+      ) only_published;
 
-    -- ...and there must be no EXTRA published field the caller omitted, or a
-    -- shrinking re-publish would silently pass as identical.
-    if v_same <> v_incoming_count
-       or v_incoming_count <> (
-            select count(*) from public.machine_profile_field_contract c
-             where c.machine_profile_id = v_profile
-               and c.machine_profile_version = p_machine_profile_version
-               and c.mode_key = v_mode
-          ) then
+    if v_diff <> 0 then
       raise exception
         'This machine profile version and mode is already published with different fields. Publish a NEW version instead of changing a published one.'
         using errcode = 'restrict_violation';
@@ -1263,11 +1336,18 @@ as $$
      where c.studio_id = p_studio_id
        and sn.studio_id = p_studio_id
        and sn.client_id = p_client_id
-       -- A RETIRED BLOCK IS NOT GUIDANCE. soft_delete_session_block (0166)
-       -- retires a treatment area without removing its rows, and removing an
-       -- area is usually how a mis-entry is CORRECTED - so offering it back
-       -- would ignore the correction and re-present the mistake.
+       -- A RETIRED BLOCK OR A RETIRED SESSION IS NOT GUIDANCE.
+       --
+       -- soft_delete_session_block (0166) retires a treatment area and
+       -- soft_delete_session (0167) retires a whole session; each leaves its
+       -- rows and its children alone. Removing either is usually how a
+       -- mis-entry is CORRECTED, so offering one back would ignore the
+       -- correction and re-present the mistake as the thing to reproduce.
+       --
+       -- Filtering only the BLOCK was the gap: a removed session kept
+       -- live-looking blocks, so its newest capture stayed eligible.
        and b.deleted_at is null
+       and sn.deleted_at is null
        and public.is_studio_member(p_studio_id)
      order by c.recorded_at desc, c.revision desc
      limit 1
@@ -1347,8 +1427,12 @@ as $$
   )
     from public.treatment_setup_captures c
     join public.session_blocks b on b.id = c.session_block_id
+    join public.sessions sn on sn.id = b.session_id
    where c.session_block_id = p_block_id
+     -- Same retirement rule as guidance, for the same reason and so the two
+     -- cannot disagree about whether a block still exists.
      and b.deleted_at is null
+     and sn.deleted_at is null
      and public.is_studio_member(c.studio_id);
 $$;
 
