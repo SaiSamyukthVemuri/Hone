@@ -131,6 +131,7 @@ type BlockRow = ClinicalSummaryBlock & {
   session_id: string;
   machine_frequency: string | null;
   probe_lot_number: string | null;
+  probe_lot_confirmed: boolean | null;
   // Charting unification: the block's live entries' observation_chips, for the
   // unified reaction summaries.
   electrolysis_entries?:
@@ -244,7 +245,7 @@ export async function getBeforeTodayPreviews(
             supabase
               .from("session_blocks")
               .select(
-                "id, session_id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, probe_lot_number, machine_frequency, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note, electrolysis_entries(observation_chips, deleted_at)",
+                "id, session_id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, probe_lot_number, probe_lot_confirmed, machine_frequency, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note, electrolysis_entries(observation_chips, deleted_at)",
               )
               .eq("studio_id", studioId)
               .in("session_id", sessionIds)

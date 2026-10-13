@@ -44,7 +44,7 @@ function cautionLine(page: Page) {
 }
 
 function setupLine(page: Page) {
-  return page.locator("span").filter({ hasText: /^Latest setup: / }).first();
+  return page.locator("span").filter({ hasText: /^Latest recorded setup: / }).first();
 }
 
 test.describe("iPhone profile", () => {

@@ -21,7 +21,7 @@ import { join } from "node:path";
 // confident voice and prints, over live historical entries:
 //
 //   "No watch/plan note."
-//   "Latest setup: Not recorded"
+//   "Latest recorded setup: Not recorded"
 //   a "Treatment area not recorded" chip
 //
 // A failed CLIENTS read has the same shape one column over: all three record

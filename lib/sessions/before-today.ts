@@ -1,5 +1,8 @@
 import type { LastSessionSummary } from "@/lib/sessions/clinical-summary";
-import type { TreatmentIntelligence } from "@/lib/sessions/treatment-intelligence";
+import {
+  recordedSetupForArea,
+  type TreatmentIntelligence,
+} from "@/lib/sessions/treatment-intelligence";
 
 // PR #211: "Before today" pre-treatment briefing. Pure assembler that
 // turns data the client Overview ALREADY loads (last charted
@@ -113,6 +116,9 @@ export type BeforeToday = {
     // recorded on, so the memory card can name it ("Latest recorded setup
     // Chin") instead of showing unlabeled chips. null for legacy data.
     areaName: string | null;
+    // BROWSER-FINDING-01. The CONFIRMED probe lot on that block -- recorded
+    // setup in its own right, and on its own enough to make `setup` non-null.
+    probeLot: string | null;
   } | null;
   // "27.12 MHz · Ballet F3 · Thermolysis · EL 14" joined form, kept
   // for the Dashboard Today compact preview (PR #212).
@@ -195,33 +201,24 @@ export function buildBeforeToday(input: BeforeTodayInput): BeforeToday {
   );
   const plan = watchPlan?.nextSessionNote?.trim() || null;
 
-  // Latest recorded setup: the most recently treated area's latest
-  // block (intelligence.areas is sorted newest-first by lastTreated).
+  // Latest recorded setup: the most recently treated area's latest block
+  // (intelligence.areas is sorted newest-first by lastTreated), answered by the
+  // ONE canonical derivation rather than recomputed here. See
+  // `recordedSetupForArea`.
   const latestArea = intelligence.areas[0] ?? null;
+  const recorded = latestArea ? recordedSetupForArea(latestArea) : null;
   const setup =
-    latestArea &&
-    (latestArea.latestFrequency ||
-      latestArea.latestProbe ||
-      latestArea.latestModeLabel ||
-      latestArea.latestEnergyLevel != null)
+    recorded?.recorded === true
       ? {
-          frequency: latestArea.latestFrequency,
-          probe: latestArea.latestProbe,
-          modeLabel: latestArea.latestModeLabel,
-          energyLevel: latestArea.latestEnergyLevel,
-          areaName: latestArea.name?.trim() || null,
+          frequency: recorded.frequency,
+          probe: recorded.probe,
+          modeLabel: recorded.modeLabel,
+          energyLevel: recorded.energyLevel,
+          areaName: recorded.areaName,
+          probeLot: recorded.confirmedProbeLot,
         }
       : null;
-  const latestSetupLine = setup
-    ? [
-        setup.frequency,
-        setup.probe,
-        setup.modeLabel,
-        setup.energyLevel != null ? `EL ${setup.energyLevel}` : null,
-      ]
-        .filter(Boolean)
-        .join(" · ") || null
-    : null;
+  const latestSetupLine = setup ? recorded!.line : null;
 
   // Last treatment snapshot extras: total recorded minutes and the
   // distinct recorded probe lot(s), both from data already loaded.

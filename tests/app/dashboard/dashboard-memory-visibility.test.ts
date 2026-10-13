@@ -48,7 +48,7 @@ describe("Today appointment card shows the memory lines in full", () => {
   it("isolated the right block of JSX", () => {
     expect(PREVIEW_BLOCK.length).toBeGreaterThan(200);
     expect(PREVIEW_BLOCK).toMatch(/Remember:/);
-    expect(PREVIEW_BLOCK).toMatch(/Latest setup:/);
+    expect(PREVIEW_BLOCK).toMatch(/Latest recorded setup:/);
   });
 
   it("the Remember note is rendered whole — no character cap", () => {
@@ -57,7 +57,7 @@ describe("Today appointment card shows the memory lines in full", () => {
   });
 
   it("the latest-settings line is rendered whole", () => {
-    expect(PREVIEW_BLOCK).toMatch(/Latest setup: \{workflow\.setup \?\? "Not recorded"\}/);
+    expect(PREVIEW_BLOCK).toMatch(/Latest recorded setup: \{workflow\.setup \?\? "Not recorded"\}/);
     expect(PREVIEW_BLOCK).not.toMatch(/truncate\(beforeToday\.setupLine/);
   });
 
@@ -77,7 +77,7 @@ describe("Today appointment card shows the memory lines in full", () => {
       PREVIEW_BLOCK.indexOf("No watch/plan note."),
     );
     expect(remember).toMatch(/whitespace-pre-wrap break-words/);
-    const setup = PREVIEW_BLOCK.slice(PREVIEW_BLOCK.indexOf("Latest setup:") - 300);
+    const setup = PREVIEW_BLOCK.slice(PREVIEW_BLOCK.indexOf("Latest recorded setup:") - 300);
     expect(setup).toMatch(/whitespace-pre-wrap break-words/);
     // The caution is its own wrapped block, in the rose convention.
     const caution = PREVIEW_BLOCK.slice(
