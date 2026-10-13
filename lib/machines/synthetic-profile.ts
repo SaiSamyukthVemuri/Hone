@@ -74,7 +74,11 @@ const FLAG = "HONE_SYNTHETIC_MACHINE_PROFILE";
 
 export const SYNTHETIC_DEMO_PROFILE: MachineProfile = {
   profileId: SYNTHETIC_PROFILE_ID,
-  version: 1,
+  // VERSION 2, because the field set changed and a published contract is
+  // immutable per (profile, version). Re-publishing v1 with a third field is
+  // refused by `sync_machine_profile_contract` - correctly - so the fixture
+  // moves forward rather than mutating history.
+  version: 2,
   // It has to sit in one of the curated families for the contract's types, but
   // the manufacturer and model names make clear it is not one of their units.
   family: "Permanence/GEMM-16",
@@ -137,6 +141,38 @@ export const SYNTHETIC_DEMO_PROFILE: MachineProfile = {
           optional: false,
           expectedSource: "practitioner-entered",
           editable: true,
+          verification: "device-confirmed",
+          evidence: ["synthetic-demo"],
+        },
+        {
+          // A MIXED-SOURCE CONTRACT, which is the point of this field.
+          //
+          // Both fields above are `practitioner-entered`, so no readback of
+          // this profile could distinguish per-field provenance from the
+          // blanket "practitioner-entered" the entry form used to hard-code.
+          // A proof that cannot fail is not a proof, and that is exactly what
+          // the provenance assertion was until this existed (Codex, ebc69ff6).
+          //
+          // `editable: false` as well, so the same fixture also exercises the
+          // machine-derived path: the value is transcribed by hand because
+          // there is no device integration, and the record says the MACHINE
+          // displayed it rather than that she decided it.
+          //
+          // OPTIONAL, deliberately. A required third field would make every
+          // existing save in the browser spec incomplete, and this fixture
+          // exists to widen what can be proved, not to rewrite the workflow.
+          key: "energy_shown",
+          nativeLabel: "Energy shown",
+          quantity: "energy-display",
+          // `device-display` is the contract's own token for a value in the
+          // machine's own arbitrary units. The unit vocabulary is closed on
+          // purpose, and inventing "mC" here would be exactly the kind of
+          // fiction the closed list prevents.
+          unit: "device-display",
+          decimals: 2,
+          optional: true,
+          expectedSource: "machine-displayed",
+          editable: false,
           verification: "device-confirmed",
           evidence: ["synthetic-demo"],
         },

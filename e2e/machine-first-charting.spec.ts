@@ -38,7 +38,11 @@ const T = 20_000;
 
 /** The one profile that is active, and only behind the server-side gate. */
 const SYNTHETIC_PROFILE_ID = "synthetic:demo-multineedle";
-const SYNTHETIC_VERSION = 1;
+// VERSION 2: the synthetic contract gained a machine-displayed field so a
+// readback can distinguish per-field provenance from a blanket
+// "practitioner-entered". A published contract is immutable per version, so a
+// changed field set is a new version (Codex, ebc69ff6).
+const SYNTHETIC_VERSION = 2;
 // The synthetic profile declares four independently controlled outputs, and
 // the published contract has to say so or a per-channel group is refused.
 const SYNTHETIC_CHANNELS = 4;
@@ -100,6 +104,14 @@ async function registerMachine(studioId: string, displayName: string) {
       JSON.stringify([
         { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
         { field_key: "duration", native_unit: "s", decimals: 1, quantity: "duration" },
+        // The mixed-source field. Its contract source is machine-displayed,
+        // which is what makes the provenance readback in step 6 falsifiable.
+        {
+          field_key: "energy_shown",
+          native_unit: "device-display",
+          decimals: 2,
+          quantity: "energy-display",
+        },
       ]),
     ],
   );
@@ -114,13 +126,17 @@ async function readingsFor({ blockId }: { blockId: string }) {
     decimals: number;
     machine_profile_id: string;
     machine_profile_version: number;
+    observation_source: string;
+    group_key: string;
+    channels: number[];
     recorded_by_practitioner_id: string | null;
   }>(
     `select field_key, value_numeric::text as value_numeric, native_unit, decimals,
-            machine_profile_id, machine_profile_version, recorded_by_practitioner_id
+            machine_profile_id, machine_profile_version, observation_source,
+            group_key, channels, recorded_by_practitioner_id
        from public.treatment_setup_readings
       where session_block_id = $1
-      order by field_key`,
+      order by group_key, field_key`,
     [blockId],
   );
 }
@@ -360,11 +376,21 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
 
     await page.getByTestId("reading-current").fill("135");
     await page.getByTestId("reading-duration").fill("300.5");
+    // THE MIXED-SOURCE FIELD. Its contract source is machine-displayed, and it
+    // is the only reason the provenance assertion below can fail: with both
+    // other fields practitioner-entered, a blanket "practitioner-entered"
+    // would have satisfied every earlier version of this check
+    // (Codex, ebc69ff6).
+    await page.getByTestId("reading-energy_shown").fill("12.25");
     await page.getByTestId("machine-reading-save").click();
     await expect(page.getByTestId("machine-reading-saved")).toBeVisible({ timeout: T });
 
     const rows = await readingsFor({ blockId });
-    expect(rows.map((r) => r.field_key)).toEqual(["current", "duration"]);
+    expect(rows.map((r) => r.field_key)).toEqual([
+      "current",
+      "duration",
+      "energy_shown",
+    ]);
     const byField = new Map(rows.map((r) => [r.field_key, r]));
     // Native unit and the machine's precision survive the browser round trip.
     expect(byField.get("current")!.native_unit).toBe("µA");
@@ -375,6 +401,21 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
     expect(byField.get("current")!.machine_profile_id).toBe(SYNTHETIC_PROFILE_ID);
     expect(byField.get("current")!.machine_profile_version).toBe(SYNTHETIC_VERSION);
     expect(byField.get("current")!.recorded_by_practitioner_id).not.toBeNull();
+
+    // PROVENANCE PER FIELD, end to end and falsifiable. The form used to send
+    // "practitioner-entered" for every reading, which is false for a field the
+    // contract marks machine-displayed - and the rows are immutable, so the
+    // wrong provenance would be permanent.
+    expect(byField.get("current")!.observation_source).toBe("practitioner-entered");
+    expect(
+      byField.get("energy_shown")!.observation_source,
+      "a blanket practitioner-entered mutation must fail here",
+    ).toBe("machine-displayed");
+
+    // And a single group records no channel association, which is NOT the same
+    // as every channel.
+    expect(byField.get("current")!.group_key).toBe("g1");
+    expect(byField.get("current")!.channels).toEqual([]);
   });
 
   await test.step("7: a reading cannot exist WITHOUT a capture", async () => {
@@ -431,6 +472,29 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
     // change", and this is the proof that the structured path works end to end
     // rather than only that the button renders.
     await page.getByTestId("machine-reading-record-change").click({ timeout: T });
+
+    // THE DRAFT DOES NOT SURVIVE THE TRANSITION, asserted here because this is
+    // where the transition actually happens.
+    //
+    // The entry surface is keyed by the setup identity - device, profile
+    // version and mode - so React remounts it rather than carrying values
+    // across. The defect that motivated the key: two modes reusing a field
+    // identity (the galvanic and adjunct fixtures both declare `current`)
+    // shared draft keys of (group, stage, field) only, so a value typed under
+    // the old mode stayed in the box and could be submitted under the NEW
+    // mode's key without being re-read (Codex, ebc69ff6).
+    //
+    // A FIRST DRAFT PUT THIS IN A STEP OF ITS OWN, which broke this step: that
+    // step clicked "Record a setting change" first, so the button 7b needs was
+    // already consumed and 7b timed out on it. The per-mode case needs a
+    // two-mode profile and is proved in the unit suite; the synthetic profile
+    // declares one mode, so this is the transition available here.
+    await expect(
+      page.getByTestId("reading-current"),
+      "a new capture must start empty, never from the capture just saved",
+    ).toHaveValue("");
+    await expect(page.getByTestId("reading-energy_shown")).toHaveValue("");
+
     await page.getByTestId("reading-current").fill("180");
     await page.getByTestId("reading-duration").fill("300.5");
     await page.getByTestId("machine-reading-save").click();
@@ -445,8 +509,13 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
         where c.session_block_id = $1 order by c.revision`,
       [blockId],
     );
+    // THREE readings in revision 1, two in revision 2: step 6 now also fills
+    // the mixed-source `energy_shown` field, and this step fills only the two
+    // required ones. The counts are asserted rather than ignored because a
+    // capture silently losing a field is exactly what the composite-setup bug
+    // looked like.
     expect(caps.map((c) => [c.revision, c.fields])).toEqual([
-      [1, "2"],
+      [1, "3"],
       [2, "2"],
     ]);
 
@@ -572,7 +641,101 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
       ["current", 2, "180"],
       ["duration", 1, "300.5"],
       ["duration", 2, "300.5"],
+      // The mixed-source field, recorded once in revision 1 and NOT carried
+      // into revision 2 - step 7b did not re-read it, and a capture must hold
+      // only what she actually entered for it. Its presence here is also what
+      // makes step 6's provenance assertion meaningful: this is the row whose
+      // observation_source is machine-displayed.
+      ["energy_shown", 1, "12.25"],
     ]);
+  });
+
+  // ORDER MATTERS HERE, and getting it wrong cost a run. Step 11 RETIRES the
+  // machine and step 12 depends on it having been retired, so anything needing
+  // a working unit has to come first. Placed after 11, this step waited two
+  // minutes for a channel control that could not exist: the unit was out of
+  // service, so nothing was selectable and there was no entry surface at all.
+  await test.step("13: TWO setting groups record distinct channels and values", async () => {
+    // The approved channel-group slice, through the real UI. The synthetic
+    // profile declares four independently controlled outputs and
+    // `supportsDistinctSettingGroups: true`, so the controls are offered here
+    // exactly as they would be for a real multi-needle model.
+    //
+    // NOTHING IS AUTO-FILLED. The second group starts empty, and its channels
+    // start unselected: carrying either over would assert she ran the second
+    // set of probes at the first set's settings.
+    const fresh = await seedNextVisitForSameClient(seed.studioId, clientId);
+    await page.goto(`/clients/${clientId}/sessions/${fresh.sessionId}`);
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+
+    // A block to record against, exactly as step 5 does it. The ids here were
+    // invented on a first draft (`block-area-input`, `save-settings-block`)
+    // and do not exist; reusing step 5's real control is the point.
+    await page.getByTestId("save-treatment-area").click();
+    await expect
+      .poll(
+        async () => {
+          const rows = await sql<{ id: string }>(
+            `select id from public.session_blocks
+              where session_id = $1 and deleted_at is null order by sort_order limit 1`,
+            [fresh.sessionId],
+          );
+          return rows[0]?.id ?? "";
+        },
+        { timeout: T, message: "the second visit's settings block never saved" },
+      )
+      .not.toBe("");
+    await page.getByTestId(/^edit-area-/).first().click({ timeout: T });
+    await openMachinePanel(page);
+    if ((await page.getByTestId(`machine-pick-${machineId}`).count()) > 0) {
+      await page.getByTestId(`machine-pick-${machineId}`).click();
+    }
+
+    // GROUP 1: probes 1 and 2 at one current.
+    await page.getByTestId("setting-group-g1-channel-1").click();
+    await page.getByTestId("setting-group-g1-channel-2").click();
+    await page.getByTestId("reading-current").fill("120");
+    await page.getByTestId("reading-duration").fill("300.0");
+
+    // GROUP 2: probes 3 and 4 at another.
+    await page.getByTestId("setting-group-add").click();
+    await expect(page.getByTestId("setting-group-g2")).toBeVisible({ timeout: T });
+    await expect(
+      page.getByTestId("reading-g2-current"),
+      "a new group must start empty - nothing is copied from its sibling",
+    ).toHaveValue("");
+    await page.getByTestId("setting-group-g2-channel-3").click();
+    await page.getByTestId("setting-group-g2-channel-4").click();
+    await page.getByTestId("reading-g2-current").fill("80");
+    await page.getByTestId("reading-g2-duration").fill("240.0");
+
+    await page.getByTestId("machine-reading-save").click();
+    await expect(page.getByTestId("machine-reading-saved")).toBeVisible({ timeout: T });
+
+    // READ BACK: two groups, each with its own channels and its own values.
+    const second = await sql<{
+      group_key: string;
+      channels: number[];
+      revision: number;
+      v: string;
+    }>(
+      `select c.group_key, c.channels, c.revision, r.value_numeric::text as v
+         from public.treatment_setup_captures c
+         join public.treatment_setup_readings r on r.capture_id = c.id
+        where c.studio_id = $1 and r.field_key = 'current'
+          and c.session_block_id <> $2
+        order by c.group_key`,
+      [seed.studioId, blockId],
+    );
+    expect(second.map((r) => r.group_key)).toEqual(["g1", "g2"]);
+    expect(second[0]!.channels).toEqual([1, 2]);
+    expect(second[1]!.channels).toEqual([3, 4]);
+    expect(second[0]!.v).toBe("120");
+    expect(second[1]!.v).toBe("80");
+    // Each group is the FIRST capture of its own group, not two revisions of
+    // one thing.
+    expect(second[0]!.revision).toBe(1);
+    expect(second[1]!.revision).toBe(1);
   });
 
   await test.step("11: a FAILED selection write is reported, and changes nothing stored", async () => {

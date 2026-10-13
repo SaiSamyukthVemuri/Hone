@@ -1060,3 +1060,253 @@ describe("choosing the mode on a multi-mode machine", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// A MODE IS ONLY OFFERED IF THIS PHYSICAL UNIT CAN RUN IT.
+//
+// `activeModes` answers what the MODEL offers. An option is fitted to a UNIT,
+// so a mode gated on `requiresInstalledOption` was offered by the picker,
+// refused by `selectDevice` when persisting, left optimistically selected
+// anyway, and then refused again by `recordReadingsAction` after the
+// practitioner had filled the form (Codex, ebc69ff6).
+// ---------------------------------------------------------------------------
+describe("the mode picker is built from the device, not the model", () => {
+  const GATED: MachineProfile = {
+    ...SYNTHETIC,
+    profileId: "fixture:gated",
+    modes: [
+      SYNTHETIC.modes[0]!,
+      {
+        ...SYNTHETIC.modes[0]!,
+        key: "adjunct",
+        nativeLabel: "Adjunct",
+        requiresInstalledOption: "adjunct-head",
+        fields: [
+          { ...SYNTHETIC.modes[0]!.fields[0]!, key: "current", nativeLabel: "Adjunct current" },
+        ],
+      },
+    ],
+  };
+  const CAT_GATED = [GATED];
+  const base: StudioDevice = { ...DEVICE, profileId: "fixture:gated" };
+  const without: StudioDevice = { ...base, installedOptions: [] };
+  const withOption: StudioDevice = { ...base, installedOptions: ["adjunct-head"] };
+
+  it("does NOT offer a mode whose option this unit lacks", () => {
+    const html = render({
+      scope: SCOPE,
+      devices: [without],
+      catalogue: CAT_GATED,
+      initialDeviceId: without.deviceId,
+    });
+    expect(html).not.toContain('data-testid="machine-mode-adjunct"');
+    // One supported mode means no picker at all, which is the right outcome:
+    // there is nothing to choose.
+    expect(html).not.toContain('data-testid="machine-mode-picker"');
+  });
+
+  it("DOES offer it once the unit reports the option", () => {
+    // The positive control. Without it the assertion above would be satisfied
+    // by a picker that never renders the mode under any circumstances.
+    const html = render({
+      scope: SCOPE,
+      devices: [withOption],
+      catalogue: CAT_GATED,
+      initialDeviceId: withOption.deviceId,
+    });
+    expect(html).toContain('data-testid="machine-mode-picker"');
+    expect(html).toContain('data-testid="machine-mode-adjunct"');
+  });
+
+  it("does not SELECT an unsupported mode even when it is remembered", () => {
+    // A remembered mode can outlive the option being removed from the unit.
+    // Falling back to a supported one beats rendering a contract the capture
+    // will be refused against.
+    const html = render({
+      scope: SCOPE,
+      devices: [without],
+      catalogue: CAT_GATED,
+      initialDeviceId: without.deviceId,
+      initialModeKey: "adjunct",
+      blockId: "block-1",
+    });
+    expect(html).toContain('data-testid="machine-chosen"');
+    // Galvanic's own label, not the adjunct mode's.
+    expect(html).not.toContain("Adjunct current");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE TOUCH FLOOR IS THE PRIMITIVE'S, not re-derived at the call site.
+// ---------------------------------------------------------------------------
+describe("mode and device controls meet DESIGN.md's interaction floor", () => {
+  const TWO: MachineProfile = {
+    ...SYNTHETIC,
+    profileId: "fixture:floor",
+    modes: [
+      SYNTHETIC.modes[0]!,
+      { ...SYNTHETIC.modes[0]!, key: "second", nativeLabel: "Second" },
+    ],
+  };
+  const DEV: StudioDevice = { ...DEVICE, profileId: "fixture:floor" };
+  // TWO RENDERS, because the two controls never appear together: the picker
+  // shows only while nothing is chosen, and the mode controls only once
+  // something is. A single render asserting both would have had to pass
+  // whichever state it was in.
+  const chosenHtml = render({
+    scope: SCOPE,
+    devices: [DEV],
+    catalogue: [TWO],
+    initialDeviceId: DEV.deviceId,
+  });
+  const pickingHtml = render({ scope: SCOPE, devices: [DEV], catalogue: [TWO] });
+
+  const tagFrom = (html: string, testid: string): string => {
+    const tags = html.match(/<button[^>]*>/g) ?? [];
+    const found = tags.find((t) => t.includes(`data-testid="${testid}"`));
+    expect(found, `no button rendered for ${testid}`).toBeTruthy();
+    return found!;
+  };
+  const tagFor = (testid: string): string => tagFrom(chosenHtml, testid);
+
+  it("the mode control carries the 44px floor", () => {
+    // My first version was `text-xs py-1.5` with no minimum height - about
+    // 28px on a thumb.
+    expect(tagFor("machine-mode-second")).toContain("min-h-[44px]");
+  });
+
+  it("and relaxes only behind the explicit pointer-fine opt-in", () => {
+    // Not a width breakpoint: an iPad in portrait is 768px wide and still a
+    // thumb, which is why the repository gates this on the pointer itself.
+    expect(tagFor("machine-mode-second")).toContain("pointer-fine:min-h-8");
+  });
+
+  it("the DEVICE control carries it too, which it did not before", () => {
+    // Pre-existing and unflagged: `py-2 text-sm` with no minimum height is
+    // about 36px. Same law, one control over.
+    expect(tagFrom(pickingHtml, `machine-pick-${DEV.deviceId}`)).toContain(
+      "min-h-[44px]",
+    );
+  });
+
+  it("the shared focus treatment comes with them", () => {
+    // The reason to use the primitive rather than copy its height: the floor
+    // is one of several rules it carries, and a call site that re-derives the
+    // height will not re-derive the rest.
+    expect(tagFor("machine-mode-second")).toContain("focus-visible:");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DISTINCT SETTING GROUPS, in the mounted surface.
+//
+// The entry form hard-coded group `g1` with no channels while the schema, the
+// command and both read paths supported several groups with channel
+// associations, so probes at different settings could only be stored as one
+// apparently global setup (Codex, 15cc6c99; narrow implementation approved
+// 2026-10-13).
+//
+// EVERY GATE HERE IS THE CONTRACT'S. The channel identities are 1..count, the
+// add control appears only when the model declares `supportsDistinctSettingGroups`,
+// and a group without channels is never widened to "all".
+// ---------------------------------------------------------------------------
+describe("setting groups in the entry surface", () => {
+  const withChannels = (over: Record<string, unknown> = {}): MachineProfile => ({
+    ...SYNTHETIC,
+    profileId: "fixture:chan",
+    channels: {
+      count: 4,
+      nativeLabel: "Channel",
+      associationRequired: false,
+      supportsDistinctSettingGroups: true,
+      verification: "device-confirmed",
+      evidence: ["p"],
+      ...over,
+    },
+  });
+  const dev = (profileId: string): StudioDevice => ({ ...DEVICE, profileId });
+
+  const entry = (profile: MachineProfile) =>
+    render({
+      scope: SCOPE,
+      devices: [dev(profile.profileId)],
+      initialDeviceId: DEVICE.deviceId,
+      catalogue: [profile],
+      blockId: "block-1",
+      onRecord: async () => ({ ok: true }),
+    });
+
+  it("offers the contract's channel identities, and only those", () => {
+    const html = entry(withChannels());
+    for (const c of [1, 2, 3, 4]) {
+      expect(html).toContain(`data-testid="setting-group-g1-channel-${c}"`);
+    }
+    expect(html, "channel 5 does not exist on this model").not.toContain(
+      'data-testid="setting-group-g1-channel-5"',
+    );
+  });
+
+  it("offers Add setting group when the model says probes can differ", () => {
+    expect(entry(withChannels())).toContain('data-testid="setting-group-add"');
+  });
+
+  it("does NOT offer it when the model has channels but no distinct groups", () => {
+    // The contract's own words: "a simple form must never label a per-probe
+    // setting as a global control". The inverse holds too - a model that does
+    // not support distinct groups must not be given the control.
+    const html = entry(withChannels({ supportsDistinctSettingGroups: false }));
+    expect(html).not.toContain('data-testid="setting-group-add"');
+    // The channel association is still offered: knowing WHICH probe is a
+    // separate question from whether probes can differ.
+    expect(html).toContain('data-testid="setting-group-g1-channel-1"');
+  });
+
+  it("offers neither for a model with no channel structure", () => {
+    const html = entry({ ...SYNTHETIC, profileId: "fixture:nochan", channels: undefined });
+    expect(html).not.toContain('data-testid="setting-group-add"');
+    expect(html).not.toContain("channel-1");
+  });
+
+  it("KEEPS THE SIMPLE PATH for a model with no channels", () => {
+    // Codex's constraint, as an assertion: a profile without channels must
+    // render exactly what it did before - one group, no group chrome, and the
+    // unprefixed input ids every existing test and spec already use.
+    const html = entry({ ...SYNTHETIC, profileId: "fixture:nochan2", channels: undefined });
+    expect(html).toContain('data-testid="reading-current"');
+    expect(html).not.toContain('data-testid="reading-g1-current"');
+    expect(html, "no group heading for a single group").not.toContain(
+      "Setting group 1",
+    );
+  });
+
+  it("says an unassociated group records NO association, not every probe", () => {
+    // The one interpretation this surface must never make. `associationRequired`
+    // is false by a recorded practitioner ruling, so saving without naming
+    // probes is legal - and it means the association is unknown, which is a
+    // weaker claim than "all of them".
+    const html = entry(withChannels());
+    expect(html).toContain('data-testid="setting-group-g1-no-channels"');
+    expect(html).toContain("not as every");
+  });
+
+  it("the channel controls carry the shared touch floor", () => {
+    const html = entry(withChannels());
+    const tags = html.match(/<button[^>]*>/g) ?? [];
+    const chan = tags.find((t) =>
+      t.includes('data-testid="setting-group-g1-channel-2"'),
+    );
+    expect(chan).toBeTruthy();
+    expect(chan).toContain("min-h-[44px]");
+  });
+
+  it("the reading input carries it too, and does not shrink its type", () => {
+    // DESIGN.md LAW 5: density comes from the box, not the type size. A 16px
+    // input is also what stops iOS zooming the page on focus.
+    const html = entry(withChannels());
+    const inputs = html.match(/<input[^>]*>/g) ?? [];
+    const current = inputs.find((t) => t.includes('data-testid="reading-current"'));
+    expect(current).toBeTruthy();
+    expect(current).toContain("min-h-[44px]");
+    expect(current).toContain("text-base");
+  });
+});

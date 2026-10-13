@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { Button } from "@/components/ui/button";
 import { SectionLabel } from "@/components/ui/section-label";
 import { MACHINE_CATALOGUE } from "@/lib/machines/catalogue";
 import {
@@ -22,10 +23,10 @@ import type {
 import { MachineReadingEntry } from "./machine-reading-entry";
 import { MachinePriorSetup } from "./machine-prior-setup";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
-import { activeModes } from "@/lib/machines/profile-contract";
 import { nativeFieldGroups } from "@/lib/machines/charting";
 import {
   selectableDevices,
+  supportedModes,
   type SelectionScope,
   type StudioDevice,
 } from "@/lib/machines/selection";
@@ -202,11 +203,11 @@ export function MachineFirstSetupPanel({
     // THE MODE IS RESET TO THE NEW DEVICE'S OWN FIRST MODE. Carrying the
     // previous one over would persist a key from a different profile, which
     // means nothing - a mode exists only within the profile that declares it.
-    const nextProfile =
-      next === null
-        ? undefined
-        : selectable.find((s) => s.device.deviceId === next)?.profile;
-    const nextMode = nextProfile ? (activeModes(nextProfile)[0]?.key ?? null) : null;
+    const nextPick =
+      next === null ? undefined : selectable.find((s) => s.device.deviceId === next);
+    const nextMode = nextPick
+      ? (supportedModes(nextPick.device, nextPick.profile)[0]?.key ?? null)
+      : null;
     setModeKey(nextMode);
     // Step 1: the optimistic move, so the form stays responsive.
     setSelection((prev) => selectionRequested(prev, next));
@@ -243,7 +244,10 @@ export function MachineFirstSetupPanel({
   // A MODE KEY IS ONLY MEANINGFUL WITHIN ONE PROFILE, so an unrecognised one
   // falls back rather than blanking the panel: a remembered mode can outlive
   // the machine it was chosen on.
-  const modes = chosen ? activeModes(chosen.profile) : [];
+  // FROM THE PHYSICAL UNIT, not the model: a mode gated on an option this
+  // device does not have is not a choice, and offering it only to have the
+  // capture refused two layers down is worse than not offering it.
+  const modes = chosen ? supportedModes(chosen.device, chosen.profile) : [];
   const mode = modes.find((m) => m.key === modeKey) ?? modes[0] ?? null;
   const groups = chosen && mode ? nativeFieldGroups(chosen.profile, mode) : [];
   const blocked = withheld(catalogue);
@@ -314,20 +318,28 @@ export function MachineFirstSetupPanel({
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
             Choose the machine you are working on before entering settings.
           </p>
+          {/*
+            THE SAME LAW, one control over, and not in the finding. `py-2
+            text-sm` with no minimum height is about 36px, also under the 44px
+            floor. It predates the mode picker and nobody flagged it, but
+            fixing the new violation while leaving its neighbour would be
+            knowingly shipping the one I had just been taught to see.
+          */}
           <div className="flex flex-wrap gap-2">
             {selectable.map(({ device, profile }) => (
-              <button
+              <Button
                 key={device.deviceId}
                 type="button"
+                variant="secondary"
+                size="md"
                 onClick={() => void chooseDevice(device.deviceId)}
                 data-testid={`machine-pick-${device.deviceId}`}
-                className="rounded-full border border-neutral-300 bg-white px-4 py-2 text-sm text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300"
               >
                 {device.displayName}
                 <span className="ml-1.5 text-neutral-500">
                   {profile.manufacturer} {profile.model}
                 </span>
-              </button>
+              </Button>
             ))}
           </div>
         </div>
@@ -352,22 +364,29 @@ export function MachineFirstSetupPanel({
           {modes.length > 1 && (
             <div className="flex flex-col gap-1.5" data-testid="machine-mode-picker">
               <SectionLabel size="caption">Mode</SectionLabel>
+              {/*
+                THE SHARED PRIMITIVE, not hand-rolled pills.
+                My first version was `text-xs py-1.5` with no minimum height -
+                about 28px on a touch device, against DESIGN.md LAW 6's 44px
+                floor. Button's `sm` size composes CONTROL_COMPACT_FINE_POINTER,
+                which keeps the full 44px on every coarse pointer and relaxes to
+                32px only behind the repository's explicit `pointer-fine` gate.
+                The rule belongs in the primitive; a call site can forget it,
+                and this one did (Codex, ebc69ff6).
+              */}
               <div className="flex flex-wrap gap-2">
                 {modes.map((m) => (
-                  <button
+                  <Button
                     key={m.key}
                     type="button"
+                    variant={m.key === mode?.key ? "primary" : "secondary"}
+                    size="sm"
                     onClick={() => void chooseMode(m.key)}
                     aria-pressed={m.key === mode?.key}
                     data-testid={`machine-mode-${m.key}`}
-                    className={
-                      m.key === mode?.key
-                        ? "rounded-full border border-neutral-900 bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900"
-                        : "rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300"
-                    }
                   >
                     {m.nativeLabel}
-                  </button>
+                  </Button>
                 ))}
               </div>
             </div>
@@ -381,6 +400,22 @@ export function MachineFirstSetupPanel({
               a reading it has nowhere to put. */}
           {blockId && recordAndCount && mode ? (
             <MachineReadingEntry
+              // REMOUNTED WHEN THE IDENTITY CHANGES, which is the whole fix.
+              //
+              // The draft is keyed by group, stage and field - NOT by mode - so
+              // when two modes reuse a field identity (the galvanic and adjunct
+              // fixtures both declare `current`) a value typed under the old
+              // mode stayed in the box and could be submitted under the NEW
+              // mode's key without being re-read. Changing the mode changed
+              // only `modeKey`; React kept the same component mounted with the
+              // same draft. A number the practitioner entered for one mode
+              // would have been stored as a reading for another
+              // (Codex, ebc69ff6).
+              //
+              // The key covers device, profile version and mode because all
+              // three change what the fields MEAN. Historical captures are
+              // untouched - this clears an unsaved draft, never a stored row.
+              key={`${chosen.device.deviceId}::${chosen.profile.profileId}::${chosen.profile.version}::${mode.key}`}
               profile={chosen.profile}
               mode={mode}
               blockId={blockId}

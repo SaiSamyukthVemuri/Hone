@@ -2,17 +2,21 @@
 
 import { useState } from "react";
 
+import { Button } from "@/components/ui/button";
 import { SectionLabel } from "@/components/ui/section-label";
+import { nativeFieldGroups } from "@/lib/machines/charting";
 import {
-  nativeFieldGroups,
-  type FieldDescriptor,
-  type FieldGroup,
-} from "@/lib/machines/charting";
-import type {
-  MachineMode,
-  MachineProfile,
-  ReadingValue,
-} from "@/lib/machines/profile-contract";
+  addGroup,
+  assembleGroupSubmissions,
+  channelChoices,
+  draftKey,
+  firstGroup,
+  groupReadiness,
+  supportsDistinctGroups,
+  toggleChannel,
+  type SettingGroupDraft,
+} from "@/lib/machines/setting-groups";
+import type { MachineMode, MachineProfile } from "@/lib/machines/profile-contract";
 import type { ReadingSubmission } from "@/lib/machines/machine-queries";
 
 // MPX-03 — recording what the machine showed.
@@ -54,63 +58,6 @@ export type MachineReadingEntryProps = {
   }) => Promise<{ ok: boolean; error?: string }>;
 };
 
-type Draft = Record<string, string>;
-
-/** A blank, non-numeric or non-finite entry is not a reading. */
-function parse(raw: string): ReadingValue | null {
-  const trimmed = raw.trim();
-  if (trimmed === "") return null;
-  const n = Number(trimmed);
-  if (!Number.isFinite(n)) return null;
-  return { kind: "value", value: n };
-}
-
-/** The stable identity of one field within one group. */
-export function draftKey(groupKey: string, f: FieldDescriptor): string {
-  return `${groupKey}::${f.stageKey ?? ""}::${f.key}`;
-}
-
-/**
- * Turn the practitioner's typed draft into the readings to submit.
- *
- * EXTRACTED SO IT CAN BE TESTED. This logic lived inside `submit`, an event
- * handler, and this repository has no jsdom or testing-library in the unit
- * stack - so nothing could reach it. That is how a hard-coded
- * "practitioner-entered" survived on every field, including ones the contract
- * marks machine-displayed or device-computed, with the rows immutable
- * (Codex, 15cc6c99). It is the third defect in this lane to ship inside an
- * untestable handler, so the rule now is: if it decides what gets stored, it
- * does not live in a closure.
- *
- * Two behaviours worth stating, because both are deliberate:
- *
- *  - A BLANK FIELD IS NOT RECORDED. Not a zero, and not "not-applicable" -
- *    neither is what she told us. Absence with a reason is a different act,
- *    and the command has its own vocabulary for it.
- *  - THE SOURCE COMES FROM THE CONTRACT, per field. Transcribing a value the
- *    machine computed is not the same act as entering one, and the record must
- *    not claim it is.
- */
-export function assembleReadings(
-  groups: readonly FieldGroup[],
-  draft: Readonly<Record<string, string>>,
-): ReadingSubmission[] {
-  const readings: ReadingSubmission[] = [];
-  for (const g of groups) {
-    for (const f of g.fields) {
-      const value = parse(draft[draftKey(g.key, f)] ?? "");
-      if (value === null) continue;
-      readings.push({
-        stageKey: f.stageKey,
-        fieldKey: f.key,
-        value,
-        observationSource: f.expectedSource,
-      });
-    }
-  }
-  return readings;
-}
-
 export function MachineReadingEntry({
   profile,
   mode,
@@ -118,8 +65,14 @@ export function MachineReadingEntry({
   deviceId,
   onRecord,
 }: MachineReadingEntryProps) {
-  const groups = nativeFieldGroups(profile, mode);
-  const [draft, setDraft] = useState<Draft>({});
+  const fieldGroups = nativeFieldGroups(profile, mode);
+  // SETTING GROUPS - probes sharing one set of values. One to begin with, which
+  // is the entire surface for a model without channels.
+  const [groups, setGroups] = useState<SettingGroupDraft[]>(firstGroup);
+  // MONOTONIC, never derived from the list: a removed group's identity is
+  // retired for the life of the mount. See addGroup for why reuse would
+  // corrupt a group's revision history.
+  const [groupOrdinal, setGroupOrdinal] = useState(1);
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -127,36 +80,71 @@ export function MachineReadingEntry({
   // and distinguishes the first capture from a later revision.
   const [captures, setCaptures] = useState(0);
 
-  const key = draftKey;
+  const channels = channelChoices(profile);
+  const canAdd = supportsDistinctGroups(profile);
+  const readiness = groups.map((g) => groupReadiness(fieldGroups, g));
+  // SAVEABLE when something is complete and nothing is half-finished. A
+  // partially filled group blocks rather than being skipped: skipping would
+  // silently discard numbers she typed, and submitting it would be refused by
+  // the command.
+  const partial = groups.filter((_, i) => readiness[i] === "partial");
+  const ready = readiness.some((r) => r === "complete") && partial.length === 0;
 
-  const required = groups.flatMap((g) =>
-    g.fields.filter((f) => !f.optional).map((f) => key(g.key, f)),
-  );
-  const ready = required.every((k) => parse(draft[k] ?? "") !== null);
+  const setValue = (groupId: string, k: string, v: string) =>
+    setGroups((prev) =>
+      prev.map((g) => (g.id === groupId ? { ...g, values: { ...g.values, [k]: v } } : g)),
+    );
+
+  const flipChannel = (groupId: string, channel: number) =>
+    setGroups((prev) =>
+      prev.map((g) => (g.id === groupId ? toggleChannel(g, channel, profile) : g)),
+    );
 
   async function submit() {
     setPending(true);
     setMessage(null);
-    // The assembly is a pure function above, so it has a test. See its
-    // docblock for why that matters.
-    const readings = assembleReadings(groups, draft);
+    const submissions = assembleGroupSubmissions(fieldGroups, groups);
 
-    const out = await onRecord({
-      blockId,
-      machineId: deviceId,
-      modeKey: mode.key,
-      groupKey: "g1",
-      channels: [],
-      readings,
-    });
+    // ONE CALL PER GROUP, because one capture is one group's atomic fact. The
+    // consequence is reported rather than rounded: with two groups the first
+    // can succeed and the second fail, and saying "saved" or "could not save"
+    // would both be false. See assembleGroupSubmissions.
+    const succeeded: string[] = [];
+    const failed: Array<{ groupKey: string; error?: string }> = [];
+    for (const sub of submissions) {
+      const out = await onRecord({
+        blockId,
+        machineId: deviceId,
+        modeKey: mode.key,
+        groupKey: sub.groupKey,
+        channels: sub.channels,
+        readings: sub.readings,
+      });
+      if (out.ok) succeeded.push(sub.groupKey);
+      else failed.push({ groupKey: sub.groupKey, error: out.error });
+    }
+
     setPending(false);
-    if (out.ok) {
-      setCaptures((n) => n + 1);
+    setCaptures((n) => n + succeeded.length);
+
+    if (failed.length === 0) {
       setSaved(true);
       setMessage("Saved to this treatment.");
-    } else {
-      setMessage(out.error ?? "Could not save those settings.");
+      return;
     }
+    if (succeeded.length === 0) {
+      setMessage(failed[0]!.error ?? "Could not save those settings.");
+      return;
+    }
+    // THE PARTIAL CASE, stated exactly. Groups that saved are permanent; the
+    // others are not, and she needs to know which is which before deciding
+    // what to do next.
+    setMessage(
+      `Saved ${succeeded.length} of ${submissions.length} setting groups. ` +
+        `${failed.map((f) => f.groupKey).join(", ")} could not be saved: ` +
+        `${failed[0]!.error ?? "the command refused it"}. ` +
+        "The saved groups are already recorded and are not affected.",
+    );
   }
 
   if (saved) {
@@ -188,122 +176,245 @@ export function MachineReadingEntry({
           If a setting changes during the treatment, record it as a new capture
           - the earlier one stays in the record.
         </p>
-        <button
-          type="button"
-          onClick={() => {
-            // A NEW capture, not an edit of the last one. The draft is cleared
-            // deliberately: pre-filling from the previous capture would invite
-            // a practitioner to submit values she has not re-read off the
-            // machine, which is the opposite of what a reading is.
-            setDraft({});
-            setMessage(null);
-            setSaved(false);
-          }}
-          className="self-start rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-          data-testid="machine-reading-record-change"
-        >
-          Record a setting change
-        </button>
+        <div>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              // A NEW capture, not an edit of the last one. Everything is
+              // cleared deliberately - values AND channel associations.
+              // Pre-filling either from the previous capture would invite a
+              // practitioner to submit settings she has not re-read off the
+              // machine, or to assert she ran the same probes, which is the
+              // opposite of what a reading is.
+              setGroups(firstGroup());
+              setGroupOrdinal(1);
+              setMessage(null);
+              setSaved(false);
+            }}
+            data-testid="machine-reading-record-change"
+          >
+            Record a setting change
+          </Button>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-3" data-testid="machine-reading-entry">
-      {groups.map((group) => (
-        <div key={group.key} className="flex flex-col gap-2">
-          <SectionLabel size="caption">{group.label}</SectionLabel>
-          <div className="grid gap-3 md:grid-cols-2">
-            {group.fields.map((f) => {
-              const k = key(group.key, f);
-              return (
-                <label key={k} className="flex flex-col gap-1">
-                  <span className="text-sm font-medium">
-                    {/* Same ids as the panel's read-only list; only one of the
-                        two renders at a time. See the note there. */}
-                    <span data-testid={`field-label-${f.key}`}>{f.label}</span>
-                    {f.unit && (
-                      <span
-                        className="ml-1 font-normal text-neutral-500"
-                        data-testid={`field-unit-${f.key}`}
-                      >
-                        ({f.unit})
+      {groups.map((setting, settingIndex) => (
+        <div
+          key={setting.id}
+          className={
+            groups.length > 1
+              ? "flex flex-col gap-2 rounded-md border border-neutral-200 p-3 dark:border-neutral-800"
+              : "flex flex-col gap-2"
+          }
+          data-testid={`setting-group-${setting.id}`}
+        >
+          {/*
+            THE GROUP HEADER ONLY EXISTS WHEN THERE IS MORE THAN ONE.
+            A single group is the whole setup, and labelling it "Group 1" would
+            invent a distinction the practitioner has not made.
+          */}
+          {groups.length > 1 && (
+            <div className="flex items-baseline justify-between gap-2">
+              <SectionLabel size="caption">
+                Setting group {settingIndex + 1}
+              </SectionLabel>
+              {readiness[settingIndex] === "empty" && (
+                <Button
+                  type="button"
+                  variant="quiet"
+                  size="sm"
+                  onClick={() =>
+                    setGroups((prev) => prev.filter((g) => g.id !== setting.id))
+                  }
+                  data-testid={`setting-group-remove-${setting.id}`}
+                >
+                  Remove
+                </Button>
+              )}
+            </div>
+          )}
+
+          {/*
+            CHANNEL ASSOCIATION, offered only where the contract declares
+            channels, and never required: `associationRequired` is false by a
+            recorded practitioner ruling, so a setup saves without naming
+            probes.
+
+            THE EMPTY STATE IS NAMED HONESTLY. An unassociated group records NO
+            association - it does NOT mean "every probe". Saying "all channels"
+            here would assert a clinical fact nobody entered, which is the one
+            thing this surface must not do.
+          */}
+          {channels.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs text-neutral-600 dark:text-neutral-400">
+                {profile.channels!.nativeLabel}s these settings applied to
+              </span>
+              <div className="flex flex-wrap gap-2">
+                {channels.map((c) => {
+                  const on = setting.channels.includes(c);
+                  return (
+                    <Button
+                      key={c}
+                      type="button"
+                      variant={on ? "primary" : "secondary"}
+                      size="sm"
+                      aria-pressed={on}
+                      onClick={() => flipChannel(setting.id, c)}
+                      data-testid={`setting-group-${setting.id}-channel-${c}`}
+                    >
+                      {c}
+                    </Button>
+                  );
+                })}
+              </div>
+              {setting.channels.length === 0 && (
+                <span
+                  className="text-xs text-neutral-500"
+                  data-testid={`setting-group-${setting.id}-no-channels`}
+                >
+                  No {profile.channels!.nativeLabel.toLowerCase()} recorded for this
+                  group. This is saved as no association — not as every{" "}
+                  {profile.channels!.nativeLabel.toLowerCase()}.
+                </span>
+              )}
+            </div>
+          )}
+
+          {fieldGroups.map((fieldGroup) => (
+            <div key={fieldGroup.key} className="flex flex-col gap-2">
+              <SectionLabel size="caption">{fieldGroup.label}</SectionLabel>
+              <div className="grid gap-3 md:grid-cols-2">
+                {fieldGroup.fields.map((f) => {
+                  const k = draftKey(fieldGroup.key, f);
+                  return (
+                    <label key={k} className="flex flex-col gap-1">
+                      <span className="text-sm font-medium">
+                        {/* Same ids as the panel's read-only list; only one of
+                            the two renders at a time. See the note there. */}
+                        <span data-testid={`field-label-${f.key}`}>{f.label}</span>
+                        {f.unit && (
+                          <span
+                            className="ml-1 font-normal text-neutral-500"
+                            data-testid={`field-unit-${f.key}`}
+                          >
+                            ({f.unit})
+                          </span>
+                        )}
+                        {f.optional && (
+                          <span className="ml-1 font-normal text-neutral-500">
+                            optional
+                          </span>
+                        )}
+                        {/*
+                          MACHINE-DERIVED FIELDS ARE STILL MARKED. Removing the
+                          `disabled` attribute took away the only signal this
+                          surface had, and the distinction matters even though
+                          the value is transcribed by hand: the practitioner is
+                          reading it off the device rather than deciding it.
+                        */}
+                        {!f.editable && (
+                          <span
+                            className="ml-1 font-normal text-neutral-500"
+                            data-testid={`field-machine-shown-${f.key}`}
+                          >
+                            shown by the machine
+                          </span>
+                        )}
                       </span>
-                    )}
-                    {f.optional && (
-                      <span className="ml-1 font-normal text-neutral-500">
-                        optional
-                      </span>
-                    )}
-                    {/*
-                      MACHINE-DERIVED FIELDS ARE STILL MARKED. Removing the
-                      `disabled` attribute took away the only signal this
-                      surface had, and the distinction matters even though the
-                      value is transcribed by hand: the practitioner is reading
-                      it off the device rather than deciding it. Same wording
-                      as the panel's read-only list, so the two agree.
-                    */}
-                    {!f.editable && (
-                      <span
-                        className="ml-1 font-normal text-neutral-500"
-                        data-testid={`field-machine-shown-${f.key}`}
-                      >
-                        shown by the machine
-                      </span>
-                    )}
-                  </span>
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    step={f.decimals === 0 ? 1 : 1 / 10 ** f.decimals}
-                    // NOT DISABLED by `editable: false`.
-                    //
-                    // That flag means the practitioner cannot change the value
-                    // ON THE MACHINE - it is computed or displayed by the
-                    // device - not that it cannot be CHARTED. Disabling the
-                    // input made such a field impossible to record at all,
-                    // since nothing else populates it: there is no device
-                    // integration. An optional machine-derived reading was
-                    // therefore uncapturable, and a required one would have
-                    // left `ready` false forever, blocking every save
-                    // (Codex, 15cc6c99).
-                    //
-                    // The field still reads differently - it is labelled as
-                    // machine-computed above - and its submitted
-                    // observation_source now carries that, which is where the
-                    // distinction belongs.
-                    value={draft[k] ?? ""}
-                    onChange={(e) =>
-                      setDraft((d) => ({ ...d, [k]: e.target.value }))
-                    }
-                    data-testid={`reading-${f.key}`}
-                    className="rounded-md border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-950"
-                  />
-                  {f.advisory.map((note, i) => (
-                    <span key={i} className="text-xs text-neutral-500">
-                      {note}
-                    </span>
-                  ))}
-                </label>
-              );
-            })}
-          </div>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        step={f.decimals === 0 ? 1 : 1 / 10 ** f.decimals}
+                        // NOT DISABLED by `editable: false`: that flag means
+                        // she cannot change the value ON THE MACHINE, not that
+                        // it cannot be charted, and nothing else populates it
+                        // (Codex, 15cc6c99).
+                        value={setting.values[k] ?? ""}
+                        onChange={(e) => setValue(setting.id, k, e.target.value)}
+                        data-testid={
+                          groups.length > 1
+                            ? `reading-${setting.id}-${f.key}`
+                            : `reading-${f.key}`
+                        }
+                        className="min-h-[44px] rounded-md border border-neutral-300 px-3 py-2 text-base pointer-fine:text-sm dark:border-neutral-700 dark:bg-neutral-950"
+                      />
+                      {f.advisory.map((note, i) => (
+                        <span key={i} className="text-xs text-neutral-500">
+                          {note}
+                        </span>
+                      ))}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </div>
       ))}
 
+      {/*
+        ADD A GROUP, only where the model says its probes can differ.
+        `supportsDistinctSettingGroups` is the contract's own answer and the
+        reason it exists is in its docblock: a simple form must never label a
+        per-probe setting as a global control. Nothing is copied into the new
+        group - carrying values over would assert that she ran the second set of
+        probes at the first set's settings.
+      */}
+      {canAdd && (
+        <div>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              setGroups((prev) => addGroup(prev, groupOrdinal + 1));
+              setGroupOrdinal((n) => n + 1);
+            }}
+            data-testid="setting-group-add"
+          >
+            Add setting group
+          </Button>
+        </div>
+      )}
+
       <div className="flex items-center gap-3">
-        <button
+        <Button
           type="button"
+          variant="primary"
+          size="md"
           onClick={submit}
           disabled={pending || !ready}
-          className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+          pending={pending}
+          busyLabel="Saving…"
           data-testid="machine-reading-save"
         >
-          {pending ? "Saving…" : "Save these settings"}
-        </button>
-        {!ready && (
+          Save these settings
+        </Button>
+        {!ready && partial.length === 0 && (
           <span className="text-xs text-neutral-500">
             Enter every required field before saving.
+          </span>
+        )}
+        {partial.length > 0 && (
+          <span className="text-xs text-amber-700 dark:text-amber-500" role="status">
+            {/*
+              NAMED, not skipped. A group with some values and a missing
+              required field is neither ready nor empty, and silently leaving it
+              out would discard numbers she had typed.
+            */}
+            Setting group
+            {partial.length > 1 ? "s " : " "}
+            {partial
+              .map((g) => groups.findIndex((x) => x.id === g.id) + 1)
+              .join(", ")}{" "}
+            {partial.length > 1 ? "are" : "is"} missing a required field.
           </span>
         )}
       </div>

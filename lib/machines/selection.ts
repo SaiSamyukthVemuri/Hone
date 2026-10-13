@@ -128,6 +128,31 @@ export type ResolvedSelection =
     };
 
 /**
+ * The modes this PHYSICAL unit can actually run.
+ *
+ * `activeModes` answers "what does this MODEL offer"; it cannot answer "what
+ * can this unit do", because an option is fitted to a unit and not to a model.
+ * Both `selectDevice` and `validateReading` already refuse a mode whose
+ * `requiresInstalledOption` the device does not report - so a picker built from
+ * `activeModes` offered a mode that two layers below would reject, left it
+ * optimistically selected after persistence failed, and let the practitioner
+ * fill in its form only for the capture to be refused (Codex, ebc69ff6).
+ *
+ * This exists so the offer and the refusal are derived from ONE rule rather
+ * than agreeing by coincidence.
+ */
+export function supportedModes(
+  device: StudioDevice,
+  profile: MachineProfile,
+): MachineMode[] {
+  return activeModes(profile).filter(
+    (m) =>
+      !m.requiresInstalledOption ||
+      device.installedOptions.includes(m.requiresInstalledOption),
+  );
+}
+
+/**
  * Resolve the remembered choice for one practitioner in one studio.
  *
  * Takes no client, no session and no chart. See the file header.

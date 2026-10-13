@@ -404,7 +404,11 @@ describe("reading metadata is DERIVED from the profile, never accepted", () => {
         id: "dev-1",
         studio_id: "studio-fett",
         machine_profile_id: "synthetic:demo-multineedle",
-        machine_profile_version: 1,
+        // VERSION 2, tracking the synthetic contract. Pinned at 1 this fixture
+        // made the test below fail on the VERSION-MISMATCH refusal instead of
+        // the unknown-field one it was written for - a refusal arriving for
+        // the wrong reason proves nothing about the rule under test.
+        machine_profile_version: 2,
         display_name: "Room 1",
         installed_options: [],
         retired_at: null,

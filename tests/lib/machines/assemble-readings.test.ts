@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  assembleReadings,
-  draftKey,
-} from "@/components/machines/machine-reading-entry";
 import type { FieldGroup } from "@/lib/machines/charting";
+import { assembleReadings, draftKey } from "@/lib/machines/setting-groups";
 
 // MPX-03 — what a typed draft becomes, before it is stored.
 //
