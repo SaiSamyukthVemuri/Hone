@@ -321,9 +321,20 @@ describe("G1: the invalidation ref is written synchronously, and cannot be bypas
     .join("\n");
 
   it("writes the ref inside the selection mutation, not in an effect", () => {
-    expect(CODE).toMatch(
-      /const selectPractitioner = \(next: string\) => \{\s*practitionerIdRef\.current = next;\s*setPractitionerId\(next\);/,
-    );
+    // ORDER inside the funnel is the property, not adjacency. An earlier
+    // version of this assertion required `{` to be immediately followed by the
+    // ref write, and reded the moment a no-op early-return was added above it
+    // -- encoding the incidental shape of the code instead of the invariant.
+    const fn = CODE.match(/const selectPractitioner = \(next: string\) => \{[\s\S]*?\n  \};/);
+    expect(fn, "expected the selection funnel").not.toBeNull();
+    const refWrite = fn![0].indexOf("practitionerIdRef.current = next");
+    const stateSet = fn![0].indexOf("setPractitionerId(next)");
+    expect(refWrite, "the funnel must write the ref").toBeGreaterThan(-1);
+    expect(stateSet, "the funnel must set the state").toBeGreaterThan(-1);
+    expect(
+      refWrite < stateSet,
+      "the ref must be written BEFORE the state, in the same synchronous turn",
+    ).toBe(true);
     // The passive mirror must be gone: two writers for one value is how they
     // drift apart.
     expect(
@@ -349,5 +360,39 @@ describe("G1: the invalidation ref is written synchronously, and cannot be bypas
     // the reconcile against returned options. Counted as a floor, not an exact
     // number, so adding a fourth that USES the funnel does not red this.
     expect((CODE.match(/selectPractitioner\(/g) ?? []).length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("G1: the jump history does not survive a scope change", () => {
+  // CODEX P2 at 9f4f92ba, and the surface I had explicitly considered in my own
+  // audit and talked myself out of. dateHistory holds dates reached by "Next
+  // available", which answers STUDIO-WIDE. The forward control is hidden once a
+  // practitioner is chosen, but "Back to previous result" renders from the
+  // stack alone -- so it survived the scope change and could navigate to a
+  // studio-wide result the chosen practitioner has no availability on.
+  const CODE = FORM.split("\n")
+    .filter((l) => !l.trim().startsWith("//"))
+    .join("\n");
+
+  it("clears it inside the selection mutation, synchronously", () => {
+    const fn = CODE.match(/const selectPractitioner = \(next: string\) => \{[\s\S]*?\n  \};/);
+    expect(fn, "expected the selection funnel").not.toBeNull();
+    expect(
+      fn![0],
+      "a scope change must clear the studio-wide jump history, or 'Back to " +
+        "previous result' navigates to a date answering a different question",
+    ).toContain("setDateHistory([])");
+  });
+
+  it("does NOT also clear it from the serviceId effect", () => {
+    // Two writers for one piece of state is how the ref and the state drifted
+    // in the previous finding, and the passive one would be the slower.
+    const eff = CODE.match(/useEffect\(\(\) => \{\s*setDateHistory\(\[\]\);\s*\}, \[([^\]]*)\]\)/);
+    expect(eff, "expected the serviceId history reset").not.toBeNull();
+    expect(eff![1]).toContain("serviceId");
+    expect(
+      eff![1],
+      "practitionerId belongs in the funnel, not in this passive effect",
+    ).not.toContain("practitionerId");
   });
 });

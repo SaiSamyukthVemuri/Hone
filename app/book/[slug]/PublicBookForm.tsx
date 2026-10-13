@@ -264,8 +264,26 @@ export function PublicBookForm({
   // kind of instruction that holds until someone adds a fourth. A guard asserts
   // that `setPractitionerId` is never called outside this function.
   const selectPractitioner = (next: string) => {
+    if (practitionerIdRef.current === next) return;
     practitionerIdRef.current = next;
     setPractitionerId(next);
+    // G1 / CODEX P2 — THE JUMP HISTORY ANSWERED A DIFFERENT QUESTION.
+    //
+    // `dateHistory` holds dates reached by "Next available", which answers
+    // STUDIO-WIDE. The forward control is hidden once a practitioner is chosen,
+    // but "Back to previous result" is rendered from this stack alone, so it
+    // survived the scope change and could navigate to a studio-wide result the
+    // chosen practitioner has no availability on -- presented as a previous
+    // RESULT, which it was, for a question the visitor is no longer asking.
+    //
+    // This is the same rule the serviceId effect below already applies ("a
+    // prior service's history is meaningless after a switch"), extended to the
+    // other thing that changes what availability MEANS. It is cleared HERE
+    // rather than by adding `practitionerId` to that effect, for two reasons:
+    // an effect is passive, and the previous finding in this file was exactly
+    // about trusting a passive effect to keep up with a selection; and one
+    // writer per concern is why the ref and the state no longer drift.
+    setDateHistory([]);
   };
 
   const nextAvailableApplies = !(
@@ -515,6 +533,12 @@ export function PublicBookForm({
   // history is meaningless after a service switch: reset it. (Runs on mount
   // too, which is a no-op since it starts empty.) Not tied to `date`, so a
   // normal next/previous jump never wipes the stack.
+  //
+  // PRACTITIONER scope is NOT handled here. It invalidates this stack for the
+  // same reason, but `selectPractitioner` clears it synchronously instead --
+  // see the comment there. Adding `practitionerId` to this dep array would make
+  // two writers for one piece of state, and the passive one would be the slower
+  // of the two.
   useEffect(() => {
     setDateHistory([]);
   }, [serviceId]);
