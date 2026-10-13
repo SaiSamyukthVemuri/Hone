@@ -203,6 +203,19 @@ export type InboundStopFacts = {
    * applies a default Rule to any otherwise-unmatched URL, so "no match" means
    * no exact, prefix or default Rule matches. Undefined = not read.
    */
+  /**
+   * Propagation of the Webhooks configuration (Codex P1 4259214614; FAQ and
+   * Rules docs, checked 2026-10-13): a write is saved at once but takes 30-60 s
+   * to reach the delivery plane. Rule writes return an Operation to poll until
+   * COMPLETED; Settings, AuthProfiles and SharedKeys create none, so 60 s must
+   * pass. Until then a STOP may be signed or retried by the OLD configuration.
+   */
+  webhookPropagation?: {
+    /** Every Operation for a Rule matching (or formerly matching) the URL is COMPLETED. */
+    ruleOperationsCompleted: boolean | null;
+    /** Seconds since the last Rule, Setting, AuthProfile or SharedKey change. */
+    secondsSinceLastConfigChange: number | null;
+  };
   webhookRules?:
     | { matched: false }
     | {
@@ -365,6 +378,24 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
               )
             : check("webhook_rules", "unknown", "a Webhook Rule matches but its Settings' shares or signing are not reported"),
   );
+
+  // PROPAGATION: only meaningful once the Rules are read (unread Rules already
+  // block). Transient, so it is unknown ("wait"), never a misconfiguration.
+  if (rules !== undefined) {
+    const p = f.webhookPropagation;
+    const PROPAGATION_SECONDS = 60;
+    checks.push(
+      p?.ruleOperationsCompleted === true && p.secondsSinceLastConfigChange !== null && p.secondsSinceLastConfigChange >= PROPAGATION_SECONDS
+        ? check("webhook_propagation", "pass", "Rule Operations COMPLETED and the configuration has been unchanged for at least 60 s")
+        : check(
+            "webhook_propagation",
+            "unknown",
+            p === undefined || p.ruleOperationsCompleted === null || p.secondsSinceLastConfigChange === null
+              ? "Webhooks configuration propagation not read: confirm Rule Operations are COMPLETED and 60 s have passed since the last change"
+              : "Webhooks configuration still propagating (an Operation is not COMPLETED, or less than 60 s since the last change): wait, then re-read",
+          ),
+    );
+  }
 
   // Does Twilio retry a 5xx under the account's Rules? "n/a" = no Rule matches,
   // so the URL's own connection overrides decide.

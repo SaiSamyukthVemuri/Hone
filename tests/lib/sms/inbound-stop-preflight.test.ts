@@ -32,6 +32,8 @@ const allProven = (): InboundStopFacts => ({
   routedFromNumber: "+14165550100",
   // No exact, prefix or default Webhook Rule matches the inbound URL.
   webhookRules: { matched: false },
+  // The Webhooks configuration has settled (Operations COMPLETED, unchanged >= 60 s).
+  webhookPropagation: { ruleOperationsCompleted: true, secondsSinceLastConfigChange: 3600 },
   honeAccountSid: ACCOUNT,
   mappedStudioId: "studio-b",
   expectedStudioId: "studio-b",
@@ -542,6 +544,43 @@ describe("evaluateInboundStopPreflight", () => {
           { phoneNumber: "+14165550101", smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: null, smsFallbackUrl: null, smsFallbackMethod: null },
         ];
         expect(evaluateInboundStopPreflight(f).checks.find((c) => c.id === "sender_pool")?.status).toBe("fail");
+      });
+    });
+
+    describe("PROPAGATION: a new Rule or Setting is not trusted until it has reached the delivery plane (Codex P1 4259214614)", () => {
+      const prop = (f: InboundStopFacts) => evaluateInboundStopPreflight(f).checks.find((c) => c.id === "webhook_propagation");
+      for (const [why, p, detail] of [
+        ["an Operation not yet COMPLETED", { ruleOperationsCompleted: false, secondsSinceLastConfigChange: 3600 }, /still propagating/],
+        ["a change 30 s ago", { ruleOperationsCompleted: true, secondsSinceLastConfigChange: 30 }, /still propagating/],
+        ["Operations not read", { ruleOperationsCompleted: null, secondsSinceLastConfigChange: 3600 }, /not read/],
+        ["the last change time not read", { ruleOperationsCompleted: true, secondsSinceLastConfigChange: null }, /not read/],
+      ] as const) {
+        it(`${why}: blocked as unknown ("wait"), never a misconfiguration`, () => {
+          const f = allProven();
+          f.webhookPropagation = { ...p };
+          const r = evaluateInboundStopPreflight(f);
+          expect(r.blockers).toEqual(["webhook_propagation"]);
+          expect(prop(f)?.status).toBe("unknown");
+          expect(prop(f)?.detail).toMatch(detail);
+        });
+      }
+
+      it("exactly 60 s and COMPLETED: settled", () => {
+        const f = allProven();
+        f.webhookPropagation = { ruleOperationsCompleted: true, secondsSinceLastConfigChange: 60 };
+        expect(prop(f)?.status).toBe("pass");
+      });
+
+      it("propagation facts absent: unknown", () => {
+        const f = allProven();
+        f.webhookPropagation = undefined;
+        expect(prop(f)?.status).toBe("unknown");
+      });
+
+      it("Rules unread: propagation is not reported separately (webhook_rules already blocks)", () => {
+        const f = allProven();
+        f.webhookRules = undefined;
+        expect(prop(f)).toBeUndefined();
       });
     });
 
