@@ -125,3 +125,13 @@ describe("approved means COMPLETE for this number (Codex P2 4253281361)", () => 
     expect(html).toMatch(/only when registration is complete for this exact number/);
   });
 });
+
+describe("a replacement sender gets a fresh form (Codex P2 4253596170)", () => {
+  // The repo's unit tests run without a DOM; React's documented key semantics
+  // (a changed key remounts) do the reset, and this pins that the key exists.
+  it("the form is keyed by the sender and its number, so stale field values cannot carry over", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("app/admin/studios/[id]/SmsRegistrationSection.tsx", "utf8");
+    expect(src).toMatch(/<SmsRegistrationForm\s+(\/\/[^\n]*\n\s*)*key=\{`\$\{sender\.id\}:\$\{sender\.phone_number\}`\}/);
+  });
+});

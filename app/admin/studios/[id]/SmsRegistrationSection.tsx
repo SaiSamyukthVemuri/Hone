@@ -72,6 +72,12 @@ export function SmsRegistrationSection({
   const form =
     sender.phone_number && kind ? (
       <SmsRegistrationForm
+        // A NEW FORM PER SENDER AND NUMBER (Codex P2 4253596170). The fields are
+        // uncontrolled, so a re-render with a replacement sender would keep the
+        // values typed for the old one; keying remounts the form, so the old
+        // number's approval or reference can never be resubmitted against the
+        // new number.
+        key={`${sender.id}:${sender.phone_number}`}
         action={recordSmsRegistrationFormAction.bind(null, studioId)}
         senderId={sender.id}
         phoneNumber={sender.phone_number}
