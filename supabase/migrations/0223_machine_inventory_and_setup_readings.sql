@@ -166,6 +166,24 @@ begin
       using errcode = 'check_violation';
   end if;
 
+  -- CONSUME-ONLY, ENFORCED HERE AND NOT ONLY IN THE SERVER ACTION.
+  --
+  -- registerMachineAction checks this too, but an owner can call this RPC
+  -- directly - it is granted to `authenticated` because it must resolve the
+  -- caller's own ownership - and would then create a PERMANENT inventory row
+  -- whose settings can never be recorded, because recording fails closed
+  -- without a published contract. A boundary that only the application
+  -- enforces is not a boundary.
+  if not exists (
+    select 1 from public.machine_profile_mode_contract c
+     where c.machine_profile_id = btrim(p_machine_profile_id)
+       and c.machine_profile_version = p_machine_profile_version
+  ) then
+    raise exception
+      'No field contract is published for that machine profile version, so a unit cannot be registered against it.'
+      using errcode = 'check_violation';
+  end if;
+
   insert into public.studio_machines
     (studio_id, machine_profile_id, machine_profile_version,
      display_name, installed_options)
@@ -394,6 +412,16 @@ create table if not exists public.treatment_setup_readings (
   -- WHO OBSERVED IT. The composite same-studio constraint below is what
   -- enforces that this practitioner belongs to the reading's own studio; the
   -- column carries no inline simple FK on purpose. See the constraint.
+  -- APPEND-ONLY REVISIONS. 1 for the first observation of a field in a block,
+  -- 2 for the next, and so on. A material setup change during one treatment is
+  -- a NEW observation, not an edit of the previous one, so both rows persist
+  -- and the HIGHEST revision is what reads as current.
+  --
+  -- The first version of this table had a unique index on the field
+  -- coordinates alone, which refused the second observation outright - the
+  -- schema contradicted this table's own comment, and a setting changed
+  -- mid-treatment could not be recorded at all.
+  revision smallint not null default 1 check (revision >= 1),
   recorded_by_practitioner_id uuid,
   recorded_at timestamptz not null default now(),
 
@@ -427,11 +455,23 @@ alter table public.treatment_setup_readings
   references public.practitioners (id, studio_id)
   on delete restrict;
 
--- One reading per field per group per block. `coalesce` because a mode-level
--- field has no stage and NULL would not collide with itself in a plain unique.
-create unique index if not exists treatment_setup_readings_field_uniq
+-- One reading per field per group per block PER REVISION. `coalesce` because a
+-- mode-level field has no stage and NULL would not collide with itself in a
+-- plain unique.
+--
+-- Including `revision` is what makes a changed setting appendable while still
+-- refusing an accidental exact-duplicate write at the same revision: the
+-- command computes the next revision itself, so a caller cannot choose one.
+create unique index if not exists treatment_setup_readings_field_revision_uniq
   on public.treatment_setup_readings
-     (session_block_id, group_key, coalesce(stage_key, ''), field_key);
+     (session_block_id, group_key, coalesce(stage_key, ''), field_key, revision);
+
+-- Reading "the current value of this field in this block" is
+-- (coordinates, max(revision)), so the index is ordered to serve it directly.
+create index if not exists treatment_setup_readings_latest_idx
+  on public.treatment_setup_readings
+     (session_block_id, group_key, coalesce(stage_key, ''), field_key,
+      revision desc);
 
 create index if not exists treatment_setup_readings_block_idx
   on public.treatment_setup_readings (session_block_id);
@@ -440,7 +480,7 @@ create index if not exists treatment_setup_readings_studio_recorded_idx
   on public.treatment_setup_readings (studio_id, recorded_at desc);
 
 comment on table public.treatment_setup_readings is
-  '0223. One row per (block, group, stage, field) holding what the machine actually showed, in the machine''s own unit and precision, under the profile version it was captured against. WRITE-ONCE PER FIELD PER BLOCK: UPDATE is refused by trigger and the unique index refuses a second row for the same coordinates, so a recorded observation can be neither edited nor superseded within its block. A recorded zero is a value; an absence carries a reason. KNOWN LIMITATION, recorded deliberately: this comment previously claimed "a material setup change is a new reading rather than an edit", which the unique index does not permit - a setting changed mid-block cannot be recorded at all. Whether a revision dimension should exist is a clinical-record decision for product authority, not a schema tidy-up, because it also decides what the chart displays when one field holds two observations.';
+  '0223. One row per (block, group, stage, field, REVISION) holding what the machine actually showed, in the machine''s own unit and precision, under the profile version it was captured against. APPEND-ONLY: UPDATE is refused by trigger, and a material setup change during the same treatment is recorded as a NEW revision rather than an edit - so every observation survives and the HIGHEST revision reads as current. The command computes the next revision itself; a caller cannot choose one, so an exact-duplicate write at the same revision is still refused. A recorded zero is a value; an absence carries a reason. Every field, unit and precision is validated against machine_profile_field_contract and DERIVED from it, so a caller cannot invent a field or mislabel its unit.';
 
 create or replace function public.refuse_treatment_setup_reading_update()
 returns trigger
@@ -484,6 +524,234 @@ grant select on public.treatment_setup_readings to authenticated;
 grant select on public.treatment_setup_readings to service_role;
 
 -- ---------------------------------------------------------------------------
+-- PART 3a — THE PUBLISHED CONTRACT, AND THE CAPTURE IDENTITY
+-- ---------------------------------------------------------------------------
+--
+-- Two problems these tables exist to solve, both found by independent review of
+-- the first attempt.
+--
+-- (1) THE CONTRACT IS A GLOBAL PRODUCT FACT, NOT STUDIO DATA. The first version
+--     let any active studio owner replace the rows for a (profile, version,
+--     mode) that EVERY studio records against - so one tenant's owner could
+--     change the units and precision accepted everywhere, and retroactively
+--     rewrite what an already-captured version meant. Publication is now
+--     restricted to deployment authority, and a published version is
+--     IMMUTABLE: re-publishing identical content is a no-op, different content
+--     is refused. Studio owners CONSUME a contract; they never author one.
+--
+-- (2) A CAPTURE IS AN ATOMIC CLINICAL FACT. The first version allocated a
+--     revision per FIELD, so fields of one block could sit at different
+--     revisions, and retrieval took the latest of each field independently -
+--     which can fabricate a composite that was never a real setting: a current
+--     from one capture beside a duration from another, possibly a different
+--     mode, machine or profile version. Readings now belong to a CAPTURE, one
+--     revision is allocated per capture, and retrieval returns one coherent
+--     capture or nothing.
+
+-- The MODE-level half of the contract: facts that are true of a whole mode
+-- rather than of one field. Separate table so a field cannot disagree with its
+-- own mode about how many channels exist.
+create table if not exists public.machine_profile_mode_contract (
+  machine_profile_id text not null
+    check (length(btrim(machine_profile_id)) between 1 and 120),
+  machine_profile_version integer not null check (machine_profile_version >= 1),
+  mode_key text not null check (length(btrim(mode_key)) between 1 and 60),
+
+  -- How many independently controlled outputs the model has, where verified.
+  -- NULL means the model does not offer channel association at all, in which
+  -- case naming a channel on a reading is itself invalid.
+  channels_max smallint check (channels_max is null or channels_max between 1 and 64),
+
+  -- A mode the machine only offers when a physical option is fitted. NULL for
+  -- an unconditional mode. The device's own installed_options decides.
+  requires_installed_option text
+    check (requires_installed_option is null
+           or length(btrim(requires_installed_option)) between 1 and 60),
+
+  published_at timestamptz not null default now(),
+
+  constraint machine_profile_mode_contract_pkey primary key
+    (machine_profile_id, machine_profile_version, mode_key)
+);
+
+comment on table public.machine_profile_mode_contract is
+  '0223. The MODE-level half of the published field contract: channel count and any required installed option, for one (profile, version, mode). Separate from the field half so a field row cannot disagree with its mode about how many channels exist. Published by DEPLOYMENT authority only and immutable once published - see sync_machine_profile_contract.';
+
+create table if not exists public.machine_profile_field_contract (
+  machine_profile_id text not null
+    check (length(btrim(machine_profile_id)) between 1 and 120),
+  machine_profile_version integer not null check (machine_profile_version >= 1),
+  mode_key text not null check (length(btrim(mode_key)) between 1 and 60),
+  -- '' rather than NULL for a mode-level field, so the primary key works
+  -- without a coalesce and a NULL cannot duplicate itself.
+  stage_key text not null default '' check (length(stage_key) <= 60),
+  field_key text not null check (length(btrim(field_key)) between 1 and 60),
+
+  native_unit text not null check (length(btrim(native_unit)) between 1 and 20),
+  decimals smallint not null check (decimals between 0 and 6),
+
+  -- WHAT KIND OF QUANTITY THIS IS. The malformed-value rules are
+  -- quantity-specific and live in the recording command, keyed on this - which
+  -- is deliberately not a publisher-supplied "non_negative" flag, because a
+  -- publisher could get that wrong and the rule would then be wrong per row
+  -- rather than wrong in one reviewed place.
+  quantity text not null check (quantity in (
+    'current', 'duration', 'intensity', 'frequency',
+    'count', 'percentage', 'energy-display', 'preset-identifier'
+  )),
+
+  published_at timestamptz not null default now(),
+
+  constraint machine_profile_field_contract_pkey primary key
+    (machine_profile_id, machine_profile_version, mode_key, stage_key, field_key),
+  constraint machine_profile_field_contract_mode_fk foreign key
+    (machine_profile_id, machine_profile_version, mode_key)
+    references public.machine_profile_mode_contract
+    (machine_profile_id, machine_profile_version, mode_key)
+    on delete restrict
+);
+
+comment on table public.machine_profile_field_contract is
+  '0223. The authoritative field contract: for one (profile, version, mode), which fields exist, in what native unit and precision, and what KIND of quantity each is. record_treatment_setup_group validates every reading against this and DERIVES unit and precision from it, so a direct RPC caller cannot invent a field or mislabel a unit. Created EMPTY and published by DEPLOYMENT authority; naming real models in a migration would turn model activation from an evidence review into a schema fact. Immutable once published. The FK to the mode contract means a field cannot exist without its mode.';
+
+alter table public.machine_profile_mode_contract enable row level security;
+alter table public.machine_profile_field_contract enable row level security;
+
+-- Readable by any authenticated practitioner: it is a product contract, not
+-- studio data, and the capture UI legitimately needs it. There is no studio_id
+-- on either table for the same reason.
+drop policy if exists "machine_profile_mode_contract_read" on public.machine_profile_mode_contract;
+create policy "machine_profile_mode_contract_read"
+  on public.machine_profile_mode_contract for select to authenticated
+  using (true);
+
+drop policy if exists "machine_profile_field_contract_read" on public.machine_profile_field_contract;
+create policy "machine_profile_field_contract_read"
+  on public.machine_profile_field_contract for select to authenticated
+  using (true);
+
+-- NO ROLE MAY WRITE EITHER TABLE DIRECTLY, including service_role. Publication
+-- goes through the gated command below, which enforces immutability; a direct
+-- grant would let a deployment path silently rewrite a published version and
+-- defeat the point.
+revoke all on public.machine_profile_mode_contract from public;
+revoke all on public.machine_profile_mode_contract from anon;
+revoke all on public.machine_profile_mode_contract from authenticated;
+revoke all on public.machine_profile_mode_contract from service_role;
+grant select on public.machine_profile_mode_contract to authenticated;
+grant select on public.machine_profile_mode_contract to service_role;
+
+revoke all on public.machine_profile_field_contract from public;
+revoke all on public.machine_profile_field_contract from anon;
+revoke all on public.machine_profile_field_contract from authenticated;
+revoke all on public.machine_profile_field_contract from service_role;
+grant select on public.machine_profile_field_contract to authenticated;
+grant select on public.machine_profile_field_contract to service_role;
+
+-- ---------------------------------------------------------------------------
+-- The CAPTURE: one atomic act of recording a settings group.
+-- ---------------------------------------------------------------------------
+create table if not exists public.treatment_setup_captures (
+  id uuid primary key default gen_random_uuid(),
+  studio_id uuid not null references public.studios(id) on delete cascade,
+  session_block_id uuid not null
+    references public.session_blocks(id) on delete cascade,
+
+  studio_machine_id uuid
+    references public.studio_machines(id) on delete set null,
+  machine_profile_id text not null
+    check (length(btrim(machine_profile_id)) between 1 and 120),
+  machine_profile_version integer not null check (machine_profile_version >= 1),
+  mode_key text not null check (length(btrim(mode_key)) between 1 and 60),
+  group_key text not null check (length(btrim(group_key)) between 1 and 40),
+  channels smallint[] not null default '{}',
+
+  -- 1 for the first capture of this group in this block, 2 for the next. The
+  -- command allocates this under an advisory lock on (block, group), so two
+  -- concurrent captures cannot collide or share a number.
+  revision smallint not null check (revision >= 1),
+
+  recorded_by_practitioner_id uuid,
+  recorded_at timestamptz not null default now(),
+
+  constraint treatment_setup_captures_revision_uniq
+    unique (session_block_id, group_key, revision)
+);
+
+comment on table public.treatment_setup_captures is
+  '0223. ONE ATOMIC CAPTURE of a settings group against a treatment block: which machine, which profile version, which mode, which channels, by whom, when, and which revision of that group it is. Readings hang off a capture, so a retrieved setup is always one real thing that was set at one moment rather than a per-field composite assembled from different captures. Revision is allocated per (block, group) under an advisory lock, so concurrent captures stay distinct and coherent.';
+
+-- 0179's law: an ACTOR reference is composite and same-studio.
+alter table public.treatment_setup_captures
+  add constraint treatment_setup_captures_recorded_by_same_studio_fk
+  foreign key (recorded_by_practitioner_id, studio_id)
+  references public.practitioners (id, studio_id)
+  on delete restrict;
+
+create index if not exists treatment_setup_captures_block_idx
+  on public.treatment_setup_captures (session_block_id, group_key, revision desc);
+
+create index if not exists treatment_setup_captures_studio_recorded_idx
+  on public.treatment_setup_captures (studio_id, recorded_at desc);
+
+alter table public.treatment_setup_captures enable row level security;
+
+drop policy if exists "treatment_setup_captures_member_select" on public.treatment_setup_captures;
+create policy "treatment_setup_captures_member_select"
+  on public.treatment_setup_captures for select to authenticated
+  using (public.is_studio_member(treatment_setup_captures.studio_id));
+
+revoke all on public.treatment_setup_captures from public;
+revoke all on public.treatment_setup_captures from anon;
+revoke all on public.treatment_setup_captures from authenticated;
+revoke all on public.treatment_setup_captures from service_role;
+grant select on public.treatment_setup_captures to authenticated;
+grant select on public.treatment_setup_captures to service_role;
+
+-- A capture is as immutable as its readings. Changing which machine or mode a
+-- recorded capture claims would rewrite the clinical meaning of every reading
+-- under it.
+create or replace function public.refuse_treatment_setup_capture_update()
+returns trigger
+language plpgsql
+set search_path = pg_catalog, pg_temp
+as $$
+begin
+  raise exception
+    'A recorded treatment setup capture is immutable. Record a new capture instead.'
+    using errcode = 'restrict_violation';
+end;
+$$;
+
+drop trigger if exists treatment_setup_captures_immutable on public.treatment_setup_captures;
+create trigger treatment_setup_captures_immutable
+  before update on public.treatment_setup_captures
+  for each row execute function public.refuse_treatment_setup_capture_update();
+
+-- ---------------------------------------------------------------------------
+-- Readings now belong to a capture.
+-- ---------------------------------------------------------------------------
+alter table public.treatment_setup_readings
+  add column if not exists capture_id uuid
+    references public.treatment_setup_captures(id) on delete cascade;
+
+comment on column public.treatment_setup_readings.capture_id is
+  '0223. The atomic capture this reading belongs to. Every reading written by record_treatment_setup_group has one; it is what makes a retrieved setup one coherent thing rather than a per-field composite.';
+
+-- One row per field PER CAPTURE. This replaces keying by field coordinates
+-- plus a per-field revision, which is what allowed fields of one block to sit
+-- at different revisions.
+drop index if exists public.treatment_setup_readings_field_revision_uniq;
+drop index if exists public.treatment_setup_readings_latest_idx;
+
+create unique index if not exists treatment_setup_readings_capture_field_uniq
+  on public.treatment_setup_readings
+     (capture_id, coalesce(stage_key, ''), field_key);
+
+create index if not exists treatment_setup_readings_capture_idx
+  on public.treatment_setup_readings (capture_id);
+
+-- ---------------------------------------------------------------------------
 -- PART 3 COMMAND — record one settings group
 -- ---------------------------------------------------------------------------
 --
@@ -516,18 +784,56 @@ declare
   v_profile_id text;
   v_profile_version integer;
   v_retired timestamptz;
+  v_installed text[];
   v_count integer := 0;
   v_item jsonb;
+  -- Derived per reading from the published contract, never accepted from input.
+  v_stage text;
+  v_field text;
+  v_unit text;
+  v_decimals smallint;
+  v_quantity text;
+  v_value numeric;
+  v_absence text;
+  v_source text;
+  -- Mode-level contract facts.
+  v_channels_max smallint;
+  v_requires_option text;
+  -- The ONE capture this call creates.
+  v_capture uuid;
+  v_revision smallint;
+  v_group text;
+  v_mode text;
+  v_channel smallint;
 begin
-  if p_readings is null or jsonb_typeof(p_readings) <> 'array' then
-    raise exception 'Readings must be a JSON array.' using errcode = 'check_violation';
+  -- A NON-EMPTY array, and the emptiness check is not cosmetic.
+  --
+  -- An empty array previously allocated a capture with no readings and
+  -- returned 0. Because `latest_setup_for_client` picks the NEWEST capture and
+  -- then aggregates its rows, that empty capture became the newest and made
+  -- valid prior guidance vanish as `[]` - a direct authenticated call could
+  -- erase a client's next-visit setup without deleting anything. The server
+  -- action already refused this; the command has to as well.
+  if p_readings is null or jsonb_typeof(p_readings) <> 'array'
+     or jsonb_array_length(p_readings) = 0 then
+    raise exception 'At least one reading is required.'
+      using errcode = 'check_violation';
   end if;
 
   -- The block decides the studio. Nothing the caller sends does.
+  --
+  -- RESOLVED THROUGH ITS SESSION, and both records must be live. Checking only
+  -- `b.deleted_at` was not enough: `soft_delete_session` (0167) stamps
+  -- `sessions.deleted_at` and leaves the child blocks alone, so a retired
+  -- session keeps live-looking blocks. A stale page or a crafted call could
+  -- then append an IMMUTABLE capture to a session that had been removed -
+  -- unamendable by construction, and attached to a record nobody can see.
   select b.studio_id into v_studio
     from public.session_blocks b
+    join public.sessions sn on sn.id = b.session_id
    where b.id = p_block_id
-     and b.deleted_at is null;
+     and b.deleted_at is null
+     and sn.deleted_at is null;
 
   if v_studio is null then
     raise exception 'Unknown treatment block.' using errcode = 'no_data_found';
@@ -546,8 +852,10 @@ begin
       using errcode = 'check_violation';
   end if;
 
-  select m.studio_id, m.machine_profile_id, m.machine_profile_version, m.retired_at
-    into v_machine_studio, v_profile_id, v_profile_version, v_retired
+  select m.studio_id, m.machine_profile_id, m.machine_profile_version,
+         m.retired_at, m.installed_options
+    into v_machine_studio, v_profile_id, v_profile_version,
+         v_retired, v_installed
     from public.studio_machines m
    where m.id = p_studio_machine_id;
 
@@ -565,31 +873,215 @@ begin
       using errcode = 'check_violation';
   end if;
 
+  v_group := btrim(coalesce(p_group_key, ''));
+  v_mode := btrim(coalesce(p_mode_key, ''));
+  if v_group = '' or v_mode = '' then
+    raise exception 'A mode and a settings group are required.'
+      using errcode = 'check_violation';
+  end if;
+
+  -- THE CONTRACT MUST BE PUBLISHED, AND IT FAILS CLOSED.
+  --
+  -- A profile version with no published contract cannot be validated, so it
+  -- cannot be recorded. Recording unvalidated whenever the contract happens to
+  -- be missing would make the whole check decorative, because the bypass would
+  -- be "do not publish".
+  select c.channels_max, c.requires_installed_option
+    into v_channels_max, v_requires_option
+    from public.machine_profile_mode_contract c
+   where c.machine_profile_id = v_profile_id
+     and c.machine_profile_version = v_profile_version
+     and c.mode_key = v_mode;
+
+  if not found then
+    raise exception
+      'No field contract is published for this machine profile version and mode, so its settings cannot be recorded.'
+      using errcode = 'check_violation';
+  end if;
+
+  -- THE MODE MAY REQUIRE A PHYSICAL OPTION THIS UNIT DOES NOT HAVE.
+  -- The profile describes the model; the device records what is actually
+  -- fitted, and the device wins.
+  if v_requires_option is not null
+     and not (v_requires_option = any (coalesce(v_installed, '{}'::text[]))) then
+    raise exception
+      'This machine does not have the % option fitted, so its % mode cannot be recorded.',
+      v_requires_option, v_mode
+      using errcode = 'check_violation';
+  end if;
+
+  -- CHANNELS MUST BE REAL CHANNELS OF THIS MODEL.
+  -- NULL channels_max means the model offers no channel association at all, so
+  -- naming one is itself invalid rather than merely out of range.
+  if coalesce(array_length(p_channels, 1), 0) > 0 then
+    if v_channels_max is null then
+      raise exception
+        'This machine profile does not offer per-channel settings, so a channel cannot be named.'
+        using errcode = 'check_violation';
+    end if;
+    foreach v_channel in array p_channels
+    loop
+      if v_channel is null or v_channel < 1 or v_channel > v_channels_max then
+        raise exception
+          'Channel % is not a channel of this machine (it has %).',
+          v_channel, v_channels_max
+          using errcode = 'check_violation';
+      end if;
+    end loop;
+    -- A repeated channel would make the group's identity ambiguous.
+    if (select count(distinct ch) from unnest(p_channels) ch)
+       <> array_length(p_channels, 1) then
+      raise exception 'A channel is named more than once.'
+        using errcode = 'check_violation';
+    end if;
+  end if;
+
+  -- ALLOCATE ONE CAPTURE FOR THIS WHOLE CALL, SAFELY UNDER CONCURRENCY.
+  --
+  -- The revision belongs to the CAPTURE, not to each field: allocating per
+  -- field let one block's fields sit at different revisions, and a per-field
+  -- "latest" could then assemble a composite that was never a real setting.
+  --
+  -- The advisory lock is transaction-scoped and keyed on (block, group), so two
+  -- concurrent captures of the same group serialise here and get distinct
+  -- consecutive revisions rather than colliding on the unique constraint or
+  -- both reading the same max. It is released at commit or rollback.
+  perform pg_advisory_xact_lock(
+    hashtextextended(p_block_id::text || ':' || v_group, 0)
+  );
+
+  select coalesce(max(c.revision), 0) + 1
+    into v_revision
+    from public.treatment_setup_captures c
+   where c.session_block_id = p_block_id
+     and c.group_key = v_group;
+
+  insert into public.treatment_setup_captures (
+    studio_id, session_block_id, studio_machine_id,
+    machine_profile_id, machine_profile_version, mode_key,
+    group_key, channels, revision, recorded_by_practitioner_id
+  )
+  values (
+    v_studio, p_block_id, p_studio_machine_id,
+    -- The profile identity is copied from the UNIT at record time, so a later
+    -- re-registration cannot retroactively change what a capture was made
+    -- under.
+    v_profile_id, v_profile_version, v_mode,
+    v_group, coalesce(p_channels, '{}'), v_revision, v_pract
+  )
+  returning id into v_capture;
+
   for v_item in select jsonb_array_elements(p_readings)
   loop
+    -- VALIDATE AND DERIVE. The caller says WHICH field and WHAT it read; the
+    -- field's native unit, precision and quantity come from the published
+    -- contract, never from the caller.
+    v_stage := btrim(coalesce(v_item->>'stage_key', ''));
+    v_field := btrim(coalesce(v_item->>'field_key', ''));
+
+    select c.native_unit, c.decimals, c.quantity
+      into v_unit, v_decimals, v_quantity
+      from public.machine_profile_field_contract c
+     where c.machine_profile_id = v_profile_id
+       and c.machine_profile_version = v_profile_version
+       and c.mode_key = v_mode
+       and c.stage_key = v_stage
+       and c.field_key = v_field;
+
+    if v_unit is null then
+      raise exception
+        'This machine profile has no field "%" in mode "%"%, so it cannot be recorded.',
+        v_field,
+        v_mode,
+        case when v_stage = '' then '' else format(' stage "%s"', v_stage) end
+        using errcode = 'check_violation';
+    end if;
+
+    -- THE OBSERVATION SOURCE IS A CLOSED SET, checked here rather than relying
+    -- only on the column constraint, so a forged call fails with a sentence
+    -- about the reading instead of a constraint name.
+    v_source := btrim(coalesce(v_item->>'observation_source', ''));
+    if v_source not in ('practitioner-entered', 'machine-displayed',
+                        'device-computed', 'estimated') then
+      raise exception '"%" is not a recognised way of observing a reading.',
+        v_source
+        using errcode = 'check_violation';
+    end if;
+
+    v_absence := nullif(btrim(coalesce(v_item->>'absence_reason', '')), '');
+    v_value := case when v_item->>'value' is null then null
+                    else (v_item->>'value')::numeric end;
+
+    -- EXACTLY ONE OF value / absence_reason. The table's XOR constraint says
+    -- this too; saying it here makes a forged call fail with a sentence.
+    if (v_value is null) = (v_absence is null) then
+      raise exception
+        'Field "%" needs either a value or a reason it was not recorded, and not both.',
+        v_field
+        using errcode = 'check_violation';
+    end if;
+
+    if v_value is not null then
+      -- A NaN numeric is storable and meaningless. There is no infinity in
+      -- `numeric`, so NaN is the whole of the finiteness check.
+      if v_value = 'NaN'::numeric then
+        raise exception 'Field "%" was given a value that is not a number.',
+          v_field using errcode = 'check_violation';
+      end if;
+
+      -- QUANTITY-SPECIFIC MALFORMED-VALUE RULES.
+      --
+      -- Deliberately NOT a blanket non-negativity rule, and deliberately NO
+      -- upper bound: a manufacturer's advisory ceiling is advisory, and
+      -- refusing a reading the machine actually displayed would destroy the
+      -- record rather than protect it. These are definitional only.
+      if v_quantity in ('current', 'duration', 'frequency', 'count',
+                        'percentage', 'intensity', 'energy-display')
+         and v_value < 0 then
+        raise exception
+          'Field "%" is a % and cannot be negative.', v_field, v_quantity
+          using errcode = 'check_violation';
+      end if;
+
+      -- A count is a whole number by definition.
+      if v_quantity = 'count' and v_value <> trunc(v_value) then
+        raise exception 'Field "%" is a count and must be a whole number.',
+          v_field using errcode = 'check_violation';
+      end if;
+
+      -- The value may not carry more precision than the machine can display.
+      if scale(v_value) > v_decimals then
+        raise exception
+          'Field "%" was given % decimal places; this machine displays %.',
+          v_field, scale(v_value), v_decimals
+          using errcode = 'check_violation';
+      end if;
+    end if;
+
     insert into public.treatment_setup_readings (
+      capture_id,
       studio_id, session_block_id, studio_machine_id,
       machine_profile_id, machine_profile_version, mode_key,
       group_key, channels, stage_key, field_key,
       value_numeric, absence_reason,
       native_unit, decimals, observation_source,
-      recorded_by_practitioner_id
+      revision, recorded_by_practitioner_id
     )
     values (
+      v_capture,
       v_studio, p_block_id, p_studio_machine_id,
-      -- The profile identity is copied from the UNIT at record time, so a
-      -- later re-registration cannot retroactively change what a reading was
-      -- captured under.
-      v_profile_id, v_profile_version, btrim(p_mode_key),
-      btrim(p_group_key), coalesce(p_channels, '{}'),
-      nullif(btrim(coalesce(v_item->>'stage_key', '')), ''),
-      btrim(v_item->>'field_key'),
-      case when v_item->>'value' is null then null
-           else (v_item->>'value')::numeric end,
-      nullif(btrim(coalesce(v_item->>'absence_reason', '')), ''),
-      btrim(v_item->>'native_unit'),
-      (v_item->>'decimals')::smallint,
-      btrim(v_item->>'observation_source'),
+      v_profile_id, v_profile_version, v_mode,
+      v_group, coalesce(p_channels, '{}'),
+      nullif(v_stage, ''),
+      v_field,
+      v_value,
+      v_absence,
+      -- DERIVED, all three.
+      v_unit,
+      v_decimals,
+      v_source,
+      -- The CAPTURE's revision, identical for every field in this call.
+      v_revision,
       v_pract
     );
     v_count := v_count + 1;
@@ -601,6 +1093,191 @@ $$;
 
 comment on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb) is
   '0223. Records ONE settings group for one treatment block. The block determines the studio and the caller must be an active member of it, so a block or machine in another studio is refused. The machine is required and its profile identity is copied at record time. Readings are append-only; recording again for the same field raises a unique violation rather than overwriting.';
+
+-- ---------------------------------------------------------------------------
+-- PART 3b — PUBLISHING A CONTRACT: deployment authority, and immutable
+-- ---------------------------------------------------------------------------
+--
+-- WHO MAY PUBLISH, AND WHY NOT A STUDIO OWNER.
+--
+-- The first version of this granted EXECUTE to `authenticated` and checked
+-- only that the caller was an active owner of SOME studio. The contract is
+-- global, so that let one tenant's owner delete and replace the rows every
+-- other tenant records against - changing the units and precision accepted
+-- across the whole deployment, and rewriting the meaning of a version under
+-- which readings had already been captured. A per-tenant actor had authority
+-- over a cross-tenant fact.
+--
+-- So: EXECUTE is revoked from `authenticated` entirely and granted only to
+-- `service_role`, which is deployment authority rather than any user. A studio
+-- owner CONSUMES a published contract (registration refuses a profile version
+-- that has none); she never authors one.
+--
+-- This is not a service-role clinical-writing bypass. service_role still holds
+-- no EXECUTE on record_treatment_setup_group and only SELECT on every clinical
+-- table, so it cannot write a reading, a capture or a machine. Publishing a
+-- product contract is a different act from recording a treatment.
+--
+-- AND A PUBLISHED VERSION IS IMMUTABLE. Re-publishing byte-identical content
+-- is a no-op so a deployment can run idempotently; publishing DIFFERENT content
+-- for a version that already exists is refused. Correcting a contract means
+-- publishing a NEW version, which is what keeps already-captured readings
+-- interpretable under the contract they were captured against.
+create or replace function public.sync_machine_profile_contract(
+  p_machine_profile_id text,
+  p_machine_profile_version integer,
+  p_mode_key text,
+  p_channels_max smallint,
+  p_requires_installed_option text,
+  p_fields jsonb
+)
+returns integer
+language plpgsql
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_profile text := btrim(coalesce(p_machine_profile_id, ''));
+  v_mode text := btrim(coalesce(p_mode_key, ''));
+  v_option text := nullif(btrim(coalesce(p_requires_installed_option, '')), '');
+  v_item jsonb;
+  v_count integer := 0;
+  v_existing_mode record;
+  v_incoming_count integer;
+  v_incoming_distinct integer;
+  v_diff integer;
+begin
+  if v_profile = '' then
+    raise exception 'A profile id is required.' using errcode = 'check_violation';
+  end if;
+  if p_machine_profile_version is null or p_machine_profile_version < 1 then
+    raise exception 'A profile version is required.'
+      using errcode = 'check_violation';
+  end if;
+  if v_mode = '' then
+    raise exception 'A mode key is required.' using errcode = 'check_violation';
+  end if;
+  if p_fields is null or jsonb_typeof(p_fields) <> 'array'
+     or jsonb_array_length(p_fields) = 0 then
+    raise exception 'Fields must be a non-empty JSON array.'
+      using errcode = 'check_violation';
+  end if;
+
+  -- NO FIELD MAY BE LISTED TWICE, on a FIRST publication or a republish.
+  --
+  -- Checked before the published/not-published split because it guards both.
+  -- On a republish it is what broke the comparison that used to live below:
+  -- that version counted matches and compared counts both ways, which a
+  -- DUPLICATE element defeats - against published {A, B}, an incoming [A, A]
+  -- gives matches = 2, incoming = 2 and published = 2, so dropping B was
+  -- accepted as an idempotent no-op. Counting is not comparing.
+  --
+  -- On a FIRST publication the primary key would catch it anyway, but with a
+  -- constraint name instead of a sentence, and only after the mode row had
+  -- been inserted.
+  select count(*),
+         count(distinct (btrim(coalesce(f->>'stage_key', '')),
+                         btrim(coalesce(f->>'field_key', ''))))
+    into v_incoming_count, v_incoming_distinct
+    from jsonb_array_elements(p_fields) as f;
+
+  if v_incoming_count <> v_incoming_distinct then
+    raise exception
+      'The same field is listed more than once in this contract.'
+      using errcode = 'check_violation';
+  end if;
+
+  select * into v_existing_mode
+    from public.machine_profile_mode_contract c
+   where c.machine_profile_id = v_profile
+     and c.machine_profile_version = p_machine_profile_version
+     and c.mode_key = v_mode;
+
+  if found then
+    -- ALREADY PUBLISHED. Identical content is a no-op; anything else refuses.
+    if coalesce(v_existing_mode.channels_max, -1) <> coalesce(p_channels_max, -1)
+       or coalesce(v_existing_mode.requires_installed_option, '')
+          <> coalesce(v_option, '') then
+      raise exception
+        'This machine profile version and mode is already published with different mode facts. Publish a NEW version instead of changing a published one.'
+        using errcode = 'restrict_violation';
+    end if;
+
+    -- EXACT SET EQUALITY, in both directions, on the FULL content of every
+    -- field - not on counts. An extra field, a missing field or a changed unit
+    -- or precision all land in one side of the symmetric difference.
+    select count(*) into v_diff
+      from (
+        (select btrim(coalesce(f->>'stage_key', '')) as stage_key,
+                btrim(coalesce(f->>'field_key', '')) as field_key,
+                btrim(coalesce(f->>'native_unit', '')) as native_unit,
+                (f->>'decimals')::smallint as decimals,
+                btrim(coalesce(f->>'quantity', '')) as quantity
+           from jsonb_array_elements(p_fields) as f)
+        except
+        (select c.stage_key, c.field_key, c.native_unit, c.decimals, c.quantity
+           from public.machine_profile_field_contract c
+          where c.machine_profile_id = v_profile
+            and c.machine_profile_version = p_machine_profile_version
+            and c.mode_key = v_mode)
+      ) only_incoming;
+
+    select v_diff + count(*) into v_diff
+      from (
+        (select c.stage_key, c.field_key, c.native_unit, c.decimals, c.quantity
+           from public.machine_profile_field_contract c
+          where c.machine_profile_id = v_profile
+            and c.machine_profile_version = p_machine_profile_version
+            and c.mode_key = v_mode)
+        except
+        (select btrim(coalesce(f->>'stage_key', '')) as stage_key,
+                btrim(coalesce(f->>'field_key', '')) as field_key,
+                btrim(coalesce(f->>'native_unit', '')) as native_unit,
+                (f->>'decimals')::smallint as decimals,
+                btrim(coalesce(f->>'quantity', '')) as quantity
+           from jsonb_array_elements(p_fields) as f)
+      ) only_published;
+
+    if v_diff <> 0 then
+      raise exception
+        'This machine profile version and mode is already published with different fields. Publish a NEW version instead of changing a published one.'
+        using errcode = 'restrict_violation';
+    end if;
+
+    return 0;  -- idempotent no-op
+  end if;
+
+  insert into public.machine_profile_mode_contract (
+    machine_profile_id, machine_profile_version, mode_key,
+    channels_max, requires_installed_option
+  )
+  values (v_profile, p_machine_profile_version, v_mode, p_channels_max, v_option);
+
+  for v_item in select jsonb_array_elements(p_fields)
+  loop
+    insert into public.machine_profile_field_contract (
+      machine_profile_id, machine_profile_version, mode_key,
+      stage_key, field_key, native_unit, decimals, quantity
+    )
+    values (
+      v_profile,
+      p_machine_profile_version,
+      v_mode,
+      btrim(coalesce(v_item->>'stage_key', '')),
+      btrim(v_item->>'field_key'),
+      btrim(v_item->>'native_unit'),
+      (v_item->>'decimals')::smallint,
+      btrim(v_item->>'quantity')
+    );
+    v_count := v_count + 1;
+  end loop;
+
+  return v_count;
+end;
+$$;
+
+comment on function public.sync_machine_profile_contract(text, integer, text, smallint, text, jsonb) is
+  '0223. Publishes the field contract for one (profile, version, mode) from the reviewed application catalogue. DEPLOYMENT AUTHORITY ONLY - EXECUTE is granted to service_role and revoked from authenticated, because the contract is a global product fact and a studio owner must not be able to change what other studios record against. IMMUTABLE once published: identical content is an idempotent no-op, different content is refused, and correcting a contract means publishing a NEW version so already-captured readings stay interpretable. Not a clinical-write bypass: service_role still holds no EXECUTE on record_treatment_setup_group and only SELECT on every clinical table.';
 
 -- ---------------------------------------------------------------------------
 -- PART 4 QUERY — this CLIENT's most recent recorded setup
@@ -637,36 +1314,49 @@ stable
 security invoker
 set search_path = pg_catalog, pg_temp
 as $$
-  with newest as (
-    select r.session_block_id
-      from public.treatment_setup_readings r
-      join public.session_blocks b on b.id = r.session_block_id
+  -- ONE COHERENT CAPTURE, OR NOTHING.
+  --
+  -- The first version returned the latest revision of each FIELD independently,
+  -- which can assemble a setup that never existed: a current from one capture
+  -- beside a duration from another, possibly under a different mode, machine or
+  -- profile version. Next-visit guidance has to be a real thing that was
+  -- actually set at one moment, so this picks the newest CAPTURE and returns
+  -- exactly its readings.
+  --
+  -- A field the practitioner did not record in that capture is therefore simply
+  -- ABSENT from the result. It is never filled in from an older capture, which
+  -- is the behaviour that would quietly invent a setting.
+  with newest_capture as (
+    select c.id, c.studio_machine_id, c.machine_profile_id,
+           c.machine_profile_version, c.mode_key, c.group_key, c.channels,
+           c.revision, c.recorded_by_practitioner_id, c.recorded_at
+      from public.treatment_setup_captures c
+      join public.session_blocks b on b.id = c.session_block_id
       join public.sessions sn on sn.id = b.session_id
-     where r.studio_id = p_studio_id
+     where c.studio_id = p_studio_id
        and sn.studio_id = p_studio_id
        and sn.client_id = p_client_id
-       -- A RETIRED BLOCK IS NOT GUIDANCE.
+       -- A RETIRED BLOCK OR A RETIRED SESSION IS NOT GUIDANCE.
        --
-       -- soft_delete_session_block (0166) retires a treatment area without
-       -- removing its rows, and the readings survive by design - the
-       -- observation happened, and an append-only clinical record does not
-       -- unhappen it. But "what to reproduce next visit" must not be taken
-       -- from an area the practitioner REMOVED, which is usually how a
-       -- mis-entry is corrected: the correction would be ignored and the
-       -- mistake re-presented as the thing to repeat.
+       -- soft_delete_session_block (0166) retires a treatment area and
+       -- soft_delete_session (0167) retires a whole session; each leaves its
+       -- rows and its children alone. Removing either is usually how a
+       -- mis-entry is CORRECTED, so offering one back would ignore the
+       -- correction and re-present the mistake as the thing to reproduce.
        --
-       -- record_treatment_setup_group above already refuses to WRITE against a
-       -- deleted block (`b.deleted_at is null`). This read was inconsistent
-       -- with it, which is the actual defect. Codex, a66f5ec9.
+       -- Filtering only the BLOCK was the gap: a removed session kept
+       -- live-looking blocks, so its newest capture stayed eligible.
        and b.deleted_at is null
+       and sn.deleted_at is null
        and public.is_studio_member(p_studio_id)
-     order by r.recorded_at desc
+     order by c.recorded_at desc, c.revision desc
      limit 1
   )
   select coalesce(
     jsonb_agg(
       jsonb_build_object(
         'id', r.id,
+        'capture_id', r.capture_id,
         'session_block_id', r.session_block_id,
         'studio_machine_id', r.studio_machine_id,
         'machine_profile_id', r.machine_profile_id,
@@ -681,6 +1371,7 @@ as $$
         'native_unit', r.native_unit,
         'decimals', r.decimals,
         'observation_source', r.observation_source,
+        'revision', r.revision,
         'recorded_by_practitioner_id', r.recorded_by_practitioner_id,
         'recorded_at', r.recorded_at
       )
@@ -689,11 +1380,64 @@ as $$
     '[]'::jsonb
   )
     from public.treatment_setup_readings r
-   where r.session_block_id = (select session_block_id from newest);
+   where r.capture_id = (select id from newest_capture);
 $$;
 
 comment on function public.latest_setup_for_client(uuid, uuid) is
-  '0223. The readings of the most recent NON-RETIRED block RECORDED FOR THIS CLIENT, as a jsonb array, for next-visit guidance. A soft-deleted block keeps its readings but is never offered as guidance, because removing an area is how a mis-entry is corrected. Scoped through session_blocks -> sessions.client_id so a studio-mate''s newer block can never be shown as this client''s setup. SECURITY INVOKER: RLS stays in force and is_studio_member is a fail-closed second lock. value_numeric is emitted as TEXT so a recorded zero and the machine''s own precision survive JSON.';
+  '0223. The readings of ONE COHERENT CAPTURE - the most recent capture in a NON-RETIRED block RECORDED FOR THIS CLIENT - as a jsonb array, for next-visit guidance. Deliberately NOT the latest revision of each field independently: that can assemble a setup that never existed, mixing fields from different capture times, modes, machines or profile versions. A field absent from that capture is absent from the result and is never filled in from an older one. Scoped through session_blocks -> sessions.client_id so a studio-mate''s newer capture can never be shown as this client''s setup. SECURITY INVOKER: RLS stays in force and is_studio_member is a fail-closed second lock. value_numeric is emitted as TEXT so a recorded zero and the machine''s own precision survive JSON.';
+
+-- ---------------------------------------------------------------------------
+-- CHRONOLOGICAL HISTORY — the captures themselves, not just the rows
+-- ---------------------------------------------------------------------------
+--
+-- Append-only storage is not the same as an exposed history. This returns the
+-- captures of one block oldest-first, each with what it was recorded under, so
+-- a superseded setting is visible as a moment in the treatment rather than
+-- merely present in the table.
+create or replace function public.setup_capture_history_for_block(
+  p_block_id uuid
+)
+returns jsonb
+language sql
+stable
+security invoker
+set search_path = pg_catalog, pg_temp
+as $$
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'capture_id', c.id,
+        'group_key', c.group_key,
+        'revision', c.revision,
+        'studio_machine_id', c.studio_machine_id,
+        'machine_profile_id', c.machine_profile_id,
+        'machine_profile_version', c.machine_profile_version,
+        'mode_key', c.mode_key,
+        'channels', c.channels,
+        'recorded_by_practitioner_id', c.recorded_by_practitioner_id,
+        'recorded_at', c.recorded_at,
+        'field_count', (
+          select count(*) from public.treatment_setup_readings r
+           where r.capture_id = c.id
+        )
+      )
+      order by c.recorded_at, c.group_key, c.revision
+    ),
+    '[]'::jsonb
+  )
+    from public.treatment_setup_captures c
+    join public.session_blocks b on b.id = c.session_block_id
+    join public.sessions sn on sn.id = b.session_id
+   where c.session_block_id = p_block_id
+     -- Same retirement rule as guidance, for the same reason and so the two
+     -- cannot disagree about whether a block still exists.
+     and b.deleted_at is null
+     and sn.deleted_at is null
+     and public.is_studio_member(c.studio_id);
+$$;
+
+comment on function public.setup_capture_history_for_block(uuid) is
+  '0223. The captures of one treatment block, oldest first, each with the machine, profile version, mode, channels, recorder, instant and field count it was recorded under. Exposes the CHRONOLOGY of a treatment rather than only the storage rows: a setting changed mid-treatment appears as two captures in order. SECURITY INVOKER, with is_studio_member as a fail-closed second lock.';
 
 -- ---------------------------------------------------------------------------
 -- GRANTS — re-asserted by name on every command
@@ -733,6 +1477,20 @@ grant execute on function public.record_treatment_setup_group(uuid, uuid, text, 
 -- DEFAULT PRIVILEGES hands EXECUTE to anon, authenticated AND service_role at
 -- create time, so all four are revoked by name first. This is the 0129 (anon)
 -- and 0164 (service_role) lesson, and it applies to a query just as much.
+-- PUBLICATION IS DEPLOYMENT AUTHORITY. `authenticated` is revoked and NOT
+-- granted back: a studio owner consumes a contract, she does not author one.
+revoke execute on function public.sync_machine_profile_contract(text, integer, text, smallint, text, jsonb) from public;
+revoke execute on function public.sync_machine_profile_contract(text, integer, text, smallint, text, jsonb) from anon;
+revoke execute on function public.sync_machine_profile_contract(text, integer, text, smallint, text, jsonb) from authenticated;
+revoke execute on function public.sync_machine_profile_contract(text, integer, text, smallint, text, jsonb) from service_role;
+grant execute on function public.sync_machine_profile_contract(text, integer, text, smallint, text, jsonb) to service_role;
+
+revoke execute on function public.setup_capture_history_for_block(uuid) from public;
+revoke execute on function public.setup_capture_history_for_block(uuid) from anon;
+revoke execute on function public.setup_capture_history_for_block(uuid) from authenticated;
+revoke execute on function public.setup_capture_history_for_block(uuid) from service_role;
+grant execute on function public.setup_capture_history_for_block(uuid) to authenticated;
+
 revoke execute on function public.latest_setup_for_client(uuid, uuid) from public;
 revoke execute on function public.latest_setup_for_client(uuid, uuid) from anon;
 revoke execute on function public.latest_setup_for_client(uuid, uuid) from authenticated;

@@ -84,10 +84,26 @@ describe("0223 sits correctly in the migration sequence", () => {
 });
 
 describe("0223 is additive, and touches no existing value", () => {
-  it("creates its two tables and alters only practitioners", () => {
+  it("creates its five tables and alters only practitioners", () => {
     expect(CODE).toMatch(/create table if not exists public\.studio_machines/);
     expect(CODE).toMatch(
       /create table if not exists public\.treatment_setup_readings/,
+    );
+    // The field contract, added when authoritative validation moved into the
+    // command's authority boundary.
+    expect(CODE).toMatch(
+      /create table if not exists public\.machine_profile_field_contract/,
+    );
+    // The MODE-level half, separate so a field cannot disagree with its own
+    // mode about how many channels exist.
+    expect(CODE).toMatch(
+      /create table if not exists public\.machine_profile_mode_contract/,
+    );
+    // The CAPTURE: one atomic act of recording a settings group. Readings hang
+    // off it, which is what makes a retrieved setup one real thing rather than
+    // a per-field composite.
+    expect(CODE).toMatch(
+      /create table if not exists public\.treatment_setup_captures/,
     );
     const alters = CODE.match(/^alter table public\.(\w+)/gm) ?? [];
     const altered = new Set(
@@ -97,7 +113,86 @@ describe("0223 is additive, and touches no existing value", () => {
     // which is expected; what matters is that no OTHER existing table is in it.
     altered.delete("studio_machines");
     altered.delete("treatment_setup_readings");
+    altered.delete("machine_profile_field_contract");
+    altered.delete("machine_profile_mode_contract");
+    altered.delete("treatment_setup_captures");
     expect([...altered]).toEqual(["practitioners"]);
+  });
+
+  it("creates the field contract EMPTY, naming no model", () => {
+    // The table exists so the command can validate against it, but populating
+    // it from a migration would turn model ACTIVATION - an evidence review -
+    // into a schema fact. Rows arrive at runtime from the application
+    // catalogue through the owner-gated sync command.
+    // Scoped to MIGRATION TOP LEVEL. The sync function must of course insert
+    // into the table - that is how rows arrive - so the function bodies are
+    // stripped first and the claim is about what the migration itself writes
+    // when it runs. A blunt whole-file ban fails on the function and would
+    // have to be deleted, losing the guarantee entirely.
+    const topLevel = CODE.replace(
+      /create or replace function[\s\S]*?\$\$;/g,
+      "",
+    );
+    expect(topLevel).not.toMatch(
+      /insert into public\.machine_profile_field_contract/,
+    );
+    expect(CODE).toMatch(
+      /create or replace function public\.sync_machine_profile_contract/,
+    );
+    // AND IT IS NOT GRANTED TO A USER ROLE. This is the cross-tenant hole:
+    // the contract is global, so a studio owner authoring one changes what
+    // every other studio records against. EXECUTE goes to service_role -
+    // deployment authority - and `authenticated` is revoked and never granted
+    // back.
+    const sig =
+      "public.sync_machine_profile_contract(text, integer, text, smallint, text, jsonb)";
+    expect(CODE).toContain(`revoke execute on function ${sig} from authenticated;`);
+    expect(CODE).toContain(`grant execute on function ${sig} to service_role;`);
+    expect(CODE).not.toContain(`grant execute on function ${sig} to authenticated;`);
+    // And no real model name reaches the migration through this table either.
+    for (const name of ["Apilus", "Silhouet", "Permanence", "Dectro", "GEMM"]) {
+      expect(topLevel, `${name} must not appear in the migration`).not.toContain(
+        name,
+      );
+    }
+  });
+
+  it("makes the recording command FAIL CLOSED without a published contract", () => {
+    // The bypass this closes is "do not sync": if a missing contract meant
+    // "skip validation", the check would be decorative.
+    const fn = /create or replace function public\.record_treatment_setup_group[\s\S]*?\$\$;/.exec(
+      CODE,
+    );
+    expect(fn).not.toBeNull();
+    expect(fn![0]).toMatch(/No field contract is published/);
+    // And it DERIVES the unit and precision rather than inserting the
+    // caller's. The old shape read them straight off the payload.
+    expect(fn![0]).not.toMatch(/btrim\(v_item->>'native_unit'\)/);
+    expect(fn![0]).not.toMatch(/\(v_item->>'decimals'\)::smallint/);
+    expect(fn![0]).toMatch(/v_unit,/);
+    expect(fn![0]).toMatch(/v_decimals,/);
+    // The revision is computed PER CAPTURE, not per field, and not accepted
+    // from the caller. Per-field allocation is what let one block's fields sit
+    // at different revisions and a per-field "latest" assemble a composite
+    // that was never a real setting.
+    expect(fn![0]).toMatch(/coalesce\(max\(c\.revision\), 0\) \+ 1/);
+    expect(fn![0]).not.toMatch(/v_item->>'revision'/);
+    // Allocated under a transaction-scoped advisory lock on (block, group), so
+    // two concurrent captures cannot read the same max.
+    expect(fn![0]).toMatch(/pg_advisory_xact_lock/);
+    // One capture row per call, and the readings reference it.
+    expect(fn![0]).toMatch(/insert into public\.treatment_setup_captures/);
+    expect(fn![0]).toMatch(/capture_id/);
+  });
+
+  it("keys readings by revision, so a changed setting APPENDS", () => {
+    expect(CODE).toMatch(
+      /create unique index if not exists treatment_setup_readings_field_revision_uniq[\s\S]{0,200}revision\)/,
+    );
+    // The old write-once index must be GONE, not merely supplemented - leaving
+    // it would still refuse the second observation.
+    expect(CODE).not.toMatch(/treatment_setup_readings_field_uniq\b/);
+    expect(CODE).toMatch(/revision smallint not null default 1/);
   });
 
   it("adds its practitioner columns as nullable, with no default and no backfill", () => {
@@ -134,7 +229,16 @@ describe("0223 is additive, and touches no existing value", () => {
     // `drop policy if exists` / `drop trigger if exists` on its OWN new
     // objects is the idempotent create idiom; nothing else may be dropped.
     const drops = CODE.match(/^drop \w+/gm) ?? [];
-    for (const d of drops) expect(["drop policy", "drop trigger"]).toContain(d);
+    // `drop index` joined the allowlist when append-only revisions landed: the
+    // old write-once unique index had to be REMOVED, not merely supplemented,
+    // because leaving it would still refuse the second observation. Its
+    // absence is as load-bearing as the new index's presence.
+    for (const d of drops)
+      expect(["drop policy", "drop trigger", "drop index"]).toContain(d);
+    // And specifically: the write-once index is gone.
+    expect(CODE).toMatch(
+      /drop index if exists public\.treatment_setup_readings_field_revision_uniq/,
+    );
   });
 });
 
@@ -216,8 +320,12 @@ describe("0223 makes the commands the only write path", () => {
 
   it("every command is SECURITY DEFINER with a pinned search_path", () => {
     const defs = CODE.match(/create or replace function[\s\S]*?\$\$;/g) ?? [];
-    // Four WRITE commands, the trigger function, and one READ query.
-    expect(defs.length).toBe(6);
+    // Nine routines now:
+    //   4 inventory/recording write commands
+    //   1 contract publication command (deployment authority)
+    //   2 immutability trigger functions (readings, captures)
+    //   2 read queries (latest coherent capture, block history)
+    expect(defs.length).toBe(9);
     // Every routine pins its search_path, definer or not.
     for (const d of defs) {
       expect(d).toMatch(/set search_path = pg_catalog, pg_temp/);
@@ -230,12 +338,17 @@ describe("0223 makes the commands the only write path", () => {
     //     so RLS must stay in force rather than be bypassed and
     //     re-implemented. Making a read definer is how a read becomes a leak.
     const definer = defs.filter((d) => /security definer/.test(d));
-    expect(definer).toHaveLength(4);
+    expect(definer).toHaveLength(5);  // the four writes plus publication
     for (const name of [
       "register_studio_machine",
       "retire_studio_machine",
       "set_own_default_machine",
       "record_treatment_setup_group",
+      // Publishing a contract is an administrative write. It is SECURITY
+      // DEFINER so it can write the contract tables (no role holds direct
+      // DML on them), while its AUTHORITY comes from the EXECUTE grant being
+      // service_role only - deployment, not any tenant.
+      "sync_machine_profile_contract",
     ]) {
       expect(
         definer.some((d) => d.includes(name)),
@@ -243,10 +356,20 @@ describe("0223 makes the commands the only write path", () => {
       ).toBe(true);
     }
     const invoker = defs.filter((d) => !/security definer/.test(d));
-    expect(invoker).toHaveLength(2);
+    expect(invoker).toHaveLength(4);
     for (const d of invoker) {
       expect(d).toMatch(
-        /refuse_treatment_setup_reading_update|latest_setup_for_client/,
+        /refuse_treatment_setup_reading_update|refuse_treatment_setup_capture_update|latest_setup_for_client|setup_capture_history_for_block/,
+      );
+    }
+    // Both READS are invoker by deliberate choice: they return only what the
+    // caller may already read, so RLS must stay in force rather than be
+    // bypassed and re-implemented. Making a read definer is how a read becomes
+    // a leak.
+    for (const name of ["latest_setup_for_client", "setup_capture_history_for_block"]) {
+      const read = defs.find((d) => d.includes(name))!;
+      expect(read, `${name} must be explicit about being invoker`).toMatch(
+        /security invoker/,
       );
     }
     // And the read is explicit about it rather than defaulting.

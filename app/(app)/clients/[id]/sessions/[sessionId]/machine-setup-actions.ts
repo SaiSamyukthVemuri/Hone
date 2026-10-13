@@ -7,6 +7,7 @@ import { validateReading } from "@/lib/machines/validate-reading";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import {
   latestRecordedSetup,
+  publishedModesFor,
   readingsForBlock,
   recordSetupGroup,
   registerStudioMachine,
@@ -267,6 +268,43 @@ export async function registerMachineAction(input: {
   }
 
   const db = await machineDb();
+
+  // CONSUME A PUBLISHED CONTRACT; NEVER AUTHOR ONE.
+  //
+  // An earlier version of this action PUBLISHED the field contract as part of
+  // registration. That was wrong in kind, not just in degree: the contract is
+  // a GLOBAL product fact, so letting a studio owner write it meant one
+  // tenant's owner could change the units and precision every other tenant
+  // records against, and rewrite the meaning of a version under which readings
+  // had already been captured. Publication is now deployment authority only
+  // (`sync_machine_profile_contract`, granted to service_role).
+  //
+  // What registration does instead is REFUSE a unit the studio could not then
+  // chart against. Recording fails closed without a published contract, so
+  // without this check an owner could register a machine that silently cannot
+  // be used, and discover it only at capture time.
+  const published = await publishedModesFor(
+    db,
+    profile.profileId,
+    profile.version,
+  );
+  if (!published.ok) {
+    return { ok: false, code: "rejected", error: published.error };
+  }
+  const wanted = activeModes(profile).map((m) => m.key);
+  const missing = wanted.filter((m) => !published.value.includes(m));
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      code: "rejected",
+      error:
+        `No published field contract covers ${profile.manufacturer} ${profile.model} ` +
+        `version ${profile.version} (${missing.join(", ")}). A machine cannot be ` +
+        `registered until its contract is published, because its settings could ` +
+        `not then be recorded.`,
+    };
+  }
+
   const made = await registerStudioMachine(db, {
     studioId: scope.studioId,
     profileId: profile.profileId,
@@ -278,6 +316,7 @@ export async function registerMachineAction(input: {
     installedOptions: input.installedOptions ?? [],
   });
   if (!made.ok) return { ok: false, code: "rejected", error: made.error };
+
   return { ok: true, machineId: made.value };
 }
 

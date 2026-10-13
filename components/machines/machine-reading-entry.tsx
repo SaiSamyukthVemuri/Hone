@@ -73,6 +73,9 @@ export function MachineReadingEntry({
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  // How many captures this mount has recorded. Drives the confirmation copy
+  // and distinguishes the first capture from a later revision.
+  const [captures, setCaptures] = useState(0);
 
   const key = (g: string, f: FieldDescriptor) => `${g}::${f.stageKey ?? ""}::${f.key}`;
 
@@ -111,6 +114,7 @@ export function MachineReadingEntry({
     });
     setPending(false);
     if (out.ok) {
+      setCaptures((n) => n + 1);
       setSaved(true);
       setMessage("Saved to this treatment.");
     } else {
@@ -120,24 +124,50 @@ export function MachineReadingEntry({
 
   if (saved) {
     return (
-      <p
-        className="text-sm text-neutral-700 dark:text-neutral-300"
+      <div
+        className="flex flex-col gap-2"
         data-testid="machine-reading-saved"
         role="status"
       >
         {/*
-          This used to read "A change of setting is recorded as a new reading,
-          so this one stays as entered." The first half was false: the schema
-          has one row per (block, group, stage, field), so a SECOND reading for
-          the same field in the same block is refused, not appended - a changed
-          setting cannot currently be recorded at all (Codex, 9c6fbbe5).
-          Whether it SHOULD be is a clinical-record question recorded for
-          product authority, not one to settle in UI copy. Until it is settled
-          this says only what is true.
+          THE SCHEMA CHANGED UNDER THIS COPY, TWICE, AND IT HAS TRACKED BOTH.
+
+          Originally it claimed "a change of setting is recorded as a new
+          reading", which the write-once schema refused. That was corrected to
+          say settings could not be overwritten and to send the practitioner to
+          free-text notes. Append-only revision CAPTURES then shipped, which
+          makes that second version wrong in the opposite direction: the
+          structured path now exists, and sending her to prose throws it away
+          (Codex, 752a7ef6).
+
+          So: say what is true - the capture is permanent and a change is a NEW
+          capture - and give her the control to make one, rather than requiring
+          a page reload to reach a path the database supports.
         */}
-        Settings saved to this treatment, and they cannot be overwritten. To
-        correct or add to them, record them in the treatment notes below.
-      </p>
+        <p className="text-sm text-neutral-700 dark:text-neutral-300">
+          {captures === 1
+            ? "Settings saved to this treatment. This capture is permanent and cannot be edited."
+            : `${captures} captures saved to this treatment. Each one is permanent and cannot be edited.`}{" "}
+          If a setting changes during the treatment, record it as a new capture
+          - the earlier one stays in the record.
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            // A NEW capture, not an edit of the last one. The draft is cleared
+            // deliberately: pre-filling from the previous capture would invite
+            // a practitioner to submit values she has not re-read off the
+            // machine, which is the opposite of what a reading is.
+            setDraft({});
+            setMessage(null);
+            setSaved(false);
+          }}
+          className="self-start rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          data-testid="machine-reading-record-change"
+        >
+          Record a setting change
+        </button>
+      </div>
     );
   }
 

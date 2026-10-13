@@ -39,6 +39,9 @@ const T = 20_000;
 /** The one profile that is active, and only behind the server-side gate. */
 const SYNTHETIC_PROFILE_ID = "synthetic:demo-multineedle";
 const SYNTHETIC_VERSION = 1;
+// The synthetic profile declares four independently controlled outputs, and
+// the published contract has to say so or a per-channel group is refused.
+const SYNTHETIC_CHANNELS = 4;
 
 async function noOverflow(page: Page) {
   const [sw, cw] = await page.evaluate(() => [
@@ -66,6 +69,39 @@ async function registerMachine(studioId: string, displayName: string) {
        (id, studio_id, machine_profile_id, machine_profile_version, display_name)
      values ($1, $2, $3, $4, $5)`,
     [id, studioId, SYNTHETIC_PROFILE_ID, SYNTHETIC_VERSION, displayName],
+  );
+
+  // PUBLISH THE CONTRACT for this profile version, through the COMMAND.
+  //
+  // `record_treatment_setup_group` validates every reading against the
+  // published contract and FAILS CLOSED when none exists. In production
+  // deployment authority publishes it; this spec seeds its unit directly, so it
+  // has to publish too or steps 6-7 would be refused - and that refusal would
+  // look like a broken feature rather than an unseeded fixture.
+  //
+  // THROUGH THE COMMAND, not raw inserts. An earlier version of this inserted
+  // into machine_profile_field_contract directly and broke the moment the
+  // schema grew a parent: the field contract now has an FK to
+  // machine_profile_mode_contract and a NOT NULL `quantity`, so the raw insert
+  // violated both. Calling the command means the fixture cannot drift from the
+  // schema again. `sql()` runs as postgres, which is the deployment authority
+  // the command requires - EXECUTE is revoked from `authenticated`.
+  //
+  // The rows mirror the synthetic profile's galvanic mode: current in µA at
+  // whole numbers, duration in seconds at one decimal. The save assertions are
+  // about the machine's OWN unit and precision surviving, so these must match
+  // the profile rather than be convenient.
+  await sql(
+    `select public.sync_machine_profile_contract($1, $2, 'galvanic', $3, null, $4::jsonb)`,
+    [
+      SYNTHETIC_PROFILE_ID,
+      SYNTHETIC_VERSION,
+      SYNTHETIC_CHANNELS,
+      JSON.stringify([
+        { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
+        { field_key: "duration", native_unit: "s", decimals: 1, quantity: "duration" },
+      ]),
+    ],
   );
   return id;
 }
@@ -156,8 +192,21 @@ async function openMachinePanel(page: Page): Promise<boolean> {
   await page.getByTestId("machine-first-open").click();
   await expect(page.getByTestId("machine-first-panel")).toBeVisible({ timeout: T });
 
-  const offered = page.getByText(/Choose the machine you are working on/i);
-  return (await offered.count()) > 0;
+  // IS THE GATE OPEN? The panel has THREE states, and an earlier version of
+  // this helper only recognised one of them:
+  //
+  //   selectable.length === 0  -> "No verified machine is available"  (CLOSED)
+  //   !chosen                  -> the picker                          (OPEN)
+  //   chosen                   -> the machine-chosen block            (OPEN)
+  //
+  // It returned "offered a selection" only for the picker, so once the
+  // remembered selection actually PERSISTED - which it now does - the second
+  // mount showed the chosen machine and this read it as a failure. The ops01
+  // lane's gate-open run found exactly that at step 6, on the edit form of the
+  // block just saved. A consequence of fixing persistence, not of the panel.
+  const picker = page.getByText(/Choose the machine you are working on/i);
+  const chosen = page.getByTestId("machine-chosen");
+  return (await picker.count()) > 0 || (await chosen.count()) > 0;
 }
 
 test("machine-first: no real model is ever offered, and the synthetic workflow records and retrieves @390px", async ({

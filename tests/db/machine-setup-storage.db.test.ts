@@ -34,11 +34,44 @@ afterAll(async () => {
 });
 
 /** Register one synthetic machine as the studio's owner. */
+/**
+ * Publish a contract as DEPLOYMENT AUTHORITY (adminQuery = postgres), not as a
+ * practitioner: EXECUTE is revoked from `authenticated` because the contract is
+ * a global product fact. Idempotent for identical content.
+ */
+async function publishContract(
+  profile: string,
+  version: number,
+  opts: { channelsMax?: number | null; requiresOption?: string | null } = {},
+): Promise<void> {
+  await adminQuery(
+    `select public.sync_machine_profile_contract($1,$2,$3,$4,$5,$6::jsonb)`,
+    [
+      profile,
+      version,
+      "galvanic",
+      // The fixture profile offers four channels; tests that record a
+      // per-probe group name one, and the contract has to permit it.
+      opts.channelsMax === undefined ? 4 : opts.channelsMax,
+      opts.requiresOption ?? null,
+      // Every field these tests legitimately record. "invented" is
+      // DELIBERATELY absent - the unknown-field refusal test needs it to be.
+      JSON.stringify([
+        { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
+        { field_key: "duration", native_unit: "s", decimals: 1, quantity: "duration" },
+        { field_key: "repeat", native_unit: "count", decimals: 0, quantity: "count" },
+        { field_key: "nothing", native_unit: "µA", decimals: 0, quantity: "current" },
+      ]),
+    ],
+  );
+}
+
 async function registerMachine(
   studio: SeededStudio,
   displayName: string,
   opts: { profile?: string; version?: number; options?: string[] } = {},
 ): Promise<string> {
+  await publishContract(opts.profile ?? PROFILE, opts.version ?? VERSION);
   return asUser(studio.userId, async (q) => {
     const r = await q(
       `select public.register_studio_machine($1, $2, $3, $4, $5) as id`,
@@ -456,7 +489,11 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
           ]),
         ]),
       ),
-    ).rejects.toThrow(/treatment_setup_readings_value_xor/i);
+      // The command now refuses this itself, with a sentence naming the
+      // field, BEFORE the column's XOR constraint is reached. The constraint
+      // is still there as a backstop; what changed is that a forged direct
+      // call gets an explanation rather than a constraint name.
+    ).rejects.toThrow(/needs either a value or a reason/i);
   });
 
   it("preserves TWO settings groups when probes differ", async () => {
@@ -532,11 +569,20 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
     expect(unchanged.rows[0].v).toBe("120");
   });
 
-  it("refuses a second reading for the same field rather than overwriting", async () => {
-    const studio = await seedStudio("mpx-dup");
+  it("APPENDS a revision when a setting changes, preserving the earlier one", async () => {
+    // THIS ASSERTION IS INVERTED FROM ITS FIRST VERSION, deliberately.
+    //
+    // It used to assert that a second reading for the same field was REFUSED
+    // with a duplicate-key error, which was faithful to the schema as written
+    // but contradicted the table's own comment ("a material setup change is a
+    // new reading rather than an edit") and meant a setting changed
+    // mid-treatment could not be recorded at all. Codex raised it twice; the
+    // operator approved append-only revisions. So the law is now: appending is
+    // correct, and the earlier observation must survive.
+    const studio = await seedStudio("mpx-rev");
     const { blockId } = await seedSession(studio);
     const machineId = await registerMachine(studio, "Room 1");
-    const once = () =>
+    const record = (readings: unknown) =>
       asUser(studio.userId, (q) =>
         q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
           blockId,
@@ -544,13 +590,244 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
           "galvanic",
           "g1",
           [],
-          JSON.stringify(READINGS),
+          JSON.stringify(readings),
         ]),
       );
-    await once();
-    await expect(once()).rejects.toThrow(
-      /treatment_setup_readings_field_uniq|duplicate key/i,
+
+    await record(READINGS);
+    // The practitioner turns the current up mid-treatment.
+    await record([
+      {
+        field_key: "current",
+        value: "180",
+        observation_source: "practitioner-entered",
+      },
+    ]);
+
+    const rows = await adminQuery(
+      `select field_key, value_numeric::text as v, revision
+         from public.treatment_setup_readings
+        where session_block_id = $1 and field_key = 'current'
+        order by revision`,
+      [blockId],
     );
+    // BOTH observations, in order, neither overwritten.
+    expect(rows.rows.map((r: { v: string; revision: number }) => [r.revision, r.v])).toEqual([
+      [1, "120"],
+      [2, "180"],
+    ]);
+
+    // And the untouched field did not gain a revision it never had.
+    const duration = await adminQuery(
+      `select count(*)::int as n from public.treatment_setup_readings
+        where session_block_id = $1 and field_key = 'duration'`,
+      [blockId],
+    );
+    expect(duration.rows[0].n).toBe(1);
+  });
+
+  it("still refuses a DUPLICATE FIELD within one capture", async () => {
+    // Rewritten for the capture model. The unique key moved from the field
+    // coordinates plus a per-field revision to (capture_id, stage, field),
+    // because allocating a revision per FIELD was what let one block's fields
+    // sit at different revisions and a per-field "latest" assemble a composite
+    // that was never a real setting.
+    //
+    // The revision is now allocated per CAPTURE by the command, so a caller
+    // cannot aim a write at an existing one. This index is the backstop against
+    // a future caller trying, so it is worth proving it still bites.
+    const studio = await seedStudio("mpx-dupfield");
+    const { blockId } = await seedSession(studio);
+    const machineId = await registerMachine(studio, "Room 1");
+    await asUser(studio.userId, (q) =>
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+        blockId, machineId, "galvanic", "g1", [], JSON.stringify(READINGS),
+      ]),
+    );
+
+    // Copy an existing reading back onto its OWN capture, same field.
+    await expect(
+      adminQuery(
+        `insert into public.treatment_setup_readings
+           (capture_id, studio_id, session_block_id, machine_profile_id,
+            machine_profile_version, mode_key, group_key, field_key,
+            value_numeric, native_unit, decimals, observation_source, revision)
+         select capture_id, studio_id, session_block_id, machine_profile_id,
+                machine_profile_version, mode_key, group_key, field_key,
+                999, native_unit, decimals, observation_source, revision
+           from public.treatment_setup_readings
+          where session_block_id = $1 and field_key = 'current'`,
+        [blockId],
+      ),
+    ).rejects.toThrow(
+      /treatment_setup_readings_capture_field_uniq|duplicate key/i,
+    );
+  });
+
+  it("gives every field of ONE capture the SAME capture and revision", async () => {
+    // The coherence property the capture model exists for: a call records one
+    // atomic capture, so its fields cannot drift apart.
+    const studio = await seedStudio("mpx-coherent");
+    const { blockId } = await seedSession(studio);
+    const machineId = await registerMachine(studio, "Room 1");
+    await asUser(studio.userId, (q) =>
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+        blockId, machineId, "galvanic", "g1", [], JSON.stringify(READINGS),
+      ]),
+    );
+    const rows = await adminQuery(
+      `select distinct capture_id, revision from public.treatment_setup_readings
+        where session_block_id = $1`,
+      [blockId],
+    );
+    expect(
+      rows.rows.length,
+      "one capture must yield exactly one (capture_id, revision) pair",
+    ).toBe(1);
+    expect(rows.rows[0].revision).toBe(1);
+
+    // A SECOND call is a second capture, with its own identity.
+    await asUser(studio.userId, (q) =>
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+        blockId, machineId, "galvanic", "g1", [],
+        JSON.stringify([
+          {
+            field_key: "current",
+            value: "180",
+            observation_source: "practitioner-entered",
+          },
+        ]),
+      ]),
+    );
+    const captures = await adminQuery(
+      `select revision, (select count(*)::int from public.treatment_setup_readings r
+                          where r.capture_id = c.id) as fields
+         from public.treatment_setup_captures c
+        where c.session_block_id = $1 order by revision`,
+      [blockId],
+    );
+    expect(
+      captures.rows.map((r: { revision: number; fields: number }) => [
+        r.revision,
+        r.fields,
+      ]),
+    ).toEqual([
+      [1, 2],
+      [2, 1],
+    ]);
+  });
+
+  it("FAILS CLOSED when no field contract is published for the version", async () => {
+    // The whole point of putting the contract in the database: an
+    // authenticated member calling the command directly cannot record against
+    // a profile version nobody has published a contract for.
+    const studio = await seedStudio("mpx-nocontract");
+    const { blockId } = await seedSession(studio);
+
+    // TWO LAYERS NOW, and this test is about the SECOND one.
+    //
+    // Registration itself refuses an unpublished version since the review
+    // finding about consume-only authority, so a machine can no longer BE
+    // registered against one directly - that refusal is proved in
+    // machine-contract-authority.db.test.ts. To still exercise the RECORDING
+    // guard, register legitimately and then repoint the unit at a version
+    // nobody published, which is the state a stale row or a later contract
+    // change could produce.
+    const machineId = await registerMachine(studio, "Repointed");
+    await adminQuery(
+      `update public.studio_machines set machine_profile_version = 97 where id = $1`,
+      [machineId],
+    );
+
+    await expect(
+      asUser(studio.userId, (q) =>
+        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+          blockId, machineId, "galvanic", "g1", [], JSON.stringify(READINGS),
+        ]),
+      ),
+    ).rejects.toThrow(/No field contract is published/i);
+  });
+
+  it("DERIVES the unit and precision, ignoring what the caller claims", async () => {
+    // The P1 this closes: the caller's metadata was cast straight into an
+    // immutable clinical row. Now the contract decides.
+    const studio = await seedStudio("mpx-derive");
+    const { blockId } = await seedSession(studio);
+    const machineId = await registerMachine(studio, "Room 1");
+    await asUser(studio.userId, (q) =>
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+        blockId, machineId, "galvanic", "g1", [],
+        JSON.stringify([
+          {
+            field_key: "current",
+            value: "80",
+            // Both of these are LIES and both must be discarded.
+            native_unit: "MILLIAMPS",
+            decimals: 6,
+            observation_source: "practitioner-entered",
+          },
+        ]),
+      ]),
+    );
+    const row = await adminQuery(
+      `select native_unit, decimals from public.treatment_setup_readings
+        where session_block_id = $1 and field_key = 'current'`,
+      [blockId],
+    );
+    expect(row.rows[0].native_unit).toBe("µA");
+    expect(row.rows[0].decimals).toBe(0);
+  });
+
+  it("refuses a field the published contract does not contain", async () => {
+    const studio = await seedStudio("mpx-unknownfield");
+    const { blockId } = await seedSession(studio);
+    const machineId = await registerMachine(studio, "Room 1");
+    await expect(
+      asUser(studio.userId, (q) =>
+        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+          blockId, machineId, "galvanic", "g1", [],
+          JSON.stringify([
+            { field_key: "invented", value: "1", observation_source: "practitioner-entered" },
+          ]),
+        ]),
+      ),
+    ).rejects.toThrow(/has no field "invented"/i);
+  });
+
+  it("NEITHER a practitioner NOR an owner may publish a contract", async () => {
+    // THIS TEST'S LAW CHANGED. It used to assert that a practitioner was
+    // refused and an owner allowed. That WAS the defect: the contract is a
+    // GLOBAL product fact, so letting any studio owner publish it meant one
+    // tenant's owner could change the units and precision every other tenant
+    // records against, and rewrite the meaning of a version under which
+    // readings had already been captured.
+    //
+    // Publication is now deployment authority: EXECUTE is granted to
+    // service_role and revoked from `authenticated`. So BOTH roles are
+    // refused, and the owner case is the one that matters.
+    const studio = await seedStudio("mpx-contract-acl");
+    const member = await seedMember(studio, "practitioner");
+    const publish = (userId: string) =>
+      asUser(userId, (q) =>
+        q(`select public.sync_machine_profile_contract($1,$2,$3,$4,$5,$6::jsonb)`, [
+          PROFILE, 4242, "galvanic", 4, null,
+          JSON.stringify([
+            { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
+          ]),
+        ]),
+      );
+    await expect(publish(member.userId)).rejects.toThrow(/permission denied/i);
+    await expect(
+      publish(studio.userId),
+      "a studio OWNER must not be able to author a global contract",
+    ).rejects.toThrow(/permission denied/i);
+
+    // And nothing was published by either attempt.
+    const rows = await adminQuery(
+      `select count(*)::int as n from public.machine_profile_mode_contract
+        where machine_profile_version = 4242`,
+    );
+    expect(rows.rows[0].n).toBe(0);
   });
 });
 
