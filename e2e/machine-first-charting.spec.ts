@@ -557,4 +557,72 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
       ["duration", 2, "300.5"],
     ]);
   });
+
+  await test.step("11: a FAILED selection write is reported, and changes nothing stored", async () => {
+    // THE MOUNTED PROOF of the status line that was wrong twice. It claimed a
+    // selection was remembered when the write had failed, because it was
+    // reading the optimistic selection rather than the stored fact.
+    //
+    // The failure is induced the way it would really happen: the machine is
+    // retired behind an already-rendered page, so the browser's list is stale
+    // and the server refuses the write the client thinks is routine. Nothing
+    // is stubbed, and the refusal comes from 0223's own command.
+    //
+    // LAST STEP DELIBERATELY: it retires the machine, so no later assertion
+    // can depend on it.
+    await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
+    await page.getByTestId(/^edit-area-/).first().click({ timeout: T });
+    await openMachinePanel(page);
+    await expect(page.getByTestId("machine-chosen")).toContainText("Room 1 demo", {
+      timeout: T,
+    });
+
+    // POSITIVE CONTROL: the clear path genuinely works, so the refusal proved
+    // below is the retirement and not a broken selection path.
+    await page.getByTestId("machine-change").click({ timeout: T });
+    await expect(page.getByTestId(`machine-pick-${machineId}`)).toBeVisible({
+      timeout: T,
+    });
+    await expect(page.getByTestId("machine-first-status")).toContainText(
+      "nothing yet",
+      { timeout: T },
+    );
+    const cleared = await sql<{ default_machine_id: string | null }>(
+      `select p.default_machine_id from public.practitioners p
+        where p.studio_id = $1 and p.role = 'owner'`,
+      [seed.studioId],
+    );
+    expect(cleared[0]?.default_machine_id, "the clear really persisted").toBeNull();
+
+    // Now retire it, behind the rendered page.
+    await sql(`update public.studio_machines set retired_at = now() where id = $1`, [
+      machineId,
+    ]);
+
+    // The stale button is still there, and clicking it is an ordinary action.
+    await page.getByTestId(`machine-pick-${machineId}`).click({ timeout: T });
+
+    // THE NOTE MUST BE VISIBLE. It used to render only inside the
+    // chosen-machine block, so the message a practitioner most needed could be
+    // the one most reliably hidden.
+    await expect(page.getByTestId("machine-selection-not-remembered")).toBeVisible({
+      timeout: T,
+    });
+
+    // AND THE STORED FACT MUST NOT HAVE MOVED - in the UI...
+    await expect(page.getByTestId("machine-first-status")).toContainText(
+      "nothing yet",
+      { timeout: T },
+    );
+    // ...and in the database, which is the only authority on it.
+    const after = await sql<{ default_machine_id: string | null }>(
+      `select p.default_machine_id from public.practitioners p
+        where p.studio_id = $1 and p.role = 'owner'`,
+      [seed.studioId],
+    );
+    expect(
+      after[0]?.default_machine_id,
+      "a refused write must leave the stored selection alone",
+    ).toBeNull();
+  });
 });

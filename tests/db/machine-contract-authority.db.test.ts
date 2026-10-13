@@ -1,14 +1,23 @@
 import { afterAll, describe, expect, it } from "vitest";
 
+import { Client } from "pg";
+
 import {
   adminQuery,
   asUser,
   closePool,
+  resolveLocalDbUrl,
   seedMember,
   seedSession,
   seedStudio,
   type SeededStudio,
 } from "./helpers/harness";
+// The real blocking observation, borrowed rather than re-invented. It lives in
+// the waitlist helpers because WAIT-03 needed it first; it reads
+// pg_stat_activity and is not waitlist-specific. A `sleep(200)` in its place
+// would pass whether or not the second transaction ever parked on a lock,
+// which is the whole claim these tests make.
+import { expectBlockedOn } from "./helpers/waitlist-concurrency";
 
 // ===========================================================================
 // 0223 — THE AUTHORITY BOUNDARY, THE RACE, AND CAPTURE COHERENCE.
@@ -981,5 +990,432 @@ describe("0223 · retrieval returns ONE coherent capture, never a composite", ()
       q(`select public.setup_capture_history_for_block($1) as r`, [blockId]),
     );
     expect(hist.rows[0].r).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE CAPTURE/RETIREMENT RACE, PROVED IN BOTH ORDERS.
+//
+// Review asked for a consistent lock order, a liveness RE-CHECK after the
+// locks are held, no deadlock against the existing retirement commands, and
+// both race orders proved with real concurrent transactions. The first three
+// are claims about the migration; only the fourth can falsify them, so these
+// tests drive two genuine connections and verify, through pg_stat_activity,
+// that the second one really parked on a lock. A test that merely sleeps
+// passes identically whether or not any serialisation exists.
+//
+// WHAT THE COMMAND DOES, and why each part is observable here:
+//   - resolves the block's session id,
+//   - locks `sessions` FOR SHARE, then `session_blocks` FOR SHARE - parent
+//     before child, the order 0166's `assert_block_in_session` already states,
+//   - and only then re-checks that both are live, in its own statement.
+//
+// FOR SHARE and not FOR KEY SHARE, which is the part most easily got wrong:
+// retirement stamps `deleted_at`, a non-key UPDATE taking FOR NO KEY UPDATE.
+// FOR KEY SHARE does NOT conflict with that, so it would let retirement run
+// underneath the capture - a lock that reads as protection without being one.
+// Every block observed below is that conflict; under FOR KEY SHARE nothing
+// would park and `expectBlockedOn` would fail.
+// ---------------------------------------------------------------------------
+describe("0223 - recording and RETIREMENT serialise, in both race orders", () => {
+  /** An authenticated connection of its own, inside an open transaction. */
+  async function party(userId: string): Promise<{ c: Client; pid: number }> {
+    const c = new Client({ connectionString: resolveLocalDbUrl() });
+    await c.connect();
+    await c.query("begin");
+    await c.query("set local role authenticated");
+    await c.query("select set_config('request.jwt.claims', $1, true)", [
+      JSON.stringify({ sub: userId, role: "authenticated" }),
+    ]);
+    const pid = Number((await c.query("select pg_backend_pid() as pid")).rows[0].pid);
+    return { c, pid };
+  }
+
+  const recordOn = (c: Client, blockId: string, machineId: string, value: string) =>
+    c.query(
+      `select public.record_treatment_setup_group($1,$2,'galvanic','g','{}'::smallint[],$3::jsonb) as n`,
+      [blockId, machineId, JSON.stringify([ok("current", value)])],
+    );
+
+  type Settled =
+    | { ok: true; rows: Array<Record<string, unknown>> }
+    | { ok: false; code: string; message: string };
+
+  /**
+   * Attach the handler AT CREATION, not at the await.
+   *
+   * A deferred query that rejects while the test is doing something else -
+   * waiting on `expectBlockedOn`, losing a deadlock, closing a connection - is
+   * an orphaned rejection, which Vitest reports as an Unhandled Rejection and
+   * warns can make tests falsely pass. Converting to a settled shape
+   * immediately removes the window rather than policing it.
+   */
+  /**
+   * A deferred query that may never settle, bounded.
+   *
+   * Every failure mode in this section is a WAIT, not an error: a lock that is
+   * never released, a cycle that never forms, a transaction whose release the
+   * test is itself blocking. Unbounded, each one stalls to the runner's
+   * timeout and reports "Test timed out", which says nothing about which lock
+   * was held by whom. The fallback carries the diagnosis instead.
+   */
+  const bounded = (p: Promise<Settled>, why: string, ms = 6000): Promise<Settled> =>
+    Promise.race([
+      p,
+      new Promise<Settled>((resolve) =>
+        setTimeout(() => resolve({ ok: false, code: "TEST_TIMEOUT", message: why }), ms),
+      ),
+    ]);
+
+  const settle = (p: Promise<{ rows: unknown[] }>): Promise<Settled> =>
+    p.then(
+      (r) => ({ ok: true as const, rows: r.rows as Array<Record<string, unknown>> }),
+      (e: { code?: string; message?: string }) => ({
+        ok: false as const,
+        code: e.code ?? "?",
+        message: e.message ?? String(e),
+      }),
+    );
+
+  const captureCount = async (blockId: string): Promise<number> => {
+    const r = await adminQuery(
+      `select count(*)::int as c from public.treatment_setup_captures
+        where session_block_id = $1`,
+      [blockId],
+    );
+    return r.rows[0].c as number;
+  };
+
+  async function scene(label: string, version: number) {
+    const studio = await seedStudio(label);
+    const { sessionId, blockId } = await seedSession(studio);
+    await publish(version);
+    const machineId = await register(studio, version);
+    return { studio, sessionId, blockId, machineId };
+  }
+
+  it("RECORD first: the retirement PARKS on the capture's lock, and the capture stands", async () => {
+    const { studio, sessionId, blockId, machineId } = await scene("race-rec-first", 110);
+    const rec = await party(studio.userId);
+    const ret = await party(studio.userId);
+    try {
+      // Taken while both parents are live, and held UNCOMMITTED.
+      const n = await recordOn(rec.c, blockId, machineId, "120");
+      expect(Number(n.rows[0].n)).toBe(1);
+
+      // Retirement fires now. Its UPDATE needs FOR NO KEY UPDATE on the very
+      // session row the capture holds FOR SHARE, so it must park.
+      const retiring = settle(
+        ret.c.query(`select public.soft_delete_session($1,$2,$3) as id`, [
+          sessionId,
+          studio.clientId,
+          "race proof: retire while a capture is in flight",
+        ]),
+      );
+      const wait = await expectBlockedOn(
+        ret.pid,
+        "the retirement must park on the recording transaction's session lock",
+      );
+      expect(wait).toMatch(/^Lock\//);
+
+      await rec.c.query("commit"); // release; the retirement may now proceed
+      const retired = await retiring;
+      expect(retired.ok, `the retirement must succeed once released`).toBe(true);
+      expect(retired.ok && retired.rows[0]!.id).toBe(sessionId);
+      await ret.c.query("commit");
+
+      // The capture was taken while the record was live, so it stands. The
+      // invariant is that no capture is created against an ALREADY-retired
+      // record - not that retirement erases a capture that preceded it.
+      expect(await captureCount(blockId)).toBe(1);
+      const after = await adminQuery(
+        `select deleted_at is not null as gone from public.sessions where id = $1`,
+        [sessionId],
+      );
+      expect(after.rows[0].gone).toBe(true);
+    } finally {
+      await rec.c.end();
+      await ret.c.end();
+    }
+  });
+
+  it("RETIRE first: the capture PARKS, then REFUSES once the retirement commits", async () => {
+    const { studio, sessionId, blockId, machineId } = await scene("race-ret-first", 111);
+    const ret = await party(studio.userId);
+    const rec = await party(studio.userId);
+    try {
+      // The retirement holds the session row, UNCOMMITTED and so invisible to
+      // the recorder's first read.
+      await ret.c.query(`select public.soft_delete_session($1,$2,$3)`, [
+        sessionId,
+        studio.clientId,
+        "race proof: retire before a capture arrives",
+      ]);
+
+      // The capture reads the block, then parks acquiring the session lock.
+      const recording = settle(recordOn(rec.c, blockId, machineId, "130"));
+      const wait = await expectBlockedOn(
+        rec.pid,
+        "the capture must park acquiring the session lock the retirement holds",
+      );
+      expect(wait).toMatch(/^Lock\//);
+
+      await ret.c.query("commit"); // the retirement is now a committed fact
+
+      // THE POINT OF THE RE-CHECK. The capture's first read saw a live
+      // session; by the time it holds the lock that is no longer true, and the
+      // re-check - a separate statement on a new snapshot - sees it.
+      const out = await recording;
+      expect(out.ok).toBe(false);
+      expect(!out.ok && out.message).toMatch(/Unknown treatment block/i);
+      expect(!out.ok && out.code, "a refusal, never a deadlock abort").not.toBe("40P01");
+      expect(await captureCount(blockId)).toBe(0);
+      await rec.c.query("rollback");
+    } finally {
+      await ret.c.end();
+      await rec.c.end();
+    }
+  });
+
+  it("POSITIVE CONTROL: a retirement that ROLLS BACK does not refuse the capture", async () => {
+    // Without this, the previous test is satisfied by a command that refuses
+    // whenever it had to wait, which is a different and wrong behaviour.
+    const { studio, sessionId, blockId, machineId } = await scene("race-rollback", 112);
+    const ret = await party(studio.userId);
+    const rec = await party(studio.userId);
+    try {
+      await ret.c.query(`select public.soft_delete_session($1,$2,$3)`, [
+        sessionId,
+        studio.clientId,
+        "race proof: this retirement is abandoned",
+      ]);
+      const recording = settle(recordOn(rec.c, blockId, machineId, "140"));
+      await expectBlockedOn(rec.pid, "the capture must park on the held session lock");
+
+      await ret.c.query("rollback"); // abandoned - the session was never retired
+
+      const n = await recording;
+      expect(n.ok, `the capture must succeed: ${!n.ok && n.message}`).toBe(true);
+      expect(n.ok && Number(n.rows[0]!.n)).toBe(1);
+      await rec.c.query("commit");
+      expect(await captureCount(blockId)).toBe(1);
+    } finally {
+      await ret.c.end();
+      await rec.c.end();
+    }
+  });
+
+  it("RETIRE THE BLOCK first: the same refusal, through the child's own liveness", async () => {
+    // soft_delete_session_block touches only `session_blocks`, so this parks on
+    // the SECOND of the two locks. Both parents are therefore proved, and the
+    // block case shows the order is actually traversed rather than the session
+    // lock alone doing all the work.
+    const { studio, sessionId, blockId, machineId } = await scene("race-block-first", 113);
+    const ret = await party(studio.userId);
+    const rec = await party(studio.userId);
+    try {
+      await ret.c.query(`select public.soft_delete_session_block($1,$2,$3,$4)`, [
+        sessionId,
+        studio.clientId,
+        blockId,
+        "race proof: retire the area before a capture arrives",
+      ]);
+      const recording = settle(recordOn(rec.c, blockId, machineId, "150"));
+      const wait = await expectBlockedOn(
+        rec.pid,
+        "the capture must park acquiring the block lock the retirement holds",
+      );
+      expect(wait).toMatch(/^Lock\//);
+
+      await ret.c.query("commit");
+      const out = await recording;
+      expect(out.ok).toBe(false);
+      expect(!out.ok && out.message).toMatch(/Unknown treatment block/i);
+      expect(!out.ok && out.code, "a refusal, never a deadlock abort").not.toBe("40P01");
+      expect(await captureCount(blockId)).toBe(0);
+      await rec.c.query("rollback");
+    } finally {
+      await ret.c.end();
+      await rec.c.end();
+    }
+  });
+
+  it("neither retirement command deadlocks a capture: the refusals are 40P01-free", async () => {
+    // The four tests above each ran one retirement command against a capture
+    // and observed a real lock wait. This states the property they establish
+    // as its own assertion, because "it refused" and "it deadlocked" are both
+    // rejections and only one of them is correct behaviour. A 40P01 abort is
+    // never an acceptable outcome: it is indistinguishable to the caller from
+    // the data being wrong, and no retry makes it right.
+    for (const [label, retire, version] of [
+      ["session", "soft_delete_session", 114],
+      ["block", "soft_delete_session_block", 115],
+    ] as const) {
+      const { studio, sessionId, blockId, machineId } = await scene(
+        `race-code-${label}`,
+        version,
+      );
+      const ret = await party(studio.userId);
+      const rec = await party(studio.userId);
+      try {
+        await ret.c.query(
+          retire === "soft_delete_session"
+            ? `select public.soft_delete_session($1,$2,$3)`
+            : `select public.soft_delete_session_block($1,$2,$4,$3)`,
+          retire === "soft_delete_session"
+            ? [sessionId, studio.clientId, `code proof: ${label}`]
+            : [sessionId, studio.clientId, `code proof: ${label}`, blockId],
+        );
+        const recording = settle(recordOn(rec.c, blockId, machineId, "160"));
+        await expectBlockedOn(rec.pid, `${label}: the capture must park on a lock`);
+        await ret.c.query("commit");
+
+        const out = await recording;
+        expect(out.ok, `${label}: the capture must be refused`).toBe(false);
+        expect(
+          !out.ok && out.code,
+          `${label}: a deadlock abort is not a refusal - ${!out.ok && out.message}`,
+        ).not.toBe("40P01");
+        expect(!out.ok && out.message).toMatch(/Unknown treatment block/i);
+        await rec.c.query("rollback");
+      } finally {
+        await ret.c.end();
+        await rec.c.end();
+      }
+    }
+  });
+
+  it("THE LOCK ORDER IS LOAD-BEARING: child-first deadlocks where parent-first does not", async () => {
+    // WHY THIS TEST EXISTS, and why it is not a bug report.
+    //
+    // No command in the repository locks both `sessions` and `session_blocks`,
+    // so today nothing can form a cycle with the capture - the four tests
+    // above show that. The fixed order is for the command that eventually
+    // does, and a comment asserting "this order prevents deadlocks" is exactly
+    // the kind of claim that goes unchecked until it is wrong.
+    //
+    // So both compositions are built here out of the real retirement commands
+    // and run against a real capture. CHILD-FIRST genuinely deadlocks;
+    // PARENT-FIRST - the order 0166 states and this migration follows - does
+    // not. That is the whole justification for the order, demonstrated rather
+    // than asserted.
+    const CHILD_FIRST_VERSION = 116;
+    const PARENT_FIRST_VERSION = 117;
+
+    // --- CHILD FIRST: a cycle, and Postgres breaks it with 40P01. ---
+    {
+      const { studio, sessionId, blockId, machineId } = await scene(
+        "race-order-child",
+        CHILD_FIRST_VERSION,
+      );
+      const x = await party(studio.userId); // retires block, THEN session
+      const y = await party(studio.userId); // the capture
+      try {
+        // X takes the CHILD.
+        await x.c.query(`select public.soft_delete_session_block($1,$2,$3,$4)`, [
+          sessionId,
+          studio.clientId,
+          blockId,
+          "order proof: child first",
+        ]);
+        // Y takes the PARENT (free), then parks wanting the child X holds.
+        const recording = settle(recordOn(y.c, blockId, machineId, "170"));
+        await expectBlockedOn(y.pid, "the capture must park on the child lock");
+        // X now wants the parent Y holds. Cycle.
+        const retiringParent = settle(
+          x.c.query(`select public.soft_delete_session($1,$2,$3)`, [
+            sessionId,
+            studio.clientId,
+            "order proof: child first, parent second",
+          ]),
+        );
+
+        // BOUNDED. If no cycle forms, the capture simply keeps waiting for a
+        // lock X never releases inside this branch, and the honest report is
+        // "child-first did not deadlock" - which is the finding, not a stall.
+        const settled = await Promise.all([
+          bounded(
+            recording,
+            "the capture never settled: child-first formed no cycle, so it is still waiting for the child lock",
+          ),
+          bounded(
+            retiringParent,
+            "the parent retirement never settled: it is waiting for the parent lock the capture holds",
+          ),
+        ]);
+        const codes = settled.map((r) => (r.ok ? "ok" : r.code));
+        expect(
+          codes.filter((c) => c === "40P01"),
+          `child-first must deadlock, or this test proves nothing about the order. Saw ${JSON.stringify(codes)}`,
+        ).toHaveLength(1);
+      } finally {
+        await x.c.query("rollback").catch(() => undefined);
+        await y.c.query("rollback").catch(() => undefined);
+        await x.c.end();
+        await y.c.end();
+      }
+    }
+
+    // --- PARENT FIRST: the same two commands, the stated order, no cycle. ---
+    {
+      const { studio, sessionId, blockId, machineId } = await scene(
+        "race-order-parent",
+        PARENT_FIRST_VERSION,
+      );
+      const x = await party(studio.userId); // retires session, THEN block
+      const y = await party(studio.userId); // the capture
+      try {
+        // X takes the PARENT first.
+        await x.c.query(`select public.soft_delete_session($1,$2,$3)`, [
+          sessionId,
+          studio.clientId,
+          "order proof: parent first",
+        ]);
+        // Y parks on the parent immediately, holding NOTHING. That is the
+        // property the order buys: a waiter that holds nothing cannot be half
+        // of a cycle.
+        const recording = settle(recordOn(y.c, blockId, machineId, "180"));
+        await expectBlockedOn(y.pid, "the capture must park on the parent lock");
+        // X proceeds to the child unobstructed - that is the claim.
+        //
+        // BOUNDED, because the failure mode here is a HANG, not an error. If
+        // the capture held the child (the wrong order), X would wait for a
+        // lock that Y only releases after this line returns, and the test
+        // would sit until the runner's timeout - a 20-second stall that says
+        // nothing about why. The timeout branch names the cause instead.
+        const retiredBlock = await bounded(
+          settle(
+            x.c.query(`select public.soft_delete_session_block($1,$2,$3,$4) as id`, [
+              sessionId,
+              studio.clientId,
+              blockId,
+              "order proof: parent first, child second",
+            ]),
+          ),
+          "the child retirement never completed: the capture is holding the child lock while waiting for the parent, which is exactly what locking parent-first prevents",
+        );
+        expect(
+          retiredBlock.ok,
+          retiredBlock.ok ? "" : retiredBlock.message,
+        ).toBe(true);
+        expect(retiredBlock.ok && retiredBlock.rows[0]!.id).toBe(blockId);
+        await x.c.query("commit");
+
+        const out = await bounded(
+          recording,
+          "the capture never settled after the retirement committed",
+        );
+        expect(out.ok).toBe(false);
+        expect(
+          !out.ok && out.code,
+          `parent-first must NOT deadlock - ${!out.ok && out.message}`,
+        ).not.toBe("40P01");
+        expect(!out.ok && out.message).toMatch(/Unknown treatment block/i);
+        await y.c.query("rollback");
+      } finally {
+        await x.c.end();
+        await y.c.end();
+      }
+    }
   });
 });

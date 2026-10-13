@@ -607,3 +607,111 @@ describe("the next-visit retrieval renders the prior setup", () => {
     expect(none).not.toContain('data-testid="machine-prior-setup"');
   });
 });
+
+// ---------------------------------------------------------------------------
+// A HISTORICAL SETUP MUST STILL CARRY ITS UNIT.
+//
+// `named` is deliberately undefined whenever today's catalogue must not speak
+// for an old reading - a different contract version, or a profile that has
+// left the catalogue entirely. Suppressing the LABEL there is correct.
+// Suppressing the UNIT with it was not: guidance rendered as a bare "120",
+// which defeats the entire reason a reading stores its own native unit
+// (Codex, 7cae831b).
+//
+// The repair then still PREFERRED today's unit whenever the version matched,
+// which is the same defect one step quieter - the published database contract
+// is immutable per version, but the application catalogue is a source file
+// whose unit can be edited without a version bump, and nothing enforces
+// agreement between the two for one version number. The component now holds no
+// current unit metadata at all, so it cannot print one (Codex, 87c88017).
+// ---------------------------------------------------------------------------
+describe("an obsolete setup is rendered from the RECORDING, never from today's catalogue", () => {
+  const reading = (over: Record<string, unknown> = {}) => ({
+    blockId: "b1",
+    profileId: "fixture:panel",
+    profileVersion: 1,
+    modeKey: "galvanic",
+    groupKey: "g1",
+    channels: [],
+    stageKey: null,
+    fieldKey: "current",
+    value: { kind: "value", value: 120 },
+    nativeUnit: "µA",
+    decimals: 0,
+    recordedAt: "2026-09-20T15:04:00Z",
+    ...over,
+  });
+
+  const unitOf = (html: string): string | null => {
+    // The unit is the span immediately after the value, so read it positionally
+    // rather than asking whether the string appears anywhere on the page - the
+    // entry form above also renders units, and a page-wide `toContain` would
+    // pass on those while the history showed a bare number.
+    const prior = html.slice(html.indexOf('data-testid="machine-prior-setup"'));
+    const m = /120<\/span>(?:<!--[^>]*-->)?<span[^>]*>([^<]*)<\/span>/.exec(prior);
+    return m ? m[1]! : null;
+  };
+
+  it("CONTROL: the unit is read from the history block, not from the page", () => {
+    // Guards the reader above. Without a history block there is no unit to
+    // find, so a passing assertion below cannot be coming from the entry form.
+    const none = render({ scope: SCOPE, catalogue: CAT, priorSetup: [] });
+    expect(unitOf(none)).toBeNull();
+  });
+
+  it("a CURRENT-version setup shows the recorded unit", () => {
+    const html = render({ scope: SCOPE, catalogue: CAT, priorSetup: [reading()] });
+    expect(unitOf(html)).toBe("µA");
+  });
+
+  it("an OLDER contract version still shows the recorded unit", () => {
+    const html = render({
+      scope: SCOPE,
+      catalogue: CAT,
+      priorSetup: [reading({ profileVersion: 99 })],
+    });
+    expect(html).toContain("field contract has changed");
+    expect(unitOf(html), "a bare 120 is the defect").toBe("µA");
+    // And still the recorded key rather than today's label.
+    expect(html).toContain("current");
+  });
+
+  it("a profile REMOVED from the catalogue still shows the recorded unit", () => {
+    // Nothing in today's catalogue describes this reading at all - not the
+    // machine name, not the mode, not the field. The unit survives because it
+    // came from the reading.
+    const html = render({
+      scope: SCOPE,
+      catalogue: CAT,
+      priorSetup: [reading({ profileId: "fixture:withdrawn" })],
+    });
+    expect(unitOf(html)).toBe("µA");
+    expect(html, "the profile id stands in for a name it no longer has").toContain(
+      "fixture:withdrawn",
+    );
+  });
+
+  it("the unit comes from the READING even when the catalogue would say otherwise", () => {
+    // The case no version check can catch: same version, but the catalogue's
+    // unit has drifted from what was published and recorded. Today's opinion
+    // must not be printed on an old measurement.
+    const html = render({
+      scope: SCOPE,
+      catalogue: CAT,
+      priorSetup: [reading({ nativeUnit: "mA" })],
+    });
+    expect(unitOf(html), "the catalogue says µA; the reading says mA").toBe("mA");
+  });
+
+  it("the recorded PRECISION is preserved too, not re-derived", () => {
+    const html = render({
+      scope: SCOPE,
+      catalogue: CAT,
+      priorSetup: [
+        reading({ fieldKey: "duration", value: { kind: "value", value: 300.5 }, decimals: 1, nativeUnit: "s" }),
+      ],
+    });
+    const prior = html.slice(html.indexOf('data-testid="machine-prior-setup"'));
+    expect(prior).toContain("300.5");
+  });
+});
