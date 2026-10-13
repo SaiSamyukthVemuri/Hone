@@ -1596,6 +1596,19 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     if (commandResult === "invalid_service") {
       return { ok: false, error: "Service no longer available." };
     }
+    // G1 / CODEX P1. The command refused a practitioner-scoped booking because
+    // the studio's public-assignment switch was off when it took the studio
+    // row lock -- i.e. the switch was flipped between this action's check and
+    // the commit. That is the one refusal in this group the visitor CAN act on
+    // (choose again, or take "any available"), so it gets the practitioner
+    // copy rather than the generic error. It is still logged, because an
+    // operator flipping the switch mid-booking is worth seeing.
+    if (commandResult === "practitioner_assignment_disabled") {
+      logInternalBookingError("public_booking_practitioner_assignment_disabled_at_commit", {
+        studioId: studio.id,
+      });
+      return { ok: false, error: PRACTITIONER_CHOICE_UNAVAILABLE_ERROR };
+    }
     // invalid_client / invalid_practitioner / no_practitioner / not_eligible /
     // studio_not_found are all operator-visible states, never the visitor's
     // fault to fix, and must not distinguish "wrong studio" from "no such row".
