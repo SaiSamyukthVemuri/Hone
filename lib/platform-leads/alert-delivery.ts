@@ -71,8 +71,9 @@ export const LEAD_ALERT_LEASE_SECONDS = 120;
 /** No claim (one counted attempt) starts with less time than this left in a sweep's budget. */
 export const LEAD_ALERT_MIN_SEND_WINDOW_MS = 2_000;
 /**
- * Kept back from a sweep's deadline so the settle after a cut-off send still
- * lands inside the invocation (Codex decision on #831).
+ * Kept back from a sweep's deadline for the settle: the send is CANCELLED this
+ * long before the deadline, and the settle is itself cancelled AT the deadline
+ * (Codex decision on #831; P2 4259034271).
  */
 export const LEAD_ALERT_SETTLE_RESERVE_MS = 1_500;
 /** One sweep's ceilings: a bounded batch, finishing well inside the route's 60 s. */
@@ -247,7 +248,36 @@ export type LeadAlertAttemptResult =
   | "none"
   | "claim_error"
   | "freeze_error"
-  | "settle_error";
+  | "settle_error"
+  // The sweep's deadline cancelled the call: whether the database applied it is
+  // UNKNOWN. Never success and never failure; the lease and the key recover it.
+  | "claim_timeout"
+  | "freeze_timeout"
+  | "settle_timeout";
+
+/**
+ * A sweep's cancellation (Codex P2 4259034271). `db` aborts every database
+ * call at the deadline; `send` aborts the provider request at the deadline
+ * minus the settle reserve. Both reach the actual transport (PostgREST's fetch
+ * and Resend's fetch), so nothing a cut-off attempt started keeps running.
+ */
+type AttemptBounds = { db: AbortSignal; send: AbortSignal };
+
+/** Pass the sweep's signal to the provider request itself; Resend spreads it into fetch. */
+function cancellableTransport(transport: IdempotentEmailTransport, signal: AbortSignal): IdempotentEmailTransport {
+  return {
+    emails: {
+      send: (payload, options) =>
+        transport.emails.send(payload, { ...options, signal } as { idempotencyKey?: string }),
+    },
+  };
+}
+
+/** An RPC, cancelled with the sweep when there is one. */
+function rpc(admin: SupabaseClient, fn: string, args: Record<string, unknown> | undefined, signal: AbortSignal | null) {
+  const call = admin.rpc(fn, args);
+  return signal ? call.abortSignal(signal) : call;
+}
 
 function log(level: "info" | "error", payload: Record<string, unknown>): void {
   const line = JSON.stringify({ ...payload, timestamp: new Date().toISOString() });
@@ -275,15 +305,29 @@ async function settle(
   admin: SupabaseClient,
   row: ClaimRow,
   s: Settlement,
+  signal: AbortSignal | null = null,
 ): Promise<LeadAlertAttemptResult> {
-  const { data, error } = await admin.rpc("settle_platform_lead_alert", {
+  const { data, error } = await rpc(admin, "settle_platform_lead_alert", {
     p_alert_id: row.alert_id,
     p_claim_token: row.claim_token,
     p_outcome: s.outcome,
     p_provider_message_id: s.messageId ?? null,
     p_error_code: s.errorCode ?? null,
     p_provider_error: s.providerError ?? null,
-  });
+  }, signal);
+  if (error && signal?.aborted) {
+    // CANCELLED AT THE DEADLINE: the settle may or may not have committed. If
+    // it did, the alert is settled; if not, the lease expires and the next
+    // claim retries under the SAME key and frozen message, so the provider
+    // replays an accepted send rather than repeating it. Unknown, not failed.
+    log("error", {
+      event: "platform_lead_alert_settle_timeout",
+      alert_id: row.alert_id,
+      attempt: row.attempt,
+      outcome: s.outcome,
+    });
+    return "settle_timeout";
+  }
   if (error) {
     // Not recorded. The lease expires and the alert is claimed again under
     // the SAME key, so an accepted send is replayed, not repeated.
@@ -307,20 +351,23 @@ async function settle(
     provider_error: s.providerError ?? null,
   });
   if (result === "failed") {
-    await recordOpsAlert({
-      severity: "warning",
-      event: "platform_lead_alert_failed",
-      message:
-        "A new-lead alert email could not be sent. The lead is saved; see Lead alerts in /admin.",
-      route: "lead-alerts",
-      safeDetails: {
-        alert_id: row.alert_id,
-        lead_kind: row.lead_kind,
-        attempt: row.attempt,
-        error_code: s.errorCode ?? null,
-        provider_error: s.providerError ?? null,
+    await recordOpsAlert(
+      {
+        severity: "warning",
+        event: "platform_lead_alert_failed",
+        message:
+          "A new-lead alert email could not be sent. The lead is saved; see Lead alerts in /admin.",
+        route: "lead-alerts",
+        safeDetails: {
+          alert_id: row.alert_id,
+          lead_kind: row.lead_kind,
+          attempt: row.attempt,
+          error_code: s.errorCode ?? null,
+          provider_error: s.providerError ?? null,
+        },
       },
-    });
+      { signal },
+    );
   }
   return result;
 }
@@ -329,13 +376,20 @@ async function claimAndSend(
   admin: SupabaseClient,
   ready: Extract<LeadAlertReadiness, { ready: true }>,
   alertId: string | null,
-  /** Epoch ms by which this attempt must finish: a sweep's budget. */
-  deadline: number | null = null,
+  /** A sweep's cancellation; `null` for the single after-save attempt. */
+  bounds: AttemptBounds | null = null,
 ): Promise<LeadAlertAttemptResult> {
-  const { data, error } = await admin.rpc("claim_platform_lead_alert", {
+  const db = bounds?.db ?? null;
+  const { data, error } = await rpc(admin, "claim_platform_lead_alert", {
     p_alert_id: alertId,
     p_lease_seconds: LEAD_ALERT_LEASE_SECONDS,
-  });
+  }, db);
+  if (error && db?.aborted) {
+    // Perhaps claimed, perhaps not. A claim that committed is an attempt with
+    // no send: its lease expires and the alert is claimed again.
+    log("error", { event: "platform_lead_alert_claim_timeout", alert_id: alertId });
+    return "claim_timeout";
+  }
   if (error) {
     log("error", {
       event: "platform_lead_alert_claim_failed",
@@ -352,7 +406,7 @@ async function claimAndSend(
   if (row.frozen_message !== null && row.frozen_message !== undefined) {
     // A later attempt of this generation: the frozen bytes, or nothing.
     if (!isFrozenMessage(row.frozen_message) || row.frozen_recipient_sha256 !== digest) {
-      return settle(admin, row, { outcome: "fail", errorCode: "recipient_changed" });
+      return settle(admin, row, { outcome: "fail", errorCode: "recipient_changed" }, db);
     }
     message = row.frozen_message;
   } else {
@@ -363,16 +417,22 @@ async function claimAndSend(
         leadConsoleUrl(ready.appOrigin, row.lead_kind, row.lead_id),
       );
     } catch {
-      return settle(admin, row, { outcome: "fail", errorCode: "render_failed" });
+      return settle(admin, row, { outcome: "fail", errorCode: "render_failed" }, db);
     }
     // Hone speaking to its own operator: Hone's From and no Reply-To. Nothing
     // submitted reaches a header.
-    const frozen = await admin.rpc("freeze_platform_lead_alert_message", {
+    const frozen = await rpc(admin, "freeze_platform_lead_alert_message", {
       p_alert_id: row.alert_id,
       p_claim_token: row.claim_token,
       p_message: { from: FROM_ADDRESS, subject: rendered.subject, html: rendered.html, text: rendered.text },
       p_recipient_sha256: digest,
-    });
+    }, db);
+    if (frozen.error && db?.aborted) {
+      // Perhaps frozen, perhaps not; NOTHING has been sent under the key. The
+      // lease expires and the next claim sends whatever the database holds.
+      log("error", { event: "platform_lead_alert_freeze_timeout", alert_id: row.alert_id, attempt: row.attempt });
+      return "freeze_timeout";
+    }
     const answer = (Array.isArray(frozen.data) ? frozen.data[0] : null) as
       | { result?: string; message?: unknown; recipient_sha256?: string | null }
       | null;
@@ -391,51 +451,31 @@ async function claimAndSend(
     if (answer.result !== "frozen" && answer.result !== "existing") return "freeze_error";
     // First writer wins: send what the database holds, never our own render.
     if (!isFrozenMessage(answer.message) || answer.recipient_sha256 !== digest) {
-      return settle(admin, row, { outcome: "fail", errorCode: "recipient_changed" });
+      return settle(admin, row, { outcome: "fail", errorCode: "recipient_changed" }, db);
     }
     message = answer.message;
   }
 
   // The ONE configured recipient, and exactly the frozen bytes.
-  const sending = sendOnceWithIdempotencyKey(
-    ready.transport,
+  //
+  // THE SWEEP'S DEADLINE HOLDS DURING THE SEND (Codex P2 4253569253,
+  // 4259034271). The request carries the sweep's send signal, aborted the
+  // settle reserve before the deadline, so the provider request itself is
+  // CANCELLED there -- nothing is left running past the invocation. A cut-off
+  // request may still have been taken (the abort can cross an acceptance), so
+  // anything short of an acceptance it answered is the ambiguous outcome a
+  // timeout already is: retried later under the SAME key and frozen message,
+  // and the provider replays rather than sends twice.
+  const send = bounds?.send ?? null;
+  let outcome = await sendOnceWithIdempotencyKey(
+    send ? cancellableTransport(ready.transport, send) : ready.transport,
     { from: message.from, to: ready.recipient, subject: message.subject, html: message.html, text: message.text },
     row.idempotency_key,
   );
-  // THE SWEEP'S DEADLINE HOLDS DURING THE SEND (Codex P2 4253569253). The keyed
-  // attempt has its own fixed 15 s ceiling; a sweep with a shorter budget (the
-  // reminders trigger's) stops waiting at its deadline. That is the ambiguous
-  // outcome a timeout already is -- the request may still be accepted -- so the
-  // alert is retried later under the SAME key and frozen message, and the
-  // provider replays rather than sends twice.
-  let outcome: WaitlistSendOutcome;
-  if (deadline === null) {
-    outcome = await sending;
-  } else {
-    // Stop waiting early enough to SETTLE inside the deadline.
-    const sendDeadline = deadline - LEAD_ALERT_SETTLE_RESERVE_MS;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let cutOff = false;
-    const late = new Promise<WaitlistSendOutcome>((resolve) => {
-      timer = setTimeout(() => {
-        cutOff = true;
-        resolve({ status: "ambiguous", reason: "timeout" });
-      }, Math.max(0, sendDeadline - Date.now()));
-    });
-    try {
-      outcome = await Promise.race([sending, late]);
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
-    if (cutOff) {
-      // NEVER ABANDONED: the request the provider may still be processing is
-      // kept alive past this response (after()), so the platform does not
-      // freeze it mid-flight. Its answer needs no record: the retry under the
-      // same key replays whatever the provider decided.
-      keepAlive(sending);
-    }
+  if (send?.aborted && outcome.status !== "accepted") {
+    outcome = { status: "ambiguous", reason: "timeout" };
   }
-  return settle(admin, row, settlementFor(outcome));
+  return settle(admin, row, settlementFor(outcome), db);
 }
 
 /**
@@ -447,11 +487,12 @@ async function recordBlocked(
   admin: SupabaseClient,
   code: LeadAlertConfigCode,
   alertId: string | null,
+  signal: AbortSignal | null = null,
 ): Promise<{ ok: true; count: number } | { ok: false }> {
-  const { data, error } = await admin.rpc("record_platform_lead_alerts_unconfigured", {
+  const { data, error } = await rpc(admin, "record_platform_lead_alerts_unconfigured", {
     p_error_code: code,
     p_alert_id: alertId,
-  });
+  }, signal);
   if (error) {
     log("error", {
       event: "platform_lead_alert_blocked_record_failed",
@@ -503,19 +544,6 @@ export async function deliverPlatformLeadAlert(
   }
 }
 
-/** Keep an in-flight provider call alive past the response; fire-and-forget out of scope. */
-function keepAlive(work: Promise<unknown>): void {
-  const settled = work.then(
-    () => undefined,
-    () => undefined,
-  );
-  try {
-    after(settled);
-  } catch {
-    // Out of request scope: the promise already runs on its own.
-  }
-}
-
 /**
  * Send ONE just-saved lead's alert AFTER the response (Codex P2 4249961225).
  *
@@ -562,7 +590,37 @@ export type LeadAlertSweepSummary = {
   retryScheduled: number;
   failed: number;
   other: number;
+  /**
+   * Attempts whose claim, freeze or settle the deadline cancelled: the
+   * database may or may not have applied it. Neither success nor failure;
+   * the lease and the idempotency key recover each one on a later run.
+   */
+  unknown: number;
+  /** The deadline cancelled a database call: the run stopped there. */
+  timedOut: boolean;
 };
+
+/**
+ * One sweep's deadline as cancellation. Both signals are aborted by timers (so
+ * a fake clock drives them in tests) and the timers are cleared on return.
+ */
+function sweepBounds(deadline: number): { bounds: AttemptBounds; release: () => void } {
+  const db = new AbortController();
+  const send = new AbortController();
+  const now = Date.now();
+  const dbTimer = setTimeout(() => {
+    send.abort();
+    db.abort();
+  }, Math.max(0, deadline - now));
+  const sendTimer = setTimeout(() => send.abort(), Math.max(0, deadline - LEAD_ALERT_SETTLE_RESERVE_MS - now));
+  return {
+    bounds: { db: db.signal, send: send.signal },
+    release: () => {
+      clearTimeout(dbTimer);
+      clearTimeout(sendTimer);
+    },
+  };
+}
 
 /**
  * The recovery path: retire what can no longer be sent, then send every due or
@@ -583,51 +641,72 @@ export async function sweepPlatformLeadAlerts(
     retryScheduled: 0,
     failed: 0,
     other: 0,
+    unknown: 0,
+    timedOut: false,
   };
+  // THE WHOLE SWEEP IS UNDER ITS DEADLINE (Codex P2 4259034271): every database
+  // call it makes, the expiry and the ops alerts included, is cancelled at the
+  // deadline, and the provider request the settle reserve before it.
+  const max = opts.maxAlerts ?? LEAD_ALERT_SWEEP_MAX;
+  const budget = opts.budgetMs ?? LEAD_ALERT_SWEEP_BUDGET_MS;
+  const deadline = Date.now() + budget;
+  const { bounds, release } = sweepBounds(deadline);
+  const db = bounds.db;
   try {
     const admin = opts.admin ?? createAdminClient();
 
     // Whatever the configuration, an alert past its window becomes a visible
     // failure rather than waiting forever (and is never mailed late).
-    const expired = await admin.rpc("expire_platform_lead_alerts");
+    const expired = await rpc(admin, "expire_platform_lead_alerts", undefined, db);
     if (expired.error) {
       summary.ok = false;
-      log("error", { event: "platform_lead_alert_expire_failed", code: expired.error.code ?? null });
+      summary.timedOut = db.aborted;
+      log("error", { event: "platform_lead_alert_expire_failed", code: expired.error.code ?? null, timed_out: db.aborted });
     } else {
       summary.expired = Number(expired.data) || 0;
       if (summary.expired > 0) {
-        await recordOpsAlert({
-          severity: "warning",
-          event: "platform_lead_alerts_expired",
-          message: `${summary.expired} new-lead alert email(s) were never sent and have expired. The leads are saved; see Lead alerts in /admin.`,
-          route: "lead-alerts",
-          safeDetails: { count: summary.expired },
-        });
+        await recordOpsAlert(
+          {
+            severity: "warning",
+            event: "platform_lead_alerts_expired",
+            message: `${summary.expired} new-lead alert email(s) were never sent and have expired. The leads are saved; see Lead alerts in /admin.`,
+            route: "lead-alerts",
+            safeDetails: { count: summary.expired },
+          },
+          { signal: db },
+        );
       }
     }
 
     const ready = resolveLeadAlertReadiness(opts);
     if (!ready.ready) {
       summary.blocked = ready.code;
-      const record = await recordBlocked(admin, ready.code, null);
+      const record = await recordBlocked(admin, ready.code, null, db);
       if (record.ok) {
         summary.blockedAlerts = record.count;
       } else {
         // The blocker was not persisted: the run FAILED (the route answers 500).
         summary.ok = false;
+        summary.timedOut = summary.timedOut || db.aborted;
       }
       return summary;
     }
 
-    const max = opts.maxAlerts ?? LEAD_ALERT_SWEEP_MAX;
-    const budget = opts.budgetMs ?? LEAD_ALERT_SWEEP_BUDGET_MS;
-    const started = Date.now();
-    const deadline = started + budget;
     // A claim is one counted attempt: never start one without time for a fair
     // send AND its settle. The loop drains until the queue is empty, the
     // batch cap or the budget: backpressure is the budget, not a fixed count.
-    for (let i = 0; i < max && deadline - Date.now() >= LEAD_ALERT_MIN_SEND_WINDOW_MS + LEAD_ALERT_SETTLE_RESERVE_MS; i += 1) {
-      const result = await claimAndSend(admin, ready, null, deadline);
+    for (let i = 0; i < max && !db.aborted && deadline - Date.now() >= LEAD_ALERT_MIN_SEND_WINDOW_MS + LEAD_ALERT_SETTLE_RESERVE_MS; i += 1) {
+      const result = await claimAndSend(admin, ready, null, bounds);
+      if (result === "claim_timeout" || result === "freeze_timeout" || result === "settle_timeout") {
+        // The deadline cancelled a database call. Its outcome is UNKNOWN: not
+        // counted as accepted, retried or failed. The lease (and, for a
+        // settle, the same key and frozen message) recovers it on a later
+        // run. The run did not complete: ok is false, and it stops here.
+        summary.unknown += 1;
+        summary.timedOut = true;
+        summary.ok = false;
+        break;
+      }
       if (result === "none") {
         summary.drained = true;
         break;
@@ -654,6 +733,8 @@ export async function sweepPlatformLeadAlerts(
       err_name: err instanceof Error ? err.name : typeof err,
     });
     return { ...summary, ok: false };
+  } finally {
+    release();
   }
 }
 
@@ -684,6 +765,13 @@ export async function sweepPlatformLeadAlerts(
  */
 export const REMINDER_TRIGGER_LEAD_ALERT_MAX = 25;
 export const REMINDER_TRIGGER_LEAD_ALERT_BUDGET_MS = 8_000;
+/**
+ * After the sweep, the one ops alert reporting a recovery that did not
+ * complete, itself cancelled after this long. The recovery's whole cost to a
+ * reminders invocation is therefore at most BUDGET + REPORT, whatever the
+ * database or provider does.
+ */
+export const REMINDER_TRIGGER_LEAD_ALERT_REPORT_MS = 1_000;
 
 export type ReminderTriggerLeadAlertResult =
   | { ran: false; reason: LeadAlertConfigCode | "threw" }
@@ -700,6 +788,30 @@ export async function recoverLeadAlertsOnReminderTrigger(
       maxAlerts: REMINDER_TRIGGER_LEAD_ALERT_MAX,
       budgetMs: REMINDER_TRIGGER_LEAD_ALERT_BUDGET_MS,
     });
+    if (!summary.ok) {
+      const report = new AbortController();
+      const timer = setTimeout(() => report.abort(), REMINDER_TRIGGER_LEAD_ALERT_REPORT_MS);
+      try {
+        await recordOpsAlert(
+          {
+            severity: "warning",
+            event: "lead_alert_recovery_failed",
+            message:
+              "Operator lead-alert recovery on the reminders trigger could not complete; reminders were unaffected.",
+            route: "/api/cron/appointment-reminders",
+            safeDetails: {
+              attempted: summary.attempted,
+              expired: summary.expired,
+              unknown: summary.unknown,
+              timed_out: summary.timedOut,
+            },
+          },
+          { signal: report.signal },
+        );
+      } finally {
+        clearTimeout(timer);
+      }
+    }
     return { ran: true, summary };
   } catch (err) {
     log("error", {

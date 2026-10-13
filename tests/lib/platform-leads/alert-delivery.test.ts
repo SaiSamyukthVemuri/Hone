@@ -1,3 +1,4 @@
+import { abortableRpc } from "./helpers/abortable-rpc";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { IdempotentEmailTransport } from "@/lib/email/new-client-waitlist-send";
@@ -66,14 +67,14 @@ type Call = { fn: string; args: Record<string, unknown> };
 
 function fakeAdmin(answers: Record<string, unknown>, calls: Call[]): SupabaseClient {
   return {
-    rpc: async (fn: string, args: Record<string, unknown> = {}) => {
+    rpc: abortableRpc(async (fn: string, args: Record<string, unknown> = {}) => {
       calls.push({ fn, args });
       if (fn === FREEZE && !(FREEZE in answers)) return { data: echoFreeze(args), error: null };
       const answer = answers[fn];
       if (answer instanceof Error) throw answer;
       if (answer && typeof answer === "object" && "error" in (answer as object)) return answer;
       return { data: answer, error: null };
-    },
+    }),
   } as unknown as SupabaseClient;
 }
 
@@ -231,7 +232,7 @@ describe("sweepPlatformLeadAlerts", () => {
     const calls: Call[] = [];
     let claims = 0;
     const admin = {
-      rpc: async (fn: string, args: Record<string, unknown> = {}) => {
+      rpc: abortableRpc(async (fn: string, args: Record<string, unknown> = {}) => {
         if (fn === FREEZE) return { data: echoFreeze(args), error: null };
         calls.push({ fn, args });
         if (fn === "expire_platform_lead_alerts") return { data: 2, error: null };
@@ -240,7 +241,7 @@ describe("sweepPlatformLeadAlerts", () => {
           return { data: [claims <= 2 ? { ...CLAIMED, claim_token: `t${claims}` } : { ...CLAIMED, result: "none" }], error: null };
         }
         return { data: "accepted", error: null };
-      },
+      }),
     } as unknown as SupabaseClient;
     const summary = await sweepPlatformLeadAlerts({
       admin,
@@ -258,7 +259,7 @@ describe("sweepPlatformLeadAlerts", () => {
   it("a lost settle FAILS the run and stops it (Codex P2 4243922093)", async () => {
     let claims = 0;
     const admin = {
-      rpc: async (fn: string, args: Record<string, unknown> = {}) => {
+      rpc: abortableRpc(async (fn: string, args: Record<string, unknown> = {}) => {
         if (fn === FREEZE) return { data: echoFreeze(args), error: null };
         if (fn === "expire_platform_lead_alerts") return { data: 0, error: null };
         if (fn === "claim_platform_lead_alert") {
@@ -266,7 +267,7 @@ describe("sweepPlatformLeadAlerts", () => {
           return { data: [{ ...CLAIMED, claim_token: `t${claims}` }], error: null };
         }
         return { data: null, error: { code: "08006", message: "connection lost" } };
-      },
+      }),
     } as unknown as SupabaseClient;
     const summary = await sweepPlatformLeadAlerts({
       admin,
@@ -281,7 +282,7 @@ describe("sweepPlatformLeadAlerts", () => {
   it("is bounded per run", async () => {
     let claims = 0;
     const admin = {
-      rpc: async (fn: string, args: Record<string, unknown> = {}) => {
+      rpc: abortableRpc(async (fn: string, args: Record<string, unknown> = {}) => {
         if (fn === FREEZE) return { data: echoFreeze(args), error: null };
         if (fn === "expire_platform_lead_alerts") return { data: 0, error: null };
         if (fn === "claim_platform_lead_alert") {
@@ -289,7 +290,7 @@ describe("sweepPlatformLeadAlerts", () => {
           return { data: [{ ...CLAIMED, claim_token: `t${claims}` }], error: null };
         }
         return { data: "retry_scheduled", error: null };
-      },
+      }),
     } as unknown as SupabaseClient;
     const summary = await sweepPlatformLeadAlerts({
       admin,
@@ -332,14 +333,14 @@ describe("every worker database call: its failure fails the run", () => {
     it(`${failing} failing -> ok:false`, async () => {
       const blocked = failing === "record_platform_lead_alerts_unconfigured";
       const admin = {
-        rpc: async (fn: string, args: Record<string, unknown> = {}) => {
+        rpc: abortableRpc(async (fn: string, args: Record<string, unknown> = {}) => {
           if (fn === failing) return { data: null, error: { code: "08006", message: "lost" } };
           if (fn === FREEZE) return { data: echoFreeze(args), error: null };
           if (fn === "expire_platform_lead_alerts") return { data: 0, error: null };
           if (fn === "claim_platform_lead_alert") return { data: [{ ...CLAIMED, claim_token: "t" }], error: null };
           if (fn === "settle_platform_lead_alert") return { data: "accepted", error: null };
           return { data: 1, error: null };
-        },
+        }),
       } as unknown as SupabaseClient;
       const summary = await sweepPlatformLeadAlerts({
         admin,
@@ -366,7 +367,7 @@ describe("every worker database call: its failure fails the run", () => {
   it("the table covers every rpc the worker makes (source guard)", async () => {
     const { readFileSync } = await import("node:fs");
     const src = readFileSync("lib/platform-leads/alert-delivery.ts", "utf8");
-    const called = [...src.matchAll(/admin\.rpc\(\s*"([a-z_]+)"/g)].map((m) => m[1]).sort();
+    const called = [...src.matchAll(/rpc\(\s*admin,\s*"([a-z_]+)"/g)].map((m) => m[1]).sort();
     expect([...new Set(called)]).toEqual([...SWEEP_CALLS].sort());
   });
 });

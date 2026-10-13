@@ -343,8 +343,16 @@ to the prospect.
   heartbeat, and also after a failed reminders run's `cron_route_failed` alert (the route still
   answers 500), so an unrelated reminders failure does not stop lead retries: a bounded sweep
   through the same worker, sized by time: up to 25 alerts within
-  an 8-second budget, with 1.5 s reserved so a send cut off at the deadline still settles (as a
-  same-key retry) and the cut-off request is kept alive past the response, never abandoned.
+  an 8-second budget. **The deadline is enforced by cancellation, on every call**: the provider
+  request is aborted 1.5 s before the deadline (settled as a same-key retry), and the claim,
+  freeze, settle, expiry and ops-alert writes are aborted at the deadline itself, so nothing the
+  sweep started keeps running. A database call cut off this way has an **unknown** outcome: it is
+  counted as `unknown` (never as sent or failed), the run reports `timed_out` and `ok: false`, and
+  the lease, the same key and the frozen message recover the alert on a later run, the provider
+  replaying rather than resending. The `lead_alert_recovery_failed` report is itself cut off after
+  1 s, so the recovery adds at most 9 s to a reminders invocation whatever the database or
+  provider does (proved with a fake clock and fake database and provider transports in
+  `tests/lib/platform-leads/recovery-deadline.test.ts`).
   Alerts are claimed earliest-due first, so a backlog cannot starve later alerts. The response
   reports `drained`; `false` means it stopped at its cap or budget. It is gated before any database or provider call until lead alerts are configured,
   and a failure there is an ops alert (`lead_alert_recovery_failed`) and a response field,

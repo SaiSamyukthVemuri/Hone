@@ -617,16 +617,9 @@ async function sendSmsReminderPass(opts: {
  */
 async function runLeadAlertRecovery() {
   try {
+    // Bounded end to end, its own failure report included (Codex P2
+    // 4259034271): at most REMINDER_TRIGGER_LEAD_ALERT_BUDGET_MS + _REPORT_MS.
     const out = await recoverLeadAlertsOnReminderTrigger();
-    if (out.ran && !out.summary.ok) {
-      await recordOpsAlert({
-        severity: "warning",
-        event: "lead_alert_recovery_failed",
-        message: "Operator lead-alert recovery on the reminders trigger could not complete; reminders were unaffected.",
-        route: "/api/cron/appointment-reminders",
-        safeDetails: { attempted: out.summary.attempted, expired: out.summary.expired },
-      });
-    }
     return out.ran
       ? {
           ran: true as const,
@@ -637,6 +630,9 @@ async function runLeadAlertRecovery() {
           accepted: out.summary.accepted,
           failed: out.summary.failed,
           expired: out.summary.expired,
+          // claim/freeze/settle cancelled at the deadline: recovered later, neither sent nor failed
+          unknown: out.summary.unknown,
+          timed_out: out.summary.timedOut,
         }
       : { ran: false as const, reason: out.reason };
   } catch {

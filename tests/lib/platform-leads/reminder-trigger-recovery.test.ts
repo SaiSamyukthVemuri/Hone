@@ -1,3 +1,4 @@
+import { abortableRpc } from "./helpers/abortable-rpc";
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -28,7 +29,7 @@ const ENV = { LEAD_ALERT_EMAIL: OPS, ADMIN_EMAILS: OPS };
 function recordingAdmin(calls: string[], claims = 10): SupabaseClient {
   let left = claims;
   return {
-    rpc: async (fn: string, args: Record<string, unknown> = {}) => {
+    rpc: abortableRpc(async (fn: string, args: Record<string, unknown> = {}) => {
       calls.push(fn);
       if (fn === "expire_platform_lead_alerts") return { data: 0, error: null };
       if (fn === "claim_platform_lead_alert") {
@@ -49,7 +50,7 @@ function recordingAdmin(calls: string[], claims = 10): SupabaseClient {
       }
       if (fn === "settle_platform_lead_alert") return { data: "retry_scheduled", error: null };
       return { data: null, error: null };
-    },
+    }),
   } as unknown as SupabaseClient;
 }
 const transport: IdempotentEmailTransport = { emails: { send: async () => ({ data: null, error: { name: "internal_server_error", message: "x", statusCode: 500 } }) as never } };
@@ -84,7 +85,7 @@ describe("recoverLeadAlertsOnReminderTrigger", () => {
   });
 
   it("never throws: a database that throws is reported, not raised", async () => {
-    const admin = { rpc: async () => { throw new Error("connection reset"); } } as unknown as SupabaseClient;
+    const admin = { rpc: abortableRpc(async () => { throw new Error("connection reset"); }) } as unknown as SupabaseClient;
     const out = await recoverLeadAlertsOnReminderTrigger({ admin, transport, env: ENV, appOrigin: () => "https://hone.example" });
     expect(out.ran === false || out.summary.ok === false).toBe(true);
   });
@@ -108,28 +109,42 @@ describe("wiring in the reminders route (source guard)", () => {
   });
 
   it("a lead-alert problem is an ops alert and a response field, never a failed reminders run", () => {
-    expect(SRC).toMatch(/event: "lead_alert_recovery_failed"/);
+    // The report is written INSIDE the bounded recovery, under its own
+    // cancellation (Codex P2 4259034271); the route adds no unbounded write.
+    const LIB = readFileSync("lib/platform-leads/alert-delivery.ts", "utf8");
+    expect(LIB).toMatch(/event: "lead_alert_recovery_failed"[\s\S]*\{ signal: report\.signal \}/);
+    expect(SRC).not.toMatch(/lead_alert_recovery_failed/);
     expect(SRC).toMatch(/lead_alerts,\n\s*\}\);/);
+    expect(SRC).toMatch(/unknown: out\.summary\.unknown/);
   });
 });
 
 // Codex P2 4253569253: the budget holds DURING a send, not only before it.
 describe("the sweep deadline holds during a send", () => {
-  it("a provider that never answers is cut off at the budget, settled as a retry under the SAME key", async () => {
+  it("a provider that never answers is CANCELLED at the send deadline, settled as a retry under the SAME key", async () => {
     afterCtl.handed.length = 0;
     vi.useFakeTimers();
     try {
       const settles: Array<Record<string, unknown>> = [];
       const keys: Array<string | undefined> = [];
+      const signals: AbortSignal[] = [];
       const base = recordingAdmin([], 10);
       const admin = {
-        rpc: async (fn: string, args: Record<string, unknown> = {}) => {
+        rpc: abortableRpc(async (fn: string, args: Record<string, unknown> = {}) => {
           if (fn === "settle_platform_lead_alert") settles.push(args);
           return (base as unknown as { rpc: (f: string, a: Record<string, unknown>) => Promise<unknown> }).rpc(fn, args);
-        },
+        }),
       } as unknown as SupabaseClient;
       const hanging: IdempotentEmailTransport = {
-        emails: { send: (_p, o) => { keys.push(o?.idempotencyKey); return new Promise(() => undefined); } },
+        // Like fetch: pending until its signal aborts, then rejects.
+        emails: {
+          send: (_p, o) => {
+            keys.push(o?.idempotencyKey);
+            const signal = (o as { signal?: AbortSignal }).signal!;
+            signals.push(signal);
+            return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))));
+          },
+        },
       };
       const started = Date.now();
       const running = recoverLeadAlertsOnReminderTrigger({ admin, transport: hanging, env: ENV, appOrigin: () => "https://hone.example" });
@@ -139,9 +154,11 @@ describe("the sweep deadline holds during a send", () => {
       const out = await running;
       // Finished inside the budget, settle reserve included -- not at the send's own 15 s ceiling.
       expect(Date.now() - started).toBeLessThanOrEqual(REMINDER_TRIGGER_LEAD_ALERT_BUDGET_MS - LEAD_ALERT_SETTLE_RESERVE_MS);
-      // The cut-off request is KEPT ALIVE past the response, never abandoned.
-      expect(afterCtl.handed).toHaveLength(1);
-      expect(afterCtl.handed[0]).toBeInstanceOf(Promise);
+      // The request itself was cancelled: nothing is left running, so nothing
+      // needs keeping alive past the response (Codex P2 4259034271).
+      expect(signals).toHaveLength(1);
+      expect(signals[0].aborted).toBe(true);
+      expect(afterCtl.handed).toHaveLength(0);
       expect(out).toMatchObject({ ran: true, summary: { ok: true, attempted: 1 } });
       expect(keys).toHaveLength(1);
       expect(settles).toEqual([expect.objectContaining({ p_outcome: "retry", p_error_code: "provider_timeout" })]);
