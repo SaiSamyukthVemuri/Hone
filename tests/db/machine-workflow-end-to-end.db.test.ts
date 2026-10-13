@@ -18,6 +18,7 @@ import {
   readingsForBlock,
   recordSetupGroup,
   registerStudioMachine,
+  syncFieldContract,
   rememberMachine,
   retireStudioMachine,
   type MachineDb,
@@ -31,7 +32,7 @@ import {
 } from "@/lib/machines/selection-store";
 import { resolveSelection, selectableDevices } from "@/lib/machines/selection";
 import { nativeFieldGroups, priorSetupView } from "@/lib/machines/charting";
-import type { MachineProfile } from "@/lib/machines/profile-contract";
+import { activeModes, type MachineProfile } from "@/lib/machines/profile-contract";
 
 // ===========================================================================
 // MPX-03 — the whole machine workflow, end to end, against a real database.
@@ -157,9 +158,12 @@ function pgMachineDb(q: UserQuery): MachineDb {
         `select public.${fn}(${placeholders}) as result`,
         names.map((n) => {
           const v = args[n];
-          // jsonb and smallint[] both arrive as JS arrays; the readings payload
-          // must go as JSON text, the channels as a pg array literal.
-          if (n === "p_readings") return JSON.stringify(v);
+          // jsonb and smallint[] both arrive as JS arrays, and pg cannot tell
+          // which is which - so the JSONB parameters are named explicitly and
+          // sent as JSON TEXT, while channels goes as a pg array literal.
+          // Missing one here surfaces as "invalid input syntax for type json",
+          // which reads like a bad payload rather than a missing name.
+          if (n === "p_readings" || n === "p_fields") return JSON.stringify(v);
           return v;
         }),
       );
@@ -226,6 +230,29 @@ async function registerSynthetic(
       displayName: name,
     });
     if (!made.ok) throw new Error(made.error);
+
+    // PUBLISH THE FIELD CONTRACT, exactly as registerMachineAction now does.
+    // Recording FAILS CLOSED without one, which is the point - so the helper
+    // has to mirror production rather than quietly enjoy an unvalidated path
+    // the application does not have.
+    for (const mode of activeModes(SYNTH)) {
+      const fields = nativeFieldGroups(SYNTH, mode).flatMap((g) =>
+        g.fields.map((f) => ({
+          stageKey: f.stageKey,
+          fieldKey: f.key,
+          nativeUnit: f.unit || "none",
+          decimals: f.decimals,
+        })),
+      );
+      if (fields.length === 0) continue;
+      const published = await syncFieldContract(db, {
+        profileId: SYNTH.profileId,
+        profileVersion: SYNTH.version,
+        modeKey: mode.key,
+        fields,
+      });
+      if (!published.ok) throw new Error(published.error);
+    }
     return made.value;
   });
 }

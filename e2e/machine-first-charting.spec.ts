@@ -67,6 +67,29 @@ async function registerMachine(studioId: string, displayName: string) {
      values ($1, $2, $3, $4, $5)`,
     [id, studioId, SYNTHETIC_PROFILE_ID, SYNTHETIC_VERSION, displayName],
   );
+
+  // PUBLISH THE FIELD CONTRACT for this profile version.
+  //
+  // record_treatment_setup_group now validates every reading against
+  // machine_profile_field_contract and FAILS CLOSED when none is published.
+  // In production registerMachineAction publishes it at registration; this
+  // spec seeds the unit directly, so it has to publish it too or steps 6-7
+  // would be refused - and that refusal would look like a broken feature
+  // rather than an unseeded fixture.
+  //
+  // The rows mirror the synthetic profile's galvanic mode: current in µA at
+  // whole numbers, duration in seconds at one decimal. The point of the save
+  // assertions is that the machine's OWN unit and precision survive, so these
+  // must match the profile rather than be convenient.
+  await sql(
+    `insert into public.machine_profile_field_contract
+       (machine_profile_id, machine_profile_version, mode_key, stage_key,
+        field_key, native_unit, decimals)
+     values ($1,$2,'galvanic','','current','µA',0),
+            ($1,$2,'galvanic','','duration','s',1)
+     on conflict do nothing`,
+    [SYNTHETIC_PROFILE_ID, SYNTHETIC_VERSION],
+  );
   return id;
 }
 

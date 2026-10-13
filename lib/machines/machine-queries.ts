@@ -297,6 +297,8 @@ export async function recordSetupGroup(
 
 export type RecordedReading = {
   blockId: string;
+  /** Which observation of this field within its block. 1-based; appends. */
+  revision: number;
   profileId: string;
   profileVersion: number;
   modeKey: string;
@@ -323,12 +325,16 @@ type ReadingRow = {
   absence_reason: string | null;
   native_unit: string;
   decimals: number;
+  revision: number;
   recorded_at: string;
 };
 
 function toReading(r: ReadingRow): RecordedReading {
   return {
     blockId: r.session_block_id,
+    // Which observation of this field this is, within its block. 1 is the
+    // first; a setting changed mid-treatment appends 2, and both survive.
+    revision: r.revision,
     profileId: r.machine_profile_id,
     profileVersion: r.machine_profile_version,
     modeKey: r.mode_key,
@@ -357,7 +363,56 @@ function toReading(r: ReadingRow): RecordedReading {
 const READING_COLUMNS =
   "session_block_id, machine_profile_id, machine_profile_version, mode_key, " +
   "group_key, channels, stage_key, field_key, value_numeric, absence_reason, " +
-  "native_unit, decimals, recorded_at";
+  "native_unit, decimals, revision, recorded_at";
+
+/**
+ * Publish the field contract for one (profile, version, mode) INTO THE
+ * DATABASE, so `record_treatment_setup_group` can validate against it.
+ *
+ * WHY THE DATABASE NEEDS ITS OWN COPY. The recording command is granted to
+ * `authenticated` - it has to run as the practitioner for ownership to resolve
+ * - so a studio member can call it directly, around the server action. While
+ * the field contract lived only in TypeScript the command had nothing to check
+ * against and took the caller's word for the field, its unit and its
+ * precision, then made the row immutable. The application was validating; the
+ * authority boundary was not.
+ *
+ * OWNER ONLY, enforced in the database. Publishing a contract is an
+ * administrative act, like registering a unit, not part of charting.
+ */
+export async function syncFieldContract(
+  db: MachineDb,
+  input: {
+    profileId: string;
+    profileVersion: number;
+    modeKey: string;
+    fields: ReadonlyArray<{
+      stageKey?: string | null;
+      fieldKey: string;
+      nativeUnit: string;
+      decimals: number;
+    }>;
+  },
+): Promise<MachineOutcome<number>> {
+  const { data, error } = await db.rpc("sync_machine_profile_field_contract", {
+    p_machine_profile_id: input.profileId,
+    p_machine_profile_version: input.profileVersion,
+    p_mode_key: input.modeKey,
+    p_fields: input.fields.map((f) => ({
+      stage_key: f.stageKey ?? "",
+      field_key: f.fieldKey,
+      native_unit: f.nativeUnit,
+      decimals: f.decimals,
+    })),
+  });
+  if (error) {
+    return {
+      ok: false,
+      error: fail(error, "Could not publish the machine's field contract."),
+    };
+  }
+  return { ok: true, value: Number(data ?? 0) };
+}
 
 /** Every reading recorded against one block, for the chart being edited. */
 export async function readingsForBlock(

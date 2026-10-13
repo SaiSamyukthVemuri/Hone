@@ -4,9 +4,11 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { activeModes, type MachineProfile } from "@/lib/machines/profile-contract";
 import { validateReading } from "@/lib/machines/validate-reading";
+import { nativeFieldGroups } from "@/lib/machines/charting";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import {
   latestRecordedSetup,
+  syncFieldContract,
   readingsForBlock,
   recordSetupGroup,
   registerStudioMachine,
@@ -278,6 +280,47 @@ export async function registerMachineAction(input: {
     installedOptions: input.installedOptions ?? [],
   });
   if (!made.ok) return { ok: false, code: "rejected", error: made.error };
+
+  // PUBLISH THE FIELD CONTRACT FOR WHAT WAS JUST REGISTERED.
+  //
+  // `record_treatment_setup_group` now validates every reading against
+  // `machine_profile_field_contract` and FAILS CLOSED when no contract exists
+  // for the profile version and mode. Registration is the right moment to
+  // publish it: it is already owner-only in both the action and the database,
+  // it is the point at which a studio commits to a specific profile version,
+  // and it means a practitioner never meets a registered machine she cannot
+  // record against.
+  //
+  // Derived from the server's own catalogue, one call per active mode, so the
+  // database's copy is the application's contract rather than a hand-kept
+  // duplicate. A failure here is reported rather than swallowed: the unit
+  // exists but could not be charted against, and silently returning ok would
+  // surface later as an unexplained refusal at capture time.
+  for (const mode of activeModes(profile)) {
+    const fields = nativeFieldGroups(profile, mode).flatMap((g) =>
+      g.fields.map((f) => ({
+        stageKey: f.stageKey,
+        fieldKey: f.key,
+        nativeUnit: f.unit || "none",
+        decimals: f.decimals,
+      })),
+    );
+    if (fields.length === 0) continue;
+    const published = await syncFieldContract(db, {
+      profileId: profile.profileId,
+      profileVersion: profile.version,
+      modeKey: mode.key,
+      fields,
+    });
+    if (!published.ok) {
+      return {
+        ok: false,
+        code: "rejected",
+        error: `${made.value ? "The machine was registered but its " : "The "}field contract could not be published: ${published.error}`,
+      };
+    }
+  }
+
   return { ok: true, machineId: made.value };
 }
 
