@@ -136,8 +136,13 @@ export async function recordSmsRegistrationAction(
   } = await supabase.auth.getUser();
 
   // EVERY return path is audited, through this one helper, with the studio
-  // (Codex P2 4248698146, 4249989482).
-  const audit = (outcome: "blocked" | "failed" | "succeeded") =>
+  // (Codex P2 4248698146, 4249989482), and with WHAT happened (Codex P2
+  // 4253770080): the result code, the sender and the status submitted, and on a
+  // write the status it replaced, so approved -> suspended, a validation
+  // refusal, sender_changed and an unknown outcome are each distinguishable.
+  // Codes and ids only: never the provider reference, a number or free text.
+  const facts: Record<string, string | null> = { result: null, sender_id: null, submitted_status: null };
+  const audit = (outcome: "blocked" | "failed" | "succeeded", more: Record<string, string | null> = {}) =>
     logAdminAction({
       actorUserId: user?.id ?? null,
       actorEmail: user?.email ?? null,
@@ -146,10 +151,11 @@ export async function recordSmsRegistrationAction(
       targetId: studioId,
       studioId,
       outcome,
+      metadata: { ...facts, ...more },
     });
 
   if (!user || !isAdmin(user.email)) {
-    await audit("blocked");
+    await audit("blocked", { result: "not_authorized" });
     return { ok: false, error: "Not authorized." };
   }
 
@@ -157,16 +163,19 @@ export async function recordSmsRegistrationAction(
   // example from a page whose state could not be read) is refused here, and
   // the command refuses a sender that has since changed.
   const expectedSenderId = String(formData.get("expected_sender_id") ?? "");
+  const submittedStatus = String(formData.get("status") ?? "");
+  facts.submitted_status = submittedStatus.slice(0, 32) || null;
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(expectedSenderId)) {
-    await audit("failed");
+    await audit("failed", { result: "missing_sender" });
     return { ok: false, result: "missing_sender", error: "Reload the page: the studio's sender could not be confirmed." };
   }
   // BOUND TO THE NUMBER SUPPORT VERIFIED, and its kind is that number's: the
   // form never chooses one (Codex P2 4244484021, 4244484022). The command
   // derives the kind again and refuses a number that has changed.
   const expectedPhone = String(formData.get("expected_phone_number") ?? "");
+  facts.sender_id = expectedSenderId;
   if (!registrationKindFor(expectedPhone)) {
-    await audit("failed");
+    await audit("failed", { result: "unsupported_number" });
     return {
       ok: false,
       result: "unsupported_number",
@@ -177,7 +186,7 @@ export async function recordSmsRegistrationAction(
   const missing = String(formData.get("missing_information") ?? "").trim();
   const reference = String(formData.get("provider_reference") ?? "").trim();
   if (!REGISTRATION_STATUS_VALUES.has(status)) {
-    await audit("failed");
+    await audit("failed", { result: "invalid_input" });
     return { ok: false, result: "invalid_input", error: "Choose a registration status." };
   }
 
@@ -196,13 +205,20 @@ export async function recordSmsRegistrationAction(
       p_provider_reference: reference.length > 0 ? reference : null,
     }));
   } catch {
-    await audit("failed");
+    // Never "succeeded" for an outcome nobody saw.
+    await audit("failed", { result: "outcome_unknown" });
     return OUTCOME_UNKNOWN;
   }
-  const row = (Array.isArray(data) ? data[0] : null) as { result?: string } | null;
+  const row = (Array.isArray(data) ? data[0] : null) as
+    | { result?: string; kind?: string | null; previous_status?: string | null }
+    | null;
   // No readable answer is not a refusal: the write may have committed.
   const result = error || !row?.result ? "outcome_unknown" : row.result;
-  await audit(result === "recorded" ? "succeeded" : "failed");
+  await audit(result === "recorded" ? "succeeded" : "failed", {
+    result,
+    registration_kind: row?.kind ?? null,
+    previous_status: result === "recorded" ? (row?.previous_status ?? "none") : null,
+  });
   try {
     revalidatePath(`/admin/studios/${studioId}`);
   } catch {

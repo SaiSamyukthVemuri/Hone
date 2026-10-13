@@ -102,7 +102,7 @@ create or replace function public.record_studio_sms_sender_registration(
   p_status             text,
   p_missing            text,
   p_provider_reference text
-) returns table (result text, registration_id uuid, kind text)
+) returns table (result text, registration_id uuid, kind text, previous_status text)
 language plpgsql
 security definer
 set search_path = pg_catalog, pg_temp
@@ -116,6 +116,7 @@ declare
   v_kind    text;
   v_missing text := nullif(btrim(p_missing), '');
   v_id      uuid;
+  v_prev    text;
 begin
   if p_studio_id is null or p_expected_sender_id is null
      or p_expected_phone is null or p_expected_phone !~ '^\+1[2-9][0-9]{2}[2-9][0-9]{6}$'
@@ -123,7 +124,7 @@ begin
      or ((p_status = 'requires_information') <> (v_missing is not null))
      or (v_missing is not null and length(v_missing) > 300)
      or (p_provider_reference is not null and p_provider_reference !~ '^[A-Za-z0-9_-]{1,64}$') then
-    return query select 'invalid_input'::text, null::uuid, null::text;
+    return query select 'invalid_input'::text, null::uuid, null::text, null::text;
     return;
   end if;
 
@@ -137,33 +138,38 @@ begin
              and s.status <> 'released'
              for share) l;
   if v_live is null then
-    return query select 'no_live_sender'::text, null::uuid, null::text;
+    return query select 'no_live_sender'::text, null::uuid, null::text, null::text;
     return;
   end if;
   if cardinality(v_live) > 1 then
     -- 0191's one-live-sender index makes this impossible; refuse, never guess.
-    return query select 'ambiguous_live_sender'::text, null::uuid, null::text;
+    return query select 'ambiguous_live_sender'::text, null::uuid, null::text, null::text;
     return;
   end if;
   -- COMPARE-AND-SET: only the sender the operator verified.
   if v_live[1] <> p_expected_sender_id then
-    return query select 'sender_changed'::text, null::uuid, null::text;
+    return query select 'sender_changed'::text, null::uuid, null::text, null::text;
     return;
   end if;
   -- No number yet (off, selecting, provisioning): nothing has been verified.
   if v_phones[1] is null then
-    return query select 'sender_has_no_number'::text, null::uuid, null::text;
+    return query select 'sender_has_no_number'::text, null::uuid, null::text, null::text;
     return;
   end if;
   -- ... and only the NUMBER the operator verified, on that same sender.
   if v_phones[1] <> p_expected_phone then
-    return query select 'sender_changed'::text, null::uuid, null::text;
+    return query select 'sender_changed'::text, null::uuid, null::text, null::text;
     return;
   end if;
 
   -- The kind is the number's, never the caller's.
   v_kind := case when v_phones[1] ~ '^\+1(800|833|844|855|866|877|888)'
                  then 'toll_free_verification' else 'us_10dlc' end;
+
+  -- The record this write replaces, for the audit trail (Codex P2 4253770080).
+  select r.status into v_prev
+    from public.studio_sms_sender_registrations r
+   where r.sender_id = v_live[1] and r.phone_number = v_phones[1] and r.kind = v_kind;
 
   insert into public.studio_sms_sender_registrations as r
     (studio_id, sender_id, phone_number, kind, status, missing_information, provider_reference)
@@ -172,11 +178,14 @@ begin
   on conflict (sender_id, phone_number, kind) do update
     set status              = excluded.status,
         missing_information = excluded.missing_information,
-        provider_reference  = coalesce(excluded.provider_reference, r.provider_reference),
+        -- EXACTLY what was submitted: an emptied reference CLEARS it
+        -- (Codex P2 4253653241). The form prefills the current reference, so
+        -- an untouched field keeps it.
+        provider_reference  = excluded.provider_reference,
         updated_at          = now()
   returning r.id into v_id;
 
-  return query select 'recorded'::text, v_id, v_kind;
+  return query select 'recorded'::text, v_id, v_kind, v_prev;
 end;
 $$;
 

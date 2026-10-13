@@ -115,3 +115,14 @@ describe("privileges", () => {
     for (const l of lists) expect(l).toEqual([...TOLL_FREE_AREA_CODES].sort());
   });
 });
+
+describe("the record is what was submitted (Codex P2 4253653241, 4253770080)", () => {
+  it("the provider reference is stored as submitted, never coalesced with the old one", () => {
+    expect(CODE).toMatch(/provider_reference\s+= excluded\.provider_reference,/);
+    expect(CODE).not.toMatch(/coalesce\(excluded\.provider_reference/);
+  });
+
+  it("the command returns the status it replaced, for the audit trail", () => {
+    expect(CODE).toMatch(/returns table \(result text, registration_id uuid, kind text, previous_status text\)/);
+  });
+});
