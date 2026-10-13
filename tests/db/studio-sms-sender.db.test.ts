@@ -43,7 +43,8 @@ type ClaimRow = {
 function numFor(studioId: string, slot: "A" | "B"): string {
   let h = 0x811c9dc5;
   for (const ch of `${studioId}:${slot}`) h = Math.imul(h ^ ch.charCodeAt(0), 0x01000193) >>> 0;
-  return `+1416555${String(2000 + (h % 7000)).padStart(4, "0")}`;
+  // Exchange 556: never overlaps the fixed 555-xxxx numbers other SMS DB tests use.
+  return `+1416556${String(2000 + (h % 7000)).padStart(4, "0")}`;
 }
 
 async function claim(
