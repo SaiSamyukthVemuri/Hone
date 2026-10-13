@@ -30,6 +30,8 @@ const allProven = (): InboundStopFacts => ({
   },
   // Routed sends pin From to the checked number (draft #858).
   routedFromNumber: "+14165550100",
+  // No exact, prefix or default Webhook Rule matches the inbound URL.
+  webhookRules: { matched: false },
   honeAccountSid: ACCOUNT,
   mappedStudioId: "studio-b",
   expectedStudioId: "studio-b",
@@ -77,6 +79,7 @@ describe("evaluateInboundStopPreflight", () => {
     expect(r.blockers).toEqual([
       "base_url",
       "inbound_reaches",
+      "webhook_rules",
       "signing_account",
       "studio_mapping",
       "stop_forwarded",
@@ -362,6 +365,111 @@ describe("evaluateInboundStopPreflight", () => {
       expect(redeliversServerErrors(`${URL_OK}#rp=5xx&rp=all`)).toBe(false);
       expect(redeliversServerErrors(URL_OK)).toBe(false);
       expect(redeliversServerErrors(null)).toBe(false);
+    });
+
+    describe("account Webhook Rules take precedence over the URL fragment (Codex P1 4254537039)", () => {
+      const setting = (over: Partial<{ retryPolicy: string[] | null; retryCount: number | null; signsWithSharedKey: boolean | null }> = {}) => ({
+        retryPolicy: ["5xx"],
+        retryCount: 2,
+        signsWithSharedKey: false,
+        ...over,
+      });
+
+      it("rules unread: blocked, and #rp=5xx alone is not trusted", () => {
+        const f = allProven();
+        f.webhookRules = undefined;
+        const r = evaluateInboundStopPreflight(f);
+        expect(r.blockers).toEqual(["webhook_rules", "stop_redelivery"]);
+      });
+
+      it("a matching Rule whose Settings retry 5xx redelivers even without a fragment", () => {
+        const f = allProven();
+        f.service!.inboundRequestUrl = URL_OK;
+        f.webhookRules = { matched: true, settings: [setting()] };
+        expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
+      });
+
+      it("a matching Rule that does NOT retry 5xx overrides the URL's #rp=5xx", () => {
+        const f = allProven();
+        f.webhookRules = { matched: true, settings: [setting({ retryPolicy: ["ct"] })] };
+        expect(redelivery(f)?.status).toBe("unknown"); // fallback unread
+        f.service!.fallbackUrl = "https://elsewhere.example/sms";
+        f.service!.fallbackMethod = "POST";
+        expect(redelivery(f)?.status).toBe("fail");
+      });
+
+      it("a matching Rule with retry count 0 does not redeliver", () => {
+        const f = allProven();
+        f.webhookRules = { matched: true, settings: [setting({ retryCount: 0 })] };
+        Object.assign(f.service!, { fallbackUrl: null, fallbackMethod: null });
+        expect(redelivery(f)?.status).toBe("fail");
+      });
+
+      it("a percentage split: EVERY Setting must retry 5xx", () => {
+        const f = allProven();
+        Object.assign(f.service!, { fallbackUrl: null, fallbackMethod: null });
+        f.webhookRules = { matched: true, settings: [setting(), setting({ retryPolicy: ["4xx"] })] };
+        expect(redelivery(f)?.status).toBe("fail");
+      });
+
+      it("a Setting signing with a SharedKey: every STOP would be refused", () => {
+        const f = allProven();
+        f.webhookRules = { matched: true, settings: [setting({ signsWithSharedKey: true })] };
+        const c = evaluateInboundStopPreflight(f).checks.find((x) => x.id === "webhook_rules");
+        expect(c?.status).toBe("fail");
+        expect(c?.detail).toMatch(/SharedKey/);
+      });
+
+      it("a Setting's signing or retry facts unreported: unknown", () => {
+        const f = allProven();
+        f.webhookRules = { matched: true, settings: [setting({ signsWithSharedKey: null, retryPolicy: null })] };
+        const r = evaluateInboundStopPreflight(f);
+        expect(r.checks.find((c) => c.id === "webhook_rules")?.status).toBe("unknown");
+        expect(r.checks.find((c) => c.id === "stop_redelivery")?.status).toBe("unknown");
+      });
+
+      it("a matching Rule with no Settings listed proves nothing", () => {
+        const f = allProven();
+        f.webhookRules = { matched: true, settings: [] };
+        expect(evaluateInboundStopPreflight(f).checks.find((c) => c.id === "webhook_rules")?.status).toBe("unknown");
+      });
+    });
+
+    describe("under the number override, only the NUMBER's fallback counts (Codex P1 4254537025)", () => {
+      const numberRoute = () => {
+        const f = allProven();
+        Object.assign(f.service!, {
+          useInboundWebhookOnNumber: true,
+          numberSmsUrl: URL_OK, // no 5xx retry on the number's own URL
+          numberSmsMethod: "POST",
+          numberSmsApplicationSid: null,
+          fallbackUrl: URL_OK, // the SERVICE fallback: ignored on this path
+          fallbackMethod: "POST",
+        });
+        return f;
+      };
+
+      it("a service fallback to Hone does not redeliver a number-routed STOP", () => {
+        const f = numberRoute();
+        expect(redelivery(f)?.status).toBe("unknown"); // number fallback unread
+        Object.assign(f.service!, { numberSmsFallbackUrl: null, numberSmsFallbackMethod: null });
+        expect(redelivery(f)?.status).toBe("fail");
+      });
+
+      it("the number's own fallback to the same route by POST does", () => {
+        const f = numberRoute();
+        Object.assign(f.service!, { numberSmsFallbackUrl: URL_OK, numberSmsFallbackMethod: "POST" });
+        expect(redelivery(f)?.status).toBe("pass");
+        expect(redelivery(f)?.detail).toMatch(/number's sms_fallback_url/);
+      });
+
+      it("the number's fallback by GET, or elsewhere, does not", () => {
+        const f = numberRoute();
+        Object.assign(f.service!, { numberSmsFallbackUrl: URL_OK, numberSmsFallbackMethod: "GET" });
+        expect(redelivery(f)?.status).toBe("fail");
+        Object.assign(f.service!, { numberSmsFallbackUrl: "https://elsewhere.example/sms", numberSmsFallbackMethod: "POST" });
+        expect(redelivery(f)?.status).toBe("fail");
+      });
     });
 
     it("a plain URL with a fallback to the SAME route by POST: redelivered", () => {
