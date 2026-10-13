@@ -47,6 +47,32 @@ import { twilioWebhookUrl } from "./webhook-base";
 
 export const INBOUND_STOP_PATH = "/api/twilio/inbound-sms";
 
+/**
+ * Twilio connection overrides (twilio.com/docs/usage/webhooks/webhooks-connection-overrides):
+ * ct, rt, tt (timeouts), rc (retry count), rp (retry policy), sni, e (edge),
+ * carried in the URL FRAGMENT. Twilio omits the fragment from the HTTP request
+ * AND from the signature, so the URL the route verifies is the one without it.
+ */
+const TWILIO_CONNECTION_OVERRIDE_KEYS: ReadonlySet<string> = new Set(["ct", "rt", "tt", "rc", "rp", "sni", "e"]);
+
+/** Marker substituted for a URL whose fragment is not connection overrides. */
+const INVALID_FRAGMENT = "invalid-fragment:";
+
+/**
+ * The URL Twilio actually requests and signs: the configured URL without a
+ * fragment of connection overrides. A fragment with any other key is not a
+ * documented override, so the URL is never treated as the expected one.
+ */
+export function signedFormOfConfiguredUrl<T extends string | null | undefined>(url: T): T | string {
+  if (typeof url !== "string") return url;
+  const i = url.indexOf("#");
+  if (i < 0) return url;
+  const fragment = url.slice(i + 1);
+  if (fragment === "") return url.slice(0, i);
+  const keys = fragment.split("&").map((part) => part.split("=")[0]);
+  return keys.every((k) => TWILIO_CONNECTION_OVERRIDE_KEYS.has(k)) ? url.slice(0, i) : `${INVALID_FRAGMENT}${url}`;
+}
+
 type Env = Readonly<Record<string, string | undefined>>;
 
 export type ExpectedInboundUrl =
@@ -187,10 +213,10 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
   const routing =
     svc && (svc.inboundRequestUrl !== undefined || svc.useInboundWebhookOnNumber === true)
       ? {
-          serviceInboundUrl: svc.inboundRequestUrl ?? null,
+          serviceInboundUrl: signedFormOfConfiguredUrl(svc.inboundRequestUrl ?? null),
           serviceInboundMethod: svc.inboundMethod ?? null,
           useInboundWebhookOnNumber: svc.useInboundWebhookOnNumber ?? null,
-          numberSmsUrl: svc.numberSmsUrl,
+          numberSmsUrl: signedFormOfConfiguredUrl(svc.numberSmsUrl),
           numberSmsMethod: svc.numberSmsMethod,
           numberSmsApplicationSid: svc.numberSmsApplicationSid,
         }
@@ -217,7 +243,9 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
                   ? "a TwiML application on the number overrides its sms_* URLs: inbound never reaches Hone"
                   : (effective?.kind === "service" || effective?.kind === "number") && effective.method !== "POST"
                     ? `inbound method is ${effective.method}, not POST: the route only accepts POST`
-                    : "effective inbound URL is not exactly the expected URL",
+                    : (effective?.kind === "service" || effective?.kind === "number") && effective.url.startsWith(INVALID_FRAGMENT)
+                      ? "the inbound URL's fragment is not Twilio connection overrides (ct, rt, tt, rc, rp, sni, e)"
+                      : "effective inbound URL is not exactly the expected URL",
           ),
   );
 
@@ -241,10 +269,10 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
               .map((n) =>
                 inboundReaches(
                   {
-                    serviceInboundUrl: svc.inboundRequestUrl ?? null,
+                    serviceInboundUrl: signedFormOfConfiguredUrl(svc.inboundRequestUrl ?? null),
                     serviceInboundMethod: svc.inboundMethod ?? null,
                     useInboundWebhookOnNumber: true,
-                    numberSmsUrl: n.smsUrl,
+                    numberSmsUrl: signedFormOfConfiguredUrl(n.smsUrl),
                     numberSmsMethod: n.smsMethod,
                     numberSmsApplicationSid: n.smsApplicationSid,
                   },

@@ -254,6 +254,43 @@ describe("evaluateInboundStopPreflight", () => {
     expect(c?.detail).toMatch(/application/);
   });
 
+  describe("Twilio connection overrides in the fragment (omitted from the request and the signature)", () => {
+    for (const frag of ["#rp=5xx", "#ct=1000&rt=5000&rp=4xx,5xx", "#rc=2&tt=15000&sni=on&e=ashburn", "#"]) {
+      it(`the service URL with "${frag}" reaches the expected URL`, () => {
+        const f = allProven();
+        f.service!.inboundRequestUrl = `${URL_OK}${frag}`;
+        expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
+      });
+    }
+
+    it("a fragment that is not connection overrides fails, and says why", () => {
+      const f = allProven();
+      f.service!.inboundRequestUrl = `${URL_OK}#studio=b`;
+      const r = evaluateInboundStopPreflight(f);
+      expect(r.blockers).toEqual(["inbound_reaches"]);
+      expect(r.checks.find((c) => c.id === "inbound_reaches")?.detail).toMatch(/connection overrides/);
+    });
+
+    it("an override does not rescue a wrong URL", () => {
+      const f = allProven();
+      f.service!.inboundRequestUrl = "https://www.hone.example/api/twilio/inbound-sms#rp=5xx";
+      expect(evaluateInboundStopPreflight(f).blockers).toEqual(["inbound_reaches"]);
+    });
+
+    it("the number's own URL and every pool number's URL may carry overrides too", () => {
+      const f = allProven();
+      Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: `${URL_OK}#rp=5xx`, numberSmsMethod: "POST", numberSmsApplicationSid: null });
+      f.routedFromNumber = undefined;
+      f.service!.senderPool = [
+        { phoneNumber: "+14165550100", smsUrl: `${URL_OK}#rp=5xx`, smsMethod: "POST", smsApplicationSid: null },
+        { phoneNumber: "+14165550101", smsUrl: `${URL_OK}#ct=1000`, smsMethod: "POST", smsApplicationSid: null },
+      ];
+      expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
+      f.service!.senderPool[1].smsUrl = `${URL_OK}#bogus=1`;
+      expect(evaluateInboundStopPreflight(f).blockers).toEqual(["sender_pool"]);
+    });
+  });
+
   it("inbound DISABLED (flag off, no inbound_request_url) fails and says so", () => {
     const f = allProven();
     f.service!.inboundRequestUrl = null;
