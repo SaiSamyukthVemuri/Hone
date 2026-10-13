@@ -333,3 +333,29 @@ describe("a group already recorded is never resubmitted", () => {
     ).toEqual([]);
   });
 });
+
+describe("an UNKNOWN outcome is excluded from resubmission, like a saved one", () => {
+  // A transport failure leaves the server's answer LOST, not negative: the
+  // write may well have committed. Resubmitting is the blind replay that would
+  // duplicate an immutable capture; treating it as saved is fake success. So
+  // both sets exclude a group from the next submission, while only
+  // `savedGroups` is ever REPORTED as recorded (Codex, ef45a4b0).
+  //
+  // The component keeps them as two sets and passes the union here, which is
+  // why one parameter serves both: the distinction matters for what is SAID,
+  // not for what is SENT.
+  const two = [
+    withValues("g1", { current: "120" }, [1]),
+    withValues("g2", { current: "80" }, [2]),
+  ];
+
+  it("excludes an unresolved group exactly as it excludes a saved one", () => {
+    expect(
+      assembleGroupSubmissions([FIELDS], two, new Set(["g2"])).map((x) => x.groupKey),
+    ).toEqual(["g1"]);
+  });
+
+  it("excludes a saved and an unresolved group together", () => {
+    expect(assembleGroupSubmissions([FIELDS], two, new Set(["g1", "g2"]))).toEqual([]);
+  });
+});

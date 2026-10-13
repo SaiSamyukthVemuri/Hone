@@ -81,6 +81,12 @@ export function MachineReadingEntry({
   const [savedGroups, setSavedGroups] = useState<ReadonlySet<string>>(
     () => new Set<string>(),
   );
+  // GROUPS WHOSE OUTCOME IS UNKNOWN, kept apart from the saved ones on
+  // purpose. They are excluded from resubmission for the same reason, but they
+  // must never be REPORTED as recorded: nobody knows whether they were.
+  const [unknownGroups, setUnknownGroups] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -100,7 +106,12 @@ export function MachineReadingEntry({
   // cannot catch these: it sees two separate, individually valid calls.
   const issues = groupIssues(profile, groups);
   const ready =
-    readiness.some((r, i) => r === "complete" && !savedGroups.has(groups[i]!.id)) &&
+    readiness.some(
+      (r, i) =>
+        r === "complete" &&
+        !savedGroups.has(groups[i]!.id) &&
+        !unknownGroups.has(groups[i]!.id),
+    ) &&
     partial.length === 0 &&
     issues.length === 0;
 
@@ -119,49 +130,103 @@ export function MachineReadingEntry({
     setMessage(null);
     // Groups already recorded are excluded, so a retry after a partial save
     // sends only what has not been stored.
-    const submissions = assembleGroupSubmissions(fieldGroups, groups, savedGroups);
+    const submissions = assembleGroupSubmissions(
+      fieldGroups,
+      groups,
+      new Set([...savedGroups, ...unknownGroups]),
+    );
 
     // ONE CALL PER GROUP, because one capture is one group's atomic fact. The
     // consequence is reported rather than rounded: with two groups the first
     // can succeed and the second fail, and saying "saved" or "could not save"
     // would both be false. See assembleGroupSubmissions.
+    // THREE OUTCOMES, NOT TWO, and the third is the one that was missing.
+    //
+    // `onRecord` can REJECT - a dropped connection, a server-action exception,
+    // a timeout - and this loop had no try/catch at all. The consequences were
+    // all silent:
+    //
+    //   * the throw escaped `submit`, so `setPending(false)` never ran and the
+    //     form sat on "Saving…" for ever with no message;
+    //   * groups that had ALREADY succeeded earlier in the loop were never
+    //     added to `savedGroups`, so a later retry could record them a second
+    //     time - the very duplication the saved-set exists to prevent;
+    //   * and the outcome of the group that threw is genuinely UNKNOWN. The
+    //     write may well have committed; the answer was simply lost on the way
+    //     back.
+    //
+    // AN UNKNOWN OUTCOME IS NOT A FAILURE, and must not be treated as one.
+    // Retrying it is the blind replay that would duplicate an immutable
+    // capture; calling it saved is fake success. So it is reported as unknown,
+    // excluded from resubmission, and the practitioner is told that a reload
+    // shows what actually committed - which is the only thing that can settle
+    // it (Codex, ef45a4b0).
     const succeeded: string[] = [];
-    const failed: Array<{ groupKey: string; error?: string }> = [];
-    for (const sub of submissions) {
-      const out = await onRecord({
-        blockId,
-        machineId: deviceId,
-        modeKey: mode.key,
-        groupKey: sub.groupKey,
-        channels: sub.channels,
-        readings: sub.readings,
-      });
-      if (out.ok) succeeded.push(sub.groupKey);
-      else failed.push({ groupKey: sub.groupKey, error: out.error });
+    const refused: Array<{ groupKey: string; error?: string }> = [];
+    const unknown: string[] = [];
+    try {
+      for (const sub of submissions) {
+        try {
+          const out = await onRecord({
+            blockId,
+            machineId: deviceId,
+            modeKey: mode.key,
+            groupKey: sub.groupKey,
+            channels: sub.channels,
+            readings: sub.readings,
+          });
+          if (out.ok) succeeded.push(sub.groupKey);
+          else refused.push({ groupKey: sub.groupKey, error: out.error });
+        } catch {
+          // The transport failed, so the server's answer is unknown. Stop:
+          // sending the NEXT group over a connection that just failed would
+          // compound an unresolved state.
+          unknown.push(sub.groupKey);
+          break;
+        }
+      }
+    } finally {
+      // ALWAYS, so a throw anywhere above cannot leave the form pending.
+      setPending(false);
     }
 
-    setPending(false);
     setCaptures((n) => n + succeeded.length);
+    // Acknowledged writes only. An unknown group is NOT added here, because
+    // `savedGroups` is also what the status line reports as recorded.
     if (succeeded.length > 0) {
       setSavedGroups((prev) => new Set([...prev, ...succeeded]));
     }
+    // Excluded from resubmission all the same: a click must not blindly replay
+    // a write that may already have committed.
+    if (unknown.length > 0) {
+      setUnknownGroups((prev) => new Set([...prev, ...unknown]));
+    }
 
-    if (failed.length === 0) {
+    if (unknown.length > 0) {
+      setMessage(
+        `The connection failed while saving ${unknown.join(", ")}, so whether ` +
+          "it was recorded is NOT known - it may have been. " +
+          (succeeded.length > 0
+            ? `${succeeded.join(", ")} did save. `
+            : "") +
+          "Reload this chart to see what actually committed before entering it " +
+          "again; saving it a second time would record it twice.",
+      );
+      return;
+    }
+    if (refused.length === 0) {
       setSaved(true);
       setMessage("Saved to this treatment.");
       return;
     }
     if (succeeded.length === 0) {
-      setMessage(failed[0]!.error ?? "Could not save those settings.");
+      setMessage(refused[0]!.error ?? "Could not save those settings.");
       return;
     }
-    // THE PARTIAL CASE, stated exactly. Groups that saved are permanent; the
-    // others are not, and she needs to know which is which before deciding
-    // what to do next.
     setMessage(
       `Saved ${succeeded.length} of ${submissions.length} setting groups. ` +
-        `${failed.map((f) => f.groupKey).join(", ")} could not be saved: ` +
-        `${failed[0]!.error ?? "the command refused it"}. ` +
+        `${refused.map((f) => f.groupKey).join(", ")} could not be saved: ` +
+        `${refused[0]!.error ?? "the command refused it"}. ` +
         "The saved groups are already recorded and are not affected.",
     );
   }
@@ -210,6 +275,7 @@ export function MachineReadingEntry({
               setGroups(firstGroup());
               setGroupOrdinal(1);
               setSavedGroups(new Set());
+              setUnknownGroups(new Set());
               setMessage(null);
               setSaved(false);
             }}
@@ -250,6 +316,14 @@ export function MachineReadingEntry({
                   data-testid={`setting-group-recorded-${setting.id}`}
                 >
                   recorded
+                </span>
+              )}
+              {unknownGroups.has(setting.id) && (
+                <span
+                  className="text-xs text-amber-700 dark:text-amber-500"
+                  data-testid={`setting-group-unknown-${setting.id}`}
+                >
+                  outcome unknown — reload to confirm
                 </span>
               )}
               {readiness[settingIndex] === "empty" && (
