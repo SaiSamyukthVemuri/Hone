@@ -109,7 +109,9 @@ export function SmsRegistrationSection({
       )}
       {form}
       <p className="mt-2 text-xs text-neutral-500">
-        Record only what you verified in the provider account for the number shown. If the
+        Record only what you verified in the provider account for the number shown. Record
+        <strong> approved</strong> only when registration is complete for this exact number,
+        including the number&apos;s own registration; while it is still pending, record pending. If the
         studio&apos;s number has changed since this page loaded, the record is refused. This changes
         the readiness shown to the studio; it does not register or activate anything, and it is
         not HIPAA coverage.
