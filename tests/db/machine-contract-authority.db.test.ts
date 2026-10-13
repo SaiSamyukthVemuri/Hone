@@ -807,14 +807,23 @@ describe("0223 · a reading cannot be an ORPHAN or disagree with its capture", (
     // Without this, every case above could be passing because the insert is
     // malformed in some way unrelated to the constraint under test.
     await setup();
+    // IDENTITY COPIED FROM THE CAPTURE, not invented.
+    //
+    // This control used to insert profile 'x' and PASSED, which is how finding
+    // 4259962078 was found: the FK covered only four columns, so a reading
+    // could name a different machine, profile version, mode or channels from
+    // its own capture. The positive control was demonstrating the hole it was
+    // supposed to be a control for.
     await adminQuery(
       `insert into public.treatment_setup_readings
          (capture_id, studio_id, session_block_id, machine_profile_id,
-          machine_profile_version, mode_key, group_key, field_key,
+          machine_profile_version, mode_key, group_key, channels, field_key,
           value_numeric, native_unit, decimals, observation_source, revision)
-       values ($1, $2, $3, 'x', 1, 'galvanic', 'g', 'duration',
-               1, 's', 1, 'practitioner-entered', 1)`,
-      [captureId, studio.studioId, blockId],
+       select c.id, c.studio_id, c.session_block_id, c.machine_profile_id,
+              c.machine_profile_version, c.mode_key, c.group_key, c.channels,
+              'duration', 1, 's', 1, 'practitioner-entered', c.revision
+         from public.treatment_setup_captures c where c.id = $1`,
+      [captureId],
     );
     const rows = await adminQuery(
       `select count(*)::int as n from public.treatment_setup_readings
@@ -822,6 +831,48 @@ describe("0223 · a reading cannot be an ORPHAN or disagree with its capture", (
       [captureId],
     );
     expect(rows.rows[0].n).toBe(2);
+  });
+
+  it("refuses a reading whose MACHINE IDENTITY disagrees with its capture", async () => {
+    // The columns the first FK left free: machine_profile_id,
+    // machine_profile_version, mode_key, group_key and channels. With those
+    // unconstrained, `latest_setup_for_client` (which emits identity from the
+    // READING) and `setup_capture_history_for_block` (which emits it from the
+    // CAPTURE) could describe one capture as two different machine setups.
+    await setup();
+    await expect(
+      adminQuery(
+        `insert into public.treatment_setup_readings
+           (capture_id, studio_id, session_block_id, machine_profile_id,
+            machine_profile_version, mode_key, group_key, channels, field_key,
+            value_numeric, native_unit, decimals, observation_source, revision)
+         select c.id, c.studio_id, c.session_block_id,
+                'a-different-machine',  -- the only change
+                c.machine_profile_version, c.mode_key, c.group_key, c.channels,
+                'reps', 1, 'count', 0, 'practitioner-entered', c.revision
+           from public.treatment_setup_captures c where c.id = $1`,
+        [captureId],
+      ),
+    ).rejects.toThrow(/treatment_setup_readings_capture_fk|foreign key/i);
+  });
+
+  it("refuses a reading whose MODE disagrees with its capture", async () => {
+    await setup();
+    await expect(
+      adminQuery(
+        `insert into public.treatment_setup_readings
+           (capture_id, studio_id, session_block_id, machine_profile_id,
+            machine_profile_version, mode_key, group_key, channels, field_key,
+            value_numeric, native_unit, decimals, observation_source, revision)
+         select c.id, c.studio_id, c.session_block_id, c.machine_profile_id,
+                c.machine_profile_version,
+                'a-different-mode',     -- the only change
+                c.group_key, c.channels,
+                'reps', 1, 'count', 0, 'practitioner-entered', c.revision
+           from public.treatment_setup_captures c where c.id = $1`,
+        [captureId],
+      ),
+    ).rejects.toThrow(/treatment_setup_readings_capture_fk|foreign key/i);
   });
 
   it("no orphan exists anywhere after this suite", async () => {

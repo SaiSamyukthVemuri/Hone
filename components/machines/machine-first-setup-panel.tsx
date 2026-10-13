@@ -135,6 +135,22 @@ export function MachineFirstSetupPanel({
   onRecord,
 }: MachineFirstSetupPanelProps) {
   const [deviceId, setDeviceId] = useState<string | null>(initialDeviceId);
+  // WHAT THE DATABASE ACTUALLY HOLDS, tracked separately from the selection
+  // the practitioner is looking at.
+  //
+  // THIS IS THE SECOND TIME THIS LINE HAS LIED, in a new way. First it read
+  // `persistence.persisted`, which is the store's CAPABILITY, so it said "yes"
+  // before anything was chosen. That was fixed by reading the selection - and
+  // the selection is OPTIMISTIC. `chooseDevice` sets it before persisting and
+  // leaves it set when the write fails, so a failed save still reported "yes",
+  // and a failed CLEAR reported "nothing" while the old database default was
+  // still there. Reporting capability and reporting intent are both wrong for
+  // the same reason: neither is the stored fact (Codex, 7cae831b).
+  //
+  // Seeded from the server's value and updated ONLY after a successful write.
+  const [persistedDeviceId, setPersistedDeviceId] = useState<string | null>(
+    initialDeviceId,
+  );
   // How many readings this panel has actually saved in this mount. Drives the
   // "Recorded:" line, which previously claimed "nothing" even after a save.
   const [savedCount, setSavedCount] = useState(0);
@@ -151,14 +167,24 @@ export function MachineFirstSetupPanel({
   const chooseDevice = async (next: string | null) => {
     setDeviceId(next);
     setSelectionNote(null);
-    if (!onSelectMachine) return;
-    const out = await onSelectMachine({ deviceId: next, modeKey: null });
-    if (!out.ok) {
-      setSelectionNote(
-        out.error ??
-          "This machine applies to this block but could not be remembered for next time.",
-      );
+    if (!onSelectMachine) {
+      // No persistence wired at all (a test-store or unavailable store): the
+      // selection applies locally and nothing claims otherwise.
+      setPersistedDeviceId(next);
+      return;
     }
+    const out = await onSelectMachine({ deviceId: next, modeKey: null });
+    if (out.ok) {
+      // ONLY NOW is it the stored fact.
+      setPersistedDeviceId(next);
+      return;
+    }
+    setSelectionNote(
+      out.error ??
+        (next === null
+          ? "This machine is no longer selected here, but clearing it for next time failed - it is still remembered."
+          : "This machine applies to this block but could not be remembered for next time."),
+    );
   };
 
   // Only a real scope can produce a selectable list, because a device belongs
@@ -206,6 +232,22 @@ export function MachineFirstSetupPanel({
       </div>
 
       {/* Selection. An empty list is a legitimate answer and says why. */}
+      {/*
+        THE FAILURE NOTE LIVES ABOVE THE BRANCH, deliberately.
+        It used to render only inside the chosen-machine block, so a failed
+        CLEAR - which leaves nothing chosen - hid the very error that mattered
+        most: the practitioner believes the machine is no longer remembered
+        while the database default is still there (Codex, 7cae831b).
+      */}
+      {selectionNote && (
+        <p
+          className="text-xs text-amber-700 dark:text-amber-500"
+          role="status"
+          data-testid="machine-selection-not-remembered"
+        >
+          {selectionNote}
+        </p>
+      )}
       {selectable.length === 0 ? (
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           No verified machine is available to select yet.{" "}
@@ -238,15 +280,6 @@ export function MachineFirstSetupPanel({
         </div>
       ) : (
         <div className="flex flex-col gap-3" data-testid="machine-chosen">
-          {selectionNote && (
-            <p
-              className="text-xs text-amber-700 dark:text-amber-500"
-              role="status"
-              data-testid="machine-selection-not-remembered"
-            >
-              {selectionNote}
-            </p>
-          )}
           <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
             {chosen.device.displayName}
             <span className="ml-2 font-normal text-neutral-600 dark:text-neutral-400">
@@ -368,7 +401,7 @@ export function MachineFirstSetupPanel({
         hasScope={scope != null}
         persistence={persistence}
         savedCount={savedCount}
-        rememberedDeviceId={deviceId}
+        rememberedDeviceId={persistedDeviceId}
       />
     </section>
   );
