@@ -1,4 +1,9 @@
-import type { FieldDescriptor, FieldGroup } from "./charting";
+import {
+  settingGroupIssues,
+  type FieldDescriptor,
+  type FieldGroup,
+  type GroupIssue,
+} from "./charting";
 import type { MachineProfile, ReadingValue } from "./profile-contract";
 import type { ReadingSubmission } from "./machine-queries";
 
@@ -169,6 +174,30 @@ export function toggleChannel(
   };
 }
 
+/**
+ * Cross-group problems, from the rule that already existed.
+ *
+ * `settingGroupIssues` in charting.ts has treated "channel already recorded in
+ * another group" as invalid since long before this entry surface could create
+ * two groups - and this path did not call it, so the practitioner could toggle
+ * channel 2 on in both groups and each RPC call would accept its own
+ * internally-duplicate-free array. The database CANNOT catch this: it sees two
+ * separate, individually valid calls. The UI is the only place it can be
+ * caught (Codex, f175e732).
+ *
+ * This adapts the draft shape to the one that rule takes rather than
+ * reimplementing the check, so there is one definition of a channel conflict.
+ */
+export function groupIssues(
+  profile: MachineProfile,
+  groups: readonly SettingGroupDraft[],
+): GroupIssue[] {
+  return settingGroupIssues(
+    profile,
+    groups.map((g) => ({ groupId: g.id, channels: g.channels, readings: {} })),
+  );
+}
+
 export type GroupReadiness = "empty" | "partial" | "complete";
 
 /**
@@ -218,9 +247,20 @@ export type GroupSubmission = {
 export function assembleGroupSubmissions(
   fieldGroups: readonly FieldGroup[],
   groups: readonly SettingGroupDraft[],
+  /**
+   * Groups already recorded, which must NOT be sent again.
+   *
+   * With several groups the first can succeed and a later one fail. Retrying
+   * after fixing the failure used to resubmit the successful group too, and
+   * because captures are append-only that created an extra immutable revision
+   * - a second capture of settings she entered once, indistinguishable in the
+   * record from a genuine mid-treatment change (Codex, f175e732).
+   */
+  alreadySaved: ReadonlySet<string> = new Set(),
 ): GroupSubmission[] {
   const out: GroupSubmission[] = [];
   for (const g of groups) {
+    if (alreadySaved.has(g.id)) continue;
     const readings = assembleReadings(fieldGroups, g.values);
     if (readings.length === 0) continue;
     out.push({ groupKey: g.id, channels: g.channels, readings });

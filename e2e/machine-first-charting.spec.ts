@@ -736,6 +736,32 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
     // one thing.
     expect(second[0]!.revision).toBe(1);
     expect(second[1]!.revision).toBe(1);
+
+    // AND NEXT-VISIT GUIDANCE SHOWS BOTH, which is the half the database rows
+    // alone cannot prove.
+    //
+    // `latest_setup_for_client` used to select ONE capture, so after a
+    // two-group save the next visit displayed only the last group and silently
+    // omitted the other probes' settings - the rows were all there and the
+    // read hid half of them (Codex, f175e732). It now returns every group of
+    // the latest setup, each at its own newest revision.
+    const after = await seedNextVisitForSameClient(seed.studioId, clientId);
+    await page.goto(`/clients/${clientId}/sessions/${after.sessionId}`);
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+    await openMachinePanel(page);
+
+    const prior = page.getByTestId("machine-prior-setup");
+    await expect(prior).toBeVisible({ timeout: T });
+    await expect(prior, "group 1's probes").toContainText("Channels 1, 2", {
+      timeout: T,
+    });
+    await expect(prior, "group 2's probes must not be hidden").toContainText(
+      "Channels 3, 4",
+      { timeout: T },
+    );
+    // Both values, so this is not one group rendered twice.
+    await expect(prior).toContainText("120");
+    await expect(prior).toContainText("80");
   });
 
   await test.step("11: a FAILED selection write is reported, and changes nothing stored", async () => {

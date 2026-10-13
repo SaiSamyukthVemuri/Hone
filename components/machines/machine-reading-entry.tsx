@@ -11,6 +11,7 @@ import {
   channelChoices,
   draftKey,
   firstGroup,
+  groupIssues,
   groupReadiness,
   supportsDistinctGroups,
   toggleChannel,
@@ -73,6 +74,13 @@ export function MachineReadingEntry({
   // retired for the life of the mount. See addGroup for why reuse would
   // corrupt a group's revision history.
   const [groupOrdinal, setGroupOrdinal] = useState(1);
+  // GROUPS ALREADY RECORDED IN THIS MOUNT. A capture is append-only, so
+  // resubmitting one on a retry would create a second immutable revision of
+  // settings entered once - indistinguishable in the record from a genuine
+  // mid-treatment change (Codex, f175e732).
+  const [savedGroups, setSavedGroups] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -88,7 +96,13 @@ export function MachineReadingEntry({
   // silently discard numbers she typed, and submitting it would be refused by
   // the command.
   const partial = groups.filter((_, i) => readiness[i] === "partial");
-  const ready = readiness.some((r) => r === "complete") && partial.length === 0;
+  // CROSS-GROUP CONFLICTS, from the rule that already existed. The database
+  // cannot catch these: it sees two separate, individually valid calls.
+  const issues = groupIssues(profile, groups);
+  const ready =
+    readiness.some((r, i) => r === "complete" && !savedGroups.has(groups[i]!.id)) &&
+    partial.length === 0 &&
+    issues.length === 0;
 
   const setValue = (groupId: string, k: string, v: string) =>
     setGroups((prev) =>
@@ -103,7 +117,9 @@ export function MachineReadingEntry({
   async function submit() {
     setPending(true);
     setMessage(null);
-    const submissions = assembleGroupSubmissions(fieldGroups, groups);
+    // Groups already recorded are excluded, so a retry after a partial save
+    // sends only what has not been stored.
+    const submissions = assembleGroupSubmissions(fieldGroups, groups, savedGroups);
 
     // ONE CALL PER GROUP, because one capture is one group's atomic fact. The
     // consequence is reported rather than rounded: with two groups the first
@@ -126,6 +142,9 @@ export function MachineReadingEntry({
 
     setPending(false);
     setCaptures((n) => n + succeeded.length);
+    if (succeeded.length > 0) {
+      setSavedGroups((prev) => new Set([...prev, ...succeeded]));
+    }
 
     if (failed.length === 0) {
       setSaved(true);
@@ -190,6 +209,7 @@ export function MachineReadingEntry({
               // opposite of what a reading is.
               setGroups(firstGroup());
               setGroupOrdinal(1);
+              setSavedGroups(new Set());
               setMessage(null);
               setSaved(false);
             }}
@@ -224,6 +244,14 @@ export function MachineReadingEntry({
               <SectionLabel size="caption">
                 Setting group {settingIndex + 1}
               </SectionLabel>
+              {savedGroups.has(setting.id) && (
+                <span
+                  className="text-xs text-neutral-500"
+                  data-testid={`setting-group-recorded-${setting.id}`}
+                >
+                  recorded
+                </span>
+              )}
               {readiness[settingIndex] === "empty" && (
                 <Button
                   type="button"
@@ -400,6 +428,18 @@ export function MachineReadingEntry({
         {!ready && partial.length === 0 && (
           <span className="text-xs text-neutral-500">
             Enter every required field before saving.
+          </span>
+        )}
+        {issues.length > 0 && (
+          <span className="text-xs text-amber-700 dark:text-amber-500" role="status">
+            {/*
+              NAMED, because the database cannot refuse it. Each call carries
+              its own duplicate-free channel array, so two groups claiming the
+              same probe are two individually valid calls - and the result
+              would permanently record one channel under two different
+              settings.
+            */}
+            {issues[0]!.problem}
           </span>
         )}
         {partial.length > 0 && (
