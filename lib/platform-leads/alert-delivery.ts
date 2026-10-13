@@ -70,6 +70,11 @@ import type {
 export const LEAD_ALERT_LEASE_SECONDS = 120;
 /** No claim (one counted attempt) starts with less time than this left in a sweep's budget. */
 export const LEAD_ALERT_MIN_SEND_WINDOW_MS = 2_000;
+/**
+ * Kept back from a sweep's deadline so the settle after a cut-off send still
+ * lands inside the invocation (Codex decision on #831).
+ */
+export const LEAD_ALERT_SETTLE_RESERVE_MS = 1_500;
 /** One sweep's ceilings: a bounded batch, finishing well inside the route's 60 s. */
 export const LEAD_ALERT_SWEEP_MAX = 20;
 export const LEAD_ALERT_SWEEP_BUDGET_MS = 40_000;
@@ -407,14 +412,27 @@ async function claimAndSend(
   if (deadline === null) {
     outcome = await sending;
   } else {
+    // Stop waiting early enough to SETTLE inside the deadline.
+    const sendDeadline = deadline - LEAD_ALERT_SETTLE_RESERVE_MS;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let cutOff = false;
     const late = new Promise<WaitlistSendOutcome>((resolve) => {
-      timer = setTimeout(() => resolve({ status: "ambiguous", reason: "timeout" }), Math.max(0, deadline - Date.now()));
+      timer = setTimeout(() => {
+        cutOff = true;
+        resolve({ status: "ambiguous", reason: "timeout" });
+      }, Math.max(0, sendDeadline - Date.now()));
     });
     try {
       outcome = await Promise.race([sending, late]);
     } finally {
       if (timer) clearTimeout(timer);
+    }
+    if (cutOff) {
+      // NEVER ABANDONED: the request the provider may still be processing is
+      // kept alive past this response (after()), so the platform does not
+      // freeze it mid-flight. Its answer needs no record: the retry under the
+      // same key replays whatever the provider decided.
+      keepAlive(sending);
     }
   }
   return settle(admin, row, settlementFor(outcome));
@@ -485,6 +503,19 @@ export async function deliverPlatformLeadAlert(
   }
 }
 
+/** Keep an in-flight provider call alive past the response; fire-and-forget out of scope. */
+function keepAlive(work: Promise<unknown>): void {
+  const settled = work.then(
+    () => undefined,
+    () => undefined,
+  );
+  try {
+    after(settled);
+  } catch {
+    // Out of request scope: the promise already runs on its own.
+  }
+}
+
 /**
  * Send ONE just-saved lead's alert AFTER the response (Codex P2 4249961225).
  *
@@ -518,6 +549,11 @@ export function schedulePlatformLeadAlert(
 
 export type LeadAlertSweepSummary = {
   ok: boolean;
+  /**
+   * True only when the run found nothing more due. False means it stopped at
+   * its cap or budget with work possibly left: the honest backpressure signal.
+   */
+  drained: boolean;
   expired: number;
   blocked: LeadAlertConfigCode | null;
   blockedAlerts: number;
@@ -538,6 +574,7 @@ export async function sweepPlatformLeadAlerts(
 ): Promise<LeadAlertSweepSummary> {
   const summary: LeadAlertSweepSummary = {
     ok: true,
+    drained: false,
     expired: 0,
     blocked: null,
     blockedAlerts: 0,
@@ -586,11 +623,15 @@ export async function sweepPlatformLeadAlerts(
     const budget = opts.budgetMs ?? LEAD_ALERT_SWEEP_BUDGET_MS;
     const started = Date.now();
     const deadline = started + budget;
-    // A claim is one counted attempt: never start one with too little time
-    // left to give its send a fair chance.
-    for (let i = 0; i < max && deadline - Date.now() >= LEAD_ALERT_MIN_SEND_WINDOW_MS; i += 1) {
+    // A claim is one counted attempt: never start one without time for a fair
+    // send AND its settle. The loop drains until the queue is empty, the
+    // batch cap or the budget: backpressure is the budget, not a fixed count.
+    for (let i = 0; i < max && deadline - Date.now() >= LEAD_ALERT_MIN_SEND_WINDOW_MS + LEAD_ALERT_SETTLE_RESERVE_MS; i += 1) {
       const result = await claimAndSend(admin, ready, null, deadline);
-      if (result === "none") break;
+      if (result === "none") {
+        summary.drained = true;
+        break;
+      }
       if (result === "claim_error" || result === "settle_error" || result === "freeze_error") {
         // The database did not record this run's work (a lost settle leaves
         // the alert leased until its lease expires): the run FAILED, and the
@@ -635,8 +676,14 @@ export async function sweepPlatformLeadAlerts(
 // never throws: whatever happens, the reminders run's result is its own.
 
 /** Small enough that a reminders run is never meaningfully delayed. */
-export const REMINDER_TRIGGER_LEAD_ALERT_MAX = 2;
-export const REMINDER_TRIGGER_LEAD_ALERT_BUDGET_MS = 4_000;
+/**
+ * Sized by TIME, not by a tiny count (Codex P2 4253669922): up to 25 alerts
+ * per 15-minute trigger within an 8-second budget, the settle reserve
+ * included. tests/lib/platform-leads/retry-capacity.test.ts proves what this
+ * sustains and where it honestly runs out.
+ */
+export const REMINDER_TRIGGER_LEAD_ALERT_MAX = 25;
+export const REMINDER_TRIGGER_LEAD_ALERT_BUDGET_MS = 8_000;
 
 export type ReminderTriggerLeadAlertResult =
   | { ran: false; reason: LeadAlertConfigCode | "threw" }

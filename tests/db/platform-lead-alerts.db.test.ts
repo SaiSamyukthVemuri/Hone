@@ -960,3 +960,16 @@ describe("the payload is frozen per generation", () => {
     }
   });
 });
+
+// Codex P2 4253669922: FAIR scheduling. The claim serves the earliest-DUE
+// alert first, not the oldest-created, so a backlog cannot starve later alerts.
+describe("fair claim order", () => {
+  it("an older alert due LATER waits behind a newer alert due EARLIER", async () => {
+    const older = await recordDemo();
+    const newer = await recordDemo();
+    await adminQuery("update public.platform_lead_alerts set next_attempt_at = clock_timestamp() - interval '1 minute' where id = $1", [older.alert_id]);
+    await adminQuery("update public.platform_lead_alerts set next_attempt_at = clock_timestamp() - interval '30 minutes' where id = $1", [newer.alert_id]);
+    expect((await claim(null)).alert_id).toBe(newer.alert_id);
+    expect((await claim(null)).alert_id).toBe(older.alert_id);
+  });
+});

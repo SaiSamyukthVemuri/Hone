@@ -708,7 +708,16 @@ export async function GET(req: Request) {
       sms_reminder_24h,
       sms_reminder_2h,
       lead_alerts: lead_alerts.ran
-        ? { ran: true, ok: lead_alerts.summary.ok, attempted: lead_alerts.summary.attempted, accepted: lead_alerts.summary.accepted, failed: lead_alerts.summary.failed }
+        ? {
+            ran: true,
+            ok: lead_alerts.summary.ok,
+            // false = stopped at its cap or budget with work possibly left (backpressure)
+            drained: lead_alerts.summary.drained,
+            attempted: lead_alerts.summary.attempted,
+            accepted: lead_alerts.summary.accepted,
+            failed: lead_alerts.summary.failed,
+            expired: lead_alerts.summary.expired,
+          }
         : { ran: false, reason: lead_alerts.reason },
     });
   } catch (err) {

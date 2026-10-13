@@ -206,7 +206,7 @@ alter table public.platform_lead_alerts enable row level security;
 
 -- The claim's candidates: only alerts that are still open.
 create index platform_lead_alerts_open_idx
-  on public.platform_lead_alerts (created_at)
+  on public.platform_lead_alerts (next_attempt_at, created_at)
   where status in ('pending', 'sending');
 
 -- ---------------------------------------------------------------------------
@@ -392,7 +392,11 @@ begin
      and (a.first_attempted_at is null or a.first_attempted_at > v_now - interval '20 hours')
      and ((a.status = 'pending' and a.next_attempt_at <= v_now)
        or (a.status = 'sending' and a.lease_expires_at <= v_now))
-   order by a.created_at
+   -- FAIR: earliest-DUE first (Codex P2 4253669922). Ordering by creation
+   -- let the oldest alerts take every slot while later ones aged towards the
+   -- replay cutoff; due-time order serves each alert in the order its next
+   -- attempt fell due.
+   order by a.next_attempt_at, a.created_at
    limit 1
    for update of a skip locked;
 

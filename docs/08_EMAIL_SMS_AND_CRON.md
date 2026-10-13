@@ -340,13 +340,20 @@ to the prospect.
   become a visible `failed: expired`, and only the operator's Retry (a new key) sends again.
 - **When retries run.** The first attempt is sent right after the lead is saved. Retries run
   on the existing **15-minute appointment-reminders trigger**, after its reminder passes and
-  heartbeat: a bounded sweep of at most two alerts with a 4-second budget, through the same
-  worker. It is gated before any database or provider call until lead alerts are configured,
+  heartbeat: a bounded sweep through the same worker, sized by time: up to 25 alerts within
+  an 8-second budget, with 1.5 s reserved so a send cut off at the deadline still settles (as a
+  same-key retry) and the cut-off request is kept alive past the response, never abandoned.
+  Alerts are claimed earliest-due first, so a backlog cannot starve later alerts. The response
+  reports `drained`; `false` means it stopped at its cap or budget. It is gated before any database or provider call until lead alerts are configured,
   and a failure there is an ops alert (`lead_alert_recovery_failed`) and a response field,
   never a failed reminders run. The daily `/api/cron/lead-alerts` stays as a backstop. With
   this trigger every arrival minute of the day reaches all five attempts inside the 20-hour
   cutoff (proved in `tests/lib/platform-leads/retry-schedule.test.ts`, at 15- and 60-minute
-  cadence). **The daily cron alone cannot**: no arrival reaches five attempts.
+  cadence). **The daily cron alone cannot**: no arrival reaches five attempts. **Capacity is
+  finite**: `tests/lib/platform-leads/retry-capacity.test.ts` shows 300- and 1,000-alert outage
+  cohorts all delivered with a healthy provider, and that with a slow provider and a large backlog
+  some alerts expire. They become a visible `failed: expired` (ops alert
+  `platform_lead_alerts_expired`); the lead is kept and the operator's Retry sends again.
 - **States are honest.** `accepted` means the provider accepted the message. It is not a
   delivery receipt.
 - **Recipient.** `LEAD_ALERT_EMAIL`, exactly one address that is also on `ADMIN_EMAILS`.

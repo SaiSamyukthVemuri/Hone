@@ -11,9 +11,12 @@ import type { IdempotentEmailTransport } from "@/lib/email/new-client-waitlist-s
 //   * wired AFTER every reminder pass and the heartbeat, outside the failure path.
 
 vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: async () => undefined }));
+const afterCtl = vi.hoisted(() => ({ handed: [] as unknown[] }));
+vi.mock("next/server", () => ({ after: (task: unknown) => { afterCtl.handed.push(task); } }));
 
 import {
   recoverLeadAlertsOnReminderTrigger,
+  LEAD_ALERT_SETTLE_RESERVE_MS,
   REMINDER_TRIGGER_LEAD_ALERT_BUDGET_MS,
   REMINDER_TRIGGER_LEAD_ALERT_MAX,
   sweepPlatformLeadAlerts,
@@ -68,10 +71,13 @@ describe("recoverLeadAlertsOnReminderTrigger", () => {
     }
   });
 
-  it("CONFIGURED: the same worker, bounded to two alerts per trigger", async () => {
+  it("CONFIGURED: the same worker, draining until empty (drained) or its cap (not drained)", async () => {
+    const small: string[] = [];
+    const drained = await recoverLeadAlertsOnReminderTrigger({ admin: recordingAdmin(small, 3), transport, env: ENV, appOrigin: () => "https://hone.example" });
+    expect(drained).toMatchObject({ ran: true, summary: { ok: true, attempted: 3, drained: true } });
     const calls: string[] = [];
-    const out = await recoverLeadAlertsOnReminderTrigger({ admin: recordingAdmin(calls, 10), transport, env: ENV, appOrigin: () => "https://hone.example" });
-    expect(out).toMatchObject({ ran: true, summary: { ok: true, attempted: REMINDER_TRIGGER_LEAD_ALERT_MAX } });
+    const out = await recoverLeadAlertsOnReminderTrigger({ admin: recordingAdmin(calls, 100), transport, env: ENV, appOrigin: () => "https://hone.example" });
+    expect(out).toMatchObject({ ran: true, summary: { ok: true, attempted: REMINDER_TRIGGER_LEAD_ALERT_MAX, drained: false } });
     expect(calls.filter((c) => c === "claim_platform_lead_alert")).toHaveLength(REMINDER_TRIGGER_LEAD_ALERT_MAX);
     // One authority: expire, claim, freeze, settle -- nothing else.
     expect([...new Set(calls)].sort()).toEqual(["claim_platform_lead_alert", "expire_platform_lead_alerts", "freeze_platform_lead_alert_message", "settle_platform_lead_alert"]);
@@ -106,6 +112,7 @@ describe("wiring in the reminders route (source guard)", () => {
 // Codex P2 4253569253: the budget holds DURING a send, not only before it.
 describe("the sweep deadline holds during a send", () => {
   it("a provider that never answers is cut off at the budget, settled as a retry under the SAME key", async () => {
+    afterCtl.handed.length = 0;
     vi.useFakeTimers();
     try {
       const settles: Array<Record<string, unknown>> = [];
@@ -122,10 +129,15 @@ describe("the sweep deadline holds during a send", () => {
       };
       const started = Date.now();
       const running = recoverLeadAlertsOnReminderTrigger({ admin, transport: hanging, env: ENV, appOrigin: () => "https://hone.example" });
-      await vi.advanceTimersByTimeAsync(REMINDER_TRIGGER_LEAD_ALERT_BUDGET_MS);
+      // Only up to the send deadline (budget minus the settle reserve): the
+      // sweep must already be done by then.
+      await vi.advanceTimersByTimeAsync(REMINDER_TRIGGER_LEAD_ALERT_BUDGET_MS - LEAD_ALERT_SETTLE_RESERVE_MS);
       const out = await running;
-      // Finished at the budget -- not at the send's own 15 s ceiling.
-      expect(Date.now() - started).toBeLessThanOrEqual(REMINDER_TRIGGER_LEAD_ALERT_BUDGET_MS);
+      // Finished inside the budget, settle reserve included -- not at the send's own 15 s ceiling.
+      expect(Date.now() - started).toBeLessThanOrEqual(REMINDER_TRIGGER_LEAD_ALERT_BUDGET_MS - LEAD_ALERT_SETTLE_RESERVE_MS);
+      // The cut-off request is KEPT ALIVE past the response, never abandoned.
+      expect(afterCtl.handed).toHaveLength(1);
+      expect(afterCtl.handed[0]).toBeInstanceOf(Promise);
       expect(out).toMatchObject({ ran: true, summary: { ok: true, attempted: 1 } });
       expect(keys).toHaveLength(1);
       expect(settles).toEqual([expect.objectContaining({ p_outcome: "retry", p_error_code: "provider_timeout" })]);
@@ -136,7 +148,7 @@ describe("the sweep deadline holds during a send", () => {
 
   it("no claim (a counted attempt) starts when too little of the budget is left", async () => {
     const calls: string[] = [];
-    const out = await sweepPlatformLeadAlerts({ admin: recordingAdmin(calls, 10), transport, env: ENV, appOrigin: () => "https://hone.example", maxAlerts: 5, budgetMs: 1_500 });
+    const out = await sweepPlatformLeadAlerts({ admin: recordingAdmin(calls, 10), transport, env: ENV, appOrigin: () => "https://hone.example", maxAlerts: 5, budgetMs: 3_000 });
     expect(out).toMatchObject({ ok: true, attempted: 0 });
     expect(calls).not.toContain("claim_platform_lead_alert");
   });
