@@ -46,7 +46,8 @@
 --   8. record_platform_lead_alerts_unconfigured(code, alert) -- records that no
 --      attempt could be made because SERVER configuration is missing (the
 --      recipient, its allowlisting, the email transport or the console
---      origin). It consumes no attempt and is never success.
+--      origin). It consumes no attempt and is never success. An abandoned
+--      send (expired lease) returns to pending with its lease cleared.
 --   9. requeue_platform_lead_alert(alert) -- the operator's explicit retry of
 --      a FAILED alert, under a fresh idempotency generation.
 --  10. Privileges: the table and every command are service_role only.
@@ -658,6 +659,23 @@ $$;
 -- No attempt was possible, so none is counted and nothing is claimed: the
 -- open alert (one, or every pending one when p_alert_id is NULL) records why
 -- it is still waiting. Returns how many alerts it annotated.
+--
+-- AN ABANDONED SEND IS NOT AN ACTIVE ONE (Codex P2 4261478391). A `sending`
+-- row whose lease has EXPIRED belongs to a worker that died or lost its
+-- settle. With configuration blocked nothing reclaims it, so it would read as
+-- an active send in /admin until the expiry. Such a row returns to `pending`
+-- with its lease cleared and the blocker recorded, in the SAME statement that
+-- annotates the pending rows:
+--   * FENCED: the lease test is re-evaluated on the locked row, so a lease a
+--     claim renewed meanwhile is not touched, and a LIVE lease never is. The
+--     old worker's token is cleared, so its freeze or settle answers
+--     stale_claim.
+--   * NOTHING ELSE CHANGES: the attempt count, first attempt, next due time,
+--     generation (so the idempotency key) and frozen message are kept, so the
+--     next claim is the same replay-safe retry it would have been, under the
+--     same five attempts and replay windows.
+--   * Only rows the claim could still take move: one past its attempts or
+--     windows is left for expire_platform_lead_alerts() to fail.
 create or replace function public.record_platform_lead_alerts_unconfigured(
   p_error_code text,
   p_alert_id   uuid
@@ -679,10 +697,19 @@ begin
   end if;
 
   update public.platform_lead_alerts a
-     set last_error_code = p_error_code,
-         last_error_at   = v_now
-   where a.status = 'pending'
-     and (p_alert_id is null or a.id = p_alert_id);
+     set status           = 'pending',
+         claim_token      = null,
+         claimed_at       = null,
+         lease_expires_at = null,
+         last_error_code  = p_error_code,
+         last_error_at    = v_now
+   where (p_alert_id is null or a.id = p_alert_id)
+     and (a.status = 'pending'
+       or (a.status = 'sending'
+           and a.lease_expires_at <= v_now
+           and a.attempt_count < 5
+           and coalesce(a.retry_requested_at, a.event_at) > v_now - interval '72 hours'
+           and (a.first_attempted_at is null or a.first_attempted_at > v_now - interval '20 hours')));
   get diagnostics v_count = row_count;
   return v_count;
 end;
@@ -818,7 +845,7 @@ comment on function public.settle_platform_lead_alert(uuid, uuid, text, text, te
 comment on function public.expire_platform_lead_alerts() is
   'LEAD-ALERT-01 (0213): fails alerts unsent 72 hours after their lead (or the operator''s retry) or 20 hours after their first attempt, or abandoned on their fifth attempt. service_role only.';
 comment on function public.record_platform_lead_alerts_unconfigured(text, uuid) is
-  'LEAD-ALERT-01 (0213): records a configuration blocker on pending alerts without counting an attempt; never success. service_role only.';
+  'LEAD-ALERT-01 (0213): records a configuration blocker on pending alerts, and returns abandoned sends (expired lease, still claimable) to pending with their lease cleared, without counting an attempt or changing the idempotency generation; a live lease is never touched; never success. service_role only.';
 comment on function public.requeue_platform_lead_alert(uuid) is
   'LEAD-ALERT-01 (0213): the operator''s explicit retry of a FAILED alert, with a fresh attempt budget, window and idempotency generation. service_role only.';
 

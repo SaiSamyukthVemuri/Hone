@@ -369,7 +369,11 @@ to the prospect.
 - **Recipient.** `LEAD_ALERT_EMAIL`, exactly one address that is also on `ADMIN_EMAILS`.
   Missing or refused configuration, a missing `RESEND_API_KEY` or a missing
   `NEXT_PUBLIC_APP_ORIGIN` sends nothing and spends no attempt. The alert records the
-  blocker and `/admin` shows **Lead alerts: Not sending**.
+  blocker and `/admin` shows **Lead alerts: Not sending**. A send abandoned by a worker
+  that died (its lease expired) is not left looking active: in the same statement it
+  returns to pending with the blocker, keeping its attempts, key and frozen message, and
+  the old worker's late settle is refused. A live lease is never touched, and one past
+  its attempts or replay window is left for expiry to fail.
 - **Content.** Name, email, practice, city, practice type, practitioner count, current tool
   when given, event and time, and a sign-in-required link to the lead's own page,
   `/admin/leads/<demo-request|early-access>/<id>`. The page is admin-only (404 for anyone else)
