@@ -60,7 +60,7 @@ describe("blast radius", () => {
     // only in the null check and the comparison.
     expect(fn).toMatch(/values\s+\(p_studio_id, v_live\[1\], v_phones\[1\], v_kind/);
     expect(fn.match(/p_expected_sender_id/g)).toHaveLength(3);
-    expect(CODE).toMatch(/where s\.studio_id = p_studio_id\s+and s\.status <> 'released'\s+for share/);
+    expect(CODE).toMatch(/where s\.studio_id = p_studio_id\s+and s\.status <> 'released'\s+for update\) l;/);
     expect(CODE).toMatch(/security definer\s+set search_path = pg_catalog, pg_temp/);
   });
 });
@@ -96,7 +96,9 @@ describe("privileges", () => {
   });
 
   it("the writer is compare-and-set on the expected sender, with the sender row locked", () => {
-    expect(CODE).toMatch(/for share\) l;/);
+    // Serialized: concurrent record writes take turns (Codex P2 on #844).
+    expect(CODE).toMatch(/for update\) l;/);
+    expect(CODE).not.toMatch(/for share\) l;/);
     expect(CODE).toMatch(/if v_live\[1\] <> p_expected_sender_id then\s+return query select 'sender_changed'/);
   });
 

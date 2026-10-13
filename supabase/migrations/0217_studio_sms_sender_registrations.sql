@@ -130,13 +130,16 @@ begin
 
   -- The studio's LIVE sender, LOCKED until this transaction ends: a release
   -- or replacement waits for this write, or this write sees it and refuses.
+  -- FOR UPDATE, not FOR SHARE (Codex P2 on #844, "serialize concurrent
+  -- registration writes"): two operators recording at once now take turns,
+  -- so the status each write replaces, and audits, is the one actually there.
   select array_agg(l.id), array_agg(l.phone_number)
     into v_live, v_phones
     from (select s.id, s.phone_number
             from public.studio_sms_senders s
            where s.studio_id = p_studio_id
              and s.status <> 'released'
-             for share) l;
+             for update) l;
   if v_live is null then
     return query select 'no_live_sender'::text, null::uuid, null::text, null::text;
     return;
