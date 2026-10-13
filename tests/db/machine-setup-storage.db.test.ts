@@ -651,10 +651,15 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
         `insert into public.treatment_setup_readings
            (capture_id, studio_id, session_block_id, machine_profile_id,
             machine_profile_version, mode_key, group_key, field_key,
-            value_numeric, native_unit, decimals, observation_source, revision)
+            value_numeric, native_unit, decimals, observation_source, revision,
+            studio_machine_id)
+         -- studio_machine_id is carried over too: it is NOT NULL, so
+         -- omitting it refuses on the not-null constraint before the unique
+         -- index under test is ever reached.
          select capture_id, studio_id, session_block_id, machine_profile_id,
                 machine_profile_version, mode_key, group_key, field_key,
-                999, native_unit, decimals, observation_source, revision
+                999, native_unit, decimals, observation_source, revision,
+                studio_machine_id
            from public.treatment_setup_readings
           where session_block_id = $1 and field_key = 'current'`,
         [blockId],

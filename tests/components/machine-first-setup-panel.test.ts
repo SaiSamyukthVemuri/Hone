@@ -23,9 +23,8 @@ const { MachineFirstSetupPanel } = await import(
 const { MachineFirstSetupConnected } = await import(
   "@/components/machines/machine-first-setup-connected"
 );
-const { NO_PERSISTENCE, TEST_STORE_PERSISTENCE } = await import(
-  "@/lib/machines/selection-store"
-);
+const { NO_PERSISTENCE, DATABASE_PERSISTENCE, TEST_STORE_PERSISTENCE } =
+  await import("@/lib/machines/selection-store");
 const { readFileSync } = await import("node:fs");
 const nodePath = (await import("node:path")).default;
 
@@ -713,5 +712,61 @@ describe("an obsolete setup is rendered from the RECORDING, never from today's c
     });
     const prior = html.slice(html.indexOf('data-testid="machine-prior-setup"'));
     expect(prior).toContain("300.5");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A STORED-BUT-UNUSABLE MACHINE IS EXPLAINED, not silently dropped.
+//
+// The loader used to forward the stored device id whatever its state, and
+// `selectableDevices` then correctly excluded it - so the panel rendered an
+// empty picker while the status line still said a machine was remembered, and
+// the reason `resolveSelection` had already produced was never shown
+// (Codex, 1a39a51f).
+// ---------------------------------------------------------------------------
+describe("a stored machine that cannot be used says so", () => {
+  const WHY =
+    "Room 1 demo was taken out of service. Choose a replacement — nothing is selected for you.";
+  // DATABASE_PERSISTENCE deliberately: with NO_PERSISTENCE the status line
+  // takes its "no. <reason>" branch and never prints "nothing yet" at all, so
+  // the assertions below would hold whatever the component did. The control at
+  // the end of this block is what caught that.
+  const html = render({
+    scope: SCOPE,
+    devices: [DEVICE],
+    catalogue: CAT,
+    persistence: DATABASE_PERSISTENCE,
+    unavailableSelection: { deviceId: "device-gone", reason: WHY },
+  });
+
+  it("states the reason", () => {
+    expect(html).toContain('data-testid="machine-selection-not-remembered"');
+    expect(html).toContain("taken out of service");
+  });
+
+  it("shows NOTHING as chosen, because nothing may be charted on it", () => {
+    expect(html).not.toContain('data-testid="machine-chosen"');
+  });
+
+  it("still offers the picker, so a replacement can be chosen", () => {
+    expect(html).toContain(`machine-pick-${DEVICE.deviceId}`);
+  });
+
+  it("does not claim nothing is remembered, because something is", () => {
+    // The database does hold the unusable machine. Reporting "nothing yet"
+    // here would be the failed-clear lie in a new costume.
+    const status = html.slice(html.indexOf('data-testid="machine-first-status"'));
+    expect(status).not.toContain("nothing yet");
+  });
+
+  it("CONTROL: without it, the panel neither explains nor warns", () => {
+    const plain = render({
+      scope: SCOPE,
+      devices: [DEVICE],
+      catalogue: CAT,
+      persistence: DATABASE_PERSISTENCE,
+    });
+    expect(plain).not.toContain('data-testid="machine-selection-not-remembered"');
+    expect(plain).toContain("nothing yet");
   });
 });

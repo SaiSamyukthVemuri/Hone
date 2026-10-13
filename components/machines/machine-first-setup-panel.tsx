@@ -8,6 +8,7 @@ import {
   initialSelection,
   selectionRequested,
   selectionSettled,
+  unusableSelection,
   type SelectionState,
 } from "@/lib/machines/selection-state";
 import {
@@ -67,6 +68,15 @@ export type MachineFirstSetupPanelProps = {
   scope?: SelectionScope | null;
   /** Pre-selected device, so a server render can show the chosen state. */
   initialDeviceId?: string | null;
+  /**
+   * A stored machine that CANNOT be used, with the reason, when the server
+   * resolved one. Mutually exclusive with `initialDeviceId`: the loader sets
+   * one or the other, never both, because a selection is either usable or it
+   * is this. Supplying it shows nothing chosen AND says why, instead of
+   * leaving the practitioner with an empty picker and a status line claiming a
+   * machine is remembered (Codex, 1a39a51f).
+   */
+  unavailableSelection?: { deviceId: string; reason: string } | null;
   /** Injectable for tests and for a future studio-scoped catalogue. */
   catalogue?: readonly MachineProfile[];
   /**
@@ -137,6 +147,7 @@ export function MachineFirstSetupPanel({
   blockId = null,
   canManageMachines = false,
   priorSetup = [],
+  unavailableSelection = null,
   onSelectMachine,
   onRecord,
 }: MachineFirstSetupPanelProps) {
@@ -149,7 +160,12 @@ export function MachineFirstSetupPanel({
   // where it has an exhaustive truth table, and this component only applies it.
   // That module's header records both failures.
   const [selection, setSelection] = useState<SelectionState>(() =>
-    initialSelection(initialDeviceId),
+    // A stored machine that cannot be charted on is NOT a selection, but it is
+    // still stored, and the reason has to be visible. `unusableSelection`
+    // keeps all three facts straight; see lib/machines/selection-state.
+    unavailableSelection
+      ? unusableSelection(unavailableSelection.deviceId, unavailableSelection.reason)
+      : initialSelection(initialDeviceId),
   );
   const deviceId = selection.selected;
   const selectionNote = selection.note;

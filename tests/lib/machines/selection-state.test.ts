@@ -6,6 +6,7 @@ import {
   initialSelection,
   selectionRequested,
   selectionSettled,
+  unusableSelection,
   type SelectionState,
 } from "@/lib/machines/selection-state";
 
@@ -193,5 +194,60 @@ describe("the stored fact only ever changes through an acknowledged write", () =
     // Non-vacuity: the acknowledged branch really ran, so the loop is not
     // passing merely because nothing matched it.
     expect(acknowledged).toBe(starts.length * nexts.length);
+  });
+});
+
+describe("a STORED machine that cannot be used is stored, not selected", () => {
+  // The fourth variant of the same question: the store holds a machine that is
+  // retired, deregistered, points at an unknown or inactive profile, or was
+  // registered against a contract version the catalogue has moved past. The
+  // panel previously showed an empty picker beside a status line claiming a
+  // machine was remembered, with none of the explanation the server had
+  // already computed (Codex, 1a39a51f).
+  const WHY = "Unit 3 was taken out of service. Choose a replacement.";
+
+  it("reports it as stored, because it IS stored", () => {
+    const s = unusableSelection(A, WHY);
+    expect(s.persisted, "the database really does hold it").toBe(A);
+  });
+
+  it("does NOT report it as selected, because nothing may be charted on it", () => {
+    expect(unusableSelection(A, WHY).selected).toBeNull();
+  });
+
+  it("carries the reason, which is the whole point", () => {
+    expect(unusableSelection(A, WHY).note).toBe(WHY);
+  });
+
+  it("is not reachable by accident: it differs from both other constructors", () => {
+    // initialSelection(A) would claim it is selected; initialSelection(null)
+    // would claim nothing is stored. Each is one of the two lies this module
+    // exists to prevent.
+    const u = unusableSelection(A, WHY);
+    expect(u).not.toEqual(initialSelection(A));
+    expect(u).not.toEqual(initialSelection(null));
+  });
+
+  it("CHOOSING A REPLACEMENT clears the note and stores the new machine", () => {
+    const after = selectionSettled(
+      selectionRequested(unusableSelection(A, WHY), B),
+      B,
+      { ok: true },
+    );
+    expect(after).toEqual({ selected: B, persisted: B, note: null });
+  });
+
+  it("a FAILED replacement keeps the unusable machine as the stored fact", () => {
+    // It is still what the database holds, so it is still what is reported -
+    // and the failure note replaces the unavailable note, because the failure
+    // is now the more immediate thing to say.
+    const after = selectionSettled(
+      selectionRequested(unusableSelection(A, WHY), B),
+      B,
+      { ok: false },
+    );
+    expect(after.selected).toBe(B);
+    expect(after.persisted).toBe(A);
+    expect(after.note).toBe(FAILED_SET_NOTE);
   });
 });

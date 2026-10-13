@@ -18,6 +18,7 @@ import {
   type RecordedReading,
 } from "@/lib/machines/machine-queries";
 import {
+  resolveSelection,
   selectDevice,
   selectableDevices,
   type SelectionScope,
@@ -97,7 +98,18 @@ export type MachineSetupContext = {
   devices: StudioDevice[];
   /** Set when there is nothing to offer and the reason is worth showing. */
   inventoryReason: string | null;
+  /** The stored selection, ONLY when it is actually usable for charting. */
   remembered: { deviceId: string; modeKey: string | null } | null;
+  /**
+   * Set when the store holds a machine that cannot be used, with the reason.
+   *
+   * Forwarding the stored id raw made the panel show nothing chosen - because
+   * `selectableDevices` excludes a retired, deregistered, unknown-profile or
+   * stale-version unit - while still reporting a machine as remembered, and
+   * with none of the explanation `resolveSelection` had already produced
+   * (Codex, 1a39a51f).
+   */
+  rememberedUnavailable: { deviceId: string; reason: string } | null;
   persistence: PersistenceCapability;
   /**
    * The catalogue the SERVER resolved. Carries the synthetic demo profile only
@@ -115,6 +127,7 @@ const ANONYMOUS: MachineSetupContext = {
   devices: [],
   inventoryReason: null,
   remembered: null,
+  rememberedUnavailable: null,
   persistence: NO_PERSISTENCE,
   catalogue: [],
   canManageMachines: false,
@@ -141,13 +154,43 @@ export async function loadMachineSetupContext(input: {
 
   const inventory = await listStudioDevices(db, scope.studioId);
 
+  // RESOLVED AGAINST THE CURRENT INVENTORY AND CATALOGUE, not forwarded raw.
+  //
+  // `resolveSelection` already distinguishes ready / unavailable /
+  // not-verified and carries the reason for each; this loader used to skip it
+  // and hand the panel the stored id whatever its state. The panel then
+  // rendered no chosen machine - `selectableDevices` correctly excludes a
+  // retired, deregistered, unknown-profile or stale-version unit - while the
+  // status line still reported one as remembered, with no explanation
+  // (Codex, 1a39a51f).
   let remembered: MachineSetupContext["remembered"] = null;
+  let rememberedUnavailable: MachineSetupContext["rememberedUnavailable"] = null;
   let persistence = DATABASE_PERSISTENCE;
   try {
-    const stored = await store(db).read(scope);
-    remembered = stored
-      ? { deviceId: stored.deviceId, modeKey: stored.modeKey }
-      : null;
+    const resolved = await resolveSelection(
+      scope,
+      inventory.devices,
+      store(db),
+      catalogue,
+    );
+    if (resolved.state === "ready") {
+      remembered = {
+        deviceId: resolved.device.deviceId,
+        modeKey: resolved.mode?.key ?? null,
+      };
+    } else if (resolved.state === "unavailable") {
+      rememberedUnavailable = {
+        deviceId: resolved.deviceId,
+        reason: resolved.reason,
+      };
+    } else if (resolved.state === "not-verified") {
+      rememberedUnavailable = {
+        deviceId: resolved.device.deviceId,
+        reason: resolved.reason,
+      };
+    }
+    // "none" leaves both null: nothing is stored, which is not a problem to
+    // report.
   } catch {
     // A failed read must not claim the choice is kept. The panel then says so.
     persistence = NO_PERSISTENCE;
@@ -160,6 +203,7 @@ export async function loadMachineSetupContext(input: {
     devices: inventory.devices,
     inventoryReason: inventory.reason,
     remembered,
+    rememberedUnavailable,
     persistence,
     catalogue,
     canManageMachines: who?.practitioner.role === "owner",

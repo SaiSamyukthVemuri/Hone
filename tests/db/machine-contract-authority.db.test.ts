@@ -132,6 +132,86 @@ const ok = (field: string, value: string): Reading => ({
   observation_source: "practitioner-entered",
 });
 
+// ---------------------------------------------------------------------------
+// CONCURRENCY HELPERS, at module scope because three describe blocks use
+// them: the session/block race, the machine race, and machine agreement.
+// ---------------------------------------------------------------------------
+/** An authenticated connection of its own, inside an open transaction. */
+async function party(userId: string): Promise<{ c: Client; pid: number }> {
+  const c = new Client({ connectionString: resolveLocalDbUrl() });
+  await c.connect();
+  await c.query("begin");
+  await c.query("set local role authenticated");
+  await c.query("select set_config('request.jwt.claims', $1, true)", [
+    JSON.stringify({ sub: userId, role: "authenticated" }),
+  ]);
+  const pid = Number((await c.query("select pg_backend_pid() as pid")).rows[0].pid);
+  return { c, pid };
+}
+
+const recordOn = (c: Client, blockId: string, machineId: string, value: string) =>
+  c.query(
+    `select public.record_treatment_setup_group($1,$2,'galvanic','g','{}'::smallint[],$3::jsonb) as n`,
+    [blockId, machineId, JSON.stringify([ok("current", value)])],
+  );
+
+type Settled =
+  | { ok: true; rows: Array<Record<string, unknown>> }
+  | { ok: false; code: string; message: string };
+
+/**
+ * Attach the handler AT CREATION, not at the await.
+ *
+ * A deferred query that rejects while the test is doing something else -
+ * waiting on `expectBlockedOn`, losing a deadlock, closing a connection - is
+ * an orphaned rejection, which Vitest reports as an Unhandled Rejection and
+ * warns can make tests falsely pass. Converting to a settled shape
+ * immediately removes the window rather than policing it.
+ */
+/**
+ * A deferred query that may never settle, bounded.
+ *
+ * Every failure mode in this section is a WAIT, not an error: a lock that is
+ * never released, a cycle that never forms, a transaction whose release the
+ * test is itself blocking. Unbounded, each one stalls to the runner's
+ * timeout and reports "Test timed out", which says nothing about which lock
+ * was held by whom. The fallback carries the diagnosis instead.
+ */
+const bounded = (p: Promise<Settled>, why: string, ms = 6000): Promise<Settled> =>
+  Promise.race([
+    p,
+    new Promise<Settled>((resolve) =>
+      setTimeout(() => resolve({ ok: false, code: "TEST_TIMEOUT", message: why }), ms),
+    ),
+  ]);
+
+const settle = (p: Promise<{ rows: unknown[] }>): Promise<Settled> =>
+  p.then(
+    (r) => ({ ok: true as const, rows: r.rows as Array<Record<string, unknown>> }),
+    (e: { code?: string; message?: string }) => ({
+      ok: false as const,
+      code: e.code ?? "?",
+      message: e.message ?? String(e),
+    }),
+  );
+
+const captureCount = async (blockId: string): Promise<number> => {
+  const r = await adminQuery(
+    `select count(*)::int as c from public.treatment_setup_captures
+      where session_block_id = $1`,
+    [blockId],
+  );
+  return r.rows[0].c as number;
+};
+
+async function scene(label: string, version: number) {
+  const studio = await seedStudio(label);
+  const { sessionId, blockId } = await seedSession(studio);
+  await publish(version);
+  const machineId = await register(studio, version);
+  return { studio, sessionId, blockId, machineId };
+}
+
 afterAll(async () => {
   await closePool();
 });
@@ -727,13 +807,19 @@ describe("0223 · a reading cannot be an ORPHAN or disagree with its capture", (
   let studio: SeededStudio;
   let blockId: string;
   let captureId: string;
+  // NAMED, because `studio_machine_id` is NOT NULL: an insert that omits it is
+  // refused by the not-null constraint BEFORE reaching the foreign key under
+  // test, and a refusal test that passes on the wrong constraint proves
+  // nothing. That is the same trap the `duration`-not-`current` comment below
+  // records, one column over.
+  let machineId: string;
 
   const setup = async () => {
     if (studio) return;
     studio = await seedStudio("orphan");
     blockId = (await seedSession(studio)).blockId;
     await publish(100);
-    const machineId = await register(studio, 100);
+    machineId = await register(studio, 100);
     await recordAs(studio.userId, blockId, machineId, "g", [ok("current", "100")]);
     const r = await adminQuery(
       `select id from public.treatment_setup_captures where session_block_id = $1`,
@@ -769,14 +855,15 @@ describe("0223 · a reading cannot be an ORPHAN or disagree with its capture", (
         `insert into public.treatment_setup_readings
            (capture_id, studio_id, session_block_id, machine_profile_id,
             machine_profile_version, mode_key, group_key, field_key,
-            value_numeric, native_unit, decimals, observation_source, revision)
+            value_numeric, native_unit, decimals, observation_source, revision,
+            studio_machine_id)
          values ($1, $2, $3, 'x', 1, 'galvanic', 'g', 'duration', 1, 's', 1,
-                 'practitioner-entered', 1)`,
+                 'practitioner-entered', 1, $4)`,
         // `duration` rather than `current`: the capture already holds a
         // `current`, so reusing it trips the (capture_id, stage, field) unique
         // index FIRST and the test would pass on the wrong constraint. A
         // refusal test that does not name its constraint proves nothing.
-        [captureId, studio.studioId, other.blockId],
+        [captureId, studio.studioId, other.blockId, machineId],
       ),
     ).rejects.toThrow(/treatment_setup_readings_capture_fk|foreign key/i);
   });
@@ -788,10 +875,11 @@ describe("0223 · a reading cannot be an ORPHAN or disagree with its capture", (
         `insert into public.treatment_setup_readings
            (capture_id, studio_id, session_block_id, machine_profile_id,
             machine_profile_version, mode_key, group_key, field_key,
-            value_numeric, native_unit, decimals, observation_source, revision)
+            value_numeric, native_unit, decimals, observation_source, revision,
+            studio_machine_id)
          values ($1, $2, $3, 'x', 1, 'galvanic', 'g', 'duration',
-                 1, 's', 1, 'practitioner-entered', 7)`,
-        [captureId, studio.studioId, blockId],
+                 1, 's', 1, 'practitioner-entered', 7, $4)`,
+        [captureId, studio.studioId, blockId, machineId],
       ),
     ).rejects.toThrow(/treatment_setup_readings_capture_fk|foreign key/i);
   });
@@ -804,10 +892,11 @@ describe("0223 · a reading cannot be an ORPHAN or disagree with its capture", (
         `insert into public.treatment_setup_readings
            (capture_id, studio_id, session_block_id, machine_profile_id,
             machine_profile_version, mode_key, group_key, field_key,
-            value_numeric, native_unit, decimals, observation_source, revision)
+            value_numeric, native_unit, decimals, observation_source, revision,
+            studio_machine_id)
          values ($1, $2, $3, 'x', 1, 'galvanic', 'g', 'duration',
-                 1, 's', 1, 'practitioner-entered', 1)`,
-        [captureId, elsewhere.studioId, blockId],
+                 1, 's', 1, 'practitioner-entered', 1, $4)`,
+        [captureId, elsewhere.studioId, blockId, machineId],
       ),
     ).rejects.toThrow(/treatment_setup_readings_capture_fk|foreign key/i);
   });
@@ -827,10 +916,12 @@ describe("0223 · a reading cannot be an ORPHAN or disagree with its capture", (
       `insert into public.treatment_setup_readings
          (capture_id, studio_id, session_block_id, machine_profile_id,
           machine_profile_version, mode_key, group_key, channels, field_key,
-          value_numeric, native_unit, decimals, observation_source, revision)
+          value_numeric, native_unit, decimals, observation_source, revision,
+          studio_machine_id)
        select c.id, c.studio_id, c.session_block_id, c.machine_profile_id,
               c.machine_profile_version, c.mode_key, c.group_key, c.channels,
-              'duration', 1, 's', 1, 'practitioner-entered', c.revision
+              'duration', 1, 's', 1, 'practitioner-entered', c.revision,
+              c.studio_machine_id
          from public.treatment_setup_captures c where c.id = $1`,
       [captureId],
     );
@@ -854,11 +945,13 @@ describe("0223 · a reading cannot be an ORPHAN or disagree with its capture", (
         `insert into public.treatment_setup_readings
            (capture_id, studio_id, session_block_id, machine_profile_id,
             machine_profile_version, mode_key, group_key, channels, field_key,
-            value_numeric, native_unit, decimals, observation_source, revision)
+            value_numeric, native_unit, decimals, observation_source, revision,
+            studio_machine_id)
          select c.id, c.studio_id, c.session_block_id,
                 'a-different-machine',  -- the only change
                 c.machine_profile_version, c.mode_key, c.group_key, c.channels,
-                'reps', 1, 'count', 0, 'practitioner-entered', c.revision
+                'reps', 1, 'count', 0, 'practitioner-entered', c.revision,
+                c.studio_machine_id
            from public.treatment_setup_captures c where c.id = $1`,
         [captureId],
       ),
@@ -872,12 +965,14 @@ describe("0223 · a reading cannot be an ORPHAN or disagree with its capture", (
         `insert into public.treatment_setup_readings
            (capture_id, studio_id, session_block_id, machine_profile_id,
             machine_profile_version, mode_key, group_key, channels, field_key,
-            value_numeric, native_unit, decimals, observation_source, revision)
+            value_numeric, native_unit, decimals, observation_source, revision,
+            studio_machine_id)
          select c.id, c.studio_id, c.session_block_id, c.machine_profile_id,
                 c.machine_profile_version,
                 'a-different-mode',     -- the only change
                 c.group_key, c.channels,
-                'reps', 1, 'count', 0, 'practitioner-entered', c.revision
+                'reps', 1, 'count', 0, 'practitioner-entered', c.revision,
+                c.studio_machine_id
            from public.treatment_setup_captures c where c.id = $1`,
         [captureId],
       ),
@@ -1018,82 +1113,6 @@ describe("0223 · retrieval returns ONE coherent capture, never a composite", ()
 // would park and `expectBlockedOn` would fail.
 // ---------------------------------------------------------------------------
 describe("0223 - recording and RETIREMENT serialise, in both race orders", () => {
-  /** An authenticated connection of its own, inside an open transaction. */
-  async function party(userId: string): Promise<{ c: Client; pid: number }> {
-    const c = new Client({ connectionString: resolveLocalDbUrl() });
-    await c.connect();
-    await c.query("begin");
-    await c.query("set local role authenticated");
-    await c.query("select set_config('request.jwt.claims', $1, true)", [
-      JSON.stringify({ sub: userId, role: "authenticated" }),
-    ]);
-    const pid = Number((await c.query("select pg_backend_pid() as pid")).rows[0].pid);
-    return { c, pid };
-  }
-
-  const recordOn = (c: Client, blockId: string, machineId: string, value: string) =>
-    c.query(
-      `select public.record_treatment_setup_group($1,$2,'galvanic','g','{}'::smallint[],$3::jsonb) as n`,
-      [blockId, machineId, JSON.stringify([ok("current", value)])],
-    );
-
-  type Settled =
-    | { ok: true; rows: Array<Record<string, unknown>> }
-    | { ok: false; code: string; message: string };
-
-  /**
-   * Attach the handler AT CREATION, not at the await.
-   *
-   * A deferred query that rejects while the test is doing something else -
-   * waiting on `expectBlockedOn`, losing a deadlock, closing a connection - is
-   * an orphaned rejection, which Vitest reports as an Unhandled Rejection and
-   * warns can make tests falsely pass. Converting to a settled shape
-   * immediately removes the window rather than policing it.
-   */
-  /**
-   * A deferred query that may never settle, bounded.
-   *
-   * Every failure mode in this section is a WAIT, not an error: a lock that is
-   * never released, a cycle that never forms, a transaction whose release the
-   * test is itself blocking. Unbounded, each one stalls to the runner's
-   * timeout and reports "Test timed out", which says nothing about which lock
-   * was held by whom. The fallback carries the diagnosis instead.
-   */
-  const bounded = (p: Promise<Settled>, why: string, ms = 6000): Promise<Settled> =>
-    Promise.race([
-      p,
-      new Promise<Settled>((resolve) =>
-        setTimeout(() => resolve({ ok: false, code: "TEST_TIMEOUT", message: why }), ms),
-      ),
-    ]);
-
-  const settle = (p: Promise<{ rows: unknown[] }>): Promise<Settled> =>
-    p.then(
-      (r) => ({ ok: true as const, rows: r.rows as Array<Record<string, unknown>> }),
-      (e: { code?: string; message?: string }) => ({
-        ok: false as const,
-        code: e.code ?? "?",
-        message: e.message ?? String(e),
-      }),
-    );
-
-  const captureCount = async (blockId: string): Promise<number> => {
-    const r = await adminQuery(
-      `select count(*)::int as c from public.treatment_setup_captures
-        where session_block_id = $1`,
-      [blockId],
-    );
-    return r.rows[0].c as number;
-  };
-
-  async function scene(label: string, version: number) {
-    const studio = await seedStudio(label);
-    const { sessionId, blockId } = await seedSession(studio);
-    await publish(version);
-    const machineId = await register(studio, version);
-    return { studio, sessionId, blockId, machineId };
-  }
-
   it("RECORD first: the retirement PARKS on the capture's lock, and the capture stands", async () => {
     const { studio, sessionId, blockId, machineId } = await scene("race-rec-first", 110);
     const rec = await party(studio.userId);
@@ -1417,5 +1436,366 @@ describe("0223 - recording and RETIREMENT serialise, in both race orders", () =>
         await y.c.end();
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE MACHINE IS THE THIRD ROW THAT WAS VALIDATED WITHOUT BEING HELD.
+//
+// The first repair of the capture/retirement race locked the session and the
+// block and stopped there. The same hole was one table over the whole time:
+// `record_treatment_setup_group` read the machine's `retired_at` without
+// holding the row, and `set_own_default_machine` did the same - so
+// `retire_studio_machine` could commit in between. The capture is IMMUTABLE,
+// so the first case permanently records a setup against a unit that was out
+// of service; the second quietly UNDOES the retirement's own cleanup, because
+// retirement clears the machine from every practitioner default and this
+// command then writes it back (Codex, 87c88017 and 1a39a51f).
+//
+// THE TOTAL ORDER these tests hold the migration to:
+//     sessions -> session_blocks -> studio_machines -> practitioners
+// ---------------------------------------------------------------------------
+describe("0223 - the MACHINE serialises with its own retirement", () => {
+  it("RETIRE the machine, then record: the capture PARKS, then REFUSES", async () => {
+    const { studio, blockId, machineId } = await scene("race-machine-ret", 118);
+    const ret = await party(studio.userId);
+    const rec = await party(studio.userId);
+    try {
+      // The owner retires the unit, uncommitted and so invisible to the
+      // recorder's first read.
+      await ret.c.query(`select public.retire_studio_machine($1)`, [machineId]);
+
+      const recording = settle(recordOn(rec.c, blockId, machineId, "190"));
+      const wait = await expectBlockedOn(
+        rec.pid,
+        "the capture must park acquiring the machine lock the retirement holds",
+      );
+      expect(wait).toMatch(/^Lock\//);
+
+      await ret.c.query("commit");
+
+      const out = await recording;
+      expect(out.ok, "a capture against a retired unit must be refused").toBe(false);
+      expect(!out.ok && out.message).toMatch(/out of service/i);
+      expect(!out.ok && out.code, "a refusal, never a deadlock abort").not.toBe("40P01");
+      expect(await captureCount(blockId)).toBe(0);
+      await rec.c.query("rollback");
+    } finally {
+      await ret.c.end();
+      await rec.c.end();
+    }
+  });
+
+  it("POSITIVE CONTROL: a retirement that ROLLS BACK does not refuse the capture", async () => {
+    const { studio, blockId, machineId } = await scene("race-machine-roll", 119);
+    const ret = await party(studio.userId);
+    const rec = await party(studio.userId);
+    try {
+      await ret.c.query(`select public.retire_studio_machine($1)`, [machineId]);
+      const recording = settle(recordOn(rec.c, blockId, machineId, "200"));
+      await expectBlockedOn(rec.pid, "the capture must park on the machine lock");
+      await ret.c.query("rollback");
+      const out = await recording;
+      expect(out.ok, `the capture must succeed: ${!out.ok && out.message}`).toBe(true);
+      await rec.c.query("commit");
+      expect(await captureCount(blockId)).toBe(1);
+    } finally {
+      await ret.c.end();
+      await rec.c.end();
+    }
+  });
+
+  it("RETIRE, then REMEMBER: the retirement's cleanup is not undone", async () => {
+    // The sharper of the two. `retire_studio_machine` stamps `retired_at` AND
+    // clears the machine from every practitioner default. Unlocked, this
+    // command observes the unit live, waits, and then writes it back as a
+    // default - so the unit is out of service and still remembered, with the
+    // retirement's own cleanup silently reversed.
+    const { studio, machineId } = await scene("race-default-ret", 120);
+
+    // Remember it first, so there is a default for retirement to clear.
+    await asUser(studio.userId, (q) =>
+      q(`select public.set_own_default_machine($1,$2,null)`, [
+        studio.studioId,
+        machineId,
+      ]),
+    );
+    const before = await adminQuery(
+      `select default_machine_id from public.practitioners where id = $1`,
+      [studio.practitionerId],
+    );
+    expect(before.rows[0].default_machine_id, "the default must be set first").toBe(
+      machineId,
+    );
+
+    const ret = await party(studio.userId);
+    const set = await party(studio.userId);
+    try {
+      await ret.c.query(`select public.retire_studio_machine($1)`, [machineId]);
+
+      const remembering = settle(
+        set.c.query(`select public.set_own_default_machine($1,$2,null) as id`, [
+          studio.studioId,
+          machineId,
+        ]),
+      );
+      const wait = await expectBlockedOn(
+        set.pid,
+        "remembering must park acquiring the machine lock the retirement holds",
+      );
+      expect(wait).toMatch(/^Lock\//);
+
+      await ret.c.query("commit");
+
+      const out = await remembering;
+      expect(out.ok, "remembering a retired machine must be refused").toBe(false);
+      expect(!out.ok && out.message).toMatch(/out of service/i);
+      expect(!out.ok && out.code).not.toBe("40P01");
+      await set.c.query("rollback");
+
+      // THE CLEANUP STANDS. This is the assertion the defect broke.
+      const after = await adminQuery(
+        `select default_machine_id from public.practitioners where id = $1`,
+        [studio.practitionerId],
+      );
+      expect(
+        after.rows[0].default_machine_id,
+        "the retirement cleared this default; nothing may write it back",
+      ).toBeNull();
+    } finally {
+      await ret.c.end();
+      await set.c.end();
+    }
+  });
+
+  it("REMEMBER, then retire: the retirement PARKS, then clears what was just set", async () => {
+    // `retire_studio_machine` and `set_own_default_machine` are the one pair in
+    // this migration that touch BOTH studio_machines and practitioners, so they
+    // are the pair that could genuinely cycle. Both take the machine first, so
+    // the waiter holds nothing and no cycle can form - this drives them into
+    // that contention on purpose and requires a clean outcome.
+    //
+    // NOT fired as two unawaited promises. An earlier version of this test did
+    // that and timed out on itself: both transactions stayed open until the
+    // join resolved, so the retirement sat on a lock the test was holding.
+    // That is a property of the harness, not of the commands.
+    const { studio, machineId } = await scene("race-default-order", 121);
+    const set = await party(studio.userId);
+    const ret = await party(studio.userId);
+    try {
+      // The remember takes the machine FOR SHARE and updates practitioners.
+      const stored = await set.c.query(
+        `select public.set_own_default_machine($1,$2,null) as id`,
+        [studio.studioId, machineId],
+      );
+      expect(stored.rows[0].id).toBe(studio.practitionerId);
+
+      // Retirement wants the machine FOR NO KEY UPDATE, so it must park.
+      const retiring = settle(
+        ret.c.query(`select public.retire_studio_machine($1) as ok`, [machineId]),
+      );
+      const wait = await expectBlockedOn(
+        ret.pid,
+        "the retirement must park on the machine lock the remember holds",
+      );
+      expect(wait).toMatch(/^Lock\//);
+
+      await set.c.query("commit"); // release
+
+      const out = await bounded(retiring, "the retirement never settled");
+      expect(out.ok, `the retirement must succeed: ${!out.ok && out.message}`).toBe(true);
+      if (!out.ok) expect(out.code).not.toBe("40P01");
+      await ret.c.query("commit");
+
+      // The retirement ran SECOND, so its cleanup is the final word: the
+      // default it found is cleared, and the unit is out of service.
+      const after = await adminQuery(
+        `select p.default_machine_id, m.retired_at is not null as retired
+           from public.practitioners p
+           join public.studio_machines m on m.id = $2
+          where p.id = $1`,
+        [studio.practitionerId, machineId],
+      );
+      expect(after.rows[0].default_machine_id).toBeNull();
+      expect(after.rows[0].retired).toBe(true);
+    } finally {
+      await set.c.end();
+      await ret.c.end();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("0223 - a reading's PHYSICAL MACHINE must agree with its capture", () => {
+  // The last duplicated setup-identity column. The nine-column FK left it
+  // free, so a reading could name a different physical unit from its own
+  // capture - and the two read paths disagree about which they report
+  // (`latest_setup_for_client` from the READING,
+  // `setup_capture_history_for_block` from the CAPTURE), which is exactly the
+  // contradiction that FK exists to prevent (Codex, 87c88017).
+  //
+  // IT IS A SECOND CONSTRAINT, not a wider first one, and these tests are why.
+  // `studio_machine_id` is nullable with ON DELETE SET NULL; a composite FK is
+  // MATCH SIMPLE, so the ENTIRE check is skipped whenever any referencing
+  // column is NULL. Widening the nine-column constraint would have let a null
+  // machine id switch off enforcement of all ten.
+  let studio: SeededStudio;
+  let blockId: string;
+  let captureId: string;
+  let machineA: string;
+  let machineB: string;
+
+  const setup = async () => {
+    if (studio) return;
+    studio = await seedStudio("machine-agree");
+    blockId = (await seedSession(studio)).blockId;
+    await publish(122);
+    machineA = await register(studio, 122);
+    machineB = await register(studio, 122);
+    await recordAs(studio.userId, blockId, machineA, "g", [ok("current", "100")]);
+    const r = await adminQuery(
+      `select id from public.treatment_setup_captures where session_block_id = $1`,
+      [blockId],
+    );
+    captureId = r.rows[0].id;
+  };
+
+  it("refuses a reading naming a DIFFERENT physical unit from its capture", async () => {
+    await setup();
+    await expect(
+      adminQuery(
+        `insert into public.treatment_setup_readings
+           (capture_id, studio_id, session_block_id, machine_profile_id,
+            machine_profile_version, mode_key, group_key, channels, field_key,
+            value_numeric, native_unit, decimals, observation_source, revision,
+            studio_machine_id)
+         select c.id, c.studio_id, c.session_block_id, c.machine_profile_id,
+                c.machine_profile_version, c.mode_key, c.group_key, c.channels,
+                'duration', 1, 's', 1, 'practitioner-entered', c.revision,
+                $2
+           from public.treatment_setup_captures c where c.id = $1`,
+        [captureId, machineB],
+      ),
+    ).rejects.toThrow(/capture_machine_fk|foreign key/i);
+  });
+
+  it("POSITIVE CONTROL: the SAME unit as its capture is accepted", async () => {
+    await setup();
+    await adminQuery(
+      `insert into public.treatment_setup_readings
+         (capture_id, studio_id, session_block_id, machine_profile_id,
+          machine_profile_version, mode_key, group_key, channels, field_key,
+          value_numeric, native_unit, decimals, observation_source, revision,
+          studio_machine_id)
+       select c.id, c.studio_id, c.session_block_id, c.machine_profile_id,
+              c.machine_profile_version, c.mode_key, c.group_key, c.channels,
+              'reps', 3, 'count', 0, 'practitioner-entered', c.revision,
+              c.studio_machine_id
+         from public.treatment_setup_captures c where c.id = $1`,
+      [captureId],
+    );
+    const n = await adminQuery(
+      `select count(*)::int as n from public.treatment_setup_readings
+        where capture_id = $1 and field_key = 'reps'`,
+      [captureId],
+    );
+    expect(n.rows[0].n).toBe(1);
+  });
+
+  it("refuses a reading with NO physical unit at all", async () => {
+    // The column is NOT NULL now, which is what lets the composite FK be a
+    // single constraint: a MATCH SIMPLE composite key skips its ENTIRE check
+    // when any referencing column is NULL, so a nullable machine id would have
+    // switched off enforcement of all ten columns.
+    await setup();
+    await expect(
+      adminQuery(
+        `insert into public.treatment_setup_readings
+           (capture_id, studio_id, session_block_id, machine_profile_id,
+            machine_profile_version, mode_key, group_key, channels, field_key,
+            value_numeric, native_unit, decimals, observation_source, revision,
+            studio_machine_id)
+         select c.id, c.studio_id, c.session_block_id, c.machine_profile_id,
+                c.machine_profile_version, c.mode_key, c.group_key, c.channels,
+                'duration', 1, 's', 1, 'practitioner-entered', c.revision,
+                null
+           from public.treatment_setup_captures c where c.id = $1`,
+        [captureId],
+      ),
+    ).rejects.toThrow(/null value in column "studio_machine_id"|not-null/i);
+  });
+
+  it("A CITED UNIT CANNOT BE ERASED: the delete is refused, not silently broken", async () => {
+    // THIS TEST FOUND A REAL DEFECT, which is why it reads the way it does.
+    //
+    // The column was nullable with ON DELETE SET NULL, the stated reason being
+    // that hard-deleting a retired unit must not orphan a clinical reading.
+    // That could never happen: the append-only trigger refuses EVERY update to
+    // a reading, including the system-driven one a SET NULL performs, so the
+    // delete failed with "A recorded treatment setup reading is immutable" -
+    // two guarantees written against each other, with the nullability buying
+    // nothing.
+    //
+    // RESTRICT states the rule the clinical record actually wants: a unit named
+    // by a reading is part of that record and is retired, never erased.
+    const own = await seedStudio("machine-delete");
+    const b = (await seedSession(own)).blockId;
+    await publish(123);
+    const m = await register(own, 123);
+    await recordAs(own.userId, b, m, "g", [ok("current", "77")]);
+
+    const before = await adminQuery(
+      `select count(*)::int as n from public.treatment_setup_readings
+        where session_block_id = $1 and studio_machine_id = $2`,
+      [b, m],
+    );
+    expect(before.rows[0].n, "the reading must name the unit first").toBe(1);
+
+    await expect(
+      adminQuery(`delete from public.studio_machines where id = $1`, [m]),
+    ).rejects.toThrow(/violates foreign key|still referenced/i);
+
+    // And the record is intact - the refusal protected it rather than
+    // half-applying.
+    const after = await adminQuery(
+      `select r.studio_machine_id as m, r.value_numeric as v
+         from public.treatment_setup_readings r where r.session_block_id = $1`,
+      [b],
+    );
+    expect(after.rows).toHaveLength(1);
+    expect(after.rows[0].m).toBe(m);
+    expect(Number(after.rows[0].v)).toBe(77);
+  });
+
+  it("RETIREMENT is the supported path, and it still works", async () => {
+    // The counterpart to the refusal above: taking a cited unit out of service
+    // is always available, so RESTRICT blocks nothing anyone needs to do.
+    await setup();
+    const r = await asUser(studio.userId, (q) =>
+      q(`select public.retire_studio_machine($1) as ok`, [machineA]),
+    );
+    expect(r.rows[0].ok).toBe(true);
+    const still = await adminQuery(
+      `select count(*)::int as n from public.treatment_setup_readings
+        where studio_machine_id = $1`,
+      [machineA],
+    );
+    expect(still.rows[0].n, "retiring never touches the record").toBeGreaterThan(0);
+  });
+
+  it("POSITIVE CONTROL: an UNCITED unit can still be deleted", async () => {
+    // RESTRICT must protect the record without freezing the inventory: a unit
+    // registered by mistake, with nothing recorded against it, is still
+    // deletable. Without this the refusal above could be passing because the
+    // FK forbids every delete.
+    const own = await seedStudio("machine-mistake");
+    await publish(124);
+    const m = await register(own, 124);
+    await adminQuery(`delete from public.studio_machines where id = $1`, [m]);
+    const gone = await adminQuery(
+      `select count(*)::int as n from public.studio_machines where id = $1`,
+      [m],
+    );
+    expect(gone.rows[0].n).toBe(0);
   });
 });

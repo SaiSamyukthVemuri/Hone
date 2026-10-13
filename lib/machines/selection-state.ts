@@ -53,6 +53,24 @@ export function initialSelection(deviceId: string | null): SelectionState {
   return { selected: deviceId, persisted: deviceId, note: null };
 }
 
+/**
+ * The store holds a machine that CANNOT BE USED: retired, removed from the
+ * studio, pointing at an unknown or inactive profile, or registered against a
+ * contract version the catalogue has moved past.
+ *
+ * All three fields differ here, which is why it needs its own constructor
+ * rather than a flag. The machine is genuinely still STORED - reporting
+ * otherwise would be the same class of lie as the two this module already
+ * records - but it is NOT selected, because nothing may be charted on it, and
+ * the reason has to be said out loud. Without this the panel showed no chosen
+ * machine while still reporting one as remembered, and never explained the
+ * gap, even though `resolveSelection` had computed the explanation already
+ * (Codex, 1a39a51f).
+ */
+export function unusableSelection(persisted: string, note: string): SelectionState {
+  return { selected: null, persisted, note };
+}
+
 /** The optimistic move: the selection applies at once, and stale notes clear. */
 export function selectionRequested(
   prev: SelectionState,

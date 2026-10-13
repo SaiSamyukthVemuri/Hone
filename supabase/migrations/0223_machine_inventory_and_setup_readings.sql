@@ -303,6 +303,21 @@ begin
   end if;
 
   if p_machine_id is not null then
+    -- LOCKED BEFORE VALIDATED, and before the practitioners UPDATE below.
+    --
+    -- Unlocked, this command could observe the machine live, have
+    -- `retire_studio_machine` commit - which retires the unit AND clears it
+    -- from every practitioner default - and then write it back as a default.
+    -- The retirement's own cleanup would be undone by a command that started
+    -- earlier, leaving a remembered machine that is out of service.
+    --
+    -- MACHINE BEFORE PRACTITIONER is retirement's own order (it stamps
+    -- `retired_at`, then clears the defaults), so the two serialise rather
+    -- than cycle. FOR SHARE, not FOR KEY SHARE: `retired_at` is a non-key
+    -- UPDATE taking FOR NO KEY UPDATE, which FOR KEY SHARE does not conflict
+    -- with.
+    perform 1 from public.studio_machines m where m.id = p_machine_id for share;
+
     select m.studio_id, m.retired_at
       into v_machine_studio, v_retired
       from public.studio_machines m
@@ -377,11 +392,30 @@ create table if not exists public.treatment_setup_readings (
   session_block_id uuid not null
     references public.session_blocks(id) on delete cascade,
 
-  -- The unit used. Nullable only so a retired-and-deleted unit cannot orphan a
-  -- clinical reading; the profile identity below is captured verbatim and
-  -- survives regardless.
-  studio_machine_id uuid
-    references public.studio_machines(id) on delete set null,
+  -- REQUIRED, AND THE UNIT CANNOT BE ERASED WHILE IT IS CITED.
+  --
+  -- This was nullable with ON DELETE SET NULL, the stated reason being that
+  -- hard-deleting a retired unit must not orphan a clinical reading. That
+  -- never worked: the append-only trigger on treatment_setup_readings refuses
+  -- EVERY update, including the system-driven one a SET NULL performs, so
+  -- deleting a cited unit failed with "A recorded treatment setup reading is
+  -- immutable" instead. Two guarantees written against each other, and the
+  -- nullability was buying nothing.
+  --
+  -- RESTRICT states the real rule: a unit with recorded readings is part of
+  -- the clinical record and is retired, never erased. `retire_studio_machine`
+  -- is the supported path and is unaffected - it stamps `retired_at` and
+  -- deletes nothing. A unit registered by mistake, with no readings, can still
+  -- be deleted.
+  --
+  -- NOT NULL matches what the command already enforces ("Choose the machine
+  -- before recording settings") and, because nothing here is nullable, lets
+  -- the composite FK below be ONE constraint: a MATCH SIMPLE composite key
+  -- skips its ENTIRE check when any referencing column is NULL, so a nullable
+  -- member would have meant a null machine id switching off every other
+  -- column's enforcement too.
+  studio_machine_id uuid not null
+    references public.studio_machines(id) on delete restrict,
   machine_profile_id text not null
     check (length(btrim(machine_profile_id)) between 1 and 120),
   machine_profile_version integer not null check (machine_profile_version >= 1),
@@ -657,8 +691,10 @@ create table if not exists public.treatment_setup_captures (
   session_block_id uuid not null
     references public.session_blocks(id) on delete cascade,
 
-  studio_machine_id uuid
-    references public.studio_machines(id) on delete set null,
+  -- Required and non-erasable, for the reasons given on
+  -- treatment_setup_readings.studio_machine_id above.
+  studio_machine_id uuid not null
+    references public.studio_machines(id) on delete restrict,
   machine_profile_id text not null
     check (length(btrim(machine_profile_id)) between 1 and 120),
   machine_profile_version integer not null check (machine_profile_version >= 1),
@@ -766,7 +802,18 @@ alter table public.treatment_setup_readings
 -- rather than because the command happens to set them from the same variables.
 -- The unique constraint exists to support it; `id` is already the primary key,
 -- so it adds no new restriction, only the index the reference needs.
--- EVERY duplicated setup-identity column, not the four I first guessed at.
+-- EVERY duplicated setup-identity column: ten, not the four I first guessed
+-- at, and not the nine of the second attempt either - `studio_machine_id` was
+-- the last one left free, so a reading could still name a different PHYSICAL
+-- unit from its own capture while every other column agreed. The two read
+-- paths disagree about which they report (`latest_setup_for_client` takes it
+-- from the READING, `setup_capture_history_for_block` from the CAPTURE), which
+-- is the same contradiction this constraint exists to prevent
+-- (Codex, 87c88017).
+--
+-- It is ONE constraint rather than a nine-column one plus a machine one
+-- because the column is now NOT NULL; see its definition for why that matters
+-- to a MATCH SIMPLE composite key.
 --
 -- The first version of this covered (capture_id, session_block_id, studio_id,
 -- revision) and left machine_profile_id, machine_profile_version, mode_key,
@@ -786,7 +833,7 @@ alter table public.treatment_setup_captures
 alter table public.treatment_setup_captures
   add constraint treatment_setup_captures_identity_uniq
   unique (id, session_block_id, studio_id, revision,
-          machine_profile_id, machine_profile_version,
+          studio_machine_id, machine_profile_id, machine_profile_version,
           mode_key, group_key, channels);
 
 alter table public.treatment_setup_readings
@@ -794,11 +841,11 @@ alter table public.treatment_setup_readings
 alter table public.treatment_setup_readings
   add constraint treatment_setup_readings_capture_fk
   foreign key (capture_id, session_block_id, studio_id, revision,
-               machine_profile_id, machine_profile_version,
+               studio_machine_id, machine_profile_id, machine_profile_version,
                mode_key, group_key, channels)
   references public.treatment_setup_captures
     (id, session_block_id, studio_id, revision,
-     machine_profile_id, machine_profile_version,
+     studio_machine_id, machine_profile_id, machine_profile_version,
      mode_key, group_key, channels)
   on delete cascade;
 
@@ -957,6 +1004,31 @@ begin
     raise exception 'Choose the machine before recording settings.'
       using errcode = 'check_violation';
   end if;
+
+  -- THE MACHINE IS LOCKED TOO, for the same reason the parents are.
+  --
+  -- The first repair of this command locked the session and the block and
+  -- stopped there, which left the identical hole one table over: unlocked,
+  -- `retire_studio_machine` can commit between this lookup and the insert
+  -- below, and the capture is IMMUTABLE, so a setup is permanently recorded
+  -- against a unit that was out of service when it was written
+  -- (Codex, 87c88017).
+  --
+  -- THE TOTAL LOCK ORDER for this migration's commands, stated once:
+  --
+  --     sessions -> session_blocks -> studio_machines -> practitioners
+  --
+  -- Every command's own subsequence is consistent with it, which is what
+  -- makes the set deadlock-free:
+  --   record_treatment_setup_group  sessions, session_blocks, studio_machines
+  --   retire_studio_machine         studio_machines, practitioners
+  --   set_own_default_machine       studio_machines, practitioners
+  --   soft_delete_session (0167)    sessions
+  --   soft_delete_session_block     session_blocks
+  -- A future command that takes studio_machines before a session would be the
+  -- first to break it.
+  perform 1 from public.studio_machines m
+   where m.id = p_studio_machine_id for share;
 
   select m.studio_id, m.machine_profile_id, m.machine_profile_version,
          m.retired_at, m.installed_options
