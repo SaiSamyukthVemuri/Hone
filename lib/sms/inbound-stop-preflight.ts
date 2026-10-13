@@ -74,6 +74,9 @@ const TWILIO_CONNECTION_OVERRIDES: Readonly<Record<string, (v: string) => boolea
   e: listOf(TWILIO_EDGE_IDS),
 };
 
+/** Twilio's default total time for a webhook and its retries (connection-overrides docs). */
+const TWILIO_DEFAULT_TOTAL_TIME_MS = 15000;
+
 /** Marker substituted for a URL whose fragment is not valid connection overrides. */
 const INVALID_FRAGMENT = "invalid-fragment:";
 
@@ -112,6 +115,12 @@ export function redeliversServerErrors(url: string | null | undefined): boolean 
   const pairs = new Map(fragment.split("&").map((p) => [p.slice(0, p.indexOf("=")), p.slice(p.indexOf("=") + 1)] as const));
   const policy = (pairs.get("rp") ?? "").split(",");
   const retries = pairs.has("rc") ? Number(pairs.get("rc")) : 1;
+  // TOTAL TIME (Codex P1 4254745407): tt bounds every attempt AND every retry.
+  // An explicit tt below Twilio's default (15000 ms) can expire before the
+  // route's 500 or before the retry starts; whether it leaves a window depends
+  // on how fast the route answers, which configuration cannot prove. So it is
+  // not certified.
+  if (pairs.has("tt") && Number(pairs.get("tt")) < TWILIO_DEFAULT_TOTAL_TIME_MS) return false;
   return (policy.includes("5xx") || policy.includes("all")) && retries >= 1;
 }
 
@@ -253,6 +262,8 @@ export type InboundStopFacts = {
           retryOn: string[] | null;
           /** connection.retryPolicy.retryCount, 0-5. */
           retryCount: number | null;
+          /** connection.totalTimeoutMs (100-60000); undefined = omitted (system default). */
+          totalTimeoutMs?: number | null;
         }>;
       };
   /** The account TWILIO_AUTH_TOKEN belongs to (TWILIO_ACCOUNT_SID), as confirmed by the operator. */
@@ -403,7 +414,15 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
         ? "n/a"
         : !sharesKnown || live.length === 0 || live.some((x) => x.retryOn === null || x.retryCount === null)
           ? "unknown"
-          : live.every((x) => (x.retryOn!.includes("HTTP_5XX") || x.retryOn!.includes("ALL")) && x.retryCount! >= 1)
+          : live.some((x) => x.totalTimeoutMs === null)
+            ? "unknown"
+          : live.every(
+                (x) =>
+                  (x.retryOn!.includes("HTTP_5XX") || x.retryOn!.includes("ALL")) &&
+                  x.retryCount! >= 1 &&
+                  // Same rule as the URL's tt: an explicit total below the default is not certified.
+                  (x.totalTimeoutMs === undefined || (x.totalTimeoutMs ?? 0) >= TWILIO_DEFAULT_TOTAL_TIME_MS),
+              )
             ? "yes"
             : "no";
   /** One webhook's 5xx redelivery: its retries under the Rules, or its own same-route POST fallback. */
@@ -478,17 +497,23 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
                 "yes",
               );
     // Each pool member's own retries or own fallback (Codex P2 4254655918).
-    const poolRedelivers =
-      pool !== undefined &&
-      pool.every((n) => {
-        const v = redelivers(n.smsUrl, n.smsFallbackUrl, n.smsFallbackMethod);
-        return v === "yes" || v === "fallback";
-      });
+    // Three-state (Codex P2 4254745411): an unread member is UNKNOWN, never "lost".
+    const memberVerdicts = (pool ?? []).map((n) => redelivers(n.smsUrl, n.smsFallbackUrl, n.smsFallbackMethod));
+    const poolRedelivery: "yes" | "no" | "unknown" =
+      pool === undefined || memberVerdicts.length === 0
+        ? "unknown"
+        : memberVerdicts.includes("no")
+          ? "no"
+          : memberVerdicts.includes("unknown")
+            ? "unknown"
+            : "yes";
     checks.push(
       pinned
         ? check("sender_pool", "pass", "routed sends are pinned to the checked number, so replies return to it")
-        : poolVerdict === "yes" && !poolRedelivers
-          ? check("sender_pool", "fail", "a pool number's webhook does not retry 5xx: a STOP the route answers 500 is lost")
+        : poolVerdict === "yes" && poolRedelivery === "no"
+          ? check("sender_pool", "fail", "a pool number neither retries 5xx nor falls back to the route: a STOP the route answers 500 is lost")
+          : poolVerdict === "yes" && poolRedelivery === "unknown"
+            ? check("sender_pool", "unknown", "a pool number's 5xx redelivery is not proven: read its Webhook Rule and sms_fallback_url")
           : poolVerdict === "yes"
           ? check("sender_pool", "pass", `every pool number (${pool!.length}) reaches the expected URL by POST and retries 5xx`)
           : poolVerdict === "no"

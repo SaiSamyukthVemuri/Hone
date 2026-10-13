@@ -359,6 +359,39 @@ describe("evaluateInboundStopPreflight", () => {
       });
     }
 
+    describe("TOTAL TIME: an explicit budget below Twilio's 15000 ms default is not certified (Codex P1 4254745407)", () => {
+      for (const frag of ["#tt=100&rp=5xx", "#tt=14999&rp=all&rc=3"]) {
+        it(`${frag}: not certified`, () => {
+          expect(redeliversServerErrors(`${URL_OK}${frag}`)).toBe(false);
+        });
+      }
+      for (const frag of ["#tt=15000&rp=5xx", "#rp=5xx", "#ct=500&rt=1000&tt=15000&rc=2&rp=4xx,5xx,ct,rt&sni=y&e=dublin,sydney"]) {
+        it(`${frag}: certified`, () => {
+          expect(redeliversServerErrors(`${URL_OK}${frag}`)).toBe(true);
+        });
+      }
+
+      const ruleSetting = (totalTimeoutMs: number | null | undefined) => ({
+        matched: true as const,
+        settings: [
+          { percentage: 100, signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", retryOn: ["HTTP_5XX"], retryCount: 2, totalTimeoutMs },
+        ],
+      });
+
+      it("a Rule Setting's totalTimeoutMs: omitted or >= 15000 retries; below, not; unreported, unknown", () => {
+        const f = allProven();
+        Object.assign(f.service!, { fallbackUrl: null, fallbackMethod: null });
+        f.webhookRules = ruleSetting(undefined);
+        expect(redelivery(f)?.status).toBe("pass");
+        f.webhookRules = ruleSetting(60000);
+        expect(redelivery(f)?.status).toBe("pass");
+        f.webhookRules = ruleSetting(5000);
+        expect(redelivery(f)?.status).toBe("fail");
+        f.webhookRules = ruleSetting(null);
+        expect(redelivery(f)?.status).toBe("unknown");
+      });
+    });
+
     it("redeliversServerErrors never trusts an invalid fragment, even one naming rp=5xx", () => {
       expect(redeliversServerErrors(`${URL_OK}#rp=5xx`)).toBe(true);
       expect(redeliversServerErrors(`${URL_OK}#rp=5xx&sni=on`)).toBe(false);
@@ -584,9 +617,10 @@ describe("evaluateInboundStopPreflight", () => {
         { phoneNumber: "+14165550100", smsUrl: URL_RETRY, smsMethod: "POST", smsApplicationSid: null },
         { phoneNumber: "+14165550101", smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: null },
       ];
+      // The member's fallback was not read: UNKNOWN, never reported as lost (Codex P2 4254745411).
       const c = evaluateInboundStopPreflight(f).checks.find((x) => x.id === "sender_pool");
-      expect(c?.status).toBe("fail");
-      expect(c?.detail).toMatch(/retry 5xx/);
+      expect(c?.status).toBe("unknown");
+      expect(c?.detail).toMatch(/not proven/);
     });
   });
 
