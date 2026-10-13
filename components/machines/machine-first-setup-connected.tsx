@@ -161,6 +161,10 @@ export function MachineFirstSetupConnected({
       scope={ctx.scope}
       devices={ctx.devices}
       initialDeviceId={ctx.remembered?.deviceId ?? null}
+      // The server resolved the stored selection; when it is not usable the
+      // panel shows nothing chosen and states the reason, rather than an
+      // empty picker beside a claim that a machine is remembered.
+      unavailableSelection={ctx.rememberedUnavailable}
       inventoryReason={ctx.inventoryReason}
       persistence={ctx.persistence ?? NO_PERSISTENCE}
       // The catalogue is whatever the SERVER resolved, so the synthetic demo
