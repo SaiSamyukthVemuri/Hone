@@ -39,6 +39,9 @@ const T = 20_000;
 /** The one profile that is active, and only behind the server-side gate. */
 const SYNTHETIC_PROFILE_ID = "synthetic:demo-multineedle";
 const SYNTHETIC_VERSION = 1;
+// The synthetic profile declares four independently controlled outputs, and
+// the published contract has to say so or a per-channel group is refused.
+const SYNTHETIC_CHANNELS = 4;
 
 async function noOverflow(page: Page) {
   const [sw, cw] = await page.evaluate(() => [
@@ -68,27 +71,37 @@ async function registerMachine(studioId: string, displayName: string) {
     [id, studioId, SYNTHETIC_PROFILE_ID, SYNTHETIC_VERSION, displayName],
   );
 
-  // PUBLISH THE FIELD CONTRACT for this profile version.
+  // PUBLISH THE CONTRACT for this profile version, through the COMMAND.
   //
-  // record_treatment_setup_group now validates every reading against
-  // machine_profile_field_contract and FAILS CLOSED when none is published.
-  // In production registerMachineAction publishes it at registration; this
-  // spec seeds the unit directly, so it has to publish it too or steps 6-7
-  // would be refused - and that refusal would look like a broken feature
-  // rather than an unseeded fixture.
+  // `record_treatment_setup_group` validates every reading against the
+  // published contract and FAILS CLOSED when none exists. In production
+  // deployment authority publishes it; this spec seeds its unit directly, so it
+  // has to publish too or steps 6-7 would be refused - and that refusal would
+  // look like a broken feature rather than an unseeded fixture.
+  //
+  // THROUGH THE COMMAND, not raw inserts. An earlier version of this inserted
+  // into machine_profile_field_contract directly and broke the moment the
+  // schema grew a parent: the field contract now has an FK to
+  // machine_profile_mode_contract and a NOT NULL `quantity`, so the raw insert
+  // violated both. Calling the command means the fixture cannot drift from the
+  // schema again. `sql()` runs as postgres, which is the deployment authority
+  // the command requires - EXECUTE is revoked from `authenticated`.
   //
   // The rows mirror the synthetic profile's galvanic mode: current in µA at
-  // whole numbers, duration in seconds at one decimal. The point of the save
-  // assertions is that the machine's OWN unit and precision survive, so these
-  // must match the profile rather than be convenient.
+  // whole numbers, duration in seconds at one decimal. The save assertions are
+  // about the machine's OWN unit and precision surviving, so these must match
+  // the profile rather than be convenient.
   await sql(
-    `insert into public.machine_profile_field_contract
-       (machine_profile_id, machine_profile_version, mode_key, stage_key,
-        field_key, native_unit, decimals)
-     values ($1,$2,'galvanic','','current','µA',0),
-            ($1,$2,'galvanic','','duration','s',1)
-     on conflict do nothing`,
-    [SYNTHETIC_PROFILE_ID, SYNTHETIC_VERSION],
+    `select public.sync_machine_profile_contract($1, $2, 'galvanic', $3, null, $4::jsonb)`,
+    [
+      SYNTHETIC_PROFILE_ID,
+      SYNTHETIC_VERSION,
+      SYNTHETIC_CHANNELS,
+      JSON.stringify([
+        { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
+        { field_key: "duration", native_unit: "s", decimals: 1, quantity: "duration" },
+      ]),
+    ],
   );
   return id;
 }

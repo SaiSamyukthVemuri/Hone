@@ -1114,6 +1114,27 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the payment-consent decisions and the metadata recorded with them.",
   },
+  treatment_setup_captures: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    reason:
+      "Introduced by migration 0223 (MPX-03, #829) when per-field revisions were replaced by atomic captures. One row per act of recording a settings group against a treatment block: which unit, which catalogue profile version, which mode, which channels, by whom, when, and which revision of that group it is. It is CLINICAL and studio-owned - the readings in treatment_setup_readings hang off it, and exporting readings without their captures would leave each reading unable to say what it was recorded under or in what order. Its disposition should therefore follow whatever treatment_setup_readings is given, and this lane was not asked to make that product decision. Note it carries recorded_by_practitioner_id, so it names a practitioner but no client directly.",
+  },
+  machine_profile_field_contract: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    reason:
+      "Introduced by migration 0223 (MPX-03, #829). The FIELD half of the published contract: for a (profile, version, mode), which fields exist, in what native unit and precision, and what kind of quantity each is. record_treatment_setup_group validates every reading against it and derives unit and precision from it. Like its mode-level parent it is a GLOBAL PRODUCT FACT with no studio_id, published by deployment authority only and immutable once published, holding no client, clinical or provider data. A studio export probably should not carry it, but an exported reading is only interpretable against the contract version it was captured under, so the decision belongs with whoever decides the readings' disposition.",
+  },
+  machine_profile_mode_contract: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    reason:
+      "Introduced by migration 0223 (MPX-03, #829) when field-contract validation moved into the recording command's authority boundary. The MODE-level half of the published contract for a (profile, version, mode): how many independently controlled channels the model has and any physical option the mode requires. It is a GLOBAL PRODUCT FACT, not studio data - there is no studio_id, it is published by deployment authority only, and it is immutable once published. It holds no client, clinical or provider data. A studio export almost certainly should NOT carry it, but it may need to be resolvable to interpret exported readings, so the decision belongs with whoever decides the readings' disposition.",
+  },
   studio_machines: {
     kind: "pending",
     ticket: "TRUTH-01B",
