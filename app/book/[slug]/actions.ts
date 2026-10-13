@@ -1499,7 +1499,12 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     !consumedInvitationId &&
     (rawCommandResult === "practitioner_assignment_disabled" ||
       rawCommandResult === "invalid_practitioner" ||
-      rawCommandResult === "not_eligible")
+      rawCommandResult === "not_eligible" ||
+      // G1 / CODEX P2. "Any available" found nobody eligible free at this
+      // instant. 0225 answers this BEFORE the resolve-or-create, so like the
+      // others it legitimately carries a null client_id and must be handled
+      // above the missing-client guard.
+      rawCommandResult === "no_practitioner_available")
   ) {
     logInternalBookingError("public_booking_practitioner_refused_pre_insert", {
       code: rawCommandResult,
@@ -1679,6 +1684,15 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     // (choose again, or take "any available"), so it gets the practitioner
     // copy rather than the generic error. It is still logged, because an
     // operator flipping the switch mid-booking is worth seeing.
+    if (commandResult === "no_practitioner_available") {
+      // Nobody eligible is free at the instant the page offered. The page and
+      // the chain disagreed, which is worth seeing: the grid is built from the
+      // same availability the command re-checks under its locks.
+      logInternalBookingError("public_booking_no_practitioner_available", {
+        studioId: studio.id,
+      });
+      return { ok: false, error: "That time has just been taken. Please choose another." };
+    }
     if (commandResult === "practitioner_assignment_disabled") {
       logInternalBookingError("public_booking_practitioner_assignment_disabled_at_commit", {
         studioId: studio.id,
