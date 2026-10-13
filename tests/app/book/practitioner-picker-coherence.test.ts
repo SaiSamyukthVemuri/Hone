@@ -203,3 +203,38 @@ describe("G1: the public-assignment kill switch is enforced SERVER-SIDE", () => 
     ).toBeGreaterThanOrEqual(2);
   });
 });
+
+describe("G1: the actionable refusal is REACHABLE for a new client", () => {
+  // CODEX P2 at 0fd7cdc2. 0225's practitioner gate runs before the
+  // resolve-or-create, so its refusals carry a NULL client_id by design. The
+  // action's missing-client guard treats a null client as "the command did not
+  // resolve one" and returns the generic error -- so the practitioner-specific
+  // message mapped further down was DEAD CODE for the primary new-client case,
+  // where there is no resolvedClientId to fall back on.
+  //
+  // The property is ORDER, so that is what this asserts: the pre-insert
+  // refusals must be answered BEFORE the guard that requires a client id.
+  // A position assertion is brittle about everything except the one thing that
+  // matters here, which is why the failure message says what to do.
+  it("answers pre-insert practitioner refusals before the missing-client guard", () => {
+    const refusal = ACTIONS.indexOf("public_booking_practitioner_refused_pre_insert");
+    const guard = ACTIONS.indexOf("public_booking_client_not_resolved");
+    expect(refusal, "expected the pre-insert refusal branch").toBeGreaterThan(-1);
+    expect(guard, "expected the missing-client guard").toBeGreaterThan(-1);
+    expect(
+      refusal < guard,
+      "the pre-insert practitioner refusals must be handled BEFORE the " +
+        "missing-client guard, or the actionable message is unreachable for a " +
+        "new email (null client_id is correct for those refusals)",
+    ).toBe(true);
+  });
+
+  it("still maps the refusal in the later group, for the existing-client path", () => {
+    // Not redundant: on the existing-client path resolvedClientId is non-null,
+    // the missing-client guard never fires, and the later mapping is the one
+    // that serves that branch. Deleting it would silently downgrade that path
+    // to the generic error.
+    const later = ACTIONS.indexOf('commandResult === "practitioner_assignment_disabled"');
+    expect(later, "the later mapping must remain for the existing-client path").toBeGreaterThan(-1);
+  });
+});
