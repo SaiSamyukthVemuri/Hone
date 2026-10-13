@@ -98,8 +98,24 @@ export function MachinePriorSetup({ readings, catalogue }: MachinePriorSetupProp
                     {named?.label ?? r.fieldKey}
                   </span>{" "}
                   <span className="font-medium">{formatValue(r)}</span>
-                  {named?.unit ? (
-                    <span className="ml-0.5 text-neutral-500">{named.unit}</span>
+                  {/*
+                    THE RECORDED UNIT, falling back when the catalogue's is
+                    deliberately unavailable.
+                    `named` is intentionally undefined when the recorded
+                    profile version differs from today's, or the profile has
+                    left the catalogue - that is correct, because today's
+                    labels must not be put on a historical reading. But
+                    suppressing the UNIT too showed bare numbers like "120"
+                    with no µA, mA or ms, which defeats the entire reason the
+                    reading stores its own native unit. The reading's unit is
+                    not today's opinion; it is what the machine displayed at
+                    capture time, so it is exactly what a historical setup
+                    should show (Codex, 7cae831b).
+                  */}
+                  {named?.unit ?? r.nativeUnit ? (
+                    <span className="ml-0.5 text-neutral-500">
+                      {named?.unit ?? r.nativeUnit}
+                    </span>
                   ) : null}
                 </li>
               );

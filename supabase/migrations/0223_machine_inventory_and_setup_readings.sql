@@ -766,19 +766,40 @@ alter table public.treatment_setup_readings
 -- rather than because the command happens to set them from the same variables.
 -- The unique constraint exists to support it; `id` is already the primary key,
 -- so it adds no new restriction, only the index the reference needs.
+-- EVERY duplicated setup-identity column, not the four I first guessed at.
+--
+-- The first version of this covered (capture_id, session_block_id, studio_id,
+-- revision) and left machine_profile_id, machine_profile_version, mode_key,
+-- group_key and channels unconstrained. I flagged that choice as a judgement
+-- in the review request, and it was the wrong one: with those free, a reading
+-- could name a different machine, profile version, mode or channel set from
+-- its own capture. That matters because the two read paths disagree about
+-- where identity comes from - `latest_setup_for_client` emits it from the
+-- READING, `setup_capture_history_for_block` from the CAPTURE - so one
+-- supposedly coherent capture could be interpreted as two different machine
+-- setups depending on which function you asked.
+--
+-- My own positive-control test demonstrated the hole: it inserted a reading
+-- with profile 'x' against a real capture and the FK accepted it.
 alter table public.treatment_setup_captures
   drop constraint if exists treatment_setup_captures_identity_uniq;
 alter table public.treatment_setup_captures
   add constraint treatment_setup_captures_identity_uniq
-  unique (id, session_block_id, studio_id, revision);
+  unique (id, session_block_id, studio_id, revision,
+          machine_profile_id, machine_profile_version,
+          mode_key, group_key, channels);
 
 alter table public.treatment_setup_readings
   drop constraint if exists treatment_setup_readings_capture_fk;
 alter table public.treatment_setup_readings
   add constraint treatment_setup_readings_capture_fk
-  foreign key (capture_id, session_block_id, studio_id, revision)
+  foreign key (capture_id, session_block_id, studio_id, revision,
+               machine_profile_id, machine_profile_version,
+               mode_key, group_key, channels)
   references public.treatment_setup_captures
-    (id, session_block_id, studio_id, revision)
+    (id, session_block_id, studio_id, revision,
+     machine_profile_id, machine_profile_version,
+     mode_key, group_key, channels)
   on delete cascade;
 
 comment on column public.treatment_setup_readings.capture_id is
@@ -874,12 +895,25 @@ begin
   -- session keeps live-looking blocks. A stale page or a crafted call could
   -- then append an IMMUTABLE capture to a session that had been removed -
   -- unamendable by construction, and attached to a record nobody can see.
+  -- LOCKED WHILE VALIDATED, because reading liveness is not holding it.
+  --
+  -- A plain lookup can observe both rows live and then have the retirement
+  -- transaction commit before this capture inserts - leaving an IMMUTABLE
+  -- capture attached to a record that was retired a millisecond later, which
+  -- is the exact state the check exists to prevent. The window is small and
+  -- the consequence is permanent, which is the worst combination.
+  --
+  -- FOR SHARE rather than FOR KEY SHARE: `soft_delete_session` stamps
+  -- `deleted_at`, a non-key UPDATE, which takes FOR NO KEY UPDATE on the row.
+  -- FOR KEY SHARE does NOT conflict with that and would let the retirement
+  -- proceed; FOR SHARE does conflict, so recording and retirement serialise.
   select b.studio_id into v_studio
     from public.session_blocks b
     join public.sessions sn on sn.id = b.session_id
    where b.id = p_block_id
      and b.deleted_at is null
-     and sn.deleted_at is null;
+     and sn.deleted_at is null
+     for share of b, sn;
 
   if v_studio is null then
     raise exception 'Unknown treatment block.' using errcode = 'no_data_found';
