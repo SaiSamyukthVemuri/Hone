@@ -116,3 +116,12 @@ describe("parseLiveRegistrationState", () => {
     expect(parseLiveRegistrationState({ senders: "x" }, STUDIO)).toEqual({ ok: false });
   });
 });
+
+describe("approved means COMPLETE for this number (Codex P2 4253281361)", () => {
+  it("the form and its guidance say so", () => {
+    const html = render({ ok: true, senders: [SENDER], registrations: [] });
+    expect(html).toMatch(/approved: COMPLETE for this number \(brand, campaign and the number registered\)/);
+    expect(html).toMatch(/pending: anything not yet complete, including this number(&#x27;|')s own registration/);
+    expect(html).toMatch(/only when registration is complete for this exact number/);
+  });
+});
