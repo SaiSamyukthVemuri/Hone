@@ -161,6 +161,10 @@ export function MachineFirstSetupConnected({
       scope={ctx.scope}
       devices={ctx.devices}
       initialDeviceId={ctx.remembered?.deviceId ?? null}
+      // The remembered MODE, which the loader has always resolved and which
+      // nothing forwarded - so the panel silently used each profile's first
+      // active mode and recorded against the wrong field contract.
+      initialModeKey={ctx.remembered?.modeKey ?? null}
       // The server resolved the stored selection; when it is not usable the
       // panel shows nothing chosen and states the reason, rather than an
       // empty picker beside a claim that a machine is remembered.

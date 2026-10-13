@@ -1936,3 +1936,198 @@ describe("0223 - retirement is idempotent under real concurrency", () => {
     expect(after.rows[0].default_machine_id).toBe(replacement);
   });
 });
+
+// ---------------------------------------------------------------------------
+// DISTINCT SETTING GROUPS, against the real command.
+//
+// The entry surface hard-coded one group with no channels while the schema,
+// the command and both read paths had always supported several groups with
+// channel associations - so a practitioner running probes at different
+// settings could store only one apparently global setup (Codex, 15cc6c99).
+//
+// WHAT THIS SECTION IS FOR. The UI slice is only safe if the AUTHORITY already
+// represents it, so these tests use `record_treatment_setup_group` exactly as
+// the form now does - one call per group - and check that the groups stay
+// separate, keep their own channels, keep their own revision sequences, and
+// that every invalid combination is refused by the database rather than by the
+// form.
+// ---------------------------------------------------------------------------
+describe("0223 - two setting groups in one block stay distinct", () => {
+  const recordGroup = (
+    userId: string,
+    blockId: string,
+    machineId: string,
+    group: string,
+    channels: number[],
+    value: string,
+  ) =>
+    asUser(userId, (q) =>
+      q(`select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb) as n`, [
+        blockId,
+        machineId,
+        "galvanic",
+        group,
+        channels,
+        JSON.stringify([ok("current", value)]),
+      ]),
+    );
+
+  it("records two groups with DIFFERENT channels and values, and reads both back", async () => {
+    const { studio, blockId, machineId } = await scene("groups-two", 130);
+
+    await recordGroup(studio.userId, blockId, machineId, "g1", [1, 2], "120");
+    await recordGroup(studio.userId, blockId, machineId, "g2", [3, 4], "80");
+
+    const rows = await adminQuery(
+      `select c.group_key, c.channels, c.revision, r.value_numeric as v
+         from public.treatment_setup_captures c
+         join public.treatment_setup_readings r on r.capture_id = c.id
+        where c.session_block_id = $1 and r.field_key = 'current'
+        order by c.group_key`,
+      [blockId],
+    );
+    expect(rows.rows).toHaveLength(2);
+
+    const [g1, g2] = rows.rows as Array<{
+      group_key: string;
+      channels: number[];
+      revision: number;
+      v: string;
+    }>;
+    expect(g1!.group_key).toBe("g1");
+    expect(g1!.channels, "g1 kept its own probes").toEqual([1, 2]);
+    expect(Number(g1!.v), "and its own value").toBe(120);
+    expect(g2!.group_key).toBe("g2");
+    expect(g2!.channels, "g2 kept its own probes").toEqual([3, 4]);
+    expect(Number(g2!.v), "and its own value").toBe(80);
+
+    // EACH GROUP HAS ITS OWN REVISION SEQUENCE. Both are the first capture of
+    // their own group, so both are revision 1 - they are not two revisions of
+    // one thing.
+    expect(g1!.revision).toBe(1);
+    expect(g2!.revision).toBe(1);
+  });
+
+  it("appends a revision WITHIN one group without touching the other", async () => {
+    // The capture/revision boundary, which the UI slice must not blur: a
+    // changed setting on probes 1-2 is revision 2 of g1 and leaves g2 alone.
+    const { studio, blockId, machineId } = await scene("groups-rev", 131);
+    await recordGroup(studio.userId, blockId, machineId, "g1", [1], "120");
+    await recordGroup(studio.userId, blockId, machineId, "g2", [2], "80");
+    await recordGroup(studio.userId, blockId, machineId, "g1", [1], "135");
+
+    const rows = await adminQuery(
+      `select group_key, revision, channels
+         from public.treatment_setup_captures
+        where session_block_id = $1
+        order by group_key, revision`,
+      [blockId],
+    );
+    expect(
+      rows.rows.map((r: { group_key: string; revision: number }) => [
+        r.group_key,
+        r.revision,
+      ]),
+    ).toEqual([
+      ["g1", 1],
+      ["g1", 2],
+      ["g2", 1],
+    ]);
+  });
+
+  it("the HISTORY read returns each group's exact recorded channels", async () => {
+    // What next-visit guidance and the block history are read from. If this
+    // flattened the associations, the whole slice would be pointless.
+    const { studio, blockId, machineId } = await scene("groups-history", 132);
+    await recordGroup(studio.userId, blockId, machineId, "g1", [1, 2], "120");
+    await recordGroup(studio.userId, blockId, machineId, "g2", [4], "80");
+
+    const hist = await asUser(studio.userId, (q) =>
+      q(`select public.setup_capture_history_for_block($1) as r`, [blockId]),
+    );
+    const captures = hist.rows[0].r as Array<{
+      group_key: string;
+      channels: number[];
+    }>;
+    const byGroup = new Map(captures.map((c) => [c.group_key, c.channels]));
+    expect(byGroup.get("g1")).toEqual([1, 2]);
+    expect(byGroup.get("g2")).toEqual([4]);
+  });
+
+  it("an UNASSOCIATED group records no channels, and is not widened to all", async () => {
+    // `associationRequired` is false by a recorded practitioner ruling, so a
+    // group without named probes is legal. It must stay EMPTY: turning it into
+    // every channel would assert a clinical fact nobody entered.
+    const { studio, blockId, machineId } = await scene("groups-none", 133);
+    await recordGroup(studio.userId, blockId, machineId, "g1", [], "120");
+
+    const rows = await adminQuery(
+      `select channels from public.treatment_setup_captures
+        where session_block_id = $1`,
+      [blockId],
+    );
+    expect(rows.rows[0].channels).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("0223 - invalid channel and group combinations are refused BY THE DATABASE", () => {
+  const tryGroup = (
+    userId: string,
+    blockId: string,
+    machineId: string,
+    group: string,
+    channels: number[],
+  ) =>
+    asUser(userId, (q) =>
+      q(`select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb) as n`, [
+        blockId,
+        machineId,
+        "galvanic",
+        group,
+        channels,
+        JSON.stringify([ok("current", "120")]),
+      ]),
+    );
+
+  it("refuses a channel above the published maximum", async () => {
+    const { studio, blockId, machineId } = await scene("groups-bad-high", 134);
+    await expect(
+      tryGroup(studio.userId, blockId, machineId, "g1", [9]),
+    ).rejects.toThrow(/channel/i);
+  });
+
+  it("refuses a channel named twice in one group", async () => {
+    const { studio, blockId, machineId } = await scene("groups-bad-dup", 135);
+    await expect(
+      tryGroup(studio.userId, blockId, machineId, "g1", [2, 2]),
+    ).rejects.toThrow(/channel/i);
+  });
+
+  it("refuses an EMPTY group key, which no stable identity can be", async () => {
+    const { studio, blockId, machineId } = await scene("groups-bad-key", 136);
+    await expect(
+      tryGroup(studio.userId, blockId, machineId, "   ", [1]),
+    ).rejects.toThrow(/mode and a settings group are required/i);
+  });
+
+  it("refuses ANOTHER TENANT's member recording into this block", async () => {
+    // Group identity is per block, and a block belongs to a studio. A group
+    // key is not a capability: naming one in another tenant's block must fail
+    // on membership, not on the key.
+    const { blockId, machineId } = await scene("groups-tenant", 137);
+    const stranger = await seedStudio("groups-stranger");
+    await expect(
+      tryGroup(stranger.userId, blockId, machineId, "g1", [1]),
+    ).rejects.toThrow(/Unknown treatment block|not an active member/i);
+  });
+
+  it("POSITIVE CONTROL: the same call with valid channels succeeds", async () => {
+    // Without this, every refusal above could be passing for an unrelated
+    // reason - the machine unregistered, the contract unpublished, the block
+    // retired.
+    const { studio, blockId, machineId } = await scene("groups-good", 138);
+    const out = await tryGroup(studio.userId, blockId, machineId, "g1", [1, 4]);
+    expect(Number(out.rows[0].n)).toBe(1);
+  });
+});

@@ -519,18 +519,38 @@ describe("with a block to chart against, the entry surface appears", () => {
     expect(html).toContain("Save these settings");
   });
 
-  it("marks the machine-computed field as not editable", () => {
-    // `Total` is device-computed on the fixture, so its input is disabled
-    // rather than inviting a value the machine owns. The whole tag is
-    // inspected because React emits attributes in source order, so a
-    // one-directional regex would depend on JSX ordering.
+  it("keeps a machine-computed field TRANSCRIBABLE, while still labelling it", () => {
+    // THIS TEST ASSERTED THE DEFECT. `Total` is device-computed on the
+    // fixture, and this file used to require its input be `disabled` - "rather
+    // than inviting a value the machine owns".
+    //
+    // That reading of `editable: false` was wrong. The flag means the
+    // practitioner cannot change the value ON THE MACHINE; it says nothing
+    // about whether the value can be CHARTED. Since nothing else populates
+    // the field - there is no device integration - disabling the input made an
+    // optional machine-derived reading impossible to record, and a required
+    // one would have left `ready` false forever, blocking every save
+    // (Codex, 15cc6c99).
+    //
+    // The distinction is preserved where it belongs: the field is still
+    // LABELLED as machine-computed, and its submitted observation_source now
+    // carries the contract's own value instead of claiming it was typed.
     const tags = html.match(/<input[^>]*>/g) ?? [];
     const computed = tags.find((t) => t.includes('data-testid="reading-computed"'));
     expect(computed, "no input was rendered for the computed field").toBeTruthy();
-    expect(computed).toContain("disabled");
-    // And the practitioner-entered ones are NOT disabled.
+    expect(computed, "a machine-derived reading must still be enterable").not.toContain(
+      "disabled",
+    );
     const current = tags.find((t) => t.includes('data-testid="reading-current"'));
     expect(current).not.toContain("disabled");
+    // AND IT IS STILL DISTINGUISHED, which is the half that must not be lost.
+    //
+    // Removing `disabled` removed the entry surface's ONLY signal - the
+    // "shown by the machine" wording lived solely in the panel's read-only
+    // list. The entry form now carries it too, so allowing the value to be
+    // charted did not quietly erase the fact that the machine owns it.
+    expect(html).toContain('data-testid="field-machine-shown-computed"');
+    expect(html).toContain("shown by the machine");
   });
 
   it("still shows the disputed bound as advisory, not as a limit", () => {
@@ -943,5 +963,350 @@ describe("the connected wrapper forwards the whole context", () => {
         "A field the loader resolves but the wrapper drops makes the feature " +
         "inert in the real route while direct-render tests still pass.",
     ).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE MODE IS A CHOICE, and the field contract depends on it.
+//
+// The panel always took `activeModes(profile)[0]`, so for any profile with
+// more than one active mode it rendered - and recorded against - the WRONG
+// field contract. The loader had resolved the practitioner's remembered mode
+// all along and the wrapper never forwarded it (Codex, 15cc6c99).
+// ---------------------------------------------------------------------------
+describe("choosing the mode on a multi-mode machine", () => {
+  /** A synthetic profile with TWO active modes, which is the whole point. */
+  const TWO_MODE: MachineProfile = {
+    ...SYNTHETIC,
+    profileId: "fixture:two-mode",
+    modes: [
+      SYNTHETIC.modes[0]!,
+      {
+        ...SYNTHETIC.modes[0]!,
+        key: "blend",
+        nativeLabel: "Blend",
+        fields: [
+          {
+            ...SYNTHETIC.modes[0]!.fields[0]!,
+            key: "blend_current",
+            nativeLabel: "Blend current",
+          },
+        ],
+      },
+    ],
+  };
+  const TWO_MODE_CAT = [TWO_MODE];
+  const DEV: StudioDevice = { ...DEVICE, profileId: "fixture:two-mode" };
+
+  it("offers a picker when the machine has more than one active mode", () => {
+    const html = render({
+      scope: SCOPE,
+      devices: [DEV],
+      catalogue: TWO_MODE_CAT,
+      initialDeviceId: DEV.deviceId,
+    });
+    expect(html).toContain('data-testid="machine-mode-picker"');
+    expect(html).toContain('data-testid="machine-mode-galvanic"');
+    expect(html).toContain('data-testid="machine-mode-blend"');
+  });
+
+  it("CONTROL: offers NO picker when there is only one mode to choose", () => {
+    // Without this, "renders a picker" could be true unconditionally, and a
+    // control on a single-mode machine is the cheapest way to know.
+    const html = render({
+      scope: SCOPE,
+      devices: [DEVICE],
+      catalogue: CAT,
+      initialDeviceId: DEVICE.deviceId,
+    });
+    expect(html).not.toContain('data-testid="machine-mode-picker"');
+  });
+
+  it("honours the REMEMBERED mode rather than the profile's first", () => {
+    // The defect in one assertion: this used to render Galvanic's contract
+    // whatever had been remembered.
+    const html = render({
+      scope: SCOPE,
+      devices: [DEV],
+      catalogue: TWO_MODE_CAT,
+      initialDeviceId: DEV.deviceId,
+      initialModeKey: "blend",
+      blockId: "block-1",
+    });
+    // The second mode's field, which only its contract declares.
+    expect(html).toContain("Blend current");
+    expect(html).toContain('aria-pressed="true"');
+  });
+
+  it("falls back to the first mode when the remembered one is not this machine's", () => {
+    // A remembered mode can outlive the machine it was chosen on, and a key
+    // means nothing outside the profile that declares it. Falling back beats
+    // blanking the panel.
+    const html = render({
+      scope: SCOPE,
+      devices: [DEV],
+      catalogue: TWO_MODE_CAT,
+      initialDeviceId: DEV.deviceId,
+      initialModeKey: "a-mode-from-another-profile",
+      blockId: "block-1",
+    });
+    expect(html).toContain('data-testid="machine-chosen"');
+    // GALVANIC's field contract, not Blend's - the first active mode. Asserted
+    // on the read-only field list, because the entry surface renders only when
+    // `onRecord` is wired and this render does not wire it.
+    expect(html).toContain("Current");
+    expect(html, "Blend's contract must not be rendered here").not.toContain(
+      "Blend current",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A MODE IS ONLY OFFERED IF THIS PHYSICAL UNIT CAN RUN IT.
+//
+// `activeModes` answers what the MODEL offers. An option is fitted to a UNIT,
+// so a mode gated on `requiresInstalledOption` was offered by the picker,
+// refused by `selectDevice` when persisting, left optimistically selected
+// anyway, and then refused again by `recordReadingsAction` after the
+// practitioner had filled the form (Codex, ebc69ff6).
+// ---------------------------------------------------------------------------
+describe("the mode picker is built from the device, not the model", () => {
+  const GATED: MachineProfile = {
+    ...SYNTHETIC,
+    profileId: "fixture:gated",
+    modes: [
+      SYNTHETIC.modes[0]!,
+      {
+        ...SYNTHETIC.modes[0]!,
+        key: "adjunct",
+        nativeLabel: "Adjunct",
+        requiresInstalledOption: "adjunct-head",
+        fields: [
+          { ...SYNTHETIC.modes[0]!.fields[0]!, key: "current", nativeLabel: "Adjunct current" },
+        ],
+      },
+    ],
+  };
+  const CAT_GATED = [GATED];
+  const base: StudioDevice = { ...DEVICE, profileId: "fixture:gated" };
+  const without: StudioDevice = { ...base, installedOptions: [] };
+  const withOption: StudioDevice = { ...base, installedOptions: ["adjunct-head"] };
+
+  it("does NOT offer a mode whose option this unit lacks", () => {
+    const html = render({
+      scope: SCOPE,
+      devices: [without],
+      catalogue: CAT_GATED,
+      initialDeviceId: without.deviceId,
+    });
+    expect(html).not.toContain('data-testid="machine-mode-adjunct"');
+    // One supported mode means no picker at all, which is the right outcome:
+    // there is nothing to choose.
+    expect(html).not.toContain('data-testid="machine-mode-picker"');
+  });
+
+  it("DOES offer it once the unit reports the option", () => {
+    // The positive control. Without it the assertion above would be satisfied
+    // by a picker that never renders the mode under any circumstances.
+    const html = render({
+      scope: SCOPE,
+      devices: [withOption],
+      catalogue: CAT_GATED,
+      initialDeviceId: withOption.deviceId,
+    });
+    expect(html).toContain('data-testid="machine-mode-picker"');
+    expect(html).toContain('data-testid="machine-mode-adjunct"');
+  });
+
+  it("does not SELECT an unsupported mode even when it is remembered", () => {
+    // A remembered mode can outlive the option being removed from the unit.
+    // Falling back to a supported one beats rendering a contract the capture
+    // will be refused against.
+    const html = render({
+      scope: SCOPE,
+      devices: [without],
+      catalogue: CAT_GATED,
+      initialDeviceId: without.deviceId,
+      initialModeKey: "adjunct",
+      blockId: "block-1",
+    });
+    expect(html).toContain('data-testid="machine-chosen"');
+    // Galvanic's own label, not the adjunct mode's.
+    expect(html).not.toContain("Adjunct current");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE TOUCH FLOOR IS THE PRIMITIVE'S, not re-derived at the call site.
+// ---------------------------------------------------------------------------
+describe("mode and device controls meet DESIGN.md's interaction floor", () => {
+  const TWO: MachineProfile = {
+    ...SYNTHETIC,
+    profileId: "fixture:floor",
+    modes: [
+      SYNTHETIC.modes[0]!,
+      { ...SYNTHETIC.modes[0]!, key: "second", nativeLabel: "Second" },
+    ],
+  };
+  const DEV: StudioDevice = { ...DEVICE, profileId: "fixture:floor" };
+  // TWO RENDERS, because the two controls never appear together: the picker
+  // shows only while nothing is chosen, and the mode controls only once
+  // something is. A single render asserting both would have had to pass
+  // whichever state it was in.
+  const chosenHtml = render({
+    scope: SCOPE,
+    devices: [DEV],
+    catalogue: [TWO],
+    initialDeviceId: DEV.deviceId,
+  });
+  const pickingHtml = render({ scope: SCOPE, devices: [DEV], catalogue: [TWO] });
+
+  const tagFrom = (html: string, testid: string): string => {
+    const tags = html.match(/<button[^>]*>/g) ?? [];
+    const found = tags.find((t) => t.includes(`data-testid="${testid}"`));
+    expect(found, `no button rendered for ${testid}`).toBeTruthy();
+    return found!;
+  };
+  const tagFor = (testid: string): string => tagFrom(chosenHtml, testid);
+
+  it("the mode control carries the 44px floor", () => {
+    // My first version was `text-xs py-1.5` with no minimum height - about
+    // 28px on a thumb.
+    expect(tagFor("machine-mode-second")).toContain("min-h-[44px]");
+  });
+
+  it("and relaxes only behind the explicit pointer-fine opt-in", () => {
+    // Not a width breakpoint: an iPad in portrait is 768px wide and still a
+    // thumb, which is why the repository gates this on the pointer itself.
+    expect(tagFor("machine-mode-second")).toContain("pointer-fine:min-h-8");
+  });
+
+  it("the DEVICE control carries it too, which it did not before", () => {
+    // Pre-existing and unflagged: `py-2 text-sm` with no minimum height is
+    // about 36px. Same law, one control over.
+    expect(tagFrom(pickingHtml, `machine-pick-${DEV.deviceId}`)).toContain(
+      "min-h-[44px]",
+    );
+  });
+
+  it("the shared focus treatment comes with them", () => {
+    // The reason to use the primitive rather than copy its height: the floor
+    // is one of several rules it carries, and a call site that re-derives the
+    // height will not re-derive the rest.
+    expect(tagFor("machine-mode-second")).toContain("focus-visible:");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DISTINCT SETTING GROUPS, in the mounted surface.
+//
+// The entry form hard-coded group `g1` with no channels while the schema, the
+// command and both read paths supported several groups with channel
+// associations, so probes at different settings could only be stored as one
+// apparently global setup (Codex, 15cc6c99; narrow implementation approved
+// 2026-10-13).
+//
+// EVERY GATE HERE IS THE CONTRACT'S. The channel identities are 1..count, the
+// add control appears only when the model declares `supportsDistinctSettingGroups`,
+// and a group without channels is never widened to "all".
+// ---------------------------------------------------------------------------
+describe("setting groups in the entry surface", () => {
+  const withChannels = (over: Record<string, unknown> = {}): MachineProfile => ({
+    ...SYNTHETIC,
+    profileId: "fixture:chan",
+    channels: {
+      count: 4,
+      nativeLabel: "Channel",
+      associationRequired: false,
+      supportsDistinctSettingGroups: true,
+      verification: "device-confirmed",
+      evidence: ["p"],
+      ...over,
+    },
+  });
+  const dev = (profileId: string): StudioDevice => ({ ...DEVICE, profileId });
+
+  const entry = (profile: MachineProfile) =>
+    render({
+      scope: SCOPE,
+      devices: [dev(profile.profileId)],
+      initialDeviceId: DEVICE.deviceId,
+      catalogue: [profile],
+      blockId: "block-1",
+      onRecord: async () => ({ ok: true }),
+    });
+
+  it("offers the contract's channel identities, and only those", () => {
+    const html = entry(withChannels());
+    for (const c of [1, 2, 3, 4]) {
+      expect(html).toContain(`data-testid="setting-group-g1-channel-${c}"`);
+    }
+    expect(html, "channel 5 does not exist on this model").not.toContain(
+      'data-testid="setting-group-g1-channel-5"',
+    );
+  });
+
+  it("offers Add setting group when the model says probes can differ", () => {
+    expect(entry(withChannels())).toContain('data-testid="setting-group-add"');
+  });
+
+  it("does NOT offer it when the model has channels but no distinct groups", () => {
+    // The contract's own words: "a simple form must never label a per-probe
+    // setting as a global control". The inverse holds too - a model that does
+    // not support distinct groups must not be given the control.
+    const html = entry(withChannels({ supportsDistinctSettingGroups: false }));
+    expect(html).not.toContain('data-testid="setting-group-add"');
+    // The channel association is still offered: knowing WHICH probe is a
+    // separate question from whether probes can differ.
+    expect(html).toContain('data-testid="setting-group-g1-channel-1"');
+  });
+
+  it("offers neither for a model with no channel structure", () => {
+    const html = entry({ ...SYNTHETIC, profileId: "fixture:nochan", channels: undefined });
+    expect(html).not.toContain('data-testid="setting-group-add"');
+    expect(html).not.toContain("channel-1");
+  });
+
+  it("KEEPS THE SIMPLE PATH for a model with no channels", () => {
+    // Codex's constraint, as an assertion: a profile without channels must
+    // render exactly what it did before - one group, no group chrome, and the
+    // unprefixed input ids every existing test and spec already use.
+    const html = entry({ ...SYNTHETIC, profileId: "fixture:nochan2", channels: undefined });
+    expect(html).toContain('data-testid="reading-current"');
+    expect(html).not.toContain('data-testid="reading-g1-current"');
+    expect(html, "no group heading for a single group").not.toContain(
+      "Setting group 1",
+    );
+  });
+
+  it("says an unassociated group records NO association, not every probe", () => {
+    // The one interpretation this surface must never make. `associationRequired`
+    // is false by a recorded practitioner ruling, so saving without naming
+    // probes is legal - and it means the association is unknown, which is a
+    // weaker claim than "all of them".
+    const html = entry(withChannels());
+    expect(html).toContain('data-testid="setting-group-g1-no-channels"');
+    expect(html).toContain("not as every");
+  });
+
+  it("the channel controls carry the shared touch floor", () => {
+    const html = entry(withChannels());
+    const tags = html.match(/<button[^>]*>/g) ?? [];
+    const chan = tags.find((t) =>
+      t.includes('data-testid="setting-group-g1-channel-2"'),
+    );
+    expect(chan).toBeTruthy();
+    expect(chan).toContain("min-h-[44px]");
+  });
+
+  it("the reading input carries it too, and does not shrink its type", () => {
+    // DESIGN.md LAW 5: density comes from the box, not the type size. A 16px
+    // input is also what stops iOS zooming the page on focus.
+    const html = entry(withChannels());
+    const inputs = html.match(/<input[^>]*>/g) ?? [];
+    const current = inputs.find((t) => t.includes('data-testid="reading-current"'));
+    expect(current).toBeTruthy();
+    expect(current).toContain("min-h-[44px]");
+    expect(current).toContain("text-base");
   });
 });
