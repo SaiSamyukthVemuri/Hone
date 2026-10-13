@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -84,14 +85,23 @@ describe("OwnerDeliveryCard", () => {
     }
   });
 
-  it("says plainly when there is nothing, and admits what it cannot see yet", async () => {
+  it("says plainly when there is nothing, and admits what it cannot see", async () => {
     const html = await render();
     expect(html).toContain("No delivery problems reported in the last 14 days.");
-    expect(html).toContain("Email bounce reports are not switched on yet");
+    expect(html).toContain("appears here only once Hone is receiving the email provider&#x27;s delivery reports");
+    expect(html).toContain("does not prove every email arrived");
+    expect(html).toContain("not that it was read");
+  });
+
+  it("never infers that bounce reporting is live from the signing secret (Codex P2 4253217747)", async () => {
+    delete process.env.RESEND_WEBHOOK_SECRET;
+    const without = await render();
     process.env.RESEND_WEBHOOK_SECRET = "whsec_x";
-    const live = await render();
-    expect(live).not.toContain("not switched on yet");
-    expect(live).toContain("not that it was read");
+    const withSecret = await render();
+    // The secret's presence changes nothing the owner reads.
+    expect(withSecret).toBe(without);
+    expect(withSecret).not.toMatch(/switched on|reporting is (on|live)/i);
+    expect(readFileSync("components/delivery/OwnerDeliveryCard.tsx", "utf8")).not.toContain("RESEND_WEBHOOK_SECRET");
   });
 
   it("never says nothing was reported when the window holds only resolved incidents (Codex P2 4244957358)", async () => {
