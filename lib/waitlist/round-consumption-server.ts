@@ -61,11 +61,17 @@ export async function readRoundConsumed(
       p_studio_id: studioId,
       p_round_id: roundId,
     });
-    if (error) return null;
+    if (error) {
+      // DIAGNOSTIC (composition-only, #874 6154077303): sqlstate only, no payload.
+      console.error(JSON.stringify({ event: "waitlist_round_consumed_read_failed", studioId, code: error.code ?? "unknown", timestamp: new Date().toISOString() }));
+      return null;
+    }
     // The gateway answers NULL for a pair it cannot match, which is "no answer"
     // and not "zero" -- `coerceConsumed` already rejects null for that reason.
     return coerceConsumed(data);
   } catch {
+    // DIAGNOSTIC (composition-only, #874 6154077303): the thrown error is not logged, only that it threw.
+    console.error(JSON.stringify({ event: "waitlist_round_consumed_read_threw", studioId, timestamp: new Date().toISOString() }));
     return null;
   }
 }
