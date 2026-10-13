@@ -55,34 +55,68 @@ export const INBOUND_STOP_PATH = "/api/twilio/inbound-sms";
  * this preflight and adoption cannot disagree about which URL is which.
  */
 
-/** Twilio's default total time for a webhook and its retries (connection-overrides docs). */
+/**
+ * Twilio's documented webhook connection defaults (Webhook connection
+ * overrides, checked 2026-10-13): ct 5000 ms, rt 15000 ms, tt 15000 ms, rc 1,
+ * rp ct. ASSUMPTION (recorded in the handoff): a Setting that omits
+ * totalTimeoutMs gets the same 15000 ms total, and one that omits
+ * `connection` the same ct/rt; the Settings docs say only that Twilio
+ * "applies defaults".
+ */
+const TWILIO_DEFAULT_CONNECT_TIMEOUT_MS = 5000;
+const TWILIO_DEFAULT_READ_TIMEOUT_MS = 15000;
 const TWILIO_DEFAULT_TOTAL_TIME_MS = 15000;
 
 /** Marker substituted for a URL the shared normalizer rejects. */
 const INVALID_FRAGMENT = "invalid-fragment:";
 
 /**
- * Does Twilio REDELIVER a request the route answers with a 5xx? The STOP route
- * returns 500 when a client/prospect scan or write fails, so a STOP is only
- * safe if Twilio tries again. Twilio's documented DEFAULT retry policy is
- * `ct` (connect failures only), with a default retry count of 1; so a 5xx is
- * retried only when the URL's overrides name `rp` with 5xx or all and the
- * retry count is not 0. No fragment, or an invalid one, means no. (The shared
- * normalizer validates; the redelivery claim is this preflight's.)
+ * The delivery failures a STOP must survive (Codex P1 4264761390):
+ *   connect      TCP connect or TLS handshake failure   (rp ct / CONNECTION_TIMEOUT)
+ *   read_timeout no response within the read timeout    (rp rt / READ_TIMEOUT)
+ *   server_error the route answered 5xx (a failed scan or write)  (rp 5xx / HTTP_5XX)
+ * `all` / `ALL` names all three. Twilio does NOT retry a partial response
+ * (connection-overrides docs), so nothing here claims to recover one.
  */
-export function redeliversServerErrors(url: string | null | undefined): boolean {
+type DeliveryFailure = "connect" | "read_timeout" | "server_error";
+const DELIVERY_FAILURES: readonly DeliveryFailure[] = ["connect", "read_timeout", "server_error"];
+const URL_POLICY: Record<string, DeliveryFailure[]> = { ct: ["connect"], rt: ["read_timeout"], "5xx": ["server_error"], all: [...DELIVERY_FAILURES] };
+const SETTING_POLICY: Record<string, DeliveryFailure[]> = {
+  CONNECTION_TIMEOUT: ["connect"],
+  READ_TIMEOUT: ["read_timeout"],
+  HTTP_5XX: ["server_error"],
+  ALL: [...DELIVERY_FAILURES],
+};
+
+/**
+ * Do retries recover EVERY delivery failure? All three must be named, at least
+ * one retry allowed, and the total budget must hold a worst-case first attempt
+ * (connect + read timeout) AND one full retry: tt >= 2 * (ct + rt). A smaller
+ * budget can expire before the retry starts or finishes, which configuration
+ * cannot rule out, so it is not certified.
+ */
+function retriesRecoverEveryFailure(r: { named: readonly DeliveryFailure[]; count: number; ct: number; rt: number; tt: number }): boolean {
+  return r.count >= 1 && DELIVERY_FAILURES.every((x) => r.named.includes(x)) && r.tt >= 2 * (r.ct + r.rt);
+}
+
+/**
+ * Under a URL's own connection overrides (no Webhook Rule matches), do
+ * Twilio's retries recover every delivery failure? Naming `rp` REPLACES the
+ * default `ct`, so `#rp=5xx` alone leaves connect failures and read timeouts
+ * unretried. No fragment means the defaults (ct only, budget 15000 < 40000):
+ * no. An invalid fragment: no.
+ */
+export function retriesRecoverDelivery(url: string | null | undefined): boolean {
   const n = normalizeTwilioWebhookUrl(url);
-  if (!n.ok || !n.overrides) return false;
-  const o = n.overrides;
-  const policy = o.rp ?? [];
-  const retries = o.rc ?? 1;
-  // TOTAL TIME (Codex P1 4254745407): tt bounds every attempt AND every retry.
-  // An explicit tt below Twilio's default (15000 ms) can expire before the
-  // route's 500 or before the retry starts; whether it leaves a window depends
-  // on how fast the route answers, which configuration cannot prove. So it is
-  // not certified.
-  if (o.tt !== undefined && o.tt < TWILIO_DEFAULT_TOTAL_TIME_MS) return false;
-  return (policy.includes("5xx") || policy.includes("all")) && retries >= 1;
+  if (!n.ok) return false;
+  const o = n.overrides ?? {};
+  return retriesRecoverEveryFailure({
+    named: (o.rp ?? ["ct"]).flatMap((t) => URL_POLICY[t] ?? []),
+    count: o.rc ?? 1,
+    ct: o.ct ?? TWILIO_DEFAULT_CONNECT_TIMEOUT_MS,
+    rt: o.rt ?? TWILIO_DEFAULT_READ_TIMEOUT_MS,
+    tt: o.tt ?? TWILIO_DEFAULT_TOTAL_TIME_MS,
+  });
 }
 
 /**
@@ -266,10 +300,29 @@ export type InboundStopFacts = {
           retryOn: string[] | null;
           /** connection.retryPolicy.retryCount, 0-5. */
           retryCount: number | null;
-          /** connection.totalTimeoutMs (100-60000); undefined = omitted (system default). */
+          /** connection.totalTimeoutMs (100-60000); undefined = omitted (assumed 15000). */
           totalTimeoutMs?: number | null;
+          /** connection.connectTimeoutMs (100-10000); undefined = `connection` omitted (5000). */
+          connectTimeoutMs?: number | null;
+          /** connection.readTimeoutMs (100-15000); undefined = `connection` omitted (15000). */
+          readTimeoutMs?: number | null;
+          /**
+           * The Setting's edgeZones (Codex P2 4264761398; Choose webhook edge
+           * zones, checked 2026-10-13): "omitted" = observed absent, every zone
+           * eligible; an object = the priority-ordered zone IDs, with
+           * allowZoneFallback undefined when omitted (documented default
+           * FALSE) and null when not read; null = the Setting's edgeZones not
+           * read.
+           */
+          edgeZones: "omitted" | { zones: readonly string[]; allowZoneFallback?: boolean | null } | null;
         }>;
       };
+  /**
+   * The current edge-zone catalog (GET /v1/Webhooks/EdgeZones): each zone's ID
+   * and how many edge locations are active in it. Needed only to judge a
+   * Setting that restricts zones without fallback. Undefined = not read.
+   */
+  edgeZoneCatalog?: ReadonlyArray<{ id: string; activeEdgeLocations: number }>;
   /** The account TWILIO_AUTH_TOKEN belongs to (TWILIO_ACCOUNT_SID), as confirmed by the operator. */
   honeAccountSid?: string | null;
   /** resolve_studio_by_sms_messaging_service(service) — must be the studio being cut over. */
@@ -446,6 +499,53 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
             : check("webhook_rules", "unknown", "a Webhook Rule matches but its Settings' shares, auth scheme or signing are not reported (or the auth scheme is unrecognised)"),
   );
 
+  // EDGE ZONES (Codex P2 4264761398): a Setting restricted to zones without
+  // fallback fails delivery whenever none of them has an available point of
+  // presence. Each live Setting must be unrestricted ("omitted": every zone
+  // eligible), allow zone fallback, or list at least two catalogued zones with
+  // active edge locations. This only CLASSIFIES what is configured: whether to
+  // add zones or enable fallback is a data-residency decision for the owner.
+  if (rules?.matched) {
+    const catalog = f.edgeZoneCatalog;
+    const zoneVerdict = (x: (typeof live)[number]): "yes" | "no" | "unknown" => {
+      const z = x.edgeZones;
+      if (z === null || z === undefined) return "unknown";
+      if (z === "omitted") return "yes";
+      const zones: unknown = (z as { zones?: unknown }).zones;
+      if (
+        typeof z !== "object" ||
+        !Array.isArray(zones) ||
+        zones.length === 0 ||
+        !zones.every((id) => typeof id === "string" && id.length > 0) ||
+        new Set(zones).size !== zones.length
+      ) {
+        return "unknown";
+      }
+      if (z.allowZoneFallback === null || (z.allowZoneFallback !== undefined && typeof z.allowZoneFallback !== "boolean")) return "unknown";
+      if (z.allowZoneFallback === true) return "yes";
+      // Omitted allowZoneFallback is the documented default, false.
+      if (catalog === undefined) return "unknown";
+      const available = (zones as string[]).filter((id) => catalog.some((c) => c.id === id && c.activeEdgeLocations > 0));
+      return available.length >= 2 ? "yes" : "no";
+    };
+    const verdicts = sharesKnown ? live.map(zoneVerdict) : ["unknown" as const];
+    checks.push(
+      verdicts.includes("no")
+        ? check(
+            "webhook_zones",
+            "fail",
+            "a live Setting restricts delivery to fewer than two available edge zones without allowZoneFallback: a zone outage drops the STOP. List another zone or allow fallback, unless data residency rules it out (an owner decision)",
+          )
+        : verdicts.includes("unknown")
+          ? check(
+              "webhook_zones",
+              "unknown",
+              "a live Setting's edgeZones, its allowZoneFallback or the edge-zone catalog is not read (or malformed): re-read the Setting and GET /v1/Webhooks/EdgeZones",
+            )
+          : check("webhook_zones", "pass", "every live Setting may use every zone, falls back to any zone, or lists at least two available zones"),
+    );
+  }
+
   // PROPAGATION: only meaningful once the Rules are read (unread Rules already
   // block). In flight it is unknown ("wait"); a terminal FAILED or CANCELLED
   // Operation is a failure, since waiting cannot make it take effect.
@@ -476,29 +576,45 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
     );
   }
 
-  // Does Twilio retry a 5xx under the account's Rules? "n/a" = no Rule matches,
-  // so the URL's own connection overrides decide.
+  // Do the account Rules' retries recover every delivery failure (Codex P1
+  // 4264761390)? "n/a" = no Rule matches, so the URL's own overrides decide.
+  // Every Setting that receives traffic must, on its own.
+  const settingRecovers = (x: (typeof live)[number]): "yes" | "no" | "unknown" => {
+    if (x.retryOn === null || x.retryCount === null || x.totalTimeoutMs === null || x.connectTimeoutMs === null || x.readTimeoutMs === null) {
+      return "unknown";
+    }
+    return retriesRecoverEveryFailure({
+      named: x.retryOn.flatMap((t) => SETTING_POLICY[t] ?? []),
+      count: x.retryCount,
+      ct: x.connectTimeoutMs ?? TWILIO_DEFAULT_CONNECT_TIMEOUT_MS,
+      rt: x.readTimeoutMs ?? TWILIO_DEFAULT_READ_TIMEOUT_MS,
+      tt: x.totalTimeoutMs ?? TWILIO_DEFAULT_TOTAL_TIME_MS,
+    })
+      ? "yes"
+      : "no";
+  };
   const ruleRetries: "yes" | "no" | "unknown" | "n/a" =
     rules === undefined
       ? "unknown"
       : !rules.matched
         ? "n/a"
-        : !sharesKnown || live.length === 0 || live.some((x) => x.retryOn === null || x.retryCount === null)
+        : !sharesKnown || live.length === 0
           ? "unknown"
-          : live.some((x) => x.totalTimeoutMs === null)
-            ? "unknown"
-          : live.every(
-                (x) =>
-                  (x.retryOn!.includes("HTTP_5XX") || x.retryOn!.includes("ALL")) &&
-                  x.retryCount! >= 1 &&
-                  // Same rule as the URL's tt: an explicit total below the default is not certified.
-                  (x.totalTimeoutMs === undefined || (x.totalTimeoutMs ?? 0) >= TWILIO_DEFAULT_TOTAL_TIME_MS),
-              )
-            ? "yes"
-            : "no";
-  /** One webhook's 5xx redelivery: its retries under the Rules, or its own same-route POST fallback. */
+          : live.map(settingRecovers).reduce<"yes" | "no" | "unknown">(
+              (acc, v) => (acc === "no" || v === "no" ? "no" : acc === "unknown" || v === "unknown" ? "unknown" : "yes"),
+              "yes",
+            );
+  /**
+   * One webhook's recovery from a failed delivery: retries covering every
+   * failure under the effective configuration, or its own same-route POST
+   * fallback. ASSUMPTION (recorded in the handoff): Twilio requests the
+   * fallback "if an error occurs while retrieving or executing the TwiML" at
+   * the primary URL (Messaging Services and IncomingPhoneNumbers docs), which
+   * covers connect failures, timeouts and 5xx alike. The fallback is the same
+   * URL, so the same Rule, Setting and edge zones govern it too.
+   */
   const redelivers = (url: string | null | undefined, fbUrl: string | null | undefined, fbMethod: string | null | undefined) => {
-    const retries = ruleRetries === "n/a" ? (redeliversServerErrors(url) ? "yes" : "no") : ruleRetries;
+    const retries = ruleRetries === "n/a" ? (retriesRecoverDelivery(url) ? "yes" : "no") : ruleRetries;
     if (retries === "yes") return "yes" as const;
     const fallbackIsRoute = !!expected.ok && signedFormOfConfiguredUrl(fbUrl ?? null) === expected.url;
     if (fallbackIsRoute && (fbMethod ?? "").toUpperCase() === "POST") return "fallback" as const;
@@ -520,19 +636,25 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
       : redelivers(svc.inboundRequestUrl, svc.fallbackUrl, svc.fallbackMethod);
     checks.push(
       verdict === "yes"
-        ? check("stop_redelivery", "pass", ruleRetries === "yes" ? "the matching Webhook Rule's Settings retry 5xx" : "the inbound URL's overrides retry 5xx (rp=5xx|all, rc>=1)")
+        ? check(
+            "stop_redelivery",
+            "pass",
+            ruleRetries === "yes"
+              ? "every live Setting retries connect failures, read timeouts and 5xx within its budget (a partial response is never retried by Twilio)"
+              : "the inbound URL's overrides retry connect failures, read timeouts and 5xx within tt (rp=all or ct,rt,5xx; rc>=1; tt>=2*(ct+rt))",
+          )
         : verdict === "fallback"
           ? check("stop_redelivery", "pass", `${fallbackName} is the same route, by POST`)
           : verdict === "unknown"
             ? check(
                 "stop_redelivery",
                 "unknown",
-                `5xx redelivery not proven: read the account Webhook Rules and ${fallbackName}, or retry 5xx (#rp=5xx, rc>=1)`,
+                `delivery recovery not proven: read the account Webhook Rules (every live Setting's retryPolicy and timeouts) and ${fallbackName}`,
               )
             : check(
                 "stop_redelivery",
                 "fail",
-                `a STOP the route answers 500 is never redelivered: no 5xx retry applies and ${fallbackName} is not the same route`,
+                `a STOP whose delivery fails (connect/TLS, read timeout or 5xx) may never be redelivered: the retries do not cover all three within their budget (rp=all or ct,rt,5xx; rc>=1; tt>=2*(ct+rt)) and ${fallbackName} is not the same route`,
               ),
     );
   }
@@ -584,11 +706,11 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
       pinned
         ? check("sender_pool", "pass", "routed sends are pinned to the checked number, so replies return to it")
         : poolVerdict === "yes" && poolRedelivery === "no"
-          ? check("sender_pool", "fail", "a pool number neither retries 5xx nor falls back to the route: a STOP the route answers 500 is lost")
+          ? check("sender_pool", "fail", "a pool number neither retries every delivery failure nor falls back to the route: a STOP may be lost")
           : poolVerdict === "yes" && poolRedelivery === "unknown"
-            ? check("sender_pool", "unknown", "a pool number's 5xx redelivery is not proven: read its Webhook Rule and sms_fallback_url")
+            ? check("sender_pool", "unknown", "a pool number's delivery recovery is not proven: read its Webhook Rule and sms_fallback_url")
           : poolVerdict === "yes"
-          ? check("sender_pool", "pass", `every pool number (${pool!.length}) reaches the expected URL by POST and retries 5xx`)
+          ? check("sender_pool", "pass", `every pool number (${pool!.length}) reaches the expected URL by POST and recovers failed deliveries`)
           : poolVerdict === "no"
             ? check("sender_pool", "fail", "a pool number's own webhook does not reach the expected URL by POST")
             : check("sender_pool", "unknown", "outbound not pinned to the checked number and the sender pool not fully read"),

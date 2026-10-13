@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   evaluateInboundStopPreflight,
   expectedInboundWebhookUrl,
-  redeliversServerErrors,
+  retriesRecoverDelivery,
   type InboundStopFacts,
 } from "@/lib/sms/inbound-stop-preflight";
 
@@ -11,8 +11,21 @@ import {
 
 const BASE = "https://hone.example";
 const URL_OK = `${BASE}/api/twilio/inbound-sms`;
-/** The expected URL with a connection override that redelivers a 5xx (Codex P1 4254444665). */
-const URL_RETRY = `${URL_OK}#rp=5xx`;
+/**
+ * Connection overrides whose retries recover EVERY delivery failure (Codex P1s
+ * 4254444665, 4264761390): connect/TLS, read timeout and 5xx, one retry or
+ * more, and a total budget holding two worst-case attempts (2 * (1000 + 5000)).
+ */
+const FULL_RETRY = "#ct=1000&rt=5000&tt=15000&rc=2&rp=ct,rt,5xx";
+const URL_RETRY = `${URL_OK}${FULL_RETRY}`;
+/** A live Setting's retries that recover every failure within the assumed 15000 ms total. */
+const SETTING_RECOVERY = {
+  retryOn: ["HTTP_5XX", "CONNECTION_TIMEOUT", "READ_TIMEOUT"],
+  retryCount: 2,
+  connectTimeoutMs: 1000,
+  readTimeoutMs: 5000,
+  edgeZones: "omitted" as const,
+};
 const ACCOUNT = `AC${"1".repeat(32)}`;
 
 const allProven = (): InboundStopFacts => ({
@@ -336,8 +349,8 @@ describe("evaluateInboundStopPreflight", () => {
       Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: URL_RETRY, numberSmsMethod: "POST", numberSmsApplicationSid: null });
       f.routedFromNumber = undefined;
       f.service!.senderPool = [
-        { phoneNumber: "+14165550100", smsUrl: `${URL_OK}#rp=5xx`, smsMethod: "POST", smsApplicationSid: null },
-        { phoneNumber: "+14165550101", smsUrl: `${URL_OK}#ct=1000&rp=5xx,ct`, smsMethod: "POST", smsApplicationSid: null },
+        { phoneNumber: "+14165550100", smsUrl: URL_RETRY, smsMethod: "POST", smsApplicationSid: null },
+        { phoneNumber: "+14165550101", smsUrl: `${URL_OK}#ct=500&rt=2000&rp=all`, smsMethod: "POST", smsApplicationSid: null },
       ];
       expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
       f.service!.senderPool[1].smsUrl = `${URL_OK}#bogus=1`;
@@ -348,8 +361,13 @@ describe("evaluateInboundStopPreflight", () => {
   describe("STOP REDELIVERY: a STOP the route answers 500 must be retried (Codex P1 4254444665)", () => {
     const redelivery = (f: InboundStopFacts) => evaluateInboundStopPreflight(f).checks.find((c) => c.id === "stop_redelivery");
 
-    for (const frag of ["#rp=5xx", "#rp=all", "#rp=ct,rt,5xx&rc=3", "#rc=1&rp=4xx,5xx"]) {
-      it(`${frag}: redelivered`, () => {
+    for (const frag of [
+      FULL_RETRY,
+      "#ct=1000&rt=5000&rp=all",
+      // Twilio's own "example with all overrides": 2 * (500 + 1000) <= 15000.
+      "#ct=500&rt=1000&tt=15000&rc=2&rp=4xx,5xx,ct,rt&sni=y&e=dublin,sydney",
+    ]) {
+      it(`${frag}: every delivery failure is retried within the budget`, () => {
         const f = allProven();
         f.service!.inboundRequestUrl = `${URL_OK}${frag}`;
         expect(redelivery(f)?.status).toBe("pass");
@@ -361,6 +379,16 @@ describe("evaluateInboundStopPreflight", () => {
       ["rp without 5xx", "#rp=4xx,ct,rt"],
       ["rp=5xx but rc=0", "#rp=5xx&rc=0"],
       ["timeouts only", "#ct=1000&rt=5000"],
+      // Codex P1 4264761390: naming rp REPLACES the default ct, so 5xx alone
+      // leaves connect/TLS failures and read timeouts unretried.
+      ["rp=5xx alone (connect failures and read timeouts unretried)", "#ct=1000&rt=5000&rp=5xx"],
+      ["rp=5xx,ct (read timeouts unretried)", "#ct=1000&rt=5000&rp=5xx,ct"],
+      ["rp=5xx,rt (connect failures unretried)", "#ct=1000&rt=5000&rp=5xx,rt"],
+      ["rp=4xx,5xx", "#rc=1&ct=1000&rt=5000&rp=4xx,5xx"],
+      // Every failure named, but the default ct/rt (5000 + 15000) twice exceed tt 15000.
+      ["rp=all with default timeouts (no room for the retry)", "#rp=all"],
+      ["rp=ct,rt,5xx with default timeouts", "#rp=ct,rt,5xx&rc=3"],
+      ["the bare 5xx override", "#rp=5xx"],
     ] as const) {
       it(`${why}: blocked (unknown with no fallback read)`, () => {
         const f = allProven();
@@ -371,22 +399,32 @@ describe("evaluateInboundStopPreflight", () => {
       });
     }
 
-    describe("TOTAL TIME: an explicit budget below Twilio's 15000 ms default is not certified (Codex P1 4254745407)", () => {
-      for (const frag of ["#tt=100&rp=5xx", "#tt=14999&rp=all&rc=3"]) {
+    describe("TOTAL TIME: the budget must hold a worst-case attempt AND one full retry, tt >= 2 * (ct + rt) (Codex P1s 4254745407, 4264761390)", () => {
+      for (const frag of [
+        "#tt=100&rp=all&ct=100&rt=100",
+        "#tt=11999&rp=all&ct=1000&rt=5000",
+        "#tt=14999&rp=all&rc=3",
+        "#ct=5000&rt=5000&rp=all",
+      ]) {
         it(`${frag}: not certified`, () => {
-          expect(redeliversServerErrors(`${URL_OK}${frag}`)).toBe(false);
+          expect(retriesRecoverDelivery(`${URL_OK}${frag}`)).toBe(false);
         });
       }
-      for (const frag of ["#tt=15000&rp=5xx", "#rp=5xx", "#ct=500&rt=1000&tt=15000&rc=2&rp=4xx,5xx,ct,rt&sni=y&e=dublin,sydney"]) {
+      for (const frag of [
+        "#tt=12000&rp=all&ct=1000&rt=5000",
+        FULL_RETRY,
+        "#ct=2500&rt=5000&rp=ct,rt,5xx",
+        "#ct=500&rt=1000&tt=15000&rc=2&rp=4xx,5xx,ct,rt&sni=y&e=dublin,sydney",
+      ]) {
         it(`${frag}: certified`, () => {
-          expect(redeliversServerErrors(`${URL_OK}${frag}`)).toBe(true);
+          expect(retriesRecoverDelivery(`${URL_OK}${frag}`)).toBe(true);
         });
       }
 
       const ruleSetting = (totalTimeoutMs: number | null | undefined) => ({
         matched: true as const,
         settings: [
-          { percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", retryOn: ["HTTP_5XX"], retryCount: 2, totalTimeoutMs },
+          { percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY, totalTimeoutMs },
         ],
       });
 
@@ -404,12 +442,12 @@ describe("evaluateInboundStopPreflight", () => {
       });
     });
 
-    it("redeliversServerErrors never trusts an invalid fragment, even one naming rp=5xx", () => {
-      expect(redeliversServerErrors(`${URL_OK}#rp=5xx`)).toBe(true);
-      expect(redeliversServerErrors(`${URL_OK}#rp=5xx&sni=on`)).toBe(false);
-      expect(redeliversServerErrors(`${URL_OK}#rp=5xx&rp=all`)).toBe(false);
-      expect(redeliversServerErrors(URL_OK)).toBe(false);
-      expect(redeliversServerErrors(null)).toBe(false);
+    it("retriesRecoverDelivery never trusts an invalid fragment, even one naming rp=5xx", () => {
+      expect(retriesRecoverDelivery(URL_RETRY)).toBe(true);
+      expect(retriesRecoverDelivery(`${URL_RETRY}&sni=on`)).toBe(false);
+      expect(retriesRecoverDelivery(`${URL_RETRY}&rp=all`)).toBe(false);
+      expect(retriesRecoverDelivery(URL_OK)).toBe(false);
+      expect(retriesRecoverDelivery(null)).toBe(false);
     });
 
     describe("account Webhook Rules take precedence and decide signing (Codex P1s 4254537039, 4254655904; P2 4254655911)", () => {
@@ -420,14 +458,16 @@ describe("evaluateInboundStopPreflight", () => {
         signatureAlgorithm: string | null;
         retryOn: string[] | null;
         retryCount: number | null;
+        connectTimeoutMs?: number | null;
+        readTimeoutMs?: number | null;
+        edgeZones: "omitted" | { zones: readonly string[]; allowZoneFallback?: boolean | null } | null;
       };
       const setting = (over: Partial<Setting> = {}): Setting => ({
         percentage: 100,
         authScheme: "NONE",
         signatureType: "ACCOUNT_AUTH_TOKEN",
         signatureAlgorithm: "HMAC_SHA1",
-        retryOn: ["HTTP_5XX"],
-        retryCount: 2,
+        ...SETTING_RECOVERY,
         ...over,
       });
       const rulesCheck = (f: InboundStopFacts) => evaluateInboundStopPreflight(f).checks.find((c) => c.id === "webhook_rules");
@@ -741,7 +781,7 @@ describe("the base URL is used RAW, exactly as the route verifies (Codex P2 4251
       expect(expectedInboundWebhookUrl({ TWILIO_WEBHOOK_BASE_URL: base })).toEqual({ ok: true, url });
       const f = allProven();
       f.env = { ...f.env, TWILIO_WEBHOOK_BASE_URL: base };
-      f.service!.inboundRequestUrl = `${url}#rp=5xx`;
+      f.service!.inboundRequestUrl = `${url}${FULL_RETRY}`;
       const r = evaluateInboundStopPreflight(f);
       expect(r.blockers).toEqual([]);
     });
@@ -818,8 +858,7 @@ describe("a matching Setting must authenticate with scheme NONE (Codex P1 426416
     authScheme: "NONE",
     signatureType: "ACCOUNT_AUTH_TOKEN",
     signatureAlgorithm: "HMAC_SHA1",
-    retryOn: ["HTTP_5XX"],
-    retryCount: 2,
+    ...SETTING_RECOVERY,
     ...over,
   });
   const withRule = (...settings: MatchedSetting[]): InboundStopFacts => {
@@ -880,5 +919,209 @@ describe("a matching Setting must authenticate with scheme NONE (Codex P1 426416
     const back = withRule(setting());
     back.webhookPropagation = { ruleOperationStatuses: [], secondsSinceLastConfigChange: 10 };
     expect(evaluateInboundStopPreflight(back).blockers).toEqual(["webhook_propagation"]);
+  });
+});
+
+type LiveSetting = Extract<NonNullable<InboundStopFacts["webhookRules"]>, { matched: true }>["settings"][number];
+const liveSetting = (over: Partial<LiveSetting> = {}): LiveSetting => ({
+  percentage: 100,
+  authScheme: "NONE",
+  signatureType: "ACCOUNT_AUTH_TOKEN",
+  signatureAlgorithm: "HMAC_SHA1",
+  ...SETTING_RECOVERY,
+  ...over,
+});
+const underRule = (...settings: LiveSetting[]): InboundStopFacts => {
+  const f = allProven();
+  // No fallback, so only the retries can recover a failed delivery.
+  Object.assign(f.service!, { fallbackUrl: null, fallbackMethod: null });
+  f.webhookRules = { matched: true, settings };
+  return f;
+};
+const checkOf = (f: InboundStopFacts, id: string) => evaluateInboundStopPreflight(f).checks.find((c) => c.id === id);
+
+describe("a live Setting's retries must recover EVERY delivery failure (Codex P1 4264761390)", () => {
+  it("POSITIVE CONTROL: 5xx, connect and read-timeout retries within budget: ready through every gate", () => {
+    const r = evaluateInboundStopPreflight(underRule(liveSetting()));
+    expect(r.blockers).toEqual([]);
+    expect(r.ready).toBe(true);
+  });
+
+  it("POSITIVE CONTROL: Twilio's documented example (5000 / 10000 / 30000, three retries on all three) recovers", () => {
+    const f = underRule(liveSetting({ connectTimeoutMs: 5000, readTimeoutMs: 10000, totalTimeoutMs: 30000, retryCount: 3 }));
+    expect(checkOf(f, "stop_redelivery")?.status).toBe("pass");
+  });
+
+  it("ALL covers all three", () => {
+    expect(checkOf(underRule(liveSetting({ retryOn: ["ALL"] })), "stop_redelivery")?.status).toBe("pass");
+  });
+
+  for (const [why, retryOn] of [
+    ["HTTP_5XX only", ["HTTP_5XX"]],
+    ["HTTP_5XX and CONNECTION_TIMEOUT (read timeouts lost)", ["HTTP_5XX", "CONNECTION_TIMEOUT"]],
+    ["HTTP_5XX and READ_TIMEOUT (connect/TLS failures lost)", ["HTTP_5XX", "READ_TIMEOUT"]],
+    ["the timeouts only (a 5xx lost)", ["CONNECTION_TIMEOUT", "READ_TIMEOUT"]],
+    ["HTTP_4XX and HTTP_5XX", ["HTTP_4XX", "HTTP_5XX"]],
+  ] as const) {
+    it(`${why}: refused`, () => {
+      const f = underRule(liveSetting({ retryOn: [...retryOn] }));
+      expect(checkOf(f, "stop_redelivery")?.status).toBe("fail");
+      expect(checkOf(f, "stop_redelivery")?.detail).toMatch(/connect\/TLS, read timeout or 5xx/);
+    });
+  }
+
+  it("connection omitted (5000 + 15000) with the assumed 15000 total: no room for a retry, refused; a 40000 total recovers", () => {
+    const omitted = liveSetting({ connectTimeoutMs: undefined, readTimeoutMs: undefined, totalTimeoutMs: undefined });
+    expect(checkOf(underRule(omitted), "stop_redelivery")?.status).toBe("fail");
+    expect(checkOf(underRule({ ...omitted, totalTimeoutMs: 40000 }), "stop_redelivery")?.status).toBe("pass");
+    expect(checkOf(underRule({ ...omitted, totalTimeoutMs: 39999 }), "stop_redelivery")?.status).toBe("fail");
+  });
+
+  for (const field of ["connectTimeoutMs", "readTimeoutMs", "totalTimeoutMs", "retryOn", "retryCount"] as const) {
+    it(`${field} not read: unknown`, () => {
+      expect(checkOf(underRule(liveSetting({ [field]: null })), "stop_redelivery")?.status).toBe("unknown");
+    });
+  }
+
+  it("every failure named and within budget, but ZERO retries: nothing is retried, refused (URL and Setting)", () => {
+    expect(retriesRecoverDelivery(`${URL_OK}#ct=1000&rt=5000&rc=0&rp=all`)).toBe(false);
+    expect(retriesRecoverDelivery(`${URL_OK}#ct=1000&rt=5000&rc=1&rp=all`)).toBe(true);
+    expect(checkOf(underRule(liveSetting({ retryCount: 0 })), "stop_redelivery")?.status).toBe("fail");
+  });
+
+  it("an unrecognised retryOn value counts for nothing", () => {
+    expect(checkOf(underRule(liveSetting({ retryOn: ["HTTP_5XX", "CONNECTION_TIMEOUT", "READ_TIMEOUTS"] })), "stop_redelivery")?.status).toBe("fail");
+  });
+
+  it("PRECEDENCE: the Setting decides, not the URL — a complete URL override under a 5xx-only Setting is refused", () => {
+    const f = underRule(liveSetting({ retryOn: ["HTTP_5XX"] }));
+    f.service!.inboundRequestUrl = URL_RETRY;
+    expect(checkOf(f, "stop_redelivery")?.status).toBe("fail");
+  });
+
+  it("PRECEDENCE: a 5xx-only URL override under a complete Setting recovers", () => {
+    const f = underRule(liveSetting());
+    f.service!.inboundRequestUrl = `${URL_OK}#rp=5xx`;
+    expect(checkOf(f, "stop_redelivery")?.status).toBe("pass");
+  });
+
+  it("SPLIT: every non-zero share must recover; a zero share is ignored", () => {
+    expect(checkOf(underRule(liveSetting({ percentage: 70 }), liveSetting({ percentage: 30, retryOn: ["HTTP_5XX"] })), "stop_redelivery")?.status).toBe("fail");
+    expect(checkOf(underRule(liveSetting({ percentage: 100 }), liveSetting({ percentage: 0, retryOn: ["HTTP_5XX"] })), "stop_redelivery")?.status).toBe("pass");
+  });
+
+  it("a same-route POST fallback still recovers when the retries do not", () => {
+    const f = underRule(liveSetting({ retryOn: ["HTTP_5XX"] }));
+    Object.assign(f.service!, { fallbackUrl: URL_OK, fallbackMethod: "POST" });
+    expect(checkOf(f, "stop_redelivery")?.status).toBe("pass");
+    expect(checkOf(f, "stop_redelivery")?.detail).toMatch(/same route, by POST/);
+  });
+
+  it("the other gates still bind: a complete retry policy does not rescue SHARED_KEY signing or OAUTH2 auth", () => {
+    expect(evaluateInboundStopPreflight(underRule(liveSetting({ signatureType: "SHARED_KEY" }))).ready).toBe(false);
+    expect(evaluateInboundStopPreflight(underRule(liveSetting({ authScheme: "OAUTH2" }))).ready).toBe(false);
+  });
+});
+
+describe("a live Setting's edge zones must not drop a STOP on one zone's outage (Codex P2 4264761398)", () => {
+  const CATALOG = [
+    { id: "zone-a", activeEdgeLocations: 2 },
+    { id: "zone-b", activeEdgeLocations: 1 },
+    { id: "zone-empty", activeEdgeLocations: 0 },
+  ];
+  const zoned = (edgeZones: LiveSetting["edgeZones"], catalog: InboundStopFacts["edgeZoneCatalog"] = CATALOG) => {
+    const f = underRule(liveSetting({ edgeZones }));
+    f.edgeZoneCatalog = catalog;
+    return f;
+  };
+  const zones = (f: InboundStopFacts) => checkOf(f, "webhook_zones")?.status;
+
+  it("edgeZones observed omitted: every zone eligible, ready", () => {
+    const f = zoned("omitted");
+    f.edgeZoneCatalog = undefined; // not needed when every zone is eligible
+    expect(zones(f)).toBe("pass");
+    expect(evaluateInboundStopPreflight(f).ready).toBe(true);
+  });
+
+  it("ONE zone, allowZoneFallback false: refused, and the decision is left to the owner", () => {
+    const f = zoned({ zones: ["zone-a"], allowZoneFallback: false });
+    expect(zones(f)).toBe("fail");
+    expect(checkOf(f, "webhook_zones")?.detail).toMatch(/data residency.*owner decision/);
+    expect(evaluateInboundStopPreflight(f).blockers).toEqual(["webhook_zones"]);
+  });
+
+  it("ONE zone, allowZoneFallback omitted: the documented default is FALSE, refused (not unknown)", () => {
+    expect(zones(zoned({ zones: ["zone-a"] }))).toBe("fail");
+  });
+
+  it("ONE zone with fallback enabled: ready", () => {
+    expect(zones(zoned({ zones: ["zone-a"], allowZoneFallback: true }))).toBe("pass");
+  });
+
+  it("an uncatalogued zone with fallback enabled still delivers: ready", () => {
+    expect(zones(zoned({ zones: ["zone-gone"], allowZoneFallback: true }))).toBe("pass");
+  });
+
+  it("REDUNDANCY: two catalogued zones with active edge locations, no fallback: ready", () => {
+    expect(zones(zoned({ zones: ["zone-a", "zone-b"], allowZoneFallback: false }))).toBe("pass");
+  });
+
+  for (const [why, list] of [
+    ["the second zone has no active edge location", ["zone-a", "zone-empty"]],
+    ["the second zone is not in the current catalog", ["zone-a", "zone-gone"]],
+  ] as const) {
+    it(`two zones, but ${why}: effectively one zone, refused`, () => {
+      expect(zones(zoned({ zones: [...list], allowZoneFallback: false }))).toBe("fail");
+    });
+  }
+
+  it("two zones without fallback and the catalog unread: unknown", () => {
+    const f = zoned({ zones: ["zone-a", "zone-b"] });
+    f.edgeZoneCatalog = undefined;
+    expect(zones(f)).toBe("unknown");
+  });
+
+  for (const [why, edgeZones] of [
+    ["edgeZones not read", null],
+    ["allowZoneFallback not read", { zones: ["zone-a", "zone-b"], allowZoneFallback: null }],
+    ["an empty zone list", { zones: [] }],
+    ["a duplicated zone", { zones: ["zone-a", "zone-a"] }],
+    ["a non-string zone", { zones: [7] as unknown as string[] }],
+    ["zones missing", {} as unknown as { zones: string[] }],
+    ["a non-boolean allowZoneFallback", { zones: ["zone-a"], allowZoneFallback: "yes" as unknown as boolean }],
+  ] as const) {
+    it(`${why}: unknown, never assumed`, () => {
+      const f = zoned(edgeZones as LiveSetting["edgeZones"]);
+      expect(zones(f)).toBe("unknown");
+      expect(evaluateInboundStopPreflight(f).blockers).toEqual(["webhook_zones"]);
+    });
+  }
+
+  it("SPLIT: a 30% single-zone share without fallback is refused; at 0% it is ignored", () => {
+    const f = underRule(liveSetting({ percentage: 70 }), liveSetting({ percentage: 30, edgeZones: { zones: ["zone-a"] } }));
+    f.edgeZoneCatalog = CATALOG;
+    expect(zones(f)).toBe("fail");
+    const g = underRule(liveSetting({ percentage: 100 }), liveSetting({ percentage: 0, edgeZones: { zones: ["zone-a"] } }));
+    expect(zones(g)).toBe("pass");
+  });
+
+  it("DRIFT: a ready Setting narrowed to one zone stops being ready, and widening it back must propagate first", () => {
+    expect(evaluateInboundStopPreflight(zoned("omitted")).ready).toBe(true);
+    const narrowed = zoned({ zones: ["zone-a"] });
+    narrowed.webhookPropagation = { ruleOperationStatuses: ["COMPLETED"], secondsSinceLastConfigChange: 5 };
+    expect(evaluateInboundStopPreflight(narrowed).blockers).toEqual(["webhook_zones", "webhook_propagation"]);
+    const widened = zoned({ zones: ["zone-a", "zone-b"] });
+    widened.webhookPropagation = { ruleOperationStatuses: ["COMPLETED"], secondsSinceLastConfigChange: 5 };
+    expect(evaluateInboundStopPreflight(widened).blockers).toEqual(["webhook_propagation"]);
+  });
+
+  it("no Rule matches: no Settings, so no zone check (the URL's own e= override is not a Setting)", () => {
+    expect(checkOf(allProven(), "webhook_zones")).toBeUndefined();
+  });
+
+  it("Rules unread: no separate zone check (webhook_rules already blocks)", () => {
+    const f = allProven();
+    f.webhookRules = undefined;
+    expect(checkOf(f, "webhook_zones")).toBeUndefined();
   });
 });
