@@ -31,8 +31,8 @@ import {
   type MachineDb,
 } from "@/lib/machines/machine-queries";
 import { nativeFieldGroups } from "@/lib/machines/charting";
-import { activeModes } from "@/lib/machines/profile-contract";
-import { SYNTHETIC_DEMO_PROFILE as SYNTH } from "@/lib/machines/synthetic-profile";
+import { activeModes, type MachineProfile } from "@/lib/machines/profile-contract";
+import { catalogueForRuntime, SYNTHETIC_DEMO_PROFILE as SYNTH, SYNTHETIC_SINGLE_PROBE } from "@/lib/machines/synthetic-profile";
 import { EMAILS, IDS, TWIN, validateTwin } from "./fett-twin-manifest";
 import { assertTwinTarget } from "./fett-twin-target";
 
@@ -105,12 +105,23 @@ function pgMachineDb(q: UserQuery): MachineDb {
   } as unknown as MachineDb;
 }
 
-/** Deployment-authority publish of the synthetic contract (service_role-only command; idempotent). */
-async function publishSyntheticContract(): Promise<void> {
-  for (const mode of activeModes(SYNTH)) {
-    const modeDef = SYNTH.modes.find((m) => m.key === mode.key)!;
+/**
+ * Every SYNTHETIC profile the app itself would offer, taken from the app's own gated runtime catalogue
+ * (the same three-way gate the UI uses: exact flag, no deployment signal, loopback Supabase). Real
+ * manufacturer profiles are never published or registered here.
+ */
+function syntheticProfiles(apiUrl: string): MachineProfile[] {
+  const gateEnv: NodeJS.ProcessEnv = { ...process.env, HONE_SYNTHETIC_MACHINE_PROFILE: "1", NEXT_PUBLIC_SUPABASE_URL: apiUrl };
+  const gated = catalogueForRuntime(gateEnv);
+  return gated.filter((p) => p.profileId.startsWith("synthetic:"));
+}
+
+/** Deployment-authority publish of a synthetic contract (service_role-only command; idempotent per version). */
+async function publishSyntheticContract(profile: MachineProfile): Promise<void> {
+  for (const mode of activeModes(profile)) {
+    const modeDef = profile.modes.find((m) => m.key === mode.key)!;
     const all = modeDef.fields.concat(modeDef.stages.flatMap((st) => st.fields));
-    const fields = nativeFieldGroups(SYNTH, mode).flatMap((g) =>
+    const fields = nativeFieldGroups(profile, mode).flatMap((g) =>
       g.fields.map((f) => ({
         stage_key: f.stageKey ?? "",
         field_key: f.key,
@@ -121,10 +132,10 @@ async function publishSyntheticContract(): Promise<void> {
     );
     if (fields.length === 0) continue;
     await adminQuery(`select public.sync_machine_profile_contract($1, $2, $3, $4, $5, $6::jsonb)`, [
-      SYNTH.profileId,
-      SYNTH.version,
+      profile.profileId,
+      profile.version,
       mode.key,
-      SYNTH.channels?.count ?? null,
+      profile.channels?.count ?? null,
       mode.requiresInstalledOption ?? null,
       JSON.stringify(fields),
     ]);
@@ -275,7 +286,8 @@ it("seeds (or proves) the persistent synthetic Fett twin", { timeout: 600_000 },
   note("D4 receptionist books through receptionist_create_appointment", deskBook.rows[0]?.result === "created", deskBook.rows[0]?.result);
 
   // ---- E. Machines ----------------------------------------------------------------------------------
-  await publishSyntheticContract();
+  const profiles = syntheticProfiles(target.apiUrl);
+  for (const p of profiles) await publishSyntheticContract(p);
   const asDb = <T,>(userId: string, fn: (db: MachineDb) => Promise<T>) => asUser(userId, (q) => fn(pgMachineDb(q)));
   const unit = await asDb(owner.userId, (db) =>
     registerStudioMachine(db, { studioId, profileId: SYNTH.profileId, profileVersion: SYNTH.version, displayName: "Room 1 demo" }),
@@ -283,7 +295,21 @@ it("seeds (or proves) the persistent synthetic Fett twin", { timeout: 600_000 },
   const oldUnit = await asDb(owner.userId, (db) =>
     registerStudioMachine(db, { studioId, profileId: SYNTH.profileId, profileVersion: SYNTH.version, displayName: "Room 2 (retired)" }),
   );
-  note("E1 synthetic contract published + 2 units registered", unit.ok && oldUnit.ok, unit.ok ? `profile ${SYNTH.profileId} v${SYNTH.version}` : unit.error);
+  // A DIFFERENT synthetic model (own mode, overlapping `current` key at a different unit/precision, a unique
+  // field, no channels) so a machine switch in the charting form is a falsifiable proof, not a decoration.
+  const singleUnit = await asDb(owner.userId, (db) =>
+    registerStudioMachine(db, {
+      studioId,
+      profileId: SYNTHETIC_SINGLE_PROBE.profileId,
+      profileVersion: SYNTHETIC_SINGLE_PROBE.version,
+      displayName: "Room 3 single-probe demo",
+    }),
+  );
+  note(
+    "E1 synthetic contracts published (gated runtime catalogue) + 3 units registered on 2 models",
+    unit.ok && oldUnit.ok && singleUnit.ok && profiles.length >= 2,
+    `${profiles.map((p) => `${p.profileId} v${p.version}`).join(", ")}${singleUnit.ok ? "" : ` | ${singleUnit.error}`}`,
+  );
   const e1 = treating[0]!;
   const mode = activeModes(SYNTH)[0]!.key;
   const remembered = unit.ok ? await asDb(e1.userId, (db) => rememberMachine(db, { studioId, machineId: unit.value, modeKey: mode })) : null;

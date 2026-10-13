@@ -79,6 +79,7 @@ export async function validateTwin(): Promise<TwinVerdict> {
          (select practitioner_capacity_enabled and practitioner_capacity_booking_enabled from public.studios where id = $1) as capacity_live,
          (select count(*) from public.studio_machines where studio_id = $1)::int as machines,
          (select count(*) from public.studio_machines where studio_id = $1 and retired_at is not null)::int as retired_machines,
+         (select count(distinct machine_profile_id) from public.studio_machines where studio_id = $1)::int as machine_models,
          (select count(*) from public.treatment_setup_captures where studio_id = $1)::int as captures,
          (select count(*) from public.appointment_settlements where studio_id = $1)::int as settlements,
          (select count(*) from public.delivery_incidents where studio_id = $1)::int as incidents,
@@ -98,7 +99,8 @@ export async function validateTwin(): Promise<TwinVerdict> {
   expect(f.clients === TWIN.clientCount, `owned clients ${f.clients} ≠ ${TWIN.clientCount}`);
   expect(f.jurisdiction === "US/usd", `jurisdiction ${f.jurisdiction} ≠ US/usd`);
   expect(f.capacity_live === true, "capacity is not LIVE");
-  expect(f.machines >= 2 && f.retired_machines >= 1, `machines ${f.machines} (retired ${f.retired_machines}); expected ≥2 with ≥1 retired`);
+  expect(f.machines >= 3 && f.retired_machines >= 1, `machines ${f.machines} (retired ${f.retired_machines}); expected ≥3 with ≥1 retired`);
+  expect(f.machine_models >= 2, `distinct synthetic models ${f.machine_models} < 2`);
   expect(f.captures >= 3, `setup captures ${f.captures} < 3`);
   expect(f.settlements >= 1, `settlements ${f.settlements} < 1`);
   expect(f.incidents >= 2, `delivery incidents ${f.incidents} < 2`);
