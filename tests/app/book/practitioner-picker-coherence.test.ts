@@ -271,3 +271,83 @@ describe("G1: the GRID refuses a practitioner the COMMIT would refuse", () => {
     expect(commit).toContain("PRACTITIONER_CHOICE_UNAVAILABLE_ERROR");
   });
 });
+
+describe("G1: an in-flight studio-wide lookup cannot outlive the choice", () => {
+  // CODEX P2 at daf59463. The picker stays enabled while onFindNext is pending,
+  // so a visitor can start "Next available" under "Any available" and then pick
+  // a practitioner before the answer returns. That answer is STUDIO-WIDE, and
+  // it would still have run setDate(r.date) -- jumping to a date the chosen
+  // practitioner may have no slots on, after the button that started it had
+  // already disappeared.
+  it("compares the latest selection, not the one captured at call time", () => {
+    const form = FORM;
+    // A ref is the only thing that reads "now" from inside the closure;
+    // comparing the closed-over `practitionerId` would always match itself.
+    expect(form).toMatch(/practitionerIdRef\s*=\s*useRef\(/);
+    // The ref is written SYNCHRONOUSLY in the selection mutation. An earlier
+    // revision mirrored it in a passive useEffect, which lagged the commit --
+    // see the synchronous-write describe below.
+    expect(form).toMatch(/practitionerIdRef\.current\s*=\s*next/);
+    expect(
+      form,
+      "the in-flight response must be compared against the CURRENT selection",
+    ).toMatch(/practitionerIdRef\.current\s*!==\s*requestedUnder/);
+  });
+
+  it("bails BEFORE any state write, not just before setDate", () => {
+    // setNextSearched, setError and setNoneInHorizon are equally wrong to apply
+    // from a lookup the visitor has moved past, so the guard must precede all
+    // of them. Order is the property, as with the pre-insert refusals.
+    const body = FORM.slice(FORM.indexOf("function onFindNext"));
+    const bail = body.indexOf("practitionerIdRef.current !== requestedUnder");
+    const firstWrite = body.indexOf("setNextSearched(true)");
+    expect(bail, "expected the invalidation guard").toBeGreaterThan(-1);
+    expect(firstWrite, "expected the first state write").toBeGreaterThan(-1);
+    expect(
+      bail < firstWrite,
+      "the guard must precede every state write from the stale response",
+    ).toBe(true);
+  });
+});
+
+describe("G1: the invalidation ref is written synchronously, and cannot be bypassed", () => {
+  // CODEX P2 at 41e0d6f3, about the fix for the P2 before it. The ref was
+  // mirrored in a useEffect, which is PASSIVE: React can commit the new
+  // selection while that effect is pending, so a lookup completing in the
+  // window read the PREVIOUS value, passed the guard, and applied the stale
+  // studio-wide response anyway. The guard was real; its input was late.
+  const CODE = FORM.split("\n")
+    .filter((l) => !l.trim().startsWith("//"))
+    .join("\n");
+
+  it("writes the ref inside the selection mutation, not in an effect", () => {
+    expect(CODE).toMatch(
+      /const selectPractitioner = \(next: string\) => \{\s*practitionerIdRef\.current = next;\s*setPractitionerId\(next\);/,
+    );
+    // The passive mirror must be gone: two writers for one value is how they
+    // drift apart.
+    expect(
+      CODE,
+      "the ref must not also be mirrored in a useEffect -- that is the lag " +
+        "this finding was about",
+    ).not.toMatch(/useEffect\(\(\) => \{\s*practitionerIdRef\.current/);
+  });
+
+  it("funnels EVERY practitioner mutation through it", () => {
+    // Comments mention setPractitionerId by name when explaining the history,
+    // so this counts CODE occurrences only -- a guard that reads its own prose
+    // is a guard that cannot fail.
+    const calls = CODE.match(/setPractitionerId\(/g) ?? [];
+    expect(
+      calls.length,
+      "setPractitionerId may be called ONLY inside selectPractitioner; a " +
+        "fourth mutation site that sets state directly would leave the ref " +
+        "stale and silently re-open the race",
+    ).toBe(1);
+    // And the known sites all go through the funnel.
+    // Three call sites today: the picker's onChange, the per-service reset and
+    // the reconcile against returned options. Counted as a floor, not an exact
+    // number, so adding a fourth that USES the funnel does not red this.
+    expect((CODE.match(/selectPractitioner\(/g) ?? []).length).toBeGreaterThanOrEqual(3);
+  });
+});
