@@ -40,8 +40,11 @@ const fakeStripe = {
       h.stripeCalls.push("pi_retrieve");
       return h.pi;
     },
-    cancel: async () => {
-      throw new Tripwire("cancel is not part of these flows");
+    // Recorded, not forbidden: a SAME-money requires_action intent is still
+    // cancelled (PR #320); a money-mismatched one must never be (P1 4253998912).
+    cancel: async (id: string) => {
+      h.stripeCalls.push("pi_cancel");
+      return { ...h.pi, id, status: "canceled" };
     },
   },
   refunds: {
@@ -332,6 +335,125 @@ describe("synchronous charge: a succeeded PI is recorded only for the prepared m
     expect(seen).toHaveLength(1);
     expect(seen[0]).toMatchObject({ amount: AMOUNT, currency: "usd" });
   });
+});
+
+// ---------------------------------------------------------------------------
+// 1b. Codex P1 4253998912: MONEY FIRST, STATUS SECOND — every status, both paths
+// ---------------------------------------------------------------------------
+// A PaymentIntent whose money is not the prepared attempt's must not drive ANY
+// status branch: no `succeeded` write, no requires_action CANCELLATION, no
+// `failed` write. The row stays pending_stripe and a person is told. Matching
+// intents take exactly their old paths (controls).
+describe("money is checked before any status branch (P1 4253998912)", () => {
+  const attemptWrites = () => h.updates.filter((u) => u.table === "payment_charge_attempts");
+  const failedWrites = () => attemptWrites().filter((u) => u.payload.status === "failed");
+  const cancels = () => h.stripeCalls.filter((c) => c === "pi_cancel");
+
+  // The reconcile path re-reads a PI already bound to a pending row; the
+  // synchronous path receives the PI from create (an idempotent replay
+  // returns whatever Stripe holds for the key).
+  const PATHS = {
+    reconcile: (currency: "cad" | "usd") =>
+      claimFor(currency, { result: "already_pending", stripe_payment_intent_id: PI_ID }),
+    create: (currency: "cad" | "usd") => claimFor(currency),
+  } as const;
+  const STATUSES = ["succeeded", "requires_action", "requires_payment_method", "processing", "canceled"] as const;
+
+  for (const [path, claim] of Object.entries(PATHS)) {
+    it.each(STATUSES)(`${path}: a mismatched %s intent writes nothing and cancels nothing`, async (status) => {
+      seedLineage("usd");
+      h.claim = claim("usd");
+      h.pi = { id: PI_ID, status, amount: AMOUNT, currency: "cad", latest_charge: CHARGE_ID };
+
+      const result = await charge();
+
+      expect(result).toMatchObject({
+        ok: false,
+        outcome: "needs_manual_review",
+        stripePaymentIntentId: PI_ID,
+        attemptId: ATTEMPT,
+      });
+      expect(cancels()).toEqual([]);
+      expect(attemptWrites()).toEqual([]);
+      const [alert] = critical("session_payment_provider_money_mismatch");
+      expect(alert?.details).toMatchObject({
+        attempt_id: ATTEMPT,
+        attempted_status: status,
+        money_mismatches: ["currency_mismatch"],
+      });
+    });
+
+    it(`${path}: a different AMOUNT on a requires_action intent is not cancelled either`, async () => {
+      seedLineage("cad");
+      h.claim = claim("cad");
+      h.pi = { id: PI_ID, status: "requires_action", amount: AMOUNT + 500, currency: "cad" };
+
+      const result = await charge();
+
+      expect(result).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+      expect(cancels()).toEqual([]);
+      expect(attemptWrites()).toEqual([]);
+    });
+
+    it(`${path}: an intent with no readable money is refused before any branch`, async () => {
+      seedLineage("usd");
+      h.claim = claim("usd");
+      h.pi = { id: PI_ID, status: "requires_payment_method" };
+
+      const result = await charge();
+
+      expect(result).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+      expect(attemptWrites()).toEqual([]);
+      expect(critical("session_payment_provider_money_mismatch")[0]?.details).toMatchObject({
+        money_mismatches: ["amount_unreadable", "currency_unreadable"],
+      });
+    });
+
+    // ----- MATCHING CONTROLS: the old behaviour, unchanged -----
+    it(`${path} CONTROL: a same-money requires_action intent is still cancelled and recorded failed`, async () => {
+      seedLineage("usd");
+      h.claim = claim("usd");
+      h.pi = { id: PI_ID, status: "requires_action", amount: AMOUNT, currency: "usd" };
+
+      const result = await charge();
+
+      expect(cancels()).toEqual(["pi_cancel"]);
+      expect(failedWrites()).toHaveLength(1);
+      expect(result.ok).toBe(false);
+      expect(critical("session_payment_provider_money_mismatch")).toEqual([]);
+    });
+
+    it(`${path} CONTROL: a same-money requires_payment_method intent is recorded failed, not cancelled`, async () => {
+      seedLineage("cad");
+      h.claim = claim("cad");
+      h.pi = {
+        id: PI_ID,
+        status: "requires_payment_method",
+        amount: AMOUNT,
+        currency: "cad",
+        last_payment_error: { code: "card_declined", message: "Your card was declined." },
+      };
+
+      const result = await charge();
+
+      expect(result).toMatchObject({ ok: false, outcome: "failed", failureCode: "card_declined" });
+      expect(cancels()).toEqual([]);
+      expect(failedWrites()).toHaveLength(1);
+      expect(critical("session_payment_provider_money_mismatch")).toEqual([]);
+    });
+
+    it(`${path} CONTROL: a same-money succeeded intent is recorded succeeded`, async () => {
+      seedLineage("usd");
+      h.claim = claim("usd");
+      h.pi = { id: PI_ID, status: "succeeded", amount: AMOUNT, currency: "usd", latest_charge: CHARGE_ID };
+
+      const result = await charge();
+
+      expect(result).toMatchObject({ ok: true, outcome: "succeeded" });
+      expect(succeededWrites()).toHaveLength(1);
+      expect(cancels()).toEqual([]);
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------
