@@ -37,14 +37,17 @@ const FN = "clients_sms_permission_guard";
 describe("0211 sits correctly in the migration sequence", () => {
   it("is no longer the repository maximum", () => {
     // HANDED OFF, per CLAUDE.md §2: only the CURRENT max may assert
-    // `isRepoMax`. It left this file for 0212's own test when the lanes were
-    // stacked 0211 -> 0212 -> 0213 (shared census,
-    // /home/sam/hone-migration-coordination.md).
+    // `isRepoMax`. It reached this file from 0210's test and left for 0214's
+    // own test when production (carrying 0211) was merged into PAY-CCY-02.
     expect(isRepoMax(VERSION)).toBe(false);
-    // DERIVED, NOT PINNED: something sits above it, and everything above it is greater.
+    // DERIVED, NOT PINNED: something sits above it, and everything above it is
+    // greater. A literal list would be the forbidden pin in other clothes.
     const above = versionsAbove(VERSION);
-    expect(above.length, "nothing sits above this migration").toBeGreaterThan(0);
-    expect(above.every((v) => Number(v) > Number(VERSION))).toBe(true);
+    expect(above.length, "nothing sits above this older migration").toBeGreaterThan(0);
+    expect(
+      above.every((v) => Number(v) > Number(VERSION)),
+      "versionsAbove returned a version at or below its own",
+    ).toBe(true);
   });
 
   it("is allocated exactly once", () => {

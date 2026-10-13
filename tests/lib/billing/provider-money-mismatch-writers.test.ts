@@ -59,11 +59,16 @@ vi.mock("@/lib/stripe/server", () => ({
   inferStripeLivemode: () => false,
   getStripe: () => fakeStripe,
 }));
-// Fett composition (R2): with PAY-CCY in the tree, the charge path checks the
-// studio's payment country before it compares provider money. Pin a Canadian
-// CAD studio so this suite reaches the money comparison it exists to test.
+// PAY-CCY-02 (0214) composition (R2): the charge path also reads the studio's
+// jurisdiction for its account-country lineage check. These cases are about
+// PROVIDER MONEY, on a Canadian studio whose account country is unobserved
+// (legacy-CA, chargeable); the jurisdiction read is proved on its own in
+// tests/lib/billing/payment-jurisdiction*.test.ts and against a real database.
 vi.mock("@/lib/billing/payment-jurisdiction-server", () => ({
-  getStudioPaymentJurisdiction: async () => ({ ok: true, jurisdiction: { country: "CA", currency: "cad" } }),
+  getStudioPaymentJurisdiction: async () => ({
+    ok: true,
+    jurisdiction: { country: "CA", currency: "cad" },
+  }),
 }));
 vi.mock("@/lib/stripe/session-payment-stripe", () => ({
   getSessionPaymentStripe: () => fakeStripe,
