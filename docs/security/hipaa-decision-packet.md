@@ -31,9 +31,15 @@ The owning lane proceeds unless Sam objects:
 - **Access log (G-13, former Q2 and Q4):** the full log lives on the
   platform/support path; an owner-scoped projection comes later;
   practitioners do not see it in V1 (the RBAC lane's recommendation).
-- **Preview isolation (former D-6):** previews never use production data.
-  Today they are behind Vercel SSO; a separate synthetic preview project is
-  part of B2.
+- **Preview isolation (former D-6), now URGENT:** previews must never use
+  production data. **Verified 2026-10-13: today they do.** The production
+  Supabase URL and service-role key, plus live Twilio and Resend credentials,
+  are shared with the preview target, so any pushed branch runs with full
+  production database access, behind Vercel SSO only. The fix is to give
+  previews a separate Supabase project with synthetic data and scope every
+  shared secret to production only. This is the **first** per-change
+  authorization in §0.3, ahead of the Supabase hardening steps. Until then:
+  no mutation or demo tests on any preview.
 - **Receipt subject (former D-7):** `Receipt from <studio>`, with the reason
   and amount kept in the body and PDF, implemented by the Audit lane. It is
   reversible copy. If Sam regards the 2026-07-04 copy approval as binding,
@@ -47,6 +53,9 @@ The owning lane proceeds unless Sam objects:
 
 These are release actions under #824's boundaries, each requested
 separately with its pre-check:
+- **first: preview isolation** (a separate preview Supabase project with
+  synthetic data, and every shared secret re-scoped to production only), see
+  §0.2;
 - the Supabase hardening sequence in §2.1 (MFA enforcement, SSL, session
   limits, password policy, then PITR and network restrictions);
 - plan purchases (after B2);
