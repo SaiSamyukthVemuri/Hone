@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   evaluateInboundStopPreflight,
   expectedInboundWebhookUrl,
+  redeliversServerErrors,
   type InboundStopFacts,
 } from "@/lib/sms/inbound-stop-preflight";
 
@@ -10,6 +11,8 @@ import {
 
 const BASE = "https://hone.example";
 const URL_OK = `${BASE}/api/twilio/inbound-sms`;
+/** The expected URL with a connection override that redelivers a 5xx (Codex P1 4254444665). */
+const URL_RETRY = `${URL_OK}#rp=5xx`;
 const ACCOUNT = `AC${"1".repeat(32)}`;
 
 const allProven = (): InboundStopFacts => ({
@@ -17,7 +20,7 @@ const allProven = (): InboundStopFacts => ({
   recentSignatureVerifiedCallbacks: 16,
   endpointProbe: { status: 405, redirectedTo: null },
   service: {
-    inboundRequestUrl: URL_OK,
+    inboundRequestUrl: URL_RETRY,
     inboundMethod: "POST",
     useInboundWebhookOnNumber: false,
     numberSmsUrl: null,
@@ -88,8 +91,8 @@ describe("evaluateInboundStopPreflight", () => {
     ["a trailing slash on the service URL", (f) => (f.service!.inboundRequestUrl = `${URL_OK}/`), "inbound_reaches"],
     ["GET inbound method on the service", (f) => (f.service!.inboundMethod = "GET"), "inbound_reaches"],
     ["the service's inbound method not reported", (f) => (f.service!.inboundMethod = null), "inbound_reaches"],
-    ["a TwiML application overriding the number", (f) => Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: URL_OK, numberSmsMethod: "POST", numberSmsApplicationSid: `AP${"5".repeat(32)}` }), "inbound_reaches"],
-    ["the number's application sid not reported", (f) => Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: URL_OK, numberSmsMethod: "POST", numberSmsApplicationSid: undefined }), "inbound_reaches"],
+    ["a TwiML application overriding the number", (f) => Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: URL_RETRY, numberSmsMethod: "POST", numberSmsApplicationSid: `AP${"5".repeat(32)}` }), "inbound_reaches"],
+    ["the number's application sid not reported", (f) => Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: URL_RETRY, numberSmsMethod: "POST", numberSmsApplicationSid: undefined }), "inbound_reaches"],
     ["the number's webhook overrides, and points elsewhere", (f) => Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: "https://elsewhere.example/sms" }), "inbound_reaches"],
     ["use_inbound_webhook_on_number not reported (null = unknown, never false)", (f) => (f.service!.useInboundWebhookOnNumber = null), "inbound_reaches"],
     ["the flag on, the number's URL not reported", (f) => Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: undefined }), "inbound_reaches"],
@@ -142,7 +145,7 @@ describe("evaluateInboundStopPreflight", () => {
 
   it("the number's own webhook, when it overrides and is exactly the expected URL, passes (with its own method)", () => {
     const f = allProven();
-    Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: URL_OK, numberSmsMethod: "POST", numberSmsApplicationSid: null, inboundRequestUrl: null });
+    Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: URL_RETRY, numberSmsMethod: "POST", numberSmsApplicationSid: null, inboundRequestUrl: null });
     expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
     f.service!.numberSmsMethod = "GET";
     const r = evaluateInboundStopPreflight(f);
@@ -152,7 +155,7 @@ describe("evaluateInboundStopPreflight", () => {
 
   it("a number-level override is decided without the (irrelevant) service URL", () => {
     const f = allProven();
-    f.service = { useInboundWebhookOnNumber: true, numberSmsUrl: URL_OK, numberSmsMethod: "POST", numberSmsApplicationSid: null, accountSid: ACCOUNT, checkedNumber: "+14165550100" };
+    f.service = { useInboundWebhookOnNumber: true, numberSmsUrl: URL_RETRY, numberSmsMethod: "POST", numberSmsApplicationSid: null, accountSid: ACCOUNT, checkedNumber: "+14165550100" };
     expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
   });
 
@@ -171,7 +174,7 @@ describe("evaluateInboundStopPreflight", () => {
       const f = allProven();
       Object.assign(f.service!, {
         useInboundWebhookOnNumber: true,
-        numberSmsUrl: URL_OK,
+        numberSmsUrl: URL_RETRY,
         numberSmsMethod: "POST",
         numberSmsApplicationSid: null,
         checkedNumber: "+14165550100",
@@ -202,21 +205,21 @@ describe("evaluateInboundStopPreflight", () => {
     it("not pinned, every pool number correct: ready", () => {
       const f = numberRouted();
       f.service!.senderPool = [
-        { phoneNumber: "+14165550100", smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: null },
-        { phoneNumber: "+14165550101", smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: null },
+        { phoneNumber: "+14165550100", smsUrl: URL_RETRY, smsMethod: "POST", smsApplicationSid: null },
+        { phoneNumber: "+14165550101", smsUrl: URL_RETRY, smsMethod: "POST", smsApplicationSid: null },
       ];
       expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
     });
 
     for (const [why, bad] of [
       ["another URL", { smsUrl: "https://elsewhere.example/sms", smsMethod: "POST", smsApplicationSid: null }],
-      ["GET", { smsUrl: URL_OK, smsMethod: "GET", smsApplicationSid: null }],
-      ["an application override", { smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: AP }],
+      ["GET", { smsUrl: URL_RETRY, smsMethod: "GET", smsApplicationSid: null }],
+      ["an application override", { smsUrl: URL_RETRY, smsMethod: "POST", smsApplicationSid: AP }],
     ] as const) {
       it(`not pinned, one pool number with ${why}: blocked (fail)`, () => {
         const f = numberRouted();
         f.service!.senderPool = [
-          { phoneNumber: "+14165550100", smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: null },
+          { phoneNumber: "+14165550100", smsUrl: URL_RETRY, smsMethod: "POST", smsApplicationSid: null },
           { phoneNumber: "+14165550101", ...bad },
         ];
         const r = evaluateInboundStopPreflight(f);
@@ -234,7 +237,7 @@ describe("evaluateInboundStopPreflight", () => {
     it("not pinned, one pool number unreported: blocked (unknown)", () => {
       const f = numberRouted();
       f.service!.senderPool = [
-        { phoneNumber: "+14165550100", smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: null },
+        { phoneNumber: "+14165550100", smsUrl: URL_RETRY, smsMethod: "POST", smsApplicationSid: null },
         { phoneNumber: "+14165550101", smsUrl: undefined },
       ];
       expect(evaluateInboundStopPreflight(f).checks.find((c) => c.id === "sender_pool")?.status).toBe("unknown");
@@ -248,7 +251,7 @@ describe("evaluateInboundStopPreflight", () => {
 
   it("a TwiML application on the number is reported as overriding, and fails", () => {
     const f = allProven();
-    Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: URL_OK, numberSmsMethod: "POST", numberSmsApplicationSid: `AP${"5".repeat(32)}` });
+    Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: URL_RETRY, numberSmsMethod: "POST", numberSmsApplicationSid: `AP${"5".repeat(32)}` });
     const c = evaluateInboundStopPreflight(f).checks.find((x) => x.id === "inbound_reaches");
     expect(c).toMatchObject({ status: "fail" });
     expect(c?.detail).toMatch(/application/);
@@ -266,7 +269,7 @@ describe("evaluateInboundStopPreflight", () => {
       it(`the service URL with "${frag}" reaches the expected URL`, () => {
         const f = allProven();
         f.service!.inboundRequestUrl = `${URL_OK}${frag}`;
-        expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
+        expect(evaluateInboundStopPreflight(f).checks.find((c) => c.id === "inbound_reaches")?.status).toBe("pass");
       });
     }
 
@@ -315,15 +318,95 @@ describe("evaluateInboundStopPreflight", () => {
 
     it("the number's own URL and every pool number's URL may carry overrides too", () => {
       const f = allProven();
-      Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: `${URL_OK}#rp=5xx`, numberSmsMethod: "POST", numberSmsApplicationSid: null });
+      Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: URL_RETRY, numberSmsMethod: "POST", numberSmsApplicationSid: null });
       f.routedFromNumber = undefined;
       f.service!.senderPool = [
         { phoneNumber: "+14165550100", smsUrl: `${URL_OK}#rp=5xx`, smsMethod: "POST", smsApplicationSid: null },
-        { phoneNumber: "+14165550101", smsUrl: `${URL_OK}#ct=1000`, smsMethod: "POST", smsApplicationSid: null },
+        { phoneNumber: "+14165550101", smsUrl: `${URL_OK}#ct=1000&rp=5xx,ct`, smsMethod: "POST", smsApplicationSid: null },
       ];
       expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
       f.service!.senderPool[1].smsUrl = `${URL_OK}#bogus=1`;
       expect(evaluateInboundStopPreflight(f).blockers).toEqual(["sender_pool"]);
+    });
+  });
+
+  describe("STOP REDELIVERY: a STOP the route answers 500 must be retried (Codex P1 4254444665)", () => {
+    const redelivery = (f: InboundStopFacts) => evaluateInboundStopPreflight(f).checks.find((c) => c.id === "stop_redelivery");
+
+    for (const frag of ["#rp=5xx", "#rp=all", "#rp=ct,rt,5xx&rc=3", "#rc=1&rp=4xx,5xx"]) {
+      it(`${frag}: redelivered`, () => {
+        const f = allProven();
+        f.service!.inboundRequestUrl = `${URL_OK}${frag}`;
+        expect(redelivery(f)?.status).toBe("pass");
+      });
+    }
+
+    for (const [why, frag] of [
+      ["no fragment (Twilio's default retries connect failures only)", ""],
+      ["rp without 5xx", "#rp=4xx,ct,rt"],
+      ["rp=5xx but rc=0", "#rp=5xx&rc=0"],
+      ["timeouts only", "#ct=1000&rt=5000"],
+    ] as const) {
+      it(`${why}: blocked (unknown with no fallback read)`, () => {
+        const f = allProven();
+        f.service!.inboundRequestUrl = `${URL_OK}${frag}`;
+        const r = evaluateInboundStopPreflight(f);
+        expect(r.blockers).toEqual(["stop_redelivery"]);
+        expect(redelivery(f)?.status).toBe("unknown");
+      });
+    }
+
+    it("redeliversServerErrors never trusts an invalid fragment, even one naming rp=5xx", () => {
+      expect(redeliversServerErrors(`${URL_OK}#rp=5xx`)).toBe(true);
+      expect(redeliversServerErrors(`${URL_OK}#rp=5xx&sni=on`)).toBe(false);
+      expect(redeliversServerErrors(`${URL_OK}#rp=5xx&rp=all`)).toBe(false);
+      expect(redeliversServerErrors(URL_OK)).toBe(false);
+      expect(redeliversServerErrors(null)).toBe(false);
+    });
+
+    it("a plain URL with a fallback to the SAME route by POST: redelivered", () => {
+      const f = allProven();
+      Object.assign(f.service!, { inboundRequestUrl: URL_OK, fallbackUrl: URL_OK, fallbackMethod: "POST" });
+      expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
+    });
+
+    for (const [why, fb] of [
+      ["another URL", { fallbackUrl: "https://elsewhere.example/sms", fallbackMethod: "POST" }],
+      ["GET", { fallbackUrl: URL_OK, fallbackMethod: "GET" }],
+      ["none (null)", { fallbackUrl: null, fallbackMethod: null }],
+    ] as const) {
+      it(`a plain URL with a fallback that is ${why}: fails`, () => {
+        const f = allProven();
+        Object.assign(f.service!, { inboundRequestUrl: URL_OK, ...fb });
+        expect(redelivery(f)?.status).toBe("fail");
+      });
+    }
+
+    it("the number's own URL is the one that must redeliver when it overrides", () => {
+      const f = allProven();
+      Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: URL_OK, numberSmsMethod: "POST", numberSmsApplicationSid: null, inboundRequestUrl: URL_RETRY });
+      expect(redelivery(f)?.status).toBe("unknown");
+      f.service!.numberSmsUrl = URL_RETRY;
+      expect(redelivery(f)?.status).toBe("pass");
+    });
+
+    it("a wrong URL is reported once, by inbound_reaches, not again here", () => {
+      const f = allProven();
+      f.service!.inboundRequestUrl = "https://www.hone.example/api/twilio/inbound-sms";
+      expect(redelivery(f)).toBeUndefined();
+    });
+
+    it("every pool number must redeliver too, when the pool is what proves reach", () => {
+      const f = allProven();
+      Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: URL_RETRY, numberSmsMethod: "POST", numberSmsApplicationSid: null });
+      f.routedFromNumber = undefined;
+      f.service!.senderPool = [
+        { phoneNumber: "+14165550100", smsUrl: URL_RETRY, smsMethod: "POST", smsApplicationSid: null },
+        { phoneNumber: "+14165550101", smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: null },
+      ];
+      const c = evaluateInboundStopPreflight(f).checks.find((x) => x.id === "sender_pool");
+      expect(c?.status).toBe("fail");
+      expect(c?.detail).toMatch(/retry 5xx/);
     });
   });
 

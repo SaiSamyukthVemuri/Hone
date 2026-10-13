@@ -96,6 +96,26 @@ function isValidConnectionOverrideFragment(fragment: string): boolean {
 }
 
 /**
+ * Does Twilio REDELIVER a request the route answers with a 5xx? The STOP route
+ * returns 500 when a client/prospect scan or write fails, so a STOP is only
+ * safe if Twilio tries again. Twilio's documented DEFAULT retry policy is
+ * `ct` (connect failures only), with a default retry count of 1; so a 5xx is
+ * retried only when the URL's overrides name `rp` with 5xx or all and the
+ * retry count is not 0. No fragment, or an invalid one, means no.
+ */
+export function redeliversServerErrors(url: string | null | undefined): boolean {
+  if (typeof url !== "string") return false;
+  const i = url.indexOf("#");
+  if (i < 0) return false;
+  const fragment = url.slice(i + 1);
+  if (!isValidConnectionOverrideFragment(fragment)) return false;
+  const pairs = new Map(fragment.split("&").map((p) => [p.slice(0, p.indexOf("=")), p.slice(p.indexOf("=") + 1)] as const));
+  const policy = (pairs.get("rp") ?? "").split(",");
+  const retries = pairs.has("rc") ? Number(pairs.get("rc")) : 1;
+  return (policy.includes("5xx") || policy.includes("all")) && retries >= 1;
+}
+
+/**
  * The URL Twilio actually requests and signs: the configured URL without a
  * fragment of documented connection overrides. Any other fragment (including
  * an empty one) is not certified, so the URL never matches the expected one.
@@ -166,6 +186,13 @@ export type InboundStopFacts = {
     numberSmsApplicationSid?: string | null;
     /** The account that owns the service; must be the account of TWILIO_AUTH_TOKEN. */
     accountSid?: string | null;
+    /**
+     * The service's fallback_url and fallback_method, read-only: Twilio sends a
+     * request there when the primary fails. A fallback that is exactly the
+     * expected route, by POST, also redelivers a STOP the route answered 5xx.
+     */
+    fallbackUrl?: string | null;
+    fallbackMethod?: string | null;
     /** The number the numberSms* facts above were read from (E.164). */
     checkedNumber?: string | null;
     /**
@@ -285,6 +312,34 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
 
   // The method is part of inboundReaches since #863 ed7334da: no separate check.
 
+  // A STOP the route answers 500 must be redelivered (Codex P1 4254444665).
+  // Evaluated only once inbound reaches the route, so a wrong URL is reported
+  // once, by inbound_reaches.
+  if (reaches === "yes" && svc) {
+    const effectiveUrl = effective?.kind === "number" ? svc.numberSmsUrl : svc.inboundRequestUrl;
+    const fallbackRedelivers =
+      !!expected.ok &&
+      signedFormOfConfiguredUrl(svc.fallbackUrl ?? null) === expected.url &&
+      (svc.fallbackMethod ?? "").toUpperCase() === "POST";
+    checks.push(
+      redeliversServerErrors(effectiveUrl)
+        ? check("stop_redelivery", "pass", "the inbound URL's overrides retry 5xx (rp=5xx|all, rc>=1)")
+        : fallbackRedelivers
+          ? check("stop_redelivery", "pass", "the service's fallback URL is the same route, by POST")
+          : svc.fallbackUrl === undefined
+            ? check(
+                "stop_redelivery",
+                "unknown",
+                "Twilio's default retries connect failures only: add #rp=5xx (rc>=1) to the inbound URL, or confirm a fallback to the same route",
+              )
+            : check(
+                "stop_redelivery",
+                "fail",
+                "a STOP the route answers 500 is never redelivered: Twilio's default retries connect failures only and the fallback is not the same route",
+              ),
+    );
+  }
+
   // ONE NUMBER OR ALL OF THEM. With the number-level override on, each pool
   // number has its own webhook. Replies go to the number that sent, so either
   // routed sends are pinned to the checked number, or every pool number must
@@ -317,11 +372,14 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
                 (acc, v) => (acc === "no" || v === "no" ? "no" : acc === "unknown" || v === "unknown" ? "unknown" : "yes"),
                 "yes",
               );
+    const poolRedelivers = pool !== undefined && pool.every((n) => redeliversServerErrors(n.smsUrl));
     checks.push(
       pinned
         ? check("sender_pool", "pass", "routed sends are pinned to the checked number, so replies return to it")
-        : poolVerdict === "yes"
-          ? check("sender_pool", "pass", `every pool number (${pool!.length}) reaches the expected URL by POST`)
+        : poolVerdict === "yes" && !poolRedelivers
+          ? check("sender_pool", "fail", "a pool number's webhook does not retry 5xx: a STOP the route answers 500 is lost")
+          : poolVerdict === "yes"
+          ? check("sender_pool", "pass", `every pool number (${pool!.length}) reaches the expected URL by POST and retries 5xx`)
           : poolVerdict === "no"
             ? check("sender_pool", "fail", "a pool number's own webhook does not reach the expected URL by POST")
             : check("sender_pool", "unknown", "outbound not pinned to the checked number and the sender pool not fully read"),
