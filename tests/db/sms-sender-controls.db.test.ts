@@ -29,6 +29,18 @@ let controls: typeof import("@/lib/sms/sender-controls");
 let admin: SupabaseClient;
 
 const deps = (provider: FakeSmsProvisioningProvider) => ({ admin, provider, appOrigin: ORIGIN, testDestination: "+14165553199" });
+/** A +1 number in `area` that no sender row records, as its number or its claim. */
+async function freshNumber(area: string): Promise<string> {
+  for (;;) {
+    const n = `+1${area}555${String(1000 + Math.floor(Math.random() * 8999))}`;
+    const { rows } = await adminQuery(
+      "select 1 from public.studio_sms_senders where phone_number = $1 or claimed_phone_number = $1 limit 1",
+      [n],
+    );
+    if (rows.length === 0) return n;
+  }
+}
+
 const liveSenders = async (studioId: string) =>
   (await adminQuery("select status, phone_number, country from public.studio_sms_senders where studio_id = $1 and status <> 'released'", [studioId])).rows;
 
@@ -447,7 +459,7 @@ describe("release and choose again", () => {
   /** Wedge a studio the way a stale search does: claim a number, then fail it as no longer available. */
   async function wedge(label: string, code = "number_no_longer_available") {
     const s = await seedStudio(label);
-    const number = `+1905555${String(Math.floor(1000 + Math.random() * 8999))}`;
+    const number = await freshNumber("905");
     const { rows } = await adminQuery(
       "select * from public.claim_studio_sms_provisioning($1, $2, 'CA', null, $3)",
       [s.studioId, s.userId, number],
@@ -537,11 +549,13 @@ describe("release and choose again", () => {
 // Codex P2 4252928388 and 4252928398: released history counts, and the claim on
 // a number is an atomic reservation.
 describe("resource history and the atomic reservation", () => {
-  const rand = () => `+1905555${String(1000 + Math.floor(Math.random() * 8999))}`;
+  // A number NO row in this database records (number or claim), so a test is
+  // never refused for a collision it did not set up. The suite shares one DB.
+  const rand = () => freshNumber("905");
 
   it("this studio's RELEASED number is refused before a new claim (0191's uniqueness still holds it)", async () => {
     const s = await seedStudio("ctl-hist-released");
-    const number = rand();
+    const number = await rand();
     // History: an active sender on that number, later released (superuser, test-only).
     const { rows } = await adminQuery(
       `insert into public.studio_sms_senders
@@ -561,10 +575,12 @@ describe("resource history and the atomic reservation", () => {
 
   it("the studio's OWN live attempt is not counted against its retry", async () => {
     const s = await seedStudio("ctl-hist-retry");
-    const number = rand();
+    const number = await rand();
     const provider = new FakeSmsProvisioningProvider({ testSendFails: "provider_unavailable" });
     const first = await controls.runSenderProvision(deps(provider), { studioId: s.studioId, actorUserId: s.userId, country: "CA", areaCode: "905", phoneNumber: number });
-    expect(first.ok).toBe(false);
+    // It failed for the reason this test set up (the proof text), past the
+    // claim -- not for a collision.
+    expect(first).toMatchObject({ ok: false, result: "failed" });
     // The retry of the SAME number passes the recorded check and reaches the orchestration.
     const retry = await controls.runSenderProvision(deps(new FakeSmsProvisioningProvider()), { studioId: s.studioId, actorUserId: s.userId, country: "CA", areaCode: "905", phoneNumber: number });
     expect(retry).not.toMatchObject({ reason: "resource_already_recorded" });
@@ -573,7 +589,7 @@ describe("resource history and the atomic reservation", () => {
   it("ATOMIC: a second studio's claim on a number another studio holds a live claim on is refused by the database itself", async () => {
     const a = await seedStudio("ctl-race-a");
     const b = await seedStudio("ctl-race-b");
-    const number = rand();
+    const number = await rand();
     const claim = (s: SeededStudioLike) =>
       adminQuery("select * from public.claim_studio_sms_provisioning($1, $2, 'CA', null, $3)", [s.studioId, s.userId, number]);
     expect((await claim(a)).rows[0].result).toBe("claimed");
@@ -585,7 +601,7 @@ describe("resource history and the atomic reservation", () => {
   it("CONCURRENT: two studios submitting one number at once -> exactly one claim, nothing bought for the other", async () => {
     const a = await seedStudio("ctl-conc-a");
     const b = await seedStudio("ctl-conc-b");
-    const number = rand();
+    const number = await rand();
     const pa = new FakeSmsProvisioningProvider();
     const pb = new FakeSmsProvisioningProvider();
     const [ra, rb] = await Promise.all([
@@ -601,7 +617,7 @@ describe("resource history and the atomic reservation", () => {
 
   it("a finalize_conflict claim is releasable only when the provider holds nothing under its key", async () => {
     const s = await seedStudio("ctl-rel-fc");
-    const number = rand();
+    const number = await rand();
     const { rows } = await adminQuery("select * from public.claim_studio_sms_provisioning($1, $2, 'CA', null, $3)", [s.studioId, s.userId, number]);
     await adminQuery("select public.fail_studio_sms_provisioning($1, $2, $3, 'finalize_conflict')", [s.studioId, rows[0].claim_key, rows[0].lease_generation]);
     const holding = new FakeSmsProvisioningProvider();
