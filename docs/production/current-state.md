@@ -199,7 +199,7 @@ before any production action; this sentence is itself a dated observation.
 
 ### Open pull requests are not production
 
-**No open PR is described as shipped anywhere in this document.** At this reconciliation:
+**No open PR is described as shipped anywhere in this document.** At this reconciliation (every row re-read from GitHub on 2026-10-13; the four US/USD rows were added because §7 now cites them):
 
 | PR | State | Why it is not production |
 |---|---|---|
@@ -207,6 +207,10 @@ before any production action; this sentence is itself a dated observation.
 | **#775** — SMS-NUMBER-SEARCH-01 number lookup | **OPEN**, release candidate | Not merged. No owner can reach a number lookup in production. |
 | **#776** — UX-02 slice 3, SectionLabel across session charting | **OPEN**, release candidate | Not merged. |
 | **#774** — BROWSER-FINDING-01 probe-lot provenance | **OPEN**, and a **DRAFT** | Not merged. |
+| **#833** — PAY-CCY-02 (#824 US/USD 2/4): per-studio payment country and charge currency | **OPEN**, and a **DRAFT** | Not merged. Carries the unapplied **0214**; no studio has a payment country in production. |
+| **#836** — PAY-CCY-03 (#824 US/USD 3/4): Stripe accounts follow the studio's verified country | **OPEN**, and a **DRAFT**, stacked on #833 | Not merged. No USD Stripe account is provisioned by production code. |
+| **#839** — PAY-CCY-04 (#824 US/USD 4/4): money surfaces name the studio's currency | **OPEN**, and a **DRAFT**, stacked on #836 | Not merged. |
+| **#847** — PAY-CCY-05 (#824 US/USD): US studio session payment end to end in USD, fake Stripe | **OPEN**, and a **DRAFT**, stacked on #839 | Not merged. US/USD activation remains **PENDING** (§7). |
 
 ⚠️ **CORRECTION, 2026-10-01 (NEW-CLIENT-MODE-01 release) — FIVE ROWS WERE REMOVED FROM THE TABLE ABOVE.**
 It declared `#752`, `#754`, `#746`, `#750` and `#755` OPEN. **All five had merged** — `1c50bd95`, `c4b0e263`,
