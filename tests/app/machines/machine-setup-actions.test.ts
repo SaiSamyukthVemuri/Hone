@@ -623,12 +623,80 @@ describe("the synthetic demo profile cannot reach production", () => {
     const on = synthetic.catalogueForRuntime(base);
     expect(off.some((p) => p.profileId === synthetic.SYNTHETIC_PROFILE_ID)).toBe(false);
     expect(on.some((p) => p.profileId === synthetic.SYNTHETIC_PROFILE_ID)).toBe(true);
-    expect(on).toHaveLength(off.length + 1);
+    expect(
+      on.some((p) => p.profileId === synthetic.SYNTHETIC_SINGLE_PROBE_PROFILE_ID),
+      "the second synthetic model is gated identically",
+    ).toBe(true);
+    expect(
+      off.some((p) => p.profileId === synthetic.SYNTHETIC_SINGLE_PROBE_PROFILE_ID),
+    ).toBe(false);
+    expect(on).toHaveLength(off.length + 2);
+
     // Every real profile is still exactly as the curated catalogue states it.
     expect(off.filter((p) => p.availability === "active")).toEqual([]);
-    expect(
-      on.filter((p) => p.availability === "active").map((p) => p.profileId),
-    ).toEqual([synthetic.SYNTHETIC_PROFILE_ID]);
+
+    // NOTHING REAL IS EVER ACTIVATED, stated as the rule rather than as a list
+    // of ids.
+    //
+    // This used to assert the active set EQUALLED [SYNTHETIC_PROFILE_ID], which
+    // had to be edited the moment a second synthetic fixture appeared - and an
+    // assertion that needs editing whenever a fixture is added is one someone
+    // will eventually "fix" by appending the new id without checking what the
+    // test was for. The rule is that activation is confined to synthetic
+    // profiles, and the product rule behind it is that an unverified
+    // manufacturer profile is never activated to make a dropdown look fuller.
+    const active = on.filter((p) => p.availability === "active");
+    expect(active.length).toBeGreaterThan(0);
+    for (const p of active) {
+      expect(p.profileId, `${p.profileId} is active but not synthetic`).toMatch(
+        /^synthetic:/,
+      );
+    }
+  });
+
+  it("the second model DISAGREES with the first, which is its whole purpose", () => {
+    // A second fixture that merely existed would make every switching proof
+    // vacuous: with disjoint field keys a stale draft LOOKS cleared whether or
+    // not anything cleared it, because the new form has no box to show the old
+    // value in. These three facts are what make the dropdown's behaviour
+    // falsifiable, so they are asserted rather than left to the fixture.
+    const single = synthetic.SYNTHETIC_SINGLE_PROBE;
+    const multi = synthetic.SYNTHETIC_DEMO_PROFILE;
+
+    const fieldsOf = (p: typeof single) =>
+      new Map(p.modes[0]!.fields.map((f) => [f.key, f]));
+    const a = fieldsOf(multi);
+    const b = fieldsOf(single);
+
+    // 1. A SHARED KEY, so a carried-over value would be visible.
+    expect([...b.keys()]).toContain("current");
+    expect([...a.keys()]).toContain("current");
+    // 2. ...at a DIFFERENT unit and precision, so a stale label is detectable.
+    expect(b.get("current")!.unit).not.toBe(a.get("current")!.unit);
+    expect(b.get("current")!.decimals).not.toBe(a.get("current")!.decimals);
+    // 3. A key unique to the second model, so "the other model's fields are
+    //    gone" is distinguishable from "they were relabelled".
+    expect([...b.keys()]).toContain("pulse_width");
+    expect([...a.keys()]).not.toContain("pulse_width");
+
+    // And the structural contrast: one has channels, the other has none, so
+    // the channel-group path and the simple path are both reachable.
+    expect(multi.channels?.count).toBeGreaterThan(0);
+    expect(single.channels).toBeUndefined();
+    // Different mode keys, so a seed hardcoding one mode fails loudly.
+    expect(single.modes[0]!.key).not.toBe(multi.modes[0]!.key);
+  });
+
+  it("the second model is also explicitly synthetic, never a borrowed family", () => {
+    // `family` is the field a reader trusts to say what a profile IS. Both
+    // demo profiles previously declared `Permanence/GEMM-16` because the
+    // vocabulary was closed to real families; that put a false claim in a
+    // shipped fixture.
+    for (const p of [synthetic.SYNTHETIC_DEMO_PROFILE, synthetic.SYNTHETIC_SINGLE_PROBE]) {
+      expect(p.manufacturer).toBe("Synthetic");
+      expect(p.family).toBe("Synthetic/Demo");
+      expect(p.model).toMatch(/demo/i);
+    }
   });
 
   it("names itself synthetic, so it cannot be mistaken for a real unit", () => {

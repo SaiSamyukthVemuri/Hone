@@ -81,7 +81,10 @@ export const SYNTHETIC_DEMO_PROFILE: MachineProfile = {
   version: 2,
   // It has to sit in one of the curated families for the contract's types, but
   // the manufacturer and model names make clear it is not one of their units.
-  family: "Permanence/GEMM-16",
+  // NOT a real family. This fixture declared `Permanence/GEMM-16` only
+  // because the vocabulary had no synthetic member; it is a fiction and
+  // should not claim a manufacturer's lineage.
+  family: "Synthetic/Demo",
   manufacturer: "Synthetic",
   model: "Demo Multineedle",
   availability: "active",
@@ -181,6 +184,105 @@ export const SYNTHETIC_DEMO_PROFILE: MachineProfile = {
   ],
 };
 
+/**
+ * A SECOND synthetic unit, so "selecting a machine shows only ITS settings"
+ * can actually fail.
+ *
+ * WHY A SECOND ONE AT ALL. With one model in the catalogue, every proof about
+ * switching machines is vacuous: there is nothing to switch to, and a form
+ * that cleared nothing would pass identically. The dropdown Sam asked for is
+ * only meaningfully testable against two models whose contracts DISAGREE.
+ *
+ * THE FIELD KEYS ARE CHOSEN TO MAKE THE DANGEROUS CASE REACHABLE:
+ *
+ *   * `current` is the SAME KEY as the multineedle's, at mA / 2 decimals
+ *     against its µA / 0 decimals. This is the case that matters. With
+ *     disjoint keys a stale draft would LOOK cleared whether or not anything
+ *     cleared it, because the new form would have no box to show the old value
+ *     in - so the assertion could not fail. Sharing the key means a value
+ *     typed for one machine is visible in the other's field unless it is
+ *     deliberately discarded, and it also means a stale µA/0dp label on an
+ *     mA/2dp field is exactly the mislabelling the contract exists to stop.
+ *   * `pulse_width` exists ONLY here, so "the other model's fields are gone"
+ *     is distinguishable from "the other model's fields were relabelled".
+ *
+ * NO CHANNELS, deliberately: it gives the single-group contrast against the
+ * multineedle's four, so the simple path and the channel-group path are both
+ * provable against the same seeded twin.
+ *
+ * A DIFFERENT MODE KEY (`blend`, not `galvanic`) because a seed or a command
+ * that hardcodes one mode would otherwise skip this profile's contract
+ * silently rather than fail.
+ *
+ * EXPLICITLY SYNTHETIC, and gated identically to the multineedle. The product
+ * rule is that an unverified manufacturer profile is NEVER activated to make
+ * the dropdown look fuller; this is a fixture that says so in its own labels
+ * and evidence.
+ */
+export const SYNTHETIC_SINGLE_PROBE_PROFILE_ID = "synthetic:demo-single-probe";
+
+const SYNTHETIC_SINGLE_PROBE: MachineProfile = {
+  profileId: SYNTHETIC_SINGLE_PROBE_PROFILE_ID,
+  version: 1,
+  family: "Synthetic/Demo",
+  manufacturer: "Synthetic",
+  model: "Demo Single-probe",
+  availability: "active",
+  verification: "device-confirmed",
+  frequency: { kind: "not-applicable" },
+  evidence: [
+    {
+      id: "synthetic-single",
+      kind: "studio-device-photo",
+      consultedOn: "2026-10-13",
+      establishes:
+        "A SYNTHETIC second model, carried only so machine switching and " +
+        "per-model field contracts can be proved against two disagreeing " +
+        "contracts. It corresponds to no real device.",
+    },
+  ],
+  openQuestions: [],
+  modes: [
+    {
+      key: "blend",
+      nativeLabel: "Blend",
+      family: "blend",
+      availability: "active",
+      verification: "device-confirmed",
+      evidence: ["synthetic-single"],
+      stages: [],
+      fields: [
+        {
+          // SAME KEY as the multineedle, DIFFERENT unit and precision.
+          key: "current",
+          nativeLabel: "Current",
+          quantity: "current",
+          unit: "mA",
+          decimals: 2,
+          optional: false,
+          expectedSource: "practitioner-entered",
+          editable: true,
+          verification: "device-confirmed",
+          evidence: ["synthetic-single"],
+        },
+        {
+          // Unique to this model.
+          key: "pulse_width",
+          nativeLabel: "Pulse width",
+          quantity: "duration",
+          unit: "ms",
+          decimals: 0,
+          optional: true,
+          expectedSource: "practitioner-entered",
+          editable: true,
+          verification: "device-confirmed",
+          evidence: ["synthetic-single"],
+        },
+      ],
+    },
+  ],
+};
+
 /** Is the synthetic profile enabled for this process? Fails closed. */
 /**
  * Is this a deployed runtime? Byte-identical to the predicate in
@@ -238,8 +340,9 @@ export function catalogueForRuntime(
   env: NodeJS.ProcessEnv = process.env,
 ): readonly MachineProfile[] {
   return syntheticProfileEnabled(env)
-    ? [...MACHINE_CATALOGUE, SYNTHETIC_DEMO_PROFILE]
+    ? [...MACHINE_CATALOGUE, SYNTHETIC_DEMO_PROFILE, SYNTHETIC_SINGLE_PROBE]
     : MACHINE_CATALOGUE;
 }
 
 export { SYNTHETIC_PROFILE_ID };
+export { SYNTHETIC_SINGLE_PROBE };
