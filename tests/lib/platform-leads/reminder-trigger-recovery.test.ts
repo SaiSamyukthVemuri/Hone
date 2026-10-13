@@ -14,7 +14,9 @@ vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: async () => undefined }));
 
 import {
   recoverLeadAlertsOnReminderTrigger,
+  REMINDER_TRIGGER_LEAD_ALERT_BUDGET_MS,
   REMINDER_TRIGGER_LEAD_ALERT_MAX,
+  sweepPlatformLeadAlerts,
 } from "@/lib/platform-leads/alert-delivery";
 
 const OPS = "ops@hone.example";
@@ -98,5 +100,44 @@ describe("wiring in the reminders route (source guard)", () => {
   it("a lead-alert problem is an ops alert and a response field, never a failed reminders run", () => {
     expect(SRC).toMatch(/event: "lead_alert_recovery_failed"/);
     expect(SRC).toMatch(/lead_alerts: lead_alerts\.ran/);
+  });
+});
+
+// Codex P2 4253569253: the budget holds DURING a send, not only before it.
+describe("the sweep deadline holds during a send", () => {
+  it("a provider that never answers is cut off at the budget, settled as a retry under the SAME key", async () => {
+    vi.useFakeTimers();
+    try {
+      const settles: Array<Record<string, unknown>> = [];
+      const keys: Array<string | undefined> = [];
+      const base = recordingAdmin([], 10);
+      const admin = {
+        rpc: async (fn: string, args: Record<string, unknown> = {}) => {
+          if (fn === "settle_platform_lead_alert") settles.push(args);
+          return (base as unknown as { rpc: (f: string, a: Record<string, unknown>) => Promise<unknown> }).rpc(fn, args);
+        },
+      } as unknown as SupabaseClient;
+      const hanging: IdempotentEmailTransport = {
+        emails: { send: (_p, o) => { keys.push(o?.idempotencyKey); return new Promise(() => undefined); } },
+      };
+      const started = Date.now();
+      const running = recoverLeadAlertsOnReminderTrigger({ admin, transport: hanging, env: ENV, appOrigin: () => "https://hone.example" });
+      await vi.advanceTimersByTimeAsync(REMINDER_TRIGGER_LEAD_ALERT_BUDGET_MS);
+      const out = await running;
+      // Finished at the budget -- not at the send's own 15 s ceiling.
+      expect(Date.now() - started).toBeLessThanOrEqual(REMINDER_TRIGGER_LEAD_ALERT_BUDGET_MS);
+      expect(out).toMatchObject({ ran: true, summary: { ok: true, attempted: 1 } });
+      expect(keys).toHaveLength(1);
+      expect(settles).toEqual([expect.objectContaining({ p_outcome: "retry", p_error_code: "provider_timeout" })]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("no claim (a counted attempt) starts when too little of the budget is left", async () => {
+    const calls: string[] = [];
+    const out = await sweepPlatformLeadAlerts({ admin: recordingAdmin(calls, 10), transport, env: ENV, appOrigin: () => "https://hone.example", maxAlerts: 5, budgetMs: 1_500 });
+    expect(out).toMatchObject({ ok: true, attempted: 0 });
+    expect(calls).not.toContain("claim_platform_lead_alert");
   });
 });

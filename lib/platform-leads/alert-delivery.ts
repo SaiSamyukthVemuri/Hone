@@ -68,6 +68,8 @@ import type {
 
 /** Long enough for the send's own 15 s ceiling plus the database round trips. */
 export const LEAD_ALERT_LEASE_SECONDS = 120;
+/** No claim (one counted attempt) starts with less time than this left in a sweep's budget. */
+export const LEAD_ALERT_MIN_SEND_WINDOW_MS = 2_000;
 /** One sweep's ceilings: a bounded batch, finishing well inside the route's 60 s. */
 export const LEAD_ALERT_SWEEP_MAX = 20;
 export const LEAD_ALERT_SWEEP_BUDGET_MS = 40_000;
@@ -322,6 +324,8 @@ async function claimAndSend(
   admin: SupabaseClient,
   ready: Extract<LeadAlertReadiness, { ready: true }>,
   alertId: string | null,
+  /** Epoch ms by which this attempt must finish: a sweep's budget. */
+  deadline: number | null = null,
 ): Promise<LeadAlertAttemptResult> {
   const { data, error } = await admin.rpc("claim_platform_lead_alert", {
     p_alert_id: alertId,
@@ -388,11 +392,31 @@ async function claimAndSend(
   }
 
   // The ONE configured recipient, and exactly the frozen bytes.
-  const outcome = await sendOnceWithIdempotencyKey(
+  const sending = sendOnceWithIdempotencyKey(
     ready.transport,
     { from: message.from, to: ready.recipient, subject: message.subject, html: message.html, text: message.text },
     row.idempotency_key,
   );
+  // THE SWEEP'S DEADLINE HOLDS DURING THE SEND (Codex P2 4253569253). The keyed
+  // attempt has its own fixed 15 s ceiling; a sweep with a shorter budget (the
+  // reminders trigger's) stops waiting at its deadline. That is the ambiguous
+  // outcome a timeout already is -- the request may still be accepted -- so the
+  // alert is retried later under the SAME key and frozen message, and the
+  // provider replays rather than sends twice.
+  let outcome: WaitlistSendOutcome;
+  if (deadline === null) {
+    outcome = await sending;
+  } else {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<WaitlistSendOutcome>((resolve) => {
+      timer = setTimeout(() => resolve({ status: "ambiguous", reason: "timeout" }), Math.max(0, deadline - Date.now()));
+    });
+    try {
+      outcome = await Promise.race([sending, late]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
   return settle(admin, row, settlementFor(outcome));
 }
 
@@ -561,8 +585,11 @@ export async function sweepPlatformLeadAlerts(
     const max = opts.maxAlerts ?? LEAD_ALERT_SWEEP_MAX;
     const budget = opts.budgetMs ?? LEAD_ALERT_SWEEP_BUDGET_MS;
     const started = Date.now();
-    for (let i = 0; i < max && Date.now() - started < budget; i += 1) {
-      const result = await claimAndSend(admin, ready, null);
+    const deadline = started + budget;
+    // A claim is one counted attempt: never start one with too little time
+    // left to give its send a fair chance.
+    for (let i = 0; i < max && deadline - Date.now() >= LEAD_ALERT_MIN_SEND_WINDOW_MS; i += 1) {
+      const result = await claimAndSend(admin, ready, null, deadline);
       if (result === "none") break;
       if (result === "claim_error" || result === "settle_error" || result === "freeze_error") {
         // The database did not record this run's work (a lost settle leaves
