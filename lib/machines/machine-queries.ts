@@ -297,7 +297,13 @@ export async function recordSetupGroup(
 
 export type RecordedReading = {
   blockId: string;
-  /** Which observation of this field within its block. 1-based; appends. */
+  /**
+   * The atomic capture this reading belongs to. Every reading recorded by the
+   * command has one; it is what makes a retrieved setup one coherent thing
+   * rather than a per-field composite.
+   */
+  captureId: string | null;
+  /** Which capture of this group within its block. 1-based; appends. */
   revision: number;
   profileId: string;
   profileVersion: number;
@@ -326,14 +332,17 @@ type ReadingRow = {
   native_unit: string;
   decimals: number;
   revision: number;
+  capture_id: string | null;
   recorded_at: string;
 };
 
 function toReading(r: ReadingRow): RecordedReading {
   return {
     blockId: r.session_block_id,
-    // Which observation of this field this is, within its block. 1 is the
-    // first; a setting changed mid-treatment appends 2, and both survive.
+    captureId: r.capture_id ?? null,
+    // Which capture of this group this reading belongs to, within its block.
+    // 1 is the first; a setting changed mid-treatment appends 2, and both
+    // survive. Every field of ONE capture shares this number.
     revision: r.revision,
     profileId: r.machine_profile_id,
     profileVersion: r.machine_profile_version,
@@ -363,11 +372,58 @@ function toReading(r: ReadingRow): RecordedReading {
 const READING_COLUMNS =
   "session_block_id, machine_profile_id, machine_profile_version, mode_key, " +
   "group_key, channels, stage_key, field_key, value_numeric, absence_reason, " +
-  "native_unit, decimals, revision, recorded_at";
+  "native_unit, decimals, revision, capture_id, recorded_at";
+
+/**
+ * Is a contract PUBLISHED for this (profile, version)? Used to refuse
+ * registering a unit the studio could not then record against.
+ *
+ * A read, available to any authenticated practitioner - the contract is a
+ * product fact, not studio data.
+ */
+export async function publishedModesFor(
+  db: MachineDb,
+  profileId: string,
+  profileVersion: number,
+): Promise<MachineOutcome<string[]>> {
+  const { data, error } = await db
+    .from("machine_profile_mode_contract")
+    .select("mode_key, machine_profile_version")
+    .eq("machine_profile_id", profileId)
+    .order("mode_key", { ascending: true })
+    .limit(200);
+  if (error) {
+    return {
+      ok: false,
+      error: fail(error, "Could not read the published machine contract."),
+    };
+  }
+  const rows = (data ?? []) as Array<{
+    mode_key: string;
+    machine_profile_version: number;
+  }>;
+  return {
+    ok: true,
+    value: rows
+      .filter((r) => r.machine_profile_version === profileVersion)
+      .map((r) => r.mode_key),
+  };
+}
 
 /**
  * Publish the field contract for one (profile, version, mode) INTO THE
  * DATABASE, so `record_treatment_setup_group` can validate against it.
+ *
+ * DEPLOYMENT AUTHORITY ONLY. This is not reachable from a user session: the
+ * command's EXECUTE is granted to `service_role` and revoked from
+ * `authenticated`, because the contract is a GLOBAL product fact. An earlier
+ * version let any active studio owner publish it, which meant one tenant's
+ * owner could change the units and precision every other tenant records
+ * against, and rewrite the meaning of a version under which readings had
+ * already been captured.
+ *
+ * A published version is IMMUTABLE: identical content is an idempotent no-op,
+ * different content is refused, and a correction means a NEW version.
  *
  * WHY THE DATABASE NEEDS ITS OWN COPY. The recording command is granted to
  * `authenticated` - it has to run as the practitioner for ownership to resolve
@@ -380,29 +436,37 @@ const READING_COLUMNS =
  * OWNER ONLY, enforced in the database. Publishing a contract is an
  * administrative act, like registering a unit, not part of charting.
  */
-export async function syncFieldContract(
+export async function publishMachineContract(
   db: MachineDb,
   input: {
     profileId: string;
     profileVersion: number;
     modeKey: string;
+    /** Independently controlled outputs, or null if the model offers none. */
+    channelsMax: number | null;
+    /** A physical option the mode requires, or null. */
+    requiresInstalledOption: string | null;
     fields: ReadonlyArray<{
       stageKey?: string | null;
       fieldKey: string;
       nativeUnit: string;
       decimals: number;
+      quantity: string;
     }>;
   },
 ): Promise<MachineOutcome<number>> {
-  const { data, error } = await db.rpc("sync_machine_profile_field_contract", {
+  const { data, error } = await db.rpc("sync_machine_profile_contract", {
     p_machine_profile_id: input.profileId,
     p_machine_profile_version: input.profileVersion,
     p_mode_key: input.modeKey,
+    p_channels_max: input.channelsMax,
+    p_requires_installed_option: input.requiresInstalledOption,
     p_fields: input.fields.map((f) => ({
       stage_key: f.stageKey ?? "",
       field_key: f.fieldKey,
       native_unit: f.nativeUnit,
       decimals: f.decimals,
+      quantity: f.quantity,
     })),
   });
   if (error) {

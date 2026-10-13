@@ -179,8 +179,21 @@ async function openMachinePanel(page: Page): Promise<boolean> {
   await page.getByTestId("machine-first-open").click();
   await expect(page.getByTestId("machine-first-panel")).toBeVisible({ timeout: T });
 
-  const offered = page.getByText(/Choose the machine you are working on/i);
-  return (await offered.count()) > 0;
+  // IS THE GATE OPEN? The panel has THREE states, and an earlier version of
+  // this helper only recognised one of them:
+  //
+  //   selectable.length === 0  -> "No verified machine is available"  (CLOSED)
+  //   !chosen                  -> the picker                          (OPEN)
+  //   chosen                   -> the machine-chosen block            (OPEN)
+  //
+  // It returned "offered a selection" only for the picker, so once the
+  // remembered selection actually PERSISTED - which it now does - the second
+  // mount showed the chosen machine and this read it as a failure. The ops01
+  // lane's gate-open run found exactly that at step 6, on the edit form of the
+  // block just saved. A consequence of fixing persistence, not of the panel.
+  const picker = page.getByText(/Choose the machine you are working on/i);
+  const chosen = page.getByTestId("machine-chosen");
+  return (await picker.count()) > 0 || (await chosen.count()) > 0;
 }
 
 test("machine-first: no real model is ever offered, and the synthetic workflow records and retrieves @390px", async ({

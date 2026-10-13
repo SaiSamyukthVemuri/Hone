@@ -13,12 +13,10 @@ import {
 } from "./helpers/harness";
 import {
   latestRecordedSetup,
-  listStudioMachines,
   readRememberedMachine,
   readingsForBlock,
   recordSetupGroup,
   registerStudioMachine,
-  syncFieldContract,
   rememberMachine,
   retireStudioMachine,
   type MachineDb,
@@ -222,6 +220,10 @@ async function registerSynthetic(
   studio: SeededStudio,
   name: string,
 ): Promise<string> {
+  // Registration CONSUMES a published contract and refuses without one, so the
+  // deployment step has to have happened first. Idempotent, so calling it here
+  // keeps each test self-contained.
+  await publishSyntheticContract();
   return asDb(studio.userId, async (db) => {
     const made = await registerStudioMachine(db, {
       studioId: studio.studioId,
@@ -230,31 +232,51 @@ async function registerSynthetic(
       displayName: name,
     });
     if (!made.ok) throw new Error(made.error);
-
-    // PUBLISH THE FIELD CONTRACT, exactly as registerMachineAction now does.
-    // Recording FAILS CLOSED without one, which is the point - so the helper
-    // has to mirror production rather than quietly enjoy an unvalidated path
-    // the application does not have.
-    for (const mode of activeModes(SYNTH)) {
-      const fields = nativeFieldGroups(SYNTH, mode).flatMap((g) =>
-        g.fields.map((f) => ({
-          stageKey: f.stageKey,
-          fieldKey: f.key,
-          nativeUnit: f.unit || "none",
-          decimals: f.decimals,
-        })),
-      );
-      if (fields.length === 0) continue;
-      const published = await syncFieldContract(db, {
-        profileId: SYNTH.profileId,
-        profileVersion: SYNTH.version,
-        modeKey: mode.key,
-        fields,
-      });
-      if (!published.ok) throw new Error(published.error);
-    }
     return made.value;
   });
+}
+
+/**
+ * Publish the synthetic profile's contract as DEPLOYMENT AUTHORITY.
+ *
+ * Through adminQuery, i.e. as `postgres`, NOT as a practitioner: the command's
+ * EXECUTE is granted to service_role and revoked from `authenticated`, because
+ * the contract is a global product fact and a studio owner must not be able to
+ * change what other studios record against. A test that could publish it as an
+ * owner would be proving the wrong thing.
+ *
+ * Idempotent by design - a published version re-published with identical
+ * content is a no-op - so every test that needs it may call it.
+ */
+async function publishSyntheticContract(): Promise<void> {
+  for (const mode of activeModes(SYNTH)) {
+    const fields = nativeFieldGroups(SYNTH, mode).flatMap((g) =>
+      g.fields.map((f) => ({
+        stage_key: f.stageKey ?? "",
+        field_key: f.key,
+        native_unit: f.unit || "none",
+        decimals: f.decimals,
+        quantity: SYNTH.modes
+          .find((m) => m.key === mode.key)!
+          .fields.concat(
+            SYNTH.modes.find((m) => m.key === mode.key)!.stages.flatMap((st) => st.fields),
+          )
+          .find((ff) => ff.key === f.key)!.quantity,
+      })),
+    );
+    if (fields.length === 0) continue;
+    await adminQuery(
+      `select public.sync_machine_profile_contract($1, $2, $3, $4, $5, $6::jsonb)`,
+      [
+        SYNTH.profileId,
+        SYNTH.version,
+        mode.key,
+        SYNTH.channels?.count ?? null,
+        mode.requiresInstalledOption ?? null,
+        JSON.stringify(fields),
+      ],
+    );
+  }
 }
 
 const READINGS = [

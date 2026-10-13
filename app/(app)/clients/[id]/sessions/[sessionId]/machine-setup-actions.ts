@@ -8,7 +8,7 @@ import { nativeFieldGroups } from "@/lib/machines/charting";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import {
   latestRecordedSetup,
-  syncFieldContract,
+  publishedModesFor,
   readingsForBlock,
   recordSetupGroup,
   registerStudioMachine,
@@ -269,6 +269,43 @@ export async function registerMachineAction(input: {
   }
 
   const db = await machineDb();
+
+  // CONSUME A PUBLISHED CONTRACT; NEVER AUTHOR ONE.
+  //
+  // An earlier version of this action PUBLISHED the field contract as part of
+  // registration. That was wrong in kind, not just in degree: the contract is
+  // a GLOBAL product fact, so letting a studio owner write it meant one
+  // tenant's owner could change the units and precision every other tenant
+  // records against, and rewrite the meaning of a version under which readings
+  // had already been captured. Publication is now deployment authority only
+  // (`sync_machine_profile_contract`, granted to service_role).
+  //
+  // What registration does instead is REFUSE a unit the studio could not then
+  // chart against. Recording fails closed without a published contract, so
+  // without this check an owner could register a machine that silently cannot
+  // be used, and discover it only at capture time.
+  const published = await publishedModesFor(
+    db,
+    profile.profileId,
+    profile.version,
+  );
+  if (!published.ok) {
+    return { ok: false, code: "rejected", error: published.error };
+  }
+  const wanted = activeModes(profile).map((m) => m.key);
+  const missing = wanted.filter((m) => !published.value.includes(m));
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      code: "rejected",
+      error:
+        `No published field contract covers ${profile.manufacturer} ${profile.model} ` +
+        `version ${profile.version} (${missing.join(", ")}). A machine cannot be ` +
+        `registered until its contract is published, because its settings could ` +
+        `not then be recorded.`,
+    };
+  }
+
   const made = await registerStudioMachine(db, {
     studioId: scope.studioId,
     profileId: profile.profileId,
@@ -280,46 +317,6 @@ export async function registerMachineAction(input: {
     installedOptions: input.installedOptions ?? [],
   });
   if (!made.ok) return { ok: false, code: "rejected", error: made.error };
-
-  // PUBLISH THE FIELD CONTRACT FOR WHAT WAS JUST REGISTERED.
-  //
-  // `record_treatment_setup_group` now validates every reading against
-  // `machine_profile_field_contract` and FAILS CLOSED when no contract exists
-  // for the profile version and mode. Registration is the right moment to
-  // publish it: it is already owner-only in both the action and the database,
-  // it is the point at which a studio commits to a specific profile version,
-  // and it means a practitioner never meets a registered machine she cannot
-  // record against.
-  //
-  // Derived from the server's own catalogue, one call per active mode, so the
-  // database's copy is the application's contract rather than a hand-kept
-  // duplicate. A failure here is reported rather than swallowed: the unit
-  // exists but could not be charted against, and silently returning ok would
-  // surface later as an unexplained refusal at capture time.
-  for (const mode of activeModes(profile)) {
-    const fields = nativeFieldGroups(profile, mode).flatMap((g) =>
-      g.fields.map((f) => ({
-        stageKey: f.stageKey,
-        fieldKey: f.key,
-        nativeUnit: f.unit || "none",
-        decimals: f.decimals,
-      })),
-    );
-    if (fields.length === 0) continue;
-    const published = await syncFieldContract(db, {
-      profileId: profile.profileId,
-      profileVersion: profile.version,
-      modeKey: mode.key,
-      fields,
-    });
-    if (!published.ok) {
-      return {
-        ok: false,
-        code: "rejected",
-        error: `${made.value ? "The machine was registered but its " : "The "}field contract could not be published: ${published.error}`,
-      };
-    }
-  }
 
   return { ok: true, machineId: made.value };
 }
