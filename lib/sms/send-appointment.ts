@@ -932,6 +932,23 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
   }
 
   const to = args.to(gate.normalizedPhone);
+
+  // D5 pre-claim revalidation FIRST (Codex P1 4254248449): it can take several
+  // reads (appointment, client, intake), and a route resolved before them could
+  // be stale by the claim. Refusal here spends nothing; the row stays owed.
+  if (args.beforeClaim) {
+    let pre: { ok: true; startsAt: Date } | { ok: false; reason: string };
+    try {
+      pre = await args.beforeClaim();
+    } catch {
+      pre = { ok: false, reason: "revalidate_failed" };
+    }
+    if (!pre.ok) return { ok: false, skipped: true, reason: pre.reason };
+  }
+
+  // Then the sender and readiness, IMMEDIATELY before the claim: a sender
+  // suspended, released or replaced while the reads above ran is seen here,
+  // and nothing is claimed or sent on the stale route.
   const route = await sendTimeRouteFor(
     args.admin,
     args.studio.id,
@@ -943,16 +960,6 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
   );
   if (!route.ok) {
     return { ok: false, skipped: true, reason: `sms_route_${route.reason}` };
-  }
-
-  if (args.beforeClaim) {
-    let pre: { ok: true; startsAt: Date } | { ok: false; reason: string };
-    try {
-      pre = await args.beforeClaim();
-    } catch {
-      pre = { ok: false, reason: "revalidate_failed" };
-    }
-    if (!pre.ok) return { ok: false, skipped: true, reason: pre.reason };
   }
 
   const claimed = await claimSmsSend(args.admin, args.appointmentId, args.smsType);

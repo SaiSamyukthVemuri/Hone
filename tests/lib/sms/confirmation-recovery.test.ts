@@ -391,8 +391,10 @@ describe("WHEN THE SENDER BECOMES READY: an owed confirmation is delivered exact
     snapshot = readyStudioA();
     const r2 = await run();
     expect(r2).toMatchObject({ ran: true, considered: 1, sent: 1, failed: 0 });
-    expect(events.indexOf(SNAPSHOT_RPC)).toBeLessThan(events.indexOf("revalidate_pre"));
-    expect(events.indexOf("revalidate_pre")).toBeLessThan(events.indexOf("claim_sms_send"));
+    // Pre-claim revalidation, THEN the route, immediately before the claim
+    // (Codex P1 4254248449).
+    expect(events.lastIndexOf("revalidate_pre")).toBeLessThan(events.lastIndexOf(SNAPSHOT_RPC));
+    expect(events.lastIndexOf(SNAPSHOT_RPC)).toBeLessThan(events.indexOf("claim_sms_send"));
     expect(events.indexOf("claim_sms_send")).toBeLessThan(events.indexOf("revalidate_post"));
     expect(events.indexOf("revalidate_post")).toBeLessThan(events.indexOf("provider"));
     expect(providerBodies[0].get("MessagingServiceSid")).toBe(MSID_A);
@@ -999,5 +1001,99 @@ describe("scan direction alternates per slot; an unreadable route is re-read", (
     };
     expect(await run()).toMatchObject({ sent: 1 });
     expect(reads).toBe(2);
+  });
+});
+
+describe("THE SENDER CHANGES WHILE THE PRE-CLAIM READS RUN (Codex P1 4254248449)", () => {
+  // The route is resolved AFTER beforeClaim, immediately before the claim.
+  // Each case changes the studio's sender during the pre-claim re-read; the
+  // fake 0217 snapshot and the fake provider (stubbed fetch) show what happens.
+  const OLD_MSID = MSID_A;
+  const NEW_MSID = `MG${"c".repeat(32)}`;
+  const NEW_NUMBER = "+18775550100";
+  let current: Snapshot;
+  const useLiveSnapshot = () => {
+    current = readyStudioA();
+    snapshot = () => current;
+  };
+
+  it("SUSPENDED during the reads: no claim, no send, still owed; sent once re-activated", async () => {
+    db = [appt()];
+    useLiveSnapshot();
+    preClaimRead = () => {
+      current = {
+        data: {
+          senders: [{ id: "sender-a-1", studio_id: A, status: "suspended", phone_number: READY_NUMBER, messaging_service_sid: OLD_MSID }],
+          registrations: [approval(A, "sender-a-1", READY_NUMBER, "toll_free_verification")],
+        },
+        error: null,
+      };
+    };
+    expect(await run()).toMatchObject({ sent: 0, skipped: { sms_route_no_active_sender: 1 } });
+    expect(events).not.toContain("claim_sms_send");
+    expect(providerCalls()).toBe(0);
+    expect(db[0].sms_confirmation_send_attempts).toBe(0);
+    preClaimRead = null;
+    current = readyStudioA();
+    events = [];
+    expect(await run()).toMatchObject({ sent: 1 });
+    expect(providerCalls()).toBe(1);
+  });
+
+  it("RELEASED during the reads (0217 returns no live sender): no claim, no send, still owed", async () => {
+    db = [appt()];
+    useLiveSnapshot();
+    preClaimRead = () => {
+      current = { data: { senders: [], registrations: [] }, error: null };
+    };
+    expect(await run()).toMatchObject({ sent: 0, skipped: { sms_route_no_active_sender: 1 } });
+    expect(events).not.toContain("claim_sms_send");
+    expect(providerCalls()).toBe(0);
+    expect(db[0].sms_confirmation_send_attempts).toBe(0);
+  });
+
+  it("REPLACED by an approved sender during the reads: sent from the NEW service and number, never the old", async () => {
+    db = [appt()];
+    useLiveSnapshot();
+    preClaimRead = () => {
+      current = {
+        data: {
+          senders: [{ id: "sender-a-2", studio_id: A, status: "active", phone_number: NEW_NUMBER, messaging_service_sid: NEW_MSID }],
+          registrations: [approval(A, "sender-a-2", NEW_NUMBER, "toll_free_verification")],
+        },
+        error: null,
+      };
+    };
+    expect(await run()).toMatchObject({ sent: 1 });
+    expect(providerBodies[0].get("MessagingServiceSid")).toBe(NEW_MSID);
+    expect(providerBodies[0].get("From")).toBe(NEW_NUMBER);
+    expect(JSON.stringify([...providerBodies[0]])).not.toContain(OLD_MSID);
+    expect(JSON.stringify([...providerBodies[0]])).not.toContain(READY_NUMBER);
+  });
+
+  it("REPLACED by a sender whose registration is not yet approved: refused before any claim", async () => {
+    db = [appt()];
+    useLiveSnapshot();
+    preClaimRead = () => {
+      current = {
+        data: {
+          senders: [{ id: "sender-a-2", studio_id: A, status: "active", phone_number: NEW_NUMBER, messaging_service_sid: NEW_MSID }],
+          registrations: [],
+        },
+        error: null,
+      };
+    };
+    expect(await run()).toMatchObject({ sent: 0, skipped: { sms_route_destination_not_ready: 1 } });
+    expect(events).not.toContain("claim_sms_send");
+    expect(providerCalls()).toBe(0);
+    expect(db[0].sms_confirmation_send_attempts).toBe(0);
+  });
+
+  it("UNCHANGED sender: the ordinary recovered send still goes through, from the studio's own sender", async () => {
+    db = [appt()];
+    useLiveSnapshot();
+    expect(await run()).toMatchObject({ sent: 1 });
+    expect(providerBodies[0].get("MessagingServiceSid")).toBe(OLD_MSID);
+    expect(providerBodies[0].get("From")).toBe(READY_NUMBER);
   });
 });
