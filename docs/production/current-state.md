@@ -24,20 +24,42 @@ not a PR diary — per-capability evidence lives in
 
 | Field | Value |
 |---|---|
-| **Reconciliation date** | **2026-09-20 / 2026-09-21 UTC source sync**; production-data counts elsewhere retain their own older measurement dates. |
+| **Reconciliation date** | **2026-10-12 UTC source sync** (CANON-REFRESH-2026-10-12). The previous sync was 2026-09-20 / 2026-09-21; its derivations are preserved below as history. Production-data counts elsewhere retain their own older measurement dates. |
 | **Production branch** | `claude/build-hone-saas-hOex7` |
-| **Current Git branch HEAD at this sync** | **`410e5039d1b11b32c19e752ae2ae278c4b288b8f` — merge of #745.** Re-read GitHub before any production action; this is a dated sync value, not a perpetual pointer. |
-| **Last runtime-bearing application HEAD at this sync** | **`410e5039d1b11b32c19e752ae2ae278c4b288b8f` (#745).** This is also the branch HEAD above. `git log --first-parent --merges c6bc5949..410e5039` returns **three** merges, not two: `27a4c960` (#751), which carried **0** application files (`app/`, `lib/`, `components/`) and is documentation-only by the classifier; `c00bcfed` (#753), which carried **0** application files but is **database-bearing** — the classifier returns `docs_only=false`, `database=true`, because it carries migration `0202`, and A3's non-shipping exclusions do not exempt `supabase/migrations/`; and `410e5039` (#745), which carried **2** (`app/(app)/getting-started/page.tsx`, `lib/onboarding/getting-started.ts`). #745 is the latest runtime-bearing head because it merged last, not because #753 carried nothing. #751 is documentation-only and does not move the runtime baseline, but omitting it made the derivation incomplete. The verdict is **A3's composed deployed predicate** — *not documentation* (asked of `scripts/classify-changes.mjs`) **and** *not in a non-shipping root* (`tests/`, `e2e/`, `.github/`, `scripts/`, test-runner and linter configs) — not judgement, and not the classifier alone: it has no "ships" output to borrow. **`scripts/` is not blanket-exempt:** A3 subtracts `PRODUCTION_BUILD_SCRIPTS` — the scripts `package.json`'s `build` actually executes, today `scripts/check-production-env-gates.mjs` — because a script the production build runs can change what the deployment does. |
-| **Current Vercel Production deployment evidence** | Vercel commit status for `410e5039…` is **success**. No deployment id, alias/runtime probe or current health measurement is inferred from that status. |
+| **Current Git branch HEAD at this sync** | **`d5efa20ade0af7cdb8624185b2520cd507fa2713` — merge of #827.** Re-read GitHub before any production action; this is a dated sync value, not a perpetual pointer. |
+| **Last runtime-bearing application HEAD at this sync** | **`d5efa20ade0af7cdb8624185b2520cd507fa2713` (#827).** This is also the branch HEAD above. `git log --first-parent 410e5039..d5efa20a` returns **57** merges. **40** are runtime-bearing and **17** are not, by **A3's composed deployed predicate**: *not documentation* (asked of `scripts/classify-changes.mjs`) **and** *not in a non-shipping root* (`tests/`, `e2e/`, `.github/`, `scripts/` except `PRODUCTION_BUILD_SCRIPTS`, test-runner and linter configs, `openwiki/`). **8** of the 57 carry a migration. #827 is the latest runtime-bearing head because it merged last and changes 3 shipping files; with this pin, A3's residue is **0** files. The per-merge derivation is in *Re-derived at this reconciliation* below. |
+| **Current Vercel Production deployment evidence** | Vercel commit status for `d5efa20a…` is **success** ("Deployment has completed", `2026-10-12T22:04:08Z`, read 2026-10-12). No deployment id, alias or current health measurement is inferred from that status. |
 | **Migration state** | **This document deliberately states no migration number.** Hosted max is declared once, machine-readably, in [`migration-state.json`](./migration-state.json). Repository max, total applied and the next free number are **derived** — run `npm run migration:state`. The current reconciled position, with checksums and apply evidence, is [migration-ledger.md](./migration-ledger.md) under *Current state*. A number copied into this table is a number that goes stale on the next apply; that is how the `0160`/`0163`/`0165` divergence happened. |
 | **Database vs. application skew** | **This document asserts no parity, pending or remote-only claim of its own.** It previously declared the two states equal and the pending set empty, and went stale the moment a reviewed migration was authored above hosted — the same second-copy failure this table already avoids for migration NUMBERS. Derive the relationship with `npm run migration:state`; hosted state is declared once in [`migration-state.json`](./migration-state.json); the reconciled position with apply evidence is [migration-ledger.md](./migration-ledger.md) under *Current state*. **A repository maximum ABOVE hosted is the normal state of an authorized migration-first apply** — reviewed migration authored, production not yet advanced — and is not by itself skew. What would be skew is a **remote-only** migration (hosted above repo), which the derivation reports and the canonical guard forbids. |
 | **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
-| **Health** | ⚠️ **NOT RE-PROBED AT THIS SOURCE SYNC.** The last probe remains the **2026-08-23** reading: `hone.care` **200** · `/login` **200** · `/dashboard` **307** (auth redirect) · `/api/health` **307**, all non-5xx, `ops_alerts` unresolved **4** (§13). Production has moved substantially since then; this document deliberately does **not** restate a merge-age count. These are dated observations, not current health. |
+| **Health** | **Status-code probe, 2026-10-12T23:07Z** (unauthenticated GET, redirects not followed): `hone.care` **200** · `/login` **200** · `/dashboard` **307 → /login** · `/api/health` **307 → /login**, all non-5xx. This is a reachability reading only, not an `ops_alerts` or provider-health measurement. ⚠️ `ops_alerts` was **not** re-read at this sync. The **2026-08-23** probe (same four routes, same codes, `ops_alerts` unresolved **4**, §13) is preserved as the previous dated reading. These are dated observations, not current health. |
 | **Tenant posture** | **Six studios in three classes — one real-customer, one controlled test, one synthetic, three empty.** Real-customer activity is **Willow Electrolysis only**. See **§0**, which is the canonical tenant register; do not restate its counts elsewhere. ⚠️ **Every tenant count in §0 was measured 2026-08-23 and was NOT re-measured on 2026-08-26** — see *What this reconciliation did and did not measure* below. |
 | **Next operational gate** | The **deep production / security / code audit** (still not performed against this baseline). **Chloe's human acceptance testing** remains outstanding and is **independent** — see §15. |
 
 ### Re-derived at this reconciliation
 
+**Re-derived on 2026-10-12 (CANON-REFRESH-2026-10-12), from the repository at `d5efa20a`:**
+
+- the production branch head and the full merge ancestry back to `b9e0003f` (138 merges),
+  from `git rev-list --first-parent --merges --count b9e0003f..d5efa20a`;
+- the **57** merges since the previous sync's pin `410e5039`, each classified by **A3's
+  composed deployed predicate** (unchanged from the previous sync, described there): **40**
+  runtime-bearing, **17** not, **8** carrying a migration. The latest runtime-bearing merge is
+  `d5efa20a` (#827). Documentation-only or non-shipping merges in that span include #756, #755,
+  #783, #782, #787, #792, #794, #797, and the ENG-LOOP and CAP lane merges #802 to #811;
+- repository and hosted migration state: **derived** with `npm run migration:state`, and
+  **declared** in [`migration-state.json`](./migration-state.json). The reconciled position is
+  [migration-ledger.md](./migration-ledger.md) under *Current state*. This document still
+  states no number;
+- Vercel commit status for `d5efa20a` (success) and a status-code probe of four public routes
+  (header row *Health*).
+
+**Not re-measured at this sync:** tenant counts (§0), `ops_alerts`, provider state, and any
+capability's production exercise. Their own measurement dates stand.
+
+### Historical preceding baseline from the 2026-09-21 reconciliation
+
+<!-- canonical-facts:ignore-start reason=preserves-the-2026-09-21-PROD-TRUTH-01-derivation-and-header-rows-as-dated-evidence -->
 **Re-derived on 2026-09-21 (PROD-TRUTH-01), from the repository at `410e5039`:**
 
 - the production branch head and the full merge ancestry back to `b9e0003f` (eighty-one merges);
@@ -56,7 +78,18 @@ These are derivations from the repository and the Git graph. The **2026-08-30** 
 boundary recorded below is unchanged: the figures derived there from `bf6f09c4` remain dated
 evidence of that reconciliation and are not restated as facts about today. That is why the
 ancestry count appears twice — **twenty-nine** through `bf6f09c4` on 2026-08-30, **eighty-one**
-through `410e5039` today — and why neither number is edited into the other's block.
+through `410e5039` on 2026-09-21 — and why neither number is edited into the other's block.
+
+The 2026-09-21 header rows, preserved verbatim as dated evidence (superseded by the header above):
+
+| Field | Value at the 2026-09-21 sync |
+|---|---|
+| **Reconciliation date** | **2026-09-20 / 2026-09-21 UTC source sync**; production-data counts elsewhere retain their own older measurement dates. |
+| **Current Git branch HEAD at this sync** | **`410e5039d1b11b32c19e752ae2ae278c4b288b8f` — merge of #745.** Re-read GitHub before any production action; this is a dated sync value, not a perpetual pointer. |
+| **Last runtime-bearing application HEAD at this sync** | **`410e5039d1b11b32c19e752ae2ae278c4b288b8f` (#745).** This is also the branch HEAD above. `git log --first-parent --merges c6bc5949..410e5039` returns **three** merges, not two: `27a4c960` (#751), which carried **0** application files (`app/`, `lib/`, `components/`) and is documentation-only by the classifier; `c00bcfed` (#753), which carried **0** application files but is **database-bearing** — the classifier returns `docs_only=false`, `database=true`, because it carries migration `0202`, and A3's non-shipping exclusions do not exempt `supabase/migrations/`; and `410e5039` (#745), which carried **2** (`app/(app)/getting-started/page.tsx`, `lib/onboarding/getting-started.ts`). #745 is the latest runtime-bearing head because it merged last, not because #753 carried nothing. #751 is documentation-only and does not move the runtime baseline, but omitting it made the derivation incomplete. The verdict is **A3's composed deployed predicate** — *not documentation* (asked of `scripts/classify-changes.mjs`) **and** *not in a non-shipping root* (`tests/`, `e2e/`, `.github/`, `scripts/`, test-runner and linter configs) — not judgement, and not the classifier alone: it has no "ships" output to borrow. **`scripts/` is not blanket-exempt:** A3 subtracts `PRODUCTION_BUILD_SCRIPTS` — the scripts `package.json`'s `build` actually executes, today `scripts/check-production-env-gates.mjs` — because a script the production build runs can change what the deployment does. |
+| **Current Vercel Production deployment evidence** | Vercel commit status for `410e5039…` is **success**. No deployment id, alias/runtime probe or current health measurement is inferred from that status. |
+| **Health** | ⚠️ **NOT RE-PROBED AT THIS SOURCE SYNC.** The last probe remains the **2026-08-23** reading: `hone.care` **200** · `/login` **200** · `/dashboard` **307** (auth redirect) · `/api/health` **307**, all non-5xx, `ops_alerts` unresolved **4** (§13). Production has moved substantially since then; this document deliberately does **not** restate a merge-age count. These are dated observations, not current health. |
+<!-- canonical-facts:ignore-end -->
 
 ### Historical preceding baseline from the 2026-08-30 reconciliation
 
@@ -269,10 +302,14 @@ surfaces then made affirmative clinical statements nobody had read: *Last visit*
 Intelligence* reported every stat as a known zero, and *Before today* reported no watch or plan
 notes and a complete procedure record.
 
-At `410e5039` all four check `unavailable` **before** `hasHistory`, and
+At `d5efa20a` all four check `unavailable` **before** `hasHistory`, and
 `session_blocks.caution_for_next_session` / `caution_note` — which reach the practitioner only
 through the Watch/Plan band built from that same read — are protected on both the Overview and
-Sessions tabs. Read failure now renders *clinical history could not be loaded*. **Re-pinned from
+Sessions tabs. Read failure now renders *clinical history could not be loaded*. **Re-run again on
+2026-10-12 through `d5efa20a` (CANON-REFRESH-2026-10-12):** across `410e5039..d5efa20a` (57
+merges), no added or removed line touching `unavailable` or `hasHistory` appears in the five
+files named below; the only change among them is two lines of `app/(app)/clients/[id]/page.tsx`,
+neither touching the guards. The 2026-09-21 record follows unchanged. **Re-pinned from
 the original #659 observation (`0f07dae6`), and verified mechanically rather than assumed — the
 comparison was RE-RUN through the current baseline on 2026-09-21, not merely re-pointed: across
 `0f07dae6..410e5039`, which now includes #751, #753 and #745, no added or removed line touching
