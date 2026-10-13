@@ -336,23 +336,53 @@ export async function fetchPublicSlotsAction(params: {
   // options this studio+service would offer. An unknown or ineligible id falls
   // back to "any available" rather than erroring — the picker refines a page
   // that must keep working, and the command refuses independently at commit.
+  // G1 / CODEX P2 — A SUBMITTED PRACTITIONER THAT CANNOT BE HONOURED REFUSES
+  // THE GRID; IT DOES NOT QUIETLY BECOME "ANY AVAILABLE".
+  //
+  // THE THIRD TIME IN THIS LANE I FIXED ONE SIDE AND LEFT THE OTHER. The
+  // earlier version validated the id and, on failure, left
+  // `scopedPractitionerId` null and returned STUDIO-WIDE slots -- while the
+  // picker on screen still named the chosen practitioner. After the commit path
+  // was taught to refuse (P1), that made the grid and the commit disagree
+  // outright: the visitor is offered times, picks one, and is then told the
+  // practitioner is unavailable. Offering a time the commit will refuse is the
+  // exact defect this lane exists to remove.
+  //
+  // So the three outcomes mirror the commit path, in the same order and for the
+  // same reasons, and the studio-wide path is reserved for a request that
+  // genuinely OMITTED a practitioner:
+  //
+  //   no id submitted        -> studio-wide grid, unchanged pre-G1 behaviour
+  //   id + assignment off    -> refuse
+  //   id + cannot validate   -> refuse (deactivated, unpinned, or a transient
+  //                             failure of the eligibility read)
+  //   id + valid             -> practitioner-scoped grid
+  //
+  // The copy is the SAME constant the commit path returns, so the page and the
+  // command say one thing rather than two. An empty scoped grid was the other
+  // option Codex offered; it is worse here, because "no availability" tells the
+  // visitor the practitioner is busy when the truth is that the choice is no
+  // longer offerable.
   let scopedPractitionerId: string | null = null;
-  if (
-    params.practitionerId &&
-    // The same kill switch as the options action. If public assignment is off,
-    // a submitted id buys NOTHING: scoping the grid to a practitioner the
-    // commit path will then ignore is the page/command disagreement this lane
-    // exists to remove.
-    studio.practitioner_capacity_booking_enabled === true
-  ) {
+  if (params.practitionerId) {
+    if (studio.practitioner_capacity_booking_enabled !== true) {
+      logInternalBookingError("public_slots_practitioner_assignment_disabled", {
+        studioId: studio.id,
+      });
+      return { ok: false, error: PRACTITIONER_CHOICE_UNAVAILABLE_ERROR };
+    }
     const eligible = await loadEligiblePractitioners(
       admin,
       studio.id,
       params.serviceId,
     );
-    if (eligible.some((o) => o.id === params.practitionerId)) {
-      scopedPractitionerId = params.practitionerId;
+    if (!eligible.some((o) => o.id === params.practitionerId)) {
+      logInternalBookingError("public_slots_practitioner_not_offered", {
+        studioId: studio.id,
+      });
+      return { ok: false, error: PRACTITIONER_CHOICE_UNAVAILABLE_ERROR };
     }
+    scopedPractitionerId = params.practitionerId;
   }
 
   const slots = await getAvailableSlots(

@@ -238,3 +238,36 @@ describe("G1: the actionable refusal is REACHABLE for a new client", () => {
     expect(later, "the later mapping must remain for the existing-client path").toBeGreaterThan(-1);
   });
 });
+
+describe("G1: the GRID refuses a practitioner the COMMIT would refuse", () => {
+  // CODEX P2 at 69d20c26, and the third instance in this lane of fixing one
+  // side of the page/command pair and leaving the other. The slots action used
+  // to validate the submitted practitioner and, on failure, return STUDIO-WIDE
+  // slots while the picker still named the chosen practitioner. Once the commit
+  // path refused (the earlier P1), the grid and the commit disagreed outright:
+  // times offered, then "that practitioner is no longer available".
+  //
+  // The studio-wide path must therefore be reachable ONLY when the request
+  // omitted a practitioner.
+  it("refuses instead of falling back to studio-wide slots", () => {
+    const body = actionSource("fetchPublicSlotsAction");
+    expect(body, "expected the slots action").not.toBe("");
+    // Both refusal paths: assignment disabled, and an id that cannot validate.
+    const refusals = body.match(/PRACTITIONER_CHOICE_UNAVAILABLE_ERROR/g) ?? [];
+    expect(
+      refusals.length,
+      "the slots action must refuse BOTH a disabled switch and an " +
+        "unvalidatable id, rather than serving a studio-wide grid the commit " +
+        "path will then refuse",
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it("says the SAME thing the commit path says", () => {
+    // One constant, two surfaces. If the grid and the commit ever carry
+    // different copy for the same refusal, the visitor is told two stories.
+    const slots = actionSource("fetchPublicSlotsAction");
+    const commit = actionSource("publicBookAppointmentAction");
+    expect(slots).toContain("PRACTITIONER_CHOICE_UNAVAILABLE_ERROR");
+    expect(commit).toContain("PRACTITIONER_CHOICE_UNAVAILABLE_ERROR");
+  });
+});
