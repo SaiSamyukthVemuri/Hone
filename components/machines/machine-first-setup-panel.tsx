@@ -69,6 +69,15 @@ export type MachineFirstSetupPanelProps = {
   /** Pre-selected device, so a server render can show the chosen state. */
   initialDeviceId?: string | null;
   /**
+   * The remembered MODE, which the loader resolves and nothing used.
+   *
+   * Without it the panel always took `activeModes(profile)[0]`, so for any
+   * profile with more than one active mode it rendered and RECORDED the wrong
+   * field contract - the practitioner's remembered choice was resolved on the
+   * server and then discarded (Codex, 15cc6c99).
+   */
+  initialModeKey?: string | null;
+  /**
    * A stored machine that CANNOT be used, with the reason, when the server
    * resolved one. Mutually exclusive with `initialDeviceId`: the loader sets
    * one or the other, never both, because a selection is either usable or it
@@ -146,6 +155,7 @@ export function MachineFirstSetupPanel({
   devices = [],
   scope = null,
   initialDeviceId = null,
+  initialModeKey = null,
   catalogue = MACHINE_CATALOGUE,
   persistence = NO_PERSISTENCE,
   inventoryReason = null,
@@ -175,6 +185,9 @@ export function MachineFirstSetupPanel({
   );
   const deviceId = selection.selected;
   const selectionNote = selection.note;
+  // THE MODE IN FORCE. Seeded from the remembered one; falls back to the
+  // profile's first active mode, which is all this used to do.
+  const [modeKey, setModeKey] = useState<string | null>(initialModeKey);
   // How many readings this panel has actually saved in this mount. Drives the
   // "Recorded:" line, which previously claimed "nothing" even after a save.
   const [savedCount, setSavedCount] = useState(0);
@@ -186,15 +199,40 @@ export function MachineFirstSetupPanel({
    * behaviour look like it had worked.
    */
   const chooseDevice = async (next: string | null) => {
+    // THE MODE IS RESET TO THE NEW DEVICE'S OWN FIRST MODE. Carrying the
+    // previous one over would persist a key from a different profile, which
+    // means nothing - a mode exists only within the profile that declares it.
+    const nextProfile =
+      next === null
+        ? undefined
+        : selectable.find((s) => s.device.deviceId === next)?.profile;
+    const nextMode = nextProfile ? (activeModes(nextProfile)[0]?.key ?? null) : null;
+    setModeKey(nextMode);
     // Step 1: the optimistic move, so the form stays responsive.
     setSelection((prev) => selectionRequested(prev, next));
     // Step 2: the acknowledged outcome. `null` means no persister is wired,
     // which is NOT the same as a successful write and must not be reported as
     // one - `selectionSettled` is what keeps those apart.
     const write = onSelectMachine
-      ? await onSelectMachine({ deviceId: next, modeKey: null })
+      ? await onSelectMachine({ deviceId: next, modeKey: nextMode })
       : null;
     setSelection((prev) => selectionSettled(prev, next, write));
+  };
+
+  /**
+   * Choose the MODE on the machine already chosen.
+   *
+   * Routed through the same rule as the device, so a failed persist is
+   * reported the same way rather than silently kept: the mode applies to this
+   * block either way, but it will not survive a reload.
+   */
+  const chooseMode = async (key: string) => {
+    setModeKey(key);
+    setSelection((prev) => selectionRequested(prev, deviceId));
+    const write = onSelectMachine
+      ? await onSelectMachine({ deviceId, modeKey: key })
+      : null;
+    setSelection((prev) => selectionSettled(prev, deviceId, write));
   };
 
   // Only a real scope can produce a selectable list, because a device belongs
@@ -202,7 +240,11 @@ export function MachineFirstSetupPanel({
   // shows the catalogue status and nothing else, rather than guessing.
   const selectable = scope ? selectableDevices(scope, devices, catalogue) : [];
   const chosen = selectable.find((s) => s.device.deviceId === deviceId) ?? null;
-  const mode = chosen ? (activeModes(chosen.profile)[0] ?? null) : null;
+  // A MODE KEY IS ONLY MEANINGFUL WITHIN ONE PROFILE, so an unrecognised one
+  // falls back rather than blanking the panel: a remembered mode can outlive
+  // the machine it was chosen on.
+  const modes = chosen ? activeModes(chosen.profile) : [];
+  const mode = modes.find((m) => m.key === modeKey) ?? modes[0] ?? null;
   const groups = chosen && mode ? nativeFieldGroups(chosen.profile, mode) : [];
   const blocked = withheld(catalogue);
 
@@ -299,6 +341,37 @@ export function MachineFirstSetupPanel({
               {mode ? ` - ${mode.nativeLabel}` : ""}
             </span>
           </p>
+
+          {/*
+            THE MODE PICKER, shown only when the machine offers a choice.
+            One active mode needs no control; the heading above already names
+            it. More than one and the practitioner must be able to say which,
+            because the field contract - the labels, units and precision below
+            - is per MODE, not per machine.
+          */}
+          {modes.length > 1 && (
+            <div className="flex flex-col gap-1.5" data-testid="machine-mode-picker">
+              <SectionLabel size="caption">Mode</SectionLabel>
+              <div className="flex flex-wrap gap-2">
+                {modes.map((m) => (
+                  <button
+                    key={m.key}
+                    type="button"
+                    onClick={() => void chooseMode(m.key)}
+                    aria-pressed={m.key === mode?.key}
+                    data-testid={`machine-mode-${m.key}`}
+                    className={
+                      m.key === mode?.key
+                        ? "rounded-full border border-neutral-900 bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900"
+                        : "rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300"
+                    }
+                  >
+                    {m.nativeLabel}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* The machine's own fields, in the machine's own grouping. Rendered
               as the model's contract: label, native unit and the precision the

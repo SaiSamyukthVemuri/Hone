@@ -519,18 +519,38 @@ describe("with a block to chart against, the entry surface appears", () => {
     expect(html).toContain("Save these settings");
   });
 
-  it("marks the machine-computed field as not editable", () => {
-    // `Total` is device-computed on the fixture, so its input is disabled
-    // rather than inviting a value the machine owns. The whole tag is
-    // inspected because React emits attributes in source order, so a
-    // one-directional regex would depend on JSX ordering.
+  it("keeps a machine-computed field TRANSCRIBABLE, while still labelling it", () => {
+    // THIS TEST ASSERTED THE DEFECT. `Total` is device-computed on the
+    // fixture, and this file used to require its input be `disabled` - "rather
+    // than inviting a value the machine owns".
+    //
+    // That reading of `editable: false` was wrong. The flag means the
+    // practitioner cannot change the value ON THE MACHINE; it says nothing
+    // about whether the value can be CHARTED. Since nothing else populates
+    // the field - there is no device integration - disabling the input made an
+    // optional machine-derived reading impossible to record, and a required
+    // one would have left `ready` false forever, blocking every save
+    // (Codex, 15cc6c99).
+    //
+    // The distinction is preserved where it belongs: the field is still
+    // LABELLED as machine-computed, and its submitted observation_source now
+    // carries the contract's own value instead of claiming it was typed.
     const tags = html.match(/<input[^>]*>/g) ?? [];
     const computed = tags.find((t) => t.includes('data-testid="reading-computed"'));
     expect(computed, "no input was rendered for the computed field").toBeTruthy();
-    expect(computed).toContain("disabled");
-    // And the practitioner-entered ones are NOT disabled.
+    expect(computed, "a machine-derived reading must still be enterable").not.toContain(
+      "disabled",
+    );
     const current = tags.find((t) => t.includes('data-testid="reading-current"'));
     expect(current).not.toContain("disabled");
+    // AND IT IS STILL DISTINGUISHED, which is the half that must not be lost.
+    //
+    // Removing `disabled` removed the entry surface's ONLY signal - the
+    // "shown by the machine" wording lived solely in the panel's read-only
+    // list. The entry form now carries it too, so allowing the value to be
+    // charted did not quietly erase the fact that the machine owns it.
+    expect(html).toContain('data-testid="field-machine-shown-computed"');
+    expect(html).toContain("shown by the machine");
   });
 
   it("still shows the disputed bound as advisory, not as a limit", () => {
@@ -943,5 +963,100 @@ describe("the connected wrapper forwards the whole context", () => {
         "A field the loader resolves but the wrapper drops makes the feature " +
         "inert in the real route while direct-render tests still pass.",
     ).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE MODE IS A CHOICE, and the field contract depends on it.
+//
+// The panel always took `activeModes(profile)[0]`, so for any profile with
+// more than one active mode it rendered - and recorded against - the WRONG
+// field contract. The loader had resolved the practitioner's remembered mode
+// all along and the wrapper never forwarded it (Codex, 15cc6c99).
+// ---------------------------------------------------------------------------
+describe("choosing the mode on a multi-mode machine", () => {
+  /** A synthetic profile with TWO active modes, which is the whole point. */
+  const TWO_MODE: MachineProfile = {
+    ...SYNTHETIC,
+    profileId: "fixture:two-mode",
+    modes: [
+      SYNTHETIC.modes[0]!,
+      {
+        ...SYNTHETIC.modes[0]!,
+        key: "blend",
+        nativeLabel: "Blend",
+        fields: [
+          {
+            ...SYNTHETIC.modes[0]!.fields[0]!,
+            key: "blend_current",
+            nativeLabel: "Blend current",
+          },
+        ],
+      },
+    ],
+  };
+  const TWO_MODE_CAT = [TWO_MODE];
+  const DEV: StudioDevice = { ...DEVICE, profileId: "fixture:two-mode" };
+
+  it("offers a picker when the machine has more than one active mode", () => {
+    const html = render({
+      scope: SCOPE,
+      devices: [DEV],
+      catalogue: TWO_MODE_CAT,
+      initialDeviceId: DEV.deviceId,
+    });
+    expect(html).toContain('data-testid="machine-mode-picker"');
+    expect(html).toContain('data-testid="machine-mode-galvanic"');
+    expect(html).toContain('data-testid="machine-mode-blend"');
+  });
+
+  it("CONTROL: offers NO picker when there is only one mode to choose", () => {
+    // Without this, "renders a picker" could be true unconditionally, and a
+    // control on a single-mode machine is the cheapest way to know.
+    const html = render({
+      scope: SCOPE,
+      devices: [DEVICE],
+      catalogue: CAT,
+      initialDeviceId: DEVICE.deviceId,
+    });
+    expect(html).not.toContain('data-testid="machine-mode-picker"');
+  });
+
+  it("honours the REMEMBERED mode rather than the profile's first", () => {
+    // The defect in one assertion: this used to render Galvanic's contract
+    // whatever had been remembered.
+    const html = render({
+      scope: SCOPE,
+      devices: [DEV],
+      catalogue: TWO_MODE_CAT,
+      initialDeviceId: DEV.deviceId,
+      initialModeKey: "blend",
+      blockId: "block-1",
+    });
+    // The second mode's field, which only its contract declares.
+    expect(html).toContain("Blend current");
+    expect(html).toContain('aria-pressed="true"');
+  });
+
+  it("falls back to the first mode when the remembered one is not this machine's", () => {
+    // A remembered mode can outlive the machine it was chosen on, and a key
+    // means nothing outside the profile that declares it. Falling back beats
+    // blanking the panel.
+    const html = render({
+      scope: SCOPE,
+      devices: [DEV],
+      catalogue: TWO_MODE_CAT,
+      initialDeviceId: DEV.deviceId,
+      initialModeKey: "a-mode-from-another-profile",
+      blockId: "block-1",
+    });
+    expect(html).toContain('data-testid="machine-chosen"');
+    // GALVANIC's field contract, not Blend's - the first active mode. Asserted
+    // on the read-only field list, because the entry surface renders only when
+    // `onRecord` is wired and this render does not wire it.
+    expect(html).toContain("Current");
+    expect(html, "Blend's contract must not be rendered here").not.toContain(
+      "Blend current",
+    );
   });
 });

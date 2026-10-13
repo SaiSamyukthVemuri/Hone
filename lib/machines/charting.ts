@@ -61,6 +61,18 @@ export function unitLabel(unit: NativeUnit): string {
 export type FieldDescriptor = {
   key: string;
   stageKey: string | null;
+  /**
+   * WHO THE CONTRACT SAYS OBSERVED THIS, carried so the entry surface can
+   * submit it instead of claiming every value was typed from scratch.
+   *
+   * It was absent here, so the UI labelled EVERY reading
+   * "practitioner-entered" - including fields the contract marks as
+   * machine-displayed or device-computed. The RPC accepts and permanently
+   * stores that, so activating any such profile would have produced
+   * incorrect provenance even when the practitioner transcribed the display
+   * accurately (Codex, 15cc6c99).
+   */
+  expectedSource: MachineField["expectedSource"];
   label: string;
   unit: string;
   decimals: number;
@@ -102,6 +114,7 @@ function describe(field: MachineField, stageKey: string | null): FieldDescriptor
   return {
     key: field.key,
     stageKey,
+    expectedSource: field.expectedSource,
     label: field.nativeLabel,
     unit: unitLabel(field.unit),
     decimals: field.decimals,

@@ -3,7 +3,11 @@
 import { useState } from "react";
 
 import { SectionLabel } from "@/components/ui/section-label";
-import { nativeFieldGroups, type FieldDescriptor } from "@/lib/machines/charting";
+import {
+  nativeFieldGroups,
+  type FieldDescriptor,
+  type FieldGroup,
+} from "@/lib/machines/charting";
 import type {
   MachineMode,
   MachineProfile,
@@ -61,6 +65,52 @@ function parse(raw: string): ReadingValue | null {
   return { kind: "value", value: n };
 }
 
+/** The stable identity of one field within one group. */
+export function draftKey(groupKey: string, f: FieldDescriptor): string {
+  return `${groupKey}::${f.stageKey ?? ""}::${f.key}`;
+}
+
+/**
+ * Turn the practitioner's typed draft into the readings to submit.
+ *
+ * EXTRACTED SO IT CAN BE TESTED. This logic lived inside `submit`, an event
+ * handler, and this repository has no jsdom or testing-library in the unit
+ * stack - so nothing could reach it. That is how a hard-coded
+ * "practitioner-entered" survived on every field, including ones the contract
+ * marks machine-displayed or device-computed, with the rows immutable
+ * (Codex, 15cc6c99). It is the third defect in this lane to ship inside an
+ * untestable handler, so the rule now is: if it decides what gets stored, it
+ * does not live in a closure.
+ *
+ * Two behaviours worth stating, because both are deliberate:
+ *
+ *  - A BLANK FIELD IS NOT RECORDED. Not a zero, and not "not-applicable" -
+ *    neither is what she told us. Absence with a reason is a different act,
+ *    and the command has its own vocabulary for it.
+ *  - THE SOURCE COMES FROM THE CONTRACT, per field. Transcribing a value the
+ *    machine computed is not the same act as entering one, and the record must
+ *    not claim it is.
+ */
+export function assembleReadings(
+  groups: readonly FieldGroup[],
+  draft: Readonly<Record<string, string>>,
+): ReadingSubmission[] {
+  const readings: ReadingSubmission[] = [];
+  for (const g of groups) {
+    for (const f of g.fields) {
+      const value = parse(draft[draftKey(g.key, f)] ?? "");
+      if (value === null) continue;
+      readings.push({
+        stageKey: f.stageKey,
+        fieldKey: f.key,
+        value,
+        observationSource: f.expectedSource,
+      });
+    }
+  }
+  return readings;
+}
+
 export function MachineReadingEntry({
   profile,
   mode,
@@ -77,7 +127,7 @@ export function MachineReadingEntry({
   // and distinguishes the first capture from a later revision.
   const [captures, setCaptures] = useState(0);
 
-  const key = (g: string, f: FieldDescriptor) => `${g}::${f.stageKey ?? ""}::${f.key}`;
+  const key = draftKey;
 
   const required = groups.flatMap((g) =>
     g.fields.filter((f) => !f.optional).map((f) => key(g.key, f)),
@@ -87,22 +137,9 @@ export function MachineReadingEntry({
   async function submit() {
     setPending(true);
     setMessage(null);
-    const readings: ReadingSubmission[] = [];
-    for (const g of groups) {
-      for (const f of g.fields) {
-        const value = parse(draft[key(g.key, f)] ?? "");
-        // A field left blank is simply not recorded. It is NOT written as a
-        // zero and NOT written as "not-applicable", because neither is what she
-        // told us.
-        if (value === null) continue;
-        readings.push({
-          stageKey: f.stageKey,
-          fieldKey: f.key,
-          value,
-          observationSource: "practitioner-entered",
-        });
-      }
-    }
+    // The assembly is a pure function above, so it has a test. See its
+    // docblock for why that matters.
+    const readings = assembleReadings(groups, draft);
 
     const out = await onRecord({
       blockId,
@@ -198,12 +235,43 @@ export function MachineReadingEntry({
                         optional
                       </span>
                     )}
+                    {/*
+                      MACHINE-DERIVED FIELDS ARE STILL MARKED. Removing the
+                      `disabled` attribute took away the only signal this
+                      surface had, and the distinction matters even though the
+                      value is transcribed by hand: the practitioner is reading
+                      it off the device rather than deciding it. Same wording
+                      as the panel's read-only list, so the two agree.
+                    */}
+                    {!f.editable && (
+                      <span
+                        className="ml-1 font-normal text-neutral-500"
+                        data-testid={`field-machine-shown-${f.key}`}
+                      >
+                        shown by the machine
+                      </span>
+                    )}
                   </span>
                   <input
                     type="number"
                     inputMode="decimal"
                     step={f.decimals === 0 ? 1 : 1 / 10 ** f.decimals}
-                    disabled={!f.editable}
+                    // NOT DISABLED by `editable: false`.
+                    //
+                    // That flag means the practitioner cannot change the value
+                    // ON THE MACHINE - it is computed or displayed by the
+                    // device - not that it cannot be CHARTED. Disabling the
+                    // input made such a field impossible to record at all,
+                    // since nothing else populates it: there is no device
+                    // integration. An optional machine-derived reading was
+                    // therefore uncapturable, and a required one would have
+                    // left `ready` false forever, blocking every save
+                    // (Codex, 15cc6c99).
+                    //
+                    // The field still reads differently - it is labelled as
+                    // machine-computed above - and its submitted
+                    // observation_source now carries that, which is where the
+                    // distinction belongs.
                     value={draft[k] ?? ""}
                     onChange={(e) =>
                       setDraft((d) => ({ ...d, [k]: e.target.value }))
