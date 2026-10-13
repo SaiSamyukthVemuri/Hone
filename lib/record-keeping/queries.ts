@@ -660,28 +660,162 @@ export async function getClientProcedureRecords(
 // studio scoping + RLS backstop as everything above.
 import type { RecordKeepingAuditEvent } from "@/lib/types/database";
 
+/**
+ * How many audit events ONE read may return. Unchanged from PR #206: it bounds
+ * the response, never the id list.
+ */
+export const AUDIT_EVENT_READ_LIMIT = 500;
+
+/**
+ * How many record ids may travel in ONE `.in(...)` filter.
+ *
+ * WHY A BOUND EXISTS AT ALL. PostgREST filters ride in the query string, so an
+ * `.in()` over N uuids puts ~39 bytes per id on the GET request line, and the
+ * gateway in front of PostgREST refuses a request line over ~8 KiB with
+ * **HTTP 414**. Measured against the local stack on this exact query shape:
+ * 205 ids (8,167 B) is the last that succeeds, 206 ids (8,206 B) is the first
+ * 414. The sibling `.in()` shapes on this page wall at 202-206 ids too, which
+ * is the tell that the wall is the byte budget, not the id count.
+ *
+ * WHY 50 AND NOT 200. Callers are already capped at 200 ids by the
+ * `.limit(200)` on each record list, so the shipped code sits ~5 ids under a
+ * hard failure with NOTHING holding it there: raise a list limit, lengthen a
+ * select, or widen a filter and the margin is gone silently. 50 ids is a
+ * ~2.1 KB request line — a ~4x margin — which makes the safe property
+ * structural instead of coincidental.
+ * `tests/lib/record-keeping/audit-history-uri-budget.test.ts` pins the chunk's
+ * own budget AND the margin the shipped caps still rely on.
+ */
+export const AUDIT_HISTORY_ID_CHUNK = 50;
+
+/**
+ * Audit history for a set of records, and — separately — the records whose
+ * history could NOT be read.
+ *
+ * The second field is the whole point. A `Map` alone cannot distinguish "this
+ * record has no history" from "this record's history did not load", and the UI
+ * renders the first as the sentence "No history recorded yet." on an
+ * append-only clinical audit trail. Callers MUST consult
+ * `unavailableRecordIds` before stating an absence.
+ */
+export type AuditHistoryByRecord = {
+  byRecord: ReadonlyMap<string, RecordKeepingAuditEvent[]>;
+  unavailableRecordIds: ReadonlySet<string>;
+};
+
+/** Nothing was asked for, so nothing is known to be missing. */
+export const EMPTY_AUDIT_HISTORY: AuditHistoryByRecord = Object.freeze({
+  byRecord: new Map<string, RecordKeepingAuditEvent[]>(),
+  unavailableRecordIds: new Set<string>(),
+});
+
+/**
+ * One structured line to stderr, the lib/ops/alerts.ts convention.
+ *
+ * No record ids, no studio id, no error message: a PostgREST error message
+ * embeds the request URL, which carries the very record ids this module reads.
+ * The count and the record type are enough to find it in a log.
+ */
+function warnAuditHistoryUnavailable(
+  recordType: string,
+  unavailable: number,
+  reason: "error" | "truncated",
+): void {
+  try {
+    console.error(
+      JSON.stringify({
+        event: "record_keeping_audit_history_unavailable",
+        record_type: recordType,
+        unavailable_record_count: unavailable,
+        reason,
+      }),
+    );
+  } catch {
+    console.error("record_keeping_audit_history_unavailable");
+  }
+}
+
+function chunkIds(ids: readonly string[], size: number): string[][] {
+  const out: string[][] = [];
+  for (let i = 0; i < ids.length; i += size) out.push(ids.slice(i, i + size));
+  return out;
+}
+
 export async function getAuditEventsByRecord(
   studioId: string,
   recordType: RecordKeepingAuditEvent["record_type"],
   recordIds: string[],
-): Promise<Map<string, RecordKeepingAuditEvent[]>> {
-  const grouped = new Map<string, RecordKeepingAuditEvent[]>();
-  if (recordIds.length === 0) return grouped;
+): Promise<AuditHistoryByRecord> {
+  const ids = [...new Set(recordIds)].filter(Boolean);
+  if (ids.length === 0) return EMPTY_AUDIT_HISTORY;
+
+  // Outside the per-chunk try/catch on purpose: a client that cannot be built
+  // is not a failed history read, and its throw keeps reaching the route's
+  // error boundary exactly as it did before this change.
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("record_keeping_audit_events")
-    .select("*")
-    .eq("studio_id", studioId)
-    .eq("record_type", recordType)
-    .in("record_id", recordIds)
-    .order("created_at", { ascending: false })
-    .limit(500);
-  for (const row of (data ?? []) as RecordKeepingAuditEvent[]) {
-    const list = grouped.get(row.record_id) ?? [];
-    list.push(row);
-    grouped.set(row.record_id, list);
+
+  const byRecord = new Map<string, RecordKeepingAuditEvent[]>();
+  const unavailableRecordIds = new Set<string>();
+  let sawError = false;
+
+  const results = await Promise.all(
+    chunkIds(ids, AUDIT_HISTORY_ID_CHUNK).map(async (chunk) => {
+      try {
+        const { data, error } = await supabase
+          .from("record_keeping_audit_events")
+          .select("*")
+          // Studio scoping is per REQUEST, not per call: every chunk carries
+          // the same studio + record_type filters the single read carried, on
+          // top of the RLS policy. Splitting the id list changes how many
+          // requests are made, never what any one of them may see.
+          .eq("studio_id", studioId)
+          .eq("record_type", recordType)
+          .in("record_id", chunk)
+          .order("created_at", { ascending: false })
+          .limit(AUDIT_EVENT_READ_LIMIT);
+        if (error) return { chunk, rows: null };
+        return { chunk, rows: (data ?? []) as RecordKeepingAuditEvent[] };
+      } catch {
+        // supabase-js turns a transport failure into `{ data: null, error }`,
+        // so this is the narrow case where the builder itself throws. It is
+        // contained rather than propagated: a collapsed History disclosure must
+        // not be able to take down a clinical logbook page.
+        return { chunk, rows: null };
+      }
+    }),
+  );
+
+  for (const { chunk, rows } of results) {
+    if (rows === null) {
+      sawError = true;
+      for (const id of chunk) unavailableRecordIds.add(id);
+      continue;
+    }
+    for (const row of rows) {
+      const list = byRecord.get(row.record_id) ?? [];
+      list.push(row);
+      byRecord.set(row.record_id, list);
+    }
+    // A chunk that came back exactly at the ceiling may have been CUT, and what
+    // it dropped is the oldest. A record that received rows still shows true
+    // rows — the panel lists events, it never claims to list all of them. A
+    // record that received NONE cannot be told apart from one whose events were
+    // all beyond the ceiling, so it is UNKNOWN rather than empty.
+    if (rows.length >= AUDIT_EVENT_READ_LIMIT) {
+      for (const id of chunk) {
+        if (!byRecord.has(id)) unavailableRecordIds.add(id);
+      }
+    }
   }
-  return grouped;
+
+  if (unavailableRecordIds.size > 0) {
+    warnAuditHistoryUnavailable(
+      recordType,
+      unavailableRecordIds.size,
+      sawError ? "error" : "truncated",
+    );
+  }
+  return { byRecord, unavailableRecordIds };
 }
 
 // Procedure-record history: aftercare events keyed by session id, and
@@ -689,29 +823,65 @@ export async function getAuditEventsByRecord(
 export async function getProcedureAuditEvents(
   studioId: string,
   sessionIds: string[],
-): Promise<Map<string, RecordKeepingAuditEvent[]>> {
-  const grouped = new Map<string, RecordKeepingAuditEvent[]>();
-  if (sessionIds.length === 0) return grouped;
+): Promise<AuditHistoryByRecord> {
+  const ids = [...new Set(sessionIds)].filter(Boolean);
+  if (ids.length === 0) return EMPTY_AUDIT_HISTORY;
   const supabase = await createClient();
-  const { data } = await supabase
+
+  // NOT chunked, and it does not need to be: this read carries no id list at
+  // all. Probe-lot events key off `metadata.session_id` rather than
+  // `record_id`, so they cannot be selected by an `.in()` over session ids —
+  // the read is studio-scoped by record_type and narrowed in memory below. Its
+  // request line does not grow with the number of sessions, so the 414 wall
+  // documented on AUDIT_HISTORY_ID_CHUNK is out of reach here by construction.
+  const { data, error } = await supabase
     .from("record_keeping_audit_events")
     .select("*")
     .eq("studio_id", studioId)
     .in("record_type", ["session_aftercare", "session_block_probe_lot"])
     .order("created_at", { ascending: false })
-    .limit(500);
-  const wanted = new Set(sessionIds);
-  for (const row of (data ?? []) as RecordKeepingAuditEvent[]) {
+    .limit(AUDIT_EVENT_READ_LIMIT);
+
+  if (error) {
+    // The read did not happen. Every session asked about is UNKNOWN, and none
+    // of them may be rendered as "no history".
+    warnAuditHistoryUnavailable("session_aftercare", ids.length, "error");
+    return {
+      byRecord: new Map<string, RecordKeepingAuditEvent[]>(),
+      unavailableRecordIds: new Set(ids),
+    };
+  }
+
+  const rows = (data ?? []) as RecordKeepingAuditEvent[];
+  const byRecord = new Map<string, RecordKeepingAuditEvent[]>();
+  const wanted = new Set(ids);
+  for (const row of rows) {
     const sessionId =
       row.record_type === "session_aftercare"
         ? row.record_id
         : ((row.metadata?.session_id as string | undefined) ?? "");
     if (!wanted.has(sessionId)) continue;
-    const list = grouped.get(sessionId) ?? [];
+    const list = byRecord.get(sessionId) ?? [];
     list.push(row);
-    grouped.set(sessionId, list);
+    byRecord.set(sessionId, list);
   }
-  return grouped;
+
+  // Same truncation rule as the chunked read, and it bites sooner here because
+  // the ceiling is studio-wide rather than per chunk: a session that received
+  // no rows from a response that came back AT the ceiling may simply have been
+  // cut off, so it is UNKNOWN rather than empty.
+  const unavailableRecordIds = new Set<string>();
+  if (rows.length >= AUDIT_EVENT_READ_LIMIT) {
+    for (const id of ids) if (!byRecord.has(id)) unavailableRecordIds.add(id);
+    if (unavailableRecordIds.size > 0) {
+      warnAuditHistoryUnavailable(
+        "session_aftercare",
+        unavailableRecordIds.size,
+        "truncated",
+      );
+    }
+  }
+  return { byRecord, unavailableRecordIds };
 }
 
 // PR #213: probe lot traceability. "Where was this lot used?" --
