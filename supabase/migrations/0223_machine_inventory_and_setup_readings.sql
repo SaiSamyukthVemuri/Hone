@@ -732,11 +732,57 @@ create trigger treatment_setup_captures_immutable
 -- Readings now belong to a capture.
 -- ---------------------------------------------------------------------------
 alter table public.treatment_setup_readings
-  add column if not exists capture_id uuid
-    references public.treatment_setup_captures(id) on delete cascade;
+  add column if not exists capture_id uuid;
+
+-- NOT NULL, because "every reading belongs to exactly one capture" is the
+-- whole point and a nullable column does not say it.
+--
+-- It WAS nullable, and that was a real gap rather than a style point. A direct
+-- owner-level insert with no capture_id was accepted, producing an ORPHAN
+-- reading that sits outside every capture's revision and outside the
+-- (capture_id, stage, field) uniqueness - so it escaped both halves of the
+-- coherence design at once. Not reachable from the application, because
+-- `authenticated` and `service_role` hold SELECT only on this table, but an
+-- invariant the schema does not enforce is an invariant the next migration can
+-- quietly break. Found by the ops01 lane's gate-open run.
+--
+-- Asserted with a separate statement so a database that already applied the
+-- nullable version is corrected rather than left alone by `if not exists`. On
+-- a fresh chain the table is empty here, so there is nothing to backfill; on a
+-- stack that already holds an orphan this fails LOUDLY, which is the right
+-- outcome - it is telling you about a row that should not exist.
+alter table public.treatment_setup_readings
+  alter column capture_id set not null;
+
+-- AND THE DENORMALISED COLUMNS MAY NOT DIVERGE FROM THEIR CAPTURE.
+--
+-- Readings carry studio_id, session_block_id, mode_key, group_key, channels and
+-- revision for query convenience, all of which the capture also holds. The
+-- deeper risk of that duplication is not an orphan but DISAGREEMENT: a reading
+-- claiming a different block or revision from the capture it belongs to would
+-- make "one coherent capture" false while every row looked individually valid.
+--
+-- A composite foreign key makes the four that matter agree BY CONSTRUCTION
+-- rather than because the command happens to set them from the same variables.
+-- The unique constraint exists to support it; `id` is already the primary key,
+-- so it adds no new restriction, only the index the reference needs.
+alter table public.treatment_setup_captures
+  drop constraint if exists treatment_setup_captures_identity_uniq;
+alter table public.treatment_setup_captures
+  add constraint treatment_setup_captures_identity_uniq
+  unique (id, session_block_id, studio_id, revision);
+
+alter table public.treatment_setup_readings
+  drop constraint if exists treatment_setup_readings_capture_fk;
+alter table public.treatment_setup_readings
+  add constraint treatment_setup_readings_capture_fk
+  foreign key (capture_id, session_block_id, studio_id, revision)
+  references public.treatment_setup_captures
+    (id, session_block_id, studio_id, revision)
+  on delete cascade;
 
 comment on column public.treatment_setup_readings.capture_id is
-  '0223. The atomic capture this reading belongs to. Every reading written by record_treatment_setup_group has one; it is what makes a retrieved setup one coherent thing rather than a per-field composite.';
+  '0223. The atomic capture this reading belongs to. NOT NULL, and part of a composite foreign key with session_block_id, studio_id and revision - so a reading cannot be an orphan, and cannot disagree with its own capture about which block, studio or revision it belongs to. That is what makes a retrieved setup one coherent thing rather than a per-field composite.';
 
 -- One row per field PER CAPTURE. This replaces keying by field coordinates
 -- plus a per-field revision, which is what allowed fields of one block to sit

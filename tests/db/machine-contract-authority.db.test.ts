@@ -703,6 +703,137 @@ describe("0223 · concurrent captures stay DISTINCT and COHERENT", () => {
 });
 
 // ---------------------------------------------------------------------------
+describe("0223 · a reading cannot be an ORPHAN or disagree with its capture", () => {
+  // These run as `postgres` through adminQuery, which is the point: nothing
+  // reachable from the application can do either of these, because
+  // `authenticated` and `service_role` hold SELECT only on this table. What
+  // is being tested is the SCHEMA's guarantee, not a privilege - an invariant
+  // the schema does not enforce is one the next migration can quietly break.
+  //
+  // The orphan case was found by a gate-open browser run, not by this suite:
+  // a stale spec step inserted a reading with no capture_id and it was
+  // ACCEPTED, because the column was nullable. That row sat outside every
+  // capture's revision AND outside the (capture_id, stage, field) uniqueness,
+  // escaping both halves of the coherence design at once.
+  let studio: SeededStudio;
+  let blockId: string;
+  let captureId: string;
+
+  const setup = async () => {
+    if (studio) return;
+    studio = await seedStudio("orphan");
+    blockId = (await seedSession(studio)).blockId;
+    await publish(100);
+    const machineId = await register(studio, 100);
+    await recordAs(studio.userId, blockId, machineId, "g", [ok("current", "100")]);
+    const r = await adminQuery(
+      `select id from public.treatment_setup_captures where session_block_id = $1`,
+      [blockId],
+    );
+    captureId = r.rows[0].id;
+  };
+
+  it("refuses a reading with NO capture", async () => {
+    await setup();
+    await expect(
+      adminQuery(
+        `insert into public.treatment_setup_readings
+           (studio_id, session_block_id, machine_profile_id, machine_profile_version,
+            mode_key, group_key, field_key, value_numeric, native_unit, decimals,
+            observation_source, revision)
+         values ($1, $2, 'x', 1, 'galvanic', 'g', 'current', 999, 'µA', 0,
+                 'practitioner-entered', 1)`,
+        [studio.studioId, blockId],
+      ),
+    ).rejects.toThrow(/null value in column "capture_id"|not-null/i);
+  });
+
+  it("refuses a reading whose BLOCK disagrees with its capture", async () => {
+    // The deeper risk of denormalising studio_id, session_block_id and
+    // revision onto readings is not orphanhood but DISAGREEMENT: a row
+    // claiming a different block from its own capture would make "one
+    // coherent capture" false while every row looked individually valid.
+    await setup();
+    const other = await seedSession(studio);
+    await expect(
+      adminQuery(
+        `insert into public.treatment_setup_readings
+           (capture_id, studio_id, session_block_id, machine_profile_id,
+            machine_profile_version, mode_key, group_key, field_key,
+            value_numeric, native_unit, decimals, observation_source, revision)
+         values ($1, $2, $3, 'x', 1, 'galvanic', 'g', 'duration', 1, 's', 1,
+                 'practitioner-entered', 1)`,
+        // `duration` rather than `current`: the capture already holds a
+        // `current`, so reusing it trips the (capture_id, stage, field) unique
+        // index FIRST and the test would pass on the wrong constraint. A
+        // refusal test that does not name its constraint proves nothing.
+        [captureId, studio.studioId, other.blockId],
+      ),
+    ).rejects.toThrow(/treatment_setup_readings_capture_fk|foreign key/i);
+  });
+
+  it("refuses a reading whose REVISION disagrees with its capture", async () => {
+    await setup();
+    await expect(
+      adminQuery(
+        `insert into public.treatment_setup_readings
+           (capture_id, studio_id, session_block_id, machine_profile_id,
+            machine_profile_version, mode_key, group_key, field_key,
+            value_numeric, native_unit, decimals, observation_source, revision)
+         values ($1, $2, $3, 'x', 1, 'galvanic', 'g', 'duration',
+                 1, 's', 1, 'practitioner-entered', 7)`,
+        [captureId, studio.studioId, blockId],
+      ),
+    ).rejects.toThrow(/treatment_setup_readings_capture_fk|foreign key/i);
+  });
+
+  it("refuses a reading whose STUDIO disagrees with its capture", async () => {
+    await setup();
+    const elsewhere = await seedStudio("orphan-other");
+    await expect(
+      adminQuery(
+        `insert into public.treatment_setup_readings
+           (capture_id, studio_id, session_block_id, machine_profile_id,
+            machine_profile_version, mode_key, group_key, field_key,
+            value_numeric, native_unit, decimals, observation_source, revision)
+         values ($1, $2, $3, 'x', 1, 'galvanic', 'g', 'duration',
+                 1, 's', 1, 'practitioner-entered', 1)`,
+        [captureId, elsewhere.studioId, blockId],
+      ),
+    ).rejects.toThrow(/treatment_setup_readings_capture_fk|foreign key/i);
+  });
+
+  it("POSITIVE CONTROL: a reading that AGREES with its capture is accepted", async () => {
+    // Without this, every case above could be passing because the insert is
+    // malformed in some way unrelated to the constraint under test.
+    await setup();
+    await adminQuery(
+      `insert into public.treatment_setup_readings
+         (capture_id, studio_id, session_block_id, machine_profile_id,
+          machine_profile_version, mode_key, group_key, field_key,
+          value_numeric, native_unit, decimals, observation_source, revision)
+       values ($1, $2, $3, 'x', 1, 'galvanic', 'g', 'duration',
+               1, 's', 1, 'practitioner-entered', 1)`,
+      [captureId, studio.studioId, blockId],
+    );
+    const rows = await adminQuery(
+      `select count(*)::int as n from public.treatment_setup_readings
+        where capture_id = $1`,
+      [captureId],
+    );
+    expect(rows.rows[0].n).toBe(2);
+  });
+
+  it("no orphan exists anywhere after this suite", async () => {
+    const rows = await adminQuery(
+      `select count(*)::int as n from public.treatment_setup_readings
+        where capture_id is null`,
+    );
+    expect(rows.rows[0].n).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 describe("0223 · retrieval returns ONE coherent capture, never a composite", () => {
   it("a later capture on a DIFFERENT machine and version does not mix with an earlier one", async () => {
     // The defect: per-field "latest" could pair a current recorded on one

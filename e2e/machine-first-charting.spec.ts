@@ -377,9 +377,25 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
     expect(byField.get("current")!.recorded_by_practitioner_id).not.toBeNull();
   });
 
-  await test.step("7: a recorded reading is IMMUTABLE — re-saving the same field is refused", async () => {
-    // Not a UI claim: the database refuses it, so a second save cannot
-    // overwrite the first observation.
+  await test.step("7: a reading cannot exist WITHOUT a capture", async () => {
+    // THIS STEP ASSERTED THE WRONG LAW and the ops01 lane's gate-open run
+    // caught it. It used to insert a second `current` reading and expect a
+    // duplicate-key refusal from the old write-once index. That law was
+    // replaced by append-only revisions and the index is correctly gone, so
+    // the step was asserting something the approved design deliberately
+    // permits.
+    //
+    // Worse, its failure exposed a real gap rather than only a stale test: the
+    // insert carried NO capture_id and was ACCEPTED, because the column was
+    // nullable. That orphan sat outside every capture's revision AND outside
+    // the (capture_id, stage, field) uniqueness - escaping both halves of the
+    // coherence design. `capture_id` is now NOT NULL and part of a composite
+    // foreign key, so the same insert is refused.
+    //
+    // Kept as a step, re-aimed at what is actually true: a reading belongs to
+    // a capture, and the schema says so rather than the command merely being
+    // careful. This runs as postgres, i.e. the only role that can insert at
+    // all, so it tests the constraint rather than a privilege.
     const before = await readingsFor({ blockId });
     let refused = false;
     try {
@@ -387,17 +403,67 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
         `insert into public.treatment_setup_readings
            (studio_id, session_block_id, machine_profile_id, machine_profile_version,
             mode_key, group_key, field_key, value_numeric, native_unit, decimals,
-            observation_source)
+            observation_source, revision)
          values ($1, $2, $3, $4, 'galvanic', 'g1', 'current', 999, 'µA', 0,
-                 'practitioner-entered')`,
+                 'practitioner-entered', 1)`,
         [seed.studioId, blockId, SYNTHETIC_PROFILE_ID, SYNTHETIC_VERSION],
       );
     } catch {
       refused = true;
     }
-    expect(refused, "a duplicate reading for the same field was accepted").toBe(true);
+    expect(refused, "a reading with no capture was accepted").toBe(true);
     const after = await readingsFor({ blockId });
     expect(after).toEqual(before);
+
+    // And no orphan exists in the whole studio, which is the invariant rather
+    // than this one insert's outcome.
+    const orphans = await sql<{ n: string }>(
+      `select count(*)::text as n from public.treatment_setup_readings
+        where capture_id is null`,
+    );
+    expect(orphans[0]!.n, "an orphan reading exists somewhere").toBe("0");
+  });
+
+  await test.step("7b: a mid-treatment change APPENDS a revision, through the UI", async () => {
+    // The approved law, exercised by the control that exists for it. Finding
+    // 4254341029 was that the form hid this path after the first save and sent
+    // the practitioner to free-text notes; it now offers "Record a setting
+    // change", and this is the proof that the structured path works end to end
+    // rather than only that the button renders.
+    await page.getByTestId("machine-reading-record-change").click({ timeout: T });
+    await page.getByTestId("reading-current").fill("180");
+    await page.getByTestId("reading-duration").fill("300.5");
+    await page.getByTestId("machine-reading-save").click();
+    await expect(page.getByTestId("machine-reading-saved")).toBeVisible({ timeout: T });
+
+    // TWO captures, and the earlier observation is untouched.
+    const caps = await sql<{ revision: number; fields: string }>(
+      `select c.revision,
+              (select count(*)::text from public.treatment_setup_readings r
+                where r.capture_id = c.id) as fields
+         from public.treatment_setup_captures c
+        where c.session_block_id = $1 order by c.revision`,
+      [blockId],
+    );
+    expect(caps.map((c) => [c.revision, c.fields])).toEqual([
+      [1, "2"],
+      [2, "2"],
+    ]);
+
+    const currents = await sql<{ revision: number; v: string }>(
+      `select revision, value_numeric::text as v
+         from public.treatment_setup_readings
+        where session_block_id = $1 and field_key = 'current'
+        order by revision`,
+      [blockId],
+    );
+    expect(
+      currents.map((r) => [r.revision, r.v]),
+      "the earlier reading was overwritten instead of superseded",
+    ).toEqual([
+      [1, "135"],
+      [2, "180"],
+    ]);
   });
 
   await test.step("8: RELOAD — the remembered machine survives a fresh page load", async () => {
@@ -439,10 +505,20 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
     // the file after step 4 failed, rather than waiting for the next run.
     await expect(prior).toContainText("Last recorded setup");
     await expect(prior).toContainText("Synthetic Demo Multineedle");
-    // The values, in their own units, from the previous visit.
-    await expect(page.getByTestId("machine-prior-setup")).toContainText("135");
-    await expect(page.getByTestId("machine-prior-setup")).toContainText("300.5");
-    await expect(page.getByTestId("machine-prior-setup")).toContainText("µA");
+    // THE LATEST CAPTURE'S VALUES, which is 180 and not 135.
+    //
+    // Step 7b changed the current mid-treatment, so revision 2 is what she was
+    // actually working at when the treatment ended - and guidance is "what was
+    // she working at", not "what did she start at". Asserting 135 here would be
+    // asserting the superseded value, which is precisely the composite
+    // behaviour the capture model removed.
+    await expect(prior).toContainText("180");
+    await expect(prior).toContainText("300.5");
+    await expect(prior).toContainText("µA");
+    // AND NOT the superseded reading. This is the assertion that would catch a
+    // regression back to per-field "latest", which could pair 135 with a newer
+    // duration and show a setting that never existed.
+    await expect(prior).not.toContainText("135");
     await noOverflow(page);
   });
 
@@ -460,10 +536,25 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
     ).toHaveCount(0);
   });
 
-  await test.step("10: the earlier reading is unchanged by the new visit", async () => {
-    const rows = await readingsFor({ blockId });
-    const byField = new Map(rows.map((r) => [r.field_key, r]));
-    expect(byField.get("current")!.value_numeric).toBe("135");
-    expect(byField.get("duration")!.value_numeric).toBe("300.5");
+  await test.step("10: BOTH revisions survive the new visit, unchanged", async () => {
+    // Keyed by (field, revision) rather than by field alone. A field->row map
+    // silently kept whichever row came last once step 7b added a second
+    // revision, so it would have asserted something while meaning nothing.
+    const rows = await sql<{ field_key: string; revision: number; v: string }>(
+      `select field_key, revision, value_numeric::text as v
+         from public.treatment_setup_readings
+        where session_block_id = $1
+        order by field_key, revision`,
+      [blockId],
+    );
+    expect(
+      rows.map((r) => [r.field_key, r.revision, r.v]),
+      "a revision was lost or rewritten by the next visit",
+    ).toEqual([
+      ["current", 1, "135"],
+      ["current", 2, "180"],
+      ["duration", 1, "300.5"],
+      ["duration", 2, "300.5"],
+    ]);
   });
 });
