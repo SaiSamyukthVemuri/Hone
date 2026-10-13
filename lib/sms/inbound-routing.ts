@@ -21,6 +21,8 @@
 // UNKNOWN, and unknown is a blocker: it never passes.
 // ===========================================================================
 
+import { sameTwilioWebhook } from "./webhook-base";
+
 export type InboundRoutingFacts = {
   serviceInboundUrl: string | null;
   /** The service's inbound_method; null = not reported. */
@@ -77,5 +79,9 @@ export function effectiveInbound(f: InboundRoutingFacts): EffectiveInbound {
 export function inboundReaches(f: InboundRoutingFacts, requiredUrl: string): "yes" | "no" | "unknown" {
   const e = effectiveInbound(f);
   if (e.kind === "unknown") return "unknown";
-  return (e.kind === "service" || e.kind === "number") && e.url === requiredUrl && e.method === "POST" ? "yes" : "no";
+  // The same endpoint EXACTLY, allowing only a validated Twilio
+  // connection-override fragment (lib/sms/webhook-base.ts).
+  return (e.kind === "service" || e.kind === "number") && sameTwilioWebhook(e.url, requiredUrl) && e.method === "POST"
+    ? "yes"
+    : "no";
 }

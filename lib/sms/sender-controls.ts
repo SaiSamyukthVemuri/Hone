@@ -14,7 +14,7 @@ import {
 import { adoptExistingStudioSmsSender, type AdoptionOutcome } from "./adoption";
 import { createProvisioningStore } from "./provisioning-store";
 import { SMS_STATUS_CALLBACK_PATH } from "./delivery-ledger";
-import { twilioWebhookUrl } from "./webhook-base";
+import { sameTwilioWebhook, twilioWebhookUrl } from "./webhook-base";
 import { inboundReaches } from "./inbound-routing";
 
 // ===========================================================================
@@ -380,7 +380,7 @@ export async function runSenderAdoption(
     u.inbound,
   );
   if (inbound === "unknown") return refuse("inbound_routing_unknown", true);
-  if (inbound === "no" || config.config.statusCallbackUrl !== u.status) {
+  if (inbound === "no" || !sameTwilioWebhook(config.config.statusCallbackUrl, u.status)) {
     return refuse("service_webhooks_mismatch", false);
   }
 
