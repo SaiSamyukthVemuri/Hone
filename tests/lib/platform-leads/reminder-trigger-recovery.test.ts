@@ -93,19 +93,23 @@ describe("recoverLeadAlertsOnReminderTrigger", () => {
 describe("wiring in the reminders route (source guard)", () => {
   const SRC = readFileSync("app/api/cron/appointment-reminders/route.ts", "utf8");
 
-  it("runs AFTER every reminder pass and the heartbeat, inside the success path only", () => {
+  it("runs AFTER every reminder pass and the heartbeat on success, and AFTER cron_route_failed on failure (Codex P2 4254097611)", () => {
     const heartbeat = SRC.indexOf("await recordReminderRunSuccess(");
-    const recovery = SRC.indexOf("await recoverLeadAlertsOnReminderTrigger(");
     const catchAt = SRC.indexOf("} catch (err) {", heartbeat);
-    expect(heartbeat).toBeGreaterThan(0);
-    expect(recovery).toBeGreaterThan(heartbeat);
-    expect(recovery).toBeLessThan(catchAt);
+    const calls = [...SRC.matchAll(/await runLeadAlertRecovery\(\)/g)].map((m) => m.index!);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toBeGreaterThan(heartbeat);
+    expect(calls[0]).toBeLessThan(catchAt);
+    const failureAlert = SRC.indexOf('event: "cron_route_failed"');
+    expect(calls[1]).toBeGreaterThan(failureAlert);
+    // The reminders' failure answer is unchanged: still a 500.
+    expect(SRC.slice(calls[1])).toMatch(/\{ ok: false, error: "cron_failed", lead_alerts \},\s*\{ status: 500 \}/);
     expect(SRC.match(/recoverLeadAlertsOnReminderTrigger\(/g)).toHaveLength(1);
   });
 
   it("a lead-alert problem is an ops alert and a response field, never a failed reminders run", () => {
     expect(SRC).toMatch(/event: "lead_alert_recovery_failed"/);
-    expect(SRC).toMatch(/lead_alerts: lead_alerts\.ran/);
+    expect(SRC).toMatch(/lead_alerts,\n\s*\}\);/);
   });
 });
 

@@ -608,6 +608,42 @@ async function sendSmsReminderPass(opts: {
   return stats;
 }
 
+/**
+ * LEAD-ALERT-01: bounded operator lead-alert recovery on this trigger, on the
+ * success AND the failure path (Codex P2 4253278108, 4254097611). Gated before
+ * any database or provider call until lead alerts are configured; never
+ * throws; a lead-alert problem is its own warning ops alert and a response
+ * field, never a change to what reminders did or how the route answers.
+ */
+async function runLeadAlertRecovery() {
+  try {
+    const out = await recoverLeadAlertsOnReminderTrigger();
+    if (out.ran && !out.summary.ok) {
+      await recordOpsAlert({
+        severity: "warning",
+        event: "lead_alert_recovery_failed",
+        message: "Operator lead-alert recovery on the reminders trigger could not complete; reminders were unaffected.",
+        route: "/api/cron/appointment-reminders",
+        safeDetails: { attempted: out.summary.attempted, expired: out.summary.expired },
+      });
+    }
+    return out.ran
+      ? {
+          ran: true as const,
+          ok: out.summary.ok,
+          // false = stopped at its cap or budget with work possibly left (backpressure)
+          drained: out.summary.drained,
+          attempted: out.summary.attempted,
+          accepted: out.summary.accepted,
+          failed: out.summary.failed,
+          expired: out.summary.expired,
+        }
+      : { ran: false as const, reason: out.reason };
+  } catch {
+    return { ran: false as const, reason: "threw" as const };
+  }
+}
+
 export async function GET(req: Request) {
   if (!isAuthorizedCronRequest(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
@@ -690,16 +726,7 @@ export async function GET(req: Request) {
     // before any database or provider call until lead alerts are configured,
     // never throws, and reports its own outcome: a lead-alert problem is an ops
     // alert and a field below, never a failed reminders run.
-    const lead_alerts = await recoverLeadAlertsOnReminderTrigger();
-    if (lead_alerts.ran && !lead_alerts.summary.ok) {
-      await recordOpsAlert({
-        severity: "warning",
-        event: "lead_alert_recovery_failed",
-        message: "Operator lead-alert recovery on the reminders trigger could not complete; reminders were unaffected.",
-        route: "/api/cron/appointment-reminders",
-        safeDetails: { attempted: lead_alerts.summary.attempted, expired: lead_alerts.summary.expired },
-      });
-    }
+    const lead_alerts = await runLeadAlertRecovery();
 
     return NextResponse.json({
       ok: true,
@@ -707,18 +734,7 @@ export async function GET(req: Request) {
       reminder_2h,
       sms_reminder_24h,
       sms_reminder_2h,
-      lead_alerts: lead_alerts.ran
-        ? {
-            ran: true,
-            ok: lead_alerts.summary.ok,
-            // false = stopped at its cap or budget with work possibly left (backpressure)
-            drained: lead_alerts.summary.drained,
-            attempted: lead_alerts.summary.attempted,
-            accepted: lead_alerts.summary.accepted,
-            failed: lead_alerts.summary.failed,
-            expired: lead_alerts.summary.expired,
-          }
-        : { ran: false, reason: lead_alerts.reason },
+      lead_alerts,
     });
   } catch (err) {
     // PR #153. Cron-route failure alert. The cron runs every few
@@ -735,8 +751,14 @@ export async function GET(req: Request) {
         duration_ms: Date.now() - startedAt,
       },
     });
+    // LEAD-ALERT-01 (Codex P2 4254097611): an unrelated reminders failure must
+    // not stop lead-alert retries -- the daily backstop alone cannot keep the
+    // 20-hour schedule. The SAME bounded, gated, never-throwing recovery runs
+    // here too, AFTER the reminders' own failure alert. The reminders' 500 and
+    // cron_route_failed are unchanged.
+    const lead_alerts = await runLeadAlertRecovery();
     return NextResponse.json(
-      { ok: false, error: "cron_failed" },
+      { ok: false, error: "cron_failed", lead_alerts },
       { status: 500 },
     );
   }

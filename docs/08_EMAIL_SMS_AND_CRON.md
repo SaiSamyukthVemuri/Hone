@@ -340,7 +340,9 @@ to the prospect.
   become a visible `failed: expired`, and only the operator's Retry (a new key) sends again.
 - **When retries run.** The first attempt is sent right after the lead is saved. Retries run
   on the existing **15-minute appointment-reminders trigger**, after its reminder passes and
-  heartbeat: a bounded sweep through the same worker, sized by time: up to 25 alerts within
+  heartbeat, and also after a failed reminders run's `cron_route_failed` alert (the route still
+  answers 500), so an unrelated reminders failure does not stop lead retries: a bounded sweep
+  through the same worker, sized by time: up to 25 alerts within
   an 8-second budget, with 1.5 s reserved so a send cut off at the deadline still settles (as a
   same-key retry) and the cut-off request is kept alive past the response, never abandoned.
   Alerts are claimed earliest-due first, so a backlog cannot starve later alerts. The response
