@@ -255,11 +255,47 @@ describe("evaluateInboundStopPreflight", () => {
   });
 
   describe("Twilio connection overrides in the fragment (omitted from the request and the signature)", () => {
-    for (const frag of ["#rp=5xx", "#ct=1000&rt=5000&rp=4xx,5xx", "#rc=2&tt=15000&sni=on&e=ashburn", "#"]) {
+    for (const frag of [
+      "#rp=5xx",
+      "#ct=1000&rt=5000&rp=4xx,5xx",
+      "#rc=2&tt=15000&sni=n&e=ashburn",
+      // Twilio's own "example with all overrides":
+      "#ct=500&rt=1000&tt=15000&rc=2&rp=4xx,5xx,ct,rt&sni=y&e=dublin,sydney",
+      "#ct=100&rt=15000&rc=0&e=ashburn-ix",
+    ]) {
       it(`the service URL with "${frag}" reaches the expected URL`, () => {
         const f = allProven();
         f.service!.inboundRequestUrl = `${URL_OK}${frag}`;
         expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
+      });
+    }
+
+    for (const [why, frag] of [
+      ["an empty fragment", "#"],
+      ["a bare key with no value", "#rp"],
+      ["an empty value", "#ct="],
+      ["ct below 100", "#ct=0"],
+      ["ct above 10000", "#ct=10001"],
+      ["rt above 15000", "#rt=15001"],
+      ["tt below 100", "#tt=99"],
+      ["rc above 5", "#rc=6"],
+      ["a negative retry count", "#rc=-1"],
+      ["a non-integer timeout", "#ct=5s"],
+      ["a fractional timeout", "#ct=500.5"],
+      ["an exponent-form timeout", "#rt=1e3"],
+      ["an undocumented retry policy", "#rp=3xx"],
+      ["an empty item in a retry-policy list", "#rp=5xx,"],
+      ["sni other than y/n", "#sni=on"],
+      ["an unknown edge", "#e=mars"],
+      ["a duplicated key", "#ct=500&ct=600"],
+      ["an empty pair", "#ct=500&"],
+    ] as const) {
+      it(`${why} (${frag}) is never certified`, () => {
+        const f = allProven();
+        f.service!.inboundRequestUrl = `${URL_OK}${frag}`;
+        const r = evaluateInboundStopPreflight(f);
+        expect(r.blockers).toEqual(["inbound_reaches"]);
+        expect(r.checks.find((c) => c.id === "inbound_reaches")?.detail).toMatch(/connection overrides/);
       });
     }
 

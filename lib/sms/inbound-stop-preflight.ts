@@ -48,29 +48,63 @@ import { twilioWebhookUrl } from "./webhook-base";
 export const INBOUND_STOP_PATH = "/api/twilio/inbound-sms";
 
 /**
- * Twilio connection overrides (twilio.com/docs/usage/webhooks/webhooks-connection-overrides):
- * ct, rt, tt (timeouts), rc (retry count), rp (retry policy), sni, e (edge),
- * carried in the URL FRAGMENT. Twilio omits the fragment from the HTTP request
- * AND from the signature, so the URL the route verifies is the one without it.
+ * Twilio connection overrides (twilio.com/docs/usage/webhooks/webhooks-connection-overrides,
+ * checked 2026-10-13): key=value pairs joined by `&` in the URL FRAGMENT, which
+ * Twilio omits from the HTTP request AND from the signature, so the URL the
+ * route verifies is the one without it. Only the DOCUMENTED syntax and values
+ * are certified; anything else is never treated as the expected URL.
  */
-const TWILIO_CONNECTION_OVERRIDE_KEYS: ReadonlySet<string> = new Set(["ct", "rt", "tt", "rc", "rp", "sni", "e"]);
+const intIn = (lo: number, hi: number) => (v: string) => /^\d+$/.test(v) && Number(v) >= lo && Number(v) <= hi;
+const listOf = (allowed: ReadonlySet<string>) => (v: string) => {
+  const items = v.split(",");
+  return items.length > 0 && items.every((x) => allowed.has(x));
+};
+/** Public and Interconnect Edge IDs (twilio.com/docs/global-infrastructure/edge-locations). */
+const TWILIO_EDGE_IDS: ReadonlySet<string> = new Set([
+  "sydney", "sao-paulo", "dublin", "frankfurt", "tokyo", "singapore", "ashburn", "umatilla", "roaming",
+  "ashburn-ix", "san-jose-ix", "sao-paulo-ix", "london-ix", "frankfurt-ix", "singapore-ix", "tokyo-ix", "sydney-ix",
+]);
+const TWILIO_CONNECTION_OVERRIDES: Readonly<Record<string, (v: string) => boolean>> = {
+  ct: intIn(100, 10000),
+  rt: intIn(100, 15000),
+  tt: intIn(100, 15000),
+  rc: intIn(0, 5),
+  rp: listOf(new Set(["4xx", "5xx", "ct", "rt", "all"])),
+  sni: (v) => v === "y" || v === "n",
+  e: listOf(TWILIO_EDGE_IDS),
+};
 
-/** Marker substituted for a URL whose fragment is not connection overrides. */
+/** Marker substituted for a URL whose fragment is not valid connection overrides. */
 const INVALID_FRAGMENT = "invalid-fragment:";
+
+/** True when `fragment` is one or more documented key=value overrides, each key once. */
+function isValidConnectionOverrideFragment(fragment: string): boolean {
+  if (fragment === "") return false;
+  const seen = new Set<string>();
+  for (const pair of fragment.split("&")) {
+    const eq = pair.indexOf("=");
+    if (eq <= 0) return false;
+    const key = pair.slice(0, eq);
+    const value = pair.slice(eq + 1);
+    const valid = Object.prototype.hasOwnProperty.call(TWILIO_CONNECTION_OVERRIDES, key)
+      ? TWILIO_CONNECTION_OVERRIDES[key]
+      : undefined;
+    if (!valid || seen.has(key) || value === "" || !valid(value)) return false;
+    seen.add(key);
+  }
+  return true;
+}
 
 /**
  * The URL Twilio actually requests and signs: the configured URL without a
- * fragment of connection overrides. A fragment with any other key is not a
- * documented override, so the URL is never treated as the expected one.
+ * fragment of documented connection overrides. Any other fragment (including
+ * an empty one) is not certified, so the URL never matches the expected one.
  */
 export function signedFormOfConfiguredUrl<T extends string | null | undefined>(url: T): T | string {
   if (typeof url !== "string") return url;
   const i = url.indexOf("#");
   if (i < 0) return url;
-  const fragment = url.slice(i + 1);
-  if (fragment === "") return url.slice(0, i);
-  const keys = fragment.split("&").map((part) => part.split("=")[0]);
-  return keys.every((k) => TWILIO_CONNECTION_OVERRIDE_KEYS.has(k)) ? url.slice(0, i) : `${INVALID_FRAGMENT}${url}`;
+  return isValidConnectionOverrideFragment(url.slice(i + 1)) ? url.slice(0, i) : `${INVALID_FRAGMENT}${url}`;
 }
 
 type Env = Readonly<Record<string, string | undefined>>;
@@ -244,7 +278,7 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
                   : (effective?.kind === "service" || effective?.kind === "number") && effective.method !== "POST"
                     ? `inbound method is ${effective.method}, not POST: the route only accepts POST`
                     : (effective?.kind === "service" || effective?.kind === "number") && effective.url.startsWith(INVALID_FRAGMENT)
-                      ? "the inbound URL's fragment is not Twilio connection overrides (ct, rt, tt, rc, rp, sni, e)"
+                      ? "the inbound URL's fragment is not valid Twilio connection overrides (documented keys ct, rt, tt, rc, rp, sni, e with their documented values)"
                       : "effective inbound URL is not exactly the expected URL",
           ),
   );
