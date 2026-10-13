@@ -872,6 +872,34 @@ describe("studios share a run", () => {
     const sentFor = (sid: string) => db.filter((x) => x.studio_id === sid && x.sms_confirmation_sent_at).length;
     expect([sentFor(A), sentFor(B2)]).toEqual([25, 25]);
   });
+
+  it("a quiet studio's unused share goes to the busy one: one studio with 50 owed, the other none, sends all 50 (Codex P2 4264089023)", async () => {
+    const B2 = "studio-b2";
+    db = Array.from({ length: 50 }, (_, i) => appt({ id: `a-${String(i).padStart(2, "0")}`, created_at: iso(NOW - (200 - i) * 60_000) }));
+    snapshot = (studioId) => readySnap(studioId, `sender-${studioId}`);
+    process.env[STUDIO_ROUTING_ENV] = `${A},${B2}`;
+    const r = await run({ [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: `${A},${B2}` });
+    expect(r).toMatchObject({ sent: 50, considered: 50 });
+    expect(db.filter((x) => x.sms_confirmation_sent_at).length).toBe(50);
+  });
+
+  it("redistribution resumes where the studio stopped: 60 and 10 owed send 40 and 10, and no row is considered twice", async () => {
+    const B2 = "studio-b2";
+    db = [
+      // A's oldest row is refused (opted out): considered once, never again.
+      appt({ id: "a-00", created_at: iso(NOW - 200 * 60_000), client_opted_out_at: iso(NOW - 60_000) }),
+      ...Array.from({ length: 59 }, (_, i) => appt({ id: `a-${String(i + 1).padStart(2, "0")}`, created_at: iso(NOW - (199 - i) * 60_000) })),
+      ...Array.from({ length: 10 }, (_, i) => appt({ id: `b-${String(i).padStart(2, "0")}`, studio_id: B2, created_at: iso(NOW - (200 - i) * 60_000) })),
+    ];
+    snapshot = (studioId) => readySnap(studioId, `sender-${studioId}`);
+    process.env[STUDIO_ROUTING_ENV] = `${A},${B2}`;
+    const r = await run({ [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: `${A},${B2}` });
+    const sentFor = (sid: string) => db.filter((x) => x.studio_id === sid && x.sms_confirmation_sent_at).length;
+    expect(r).toMatchObject({ sent: 50 });
+    expect([sentFor(A), sentFor(B2)]).toEqual([40, 10]);
+    expect(Object.values(r.ran ? r.skipped : {}).reduce((n, k) => n + k, 0)).toBe(1);
+    expect(r).toMatchObject({ considered: 51 });
+  });
 });
 
 describe("the first studio rotates per 15-minute slot", () => {
@@ -897,6 +925,24 @@ describe("the first studio rotates per 15-minute slot", () => {
       served.push(db.find((x) => x.sms_confirmation_sent_at)!.studio_id);
     }
     expect(new Set(served).size).toBe(2);
+  });
+
+  it("149 routed studios with backlogs: every one is reached within ceil(149 / 50) = 3 slots, not 100 (Codex P2 4250550574)", async () => {
+    const ids = Array.from({ length: 149 }, (_, i) => `studio-r${String(i).padStart(3, "0")}`);
+    const list = ids.join(",");
+    const env = { [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: list };
+    process.env[STUDIO_ROUTING_ENV] = list;
+    snapshot = (studioId) => readySnap(studioId, `sender-${studioId}`);
+    // Two owed rows per studio, so every studio still has a backlog after a run.
+    db = ids.flatMap((sid) => [0, 1].map((k) => appt({ id: `${sid}-${k}`, studio_id: sid, created_at: iso(NOW - HOUR - k * 60_000), starts_at: iso(NOW + 48 * HOUR) })));
+    const slot0 = Math.floor(NOW / (15 * 60_000)) * 15 * 60_000;
+    for (const k of [0, 1, 2]) {
+      const at = slot0 + k * 15 * 60_000 + 60_000;
+      const r = await recoverOwedConfirmations({ admin: admin(), nowMs: at, env, clock: () => at, manageUrlFor: () => "https://app.example/manage/x" });
+      expect(r).toMatchObject({ sent: 50 });
+    }
+    const reached = new Set(db.filter((x) => x.sms_confirmation_sent_at).map((x) => x.studio_id));
+    expect(reached.size).toBe(149);
   });
 });
 

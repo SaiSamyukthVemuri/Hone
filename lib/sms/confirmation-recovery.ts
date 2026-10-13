@@ -68,10 +68,20 @@ import { sendRecoveredConfirmationSmsToClient, type SmsSendResult } from "./send
 // run. A persisted per-studio cursor would close it, and needs a store this
 // candidate does not add.
 //
-// STUDIOS SHARE A RUN. Each listed studio gets an equal share of the
-// provider-attempt cap, and the studio a run starts with rotates every
+// STUDIOS SHARE A RUN. Each listed studio first gets an equal share of the
+// provider-attempt cap; attempts a quiet studio leaves unused are then split
+// among the studios stopped at their share, each resuming from its keyset
+// cursor, until the cap is spent or no studio has work left. The studio a
+// run starts with rotates every
 // 15-minute slot, so one studio's backlog never holds another's confirmations
-// until they expire.
+// until they expire. When every listed studio fits in one run the start moves
+// by one studio per slot. When more studios have backlogs than the cap can
+// serve (perStudio is then 1, so at most 50 per run), the start moves by the
+// run's capacity instead (Codex P2 4250550574): consecutive runs serve
+// abutting windows, so every studio is reached within ceil(studios / 50)
+// slots, inside the 24h recovery age for up to 4,800 studios. Residual: a run
+// cut short by its time budget leaves the rest of its window to the next
+// full rotation.
 //
 // THE INTAKE LINK. As the booking confirmation does, a recovered one carries
 // the client's intake link when their latest intake for the studio is still
@@ -244,90 +254,114 @@ export async function recoverOwedConfirmations(opts: {
   // An equal share per studio, and a rotating first studio.
   const perStudio = Math.max(1, Math.floor(RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN / studioIds.length));
   const slot = Math.floor(opts.nowMs / RECOVERY_SLOT_MS);
-  const first = slot % studioIds.length;
+  const capacity = Math.floor(RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN / perStudio);
+  const stride = capacity >= studioIds.length ? 1 : capacity;
+  const first = (slot * stride) % studioIds.length;
   const newestFirst = slot % 2 === 1;
   const ordered = [...studioIds.slice(first), ...studioIds.slice(0, first)];
 
-  studios: for (const studioId of ordered) {
-    const atStart = attempted();
-    let after: { createdAt: string; id: string } | null = null;
-    for (;;) {
-      if (attempted() >= RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN || outOfTime()) break studios;
-      const rows = await readOwedPage(opts.admin, studioId, w, after, pageSize, newestFirst);
-      if (rows === null) {
-        skip("read_failed");
-        continue studios;
-      }
-      anyRead = true;
-      for (const row of rows) {
-        if (attempted() >= RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN || outOfTime()) break studios;
-        if (attempted() - atStart >= perStudio) continue studios;
-        run.considered += 1;
-        if (!isOwedConfirmation(row, opts.nowMs, studioIds) || !row.studio || !row.client) {
-          skip("not_owed");
-          continue;
+  // The first pass gives every studio its fair share. A studio stopped at its
+  // share with rows still to consider is queued, and each later pass splits
+  // the run's UNUSED attempts among the queued studios, resuming each where it
+  // stopped (Codex P2 4264089023): a quiet studio's share is never wasted while
+  // another studio's confirmations wait.
+  type Cursor = { createdAt: string; id: string };
+  let visits: Array<{ studioId: string; after: Cursor | null }> = ordered.map((studioId) => ({ studioId, after: null }));
+  let share = perStudio;
+  passes: while (visits.length > 0) {
+    const cutOff: typeof visits = [];
+    const atPass = attempted();
+    studios: for (const visit of visits) {
+      const studioId = visit.studioId;
+      const atStart = attempted();
+      let after = visit.after;
+      let lastSeen = visit.after;
+      for (;;) {
+        if (attempted() >= RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN || outOfTime()) break passes;
+        const rows = await readOwedPage(opts.admin, studioId, w, after, pageSize, newestFirst);
+        if (rows === null) {
+          skip("read_failed");
+          continue studios;
         }
-        const destKey = destinationKey(studioId, row.client.phone);
-        const refused = studioRefusal.get(studioId) ?? (destKey ? destinationRefusal.get(destKey) : undefined);
-        if (refused) {
-          skip(refused);
-          continue;
-        }
-        const listedPhone = row.client.phone;
-        let intake: { id: string; url: string } | null = null;
-        let intakeRead = false;
-        let result: SmsSendResult;
-        try {
-          result = await sendRecoveredConfirmationSmsToClient({
-            admin: opts.admin,
-            appointmentId: row.id,
-            timezone: row.studio.timezone,
-            studio: row.studio,
-            client: row.client,
-            routeReader: opts.routeReader,
-            manageUrlFor: (startsAt) => opts.manageUrlFor(row.id, startsAt),
-            revalidate: async () => {
-              const check = await revalidateOwed(opts.admin, row.id, clock(), listedPhone);
-              // A confirmation goes WITH its manage link or not at all: refused
-              // before the claim, so nothing is spent and it stays owed.
-              if (check.ok && !opts.manageUrlFor(row.id, check.startsAt)) {
-                return { ok: false as const, reason: "recovery_manage_link_unavailable" };
+        anyRead = true;
+        for (const row of rows) {
+          if (attempted() >= RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN || outOfTime()) break passes;
+          if (attempted() - atStart >= share) {
+            cutOff.push({ studioId, after: lastSeen });
+            continue studios;
+          }
+          lastSeen = { createdAt: row.created_at, id: row.id };
+          run.considered += 1;
+          if (!isOwedConfirmation(row, opts.nowMs, studioIds) || !row.studio || !row.client) {
+            skip("not_owed");
+            continue;
+          }
+          const destKey = destinationKey(studioId, row.client.phone);
+          const refused = studioRefusal.get(studioId) ?? (destKey ? destinationRefusal.get(destKey) : undefined);
+          if (refused) {
+            skip(refused);
+            continue;
+          }
+          const listedPhone = row.client.phone;
+          let intake: { id: string; url: string } | null = null;
+          let intakeRead = false;
+          let result: SmsSendResult;
+          try {
+            result = await sendRecoveredConfirmationSmsToClient({
+              admin: opts.admin,
+              appointmentId: row.id,
+              timezone: row.studio.timezone,
+              studio: row.studio,
+              client: row.client,
+              routeReader: opts.routeReader,
+              manageUrlFor: (startsAt) => opts.manageUrlFor(row.id, startsAt),
+              revalidate: async () => {
+                const check = await revalidateOwed(opts.admin, row.id, clock(), listedPhone);
+                // A confirmation goes WITH its manage link or not at all: refused
+                // before the claim, so nothing is spent and it stays owed.
+                if (check.ok && !opts.manageUrlFor(row.id, check.startsAt)) {
+                  return { ok: false as const, reason: "recovery_manage_link_unavailable" };
+                }
+                // Read once, at the pre-claim check, only for a row about to send.
+                if (check.ok && !intakeRead) {
+                  intakeRead = true;
+                  intake = await readIntakeLink(opts.admin, row.studio_id, row.client_id, opts.intakeUrlFor);
+                }
+                return check;
+              },
+              intakeUrlFor: () => intake?.url ?? null,
+            });
+          } catch {
+            result = { ok: false, error: "recovery_threw", retryable: false };
+          }
+          if (result.ok) {
+            run.sent += 1;
+            const issued = intake as { id: string; url: string } | null;
+            if (issued) {
+              try {
+                await stampIntakeLinkIssued(opts.admin, issued.id, { emailed: false });
+              } catch {
+                // Display metadata only; never fails the run.
               }
-              // Read once, at the pre-claim check, only for a row about to send.
-              if (check.ok && !intakeRead) {
-                intakeRead = true;
-                intake = await readIntakeLink(opts.admin, row.studio_id, row.client_id, opts.intakeUrlFor);
-              }
-              return check;
-            },
-            intakeUrlFor: () => intake?.url ?? null,
-          });
-        } catch {
-          result = { ok: false, error: "recovery_threw", retryable: false };
-        }
-        if (result.ok) {
-          run.sent += 1;
-          const issued = intake as { id: string; url: string } | null;
-          if (issued) {
-            try {
-              await stampIntakeLinkIssued(opts.admin, issued.id, { emailed: false });
-            } catch {
-              // Display metadata only; never fails the run.
             }
           }
+          else if (result.skipped) {
+            skip(result.reason);
+            if (STUDIO_WIDE_REFUSALS.has(result.reason)) studioRefusal.set(studioId, result.reason);
+            else if (result.reason === "sms_route_destination_not_ready" && destKey) {
+              destinationRefusal.set(destKey, result.reason);
+            }
+          } else run.failed += 1;
         }
-        else if (result.skipped) {
-          skip(result.reason);
-          if (STUDIO_WIDE_REFUSALS.has(result.reason)) studioRefusal.set(studioId, result.reason);
-          else if (result.reason === "sms_route_destination_not_ready" && destKey) {
-            destinationRefusal.set(destKey, result.reason);
-          }
-        } else run.failed += 1;
+        if (rows.length < pageSize) continue studios;
+        const last = rows[rows.length - 1];
+        after = { createdAt: last.created_at, id: last.id };
       }
-      if (rows.length < pageSize) continue studios;
-      const last = rows[rows.length - 1];
-      after = { createdAt: last.created_at, id: last.id };
     }
+    const unused = RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN - attempted();
+    if (cutOff.length === 0 || unused <= 0 || attempted() === atPass) break;
+    visits = cutOff;
+    share = Math.max(1, Math.floor(unused / cutOff.length));
   }
   if (!anyRead) return { ran: false, reason: "read_failed" };
   return run;
