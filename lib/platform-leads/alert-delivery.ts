@@ -588,3 +588,50 @@ export async function sweepPlatformLeadAlerts(
     return { ...summary, ok: false };
   }
 }
+
+// ---------------------------------------------------------------------------
+// RECOVERY ON THE REMINDERS TRIGGER (Codex P2 4253278108; decision on #831/#843)
+// ---------------------------------------------------------------------------
+// The production plan caps Vercel Cron at once a day, and the daily
+// /api/cron/lead-alerts run alone cannot reach the retry schedule inside the
+// 20-hour replay cutoff. The appointment-reminders route is already fired
+// every 15 minutes by the existing external scheduler, so it also runs this:
+// a SMALL, bounded sweep through the SAME worker (one retry authority: the
+// same claim -> send -> settle, lease and fencing, the same idempotency key
+// and frozen message per generation, the same 20-hour cutoff and five-attempt
+// cap). The daily cron stays as a backstop.
+//
+// GATED BEFORE ANY DATABASE OR PROVIDER CALL. Until lead alerts are configured
+// (an allowlisted LEAD_ALERT_EMAIL, the email transport and the console
+// origin), this makes NO RPC and NO provider call, so a production reminders
+// run is untouched while 0213 is unapplied or lead alerts are unactivated. It
+// never throws: whatever happens, the reminders run's result is its own.
+
+/** Small enough that a reminders run is never meaningfully delayed. */
+export const REMINDER_TRIGGER_LEAD_ALERT_MAX = 2;
+export const REMINDER_TRIGGER_LEAD_ALERT_BUDGET_MS = 4_000;
+
+export type ReminderTriggerLeadAlertResult =
+  | { ran: false; reason: LeadAlertConfigCode | "threw" }
+  | { ran: true; summary: LeadAlertSweepSummary };
+
+export async function recoverLeadAlertsOnReminderTrigger(
+  deps: LeadAlertDeps = {},
+): Promise<ReminderTriggerLeadAlertResult> {
+  try {
+    const ready = resolveLeadAlertReadiness(deps);
+    if (!ready.ready) return { ran: false, reason: ready.code };
+    const summary = await sweepPlatformLeadAlerts({
+      ...deps,
+      maxAlerts: REMINDER_TRIGGER_LEAD_ALERT_MAX,
+      budgetMs: REMINDER_TRIGGER_LEAD_ALERT_BUDGET_MS,
+    });
+    return { ran: true, summary };
+  } catch (err) {
+    log("error", {
+      event: "platform_lead_alert_reminder_trigger_threw",
+      err_name: err instanceof Error ? err.name : typeof err,
+    });
+    return { ran: false, reason: "threw" };
+  }
+}

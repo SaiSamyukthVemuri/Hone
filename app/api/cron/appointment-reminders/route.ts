@@ -31,6 +31,7 @@ import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { reminderWindowIso } from "@/lib/cron/reminder-schedule";
 import { recordReminderRunSuccess } from "@/lib/cron/reminder-heartbeat";
+import { recoverLeadAlertsOnReminderTrigger } from "@/lib/platform-leads/alert-delivery";
 
 const PER_RUN_LIMIT = 50;
 const MAX_ATTEMPTS = 3;
@@ -683,12 +684,32 @@ export async function GET(req: Request) {
       smsFailed: sms_reminder_24h.failed + sms_reminder_2h.failed,
     });
 
+    // LEAD-ALERT-01 (Codex P2 4253278108): bounded operator lead-alert
+    // recovery on this existing 15-minute trigger, AFTER every reminder pass
+    // and the heartbeat, so it can never change what reminders did. It is gated
+    // before any database or provider call until lead alerts are configured,
+    // never throws, and reports its own outcome: a lead-alert problem is an ops
+    // alert and a field below, never a failed reminders run.
+    const lead_alerts = await recoverLeadAlertsOnReminderTrigger();
+    if (lead_alerts.ran && !lead_alerts.summary.ok) {
+      await recordOpsAlert({
+        severity: "warning",
+        event: "lead_alert_recovery_failed",
+        message: "Operator lead-alert recovery on the reminders trigger could not complete; reminders were unaffected.",
+        route: "/api/cron/appointment-reminders",
+        safeDetails: { attempted: lead_alerts.summary.attempted, expired: lead_alerts.summary.expired },
+      });
+    }
+
     return NextResponse.json({
       ok: true,
       reminder_24h,
       reminder_2h,
       sms_reminder_24h,
       sms_reminder_2h,
+      lead_alerts: lead_alerts.ran
+        ? { ran: true, ok: lead_alerts.summary.ok, attempted: lead_alerts.summary.attempted, accepted: lead_alerts.summary.accepted, failed: lead_alerts.summary.failed }
+        : { ran: false, reason: lead_alerts.reason },
     });
   } catch (err) {
     // PR #153. Cron-route failure alert. The cron runs every few

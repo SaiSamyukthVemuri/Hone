@@ -338,6 +338,15 @@ to the prospect.
   attempts end 20 hours after the first one (the provider keeps an idempotency key about
   24 hours), whatever the sweep cadence; alerts unsent by then, or 72 hours after the lead,
   become a visible `failed: expired`, and only the operator's Retry (a new key) sends again.
+- **When retries run.** The first attempt is sent right after the lead is saved. Retries run
+  on the existing **15-minute appointment-reminders trigger**, after its reminder passes and
+  heartbeat: a bounded sweep of at most two alerts with a 4-second budget, through the same
+  worker. It is gated before any database or provider call until lead alerts are configured,
+  and a failure there is an ops alert (`lead_alert_recovery_failed`) and a response field,
+  never a failed reminders run. The daily `/api/cron/lead-alerts` stays as a backstop. With
+  this trigger every arrival minute of the day reaches all five attempts inside the 20-hour
+  cutoff (proved in `tests/lib/platform-leads/retry-schedule.test.ts`, at 15- and 60-minute
+  cadence). **The daily cron alone cannot**: no arrival reaches five attempts.
 - **States are honest.** `accepted` means the provider accepted the message. It is not a
   delivery receipt.
 - **Recipient.** `LEAD_ALERT_EMAIL`, exactly one address that is also on `ADMIN_EMAILS`.
@@ -372,11 +381,11 @@ to the prospect.
 
 | Route | How it is scheduled |
 |---|---|
-| `/api/cron/appointment-reminders` | **External scheduler (cron-job.org), `GET` every 15 min** with `Authorization: Bearer $CRON_SECRET`. (NOT in `vercel.json` — `*/15` exceeds the current plan's once-per-day cron cap. If the project moves to Vercel Pro, add `{ "path": "/api/cron/appointment-reminders", "schedule": "*/15 * * * *" }` to `vercel.json` and drop the external job — that schedule string is `APPOINTMENT_REMINDER_CRON_SCHEDULE`.) |
+| `/api/cron/appointment-reminders` | **External scheduler (cron-job.org), `GET` every 15 min** with `Authorization: Bearer $CRON_SECRET`. After its reminder passes it also runs bounded operator lead-alert recovery (LEAD-ALERT-01), gated until lead alerts are configured. (NOT in `vercel.json` — `*/15` exceeds the current plan's once-per-day cron cap. If the project moves to Vercel Pro, add `{ "path": "/api/cron/appointment-reminders", "schedule": "*/15 * * * *" }` to `vercel.json` and drop the external job — that schedule string is `APPOINTMENT_REMINDER_CRON_SCHEDULE`.) |
 | `/api/cron/materialize-recurring-breaks` | **Vercel Cron, `vercel.json`, `0 8 * * *`** (daily, 08:00 UTC — allowed on every plan). Also runs the reminder-scheduler health check in a `finally` (PR OPS-01). |
 | `/api/cron/calendar-reconcile` | **Vercel Cron, `vercel.json`, `0 9 * * *`** (daily, B2.3-c3 — daily because the plan caps cron at once/day). **DORMANT:** the reconciliation sweep finds zero intent-eligible studios while every studio outbound flag is OFF. Schedule pinned in `lib/cron/calendar-cron-schedule.ts`. |
 | `/api/cron/calendar-sync` | **Vercel Cron, `vercel.json`, `30 9 * * *`** (daily, B2.3-c3, after reconciliation). **DORMANT:** `worker_enabled=false` → the claim RPC returns zero rows and mutates nothing → no-work. The **first scheduled run doubles as the B2.3-c2 no-work production validation** (Vercel Cron auto-supplies the production `CRON_SECRET`). Schedule pinned in `lib/cron/calendar-cron-schedule.ts`. |
-| `/api/cron/lead-alerts` | **Vercel Cron, `vercel.json`, `0 13 * * *`** (daily, LEAD-ALERT-01). Recovery sweep for operator lead alerts: expires alerts past 72 h, then sends due or abandoned ones, one claim at a time (≤ 20 per run). Each alert is normally sent right after its lead is saved; for retries faster than daily, add an external every-15-min `GET` with `Authorization: Bearer $CRON_SECRET` (activation step, not done in code). |
+| `/api/cron/lead-alerts` | **Vercel Cron, `vercel.json`, `0 13 * * *`** (daily, LEAD-ALERT-01). Recovery sweep for operator lead alerts: expires alerts past 72 h, then sends due or abandoned ones, one claim at a time (≤ 20 per run). Each alert is normally sent right after its lead is saved. Retries run on the 15-minute appointment-reminders trigger (bounded, gated until configured); this daily run is the backstop. |
 | `/api/cron/no-show-check` | **intentionally NOT scheduled** (disabled, non-mutating stub). |
 
 ### Reminder scheduler: RUNTIME OPERATION PROVEN 2026-08-12 · HUMAN OWNERSHIP still OPEN
