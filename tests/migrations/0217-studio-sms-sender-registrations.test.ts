@@ -60,7 +60,7 @@ describe("blast radius", () => {
     // only in the null check and the comparison.
     expect(fn).toMatch(/values\s+\(p_studio_id, v_live\[1\], v_phones\[1\], v_kind/);
     expect(fn.match(/p_expected_sender_id/g)).toHaveLength(3);
-    expect(CODE).toMatch(/where s\.studio_id = p_studio_id\s+and s\.status <> 'released'\s+for share/);
+    expect(CODE).toMatch(/where s\.studio_id = p_studio_id\s+and s\.status <> 'released'\s+for update\) l;/);
     expect(CODE).toMatch(/security definer\s+set search_path = pg_catalog, pg_temp/);
   });
 });
@@ -96,7 +96,9 @@ describe("privileges", () => {
   });
 
   it("the writer is compare-and-set on the expected sender, with the sender row locked", () => {
-    expect(CODE).toMatch(/for share\) l;/);
+    // Serialized: concurrent record writes take turns (Codex P2 on #844).
+    expect(CODE).toMatch(/for update\) l;/);
+    expect(CODE).not.toMatch(/for share\) l;/);
     expect(CODE).toMatch(/if v_live\[1\] <> p_expected_sender_id then\s+return query select 'sender_changed'/);
   });
 
@@ -113,5 +115,16 @@ describe("privileges", () => {
     const lists = [...CODE.matchAll(/'\^\\\+1\(([0-9|]+)\)'/g)].map((m) => m[1].split("|").sort());
     expect(lists).toHaveLength(2);
     for (const l of lists) expect(l).toEqual([...TOLL_FREE_AREA_CODES].sort());
+  });
+});
+
+describe("the record is what was submitted (Codex P2 4253653241, 4253770080)", () => {
+  it("the provider reference is stored as submitted, never coalesced with the old one", () => {
+    expect(CODE).toMatch(/provider_reference\s+= excluded\.provider_reference,/);
+    expect(CODE).not.toMatch(/coalesce\(excluded\.provider_reference/);
+  });
+
+  it("the command returns the status it replaced, for the audit trail", () => {
+    expect(CODE).toMatch(/returns table \(result text, registration_id uuid, kind text, previous_status text\)/);
   });
 });
