@@ -247,9 +247,26 @@ export function PublicBookForm({
   // chosen by the time the answer arrives. A ref is the only thing that reads
   // "now" from inside that closure.
   const practitionerIdRef = useRef(practitionerId);
-  useEffect(() => {
-    practitionerIdRef.current = practitionerId;
-  }, [practitionerId]);
+
+  // G1 / CODEX P2 — THE REF MOVES IN THE SAME MUTATION AS THE SELECTION.
+  //
+  // An earlier version mirrored the value in a `useEffect`. That effect is
+  // PASSIVE: React can commit the new selection while it is still pending, so
+  // a lookup completing in that window read the PREVIOUS ref value, passed the
+  // invalidation guard, and applied the stale studio-wide response anyway. The
+  // guard was real and its input was late.
+  //
+  // Every practitioner change therefore goes through this one function, which
+  // writes the ref FIRST and then the state, in one synchronous turn. Funnelled
+  // rather than written at each call site on purpose: there are three (the
+  // picker's onChange, the per-service reset, and the reconcile against
+  // returned options), and "remember to also update the ref" is exactly the
+  // kind of instruction that holds until someone adds a fourth. A guard asserts
+  // that `setPractitionerId` is never called outside this function.
+  const selectPractitioner = (next: string) => {
+    practitionerIdRef.current = next;
+    setPractitionerId(next);
+  };
 
   const nextAvailableApplies = !(
     pickerApplies &&
@@ -422,7 +439,7 @@ export function PublicBookForm({
   // behaviour.
   useEffect(() => {
     let cancelled = false;
-    setPractitionerId("");
+    selectPractitioner("");
     // G1 — CLEAR THE PREVIOUS SERVICE'S OPTIONS BEFORE THE REQUEST, NOT AFTER.
     //
     // Resetting only `practitionerId` left the PREVIOUS service's options
@@ -447,9 +464,12 @@ export function PublicBookForm({
       // what actually came back. The clear above makes this hard to reach, but
       // "hard to reach" is not "impossible", and the cost of being wrong is a
       // submission the server now rejects outright.
-      setPractitionerId((current) =>
-        current && !options.some((o) => o.id === current) ? "" : current,
-      );
+      // Read the ref, which is now the authoritative synchronous value, rather
+      // than a functional state update -- the two must not disagree.
+      const current = practitionerIdRef.current;
+      if (current && !options.some((o) => o.id === current)) {
+        selectPractitioner("");
+      }
       // G1 — THE SOLE-ELIGIBLE PRACTITIONER IS **NOT** AUTO-ASSIGNED HERE, and
       // this is a deliberate retreat from a fix that was already written.
       //
@@ -959,7 +979,7 @@ export function PublicBookForm({
               aria-label="Practitioner"
               data-testid="practitioner-picker"
               value={practitionerId}
-              onChange={(e) => setPractitionerId(e.target.value)}
+              onChange={(e) => selectPractitioner(e.target.value)}
               className="w-full bg-transparent py-2 text-[16px] outline-none"
               style={{ borderBottom: "1px solid #0A0A0A" }}
             >
