@@ -262,6 +262,42 @@ async function appointmentsOnDate(): Promise<
   );
 }
 
+/** Hold the NEXT server-action POST until the test releases it.
+ *
+ *  Codex asked for "a deliberately delayed old result", and this is the only
+ *  way to produce one: the race needs a studio-wide answer still in flight when
+ *  the visitor narrows to a practitioner, which no amount of ordinary driving
+ *  can arrange. Armed AFTER the first grid has loaded, so the held request is
+ *  the "Next available" lookup rather than the initial slot fetch.
+ *
+ *  Every later POST continues normally, which matters: selecting a practitioner
+ *  fires its own scoped slot fetch and that must not be held too, or the test
+ *  would be asserting against a page that never finished rendering. */
+async function holdNextServerAction(page: Page): Promise<{
+  release: () => void;
+  held: () => number;
+}> {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let held = 0;
+  await page.route("**/book/**", async (route) => {
+    const request = route.request();
+    if (
+      request.method() !== "POST" ||
+      !request.headers()["next-action"] ||
+      held > 0
+    ) {
+      return route.continue();
+    }
+    held += 1;
+    await gate;
+    return route.continue();
+  });
+  return { release: () => release(), held: () => held };
+}
+
 test("the picker offers only active, service-eligible practitioners", async ({ page }) => {
   await page.goto(`/book/${seed.slug}`);
   await page.getByRole("button", { name: /new client/i }).first().click();
@@ -386,4 +422,133 @@ test("the SAME practitioner's taken instant is not offered, and is not double-bo
   );
   expect(aRows[0].n).toBe("1");
   expect(await appointmentsOnDate()).toHaveLength(2);
+});
+
+test("a DELAYED studio-wide jump is discarded when the visitor narrows mid-flight", async ({
+  page,
+}) => {
+  // THE BEHAVIOURAL PROOF for two findings that source ordering guards could
+  // only pin by shape: the in-flight invalidation, and the synchronous ref that
+  // makes the invalidation read the CURRENT selection rather than a stale one.
+  //
+  // "Next available" answers STUDIO-WIDE. Started under "Any available" and
+  // still in flight when the visitor picks a practitioner, its answer is about
+  // a different question -- and before the fix it still ran setDate(), jumping
+  // the page to a date that practitioner may have no slots on, after the button
+  // that started it had already disappeared.
+  await page.goto(`/book/${seed.slug}`);
+  await page.getByRole("button", { name: /new client/i }).first().click();
+  await page.getByLabel("Date").fill(bookDate);
+  await page.getByLabel("Service").selectOption(serviceId);
+  await waitForGrid(page, bookDate);
+
+  const picker = page.getByTestId("practitioner-picker");
+  await expect(picker).toBeVisible();
+  await expect(picker, "the jump must start under Any available").toHaveValue("");
+
+  // BOTH LABELS. PublicBookForm has two jump surfaces sharing one handler
+  // (see its comment at the onFindNext definition): the empty-slot path renders
+  // "Next available" and the populated-slot path "Next available day". This
+  // fixture's date HAS slots, so the populated label is the one on screen --
+  // my first version anchored on /^next available$/i and never matched it.
+  const jump = page.getByRole("button", { name: /^next available( day)?$/i });
+  await expect(jump, "the jump is offered while no practitioner is chosen").toBeVisible();
+
+  // ARM ONLY NOW, so the held POST is the jump and not the first slot fetch.
+  const gate = await holdNextServerAction(page);
+  await jump.click();
+  await expect
+    .poll(() => gate.held(), { timeout: 20_000 })
+    .toBeGreaterThan(0);
+
+  // THE WINDOW. The visitor narrows while the studio-wide answer is held.
+  await picker.selectOption({ label: A.displayName });
+  // The jump is withdrawn once a practitioner is chosen, which is the gate the
+  // earlier finding added; assert it so this test also covers that.
+  await expect(jump, "the studio-wide jump is not offered once narrowed").toHaveCount(0);
+
+  // Release the stale answer, and WAIT FOR IT TO BE DELIVERED. Asserting
+  // immediately after release is what made the first version of this test
+  // vacuous: `toHaveValue(bookDate)` was already true at that instant, so it
+  // passed before the released response could possibly apply setDate.
+  const delivered = page.waitForResponse(
+    (r) =>
+      r.request().method() === "POST" &&
+      !!r.request().headers()["next-action"],
+    { timeout: 20_000 },
+  );
+  gate.release();
+  await delivered;
+
+  // THEN SETTLE THE GRID, which is the second half of why the first version
+  // could not fail. Selecting a practitioner refetches slots, and while
+  // `loadingSlots` is true NEITHER the jump nor the Back control renders and
+  // the date assertion is trivially satisfied -- the loading window answered
+  // every negative assertion for me. waitForGrid asserts the heading for this
+  // date AND that "loading slots" is gone, so what follows is read from a
+  // settled page.
+  //
+  // Under a build without the invalidation this is also the first thing to
+  // fail: the stale response moves the page, so the heading is for another
+  // date and this times out.
+  await waitForGrid(page, bookDate);
+
+  // THE CLAIM: the page did not move.
+  await expect(
+    page.getByLabel("Date"),
+    "a studio-wide answer the visitor narrowed away from must not move the page",
+  ).toHaveValue(bookDate);
+  // And left no navigation behind, since a discarded response never pushed
+  // history.
+  await expect(
+    page.getByRole("button", { name: /back to previous result/i }),
+    "a discarded jump must not leave a Back control",
+  ).toHaveCount(0);
+  await expect(
+    picker,
+    "the selection the visitor made must be the one that survived",
+  ).toHaveValue(A.practitionerId);
+});
+
+test("history navigation does not survive a practitioner change", async ({ page }) => {
+  // The third finding in this family: dateHistory holds dates reached by the
+  // STUDIO-WIDE jump, the forward control hides once a practitioner is chosen,
+  // but "Back to previous result" renders from that stack alone -- so Back
+  // survived the scope change and could navigate to a studio-wide result the
+  // chosen practitioner has no availability on, presented as a previous result.
+  await page.goto(`/book/${seed.slug}`);
+  await page.getByRole("button", { name: /new client/i }).first().click();
+  await page.getByLabel("Date").fill(bookDate);
+  await page.getByLabel("Service").selectOption(serviceId);
+  await waitForGrid(page, bookDate);
+
+  const picker = page.getByTestId("practitioner-picker");
+  const jump = page.getByRole("button", { name: /^next available( day)?$/i });
+  const back = page.getByRole("button", { name: /back to previous result/i });
+
+  // A COMPLETED jump, so there is genuine history to strand.
+  await expect(back, "no history before the first jump").toHaveCount(0);
+  await jump.click();
+  await expect(back, "a completed jump leaves a Back control").toBeVisible({
+    timeout: 20_000,
+  });
+  const jumped = await page.getByLabel("Date").inputValue();
+  expect(jumped, "the jump must have moved the page").not.toBe(bookDate);
+
+  // Narrow. The history answered a question the visitor has stopped asking.
+  await picker.selectOption({ label: A.displayName });
+
+  // SETTLE FIRST. Both Back controls live inside the
+  // `{loadingSlots ? … : slots.length === 0 ? … : …}` branch, so while the
+  // scoped refetch is in flight neither renders and `toHaveCount(0)` passes
+  // for a reason that has nothing to do with the history. That is precisely
+  // how the first version of this test passed against a build with the clear
+  // REMOVED.
+  await waitForGrid(page, jumped);
+
+  await expect(
+    back,
+    "studio-wide jump history must not survive a scope change -- Back would " +
+      "navigate to a date this practitioner may have no availability on",
+  ).toHaveCount(0);
 });
