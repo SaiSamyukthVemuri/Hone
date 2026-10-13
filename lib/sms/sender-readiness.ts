@@ -56,6 +56,21 @@ import { RECOVERY_ROUTE_BY_ERROR_CODE, type SenderRead } from "./sender-status";
 
 export type DestinationCountry = "CA" | "US";
 
+/**
+ * Registration evidence for THE EXACT CURRENT NUMBER (#844 binds every record
+ * to the sender and the number support verified; a record for any other number
+ * is not evidence for this one).
+ *
+ * `approved` IS COMPLETE AND VERIFIED, NOTHING LESS (Codex P2 4253281361 and
+ * the Codex decision on #863). For A2P 10DLC that is the brand, the campaign
+ * AND this number's own registration: Twilio registers each number separately
+ * and asynchronously after campaign approval, and that step can lag or fail
+ * (twilio.com/docs/messaging/compliance/a2p-10dlc/troubleshooting-a2p-brands/
+ * troubleshooting-a2p-phone-number-registration-issues). For a toll-free
+ * number it is completed verification of that number. A number still
+ * UNREGISTERED or PENDING_REGISTRATION is `pending`; one whose registration
+ * failed is `rejected`. Nothing short of complete is ever Active.
+ */
 export type UsRegistrationEvidence =
   | { state: "not_recorded" }
   /** The evidence read did not answer: never treated as "not recorded". */
@@ -158,9 +173,27 @@ function fromRegistration(
     case "unreadable":
       return make(destination, "unavailable", `Hone could not read the ${kind} record just now.`, "Try again in a moment.", "none", senderCountry);
     case "approved":
-      return make(destination, "active", `The studio's number has approved ${kind}.`, null, "none", senderCountry);
+      return make(
+        destination,
+        "active",
+        senderCountry === "toll_free"
+          ? "Toll-free verification of the studio's number is complete."
+          : "A2P 10DLC registration is complete for the studio's number: the brand, the campaign and the number's own registration.",
+        null,
+        "none",
+        senderCountry,
+      );
     case "pending":
-      return make(destination, "pending", `The studio's ${kind} is under review.`, "Wait for the review to finish.", "support", senderCountry);
+      return make(
+        destination,
+        "pending",
+        senderCountry === "toll_free"
+          ? "Toll-free verification of the studio's number is not complete yet."
+          : "A2P 10DLC registration is not complete yet: the brand, the campaign or the number's own registration is still under review.",
+        "Wait for the registration to complete.",
+        "support",
+        senderCountry,
+      );
     case "requires_information":
       return make(
         destination,
