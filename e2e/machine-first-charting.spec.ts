@@ -505,6 +505,23 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
     // the file after step 4 failed, rather than waiting for the next run.
     await expect(prior).toContainText("Last recorded setup");
     await expect(prior).toContainText("Synthetic Demo Multineedle");
+
+    // THE PHYSICAL UNIT'S NAME, and this is the only assertion in the suite
+    // that proves the whole chain is actually connected:
+    //
+    //   studio_machine_id on the capture -> latest_setup_for_client ->
+    //   RecordedReading.deviceId -> machinesByIds in the loader ->
+    //   context.priorUnitNames -> the connected wrapper's forward ->
+    //   the panel's prop -> MachinePriorSetup's render
+    //
+    // Its absence is exactly how that lookup shipped INERT: I had added it at
+    // every layer except the wrapper's forward, and the render tests pass the
+    // prop themselves so they could not see the missing wire. A studio with
+    // two units of the same model cannot otherwise tell which setup to
+    // reproduce (Codex, 2351742d).
+    await expect(prior.getByTestId("prior-setup-unit")).toHaveText("Room 1 demo", {
+      timeout: T,
+    });
     // THE LATEST CAPTURE'S VALUES, which is 180 and not 135.
     //
     // Step 7b changed the current mid-treatment, so revision 2 is what she was
@@ -624,5 +641,42 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
       after[0]?.default_machine_id,
       "a refused write must leave the stored selection alone",
     ).toBeNull();
+  });
+
+  await test.step("12: the RETIRED unit is still NAMED in next-visit guidance", async () => {
+    // Step 11 retired the machine, so this is the real production state that a
+    // component fixture cannot create: `listStudioMachines` excludes retired
+    // units in SQL, so they never reach the panel's device list. An earlier
+    // version of this claim was a render test that injected a retired device
+    // into that list directly - a state the loader cannot produce, which made
+    // the test pass while proving nothing (Codex, 27061e88).
+    //
+    // What must hold: the unit is GONE from the picker and still NAMED in the
+    // history, because the practitioner is reading what happened, not choosing
+    // a machine.
+    const next = await seedNextVisitForSameClient(seed.studioId, clientId);
+    await page.goto(`/clients/${clientId}/sessions/${next.sessionId}`);
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+
+    // The panel opens into its no-machine state now, which is correct and is
+    // why `openMachinePanel`'s return is not asserted here.
+    await openMachinePanel(page);
+
+    const prior = page.getByTestId("machine-prior-setup");
+    await expect(prior).toBeVisible({ timeout: T });
+    await expect(
+      prior.getByTestId("prior-setup-unit"),
+      "a retired unit must still be nameable: that is what machinesByIds is for",
+    ).toHaveText("Room 1 demo", { timeout: T });
+
+    // AND IT IS NOT OFFERED. The SQL guard that hid it from the picker is
+    // still doing its job; naming it did not re-expose it.
+    await expect(page.getByTestId(`machine-pick-${machineId}`)).toHaveCount(0);
+
+    const stillRetired = await sql<{ retired: boolean }>(
+      `select retired_at is not null as retired from public.studio_machines where id = $1`,
+      [machineId],
+    );
+    expect(stillRetired[0]?.retired, "the unit really is out of service").toBe(true);
   });
 });
