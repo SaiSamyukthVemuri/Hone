@@ -271,3 +271,38 @@ describe("G1: the GRID refuses a practitioner the COMMIT would refuse", () => {
     expect(commit).toContain("PRACTITIONER_CHOICE_UNAVAILABLE_ERROR");
   });
 });
+
+describe("G1: an in-flight studio-wide lookup cannot outlive the choice", () => {
+  // CODEX P2 at daf59463. The picker stays enabled while onFindNext is pending,
+  // so a visitor can start "Next available" under "Any available" and then pick
+  // a practitioner before the answer returns. That answer is STUDIO-WIDE, and
+  // it would still have run setDate(r.date) -- jumping to a date the chosen
+  // practitioner may have no slots on, after the button that started it had
+  // already disappeared.
+  it("compares the latest selection, not the one captured at call time", () => {
+    const form = FORM;
+    // A ref is the only thing that reads "now" from inside the closure;
+    // comparing the closed-over `practitionerId` would always match itself.
+    expect(form).toMatch(/practitionerIdRef\s*=\s*useRef\(/);
+    expect(form).toMatch(/practitionerIdRef\.current\s*=\s*practitionerId/);
+    expect(
+      form,
+      "the in-flight response must be compared against the CURRENT selection",
+    ).toMatch(/practitionerIdRef\.current\s*!==\s*requestedUnder/);
+  });
+
+  it("bails BEFORE any state write, not just before setDate", () => {
+    // setNextSearched, setError and setNoneInHorizon are equally wrong to apply
+    // from a lookup the visitor has moved past, so the guard must precede all
+    // of them. Order is the property, as with the pre-insert refusals.
+    const body = FORM.slice(FORM.indexOf("function onFindNext"));
+    const bail = body.indexOf("practitionerIdRef.current !== requestedUnder");
+    const firstWrite = body.indexOf("setNextSearched(true)");
+    expect(bail, "expected the invalidation guard").toBeGreaterThan(-1);
+    expect(firstWrite, "expected the first state write").toBeGreaterThan(-1);
+    expect(
+      bail < firstWrite,
+      "the guard must precede every state write from the stale response",
+    ).toBe(true);
+  });
+});

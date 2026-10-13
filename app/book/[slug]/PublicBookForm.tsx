@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { Service } from "@/lib/types/database";
 import {
   formatServiceLabel,
@@ -239,6 +239,18 @@ export function PublicBookForm({
   // practitioner the control is not rendered, nothing was chosen, and the
   // studio-wide jump is exactly the pre-G1 behaviour — no better, no worse, and
   // not a regression.
+  // G1 / CODEX P2 — THE LATEST SELECTION, READABLE FROM INSIDE AN IN-FLIGHT
+  // RESPONSE.
+  //
+  // `onFindNext` closes over `practitionerId` at CALL time, which is the wrong
+  // value to compare a response against: the question is what the visitor has
+  // chosen by the time the answer arrives. A ref is the only thing that reads
+  // "now" from inside that closure.
+  const practitionerIdRef = useRef(practitionerId);
+  useEffect(() => {
+    practitionerIdRef.current = practitionerId;
+  }, [practitionerId]);
+
   const nextAvailableApplies = !(
     pickerApplies &&
     practitionerOptions.length > 1 &&
@@ -531,12 +543,37 @@ export function PublicBookForm({
     // calendar date and then clicking starts the next search from
     // that manual date.
     const startFrom = addOneDayLocal(date);
+    // The selection this lookup is being made UNDER. `fetchNextAvailableDateAction`
+    // answers STUDIO-WIDE, so its answer is only meaningful while the visitor
+    // has not narrowed to a practitioner.
+    const requestedUnder = practitionerId;
     startFindingNext(async () => {
       const r = await fetchNextAvailableDateAction({
         slug,
         serviceId,
         fromDate: startFrom,
       });
+      // G1 / CODEX P2 — DISCARD A STUDIO-WIDE ANSWER THE VISITOR HAS SINCE
+      // NARROWED AWAY FROM.
+      //
+      // The picker stays enabled while this is pending, deliberately: blocking
+      // the control during a network call is a worse surface than letting the
+      // choice win. But the outstanding lookup is studio-wide, so if the
+      // visitor picks a practitioner before it returns, its answer is about a
+      // DIFFERENT question — and it would still have run `setDate(r.date)`,
+      // jumping the page to a date that practitioner may have no slots on,
+      // after the button that started it had already disappeared.
+      //
+      // The whole response is dropped, not just the date: `setNextSearched`,
+      // `setError` and `setNoneInHorizon` are equally wrong to apply from a
+      // lookup the visitor has moved past. Bailing before any of them is why
+      // this sits above `setNextSearched` rather than next to `setDate`.
+      //
+      // Disabling the picker was the other option Codex offered. Invalidation
+      // is strictly better: it costs the visitor nothing, and it also covers a
+      // selection change this component does not control, where a disabled
+      // attribute would not have helped.
+      if (practitionerIdRef.current !== requestedUnder) return;
       setNextSearched(true);
       if (!r.ok) {
         setError(r.error);
