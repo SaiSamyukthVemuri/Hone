@@ -864,3 +864,84 @@ describe("next-visit guidance names the unit, not just the model", () => {
     expect(prior).toContain("Room 9 unit");
   });
 });
+
+// ---------------------------------------------------------------------------
+// EVERY CONTEXT FIELD REACHES THE PANEL.
+//
+// This is the gap that twice let a feature be inert in production while its
+// tests passed. `priorUnitNames` was added to the loader, to the panel's props
+// and to the panel's own forwarding - and never to the connected wrapper that
+// builds those props in the real route. The panel therefore always received
+// its default empty map, so no historical unit was ever named, while the
+// render tests above passed because they pass the prop themselves. A test that
+// supplies a prop directly cannot see a missing wire (Codex, 2351742d).
+//
+// THE FIELD LIST IS DERIVED FROM THE TYPE, not written out here. A hardcoded
+// list would need maintaining in exactly the moment it is most likely to be
+// forgotten - when a new field is added - which is the failure this guards
+// against. Adding a field to MachineSetupContext now fails this test until the
+// wrapper forwards it.
+//
+// It reads source text, so comments are stripped first: prose mentioning
+// `ctx.priorUnitNames` would otherwise satisfy a guard about code, which has
+// caught this lane four times.
+// ---------------------------------------------------------------------------
+describe("the connected wrapper forwards the whole context", () => {
+  const stripComments = (text: string): string =>
+    text
+      .split("\n")
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+      .join("\n");
+
+  const CONNECTED = stripComments(
+    readFileSync(
+      nodePath.resolve(
+        __dirname,
+        "../../components/machines/machine-first-setup-connected.tsx",
+      ),
+      "utf8",
+    ),
+  );
+
+  const ACTIONS = readFileSync(
+    nodePath.resolve(
+      __dirname,
+      "../../app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts",
+    ),
+    "utf8",
+  );
+
+  /** The context's own top-level field names, read off its declaration. */
+  const contextFields = (): string[] => {
+    const block = /export type MachineSetupContext = \{([\s\S]*?)\n\};/.exec(ACTIONS);
+    expect(block, "MachineSetupContext's declaration must be findable").not.toBeNull();
+    return stripComments(block![1]!)
+      .split("\n")
+      // Top-level members only: exactly two spaces of indent. Nested object
+      // types sit on one line each, so they cannot be mistaken for members.
+      .map((l) => /^ {2}(\w+)\??:/.exec(l)?.[1])
+      .filter((n): n is string => Boolean(n));
+  };
+
+  it("finds the context's fields, so the assertion below is not vacuous", () => {
+    const fields = contextFields();
+    // A sanity floor AND a couple of known members: if the regex ever stops
+    // matching, this fails here rather than passing an empty loop below.
+    expect(fields.length).toBeGreaterThanOrEqual(8);
+    expect(fields).toContain("priorSetup");
+    expect(fields).toContain("priorUnitNames");
+    expect(fields).toContain("persistence");
+  });
+
+  it("forwards every one of them", () => {
+    const missing = contextFields().filter(
+      (f) => !new RegExp(`ctx\\.${f}\\b`).test(CONNECTED),
+    );
+    expect(
+      missing,
+      `MachineSetupContext fields the wrapper never reads: ${missing.join(", ")}. ` +
+        "A field the loader resolves but the wrapper drops makes the feature " +
+        "inert in the real route while direct-render tests still pass.",
+    ).toEqual([]);
+  });
+});

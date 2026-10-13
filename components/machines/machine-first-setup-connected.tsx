@@ -172,6 +172,13 @@ export function MachineFirstSetupConnected({
       catalogue={ctx.catalogue.length > 0 ? ctx.catalogue : undefined}
       canManageMachines={ctx.canManageMachines}
       priorSetup={ctx.priorSetup}
+      // The names for those recorded units. Resolved on the server, because
+      // only the server can see a RETIRED unit. Omitting this left the panel
+      // with its default empty map in the real route, so the whole lookup was
+      // inert in production while the direct-render tests passed - they supply
+      // the prop themselves and so cannot see a wiring gap
+      // (Codex, 2351742d).
+      priorUnitNames={ctx.priorUnitNames}
       blockId={blockId}
       onSelectMachine={select ?? onSelectMachine}
       onRecord={onRecord}
