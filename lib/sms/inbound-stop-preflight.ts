@@ -429,10 +429,12 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
   const redelivers = (url: string | null | undefined, fbUrl: string | null | undefined, fbMethod: string | null | undefined) => {
     const retries = ruleRetries === "n/a" ? (redeliversServerErrors(url) ? "yes" : "no") : ruleRetries;
     if (retries === "yes") return "yes" as const;
-    const fallback =
-      !!expected.ok && signedFormOfConfiguredUrl(fbUrl ?? null) === expected.url && (fbMethod ?? "").toUpperCase() === "POST";
-    if (fallback) return "fallback" as const;
-    return retries === "unknown" || fbUrl === undefined ? ("unknown" as const) : ("no" as const);
+    const fallbackIsRoute = !!expected.ok && signedFormOfConfiguredUrl(fbUrl ?? null) === expected.url;
+    if (fallbackIsRoute && (fbMethod ?? "").toUpperCase() === "POST") return "fallback" as const;
+    // Anything not read stays UNKNOWN (Codex P2 4254851468): the URL, or, for a
+    // fallback that IS the route, its method.
+    const fallbackUnread = fbUrl === undefined || (fallbackIsRoute && fbMethod === undefined);
+    return retries === "unknown" || fallbackUnread ? ("unknown" as const) : ("no" as const);
   };
 
   // A STOP the route answers 500 must be redelivered (Codex P1 4254444665).

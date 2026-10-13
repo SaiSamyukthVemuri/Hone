@@ -583,6 +583,22 @@ describe("evaluateInboundStopPreflight", () => {
       expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
     });
 
+    it("a fallback that IS the route but whose method was not read: unknown, never misconfigured", () => {
+      const f = allProven();
+      Object.assign(f.service!, { inboundRequestUrl: URL_OK, fallbackUrl: URL_OK, fallbackMethod: undefined });
+      expect(redelivery(f)?.status).toBe("unknown");
+    });
+
+    it("a pool member whose same-route fallback method was not read: unknown", () => {
+      const f = allProven();
+      Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: URL_RETRY, numberSmsMethod: "POST", numberSmsApplicationSid: null });
+      f.routedFromNumber = undefined;
+      f.service!.senderPool = [
+        { phoneNumber: "+14165550100", smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: null, smsFallbackUrl: URL_OK },
+      ];
+      expect(evaluateInboundStopPreflight(f).checks.find((c) => c.id === "sender_pool")?.status).toBe("unknown");
+    });
+
     for (const [why, fb] of [
       ["another URL", { fallbackUrl: "https://elsewhere.example/sms", fallbackMethod: "POST" }],
       ["GET", { fallbackUrl: URL_OK, fallbackMethod: "GET" }],
