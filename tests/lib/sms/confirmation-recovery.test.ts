@@ -10,6 +10,7 @@ import {
   type OwedConfirmationRow,
 } from "@/lib/sms/confirmation-recovery";
 import { STUDIO_ROUTING_ENV, type SendTimeRouteRead } from "@/lib/sms/send-time-route";
+import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
 
 // ===========================================================================
 // D5 (#824): an OWED confirmation, delivered once when the sender is ready.
@@ -699,6 +700,88 @@ describe("a provider that could never be reached spends nothing", () => {
     events = [];
     expect(await run()).toMatchObject({ sent: 1 });
     expect(providerCalls()).toBe(1);
+  });
+});
+
+describe("the INITIAL routed confirmation preflights its provider before the claim (Codex P2 4264231238)", () => {
+  const STUDIO = { id: A, name: "Studio", send_confirmation_sms: true, send_24h_sms_reminders: true, send_2h_sms_reminders: true };
+  const CLIENT = { phone: "+16475550123", sms_consent_at: "2026-10-01T00:00:00Z", sms_opted_out_at: null as string | null };
+  const initial = (over: { studio?: Partial<typeof STUDIO>; client?: Partial<typeof CLIENT> } = {}) =>
+    sendBookingConfirmationSmsToClient({
+      admin: admin(),
+      appointmentId: db[0].id,
+      startsAt: new Date(db[0].starts_at),
+      timezone: "America/Toronto",
+      studio: { ...STUDIO, ...over.studio },
+      client: { ...CLIENT, ...over.client },
+      intakeUrl: null,
+      manageUrl: null,
+    });
+
+  it("missing credentials: zero provider calls, zero spent claim, still owed; once configured, recovery sends EXACTLY once", async () => {
+    db = [appt()];
+    delete process.env.TWILIO_AUTH_TOKEN;
+    expect(await initial()).toMatchObject({ ok: false, skipped: true, reason: "twilio_not_configured" });
+    expect(events).toContain(SNAPSHOT_RPC);
+    expect(events).not.toContain("claim_sms_send");
+    expect(providerCalls()).toBe(0);
+    expect(db[0]).toMatchObject({ sms_confirmation_send_attempts: 0, sms_confirmation_claimed_at: null, sms_confirmation_sent_at: null });
+
+    process.env.TWILIO_AUTH_TOKEN = "token";
+    expect(await run()).toMatchObject({ sent: 1 });
+    expect(providerCalls()).toBe(1);
+    expect(await run()).toMatchObject({ sent: 0 });
+    expect(providerCalls()).toBe(1);
+  });
+
+  it("an ambiguous acceptance (provider 5xx) on the initial send is never resent by recovery", async () => {
+    db = [appt()];
+    providerStatus = 503;
+    await initial();
+    expect(providerCalls()).toBe(1);
+    expect(db[0].sms_confirmation_send_attempts).toBe(1);
+    providerStatus = 201;
+    expect(await run()).toMatchObject({ sent: 0 });
+    expect(providerCalls()).toBe(1);
+  });
+
+  it("an initial send that succeeded is never resent", async () => {
+    db = [appt()];
+    expect(await initial()).toMatchObject({ ok: true });
+    expect(await run()).toMatchObject({ sent: 0 });
+    expect(providerCalls()).toBe(1);
+  });
+
+  it("STOP: the consent gate refuses first, nothing claimed, and recovery never sends", async () => {
+    db = [appt({ client_opted_out_at: iso(NOW - 60_000) })];
+    delete process.env.TWILIO_AUTH_TOKEN;
+    const r = await initial({ client: { sms_opted_out_at: iso(NOW - 60_000) } });
+    expect(r).toMatchObject({ ok: false, skipped: true });
+    expect(r).not.toMatchObject({ reason: "twilio_not_configured" });
+    expect(events).toEqual([]);
+    process.env.TWILIO_AUTH_TOKEN = "token";
+    expect(await run()).toMatchObject({ sent: 0 });
+    expect(providerCalls()).toBe(0);
+  });
+
+  it("confirmations toggled off: the consent gate refuses first, nothing read or claimed", async () => {
+    db = [appt()];
+    delete process.env.TWILIO_AUTH_TOKEN;
+    const r = await initial({ studio: { send_confirmation_sms: false } });
+    expect(r).toMatchObject({ ok: false, skipped: true });
+    expect(r).not.toMatchObject({ reason: "twilio_not_configured" });
+    expect(events).toEqual([]);
+  });
+
+  it("LEGACY gate off (studio not listed): today's order is unchanged, it claims and the provider module refuses", async () => {
+    db = [appt()];
+    delete process.env[STUDIO_ROUTING_ENV];
+    delete process.env.TWILIO_AUTH_TOKEN;
+    await initial();
+    expect(events).not.toContain(SNAPSHOT_RPC);
+    expect(events).toContain("claim_sms_send");
+    expect(providerCalls()).toBe(0);
+    expect(db[0].sms_confirmation_send_attempts).toBe(1);
   });
 });
 

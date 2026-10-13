@@ -545,3 +545,21 @@ describe("a ONE-SHOT confirmation looks again at an unreadable route; a reminder
     expect(events).toEqual(["route_read"]);
   });
 });
+
+describe("missing credentials on a ROUTED send (Codex P2 4264231238)", () => {
+  it("a confirmation refuses after the route read and before any claim or provider call", async () => {
+    routeStudioA();
+    delete process.env.TWILIO_AUTH_TOKEN;
+    const r = await confirmation(reader(ready));
+    expect(r).toMatchObject({ ok: false, skipped: true, reason: "twilio_not_configured" });
+    expect(events).toEqual(["route_read"]);
+  });
+
+  it("a reminder keeps today's order: it claims, and the provider module refuses (the cron's next pass is its retry)", async () => {
+    routeStudioA();
+    delete process.env.TWILIO_AUTH_TOKEN;
+    await reminder(reader(ready));
+    expect(events).toContain("claim_reminder_sms_send");
+    expect(events).not.toContain("provider");
+  });
+});

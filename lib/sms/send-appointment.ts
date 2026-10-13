@@ -962,6 +962,18 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
     return { ok: false, skipped: true, reason: `sms_route_${route.reason}` };
   }
 
+  // A STUDIO-ROUTED confirmation whose provider request could never be made
+  // (no credentials) refuses BEFORE the claim (Codex P2 4264231238): claimed,
+  // it would end with attempts = 1 and no request, and recovery admits only
+  // rows with zero attempts, so it could never be recovered. Refused here it
+  // spends nothing and stays owed. The platform path keeps today's order (it
+  // claims, then sendSmsSafely refuses). sendOne carries confirmations only;
+  // reminders (sendReminder) keep their order: the cron's next pass is their
+  // retry.
+  if (route.mode === "studio" && !smsProviderConfigured()) {
+    return { ok: false, skipped: true, reason: "twilio_not_configured" };
+  }
+
   const claimed = await claimSmsSend(args.admin, args.appointmentId, args.smsType);
   if (!claimed) {
     return { ok: false, skipped: true, reason: "not_claimed" };
