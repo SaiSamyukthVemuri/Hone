@@ -96,8 +96,11 @@ export function numberMatchesCountry(phoneNumber: string, country: SenderCountry
   return n.ok && n.country === country;
 }
 
-/** Refused before any claim: the number or area code is another country's. */
-export type CountryRefusal = { ok: false; result: "refused"; reason: "number_country_mismatch" };
+/**
+ * Refused before any claim: the number or area code is another country's, or
+ * the number is not in the area code the owner searched.
+ */
+export type CountryRefusal = { ok: false; result: "refused"; reason: "number_country_mismatch" | "area_code_mismatch" };
 
 /**
  * Refused before any claim because the adoption could not be shown to be
@@ -184,7 +187,16 @@ export type SenderControlsDeps = {
 };
 
 export type SearchResult =
-  | { ok: true; candidates: Array<Pick<AvailableNumberCandidate, "phoneNumber" | "formatted" | "locality" | "region" | "country">> }
+  | {
+      ok: true;
+      /**
+       * The validated area code this search used, or null. Carried into every
+       * candidate's provisioning form so the claim records the owner's actual
+       * request (Codex P2 4253781002).
+       */
+      areaCode: string | null;
+      candidates: Array<Pick<AvailableNumberCandidate, "phoneNumber" | "formatted" | "locality" | "region" | "country">>;
+    }
   | { ok: false; reason: string };
 
 export async function runSenderSearch(
@@ -204,6 +216,7 @@ export async function runSenderSearch(
   // Only the safe candidate shape crosses back to the browser.
   return {
     ok: true,
+    areaCode: input.areaCode,
     // Only numbers of the chosen country are ever offered.
     candidates: out.candidates.filter((c) => numberMatchesCountry(c.phoneNumber, input.country as SenderCountry)).map((c) => ({
       phoneNumber: c.phoneNumber,
@@ -268,6 +281,11 @@ export async function runSenderProvision(
     (input.areaCode && !areaCodeMatchesCountry(input.areaCode, input.country))
   ) {
     return { ok: false, result: "refused", reason: "number_country_mismatch" };
+  }
+  // PROVENANCE (Codex P2 4253781002): a requested area code is recorded on the
+  // claim, so the chosen number must actually be in it.
+  if (input.areaCode && input.phoneNumber.slice(2, 5) !== input.areaCode) {
+    return { ok: false, result: "refused", reason: "area_code_mismatch" };
   }
   const u = urls(deps.appOrigin, deps.env);
   if (!u) return WEBHOOK_BASE_UNUSABLE;

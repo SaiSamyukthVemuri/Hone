@@ -64,6 +64,8 @@ export function SmsSenderControls({
               <form action={provisionAction}>
                 <input type="hidden" name="country" value={c.country} />
                 <input type="hidden" name="phone_number" value={c.phoneNumber} />
+                {/* The searched area code travels with the choice (Codex P2 4253781002). */}
+                {search.areaCode ? <input type="hidden" name="area_code" value={search.areaCode} /> : null}
                 <button type="submit" disabled={provisioning} className="rounded-md border px-2 py-0.5 text-xs">Use this number</button>
               </form>
             </li>

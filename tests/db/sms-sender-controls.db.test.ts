@@ -612,3 +612,32 @@ describe("resource history and the atomic reservation", () => {
 });
 
 type SeededStudioLike = { studioId: string; userId: string };
+
+// Codex P2 4253781002: the searched area code is the claim's recorded request,
+// and the chosen number must be in it.
+describe("searched area-code provenance", () => {
+  it("the search returns the area code it used; provisioning records it on the claim", async () => {
+    const s = await seedStudio("ctl-area-prov");
+    const provider = new FakeSmsProvisioningProvider();
+    const found = await controls.runSenderSearch({ provider }, { country: "CA", areaCode: "613" });
+    expect(found).toMatchObject({ ok: true, areaCode: "613" });
+    const held = new Set(
+      (await adminQuery("select phone_number from public.studio_sms_senders where phone_number is not null")).rows.map((r) => r.phone_number as string),
+    );
+    const pick = found.ok ? found.candidates.map((c) => c.phoneNumber).find((n) => !held.has(n))! : "";
+    expect(pick.slice(2, 5)).toBe("613");
+    expect(await controls.runSenderProvision(deps(provider), { studioId: s.studioId, actorUserId: s.userId, country: "CA", areaCode: found.ok ? found.areaCode : null, phoneNumber: pick }))
+      .toMatchObject({ ok: true, result: "activated" });
+    const { rows } = await adminQuery("select requested_area_code from public.studio_sms_senders where studio_id = $1", [s.studioId]);
+    expect(rows).toEqual([{ requested_area_code: "613" }]);
+  });
+
+  it("a number outside the requested area code is refused before any claim", async () => {
+    const s = await seedStudio("ctl-area-mismatch");
+    const out = await controls.runSenderProvision(deps(new FakeSmsProvisioningProvider()), {
+      studioId: s.studioId, actorUserId: s.userId, country: "CA", areaCode: "613", phoneNumber: "+14165553101",
+    });
+    expect(out).toEqual({ ok: false, result: "refused", reason: "area_code_mismatch" });
+    expect((await adminQuery("select count(*)::int n from public.studio_sms_senders where studio_id = $1", [s.studioId])).rows[0].n).toBe(0);
+  });
+});

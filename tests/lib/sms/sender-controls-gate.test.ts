@@ -72,3 +72,11 @@ describe("numberMatchesCountry / areaCodeMatchesCountry (Codex P2 4250699105)", 
     expect(areaCodeMatchesCountry("12", "US")).toBe(false);
   });
 });
+
+describe("the searched area code reaches provisioning (Codex P2 4253781002)", () => {
+  it("each candidate's provisioning form carries the search's area code", async () => {
+    const src = readFileSync("app/(app)/settings/integrations/SmsSenderControls.tsx", "utf8");
+    expect(src).toMatch(/search\.areaCode \? <input type="hidden" name="area_code" value=\{search\.areaCode\} \/> : null/);
+    expect(readFileSync("app/(app)/settings/integrations/sender-control-actions.ts", "utf8")).toMatch(/areaCode: str\(formData, "area_code"\) \|\| null/);
+  });
+});
