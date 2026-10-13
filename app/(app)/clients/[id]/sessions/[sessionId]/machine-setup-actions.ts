@@ -33,7 +33,10 @@ import {
   ScopeMismatchError,
   type PersistenceCapability,
 } from "@/lib/machines/selection-store";
-import { listStudioDevices } from "@/lib/machines/studio-devices";
+import {
+  inventoryUnavailable,
+  listStudioDevices,
+} from "@/lib/machines/studio-devices";
 import { assertSessionForClient } from "@/lib/sessions/session-lineage";
 
 // MPX-03 — the machine workflow's server surface.
@@ -167,30 +170,50 @@ export async function loadMachineSetupContext(input: {
   let rememberedUnavailable: MachineSetupContext["rememberedUnavailable"] = null;
   let persistence = DATABASE_PERSISTENCE;
   try {
-    const resolved = await resolveSelection(
-      scope,
-      inventory.devices,
-      store(db),
-      catalogue,
-    );
-    if (resolved.state === "ready") {
-      remembered = {
-        deviceId: resolved.device.deviceId,
-        modeKey: resolved.mode?.key ?? null,
-      };
-    } else if (resolved.state === "unavailable") {
-      rememberedUnavailable = {
-        deviceId: resolved.deviceId,
-        reason: resolved.reason,
-      };
-    } else if (resolved.state === "not-verified") {
-      rememberedUnavailable = {
-        deviceId: resolved.device.deviceId,
-        reason: resolved.reason,
-      };
+    if (inventoryUnavailable(inventory)) {
+      // AN UNREADABLE INVENTORY IS NOT A DEREGISTRATION.
+      //
+      // `listStudioDevices` returns an EMPTY array with source "unreadable"
+      // when the read itself fails. Resolving a stored selection against that
+      // empty array concludes "no longer registered to this studio", which
+      // asserts a fact from missing data: the unit's existence is unknown, not
+      // disproved. studio-devices' own header already draws this distinction -
+      // "emptiness here means nothing about the studio" - and this loader was
+      // ignoring it (Codex, d3e8b17b).
+      const stored = await store(db).read(scope);
+      if (stored) {
+        rememberedUnavailable = {
+          deviceId: stored.deviceId,
+          reason:
+            "Your machines could not be read just now, so the one remembered for you could not be confirmed. Nothing is selected - try again before charting.",
+        };
+      }
+    } else {
+      const resolved = await resolveSelection(
+        scope,
+        inventory.devices,
+        store(db),
+        catalogue,
+      );
+      if (resolved.state === "ready") {
+        remembered = {
+          deviceId: resolved.device.deviceId,
+          modeKey: resolved.mode?.key ?? null,
+        };
+      } else if (resolved.state === "unavailable") {
+        rememberedUnavailable = {
+          deviceId: resolved.deviceId,
+          reason: resolved.reason,
+        };
+      } else if (resolved.state === "not-verified") {
+        rememberedUnavailable = {
+          deviceId: resolved.device.deviceId,
+          reason: resolved.reason,
+        };
+      }
+      // "none" leaves both null: nothing is stored, which is not a problem to
+      // report.
     }
-    // "none" leaves both null: nothing is stored, which is not a problem to
-    // report.
   } catch {
     // A failed read must not claim the choice is kept. The panel then says so.
     persistence = NO_PERSISTENCE;

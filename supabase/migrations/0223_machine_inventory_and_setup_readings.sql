@@ -207,10 +207,10 @@ set search_path = pg_catalog, pg_temp
 as $$
 declare
   v_studio uuid;
-  v_already timestamptz;
+  v_id     uuid;
 begin
-  select m.studio_id, m.retired_at
-    into v_studio, v_already
+  select m.studio_id
+    into v_studio
     from public.studio_machines m
    where m.id = p_machine_id;
 
@@ -225,17 +225,38 @@ begin
 
   -- Idempotent: retiring a retired unit is not an error and does not move the
   -- recorded instant.
-  if v_already is not null then
+  -- CONDITIONAL, so two overlapping retirements cannot both claim the work.
+  --
+  -- This read `retired_at` with a plain select and then updated by id. Two
+  -- requests could both observe NULL, both run their update, and the second
+  -- would overwrite the first's recorded retirement INSTANT while also
+  -- returning true - so the stamped time belonged to neither request and the
+  -- documented idempotence ("returns false if it was already retired") was not
+  -- true under concurrency (Codex, d3e8b17b).
+  --
+  -- The fix is the predicate, not another lock. The UPDATE's own row lock IS
+  -- the serialisation point: under READ COMMITTED the loser blocks, then
+  -- re-evaluates `retired_at is null` against the committed new version and
+  -- matches nothing. The return value is then derived from the row actually
+  -- affected rather than from a read that may already be stale. Adding FOR
+  -- UPDATE above would serialise the same pair at more cost and still leave
+  -- the return value derived from the earlier read.
+  --
+  -- studio_machines before practitioners, which is this migration's stated
+  -- order - see record_treatment_setup_group.
+  update public.studio_machines
+     set retired_at = now()
+   where id = p_machine_id
+     and retired_at is null
+  returning id into v_id;
+
+  if v_id is null then
+    -- Already out of service. Nothing changed, and nothing is cleared below:
+    -- whichever request won did that, and re-running the cleanup could undo a
+    -- default legitimately set against ANOTHER machine since.
     return false;
   end if;
 
-  update public.studio_machines
-     set retired_at = now()
-   where id = p_machine_id;
-
-  -- Any practitioner still pointing at it loses the default rather than
-  -- silently charting on a unit that left service. Her OWN row only is
-  -- touched, and only the two UI-default columns.
   update public.practitioners
      set default_machine_id = null,
          default_machine_mode = null

@@ -400,7 +400,11 @@ export function MachineFirstSetupPanel({
         </p>
       )}
 
-      <MachinePriorSetup readings={priorSetup} catalogue={catalogue} />
+      <MachinePriorSetup
+        readings={priorSetup}
+        catalogue={catalogue}
+        devices={devices}
+      />
 
       <PersistenceStatus
         hasScope={scope != null}

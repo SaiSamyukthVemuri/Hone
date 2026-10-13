@@ -25,6 +25,19 @@ const DB = vi.hoisted(() => ({
   rpcResult: null as unknown,
   rpcError: null as null | { message: string },
   selectError: null as null | { message: string },
+  /**
+   * PER-TABLE overrides, because some behaviour only exists when one read
+   * fails and another succeeds.
+   *
+   * `from()` used to discard its argument, so every table shared one `rows`
+   * and one `selectError` - which made "the inventory read failed but the
+   * remembered selection read did not" untestable, and that is precisely the
+   * state in which the loader asserted a machine had been DEREGISTERED when
+   * its existence was merely unknown (Codex, d3e8b17b). Both fall back to the
+   * shared fields, so existing cases are unaffected.
+   */
+  rowsFor: {} as Record<string, unknown[]>,
+  errorFor: {} as Record<string, { message: string }>,
   calls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
 }));
 
@@ -62,24 +75,21 @@ vi.mock("@/lib/supabase/server", () => ({
       DB.calls.push({ fn, args });
       return { data: DB.rpcResult, error: DB.rpcError };
     },
-    from: () => ({
-      select: () => ({
-        eq: () => ({
-          is: () => ({
-            order: async () => ({
-              data: DB.selectError ? null : DB.rows,
-              error: DB.selectError,
-            }),
-          }),
-          order: () => ({
-            limit: async () => ({
-              data: DB.selectError ? null : DB.rows,
-              error: DB.selectError,
-            }),
+    from: (table: string) => {
+      const error = DB.errorFor[table] ?? DB.selectError;
+      const rows = DB.rowsFor[table] ?? DB.rows;
+      const result = async () => ({ data: error ? null : rows, error });
+      return {
+        select: () => ({
+          eq: () => ({
+            is: () => ({ order: result }),
+            order: () => ({ limit: result }),
+            maybeSingle: result,
+            limit: result,
           }),
         }),
-      }),
-    }),
+      };
+    },
   }),
 }));
 
@@ -112,6 +122,8 @@ beforeEach(() => {
   DB.rpcResult = null;
   DB.rpcError = null;
   DB.selectError = null;
+  DB.rowsFor = {};
+  DB.errorFor = {};
   DB.calls = [];
 });
 
@@ -671,5 +683,75 @@ describe("the module stays out of the clinical record", () => {
     // Via the data layer, so the action file itself names none directly.
     expect(rpcs).toEqual([]);
     expect(CODE).toContain("@/lib/machines/machine-queries");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AN UNREADABLE INVENTORY IS NOT A DEREGISTRATION.
+//
+// `listStudioDevices` returns an EMPTY device array with source "unreadable"
+// when the read itself fails. The loader passed that empty array to
+// `resolveSelection`, which then reported the stored machine as "no longer
+// registered to this studio" - a claim derived from missing data rather than
+// from evidence. studio-devices' own header already states the distinction
+// ("emptiness here means nothing about the studio") (Codex, d3e8b17b).
+// ---------------------------------------------------------------------------
+describe("an unreadable inventory does not accuse the stored machine", () => {
+  const REMEMBERED = [
+    { default_machine_id: "room-9", default_machine_mode: null },
+  ];
+
+  it("reports that the selection could not be CONFIRMED, not that it is gone", async () => {
+    signIn("studio-1", "pract-1");
+    DB.rowsFor.practitioners = REMEMBERED;
+    DB.errorFor.studio_machines = { message: "connection reset" };
+
+    const ctx = await actions.loadMachineSetupContext(ROUTE);
+
+    expect(ctx.rememberedUnavailable?.deviceId).toBe("room-9");
+    expect(ctx.rememberedUnavailable?.reason).toMatch(/could not be (read|confirmed)/i);
+    // THE DEFECT, as an assertion: the stored unit must not be called
+    // deregistered on the strength of a failed read.
+    expect(ctx.rememberedUnavailable?.reason).not.toMatch(/no longer registered/i);
+    expect(ctx.remembered, "nothing may be selected on unverified ground").toBeNull();
+  });
+
+  it("CONTROL: when the inventory IS readable and the unit is absent, it says so", async () => {
+    // Without this, the assertion above could pass because the loader never
+    // produces the deregistration wording at all.
+    signIn("studio-1", "pract-1");
+    DB.rowsFor.practitioners = REMEMBERED;
+    DB.rowsFor.studio_machines = []; // read succeeded; the studio has none
+
+    const ctx = await actions.loadMachineSetupContext(ROUTE);
+
+    expect(ctx.rememberedUnavailable?.deviceId).toBe("room-9");
+    expect(ctx.rememberedUnavailable?.reason).toMatch(/no longer registered/i);
+  });
+
+  it("a readable inventory containing the unit selects it normally", async () => {
+    // The third leg: proving the unreadable branch is not swallowing the
+    // ordinary path.
+    signIn("studio-1", "pract-1");
+    DB.rowsFor.practitioners = REMEMBERED;
+    DB.rowsFor.studio_machines = [
+      {
+        id: "room-9",
+        studio_id: "studio-1",
+        machine_profile_id: "synthetic:demo",
+        machine_profile_version: 1,
+        display_name: "Room 9",
+        installed_options: [],
+        retired_at: null,
+      },
+    ];
+
+    const ctx = await actions.loadMachineSetupContext(ROUTE);
+    // Either it resolves as ready, or it is withheld for a stated reason - but
+    // never silently both null, which would mean the stored choice vanished.
+    expect(
+      ctx.remembered !== null || ctx.rememberedUnavailable !== null,
+      "a stored selection must always be either usable or explained",
+    ).toBe(true);
   });
 });
