@@ -214,6 +214,9 @@ export type InboundStopFacts = {
       smsUrl: string | null | undefined;
       smsMethod?: string | null;
       smsApplicationSid?: string | null;
+      /** The member's own sms_fallback_url / sms_fallback_method (undefined = not read). */
+      smsFallbackUrl?: string | null;
+      smsFallbackMethod?: string | null;
     }>;
   };
   /**
@@ -234,13 +237,22 @@ export type InboundStopFacts = {
     | { matched: false }
     | {
         matched: true;
+        /**
+         * The Rule's one or two Settings (Webhook Rules/Settings docs, checked
+         * 2026-10-13). A null field = not reported. An omitted retryPolicy
+         * means NO retries: pass retryOn [] and retryCount 0.
+         */
         settings: Array<{
-          /** The Setting's connection retry policy, e.g. ["5xx"]; null = not reported. */
-          retryPolicy: string[] | null;
-          /** The Setting's retry count; null = not reported. */
+          /** The Setting's share of matching traffic, 0-100; only non-zero shares are ever used. */
+          percentage: number | null;
+          /** signature.type: "ACCOUNT_AUTH_TOKEN" | "SHARED_KEY" | "NONE". */
+          signatureType: string | null;
+          /** signature.algorithm: "HMAC_SHA1" | "HMAC_SHA256". */
+          signatureAlgorithm: string | null;
+          /** connection.retryPolicy.retryOn: HTTP_4XX, HTTP_5XX, CONNECTION_TIMEOUT, READ_TIMEOUT, ALL. */
+          retryOn: string[] | null;
+          /** connection.retryPolicy.retryCount, 0-5. */
           retryCount: number | null;
-          /** True when the Setting signs with a SharedKey; null = not reported. */
-          signsWithSharedKey: boolean | null;
         }>;
       };
   /** The account TWILIO_AUTH_TOKEN belongs to (TWILIO_ACCOUNT_SID), as confirmed by the operator. */
@@ -345,55 +357,81 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
   // A STOP the route answers 500 must be redelivered (Codex P1 4254444665).
   // Evaluated only once inbound reaches the route, so a wrong URL is reported
   // once, by inbound_reaches.
-  // ACCOUNT WEBHOOK RULES (Codex P1 4254537039): a matching Rule's Setting
-  // overrides URL connection overrides and may sign with a SharedKey.
+  // ACCOUNT WEBHOOK RULES (Codex P1s 4254537039, 4254655904): a matching
+  // Rule's Settings override URL connection overrides and decide signing. The
+  // route verifies ONLY the account auth token with HMAC-SHA1, so every Setting
+  // that can receive traffic (non-zero percentage, Codex P2 4254655911) must
+  // be ACCOUNT_AUTH_TOKEN + HMAC_SHA1.
   const rules = f.webhookRules;
-  const ruleSettings = rules?.matched ? rules.settings : [];
+  const allSettings = rules?.matched ? rules.settings : [];
+  const sharesKnown = allSettings.length > 0 && allSettings.every((x) => x.percentage !== null);
+  const live = allSettings.filter((x) => (x.percentage ?? 1) > 0);
+  const signing: "yes" | "no" | "unknown" =
+    !sharesKnown || live.length === 0
+      ? "unknown"
+      : live.some(
+            (x) =>
+              (x.signatureType !== null && x.signatureType !== "ACCOUNT_AUTH_TOKEN") ||
+              (x.signatureAlgorithm !== null && x.signatureAlgorithm !== "HMAC_SHA1"),
+          )
+        ? "no"
+        : live.some((x) => x.signatureType === null || x.signatureAlgorithm === null)
+          ? "unknown"
+          : "yes";
   checks.push(
     rules === undefined
-      ? check("webhook_rules", "unknown", "account Webhook Rules not read: a matching Rule overrides URL overrides and may sign with a SharedKey")
+      ? check("webhook_rules", "unknown", "account Webhook Rules not read: a matching Rule overrides URL overrides and decides signing")
       : !rules.matched
         ? check("webhook_rules", "pass", "no exact, prefix or default Webhook Rule matches the inbound URL")
-        : ruleSettings.length === 0 || ruleSettings.some((x) => x.signsWithSharedKey === null)
-          ? check("webhook_rules", "unknown", "a Webhook Rule matches but its Settings' signing is not reported")
-          : ruleSettings.some((x) => x.signsWithSharedKey)
-            ? check("webhook_rules", "fail", "a matching Webhook Rule's Setting signs with a SharedKey: the route verifies only the account auth token, so every STOP is refused")
-            : check("webhook_rules", "pass", "the matching Webhook Rule's Settings sign with the account auth token"),
+        : signing === "yes"
+          ? check("webhook_rules", "pass", "every Setting receiving traffic signs with the account auth token, HMAC-SHA1")
+          : signing === "no"
+            ? check(
+                "webhook_rules",
+                "fail",
+                "a Setting receiving traffic does not sign with the account auth token by HMAC-SHA1 (SHARED_KEY, NONE or HMAC_SHA256): the route refuses every STOP",
+              )
+            : check("webhook_rules", "unknown", "a Webhook Rule matches but its Settings' shares or signing are not reported"),
   );
+
+  // Does Twilio retry a 5xx under the account's Rules? "n/a" = no Rule matches,
+  // so the URL's own connection overrides decide.
+  const ruleRetries: "yes" | "no" | "unknown" | "n/a" =
+    rules === undefined
+      ? "unknown"
+      : !rules.matched
+        ? "n/a"
+        : !sharesKnown || live.length === 0 || live.some((x) => x.retryOn === null || x.retryCount === null)
+          ? "unknown"
+          : live.every((x) => (x.retryOn!.includes("HTTP_5XX") || x.retryOn!.includes("ALL")) && x.retryCount! >= 1)
+            ? "yes"
+            : "no";
+  /** One webhook's 5xx redelivery: its retries under the Rules, or its own same-route POST fallback. */
+  const redelivers = (url: string | null | undefined, fbUrl: string | null | undefined, fbMethod: string | null | undefined) => {
+    const retries = ruleRetries === "n/a" ? (redeliversServerErrors(url) ? "yes" : "no") : ruleRetries;
+    if (retries === "yes") return "yes" as const;
+    const fallback =
+      !!expected.ok && signedFormOfConfiguredUrl(fbUrl ?? null) === expected.url && (fbMethod ?? "").toUpperCase() === "POST";
+    if (fallback) return "fallback" as const;
+    return retries === "unknown" || fbUrl === undefined ? ("unknown" as const) : ("no" as const);
+  };
 
   // A STOP the route answers 500 must be redelivered (Codex P1 4254444665).
   // Evaluated only once inbound reaches the route, so a wrong URL is reported
-  // once, by inbound_reaches.
+  // once, by inbound_reaches. Under the number override, only the NUMBER's
+  // fallback is used (Codex P1 4254537025).
   if (reaches === "yes" && svc) {
     const onNumber = effective?.kind === "number";
-    const effectiveUrl = onNumber ? svc.numberSmsUrl : svc.inboundRequestUrl;
-    // Under the number override, only the NUMBER's fallback is used.
-    const fbUrl = onNumber ? svc.numberSmsFallbackUrl : svc.fallbackUrl;
-    const fbMethod = onNumber ? svc.numberSmsFallbackMethod : svc.fallbackMethod;
-    const fallbackRedelivers =
-      !!expected.ok && signedFormOfConfiguredUrl(fbUrl ?? null) === expected.url && (fbMethod ?? "").toUpperCase() === "POST";
-    // Retries: a matching Rule's Settings decide; with no Rule, the fragment.
-    const retries: "yes" | "no" | "unknown" =
-      rules === undefined
-        ? "unknown"
-        : rules.matched
-          ? ruleSettings.length === 0 || ruleSettings.some((x) => x.retryPolicy === null || x.retryCount === null)
-            ? "unknown"
-            : ruleSettings.every(
-                  (x) => (x.retryPolicy!.includes("5xx") || x.retryPolicy!.includes("all")) && x.retryCount! >= 1,
-                )
-              ? "yes"
-              : "no"
-          : redeliversServerErrors(effectiveUrl)
-            ? "yes"
-            : "no";
     const fallbackName = onNumber ? "the number's sms_fallback_url" : "the service's fallback_url";
+    const verdict = onNumber
+      ? redelivers(svc.numberSmsUrl, svc.numberSmsFallbackUrl, svc.numberSmsFallbackMethod)
+      : redelivers(svc.inboundRequestUrl, svc.fallbackUrl, svc.fallbackMethod);
     checks.push(
-      retries === "yes"
-        ? check("stop_redelivery", "pass", rules?.matched ? "the matching Webhook Rule's Settings retry 5xx" : "the inbound URL's overrides retry 5xx (rp=5xx|all, rc>=1)")
-        : fallbackRedelivers
+      verdict === "yes"
+        ? check("stop_redelivery", "pass", ruleRetries === "yes" ? "the matching Webhook Rule's Settings retry 5xx" : "the inbound URL's overrides retry 5xx (rp=5xx|all, rc>=1)")
+        : verdict === "fallback"
           ? check("stop_redelivery", "pass", `${fallbackName} is the same route, by POST`)
-          : retries === "unknown" || fbUrl === undefined
+          : verdict === "unknown"
             ? check(
                 "stop_redelivery",
                 "unknown",
@@ -439,12 +477,13 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
                 (acc, v) => (acc === "no" || v === "no" ? "no" : acc === "unknown" || v === "unknown" ? "unknown" : "yes"),
                 "yes",
               );
+    // Each pool member's own retries or own fallback (Codex P2 4254655918).
     const poolRedelivers =
       pool !== undefined &&
-      (rules?.matched
-        ? ruleSettings.length > 0 &&
-          ruleSettings.every((x) => !!x.retryPolicy && (x.retryPolicy.includes("5xx") || x.retryPolicy.includes("all")) && (x.retryCount ?? 0) >= 1)
-        : rules !== undefined && pool.every((n) => redeliversServerErrors(n.smsUrl)));
+      pool.every((n) => {
+        const v = redelivers(n.smsUrl, n.smsFallbackUrl, n.smsFallbackMethod);
+        return v === "yes" || v === "fallback";
+      });
     checks.push(
       pinned
         ? check("sender_pool", "pass", "routed sends are pinned to the checked number, so replies return to it")

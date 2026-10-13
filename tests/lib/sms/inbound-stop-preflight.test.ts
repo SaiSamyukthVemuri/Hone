@@ -367,71 +367,143 @@ describe("evaluateInboundStopPreflight", () => {
       expect(redeliversServerErrors(null)).toBe(false);
     });
 
-    describe("account Webhook Rules take precedence over the URL fragment (Codex P1 4254537039)", () => {
-      const setting = (over: Partial<{ retryPolicy: string[] | null; retryCount: number | null; signsWithSharedKey: boolean | null }> = {}) => ({
-        retryPolicy: ["5xx"],
+    describe("account Webhook Rules take precedence and decide signing (Codex P1s 4254537039, 4254655904; P2 4254655911)", () => {
+      type Setting = {
+        percentage: number | null;
+        signatureType: string | null;
+        signatureAlgorithm: string | null;
+        retryOn: string[] | null;
+        retryCount: number | null;
+      };
+      const setting = (over: Partial<Setting> = {}): Setting => ({
+        percentage: 100,
+        signatureType: "ACCOUNT_AUTH_TOKEN",
+        signatureAlgorithm: "HMAC_SHA1",
+        retryOn: ["HTTP_5XX"],
         retryCount: 2,
-        signsWithSharedKey: false,
         ...over,
       });
+      const rulesCheck = (f: InboundStopFacts) => evaluateInboundStopPreflight(f).checks.find((c) => c.id === "webhook_rules");
 
       it("rules unread: blocked, and #rp=5xx alone is not trusted", () => {
         const f = allProven();
         f.webhookRules = undefined;
-        const r = evaluateInboundStopPreflight(f);
-        expect(r.blockers).toEqual(["webhook_rules", "stop_redelivery"]);
+        expect(evaluateInboundStopPreflight(f).blockers).toEqual(["webhook_rules", "stop_redelivery"]);
       });
 
-      it("a matching Rule whose Settings retry 5xx redelivers even without a fragment", () => {
+      it("a matching Rule whose Setting is ACCOUNT_AUTH_TOKEN + HMAC_SHA1 and retries HTTP_5XX: ready even without a fragment", () => {
         const f = allProven();
         f.service!.inboundRequestUrl = URL_OK;
         f.webhookRules = { matched: true, settings: [setting()] };
         expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
       });
 
+      it("retryOn ALL also redelivers", () => {
+        const f = allProven();
+        f.webhookRules = { matched: true, settings: [setting({ retryOn: ["ALL"] })] };
+        expect(redelivery(f)?.status).toBe("pass");
+      });
+
+      for (const [why, over] of [
+        ["signature NONE", { signatureType: "NONE", signatureAlgorithm: null }],
+        ["a SHARED_KEY", { signatureType: "SHARED_KEY", signatureAlgorithm: "HMAC_SHA1" }],
+        ["the account token by HMAC_SHA256", { signatureAlgorithm: "HMAC_SHA256" }],
+      ] as const) {
+        it(`a Setting signing with ${why}: every STOP would be refused`, () => {
+          const f = allProven();
+          f.webhookRules = { matched: true, settings: [setting(over)] };
+          expect(rulesCheck(f)?.status).toBe("fail");
+        });
+      }
+
+      it("a Setting's signing unreported: unknown", () => {
+        const f = allProven();
+        f.webhookRules = { matched: true, settings: [setting({ signatureAlgorithm: null })] };
+        expect(rulesCheck(f)?.status).toBe("unknown");
+      });
+
       it("a matching Rule that does NOT retry 5xx overrides the URL's #rp=5xx", () => {
         const f = allProven();
-        f.webhookRules = { matched: true, settings: [setting({ retryPolicy: ["ct"] })] };
+        f.webhookRules = { matched: true, settings: [setting({ retryOn: ["CONNECTION_TIMEOUT"] })] };
         expect(redelivery(f)?.status).toBe("unknown"); // fallback unread
-        f.service!.fallbackUrl = "https://elsewhere.example/sms";
-        f.service!.fallbackMethod = "POST";
+        Object.assign(f.service!, { fallbackUrl: "https://elsewhere.example/sms", fallbackMethod: "POST" });
         expect(redelivery(f)?.status).toBe("fail");
       });
 
-      it("a matching Rule with retry count 0 does not redeliver", () => {
-        const f = allProven();
-        f.webhookRules = { matched: true, settings: [setting({ retryCount: 0 })] };
-        Object.assign(f.service!, { fallbackUrl: null, fallbackMethod: null });
-        expect(redelivery(f)?.status).toBe("fail");
-      });
-
-      it("a percentage split: EVERY Setting must retry 5xx", () => {
+      it("HTTP_5XX with retryCount 0 does not redeliver", () => {
         const f = allProven();
         Object.assign(f.service!, { fallbackUrl: null, fallbackMethod: null });
-        f.webhookRules = { matched: true, settings: [setting(), setting({ retryPolicy: ["4xx"] })] };
+        f.webhookRules = { matched: true, settings: [setting({ retryOn: ["HTTP_5XX"], retryCount: 0 })] };
         expect(redelivery(f)?.status).toBe("fail");
       });
 
-      it("a Setting signing with a SharedKey: every STOP would be refused", () => {
+      it("an omitted retryPolicy (no retries: [] and 0) does not redeliver", () => {
         const f = allProven();
-        f.webhookRules = { matched: true, settings: [setting({ signsWithSharedKey: true })] };
-        const c = evaluateInboundStopPreflight(f).checks.find((x) => x.id === "webhook_rules");
-        expect(c?.status).toBe("fail");
-        expect(c?.detail).toMatch(/SharedKey/);
+        Object.assign(f.service!, { fallbackUrl: null, fallbackMethod: null });
+        f.webhookRules = { matched: true, settings: [setting({ retryOn: [], retryCount: 0 })] };
+        expect(redelivery(f)?.status).toBe("fail");
       });
 
-      it("a Setting's signing or retry facts unreported: unknown", () => {
+      it("a live traffic split: EVERY Setting with traffic must sign correctly and retry 5xx", () => {
         const f = allProven();
-        f.webhookRules = { matched: true, settings: [setting({ signsWithSharedKey: null, retryPolicy: null })] };
-        const r = evaluateInboundStopPreflight(f);
-        expect(r.checks.find((c) => c.id === "webhook_rules")?.status).toBe("unknown");
-        expect(r.checks.find((c) => c.id === "stop_redelivery")?.status).toBe("unknown");
+        Object.assign(f.service!, { fallbackUrl: null, fallbackMethod: null });
+        f.webhookRules = { matched: true, settings: [setting({ percentage: 70 }), setting({ percentage: 30, retryOn: ["HTTP_4XX"] })] };
+        expect(redelivery(f)?.status).toBe("fail");
+        f.webhookRules = { matched: true, settings: [setting({ percentage: 70 }), setting({ percentage: 30, signatureType: "NONE" })] };
+        expect(rulesCheck(f)?.status).toBe("fail");
+      });
+
+      it("a 0/100 rollout: the zero-share Setting never receives traffic and is ignored", () => {
+        const f = allProven();
+        f.service!.inboundRequestUrl = URL_OK;
+        f.webhookRules = {
+          matched: true,
+          settings: [
+            setting({ percentage: 0, signatureType: "SHARED_KEY", retryOn: [], retryCount: 0 }),
+            setting({ percentage: 100 }),
+          ],
+        };
+        expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
+      });
+
+      it("shares not reported: unknown, never assumed", () => {
+        const f = allProven();
+        f.webhookRules = { matched: true, settings: [setting({ percentage: null })] };
+        expect(rulesCheck(f)?.status).toBe("unknown");
+        expect(redelivery(f)?.status).toBe("unknown");
       });
 
       it("a matching Rule with no Settings listed proves nothing", () => {
         const f = allProven();
         f.webhookRules = { matched: true, settings: [] };
-        expect(evaluateInboundStopPreflight(f).checks.find((c) => c.id === "webhook_rules")?.status).toBe("unknown");
+        expect(rulesCheck(f)?.status).toBe("unknown");
+      });
+    });
+
+    describe("each unpinned pool number may redeliver by its OWN fallback (Codex P2 4254655918)", () => {
+      const poolRoute = () => {
+        const f = allProven();
+        Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: URL_RETRY, numberSmsMethod: "POST", numberSmsApplicationSid: null });
+        f.routedFromNumber = undefined;
+        return f;
+      };
+
+      it("plain primary URLs, each with its own same-route POST fallback: ready", () => {
+        const f = poolRoute();
+        f.service!.senderPool = [
+          { phoneNumber: "+14165550100", smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: null, smsFallbackUrl: URL_OK, smsFallbackMethod: "POST" },
+          { phoneNumber: "+14165550101", smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: null, smsFallbackUrl: URL_OK, smsFallbackMethod: "POST" },
+        ];
+        expect(evaluateInboundStopPreflight(f).checks.find((c) => c.id === "sender_pool")?.status).toBe("pass");
+      });
+
+      it("one member with neither a 5xx retry nor its own fallback: blocked", () => {
+        const f = poolRoute();
+        f.service!.senderPool = [
+          { phoneNumber: "+14165550100", smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: null, smsFallbackUrl: URL_OK, smsFallbackMethod: "POST" },
+          { phoneNumber: "+14165550101", smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: null, smsFallbackUrl: null, smsFallbackMethod: null },
+        ];
+        expect(evaluateInboundStopPreflight(f).checks.find((c) => c.id === "sender_pool")?.status).toBe("fail");
       });
     });
 
