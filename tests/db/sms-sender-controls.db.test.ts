@@ -84,7 +84,8 @@ describe("provision (fake provider)", () => {
     const { studioSenderReadiness } = await import("@/lib/sms/sender-readiness");
     const row = (await adminQuery("select * from public.studio_sms_senders where studio_id = $1 and status = 'active'", [s.studioId])).rows[0];
     const readiness = studioSenderReadiness({ ok: true, sender: { ...row, provisioned_at: String(row.provisioned_at), last_test_ok_at: String(row.last_test_ok_at), created_at: "", updated_at: "", last_error_at: null, released_at: null } }, { state: "not_recorded" });
-    expect(readiness.map((r) => `${r.destination}:${r.state}`)).toEqual(["CA:active", "US:requires_information"]);
+    // A long code is not an eligible Canadian A2P route (Codex P2 4253590276); US awaits registration.
+    expect(readiness.map((r) => `${r.destination}:${r.state}`)).toEqual(["CA:requires_information", "US:requires_information"]);
 
     // A second request buys nothing more.
     const again = await controls.runSenderProvision(deps(provider), {
