@@ -1,5 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 
+import { randomUUID } from "node:crypto";
+
 import { Client } from "pg";
 
 import {
@@ -53,7 +55,21 @@ import { expectBlockedOn } from "./helpers/waitlist-concurrency";
 // legitimate path still works.
 // ===========================================================================
 
-const PROFILE = "synthetic:authority-proof";
+// UNIQUE PER RUN, which is what makes this suite re-runnable.
+//
+// A published contract is immutable per (profile, version) and GLOBAL - not
+// studio-scoped - so with a FIXED profile id two tests failed on any second
+// run against the same database: re-publishing a version with different
+// fields is correctly REFUSED, and that refusal reads exactly like a defect.
+// Measured: run 1 on a fresh chain 129/129, run 2 on the same database 2
+// failed, both in the publication and immutability sections.
+//
+// It cost two misread boards in this lane and was about to cost a third in the
+// hosted composition, where re-running after a code-only change is otherwise
+// perfectly reasonable. A fresh namespace per run removes the hazard instead
+// of documenting it forever. Every other section was already re-runnable
+// because each test seeds its own studio.
+const PROFILE = `synthetic:authority-proof-${randomUUID().slice(0, 8)}`;
 
 /** Publish as DEPLOYMENT AUTHORITY. adminQuery is `postgres`, not a user. */
 async function publish(

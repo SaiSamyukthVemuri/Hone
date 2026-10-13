@@ -29,6 +29,7 @@ import {
   ScopeMismatchError,
 } from "@/lib/machines/selection-store";
 import { resolveSelection, selectableDevices } from "@/lib/machines/selection";
+import { machinesByIds } from "@/lib/machines/machine-queries";
 import { nativeFieldGroups, priorSetupView } from "@/lib/machines/charting";
 import { activeModes, type MachineProfile } from "@/lib/machines/profile-contract";
 
@@ -198,6 +199,19 @@ function pgMachineDb(q: UserQuery): MachineDb {
                           opts.ascending ? "asc" : "desc"
                         } limit ${n}`,
                         [value],
+                      );
+                    },
+                  };
+                },
+                // `in` names specific rows by id. Sent as a pg array with
+                // `= any($2)` rather than an interpolated list, so the ids stay
+                // parameters and never become SQL text.
+                in(column, values) {
+                  return {
+                    limit(n) {
+                      return run(
+                        `${base} and ${column} = any($2) limit ${n}`,
+                        [value, [...values]],
                       );
                     },
                   };
@@ -1071,5 +1085,93 @@ describe("MPX-03 · the adapter itself is not lying", () => {
         }),
       ),
     ).rejects.toBeInstanceOf(PersistenceUnavailableError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A RETIRED UNIT MUST STILL BE NAMEABLE, against real SQL.
+//
+// Every existing inventory query excludes retired units in SQL - deliberately,
+// so one cannot reach a picker by accident - which also left nothing able to
+// NAME one. Two things needed to: next-visit guidance, which fell back to the
+// model exactly when a studio with two identical models most needed telling
+// them apart, and the "taken out of service" wording, which could not fire
+// because the unit was absent from the list it was looked up in.
+//
+// THIS IS THE TEST THE COMPONENT FILE COULD NOT HONESTLY WRITE. Its version
+// injected a retired device into the `devices` prop - a state the production
+// loader cannot produce - so it passed while proving nothing (Codex, 27061e88).
+// Here the unit is genuinely retired through the real command first.
+// ---------------------------------------------------------------------------
+describe("naming a RETIRED unit", () => {
+  it("is still named after retirement, while being absent from the picker", async () => {
+    const studio = await seedStudio("retired-name");
+    const machineId = await registerSynthetic(studio, "Room 1 retired");
+
+    // PRE-CONDITION: it is offered while live, or the test proves nothing
+    // about retirement specifically.
+    const before = await asDb(studio.userId, (db) =>
+      listStudioDevices(db, studio.studioId),
+    );
+    expect(
+      before.devices.map((d) => d.deviceId),
+      "the unit must be offered before it is retired",
+    ).toContain(machineId);
+
+    await asUser(studio.userId, (q) =>
+      q(`select public.retire_studio_machine($1)`, [machineId]),
+    );
+
+    // THE PICKER NO LONGER OFFERS IT - the guard still holds.
+    const after = await asDb(studio.userId, (db) =>
+      listStudioDevices(db, studio.studioId),
+    );
+    expect(
+      after.devices.map((d) => d.deviceId),
+      "a retired unit must never reach the picker",
+    ).not.toContain(machineId);
+
+    // AND IT IS STILL NAMEABLE BY ID, which is the whole point.
+    const named = await asDb(studio.userId, (db) =>
+      machinesByIds(db, studio.studioId, [machineId]),
+    );
+    expect(named.ok).toBe(true);
+    if (!named.ok) return;
+    expect(named.value).toHaveLength(1);
+    expect(named.value[0]!.displayName).toBe("Room 1 retired");
+    expect(
+      named.value[0]!.retiredAt,
+      "and it reports that it IS retired, so the wording can say so",
+    ).not.toBeNull();
+  });
+
+  it("names only units of the CALLER's studio, retired or not", async () => {
+    // The lookup drops the picker's retired filter; it must not drop the
+    // studio scope with it. RLS plus the explicit studio_id predicate.
+    const mine = await seedStudio("retired-name-mine");
+    const theirs = await seedStudio("retired-name-theirs");
+    const hers = await registerSynthetic(theirs, "Their room");
+    await asUser(theirs.userId, (q) =>
+      q(`select public.retire_studio_machine($1)`, [hers]),
+    );
+
+    const named = await asDb(mine.userId, (db) =>
+      machinesByIds(db, mine.studioId, [hers]),
+    );
+    expect(named.ok).toBe(true);
+    if (!named.ok) return;
+    expect(named.value, "another studio's unit is not nameable here").toEqual([]);
+  });
+
+  it("an empty id list performs no query and returns nothing", async () => {
+    // The ordinary case on a chart with no history. Worth pinning because the
+    // alternative - an unfiltered read - would be a studio-wide scan.
+    const studio = await seedStudio("retired-name-none");
+    const named = await asDb(studio.userId, (db) =>
+      machinesByIds(db, studio.studioId, []),
+    );
+    expect(named.ok).toBe(true);
+    if (!named.ok) return;
+    expect(named.value).toEqual([]);
   });
 });

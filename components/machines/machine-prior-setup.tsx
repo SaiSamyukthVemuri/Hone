@@ -1,7 +1,6 @@
 import { SectionLabel } from "@/components/ui/section-label";
 import type { RecordedReading } from "@/lib/machines/machine-queries";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
-import type { StudioDevice } from "@/lib/machines/selection";
 import { findMode, modeFields } from "@/lib/machines/profile-contract";
 
 // MPX-03 — the next-visit payoff.
@@ -23,18 +22,20 @@ export type MachinePriorSetupProps = {
   readings: RecordedReading[];
   catalogue: readonly MachineProfile[];
   /**
-   * The studio's units, so the recorded one can be named.
+   * Recorded unit id -> the studio's own name for it.
    *
-   * WITHOUT THIS the heading showed only the model, and a studio with two
-   * units of the same model - which is the ordinary case the whole
-   * studio_machines table exists for - could not tell whether the setup to
-   * reproduce was Room 1's or Room 2's (Codex, d3e8b17b).
+   * A NAME MAP, not the inventory. The first version of this took
+   * `StudioDevice[]` and looked the unit up in it, which could never resolve a
+   * RETIRED unit: `listStudioMachines` excludes those in SQL so they cannot
+   * reach a picker, so the production device list never contains one. The
+   * retired-unit test passed only because it injected a retired device
+   * directly - a fixture creating a state the loader cannot produce
+   * (Codex, 27061e88).
    *
-   * Retired units are included in this list, which matters: the unit a
-   * historical setup names may well be out of service now, and naming it is
-   * still the correct thing to do.
+   * The server now names the recorded units by id through `machinesByIds`,
+   * which has no retired filter, and passes only what this component needs.
    */
-  devices?: readonly StudioDevice[];
+  unitNames?: Readonly<Record<string, string>>;
 };
 
 function formatValue(r: RecordedReading): string {
@@ -52,7 +53,7 @@ function formatValue(r: RecordedReading): string {
 export function MachinePriorSetup({
   readings,
   catalogue,
-  devices = [],
+  unitNames = {},
 }: MachinePriorSetupProps) {
   if (readings.length === 0) return null;
 
@@ -86,8 +87,7 @@ export function MachinePriorSetup({
   // THE PHYSICAL UNIT, named where the studio can recognise it. The id itself
   // is never shown - a bare uuid is noise to a practitioner - so an unresolved
   // unit simply leaves the model standing alone, as before.
-  const unitName =
-    devices.find((d) => d.deviceId === first.deviceId)?.displayName ?? null;
+  const unitName = unitNames[first.deviceId] ?? null;
 
   return (
     <div

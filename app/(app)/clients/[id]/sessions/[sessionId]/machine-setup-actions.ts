@@ -37,6 +37,7 @@ import {
   inventoryUnavailable,
   listStudioDevices,
 } from "@/lib/machines/studio-devices";
+import { machinesByIds } from "@/lib/machines/machine-queries";
 import { assertSessionForClient } from "@/lib/sessions/session-lineage";
 
 // MPX-03 — the machine workflow's server surface.
@@ -123,6 +124,16 @@ export type MachineSetupContext = {
   canManageMachines: boolean;
   /** The most recent recorded setup in this studio, for next-visit prep. */
   priorSetup: RecordedReading[];
+  /**
+   * Recorded unit id -> the studio's own name for it.
+   *
+   * Resolved here rather than in the component because only the server can see
+   * a RETIRED unit: `listStudioMachines` excludes those in SQL so they cannot
+   * reach a picker, which also meant nothing could NAME one. A studio with two
+   * units of the same model needs the name most once one is out of service
+   * (Codex, 27061e88).
+   */
+  priorUnitNames: Record<string, string>;
 };
 
 const ANONYMOUS: MachineSetupContext = {
@@ -135,6 +146,7 @@ const ANONYMOUS: MachineSetupContext = {
   catalogue: [],
   canManageMachines: false,
   priorSetup: [],
+  priorUnitNames: {},
 };
 
 /** Everything the panel needs, derived entirely on the server. */
@@ -220,6 +232,47 @@ export async function loadMachineSetupContext(input: {
   }
 
   const prior = await latestRecordedSetup(db, scope.studioId, input.clientId);
+  const priorSetup = prior.ok ? prior.value : [];
+
+  // ONE LOOKUP, for the two things that need to see a RETIRED unit.
+  //
+  // Both were unreachable before, for the same reason: every existing query
+  // excluded retired units, so nothing could name one.
+  //   1. next-visit guidance, which fell back to the model once the recorded
+  //      unit was retired;
+  //   2. the unavailable WORDING - `resolveSelection`'s "was taken out of
+  //      service" branch cannot fire from here, because a retired unit is not
+  //      in the device list it searches, so it said "no longer registered to
+  //      this studio" instead. That asserts the unit does not exist when it
+  //      does, which is the same error one layer up from the unreadable-
+  //      inventory case above.
+  //
+  // Degrades silently: if this read fails, names are simply absent and the
+  // wording stays as resolved. A failed cosmetic lookup must not cost the
+  // practitioner the setup itself.
+  const priorUnitNames: Record<string, string> = {};
+  const needNames = [
+    ...priorSetup.map((r) => r.deviceId),
+    ...(rememberedUnavailable ? [rememberedUnavailable.deviceId] : []),
+  ].filter((id): id is string => typeof id === "string" && id.length > 0);
+
+  if (needNames.length > 0) {
+    const named = await machinesByIds(db, scope.studioId, needNames);
+    if (named.ok) {
+      for (const m of named.value) priorUnitNames[m.deviceId] = m.displayName;
+      if (rememberedUnavailable) {
+        const stored = named.value.find(
+          (m) => m.deviceId === rememberedUnavailable!.deviceId,
+        );
+        if (stored?.retiredAt) {
+          rememberedUnavailable = {
+            deviceId: stored.deviceId,
+            reason: `${stored.displayName} was taken out of service. Choose a replacement - nothing is selected for you.`,
+          };
+        }
+      }
+    }
+  }
 
   return {
     scope,
@@ -230,7 +283,8 @@ export async function loadMachineSetupContext(input: {
     persistence,
     catalogue,
     canManageMachines: who?.practitioner.role === "owner",
-    priorSetup: prior.ok ? prior.value : [],
+    priorSetup,
+    priorUnitNames,
   };
 }
 
