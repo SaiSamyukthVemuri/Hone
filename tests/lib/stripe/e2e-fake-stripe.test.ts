@@ -300,3 +300,74 @@ describe("fake-call recorder — invocation vs effect, run-isolated, test-safe",
     expect(keys.length).toBe(7);
   });
 });
+
+// PAY-CCY-09. Refund outcomes, selected by the SAME run-scoped, server-side
+// selector as PaymentIntent create (the refund's idempotency key). They map onto
+// the two refund failure classes production already handles.
+describe("fake refunds: selectable outcomes match production's failure classes", () => {
+  const RUN = "run-refund0001";
+  const KEY = "hone:payment_refund:att-r1:v1";
+  const prevRun = process.env.HONE_E2E_RUN_ID;
+  const prevFlag = process.env.HONE_E2E_FAKE_STRIPE;
+  afterEach(async () => {
+    const { clearFakeStripeBehavior, cleanupFakeStripeFiles } = await import("@/lib/stripe/e2e-fake-ledger");
+    clearFakeStripeBehavior(RUN);
+    cleanupFakeStripeFiles(RUN);
+    resetFakeStripeState(RUN);
+    if (prevRun === undefined) delete process.env.HONE_E2E_RUN_ID;
+    else process.env.HONE_E2E_RUN_ID = prevRun;
+    if (prevFlag === undefined) delete process.env.HONE_E2E_FAKE_STRIPE;
+    else process.env.HONE_E2E_FAKE_STRIPE = prevFlag;
+  });
+
+  async function setup(outcome: "success" | "decline" | "processing") {
+    process.env.HONE_E2E_FAKE_STRIPE = "1";
+    process.env.HONE_E2E_RUN_ID = RUN;
+    const { setFakeStripeBehavior } = await import("@/lib/stripe/e2e-fake-ledger");
+    setFakeStripeBehavior(RUN, KEY, outcome);
+    const stripe = createFakeStripe();
+    const charge = await (stripe.paymentIntents.create as unknown as (
+      p: unknown,
+      o: unknown,
+    ) => Promise<{ latest_charge: string }>)(
+      { amount: 18500, currency: "usd" },
+      { stripeAccount: "acct_test_r", idempotencyKey: "hone:session_payment:att-r1:v1" },
+    );
+    const refund = () =>
+      (stripe.refunds.create as unknown as (p: unknown, o: unknown) => Promise<{ id: string }>)(
+        { charge: charge.latest_charge, amount: 18500 },
+        { stripeAccount: "acct_test_r", idempotencyKey: KEY },
+      );
+    const refundCalls = () => getFakeStripeCalls(RUN).filter((c) => c.method === "refund_create");
+    return { refund, refundCalls };
+  }
+
+  it("decline: a genuine StripeError (production records 'failed'); no refund exists", async () => {
+    const { refund, refundCalls } = await setup("decline");
+    const StripeSdk = (await import("stripe")).default;
+    const err = await refund().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StripeSdk.errors.StripeError);
+    expect(err).toMatchObject({ code: "e2e_fake_refund_refused" });
+    expect(refundCalls()).toHaveLength(1);
+    expect(refundCalls()[0].resultId).toMatch(/_refused$/);
+  });
+
+  it("processing: the refund EXISTS, then a non-Stripe error (production leaves 'pending_stripe')", async () => {
+    const { refund, refundCalls } = await setup("processing");
+    const StripeSdk = (await import("stripe")).default;
+    const err = await refund().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(StripeSdk.errors.StripeError);
+    const [effect] = refundCalls();
+    expect(effect).toMatchObject({ replay: false, amountCents: 18500 });
+    expect(effect.resultId).toMatch(/^re_test_e2e_/);
+    expect(effect.resultId).not.toMatch(/_refused$/);
+  });
+
+  it("success (default): unchanged — a refund in the charge's currency", async () => {
+    const { refund, refundCalls } = await setup("success");
+    const r = (await refund()) as unknown as { status: string; currency: string; amount: number };
+    expect(r).toMatchObject({ status: "succeeded", currency: "usd", amount: 18500 });
+    expect(refundCalls()).toHaveLength(1);
+  });
+});

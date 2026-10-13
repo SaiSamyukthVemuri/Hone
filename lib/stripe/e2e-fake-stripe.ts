@@ -1,4 +1,7 @@
 import "server-only";
+// The SDK VALUE is needed only to construct a genuine StripeError for the
+// fake's terminal refund refusal (production classifies by instanceof).
+import StripeSdk from "stripe";
 import type Stripe from "stripe";
 import {
   appendFakeCallToLedger,
@@ -244,6 +247,38 @@ export function createFakeStripe(): Stripe {
         const run = runId();
         const key = opts?.idempotencyKey ?? null;
         const existing = idempotentResult(run, key);
+        // PAY-CCY-09. The SAME run-scoped, server-side outcome selector the
+        // PaymentIntent create uses (keyed by the request's idempotency key,
+        // set only by the test harness through the fake ledger), so a test
+        // can drive the two refund failure classes the production refund path
+        // already handles. Never browser-selectable.
+        //   decline    -> a real Stripe.errors.StripeError: production records
+        //                 refund_status 'failed' (terminal).
+        //   processing -> the AMBIGUOUS case: the synthetic processor DID make
+        //                 the refund, but the response is lost (a non-Stripe
+        //                 error is thrown after the effect). Production leaves
+        //                 the row 'pending_stripe' (outcome unknown) until a
+        //                 charge.refunded webhook or manual reconciliation; that
+        //                 webhook then names a refund that really exists here.
+        // A refusal creates no refund object; its invocation is still recorded
+        // so a test can see the server asked exactly once.
+        const outcome = existing ? "success" : outcomeFor(run, key);
+        if (outcome === "decline") {
+          record(run, {
+            method: "refund_create",
+            idempotencyKey: key,
+            stripeAccount: opts?.stripeAccount ?? null,
+            amountCents: params?.amount ?? null,
+            currency: params?.currency ?? null,
+            resultId: `re_test_e2e_${run}_refused`,
+            replay: false,
+          });
+          throw new StripeSdk.errors.StripeInvalidRequestError({
+            type: "invalid_request_error",
+            code: "e2e_fake_refund_refused",
+            message: "E2E FAKE: the synthetic processor refused this refund.",
+          });
+        }
         const replay = existing !== null;
         const id = existing ?? `re_test_e2e_${run}_${nextSeq(run)}`;
         // Stripe takes a refund's currency from the CHARGE, never from the
@@ -269,6 +304,10 @@ export function createFakeStripe(): Stripe {
           resultId: id,
           replay,
         });
+        if (outcome === "processing") {
+          // The refund above EXISTS; only the response is lost.
+          throw new Error("E2E FAKE: simulated network failure after the refund; outcome unknown.");
+        }
         return {
           id,
           status: "succeeded",
