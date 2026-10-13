@@ -45,6 +45,7 @@ function refusal(reason: string, country: string): string {
     const name = country === "US" ? "a United States" : "a Canadian";
     return `That is not ${name} number. Choose a number in the country selected.`;
   }
+  if (reason === "not_claimable") return "That number was just taken by another setup. Choose another number";
   if (reason === "resource_already_recorded") return "That number is already set up for a studio. Choose another number";
   if (reason === "webhook_base_unusable") return "Hone's webhook address is not configured, so no number can be set up here yet";
   return reason;

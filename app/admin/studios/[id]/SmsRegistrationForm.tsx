@@ -14,6 +14,12 @@ export type CurrentRecord = {
 // (Codex P2 4244484022). Every outcome, a refusal included, comes back as
 // state and is rendered here; nothing is thrown (Codex P2 4244484024).
 //
+// "approved" IS COMPLETE (Codex P2 4253281361, decision on #863): for A2P 10DLC
+// the brand, the campaign AND this number's own registration, which Twilio
+// completes separately after campaign approval; for toll-free, completed
+// verification of this number. A number still UNREGISTERED or
+// PENDING_REGISTRATION is recorded as pending, and a failed one as rejected.
+//
 // PREFILLED FROM THE CURRENT RECORD (Codex P2 4248698137). A submission
 // replaces the record for this number, so an untouched form must say what is
 // already recorded: re-submitting to add a reference can never quietly turn an
@@ -48,10 +54,10 @@ export function SmsRegistrationForm({
         <label className="flex flex-col">
           Status
           <select name="status" className="rounded border px-2 py-1" defaultValue={current?.status ?? "pending"}>
-            <option value="pending">pending</option>
-            <option value="requires_information">requires_information</option>
-            <option value="approved">approved</option>
-            <option value="rejected">rejected</option>
+            <option value="pending">pending: anything not yet complete, including this number&apos;s own registration</option>
+            <option value="requires_information">requires_information: something must be provided</option>
+            <option value="approved">approved: COMPLETE for this number (brand, campaign and the number registered)</option>
+            <option value="rejected">rejected: the registration or this number&apos;s registration failed</option>
             <option value="suspended">suspended</option>
           </select>
         </label>
