@@ -1799,3 +1799,124 @@ describe("0223 - a reading's PHYSICAL MACHINE must agree with its capture", () =
     expect(gone.rows[0].n).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// RETIREMENT'S OWN IDEMPOTENCE, which was the fourth instance of this class.
+//
+// `retire_studio_machine` documents itself as idempotent: it returns false if
+// the unit was already out of service. It read `retired_at` with a plain
+// select and then updated by id, so two overlapping requests could both
+// observe NULL, both run their update, and the second would OVERWRITE the
+// first's recorded retirement instant while also returning true - a stamped
+// time belonging to neither request (Codex, d3e8b17b).
+//
+// The repair is the predicate, not another lock: the UPDATE is conditional on
+// `retired_at is null`, its own row lock is the serialisation point, and the
+// return value is derived from the row actually affected.
+// ---------------------------------------------------------------------------
+describe("0223 - retirement is idempotent under real concurrency", () => {
+  it("the SECOND of two overlapping retirements returns false and changes nothing", async () => {
+    const { studio, machineId } = await scene("retire-idem", 125);
+    const first = await party(studio.userId);
+    const second = await party(studio.userId);
+    try {
+      const won = await first.c.query(
+        `select public.retire_studio_machine($1) as ok`,
+        [machineId],
+      );
+      expect(won.rows[0].ok, "the first request must retire it").toBe(true);
+
+      // The second request's conditional UPDATE must park on the first's row
+      // lock rather than reading a stale NULL and proceeding.
+      const racing = settle(
+        second.c.query(`select public.retire_studio_machine($1) as ok`, [machineId]),
+      );
+      const wait = await expectBlockedOn(
+        second.pid,
+        "the second retirement must park on the first's row lock",
+      );
+      expect(wait).toMatch(/^Lock\//);
+
+      await first.c.query("commit");
+      const stamped = await adminQuery(
+        `select retired_at from public.studio_machines where id = $1`,
+        [machineId],
+      );
+      const instant = stamped.rows[0].retired_at;
+      expect(instant, "the first request's instant must be recorded").not.toBeNull();
+
+      const out = await bounded(racing, "the second retirement never settled");
+      expect(out.ok, `it must complete, not error: ${!out.ok && out.message}`).toBe(true);
+      expect(
+        out.ok && out.rows[0]!.ok,
+        "the second request did no work, so it must report false",
+      ).toBe(false);
+      await second.c.query("commit");
+
+      // AND THE INSTANT IS THE FIRST REQUEST'S, not overwritten by the second.
+      const after = await adminQuery(
+        `select retired_at from public.studio_machines where id = $1`,
+        [machineId],
+      );
+      expect(
+        after.rows[0].retired_at,
+        "the recorded retirement instant must belong to the request that did it",
+      ).toEqual(instant);
+    } finally {
+      await first.c.end();
+      await second.c.end();
+    }
+  });
+
+  it("POSITIVE CONTROL: a single retirement returns true, and a later one false", async () => {
+    // Sequentially, with no contention at all - so the test above is proving
+    // something about concurrency rather than about the return value in
+    // general.
+    const { studio, machineId } = await scene("retire-seq", 126);
+    const a = await asUser(studio.userId, (q) =>
+      q(`select public.retire_studio_machine($1) as ok`, [machineId]),
+    );
+    expect(a.rows[0].ok).toBe(true);
+    const b = await asUser(studio.userId, (q) =>
+      q(`select public.retire_studio_machine($1) as ok`, [machineId]),
+    );
+    expect(b.rows[0].ok).toBe(false);
+  });
+
+  it("a second retirement does NOT re-run the default cleanup", async () => {
+    // The cleanup clears this machine from every practitioner default. Running
+    // it again on the no-op path would be harmless today, but the guard is
+    // deliberate: by then the practitioner may have chosen ANOTHER machine,
+    // and a blind re-run keyed on the old id must not disturb it.
+    const { studio, machineId } = await scene("retire-cleanup", 127);
+    const replacement = await register(studio, 127);
+
+    await asUser(studio.userId, (q) =>
+      q(`select public.set_own_default_machine($1,$2,null)`, [
+        studio.studioId,
+        machineId,
+      ]),
+    );
+    await asUser(studio.userId, (q) =>
+      q(`select public.retire_studio_machine($1) as ok`, [machineId]),
+    );
+    // The practitioner picks a different unit afterwards.
+    await asUser(studio.userId, (q) =>
+      q(`select public.set_own_default_machine($1,$2,null)`, [
+        studio.studioId,
+        replacement,
+      ]),
+    );
+    // A repeat retirement of the FIRST machine must leave that choice alone.
+    const again = await asUser(studio.userId, (q) =>
+      q(`select public.retire_studio_machine($1) as ok`, [machineId]),
+    );
+    expect(again.rows[0].ok).toBe(false);
+
+    const after = await adminQuery(
+      `select default_machine_id from public.practitioners where id = $1`,
+      [studio.practitionerId],
+    );
+    expect(after.rows[0].default_machine_id).toBe(replacement);
+  });
+});

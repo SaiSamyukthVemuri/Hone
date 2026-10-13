@@ -770,3 +770,88 @@ describe("a stored machine that cannot be used says so", () => {
     expect(plain).toContain("nothing yet");
   });
 });
+
+// ---------------------------------------------------------------------------
+// THE PHYSICAL UNIT IS NAMED in next-visit guidance.
+//
+// The retrieved setup dropped `studio_machine_id`, so the heading showed only
+// the manufacturer and model. A studio with two units of the same model -
+// which is the ordinary case the studio_machines table exists for - could not
+// tell whether the setup to reproduce was Room 1's or Room 2's
+// (Codex, d3e8b17b).
+// ---------------------------------------------------------------------------
+describe("next-visit guidance names the unit, not just the model", () => {
+  const reading = (over: Record<string, unknown> = {}) => ({
+    blockId: "b1",
+    deviceId: DEVICE.deviceId,
+    profileId: "fixture:panel",
+    profileVersion: 1,
+    modeKey: "galvanic",
+    groupKey: "g1",
+    channels: [],
+    stageKey: null,
+    fieldKey: "current",
+    value: { kind: "value", value: 120 },
+    nativeUnit: "µA",
+    decimals: 0,
+    recordedAt: "2026-09-20T15:04:00Z",
+    ...over,
+  });
+
+  it("shows the studio's own name for the recorded unit", () => {
+    const html = render({
+      scope: SCOPE,
+      devices: [DEVICE],
+      catalogue: CAT,
+      priorSetup: [reading()],
+    });
+    expect(html).toContain('data-testid="prior-setup-unit"');
+    const prior = html.slice(html.indexOf('data-testid="machine-prior-setup"'));
+    expect(prior).toContain(DEVICE.displayName);
+    // The model still qualifies it - the unit name alone does not say what it is.
+    expect(prior).toContain("Fixture Panel");
+  });
+
+  it("CONTROL: with no inventory passed, the model stands alone", () => {
+    // Guards the assertion above: without this, "contains the display name"
+    // could be satisfied by the picker elsewhere on the page.
+    const html = render({
+      scope: SCOPE,
+      devices: [],
+      catalogue: CAT,
+      priorSetup: [reading()],
+    });
+    const prior = html.slice(html.indexOf('data-testid="machine-prior-setup"'));
+    expect(prior).not.toContain('data-testid="prior-setup-unit"');
+    expect(prior).toContain("Fixture Panel");
+  });
+
+  it("NEVER renders a bare unit id, which is noise to a practitioner", () => {
+    // An unresolvable unit - deleted, or from another studio's inventory -
+    // must not leak its uuid into the heading.
+    const html = render({
+      scope: SCOPE,
+      devices: [DEVICE],
+      catalogue: CAT,
+      priorSetup: [reading({ deviceId: "device-no-longer-listed" })],
+    });
+    const prior = html.slice(html.indexOf('data-testid="machine-prior-setup"'));
+    expect(prior).not.toContain("device-no-longer-listed");
+    expect(prior).toContain("Fixture Panel");
+  });
+
+  it("names a RETIRED unit too, because that is what the record says", () => {
+    // The unit a historical setup names may well be out of service now.
+    // Naming it is still correct: the practitioner is reading history, not
+    // choosing a machine.
+    const retired = { ...DEVICE, retiredAt: "2026-10-01T00:00:00Z" };
+    const html = render({
+      scope: SCOPE,
+      devices: [retired],
+      catalogue: CAT,
+      priorSetup: [reading()],
+    });
+    const prior = html.slice(html.indexOf('data-testid="machine-prior-setup"'));
+    expect(prior).toContain(DEVICE.displayName);
+  });
+});

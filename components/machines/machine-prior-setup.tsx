@@ -1,6 +1,7 @@
 import { SectionLabel } from "@/components/ui/section-label";
 import type { RecordedReading } from "@/lib/machines/machine-queries";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
+import type { StudioDevice } from "@/lib/machines/selection";
 import { findMode, modeFields } from "@/lib/machines/profile-contract";
 
 // MPX-03 — the next-visit payoff.
@@ -21,6 +22,19 @@ import { findMode, modeFields } from "@/lib/machines/profile-contract";
 export type MachinePriorSetupProps = {
   readings: RecordedReading[];
   catalogue: readonly MachineProfile[];
+  /**
+   * The studio's units, so the recorded one can be named.
+   *
+   * WITHOUT THIS the heading showed only the model, and a studio with two
+   * units of the same model - which is the ordinary case the whole
+   * studio_machines table exists for - could not tell whether the setup to
+   * reproduce was Room 1's or Room 2's (Codex, d3e8b17b).
+   *
+   * Retired units are included in this list, which matters: the unit a
+   * historical setup names may well be out of service now, and naming it is
+   * still the correct thing to do.
+   */
+  devices?: readonly StudioDevice[];
 };
 
 function formatValue(r: RecordedReading): string {
@@ -35,7 +49,11 @@ function formatValue(r: RecordedReading): string {
   return r.value.value.toFixed(Math.max(r.decimals, own));
 }
 
-export function MachinePriorSetup({ readings, catalogue }: MachinePriorSetupProps) {
+export function MachinePriorSetup({
+  readings,
+  catalogue,
+  devices = [],
+}: MachinePriorSetupProps) {
   if (readings.length === 0) return null;
 
   const first = readings[0]!;
@@ -65,6 +83,12 @@ export function MachinePriorSetup({ readings, catalogue }: MachinePriorSetupProp
     ? `${profile.manufacturer} ${profile.model}${profile.variant ? ` (${profile.variant})` : ""}`
     : first.profileId;
 
+  // THE PHYSICAL UNIT, named where the studio can recognise it. The id itself
+  // is never shown - a bare uuid is noise to a practitioner - so an unresolved
+  // unit simply leaves the model standing alone, as before.
+  const unitName =
+    devices.find((d) => d.deviceId === first.deviceId)?.displayName ?? null;
+
   return (
     <div
       className="flex flex-col gap-2 border-t border-neutral-200 pt-3 dark:border-neutral-800"
@@ -72,7 +96,14 @@ export function MachinePriorSetup({ readings, catalogue }: MachinePriorSetupProp
     >
       <SectionLabel size="caption">Last recorded setup</SectionLabel>
       <p className="text-sm text-neutral-700 dark:text-neutral-300">
-        {machine}
+        {unitName ? (
+          <>
+            <span data-testid="prior-setup-unit">{unitName}</span>
+            <span className="ml-1.5 text-neutral-500">{machine}</span>
+          </>
+        ) : (
+          machine
+        )}
         <span className="ml-2 text-neutral-500">
           {historical ? first.modeKey : (mode?.nativeLabel ?? first.modeKey)}
         </span>

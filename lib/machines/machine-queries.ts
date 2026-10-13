@@ -305,6 +305,16 @@ export type RecordedReading = {
   captureId: string | null;
   /** Which capture of this group within its block. 1-based; appends. */
   revision: number;
+  /**
+   * The PHYSICAL unit this was recorded on, as the capture pinned it.
+   *
+   * Carried because the profile is not enough: two rooms can hold the same
+   * model, so "Permanence GEMM-16" does not tell a practitioner whether the
+   * setup to reproduce was Room 1's unit or Room 2's. Both read paths emit it
+   * and the composite FK now forces them to agree on it; dropping it here
+   * threw that away at the last step (Codex, d3e8b17b).
+   */
+  deviceId: string;
   profileId: string;
   profileVersion: number;
   modeKey: string;
@@ -333,6 +343,7 @@ type ReadingRow = {
   decimals: number;
   revision: number;
   capture_id: string | null;
+  studio_machine_id: string;
   recorded_at: string;
 };
 
@@ -344,6 +355,7 @@ function toReading(r: ReadingRow): RecordedReading {
     // 1 is the first; a setting changed mid-treatment appends 2, and both
     // survive. Every field of ONE capture shares this number.
     revision: r.revision,
+    deviceId: r.studio_machine_id,
     profileId: r.machine_profile_id,
     profileVersion: r.machine_profile_version,
     modeKey: r.mode_key,
@@ -372,7 +384,7 @@ function toReading(r: ReadingRow): RecordedReading {
 const READING_COLUMNS =
   "session_block_id, machine_profile_id, machine_profile_version, mode_key, " +
   "group_key, channels, stage_key, field_key, value_numeric, absence_reason, " +
-  "native_unit, decimals, revision, capture_id, recorded_at";
+  "native_unit, decimals, revision, capture_id, studio_machine_id, recorded_at";
 
 /**
  * Is a contract PUBLISHED for this (profile, version)? Used to refuse
