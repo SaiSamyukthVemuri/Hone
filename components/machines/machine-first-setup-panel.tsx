@@ -77,6 +77,11 @@ export type MachineFirstSetupPanelProps = {
    * machine is remembered (Codex, 1a39a51f).
    */
   unavailableSelection?: { deviceId: string; reason: string } | null;
+  /**
+   * Recorded unit id -> the studio's name for it, for next-visit guidance.
+   * Resolved on the server, where retired units are visible.
+   */
+  priorUnitNames?: Readonly<Record<string, string>>;
   /** Injectable for tests and for a future studio-scoped catalogue. */
   catalogue?: readonly MachineProfile[];
   /**
@@ -148,6 +153,7 @@ export function MachineFirstSetupPanel({
   canManageMachines = false,
   priorSetup = [],
   unavailableSelection = null,
+  priorUnitNames = {},
   onSelectMachine,
   onRecord,
 }: MachineFirstSetupPanelProps) {
@@ -403,7 +409,7 @@ export function MachineFirstSetupPanel({
       <MachinePriorSetup
         readings={priorSetup}
         catalogue={catalogue}
-        devices={devices}
+        unitNames={priorUnitNames}
       />
 
       <PersistenceStatus

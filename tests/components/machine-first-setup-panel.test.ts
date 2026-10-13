@@ -804,20 +804,21 @@ describe("next-visit guidance names the unit, not just the model", () => {
       devices: [DEVICE],
       catalogue: CAT,
       priorSetup: [reading()],
+      priorUnitNames: { [DEVICE.deviceId]: "Room 9 unit" },
     });
     expect(html).toContain('data-testid="prior-setup-unit"');
     const prior = html.slice(html.indexOf('data-testid="machine-prior-setup"'));
-    expect(prior).toContain(DEVICE.displayName);
+    expect(prior).toContain("Room 9 unit");
     // The model still qualifies it - the unit name alone does not say what it is.
     expect(prior).toContain("Fixture Panel");
   });
 
-  it("CONTROL: with no inventory passed, the model stands alone", () => {
+  it("CONTROL: with no name resolved, the model stands alone", () => {
     // Guards the assertion above: without this, "contains the display name"
     // could be satisfied by the picker elsewhere on the page.
     const html = render({
       scope: SCOPE,
-      devices: [],
+      devices: [DEVICE],
       catalogue: CAT,
       priorSetup: [reading()],
     });
@@ -827,31 +828,39 @@ describe("next-visit guidance names the unit, not just the model", () => {
   });
 
   it("NEVER renders a bare unit id, which is noise to a practitioner", () => {
-    // An unresolvable unit - deleted, or from another studio's inventory -
-    // must not leak its uuid into the heading.
+    // An unresolvable unit must not leak its uuid into the heading.
     const html = render({
       scope: SCOPE,
       devices: [DEVICE],
       catalogue: CAT,
       priorSetup: [reading({ deviceId: "device-no-longer-listed" })],
+      priorUnitNames: { [DEVICE.deviceId]: "Room 9 unit" },
     });
     const prior = html.slice(html.indexOf('data-testid="machine-prior-setup"'));
     expect(prior).not.toContain("device-no-longer-listed");
     expect(prior).toContain("Fixture Panel");
   });
 
-  it("names a RETIRED unit too, because that is what the record says", () => {
-    // The unit a historical setup names may well be out of service now.
-    // Naming it is still correct: the practitioner is reading history, not
-    // choosing a machine.
-    const retired = { ...DEVICE, retiredAt: "2026-10-01T00:00:00Z" };
+  it("a name resolved for a RETIRED unit renders like any other", () => {
+    // THE RETIRED CASE IS NOT PROVABLE HERE, and the previous version of this
+    // test pretended otherwise: it put a retired device into the `devices`
+    // prop and asserted the name appeared. In production `devices` comes from
+    // `listStudioMachines`, which excludes retired units in SQL, so that state
+    // could never occur - the fixture was creating something the loader cannot
+    // produce, which is the definition of a vacuous proof (Codex, 27061e88).
+    //
+    // What this file CAN prove is that the component does not care: a name is
+    // a name. That the name is actually RESOLVABLE for a retired unit is a
+    // database fact, proved in tests/db/machine-workflow-end-to-end against
+    // real SQL with the unit genuinely retired.
     const html = render({
       scope: SCOPE,
-      devices: [retired],
+      devices: [], // retired units are absent from the picker, as in production
       catalogue: CAT,
       priorSetup: [reading()],
+      priorUnitNames: { [DEVICE.deviceId]: "Room 9 unit" },
     });
     const prior = html.slice(html.indexOf('data-testid="machine-prior-setup"'));
-    expect(prior).toContain(DEVICE.displayName);
+    expect(prior).toContain("Room 9 unit");
   });
 });

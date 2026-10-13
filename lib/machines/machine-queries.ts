@@ -52,6 +52,17 @@ export type MachineDb = {
             n: number,
           ) => Promise<{ data: unknown; error: MachineDbError }>;
         };
+        // `in` is how a lookup names SPECIFIC units by id. Declared here
+        // because the slice is deliberately narrow: a query shape this type
+        // does not describe is one this module has no business performing.
+        in: (
+          column: string,
+          values: readonly string[],
+        ) => {
+          limit: (
+            n: number,
+          ) => Promise<{ data: unknown; error: MachineDbError }>;
+        };
       };
     };
   };
@@ -86,6 +97,64 @@ type MachineRow = {
  * retired unit cannot reach a picker by accident. Historical readings still
  * reference it by id and are unaffected.
  */
+export type MachineIdentity = {
+  deviceId: string;
+  displayName: string;
+  retiredAt: string | null;
+};
+
+/**
+ * Name specific units by id, INCLUDING retired ones.
+ *
+ * WHY THIS EXISTS SEPARATELY from `listStudioMachines`. That query excludes
+ * retired units in SQL, deliberately, "so a retired unit cannot reach a picker
+ * by accident" - and that guard is right. But it left the system unable to see
+ * a retired unit AT ALL outside the historical rows that reference it by id,
+ * which broke two things that both needed to name one:
+ *
+ *   - next-visit guidance fell back to the model name once the recorded unit
+ *     was retired, so "Room 1" became "Permanence GEMM-16" exactly when a
+ *     studio with two units most needed telling them apart;
+ *   - `resolveSelection`'s "was taken out of service" branch was UNREACHABLE
+ *     from the loader, because a retired remembered machine is not in the
+ *     device list at all - so it reported "no longer registered to this
+ *     studio", which says the unit does not exist when it does.
+ *
+ * Both are the same omission: a lookup by id is not a picker, and must not
+ * inherit the picker's filter. This one takes explicit ids and is still
+ * studio-scoped, so it can name a unit without ever offering one
+ * (Codex, 27061e88).
+ */
+export async function machinesByIds(
+  db: MachineDb,
+  studioId: string,
+  ids: readonly string[],
+): Promise<MachineOutcome<MachineIdentity[]>> {
+  if (ids.length === 0) return { ok: true, value: [] };
+  const { data, error } = await db
+    .from("studio_machines")
+    .select("id, display_name, retired_at")
+    .eq("studio_id", studioId)
+    .in("id", [...new Set(ids)])
+    .limit(200);
+  if (error) {
+    return { ok: false, error: fail(error, "Could not read machine names.") };
+  }
+  const rows = (data ?? []) as Array<{
+    id: string;
+    display_name: string;
+    retired_at: string | null;
+  }>;
+  return {
+    ok: true,
+    value: rows.map((r) => ({
+      deviceId: r.id,
+      displayName: r.display_name,
+      retiredAt: r.retired_at,
+    })),
+  };
+}
+
 export async function listStudioMachines(
   db: MachineDb,
   studioId: string,

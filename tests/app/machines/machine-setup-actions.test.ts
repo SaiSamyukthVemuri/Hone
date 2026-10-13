@@ -84,6 +84,7 @@ vi.mock("@/lib/supabase/server", () => ({
           eq: () => ({
             is: () => ({ order: result }),
             order: () => ({ limit: result }),
+            in: () => ({ limit: result }),
             maybeSingle: result,
             limit: result,
           }),
@@ -753,5 +754,30 @@ describe("an unreadable inventory does not accuse the stored machine", () => {
       ctx.remembered !== null || ctx.rememberedUnavailable !== null,
       "a stored selection must always be either usable or explained",
     ).toBe(true);
+  });
+});
+
+describe("a RETIRED remembered machine is named as retired, not as missing", () => {
+  it("says it was taken out of service, with its name", async () => {
+    // `resolveSelection`'s own retired branch cannot fire from the loader: a
+    // retired unit is absent from the device list it searches, so it reported
+    // "no longer registered to this studio" - saying the unit does not exist
+    // when it does. The loader now names it through machinesByIds, which has
+    // no retired filter, and corrects the wording (Codex, 27061e88).
+    signIn("studio-1", "pract-1");
+    DB.rowsFor.practitioners = [
+      { default_machine_id: "room-9", default_machine_mode: null },
+    ];
+    DB.rowsFor.studio_machines = [
+      { id: "room-9", display_name: "Room 9", retired_at: "2026-10-01T00:00:00Z" },
+    ];
+
+    const ctx = await actions.loadMachineSetupContext(ROUTE);
+
+    expect(ctx.rememberedUnavailable?.deviceId).toBe("room-9");
+    expect(ctx.rememberedUnavailable?.reason).toMatch(/out of service/i);
+    expect(ctx.rememberedUnavailable?.reason).toContain("Room 9");
+    // THE DEFECT: it must not claim the unit is gone from the studio.
+    expect(ctx.rememberedUnavailable?.reason).not.toMatch(/no longer registered/i);
   });
 });
