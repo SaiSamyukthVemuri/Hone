@@ -657,3 +657,36 @@ describe("searched area-code provenance", () => {
     expect((await adminQuery("select count(*)::int n from public.studio_sms_senders where studio_id = $1", [s.studioId])).rows[0].n).toBe(0);
   });
 });
+
+// Codex decision on #863: ONE strict normalizer. A same-endpoint inbound URL
+// with a valid Twilio connection override is adopted; an invalid fragment or
+// any change before the # is refused, before the claim.
+describe("connection-override fragments on adoption", () => {
+  const adoptWith = async (label: string, inboundUrl: string, statusUrl = `${ORIGIN}/api/twilio/message-status`) => {
+    const s = await seedStudio(label);
+    const number = await freshNumber("416");
+    const r = () => Math.floor(Math.random() * 16 ** 8).toString(16).padStart(8, "0");
+    const mg = `MG${r()}${r()}${r()}${r()}`;
+    const provider = new FakeSmsProvisioningProvider({
+      preOwnedNumbers: { [number]: "PN" + r() + r() + r() + r() },
+      accountServices: [{ sid: mg, numbers: [number], inboundUrl, statusUrl }],
+    });
+    return controls.runSenderAdoption(deps(provider), { studioId: s.studioId, actorUserId: s.userId, country: "CA", phoneNumber: number, messagingServiceSid: mg });
+  };
+
+  it("#rp=5xx on the same endpoint is adopted (and on the status callback too)", async () => {
+    expect(await adoptWith("ctl-frag-ok", `${ORIGIN}/api/twilio/inbound-sms#rp=5xx`)).toMatchObject({ ok: true, result: "adopted" });
+    expect(await adoptWith("ctl-frag-status", `${ORIGIN}/api/twilio/inbound-sms#rp=5xx&rc=2`, `${ORIGIN}/api/twilio/message-status#rp=all`)).toMatchObject({ ok: true, result: "adopted" });
+  });
+
+  it("an invalid or unknown fragment, or a changed query, is refused before any claim", async () => {
+    for (const [label, url] of [
+      ["ctl-frag-ct0", `${ORIGIN}/api/twilio/inbound-sms#ct=0`],
+      ["ctl-frag-unknown", `${ORIGIN}/api/twilio/inbound-sms#rp=5xx&foo=1`],
+      ["ctl-frag-query", `${ORIGIN}/api/twilio/inbound-sms?x=1#rp=5xx`],
+      ["ctl-frag-empty", `${ORIGIN}/api/twilio/inbound-sms#`],
+    ]) {
+      expect(await adoptWith(label, url), label).toEqual({ ok: false, result: "refused", reason: "service_webhooks_mismatch", uncertain: false });
+    }
+  });
+});

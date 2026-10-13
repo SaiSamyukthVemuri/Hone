@@ -11,6 +11,7 @@ import type {
   ProvisioningStore,
 } from "./provisioning";
 import { inboundReaches } from "./inbound-routing";
+import { sameTwilioWebhook } from "./webhook-base";
 
 // ===========================================================================
 // WILLOW ADOPTION — establish the 0191 lifecycle over an ALREADY-OWNED sender
@@ -353,7 +354,7 @@ export async function adoptExistingStudioSmsSender(
   if (inbound !== "yes") {
     mismatched.push("inbound_webhook");
   }
-  if (current.config.statusCallbackUrl !== input.requiredStatusCallbackUrl) {
+  if (!sameTwilioWebhook(current.config.statusCallbackUrl, input.requiredStatusCallbackUrl)) {
     mismatched.push("status_callback");
   }
   if (mismatched.length > 0) {
