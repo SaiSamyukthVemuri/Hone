@@ -24,29 +24,29 @@ not a PR diary — per-capability evidence lives in
 
 | Field | Value |
 |---|---|
-| **Reconciliation date** | **2026-10-14 UTC source sync** (CANON-REFRESH-2026-10-14, four merges after the 2026-10-13 sync, three of them runtime-bearing). The 2026-10-13, 2026-10-12 and 2026-09-21 syncs are preserved below as history. Production-data counts elsewhere retain their own older measurement dates. |
+| **Reconciliation date** | **2026-10-14 UTC source sync** (CANON-REFRESH-2026-10-14, five merges after the 2026-10-13 sync, four of them runtime-bearing). The 2026-10-13, 2026-10-12 and 2026-09-21 syncs are preserved below as history. Production-data counts elsewhere retain their own older measurement dates. |
 | **Production branch** | `claude/build-hone-saas-hOex7` |
-| **Current Git branch HEAD at this sync** | **`338014f45953cbdabb13e4603d81ee5844d57b1c` — merge of #776.** Re-read GitHub before any production action; this is a dated sync value, not a perpetual pointer. |
-| **Last runtime-bearing application HEAD at this sync** | **`338014f45953cbdabb13e4603d81ee5844d57b1c` (#776).** This is also the branch HEAD above. `git log --first-parent 6f7281bb..338014f4` returns **4** merges, classified by **A3's composed deployed predicate** (unchanged; see the 2026-09-21 record): `f5c87f93` (#877) is documentation-only (3 files, 0 application files) and does not move the runtime baseline; `d0118f75` (#869) changes **1** application file (`lib/analytics/client-boundary.ts`); `82a0e520` (#769) changes **5** application files under `app/(app)/settings/`; `338014f4` (#776) changes **5** application files under `app/(app)/clients/[id]/sessions/`. **None** of the four carries a migration. With this pin, A3's residue is **0** files. |
-| **Current Vercel Production deployment evidence** | **Source and runtime recorded separately.** Source: the branch HEAD above. Runtime: Vercel commit status for `338014f4…` is **success** ("Deployment has completed", `2026-10-14T02:14:53Z`, deployment `GRRSxjM8rK6zqxCJSkuz2UHWbCip`, read 2026-10-14). The two intermediate runtime merges also report **success**: `82a0e520` (#769) at `2026-10-14T01:48:48Z` (`EGXdJYey4ajRcEP1D46w2iM8jjzG`) and `d0118f75` (#869) at `2026-10-14T01:31:31Z` (`At3JpQw6RFLFR7SPa64ZZ62SVvSa`). No alias or current health measurement is inferred from those statuses. |
+| **Current Git branch HEAD at this sync** | **`ce133c18b8458e07b86c05301a5a38b92c9cb0be` — merge of #857.** Re-read GitHub before any production action; this is a dated sync value, not a perpetual pointer. |
+| **Last runtime-bearing application HEAD at this sync** | **`ce133c18b8458e07b86c05301a5a38b92c9cb0be` (#857).** This is also the branch HEAD above. `git log --first-parent 6f7281bb..ce133c18` returns **5** merges, classified by **A3's composed deployed predicate** (unchanged; see the 2026-09-21 record): `f5c87f93` (#877) is documentation-only (3 files, 0 application files) and does not move the runtime baseline; `d0118f75` (#869) changes **1** application file (`lib/analytics/client-boundary.ts`); `82a0e520` (#769) changes **5** application files under `app/(app)/settings/`; `338014f4` (#776) changes **5** application files under `app/(app)/clients/[id]/sessions/`; `ce133c18` (#857) changes **2** application files (`lib/stripe/setup-intent.ts`, `app/portal/payment-method-actions.ts`). **None** of the five carries a migration. With this pin, A3's residue is **0** files. |
+| **Current Vercel Production deployment evidence** | **Source and runtime recorded separately.** Source: the branch HEAD above. Runtime: Vercel commit status for `ce133c18…` is **success** ("Deployment has completed", `2026-10-14T03:31:02Z`, deployment `Ch9W23Q5LEpQj2QTt89TuiXGbEWC`, read 2026-10-14). The three intermediate runtime merges also report **success**: `338014f4` (#776) at `2026-10-14T02:14:53Z` (`GRRSxjM8rK6zqxCJSkuz2UHWbCip`), `82a0e520` (#769) at `2026-10-14T01:48:48Z` (`EGXdJYey4ajRcEP1D46w2iM8jjzG`) and `d0118f75` (#869) at `2026-10-14T01:31:31Z` (`At3JpQw6RFLFR7SPa64ZZ62SVvSa`). No alias or current health measurement is inferred from those statuses. |
 | **Migration state** | **This document deliberately states no migration number.** Hosted max is declared once, machine-readably, in [`migration-state.json`](./migration-state.json). Repository max, total applied and the next free number are **derived** — run `npm run migration:state`. The current reconciled position, with checksums and apply evidence, is [migration-ledger.md](./migration-ledger.md) under *Current state*. A number copied into this table is a number that goes stale on the next apply; that is how the `0160`/`0163`/`0165` divergence happened. |
 | **Database vs. application skew** | **This document asserts no parity, pending or remote-only claim of its own.** It previously declared the two states equal and the pending set empty, and went stale the moment a reviewed migration was authored above hosted — the same second-copy failure this table already avoids for migration NUMBERS. Derive the relationship with `npm run migration:state`; hosted state is declared once in [`migration-state.json`](./migration-state.json); the reconciled position with apply evidence is [migration-ledger.md](./migration-ledger.md) under *Current state*. **A repository maximum ABOVE hosted is the normal state of an authorized migration-first apply** — reviewed migration authored, production not yet advanced — and is not by itself skew. What would be skew is a **remote-only** migration (hosted above repo), which the derivation reports and the canonical guard forbids. |
 | **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
-| **Health** | **Status-code probe, 2026-10-14T02:40Z** (unauthenticated GET, redirects not followed): `hone.care` **200** · `/login` **200** · `/dashboard`, `/clients`, `/calendar` and `/api/health` **307 → /login**, all non-5xx. This is a reachability reading only. ⚠️ `ops_alerts` was **not** re-read at this sync. The **2026-10-13T16:20Z**, **2026-10-12T23:07Z** and **2026-08-23** probes are preserved as earlier dated readings. These are dated observations, not current health. |
+| **Health** | **Status-code probe, 2026-10-14T12:23Z** (unauthenticated GET, redirects not followed): `hone.care` **200** · `/login` **200** · `/dashboard`, `/clients`, `/calendar` and `/api/health` **307 → /login**, all non-5xx. This is a reachability reading only. ⚠️ `ops_alerts` was **not** re-read at this sync. The **2026-10-14T02:40Z** (at `338014f4`), **2026-10-13T16:20Z**, **2026-10-12T23:07Z** and **2026-08-23** probes are preserved as earlier dated readings. These are dated observations, not current health. |
 | **Tenant posture** | **Six studios in three classes — one real-customer, one controlled test, one synthetic, three empty.** Real-customer activity is **Willow Electrolysis only**. See **§0**, which is the canonical tenant register; do not restate its counts elsewhere. ⚠️ **Every tenant count in §0 was measured 2026-08-23 and was NOT re-measured on 2026-08-26** — see *What this reconciliation did and did not measure* below. |
 | **Next operational gate** | The **deep production / security / code audit** (still not performed against this baseline). **Chloe's human acceptance testing** remains outstanding and is **independent** — see §15. |
 
 ### Re-derived at this reconciliation
 
-**Re-derived on 2026-10-14 (CANON-REFRESH-2026-10-14), from the repository at `338014f4`:**
+**Re-derived on 2026-10-14 (CANON-REFRESH-2026-10-14), from the repository at `ce133c18`:**
 
-- the production branch head and the full merge ancestry back to `b9e0003f` (144 merges),
-  from `git rev-list --first-parent --merges --count b9e0003f..338014f4`;
-- the **4** merges since the 2026-10-13 pin `6f7281bb`: `f5c87f93` (#877, documentation-only),
-  `d0118f75` (#869), `82a0e520` (#769) and `338014f4` (#776), the last three runtime-bearing;
-  none carries a migration;
+- the production branch head and the full merge ancestry back to `b9e0003f` (145 merges),
+  from `git rev-list --first-parent --merges --count b9e0003f..ce133c18`;
+- the **5** merges since the 2026-10-13 pin `6f7281bb`: `f5c87f93` (#877, documentation-only),
+  `d0118f75` (#869), `82a0e520` (#769), `338014f4` (#776) and `ce133c18` (#857), the last four
+  runtime-bearing; none carries a migration;
 - repository and hosted migration state: **derived** with `npm run migration:state`
-  (unchanged by these four merges) and **declared** in
+  (unchanged by these five merges) and **declared** in
   [`migration-state.json`](./migration-state.json). This document states no number;
 - Vercel commit status and deployment id for each runtime merge, and a status-code probe of six
   public or protected routes (header row *Health*);
@@ -377,11 +377,11 @@ surfaces then made affirmative clinical statements nobody had read: *Last visit*
 Intelligence* reported every stat as a known zero, and *Before today* reported no watch or plan
 notes and a complete procedure record.
 
-At `338014f4` all four check `unavailable` **before** `hasHistory`, and
+At `ce133c18` all four check `unavailable` **before** `hasHistory`, and
 `session_blocks.caution_for_next_session` / `caution_note` — which reach the practitioner only
 through the Watch/Plan band built from that same read — are protected on both the Overview and
 Sessions tabs. Read failure now renders *clinical history could not be loaded*. **Re-run on
-2026-10-14 through `338014f4` (CANON-REFRESH-2026-10-14):** across `6f7281bb..338014f4` (4
+2026-10-14 through `ce133c18` (CANON-REFRESH-2026-10-14):** across `6f7281bb..ce133c18` (5
 merges), none of the five files named below changed; #776's changes sit under
 `app/(app)/clients/[id]/sessions/`, outside them. **Re-run on
 2026-10-13 through `6f7281bb` (CANON-REFRESH-2026-10-13):** across `d5efa20a..6f7281bb` (2
