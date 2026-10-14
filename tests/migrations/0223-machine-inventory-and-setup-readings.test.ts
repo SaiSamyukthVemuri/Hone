@@ -105,6 +105,22 @@ function codeWithoutWrapper(): string {
   return CODE.slice(0, at) + CODE.slice(end + 3);
 }
 
+/**
+ * One SQL statement, in one spelling.
+ *
+ * Collapses whitespace runs to a single space and removes it around `( ) , ;`
+ * so that `f(uuid, text)`, `f(uuid,text)` and a signature split across lines
+ * are all the same string. Applied to BOTH the source and the needle, or the
+ * normalisation would just move the mismatch.
+ */
+function squash(text: string): string {
+  return text.replace(/\s+/g, " ").replace(/\s*([(),;])\s*/g, "$1");
+}
+
+function escapeRe(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /** The body of one `create or replace function` in the migration. */
 function bodyOf(name: string): string {
   const at = CODE.indexOf(`create or replace function public.${name}`);
@@ -458,10 +474,25 @@ describe("0223 makes the commands the only write path", () => {
       // half the posture - what is granted BACK is the other half, and a
       // command the service role can call is a command that runs with no
       // tenant boundary at all.
+      // MATCHED AGAINST WHITESPACE-NORMALISED SOURCE, because the raw form is
+      // not the only legal spelling and I measured three variants rather than
+      // reasoning about them (DB/WAIT's cases at 595b803d, extended):
+      //
+      //   * a grant on the SAME LINE after another statement - already
+      //     caught, because this matcher is an unanchored substring search
+      //     rather than line-anchored;
+      //   * `grant  execute   on  function ...` with extra whitespace
+      //     between keywords - WAS MISSED;
+      //   * the signature REFORMATTED across lines - WAS MISSED.
+      //
+      // Both misses were silent: a grant to `public` in either spelling left
+      // the whole file green while handing the command to every role. Squash
+      // whitespace and collapse it around punctuation on BOTH the source and
+      // the needle, so every spelling of one statement is one string.
       const grants = [
-        ...CODE.matchAll(
+        ...squash(CODE).matchAll(
           new RegExp(
-            `grant execute on function ${sig.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} to (\\w+);`,
+            `${escapeRe(squash(`grant execute on function ${sig} to `))}(\\w+);`,
             "g",
           ),
         ),
@@ -470,6 +501,25 @@ describe("0223 makes the commands the only write path", () => {
         "authenticated",
       ]);
     }
+
+    // A BLANKET GRANT NAMES NO FUNCTION, so no per-signature check above can
+    // see it. `grant execute on all functions in schema public to anon;`
+    // hands every command in the schema to that role while every exact-set
+    // assertion stays green - measured, not reasoned, by the DB/WAIT lane at
+    // 595b803d.
+    //
+    // Pinned here for 0223 only. A SHARED helper for this
+    // (tests/migrations/helpers/grant-posture.ts) exists on that lane's
+    // branch and is not on this one, so adopting it is the right follow-up
+    // rather than something I can do now - and writing a second
+    // general-purpose grant parser instead would be exactly the duplication
+    // this repository keeps paying for.
+    expect(CODE, "0223 must grant no blanket function privilege").not.toMatch(
+      /grant\s+execute\s+on\s+all\s+functions/i,
+    );
+    expect(CODE).not.toMatch(/grant\s+all\s+on\s+all\s+functions/i);
+    // The table-level equivalent, for the same reason.
+    expect(CODE).not.toMatch(/grant\s+\w+\s+on\s+all\s+tables/i);
   });
 
   it("leaves the immutability trigger function callable by nobody", () => {

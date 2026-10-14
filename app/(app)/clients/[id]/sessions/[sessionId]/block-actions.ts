@@ -1063,9 +1063,42 @@ export type CreateAreaWithEntryInput = {
 // `create_block_with_entry` (migration 0166) now owns the block, its area rows
 // and the first entry in ONE transaction, so the application-side compensating
 // soft delete that used to follow a failed entry write is gone with it.
+/**
+ * The machine settings recorded WITH the treatment area, when there are any.
+ *
+ * OPTIONAL, AND THE OPTIONALITY IS THE POINT. An area saved with no machine
+ * settings is an ordinary state - she sets the area up and charts later - so
+ * this must never be required. When it IS present, the area and the settings
+ * are written by ONE command in ONE transaction: either both exist or neither
+ * does.
+ */
+export type InitialSetupInput = {
+  machineId: string;
+  modeKey: string;
+  /**
+   * The retry key for this save, minted ONCE by
+   * `lib/machines/pending-setup.ts` and reused by every retry of it. That is
+   * what makes a retry safe after a lost response: the database recognises
+   * the repeat and returns the original submission.
+   */
+  idempotencyKey: string;
+  groups: Array<{
+    groupKey: string;
+    channels: number[];
+    readings: Array<{
+      stageKey: string | null;
+      fieldKey: string;
+      value: { kind: "value"; value: number } | { kind: "absent"; reason: string };
+      nativeUnit: string;
+      decimals: number;
+      observationSource: string;
+    }>;
+  }>;
+};
+
 export async function createTreatmentAreaWithEntryAction(
-  input: CreateAreaWithEntryInput,
-): Promise<BlockResult> {
+  input: CreateAreaWithEntryInput & { initialSetup?: InitialSetupInput | null },
+): Promise<BlockResult & { setup?: unknown }> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot log sessions." };
@@ -1179,9 +1212,12 @@ export async function createTreatmentAreaWithEntryAction(
     (input.mode ?? null) as SessionMode | null,
     readings,
   );
-  const { data: createdRows, error: cmdErr } = await supabase.rpc(
-    "create_block_with_entry",
-    {
+  // THE BLOCK ARGUMENTS ARE BUILT ONCE, whichever command runs.
+  //
+  // Two call sites with their own copies of twenty-six arguments is how the
+  // settings path and the no-settings path would silently come to create
+  // DIFFERENT blocks. One object, two destinations.
+  const blockArgs = {
       p_session_id: input.sessionId,
       p_client_id: input.clientId,
       p_block: blockFields,
@@ -1225,13 +1261,63 @@ export async function createTreatmentAreaWithEntryAction(
       p_thermolysis_intensity_percent: readingCols.thermolysis_intensity_percent,
       p_thermolysis_duration_seconds: readingCols.thermolysis_duration_seconds,
       p_units_of_lye: readingCols.units_of_lye,
-    },
-  );
+  } as const;
+
+  // WHICH COMMAND, AND WHY IT IS A BRANCH RATHER THAN ALWAYS THE NEW ONE.
+  //
+  // `create_block_with_initial_setup` (0223) writes the area AND the settings
+  // in one transaction, which closes the window where the area commits and
+  // the settings do not - an area that silently has no machine settings while
+  // the practitioner believes she entered them.
+  //
+  // It is PENDING and UNEXECUTED. Routing every treatment-area creation
+  // through it would put the whole charting flow behind SQL no database has
+  // run; a twenty-six parameter forwarding wrapper is exactly the class where
+  // one wrong parameter name fails only at runtime. So the proven path stays
+  // the default and the new command is taken ONLY when there are settings to
+  // record with the area - which is the case it exists for, and the case that
+  // did not work at all before.
+  const withSetup =
+    input.initialSetup != null && input.initialSetup.groups.length > 0;
+
+  const { data: createdRows, error: cmdErr } = withSetup
+    ? await supabase.rpc("create_block_with_initial_setup", {
+        ...blockArgs,
+        p_studio_machine_id: input.initialSetup!.machineId,
+        p_setup_mode_key: input.initialSetup!.modeKey,
+        p_setup_idempotency_key: input.initialSetup!.idempotencyKey,
+        p_setup_groups: input.initialSetup!.groups.map((g) => ({
+          group_key: g.groupKey,
+          channels: g.channels,
+          readings: g.readings.map((r) => ({
+            stage_key: r.stageKey,
+            field_key: r.fieldKey,
+            // A STRING, so a recorded zero and the machine's own precision
+            // survive JSON - identical to the other two write paths, because
+            // it is the same rule and not a new one.
+            ...(r.value.kind === "value"
+              ? { value: String(r.value.value) }
+              : { absence_reason: r.value.reason }),
+            native_unit: r.nativeUnit,
+            decimals: r.decimals,
+            observation_source: r.observationSource,
+          })),
+        })),
+      })
+    : await supabase.rpc("create_block_with_entry", blockArgs);
   if (cmdErr) return { ok: false, error: mapBlockCommandError(cmdErr) };
 
-  const createdBlockId = Array.isArray(createdRows)
-    ? (createdRows[0] as { block_id?: string } | undefined)?.block_id
-    : (createdRows as { block_id?: string } | null)?.block_id;
+  // THE TWO COMMANDS RETURN DIFFERENT SHAPES, and both are read rather than
+  // one being assumed: `create_block_with_entry` returns a table, so PostgREST
+  // gives an array of rows; `create_block_with_initial_setup` returns a single
+  // jsonb object carrying the settings result as well.
+  const asRow = Array.isArray(createdRows)
+    ? (createdRows[0] as { block_id?: string } | undefined)
+    : (createdRows as { block_id?: string; setup?: unknown } | null);
+  const createdBlockId = asRow?.block_id;
+  const setupResult = Array.isArray(createdRows)
+    ? undefined
+    : (createdRows as { setup?: unknown } | null)?.setup;
   if (!createdBlockId) return { ok: false, error: GENERIC_BLOCK_COMMAND_ERROR };
 
   const { data: blockRow, error: blockReadErr } = await supabase
@@ -1250,7 +1336,10 @@ export async function createTreatmentAreaWithEntryAction(
   );
   revalidatePath(`/clients/${input.clientId}/sessions/${input.sessionId}`);
   revalidatePath(`/clients/${input.clientId}`);
-  return { ok: true, block: block as SessionBlock };
+  // `setup` is UNDEFINED on the proven path and null when the atomic command
+  // recorded nothing, which the caller must be able to tell apart from a
+  // submission result. It is passed through rather than interpreted here.
+  return { ok: true, block: block as SessionBlock, setup: setupResult };
 }
 
 export type UpdateAreaWithEntryInput = {
