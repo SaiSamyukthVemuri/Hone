@@ -396,3 +396,221 @@ describe("G1: the jump history does not survive a scope change", () => {
     ).not.toContain("practitionerId");
   });
 });
+
+describe("G1: every refusal is answered at the boundary that actually fires", () => {
+  // CODEX P2 4264946618, and the THIRD instance of one shape in this PR: a
+  // message added to the later result mapping while an earlier guard returns
+  // first, so the copy is dead exactly on the reachable path. It happened with
+  // practitioner_assignment_disabled, then with the pre-insert refusals, and
+  // then with no_practitioner_available.
+  //
+  // The pre-insert guard fires for a NEW CLIENT -- the reachable public surface
+  // -- because 0225 answers these before the resolve-or-create and they
+  // therefore carry a null client_id. So any code handled there must get its
+  // final copy THERE, not later.
+  it("gives no_practitioner_available the stale-slot copy at the EARLY boundary", () => {
+    const block = ACTIONS.slice(
+      ACTIONS.indexOf("public_booking_practitioner_refused_pre_insert"),
+      ACTIONS.indexOf("public_booking_client_not_resolved"),
+    );
+    expect(block, "expected the pre-insert refusal block").not.toBe("");
+    expect(
+      block,
+      "an ordinary stale-slot outcome must not reach the visitor as the " +
+        "generic error just because the early guard returned first",
+    ).toContain("PUBLIC_BOOKING_SLOT_TAKEN_ERROR");
+  });
+
+  it("keeps operator-visible states GENERIC, so copy does not describe the roster", () => {
+    // invalid_practitioner / not_eligible are configuration states a visitor
+    // cannot act on. Telling them apart in copy would leak which practitioners
+    // a studio has and how booked they are; the distinction stays in the log.
+    const block = ACTIONS.slice(
+      ACTIONS.indexOf("public_booking_practitioner_refused_pre_insert"),
+      ACTIONS.indexOf("public_booking_client_not_resolved"),
+    );
+    expect(block).toContain("PUBLIC_BOOKING_GENERIC_ERROR");
+    expect(block, "the refused code is still recorded for the operator").toContain(
+      "code: rawCommandResult",
+    );
+  });
+
+  it("uses ONE constant for the stale-slot sentence, not two copies", () => {
+    const code = ACTIONS.split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+    const inline = code.match(/"That time has just been taken/g) ?? [];
+    expect(
+      inline.length,
+      "the sentence must live in the constant only -- it is returned from two " +
+        "boundaries and two copies of one sentence is how they drift",
+    ).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Codex P1 4265558721 — "Any available" must consider the UNION of eligible
+// practitioners, in the grid AND in the submission re-verification.
+//
+// WHY THESE GUARDS EXIST AT ALL: the 22 assertions above all passed, unchanged,
+// against the broken code AND against the fix. They pin the SCOPED and REFUSED
+// paths; nothing in them looked at what "Any available" asks for. So the fix
+// shipped unprotected until this block, and the regression it invites is the
+// cheapest one in this whole lane -- delete one branch and the studio-wide
+// answer silently returns.
+// ---------------------------------------------------------------------------
+
+/** Comment-stripped source of one action: these guards assert about CODE, and
+ *  every comment in that code now DISCUSSES the studio-wide branch it removed. */
+function actionCode(name: string): string {
+  return actionSource(name)
+    .split("\n")
+    .filter((l) => !l.trim().startsWith("//"))
+    .join("\n");
+}
+
+describe('G1 / P1: "Any available" resolves against eligible practitioners', () => {
+  it("the grid takes a union branch when assignment is enabled", () => {
+    const code = actionCode("fetchPublicSlotsAction");
+    expect(code, "fetchPublicSlotsAction must exist").not.toBe("");
+    expect(
+      code.includes("practitioner_capacity_booking_enabled === true"),
+      "the grid must branch on the assignment switch: with it OFF the legacy " +
+        "studio-wide answer is still correct, with it ON that answer is wrong " +
+        "in both directions",
+    ).toBe(true);
+    expect(
+      code.includes("unionEligibleSlots"),
+      "an enabled studio with no practitioner chosen must ask the union, not " +
+        "the studio-wide question",
+    ).toBe(true);
+  });
+
+  it("the re-verification asks the SAME union as the grid", () => {
+    const code = actionCode("publicBookAppointmentAction");
+    expect(code, "publicBookAppointmentAction must exist").not.toBe("");
+    expect(
+      code.includes("unionEligibleSlots"),
+      "re-verifying studio-wide while the grid asked the union makes the " +
+        "action a SECOND availability authority that refuses slots the page " +
+        "offered and the command would have accepted -- the exact mismatch " +
+        "this lane exists to remove",
+    ).toBe(true);
+  });
+
+  it("the union is per-practitioner reads, never a widened conflict filter", () => {
+    // THE TEMPTING WRONG SHAPE. `.in("resource_key", ids)` reads like "all of
+    // them" and means the opposite: it collects EVERY listed practitioner's
+    // conflicts, which is more conflicts than any single one has -- the
+    // false-negative bug with extra steps.
+    const union = ACTIONS.slice(
+      ACTIONS.indexOf("async function unionEligibleSlots"),
+    ).slice(0, 2000);
+    expect(union, "unionEligibleSlots must exist").not.toBe("");
+    expect(
+      /\.in\(\s*["']resource_key["']/.test(union),
+      "a widened resource_key filter is intersection-of-busy, not union-of-free",
+    ).toBe(false);
+    expect(
+      union.includes("Promise.all"),
+      "the per-practitioner reads are independent and must not be serialised",
+    ).toBe(true);
+    expect(
+      union.includes("getAvailableSlots"),
+      "the union must REUSE the proven per-practitioner authority rather than " +
+        "reimplement availability",
+    ).toBe(true);
+  });
+
+  it("the horizon scan is NOT routed through the union", () => {
+    // BOOK-NEXT-FAST-01. fetchNextAvailableDateAction is ONE bulk read across
+    // the whole horizon; per-practitioner fan-out there multiplies the hot
+    // path. Codex's finding is about the single-day grid and the single-slot
+    // re-verification, and the fix is scoped to exactly those two.
+    const code = actionCode("fetchNextAvailableDateAction");
+    expect(code, "fetchNextAvailableDateAction must exist").not.toBe("");
+    expect(
+      code.includes("unionEligibleSlots"),
+      "unioning the horizon scan reintroduces the cost BOOK-NEXT-FAST-01 " +
+        "removed; if it is ever wanted it needs its own measurement",
+    ).toBe(false);
+  });
+
+  it("an enabled studio with nobody eligible refuses instead of lying", () => {
+    const code = actionCode("fetchPublicSlotsAction");
+    expect(
+      code.includes("public_slots_no_eligible_practitioner"),
+      "an empty eligible set must refuse: an empty GRID reads as 'fully " +
+        "booked' and a studio-wide grid offers times the command answers " +
+        "no_practitioner_available",
+    ).toBe(true);
+  });
+
+  // Codex P1 4265796478. The union is correct for the command a NEW client
+  // commits through (0225 -> 0222, practitioner-aware) and WRONG for the one an
+  // EXISTING client still commits through (the legacy studio-wide
+  // `create_public_appointment`). The first version of the union fix ignored
+  // that and so reintroduced the page/command mismatch one branch over: an
+  // existing client was offered a slot only practitioner B was free for, passed
+  // re-verification on the union, and had the legacy command refuse it.
+  it("the union is gated on the client type, in BOTH places", () => {
+    const grid = actionCode("fetchPublicSlotsAction");
+    expect(
+      /forNewClient\s*&&\s*studio\.practitioner_capacity_booking_enabled === true/.test(
+        grid,
+      ),
+      "the GRID must union only for the client type whose command is " +
+        "practitioner-aware",
+    ).toBe(true);
+
+    // PIN THE CONJUNCTION, NOT THE TOKEN. The first version of this guard
+    // tested `/clientType === "new"/` against the whole action and passed
+    // against a mutant that removed the gate from the re-verification --
+    // because that phrase occurs FOUR other times in this action (the
+    // admission gate, the consultation rule, the submitted-practitioner
+    // branch). A token that appears elsewhere cannot witness a condition
+    // here. The mutant run caught it; the three operands must be asserted
+    // together, as one condition.
+    const commit = actionCode("publicBookAppointmentAction");
+    expect(
+      /!chosenPractitionerId\s*&&\s*clientType === "new"\s*&&\s*studio\.practitioner_capacity_booking_enabled === true/.test(
+        commit,
+      ),
+      "the RE-VERIFICATION must gate the union on the same discriminator the " +
+        "commit uses, or it is more permissive than the command it hands to",
+    ).toBe(true);
+    expect(
+      commit.includes("unionEligibleSlots"),
+      "the re-verification must still ask the union on the new-client path",
+    ).toBe(true);
+  });
+
+  it("absent means legacy — the union is opt-in, never inferred", () => {
+    const grid = actionCode("fetchPublicSlotsAction");
+    expect(
+      grid.includes("params.newClient === true"),
+      "an omitted flag must get the STUDIO-WIDE answer: that is pre-G1 " +
+        "behaviour and the one the legacy command shares, so a caller that " +
+        "does not opt in cannot be handed the more permissive grid",
+    ).toBe(true);
+  });
+
+  it("a practitioner id outside the new-client path is refused, not scoped", () => {
+    const grid = actionCode("fetchPublicSlotsAction");
+    expect(
+      grid.includes("public_slots_practitioner_not_new_client"),
+      "the picker is new-client only, so a practitioner elsewhere is a call " +
+        "the UI cannot make; scoping it would offer a scoped grid for a " +
+        "booking the studio-wide command decides -- the same mismatch by " +
+        "another route",
+    ).toBe(true);
+  });
+
+  it("the form tells the action which command will commit", () => {
+    expect(
+      /newClient:\s*isNewClient/.test(FORM),
+      "without this the grid falls back to legacy for NEW clients too, " +
+        "silently undoing the union fix",
+    ).toBe(true);
+  });
+});

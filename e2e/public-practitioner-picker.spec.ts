@@ -552,3 +552,379 @@ test("history navigation does not survive a practitioner change", async ({ page 
       "navigate to a date this practitioner may have no availability on",
   ).toHaveCount(0);
 });
+
+test("a slot taken between render and submit is refused with actionable copy, and writes no client", async ({
+  page,
+}) => {
+  // CODEX P2 4264946618, proved on the path that actually reaches a visitor.
+  //
+  // `no_practitioner_available` is answered by 0225's PRE-INSERT guard, which
+  // returns before the later result mapping -- so the "just been taken"
+  // sentence I had added there was dead code for a new client, and the
+  // reachable surface showed the GENERIC error for an ordinary race. Third time
+  // in this PR that a message sat behind a guard that returns first, which is
+  // why this is proved through the rendered page and not by reading source.
+  //
+  // THE RACE IS ARRANGED, not waited for: the grid renders, a slot is chosen,
+  // THEN every eligible practitioner is occupied at that instant, and only then
+  // is the form submitted. That is precisely the window the message exists for.
+  await page.goto(`/book/${seed.slug}`);
+  await page.getByRole("button", { name: /new client/i }).first().click();
+  await page.getByLabel("Date").fill(bookDate);
+  await page.getByLabel("Service").selectOption(serviceId);
+
+  // "Any available" stays selected -- the DEFAULT interaction the finding is
+  // about.
+  await expect(page.getByTestId("practitioner-picker")).toHaveValue("");
+  await waitForGrid(page, bookDate);
+
+  // THE FIRST OFFERED SLOT IS NOT NECESSARILY FREE FOR A, and taking `.first()`
+  // on faith is what made this test red once "Any available" became a UNION.
+  //
+  // It had been passing for a reason it never stated. Before the union, the
+  // default grid asked a STUDIO-WIDE question, which under capacity ON collects
+  // every practitioner's conflicts -- so the earliest slot, already held by A
+  // and B from the parallel-booking test above, was HIDDEN, and `.first()`
+  // handed back a later time A happened to be free for. The union correctly
+  // offers that earliest slot again, because the OWNER is free then. The test
+  // then picked it, narrowed eligibility to A, and could not occupy A there:
+  // `create_public_appointment_v2` answered `time_unavailable`, because A was
+  // already booked at that instant.
+  //
+  // So the assumption, not the product, was wrong. State the requirement
+  // instead: this test needs a slot that is OFFERED by default AND free for A,
+  // because A is about to become the only eligible practitioner and must be
+  // occupiable. Nothing about the claim under test changes.
+  const slotButtons = page.getByRole("button", {
+    name: /^\d{1,2}:\d{2}\s*(AM|PM)$/i,
+  });
+  await expect(slotButtons.first()).toBeVisible({ timeout: 20_000 });
+  const offered = (await slotButtons.allTextContents()).map((t) => t.trim());
+  let slotLabel = "";
+  for (const label of offered) {
+    if ((await heldAt(A.practitionerId, label)) === 0) {
+      slotLabel = label;
+      break;
+    }
+  }
+  expect(
+    slotLabel,
+    "no offered slot is free for A, so A cannot be made the sole occupant",
+  ).toMatch(/^\d{1,2}:\d{2}\s*(AM|PM)$/i);
+  await page.getByRole("button", { name: slotLabel, exact: true }).click();
+
+  // CLOSE THE WINDOW, through the real command so the fixture cannot be more
+  // permissive than production. Each occupying booking gets its OWN client row:
+  // one client holding two appointments at one instant could trip a
+  // client-level rule and refuse for the wrong reason.
+  //
+  // Postgres parses "7:00 AM" directly, so the label needs no conversion --
+  // my first attempt invented a to24h() helper for a problem that does not
+  // exist.
+  //
+  // ONE ELIGIBLE PRACTITIONER, SO THE SCENARIO IS DETERMINISTIC. Two earlier
+  // attempts failed on fixture detail rather than on the product: the first
+  // occupied only A and B and the booking SUCCEEDED, because
+  // `services_default_eligibility_trg` pins the OWNER to every new service and
+  // the owner was eligible and free; the second derived the whole eligible set
+  // and could not occupy one of them at the chosen instant.
+  //
+  // Restricting eligibility to A needs exactly ONE occupancy and removes every
+  // unknown. Restored in `finally`, because this spec's fixture is shared and a
+  // later reader should not inherit a narrowed service.
+  const saved = await sql<{ practitioner_id: string }>(
+    `select practitioner_id from public.service_practitioners where service_id = $1`,
+    [serviceId],
+  );
+  try {
+    await sql(`delete from public.service_practitioners where service_id = $1`, [serviceId]);
+    await sql(
+      `insert into public.service_practitioners (studio_id, service_id, practitioner_id)
+       values ($1, $2, $3)`,
+      [seed.studioId, serviceId, A.practitionerId],
+    );
+
+    // Occupy A at the chosen instant, through the real command so the fixture
+    // cannot be more permissive than production. Postgres parses "7:00 AM"
+    // directly, so the label needs no conversion.
+    const occupant = await sql<{ id: string }>(
+      `insert into public.clients (studio_id, name, email)
+       values ($1, $2, $3) returning id`,
+      [seed.studioId, "SYNTH-FETT occupy A", `occupy-a-${seed.runId.slice(0, 6)}@synth.local`],
+    );
+    const r = await sql<{ result: string }>(
+      `select (public.create_public_appointment_v2(
+                 $1, $2, $3,
+                 (($4::text || ' ' || $5::text)::timestamp at time zone $6),
+                 $7, null, null, $8)).result as result`,
+      [
+        seed.studioId,
+        occupant[0]!.id,
+        serviceId,
+        bookDate,
+        slotLabel,
+        tz,
+        randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, ""),
+        A.practitionerId,
+      ],
+    );
+    expect(
+      r[0]?.result,
+      `the only eligible practitioner must actually be occupied at ${slotLabel}`,
+    ).toBe("created");
+
+    // THE PREMISE, asserted rather than assumed: the resolver must now find
+    // nobody. Without this the final expectation could pass for some unrelated
+    // reason, and two of my attempts at this test did exactly that.
+    const none = await sql<{ resolved: string | null }>(
+      `select public.resolve_public_any_available_practitioner(
+                $1, $2,
+                (($3::text || ' ' || $4::text)::timestamp at time zone $5),
+                (($3::text || ' ' || $4::text)::timestamp at time zone $5)
+                  + make_interval(mins => (select default_duration_minutes
+                                             from public.services where id = $2))
+              )::text as resolved`,
+      [seed.studioId, serviceId, bookDate, slotLabel, tz],
+    );
+    expect(
+      none[0]?.resolved,
+      "nobody eligible may be free, or the refusal under test cannot occur",
+    ).toBeNull();
+
+    await page.getByLabel("Your name").fill("SYNTH-FETT Stale Slot");
+    await page.locator('input[type="email"]').fill(`stale-${randomUUID().slice(0, 8)}@synth.local`);
+    await page.locator('input[type="tel"]').fill("+15555550199");
+    await page.getByRole("button", { name: /^book appointment$/i }).click();
+
+    // THE CLAIM, CORRECTED AFTER THREE FAILURES, and the correction is the
+    // finding rather than a concession.
+    //
+    // I expected "that time has just been taken" -- the command's
+    // `no_practitioner_available` copy. The page shows "That time is no longer
+    // available" instead, because the ACTION's own pre-commit slot
+    // re-verification (actions.ts:920) refuses FIRST: with no practitioner
+    // submitted it asks a studio-wide question, the instant is now occupied,
+    // and it never calls the command at all.
+    //
+    // So this scenario is ALREADY actionable for the visitor, and the generic
+    // error Codex found is NOT reachable from the new-client UI this way. The
+    // window where it IS reachable is between that re-verification and the
+    // command taking its locks -- sub-second, inside one server action, and not
+    // arrangeable from a browser. The mapping fix is still right (the
+    // existing-client path and any other caller reach it), and it is proved at
+    // command level in tests/db/public-any-available-eligibility plus a source
+    // guard that the EARLY boundary carries the copy.
+    //
+    // What this test therefore proves, honestly stated: a slot taken between
+    // render and submit is refused with copy the visitor can act on, and
+    // writes no client row. That is worth having, and it is not proof of the
+    // code path I set out to prove.
+    await expect(
+      page.getByText(/that time is no longer available/i),
+      "a stale-slot race must be refused with actionable copy, not the generic error",
+    ).toBeVisible({ timeout: 20_000 });
+
+    // AND NO ORPHAN: the refusal happened before the client was created.
+    const orphans = await sql<{ n: string }>(
+      `select count(*)::text as n from public.clients
+        where studio_id = $1 and name = $2`,
+      [seed.studioId, "SYNTH-FETT Stale Slot"],
+    );
+    expect(orphans[0].n, "a refused booking must write no client row").toBe("0");
+  } finally {
+    // RESTORE ONLY WHAT CAN BE RE-CREATED, and the exception is not a shortcut.
+    // A database guard refuses to "mark inactive practitioner … eligible for a
+    // service", so the saved row belonging to the deliberately-INACTIVE
+    // practitioner C cannot be re-inserted -- my first restore attempt failed
+    // on exactly that. Not restoring it changes nothing observable: every
+    // eligibility decision also requires `active`, so a row for an inactive
+    // practitioner cannot affect any outcome. Filtering is therefore faithful,
+    // where blanket re-insertion is impossible.
+    await sql(`delete from public.service_practitioners where service_id = $1`, [serviceId]);
+    for (const row of saved) {
+      const active = await sql<{ ok: boolean }>(
+        `select active as ok from public.practitioners where id = $1`,
+        [row.practitioner_id],
+      );
+      if (!active[0]?.ok) continue;
+      await sql(
+        `insert into public.service_practitioners (studio_id, service_id, practitioner_id)
+         values ($1, $2, $3) on conflict do nothing`,
+        [seed.studioId, serviceId, row.practitioner_id],
+      );
+    }
+  }
+});
+
+/** How many appointments one practitioner holds at a given slot LABEL on the
+ *  booking date. Deliberately keyed by label rather than by a count of all
+ *  rows: this file is serial and shared, so an absolute total couples a test to
+ *  everything that ran before it. */
+async function heldAt(practitionerId: string, label: string): Promise<number> {
+  const rows = await sql<{ n: string }>(
+    `select count(*)::text as n
+       from public.appointments
+      where studio_id = $1
+        and practitioner_id = $2
+        and to_char((starts_at at time zone $3), 'FMHH12:MI AM') = $4`,
+    [seed.studioId, practitionerId, tz, label],
+  );
+  return Number(rows[0].n);
+}
+
+/** Render the public grid for "Any available" — the DEFAULT choice, i.e. the
+ *  picker deliberately left alone — and return the visible slot labels. */
+async function anyAvailableLabels(page: Page): Promise<string[]> {
+  await page.goto(`/book/${seed.slug}`);
+  await page.getByRole("button", { name: /new client/i }).first().click();
+  await page.getByLabel("Date").fill(bookDate);
+  await page.getByLabel("Service").selectOption(serviceId);
+  // The picker is present (two eligible practitioners) and is NOT touched, so
+  // its value is "" — "Any available". Asserted, because a default that
+  // silently became a named practitioner would make every claim below vacuous.
+  await expect(page.getByTestId("practitioner-picker")).toHaveValue("");
+  await waitForGrid(page, bookDate);
+  const slots = page.getByRole("button", { name: /^\d{1,2}:\d{2}\s*(AM|PM)$/i });
+  await expect(slots.first()).toBeVisible({ timeout: 20_000 });
+  return (await slots.allTextContents()).map((t) => t.trim());
+}
+
+test('"Any available" offers a time only the OTHER practitioner is free for', async ({
+  page,
+}) => {
+  // CODEX P1 4265558721 — THE BEHAVIOURAL PROOF.
+  //
+  // "Any available" passed NULL, and getAvailableSlots derives capacityOn from
+  // `flag && practitionerId != null`, so NULL took the STUDIO-WIDE branch. Under
+  // capacity ON that branch is wrong in both directions; this proves the
+  // false-negative half, which is the one a visitor actually loses bookings to:
+  //
+  //   capacity ON fans a studio-wide closure out to one reservation row PER
+  //   practitioner, so the studio-wide reservation filter (.eq("studio_id", …))
+  //   collects EVERY practitioner's conflicts. One practitioner booked at a
+  //   time therefore HID that time from the default grid while another eligible
+  //   practitioner was free for it.
+  //
+  // THE CONTROL IS INSIDE THIS TEST, in step 4. "The slot is still offered"
+  // alone would also pass on a grid that had simply stopped filtering
+  // conflicts, which is a worse bug than the one being fixed. So the same label
+  // must DISAPPEAR once BOTH eligible practitioners hold it. Present-then-absent
+  // is a union; present-then-present is no filter at all.
+  //
+  // Self-contained by construction: it discovers its own slot and books both
+  // halves through the real page, so it does not depend on what earlier tests
+  // in this serial file left behind, and it inserts no appointment rows
+  // directly — a direct INSERT would skip the shadow-reservation writers and
+  // the grid would never see the conflict at all.
+
+  // THE ELIGIBLE SET IS DERIVED, NOT ASSUMED — and assuming it is how the
+  // first version of this test was wrong. It booked A and B and expected the
+  // slot to vanish, but 0134 carries TWO auto-eligibility triggers
+  // (`default_eligibility_for_service` at service insert,
+  // `default_eligibility_for_practitioner` at practitioner insert), so this
+  // studio's eligible set is the OWNER **plus** A and B. The owner would still
+  // have been free, the slot would still have been offered, and the control
+  // would have failed while the code was right.
+  const eligible = await sql<{ id: string; display_name: string }>(
+    `select p.id, p.display_name
+       from public.practitioners p
+      where p.studio_id = $1
+        and p.active = true
+        and p.role in ('owner', 'practitioner')
+        and (
+          not exists (
+            select 1 from public.service_practitioners sp
+             where sp.service_id = $2
+          )
+          or exists (
+            select 1 from public.service_practitioners sp
+             where sp.service_id = $2 and sp.practitioner_id = p.id
+          )
+        )
+      order by p.display_name`,
+    [seed.studioId, serviceId],
+  );
+  expect(
+    eligible.length,
+    "the union claim needs at least two eligible practitioners",
+  ).toBeGreaterThanOrEqual(2);
+
+  // 1. Discover a slot EVERY eligible practitioner is free for, taken from the
+  //    END of the day so it cannot collide with the earliest-slot bookings the
+  //    earlier tests in this serial file make.
+  await page.goto(`/book/${seed.slug}`);
+  await page.getByRole("button", { name: /new client/i }).first().click();
+  await page.getByLabel("Date").fill(bookDate);
+  await page.getByLabel("Service").selectOption(serviceId);
+  await page
+    .getByTestId("practitioner-picker")
+    .selectOption({ label: eligible[0].display_name });
+  await waitForGrid(page, bookDate);
+  const firstSlots = page.getByRole("button", {
+    name: /^\d{1,2}:\d{2}\s*(AM|PM)$/i,
+  });
+  await expect(firstSlots.first()).toBeVisible({ timeout: 20_000 });
+  const target = (await firstSlots.last().textContent())?.trim() ?? "";
+  expect(target, "no slot label was discoverable").toMatch(
+    /^\d{1,2}:\d{2}\s*(AM|PM)$/i,
+  );
+  for (const e of eligible) {
+    expect(
+      await heldAt(e.id, target),
+      `${e.display_name} must start free at the target instant`,
+    ).toBe(0);
+  }
+
+  // 2. Book the FIRST eligible there, through the real page and real command.
+  await bookPublicly(page, newClientIdentity(seed.runId, "AnyAvail0"), {
+    practitionerName: eligible[0].display_name,
+    slotLabel: target,
+  });
+  await expect
+    .poll(() => heldAt(eligible[0].id, target), { timeout: 20_000 })
+    .toBe(1);
+  expect(
+    await heldAt(eligible[1].id, target),
+    "a second eligible practitioner must still be free, or this proves nothing",
+  ).toBe(0);
+
+  // 3. THE FINDING. One is busy, the others are free, nobody is chosen ->
+  //    the time must STILL be offered.
+  const withOneBusy = await anyAvailableLabels(page);
+  expect(
+    withOneBusy.length,
+    "the default grid must be non-empty, or the assertion below is vacuous",
+  ).toBeGreaterThan(0);
+  expect(
+    withOneBusy,
+    'one practitioner being booked must not remove the time from "Any available" ' +
+      "while another eligible practitioner is free for it",
+  ).toContain(target);
+
+  // 4. THE CONTROL. Book EVERY remaining eligible practitioner at the same
+  //    instant. Now nobody eligible is free, so the union must drop it. This is
+  //    what separates a union from a grid that stopped checking conflicts: a
+  //    present-then-present result would mean the filter is simply gone, which
+  //    is a worse defect than the one being fixed.
+  for (let i = 1; i < eligible.length; i++) {
+    await bookPublicly(page, newClientIdentity(seed.runId, `AnyAvail${i}`), {
+      practitionerName: eligible[i].display_name,
+      slotLabel: target,
+    });
+    await expect
+      .poll(() => heldAt(eligible[i].id, target), { timeout: 20_000 })
+      .toBe(1);
+  }
+
+  const withAllBusy = await anyAvailableLabels(page);
+  expect(
+    withAllBusy.length,
+    "still non-empty: the day has other times, so an empty grid would mean " +
+      "something unrelated broke",
+  ).toBeGreaterThan(0);
+  expect(
+    withAllBusy,
+    "with EVERY eligible practitioner booked the time must disappear -- if it " +
+      "survives here the grid is not unioning, it is not filtering",
+  ).not.toContain(target);
+});
