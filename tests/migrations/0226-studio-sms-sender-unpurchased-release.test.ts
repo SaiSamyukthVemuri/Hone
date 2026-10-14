@@ -12,7 +12,9 @@ const VERSION = "0226";
 const MIGRATIONS = path.join(process.cwd(), "supabase/migrations");
 const read = (f: string) => readFileSync(path.join(MIGRATIONS, f), "utf8");
 const SQL = read("0226_studio_sms_sender_unpurchased_release.sql");
-const CODE = SQL.replace(/^\s*--.*$/gm, " ").replace(/\s+--.*$/gm, " ");
+// Block comments first, then line comments: a commented-out statement of
+// either kind is neither counted nor able to hide a real one.
+const CODE = SQL.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*--.*$/gm, " ").replace(/\s+--.*$/gm, " ");
 const TOP_LEVEL = CODE.replace(/\$\$[\s\S]*?\$\$/g, " ");
 const FNS = [
   ["get_releasable_studio_sms_claim", "uuid, uuid"],
