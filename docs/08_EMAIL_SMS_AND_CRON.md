@@ -406,6 +406,42 @@ to the prospect.
 - **No catch-up.** Leads saved before 0213, or written any other way, have no alert and
   never generate email.
 
+### Studio number controls (SMS-SENDER-CONTROL-01, #824) — fake provider only
+
+Settings → Integrations can show an owner **Set up a studio number** panel:
+- **Find numbers:** search CA or US candidates by area code.
+- **Use this number:** provision the chosen number. This runs `provisionStudioSmsSender`, so it goes through the 0191 claim, fence, purchase, finalize and test.
+- **Adopt an existing number:** a support-assisted path through `adoptExistingStudioSmsSender`.
+
+**The gate.** The panel and every action open **only** when `HONE_SMS_SENDER_CONTROLS=fake` on an unhosted run (no `VERCEL_ENV`) or Vercel `development`. They stay shut on every hosted Vercel environment, including previews, which run against the production database, and in either of these cases:
+- in production (`VERCEL_ENV=production`), where the resolver would hand back the fake and could write a fake sender into production data;
+- whenever live provisioning is armed (`HONE_SMS_PROVISIONING_LIVE` plus credentials), where a click could buy a number.
+
+**The provider.** The actions pass the controls' own **fake** provider explicitly and never resolve one, so nothing is bought, registered or sent. That fake is seeded with a synthetic demo account inventory (`lib/sms/sender-controls-demo.ts`): +14165550142 (CA) and +12125550142 (US) in one demo messaging service, so adoption can succeed. Search never offers those numbers and purchase never buys them.
+
+**One webhook base.** Every Twilio webhook URL Hone configures (provisioning) or requires (adoption) is built by `lib/sms/webhook-base.ts`: `TWILIO_WEBHOOK_BASE_URL` when set, else the app origin. The signature-verifying routes (`/api/twilio/inbound-sms`, `/api/twilio/message-status`) rebuild the signed URL through the same module. A configured URL therefore always verifies, and parity tests pin this.
+
+**Release and choose again (migration 0226).** The panel offers "Choose a different number" when the sender is in `error`. The release proceeds only for a claim that provably owns nothing:
+- `get_releasable_studio_sms_claim` requires an owner actor, `error`, no recorded number, number SID, service SID or `provisioned_at`, and a last error of `number_no_longer_available`, `provider_resource_mismatch` or `finalize_conflict`;
+- the provider's read-only `lookupResourcesByClaim` must find nothing under the claim key;
+- `release_unpurchased_studio_sms_claim` then re-checks everything, compare-and-set on the sender and key, and goes error -> releasing -> released.
+
+A timeout, network or unavailable failure is never releasable; only a retry, which reconciles first, may continue it.
+
+Before any claim, a number or service recorded on any row other than the studio's own live attempt is refused (`studio_sms_resource_recorded`). That includes the studio's RELEASED history, which 0191's uniqueness still covers. A stale search result therefore does not wedge setup. The reservation itself is atomic: a unique index on the claimed number across live rows makes the second concurrent claimer `not_claimable` before any provider work. Each studio's demo account is its own: numbers from the 555-0150..0199 range (search offers 0100..0149) and its own service.
+
+**Connection-override fragments.** Twilio lets a webhook URL carry connection overrides after `#` (for example `#rp=5xx`), and leaves the fragment out of the request and the signature. One strict validator, `normalizeTwilioWebhookUrl` in `lib/sms/webhook-base.ts`, is shared with the STOP preflight. A fragment is recognised only when it is entirely documented overrides with valid values: `ct` 100–10000, `rt` and `tt` 100–15000, `rc` 0–5, `rp` from 4xx, 5xx, ct, rt and all, `sni` y or n, `e` documented edges, each key once. Anything else is refused, never stripped, and everything before `#` is compared exactly. A recognised override is not evidence of STOP redelivery: account Webhook Rules take precedence (`effectiveConnectionSettings`).
+
+**Effective inbound route.** Adoption compares where inbound texts, STOP included, ACTUALLY go (`lib/sms/inbound-routing.ts`). Per Twilio's Services resource documentation (checked 2026-10-12), with `use_inbound_webhook_on_number` on, the number's own `sms_url` overrides the service's `inbound_request_url`. With it off and `inbound_request_url` null, inbound is disabled. `readMessagingServiceConfig` reports the flag, and an unreported flag is `null`. `lookupOwnedNumber` reports the number's `sms_url` from the record it already reads. The number's `sms_method` must be POST, and a populated `sms_application_sid` (which makes Twilio ignore the number's URLs) is refused. The service's `inbound_method` must be POST too. An unreported flag, URL, method or application is UNKNOWN: a blocker, refused before the claim as `inbound_routing_unknown` (uncertain), never treated as false.
+
+**Adoption is checked before the claim.** The provider's read-only ownership lookup and messaging-service config read run BEFORE the durable claim. A number the account does not own, a number in another or no service, or a service not wired to Hone's webhooks is refused with nothing written (`uncertain: false`). An incomplete or failed provider answer is refused as `uncertain: true`, to retry later. Without this, a typo would claim a write-once number (0191), park it in `error`, and wedge the studio's setup. Only a submission that passes reaches the claim. A later failure there (for example its proof text) is reported as failed and never as active.
+
+**The country.** A number, or area code, that does not belong to the selected country is refused before any claim (`number_country_mismatch`). With no area code, the fake proposes the country's own numbers.
+
+**Authority.**
+- The database's claim re-derives the owner from the actor user id.
+- Live provisioning, number purchase, US registration submission and WAIT routing (#716, held) are separate owner-approved decisions.
+
 ### SMS RPC grants hardened (PR #141 / migration 0062)
 
 `claim_sms_send` and related SMS RPCs are `revoke from public, anon, authenticated; grant to service_role only`. The action layer always invokes via `createAdminClient()`. Audit grep on every caller is part of the PR template's security checklist.

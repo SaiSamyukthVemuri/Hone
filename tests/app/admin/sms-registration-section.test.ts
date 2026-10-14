@@ -116,3 +116,35 @@ describe("parseLiveRegistrationState", () => {
     expect(parseLiveRegistrationState({ senders: "x" }, STUDIO)).toEqual({ ok: false });
   });
 });
+
+describe("approved means COMPLETE for this number (Codex P2 4253281361)", () => {
+  it("the form and its guidance say so", () => {
+    const html = render({ ok: true, senders: [SENDER], registrations: [] });
+    expect(html).toMatch(/approved: COMPLETE for this number \(brand, campaign and the number registered\)/);
+    expect(html).toMatch(/pending: anything not yet complete, including this number(&#x27;|')s own registration/);
+    expect(html).toMatch(/only when registration is complete for this exact number/);
+  });
+});
+
+describe("a replacement sender gets a fresh form (Codex P2 4253596170)", () => {
+  // The repo's unit tests run without a DOM; React's documented key semantics
+  // (a changed key remounts) do the reset, and this pins that the key exists.
+  it("a new sender or number is a new form component; a new record VERSION resets the fields but keeps the action result", async () => {
+    const { readFileSync } = await import("node:fs");
+    const section = readFileSync("app/admin/studios/[id]/SmsRegistrationSection.tsx", "utf8");
+    const form = readFileSync("app/admin/studios/[id]/SmsRegistrationForm.tsx", "utf8");
+    // The component (which owns useActionState) is keyed by sender and number only.
+    expect(section).toMatch(/<SmsRegistrationForm\s+(\/\/[^\n]*\n\s*)*key=\{`\$\{sender\.id\}:\$\{sender\.phone_number\}`\}/);
+    expect(section).not.toMatch(/key=\{`[^`]*updated_at/);
+    // The record version keys the <form> element inside it (Codex P2 4266543216) ...
+    expect(form).toMatch(/<form\s+key=\{current\?\.updated_at \?\? "none"\}\s+action=\{formAction\}/);
+    // ... and the result is rendered OUTSIDE that element, by the component
+    // that holds the state, so a refresh never discards it (Codex P2 4266641804).
+    const formEnd = form.indexOf("</form>");
+    const result = form.indexOf('data-testid="admin-sms-registration-result"');
+    expect(formEnd).toBeGreaterThan(0);
+    expect(result).toBeGreaterThan(formEnd);
+    expect(form.indexOf("useActionState")).toBeLessThan(form.indexOf("<form"));
+  });
+
+});

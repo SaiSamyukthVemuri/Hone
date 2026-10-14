@@ -14,6 +14,7 @@ import {
   readClientSuppressionCandidates,
   readProspectSuppressionCandidates,
 } from "@/lib/sms/suppression-candidates";
+import { canonicalTwilioSignedUrl } from "@/lib/sms/webhook-base";
 
 // Twilio inbound SMS webhook (PR Twilio v1).
 //
@@ -138,11 +139,8 @@ export async function POST(req: Request): Promise<Response> {
   // Vercel may be the internal deployment hostname, which would fail
   // validation. Operators set TWILIO_WEBHOOK_BASE_URL=https://hone.care
   // to make this deterministic.
-  const requestUrlParsed = new URL(req.url);
-  const baseOverride = process.env.TWILIO_WEBHOOK_BASE_URL;
-  const signedUrl = baseOverride
-    ? `${baseOverride.replace(/\/+$/, "")}${requestUrlParsed.pathname}${requestUrlParsed.search}`
-    : req.url;
+  // ONE rule, shared with every URL Hone configures (lib/sms/webhook-base.ts).
+  const signedUrl = canonicalTwilioSignedUrl(req.url);
 
   const validSignature = validateTwilioFormRequest({
     authToken,

@@ -56,7 +56,8 @@ describe("the number decides which registration matters", () => {
     };
     const evidence = registrationEvidenceFor(read(row("us_10dlc", "approved", null, CA)), CA);
     expect(destinationReadiness("US", sender, evidence).state).toBe("active");
-    expect(destinationReadiness("CA", sender, { state: "not_recorded" }).state).toBe("active");
+    // ...but it is NOT an eligible Canadian A2P route (Codex P2 4253590276).
+    expect(destinationReadiness("CA", sender, { state: "not_recorded" }).state).toBe("requires_information");
   });
 
   it("a row for ANOTHER number says nothing about this one (Codex P2 4244484021)", () => {

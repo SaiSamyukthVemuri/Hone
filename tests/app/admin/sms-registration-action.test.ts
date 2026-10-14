@@ -63,11 +63,26 @@ describe("recordSmsRegistrationFormAction", () => {
       p_status: "approved",
       p_missing: null,
       p_provider_reference: null,
+      p_expected_updated_at: null,
     });
+  });
+
+  it("passes back the version of the record the form showed, exactly as given (Codex P2 4266275222)", async () => {
+    rpc.mockResolvedValue({ data: [{ result: "recorded", registration_id: "r", kind: "us_10dlc" }], error: null });
+    const shown = "2026-10-14T03:12:45.123456+00:00";
+    await recordSmsRegistrationFormAction(STUDIO, null, form({ ...valid, expected_updated_at: shown }));
+    expect(rpc).toHaveBeenCalledWith("record_studio_sms_sender_registration", expect.objectContaining({ p_expected_updated_at: shown }));
+  });
+
+  it("a malformed version is refused before the command, and audited", async () => {
+    const out = await recordSmsRegistrationFormAction(STUDIO, null, form({ ...valid, expected_updated_at: "yesterday-ish" }));
+    expect(out).toMatchObject({ ok: false, result: "invalid_input" });
+    expect(rpc).not.toHaveBeenCalled();
   });
 
   it.each([
     ["sender_changed", /number changed after this page loaded/],
+    ["stale_record", /changed after this page loaded\. Nothing was recorded; reload/],
     ["sender_has_no_number", /no number yet/],
     ["no_live_sender", /no live SMS sender/],
   ])("the command's %s comes back as an error message, not a throw", async (result, message) => {
@@ -164,5 +179,37 @@ describe("recordSmsRegistrationFormAction", () => {
     // One logAdminAction call, and it is the helper's; every path above calls the helper.
     expect(fn.match(/logAdminAction\(/g)).toHaveLength(1);
     expect(fn).toMatch(/const audit = \(outcome[^)]*\) =>\s+logAdminAction\(/);
+  });
+
+  // Codex P2 4253770080: each audit event says WHAT happened, codes and ids only.
+  it("audit metadata distinguishes a write (with the status it replaced), each refusal, and an unknown outcome", async () => {
+    const meta = () => audit.calls[audit.calls.length - 1].metadata as Record<string, unknown>;
+    rpc.mockResolvedValue({ data: [{ result: "recorded", registration_id: "r", kind: "us_10dlc", previous_status: "approved" }], error: null });
+    await recordSmsRegistrationFormAction(STUDIO, null, form({ ...valid, status: "suspended", provider_reference: "CMsecretRef1" }));
+    expect(meta()).toEqual({ result: "recorded", sender_id: SENDER, submitted_status: "suspended", registration_kind: "us_10dlc", previous_status: "approved" });
+    expect(audit.calls[audit.calls.length - 1].outcome).toBe("succeeded");
+
+    rpc.mockResolvedValue({ data: [{ result: "recorded", registration_id: "r", kind: "us_10dlc", previous_status: null }], error: null });
+    await recordSmsRegistrationFormAction(STUDIO, null, form(valid));
+    expect(meta()).toMatchObject({ result: "recorded", previous_status: "none" });
+
+    rpc.mockResolvedValue({ data: [{ result: "sender_changed", registration_id: null, kind: null, previous_status: null }], error: null });
+    await recordSmsRegistrationFormAction(STUDIO, null, form(valid));
+    expect(meta()).toMatchObject({ result: "sender_changed", sender_id: SENDER, submitted_status: "approved" });
+    expect(audit.calls[audit.calls.length - 1].outcome).toBe("failed");
+
+    await recordSmsRegistrationFormAction(STUDIO, null, form({ ...valid, status: "delivered" }));
+    expect(meta()).toMatchObject({ result: "invalid_input", submitted_status: "delivered" });
+
+    for (const lost of [() => rpc.mockRejectedValue(new Error("x")), () => rpc.mockResolvedValue({ data: null, error: { message: "x" } })]) {
+      rpc.mockReset();
+      lost();
+      await recordSmsRegistrationFormAction(STUDIO, null, form(valid));
+      expect(meta()).toMatchObject({ result: "outcome_unknown" });
+      expect(audit.calls[audit.calls.length - 1].outcome).toBe("failed");
+    }
+    // Never the provider reference, a number, or free text.
+    const all = JSON.stringify(audit.calls.map((c) => c.metadata));
+    expect(all).not.toMatch(/CMsecretRef1|\+1212|missing_information/);
   });
 });

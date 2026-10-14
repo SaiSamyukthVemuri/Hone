@@ -17,14 +17,16 @@ const read = (f: string) => readFileSync(path.join(MIGRATIONS, f), "utf8");
 const SQL = read("0217_studio_sms_sender_registrations.sql");
 const CODE = SQL.replace(/^\s*--.*$/gm, " ").replace(/\s+--.*$/gm, " ");
 const TOP_LEVEL = CODE.replace(/\$\$[\s\S]*?\$\$/g, " ");
-const SIG = "public.record_studio_sms_sender_registration(uuid, uuid, text, text, text, text)";
+const SIG = "public.record_studio_sms_sender_registration(uuid, uuid, text, text, text, text, timestamptz)";
 
 describe("0217 in the sequence", () => {
-  it("is the repository maximum on this branch, allocated once", () => {
-    expect(isRepoMax(VERSION)).toBe(false); // INTEGRATION handoff — see note below
-    const above = versionsAbove(VERSION);
-    expect(above.length, "nothing sits above 0217").toBeGreaterThan(0);
-    expect(above.every((v) => Number(v) > Number(VERSION))).toBe(true);
+  // isRepoMax HANDOFF (CLAUDE.md §2): on #863's branch 0226 sits above 0217,
+  // so the max assertion moves to 0226's test and this keeps the derived
+  // tripwire older migrations use: something is above, all of it greater.
+  it("is allocated once, and everything above it is a later migration", () => {
+    expect(isRepoMax(VERSION)).toBe(false);
+    expect(versionsAbove(VERSION).length).toBeGreaterThan(0);
+    for (const v of versionsAbove(VERSION)) expect(v > VERSION, v).toBe(true);
     expect(countVersion(VERSION)).toBe(1);
   });
 
@@ -62,8 +64,19 @@ describe("blast radius", () => {
     // only in the null check and the comparison.
     expect(fn).toMatch(/values\s+\(p_studio_id, v_live\[1\], v_phones\[1\], v_kind/);
     expect(fn.match(/p_expected_sender_id/g)).toHaveLength(3);
-    expect(CODE).toMatch(/where s\.studio_id = p_studio_id\s+and s\.status <> 'released'\s+for share/);
+    expect(CODE).toMatch(/where s\.studio_id = p_studio_id\s+and s\.status <> 'released'\s+for update\) l;/);
     expect(CODE).toMatch(/security definer\s+set search_path = pg_catalog, pg_temp/);
+  });
+
+  it("a write replaces only the record its form showed, checked after the sender lock and before the upsert (Codex P2 4266275222)", () => {
+    const body = CODE.slice(CODE.indexOf("create or replace function public.record_studio_sms_sender_registration("));
+    const fn = body.slice(0, body.indexOf("$$;", body.indexOf("as $$") + 5));
+    const lock = fn.indexOf("for update) l;");
+    const check = fn.search(/if \(v_exists and p_expected_updated_at is distinct from v_prev_at\)\s+or \(not v_exists and p_expected_updated_at is not null\) then\s+return query select 'stale_record'/);
+    const upsert = fn.indexOf("insert into public.studio_sms_sender_registrations");
+    expect(lock).toBeGreaterThan(0);
+    expect(check).toBeGreaterThan(lock);
+    expect(upsert).toBeGreaterThan(check);
   });
 });
 
@@ -98,7 +111,9 @@ describe("privileges", () => {
   });
 
   it("the writer is compare-and-set on the expected sender, with the sender row locked", () => {
-    expect(CODE).toMatch(/for share\) l;/);
+    // Serialized: concurrent record writes take turns (Codex P2 on #844).
+    expect(CODE).toMatch(/for update\) l;/);
+    expect(CODE).not.toMatch(/for share\) l;/);
     expect(CODE).toMatch(/if v_live\[1\] <> p_expected_sender_id then\s+return query select 'sender_changed'/);
   });
 
@@ -115,5 +130,16 @@ describe("privileges", () => {
     const lists = [...CODE.matchAll(/'\^\\\+1\(([0-9|]+)\)'/g)].map((m) => m[1].split("|").sort());
     expect(lists).toHaveLength(2);
     for (const l of lists) expect(l).toEqual([...TOLL_FREE_AREA_CODES].sort());
+  });
+});
+
+describe("the record is what was submitted (Codex P2 4253653241, 4253770080)", () => {
+  it("the provider reference is stored as submitted, never coalesced with the old one", () => {
+    expect(CODE).toMatch(/provider_reference\s+= excluded\.provider_reference,/);
+    expect(CODE).not.toMatch(/coalesce\(excluded\.provider_reference/);
+  });
+
+  it("the command returns the status it replaced, for the audit trail", () => {
+    expect(CODE).toMatch(/returns table \(result text, registration_id uuid, kind text, previous_status text\)/);
   });
 });

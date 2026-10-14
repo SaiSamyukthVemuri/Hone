@@ -62,16 +62,29 @@ const record = async (
   status: string,
   missing: string | null = null,
   reference: string | null = null,
-  expected?: { sender?: string | null; phone?: string | null },
+  expected?: { sender?: string | null; phone?: string | null; updatedAt?: string | null },
 ) => {
   const live = await liveSender(studioId);
   const sender = expected && "sender" in expected ? expected.sender : (live?.id ?? NO_SENDER);
   const shown = expected && "phone" in expected ? expected.phone : (live?.phone ?? NO_PHONE);
+  // By default a FRESH form: it shows the record as it is now (or none).
+  const version = expected && "updatedAt" in expected ? expected.updatedAt : await shownVersion(studioId, sender, shown);
   return (await adminQuery(
-    "select * from public.record_studio_sms_sender_registration($1, $2, $3, $4, $5, $6)",
-    [studioId, sender, shown, status, missing, reference],
-  )).rows[0] as { result: string; registration_id: string | null; kind: string | null };
+    "select * from public.record_studio_sms_sender_registration($1, $2, $3, $4, $5, $6, $7)",
+    [studioId, sender, shown, status, missing, reference, version],
+  )).rows[0] as { result: string; registration_id: string | null; kind: string | null; previous_status: string | null };
 };
+
+/**
+ * The version a form loaded NOW would carry: the record's updated_at exactly as
+ * the page's snapshot gives it (the same jsonb string the form posts back).
+ */
+async function shownVersion(studioId: string, sender: string | null | undefined, phoneShown: string | null | undefined): Promise<string | null> {
+  const s = (await adminQuery("select public.get_live_studio_sms_sender_registration_state($1) s", [studioId])).rows[0].s as {
+    registrations?: Array<{ sender_id: string; phone_number: string; updated_at: string }>;
+  } | null;
+  return s?.registrations?.find((r) => r.sender_id === sender && r.phone_number === phoneShown)?.updated_at ?? null;
+}
 
 /** Try to move the SAME sender row to another number (0191 refuses: write-once). */
 const renumber = (senderId: string, to: string) =>
@@ -109,7 +122,7 @@ describe("the command", () => {
     const first = await record(a.studioId, "pending", null, "BN1234abcd");
     expect(first.result).toBe("recorded");
     const again = await record(a.studioId, "requires_information", "  a campaign description  ");
-    expect(again).toEqual({ result: "recorded", registration_id: first.registration_id, kind: "us_10dlc" });
+    expect(again).toEqual({ result: "recorded", registration_id: first.registration_id, kind: "us_10dlc", previous_status: "pending" });
     const { rows } = await adminQuery(
       "select studio_id, sender_id, status, missing_information, provider_reference from public.studio_sms_sender_registrations where id = $1",
       [first.registration_id],
@@ -119,8 +132,8 @@ describe("the command", () => {
       sender_id: senderA,
       status: "requires_information",
       missing_information: "a campaign description",
-      // A later record without a reference keeps the one support already gave.
-      provider_reference: "BN1234abcd",
+      // A later record WITHOUT a reference clears it: what is submitted is what is stored.
+      provider_reference: null,
     });
   });
 
@@ -134,7 +147,7 @@ describe("the command", () => {
   });
 
   it("refuses a studio with no live sender, and a released sender is not live", async () => {
-    expect(await record(none.studioId, "approved")).toEqual({ result: "no_live_sender", registration_id: null, kind: null });
+    expect(await record(none.studioId, "approved")).toEqual({ result: "no_live_sender", registration_id: null, kind: null, previous_status: null });
     const s = await seedStudio("reg-released");
     const id = await seedActiveSender(s, phone());
     await adminQuery("update public.studio_sms_senders set status = 'releasing' where id = $1", [id]);
@@ -202,6 +215,7 @@ describe("evidence is bound to the number support verified (Codex P2 4244484021)
       result: "sender_has_no_number",
       registration_id: null,
       kind: null,
+      previous_status: null,
     });
     const n = await adminQuery("select count(*)::int n from public.studio_sms_sender_registrations where sender_id = $1", [id]);
     expect(n.rows[0].n).toBe(0);
@@ -217,6 +231,7 @@ describe("evidence is bound to the number support verified (Codex P2 4244484021)
       result: "sender_changed",
       registration_id: null,
       kind: null,
+      previous_status: null,
     });
     expect((await snapshot(s.studioId)).registrations).toEqual([]);
     expect(await record(s.studioId, "approved", null, null, { sender: id, phone: shown })).toMatchObject({ result: "recorded" });
@@ -299,7 +314,7 @@ describe("compare-and-set on the sender support verified (Codex P2 4244108809)",
     await adminQuery("update public.studio_sms_senders set status = 'releasing' where id = $1", [shown]);
     await adminQuery("update public.studio_sms_senders set status = 'released', released_at = now() where id = $1", [shown]);
     await seedActiveSender(s, phone());
-    expect(await record(s.studioId, "approved", null, null, { sender: shown })).toEqual({ result: "sender_changed", registration_id: null, kind: null });
+    expect(await record(s.studioId, "approved", null, null, { sender: shown })).toEqual({ result: "sender_changed", registration_id: null, kind: null, previous_status: null });
     expect((await snapshot(s.studioId)).registrations).toEqual([]);
   });
 
@@ -323,7 +338,7 @@ describe("compare-and-set on the sender support verified (Codex P2 4244108809)",
     try {
       await writer.query("begin");
       const w = await writer.query(
-        "select result from public.record_studio_sms_sender_registration($1, $2, $3, 'approved', null, null)",
+        "select result from public.record_studio_sms_sender_registration($1, $2, $3, 'approved', null, null, null)",
         [s.studioId, id, num],
       );
       expect(w.rows[0].result).toBe("recorded");
@@ -373,12 +388,14 @@ describe("privileges", () => {
     }
     for (const role of ["anon", "authenticated"] as const) {
       await expect(
-        asRole(role, (q) => q("select * from public.record_studio_sms_sender_registration($1, $2, $3, 'approved', null, null)", [a.studioId, senderA, NO_PHONE])),
+        asRole(role, (q) => q("select * from public.record_studio_sms_sender_registration($1, $2, $3, 'approved', null, null, null)", [a.studioId, senderA, NO_PHONE])),
       ).rejects.toMatchObject({ code: "42501" });
     }
     const phoneB = (await liveSender(b.studioId))?.phone;
+    // A fresh form: the version of whatever record b already holds (or none).
+    const shownB = await shownVersion(b.studioId, senderB, phoneB);
     const ok = await asRole("service_role", (q) =>
-      q("select result from public.record_studio_sms_sender_registration($1, $2, $3, 'approved', null, null)", [b.studioId, senderB, phoneB]),
+      q("select result from public.record_studio_sms_sender_registration($1, $2, $3, 'approved', null, null, $4)", [b.studioId, senderB, phoneB, shownB]),
     );
     expect(ok.rows[0].result).toBe("recorded");
   });
@@ -390,5 +407,91 @@ describe("privileges", () => {
     await adminQuery("delete from public.studio_sms_senders where id = $1", [id]);
     const n = await adminQuery("select count(*)::int n from public.studio_sms_sender_registrations where studio_id = $1", [s.studioId]);
     expect(n.rows[0].n).toBe(0);
+  });
+});
+
+// Codex P2 4253653241 and 4253770080: the reference is stored exactly as
+// submitted (clearable), and the command reports the status it replaced.
+describe("reference clearing and the replaced status", () => {
+  it("an emptied reference CLEARS the stored one; the command returns the previous status", async () => {
+    const s = await seedStudio("reg-clear");
+    await seedActiveSender(s, phone());
+    const first = await record(s.studioId, "approved", null, "BN1234abcd");
+    expect(first).toMatchObject({ result: "recorded" });
+    expect((first as Record<string, unknown>).previous_status).toBeNull();
+    const second = await record(s.studioId, "suspended", null, null);
+    expect((second as Record<string, unknown>).previous_status).toBe("approved");
+    const { rows } = await adminQuery("select status, provider_reference from public.studio_sms_sender_registrations where id = $1", [first.registration_id]);
+    expect(rows[0]).toEqual({ status: "suspended", provider_reference: null });
+  });
+});
+
+// Codex P2 on #844 (6a6aa5ec): concurrent registration writes are SERIALIZED,
+// so each write's previous_status (which the audit records) is the real one.
+// Codex P2 4266275222: and a write may replace only the record its form showed.
+describe("concurrent registration writes take turns, and a stale form never wins", () => {
+  const RECORD = "select * from public.record_studio_sms_sender_registration($1, $2, $3, $4, $5, $6, $7)";
+
+  it("two forms loaded from the same record: the second waits its turn, then is REFUSED as stale; the first's decision stands", async () => {
+    const { Client } = await import("pg");
+    const { resolveLocalDbUrl } = await import("./helpers/harness");
+    const s = await seedStudio("reg-serial");
+    const num = phone();
+    const id = await seedActiveSender(s, num);
+    await record(s.studioId, "pending");
+    // Both operators load the page now: the same record, the same version.
+    const loaded = await shownVersion(s.studioId, id, num);
+    expect(loaded).not.toBeNull();
+    const one = new Client({ connectionString: resolveLocalDbUrl() });
+    const two = new Client({ connectionString: resolveLocalDbUrl() });
+    await Promise.all([one.connect(), two.connect()]);
+    try {
+      await one.query("begin");
+      const first = await one.query(RECORD, [s.studioId, id, num, "approved", null, null, loaded]);
+      expect(first.rows[0]).toMatchObject({ result: "recorded", previous_status: "pending" });
+      // The second writer starts WHILE the first is uncommitted and waits at the
+      // sender lock, BEFORE it reads the record it would replace.
+      const secondP = two.query(RECORD, [s.studioId, id, num, "suspended", null, null, loaded]);
+      await new Promise((r) => setTimeout(r, 300));
+      await one.query("commit");
+      const second = await secondP;
+      // It sees the first's committed record (approved), not the stale pending.
+      expect(second.rows[0]).toMatchObject({ result: "stale_record", registration_id: null, previous_status: "approved" });
+    } finally {
+      await Promise.all([one.end(), two.end()]);
+    }
+    expect((await snapshot(s.studioId)).registrations[0]).toMatchObject({ status: "approved" });
+    // Reloaded, the second operator decides against the CURRENT record.
+    expect(await record(s.studioId, "suspended")).toMatchObject({ result: "recorded", previous_status: "approved" });
+  });
+
+  it("THE LOST UPDATE Codex describes: approved -> suspended by one operator; another's stale reference edit cannot restore approved", async () => {
+    const s = await seedStudio("reg-lost-update");
+    const num = phone();
+    const id = await seedActiveSender(s, num);
+    await record(s.studioId, "approved", null, "BN-OLD");
+    const staleForm = await shownVersion(s.studioId, id, num);
+    // Operator A suspends it.
+    expect(await record(s.studioId, "suspended", null, "BN-OLD")).toMatchObject({ result: "recorded", previous_status: "approved" });
+    // Operator B, still showing "approved", edits only the reference.
+    expect(await record(s.studioId, "approved", null, "BN-NEW", { updatedAt: staleForm })).toMatchObject({ result: "stale_record", previous_status: "suspended" });
+    expect((await snapshot(s.studioId)).registrations[0]).toMatchObject({ status: "suspended", provider_reference: "BN-OLD" });
+  });
+
+  it("a form that showed NO record cannot overwrite one recorded since, and a form that showed one cannot write when none exists", async () => {
+    const s = await seedStudio("reg-stale-none");
+    const num = phone();
+    const id = await seedActiveSender(s, num);
+    // Loaded while there was no record.
+    const empty = await shownVersion(s.studioId, id, num);
+    expect(empty).toBeNull();
+    expect(await record(s.studioId, "approved")).toMatchObject({ result: "recorded", previous_status: null });
+    expect(await record(s.studioId, "rejected", null, null, { updatedAt: null })).toMatchObject({ result: "stale_record", previous_status: "approved" });
+    // A version for a record that does not exist (another number's form).
+    const other = await seedStudio("reg-stale-phantom");
+    const otherNum = phone();
+    await seedActiveSender(other, otherNum);
+    expect(await record(other.studioId, "approved", null, null, { updatedAt: "2026-01-01T00:00:00+00:00" })).toMatchObject({ result: "stale_record", previous_status: null });
+    expect((await snapshot(other.studioId)).registrations).toEqual([]);
   });
 });

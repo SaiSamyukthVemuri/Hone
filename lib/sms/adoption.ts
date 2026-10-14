@@ -10,6 +10,8 @@ import type {
   FinalizeResult,
   ProvisioningStore,
 } from "./provisioning";
+import { inboundReaches } from "./inbound-routing";
+import { sameTwilioWebhook } from "./webhook-base";
 
 // ===========================================================================
 // WILLOW ADOPTION — establish the 0191 lifecycle over an ALREADY-OWNED sender
@@ -335,10 +337,24 @@ export async function adoptExistingStudioSmsSender(
   }
 
   const mismatched: Array<"inbound_webhook" | "status_callback"> = [];
-  if (current.config.inboundRequestUrl !== input.requiredInboundWebhookUrl) {
+  // The EFFECTIVE inbound URL (lib/sms/inbound-routing.ts): the number's own
+  // webhook when the service routes inbound to it, else the service's. Unknown
+  // is never a match, so an unreported flag cannot pass.
+  const inbound = inboundReaches(
+    {
+      serviceInboundUrl: current.config.inboundRequestUrl,
+      serviceInboundMethod: current.config.inboundMethod,
+      useInboundWebhookOnNumber: current.config.useInboundWebhookOnNumber,
+      numberSmsUrl: facts.facts.numberSmsUrl,
+      numberSmsMethod: facts.facts.numberSmsMethod,
+      numberSmsApplicationSid: facts.facts.numberSmsApplicationSid,
+    },
+    input.requiredInboundWebhookUrl,
+  );
+  if (inbound !== "yes") {
     mismatched.push("inbound_webhook");
   }
-  if (current.config.statusCallbackUrl !== input.requiredStatusCallbackUrl) {
+  if (!sameTwilioWebhook(current.config.statusCallbackUrl, input.requiredStatusCallbackUrl)) {
     mismatched.push("status_callback");
   }
   if (mismatched.length > 0) {

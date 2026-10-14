@@ -101,8 +101,11 @@ create or replace function public.record_studio_sms_sender_registration(
   p_expected_phone     text,
   p_status             text,
   p_missing            text,
-  p_provider_reference text
-) returns table (result text, registration_id uuid, kind text)
+  p_provider_reference text,
+  -- The record the operator's form was showing: its updated_at, or NULL for
+  -- "there was no record" (Codex P2 4266275222).
+  p_expected_updated_at timestamptz
+) returns table (result text, registration_id uuid, kind text, previous_status text)
 language plpgsql
 security definer
 set search_path = pg_catalog, pg_temp
@@ -116,6 +119,9 @@ declare
   v_kind    text;
   v_missing text := nullif(btrim(p_missing), '');
   v_id      uuid;
+  v_prev    text;
+  v_prev_at timestamptz;
+  v_exists  boolean;
 begin
   if p_studio_id is null or p_expected_sender_id is null
      or p_expected_phone is null or p_expected_phone !~ '^\+1[2-9][0-9]{2}[2-9][0-9]{6}$'
@@ -123,47 +129,67 @@ begin
      or ((p_status = 'requires_information') <> (v_missing is not null))
      or (v_missing is not null and length(v_missing) > 300)
      or (p_provider_reference is not null and p_provider_reference !~ '^[A-Za-z0-9_-]{1,64}$') then
-    return query select 'invalid_input'::text, null::uuid, null::text;
+    return query select 'invalid_input'::text, null::uuid, null::text, null::text;
     return;
   end if;
 
   -- The studio's LIVE sender, LOCKED until this transaction ends: a release
   -- or replacement waits for this write, or this write sees it and refuses.
+  -- FOR UPDATE, not FOR SHARE (Codex P2 on #844, "serialize concurrent
+  -- registration writes"): two operators recording at once now take turns,
+  -- so the status each write replaces, and audits, is the one actually there.
   select array_agg(l.id), array_agg(l.phone_number)
     into v_live, v_phones
     from (select s.id, s.phone_number
             from public.studio_sms_senders s
            where s.studio_id = p_studio_id
              and s.status <> 'released'
-             for share) l;
+             for update) l;
   if v_live is null then
-    return query select 'no_live_sender'::text, null::uuid, null::text;
+    return query select 'no_live_sender'::text, null::uuid, null::text, null::text;
     return;
   end if;
   if cardinality(v_live) > 1 then
     -- 0191's one-live-sender index makes this impossible; refuse, never guess.
-    return query select 'ambiguous_live_sender'::text, null::uuid, null::text;
+    return query select 'ambiguous_live_sender'::text, null::uuid, null::text, null::text;
     return;
   end if;
   -- COMPARE-AND-SET: only the sender the operator verified.
   if v_live[1] <> p_expected_sender_id then
-    return query select 'sender_changed'::text, null::uuid, null::text;
+    return query select 'sender_changed'::text, null::uuid, null::text, null::text;
     return;
   end if;
   -- No number yet (off, selecting, provisioning): nothing has been verified.
   if v_phones[1] is null then
-    return query select 'sender_has_no_number'::text, null::uuid, null::text;
+    return query select 'sender_has_no_number'::text, null::uuid, null::text, null::text;
     return;
   end if;
   -- ... and only the NUMBER the operator verified, on that same sender.
   if v_phones[1] <> p_expected_phone then
-    return query select 'sender_changed'::text, null::uuid, null::text;
+    return query select 'sender_changed'::text, null::uuid, null::text, null::text;
     return;
   end if;
 
   -- The kind is the number's, never the caller's.
   v_kind := case when v_phones[1] ~ '^\+1(800|833|844|855|866|877|888)'
                  then 'toll_free_verification' else 'us_10dlc' end;
+
+  -- The record this write replaces, for the audit trail (Codex P2 4253770080).
+  select r.status, r.updated_at into v_prev, v_prev_at
+    from public.studio_sms_sender_registrations r
+   where r.sender_id = v_live[1] and r.phone_number = v_phones[1] and r.kind = v_kind;
+  v_exists := found;
+
+  -- NO LOST UPDATE (Codex P2 4266275222). The sender lock above makes writers
+  -- take turns; this makes each one replace only the record its form showed.
+  -- A form loaded before another operator's write (or before the first
+  -- record, or showing none when one now exists) is refused, not merged: it
+  -- would otherwise restore the decision that write replaced.
+  if (v_exists and p_expected_updated_at is distinct from v_prev_at)
+     or (not v_exists and p_expected_updated_at is not null) then
+    return query select 'stale_record'::text, null::uuid, v_kind, v_prev;
+    return;
+  end if;
 
   insert into public.studio_sms_sender_registrations as r
     (studio_id, sender_id, phone_number, kind, status, missing_information, provider_reference)
@@ -172,11 +198,14 @@ begin
   on conflict (sender_id, phone_number, kind) do update
     set status              = excluded.status,
         missing_information = excluded.missing_information,
-        provider_reference  = coalesce(excluded.provider_reference, r.provider_reference),
+        -- EXACTLY what was submitted: an emptied reference CLEARS it
+        -- (Codex P2 4253653241). The form prefills the current reference, so
+        -- an untouched field keeps it.
+        provider_reference  = excluded.provider_reference,
         updated_at          = now()
   returning r.id into v_id;
 
-  return query select 'recorded'::text, v_id, v_kind;
+  return query select 'recorded'::text, v_id, v_kind, v_prev;
 end;
 $$;
 
@@ -239,11 +268,11 @@ grant select (id, studio_id, sender_id, phone_number, kind, status, missing_info
 -- The operator console reads through service_role; it writes only through the command.
 grant select on table public.studio_sms_sender_registrations to service_role;
 
-revoke execute on function public.record_studio_sms_sender_registration(uuid, uuid, text, text, text, text) from public;
-revoke execute on function public.record_studio_sms_sender_registration(uuid, uuid, text, text, text, text) from anon;
-revoke execute on function public.record_studio_sms_sender_registration(uuid, uuid, text, text, text, text) from authenticated;
-revoke execute on function public.record_studio_sms_sender_registration(uuid, uuid, text, text, text, text) from service_role;
-grant execute on function public.record_studio_sms_sender_registration(uuid, uuid, text, text, text, text) to service_role;
+revoke execute on function public.record_studio_sms_sender_registration(uuid, uuid, text, text, text, text, timestamptz) from public;
+revoke execute on function public.record_studio_sms_sender_registration(uuid, uuid, text, text, text, text, timestamptz) from anon;
+revoke execute on function public.record_studio_sms_sender_registration(uuid, uuid, text, text, text, text, timestamptz) from authenticated;
+revoke execute on function public.record_studio_sms_sender_registration(uuid, uuid, text, text, text, text, timestamptz) from service_role;
+grant execute on function public.record_studio_sms_sender_registration(uuid, uuid, text, text, text, text, timestamptz) to service_role;
 
 revoke execute on function public.get_live_studio_sms_sender_registration_state(uuid) from public;
 revoke execute on function public.get_live_studio_sms_sender_registration_state(uuid) from anon;
@@ -255,7 +284,7 @@ comment on table public.studio_sms_sender_registrations is
   'SMS-SENDER-REG-01 (0217): support-recorded US registration evidence (10DLC or toll-free verification) for the number a studio''s sender holds; the kind is the number''s. Evidence for readiness only: recording it calls no provider and activates nothing. Owner reads own rows (no provider_reference); written only by record_studio_sms_sender_registration.';
 comment on function public.get_live_studio_sms_sender_registration_state(uuid) is
   'SMS-SENDER-REG-01 (0217): one snapshot of the studio''s non-released sender(s), including the messaging service, and exactly the registrations of the number each holds now (a released or replaced number''s rows are history, never current state). service_role only.';
-comment on function public.record_studio_sms_sender_registration(uuid, uuid, text, text, text, text) is
+comment on function public.record_studio_sms_sender_registration(uuid, uuid, text, text, text, text, timestamptz) is
   'SMS-SENDER-REG-01 (0217): records the registration state of the studio''s live sender''s number, compare-and-set on the sender AND number the operator verified (sender_changed otherwise; sender_has_no_number before one is assigned), with the sender row locked; the kind is derived from the number. service_role only.';
 
 commit;
