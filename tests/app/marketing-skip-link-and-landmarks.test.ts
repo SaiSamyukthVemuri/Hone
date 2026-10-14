@@ -224,23 +224,26 @@ describe("4: the policy shell's landmark hierarchy", () => {
       expect(articleAt, "the article must open BEFORE </main>").toBeLessThan(closeAt);
     });
 
+  // MKT-03 revision 2 moved the policy pages onto the marketing site's own
+  // shell (SiteHeader / SiteFooter), the one every other marketing page uses.
+  // The landmark rules below are unchanged; only the component they look for is.
   it("the site header is OUTSIDE main", () => {
     const mainAt = code.indexOf("<main");
-    const headerAt = code.indexOf("<MarketingHeader");
+    const headerAt = code.indexOf("<SiteHeader");
     expect(headerAt).toBeGreaterThan(-1);
     expect(headerAt, "header must precede <main>").toBeLessThan(mainAt);
   });
 
   it("the site footer is OUTSIDE main", () => {
     const closeAt = code.indexOf("</main>");
-    const footerAt = code.indexOf("<MarketingFooter");
+    const footerAt = code.indexOf("<SiteFooter");
     expect(closeAt).toBeGreaterThan(-1);
     expect(footerAt, "footer must follow </main>").toBeGreaterThan(closeAt);
   });
 
     it("the skip link precedes the header it exists to bypass", () => {
       const skipAt = code.indexOf("<SkipLink");
-      const headerAt = code.indexOf("<MarketingHeader");
+      const headerAt = code.indexOf("<SiteHeader");
       expect(skipAt).toBeGreaterThan(-1);
       expect(skipAt).toBeLessThan(headerAt);
     });

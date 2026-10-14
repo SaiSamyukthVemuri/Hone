@@ -204,6 +204,13 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
   // The page at the heart of the reported failure. All eight controls.
   {
     page: "/settings/booking",
+    label: "New clients",
+    role: "owner",
+    decision: "searchable",
+    entryId: "settings-new-client-admission",
+  },
+  {
+    page: "/settings/booking",
     label: "Your booking link",
     role: "owner",
     decision: "searchable",

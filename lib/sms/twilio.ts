@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { normalizePhoneForMatch, normalizePhoneForSms } from "./phone";
 
 // Twilio SMS helpers used by the booking, reschedule, reminder cron,
 // and inbound STOP webhook paths. Implementation deliberately avoids
@@ -23,89 +24,102 @@ import crypto from "node:crypto";
 // ---------------------------------------------------------------------------
 // Phone normalization
 // ---------------------------------------------------------------------------
+//
+// Defined in ./phone -- pure and browser-safe, so the public waitlist form
+// validates with the same law the sender uses -- and re-exported here for
+// every existing caller.
 
-const VALID_E164_DIGIT_RANGE = { min: 8, max: 15 } as const;
-
-/**
- * Normalize a free-text phone string into Twilio-acceptable E.164
- * format (`+` followed by 8-15 digits). Returns null for anything we
- * cannot safely coerce; the caller treats null as "do not send SMS".
- *
- * Rules:
- *   - `+` prefix kept verbatim if the digits after it land in 8..15.
- *   - 10 digits assumed North-America-Numbering-Plan and prepended
- *     with `+1` (Hone is currently Canadian-only).
- *   - 11 digits starting with `1` get a `+` prepended.
- *   - Anything else returns null. We deliberately do not guess country
- *     codes for international numbers; an invalid Twilio destination
- *     would surface as a non-retryable error anyway.
- */
-export function normalizePhoneForSms(raw: string | null): string | null {
-  if (typeof raw !== "string") return null;
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) return null;
-
-  if (trimmed.startsWith("+")) {
-    const digits = trimmed.slice(1).replace(/\D/g, "");
-    if (
-      digits.length >= VALID_E164_DIGIT_RANGE.min &&
-      digits.length <= VALID_E164_DIGIT_RANGE.max
-    ) {
-      return `+${digits}`;
-    }
-    return null;
-  }
-
-  const digits = trimmed.replace(/\D/g, "");
-  if (digits.length === 10) return `+1${digits}`;
-  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
-  return null;
-}
-
-/**
- * Canonical phone digits for matching. Used to compare:
- *   1. a public-booking-submitted phone against a stored client phone
- *      (consent gate in app/book/[slug]/actions.ts),
- *   2. an inbound Twilio STOP From-number against stored client phones
- *      (app/api/twilio/inbound-sms/route.ts).
- *
- * Both surfaces MUST share the same normalization so consent and STOP
- * always resolve to the same client. The earlier "digits only"
- * implementation broke for the common case where one side stored a
- * 10-digit Canadian/US number ("647-555-1234" -> "6475551234") and
- * the other side carried the E.164 country prefix ("+16475551234" ->
- * "16475551234"), so a real client replying STOP could fail to opt
- * out. We now canonicalize through normalizePhoneForSms first (which
- * promotes 10-digit NANP to "+1XXXXXXXXXX" and accepts any
- * +-prefixed international number with 8-15 digits) and only then
- * strip non-digits. The fallback to plain-digit-strip preserves the
- * historical behaviour for inputs we cannot canonicalize.
- *
- * Returns "" for null/empty so callers can compare with strict
- * equality without a null check.
- */
-export function normalizePhoneForMatch(raw: string | null): string {
-  const e164 = normalizePhoneForSms(raw);
-  if (e164) return e164.replace(/\D/g, "");
-  if (typeof raw !== "string") return "";
-  return raw.replace(/\D/g, "");
-}
+export { normalizePhoneForMatch, normalizePhoneForSms };
 
 // ---------------------------------------------------------------------------
 // Outbound SMS
 // ---------------------------------------------------------------------------
 
+/**
+ * What the provider was told, which is a different fact from `retryable`.
+ *
+ *   none       no request left Hone (not configured, or fenced), so nothing
+ *              can exist at the provider;
+ *   refused    the provider answered and did not create a message;
+ *   ambiguous  a request was made and its answer was lost or unreadable, so a
+ *              message MAY exist. Twilio's Messages API takes no idempotency
+ *              key, so an ambiguous attempt must never be retried
+ *              automatically by a path that cannot tell the two apart.
+ */
+export type SendSmsAttempt = "none" | "refused" | "ambiguous";
+
 export type SendSmsResult =
   | { ok: true; messageSid: string }
-  | { ok: false; error: string; retryable: boolean };
+  | {
+      ok: false;
+      error: string;
+      retryable: boolean;
+      attempt: SendSmsAttempt;
+      /** Twilio's numeric error code, when its error body carried one. */
+      providerErrorCode?: number;
+    };
 
 type SendSmsParams = {
   to: string;
   body: string;
+  /**
+   * Absolute URL Twilio should POST this message's delivery-status callbacks
+   * to (lib/sms/delivery-ledger.ts builds it). Omitted, Twilio reports nothing.
+   */
+  statusCallbackUrl?: string | null;
 };
 
 const TWILIO_API_BASE = "https://api.twilio.com/2010-04-01";
 const TWILIO_SEND_TIMEOUT_MS = 15_000;
+
+// A message SID is the provider's identity for the message; it is checked for
+// shape before Hone records it anywhere.
+const MESSAGE_SID_RE = /^(SM|MM)[0-9a-fA-F]{32}$/;
+
+// undici `cause.code`s raised before a connection exists, so before any byte
+// of the request could have reached the provider.
+const PRE_CONNECTION_ERROR_CODES = new Set([
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ECONNREFUSED",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "UND_ERR_CONNECT_TIMEOUT",
+]);
+
+/**
+ * Whether THIS deployment may send SMS at all.
+ *
+ * Vercel preview deployments carry the live Twilio credentials and run against
+ * the production database, so a preview could text a real person from
+ * unreviewed code. Only the production deployment sends; any other Vercel
+ * environment is fenced unless an operator deliberately sets
+ * HONE_SMS_NON_PRODUCTION_SENDS=allow on it. Outside Vercel (local, CI)
+ * there is no VERCEL_ENV and nothing is fenced here: those runs have no live
+ * credentials, and tests stub the network.
+ */
+export function outboundSmsFence(
+  env: NodeJS.ProcessEnv = process.env,
+): { allowed: true } | { allowed: false; reason: "non_production_deployment" } {
+  const vercelEnv = env.VERCEL_ENV;
+  if (
+    vercelEnv &&
+    vercelEnv !== "production" &&
+    env.HONE_SMS_NON_PRODUCTION_SENDS !== "allow"
+  ) {
+    return { allowed: false, reason: "non_production_deployment" };
+  }
+  return { allowed: true };
+}
+
+/** Twilio's numeric error code from a parsed error body, or undefined. */
+function providerErrorCodeOf(parsed: unknown): number | undefined {
+  if (typeof parsed !== "object" || parsed === null) return undefined;
+  const code = (parsed as { code?: unknown }).code;
+  return typeof code === "number" && Number.isInteger(code) && code > 0 && code < 100_000_000
+    ? code
+    : undefined;
+}
 
 /**
  * Post one outbound SMS via Twilio Messages API. Never throws; every
@@ -113,12 +127,16 @@ const TWILIO_SEND_TIMEOUT_MS = 15_000;
  * retryable flag the cron uses to decide whether to attempt again.
  *
  * Configuration:
+ *   - A non-production Vercel deployment is fenced (outboundSmsFence)
+ *     before any credential is read: ok:false, attempt "none".
  *   - Requires TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN; missing
  *     either returns ok:false with retryable:false. The caller's job
  *     is to surface this once on startup (settings → launch) rather
  *     than blow up booking.
  *   - Uses TWILIO_MESSAGING_SERVICE_SID when set; otherwise falls
  *     back to TWILIO_FROM_NUMBER. Missing both also returns ok:false.
+ *   - `statusCallbackUrl`, when given, becomes Twilio's StatusCallback,
+ *     so delivery reports reach /api/twilio/message-status.
  *
  * Logging discipline:
  *   - Auth Token is never logged.
@@ -130,6 +148,17 @@ const TWILIO_SEND_TIMEOUT_MS = 15_000;
 export async function sendSmsSafely(
   params: SendSmsParams,
 ): Promise<SendSmsResult> {
+  // Checked before anything else, so a fenced deployment never even reads
+  // the credentials it holds.
+  if (!outboundSmsFence().allowed) {
+    return {
+      ok: false,
+      error: "sms_fenced_non_production",
+      retryable: false,
+      attempt: "none",
+    };
+  }
+
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   if (!accountSid || !authToken) {
@@ -137,6 +166,7 @@ export async function sendSmsSafely(
       ok: false,
       error: "twilio_not_configured",
       retryable: false,
+      attempt: "none",
     };
   }
 
@@ -147,6 +177,7 @@ export async function sendSmsSafely(
       ok: false,
       error: "twilio_missing_sender",
       retryable: false,
+      attempt: "none",
     };
   }
 
@@ -157,6 +188,9 @@ export async function sendSmsSafely(
     formBody.set("MessagingServiceSid", messagingServiceSid);
   } else if (fromNumber) {
     formBody.set("From", fromNumber);
+  }
+  if (params.statusCallbackUrl) {
+    formBody.set("StatusCallback", params.statusCallbackUrl);
   }
 
   const url = `${TWILIO_API_BASE}/Accounts/${encodeURIComponent(
@@ -191,15 +225,28 @@ export async function sendSmsSafely(
     } catch {
       // Some 5xx responses are HTML or empty; treat as retryable.
     }
-    const sid =
+    const rawSid =
       typeof parsed === "object" &&
       parsed !== null &&
       typeof (parsed as { sid?: unknown }).sid === "string"
         ? ((parsed as { sid: string }).sid as string)
         : null;
+    const sid = rawSid !== null && MESSAGE_SID_RE.test(rawSid) ? rawSid : null;
 
     if (res.ok && sid) {
       return { ok: true, messageSid: sid };
+    }
+
+    if (res.ok) {
+      // A success status without a well-formed SID: the provider probably
+      // created the message, and Hone cannot name it. That is the definition
+      // of ambiguous, never a refusal.
+      return {
+        ok: false,
+        error: "twilio_unreadable_success",
+        retryable: false,
+        attempt: "ambiguous",
+      };
     }
 
     // Map status codes to retryable / non-retryable. 429 + 5xx are
@@ -207,15 +254,32 @@ export async function sendSmsSafely(
     // sender config is wrong and a retry will not help.
     const retryable = res.status === 429 || res.status >= 500;
     const errorTag = `twilio_http_${res.status}`;
-    return { ok: false, error: errorTag, retryable };
+    return {
+      ok: false,
+      error: errorTag,
+      retryable,
+      // A 4xx (429 included) is the provider answering that it did not create
+      // a message. A 5xx is an answer about the provider, not about the
+      // message, so it cannot rule out that the message was created.
+      attempt: res.status >= 500 ? "ambiguous" : "refused",
+      providerErrorCode: providerErrorCodeOf(parsed),
+    };
   } catch (err) {
-    // AbortController fires AbortError on timeout. Network failures
-    // come through as TypeError. Both are retryable.
-    const tag =
-      err instanceof Error && err.name === "AbortError"
-        ? "twilio_timeout"
-        : "twilio_network";
-    return { ok: false, error: tag, retryable: true };
+    // AbortController fires AbortError on timeout: the request was sent and
+    // its answer lost, so it is ambiguous.
+    if (err instanceof Error && err.name === "AbortError") {
+      return { ok: false, error: "twilio_timeout", retryable: true, attempt: "ambiguous" };
+    }
+    // A connection that was never established (DNS, refused, unreachable,
+    // connect timeout) carried no request, so no message can exist: that is
+    // a definite non-acceptance, and retrying it cannot send twice.
+    const code = (err as { cause?: { code?: unknown } } | null)?.cause?.code;
+    if (typeof code === "string" && PRE_CONNECTION_ERROR_CODES.has(code)) {
+      return { ok: false, error: "twilio_unreachable", retryable: true, attempt: "refused" };
+    }
+    // Any other network failure (a reset mid-request, a broken socket) may
+    // have happened after Twilio read the request: ambiguous.
+    return { ok: false, error: "twilio_network", retryable: true, attempt: "ambiguous" };
   } finally {
     clearTimeout(timeout);
   }

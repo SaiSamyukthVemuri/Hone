@@ -2,17 +2,28 @@
 
 import { useRef, useState, useTransition } from "react";
 import type { OnboardingModel } from "@/lib/onboarding/steps";
+import {
+  absorbTransportFailure,
+  isServerActionTransportFailure,
+} from "@/lib/reliability/server-action-transport";
 import { OnboardingProgressCard } from "./OnboardingProgressCard";
 import { OnboardingWizard } from "./OnboardingWizard";
 import {
   completeOnboardingAction,
   dismissOnboardingAction,
   reopenOnboardingAction,
+  type OnboardingActionResult,
 } from "../onboarding-actions";
 
 // Owns the wizard open/closed state so the pinned card can re-open the wizard
 // without a server round-trip, while each transition also persists the state
 // (dismissed / completed / reopened) server-side.
+//
+// SENTRY-FETCH-01. Those writes can be LOST in transit, and the browser then
+// rejects the invocation (lib/reliability/server-action-transport.ts). Dismiss
+// and reopen are best-effort: the overlay has already moved, and the next
+// server render restores whatever was actually persisted. Completion is not
+// best-effort, so it is handled where it is awaited, below.
 export function OnboardingSurface({
   model,
   initialOpen,
@@ -66,14 +77,27 @@ export function OnboardingSurface({
   function handleDismiss() {
     setOpen(false);
     startTransition(() => {
-      void dismissOnboardingAction();
+      dismissOnboardingAction().catch(absorbTransportFailure);
     });
   }
 
   function handleComplete() {
     setOpen(false);
     startTransition(async () => {
-      const res = await completeOnboardingAction();
+      let res: OnboardingActionResult;
+      try {
+        res = await completeOnboardingAction();
+      } catch (error) {
+        // A LOST request is not a refusal and not a success: the completion may
+        // or may not have been recorded. Claim nothing. The card stays, which
+        // is exactly what a refusal does, and the next server model settles it
+        // either way. Left uncaught, the rejection would escape the transition
+        // to the route error boundary and replace the entire Dashboard over one
+        // optional setup step. Anything else is a real failure and still goes
+        // there.
+        if (!isServerActionTransportFailure(error)) throw error;
+        return;
+      }
       // Only on a RECORDED completion. A refusal keeps the card.
       if (res.ok) setCompletedLocally(true);
     });
@@ -82,7 +106,7 @@ export function OnboardingSurface({
   function handleContinue() {
     setOpen(true);
     startTransition(() => {
-      void reopenOnboardingAction();
+      reopenOnboardingAction().catch(absorbTransportFailure);
     });
   }
 

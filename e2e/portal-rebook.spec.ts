@@ -168,8 +168,13 @@ test.describe("portal rebooking", () => {
     expect(audit.map((a) => a.action)).toContain("created");
 
     // N/O. The acknowledgement always offers a management link, whatever the
-    // provider did — the local harness has a dummy Resend key, so this run
-    // exercises the degraded path and must still report a committed booking.
+    // provider did. This run exercises the DEGRADED path: the lane's fake email
+    // transport defaults to `reject`
+    // (HONE_E2E_FAKE_RESEND_DEFAULT_MODE in e2e/helpers/local-env.ts), which is
+    // what the dummy Resend key used to produce before the fake was armed. The
+    // assertion below is deliberately provider-INDEPENDENT, so it cannot
+    // discriminate acceptance from refusal and is not trying to: what it proves
+    // is that a committed booking is reported either way.
     await expect(page.getByTestId("portal-rebook-manage-link")).toBeVisible();
 
     // THE JOURNEY CLOSES: the appointment is in the client's own list, WITHOUT

@@ -1,0 +1,216 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:2b3d21ba12372248f747602b2b4ffe80033d321c64133d35e954bf8aa1dde721",
+  "claims": [
+    {
+      "id": "claim_26094bdb956641bfb8df82dda94c8cb3",
+      "statement": "A single module defines the newest prior charted session: the caller supplies studio- and client-scoped, non-deleted sessions newest first, and the pure half excludes void and current sessions, applies the time bound and requires at least one live block, live electrolysis entry or live laser entry, because start_session creates empty rows that previously masked the real last treatment.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/charted-session.ts#L1-L40",
+          "version": "repo-lines-v1:sha256:11d636e158194b6941e3606e3eb3cb0114131af862801bf6c01fa8c7e2f28cac:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY0NDU4NzdjNDcxMTk0M2Q4MmI1MGViY2VkNjkyODk0MmFkMzQyMTFjOTRkMjdkYmRmODlhMzljNGE1ZDBmMjAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVlZTAxMDFjMzA1MmM5NzYwNzc5OGJkZGRhOTlhMmM3MmIxNzhlZTJkNDQ5ZTk1Nzk3NmFhMzM4ZjM1ZDVlOWEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQxOGE4Yjg2NTQxMzJiODM1ODE4YzZmMjA1Y2ViMWY4ZjU0ZTA1NTI4YTU5ZTcwYjY5MmFhMzhiM2UwZGZjYTQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_85c98303421f4d77940dd7a4fbf3bdea",
+      "statement": "The last-treatment loader reads the candidate sessions' blocks in one batched, RLS-scoped user-client query with an explicit studio filter and a 600-row ceiling, and uses no service-role client.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/last-treatment-loader.ts#L198-L221",
+          "version": "repo-lines-v1:sha256:b4ea3a475dbd8648cced15c8f938a1cc4e787a76891c39e6d998d0055352407b:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRhNjUwMzNiNWVkMTNmMjUwMjZlY2UyNzkxOGE0NjZjMGYzOTUyYzdkNzZlNzhkZDEzZGNjODY5ODhiYzg2MzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE2NWE1NDdmNzllYzI1N2YzMjA5YjQyZjlmNjE2YTgzNjU5OTRkNzcyZjU4NjMwNTQ3YzJkYmJlNjI0NTg4M2UiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQwMWZiMjA1YWQyYTJmMDNiNmM5ZjExMmI2ZmQyMGM2YzBkYTJjNmFlZDY0ZTEyM2JmYzVjMDUwN2Y4OWJmNjgifQ"
+        },
+        {
+          "resource": "repo://lib/sessions/last-treatment-loader.ts#L20-L50",
+          "version": "repo-lines-v1:sha256:d175efe9442ee09452ee37a4c6f5a2be816061e6accf6d68e6d1bf2b06ba4951:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjViOTM0NDZiZTQ0MTYwYTlmZGVlYzViZDMzMDNhZDg5NWZjNDFjMzRlNmU5MjMzNTcyY2MxMjI0NmExYzJmNzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFmY2Y2ZmYzYWUxN2NmYmFhNmJjYmM3N2NkMmY1YmNiYjljNWNkMDkxNjc0MDIzYjViOWRmODQ5NDdlOGYxNjEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjUzZjY4NWFiOGNkNTMyYzY4MzBlMzBjNDg4OWRkYzVhNWY2ZTM4NzJjOGQ0N2U4Nzc1OWM5ZTlhZWQwMDIwNmYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdiMDY2NGI5MWZiZDA2NDBjODU3YjQxNTc0ZDI3NTcxMzBjNjI5YzVmZGU2ZDc3NGI5YjUxMmIwZjZlNjFmOGUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b9671b78b2e9404fa91adc4a439c0433",
+      "statement": "The loader distinguishes a selected treatment, a successful read that found nothing charted, and a failed block read, logging a failed read with only its SQLSTATE, studio id and candidate count rather than the raw error message.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/last-treatment-loader.ts#L182-L260",
+          "version": "repo-lines-v1:sha256:2b8945d2f3267f76d45ae716d604000c8e6e5839738e3af984382d56f2231632:eyJzZWxlY3RlZExpbmVDb3VudCI6NzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc2ZTFkZjZhZmZmOGVhZjkyYzMyOWFhNmM4MWExYjk2NTgxYTQ3N2YxZDZhZWNkNjhiZjNmMjYyYzRhMDY0M2YiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkwOTgyMmJhYTA3YjFmYTBkMmMyNjNlYjBhM2ZlN2NmMzdkNmZkMzc4MzM0ZmQzNjliYjZhN2VlOWY0ZDNjNGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQzMzZlZDE2NWE3N2FlZDU0ZDg1MDA5OGJmOWYyMTZjNmQzYjI0OWU0OTA4YTM4N2FkYTI0OTkwYTc0Zjk1YWUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7dc097247e1d4d6d9e2dc3609fb38543",
+      "statement": "The charting screen and the new-session page keep a fail-soft contract in which both no-history and read-failure return null and render nothing, while only the appointment-prep companion distinguishes none from unavailable because it makes an explicit statement to the practitioner.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/last-treatment-loader.ts#L155-L180",
+          "version": "repo-lines-v1:sha256:500c9ca8454dae4d52b62ef893bb30b6868a4e1e02e05015a947a4d9070e8637:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVjZjAyZDJlOWFkYzhmN2Q4ODRhZTczYzg5MDA2MzVjODM4OWU1ODk4MjcxNzY3MWUwNWY4ZmUyODFlNTg2ZDAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY2NGZkMjAyMTkwMDBlNjAyNjAwMTJmYzkyMjYyNTc3MTNjYmM4ZTVlZGMzMGE2YTI5YTk1NmUxZTI4ZWUxMWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc5YWYzZTg1MTViNDFmYWIyZTg1OGNkYWEzZGJjODBiODMxNjI0NzM2NGVlMjkzNDg4YWQxZGQ2NzAxOWJlZWEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_21907ea5926944fc9682f74645c6a772",
+      "statement": "Appointment-prep memory carries an unavailable flag set only when a read actually failed and returns practitioner narrative separately from the charted treatment, so a plan written on an uncharted visit and narrative from a failed block read still surface.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/last-treatment-loader.ts#L371-L408",
+          "version": "repo-lines-v1:sha256:8ecb5738b0999dfd6245656ad57fb62dc5a411d5fd3218293cea43fc1004db7e:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMwMDUwMjBkM2Q2MTg5NDc2M2I2ZmVhZDM0NTE4Y2NlZTY1N2VlNzBkMDgzN2ZkN2Y1NTA0OWM4MDVlYTAxNDUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFhMWQxYTYzMzkwMjI5Yzc5ODM0N2U4M2EwNDA1NDQxYzk0MDAwMzUyODRhZDE2OGMxYmY2Y2RmMWQ3MGEzNzAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjcwYjRjYmI3YjBhYjBhNmYyZTJmMzcwZWZiNmU5NTA0NTVhM2Y1OTFmMjNiOTgwODM5OGU4YmY0MmUyY2ZiNGMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ3ZmY2ZjQ3ZTcwYjk4NWM5ZDM5MjBlOGMzNDRiNjgyYzc2ZGMzY2QxMjhmOTEzNTA4MTJlZWU2MDYzMjg5MDYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7e8d788537184ceabff3d3512c94dc0c",
+      "statement": "In the batched dashboard loader, a client whose candidate window was truncated by the shared row budget is returned as unavailable rather than as having no treatment.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/last-treatment-loader.ts#L534-L541",
+          "version": "repo-lines-v1:sha256:42267b1117f64bdb4d616bd3acdbb38c3ffb80735bef670e82dd0be3e1f666b3:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNGEwZjg1YjVlZjg0ZmI3MWUzMTA3MGExN2RhMzlhNDczNmYyNmIyYzA4NDlkNzM4ZThmZDJmZWQ0ZTIxZDhlMCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNjRlYjBlNTU0MzcwYTliODVlZjM4NTA4ZjkzNzc1ZGUwYjlhNDE0OWVkMmZkYmZlY2E1ZGJiOGZjMzQ1OTE2OSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYjY4MzY0MDNmNTAzMWFiM2QwMTJmMzljZDhiODVmMGNiMDJlYjFhOTQ5YzBhMjE1Njg1NGFkM2Q5MjUxNzBkZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNWQzZDc5MDExM2RiNTNiZDY0YTRjYTY5NDUzNGM3MjAyMDViNzFiN2I1NTUyZDM3ZmMwNzU2NTFkYTViNDEyZSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_5d043343c2794cc8a154dc96deaeb57c",
+      "statement": "Before Today carries independent clinical and client-record unavailability flags, and its unavailable field must be read first because hasHistory false then means the history could not be read, not that none exists.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/before-today.ts#L45-L80",
+          "version": "repo-lines-v1:sha256:0e8026390659ae75ae30e1eb90450cab6754b440ef137a07ef76c9ae06165e10:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE1ODIyYmJhYWYzOTFlMWE4YmU5NTM0NTlhYTY2NmE0ZWU2ZjVjYjRiNDIxNzY2Zjk4M2QzMzA2YjRiMTQ5NWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFhZjE0MDVhZjM4OGFlNGM2MzUzYTk0NzY5MjgxM2ZjNTA4YTZlYWIyZTc4ZjdmOGZlMThlM2U5YTE5MDQwNGUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNjZWZiMGM4OTdlNDJiODc2NTRhNTkwNzlkNzY1NDliZjRkNjg0ZDYyZjA2ODg4NmJmMzgzZjkxZWVhZmRjYmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFiM2NmODZhN2NhMDVmYTY3MGVkNjI2NTQzOGE5MTMyMWE2MjMyMDljNTM2NzFjOGZkN2UwZDNjNGFjZmFjMWUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_579492f844274eb898f97d12399b4fe8",
+      "statement": "The dashboard Today row orders its answers unavailable, new, silent, history; its no-history line requires both authorities to agree, and an unavailable prep read never routes a client as new.",
+      "evidence": [
+        {
+          "resource": "repo://tests/app/dashboard/today-two-authority-truth.test.ts#L65-L185",
+          "version": "repo-lines-v1:sha256:eb16e78a35229d4330c48f8605c36de75b57dad0ad4bf24e4edd9a3784175fa8:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIxLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI5ZGJkZWNjMzE5ZTEyODEyYzQ0NjU2OTBjNWRlNjU4ZjYzODc5YTgwZmVkNDM5ZjhjYjczN2IzY2QyMWM1OWM0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIwOGNiMmQ4MDEyYjkzNDBlMThlMjY3YjdmYTg1YjZiYzRiNTgwNjc2NDBhMTU3ZmE3ZDU5NmEyNGY0YWZlNjJmIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJiNzc5ZDExOGQ2ZTNjYmY0NTA1Mzk3NDhkZWU3YTQzMDdhY2JlNjQ0NmNiYTI5N2YyNzYwZmE1ZDBiYmExYmMyIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIwY2NlY2Y0NTFiYjM3ZWUyNDYwNjVlM2U3YjcwY2M1MzZmNDViZjNjMzM2NmJmMzE1ZTQwYTlkOTVkNjE2Mzg4In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_e6d8012b88b8435ebd81c71d158e6bce",
+      "statement": "Point-of-care memory is a pure view model that gates machine readings by mode, never reads the retired galvanic intensity, takes entry setup from the earliest live pass, sums hairs over live passes, excludes soft-deleted passes and reuses the shared label helpers.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/point-of-care-memory.ts#L1-L45",
+          "version": "repo-lines-v1:sha256:33c91e263644eaa71f82f9578887cffe5aff458f43f1bc89aef524309c7f11a5:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRhMzVlYTFjMjJlODU2MThiZDRkYzZjMWZkZGQzMjc3YzM4NTdjMWI4NmQ1MjM5NzE2ZjJlNGVjMTk1NzJiYzkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUwYzljYjdjYTUwZmJiOGU4N2ZiN2JmZGM2MzAzMWQ5ODIxZjIxN2YzZmI0M2I4MDY0ODNjNDY1MGE3NGY1YmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImIwZmEzMDEwOTI3YWMxZDhlNTEyM2UxNTQzMjg3MzgyYmIwODVlOThkYTRhMjY2YjJhOWQ3NWYzNjljMTJjNDQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_843d1c20cf6b4682895924f6da1b37fd",
+      "statement": "DB tests prove the newest charted session wins over a newer empty one, multi-area minutes are credited once, other clients and studios never appear, soft-deleted rows are excluded, the read uses a fixed number of statements as history grows, and a client with no charted history yields no memory.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/point-of-care-memory.db.test.ts#L343-L680",
+          "version": "repo-lines-v1:sha256:64a2f4f44f8727b7432696437a271eff351de72b5ac051e456c9ae68695f4553:eyJzZWxlY3RlZExpbmVDb3VudCI6MzM4LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIwNjhmNTg4NmYxZDIxZmM3YzkyM2Q1MjZiMTFkMDc5OGI1ODdkZGUyYzI3ZjQ3ODhkMGExMzlkNjBmOGI0NTA0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJiZDBmMmQzYTNhYWRhMjc1ODY0NTc4ZDBhNDM5MTU2MzhkNTQzZmVjYTJjOTQ4NThkYjk0MTIxMWU4NmNlZjJiIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_6df3b3c1056647bea0b8a1d4e82ad47f",
+      "statement": "Appointment-prep memory adds a narrative layer limited to audited practitioner-authored session, block, entry and laser notes, excludes structured chips, dead columns and deletion metadata, and prevents duplicates by note source, area and text.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/appointment-prep-memory.ts#L1-L68",
+          "version": "repo-lines-v1:sha256:88c654987073c98b80b94ad8a183e504ea3df635d4ed71a8698d6643cdbf496e:eyJzZWxlY3RlZExpbmVDb3VudCI6NjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBhZTUwM2EzYWIwYmNiYWFkNGIxZTNkYTRhOGNjZDY3OTNlYzc2YjZjNzFhZDEyMTYxOGM4YTQ5M2Q3MWY1OTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUwYzljYjdjYTUwZmJiOGU4N2ZiN2JmZGM2MzAzMWQ5ODIxZjIxN2YzZmI0M2I4MDY0ODNjNDY1MGE3NGY1YmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJhYWY4NjU4MjEyY2ZlZmE0YjQ3MzlkNDY2ZDlkOTNhYmVlMDFhYzY0MDcwM2JlMjAzZDAyOTJkNWExZGQyZjIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8957573ac52a4f9492edc68996f49c64",
+      "statement": "Imported treatment memory lives in separate tables rather than sessions, readable by members, insertable and voidable by owners, with no DELETE policy and an append-only audit table written only by a definer trigger.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0089_imported_treatment_memory.sql#L1-L50",
+          "version": "repo-lines-v1:sha256:894a18d196e4fc1dc8290a2bcfe40444856b08cee840545eba1b6346ea978281:eyJzZWxlY3RlZExpbmVDb3VudCI6NTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3MWFlYTA1NWZkNDRiN2VjODMzNTFjZjIxYzdjOGU3ZjZiNDJjNzhkZmE2ZGFhOGFmMDRhOThiOWMyOGMxZTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI4YmRjNmI2YTVlYzU4YzQ0NDhhMjYxNGZmNzcwY2ZkYmJhNzJiYmZkN2NiMmUyODM2ZmE1NjA5NmM4ZDc0YjkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjgwNjZhZjhjMGNkM2VhZGZlN2U4M2U2YjFkMThhNzJhMDA1MjJlYmU0ZmMzOWY1MzE3OWYwMjc0MjJhNGZjMmUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_852419a8c3f143bf80f7290296ea882e",
+      "statement": "The imported-memory read model uses the RLS-backed server client, excludes voided rows, and returns provenance labels and recorded-history wording only.",
+      "evidence": [
+        {
+          "resource": "repo://lib/imported-treatment-memory.ts#L8-L40",
+          "version": "repo-lines-v1:sha256:09249bebf25e924b1629eff4ee8f5de06058cda68c64225809890b8a5dbbc87b:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRhMWUwYjlhMzE4YTA1YzEwZmFiNjNlYTMwODYxY2I5ZWZjODIwNjczNDgxZGNiZWY3ZWYzOGZiYjY4YjczYjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVjMDY3ODk3N2IxNWQ2MzgwNjZlNTczODFiNGQ0MWYwZGNlOGYyYWU0Y2QxNzQwODZmYzQzZGUxYWI0NDMzMDAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjdkMzU5NmM4ZjNlNjA5NTQ4NDE5MmQ3NGE4ODNmZTk1ODU4NjNlNGE3NWY5OWMwZGI4YTY1N2UzMWNjOTZkNDciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ4NTIwNjM5N2Y5YTAzMWJlOGYyMTRlMTMxMjVkMmE1NmQwYThkNDA4MGQwOGJhNzBlZjEzZmI4ZmE3N2Q3YTgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_613c03b29ca9469cbbde9438fd926fe9",
+      "statement": "Global search merges direct block-text matches with structured treatment-area matches so secondary areas become findable, deduplicating the overlap into one result per block.",
+      "evidence": [
+        {
+          "resource": "repo://lib/search/treatment-memory-merge.ts#L1-L26",
+          "version": "repo-lines-v1:sha256:699e3dbfa22808498a9e26ea22cf305506adb0eb6864aa6e8b00bab9649262b2:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJmNDFjYTdhY2QyYjJlOGQxZTk5MWE3NTVkOTIwZjE1NDRmMzY5NmExNmQ5MDZmZWExOWZlYzVlOTU3NTA1ZWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU1YzFjNmE3OWEyZjk0N2NkM2M4MGUxY2Y3NjIxYjZkMzc3NmNkOTRlN2RlNjE5ZWFhNDJkOWVhNTRkMGFmOTIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI0MzQzMDA5NzRmNWUwNWE0MDU0ZjA0N2U3MWE2ZTEyN2Y0NDYxYzZhMDMyOGE1Y2Y4N2UxNzBmYzYwZWQyMWIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c49c2887fa234168b31ac0c30f636685",
+      "statement": "copy_session_setup is service-role only, re-verifies the practitioner's active membership, derives the source session itself, fails closed with zero rows on a stale fingerprint, locks an empty electrolysis draft target, copies setup and area only (never outcomes, probe lots or minutes performed) and records an idempotency ledger row.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0157_whole_session_copy_setup.sql#L1-L63",
+          "version": "repo-lines-v1:sha256:aaaa4812a34d830a310e78e5d586077ffd083b47826e688b255a1e2f80a4a799:eyJzZWxlY3RlZExpbmVDb3VudCI6NjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI2MDkyNmU4OGUyMzVlMGJlMWIyOWU1YjYyMGE0ZmVkOTg3YmNjMTAwZDJjMTIzNjMzYjA0ZjNjMjdiZGZlM2UiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU1ODVjNjk3NGVhMDg3MzU0ODkwNDI0NWFkNDJlNmRlMWRjNzAzZDVjMDM5NmZkMmVjY2MwODUzY2E5YzBkNDMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE0MDA4ZTM0NWVhNzg0NWM3OTk3MGJkNmE0YjgyMGIxMmNjMThlNzQ4MzA5OTk1MWZkYmQwYTBmM2E0N2VhNTIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2d50539c128d4618b1fe7f7cad552f23",
+      "statement": "DB tests prove the whole-session copy drops outcomes and minutes, replays an identical idempotent request, rejects ambiguous keys, stale or non-canonical sources and ineligible targets, refuses non-members and the authenticated role, and rolls back a failing batch entirely.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/whole-session-copy.db.test.ts#L215-L600",
+          "version": "repo-lines-v1:sha256:c52f0a2e6a079e2b7a05f75857bdeadf8ede975dfd3908a379a645e424322716:eyJzZWxlY3RlZExpbmVDb3VudCI6Mzg2LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJkOGYyMDVmODhlNmRjZDk4ZTMzNWE3MGVlZjk2OWE5MGVhMDM3NTkzMjIzYTA0YjAzMjk3NjVjNDlhMmJkNWUwIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIwMWJhNDcxOWM4MGI2ZmU5MTFiMDkxYTdjMDUxMjRiNjRlZWVjZTk2NGUwOWMwNThlZjhmOTgwNWRhY2E1NDZiIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIzZWExMWRhMTE1Mjk3NGUxODcwYmYwYjFjNmFkMTNjZmU4YjZlYzZmMWIyNjAyNjI5OTQ2ZmIxYzBmZmNmY2ZkIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI5ZTc0YmI2MzczODM0NjY5MDcxOWQ2OTE3NzYxYjc4YzE2OWRhYTRhOTBmZmVjZTg5MDk4YmYxZWM0NDAwN2VmIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_906c47d000a74fa38633d750303f5235",
+      "statement": "The imported-memory module header says surfacing imported memory in Before Today or the client page is a later PR, although the client page and Before Today card already import it and a browser spec proves it appears.",
+      "evidence": [
+        {
+          "resource": "repo://e2e/before-today-imported.spec.ts#L21-L22",
+          "version": "repo-lines-v1:sha256:0fb630fedfaac3e0092356b9cfa2720f131af4c4983b1488eb9bb5bc707758e1:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOTk5MTI3NzEzNWE5N2IzM2ViOWJkZTdiZWQ5OGUxMjUwZTgxYjgyYmNhZGM2NTRlNjg2ZWU4ZWRmYzIxMTJjNyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiY2ZmNjI0NjVjNGM1NmRkMTdhMWYwN2FlMGUwOTU0MmE1YjNlY2I5Zjc2OGEwN2JiMjQwZWIxYWMwOWExZTEwZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNWM5MmM4YmY4MzUyZDhlMzEyYTVjN2JhMmM2Zjg3YmUyNGYxOGRhZWVkNmQzMWVlODE4YjJlNDkzMTQ5NTc2NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYmZjYWFjZWU3NDZkZjBkNjk3ZGEwZjVmMjI1OWFlMWQ3MDJmNzU5YzIyYzRhY2Y1ZmY5M2Q5ZDI4MmRlNGQ4ZSJ9"
+        },
+        {
+          "resource": "repo://lib/imported-treatment-memory.ts#L26-L27",
+          "version": "repo-lines-v1:sha256:58535301b1c002b2c073cc664f7854c434a25d5bd23ceca506e732d842e716b7:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOWMyMGU3MTg1YjgxNGRmYjZjZDc5NDNjZjlkZWI0NmExMGYxZDFhZDExNTg2MmY1NjBjYWNhMzJkMTVjYTNhMSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOGZmN2E3MmIwNzIzZjZjNzk4OTExNmY4YmQ1YTg4ZmM4Y2E5ZDc5ZmRmODdmZWRmYzAzMDNiNWVlOGIwODBlZiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMGEzN2NmZTdhZGZlMmZjYWUzOGI1MjNmMWY1MmVjYWZkNWE0Y2Q4ODAzNjYxMzI5MGQ3ODJkZjIwNTIyOTA0OSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOTU3ZjMyMjQ1NThmMDk5ZDNhYTJiZGNjOTA4NWY1ZjczMjQwNDkwYTJmOTIxN2Y2NjFkMWU1YzU5YjIwYmM3NiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_9522cf3d1e934ca295561d4564678c8f",
+      "statement": "The charted-session module documents a known divergence: the dashboard's clients-needing-attention list uses a blocks-only charted rule without the legacy-entry fallback.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/charted-session.ts#L34-L38",
+          "version": "repo-lines-v1:sha256:d1ff8497caa5b42aa56b29f81858022c32a5efb35a58977f30daf6171a639a4a:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOWUyOGE4YzczNDk3ZTViMWRiYjQxMzQyMGNlNTU5NjVkZTI3Y2FhYmJlZjc4ZWQ0NmJkZGI0M2Q3MDFjYjZlYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMTFkNWU0ZTYwOTA4ZDI0MzNmMGQzNjU1YTFhZDNiYWI5YWE3NmRlMjI4MmY1NDYxMTdhNTFiYzdhMmFlM2FkMiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMmVhYWQ3NGNmNzViMzE2NTdjMTAwMGZkOGQ3NzIzYjk2NWIxMGIwNDA1NmVlYzY4NmQ4Y2FhMjVmMmNiMDY3OSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiY2JhMjE2ZGMzNzIwNTc5YmUxMDAwMjZjNmIwMjE5MzQ0MzkyNjYxOTVhYzUwMTUxZTVjNjZmOTgwYWZjZmQ3OSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_caf328b60ea346dbbd288b4d60b73e2c",
+      "statement": "Before Today takes its latest recorded setup from the most recently treated Treatment Intelligence area and its latest tolerance and reaction from the Treatment Intelligence rollup.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/before-today.ts#L198-L212",
+          "version": "repo-lines-v1:sha256:3c78c112cc53ebe8ac51988fa83b56501b06c5454cfd6ed908c53216d226db57:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIxN2Y3NWE0ZmIzYWMyNjRmOTdjMTI5MzVhZDBlNzc0OTEzNDRjMTY1MzdhM2M1ODg0NDU5MzEzZjQ4NzRjNmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkyYjYwNzVkZGQ5ZmM0YzI3ZTQzYmEzYzQ4NTVjNDEzN2JjODJkY2RiYTMwYTYxYTdjNjUxNTllYmMxYTYyYTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI0MmVhYWM4MGFjYjIxMGJlMjhiZDM5NGYxYzhhZGFjMGE0ZDM4Y2EwMmFhMDliNGE2ZWEzMGZhMjM5Y2ZmMWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjMzZmEwZjNiNDVhZWJmMzYwYWNjM2RjM2RlMDc5OWNhZWQ0OTAwNmZkMGY1YTRjYTJlYWIzYTA4MjA5YzBmOGIifQ"
+        },
+        {
+          "resource": "repo://lib/sessions/before-today.ts#L249-L255",
+          "version": "repo-lines-v1:sha256:886e0d8f6d36127cf95931707f75be5922e2467b2806e1ab2b6f8ad0a48bc0d3:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYjk3MWY3OTU4NDUyM2ZjYTkzOWMzYmI2ODZhM2UzZjIxMTU0ZjY1YzU4NDMxNGIwNWY4ZmUzMWM2MTA0OGI0NCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZGY0NThmMGM5NDEwZTM3YWEyY2VhNGFhZjc0M2M4MmI4ODI3Y2M0MWZhNDRhMzM5MzUwZmQxZjY0YjI5OTA0NSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOWM5ZDViMDBlOGFkNjEzYmVjNDFhMDk5YzZiYzY2OWFjMTAxZjkzOTJlOTU3YjRmMWY1NzIxMDgzODY3MWFmMCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDI3ODAwOGE3YmRiNGEyNTA2NWJmMTYwODJlNjJhNDBhN2ViYmQ5NTdhY2IwYTVlMTM2MzcxMjAwMzVhYWY4YSJ9"
+        },
+        {
+          "resource": "repo://lib/sessions/before-today.ts#L96-L100",
+          "version": "repo-lines-v1:sha256:a667316b3d705c8f86ca1e10d5e0f72d387eff3e1bf6ea0036809f36268cd6ff:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMDkxMTVhMzdhYTk3MmI4YWJhMjg3M2Q2MTQ2ZGMwM2I4ZDE3NTk5YWM5ZTRiZjUzODUyYmZjMWE5ZjRjMTMxYyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZmUwNzFlODQzM2M3NWY1ZDQ0MDhkYTNjYTJkZjg0M2QwNzRmYzBkOTc2NWUzY2Q0NWE5MGEwNThjNTgxMTI5ZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMTRmM2VjMDA3OTRhMDcxNzRiMDZmNDg1OTJhOGVlOGU0MDA4OGJiOTU2YmFmMmQwMGFmZmViOTk1YzcyMzBiZCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNmYxOGJjNGE1ZWE3NGU3ZGIwMDczOTVhZTBkM2RjMTkwMTMxNTQxYmFkNmUxMjc3OGZjOWJiMTlmYzRjYjllMSJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-04T01:59:59.625Z"
+  }
+}

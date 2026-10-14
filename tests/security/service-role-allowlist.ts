@@ -27,6 +27,13 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
+    path: "app/(app)/settings/waitlist/consent-actions.ts",
+    purpose:
+      "0208 owner surface — the sole caller of record_waitlist_sms_consent_by_practitioner, and a phone-wide STOP read before it.",
+    why: "record_waitlist_sms_consent_by_practitioner is `security definer` with EXECUTE granted to service_role ALONE (revoked by name from public, anon, authenticated and service_role first). The action resolves the studio and the acting practitioner server-side via getCurrentPractitionerWithStudio() and passes the server-derived studio.id + practitioner.user_id; the browser supplies an entry id and the owner's three answers, never a studio_id, user_id, role, source or timestamp. The command re-derives membership AND owner role from (studio_id, user_id), scopes the entry by BOTH id and studio_id, locks it, and refuses STOP, existing consent, no phone and inactive entries. Before it runs, the action reads the entry's number through the OWNER'S OWN session client (0185's owner SELECT policy, scoped by id AND studio_id), then checks it through lookupPhoneWideSuppression, which reads opted-out clients and waitlist_prospect_suppression_candidates (0202, service_role-only) across every studio on purpose: STOP is phone-wide on Hone's shared sender, exactly as the STOP route applies it. What leaves the server is a refusal message, never another studio's row. A failed read refuses too. This file performs no table DML.",
+    scopeGuard: "record_waitlist_sms_consent_by_practitioner",
+  },
+  {
     path: "app/(app)/settings/waitlist/capacity-actions.ts",
     purpose: "Owner's invitation-capacity open/close commands.",
     why:
@@ -149,8 +156,8 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
     path: "app/(app)/clients/[id]/images/page.tsx",
     purpose: "Authenticated practitioner server action/query.",
-    why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",
-    scopeGuard: "getCurrentPractitionerWithStudio",
+    why: "Service-role write/read-through after the caller's studio is resolved via requirePractitionerWithStudio(); every query is scoped to that studio.id.",
+    scopeGuard: "requirePractitionerWithStudio",
   },
   {
     path: "app/(app)/clients/[id]/intake/actions.ts",
@@ -216,8 +223,8 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
     path: "app/(app)/settings/payments/return/page.tsx",
     purpose: "Authenticated practitioner server action/query.",
-    why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",
-    scopeGuard: "getCurrentPractitionerWithStudio",
+    why: "Service-role write/read-through after the caller's studio is resolved via requirePractitionerWithStudio(); every query is scoped to that studio.id.",
+    scopeGuard: "requirePractitionerWithStudio",
   },
   {
     path: "app/(auth)/login/actions.ts",
@@ -334,6 +341,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "x-twilio-signature",
   },
   {
+    path: "app/api/twilio/message-status/route.ts",
+    purpose: "SMS-00 Twilio delivery-status callback.",
+    why: "No user session; authenticated by the Twilio signature (x-twilio-signature) over the full URL, whose query carries the ledger row id. The admin client is built only after the signature verifies, and drives ONLY the service-role-only record_sms_delivery_status command, which re-derives studio and subject from the addressed row and refuses a SID that does not match it.",
+    scopeGuard: "x-twilio-signature",
+  },
+  {
     path: "app/book/[slug]/actions.ts",
     purpose: "Public, unauthenticated token-scoped route/query.",
     why: "No session; the bearer signed/hashed token is verified (verifyCancellationToken) and resolves the exact appointment/intake/portal row. Scope comes from the verified token, so service-role is required.",
@@ -342,15 +355,15 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
     path: "app/book/[slug]/waitlist-actions.ts",
     purpose:
-      "WAIT-02 public new-client waitlist join — the sole caller of join_new_client_waitlist (migration 0185).",
+      "WAIT-02 public new-client waitlist join — the sole caller of join_new_client_waitlist (migration 0185), reached since 0210 through join_new_client_waitlist_with_phone_and_sms_answer (the successor of 0208's join_new_client_waitlist_with_sms_answer), which wraps 0204's guarded join, requires a sendable phone and records the visitor's explicit SMS answer on the entry it creates; and, with the same server-built client after the commit, the sole caller of claim_waitlist_join_ack_sms (0210) through lib/waitlist/delivery/join-ack-sms.ts.",
     // The scopeGuard is the COMMAND NAME rather than the generic
     // `getStudioBySlug` this route already uses, following the B1 tightening
     // applied to move-appointment-actions.ts: if this file ever stops going
     // through the governed command — for example by reintroducing a direct
     // insert into new_client_waitlist_entries — the allowlist test fails rather
     // than continuing to vouch for a justification that is no longer true.
-    why: "Unauthenticated public surface: there is no session to satisfy RLS, and `authenticated` holds SELECT only on new_client_waitlist_entries while `anon` and `service_role` hold NOTHING on the table (0185), so no client role can write it at all. The action resolves the studio server-side from the public slug (getStudioBySlug), re-derives the waitlist gate from the SERVER-RESOLVED slug, and passes that studio.id as the command's tenant argument; the browser supplies only a lookup slug and bounded contact fields. join_new_client_waitlist is service_role-only (EXECUTE revoked from public/anon/authenticated), validates and normalizes its own input, owns the studio-scoped duplicate rule atomically, and writes exactly one table.",
-    scopeGuard: "join_new_client_waitlist",
+    why: "Unauthenticated public surface: there is no session to satisfy RLS, and `authenticated` holds SELECT only on new_client_waitlist_entries while `anon` and `service_role` hold NOTHING on the table (0185), so no client role can write it at all. The action resolves the studio server-side from the public slug (getStudioBySlug), re-derives the waitlist gate from the SERVER-RESOLVED slug, and passes that studio.id as the command's tenant argument; the browser supplies only a lookup slug and bounded contact fields. join_new_client_waitlist is service_role-only (EXECUTE revoked from public/anon/authenticated), validates and normalizes its own input, owns the studio-scoped duplicate rule atomically, and writes exactly one table. 0208's wrapper is service_role-only by the same revoke-by-name pattern; it refuses an unanswered SMS question, adds nothing to the guarded join's authority, and stamps consent (public_form, v1, its own clock) only on an entry that join has just created, never on an existing one.",
+    scopeGuard: "join_new_client_waitlist_with_phone_and_sms_answer",
   },
   {
     path: "app/book/[slug]/page.tsx",
@@ -617,6 +630,20 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: '.eq("studio_id"',
   },
   {
+    path: "lib/booking/new-client-admission.ts",
+    purpose: "Public booking: read the studio's NEW-CLIENT admission mode.",
+    why:
+      "A PUBLIC visitor has no session, and `studios` RLS is members-read for " +
+      "`authenticated` only - so the RLS-scoped client returns NO ROW, which " +
+      "maybeSingle reports as { data: null, error: null } rather than an error. " +
+      "A stored WAITLIST or CLOSED then fell silently back to the legacy env " +
+      "list and the studio went on taking bookings. The narrowing is the " +
+      "projection and the key: ONE column, by the SERVER-RESOLVED studio id " +
+      "(never a slug or anything the browser supplies). The public booking page " +
+      "already reads this same row this way via getStudioBySlug.",
+    scopeGuard: '.eq("id", studio.id)',
+  },
+  {
     path: "lib/booking/queries.ts",
     purpose: "Public booking / portal / token-scoped read.",
     why: "Session-less or portal-session path that cannot satisfy member RLS; the query is explicitly studio/client scoped (see scopeGuard). Service-role reads the tenant-scoped rows.",
@@ -748,7 +775,7 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
     path: "app/(app)/settings/tracking/page.tsx",
     purpose: "Authenticated OWNER settings page (redacted status read).",
-    why: "Owner-gated via getCurrentPractitionerWithStudio(); reads only redacted provider status (never encrypted_server_token) scoped to studio.id.",
-    scopeGuard: "getCurrentPractitionerWithStudio",
+    why: "Owner-gated via requirePractitionerWithStudio(); reads only redacted provider status (never encrypted_server_token) scoped to studio.id.",
+    scopeGuard: "requirePractitionerWithStudio",
   },
 ];

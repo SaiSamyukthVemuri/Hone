@@ -51,10 +51,12 @@ export const WAIT_04B_CAPABILITIES: ProfileAdapterCapabilities = {
   // argument false. Flipping it before the STOP path existed would have been
   // the flag lying about the system rather than describing it.
   //
-  // WHAT THIS DOES NOT UNLOCK: sending. `prospectMayReceiveSms` still needs a
-  // VERIFIED mobile, and `verifiesMobile` below is still false — so every
-  // prospect send remains refused. Recording consent honestly and being allowed
-  // to act on it are different questions, and only the first is answered here.
+  // WHAT THIS DOES NOT DECIDE: sending. Since Roadmap v1.25 (operator decision
+  // D4(2), 2026-10-08) `prospectMayReceiveSms` allows a text on recorded consent
+  // and no STOP, with verification optional. Each text is still claimed once
+  // per invitation, behind the studio switch, the phone check and the
+  // deployment fence (SMS-01). Recording consent honestly is this flag's
+  // question; acting on it is the sender's.
   recordsSmsConsent: true,
 
   // FALSE, AND THE REASON HAS NARROWED AGAIN RATHER THAN GONE AWAY.
@@ -79,8 +81,9 @@ export const WAIT_04B_CAPABILITIES: ProfileAdapterCapabilities = {
   // plumbing would be the flag lying about the system, which is the same mistake
   // `recordsSmsConsent` above was held back from making.
   //
-  // A candidate is not a destination, and `prospectMayReceiveSms` therefore
-  // refuses every prospect send — the correct standing behaviour, not a gap.
+  // No mobile is proven, and since D4(2) that refuses nothing:
+  // `prospectMayReceiveSms` decides on consent and STOP. This flag only says
+  // that no verification is claimed.
   verifiesMobile: false,
 
   // 0193 issues and revokes the grant; 0202 redeems it for profile completion.

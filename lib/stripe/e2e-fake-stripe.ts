@@ -54,6 +54,22 @@ const callsByRun = new Map<string, FakeStripeCall[]>();
 // synthetic result and records NO second call (proves retry never double-charges).
 const idempotentResultByRun = new Map<string, Map<string, string>>();
 const seqByRun = new Map<string, number>();
+// PAY-CCY-01. The money each synthetic PaymentIntent and Charge was created
+// with, so a later retrieve and a refund state it back exactly as real Stripe
+// does. Real Stripe always states `amount` and `currency` on these objects,
+// and the application now refuses to record any that do not equal the
+// prepared attempt, so a fake that omitted them would fail closed.
+type FakeMoney = { amount: number | null; currency: string | null };
+const moneyByIdByRun = new Map<string, Map<string, FakeMoney>>();
+function rememberMoney(run: string, id: string, money: FakeMoney): void {
+  const m = moneyByIdByRun.get(run) ?? new Map<string, FakeMoney>();
+  m.set(id, money);
+  moneyByIdByRun.set(run, m);
+}
+function recalledMoney(run: string, id: string | null | undefined): FakeMoney {
+  if (!id) return { amount: null, currency: null };
+  return moneyByIdByRun.get(run)?.get(id) ?? { amount: null, currency: null };
+}
 
 function runId(): string {
   return process.env.HONE_E2E_RUN_ID ?? "no-run";
@@ -110,6 +126,7 @@ export function resetFakeStripeState(run: string = runId()): void {
   callsByRun.delete(run);
   idempotentResultByRun.delete(run);
   seqByRun.delete(run);
+  moneyByIdByRun.delete(run);
 }
 
 // ---- The fake client -----------------------------------------------------------
@@ -153,9 +170,20 @@ function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiPar
       : outcome === "processing"
         ? "processing"
         : "succeeded";
+  // A replay states the money of the ORIGINAL create, as Stripe's idempotent
+  // replay returns the original object rather than echoing the new request.
+  const money: FakeMoney = existing
+    ? recalledMoney(run, id)
+    : { amount: params?.amount ?? null, currency: params?.currency ?? null };
+  if (!existing) {
+    rememberMoney(run, id, money);
+    rememberMoney(run, chargeId, money);
+  }
   return {
     id,
     status,
+    amount: money.amount,
+    currency: money.currency,
     latest_charge: outcome === "success" ? chargeId : null,
   };
 }
@@ -176,7 +204,20 @@ export function createFakeStripe(): Stripe {
           resultId: id,
           replay: false, // a read, not a keyed effect
         });
-        return { id, status: "succeeded", latest_charge: `ch_test_e2e_${runId()}_r` };
+        const run = runId();
+        const chargeId = `ch_test_e2e_${run}_r`;
+        // States the money this PaymentIntent was created with. An id the fake
+        // never created states none, which the application treats as a
+        // mismatch, the same as real Stripe disagreeing with the row.
+        const money = recalledMoney(run, id);
+        rememberMoney(run, chargeId, money);
+        return {
+          id,
+          status: "succeeded",
+          amount: money.amount,
+          currency: money.currency,
+          latest_charge: chargeId,
+        };
       },
       cancel: async (id: string, _p?: unknown, opts?: RequestOpts) => {
         record(runId(), {
@@ -193,7 +234,11 @@ export function createFakeStripe(): Stripe {
     },
     refunds: {
       create: async (
-        params: { amount?: number | null; currency?: string | null },
+        params: {
+          charge?: string | null;
+          amount?: number | null;
+          currency?: string | null;
+        },
         opts?: RequestOpts,
       ) => {
         const run = runId();
@@ -201,8 +246,17 @@ export function createFakeStripe(): Stripe {
         const existing = idempotentResult(run, key);
         const replay = existing !== null;
         const id = existing ?? `re_test_e2e_${run}_${nextSeq(run)}`;
+        // Stripe takes a refund's currency from the CHARGE, never from the
+        // request. A replay states the original refund's amount.
+        const money: FakeMoney = existing
+          ? recalledMoney(run, id)
+          : {
+              amount: params?.amount ?? null,
+              currency: recalledMoney(run, params?.charge).currency,
+            };
         if (!existing) {
           rememberIdempotent(run, key, id);
+          rememberMoney(run, id, money);
         }
         // Record every refund invocation (replay flag), same invocation/effect
         // model as create, so a duplicate refund request can't be concealed.
@@ -215,7 +269,12 @@ export function createFakeStripe(): Stripe {
           resultId: id,
           replay,
         });
-        return { id, status: "succeeded" };
+        return {
+          id,
+          status: "succeeded",
+          amount: money.amount,
+          currency: money.currency,
+        };
       },
     },
   };

@@ -77,6 +77,12 @@ export function assertRouteFaultNotRequestedInDeployment(
 //                normally. Proves Try again actually recovers.
 //   redirect     calls redirect(). Must NOT be converted into an error screen.
 //   not-found    calls notFound(). Must stay a 404, distinct from an error.
+//   unmarked-throw
+//                a Server Component throw WITHOUT the canary: it stands in for
+//                an unexpected failure on the harness route. Sentry must still
+//                deliver it (SENTRY-NOISE-01 suppresses only the marked fault),
+//                which is the positive control that makes "the marked fault
+//                was not sent" a measurement rather than an absence.
 export const E2E_ROUTE_FAULT_CASES = [
   "ok",
   "server-throw",
@@ -84,6 +90,7 @@ export const E2E_ROUTE_FAULT_CASES = [
   "once",
   "redirect",
   "not-found",
+  "unmarked-throw",
 ] as const;
 
 export type E2eRouteFaultCase = (typeof E2E_ROUTE_FAULT_CASES)[number];
@@ -99,6 +106,11 @@ export function asRouteFaultCase(value: string): E2eRouteFaultCase | null {
 // never reaches the DOM. Defined here so the page and the specs cannot drift.
 export const E2E_ROUTE_FAULT_CANARY =
   'relation "clients" does not exist [HONE-LEAK-CANARY-9f3c1d]';
+
+// The unmarked-throw message. Deliberately carries NO part of the canary, so
+// SENTRY-NOISE-01's predicate must keep it.
+export const E2E_ROUTE_FAULT_UNMARKED_MESSAGE =
+  "Failed to load fault fixture: unmarked harness failure";
 
 // Per-token bookkeeping for the `once` case, so Try again has something real to
 // recover from. Module-scoped, exactly like failedOnceRecipients in

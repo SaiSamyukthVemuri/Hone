@@ -67,7 +67,8 @@ describe("a new prospect joins with a full profile", () => {
     expect(row.sms_consent_text_version).toBe("waitlist_sms_operational_v1");
     expect(row.sms_consent_at).not.toBeNull();
 
-    // THE WHOLE POINT: holding a number is not permission to text it.
+    // D4(2), Roadmap v1.25 (2026-10-08): verification is optional, so consent
+    // recorded WITH the join's own number is sendable...
     expect(row.mobile_verified_at).toBeNull();
     expect(
       prospectMayReceiveSms({
@@ -75,8 +76,19 @@ describe("a new prospect joins with a full profile", () => {
         sms_opted_out_at: row.sms_opted_out_at,
         mobile_verified_at: row.mobile_verified_at,
       }),
-      "consent plus a typed number must NOT be sendable",
-    ).toBe(false);
+      "consent recorded with the join's own number is sendable",
+    ).toBe(true);
+    // ...and it stays bound to THAT number: a stored phone can never be
+    // replaced or cleared, so the consent cannot follow a different one.
+    await expect(
+      adminQuery(`update public.new_client_waitlist_entries set phone = '647-555-9999' where id = $1`, [
+        out.entry_id,
+      ]),
+    ).rejects.toThrow(/may not be replaced or cleared/);
+    await expect(
+      adminQuery(`update public.new_client_waitlist_entries set phone = null where id = $1`, [out.entry_id]),
+    ).rejects.toThrow(/may not be replaced or cleared/);
+    expect((await entryRow(out.entry_id!)).phone).toBe("647-555-1234");
   });
 
   it("writes availability to 0193's table, not to a second column", async () => {

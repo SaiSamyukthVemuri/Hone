@@ -35,7 +35,7 @@ describe("Record Keeping navigation", () => {
   });
 
   it("the page is inside the authenticated (app) layout and resolves the studio server-side", () => {
-    expect(PAGE).toMatch(/getCurrentPractitionerWithStudio/);
+    expect(PAGE).toMatch(/requirePractitionerWithStudio/);
     expect(PAGE).not.toMatch(/"use client"/);
   });
 

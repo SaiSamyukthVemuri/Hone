@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   getClientById,
-  getCurrentPractitionerWithStudio,
+  requirePractitionerWithStudio,
 } from "@/lib/supabase/queries";
 import { PendingButton } from "@/components/pending-button";
 import { ClientForm, type ClientFormValues } from "@/components/client-form";
@@ -15,7 +15,7 @@ export default async function EditClientPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { studio } = await requirePractitionerWithStudio();
   const data = await getClientById(studio.id, id);
   if (!data) notFound();
 

@@ -49,7 +49,7 @@ export function ProductMenu() {
         aria-haspopup="true"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1.5 text-[0.9375rem] font-medium text-ink"
+        className="inline-flex min-h-11 items-center gap-1.5 text-[0.9375rem] font-medium text-ink transition-colors duration-[var(--hone-duration-ui)] hover:text-mineral focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-mineral)]"
       >
         Product
         <svg
@@ -81,7 +81,7 @@ export function ProductMenu() {
             href={item.href}
             role="menuitem"
             onClick={() => setOpen(false)}
-            className="block rounded-[6px] px-3 py-2 text-[0.9375rem] text-ink hover:bg-warm"
+            className="flex min-h-11 items-center rounded-[6px] px-3 text-[0.9375rem] text-ink hover:bg-warm focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[color:var(--color-mineral)]"
           >
             {item.label}
           </Link>

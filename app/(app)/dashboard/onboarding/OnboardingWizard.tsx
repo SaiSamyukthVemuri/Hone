@@ -20,6 +20,7 @@ import {
   celebrationReducer,
   isCelebrationSpent,
 } from "@/lib/onboarding/celebration-machine";
+import { absorbTransportFailure } from "@/lib/reliability/server-action-transport";
 import { OnboardingModal } from "./OnboardingModal";
 import { Celebration } from "./Celebration";
 import {
@@ -210,16 +211,22 @@ export function OnboardingWizard({
     // Fire once when landing on a celebratory success step.
   }, [open, showConfetti]);
 
+  // SENTRY-FETCH-01. The step pointer, the welcome acknowledgement and the
+  // payments skip are BEST-EFFORT writes: the wizard has already moved on
+  // locally, and the next server model carries whatever was really persisted.
+  // A request lost in transit is therefore absorbed rather than left to reject
+  // unhandled. Every other rejection is re-thrown and stays visible
+  // (lib/reliability/server-action-transport.ts).
   function goTo(step: OnboardingStepKey) {
     setActiveStep(step);
     startTransition(() => {
-      void setOnboardingStepAction(step);
+      setOnboardingStepAction(step).catch(absorbTransportFailure);
     });
   }
 
   function persistPointer() {
     startTransition(() => {
-      void setOnboardingStepAction(active.key);
+      setOnboardingStepAction(active.key).catch(absorbTransportFailure);
     });
   }
 
@@ -302,7 +309,7 @@ export function OnboardingWizard({
             disabled={pending}
             onClick={() => {
               startTransition(() => {
-                void acknowledgeWelcomeAction();
+                acknowledgeWelcomeAction().catch(absorbTransportFailure);
               });
               setActiveStep("service");
             }}
@@ -380,7 +387,7 @@ export function OnboardingWizard({
                   disabled={pending}
                   onClick={() => {
                     startTransition(() => {
-                      void skipPaymentsAction();
+                      skipPaymentsAction().catch(absorbTransportFailure);
                     });
                     setActiveStep("done");
                   }}

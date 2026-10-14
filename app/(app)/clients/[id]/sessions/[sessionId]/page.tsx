@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 import {
   getClientById,
-  getCurrentPractitionerWithStudio,
+  requirePractitionerWithStudio,
   getLaserTreatmentCountsForClient,
   getPriorLaserSessionCount,
   getRecentEntryForClient,
@@ -95,7 +95,7 @@ export default async function SessionDetailPage({
   const { id, sessionId } = await params;
   const query = (await searchParams) ?? {};
   const { practitioner, studio } = await timed("session-chart.identity", () =>
-    getCurrentPractitionerWithStudio(),
+    requirePractitionerWithStudio(),
   );
 
   // Everything from here to the render is the page's own domain work. The

@@ -448,3 +448,133 @@ test.describe("onboarding v2 — flag ON", () => {
     expect(rows[0]?.celebrated_at ?? null).toBeNull();
   });
 });
+
+// SENTRY-FETCH-01. Every onboarding write is a Server Action, and a Server
+// Action is a POST that can be LOST in transit: the browser then rejects the
+// invocation with its own `TypeError: Failed to fetch`. A discarded promise
+// surfaces as an unhandled rejection that Sentry reports as a crash; an awaited
+// one left uncaught reaches the route error boundary, which replaces the whole
+// Dashboard. This pins that neither happens to an onboarding write.
+//
+// Only Server Action POSTs are failed here (route.abort, which Chrome reports
+// as "Failed to fetch"). The page, its RSC requests and the Sentry tunnel keep
+// working, which is the only shape whose event can reach Sentry at all: a device
+// that is fully offline cannot post its own report. Envelopes sent to the
+// tunnel are read and answered locally, so this test sees exactly what WOULD
+// have been reported and forwards nothing.
+test.describe("onboarding v2 — a request lost in transit", () => {
+  test("never escapes as a crash, never replaces the Dashboard, never claims completion", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    await setStudioOnboardingV2Enabled(seed.studioId, true);
+
+    const reported: string[] = [];
+    await page.route("**/monitoring**", async (route) => {
+      reported.push(...reportedErrorValues(route.request().postData() ?? ""));
+      await route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+    });
+    const uncaught: string[] = [];
+    page.on("pageerror", (e) => uncaught.push(`${e.name}: ${e.message}`));
+
+    await loginAsOwner(page, seed);
+    const wizard = page.locator(WIZARD);
+    await expect(wizard).toBeVisible();
+
+    let lost = 0;
+    await page.route("**/*", async (route) => {
+      const req = route.request();
+      if (req.method() === "POST" && req.headers()["next-action"]) {
+        lost += 1;
+        return route.abort("failed");
+      }
+      return route.fallback();
+    });
+    // Each press below must really have sent a write that was then lost.
+    async function press(name: string | RegExp, scope = wizard) {
+      const before = lost;
+      await scope.getByRole("button", { name }).click();
+      await expect.poll(() => lost, { message: `no write was lost for ${name}` }).toBeGreaterThan(before);
+    }
+
+    // The best-effort writes: the wizard moves on locally regardless.
+    await press("Get started");
+    await expect(wizard.getByRole("heading", { name: "Create your first service" })).toBeVisible();
+    await press("Continue");
+    await press("Continue");
+    await press("Continue");
+    await press("Skip for now");
+    await expect(wizard.getByRole("heading", { name: "You're ready" })).toBeVisible();
+    await press("Close setup");
+    await expect(page.locator(WIZARD)).toHaveCount(0);
+    await press(/Continue setup|Start setup/, page.locator("body"));
+    await expect(wizard).toBeVisible();
+
+    // Completion, the one write that is NOT best-effort.
+    await press("Go to dashboard");
+    await expect(page.locator(WIZARD)).toHaveCount(0);
+    // The Dashboard survives the lost request...
+    await expect(page.getByTestId("route-error-boundary")).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+    // ...and nothing was claimed: the server never confirmed, so the card stays.
+    await expect(page.getByRole("heading", { name: "Finish setting up your studio" })).toBeVisible();
+    const [row] = await sql<{ completed_at: string | null }>(
+      `select completed_at from studio_onboarding where studio_id = $1`,
+      [seed.studioId],
+    );
+    expect(row?.completed_at ?? null, "a lost completion must not be recorded").toBeNull();
+
+    // THE SYMPTOM: no unhandled rejection, and no transport failure reported.
+    expect(uncaught).toEqual([]);
+    expect(reported.filter((value) => /Failed to fetch/.test(value))).toEqual([]);
+
+    // ANTI-VACUITY: the tunnel capture really sees what the page reports. A
+    // deliberate unhandled rejection must arrive, or the two empty lists above
+    // prove nothing.
+    await page.evaluate(() => {
+      void Promise.reject(new Error("capture probe"));
+    });
+    await expect.poll(() => reported, { timeout: 15_000 }).toContain("capture probe");
+
+    // RECOVERY: with the transport back, the same press completes for real.
+    await page.unroute("**/*");
+    await page.getByRole("button", { name: /Continue setup|Start setup/ }).click();
+    await expect(wizard).toBeVisible();
+    await wizard.getByRole("button", { name: "Go to dashboard" }).click();
+    await expect(page.getByRole("heading", { name: "Finish setting up your studio" })).toHaveCount(0);
+    await expect
+      .poll(async () => {
+        const rows = await sql<{ completed_at: string | null }>(
+          `select completed_at from studio_onboarding where studio_id = $1`,
+          [seed.studioId],
+        );
+        return rows[0]?.completed_at ?? null;
+      })
+      .not.toBeNull();
+  });
+});
+
+// The exception values inside a Sentry envelope posted to the same-origin
+// tunnel: a header line, then item-header / payload line pairs.
+function reportedErrorValues(envelope: string): string[] {
+  const lines = envelope.split("\n");
+  const values: string[] = [];
+  for (let i = 1; i + 1 < lines.length; i += 2) {
+    let header: { type?: string };
+    try {
+      header = JSON.parse(lines[i]!);
+    } catch {
+      break;
+    }
+    if (header.type !== "event") continue;
+    try {
+      const event = JSON.parse(lines[i + 1]!) as {
+        exception?: { values?: Array<{ value?: string }> };
+      };
+      for (const v of event.exception?.values ?? []) if (v.value) values.push(v.value);
+    } catch {
+      // Not a JSON payload, so not an error event.
+    }
+  }
+  return values;
+}

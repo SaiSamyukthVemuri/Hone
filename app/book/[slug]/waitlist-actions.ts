@@ -5,8 +5,13 @@ import { after } from "next/server";
 import { getStudioBySlug } from "@/lib/booking/queries";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
-  isNewClientWaitlistEnabled,
-  isNewClientWaitlistDurableEnabled,
+  getNewClientAdmissionMode,
+  newClientAdmissionLegacyBridgeWaitlist,
+  newClientMayJoinWaitlist,
+} from "@/lib/booking/new-client-admission";
+import { newClientWaitlistCommitIsDurable } from "@/lib/booking/new-client-waitlist-durability-bridge";
+import {
+  validateWaitlistSmsAnswer,
   validateWaitlistSubmission,
   NEW_CLIENT_WAITLIST_SUBMIT_FAILED,
   NEW_CLIENT_WAITLIST_SUBMIT_UNCONFIRMED,
@@ -14,6 +19,10 @@ import {
   type NewClientWaitlistResult,
   type WaitlistSubmission,
 } from "@/lib/booking/new-client-waitlist";
+import {
+  SMS_CONSENT_ANSWER_FIELD,
+  parseSmsConsentAnswer,
+} from "@/lib/waitlist/prospect-sms-consent";
 import { limitNewClientBookingWaitlist, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 import { sendWaitlistEmailIdempotent } from "@/lib/email/new-client-waitlist-send";
 import {
@@ -25,6 +34,8 @@ import {
   buildNewClientWaitlistStudioEmail,
 } from "@/lib/email/templates/new-client-waitlist";
 import { hashFingerprint } from "@/lib/portal/tokens";
+import { sendWaitlistJoinAckSms } from "@/lib/waitlist/delivery/join-ack-sms";
+import { recordOpsAlert } from "@/lib/ops/alerts";
 import type { Studio } from "@/lib/types/database";
 
 // ===========================================================================
@@ -245,6 +256,44 @@ async function sendClientAcknowledgement(
   }
 }
 
+/**
+ * SMS-04. The one join acknowledgement text, for an entry this request just
+ * created with a Yes. Strictly after the commit and after the response, like
+ * the emails, and never able to change either: whether it goes at all is the
+ * database claim's decision (claim_waitlist_join_ack_sms, 0210 -- the studio
+ * switch, a genuinely new public-form Yes, once per entry, once per number per
+ * day) and then the sender's (STOP phone-wide, a usable number, the
+ * production fence). Its outcome lives in the SMS ledger. It never throws: a
+ * throw it contains raises the same durable `sms_send_failed` warning as a
+ * refused or lost text.
+ */
+async function deliverJoinAckSms(
+  admin: ReturnType<typeof createAdminClient>,
+  studio: Studio,
+  entryId: string,
+): Promise<void> {
+  try {
+    await sendWaitlistJoinAckSms({
+      admin,
+      studio: { id: studio.id, name: studio.name },
+      entryId,
+    });
+  } catch {
+    // Structural only: no recipient, number or identity.
+    logWaitlistEvent("new_client_waitlist_join_ack_sms_threw", { studioId: studio.id });
+    // recordOpsAlert never throws.
+    await recordOpsAlert({
+      severity: "warning",
+      event: "sms_send_failed",
+      message:
+        "A waitlist join acknowledgement text failed with an unexpected error and may not have been sent; the person is on the waitlist and their acknowledgement email is unaffected.",
+      studioId: studio.id,
+      route: "app/book/[slug]/waitlist-actions",
+      safeDetails: { purpose: "waitlist_join_acknowledgement", shape: "threw" },
+    });
+  }
+}
+
 // ===========================================================================
 // WAIT-02 — DURABLE PATH. The database row is the commit.
 // ===========================================================================
@@ -255,6 +304,9 @@ async function submitToDurableWaitlist(
   // configured. Correlation is then unavailable, which is a degraded log, not
   // a reason to put the raw address in one.
   emailFingerprint: string | null,
+  // 0208. The visitor's explicit answer to the SMS question. Recorded by the
+  // command on a NEW entry only, in the same transaction as the join.
+  smsConsent: boolean,
 ): Promise<NewClientWaitlistResult> {
   // Construct the service-role client separately from the call, and classify a
   // construction failure as a DEFINITE failure: a missing key means nothing
@@ -278,11 +330,25 @@ async function submitToDurableWaitlist(
   // key below, so a rejoin after removal is a distinct provider request.
   let entryId: string | null = null;
   try {
-    const { data, error } = await admin.rpc("join_new_client_waitlist", {
+    // COMMIT-TIME ADMISSION. The read at the top of this action is fast refusal,
+    // not authority: the owner can change the mode before this write lands. The
+    // guarded command re-decides inside its own transaction, under the studios
+    // row lock, so an owner who closes the studio first wins and no entry is
+    // written. `p_legacy_bridge_waitlist` is server-derived and TEMPORARY.
+    //
+    // 0208: the same guarded join, wrapped by the command that also records the
+    // SMS answer. The admission gate and the join run unchanged inside it; a
+    // Yes is written on a newly created entry only, never on an existing one.
+    // SMS-04 (0210): the successor command, which also refuses a missing or
+    // unsendable phone for a Yes and a No alike, and stamps the version-2
+    // wording this form now shows.
+    const { data, error } = await admin.rpc("join_new_client_waitlist_with_phone_and_sms_answer", {
       p_studio_id: studio.id,
       p_name: submission.name,
       p_email: submission.email,
       p_phone: submission.phone,
+      p_legacy_bridge_waitlist: newClientAdmissionLegacyBridgeWaitlist(studio.slug),
+      p_sms_consent: smsConsent,
     });
     if (error) {
       const code = typeof error.code === "string" ? error.code : "";
@@ -347,6 +413,12 @@ async function submitToDurableWaitlist(
   // ---- COMMITTED. Everything below is notification and cannot change that,
   // ---- and none of it is awaited before the caller gets an answer.
   schedulePostResponse(async () => {
+    // SMS-04. Started FIRST and run beside the two emails, so a slow email can
+    // never hold it back. Only a Yes on THIS new entry can qualify; a No, and
+    // every resubmission (already_waiting returned above), never reach here.
+    const joinAckText =
+      smsConsent && entryId ? deliverJoinAckSms(admin, studio, entryId) : null;
+
     // Tracked for the operator log line at the end, never for the response: the
     // browser now learns nothing beyond "success", so this is the only place the
     // notification outcome is still visible.
@@ -413,6 +485,8 @@ async function submitToDurableWaitlist(
       studioId: studio.id,
       notification,
     });
+
+    if (joinAckText) await joinAckText;
   });
 
   // Reached at the same point in the flow as the duplicate branch above: the
@@ -469,6 +543,30 @@ async function submitViaStudioNotification(
     email: submission.email,
     phone: submission.phone,
   });
+  // LAST-MOMENT RE-RESOLVE, immediately before the provider commit.
+  //
+  // This transitional path cannot join a database transaction - the commitment
+  // is an external email - so it cannot have the studios row lock the durable
+  // path uses. What it CAN do is refuse to report a successful join using an
+  // admission state that has since changed, and that is what this is: the owner
+  // may have stamped CLOSED (or OPEN) between this action's first read and here.
+  //
+  // A STAMPED state wins over the legacy env list, because
+  // `getNewClientAdmissionMode` resolves the stamp first. Only WAITLIST may
+  // continue; OPEN, CLOSED and UNKNOWN all stop before anything is sent.
+  //
+  // TRANSITIONAL. This whole function disappears when the durable bridge is
+  // retired at cutover - see docs/production/new-client-admission-activation.md
+  // step H - and with it this re-read.
+  const admissionAtCommit = await getNewClientAdmissionMode(studio);
+  if (!newClientMayJoinWaitlist(admissionAtCommit)) {
+    logWaitlistEvent("new_client_waitlist_admission_changed_before_send", {
+      studioId: studio.id,
+      emailFingerprint,
+    });
+    return { ok: false, error: NEW_CLIENT_WAITLIST_SUBMIT_FAILED };
+  }
+
   const studioSend = await sendWaitlistEmailIdempotent({
     namespace: "studio",
     studioId: studio.id,
@@ -519,6 +617,17 @@ export async function submitNewClientBookingWaitlistAction(
     phone: trimmed(formData.get("phone")) || null,
   });
   if (!validated.ok) return { ok: false, error: validated.error };
+
+  // 0208. THE SMS QUESTION IS ANSWERED, EXPLICITLY, BEFORE ANYTHING ELSE RUNS.
+  // Not answered is refused, never read as "no". A Yes needs a number. Both
+  // refusals are about the visitor's own form and reveal nothing about the
+  // studio or the queue.
+  const smsAnswer = validateWaitlistSmsAnswer({
+    answer: parseSmsConsentAnswer(formData.get(SMS_CONSENT_ANSWER_FIELD)),
+    phone: validated.value.phone,
+  });
+  if (!smsAnswer.ok) return { ok: false, error: smsAnswer.error };
+
   if (!slug || slug.length > WAITLIST_SLUG_MAX) {
     return { ok: false, error: NEW_CLIENT_WAITLIST_SUBMIT_FAILED };
   }
@@ -543,7 +652,12 @@ export async function submitNewClientBookingWaitlistAction(
   //    the row. A browser-claimed "waitlist is on" is not consulted and does not
   //    exist on the wire. Checked BEFORE the limiter so a submission to a studio
   //    that is not in waitlist mode consumes no quota.
-  if (!isNewClientWaitlistEnabled(studio.slug)) {
+  //    NEW-CLIENT-MODE-01: the one admission authority, read from the
+  //    server-resolved studio. `waitlist` is the ONLY mode that admits a join -
+  //    `closed` refuses it as firmly as it refuses a booking, and an unreadable
+  //    mode refuses too rather than guessing the studio is collecting leads.
+  const admission = await getNewClientAdmissionMode(studio);
+  if (!newClientMayJoinWaitlist(admission)) {
     return { ok: false, error: NEW_CLIENT_WAITLIST_SUBMIT_FAILED };
   }
 
@@ -557,9 +671,31 @@ export async function submitNewClientBookingWaitlistAction(
   });
   if (!gate.allowed) return { ok: false, error: RATE_LIMIT_MESSAGE };
 
-  // 5. COMMIT. Which commit point applies is a SERVER fact derived from the
-  //    server-resolved slug, exactly like the gate above.
-  return isNewClientWaitlistDurableEnabled(studio.slug)
-    ? submitToDurableWaitlist(studio, submission, emailFingerprint)
-    : submitViaStudioNotification(studio, submission, emailFingerprint);
+  // 5. COMMIT.
+  //
+  //    `waitlist` MEANS durable, and that is the long-term law: a successful
+  //    join writes new_client_waitlist_entries, the notification happens AFTER
+  //    a durable success, and a failure to send cannot unwrite the row. There
+  //    is no permanent email-only waitlist mode.
+  //
+  //    DURING THE BOUNDED MIGRATION BRIDGE ONLY, the commit point follows the
+  //    studio's CURRENT configuration rather than the new law, because a code
+  //    deploy must not move a studio's commit point before anyone chose to move
+  //    it. A studio named in NEW_CLIENT_WAITLIST_STUDIO_SLUGS but NOT in the
+  //    DURABLE list commits by email acceptance in production today; it keeps
+  //    doing so until its durable mode is actually persisted.
+  //
+  //    Once it IS persisted, the durable path is unconditional - removing the
+  //    legacy durable slug cannot return a cut-over studio to email-only.
+  //
+  //    The whole decision lives in ONE deletable file. See
+  //    lib/booking/new-client-waitlist-durability-bridge.ts.
+  //
+  //    THE SMS ANSWER is recorded on the durable path only. The notification
+  //    path writes no row, so there is nothing to bind it to, and SMS-01 never
+  //    applies there: an invitation exists only for a durable entry.
+  if (newClientWaitlistCommitIsDurable(admission, studio.slug)) {
+    return submitToDurableWaitlist(studio, submission, emailFingerprint, smsAnswer.smsConsent);
+  }
+  return submitViaStudioNotification(studio, submission, emailFingerprint);
 }

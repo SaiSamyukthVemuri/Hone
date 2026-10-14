@@ -304,6 +304,37 @@ export function protectedIntervals(
     });
 }
 
+/**
+ * The earliest instant a reservation may END and still protect time inside a
+ * search window that begins at `windowStartUtc`.
+ *
+ * WAIT-v4 PR0 — the midnight buffer spill. `studio_calendar_reservations` stores
+ * an appointment's ACTUAL end (0152); `protectedIntervals` above re-applies the
+ * studio buffer to reach its PROTECTED end. A loader that filters on the actual
+ * end therefore drops exactly the reservation whose protected end reaches into
+ * the window: a 23:50 appointment under a 30-minute buffer is protected to
+ * 00:20, but `ends_at > 00:00` is false, so it was never loaded and 00:00 was
+ * offered. The database's own `enforce_appointment_buffer` (0152) then refused
+ * the write with HB001 — an offer the authority would not accept.
+ *
+ * Widening the lower bound by the buffer is the whole repair, and it belongs
+ * here rather than at each call site so the two loaders cannot drift: every
+ * query that feeds `protectedIntervals` must select on the same boundary that
+ * function reconstructs.
+ *
+ * Non-appointment reservations are unaffected in substance. They are protected
+ * to their raw end, so one loaded by this wider bound ends at or before
+ * `windowStartUtc` and can collide with nothing inside the window.
+ */
+export function reservationWindowStartUtc(
+  windowStartUtc: Date,
+  bufferMinutes: number,
+): Date {
+  return new Date(
+    windowStartUtc.getTime() - Math.max(0, bufferMinutes) * 60_000,
+  );
+}
+
 export async function getAvailableSlots(
   supabase: SupabaseClient,
   studio: StudioRow,
@@ -451,7 +482,13 @@ export async function getAvailableSlots(
     .from("studio_calendar_reservations")
     .select("starts_at, ends_at, source_kind, source_id")
     .lt("starts_at", windowEndUtc.toISOString())
-    .gt("ends_at", windowStartUtc.toISOString());
+    // Widened by the buffer: see reservationWindowStartUtc. Filtering on the
+    // raw end dropped a previous-day appointment whose protected end crossed
+    // into this window, and the write authority then refused the offer.
+    .gt(
+      "ends_at",
+      reservationWindowStartUtc(windowStartUtc, buffer).toISOString(),
+    );
   const { data: reservations } = await (capacityOn
     ? reservationBase.eq("resource_key", practitionerId)
     : reservationBase.eq("studio_id", studio.id));

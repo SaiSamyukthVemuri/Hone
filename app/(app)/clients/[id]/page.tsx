@@ -38,7 +38,7 @@ import {
 import {
   getAppointmentsForClientProfile,
   getClientById,
-  getCurrentPractitionerWithStudio,
+  requirePractitionerWithStudio,
   sessionPerformerName,
 } from "@/lib/supabase/queries";
 import { ClientAppointmentTimeline } from "@/components/client-appointment-timeline";
@@ -221,7 +221,7 @@ export default async function ClientCheatSheetPage({
   // resolution is measured separately from its domain reads so the summary
   // can attribute time to the shell, to identity, and to page content.
   const { studio, practitioner } = await timed("client-profile.identity", () =>
-    getCurrentPractitionerWithStudio(),
+    requirePractitionerWithStudio(),
   );
   // Domain window opens here and closes immediately before the render return
   // below, so it covers the whole data-assembly phase INCLUDING the

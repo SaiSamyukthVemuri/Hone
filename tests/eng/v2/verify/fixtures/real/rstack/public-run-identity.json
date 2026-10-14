@@ -1,0 +1,148 @@
+{
+ "recorded": "2026-10-08 (read-only REST GETs and GraphQL queries by the independent verifier)",
+ "repository": "cli/cli",
+ "baseRepoId": 212613049,
+ "forkPullRequest": {
+  "pr": 14617,
+  "prHeadRepoId": 1408291984,
+  "prHeadShaEqualsRunHeadSha": true,
+  "run": {
+   "id": 37594273461,
+   "event": "pull_request",
+   "headRepositoryId": 1408291984,
+   "headRepositoryIsFork": true,
+   "repositoryId": 212613049,
+   "headBranchEqualsPrHeadRef": true,
+   "pullRequests": []
+  },
+  "sameBranchNameUnderBaseOwnerListing": []
+ },
+ "deletedForkPullRequests": [
+  {
+   "pr": 14544,
+   "prHeadRepo": null,
+   "headFilteredListing": [],
+   "runs": [
+    {
+     "id": 36435729532,
+     "event": "pull_request",
+     "headRepositoryId": 1392836827,
+     "headRepositoryIsBase": false
+    },
+    {
+     "id": 36435728147,
+     "event": "pull_request",
+     "headRepositoryId": 1392836827,
+     "headRepositoryIsBase": false
+    }
+   ]
+  },
+  {
+   "pr": 14502,
+   "prHeadRepo": null,
+   "headFilteredListing": [],
+   "runs": [
+    {
+     "id": 35784527910,
+     "event": "pull_request_target",
+     "headRepositoryId": 1382327403,
+     "headRepositoryIsBase": false
+    },
+    {
+     "id": 35784526903,
+     "event": "pull_request",
+     "headRepositoryId": 1382327403,
+     "headRepositoryIsBase": false
+    }
+   ]
+  },
+  {
+   "pr": 14482,
+   "prHeadRepo": null,
+   "headFilteredListing": "not read",
+   "runs": [
+    {
+     "id": 35567050488,
+     "event": "pull_request",
+     "headRepositoryId": 1379174606,
+     "headRepositoryIsBase": false
+    },
+    {
+     "id": 35567050487,
+     "event": "pull_request",
+     "headRepositoryId": 1379174606,
+     "headRepositoryIsBase": false
+    }
+   ]
+  },
+  {
+   "pr": 14393,
+   "prHeadRepo": null,
+   "headFilteredListing": "not read",
+   "runs": [
+    {
+     "id": 34241154838,
+     "event": "pull_request_target",
+     "headRepositoryId": 1361507375,
+     "headRepositoryIsBase": false
+    },
+    {
+     "id": 34241154277,
+     "event": "pull_request",
+     "headRepositoryId": 1361507375,
+     "headRepositoryIsBase": false
+    }
+   ]
+  },
+  {
+   "pr": 14362,
+   "prHeadRepo": null,
+   "headFilteredListing": "not read",
+   "runs": [
+    {
+     "id": 33933057327,
+     "event": "pull_request",
+     "headRepositoryId": 1357595429,
+     "headRepositoryIsBase": false
+    },
+    {
+     "id": 33933057266,
+     "event": "pull_request",
+     "headRepositoryId": 1357595429,
+     "headRepositoryIsBase": false
+    }
+   ]
+  }
+ ],
+ "reopenedForkPullRequest": {
+  "pr": 14294,
+  "isCrossRepository": true,
+  "prHeadRepoId": 1351029481,
+  "reopenedAt": [
+   "2026-08-30T01:59:40Z"
+  ],
+  "runsWithin2minOfReopen": [
+   {
+    "id": 33286919592,
+    "headBranchEqualsPrHeadRef": true,
+    "headRepositoryId": 1351029481,
+    "createdAt": "2026-08-30T01:59:42Z",
+    "pullRequests": []
+   },
+   {
+    "id": 33286919591,
+    "headBranchEqualsPrHeadRef": true,
+    "headRepositoryId": 1351029481,
+    "createdAt": "2026-08-30T01:59:42Z",
+    "pullRequests": []
+   },
+   {
+    "id": 33286919585,
+    "headBranchEqualsPrHeadRef": true,
+    "headRepositoryId": 1351029481,
+    "createdAt": "2026-08-30T01:59:42Z",
+    "pullRequests": []
+   }
+  ]
+ }
+}

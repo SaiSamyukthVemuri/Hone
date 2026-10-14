@@ -13,7 +13,7 @@ import {
   type AppointmentPaymentState,
 } from "@/lib/billing/appointment-payment-state";
 import {
-  getCurrentPractitionerWithStudio,
+  requirePractitionerWithStudio,
   getPractitionersForStudio,
 } from "@/lib/supabase/queries";
 import {
@@ -225,7 +225,7 @@ export default async function DashboardPage({
   const period: ReportingPeriod = isReportingPeriod(sp.period)
     ? sp.period
     : "week";
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await requirePractitionerWithStudio();
   const isOwner = practitioner.role === "owner";
   const supabase = await createClient();
 

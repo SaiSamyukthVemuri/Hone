@@ -1,5 +1,5 @@
 import { INTAKE_STEPS, type Question } from "@/lib/intake/questions";
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { PostcareSettingsForm } from "../studio/PostcareSettingsForm";
 import { PolicySettingsForm } from "../studio/PolicySettingsForm";
 import { SectionLabel } from "@/components/ui/section-label";
@@ -34,7 +34,7 @@ import { SectionLabel } from "@/components/ui/section-label";
 export const metadata = { title: "Forms & Policies" };
 
 export default async function IntakeAndPostcarePage() {
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await requirePractitionerWithStudio();
   const isOwner = practitioner.role === "owner";
 
   return (

@@ -39,3 +39,22 @@ lib/billing/fonts/LICENSE.txt -whitespace
 # doesn't - so mark it binary explicitly for the same reason as the fonts above.
 *.mp4 binary
 *.png binary
+
+# UI-06 historical baseline fixtures (UI06-HIST-BASE-01).
+#
+# These are byte-hashed evidence, not source. The UI-06 historical proof hashes
+# each one as a git blob and requires it to equal the id recorded from
+# 6b36061b, which is what lets a file in the working tree stand in for a commit
+# CI's shallow clone cannot reach.
+#
+# Without `-text` the attribute is UNSPECIFIED, so Git falls back to its own
+# text detection plus core.autocrlf. On a checkout with autocrlf=true the LF
+# bytes become CRLF, the working-tree hash stops matching the committed blob,
+# and the provenance assertion fails on a fixture that is in fact correct -
+# the same silent-byte-rewrite class the fonts above are marked for.
+#
+# `-text` (not `binary`) is deliberate: it disables conversion while KEEPING
+# the fixtures diffable and reviewable, which `binary` would not. Scoped to this
+# one directory rather than a global *.txt rule, so it makes no claim about any
+# other text file in the repository.
+tests/fixtures/ui06-pre-slice-baseline/** -text

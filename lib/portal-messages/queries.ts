@@ -4,8 +4,10 @@ import type { ClientPortalMessage } from "@/lib/types/database";
 
 // Practitioner-side read of the secure portal messages for one
 // client. Always scoped by (studioId, clientId); callers must
-// resolve studioId from getCurrentPractitionerWithStudio() rather
-// than accepting it from form data.
+// resolve studioId from the practitioner session
+// (requirePractitionerWithStudio() in a page,
+// getCurrentPractitionerWithStudio() in an action) rather than
+// accepting it from form data.
 //
 // We select every column the practitioner card renders, including
 // the notification_email_* audit fields so the card can show "Email

@@ -1,0 +1,72 @@
+{
+ "recorded": "2026-10-08 (read-only REST GETs and GraphQL queries by the independent verifier)",
+ "note": "Head labels shared by more than one PR with different bases; owner part of each label redacted. Scans: nodejs/node and grafana/grafana, 1000 PRs each (state=all), and 3222 open PRs across nodejs/node, grafana/grafana, microsoft/vscode, home-assistant/core: no head label shared by two OPEN PRs.",
+ "pairs": [
+  {
+   "repo": "nodejs/node",
+   "label": "<owner>:backport-stack-frame-opti",
+   "headFilteredListing": [
+    {
+     "number": 66241,
+     "state": "open",
+     "merged": false,
+     "base": "v24.x-staging",
+     "created": "2026-09-23T13:08:18Z",
+     "closed": null
+    },
+    {
+     "number": 65764,
+     "state": "closed",
+     "merged": false,
+     "base": "main",
+     "created": "2026-09-03T15:35:38Z",
+     "closed": "2026-09-07T12:34:55Z"
+    }
+   ]
+  },
+  {
+   "repo": "nodejs/node",
+   "label": "<owner>:list-requisites.sh",
+   "headFilteredListing": [
+    {
+     "number": 65560,
+     "state": "closed",
+     "merged": true,
+     "base": "v26.x-staging",
+     "created": "2026-08-26T09:47:30Z",
+     "closed": "2026-08-26T17:44:48Z"
+    },
+    {
+     "number": 65403,
+     "state": "closed",
+     "merged": true,
+     "base": "main",
+     "created": "2026-08-19T16:16:49Z",
+     "closed": "2026-08-21T17:05:16Z"
+    }
+   ]
+  },
+  {
+   "repo": "grafana/grafana",
+   "label": "<owner>:snapshots/kv-blob-section",
+   "headFilteredListing": [
+    {
+     "number": 134044,
+     "state": "closed",
+     "merged": true,
+     "base": "main",
+     "created": "2026-10-02T12:48:04Z",
+     "closed": "2026-10-05T14:30:45Z"
+    },
+    {
+     "number": 134023,
+     "state": "closed",
+     "merged": true,
+     "base": "snapshots/sql-blob-client",
+     "created": "2026-10-02T08:03:06Z",
+     "closed": "2026-10-02T12:46:51Z"
+    }
+   ]
+  }
+ ]
+}
