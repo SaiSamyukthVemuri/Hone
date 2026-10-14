@@ -29,7 +29,10 @@ const MIGRATIONS = path.join(process.cwd(), "supabase/migrations");
 const read = (f: string) => readFileSync(path.join(MIGRATIONS, f), "utf8");
 const SQL = read(FILE);
 // LINE comments first: a comment must never satisfy a code assertion.
-const stripComments = (sql: string) => sql.replace(/^\s*--.*$/gm, " ").replace(/\s+--.*$/gm, " ");
+// Block comments first, then line comments: a commented-out statement of
+// either kind is neither counted nor able to hide a real one.
+const stripComments = (sql: string) =>
+  sql.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*--.*$/gm, " ").replace(/\s+--.*$/gm, " ");
 const CODE = stripComments(SQL);
 // Everything OUTSIDE dollar-quoted bodies: the migration's own top-level statements.
 const TOP_LEVEL = CODE.replace(/\$\$[\s\S]*?\$\$/g, " ");
