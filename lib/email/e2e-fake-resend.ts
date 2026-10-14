@@ -129,6 +129,8 @@ export type MinimalEmailTransport = {
       text: string;
       replyTo?: string;
       attachments?: ReadonlyArray<{ filename: string; content: Buffer }>;
+      // DELIVERY-VISIBILITY-01: the `hone_m` ledger tag (an opaque row id).
+      tags?: ReadonlyArray<{ name: string; value: string }>;
     }) => Promise<{
       data?: { id?: string } | null;
       // The error envelope carries what `classifyResendError` in

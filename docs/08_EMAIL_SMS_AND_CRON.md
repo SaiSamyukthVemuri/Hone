@@ -86,7 +86,7 @@ The double-send gap is closed. The reminder cron now claims each row via `claim_
 
 ### Email delivery events (DELIVERY-EVENTS-01, migration 0212)
 
-> **THE RECEIVING HALF ONLY, AND INERT.** This adds the signed Resend webhook, the receipts and an email delivery ledger. It does **not** wire any send path into the ledger, raise any alert or show anything to a studio. Until a producer slice wires a send path in, every event is unattributed and stays platform-only. Until `RESEND_WEBHOOK_SECRET` is set and the endpoint is configured in Resend (a separately authorized activation), nothing arrives at all.
+> **THE RECEIVING HALF, INERT UNTIL ACTIVATED.** This adds the signed Resend webhook, the receipts and an email delivery ledger. **Ledgered so far:** the 24h and 2h reminder window emails (DELIVERY-VISIBILITY-01, below). Every other email path is still unledgered, so its events stay unattributed and platform-only. Until `RESEND_WEBHOOK_SECRET` is set and the endpoint is configured in Resend (a separately authorized activation), nothing arrives at all.
 
 **Route: `POST /api/resend/webhook`** (`app/api/resend/webhook/route.ts`, exact-path middleware exemption). It reads the raw body, then verifies the Svix signature (`svix-id`, `svix-timestamp`, `svix-signature`) with `RESEND_WEBHOOK_SECRET` in `lib/email/resend-webhook.ts`. The check is hand-rolled on `node:crypto`, like the Twilio check, and is held to the official Resend SDK verifier on the same fixtures. Refusals:
 - missing secret: 500, nothing written;
@@ -148,6 +148,35 @@ A retry under the **same** idempotency key may settle an `unknown` row `accepted
 4. A dashboard test event, verified as one receipt with the expected outcome.
 
 Pinned by `tests/db/email-delivery-events.db.test.ts` (replay, order permutations, exactly-once under concurrency, crash recovery, tenant isolation, provider failure, privileges), `tests/migrations/0212-email-delivery-events.test.ts`, `tests/lib/email/resend-webhook.test.ts`, `tests/app/api/resend-webhook.test.ts` and `tests/lib/delivery/status.test.ts`.
+
+### Delivery incidents, the recovery sweep and the first ledgered emails (DELIVERY-VISIBILITY-01, migration 0215)
+
+**The first producer join: the reminder window email.** The reminder cron's email pass sends the 24h or 2h reminder, or the standalone intake email, under the existing 0080 claim. It now:
+1. begins one `email_outbound_messages` row per real attempt (`begin_appointment_email_message`), only after the claim, the live status re-check and the nothing-to-send exit;
+2. sends through the one Resend path with the tag `hone_m = <row id>` (`sendEmailSafely({ ledgerMessageId })`);
+3. settles the row (`settleOutcomeForEmailSend`) before recording the claim result.
+
+`sendEmailSafely` now classifies each failure as `none` (no request made), `refused` (a 4xx) or `ambiguous` (5xx, timeout, network). An acceptance without a recognisable provider id settles `unknown`. Ambiguity is never recorded as a refusal, and no free-text provider message is kept. The join is fail-soft: a ledger that cannot be written sends exactly as before, untagged. The 0080 claim stays the send authority, and nothing here resends. Other email paths (booking confirmation, cancellation, postcare, receipts, LEAD-ALERT-01's operator email) join in later slices.
+
+**Incidents: one per failure class, not one per failure.** `delivery_incidents` keeps one OPEN incident per (studio, channel, purpose, failure class), with occurrences, first and last seen, the latest attempt and appointment, and the latest reason slug.
+- An AFTER trigger on each ledger opens or extends it in the **same transaction** as the failure. For email that covers refused, bounced, failed and suppressed (settle or signed event). For SMS it covers refused, undelivered and failed (settle or Twilio callback, with no change to the Twilio route).
+- A rolled-back failure leaves no incident, and racing failures collapse into one.
+- Retry-in-progress and ambiguous states (`unknown`, `delivery_delayed`, `accepted`, `sent`) are **not** incidents. They surface through health as unknown, never as success.
+- `resolve_delivery_incident` (service_role) closes one as fixed, acknowledged or not_actionable, and the next failure opens a new one.
+- The studio **owner** reads their own incidents through `owner_delivery_incidents(studio)`: operational metadata only, with no client identity, address or message. Another studio's owner, non-owner members (receptionists included), anon and service_role are refused with 42501.
+- Platform support reads the cross-studio queue through `support_delivery_incidents` and `support_email_receipt_outcomes` (service_role). The second gives seven days of Resend receipts by outcome, including the unattributed and quarantined ones that belong to no studio.
+
+**Recovery sweep and heartbeat: `GET /api/cron/email-delivery-sweep`** (CRON_SECRET bearer). It drains up to 50 receipts whose processing never finished, records `delivery_sweep_heartbeat`, and reads `email_delivery_health()`:
+- the pending backlog and its oldest age;
+- receipts exhausted or quarantined in 24h, and unattributed receipts;
+- accepted emails with no report for 24h;
+- open incidents and the last sweep.
+
+Findings (`lib/email/delivery-health.ts`) have purpose-specific thresholds: a backlog older than 15 minutes is a warning and older than 6 hours is critical; exhausted, quarantined, unreported and sweep failures are warnings. Each finding is raised as an ops alert **at most once while an unresolved alert for that event is open**. The sweep records every finding at **warning** severity at most, because a critical ops alert is emailed to `OPS_ALERT_EMAILS` and emailed delivery alerts stay off until the #828 routing decision (D-4). A finding assessed as critical carries `assessed_severity: "critical"` in its details, so the `ops_alerts` row and `/admin/ops-alerts` still show it. A sweep or health read that fails is itself a finding, never a healthy run. **The route is not registered in `vercel.json`**: scheduling it belongs to the delivery-events activation.
+
+**Not yet:** an owner-facing screen, a support queue UI, emailed owner/support notifications (the HIPAA routing gate #828 applies to any patient-related email: Resend cannot sign a BAA), and producers beyond the reminder window.
+
+Pinned by `tests/db/delivery-incidents.db.test.ts`, `tests/migrations/0215-delivery-incidents.test.ts`, `tests/lib/email/delivery-ledger.test.ts`, `tests/lib/email/delivery-health.test.ts`, `tests/app/api/email-delivery-sweep.test.ts` and `tests/app/api/cron/reminder-email-ledger.test.ts`.
 
 ## SMS (Twilio)
 
