@@ -77,12 +77,10 @@ export function SmsRegistrationSection({
         // values typed for the old one; keying remounts the form, so the old
         // number's approval or reference can never be resubmitted against the
         // new number.
-        // AND PER RECORD VERSION (Codex P2 4266543216): after a stale_record
-        // refusal the page refreshes `current`; without a remount the fields
-        // would keep the stale values while the hidden version became the new
-        // one, so a second submit would pass the check and overwrite the other
-        // operator's decision. A new version is a new form, prefilled from it.
-        key={`${sender.id}:${sender.phone_number}:${current?.updated_at ?? "none"}`}
+        // The record VERSION resets the fields INSIDE the form component
+        // (SmsRegistrationForm keys its <form> by it), not here, so the
+        // action's result survives the refresh (Codex P2 4266641804).
+        key={`${sender.id}:${sender.phone_number}`}
         action={recordSmsRegistrationFormAction.bind(null, studioId)}
         senderId={sender.id}
         phoneNumber={sender.phone_number}

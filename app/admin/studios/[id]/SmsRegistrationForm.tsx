@@ -46,7 +46,18 @@ export function SmsRegistrationForm({
 
   return (
     <>
-      <form action={formAction} className="mt-3 flex flex-wrap items-end gap-2 text-sm">
+      {/* KEYED BY THE RECORD VERSION (Codex P2 4266543216, 4266641804). After
+          a write or a stale_record refusal the page refreshes `current`; the
+          new key remounts THIS <form> only, so every uncontrolled field is
+          prefilled from the record the hidden version names, and a resubmit
+          can never pair stale values with a fresh version. The action result
+          lives in this component, outside the keyed element, so "Recorded."
+          or the refusal stays on screen across that refresh. */}
+      <form
+        key={current?.updated_at ?? "none"}
+        action={formAction}
+        className="mt-3 flex flex-wrap items-end gap-2 text-sm"
+      >
         <input type="hidden" name="expected_sender_id" value={senderId} />
         <input type="hidden" name="expected_phone_number" value={phoneNumber} />
         {/* NO LOST UPDATE (Codex P2 4266275222): the record this form shows, or
