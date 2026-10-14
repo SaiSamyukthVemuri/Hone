@@ -447,3 +447,102 @@ describe("G1: every refusal is answered at the boundary that actually fires", ()
     ).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Codex P1 4265558721 — "Any available" must consider the UNION of eligible
+// practitioners, in the grid AND in the submission re-verification.
+//
+// WHY THESE GUARDS EXIST AT ALL: the 22 assertions above all passed, unchanged,
+// against the broken code AND against the fix. They pin the SCOPED and REFUSED
+// paths; nothing in them looked at what "Any available" asks for. So the fix
+// shipped unprotected until this block, and the regression it invites is the
+// cheapest one in this whole lane -- delete one branch and the studio-wide
+// answer silently returns.
+// ---------------------------------------------------------------------------
+
+/** Comment-stripped source of one action: these guards assert about CODE, and
+ *  every comment in that code now DISCUSSES the studio-wide branch it removed. */
+function actionCode(name: string): string {
+  return actionSource(name)
+    .split("\n")
+    .filter((l) => !l.trim().startsWith("//"))
+    .join("\n");
+}
+
+describe('G1 / P1: "Any available" resolves against eligible practitioners', () => {
+  it("the grid takes a union branch when assignment is enabled", () => {
+    const code = actionCode("fetchPublicSlotsAction");
+    expect(code, "fetchPublicSlotsAction must exist").not.toBe("");
+    expect(
+      code.includes("practitioner_capacity_booking_enabled === true"),
+      "the grid must branch on the assignment switch: with it OFF the legacy " +
+        "studio-wide answer is still correct, with it ON that answer is wrong " +
+        "in both directions",
+    ).toBe(true);
+    expect(
+      code.includes("unionEligibleSlots"),
+      "an enabled studio with no practitioner chosen must ask the union, not " +
+        "the studio-wide question",
+    ).toBe(true);
+  });
+
+  it("the re-verification asks the SAME union as the grid", () => {
+    const code = actionCode("publicBookAppointmentAction");
+    expect(code, "publicBookAppointmentAction must exist").not.toBe("");
+    expect(
+      code.includes("unionEligibleSlots"),
+      "re-verifying studio-wide while the grid asked the union makes the " +
+        "action a SECOND availability authority that refuses slots the page " +
+        "offered and the command would have accepted -- the exact mismatch " +
+        "this lane exists to remove",
+    ).toBe(true);
+  });
+
+  it("the union is per-practitioner reads, never a widened conflict filter", () => {
+    // THE TEMPTING WRONG SHAPE. `.in("resource_key", ids)` reads like "all of
+    // them" and means the opposite: it collects EVERY listed practitioner's
+    // conflicts, which is more conflicts than any single one has -- the
+    // false-negative bug with extra steps.
+    const union = ACTIONS.slice(
+      ACTIONS.indexOf("async function unionEligibleSlots"),
+    ).slice(0, 2000);
+    expect(union, "unionEligibleSlots must exist").not.toBe("");
+    expect(
+      /\.in\(\s*["']resource_key["']/.test(union),
+      "a widened resource_key filter is intersection-of-busy, not union-of-free",
+    ).toBe(false);
+    expect(
+      union.includes("Promise.all"),
+      "the per-practitioner reads are independent and must not be serialised",
+    ).toBe(true);
+    expect(
+      union.includes("getAvailableSlots"),
+      "the union must REUSE the proven per-practitioner authority rather than " +
+        "reimplement availability",
+    ).toBe(true);
+  });
+
+  it("the horizon scan is NOT routed through the union", () => {
+    // BOOK-NEXT-FAST-01. fetchNextAvailableDateAction is ONE bulk read across
+    // the whole horizon; per-practitioner fan-out there multiplies the hot
+    // path. Codex's finding is about the single-day grid and the single-slot
+    // re-verification, and the fix is scoped to exactly those two.
+    const code = actionCode("fetchNextAvailableDateAction");
+    expect(code, "fetchNextAvailableDateAction must exist").not.toBe("");
+    expect(
+      code.includes("unionEligibleSlots"),
+      "unioning the horizon scan reintroduces the cost BOOK-NEXT-FAST-01 " +
+        "removed; if it is ever wanted it needs its own measurement",
+    ).toBe(false);
+  });
+
+  it("an enabled studio with nobody eligible refuses instead of lying", () => {
+    const code = actionCode("fetchPublicSlotsAction");
+    expect(
+      code.includes("public_slots_no_eligible_practitioner"),
+      "an empty eligible set must refuse: an empty GRID reads as 'fully " +
+        "booked' and a studio-wide grid offers times the command answers " +
+        "no_practitioner_available",
+    ).toBe(true);
+  });
+});
