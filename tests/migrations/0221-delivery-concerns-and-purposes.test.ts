@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
+import { countVersion } from "./helpers/migration-state";
 
 // ===========================================================================
 // Migration 0221 — DELIVERY-VISIBILITY-04: cancellation and postcare email
@@ -26,12 +26,9 @@ const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const sha = (f: string) => createHash("sha256").update(read(f), "utf8").digest("hex");
 
 describe("0221 sits correctly in the migration sequence", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    // Only the CURRENT maximum migration's own test may assert this — see
-    // CLAUDE.md §2. It reached this file from 0215's test.
-    expect(isRepoMax(VERSION), "0221 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION), "something was added above 0221").toEqual([]);
-  });
+  // No repo-max claim here (CLAUDE.md §2): "nothing above 0221" is a fact
+  // about one branch, and it turns red for whichever lane lands above it
+  // (0227 on the composed chain). The central tripwire covers it.
 
   it("is allocated exactly once", () => {
     expect(countVersion(VERSION)).toBe(1);
