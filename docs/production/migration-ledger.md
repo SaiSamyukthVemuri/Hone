@@ -14,7 +14,16 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-12, post-0212 apply; hosted `0212`; `0213`–`0226` AUTHORED AND PENDING, contiguous, in that order)
+## Current state (verified 2026-10-14, post-0212 apply; hosted `0212`; `0213`–`0227` AUTHORED AND PENDING, contiguous, in that order)
+
+> **0227 IS AUTHORED AND PENDING, on `fix/delivery-quarantine-bound-0227` (#876) only**, which is stacked on #832 (`0212`).
+> `0227_email_receipt_quarantine_bound.sql` (blob `67e837de`, sha256 `8b62d4d8…0313`) makes two forward fixes to the APPLIED, frozen `0212`. It redefines exactly two functions and nothing else: no table, no ALTER, no row written.
+> - `claim_email_provider_events(uuid, integer)` bounds the sweep's quarantine step by the same limit as its claim step, oldest first, with `for update skip locked` (Codex P2 4252980865).
+> - `process_email_provider_event(uuid)` records a transient (soft) bounce as `delivery_delayed`, not as a terminal bounce (Codex P2 4265450918).
+>
+> Grants are restated by name (`service_role` only), and `0212`'s bytes are unchanged.
+> - **Allocation:** after a fresh census found nothing at or above `0227`, recorded in `/home/sam/hone-migration-coordination.md`. It applies after `0226`.
+
 
 > **0226 IS AUTHORED AND PENDING, on `feat/sms-sender-control-01` (#863) only**, which is stacked on #844 (`0217`).
 > `0226_studio_sms_sender_unpurchased_release.sql` adds three service_role-only definer functions and ONE unique index, and nothing else: no table, no ALTER, no row written.
@@ -154,10 +163,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0212** (`0212_email_delivery_events.sql`), applied 2026-10-12 from #832's reviewed head. |
-| **Repo migration max** | **0226**: `0226_studio_sms_sender_unpurchased_release.sql` (SMS-SENDER-CONTROL-01 #863), above `0225_public_new_client_practitioner_selection.sql` (DB/WAIT #874), above `0224_us_settlement_method_guard.sql` (Audit #872), `0223_machine_inventory_and_setup_readings.sql` (MPX #860) and `0222_public_practitioner_booking_command.sql` (DB/WAIT #868). This tree is the isolated synthetic Fett integration (`integration/fett-composed-824`): every migration `0211`–`0225` (applied `0211` and `0212` included) is carried byte-identical to its own owner PR head, proved by blob check. It is rehearsal evidence, never a release vehicle. |
+| **Repo migration max** | **0227**: `0227_email_receipt_quarantine_bound.sql` (DELIVERY-QUARANTINE-BOUND-01 #876), above `0226_studio_sms_sender_unpurchased_release.sql` (SMS-SENDER-CONTROL-01 #863), above `0225_public_new_client_practitioner_selection.sql` (DB/WAIT #874), above `0224_us_settlement_method_guard.sql` (Audit #872), `0223_machine_inventory_and_setup_readings.sql` (MPX #860) and `0222_public_practitioner_booking_command.sql` (DB/WAIT #868). This tree is the isolated synthetic Fett integration (`integration/fett-composed-824`): every migration `0211`–`0225` (applied `0211` and `0212` included) is carried byte-identical to its own owner PR head, proved by blob check. It is rehearsal evidence, never a release vehicle. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **`0213`–`0226`**, contiguous from hosted + 1, all **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING. `0211` and `0212` are APPLIED and FROZEN and carried byte-identical. Each pending migration applies from its own reviewed head, in this order, under its own approval. |
-| **Next free migration** | Next free number is **0227**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** here: availability is not allocation. The shared register (`~/hone-migration-coordination.md`) is the authority for in-flight claims. |
+| **Pending migrations** | **`0213`–`0227`**, contiguous from hosted + 1, all **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING. `0211` and `0212` are APPLIED and FROZEN and carried byte-identical. Each pending migration applies from its own reviewed head, in this order, under its own approval. |
+| **Next free migration** | Next free number is **0228**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** here: availability is not allocation. The shared register (`~/hone-migration-coordination.md`) is the authority for in-flight claims. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. |
 
 ## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, repo == hosted)
