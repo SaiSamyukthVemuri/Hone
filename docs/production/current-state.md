@@ -24,20 +24,40 @@ not a PR diary — per-capability evidence lives in
 
 | Field | Value |
 |---|---|
-| **Reconciliation date** | **2026-10-13 UTC source sync** (CANON-REFRESH-2026-10-13, one runtime merge after the 2026-10-12 sync). The 2026-10-12 and 2026-09-21 syncs are preserved below as history. Production-data counts elsewhere retain their own older measurement dates. |
+| **Reconciliation date** | **2026-10-14 UTC source sync** (CANON-REFRESH-2026-10-14, four merges after the 2026-10-13 sync, three of them runtime-bearing). The 2026-10-13, 2026-10-12 and 2026-09-21 syncs are preserved below as history. Production-data counts elsewhere retain their own older measurement dates. |
 | **Production branch** | `claude/build-hone-saas-hOex7` |
-| **Current Git branch HEAD at this sync** | **`6f7281bb1b90e5a1911166495a249f7ac2770189` — merge of #834.** Re-read GitHub before any production action; this is a dated sync value, not a perpetual pointer. |
-| **Last runtime-bearing application HEAD at this sync** | **`6f7281bb1b90e5a1911166495a249f7ac2770189` (#834).** This is also the branch HEAD above. `git log --first-parent d5efa20a..6f7281bb` returns **2** merges, classified by **A3's composed deployed predicate** (unchanged; see the 2026-09-21 record): `f91cdf03` (#875) is documentation-only (3 files, 0 application files, no migration) and does not move the runtime baseline; `6f7281bb` (#834) changes **5** application files in `lib/billing/` and `lib/stripe/`, with **no migration**. With this pin, A3's residue is **0** files. |
-| **Current Vercel Production deployment evidence** | Vercel commit status for `6f7281bb…` is **success** ("Deployment has completed", `2026-10-13T14:18:38Z`, deployment `2Q9aZM1QYN7WMn76MSxTBrFEaex5`, read 2026-10-13). No alias or current health measurement is inferred from that status. |
+| **Current Git branch HEAD at this sync** | **`338014f45953cbdabb13e4603d81ee5844d57b1c` — merge of #776.** Re-read GitHub before any production action; this is a dated sync value, not a perpetual pointer. |
+| **Last runtime-bearing application HEAD at this sync** | **`338014f45953cbdabb13e4603d81ee5844d57b1c` (#776).** This is also the branch HEAD above. `git log --first-parent 6f7281bb..338014f4` returns **4** merges, classified by **A3's composed deployed predicate** (unchanged; see the 2026-09-21 record): `f5c87f93` (#877) is documentation-only (3 files, 0 application files) and does not move the runtime baseline; `d0118f75` (#869) changes **1** application file (`lib/analytics/client-boundary.ts`); `82a0e520` (#769) changes **5** application files under `app/(app)/settings/`; `338014f4` (#776) changes **5** application files under `app/(app)/clients/[id]/sessions/`. **None** of the four carries a migration. With this pin, A3's residue is **0** files. |
+| **Current Vercel Production deployment evidence** | **Source and runtime recorded separately.** Source: the branch HEAD above. Runtime: Vercel commit status for `338014f4…` is **success** ("Deployment has completed", `2026-10-14T02:14:53Z`, deployment `GRRSxjM8rK6zqxCJSkuz2UHWbCip`, read 2026-10-14). The two intermediate runtime merges also report **success**: `82a0e520` (#769) at `2026-10-14T01:48:48Z` (`EGXdJYey4ajRcEP1D46w2iM8jjzG`) and `d0118f75` (#869) at `2026-10-14T01:31:31Z` (`At3JpQw6RFLFR7SPa64ZZ62SVvSa`). No alias or current health measurement is inferred from those statuses. |
 | **Migration state** | **This document deliberately states no migration number.** Hosted max is declared once, machine-readably, in [`migration-state.json`](./migration-state.json). Repository max, total applied and the next free number are **derived** — run `npm run migration:state`. The current reconciled position, with checksums and apply evidence, is [migration-ledger.md](./migration-ledger.md) under *Current state*. A number copied into this table is a number that goes stale on the next apply; that is how the `0160`/`0163`/`0165` divergence happened. |
 | **Database vs. application skew** | **This document asserts no parity, pending or remote-only claim of its own.** It previously declared the two states equal and the pending set empty, and went stale the moment a reviewed migration was authored above hosted — the same second-copy failure this table already avoids for migration NUMBERS. Derive the relationship with `npm run migration:state`; hosted state is declared once in [`migration-state.json`](./migration-state.json); the reconciled position with apply evidence is [migration-ledger.md](./migration-ledger.md) under *Current state*. **A repository maximum ABOVE hosted is the normal state of an authorized migration-first apply** — reviewed migration authored, production not yet advanced — and is not by itself skew. What would be skew is a **remote-only** migration (hosted above repo), which the derivation reports and the canonical guard forbids. |
 | **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
-| **Health** | **Status-code probe, 2026-10-13T16:20Z** (unauthenticated GET, redirects not followed): `hone.care` **200** · `/login` **200** · `/dashboard`, `/clients`, `/calendar` and `/api/health` **307 → /login**, all non-5xx. This is a reachability reading only. ⚠️ `ops_alerts` was **not** re-read at this sync. The **2026-10-12T23:07Z** and **2026-08-23** probes are preserved as earlier dated readings. These are dated observations, not current health. |
+| **Health** | **Status-code probe, 2026-10-14T02:40Z** (unauthenticated GET, redirects not followed): `hone.care` **200** · `/login` **200** · `/dashboard`, `/clients`, `/calendar` and `/api/health` **307 → /login**, all non-5xx. This is a reachability reading only. ⚠️ `ops_alerts` was **not** re-read at this sync. The **2026-10-13T16:20Z**, **2026-10-12T23:07Z** and **2026-08-23** probes are preserved as earlier dated readings. These are dated observations, not current health. |
 | **Tenant posture** | **Six studios in three classes — one real-customer, one controlled test, one synthetic, three empty.** Real-customer activity is **Willow Electrolysis only**. See **§0**, which is the canonical tenant register; do not restate its counts elsewhere. ⚠️ **Every tenant count in §0 was measured 2026-08-23 and was NOT re-measured on 2026-08-26** — see *What this reconciliation did and did not measure* below. |
 | **Next operational gate** | The **deep production / security / code audit** (still not performed against this baseline). **Chloe's human acceptance testing** remains outstanding and is **independent** — see §15. |
 
 ### Re-derived at this reconciliation
 
+**Re-derived on 2026-10-14 (CANON-REFRESH-2026-10-14), from the repository at `338014f4`:**
+
+- the production branch head and the full merge ancestry back to `b9e0003f` (144 merges),
+  from `git rev-list --first-parent --merges --count b9e0003f..338014f4`;
+- the **4** merges since the 2026-10-13 pin `6f7281bb`: `f5c87f93` (#877, documentation-only),
+  `d0118f75` (#869), `82a0e520` (#769) and `338014f4` (#776), the last three runtime-bearing;
+  none carries a migration;
+- repository and hosted migration state: **derived** with `npm run migration:state`
+  (unchanged by these four merges) and **declared** in
+  [`migration-state.json`](./migration-state.json). This document states no number;
+- Vercel commit status and deployment id for each runtime merge, and a status-code probe of six
+  public or protected routes (header row *Health*);
+- the open-PR table below, every row re-read from GitHub on 2026-10-14.
+
+**Not re-measured at this sync:** tenant counts (§0), `ops_alerts`, provider state, payment
+row counts (§7), and any capability's production exercise. Their own measurement dates stand.
+
+### Historical preceding baseline from the 2026-10-13 reconciliation
+
+<!-- canonical-facts:ignore-start reason=preserves-the-2026-10-13-CANON-REFRESH-derivation-and-header-rows-as-dated-evidence -->
 **Re-derived on 2026-10-13 (CANON-REFRESH-2026-10-13), from the repository at `6f7281bb`:**
 
 - the production branch head and the full merge ancestry back to `b9e0003f` (140 merges),
@@ -52,6 +72,17 @@ not a PR diary — per-capability evidence lives in
 
 **Not re-measured at this sync:** tenant counts (§0), `ops_alerts`, provider state, payment
 row counts (§7), and any capability's production exercise. Their own measurement dates stand.
+
+The 2026-10-13 header rows, preserved verbatim as dated evidence (superseded by the header above):
+
+| Field | Value at the 2026-10-13 sync |
+|---|---|
+| **Reconciliation date** | **2026-10-13 UTC source sync** (CANON-REFRESH-2026-10-13, one runtime merge after the 2026-10-12 sync). The 2026-10-12 and 2026-09-21 syncs are preserved below as history. Production-data counts elsewhere retain their own older measurement dates. |
+| **Current Git branch HEAD at this sync** | **`6f7281bb1b90e5a1911166495a249f7ac2770189` — merge of #834.** Re-read GitHub before any production action; this is a dated sync value, not a perpetual pointer. |
+| **Last runtime-bearing application HEAD at this sync** | **`6f7281bb1b90e5a1911166495a249f7ac2770189` (#834).** This is also the branch HEAD above. `git log --first-parent d5efa20a..6f7281bb` returns **2** merges, classified by **A3's composed deployed predicate** (unchanged; see the 2026-09-21 record): `f91cdf03` (#875) is documentation-only (3 files, 0 application files, no migration) and does not move the runtime baseline; `6f7281bb` (#834) changes **5** application files in `lib/billing/` and `lib/stripe/`, with **no migration**. With this pin, A3's residue is **0** files. |
+| **Current Vercel Production deployment evidence** | Vercel commit status for `6f7281bb…` is **success** ("Deployment has completed", `2026-10-13T14:18:38Z`, deployment `2Q9aZM1QYN7WMn76MSxTBrFEaex5`, read 2026-10-13). No alias or current health measurement is inferred from that status. |
+| **Health** | **Status-code probe, 2026-10-13T16:20Z** (unauthenticated GET, redirects not followed): `hone.care` **200** · `/login` **200** · `/dashboard`, `/clients`, `/calendar` and `/api/health` **307 → /login**, all non-5xx. This is a reachability reading only. ⚠️ `ops_alerts` was **not** re-read at this sync. The **2026-10-12T23:07Z** and **2026-08-23** probes are preserved as earlier dated readings. These are dated observations, not current health. |
+<!-- canonical-facts:ignore-end -->
 
 ### Historical preceding baseline from the 2026-10-12 reconciliation
 
@@ -199,18 +230,29 @@ before any production action; this sentence is itself a dated observation.
 
 ### Open pull requests are not production
 
-**No open PR is described as shipped anywhere in this document.** At this reconciliation (every row re-read from GitHub on 2026-10-13; the four US/USD rows were added because §7 now cites them):
+**No open PR is described as shipped anywhere in this document.** At this reconciliation (every row re-read from GitHub on 2026-10-14; the four US/USD rows were added on 2026-10-13 because §7 cites them):
 
 | PR | State | Why it is not production |
 |---|---|---|
-| **#769** — UX-02 slice 2, SectionLabel across Settings | **OPEN**, release candidate | Not merged. It was `MERGEABLE`/`CLEAN` throughout the NEW-CLIENT-MODE-01 release and was deliberately **held** so it could not land ahead of #773. |
 | **#775** — SMS-NUMBER-SEARCH-01 number lookup | **OPEN**, release candidate | Not merged. No owner can reach a number lookup in production. |
-| **#776** — UX-02 slice 3, SectionLabel across session charting | **OPEN**, release candidate | Not merged. |
 | **#774** — BROWSER-FINDING-01 probe-lot provenance | **OPEN**, and a **DRAFT** | Not merged. |
 | **#833** — PAY-CCY-02 (#824 US/USD 2/4): per-studio payment country and charge currency | **OPEN**, and a **DRAFT** | Not merged. Carries the unapplied **0214**; no studio has a payment country in production. |
 | **#836** — PAY-CCY-03 (#824 US/USD 3/4): Stripe accounts follow the studio's verified country | **OPEN**, and a **DRAFT**, stacked on #833 | Not merged. No USD Stripe account is provisioned by production code. |
 | **#839** — PAY-CCY-04 (#824 US/USD 4/4): money surfaces name the studio's currency | **OPEN**, and a **DRAFT**, stacked on #836 | Not merged. |
 | **#847** — PAY-CCY-05 (#824 US/USD): US studio session payment end to end in USD, fake Stripe | **OPEN**, and a **DRAFT**, stacked on #839 | Not merged. US/USD activation remains **PENDING** (§7). |
+
+**2026-10-14 (CANON-REFRESH-2026-10-14): two rows left the table above because the PRs merged.**
+`#769` (UX-02 slice 2, SectionLabel across Settings) merged as `82a0e520` and `#776` (UX-02 slice 3,
+SectionLabel across session charting) merged as `338014f4`, both on 2026-10-14 and both deployed
+(header row *Current Vercel Production deployment evidence*). They were correctly OPEN at the
+2026-10-13 sync; this is a state change, not a correction. Their rows as of 2026-10-13 are preserved here:
+
+<!-- canonical-facts:ignore-start reason=preserves-the-2026-10-13-open-rows-for-769-and-776-which-have-since-merged -->
+> | PR | State at 2026-10-13 | Why it was not production then |
+> |---|---|---|
+> | **#769** — UX-02 slice 2, SectionLabel across Settings | **OPEN**, release candidate | Not merged. It was `MERGEABLE`/`CLEAN` throughout the NEW-CLIENT-MODE-01 release and was deliberately **held** so it could not land ahead of #773. |
+> | **#776** — UX-02 slice 3, SectionLabel across session charting | **OPEN**, release candidate | Not merged. |
+<!-- canonical-facts:ignore-end -->
 
 ⚠️ **CORRECTION, 2026-10-01 (NEW-CLIENT-MODE-01 release) — FIVE ROWS WERE REMOVED FROM THE TABLE ABOVE.**
 It declared `#752`, `#754`, `#746`, `#750` and `#755` OPEN. **All five had merged** — `1c50bd95`, `c4b0e263`,
@@ -335,10 +377,13 @@ surfaces then made affirmative clinical statements nobody had read: *Last visit*
 Intelligence* reported every stat as a known zero, and *Before today* reported no watch or plan
 notes and a complete procedure record.
 
-At `6f7281bb` all four check `unavailable` **before** `hasHistory`, and
+At `338014f4` all four check `unavailable` **before** `hasHistory`, and
 `session_blocks.caution_for_next_session` / `caution_note` — which reach the practitioner only
 through the Watch/Plan band built from that same read — are protected on both the Overview and
 Sessions tabs. Read failure now renders *clinical history could not be loaded*. **Re-run on
+2026-10-14 through `338014f4` (CANON-REFRESH-2026-10-14):** across `6f7281bb..338014f4` (4
+merges), none of the five files named below changed; #776's changes sit under
+`app/(app)/clients/[id]/sessions/`, outside them. **Re-run on
 2026-10-13 through `6f7281bb` (CANON-REFRESH-2026-10-13):** across `d5efa20a..6f7281bb` (2
 merges), none of the five files named below changed at all. **Re-run again on
 2026-10-12 through `d5efa20a` (CANON-REFRESH-2026-10-12):** across `410e5039..d5efa20a` (57
