@@ -63,8 +63,8 @@ describe("the actions can only reach the fake provider (source guard)", () => {
   const lib = strip(readFileSync("lib/sms/sender-controls.ts", "utf8"));
 
   it("the actions pass the controls' own seeded FAKE explicitly and never resolve a provider", () => {
-    // Per studio (Codex P2 4251747847): every action, release included.
-    expect(actions.match(/senderControlsFakeProvider\(getRequiredAppOrigin\(\), ctx\.studioId\)/g)).toHaveLength(4);
+    // Per studio (Codex P2 4251747847): every action, release and retry included.
+    expect(actions.match(/senderControlsFakeProvider\(getRequiredAppOrigin\(\), ctx\.studioId\)/g)).toHaveLength(5);
     expect(lib).toMatch(/new FakeSmsProvisioningProvider\(\{/);
     for (const forbidden of ["resolveProvisioningProvider", "twilioProvisioningProvider", "twilio-provider"]) {
       expect(actions, forbidden).not.toContain(forbidden);
@@ -73,7 +73,7 @@ describe("the actions can only reach the fake provider (source guard)", () => {
   });
 
   it("every action checks the gate before anything else", () => {
-    for (const name of ["searchSenderNumbersAction", "provisionSenderNumberAction", "adoptSenderNumberAction", "releaseSenderClaimAction"]) {
+    for (const name of ["searchSenderNumbersAction", "provisionSenderNumberAction", "adoptSenderNumberAction", "releaseSenderClaimAction", "retrySenderClaimAction"]) {
       const body = actions.slice(actions.indexOf(`export async function ${name}`));
       const firstAwait = body.indexOf("await ");
       expect(body.slice(firstAwait, firstAwait + 30), name).toContain("ownerContext()");

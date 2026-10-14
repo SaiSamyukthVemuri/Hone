@@ -16,6 +16,7 @@ import { createProvisioningStore } from "./provisioning-store";
 import { SMS_STATUS_CALLBACK_PATH } from "./delivery-ledger";
 import { sameTwilioWebhook, twilioWebhookUrl } from "./webhook-base";
 import { inboundReaches } from "./inbound-routing";
+import { RECOVERY_ROUTE_BY_ERROR_CODE, type StudioSmsSenderState } from "./sender-status";
 
 // ===========================================================================
 // SMS-SENDER-CONTROL-01 (#824): the studio owner's controls over the 0191
@@ -450,6 +451,93 @@ export async function runSenderAdoption(
 // two database calls the PROVIDER is asked (a read, lookupResourcesByClaim)
 // what exists under the claim key. Anything found, or no complete answer,
 // refuses: only a retry, which reconciles first, may continue that claim.
+
+// ---------------------------------------------------------------------------
+// WHICH RECOVERY AN ERRORED CLAIM OFFERS (Codex P2 4266736587's sibling,
+// 4271461595)
+// ---------------------------------------------------------------------------
+// Derived from the stored last_error_code, never from the browser:
+//   * release -- 0226's definitive pre-purchase codes: the claim may own
+//     nothing, so the owner may give it up and choose again (the release still
+//     asks the provider first);
+//   * retry   -- a code RECOVERY_ROUTE_BY_ERROR_CODE routes to "retry"
+//     (transport, capacity, finalize_failed, lease_lost): the SAME claim is
+//     retried, which reconciles with the provider first, so anything a failed
+//     attempt bought is found rather than bought again;
+//   * none    -- anything else (support, operator decision, unknown): no
+//     self-service action is honest.
+
+/** Exactly 0226's release_unpurchased_studio_sms_claim codes (pinned to the SQL by test). */
+export const RELEASABLE_ERROR_CODES = ["number_no_longer_available", "provider_resource_mismatch", "finalize_conflict"] as const;
+
+export type SenderRecovery = "retry" | "release" | "none";
+
+export function senderRecoveryFor(status: string | null | undefined, lastErrorCode: string | null | undefined): SenderRecovery {
+  if (status !== "error" || !lastErrorCode) return "none";
+  if ((RELEASABLE_ERROR_CODES as readonly string[]).includes(lastErrorCode)) return "release";
+  return RECOVERY_ROUTE_BY_ERROR_CODE[lastErrorCode] === "retry" ? "retry" : "none";
+}
+
+export type RetryRefusal = {
+  ok: false;
+  result: "refused";
+  reason: "not_retryable" | "release_instead" | "not_a_member" | "not_owner" | "no_live_sender" | "store_unavailable";
+  uncertain: boolean;
+};
+
+/**
+ * RETRY THE STUDIO'S ERRORED CLAIM, SERVER-SIDE ONLY (Codex P2 4271461595).
+ *
+ * The browser supplies nothing. The retry's inputs are read here:
+ *   * status, country, requested area code and last error code from the
+ *     owner's own row (`readOwnSender`, the owner's session under 0191's policy);
+ *   * the claimed number, which the owner cannot read, from 0226's definer
+ *     read (`get_releasable_studio_sms_claim` names the claimed number of a
+ *     claim it will not release).
+ * The recovery is re-derived here from the stored code: only a "retry" code
+ * proceeds. The provisioning claim then re-checks everything under its lock:
+ * the bound number (`number_mismatch` otherwise), the owner, the state. It
+ * reuses the claim key, so the attempt first asks the provider what already
+ * exists under it and never buys a second number.
+ */
+export async function runSenderRetry(
+  deps: SenderControlsDeps & { readOwnSender: () => Promise<{ ok: true; sender: StudioSmsSenderState | null } | { ok: false }> },
+  input: { studioId: string; actorUserId: string },
+): Promise<ProvisionOutcome | CountryRefusal | WebhookBaseRefusal | PreClaimRefusal | RetryRefusal> {
+  const refuse = (reason: RetryRefusal["reason"], uncertain = false): RetryRefusal => ({ ok: false, result: "refused", reason, uncertain });
+
+  const own = await deps.readOwnSender().catch(() => ({ ok: false as const }));
+  if (!own.ok) return refuse("store_unavailable", true);
+  if (!own.sender || own.sender.status === "released") return refuse("no_live_sender");
+  const recovery = senderRecoveryFor(own.sender.status, own.sender.last_error_code);
+  if (recovery === "release") return refuse("release_instead");
+  if (recovery !== "retry" || !isSenderCountry(own.sender.country)) return refuse("not_retryable");
+
+  let claimed: string | null = null;
+  try {
+    const { data, error } = await deps.admin.rpc("get_releasable_studio_sms_claim", {
+      p_studio_id: input.studioId,
+      p_actor_user_id: input.actorUserId,
+    });
+    if (error) return refuse("store_unavailable", true);
+    const row = (Array.isArray(data) ? data[0] : null) as { result?: string; claimed_phone_number?: string | null } | null;
+    if (!row?.result) return refuse("store_unavailable", true);
+    if (row.result === "releasable") return refuse("release_instead");
+    if (row.result === "not_a_member" || row.result === "not_owner" || row.result === "no_live_sender") return refuse(row.result);
+    if (row.result !== "not_releasable" || !row.claimed_phone_number) return refuse("not_retryable");
+    claimed = row.claimed_phone_number;
+  } catch {
+    return refuse("store_unavailable", true);
+  }
+
+  return runSenderProvision(deps, {
+    studioId: input.studioId,
+    actorUserId: input.actorUserId,
+    country: own.sender.country,
+    areaCode: own.sender.requested_area_code,
+    phoneNumber: claimed,
+  });
+}
 
 export type ReleaseOutcome =
   | { ok: true; result: "released"; senderId: string }

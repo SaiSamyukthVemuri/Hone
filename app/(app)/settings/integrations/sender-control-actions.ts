@@ -4,10 +4,13 @@ import { revalidatePath } from "next/cache";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { createClient } from "@/lib/supabase/server";
+import { readOwnStudioSmsSender } from "@/lib/sms/sender-status";
 import {
   runSenderAdoption,
   runSenderProvision,
   runSenderRelease,
+  runSenderRetry,
   runSenderSearch,
   senderControlsFakeProvider,
   senderControlsGate,
@@ -149,5 +152,49 @@ export async function releaseSenderClaimAction(
     message: out.uncertain
       ? "Hone could not confirm this setup owns nothing, so nothing was released. Try again shortly."
       : (words[out.reason] ?? `Not released: ${out.reason}.`),
+  };
+}
+
+/**
+ * Retry the studio's errored setup with the SAME number (Codex P2 4271461595).
+ * Takes nothing from the browser: the number, country and area code are read
+ * on the server (runSenderRetry), and only a stored code that routes to
+ * "retry" proceeds. The retry reconciles with the provider first, so what a
+ * failed attempt bought is found, not bought again.
+ */
+export async function retrySenderClaimAction(
+  _prev: SenderControlResult | null,
+  _formData: FormData,
+): Promise<SenderControlResult> {
+  const ctx = await ownerContext();
+  if (!ctx.ok) return { ok: false, message: ctx.message };
+  const session = await createClient();
+  const out = await runSenderRetry(
+    {
+      admin: createAdminClient(),
+      provider: senderControlsFakeProvider(getRequiredAppOrigin(), ctx.studioId),
+      appOrigin: getRequiredAppOrigin(),
+      testDestination: FAKE_TEST_DESTINATION,
+      readOwnSender: () => readOwnStudioSmsSender(session, ctx.studioId),
+    },
+    { studioId: ctx.studioId, actorUserId: ctx.actorUserId },
+  );
+  revalidatePath("/settings/integrations");
+  if (out.ok) {
+    return { ok: true, message: out.result === "activated" ? `Studio number ${out.phoneNumber} is set up (fake provider).` : "This studio already has an active number." };
+  }
+  const words: Record<string, string> = {
+    release_instead: "This setup failed before a number was bought. Choose a different number instead.",
+    not_retryable: "This setup cannot be retried here. Contact Hone support.",
+    no_live_sender: "There is no setup to retry.",
+    claim_held: "A setup attempt is already running. Wait a moment and reload.",
+  };
+  const reason = "reason" in out ? String(out.reason) : out.result;
+  return {
+    ok: false,
+    message:
+      "uncertain" in out && out.uncertain
+        ? "Hone could not confirm the setup right now. Nothing was changed; try again shortly."
+        : (words[reason] ?? `Not set up: ${refusal(reason, "")}.`),
   };
 }

@@ -5,11 +5,12 @@ import {
   adoptSenderNumberAction,
   provisionSenderNumberAction,
   releaseSenderClaimAction,
+  retrySenderClaimAction,
   searchSenderNumbersAction,
   type SenderControlResult,
 } from "./sender-control-actions";
 import type { DemoAdoptionInventory } from "@/lib/sms/sender-controls-demo";
-import type { SearchResult } from "@/lib/sms/sender-controls";
+import type { SearchResult, SenderRecovery } from "@/lib/sms/sender-controls";
 
 // SMS-SENDER-CONTROL-01 (#824): rendered only when the page's gate is open,
 // which is never in production and never with live provisioning armed. Every
@@ -20,17 +21,22 @@ const field = "rounded border px-2 py-1";
 
 export function SmsSenderControls({
   inventory,
-  canRelease,
+  recovery,
 }: {
   /** This studio's own fake account inventory (lib/sms/sender-controls-demo.ts). */
   inventory: DemoAdoptionInventory;
-  /** The studio's sender is in `error`: offer "choose a different number". The server decides. */
-  canRelease: boolean;
+  /**
+   * What an errored setup offers, from its stored error code (senderRecoveryFor):
+   * release ("choose a different number"), retry (the same number), or nothing.
+   * Each action re-derives it on the server.
+   */
+  recovery: SenderRecovery;
 }) {
   const [search, searchAction, searching] = useActionState<SearchResult | null, FormData>(searchSenderNumbersAction, null);
   const [provision, provisionAction, provisioning] = useActionState<SenderControlResult | null, FormData>(provisionSenderNumberAction, null);
   const [adopt, adoptAction, adopting] = useActionState<SenderControlResult | null, FormData>(adoptSenderNumberAction, null);
   const [release, releaseAction, releasing] = useActionState<SenderControlResult | null, FormData>(releaseSenderClaimAction, null);
+  const [retry, retryAction, retrying] = useActionState<SenderControlResult | null, FormData>(retrySenderClaimAction, null);
 
   return (
     <div data-testid="sms-sender-controls" className="rounded-lg border border-dashed border-amber-400 p-5">
@@ -74,7 +80,19 @@ export function SmsSenderControls({
       )}
       {provision && <p role="status" className={`mt-2 text-sm ${provision.ok ? "text-emerald-800" : "text-red-700"}`}>{provision.message}</p>}
 
-      {canRelease && (
+      {recovery === "retry" && (
+        <form action={retryAction} className="mt-4 text-sm" data-testid="sms-sender-retry">
+          <p className="text-neutral-600 dark:text-neutral-400">
+            The last setup attempt did not finish. Retrying uses the same number and first checks what the provider already holds, so nothing is bought twice.
+          </p>
+          <button type="submit" disabled={retrying} className="mt-2 rounded-md border px-3 py-1">
+            Retry setup
+          </button>
+          {retry && <p role="status" className={`mt-2 ${retry.ok ? "text-emerald-800" : "text-red-700"}`}>{retry.message}</p>}
+        </form>
+      )}
+
+      {recovery === "release" && (
         <form action={releaseAction} className="mt-4 text-sm" data-testid="sms-sender-release">
           <p className="text-neutral-600 dark:text-neutral-400">
             The last setup attempt did not finish. If it failed before a number was bought, you can release it and choose a different number.
