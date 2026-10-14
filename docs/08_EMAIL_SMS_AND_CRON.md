@@ -109,7 +109,8 @@ A captured request therefore cannot be replayed later. A replay inside the windo
 
 **Order.** Statuses only move forward: `claimed`/`unknown` < `accepted` < `sent` < `delivery_delayed` < `delivered` < `bounced` | `failed` | `suppressed`.
 - Every arrival order of the same events ends in the same state. A late, repeated or lower event is recorded `stale` and changes nothing.
-- A bounce reported after `delivered` supersedes it: the recipient's server rejected the message after all.
+- A **permanent** bounce reported after `delivered` supersedes it: the recipient's server rejected the message after all.
+- A **transient** (soft) bounce is not terminal (0227, Codex P2 4265450918): it is recorded as `delivery_delayed`, so a later `delivered` or a permanent bounce still advances the row, and a transient bounce after `delivered` is stale. Permanent, undetermined and any other bounce type stay terminal.
 - `email.complained` records `complained_at` once and implies `delivered`.
 - `email.opened` and `email.clicked` are `ignored`: they are not delivery facts, and the activation subscribes to neither.
 

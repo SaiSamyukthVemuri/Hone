@@ -39,8 +39,10 @@ describe("0227 is a forward fix, not an edit of the applied 0212", () => {
     expect(CODE.trimEnd()).toMatch(/commit;$/);
   });
 
-  it("redefines exactly one function and touches no table, policy or trigger", () => {
-    expect(CODE.match(/create or replace function/g)).toHaveLength(1);
+  it("redefines exactly two functions (the claim and the processor) and touches no table, policy or trigger", () => {
+    expect(CODE.match(/create or replace function/g)).toHaveLength(2);
+    expect(CODE).toContain("create or replace function public.claim_email_provider_events(");
+    expect(CODE).toContain("create or replace function public.process_email_provider_event(");
     expect(CODE).not.toMatch(/\b(create|alter|drop)\s+(table|policy|trigger|index|type)\b/i);
     expect(CODE).not.toMatch(/\b(insert\s+into|delete\s+from|truncate)\b/i);
   });
@@ -93,9 +95,53 @@ describe("0227 is a forward fix, not an edit of the applied 0212", () => {
     for (const role of ["public", "anon", "authenticated", "service_role"]) {
       expect(CODE).toContain(`revoke execute on function ${SIG} from ${role};`);
     }
-    expect(CODE.match(/grant execute on function/g)).toHaveLength(1);
+    expect(CODE.match(/grant execute on function/g)).toHaveLength(2);
     expect(CODE).toContain(`grant execute on function ${SIG} to service_role;`);
-    expect(CODE.lastIndexOf("revoke execute")).toBeLessThan(CODE.indexOf("grant execute"));
+    expect(CODE.lastIndexOf(`revoke execute on function ${SIG}`)).toBeLessThan(CODE.indexOf(`grant execute on function ${SIG}`));
+  });
+});
+
+describe("0227 keeps Resend's transient bounces non-terminal (Codex P2 4265450918)", () => {
+  const PSIG = "public.process_email_provider_event(uuid)";
+  const procBody = (sql: string) => {
+    const start = sql.indexOf("create or replace function public.process_email_provider_event(");
+    expect(start).toBeGreaterThan(-1);
+    return sql
+      .slice(start, sql.indexOf("$$;", start))
+      .replace(/--[^\n]*/g, "")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+  };
+
+  it("differs from 0212's processor ONLY by remapping a transient bounce to delivery_delayed", () => {
+    const before = procBody(readFileSync(path.join(DIR, "0212_email_delivery_events.sql"), "utf8"));
+    const after = procBody(SQL);
+    const removed = before.filter((l, i, a) => a.slice(0, i + 1).filter((x) => x === l).length > after.filter((x) => x === l).length);
+    const added = after.filter((l, i, a) => a.slice(0, i + 1).filter((x) => x === l).length > before.filter((x) => x === l).length);
+    expect(removed).toEqual([]);
+    expect(added).toEqual([
+      "if v_target = 'bounced' and v_evt.bounce_type = 'transient' then",
+      "v_target := 'delivery_delayed';",
+      "end if;",
+    ]);
+  });
+
+  it("puts the remap after the event-to-target mapping and before any ranking", () => {
+    const body = SQL.slice(SQL.indexOf("create or replace function public.process_email_provider_event("));
+    const mapEnd = body.indexOf("when 'email.complained'       then 'complained'");
+    const remap = body.indexOf("if v_target = 'bounced' and v_evt.bounce_type = 'transient' then");
+    const rank = body.indexOf("v_old_rank := case v_msg.status");
+    expect(mapEnd).toBeGreaterThan(-1);
+    expect(remap).toBeGreaterThan(mapEnd);
+    expect(rank).toBeGreaterThan(remap);
+  });
+
+  it("restates the processor's grants by name: service_role only", () => {
+    for (const role of ["public", "anon", "authenticated", "service_role"]) {
+      expect(CODE).toContain(`revoke execute on function ${PSIG} from ${role};`);
+    }
+    expect(CODE).toContain(`grant execute on function ${PSIG} to service_role;`);
   });
 });
 
