@@ -219,6 +219,7 @@ Token storage: the DB only ever holds `hashToken(rawToken)`. A DB compromise doe
 
 - **Studio toggle off by default.** `studios.send_*_sms` columns default `false`. SMS only goes out when the studio toggle is `true`.
 - **Client consent required.** `clients.sms_consent_at` must be set and `clients.sms_opted_out_at` must be null.
+- **Members cannot manufacture consent or clear a STOP (0211, G3).** The `clients_sms_permission_guard` trigger refuses any `anon` / `authenticated` write that adds, changes or removes SMS consent, and lets a member add an opt-out only as a withdrawal (source `practitioner`, database clock). Consent evidence is write-once and an opt-out is terminal for every role, so a STOP can never be cleared, even by a trusted path.
 - **STOP webhook handled.** `/api/twilio/inbound-sms` verifies the Twilio signature, idempotently stamps `sms_opted_out_at` on the matching client, and never reveals whether the number was known.
 - **SMS RPC grants are service-role only.** PR #141 / migration 0062 revoked `claim_sms_send` and friends from `anon` and `authenticated`. The action layer always invokes them via `createAdminClient()`.
 - **Twilio credentials gate the whole subsystem.** Missing `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` makes `sendBookingConfirmationSmsToClient` return `ok:false` cleanly; the booking continues.
