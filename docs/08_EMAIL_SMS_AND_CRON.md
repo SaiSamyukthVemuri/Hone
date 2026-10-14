@@ -103,7 +103,7 @@ A captured request therefore cannot be replayed later. A replay inside the windo
 
 **Exactly-once processing and crash recovery.**
 - `process_email_provider_event` applies one receipt in one transaction. It locks the receipt, refuses one that is no longer pending (`already_processed`), locks the ledger row, moves the status and records the outcome. Any error rolls back all of it.
-- `claim_email_provider_events` counts every attempt in its own committed statement, **before** the attempt. A claim is held for two minutes. The route claims the receipt it just recorded, then sweeps up to five receipts that are at least a minute old, which covers a request that died mid-processing.
+- `claim_email_provider_events` counts every attempt in its own committed statement, **before** the attempt. A claim is held for two minutes. The route claims and processes the receipt it just recorded and answers the provider. Only **after** the response (Next `after()`, Codex P2 4266147060) does it sweep up to five receipts that are at least a minute old, which covers a request that died mid-processing. A slow or failing sweep never delays or changes the delivery's answer; a failed sweep is logged as `resend_webhook_sweep_failed`.
 - A receipt that has spent **five** attempts is quarantined as `processing_exhausted` instead of being retried forever.
 - The sweep runs only as a side effect of the next delivery. A scheduled sweep and its heartbeat belong to the alerting slice.
 
