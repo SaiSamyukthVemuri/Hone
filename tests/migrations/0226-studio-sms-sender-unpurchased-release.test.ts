@@ -12,7 +12,9 @@ const VERSION = "0226";
 const MIGRATIONS = path.join(process.cwd(), "supabase/migrations");
 const read = (f: string) => readFileSync(path.join(MIGRATIONS, f), "utf8");
 const SQL = read("0226_studio_sms_sender_unpurchased_release.sql");
-const CODE = SQL.replace(/^\s*--.*$/gm, " ").replace(/\s+--.*$/gm, " ");
+// Block comments first, then line comments: a commented-out statement of
+// either kind is neither counted nor able to hide a real one.
+const CODE = SQL.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*--.*$/gm, " ").replace(/\s+--.*$/gm, " ");
 const TOP_LEVEL = CODE.replace(/\$\$[\s\S]*?\$\$/g, " ");
 const FNS = [
   ["get_releasable_studio_sms_claim", "uuid, uuid"],
@@ -119,5 +121,23 @@ describe("only a claim that provably owns nothing is released", () => {
   it("goes error -> releasing -> released through 0191's guard, and nothing else", () => {
     expect(RELEASE).toMatch(/set status = 'releasing' where id = v_row\.id;\s+update public\.studio_sms_senders\s+set status = 'released', released_at = now\(\)/);
     expect(RELEASE.match(/update public\.studio_sms_senders/g)).toHaveLength(2);
+  });
+});
+
+// EXACT PRIVILEGES (cross-lane finding from History 0223): the grantee lists
+// above match one grantee per statement, so a stray multi-grantee grant
+// (`to anon, authenticated`) or `grant all` slipped past them. This compares
+// EVERY top-level grant statement, of any shape or case, to the exact list.
+describe("exactly these grants, and no other", () => {
+  it("every top-level GRANT statement, normalised, is exactly the intended list; no default-privilege change", () => {
+    const grants = TOP_LEVEL.split(";")
+      .map((st) => st.replace(/\s+/g, " ").trim())
+      .filter((st) => /^grant\b/i.test(st));
+    expect(grants).toEqual([
+      "grant execute on function public.get_releasable_studio_sms_claim(uuid, uuid) to service_role",
+      "grant execute on function public.release_unpurchased_studio_sms_claim(uuid, uuid, uuid, text, integer) to service_role",
+      "grant execute on function public.studio_sms_resource_recorded(uuid, text, text) to service_role",
+    ]);
+    expect(TOP_LEVEL).not.toMatch(/alter\s+default\s+privileges/i);
   });
 });

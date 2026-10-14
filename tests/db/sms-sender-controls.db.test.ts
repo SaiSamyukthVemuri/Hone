@@ -421,10 +421,83 @@ describe("per-studio demo inventory and the recorded-resource check", () => {
       const out = await controls.runSenderAdoption(deps(controls.senderControlsFakeProvider(ORIGIN, s.studioId)), {
         studioId: s.studioId, actorUserId: s.userId, country: "CA", phoneNumber: inv.numbers.CA.phoneNumber, messagingServiceSid: inv.messagingServiceSid,
       });
-      // Two studios may hash to the same 555-01xx line: the second is then refused BEFORE a claim.
+      // Candidate 0 can still collide by chance; resolveDemoInventory (below) is what the page shows.
       if (!out.ok) expect(out).toEqual({ ok: false, result: "refused", reason: "resource_already_recorded", uncertain: false });
       else expect(out).toMatchObject({ ok: true, result: "adopted" });
     }
+  });
+
+  // Codex P2 4274756044: a studio whose first demo pair another studio already
+  // holds is offered its NEXT candidate, and can adopt it; the demo never wedges.
+  it("COLLISION: another studio records this studio's first demo number; the page offers the next candidate, and it adopts", async () => {
+    const holder = await seedStudio("ctl-inv-holder");
+    const b = await seedStudio("ctl-inv-collide");
+    const first = controls.demoAdoptionInventory(b.studioId, 0);
+    // Another studio's live sender holds b's candidate-0 Canadian number.
+    await adminQuery(
+      `insert into public.studio_sms_senders
+         (studio_id, provider, status, country, claimed_phone_number, phone_number, phone_number_sid, messaging_service_sid,
+          provisioning_claim_key, provisioning_claim_at, provisioning_claim_by_practitioner_id, provisioning_lease_generation, provisioned_at, last_test_ok_at)
+       values ($1, 'twilio', 'active', 'CA', $2, $2, $3, $4, $5, now(), $6, 1, now(), now())`,
+      [holder.studioId, first.numbers.CA.phoneNumber, "PN" + "1".repeat(32), "MG" + "2".repeat(32), "hone-sms-" + "3".repeat(32), holder.practitionerId],
+    );
+    // Candidate 0 would now be refused before a claim...
+    const provider = controls.senderControlsFakeProvider(ORIGIN, b.studioId);
+    expect(await controls.runSenderAdoption(deps(provider), {
+      studioId: b.studioId, actorUserId: b.userId, country: "CA", phoneNumber: first.numbers.CA.phoneNumber, messagingServiceSid: first.messagingServiceSid,
+    })).toMatchObject({ ok: false, reason: "resource_already_recorded" });
+    // ...so the page advertises another pair, which b's fake account also owns.
+    const offered = await controls.resolveDemoInventory(admin, b.studioId);
+    expect(offered.numbers.CA.phoneNumber).not.toBe(first.numbers.CA.phoneNumber);
+    // A different candidate is a different service (Codex P2 4275860500).
+    expect(offered.messagingServiceSid).not.toBe(first.messagingServiceSid);
+    expect(await controls.runSenderAdoption(deps(provider), {
+      studioId: b.studioId, actorUserId: b.userId, country: "CA", phoneNumber: offered.numbers.CA.phoneNumber, messagingServiceSid: offered.messagingServiceSid,
+    })).toMatchObject({ ok: true, result: "adopted", phoneNumber: offered.numbers.CA.phoneNumber });
+    expect(provider.calls.purchase).toBe(0);
+  });
+
+  // Codex P2 4275860500: released history keeps the adopted SERVICE SID under
+  // 0191's global uniqueness, so the studio's next demo must use a candidate
+  // whose service is unrecorded too.
+  it("ADOPT, RELEASE, ADOPT AGAIN: the released service is skipped and the studio adopts a fresh candidate", async () => {
+    const s = await seedStudio("ctl-inv-readopt");
+    const provider = controls.senderControlsFakeProvider(ORIGIN, s.studioId);
+    const first = await controls.resolveDemoInventory(admin, s.studioId);
+    expect(await controls.runSenderAdoption(deps(provider), {
+      studioId: s.studioId, actorUserId: s.userId, country: "CA", phoneNumber: first.numbers.CA.phoneNumber, messagingServiceSid: first.messagingServiceSid,
+    })).toMatchObject({ ok: true, result: "adopted" });
+    // The sender is released (0191's lifecycle), and stays as history.
+    await adminQuery("update public.studio_sms_senders set status = 'releasing' where studio_id = $1 and status = 'active'", [s.studioId]);
+    await adminQuery("update public.studio_sms_senders set status = 'released', released_at = now() where studio_id = $1 and status = 'releasing'", [s.studioId]);
+
+    const second = await controls.resolveDemoInventory(admin, s.studioId);
+    expect(second.messagingServiceSid).not.toBe(first.messagingServiceSid);
+    expect(second.numbers.CA.phoneNumber).not.toBe(first.numbers.CA.phoneNumber);
+    expect(await controls.runSenderAdoption(deps(provider), {
+      studioId: s.studioId, actorUserId: s.userId, country: "CA", phoneNumber: second.numbers.CA.phoneNumber, messagingServiceSid: second.messagingServiceSid,
+    })).toMatchObject({ ok: true, result: "adopted", phoneNumber: second.numbers.CA.phoneNumber });
+    expect(provider.calls.purchase).toBe(0);
+  });
+
+  // THE CONTRACT, not an assumption about a shared database: other tests'
+  // random numbers can land on a candidate, so the expected pair is computed
+  // from what the database actually records (CI found the earlier
+  // "candidate 0" assumption flaky).
+  it("the page offers the FIRST candidate whose numbers no other studio records", async () => {
+    const s = await seedStudio("ctl-inv-free");
+    const recorded = async (n: string) =>
+      (await adminQuery("select public.studio_sms_resource_recorded($1, $2, null) r", [s.studioId, n])).rows[0].r as boolean;
+    let expected = controls.demoAdoptionInventory(s.studioId, 0);
+    for (let i = 0; i < 16; i += 1) {
+      const inv = controls.demoAdoptionInventory(s.studioId, i);
+      const svcRecorded = (await adminQuery("select public.studio_sms_resource_recorded($1, null, $2) r", [s.studioId, inv.messagingServiceSid])).rows[0].r as boolean;
+      if (!(await recorded(inv.numbers.CA.phoneNumber)) && !(await recorded(inv.numbers.US.phoneNumber)) && !svcRecorded) {
+        expected = inv;
+        break;
+      }
+    }
+    expect(await controls.resolveDemoInventory(admin, s.studioId)).toEqual(expected);
   });
 
   it("a number or service already recorded for another studio is refused before any claim", async () => {

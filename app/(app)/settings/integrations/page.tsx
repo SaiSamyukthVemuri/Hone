@@ -5,9 +5,8 @@ import { GoogleCalendarCard } from "../profile/GoogleCalendarCard";
 import { getOwnConnectionReadiness } from "@/lib/google-calendar/connection";
 import { SmsSenderStatusCard } from "./SmsSenderStatusCard";
 import { SmsSenderReadinessPanel } from "./SmsSenderReadinessPanel";
-import { SmsSenderControls } from "./SmsSenderControls";
+import { SmsSenderControlsSection } from "./SmsSenderControlsSection";
 import { senderControlsGate, senderRecoveryFor } from "@/lib/sms/sender-controls";
-import { demoAdoptionInventory } from "@/lib/sms/sender-controls-demo";
 import { studioSenderReadiness } from "@/lib/sms/sender-readiness";
 import {
   readOwnSenderRegistrations,
@@ -116,8 +115,8 @@ export default async function IntegrationsSettingsPage() {
           is shut in production, on hosted previews and whenever live provisioning is armed, so
           nothing renders there; each action re-checks it. */}
       {senderControlsGate().open ? (
-        <SmsSenderControls
-          inventory={demoAdoptionInventory(studio.id)}
+        <SmsSenderControlsSection
+          studioId={studio.id}
           recovery={senderRecoveryFor(sender?.status, sender?.last_error_code)}
         />
       ) : null}

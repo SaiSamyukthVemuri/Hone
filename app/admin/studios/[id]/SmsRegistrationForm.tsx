@@ -76,12 +76,34 @@ export function SmsRegistrationPanel({
           data-result={state.result ?? (state.ok ? "recorded" : "error")}
           className={state.ok ? "mt-2 text-sm text-green-700" : "mt-2 text-sm text-red-700"}
         >
-          {state.ok ? "Recorded." : (state.error ?? "The registration could not be recorded.")}
+          {state.ok ? successText(state.phoneNumber, target?.phoneNumber ?? null, dataState) : (state.error ?? "The registration could not be recorded.")}
         </p>
       ) : null}
       {footer}
     </section>
   );
+}
+
+/**
+ * SUCCESS NAMES ITS NUMBER (Codex P2 4274699533). The panel keeps its result
+ * across a refresh (so a refusal stays visible), which means a success can
+ * outlive the sender it was about: the sender may be replaced before the
+ * refresh lands. "Recorded." beside a replacement number would read as that
+ * number's approval. So the message names the number it recorded for, and
+ * says plainly when that is no longer the studio's number.
+ */
+export function successText(recordedFor: string | undefined, shownNow: string | null, dataState?: string): string {
+  if (!recordedFor) return "Recorded.";
+  // AN UNREADABLE OR AMBIGUOUS REFRESH PROVES NOTHING (Codex P2 4275179860):
+  // the write succeeded as reported, and the studio's current number is
+  // simply unknown. Never claim it changed.
+  if (dataState === "unreadable" || dataState === "ambiguous") {
+    return `Recorded for ${recordedFor}. The studio's current number could not be confirmed just now; reload to check it.`;
+  }
+  if (shownNow !== recordedFor) {
+    return `Recorded for ${recordedFor}. That is no longer this studio's number; nothing is recorded for the number shown now.`;
+  }
+  return `Recorded for ${recordedFor}.`;
 }
 
 /** A new form per sender, per number and per record version. */

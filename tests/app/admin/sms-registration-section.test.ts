@@ -170,3 +170,36 @@ describe("a replacement sender gets a fresh form (Codex P2 4253596170)", () => {
 
 
 });
+
+// Codex P2 4274699533: the kept result must never read as the replacement
+// sender's approval.
+describe("success names the number it recorded for", () => {
+  it("says which number, and says plainly when the studio's number has since changed", async () => {
+    const { successText } = await import("@/app/admin/studios/[id]/SmsRegistrationForm");
+    expect(successText("+12125550123", "+12125550123")).toBe("Recorded for +12125550123.");
+    const moved = successText("+12125550123", "+12125550199");
+    expect(moved).toMatch(/^Recorded for \+12125550123\. That is no longer this studio's number; nothing is recorded for the number shown now\.$/);
+    expect(moved).not.toContain("+12125550199");
+    // The sender released (no live sender, a definite answer).
+    expect(successText("+12125550123", null, "no-live-sender")).toMatch(/no longer this studio's number/);
+  });
+
+  it("an UNREADABLE or AMBIGUOUS refresh claims nothing about the current number (Codex P2 4275179860)", async () => {
+    const { successText } = await import("@/app/admin/studios/[id]/SmsRegistrationForm");
+    for (const state of ["unreadable", "ambiguous"]) {
+      const text = successText("+12125550123", null, state);
+      expect(text, state).toBe("Recorded for +12125550123. The studio's current number could not be confirmed just now; reload to check it.");
+      expect(text, state).not.toMatch(/no longer|nothing is recorded/);
+    }
+    // A definite read still gets the definite answer.
+    expect(successText("+12125550123", "+12125550199", "ready")).toMatch(/no longer this studio's number/);
+    expect(successText("+12125550123", "+12125550123", "ready")).toBe("Recorded for +12125550123.");
+  });
+
+  it("the panel renders success through successText with the number shown now", async () => {
+    const { readFileSync } = await import("node:fs");
+    const form = readFileSync("app/admin/studios/[id]/SmsRegistrationForm.tsx", "utf8");
+    expect(form).toMatch(/state\.ok \? successText\(state\.phoneNumber, target\?\.phoneNumber \?\? null, dataState\)/);
+    expect(form).not.toMatch(/state\.ok \? "Recorded\."/);
+  });
+});

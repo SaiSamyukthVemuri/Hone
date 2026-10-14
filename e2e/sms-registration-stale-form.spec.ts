@@ -118,7 +118,7 @@ test.describe("SMS registration: a stale form never wins, mounted", () => {
     await expect(section(a)).toBeVisible();
     await submit(a, phone, { status: "approved", reference: ref1 });
     await expect(result(a)).toHaveAttribute("data-result", "recorded");
-    await expect(result(a)).toHaveText("Recorded.");
+    await expect(result(a)).toHaveText(`Recorded for ${phone}.`);
     expect(await registrationOf(studioId)).toEqual({ status: "approved", provider_reference: ref1 });
 
     // Operator B loads the page NOW: it shows "approved".
