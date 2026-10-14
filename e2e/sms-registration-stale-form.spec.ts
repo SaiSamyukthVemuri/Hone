@@ -53,6 +53,32 @@ async function seedStudioWithActiveUsSender(): Promise<{ studioId: string; phone
   return { studioId: seed.studioId, phone };
 }
 
+/** Release a sender the way 0191's lifecycle does: active -> releasing -> released. */
+async function releaseSender(studioId: string): Promise<void> {
+  await sql("update public.studio_sms_senders set status = 'releasing' where studio_id = $1 and status <> 'released'", [studioId]);
+  await sql("update public.studio_sms_senders set status = 'released', released_at = now() where studio_id = $1 and status = 'releasing'", [studioId]);
+}
+
+/** A new live sender with a new US number for the same studio (the replacement). */
+async function addActiveUsSender(studioId: string): Promise<string> {
+  const [owner] = await sql<{ id: string }>(
+    "select id from public.practitioners where studio_id = $1 order by created_at limit 1",
+    [studioId],
+  );
+  const phone = `+1212555${String(Math.floor(1000 + Math.random() * 9000))}`;
+  const hex = (n: number) => randomBytes(n / 2).toString("hex");
+  await sql(
+    `insert into public.studio_sms_senders
+       (studio_id, provider, status, country,
+        claimed_phone_number, phone_number, phone_number_sid, messaging_service_sid,
+        provisioning_claim_key, provisioning_claim_at, provisioning_claim_by_practitioner_id,
+        provisioning_lease_generation, provisioned_at, last_test_ok_at)
+     values ($1, 'twilio', 'active', 'US', $2, $2, $3, $4, $5, now(), $6, 1, now(), now())`,
+    [studioId, phone, `PN${hex(32)}`, `MG${hex(32)}`, `hone-sms-${hex(32)}`, owner.id],
+  );
+  return phone;
+}
+
 /** One operator, signed in through the real magic link, in its own browser context. */
 async function operatorPage(browser: Browser): Promise<Page> {
   const { email } = await seedOperatorAuthUser();
@@ -130,6 +156,43 @@ test.describe("SMS registration: a stale form never wins, mounted", () => {
     await expect(section(b).getByLabel("Status")).toHaveValue("suspended");
 
     await a.context().close();
+    await b.context().close();
+  });
+
+  // Codex P2 4270957975: the refusal must survive a refresh that REPLACES or
+  // REMOVES the sender, not only one that changes the record version.
+  test("a sender replaced or released after the page loaded: the refusal stays on screen, and the page shows the new state", async ({ browser }) => {
+    test.setTimeout(180_000);
+    const { studioId, phone } = await seedStudioWithActiveUsSender();
+    const path = `/admin/studios/${studioId}`;
+    const b = await operatorPage(browser);
+
+    // REPLACED: B's page shows the old sender and number.
+    await b.goto(path);
+    await expect(b.getByTestId("admin-sms-registration-number")).toHaveText(phone);
+    await releaseSender(studioId);
+    const replacement = await addActiveUsSender(studioId);
+    await submit(b, phone, { status: "approved" });
+    await expect(result(b)).toHaveAttribute("data-result", "sender_changed");
+    await expect(result(b)).toContainText("number changed after this page loaded");
+    // The refreshed page shows the NEW sender and its fresh form; the refusal stays.
+    await expect(b.getByTestId("admin-sms-registration-number")).toHaveText(replacement);
+    await expect(section(b).getByRole("button", { name: new RegExp(`Record for ${replacement.replace("+", "\\+")}`) })).toBeVisible();
+    await expect(result(b)).toHaveAttribute("data-result", "sender_changed");
+    expect(await registrationOf(studioId)).toBeNull();
+
+    // RELEASED: B's page (reloaded) shows the replacement; then it is released.
+    await b.reload();
+    await expect(b.getByTestId("admin-sms-registration-number")).toHaveText(replacement);
+    await releaseSender(studioId);
+    await submit(b, replacement, { status: "approved" });
+    await expect(result(b)).toHaveAttribute("data-result", "no_live_sender");
+    // The refreshed page has no sender and no form -- and the refusal is still shown.
+    await expect(section(b)).toHaveAttribute("data-state", "no-live-sender");
+    await expect(section(b).locator("form")).toHaveCount(0);
+    await expect(result(b)).toHaveAttribute("data-result", "no_live_sender");
+    expect(await registrationOf(studioId)).toBeNull();
+
     await b.context().close();
   });
 });
