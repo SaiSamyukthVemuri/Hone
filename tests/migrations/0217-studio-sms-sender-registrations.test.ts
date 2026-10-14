@@ -143,3 +143,22 @@ describe("the record is what was submitted (Codex P2 4253653241, 4253770080)", (
     expect(CODE).toMatch(/returns table \(result text, registration_id uuid, kind text, previous_status text\)/);
   });
 });
+
+// EXACT PRIVILEGES (cross-lane finding from History 0223): the grantee lists
+// above match one grantee per statement, so a stray multi-grantee grant
+// (`to anon, authenticated`) or `grant all` slipped past them. This compares
+// EVERY top-level grant statement, of any shape or case, to the exact list.
+describe("exactly these grants, and no other", () => {
+  it("every top-level GRANT statement, normalised, is exactly the intended list; no default-privilege change", () => {
+    const grants = TOP_LEVEL.split(";")
+      .map((st) => st.replace(/\s+/g, " ").trim())
+      .filter((st) => /^grant\b/i.test(st));
+    expect(grants).toEqual([
+      "grant select (id, studio_id, sender_id, phone_number, kind, status, missing_information, recorded_at, updated_at) on public.studio_sms_sender_registrations to authenticated",
+      "grant select on table public.studio_sms_sender_registrations to service_role",
+      "grant execute on function public.record_studio_sms_sender_registration(uuid, uuid, text, text, text, text, timestamptz) to service_role",
+      "grant execute on function public.get_live_studio_sms_sender_registration_state(uuid) to service_role",
+    ]);
+    expect(TOP_LEVEL).not.toMatch(/alter\s+default\s+privileges/i);
+  });
+});
