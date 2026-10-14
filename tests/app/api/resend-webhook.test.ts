@@ -21,7 +21,8 @@ const h: {
   calls: RpcCall[];
   admins: number;
   answers: Record<string, Answer[]>;
-} = { calls: [], admins: 0, answers: {} };
+  atResponse: string[];
+} = { calls: [], admins: 0, answers: {}, atResponse: [] };
 
 function answer(fn: string): Promise<{ data: unknown; error: unknown }> {
   const queue = h.answers[fn] ?? [];
@@ -40,6 +41,17 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         return answer(fn);
       },
     };
+  },
+}));
+
+// Post-response work (Next's after()): queued here and flushed by deliver(),
+// so each case can see what had run when the response was returned
+// (h.atResponse) and what ran afterwards (Codex P2 4266147060).
+const deferred: Array<() => Promise<void>> = [];
+vi.mock("next/server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/server")>()),
+  after: (work: () => Promise<void>) => {
+    deferred.push(work);
   },
 }));
 
@@ -86,13 +98,20 @@ function deliver(
   };
   const signature = opts.signature === undefined ? sign(raw, ts) : opts.signature;
   if (signature !== null) headers["svix-signature"] = signature;
-  return POST(
-    new Request("https://hone.care/api/resend/webhook", {
-      method: "POST",
-      headers,
-      body: opts.tamper ? opts.tamper(raw) : raw,
-    }),
-  );
+  return (async () => {
+    const res = await POST(
+      new Request("https://hone.care/api/resend/webhook", {
+        method: "POST",
+        headers,
+        body: opts.tamper ? opts.tamper(raw) : raw,
+      }),
+    );
+    // What had run when the provider got its answer...
+    h.atResponse = h.calls.map((c) => c.fn);
+    // ...then whatever the route scheduled for after the response.
+    for (const work of deferred.splice(0)) await work();
+    return res;
+  })();
 }
 
 const ok = (data: unknown) => ({ data, error: null });
@@ -108,6 +127,8 @@ let logged: string[] = [];
 
 beforeEach(() => {
   h.calls = [];
+  h.atResponse = [];
+  deferred.length = 0;
   h.admins = 0;
   h.answers = {};
   logged = [];
@@ -350,6 +371,36 @@ describe("retries and replays", () => {
     expect(fns()).not.toContain("process_email_provider_event");
   });
 
+
+  it("answers the provider BEFORE sweeping the backlog (Codex P2 4266147060)", async () => {
+    h.answers = {
+      record_email_provider_event: [recorded()],
+      claim_email_provider_events: [claimedOwn, claimedNone],
+      process_email_provider_event: [appliedDelivered],
+    };
+    const res = await deliver(payload());
+    expect(res.status).toBe(200);
+    // At response time only this delivery's own record, claim and process had run.
+    expect(h.atResponse).toEqual(["record_email_provider_event", "claim_email_provider_events", "process_email_provider_event"]);
+    // The bounded sweep ran afterwards.
+    expect(fns().slice(3)).toEqual(["claim_email_provider_events"]);
+    expect(h.calls[3]!.args).toEqual({ p_event_id: null, p_limit: 5 });
+  });
+
+  it("still answers 500 for a pending receipt before any sweep, and a sweep that throws changes nothing", async () => {
+    h.answers = {
+      record_email_provider_event: [recorded()],
+      claim_email_provider_events: [claimedOwn, (): never => {
+        throw new Error("connection reset");
+      }],
+      process_email_provider_event: [{ data: null, error: { message: "boom" } }],
+    };
+    const res = await deliver(payload());
+    expect(res.status).toBe(500);
+    expect(h.atResponse.filter((f) => f === "claim_email_provider_events")).toHaveLength(1);
+    // The sweep's own claim rejected (connection reset): logged, never thrown.
+    expect(fns().filter((f) => f === "claim_email_provider_events")).toHaveLength(2);
+  });
 
   it("uses its turn to recover older receipts, without letting their outcome change its answer", async () => {
     const OLDER = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
