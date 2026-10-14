@@ -46,3 +46,26 @@ describe("demo candidates", () => {
     expect(demoAdoptionInventory(studio, 999)).toEqual(demoAdoptionInventory(studio, DEMO_CANDIDATES - 1));
   });
 });
+
+// Codex P2 4275196090: two studio ids that collide in 32-bit FNV must not
+// share a Messaging Service SID (or any number SID).
+describe("synthetic SIDs are collision-resistant", () => {
+  it("Codex's colliding pair gets DIFFERENT service SIDs", () => {
+    const a = demoAdoptionInventory("a9c0bf66-31c4-4b10-b6df-446fe34aa339");
+    const b = demoAdoptionInventory("343c02fb-9e91-43a5-8ecf-09ef4a0cce20");
+    expect(a.messagingServiceSid).not.toBe(b.messagingServiceSid);
+    expect(a.messagingServiceSid).toMatch(/^MG[0-9a-f]{32}$/);
+    expect(a.numbers.CA.phoneNumberSid).not.toBe(b.numbers.CA.phoneNumberSid);
+  });
+
+  it("no SID repeats across 2,000 studios", () => {
+    const sids = new Set<string>();
+    for (let k = 0; k < 2000; k += 1) {
+      const inv = demoAdoptionInventory(randomUUID());
+      for (const sid of [inv.messagingServiceSid, inv.numbers.CA.phoneNumberSid, inv.numbers.US.phoneNumberSid]) {
+        expect(sids.has(sid)).toBe(false);
+        sids.add(sid);
+      }
+    }
+  });
+});

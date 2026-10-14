@@ -18,6 +18,8 @@
 // 0226's studio_sms_resource_recorded), so a collision moves this studio to
 // its next candidate instead of wedging its demo.
 
+import { createHash } from "node:crypto";
+
 /** FNV-1a, 32-bit: a small deterministic spread, not a security property. */
 function fnv1a(input: string): number {
   let h = 0x811c9dc5;
@@ -28,10 +30,16 @@ function fnv1a(input: string): number {
   return h >>> 0;
 }
 
+/**
+ * A 128-bit synthetic SID body from a SHA-256 digest (Codex P2 4275196090).
+ * Chunking one 32-bit FNV state gave every SID only 32 bits of collision
+ * resistance: two studio ids colliding in that state shared the WHOLE
+ * Messaging Service SID, and after one adopted, every candidate of the other
+ * was refused on the service. FNV stays only for spreading numbers over
+ * candidate slots, where a collision is resolved by the next candidate.
+ */
 function hex32(seed: string): string {
-  let out = "";
-  for (let i = 0; out.length < 32; i += 1) out += fnv1a(`${seed}:${i}`).toString(16).padStart(8, "0");
-  return out.slice(0, 32);
+  return createHash("sha256").update(seed, "utf8").digest("hex").slice(0, 32);
 }
 
 export type DemoAdoptionInventory = {
