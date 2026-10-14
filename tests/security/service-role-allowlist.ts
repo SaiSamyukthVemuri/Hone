@@ -353,10 +353,10 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "verifyCancellationToken",
   },
   {
-    path: "app/(app)/settings/integrations/page.tsx",
+    path: "app/(app)/settings/integrations/SmsSenderControlsSection.tsx",
     purpose:
-      "SMS-SENDER-CONTROL-01 (#824, Codex P2 4274756044): chooses which FAKE demo number pair the owner's sender controls advertise, the studio's first candidate that no other studio records, via 0226's studio_sms_resource_recorded (service_role only, existence only).",
-    why: "Reached only inside the senderControlsGate().open branch (never in production, never on hosted previews, never with live provisioning armed, only HONE_SMS_SENDER_CONTROLS=fake against the loopback database). It is a READ: one existence check per candidate number, scoped to the studio the page already resolved for the signed-in practitioner. It writes nothing and returns only a boolean per number.",
+      "SMS-SENDER-CONTROL-01 (#824, Codex P2 4274756044): chooses which FAKE demo number pair the owner's sender controls advertise, the studio's first candidate that no other studio records, via 0226's studio_sms_resource_recorded (service_role only, existence only). Its own server component so the integrations page keeps its read-only, session-client-only boundary.",
+    why: "Returns nothing unless senderControlsGate().open, re-checked here (never in production, never on hosted previews, never with live provisioning armed, only HONE_SMS_SENDER_CONTROLS=fake against the loopback database). It is a READ: one existence check per candidate number, scoped to the studio the page already resolved for the signed-in practitioner. It writes nothing and returns only a boolean per number.",
     scopeGuard: "senderControlsGate",
   },
   {
