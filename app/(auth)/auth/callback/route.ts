@@ -5,29 +5,30 @@ import {
   identifyServerUser,
 } from "@/lib/analytics/server";
 import { isAnalyticsUuid } from "@/lib/analytics/ids";
-import {
-  ADMIN_RETURN_COOKIE,
-  safeAdminReturnPath,
-  safeInternalPath,
-} from "@/lib/auth/return-path";
+import { ADMIN_RETURN_COOKIE, safeInternalPath } from "@/lib/auth/return-path";
+import { adminReturnTargetFor } from "@/lib/auth/admin-return";
 
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
-  // Where to go after sign-in. Every candidate is VALIDATED as a same-origin
-  // relative path (an unvalidated `next` such as `@evil.example` would leave
-  // this origin): the /admin target the middleware remembered for an
-  // operator's link (Codex P2 4248920454), then a `next` parameter, then the
-  // dashboard.
-  const next =
-    safeAdminReturnPath(request.cookies.get(ADMIN_RETURN_COOKIE)?.value) ??
-    safeInternalPath(searchParams.get("next")) ??
-    "/dashboard";
 
   if (code) {
     const supabase = await createClient();
     const { data, error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error && data.user) {
+      // Where to go after sign-in. Every candidate is VALIDATED as a
+      // same-origin relative path (an unvalidated `next` such as
+      // `@evil.example` would leave this origin): the /admin target the
+      // middleware remembered for an operator's link (Codex P2 4248920454),
+      // honoured only for an allowlisted operator, then a `next` parameter,
+      // then the dashboard.
+      const adminTarget = adminReturnTargetFor(
+        request.cookies.get(ADMIN_RETURN_COOKIE)?.value,
+        data.user.email,
+      );
+      const next =
+        adminTarget ?? safeInternalPath(searchParams.get("next")) ?? "/dashboard";
+
       // Post-response, bounded: sign-in must never fail or stall because
       // PostHog is unavailable (P1/P2-ANALYTICS-03). Identify by opaque UUID
       // only; the (app) layout re-identifies with the validated coarse role.
@@ -49,6 +50,11 @@ export async function GET(request: NextRequest) {
       // block sign-in, so any failure falls through to the default destination.
       let dest = next;
       let clearSelection = false;
+      // A REQUIRED step comes first (accepting the invitation, choosing a
+      // studio), and the operator's target is CARRIED through it, to be used
+      // when it completes (Codex P2 4263663458; lib/auth/admin-return.ts). A
+      // refusal (conflict, ambiguity) or a sign-in with no step forgets it.
+      let carryAdminTarget = false;
       try {
         const { data: rec } = await supabase.rpc(
           "reconcile_my_pending_invitation",
@@ -59,6 +65,7 @@ export async function GET(request: NextRequest) {
             : null;
         if (status?.status === "acceptance_required") {
           dest = "/accept-invitation";
+          carryAdminTarget = adminTarget !== null;
         } else if (status?.status === "conflict") {
           dest = "/no-access?reason=invite-conflict";
         } else if (status?.status === "ambiguous") {
@@ -79,6 +86,7 @@ export async function GET(request: NextRequest) {
           // selection; middleware routes 2+ memberships w/o selection there).
           dest = "/dashboard";
           clearSelection = true;
+          carryAdminTarget = adminTarget !== null;
         }
       } catch {
         // Never block sign-in on reconciliation.
@@ -88,8 +96,11 @@ export async function GET(request: NextRequest) {
       if (clearSelection) {
         response.cookies.delete("hone_selected_studio");
       }
-      // One sign-in, one use: the remembered target never outlives it.
-      response.cookies.delete(ADMIN_RETURN_COOKIE);
+      // One sign-in, one use: the remembered target outlives it only to be
+      // used at the end of a required step (and its own 15-minute life).
+      if (!carryAdminTarget) {
+        response.cookies.delete(ADMIN_RETURN_COOKIE);
+      }
       return response;
     }
   }

@@ -246,5 +246,14 @@ export const E2E_WEB_SERVER_ENV: Record<string, string> = {
   // e2e-operator@harness.local is the dedicated New Studio Wizard operator
   // (PR #254). isAdmin matches exactly, lowercased; keep it in this allowlist
   // so the operator e2e can reach /admin without colliding with other seeds.
-  ADMIN_EMAILS: "e2e@harness.local,e2e-operator@harness.local",
+  //
+  // LEAD-ALERT-01 (#831): lead alerts are ON in this lane, to the fake
+  // transport only. The recipient must be on ADMIN_EMAILS (the readiness rule)
+  // and carries the `success+` prefix, so the fake ACCEPTS
+  // (e2e/lead-alert-operator.spec.ts). e2e-lead-operator@harness.local is that
+  // spec's own operator: it alone is given a studio invitation, so the shared
+  // e2e-operator account stays studio-less for the wizard specs.
+  LEAD_ALERT_EMAIL: "success+lead-ops@harness.local",
+  ADMIN_EMAILS:
+    "e2e@harness.local,e2e-operator@harness.local,success+lead-ops@harness.local,e2e-lead-operator@harness.local",
 };

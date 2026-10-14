@@ -600,6 +600,125 @@ describe("expiry, configuration blockers and the operator's retry", () => {
     ).rejects.toMatchObject({ code: "22023" });
   });
 
+  // Codex P2 4261478391: an abandoned send (expired lease) under blocked
+  // configuration returns to pending, atomically and fenced.
+  describe("an abandoned send under blocked configuration", () => {
+    const MESSAGE = { from: "Hone <alerts@hone.test>", subject: "New demo request", html: "<p>frozen</p>", text: "frozen" };
+
+    /** Claimed, frozen for OPS, then abandoned: the worker died mid-attempt. */
+    async function abandoned() {
+      const r = await recordDemo();
+      const c = await claim(r.alert_id);
+      const frozen = await adminQuery(
+        "select result from public.freeze_platform_lead_alert_message($1, $2, $3::jsonb, $4)",
+        [r.alert_id, c.claim_token, JSON.stringify(MESSAGE), delivery.recipientDigest(OPS)],
+      );
+      expect(frozen.rows[0].result).toBe("frozen");
+      await expireLease(r.alert_id!);
+      return { id: r.alert_id!, token: c.claim_token as string, key: c.idempotency_key as string, before: await alertRow(r.alert_id!) };
+    }
+
+    const BLOCKED: Array<[string, (sent: Sent[]) => Parameters<Delivery["sweepPlatformLeadAlerts"]>[0]]> = [
+      ["recipient_not_configured", (sent) => deps(undefined, sent)],
+      ["recipient_not_allowlisted", (sent) => deps("someone-else@lead-alert.test", sent)],
+      ["transport_not_configured", (sent) => ({ ...deps(OPS, sent), transport: null })],
+      ["app_origin_not_configured", (sent) => ({ ...deps(OPS, sent), appOrigin: () => { throw new Error("no origin"); } })],
+    ];
+
+    for (const [code, blockedDeps] of BLOCKED) {
+      it(`${code}: an expired sending lease becomes blocked pending; a live lease is untouched; nothing is sent`, async () => {
+        const gone = await abandoned();
+        const live = (await recordDemo()).alert_id!;
+        const liveClaim = await claim(live);
+        const liveBefore = await alertRow(live);
+        const sent: Sent[] = [];
+
+        const summary = await delivery.sweepPlatformLeadAlerts(blockedDeps(sent));
+        expect(summary).toMatchObject({ ok: true, blocked: code, blockedAlerts: 1, attempted: 0 });
+        expect(sent).toHaveLength(0);
+
+        const after = await alertRow(gone.id);
+        expect(after).toMatchObject({
+          status: "pending", claim_token: null, claimed_at: null, lease_expires_at: null, last_error_code: code,
+        });
+        // Nothing that makes the next claim a safe replay has moved.
+        for (const col of ["attempt_count", "first_attempted_at", "next_attempt_at", "send_generation", "frozen_message", "frozen_recipient_sha256"]) {
+          expect(after[col], col).toEqual(gone.before[col]);
+        }
+        // The live lease: byte for byte as it was.
+        expect(await alertRow(live)).toEqual({ ...liveBefore });
+        expect((await alertRow(live)).claim_token).toBe(liveClaim.claim_token);
+      });
+    }
+
+    it("the old worker is fenced out: its late freeze and settle answer stale_claim and change nothing", async () => {
+      const gone = await abandoned();
+      await adminQuery("select public.record_platform_lead_alerts_unconfigured('transport_not_configured', null)");
+      expect(await settle(gone.id, gone.token, "accepted", null, null, "late")).toBe("stale_claim");
+      expect(await settle(gone.id, gone.token, "fail", "provider_rejected")).toBe("stale_claim");
+      const frozen = await adminQuery(
+        "select result from public.freeze_platform_lead_alert_message($1, $2, $3::jsonb, $4)",
+        [gone.id, gone.token, JSON.stringify(MESSAGE), delivery.recipientDigest(OPS)],
+      );
+      expect(frozen.rows[0].result).toBe("stale_claim");
+      expect(await alertRow(gone.id)).toMatchObject({ status: "pending", provider_message_id: null, last_error_code: "transport_not_configured", attempt_count: 1 });
+    });
+
+    it("once configured, the normal reclaim is the same replay-safe retry: same key, frozen bytes, one send", async () => {
+      const gone = await abandoned();
+      await adminQuery("select public.record_platform_lead_alerts_unconfigured('recipient_not_configured', null)");
+      const sent: Sent[] = [];
+      const summary = await delivery.sweepPlatformLeadAlerts(deps(OPS, sent));
+      expect(summary).toMatchObject({ ok: true, attempted: 1, accepted: 1 });
+      expect(sent).toHaveLength(1);
+      expect(sent[0].key).toBe(gone.key);
+      expect(sent[0].payload).toMatchObject({ to: OPS, subject: MESSAGE.subject, html: MESSAGE.html, text: MESSAGE.text });
+      expect(await alertRow(gone.id)).toMatchObject({ status: "accepted", attempt_count: 2, send_generation: gone.before.send_generation });
+    });
+
+    it("an abandoned send past its attempts or replay window is not revived: expiry fails it", async () => {
+      const fifth = (await recordDemo()).alert_id!;
+      for (let i = 1; i <= 4; i += 1) {
+        const c = await claim(fifth);
+        await settle(fifth, c.claim_token, "retry", "provider_timeout");
+        await makeDue(fifth);
+      }
+      await claim(fifth);
+      await expireLease(fifth);
+      const late = await abandoned();
+      await adminQuery("update public.platform_lead_alerts set first_attempted_at = clock_timestamp() - interval '21 hours' where id = $1", [late.id]);
+
+      expect(Number((await adminQuery("select public.record_platform_lead_alerts_unconfigured('recipient_not_configured', null) n")).rows[0].n)).toBe(0);
+      expect((await alertRow(fifth)).status).toBe("sending");
+      expect((await alertRow(late.id)).status).toBe("sending");
+      expect(Number((await adminQuery("select public.expire_platform_lead_alerts() n")).rows[0].n)).toBe(2);
+      expect(await alertRow(fifth)).toMatchObject({ status: "failed", attempt_count: 5 });
+      expect((await alertRow(late.id)).status).toBe("failed");
+    });
+
+    it("ATOMIC against a concurrent reclaim: a lease renewed while the blocker waits is not touched", async () => {
+      const gone = await abandoned();
+      const a = new Client({ connectionString: resolveLocalDbUrl() });
+      const b = new Client({ connectionString: resolveLocalDbUrl() });
+      await Promise.all([a.connect(), b.connect()]);
+      try {
+        // A configured worker re-leases the abandoned alert, uncommitted.
+        await a.query("begin");
+        const re = await a.query("select result, claim_token from public.claim_platform_lead_alert($1, 120)", [gone.id]);
+        expect(re.rows[0].result).toBe("claimed");
+        // The blocker (another instance, blocked config) runs meanwhile: it
+        // waits on the row, then re-checks the lease on the committed row.
+        const blocked = b.query("select public.record_platform_lead_alerts_unconfigured('recipient_not_configured', $1) n", [gone.id]);
+        await new Promise((r) => setTimeout(r, 300));
+        await a.query("commit");
+        expect(Number((await blocked).rows[0].n)).toBe(0);
+        expect(await alertRow(gone.id)).toMatchObject({ status: "sending", claim_token: re.rows[0].claim_token, attempt_count: 2, last_error_code: "lease_expired" });
+      } finally {
+        await Promise.all([a.end(), b.end()]);
+      }
+    });
+  });
+
   it("THE REPLAY WINDOW: no automatic attempt 20 hours after the first, whatever the cadence (Codex P2 4243922090)", async () => {
     const r = await recordDemo();
     const first = await claim(r.alert_id);
@@ -624,7 +743,11 @@ describe("expiry, configuration blockers and the operator's retry", () => {
     expect(await alertRow(r.alert_id!)).toMatchObject({ status: "failed", last_error_code: "expired", attempt_count: 2 });
 
     // Only the operator's retry sends again, and under a NEW key generation.
-    expect((await adminQuery("select public.requeue_platform_lead_alert($1) r", [r.alert_id])).rows[0].r).toBe("requeued");
+    // Attempts were made, so the alert MAY have been sent: the operator must
+    // confirm first (Codex P2 4276616247), and until then nothing changes.
+    expect((await adminQuery("select public.requeue_platform_lead_alert($1) r", [r.alert_id])).rows[0].r).toBe("possible_duplicate");
+    expect(await alertRow(r.alert_id!)).toMatchObject({ status: "failed", attempt_count: 2, idempotency_key: `lead-alert/${r.alert_id}/1` });
+    expect((await adminQuery("select public.requeue_platform_lead_alert($1, true) r", [r.alert_id])).rows[0].r).toBe("requeued");
     expect(await alertRow(r.alert_id!)).toMatchObject({ first_attempted_at: null, attempt_count: 0, idempotency_key: `lead-alert/${r.alert_id}/2` });
     expect((await claim(r.alert_id)).idempotency_key).toBe(`lead-alert/${r.alert_id}/2`);
   });
@@ -958,5 +1081,76 @@ describe("the payload is frozen per generation", () => {
         asRole(role, (q) => q("select * from public.freeze_platform_lead_alert_message($1, $2, $3, $4)", [randomUUID(), randomUUID(), JSON.stringify(MESSAGE), DIGEST])),
       ).rejects.toMatchObject({ code: "42501" });
     }
+  });
+});
+
+// Codex P2 4253669922: FAIR scheduling. The claim serves the earliest-DUE
+// alert first, not the oldest-created, so a backlog cannot starve later alerts.
+describe("fair claim order", () => {
+  it("an older alert due LATER waits behind a newer alert due EARLIER", async () => {
+    const older = await recordDemo();
+    const newer = await recordDemo();
+    await adminQuery("update public.platform_lead_alerts set next_attempt_at = clock_timestamp() - interval '1 minute' where id = $1", [older.alert_id]);
+    await adminQuery("update public.platform_lead_alerts set next_attempt_at = clock_timestamp() - interval '30 minutes' where id = $1", [newer.alert_id]);
+    expect((await claim(null)).alert_id).toBe(newer.alert_id);
+    expect((await claim(null)).alert_id).toBe(older.alert_id);
+  });
+});
+
+// Codex P2 4276616247: a manual retry mints a NEW idempotency key, which the
+// provider cannot match to an earlier request. Only failures KNOWN not to have
+// been sent are retried unasked; an ambiguous one needs the operator's
+// confirmation (after checking the inbox), and nothing changes until then.
+describe("the operator's retry never silently risks a duplicate", () => {
+  const failWith = async (code: string) => {
+    const r = await recordDemo();
+    const c = await claim(r.alert_id);
+    expect(await settle(r.alert_id!, c.claim_token, "fail", code)).toBe("failed");
+    return r.alert_id!;
+  };
+  const requeue = async (id: string, confirm?: boolean) =>
+    (await adminQuery(
+      confirm === undefined ? "select public.requeue_platform_lead_alert($1) r" : "select public.requeue_platform_lead_alert($1, $2) r",
+      confirm === undefined ? [id] : [id, confirm],
+    )).rows[0].r as string;
+
+  it("AMBIGUOUS failures (timeout, provider exception, provider unavailable): possible_duplicate, nothing changes; confirmed, a new generation", async () => {
+    for (const code of ["provider_timeout", "provider_exception", "provider_unavailable"]) {
+      const id = await failWith(code);
+      const before = await alertRow(id);
+      expect(await requeue(id), code).toBe("possible_duplicate");
+      expect(await requeue(id, false), code).toBe("possible_duplicate");
+      expect(await alertRow(id), code).toEqual(before);
+      expect(await requeue(id, true), code).toBe("requeued");
+      expect(await alertRow(id), code).toMatchObject({ status: "pending", send_generation: 2, attempt_count: 0 });
+    }
+  });
+
+  it("an abandoned FIFTH attempt (lease_expired) is ambiguous too", async () => {
+    const r = await recordDemo();
+    for (let i = 1; i <= 4; i += 1) {
+      const c = await claim(r.alert_id);
+      await settle(r.alert_id!, c.claim_token, "retry", "provider_timeout");
+      await makeDue(r.alert_id!);
+    }
+    await claim(r.alert_id);
+    await expireLease(r.alert_id!);
+    await adminQuery("select public.expire_platform_lead_alerts()");
+    expect(await alertRow(r.alert_id!)).toMatchObject({ status: "failed", last_error_code: "lease_expired" });
+    expect(await requeue(r.alert_id!)).toBe("possible_duplicate");
+  });
+
+  it("KNOWN-UNSENT failures (rejection, recipient changed, render failed) are retried without confirmation", async () => {
+    for (const code of ["provider_rejected", "recipient_changed", "render_failed"]) {
+      const id = await failWith(code);
+      expect(await requeue(id), code).toBe("requeued");
+      expect(await alertRow(id), code).toMatchObject({ send_generation: 2 });
+    }
+  });
+
+  it("NULL confirmation is invalid input, and changes nothing", async () => {
+    const id = await failWith("provider_timeout");
+    expect((await adminQuery("select public.requeue_platform_lead_alert($1, null) r", [id])).rows[0].r).toBe("invalid_input");
+    expect((await alertRow(id)).status).toBe("failed");
   });
 });

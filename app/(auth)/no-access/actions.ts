@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { setSelectedStudioId } from "@/lib/supabase/selected-studio";
+import { clearAdminReturn, fulfilAdminReturn } from "@/lib/auth/admin-return";
 
 // Self-contained sign-out for the invite-only /no-access gate (PR #253),
 // so the (auth) route does not import (app) internals. Same behaviour as
@@ -10,6 +11,7 @@ import { setSelectedStudioId } from "@/lib/supabase/selected-studio";
 export async function signOutFromGate() {
   const supabase = await createClient();
   await supabase.auth.signOut();
+  await clearAdminReturn();
   redirect("/login");
 }
 
@@ -47,5 +49,9 @@ export async function switchStudioAction(formData: FormData): Promise<void> {
   }
 
   await setSelectedStudioId(studioId as string);
+  // The chooser was the required step: an operator's remembered /admin target
+  // (lib/auth/admin-return.ts) is used now, and consumed.
+  const adminTarget = await fulfilAdminReturn(user.email);
+  if (adminTarget) redirect(adminTarget);
   redirect("/dashboard");
 }

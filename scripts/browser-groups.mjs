@@ -335,6 +335,13 @@ export const BROWSER_GROUPS = {
       // operator's registration form on /admin/studios/[id] (two operators,
       // stale submit refused, refresh, safe resubmit). Admin surface.
       "sms-registration-stale-form.spec.ts",
+      // LEAD-ALERT-01 (#831): the operator lead alert on the fake provider --
+      // /demo -> accepted, durable failure -> Retry, and the operator's lead
+      // link through invitation acceptance. Operator/admin and invitation
+      // surface, like welcome-email-admin above; changed /admin and invitation
+      // paths already select this group. lib/platform-leads/** matches no rule
+      // and keeps its EXTENDED fail-safe (narrowing it is not this slice's call).
+      "lead-alert-operator.spec.ts",
       "practitioner-availability-compat.spec.ts",
       "practitioner-booking-studio-b.spec.ts",
       "practitioner-quick-book-studio-b.spec.ts",

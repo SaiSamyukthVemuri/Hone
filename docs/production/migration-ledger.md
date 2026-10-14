@@ -217,43 +217,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 >
 > **NOT APPLIED, NOT MERGED.** Apply it migration-first, under separate approval, from the exact reviewed head. No application change depends on it: either order is safe for the application, and the guard binds only raw member writes that no screen makes.
 >
-
-### Pending `0212` — email delivery events (PR #832)
-
-> **0212 IS AUTHORED AND PENDING (added after the 0210 apply), on the DELIVERY-EVENTS-01 branch `feat/delivery-events-01-resend` only.**
-> `0212_email_delivery_events.sql` adds two tables and five `service_role`-only commands:
-> - **`email_outbound_messages`**, the email delivery ledger, shaped like 0206's SMS ledger: one row per attempt, forward-only status, no address, subject or body;
-> - **`email_provider_events`**, one receipt per signature-verified Resend webhook delivery, deduplicated on its delivery id.
->
-> The commands are `begin_appointment_email_message`, `settle_email_message`, `record_email_provider_event`, `claim_email_provider_events` and `process_email_provider_event`. No browser grant, no policy, no trigger on an existing table, and it writes no data.
->
-
-### Pending `0213` — operator lead alerts (PR #831)
-
-> **0213 IS AUTHORED AND PENDING, on `feat/lead-alert-01-operator-email` (#826) only.**
-> `0213_platform_lead_alerts.sql` adds the operator alert for a new Hone demo request or
-> early-access signup: one table (`platform_lead_alerts`, service_role SELECT only, RLS on,
-> no policy), its update guard, and seven `service_role`-only commands that save a lead and
-> its alert intent together and claim, settle, expire, block and requeue the alert. It
-> writes no row at top level, so no existing lead is ever alerted, and it changes no existing
-> object: 0004's and 0006's anonymous insert policies stay for the deployed forms.
->
-
-> **DELIVERY AUTHORITY, ONE OWNER EACH.** `0213` owns the lead alert's SEND retries (claim → send →
-> settle, at most five attempts). `0212` owns delivery-event RECEIPTS (record → claim → process,
-> bounded and quarantined) and never resends anything; its ledger is studio-scoped, so a receipt for
-> a lead-alert email matches no ledger row and stays platform-only. Neither writes the other's tables.
-
-| Field | Value |
-|---|---|
-| **Hosted (production) migration max** | **0210** (`0210_sms_waitlist_join_acknowledgement.sql`), applied 2026-10-11 from #822's reviewed head. |
-| **Repo migration max** | **0213** — `0213_platform_lead_alerts.sql`, above `0212_email_delivery_events.sql` and `0211_client_sms_permission_guard.sql`. `0209` and `0210` are byte-identical. |
-| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **`0211`, `0212`, `0213`**, contiguous from hosted + 1, all **NOT applied**: the MIGRATION-FIRST PENDING shape, `repo > hosted`. |
-| **Next free migration** | Next free number is **0214**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation. |
-| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. |
-
-## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, repo == hosted)
+> **THE BLOCK BELOW IS THE 0210 APPLY RECORD.** Its hosted row is still current. Its repo-max, pending and next-free rows have been updated for `0211` and `0212` while they are pending.
 
 ### Pending `0214` — PAY-CCY-02 studio payment jurisdiction (PR #833)
 

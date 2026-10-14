@@ -8,14 +8,21 @@ import { NextRequest } from "next/server";
 
 const auth = vi.hoisted(() => ({
   user: null as { id: string; email: string } | null,
-  exchange: { data: { user: { id: "u1" } }, error: null } as unknown,
+  // An allowlisted operator: the remembered target is honoured only for one
+  // (lib/auth/admin-return.ts; lead-return-through-invitation.test.ts).
+  exchange: { data: { user: { id: "u1", email: "ops@hone.example" } }, error: null } as unknown,
   reconcile: { data: { status: "none" } } as unknown,
 }));
 
+const { query } = vi.hoisted(() => ({
+  query: (data: unknown) => Object.assign(Promise.resolve({ data, error: null }), { limit: async () => ({ data, error: null }) }),
+}));
 vi.mock("@supabase/ssr", () => ({
   createServerClient: () => ({
     auth: { getUser: async () => ({ data: { user: auth.user } }) },
-    from: () => ({ select: () => ({ eq: () => ({ eq: async () => ({ data: [] }) }) }) }),
+    // Awaitable AND .limit()-able, so the mock holds whichever membership
+    // reads the middleware makes.
+    from: () => ({ select: () => ({ eq: () => ({ eq: () => query([]) }) }) }),
   }),
 }));
 vi.mock("@/lib/supabase/server", () => ({
@@ -38,6 +45,7 @@ beforeEach(() => {
   auth.reconcile = { data: { status: "none" } };
   process.env.NEXT_PUBLIC_SUPABASE_URL = "http://127.0.0.1:1";
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon";
+  process.env.ADMIN_EMAILS = "ops@hone.example";
 });
 
 const returnCookie = (res: Response) =>
@@ -99,8 +107,10 @@ describe("the sign-in callback", () => {
     expect((await signIn(undefined, "/clients")).headers.get("location")).toBe(`${ORIGIN}/clients`);
   });
 
-  it("an invitation that needs acceptance still wins over the remembered target", async () => {
+  it("an invitation that needs acceptance still comes first, and the target is CARRIED, not consumed (Codex P2 4263663458)", async () => {
     auth.reconcile = { data: { status: "acceptance_required" } };
-    expect((await signIn(LEAD)).headers.get("location")).toBe(`${ORIGIN}/accept-invitation`);
+    const res = await signIn(LEAD);
+    expect(res.headers.get("location")).toBe(`${ORIGIN}/accept-invitation`);
+    expect(returnCookie(res)).toBeNull();
   });
 });

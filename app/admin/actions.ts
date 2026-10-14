@@ -61,6 +61,11 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // alert. The database requeues it (only a failed alert, with a fresh attempt
 // budget, window and idempotency key) and it is sent after this response.
 // The lead itself is never touched.
+//
+// A failure that MAY HAVE BEEN SENT (Codex P2 4276616247) is requeued only
+// when the operator confirms, after checking the operator inbox, that a
+// duplicate is acceptable: the form's `confirm_possible_duplicate=yes`. The
+// database decides which failures need that (0213), not this action.
 export async function retryLeadAlertAction(formData: FormData): Promise<void> {
   const supabase = await createClient();
   const {
@@ -85,6 +90,7 @@ export async function retryLeadAlertAction(formData: FormData): Promise<void> {
   const admin = createAdminClient();
   const { data, error } = await admin.rpc("requeue_platform_lead_alert", {
     p_alert_id: id,
+    p_confirm_possible_duplicate: formData.get("confirm_possible_duplicate") === "yes",
   });
   const requeued = !error && data === "requeued";
   await logAdminAction({
@@ -98,7 +104,8 @@ export async function retryLeadAlertAction(formData: FormData): Promise<void> {
   if (error) {
     throw new Error("Failed to retry the lead alert.");
   }
-  // 'not_failed' means another retry already took it; nothing more to do.
+  // 'not_failed' means another retry already took it; 'possible_duplicate'
+  // means the operator has not confirmed an ambiguous one. Nothing to send.
   if (requeued) {
     schedulePlatformLeadAlert(id);
   }
