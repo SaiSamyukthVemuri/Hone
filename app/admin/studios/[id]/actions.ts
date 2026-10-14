@@ -183,6 +183,14 @@ export async function recordSmsRegistrationAction(
     };
   }
   const status = String(formData.get("status") ?? "");
+  // The record the form showed (its updated_at, passed back as the database's
+  // own string so no precision is lost), or none. The command refuses a write
+  // whose record has changed since (Codex P2 4266275222).
+  const expectedUpdatedAt = String(formData.get("expected_updated_at") ?? "").trim();
+  if (expectedUpdatedAt.length > 0 && (expectedUpdatedAt.length > 40 || Number.isNaN(Date.parse(expectedUpdatedAt)))) {
+    await audit("failed", { result: "invalid_input" });
+    return { ok: false, result: "invalid_input", error: "Reload the page: the record it showed could not be confirmed." };
+  }
   const missing = String(formData.get("missing_information") ?? "").trim();
   const reference = String(formData.get("provider_reference") ?? "").trim();
   if (!REGISTRATION_STATUS_VALUES.has(status)) {
@@ -203,6 +211,7 @@ export async function recordSmsRegistrationAction(
       p_status: status,
       p_missing: status === "requires_information" ? missing : null,
       p_provider_reference: reference.length > 0 ? reference : null,
+      p_expected_updated_at: expectedUpdatedAt.length > 0 ? expectedUpdatedAt : null,
     }));
   } catch {
     // Never "succeeded" for an outcome nobody saw.
@@ -232,6 +241,7 @@ export async function recordSmsRegistrationAction(
     ambiguous_live_sender: "This studio has more than one live sender. Nothing was recorded.",
     sender_changed: "The studio's number changed after this page loaded. Nothing was recorded; reload and verify the current number.",
     sender_has_no_number: "The studio's sender has no number yet, so there is nothing to record registration against.",
+    stale_record: "This registration was changed after this page loaded. Nothing was recorded; reload to see the current record, then decide again.",
   };
   return { ok: false, result, error: message[result] ?? OUTCOME_UNKNOWN.error };
 }
