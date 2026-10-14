@@ -176,8 +176,19 @@ function ownership(
   };
 }
 
+/**
+ * Is response still held by a multi-area container?
+ *
+ * Response has TWO stores: the legacy SessionBlock columns (RESPONSE_FIELDS) and
+ * the canonical ElectrolysisEntry.observation_chips that new charting writes
+ * reactions to (lib/sessions/clinical-response.ts). An entry can cover several
+ * areas, so the prohibition holds while EITHER store sits on a multi-area
+ * container, the same rule the machine/probe/minutes gates use (Codex P2
+ * 4265583716). Moving only the legacy columns to SessionBlockArea must not
+ * switch the response checks off.
+ */
 function responseIsBlockOwned(): boolean {
-  return ownership(RESPONSE_FIELDS).blockOwned;
+  return familyIsMultiAreaOwned(RESPONSE_FIELDS, ["observation_chips"]);
 }
 /**
  * Is ANY model that carries this family still attached to a multi-area
@@ -359,12 +370,14 @@ type Family = "response" | "machine" | "probe" | "minutes";
 const PATTERNS: Array<[string, RegExp, Family]> = [
   [
     "per-area quantifier followed by a response word",
-    new RegExp(`\\b(each|per|every)\\s+(\\w+\\s+)?area\\b[^.|]{0,80}?(${RESPONSE_WORD})`, "i"),
+    // "by" too (Codex P2 4265583711): "charting by treated area: ... tolerance" attributes
+    // the listed response to the area exactly as "per area" does.
+    new RegExp(`\\b(each|per|every|by)\\s+(\\w+\\s+)?area\\b[^.|]{0,80}?(${RESPONSE_WORD})`, "i"),
     "response",
   ],
   [
     "response word followed by a per-area quantifier",
-    new RegExp(`(${RESPONSE_WORD})[^.|]{0,40}?\\b(per|each|every)\\s+(\\w+\\s+)?area\\b`, "i"),
+    new RegExp(`(${RESPONSE_WORD})[^.|]{0,40}?\\b(per|each|every|by)\\s+(\\w+\\s+)?area\\b`, "i"),
     "response",
   ],
   [
@@ -626,6 +639,16 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
     expect(typeof responseIsBlockOwned()).toBe("boolean");
   });
 
+  it("response stays multi-area-owned through the entry-side chip store (Codex P2 4265583716)", () => {
+    // New charting writes reactions to ElectrolysisEntry.observation_chips, and an
+    // entry may cover several areas. Even if the legacy SessionBlock response
+    // columns moved, the prohibition must hold while that store is multi-area.
+    const entry = block("ElectrolysisEntry");
+    expect(has(entry, "observation_chips")).toBe(true);
+    expect(has(entry, ENTRY_MULTI_AREA_FIELD)).toBe(true);
+    expect(responseIsBlockOwned()).toBe(true);
+  });
+
   it("every guidance-scoped surface is still swept", () => {
     for (const rel of Object.keys(GUIDANCE_ROUTES)) {
       expect(() => read(rel), `${rel} is scoped but missing`).not.toThrow();
@@ -704,6 +727,12 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
     // FALSE: no owner named at all.
     expect(fires("Each treated area keeps its own tolerance and response.")).toBe(true);
     expect(fires("Capture how each area was tolerated and any reaction.")).toBe(true);
+    // Codex P2 4265583711: the "by treated area: ..." construction.
+    expect(
+      fires("Electrolysis charting by treated area: mode, probe and lot, laterality, tolerance and skin response."),
+    ).toBe(true);
+    // ...while the true per-area statements stay legal.
+    expect(fires("Recorded by area. Each treated area is recorded as an area, with its own side.")).toBe(false);
     // FALSE: the owner is named, but far away — a long row must not rescue a
     // claim made at its start. This is the case that let two reverts through.
     expect(

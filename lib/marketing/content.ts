@@ -515,7 +515,7 @@ export const MARKETING_PAGES: ReadonlyArray<MarketingPage> = [
     path: "/features/charting-records",
     title: "Electrolysis charting and records | Hone",
     description:
-      "Electrolysis charting by treated area: mode, modality, energy, frequency, pulses, probe and lot, laterality, tolerance and skin response.",
+      "Electrolysis charting with laterality for each treated area. Each settings block records mode, modality, energy, frequency, pulses, probe and lot, tolerance and skin response.",
     indexable: true,
   },
   {
