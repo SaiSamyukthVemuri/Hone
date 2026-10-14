@@ -1,7 +1,10 @@
 import { createHash } from "crypto";
 import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
-import { PROOF_REQUEST_LIMITS } from "@/lib/waitlist/delivery/policy";
+import {
+  MOBILE_VERIFICATION_LIMITS,
+  PROOF_REQUEST_LIMITS,
+} from "@/lib/waitlist/delivery/policy";
 
 // Rate limiter for unauthenticated public surfaces. Covers:
 //   * public booking: fetchPublicSlotsAction + publicBookAppointmentAction
@@ -721,5 +724,128 @@ export async function limitWaitlistProofRequest(args: {
   } catch (err) {
     logBackendUnavailable("waitlist_proof", err);
     return { allowed: true }; // fail open — see the classification above
+  }
+}
+
+// ---------------------------------------------------------------------------
+// WAIT B2b-2 — mobile possession proof, TWO STAGES
+// ---------------------------------------------------------------------------
+//
+// A COST AND ABUSE DAMPENER, NOT THE BRUTE-FORCE CONTROL. This whole file fails
+// open by contract, so a Redis outage allows everything; the attempt ceiling that
+// actually stops guessing lives in the Verify service. MOBILE_VERIFICATION_LIMITS
+// carries the full reasoning and must be read before these numbers are tuned.
+//
+// WHY TWO SEPARATE GATES RATHER THAN ONE CALL, AND IT IS A SECURITY PROPERTY
+// RATHER THAN A REFACTOR. The first version checked the ENTRY bucket and then the
+// IP bucket, both AFTER the caller's authorization had been resolved. That ordering
+// leaked capability validity: once an IP had exhausted its bucket, an INVALID
+// capability returned before the limiter ran (`not_proved`) while a VALID one
+// reached the limiter and returned `rate_limited`. A caller could exhaust their own
+// bucket on purpose and then read capability validity off which refusal came back —
+// which is the membership oracle the whole boundary is shaped to deny.
+//
+//   STAGE 1  limitMobileVerificationIp     BEFORE the resolver runs. Keyed on the
+//            operation and the HASHED CLIENT IP, and on nothing else, so it is the
+//            same bucket whatever the caller claims about itself.
+//   STAGE 2  limitMobileVerificationEntry  AFTER a context is resolved. Keyed on the
+//            SERVER-RESOLVED entry and studio, so it protects one person.
+//
+// ONE REQUEST SPENDS EACH CONCEPTUAL BUDGET ONCE. Stage 2 deliberately does NOT
+// re-check an IP bucket: that would charge a single request twice for the same
+// limit and make the effective IP budget depend on how many requests happened to
+// resolve.
+//
+// WHAT IS NEVER A KEY HERE: the capability, the caller-supplied studio id, the
+// submitted code, the phone number, and the raw IP. The IP is hashed before it
+// touches Redis or a log line; the entry and studio ids are opaque server-resolved
+// uuids.
+//
+// THE CALLER-SUPPLIED studioId IS DELIBERATELY ABSENT FROM STAGE 1. Scoping the
+// pre-auth bucket by it would let an attacker mint a fresh budget by varying one
+// string in the request, which is not an abuse control. The cost is that stage 1 is
+// not studio-scoped, so a shared NAT is damped across studios — acceptable at these
+// budgets for a prospect who verifies once, and the alternative is evadable.
+
+const mobileVerificationLimiterCache = new Map<string, Ratelimit | null>();
+function mobileVerificationLimiter(
+  operation: "start" | "check",
+  dimension: "entry" | "ip",
+): Ratelimit | null {
+  const key = `${operation}_${dimension}`;
+  const cached = mobileVerificationLimiterCache.get(key);
+  if (cached !== undefined) return cached;
+  const redis = getRedis();
+  const cfg = MOBILE_VERIFICATION_LIMITS[operation][dimension];
+  const limiter = redis
+    ? new Ratelimit({
+        redis,
+        limiter: Ratelimit.slidingWindow(cfg.limit, cfg.window),
+        // Own namespace per operation AND per dimension. A shared prefix would
+        // let a cheap `check` budget be spent by an expensive `start`, which is
+        // the opposite of why the two budgets differ.
+        prefix: `rl:waitlist_mobile_verification_${key}`,
+        analytics: false,
+      })
+    : null;
+  mobileVerificationLimiterCache.set(key, limiter);
+  return limiter;
+}
+
+/**
+ * STAGE 1 — the pre-authorization gate. Runs BEFORE any resolver.
+ *
+ * Takes headers and nothing else, which is the point: there is no argument through
+ * which a caller could influence which bucket it spends. A denial must be returned
+ * to the caller as the ordinary `rate_limited` refusal, BEFORE the resolver runs, so
+ * a valid and an invalid capability from an exhausted IP are indistinguishable.
+ */
+export async function limitMobileVerificationIp(
+  operation: "start" | "check",
+  args: { headers: Headers },
+): Promise<RateLimitResult> {
+  const limiter = mobileVerificationLimiter(operation, "ip");
+  if (!limiter) return { allowed: true }; // disabled — fail open, by contract
+  const routeClass = `waitlist_mobile_verification_${operation}_ip`;
+  try {
+    // HASHED, AND THE ONLY COMPONENT. No studio, no capability, no entry.
+    const res = await limiter.limit(hashId(clientIpFromHeaders(args.headers)));
+    if (!res.success) {
+      const retry = retryAfterSeconds(res.reset);
+      logRateLimitExceeded(routeClass, retry, "ip");
+      return { allowed: false, retryAfterSeconds: retry };
+    }
+    return { allowed: true };
+  } catch (err) {
+    logBackendUnavailable(routeClass, err);
+    return { allowed: true }; // fail open — abuse damping, not authorization
+  }
+}
+
+/**
+ * STAGE 2 — the per-entry gate. Runs only AFTER a context is resolved.
+ *
+ * `entryId` and `studioId` MUST both be server-resolved row ids. A browser-supplied
+ * value makes the scoping meaningless and would let a caller choose which bucket to
+ * spend — which is exactly why stage 1 takes neither.
+ */
+export async function limitMobileVerificationEntry(
+  operation: "start" | "check",
+  args: { studioId: string; entryId: string },
+): Promise<RateLimitResult> {
+  const limiter = mobileVerificationLimiter(operation, "entry");
+  if (!limiter) return { allowed: true }; // disabled — fail open, by contract
+  const routeClass = `waitlist_mobile_verification_${operation}_entry`;
+  try {
+    const res = await limiter.limit(`${args.entryId}:${args.studioId}`);
+    if (!res.success) {
+      const retry = retryAfterSeconds(res.reset);
+      logRateLimitExceeded(routeClass, retry, "entry");
+      return { allowed: false, retryAfterSeconds: retry };
+    }
+    return { allowed: true };
+  } catch (err) {
+    logBackendUnavailable(routeClass, err);
+    return { allowed: true }; // fail open
   }
 }

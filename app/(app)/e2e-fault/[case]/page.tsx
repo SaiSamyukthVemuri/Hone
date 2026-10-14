@@ -1,8 +1,10 @@
 import { notFound, redirect } from "next/navigation";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import {
   asRouteFaultCase,
   assertRouteFaultNotRequestedInDeployment,
   E2E_ROUTE_FAULT_CANARY,
+  E2E_ROUTE_FAULT_UNMARKED_MESSAGE,
   isE2eRouteFaultEnabled,
   shouldFailOnceForToken,
 } from "@/lib/reliability/e2e-route-fault";
@@ -15,7 +17,8 @@ import { ClientFault } from "./ClientFault";
 // so this page calls notFound() and the URL is a plain 404. There is no
 // production-accessible crash route. It is additionally behind the normal auth
 // gates: middleware bounces anonymous visitors to /login before this file runs,
-// and app/(app)/layout.tsx re-checks the practitioner/studio membership.
+// and, like every authenticated page, it resolves the practitioner/studio
+// membership itself before any fault case runs (SENTRY-IDENTITY-01).
 //
 // The case lives in a DYNAMIC segment because it is chosen per invocation: the
 // harness addresses a failure mode, never a fixed destination. That also keeps
@@ -44,6 +47,11 @@ export default async function E2eFaultPage({
 
   if (!isE2eRouteFaultEnabled(process.env)) notFound();
 
+  // After the activation gate, so a deployed build is still a plain 404 that
+  // reads nothing; before any fault case, so the cases exercise a page whose
+  // identity boundary is the same as every other authenticated page's.
+  await requirePractitionerWithStudio();
+
   const { case: rawCase } = await params;
   const faultCase = asRouteFaultCase(rawCase);
   if (!faultCase) notFound();
@@ -55,6 +63,10 @@ export default async function E2eFaultPage({
 
   if (faultCase === "server-throw") {
     throw new Error(faultMessage);
+  }
+
+  if (faultCase === "unmarked-throw") {
+    throw new Error(E2E_ROUTE_FAULT_UNMARKED_MESSAGE);
   }
 
   if (faultCase === "once") {

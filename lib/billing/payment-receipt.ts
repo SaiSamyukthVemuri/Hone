@@ -40,24 +40,73 @@ import {
 //   3. Loads the client + studio rows so the email greeting,
 //      reason label, and contact line resolve correctly.
 //   4. Atomically claims the row via a conditional UPDATE on
-//      receipt_status (null OR 'failed' -> 'sending') so two
-//      concurrent click events cannot both call Resend.
+//      receipt_status, so two concurrent senders cannot both call
+//      Resend. The admissible set depends on the CALLER'S POLICY:
+//        manual    (default): null OR 'failed' -> 'sending'.
+//                  Not refund-gated: a practitioner who clicks Send
+//                  is deciding about a real document.
+//        automatic          : null ONLY, and only while
+//                  refund_status IS NULL, in the same statement.
+//                  It does not resurrect a 'failed' receipt, and it
+//                  will not fire into a charge being refunded.
+//      The refund side carries the reciprocal predicate (it will not
+//      claim while receipt_status='sending'), so the two operations
+//      are mutually exclusive at this one row.
 //   5. Calls sendEmailSafely. The helper itself caps the send at
 //      a 15-second timeout and classifies failures as retryable
 //      or terminal.
-//   6. Writes the result back to the row:
+//   6. Writes the result back to the row. THE DECIDING QUESTION IS
+//      NOT "is this error retryable" BUT "do we know whether an
+//      email reached the client":
+//
 //       ok: true              -> receipt_status='sent',
 //                              receipt_sent_at=now(),
 //                              receipt_email_to=<client_email>,
 //                              clears the failure detail.
-//      ok: false, retryable  -> receipt_status=null (releases
-//                              the claim so a manual retry can
-//                              run later) + ops_alert at
-//                              severity 'warning'.
-//      ok: false, terminal   -> receipt_status='failed',
-//                              receipt_failure_code,
-//                              receipt_failure_message_safe +
-//                              ops_alert at severity 'critical'.
+//
+//      AMBIGUOUS PROVIDER RESULT (timeout, network error, empty
+//      response, 429, 5xx, or a shape the classifier does not
+//      recognise -- it fails open to retryable): DELIVERY CANNOT BE
+//      RULED OUT. That is the whole of the claim, and it is weaker
+//      than it looks. We do NOT know the provider was reached: a
+//      network error can fire before the request is accepted. We do
+//      NOT know no answer arrived: a 429 or a 5xx IS an answer. All
+//      that survives is that an email may or may not have gone out.
+//      That is enough, because the risk being managed is a DUPLICATE
+//      receipt, and only certainty that nothing was sent would
+//      justify sending again.
+//      So the claim is deliberately HELD: receipt_status STAYS
+//      'sending', nothing is released, and no automatic retry
+//      follows. An ops_alert at severity 'critical' asks an operator
+//      to reconcile with the provider before clearing or resending.
+//      Returns send_ambiguous_state_not_recorded.
+//
+//      KNOWN PRE-DISPATCH FAILURE: the receipt document or its PDF
+//      could not be built (including an unsupported character), so
+//      the provider was NEVER dispatched to and delivery definitely
+//      did not happen. The claim is SAFE TO RELEASE for later
+//      recovery: receipt_status -> null, ops_alert at severity
+//      'warning', returns receipt_pdf_unavailable. This is the ONLY
+//      path in this module that releases the claim.
+//      (ONLY AN EMPTY client email is refused before the claim
+//      exists -- the pre-claim check is a presence check, nothing
+//      more. A nonempty but MALFORMED address passes it, wins the
+//      claim, and is then rejected by the sender; a missing provider
+//      configuration is likewise classified after the claim. Both are
+//      non-retryable, so they settle down the terminal path below and
+//      park the row as 'failed'. They do not release it.)
+//
+//      KNOWN TERMINAL NOT-DELIVERED provider outcome: the provider
+//      answered and refused. receipt_status -> 'failed' with
+//      receipt_failure_code and receipt_failure_message_safe, plus
+//      an ops_alert at severity 'critical'. The automatic policy
+//      does not resurrect 'failed'; manual or operator recovery
+//      stays explicit.
+//
+//      Each of the three settlement writes can itself fail. When it
+//      does the outcome says so rather than reporting the intended
+//      state -- see sent_but_record_update_failed and
+//      send_failed_state_not_recorded.
 //
 // What this helper does NOT do:
 //   * Does NOT create a Stripe PaymentIntent. Does NOT call any
@@ -89,6 +138,12 @@ export type SendPaymentChargeReceiptResult =
         | "in_flight"
         | "client_email_missing"
         | "studio_missing"
+        // UNREACHABLE SINCE THE AMBIGUOUS-DELIVERY REPAIR, and retained only so
+        // existing consumers keep compiling. Nothing produces it: a retryable
+        // provider failure means delivery is UNKNOWN, which now holds the claim
+        // and reports `send_ambiguous_state_not_recorded` instead. Its old advice
+        // -- "try again in a moment" -- is exactly what must not be offered when a
+        // duplicate receipt is the risk, so do not wire this back up.
         | "send_failed_retryable"
         | "send_failed_terminal"
         // The send FAILED (retryably or terminally) and the follow-up
@@ -121,6 +176,25 @@ export type SendPaymentChargeReceiptResult =
         // unknown, it definitively did not happen. The claim is released, so a
         // manual Send can try again.
         | "receipt_pdf_unavailable"
+        // R1. The AUTOMATIC claim lost, and the re-read shows the row is not
+        // held by another sender -- it is refund activity that made the claim
+        // inadmissible. Reporting `in_flight` here was false twice over: no send
+        // is in flight, and none can start, because the automatic claim requires
+        // `refund_status IS NULL` and refund_status is not going back to NULL.
+        //
+        // IT IS NOT A FAILURE. Nothing was attempted and nothing went wrong; an
+        // automatic receipt was deliberately suppressed. It also does not say
+        // the refund succeeded -- `pending_stripe`, `succeeded` and `failed` all
+        // produce it, because the policy is about refund ACTIVITY existing, not
+        // about how the refund turned out.
+        //
+        // NO AUTOMATIC RECOVERY FOLLOWS, including after a FAILED refund. Once a
+        // refund has been started against a charge, whether a receipt is still
+        // the right thing to send is a judgement about a real document, and
+        // manual recovery owns it. Wiring automatic retry to refund failure
+        // would couple two independent operations that have no business
+        // driving each other.
+        | "blocked_by_refund"
         | "database_error";
       message: string;
       emailTo?: string;
@@ -130,6 +204,13 @@ export type SendPaymentChargeReceiptResult =
 const ALREADY_SENT_MESSAGE = "Receipt has already been sent.";
 const IN_FLIGHT_MESSAGE =
   "A receipt send is already in flight for this attempt.";
+// Says what happened and what to do, and asserts nothing about the refund's
+// outcome or about any email. No client detail: this is read by whoever is
+// looking at the charge, and by the ops alert.
+const BLOCKED_BY_REFUND_MESSAGE =
+  "Automatic receipt delivery was skipped because refund activity exists for " +
+  "this charge. Review the payment and refund state before sending a receipt " +
+  "manually.";
 const NOT_SUCCEEDED_MESSAGE =
   "Receipts can only be sent for a succeeded charge.";
 const MISSING_PI_MESSAGE =
@@ -138,8 +219,6 @@ const CLIENT_EMAIL_MISSING_MESSAGE =
   "Client has no email on file. Add one before sending the receipt.";
 const STUDIO_MISSING_MESSAGE =
   "Studio details are missing for this attempt.";
-const SEND_FAILED_RETRYABLE_MESSAGE =
-  "Receipt email failed temporarily. Try again in a moment.";
 const SEND_FAILED_TERMINAL_MESSAGE =
   "Receipt email failed and cannot be retried automatically.";
 // TERMINAL provider failure + settlement write failure. Definitive
@@ -371,11 +450,37 @@ function resolveStudioContactEmail(studio: StudioRow): string | null {
   return studioClientContactEmail(studio);
 }
 
+/**
+ * WHICH `receipt_status` VALUES THIS CALLER MAY CLAIM.
+ *
+ * ONE SENDER, TWO POLICIES -- deliberately not two senders, because a second
+ * implementation is a second place for the claim to drift.
+ *
+ * `automatic`  NULL only. An automatic caller is one of possibly several
+ *              concurrent charge/recovery invocations for the same attempt, and
+ *              it must never resurrect a `failed` receipt: that decision belongs
+ *              to a human who has looked at why it failed.
+ *
+ * `manual`     NULL or `failed`. A practitioner clicking Send after reading the
+ *              failure is the authorised recovery path, and this preserves
+ *              exactly today's behaviour for it.
+ *
+ * NEITHER POLICY MAY CLAIM `sending` OR `sent`. That is what makes the claim the
+ * single durable owner of email delivery.
+ */
+export type ReceiptClaimPolicy = "automatic" | "manual";
+
 export async function sendPaymentChargeReceipt(args: {
   attemptId: string;
   studioId: string;
   practitionerId: string;
+  /**
+   * Defaults to `manual` so every existing caller keeps its current behaviour;
+   * the automatic sender passes `automatic` explicitly.
+   */
+  claimPolicy?: ReceiptClaimPolicy;
 }): Promise<SendPaymentChargeReceiptResult> {
+  const claimPolicy: ReceiptClaimPolicy = args.claimPolicy ?? "manual";
   const admin = createAdminClient();
 
   // 1) Load the attempt row scoped by studio. The auth gate
@@ -444,6 +549,16 @@ export async function sendPaymentChargeReceipt(args: {
       sentAt: attempt.receipt_sent_at,
     };
   }
+  if (attempt.receipt_status === "failed" && claimPolicy === "automatic") {
+    // NOT an error and not something to retry here. A failed receipt is an
+    // operator decision, and an automatic caller reporting it as claimable would
+    // be the first step towards automatically resending it.
+    return {
+      ok: false,
+      reason: "in_flight",
+      message: IN_FLIGHT_MESSAGE,
+    };
+  }
   if (attempt.receipt_status === "sending") {
     return {
       ok: false,
@@ -496,7 +611,16 @@ export async function sendPaymentChargeReceipt(args: {
   //    transition. Returning the post-update row lets us
   //    distinguish "I claimed it" (data non-null) from "someone
   //    else got there first" (data null).
-  const { data: claimedRows, error: claimErr } = await admin
+  //
+  //    THE CLAIM IS THE ONE DURABLE OWNER OF EMAIL DELIVERY. No process-level
+  //    fact grants it. Several concurrent charge invocations may legitimately
+  //    reach this point for the same attempt -- the claim winner sends, everyone
+  //    else is told `in_flight` or `already_sent`.
+  //
+  //    AND THE ADMISSIBLE SET DEPENDS ON THE CALLER. `manual` keeps
+  //    (null, 'failed'); `automatic` admits NULL alone, because an automatic
+  //    caller must never resurrect a receipt a human has not looked at.
+  const claimQuery = admin
     .from("payment_charge_attempts")
     .update({
       receipt_status: "sending",
@@ -507,9 +631,41 @@ export async function sendPaymentChargeReceipt(args: {
     })
     .eq("id", attempt.id)
     .eq("studio_id", args.studioId)
-    .eq("status", "succeeded")
-    .or("receipt_status.is.null,receipt_status.eq.failed")
-    .select("id");
+    .eq("status", "succeeded");
+  //    THE AUTOMATIC CLAIM ALSO CARRIES THE REFUND PREDICATE. On its own that
+  //    closes exactly ONE ordering -- refund-first -- and nothing more. This
+  //    predicate cannot stop a refund that begins AFTER the claim is won, because
+  //    a WHERE clause constrains this statement, not some later statement in
+  //    another request.
+  //
+  //    THE OTHER ORDERING IS CLOSED BY THE RECIPROCAL PREDICATE in
+  //    `refundPaymentChargeAttempt`, which refuses to claim while
+  //    `receipt_status = 'sending'`. Only the PAIR makes the two operations
+  //    mutually exclusive, and it is mutual exclusion of the two CLAIMS on one
+  //    row -- not a transaction held open across the PDF render, the email
+  //    dispatch or the Stripe call, none of which are inside any transaction
+  //    here. What is guaranteed is that a refund cannot start between this claim
+  //    and its settlement, because the row it would have to claim is taken.
+  //
+  //    `classifyZeroRowSuccessWrite` already refuses a benign verdict unless
+  //    `refund_status` is NULL -- but it checks that at READ time, and the claim
+  //    below runs later. `refundPaymentChargeAttempt` writes `refund_status`
+  //    on this same row independently, so a refund starting in the gap left the
+  //    charge eligible: the claim filtered only `receipt_status`, matched, and an
+  //    automatic receipt went to the client while their refund was in flight.
+  //    Checking a condition and then acting on it in a separate statement is not
+  //    the same as requiring it, and the row is the only place that difference
+  //    can be settled.
+  //
+  //    MANUAL IS DELIBERATELY NOT GATED THIS WAY. A practitioner sending a
+  //    receipt for a charge that was later refunded is making a decision about a
+  //    real document, and manual recovery owns that decision; the automatic path
+  //    is the one that must never make it on its own.
+  const { data: claimedRows, error: claimErr } = await (claimPolicy ===
+  "automatic"
+    ? claimQuery.is("receipt_status", null).is("refund_status", null)
+    : claimQuery.or("receipt_status.is.null,receipt_status.eq.failed")
+  ).select("id");
   if (claimErr) {
     logInternal("payment_receipt_claim_failed", {
       code: claimErr.code,
@@ -523,13 +679,24 @@ export async function sendPaymentChargeReceipt(args: {
     };
   }
   if (!claimedRows || claimedRows.length === 0) {
-    // The row moved between our SELECT and the UPDATE. Re-check
-    // the current state to surface the right reason.
+    // The row moved between our SELECT and the UPDATE. Re-read to say WHY we
+    // lost, because the losers are not alike and the caller acts on the
+    // difference.
+    //
+    // `refund_status` IS PART OF THE ANSWER and must be selected. The automatic
+    // claim carries `refund_status IS NULL`, so refund activity is one of the
+    // two reasons this UPDATE can match zero rows -- and it was invisible to a
+    // re-read that looked only at the receipt columns. Every such loser was
+    // reported as `in_flight`, which sent the reader looking for a send that
+    // did not exist and would never start.
     const { data: re } = await admin
       .from("payment_charge_attempts")
-      .select("receipt_status, receipt_sent_at, receipt_email_to")
+      .select("receipt_status, receipt_sent_at, receipt_email_to, refund_status")
       .eq("id", attempt.id)
       .maybeSingle();
+
+    // Delivered. True under either policy, and checked first because it is the
+    // only branch that can report an address and a timestamp.
     if (re?.receipt_status === "sent") {
       return {
         ok: false,
@@ -539,6 +706,33 @@ export async function sendPaymentChargeReceipt(args: {
         sentAt: (re.receipt_sent_at as string | null) ?? null,
       };
     }
+
+    // Genuinely held by another sender. `sending` is inadmissible to both
+    // policies, so this is the one loser that really is waiting on an email.
+    if (re?.receipt_status === "sending") {
+      return { ok: false, reason: "in_flight", message: IN_FLIGHT_MESSAGE };
+    }
+
+    // Not held, and not sent -- so under the AUTOMATIC policy the remaining
+    // reason the claim could be refused is its refund predicate.
+    //
+    // MANUAL IS NOT CLASSIFIED THIS WAY, because manual is not refund-gated: a
+    // manual claim never loses on account of a refund, so saying it did would
+    // be a new falsehood in place of the one being removed.
+    // `typeof === "string"`, not `!== null`. If this re-read ever stops
+    // selecting refund_status the value is `undefined`, and `undefined !== null`
+    // is TRUE -- every automatic loser would be reported as refund-blocked. The
+    // narrow check makes a missing column read as "no refund activity known",
+    // which is the harmless direction: the claim already refused, so only the
+    // REASON is at stake here, never whether an email goes out.
+    if (claimPolicy === "automatic" && typeof re?.refund_status === "string") {
+      return {
+        ok: false,
+        reason: "blocked_by_refund",
+        message: BLOCKED_BY_REFUND_MESSAGE,
+      };
+    }
+
     return {
       ok: false,
       reason: "in_flight",
@@ -692,64 +886,72 @@ export async function sendPaymentChargeReceipt(args: {
     return { ok: true, status: "sent", emailTo: clientEmail };
   }
 
-  // Send failed. Distinguish retryable from terminal so a
-  // transient Resend 5xx does NOT lock the row into 'failed'
-  // forever; the retryable path releases the claim back to null
-  // so a manual click can try again.
+  // ===========================================================================
+  // AMBIGUOUS DELIVERY DOES NOT REOPEN THE CLAIM
+  // ===========================================================================
+  //
+  // `retryable` covers TIMEOUT, NETWORK FAILURE, an EMPTY RESPONSE and 5xx --
+  // every case where the request reached Resend, or may have, and DELIVERY IS
+  // UNKNOWN. The email may already be in the client's inbox.
+  //
+  // THIS BRANCH USED TO RELEASE `receipt_status` BACK TO NULL, and the comment
+  // sitting in it named the exact hazard that made that wrong: "Resend may have
+  // accepted the email. Clearing this row without checking the provider first
+  // can duplicate a real client receipt." It said so on the failure-to-release
+  // path, and then the success path cleared the row anyway.
+  //
+  // It was survivable while only a practitioner's click could re-enter here. It
+  // is not survivable now: several concurrent charge invocations may each reach
+  // the sender for one attempt, so a released claim is an open invitation for the
+  // next one to send a second receipt for a charge that may already have been
+  // receipted.
+  //
+  // SO THE CLAIM IS HELD. The row stays `sending`, which is the truthful
+  // representation of what Hone knows -- a send was started and its outcome is
+  // unknown -- and no caller, automatic or manual, may claim it. An operator
+  // reconciles with the provider and then decides. That is a deliberate loss of
+  // automatic retry on an ambiguous outcome, and the trade is the right way
+  // round: a missing receipt is recoverable by a person, a duplicate one is not.
+  //
+  // A FAILURE BEFORE DISPATCH IS DIFFERENT AND STILL RELEASES. PDF generation,
+  // an unusable recipient or missing configuration never reach the provider, so
+  // delivery is definitively "no" rather than "unknown" -- see
+  // `releaseAfterPdfFailure`, which keeps that behaviour and says why.
   if (sendResult.retryable) {
-    const { error: releaseErr } = await admin
-      .from("payment_charge_attempts")
-      .update({
-        receipt_status: null,
-        receipt_failure_code: null,
-        receipt_failure_message_safe: null,
-      })
-      .eq("id", attempt.id)
-      .eq("studio_id", args.studioId)
-      .eq("receipt_status", "sending");
-    if (releaseErr) {
-      // The release is what makes a retryable failure retryable. If it
-      // fails the row stays 'sending', the claim admits only
-      // (null, 'failed'), and ReceiptSubPanel hides the Send button on
-      // 'sending' -- so the receipt is permanently unretryable through
-      // the normal path. Saying "try again in a moment" here would be
-      // advice that can never succeed, so this returns a distinct
-      // outcome and raises the persistence failure (not the provider
-      // failure) to the operator.
-      return await reportSettlementFailure({
-        // Retryable covers TIMEOUT and NETWORK errors, so DELIVERY IS
-        // UNKNOWN: Resend may have accepted the email. Clearing this row
-        // without checking the provider first can duplicate a real
-        // client receipt.
-        deliveryUnknown: true,
-        reason: "send_ambiguous_state_not_recorded",
-        event: "payment_receipt_release_failed",
-        message:
-          "Receipt delivery is UNKNOWN (retryable provider failure: the email may have been accepted) and Hone could not release receipt_status back to null. The row is stuck in 'sending'. Reconcile with the email provider BEFORE clearing this row or sending again.",
-        attempt,
-        studioId: args.studioId,
-        dbError: releaseErr,
-        providerError: sanitiseSafe(sendResult.error, 200),
-      });
-    }
     await recordOpsAlert({
-      severity: "warning",
-      event: "payment_receipt_send_failed_retryable",
+      // CRITICAL, NOT WARNING, and the change of severity follows the change of
+      // behaviour. Releasing the claim used to make this self-healing -- a
+      // practitioner could click Send again -- so `warning` was right. Holding
+      // the claim means the row is parked at 'sending', no caller can claim it,
+      // and the receipt CANNOT proceed without a person reconciling with the
+      // provider. That is the same shape this file already raises at critical
+      // when a release fails, and it needs the same attention.
+      severity: "critical",
+      event: "payment_receipt_send_ambiguous_claim_held",
       message:
-        "Receipt email failed with a retryable error; row released for manual retry.",
+        "Receipt delivery is UNKNOWN (retryable provider failure: timeout, network, empty response or 5xx, so the email may have been accepted). " +
+        "receipt_status is deliberately LEFT AT 'sending' rather than released, so no automatic or manual caller can send a second receipt for this charge. " +
+        "RECONCILE WITH THE EMAIL PROVIDER before clearing this row or sending again.",
       studioId: args.studioId,
       clientId: attempt.client_id,
       route: "lib/billing/payment-receipt:sendPaymentChargeReceipt",
       safeDetails: {
         attempt_id: attempt.id,
         charge_reason: attempt.charge_reason,
+        claim_policy: claimPolicy,
+        claim_released: false,
+        delivery_unknown: true,
         error: sanitiseSafe(sendResult.error, 200),
       },
     });
     return {
       ok: false,
-      reason: "send_failed_retryable",
-      message: SEND_FAILED_RETRYABLE_MESSAGE,
+      // The row is parked at 'sending' on purpose, which is the same shape the
+      // failed-to-release case reports -- and now for the same reason, so the
+      // operator instruction is identical: reconcile before acting.
+      reason: "send_ambiguous_state_not_recorded",
+      message:
+        "Receipt delivery is UNKNOWN and Hone has deliberately kept the receipt claim so nothing can send twice. Reconcile with the email provider before sending again.",
     };
   }
 

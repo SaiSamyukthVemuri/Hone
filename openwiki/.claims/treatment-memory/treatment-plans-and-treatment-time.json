@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:37cfd9a1a3de97cae0f5c2ba2b826eb07758d54cc91a84af9ea8f4b3c68fd2f8",
+  "claims": [
+    {
+      "id": "claim_8f0c9861d4b6450f8f3c6428ed6699ba",
+      "statement": "treatment_plans rows carry a name, an active or closed status with creator and closer attribution and a legacy suggested visit count, and sessions link to a plan through a nullable treatment_plan_id that is set to NULL when the plan is deleted.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0024_treatment_plans.sql#L8-L74",
+          "version": "repo-lines-v1:sha256:c16e0d8864b0a27fe69f853c2309cd11613277f95d92bd70e8f1f39184bf0979:eyJzZWxlY3RlZExpbmVDb3VudCI6NjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjViNGNkZjI0ZjdkYWExNzc3NzVkYjdhNzVlNzFmNGM3MDY3ZWNiM2I5MDhiNTI5ZjBlZGYyYTFkYzBlZDg0Y2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjViZTMzNjNmYWZmMzAxYzY2ZjliMDY2Njk2ODMwMDY2YTdmN2IwNWY0YWE0YTA3N2EzZjQ2Y2E4YzA5NWFjZGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJmOTJjYjE3ZDBmZGZlOTU5NTlkNDY1NWIyMmIzOWY1MDk4OTE2ODNiZWI4ODBiYjdkYjM0NzRjMjQwNzk5NWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_948af37fd70e42b984f2fc0025264598",
+      "statement": "Migration 0051 additively added optional treatment_areas (1 to 12 entries) and estimated timeline months (1 to 60, min not above max) to treatment plans and defaulted the legacy suggested_visit_count to 12, keeping legacy rows valid.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0051_treatment_plan_multi_area_and_timeline.sql#L1-L126",
+          "version": "repo-lines-v1:sha256:42a4bcb6712c5c2b53799fa2b21e2fa5db3d23942599fea4be235d1f5ad7e30d:eyJzZWxlY3RlZExpbmVDb3VudCI6MTI2LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIxNmQxOTNiNWVmNDNlMjNiMmIwNjU1MGFhYWRmMmYwNzJmMzcyYjMwMjdlMTE0NmY2NGU5Zjc0NTFlNTgzYWYxIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI4ZWNhNzM3MGZkYzVkOTc2OWZiNmMyODQ3ZDM0MTNlOTQzZjEyMGNhMDYzNWY1OTdkODk4NjI3MWRjMjFlMTAwIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_0fa37aab2baf401b8698f9db4123d123",
+      "statement": "treatment_plan_stages constrain cadence to weekly, every two weeks or monthly, visit length to 5 to 240 minutes and stage length to weeks or months, and derive studio_id from the parent plan by trigger.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0034_treatment_plan_stages.sql#L28-L142",
+          "version": "repo-lines-v1:sha256:4b3ea83d534ba41ebd75bf1069be41e46f52778eef08a192cd098a87c0f6deee:eyJzZWxlY3RlZExpbmVDb3VudCI6MTE1LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI1ZDc5Y2ViMTI3MjljYWVmMTcxNDA1NGVjMjNkMWYxYjQyNzZiNDA4NDMzOTRlMzc3OTgyNTc3N2Y0MzFkMWRlIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJkZjlhMTM5MWY1ZjUwNGU3NzY0MzFmNjk4ZjJiYTE5NDFlYjlkMWY4NDZlM2JmYTYzNWQwZDRjMWRjNjNjNjhjIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxNjg1ZWM4YzZhZTg5OGIyYTNkZGI1MGM1NDUxNGY4NDU2OWE1YmU2YTVhZTg1MmRiYWQ3NDc3MGM3MGVhNmExIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI5ODIwYzU2M2I3NDU1ZmE3ZTYwYmQ3MjA1ODY3MmU0NzJiNjliYzdhYWU5ZDI1YTVjYjY4MGFjMGU4ZGY0ZGQxIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_094df49105ed4c12adf3b4a292a34d58",
+      "statement": "treatment_goals holds one row per client with an estimated total in minutes and an active, reached, revised or archived status, and 0026 added an off-by-default studio toggle for showing treatment time to clients.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0026_treatment_goals.sql#L1-L50",
+          "version": "repo-lines-v1:sha256:a58335a3696c43eeb4a1d7563545acf4ca175f87abcbaa5c5eed024236167b7c:eyJzZWxlY3RlZExpbmVDb3VudCI6NTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlN2E3MGU0Y2JhZGU2YWM2YTZkOTQ0NWJiMTI1ZjFhYmJkZDdkNjc2ODkwNjBhMjFhM2Y2ZDhkZjg4OTNmZGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBlZTc3NTIxN2EzYzc0NDI4NzYyNzNmOTZiYTMyYzg0ZTZiMDVjYzMwOGJkZWQ5MmUwNjQ3YWJjZjczZTI3MWQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_93806c4a7ad54adfa9e6234006fff6ab",
+      "statement": "Creating a treatment plan inserts the plan and then seeds three fixed clinical stages in a separate write, and on a stage insert failure the action closes the plan because treatment_plans has no authenticated delete policy.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/treatment-plans-actions.ts#L245-L284",
+          "version": "repo-lines-v1:sha256:829f47dbcfd53fc572630b4c00954181857d94e8ee977fc27bc997bb35e2510d:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU4NmFkZTJlY2IzYmFkYTY2ZjM3OWMyZjJkMTU1YWY4ZDc1ZDdjNWQ1NDdiZDkyOTMzZDMyNjdjYzlmMjA2ODQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJlZWVmZGQ1MTEzZDk5MDU2ZjFlMTlkZTFiN2Q1YmVkZTZlMGEzMDFmOWU4ZjdiZTRlYWQzZjhmOGRhODY2YzgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRmYTJlNzFkYWM1ZDg2OGViNmU4M2QxNjRiOWZlNzQyOWY3NDdhMTQzMWJjYWY1MTMzZmNjYWYwY2YyYjc5Y2MifQ"
+        },
+        {
+          "resource": "repo://lib/treatment-plans/stage-defaults.ts#L1-L60",
+          "version": "repo-lines-v1:sha256:5ba31f3b825f099154280461e81d334a24470acd976004286ce38c78cfc9e060:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMxYjdmOTA3OGU5ZTRlMWE0OWRiZDk4MmZiZmIxYWU5ZmVlMzU5NDlhNjhhNTdiN2FiNWE4NGE5ZDcyZTA1MmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE3MTE3NGFmYjhlNTgzMGM1MDU3YmIyYTk0ZjNlNTgwMDk0Yjc1NTE4NjBmOWNhZTRiZWY2Y2ZkNTA4OTY1ZWUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f04a02ea7b4a43e7b003befd8a85a0c1",
+      "statement": "Closing a treatment plan first verifies the plan belongs to the studio and submitted client and is active, then binds id, studio, client and active status in the update and treats zero rows as a refusal, because treatment_plans RLS is studio-scoped only and has no database backstop against cross-client writes.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/treatment-plans-actions.ts#L286-L348",
+          "version": "repo-lines-v1:sha256:cd7ca8c01b4560a0183d3fa3a38002456c9585dfac1932521e03d761477c58f7:eyJzZWxlY3RlZExpbmVDb3VudCI6NjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNkNzI0ZjY1YzZlYzQxNThjMTFhMDU2ODYyYzFhOTA2OTA4M2ZmZmY4MzAxYTFkMTcxNzMxOTk0NTUxYzZjN2MiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE4NmJiMjE3YTNkNGY0NDhkY2FiYTU0NzQ5NTIwMmE5ZDZkOTZkNDkyYjc4MDI5ZTc5YzcxNTAxMmRiMzFjNGQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg5ZjJjZTU5MTMxMzE2YTVhZTJhNjgxODU1MDg2MjAyMDgyMTczODU2MTVmYjZjZTE3NzY1MGM1YTE1MDhmYjYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5c0893eaa2944e4cb99eca4e1d7dda01",
+      "statement": "set_session_treatment_plan is a SECURITY DEFINER command executable only by authenticated that asserts the session is writable for the caller and client and refuses a plan that is missing, closed or belongs to another client before updating the session's plan link.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0167_session_write_commands.sql#L495-L535",
+          "version": "repo-lines-v1:sha256:a811b48db2e1d752a8b5562087e2be0a34cbc2ca9e1e90b55bb92c1e056a6400:eyJzZWxlY3RlZExpbmVDb3VudCI6NDEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIwYTE2ZWZhMTFiOWE0Nzk2OTliNmQ4YzFjMDYyNTFiMDA1ZDc1Zjc4OWQyZGViYWJjODlkY2Y0YTg4ZGI2NTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVlMzQ2YjNlYzhlNDY1Zjc5MTMzZTQxYjU0NzdhNzRkZGNmNTc3YzE1YjNmNWUzZDczOTRhOTEyZDE5Zjc0ZmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZmMmUwOWQ4NDUwMzViMTYxNGJiMzU0Y2FlMTEyY2I2ODY2Y2YxMGJiMmI0NDg2N2UxMjQ1ZmQwMjZiNmE0OWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI1NjM1ZmZmOTEzNmZhM2QwM2E5YTQwMmM2MzM4ZGNmMGY0ODc5MjRhZDVhMWVkODY2ODY4NDU4MTMxZThjOWUifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0167_session_write_commands.sql#L631-L648",
+          "version": "repo-lines-v1:sha256:7c220ddf56a64a110832b3a4ab121d8b805f3a5ee8880bf88c20a35a63782337:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMxYzkzMmNkZTAwMDEzNGU4ZGIxOGMzOGQ3OTIzMTg5MTYwZjkzNzM1MzUyZDFiZTI0YWRhNmMyMzRiNjVlMTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEzYjU2NzkxYTc2ZGRiYzEwNTY4MzhjOTEzOWM2MmI0NmZjYjE1MmFlOGViNDRlYTIyZGY4MzVmMGI5MzBiMWEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwM2YyZjI2NjUyMjRjYTYyYTliMTEzZDY0Mjk1YWIzOTY1MjkwY2ZlZWIwZDhiNjViZWFhYzUyNWIxODExMTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoyLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg4ODJlNTcyZjI4M2I3MmMxMjYyYmQxMDA2NTZjN2RhM2NhYTEyMGNlZGY2MjQ2NDI4OTUwNTEyMTU3ZTgyZGQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_86e82c8df83d4f1eae0e2e0a999c1878",
+      "statement": "Treatment time totals cover electrolysis sessions only and load non-deleted sessions with their non-deleted blocks and structured areas in one round trip.",
+      "evidence": [
+        {
+          "resource": "repo://lib/treatment-time/queries.ts#L1-L80",
+          "version": "repo-lines-v1:sha256:7094b3115f958276c698730eb546a5457e08cbbd262726202e23ac5f860152bb:eyJzZWxlY3RlZExpbmVDb3VudCI6ODAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYwNDkxYmViMjQ4ZGIyN2YwYjJjNzAwMDE4YWExZGUyMjg4MWUzMWQzMTA0M2EzMDE1ZjNmMTAyOGVkM2M0MTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYzNWFkNDcwMWNlMjE3ODMxMzJhODk0ZDFjNjc5ODE5MWU5OGYzNjVkNDBmMWEyMGYyMjM3ZDY4ZGY2MTQxYTAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAwNDI2ZmU2ODM0N2NjZGM5MDdiOTBmMjJjNzdmMjQzMWRmYzlkM2UzMGU3MTZhZGU0Yjc3NGJmY2I2Mjg1ODEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_bf1492a217cf4ad1be5cd6361d0f3217",
+      "statement": "A multi-area block's minutes are credited once to a single combined bucket naming all its areas, never split, duplicated or credited to the first area alone, so the client's global total is unchanged.",
+      "evidence": [
+        {
+          "resource": "repo://lib/treatment-time/area-bucket.ts#L1-L60",
+          "version": "repo-lines-v1:sha256:6096ca805833185835f30436a87f3e9e65c5bed2152063a717b37be13e5d9d22:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIxNGQxMzBjOWZjM2EwZDJiOWMxYTdkMzVmMWYyOWU0ZjgxNGZlYWRlNWIyNDFjZDVlM2U2NzY0ZGVlZDI0ZTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYwN2Y2NTFmN2UyZWUwZWFkZjhkMWZkOTBkY2I0NzhjZWE1OWNmZmI2MTViNDFhMDMzODIzYjE3MGMxMGZiNmQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJiYjU5MTdlY2RjMDlhN2Q3MGYyOTU3MGUzZmZmYjQ0OWY2M2U0MjAyZmI5MmE4YjZiYTRlMDJlZTE0MzgzNzQifQ"
+        },
+        {
+          "resource": "repo://tests/lib/treatment-time/area-attribution.test.ts",
+          "version": "repo-file-v1:sha256:51a8cbe4685a0dfce208e0031293cd63b61de3de3adbeda6c150a972c47514a5"
+        }
+      ]
+    },
+    {
+      "id": "claim_3fec758f831a462c9c964baba415dd3f",
+      "statement": "The treatment goal action accepts 1 to 1000 hours, stores minutes and upserts on the client id after re-proving the client belongs to the session's studio.",
+      "evidence": [
+        {
+          "resource": "repo://app/(app)/clients/%5Bid%5D/treatment-time-actions.ts#L21-L75",
+          "version": "repo-lines-v1:sha256:ba06bd45e96be0f04cb6b4a1686a04d53db6e521ffe6fb121c02c9823744419e:eyJzZWxlY3RlZExpbmVDb3VudCI6NTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM4Njc5M2UzZjE3ZmE1OGQ4Yjc2MzA2YmMwYjJlOTczMmQ2YTQwZGQ1YTdiOWY3OTBiYTIxNjY1ZWNkNTc4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU2ODkyYTZlYWRlOWJhNTk3Yjc5NmQ0Y2JhOTgyMWQ1YTk0NjQzMTJhOTE0YjUyYjEyNWY4YzBiMTgyZGI3MWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5e9beac39819424fa326839b486b9433",
+      "statement": "Treatment Intelligence credits a multi-area block's full minutes to every area card it treated, whereas the treatment-time breakdown credits the block once to a single combined bucket, and both count each block once in their overall totals.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/treatment-intelligence.ts#L241-L250",
+          "version": "repo-lines-v1:sha256:2570ce9450214107112189f7d9c652c5d147c8ca8ed0f015933aa9c52b683149:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBlNjYxYzY2MWI0ODM3YzEzODdiNGRlOWQ1OTBiNzQzODQwY2ZhNzZiNWM3M2MzYzYyYzI2OTdjYTQ4YWE1OWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNlNDJmNTZmMTQwYTkxZTU5ZTlhOTA2MDUyODI2NjE4ZmVmOWU4M2MzZWUyY2QyMjM0MTI0ZGIyZmI1N2UzNjgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY5NDM0NWMzNDdlY2E0Mzc5YzY5YTZlYTI4ZTc4NGQ1MDk0MTA3NWM4YTNmNDNiY2U0MWUxNWYxMDQ2Y2NjZjUifQ"
+        },
+        {
+          "resource": "repo://lib/sessions/treatment-intelligence.ts#L274-L306",
+          "version": "repo-lines-v1:sha256:c4d5ff651101af3ec7fb82751091fea57c49c36d7d544e3839189a48cf49de96:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZlOGIwMzBhNGYwYzdlYjlmYzZhNWQ2NmUwMzQyYjQ3MGQyMTUyNDU4NjVmYjI2ZjY4YjRhMDQ5YTc3MDM3MGIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVhYTNkMDgxZmEwOGU5NjhhM2I3MzlhYTViY2EwNDMzNTlhYzE2YTJhYWU4YWEzZTYwMzAxNTg4OGExMmQ4MzYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI1NzMyZjdiMTNhODY2MGU3ZWQ1NGEzMmU0MzhkNDk3NTRmZTFiN2Y5NGE5MjczMmU0NTg2NTI0MmI3MjU2NzYifQ"
+        },
+        {
+          "resource": "repo://lib/treatment-time/area-bucket.ts#L1-L60",
+          "version": "repo-lines-v1:sha256:6096ca805833185835f30436a87f3e9e65c5bed2152063a717b37be13e5d9d22:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIxNGQxMzBjOWZjM2EwZDJiOWMxYTdkMzVmMWYyOWU0ZjgxNGZlYWRlNWIyNDFjZDVlM2U2NzY0ZGVlZDI0ZTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYwN2Y2NTFmN2UyZWUwZWFkZjhkMWZkOTBkY2I0NzhjZWE1OWNmZmI2MTViNDFhMDMzODIzYjE3MGMxMGZiNmQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJiYjU5MTdlY2RjMDlhN2Q3MGYyOTU3MGUzZmZmYjQ0OWY2M2U0MjAyZmI5MmE4YjZiYTRlMDJlZTE0MzgzNzQifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-04T01:59:59.625Z"
+  }
+}

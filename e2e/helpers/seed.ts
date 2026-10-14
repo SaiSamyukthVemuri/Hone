@@ -648,7 +648,16 @@ export async function insertBareStudio(
   const name = `E2E ${label} ${runId}`;
   // The owner_email drives the fake-Resend per-recipient mode control in the
   // welcome-email browser contracts (e.g. `reject+<id>@harness.local`).
-  const resolvedOwnerEmail = ownerEmail ?? `owner-${runId}@harness.local`;
+  // THE DEFAULT ASKS FOR ACCEPTANCE, explicitly. The lane now defaults the fake
+  // to `reject` so specs documenting a degraded path actually get one
+  // (HONE_E2E_FAKE_RESEND_DEFAULT_MODE in e2e/helpers/local-env.ts), and every
+  // unprefixed caller here expects the OPPOSITE: `insertBareStudio` is the
+  // welcome-email contracts' seam, and their success, in-progress and
+  // retry-then-send cases all need the provider to ACCEPT. Prefixing the default
+  // keeps every one of them behaving exactly as it did, while callers that pass
+  // `reject+`/`throw+`/`failonce+`/`hold+` are untouched.
+  const resolvedOwnerEmail =
+    ownerEmail ?? `success+owner-${runId}@harness.local`;
   await sql(
     `insert into public.studios (id, name, owner_email, slug, timezone)
      values ($1, $2, $3, $4, $5)`,

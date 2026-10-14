@@ -347,6 +347,28 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     priority: 320,
   },
   {
+    id: "settings-new-client-admission",
+    title: "New clients",
+    category: "Settings",
+    href: "/settings/booking#new-client-admission",
+    description:
+      "Accept bookings, use a waitlist, or stop taking new clients. Existing clients are unaffected",
+    keywords: [
+      "new clients",
+      "new client",
+      "waitlist",
+      "wait list",
+      "accepting new clients",
+      "not accepting",
+      "stop taking new clients",
+      "pause bookings",
+      "close bookings",
+      "admission",
+    ],
+    visibility: "owner",
+    priority: 331,
+  },
+  {
     id: "settings-booking-link",
     title: "Booking link",
     category: "Settings",

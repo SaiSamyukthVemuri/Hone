@@ -2,6 +2,7 @@ import { withSentryConfig } from "@sentry/nextjs";
 import type { NextConfig } from "next";
 import { buildGlobalSecurityHeaders, buildTokenRoutePrivacyHeaders,  } from "./lib/security/headers";
 import { TOKEN_ROUTE_PATTERNS } from "./lib/security/token-routes";
+import { localE2eBuildSentryOverrides } from "./lib/observability/e2e-build-sentry-overrides";
 
 // PR #142. Token route privacy header prefixes. Listed once here
 // because two header blocks in next.config.ts reference the same
@@ -125,6 +126,13 @@ export default withSentryConfig(nextConfig, {
   sourcemaps: {
     deleteSourcemapsAfterUpload: true,
   },
+
+  // SENTRY-E2E-NOISE-02: inside a local browser lane's build ONLY, an empty
+  // auth token, so that build creates no release and uploads no source map to
+  // the operational project. Nothing in a deployed build: the override exists
+  // only where the lane's egress guard armed, which it refuses to do in any
+  // deployed runtime. See lib/observability/e2e-build-sentry-overrides.ts.
+  ...localE2eBuildSentryOverrides(),
 
   // Route browser -> Sentry traffic through a same-origin rewrite (/monitoring)
   // instead of hitting *.ingest.sentry.io directly. This keeps the strict CSP

@@ -85,8 +85,12 @@ const CONTENT = strip(read("lib/marketing/content.ts")).replace(/\s+/g, " ");
 
 describe("v2.2 headline and seat lines", () => {
   it("leads with the plans headline, not the old pricing one", () => {
-    expect(PRICING).toContain("Simple plans, in Canadian dollars.");
+    // From the shared constant since MKT-03 revision 3, which also dropped
+    // "Simple" (a benefit the page asserted rather than showed) and the full stop.
+    expect(PRICING).toContain("<Display className=\"max-w-[18ch]\">{POSITIONING.pricingHeading}</Display>");
+    expect(POSITIONING.pricingHeading).toBe("Plans in Canadian dollars");
     expect(PRICING).not.toContain("Straightforward pricing, in Canadian dollars.");
+    expect(PRICING).not.toContain("Simple plans");
   });
 
   it("renders the verified no-caps line, from the shared constant", () => {
@@ -98,7 +102,7 @@ describe("v2.2 headline and seat lines", () => {
     // constant must be the sentence #762 verified, character for character.
     expect(PRICING).toContain("{POSITIONING.noCapsLine}");
     expect(POSITIONING.noCapsLine).toBe(
-      "Every plan includes the full treatment workflow. No client caps. No appointment caps.",
+      "Every plan includes the full treatment workflow, with no cap on clients or appointments.",
     );
   });
 
@@ -106,6 +110,7 @@ describe("v2.2 headline and seat lines", () => {
     // A second copy is how the page and the register drift apart. The words may
     // exist once, in the constant.
     expect(PRICING).not.toContain("No client caps");
+    expect(PRICING).not.toContain("no cap on clients");
   });
 
   it("gives every tier a seat line, and Studio's is the packaged boundary", () => {

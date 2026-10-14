@@ -25,6 +25,8 @@
 // See scripts/worktree-resources.mjs.
 // @ts-expect-error - .mjs utility ships without type declarations
 import { resolveResources } from "../../scripts/worktree-resources.mjs";
+import os from "node:os";
+import path from "node:path";
 
 const LOCAL_SUPABASE_URL = "http://127.0.0.1:54321";
 const LOCAL_DB_URL = "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
@@ -89,25 +91,77 @@ export const E2E_DB_URL = LOCAL_DB_URL;
 export const E2E_MAILPIT_URL = LOCAL_MAILPIT_URL;
 export const E2E_SERVICE_ROLE_KEY = LOCAL_SERVICE_ROLE_KEY;
 
+// SENTRY-E2E-NOISE-02. The preload that keeps every browser lane out of the
+// operational Sentry project, and the file it records to. The guard answers
+// each request bound for *.sentry.io from a loopback sink and writes what would
+// have been sent here, so a spec can assert on the real runtime path. Keyed by
+// worktree and port so two worktrees never read each other's records; a spec
+// filters by time, so records from earlier runs are inert.
+// See e2e/helpers/sentry-egress-guard.cjs.
+export const E2E_SENTRY_EGRESS_GUARD = path.join(__dirname, "sentry-egress-guard.cjs");
+export const E2E_SENTRY_EGRESS_LOG = path.join(
+  os.tmpdir(),
+  "hone-e2e-sentry-egress",
+  `${path.basename(E2E_WORKTREE)}-${E2E_APP_PORT}.jsonl`,
+);
+
+/**
+ * NODE_OPTIONS carrying the guard, COMPOSED with whatever the caller already
+ * set. This environment is applied over the inherited one, so assigning the
+ * guard alone would silently discard an operator's or CI's own options.
+ * Idempotent, and quoted only when the path needs it (NODE_OPTIONS splits on
+ * spaces outside double quotes).
+ */
+export function withSentryEgressGuard(existing: string | undefined): string {
+  const current = (existing ?? "").trim();
+  if (current.includes(E2E_SENTRY_EGRESS_GUARD)) return current;
+  const target = /[\s"\\]/.test(E2E_SENTRY_EGRESS_GUARD)
+    ? `"${E2E_SENTRY_EGRESS_GUARD.replace(/(["\\])/g, "\\$1")}"`
+    : E2E_SENTRY_EGRESS_GUARD;
+  return [current, `--require ${target}`].filter(Boolean).join(" ");
+}
+
 // Environment for the Next dev server under test. Mirrors the fast
 // CI lane's dummy/test-safe values, with Supabase pointed at the
 // LOCAL stack. Nothing here is a real secret.
 export const E2E_WEB_SERVER_ENV: Record<string, string> = {
-  // Explicitly propagate the fake-Resend marker to the Next server when the
-  // browser-e2e job requests it (the webServer.env replaces process.env, so it
-  // must be listed here — same pattern as the fake-Stripe lane). Only the
-  // welcome/invitation path reads getResendTransport, so other emails are
-  // unaffected. Server-only marker; the module's own guard refuses it in any
-  // deployed runtime.
-  // The fake transport's MODE travels with the switch that enables it, so a spec
-  // can drive a provider REFUSAL as well as an acceptance. Same guard, same
-  // fail-closed posture: absent the "1" switch neither variable is forwarded,
-  // and the fake refuses to exist in any deployed environment regardless.
-  ...(process.env.HONE_E2E_FAKE_RESEND === "1" && process.env.HONE_E2E_FAKE_RESEND_MODE
+  // RESCHEDULE-E2E-01: THE FAKE EMAIL TRANSPORT IS ARMED FOR EVERY RUN OF THIS
+  // LANE, not only when the outer job opts in.
+  //
+  // It used to be conditional, so an ordinary lane run sent appointment mail
+  // through the REAL Resend SDK carrying `RESEND_API_KEY: re_dummy_resend_key`
+  // below. The public-reschedule spec then asserted the failure copy and was
+  // correct only for as long as api.resend.com kept rejecting that key
+  // promptly: the same tree passed, then failed repeatedly, with no code
+  // change. A test whose verdict is decided by a third party is not a test.
+  //
+  // Armed unconditionally for the same reason HONE_E2E_ROUTE_FAULT is below:
+  // this lane is hardcoded to 127.0.0.1, the marker is server-only and never
+  // NEXT_PUBLIC_*, and the module's own guard (lib/email/e2e-fake-resend.ts)
+  // REFUSES to exist in any deployed runtime — so it cannot reach production.
+  // Default mode is `success`; a spec drives a refusal per-recipient with a
+  // `reject+`/`throw+` local-part, needing no restart and no global switch.
+  HONE_E2E_FAKE_RESEND: "1",
+  // AND THE DEFAULT IS REFUSAL, because that is what this lane already did.
+  //
+  // Every send here used to go through the real SDK with the dummy key above
+  // and be refused. Arming the fake with `success` as the fallback silently
+  // converted every documented degraded-path scenario in the suite into an
+  // accepted send -- portal-rebook's degraded acknowledgement, the dashboard
+  // card's safe-failure copy, the waitlist spec's refused notifications -- and
+  // all of them kept PASSING, because each asserts what is absent on a refusal,
+  // which is also absent on success. Three separate specs lost their scenario
+  // without a single red test.
+  //
+  // So the lane default reproduces the old behaviour exactly, and a spec that
+  // needs ACCEPTANCE opts in with a `success+` recipient. New coverage is
+  // explicit; existing coverage is untouched.
+  HONE_E2E_FAKE_RESEND_DEFAULT_MODE: "reject",
+  // A global MODE override, when the outer process sets one, forces every
+  // recipient. Specs do NOT rely on it (it would apply to the whole server);
+  // it exists for a deliberate whole-run refusal sweep.
+  ...(process.env.HONE_E2E_FAKE_RESEND_MODE
     ? { HONE_E2E_FAKE_RESEND_MODE: process.env.HONE_E2E_FAKE_RESEND_MODE }
-    : {}),
-  ...(process.env.HONE_E2E_FAKE_RESEND === "1"
-    ? { HONE_E2E_FAKE_RESEND: "1" }
     : {}),
   // SESSION-START-01 slice 2 measurement. webServer.env REPLACES process.env,
   // so the timing switch has to be listed here to reach the server — same
@@ -121,6 +175,16 @@ export const E2E_WEB_SERVER_ENV: Record<string, string> = {
   // this hardcoded-to-127.0.0.1 lane. Set here rather than passed through from
   // the outer process because webServer.env REPLACES process.env.
   HONE_E2E_ROUTE_FAULT: "1",
+  // SENTRY-E2E-NOISE-02. Nothing this lane's server sends may reach the
+  // operational Sentry project: not the deliberate faults above, not a real
+  // failure raised during a run, not the browser envelopes the /monitoring
+  // tunnel forwards. The guard is a NODE_OPTIONS preload rather than an app
+  // setting so that the Sentry runtime wiring stays byte-identical and no
+  // NEXT_PUBLIC_* input is involved. An inherited deployed-runtime signal
+  // (AWS_REGION, VERCEL_ENV, ...) makes it refuse to start, failing the lane
+  // before any spec runs rather than letting it send.
+  NODE_OPTIONS: withSentryEgressGuard(process.env.NODE_OPTIONS),
+  HONE_E2E_SENTRY_EGRESS_LOG: E2E_SENTRY_EGRESS_LOG,
   // `next start` reads PORT when no -p flag is given (commander `.env("PORT")`),
   // so the derived port reaches the server without any shell interpolation in
   // package.json - which also keeps the npm script portable.

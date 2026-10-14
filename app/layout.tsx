@@ -26,11 +26,14 @@ import "./globals.css";
 // overclaimed AI phrasing in the SERP/OG snippet.
 export const metadata: Metadata = {
   title: {
-    default: "Hone | Treatment Memory for Electrologists",
+    default: "Hone | Treatment memory for electrologists",
+    // The template titles the signed-in app's pages too ("Financials · Hone"),
+    // so it stays as it was. Marketing and policy pages set absolute
+    // "… | Hone" titles of their own.
     template: "%s · Hone",
   },
   description:
-    "Hone helps electrologists prepare for returning clients, chart treatment details, and keep cleaner procedure records.",
+    "Electrolysis practice software that keeps each treated area's history and brings it forward before the next appointment.",
   metadataBase: new URL("https://hone.care"),
   applicationName: "Hone",
   authors: [{ name: "Hone" }],
@@ -47,18 +50,18 @@ export const metadata: Metadata = {
   ],
   openGraph: {
     type: "website",
-    title: "Hone | Treatment Memory for Electrologists",
+    title: "Hone | Treatment memory for electrologists",
     description:
-      "Hone helps electrologists prepare for returning clients, chart treatment details, and keep cleaner procedure records.",
+      "Electrolysis practice software that keeps each treated area's history and brings it forward before the next appointment.",
     url: "https://hone.care",
     siteName: "Hone",
     locale: "en_CA",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Hone | Treatment Memory for Electrologists",
+    title: "Hone | Treatment memory for electrologists",
     description:
-      "Hone helps electrologists prepare for returning clients, chart treatment details, and keep cleaner procedure records.",
+      "Electrolysis practice software that keeps each treated area's history and brings it forward before the next appointment.",
   },
   robots: {
     index: true,

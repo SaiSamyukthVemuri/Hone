@@ -6,7 +6,7 @@ import Link from "next/link";
 import { PendingLink } from "@/components/pending-link";
 import { notFound } from "next/navigation";
 import {
-  getCurrentPractitionerWithStudio,
+  requirePractitionerWithStudio,
   getPractitionersForStudio,
 } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
@@ -141,7 +141,7 @@ export default async function ClientIntakePage({
   const sp = await searchParams;
   const requestedIntakeId =
     typeof sp.intake === "string" && sp.intake ? sp.intake : null;
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { studio } = await requirePractitionerWithStudio();
 
   const supabase = await createClient();
   const { data: client, error: clientErr } = await supabase

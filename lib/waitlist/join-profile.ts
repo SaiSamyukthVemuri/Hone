@@ -473,8 +473,7 @@ export function displayName(stored: StoredWaitlistProfile): string {
 
 export type InvitationEligibility =
   | { eligible: true }
-  | { eligible: false; reason: "profile_incomplete"; missing: ReadonlyArray<ProfileField> }
-  | { eligible: false; reason: "mobile_unverified"; standing: MobileStanding };
+  | { eligible: false; reason: "profile_incomplete"; missing: ReadonlyArray<ProfileField> };
 
 /**
  * May this prospect be sent a NEW Invite-to-book?
@@ -491,15 +490,6 @@ export type InvitationEligibility =
  */
 export function invitationEligibility(
   stored: StoredWaitlistProfile,
-  /**
-   * Does the invitation being considered need to reach them BY SMS?
-   *
-   * Defaults to false, because the shipped invitation is an email and most
-   * callers are asking the older question. When true the bar rises: a number
-   * someone typed is not a channel, so an unverified mobile FAILS CLOSED rather
-   * than being tried and hoped for.
-   */
-  options: { requiresSms?: boolean } = {},
 ): InvitationEligibility {
   const completeness = assessProfileCompleteness(stored);
   if (completeness.status !== PROFILE_COMPLETE) {
@@ -509,16 +499,10 @@ export function invitationEligibility(
       missing: completeness.missing,
     };
   }
-  // ORDER MATTERS: completeness first, so "you never told us your areas" is
-  // never reported as a phone problem. A complete profile with a candidate
-  // number is a real, invitable prospect — by email.
-  if (options.requiresSms === true && !mobileIsVerified(stored)) {
-    return {
-      eligible: false,
-      reason: "mobile_unverified",
-      standing: mobileStanding(stored),
-    };
-  }
+  // An SMS invitation asks for nothing more. Completeness already requires a
+  // plausible mobile, and since Roadmap v1.25 (operator decision D4(2),
+  // 2026-10-08) verification is optional. Consent and STOP are decided per
+  // text by `prospectMayReceiveSms`, over the stored record.
   return { eligible: true };
 }
 
@@ -834,21 +818,27 @@ export function profileJoinIsSupported(commitPoint: WaitlistCommitPoint): boolea
 //                              submitted. May arrive from the INITIAL PUBLIC
 //                              JOIN or from a later completion. Not authority
 //                              to send anything.
-//   2. mobileVerified          possession proven by a future verification flow.
-//                              THE operational SMS destination.
+//   2. mobileVerified          possession proven by a verification flow.
+//                              Optional strengthening: since Roadmap v1.25
+//                              (operator decision D4(2), 2026-10-08) it is no
+//                              longer a condition of sending.
 //   3. smsOperationalConsent   permission to receive operational SMS.
 //                              Independent of verification.
 //
-// Sending requires verified AND consented AND not suppressed. Any two of the
-// three is not enough, and the pair people reach for — candidate plus consent —
-// is the one that reads most like permission and grants least.
+// Sending requires a stored number AND consent AND no STOP. Verification is
+// optional.
 //
-// WHY THE JOIN FORM IS NOT AN EXCEPTION. The public join form proves no
-// possession of the number typed into it. Treating a join-supplied mobile as
-// verified would not remove the wrong-recipient defect, it would relocate it:
-// anyone could enrol a victim's name and email against a phone they control.
-// So a join-supplied number is a candidate exactly like a completion-supplied
-// one, and this module has no path that produces a verified mobile at all.
+// WHAT STILL HOLDS: consent is bound to one number. The database records
+// consent only on a row that holds a phone, and never lets a stored phone be
+// replaced or cleared (0202/0203). The send path refuses a number that does
+// not normalise, and the deployment fence keeps non-production silent.
+//
+// WHAT D4(2) ACCEPTS, stated because it is the case this block used to refuse:
+// the public join form proves no possession of the number typed into it. A
+// join can pair someone's name and email with a phone the submitter controls,
+// and that phone then receives the invitation text. STOP ends it. Nothing here
+// marks a join-supplied number verified: verification still means a completed
+// verification flow, and this module has no path that produces one.
 
 /**
  * A number someone typed, carried as a value that CANNOT claim verification.
@@ -884,11 +874,11 @@ export function joinMobileCandidate(profile: WaitlistJoinProfile): MobileCandida
 /**
  * The one shape that may ever receive operational SMS.
  *
- * Stated as a single predicate so the three-way rule lives in ONE place and a
- * caller cannot satisfy two limbs and assume the third. It mirrors
- * `prospectMayReceiveSms` exactly — that function decides over a stored SMS
- * record, this one over a profile — and the truth table test walks all eight
- * combinations to prove only one is sendable.
+ * Stated as a single predicate so the rule lives in ONE place: a number on
+ * file, consent, and no STOP. Verification is optional (D4(2)). It mirrors
+ * `prospectMayReceiveSms` — that function decides over a stored SMS record,
+ * this one over a profile, which can also lack a number — and the truth table
+ * test walks every combination.
  */
 export function mobileIsSendable(input: {
   standing: MobileStanding;
@@ -896,6 +886,7 @@ export function mobileIsSendable(input: {
   suppressed: boolean;
 }): boolean {
   if (input.suppressed) return false;
-  if (input.standing !== "verified") return false;
+  // A number must be on file; whether anyone proved it is optional.
+  if (input.standing === "absent") return false;
   return input.smsOperationalConsent;
 }

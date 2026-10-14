@@ -40,9 +40,14 @@ export const CONTACT_EMAIL = "hello@hone.care" as const;
 // POSITIONING — copy deck v2.2 §1, the fixed hero and category language.
 // ---------------------------------------------------------------------------
 //
-// EVERY VALUE HERE IS QUOTED FROM THE DECK, NOT PARAPHRASED. The deck says its
-// lines are "written to be pasted", and the difference matters: a rewritten
-// line is a claim nobody reviewed against the truth register.
+// EVERY VALUE HERE IS QUOTED FROM THE DECK, NOT PARAPHRASED, UNLESS A COMMENT
+// SAYS OTHERWISE. The deck says its lines are "written to be pasted", and the
+// difference matters: a rewritten line is a claim nobody reviewed against the
+// truth register. MKT-03 revision 3 is the one authorized exception: the
+// operator directed an editorial pass (the anti-slop guides) that superseded
+// verbatim preservation. Each line it rewrote says so beside it, keeps the
+// deck's factual meaning, and was checked against
+// docs/marketing/product-truth-register.md.
 //
 // WHAT THE DECK RETIRES, AND WHY THE STRINGS ARE GONE RATHER THAN UNUSED.
 // v2.2 retires six strings outright. A retired string left exported is a string
@@ -56,6 +61,12 @@ export const CONTACT_EMAIL = "hello@hone.care" as const;
 //     rather than about the record
 //   * a "most popular" badge on the Solo pricing card
 //   * the six-box capability grid AS THE HOMEPAGE'S MAIN PRODUCT SECTION
+//
+// MKT-03 retired one more, by the same rule: v2.2's own `proofLine`, the
+// middle-dot strip under the hero. It was true, and it was the only thing on
+// the page said twice in a row — each of its four clauses is said again, in
+// full, in the sub, the trust strip or the records band — so the compact
+// opening dropped it, and an unrendered string is deleted, not kept.
 //
 // REPRODUCING A RETIRED LINE HERE WOULD BE A DEFECT, not documentation. A guard
 // that scans this file for retired copy has to strip comments to tell an
@@ -79,40 +90,30 @@ export const POSITIONING = {
   differentiator: "Treatment memory",
   corePromise: "Hone carries the important details from one appointment into the next.",
   heroEyebrow: "Electrolysis practice software",
-  heroH1: "Start the next treatment where the last one ended.",
+  heroH1: "Start the next treatment where the last one ended",
   // Replaces `heroSupporting`, whose sentence listed eight capabilities in one
   // breath. The deck's sub names ONE mechanism and is the claim the film shows.
   heroSub:
     "Each treated area keeps its own history. Before a returning client sits down, Hone brings forward last time's settings, response and notes.",
-  // KEPT VERBATIM. The deck moves this from the hero to the connected-workflow
-  // section header, which is a placement change and belongs to the lane that
-  // builds that section; the string itself does not change.
-  differentiationLine:
-    "Your calendar remembers the appointment. Hone helps you remember the treatment.",
+  // The connected-workflow heading. MKT-03 revision 3 (the anti-slop pass)
+  // replaced the deck's two-sentence contrast, which set the calendar against
+  // the treatment, with a plain statement of what the section shows.
+  differentiationLine: "One record, from booking to payment",
   keepPhrase: "Treatment memory for electrologists",
-  // Every clause is register-backed, and the fourth is the one worth naming:
-  // "CSV export on every plan" rests on `lib/export/resource-registry.ts` plus
-  // the register's "Exportable records (full studio export)" row, class
-  // LIVE_FOR_ALL_ONBOARDED — not plan-gated, so "every plan" is literal.
-  proofLine:
-    "Built for electrolysis records · History by treated area · Probe lots tied to treatments · CSV export on every plan",
-  // Rendered directly under the Before Today block (deck §3 section 2).
+  // THE TRUST STRIP IS GONE (MKT-03 revision 3). Its four items were all said
+  // again lower on the same page: studio isolation, imported history and the
+  // CSV export in the records section, and the setup fee at pricing. A strip
+  // made of repeats is a template device rather than information, so the
+  // constant goes with the block. The support-promise reasoning it carried
+  // still holds for any future strip: no line here may promise that one person
+  // answers support, and no invented substitute ("24/7 support", "the Hone
+  // team") replaces it.
   //
-  // THE FOURTH ITEM IS NOT A SUPPORT PROMISE, AND THAT IS DELIBERATE.
-  // It read as a commitment that one specific person answers support. That is a
-  // personal obligation, not a property of the product: it has no truth-register
-  // row, nothing in the repository can verify it, and it binds the business to
-  // one individual's availability on a public page. It is replaced by a
-  // commercial term the operator actually sets and already publishes in
-  // `assuranceLine` — no invented substitute, and deliberately NOT "24/7
-  // support" or "the Hone team", which would trade an unsupported promise for a
-  // larger one.
-  trustStrip:
-    "Records isolated by studio · Imported history stays marked as imported · CSV export on every plan · No setup fee",
-  // Under the pricing cards and in the CTA block — deliberately NOT under the
-  // hero, which is where the retired proof line used to put this material.
+  // Under the pricing cards. A sentence rather than four terms joined by middle
+  // dots: the dotted strip read as a template, and a sentence carries the same
+  // four terms the operator publishes, unchanged.
   assuranceLine:
-    "Founder-led setup · Free standard client import · No setup fee · Cancel anytime",
+    "Setup is founder-led, standard client import is free, there is no setup fee and you can cancel anytime.",
   // [VERIFY] RESOLVED — nothing caps clients or appointments.
   //
   // Verified as an ABSENCE, which needs saying because a negative is the easiest
@@ -124,8 +125,12 @@ export const POSITIONING = {
   // for this one: per-IP request rate limiters (abuse protection), Google API
   // quotas, and waitlist proof attempt ceilings. A rate limit on how fast
   // requests arrive is not a cap on how many records a studio may hold.
+  //
+  // One sentence since MKT-03 revision 3. "No client caps. No appointment caps."
+  // was a run of clipped negatives; the claim is the same verified absence, and
+  // it still does not say "unlimited".
   noCapsLine:
-    "Every plan includes the full treatment workflow. No client caps. No appointment caps.",
+    "Every plan includes the full treatment workflow, with no cap on clients or appointments.",
   // PAYMENTS ARE NAMED HERE, SO THE QUALIFIER IS NOT OPTIONAL.
   //
   // The truth register's payment rule: card on file and owner-run session
@@ -142,13 +147,10 @@ export const POSITIONING = {
   // consent, photos (MARKET), follow-up, client portal (passwordless
   // magic-link, LIVE_FOR_ALL_ONBOARDED/MARKET) and CSV export.
   everyPlanIncludes:
-    "Treatment memory, charting, intake, consent, photos, follow-up, payments, a client portal and CSV export. On every plan.",
-  pricingHeading: "Simple plans, in Canadian dollars.",
-  recordsHeading: "Your client records should stay yours.",
-  walkthroughHeading: "See it with a returning client.",
-  // The film's end card, reused as the walkthrough CTA eyebrow and as the
-  // closing line of the treatment-memory page.
-  filmClosingLine: "Pick up where you left off.",
+    "Included on every plan: treatment memory, charting, intake, consent, photos, follow-up, payments, a client portal and CSV export.",
+  pricingHeading: "Plans in Canadian dollars",
+  recordsHeading: "How your records are kept",
+  walkthroughHeading: "See it with a returning client",
   // ALREADY BURNED INTO THE FILM, so it is carried verbatim rather than
   // restyled. The deck standardises on this exact wording — not a middle-dot
   // variant — precisely so no recut is needed and every screenshot matches.
@@ -184,6 +186,13 @@ export const POSITIONING = {
 // The transcript is the §12b card sequence, verbatim and in the film's order —
 // the film's text equivalent (WCAG 1.2.1). The film carries product claims, and
 // a claim only sighted visitors can reach is a claim the page makes selectively.
+//
+// Each entry quotes the card's on-screen words exactly, in quotation marks,
+// then says what they appear over. The quoted words are burned into the film
+// and must never be edited here; only the description around them may change.
+// MKT-03 revision 3 replaced the dash that joined the two with quotation marks
+// and a plain sentence, so the boundary between the film's words and ours is
+// marked rather than implied.
 export const FILM = {
   src: "/film/hone-treatment-memory-v3-1.mp4",
   type: "video/mp4",
@@ -192,7 +201,7 @@ export const FILM = {
   height: 1080,
   hasAudioTrack: false,
   /**
-   * THE BYTES THIS TRANSCRIPT DESCRIBES.
+   * SHA-256 of the shipped film file (#766, re-applied after MKT-03).
    *
    * The transcript is the film's text alternative, so equivalence is a claim
    * about one specific artefact. Pinning the digest means the alternative
@@ -205,13 +214,13 @@ export const FILM = {
   // time and that there is no sound, so nobody waits for narration.
   accessibleName: "Hone treatment-memory product film, 25 seconds, silent",
   transcript: [
-    "Monday, Sep 14. Your next client has a history. — the studio calendar, week view.",
-    "Hone. Treatment memory for electrologists. — title card.",
-    "Treatment memory: see what happened last time. Areas treated, how she responded, and the note left for this visit. — the Last Treatment card: areas treated, response and tolerance for each settings block, a Watch Today caution, the setup used, consultation and skin/hair.",
-    "Treatment memory: the exact setup you used. — the Setup Used card: two settings blocks, each covering a single treated area, with frequency, probe and lot, modality, level, timing, percentage, pulses, duration and a numbing note.",
-    "Charting: record today's treatment. — the appointment page: confirmed session, pinned notes, allergies, client summary.",
-    "One client record: appointments, records, and treatment history together. — the client profile with its tabs and pinned notes marked visible on every appointment.",
-    "Hone. Pick up where you left off. hone.care — end card.",
+    "“Monday, Sep 14. Your next client has a history.” Shown over the studio calendar in week view.",
+    "“Hone. Treatment memory for electrologists.” The title card.",
+    "“Treatment memory: see what happened last time. Areas treated, how she responded, and the note left for this visit.” Shown over the Last Treatment card: areas treated, response and tolerance for each settings block, a Watch Today caution, the setup used, consultation and skin/hair.",
+    "“Treatment memory: the exact setup you used.” Shown over the Setup Used card: two settings blocks, each covering a single treated area, with frequency, probe and lot, modality, level, timing, percentage, pulses, duration and a numbing note.",
+    "“Charting: record today's treatment.” Shown over the appointment page: confirmed session, pinned notes, allergies and client summary.",
+    "“One client record: appointments, records, and treatment history together.” Shown over the client profile, with its tabs and pinned notes marked visible on every appointment.",
+    "“Hone. Pick up where you left off. hone.care” The end card.",
   ],
 } as const;
 
@@ -404,27 +413,27 @@ export const PRIMARY_NAV: ReadonlyArray<NavLink> = [
 
 export type FooterGroup = { title: string; links: ReadonlyArray<NavLink> };
 
+// THREE GROUPS, CUT FROM WHAT THE SITE HAS (MKT-03 revision 3). The footer was
+// the four-column template (Product, Features, Resources, Company), with a
+// "Resources" link under a "Resources" title and the legal pages filed under
+// "Company". Now the product pages are one group, the guides another, and the
+// two ways to reach a person a third. The policy pages and Sign in sit on the
+// footer's last line (FOOTER_LEGAL), with the copyright they belong beside.
 export const FOOTER_GROUPS: ReadonlyArray<FooterGroup> = [
   {
     title: "Product",
     links: [
       { href: "/electrolysis-software", label: "Electrolysis software" },
-      { href: "/pricing", label: "Pricing" },
-      { href: "/demo", label: "Request a walkthrough" },
-    ],
-  },
-  {
-    title: "Features",
-    links: [
       { href: "/features/treatment-memory", label: "Treatment memory" },
       { href: "/features/booking-calendar", label: "Booking and calendar" },
       { href: "/features/charting-records", label: "Charting and records" },
+      { href: "/pricing", label: "Pricing" },
     ],
   },
   {
-    title: "Resources",
+    title: "Guides",
     links: [
-      { href: "/resources", label: "Resources" },
+      { href: "/resources", label: "All guides" },
       {
         href: "/resources/electrolysis-treatment-record-checklist",
         label: "Treatment record checklist",
@@ -436,14 +445,19 @@ export const FOOTER_GROUPS: ReadonlyArray<FooterGroup> = [
     ],
   },
   {
-    title: "Company",
+    title: "Talk to us",
     links: [
-      { href: "/privacy", label: "Privacy" },
-      { href: "/terms", label: "Terms" },
-      { href: "/login", label: "Sign in" },
-      { href: `mailto:${CONTACT_EMAIL}`, label: "Contact" },
+      { href: "/demo", label: "Request a walkthrough" },
+      { href: `mailto:${CONTACT_EMAIL}`, label: CONTACT_EMAIL },
     ],
   },
+] as const;
+
+// The footer's last line, beside the copyright.
+export const FOOTER_LEGAL: ReadonlyArray<NavLink> = [
+  { href: "/privacy", label: "Privacy" },
+  { href: "/terms", label: "Terms" },
+  { href: "/login", label: "Sign in" },
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -473,14 +487,14 @@ export const MARKETING_PAGES: ReadonlyArray<MarketingPage> = [
     path: "/electrolysis-software",
     title: "Electrolysis software built around the treatment record | Hone",
     description:
-      "Practice software for electrologists. Modality, settings, probe and lot recorded with each treatment block, with booking, intake and consent connected to the same record.",
+      "Practice software for electrologists. Modality, settings, probe and lot recorded for each settings block, with every treated area findable and booking, intake and consent connected to the same record.",
     indexable: true,
   },
   {
     path: "/pricing",
     title: "Pricing | Hone",
     description:
-      "Simple plans in Canadian dollars. Every plan includes the full treatment workflow. No client caps, no appointment caps, no setup fee.",
+      "Plans in Canadian dollars. Every plan includes the full treatment workflow, with no cap on clients or appointments and no setup fee.",
     indexable: true,
   },
   {
@@ -494,40 +508,40 @@ export const MARKETING_PAGES: ReadonlyArray<MarketingPage> = [
     path: "/features/booking-calendar",
     title: "Booking and calendar, connected to the record | Hone",
     description:
-      "Give clients an online booking page with real open times and double-booking protection, and run your day on a calendar built for an electrolysis practice.",
+      "Give clients an online booking page with real open times and double-booking protection, and see your day, week or month on one calendar.",
     indexable: true,
   },
   {
     path: "/features/charting-records",
     title: "Electrolysis charting and records | Hone",
     description:
-      "Charting built around treatments, not generic notes: mode, modality, energy, frequency, pulses, probe and lot, per-area laterality, and tolerance and skin response recorded on the settings block that covers them.",
+      "Electrolysis charting by treated area: mode, modality, energy, frequency, pulses, probe and lot, laterality, tolerance and skin response.",
     indexable: true,
   },
   {
     path: "/demo",
     title: "Request a walkthrough | Hone",
     description:
-      "A founder-led walkthrough: open a returning client and watch the Before Today briefing assemble from their history.",
+      "In a founder-led walkthrough, we open a returning client and you watch the Before Today briefing assemble from their history.",
     indexable: true,
   },
   {
     path: "/resources",
-    title: "Electrolysis Practice Resources & Record-Keeping Guides | Hone",
+    title: "Electrolysis practice resources and record-keeping guides | Hone",
     description:
-      "Practical guides for running an electrolysis practice, treatment record-keeping and moving from paper records, from the team building Hone.",
+      "Guides on running an electrolysis practice, keeping treatment records and moving from paper, written by the team building Hone.",
     indexable: true,
   },
   {
     path: "/resources/electrolysis-treatment-record-checklist",
-    title: "Electrolysis Treatment Record Checklist | Hone",
+    title: "Electrolysis treatment record checklist | Hone",
     description:
-      "A practical checklist of what to capture in an electrolysis treatment record, from client details and machine settings to probe lot and aftercare.",
+      "A checklist of what to capture in an electrolysis treatment record: client details, consent, machine settings, probe and lot, areas, response and aftercare.",
     indexable: true,
   },
   {
     path: "/resources/moving-an-electrolysis-practice-from-paper-records",
-    title: "Moving an Electrolysis Practice From Paper Records | Hone",
+    title: "Moving an electrolysis practice from paper records | Hone",
     description:
       "How to move an electrolysis practice from paper treatment cards to structured digital records without losing client history.",
     indexable: true,

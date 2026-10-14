@@ -1,0 +1,308 @@
+{
+ "recorded": "2026-10-08 (read-only REST GETs and GraphQL queries by the independent verifier)",
+ "note": "SaiSamyukthVemuri/Hone (repo id 1240764106), workflow 289443461 (ci.yml). #815 is stacked on #810: its branch contains #810 commits, its base is production.",
+ "p810": {
+  "number": 810,
+  "state": "open",
+  "draft": true,
+  "createdAt": "2026-10-07T20:16:40Z",
+  "head": {
+   "label": "SaiSamyukthVemuri:feat/eng-loop-v1-05a",
+   "ref": "feat/eng-loop-v1-05a",
+   "sha": "b99b733271382dc9636700c7085057dad9a72006",
+   "repoId": 1240764106
+  },
+  "base": {
+   "ref": "claude/build-hone-saas-hOex7",
+   "repoId": 1240764106
+  }
+ },
+ "p815": {
+  "number": 815,
+  "state": "open",
+  "draft": true,
+  "createdAt": "2026-10-07T22:18:29Z",
+  "head": {
+   "label": "SaiSamyukthVemuri:feat/eng-loop-v1-05b",
+   "ref": "feat/eng-loop-v1-05b",
+   "sha": "a1c4ff605513fa2a53a85526a275208bb92f5af2",
+   "repoId": 1240764106
+  },
+  "base": {
+   "ref": "claude/build-hone-saas-hOex7",
+   "repoId": 1240764106
+  }
+ },
+ "runs810": [
+  {
+   "id": 37708521181,
+   "run_number": 2889,
+   "event": "pull_request",
+   "head_branch": "feat/eng-loop-v1-05a",
+   "head_sha": "b99b733271382dc9636700c7085057dad9a72006",
+   "head_repository_id": 1240764106,
+   "created_at": "2026-10-08T00:34:58Z",
+   "run_attempt": 1,
+   "status": "completed",
+   "conclusion": "failure",
+   "pull_requests": [
+    810
+   ]
+  },
+  {
+   "id": 37708490631,
+   "run_number": 2888,
+   "event": "pull_request",
+   "head_branch": "feat/eng-loop-v1-05a",
+   "head_sha": "992af0b5803310ea082e119fc67e8c8c2922539b",
+   "head_repository_id": 1240764106,
+   "created_at": "2026-10-08T00:34:36Z",
+   "run_attempt": 1,
+   "status": "completed",
+   "conclusion": "cancelled",
+   "pull_requests": [
+    810
+   ]
+  },
+  {
+   "id": 37707973129,
+   "run_number": 2885,
+   "event": "pull_request",
+   "head_branch": "feat/eng-loop-v1-05a",
+   "head_sha": "1d06bccd0470a51fcbb708c521da125a40311085",
+   "head_repository_id": 1240764106,
+   "created_at": "2026-10-08T00:28:45Z",
+   "run_attempt": 1,
+   "status": "completed",
+   "conclusion": "cancelled",
+   "pull_requests": [
+    810
+   ]
+  },
+  {
+   "id": 37704551013,
+   "run_number": 2878,
+   "event": "pull_request",
+   "head_branch": "feat/eng-loop-v1-05a",
+   "head_sha": "aaf6ac505aa710d74ad4176ccce30b73dfb883dd",
+   "head_repository_id": 1240764106,
+   "created_at": "2026-10-07T23:50:54Z",
+   "run_attempt": 1,
+   "status": "completed",
+   "conclusion": "failure",
+   "pull_requests": [
+    810
+   ]
+  },
+  {
+   "id": 37703215812,
+   "run_number": 2876,
+   "event": "pull_request",
+   "head_branch": "feat/eng-loop-v1-05a",
+   "head_sha": "63bd3b6e4359bcd474b6e51e0568493a39080513",
+   "head_repository_id": 1240764106,
+   "created_at": "2026-10-07T23:36:21Z",
+   "run_attempt": 1,
+   "status": "completed",
+   "conclusion": "failure",
+   "pull_requests": [
+    810
+   ]
+  },
+  {
+   "id": 37697590867,
+   "run_number": 2871,
+   "event": "pull_request",
+   "head_branch": "feat/eng-loop-v1-05a",
+   "head_sha": "f75ca255a20c7389a411a8353fdbbdde7a2b5dad",
+   "head_repository_id": 1240764106,
+   "created_at": "2026-10-07T22:39:44Z",
+   "run_attempt": 1,
+   "status": "completed",
+   "conclusion": "failure",
+   "pull_requests": [
+    810
+   ]
+  },
+  {
+   "id": 37693787561,
+   "run_number": 2866,
+   "event": "pull_request",
+   "head_branch": "feat/eng-loop-v1-05a",
+   "head_sha": "03281dffe433df1b3d2a0012917a1ac41007bc21",
+   "head_repository_id": 1240764106,
+   "created_at": "2026-10-07T22:04:38Z",
+   "run_attempt": 1,
+   "status": "completed",
+   "conclusion": "failure",
+   "pull_requests": [
+    810
+   ]
+  },
+  {
+   "id": 37692128725,
+   "run_number": 2865,
+   "event": "pull_request",
+   "head_branch": "feat/eng-loop-v1-05a",
+   "head_sha": "203ed1f4293bcfb03d99ac23b5a81a69469d3bdf",
+   "head_repository_id": 1240764106,
+   "created_at": "2026-10-07T21:49:54Z",
+   "run_attempt": 1,
+   "status": "completed",
+   "conclusion": "failure",
+   "pull_requests": [
+    810
+   ]
+  },
+  {
+   "id": 37684791444,
+   "run_number": 2857,
+   "event": "pull_request",
+   "head_branch": "feat/eng-loop-v1-05a",
+   "head_sha": "7bf0d05cf0c2bdbec76f6a83d7a445dc4f4341ef",
+   "head_repository_id": 1240764106,
+   "created_at": "2026-10-07T20:48:12Z",
+   "run_attempt": 1,
+   "status": "completed",
+   "conclusion": "failure",
+   "pull_requests": [
+    810
+   ]
+  },
+  {
+   "id": 37684188392,
+   "run_number": 2856,
+   "event": "pull_request",
+   "head_branch": "feat/eng-loop-v1-05a",
+   "head_sha": "85adaae3e297fa4c876452002c17a7c349b9c5bb",
+   "head_repository_id": 1240764106,
+   "created_at": "2026-10-07T20:43:26Z",
+   "run_attempt": 1,
+   "status": "completed",
+   "conclusion": "cancelled",
+   "pull_requests": [
+    810
+   ]
+  },
+  {
+   "id": 37680787947,
+   "run_number": 2855,
+   "event": "pull_request",
+   "head_branch": "feat/eng-loop-v1-05a",
+   "head_sha": "958b9d536e055e746499262cdc1a740e13501bf2",
+   "head_repository_id": 1240764106,
+   "created_at": "2026-10-07T20:16:44Z",
+   "run_attempt": 1,
+   "status": "completed",
+   "conclusion": "failure",
+   "pull_requests": [
+    810
+   ]
+  }
+ ],
+ "runs815": [
+  {
+   "id": 37712905482,
+   "run_number": 2893,
+   "event": "pull_request",
+   "head_branch": "feat/eng-loop-v1-05b",
+   "head_sha": "a1c4ff605513fa2a53a85526a275208bb92f5af2",
+   "head_repository_id": 1240764106,
+   "created_at": "2026-10-08T01:26:03Z",
+   "run_attempt": 1,
+   "status": "completed",
+   "conclusion": "failure",
+   "pull_requests": [
+    815
+   ]
+  },
+  {
+   "id": 37711968803,
+   "run_number": 2892,
+   "event": "pull_request",
+   "head_branch": "feat/eng-loop-v1-05b",
+   "head_sha": "5f7d53a6fe732d3ab532f01ec93b22b229c5dcc8",
+   "head_repository_id": 1240764106,
+   "created_at": "2026-10-08T01:15:01Z",
+   "run_attempt": 1,
+   "status": "completed",
+   "conclusion": "failure",
+   "pull_requests": [
+    815
+   ]
+  },
+  {
+   "id": 37706803037,
+   "run_number": 2882,
+   "event": "pull_request",
+   "head_branch": "feat/eng-loop-v1-05b",
+   "head_sha": "df8dd9b5683a02d893986e018769a4e183936e04",
+   "head_repository_id": 1240764106,
+   "created_at": "2026-10-08T00:15:30Z",
+   "run_attempt": 1,
+   "status": "completed",
+   "conclusion": "failure",
+   "pull_requests": [
+    815
+   ]
+  },
+  {
+   "id": 37703263829,
+   "run_number": 2877,
+   "event": "pull_request",
+   "head_branch": "feat/eng-loop-v1-05b",
+   "head_sha": "d5fb4c2af79354e23b8e8964d2f01b0190c951ba",
+   "head_repository_id": 1240764106,
+   "created_at": "2026-10-07T23:36:53Z",
+   "run_attempt": 1,
+   "status": "completed",
+   "conclusion": "failure",
+   "pull_requests": [
+    815
+   ]
+  },
+  {
+   "id": 37697652442,
+   "run_number": 2872,
+   "event": "pull_request",
+   "head_branch": "feat/eng-loop-v1-05b",
+   "head_sha": "3ab81ab65ad4cad89843db906cb1da37cd5f3d1c",
+   "head_repository_id": 1240764106,
+   "created_at": "2026-10-07T22:40:20Z",
+   "run_attempt": 1,
+   "status": "completed",
+   "conclusion": "failure",
+   "pull_requests": [
+    815
+   ]
+  },
+  {
+   "id": 37695332037,
+   "run_number": 2870,
+   "event": "pull_request",
+   "head_branch": "feat/eng-loop-v1-05b",
+   "head_sha": "b087989125322a8bbbe244a186850767d133c3ee",
+   "head_repository_id": 1240764106,
+   "created_at": "2026-10-07T22:18:32Z",
+   "run_attempt": 1,
+   "status": "completed",
+   "conclusion": "failure",
+   "pull_requests": [
+    815
+   ]
+  }
+ ],
+ "runs815AtA810HeadSha": [],
+ "runsAt810CurrentHead": [
+  {
+   "id": 37708521181,
+   "event": "pull_request",
+   "head_branch": "feat/eng-loop-v1-05a",
+   "head_sha": "b99b733271382dc9636700c7085057dad9a72006",
+   "head_repository_id": 1240764106,
+   "pull_requests": [
+    810
+   ]
+  }
+ ]
+}

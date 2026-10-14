@@ -28,7 +28,11 @@ export function ProductFrame({
       }}
     >
       {children}
-      <figcaption className="border-t border-[color:var(--color-hairline)] px-4 py-2 text-[0.6875rem] font-medium uppercase tracking-[0.12em] text-muted">
+      {/* The disclosure is set as words in sentence case. The SMALL CAPS inside
+          the previews stay: they reproduce the real app's own labels (the film
+          shows the same "SETUP USED" and "AREAS TREATED"), whereas this line is
+          the marketing site speaking, in the site's voice. */}
+      <figcaption className="border-t border-[color:var(--color-hairline)] px-4 py-2 text-[0.8125rem] text-muted">
         {label}
       </figcaption>
     </figure>
@@ -36,9 +40,10 @@ export function ProductFrame({
 }
 
 /**
- * BrowserFrame, a ProductFrame with a top chrome bar (window dots + a static
- * context label such as a route). The label is decorative context, not a real
- * URL bar; keep it truthful and generic.
+ * BrowserFrame, a ProductFrame with a top bar carrying a static context label
+ * such as a route. The label is context, not a real URL bar; keep it truthful
+ * and generic. No window dots: they are template chrome that says "screenshot"
+ * without saying anything about Hone.
  */
 export function BrowserFrame({
   children,
@@ -58,12 +63,7 @@ export function BrowserFrame({
         style={{ background: "var(--color-warm)" }}
         aria-hidden="true"
       >
-        <span className="flex gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full bg-[color:var(--color-hairline-strong)]" />
-          <span className="h-2.5 w-2.5 rounded-full bg-[color:var(--color-hairline-strong)]" />
-          <span className="h-2.5 w-2.5 rounded-full bg-[color:var(--color-hairline-strong)]" />
-        </span>
-        <span className="ml-2 truncate text-[0.75rem] text-muted">{contextLabel}</span>
+        <span className="text-[0.75rem] text-muted">{contextLabel}</span>
       </div>
       {children}
     </ProductFrame>

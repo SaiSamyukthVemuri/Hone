@@ -4,8 +4,9 @@ import type { ClientPortalMessageReply } from "@/lib/types/database";
 
 // Practitioner-side read of every client reply for one client. PR
 // #129. Always scoped by (studioId, clientId); callers must resolve
-// studioId from getCurrentPractitionerWithStudio() rather than
-// accepting it from form data.
+// studioId from the practitioner session (requirePractitionerWithStudio()
+// in a page, getCurrentPractitionerWithStudio() in an action) rather
+// than accepting it from form data.
 //
 // We surface the studio-facing audit columns (practitioner_seen_at,
 // notification_email_*) so the client profile card can render the

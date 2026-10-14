@@ -4,6 +4,10 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { getSessionPaymentStripe } from "@/lib/stripe/session-payment-stripe";
 import { recordOpsAlert } from "@/lib/ops/alerts";
+import {
+  compareProviderMoney,
+  providerMoneyMismatchDetails,
+} from "@/lib/billing/provider-money-facts";
 
 // ---------------------------------------------------------------------------
 // PR #178. refundPaymentChargeAttempt.
@@ -185,6 +189,7 @@ type AttemptRow = {
   stripe_payment_intent_id: string | null;
   stripe_charge_id: string | null;
   amount_cents: number;
+  currency: string;
   charged_at: string | null;
   refund_status: string | null;
   refund_amount_cents: number | null;
@@ -218,7 +223,7 @@ export async function refundPaymentChargeAttempt(args: {
   const { data: rawRow, error: loadErr } = await admin
     .from("payment_charge_attempts")
     .select(
-      "id, studio_id, client_id, charge_reason, status, stripe_livemode, stripe_account_id, stripe_payment_intent_id, stripe_charge_id, amount_cents, charged_at, refund_status, refund_amount_cents, refunded_at, stripe_refund_id",
+      "id, studio_id, client_id, charge_reason, status, stripe_livemode, stripe_account_id, stripe_payment_intent_id, stripe_charge_id, amount_cents, currency, charged_at, refund_status, refund_amount_cents, refunded_at, stripe_refund_id",
     )
     .eq("id", args.attemptId)
     .maybeSingle();
@@ -384,6 +389,33 @@ export async function refundPaymentChargeAttempt(args: {
     .eq("status", "succeeded")
     .eq("stripe_livemode", livemode)
     .or("refund_status.is.null,refund_status.eq.failed")
+    // RECIPROCAL WITH THE RECEIPT CLAIM. A refund may not start while a receipt
+    // send holds the row.
+    //
+    // THE ONE-DIRECTION FIX WAS NOT ENOUGH. The automatic receipt claim requires
+    // `refund_status IS NULL`, which closes REFUND-FIRST: a refund in flight makes
+    // the receipt claim match zero rows. RECEIPT-FIRST stayed open, because this
+    // claim filtered refund_status, status and mode but never receipt_status -- so
+    // a receipt claim could win, and this UPDATE could then set
+    // `pending_stripe` while that receipt was still rendering its PDF, and the
+    // client received a receipt for a charge already being refunded.
+    //
+    // AN EXPLICIT ADMISSIBLE SET, NOT `!= 'sending'`. Fail-closed: a state nobody
+    // has thought about yet is refused rather than admitted.
+    //
+    //   NULL    no receipt activity                      -> refund allowed
+    //   sent    receipt completed                        -> refund allowed
+    //   failed  not currently dispatching                -> refund allowed
+    //   sending in flight, or ambiguous and deliberately
+    //           held (see payment-receipt.ts)            -> refund REFUSED
+    //
+    // SAME ROW IS THE WHOLE MECHANISM. Both claims are conditional UPDATEs on this
+    // one row, so Postgres serializes them: whichever transitions first makes the
+    // other re-evaluate against the new state and affect zero rows. No advisory
+    // lock, no owner column, no migration -- and deliberately NOT a long
+    // transaction spanning the Stripe or email network calls, which is not what
+    // serializes anything here.
+    .or("receipt_status.is.null,receipt_status.eq.sent,receipt_status.eq.failed")
     .select("id");
   if (claimErr) {
     logInternal("payment_refund_claim_failed", {
@@ -398,13 +430,20 @@ export async function refundPaymentChargeAttempt(args: {
     };
   }
   if (!claimedRows || claimedRows.length === 0) {
-    // Two concurrent clicks both passed the pre-claim SELECT but
-    // only one wins the UPDATE; the loser sees zero rows.
+    // The loser of the row transition. Two concurrent refund clicks produce this,
+    // and so does a RECEIPT SEND holding the row -- which is why the copy no
+    // longer names a refund as the only possible competitor. Saying "another
+    // refund attempt is in flight" when the competitor is a receipt would send a
+    // practitioner looking for a refund that does not exist.
+    //
+    // It stays deliberately vague about which operation won: the internal state
+    // is not the practitioner's problem, and "refresh and try again" is the same
+    // correct action either way.
     return {
       ok: false,
       outcome: "claim_lost",
       message:
-        "Another refund attempt is already in flight or the charge is no longer eligible. Refresh and try again.",
+        "This payment changed while the refund was starting. Another refund or receipt operation may still be in progress. Refresh and try again.",
     };
   }
 
@@ -581,6 +620,51 @@ export async function refundPaymentChargeAttempt(args: {
       message:
         "We did not get a clear response from Stripe. Refresh in a few minutes.",
     };
+  }
+
+  // PAY-CCY-01. The refund Stripe made must be the refund Hone asked for: the
+  // claimed amount, in the attempt's own prepared currency. Stripe derives a
+  // refund's currency from the charge, so a different currency means the
+  // charge id on this row is not the prepared charge. Recording `succeeded`
+  // would then say this payment was returned when different money was. The
+  // row stays `pending_stripe`, the same unresolved state an unclear Stripe
+  // answer leaves above, and the operator reconciles it.
+  {
+    const prepared = {
+      amountCents: refundAmountCents,
+      currency: attempt.currency,
+    };
+    const provider = { amount: refund.amount, currency: refund.currency };
+    const money = compareProviderMoney(prepared, provider);
+    if (!money.ok) {
+      logInternal("payment_refund_provider_money_mismatch", {
+        attemptId: attempt.id,
+        stripeRefundId: refund.id,
+        mismatches: money.mismatches,
+      });
+      await recordOpsAlert({
+        severity: "critical",
+        event: "payment_refund_provider_money_mismatch",
+        message:
+          "Stripe returned a refund whose amount or currency does not equal the claimed refund of the prepared attempt. Hone did NOT record it as succeeded; the row stays refund_status='pending_stripe'. Manual reconciliation required.",
+        studioId: attempt.studio_id,
+        clientId: attempt.client_id,
+        route: ROUTE,
+        safeDetails: {
+          attempt_id: attempt.id,
+          charge_reason: attempt.charge_reason,
+          stripe_charge_id: attempt.stripe_charge_id,
+          stripe_refund_id: refund.id,
+          ...providerMoneyMismatchDetails(prepared, provider, money.mismatches),
+        },
+      });
+      return {
+        ok: false,
+        outcome: "needs_manual_review",
+        message:
+          "Stripe's refund does not match this payment, so Hone did not record it. The studio operator will reconcile this.",
+      };
+    }
   }
 
   const refundedAtIso = new Date().toISOString();

@@ -181,8 +181,24 @@ export async function listActiveStudioMemberships(): Promise<
   }));
 }
 
-// Returns the signed-in user's active practitioner row + studio.
-// Redirects to /login if no auth user, or throws if the user has no practitioner row.
+// The SERVER-ACTION backstop. Returns the signed-in user's active practitioner
+// row + studio, redirects to /login if there is no auth user, and THROWS when
+// there is no usable membership (none, or 2+ with no valid selection), because
+// a redirect raised inside an action's try/catch would be swallowed into that
+// action's generic denial.
+//
+// Server actions ONLY. Pages, layouts and server components call
+// requirePractitionerWithStudio() below (SENTRY-IDENTITY-01). Next renders a
+// route's layouts and its page IN PARALLEL, so the shell layout's redirect does
+// not stop a page from running: a page that threw here still reached
+// onRequestError (Sentry) on every full load, and on a soft navigation, where
+// the shell layout is not re-rendered at all, the throw WAS the screen the
+// practitioner saw. The middleware's gate narrows that window but cannot close
+// it: a membership deactivated after the middleware admits a request is first
+// seen by this read. tests/app/authenticated-pages-identity-sweep.test.ts
+// renders every authenticated page and layout in each identity state and
+// proves it redirects; tests/source-guards/server-render-identity-guard.test.ts is the
+// fast syntactic hint that keeps server-rendered modules off this function.
 export async function getCurrentPractitionerWithStudio(): Promise<PractitionerWithStudio> {
   // PERF-01A: same three outcomes, resolved from this request's single
   // identity read instead of a third round trip to GoTrue and Postgres.
@@ -203,11 +219,10 @@ export async function getCurrentPractitionerWithStudio(): Promise<PractitionerWi
     throw new Error("No active practitioner found for the signed-in user.");
   }
   if (membership.kind === "choose") {
-    // Controlled (not raw-DB) error, and never an auto-picked studio. Reached
-    // only as a server-action backstop: the middleware + shell layout redirect
-    // multi-membership users with no valid selection to the chooser before any
-    // page loader runs, and server actions run inside try/catch that returns a
-    // generic denial, so no raw 500 reaches the user because of multiple rows.
+    // Controlled (not raw-DB) error, and never an auto-picked studio. Only a
+    // server action reaches this branch: a server-rendered module never calls
+    // this function, so its multi-membership user is redirected to the chooser
+    // instead.
     throw new Error(
       `Multiple active studio memberships (${membership.options.length}) with no valid studio selection; choose a studio first.`,
     );
@@ -215,20 +230,24 @@ export async function getCurrentPractitionerWithStudio(): Promise<PractitionerWi
   return membership.value;
 }
 
-// Route-guard variant of getCurrentPractitionerWithStudio for the
-// authenticated app SHELL (app/(app)/layout.tsx). Hone is invite-only
-// (PR #189 / migration 0081 / PR #253): a signed-in user with no active
-// practitioner row: e.g. an uninvited Google sign-in, which creates an
-// auth.users row but NO studio/practitioner, must not reach the app.
+// Route-guard variant of getCurrentPractitionerWithStudio for EVERY
+// server-rendered module: the authenticated app shell (app/(app)/layout.tsx),
+// every page and nested layout, and any server component that needs identity.
+// Hone is invite-only (PR #189 / migration 0081 / PR #253): a signed-in user
+// with no active practitioner row: e.g. an uninvited Google sign-in, which
+// creates an auth.users row but NO studio/practitioner, must not reach the app.
 // Instead of throwing a raw 500 (what getCurrentPractitionerWithStudio
 // does), this redirects:
 //   * no auth user                 -> /login
 //   * authed, but no studio        -> /no-access  (the safe invite-only gate)
 //   * authed, 2+ studios, no valid selection -> /no-access?reason=multiple-studios (chooser)
-// The throwing variant stays the backstop for direct server-action POSTs
-// (those run inside try/catch and safely return a generic denial), so
-// this redirecting guard is used ONLY where a clean redirect is wanted
-// and not swallowed by a surrounding catch (the shell layout).
+// A failed membership read is NOT one of those states: it still throws (from
+// loadActiveMembershipRows), so a broken read stays loud instead of becoming a
+// quiet "no access".
+// The throwing variant stays the backstop for direct server-action POSTs,
+// where a surrounding try/catch would swallow a redirect. A redirect is wanted
+// everywhere else, and the shell layout alone cannot provide it for its pages:
+// see getCurrentPractitionerWithStudio above (SENTRY-IDENTITY-01).
 export async function requirePractitionerWithStudio(): Promise<PractitionerWithStudio> {
   // PERF-01A: same three redirect outcomes, resolved from this request's
   // single identity read. The redirects stay OUT of the memoised function so a

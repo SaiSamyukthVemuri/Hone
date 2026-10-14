@@ -101,8 +101,14 @@ describe("public_booking_archived_client_collision logs no raw PII", () => {
   });
 });
 
-describe("public_booking_unique_race_unresolved logs no raw PII", () => {
-  const block = logCall("public_booking_unique_race_unresolved");
+// The `public_booking_unique_race_unresolved` site this used to guard is GONE,
+// and so is the race it reported: the client row is now created inside the
+// transaction that holds the studios row lock, which serialises same-studio
+// bookings, so two concurrent new-client bookings cannot collide on the unique
+// index. Its successor is the one event that can still report an unresolved
+// client, and it inherits exactly the same PII bar.
+describe("public_booking_client_not_resolved logs no raw PII", () => {
+  const block = logCall("public_booking_client_not_resolved");
 
   it("call site still exists", () => {
     expect(block).not.toBe("");
@@ -117,7 +123,9 @@ describe("public_booking_unique_race_unresolved logs no raw PII", () => {
   });
 
   it("keeps the sqlstate code, studioId, and a salted emailFingerprint", () => {
-    expect(block).toContain("code: clientErr.code");
+    // The successor carries the COMMAND's outcome rather than a PostgREST
+    // error code, because the command answers instead of failing.
+    expect(block).toContain("code: rawCommandResult");
     expect(block).toContain("studioId: studio.id");
     expect(block).toContain(
       "emailFingerprint: hashFingerprint(normalizedEmail)",

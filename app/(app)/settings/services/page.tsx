@@ -1,4 +1,4 @@
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { getAllServices, servicesHaveCalendarColor } from "@/lib/booking/queries";
 import { sortServicesForSettings } from "@/lib/booking/service-order";
 import { KNOWN_MODALITIES, type Service } from "@/lib/types/database";
@@ -22,7 +22,7 @@ function formatPrice(cents: number | null): string {
 }
 
 export default async function ServicesSettingsPage() {
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await requirePractitionerWithStudio();
   if (practitioner.role !== "owner") {
     return (
       <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">

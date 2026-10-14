@@ -1,8 +1,9 @@
 import "server-only";
 
+import { isNewClientWaitlistEnabled } from "@/lib/booking/new-client-waitlist";
+
 import type { Service } from "@/lib/types/database";
 import { isConsultationService } from "@/lib/booking/consultation";
-import { isNewClientWaitlistEnabled } from "@/lib/booking/new-client-waitlist";
 
 // ===========================================================================
 // EMERG-01 — WAITLIST-ONLY REBOOKING OF A FREE CONSULTATION
@@ -27,7 +28,7 @@ import { isNewClientWaitlistEnabled } from "@/lib/booking/new-client-waitlist";
 // WHAT THIS MODULE DELIBERATELY IS NOT.
 //
 //   * NOT A SECOND GATE. Studio scope is answered by
-//     `isNewClientWaitlistEnabled` and nothing else — same server-only env
+//     the studio's canonical admission mode and nothing else - resolved by
 //     allowlist, same exact-match semantics, same DEFAULT OFF, same one-line
 //     kill switch. No new environment variable was added, because the existing
 //     gate already expresses "this studio's new-client intake is closed", which
@@ -123,13 +124,37 @@ export type FreeConsultPolicyService = Pick<
  *   resolvable service is not one, so it keeps its existing behaviour.
  */
 export function isFreeConsultWaitlistOnlyReschedule(input: {
+  /**
+   * SERVER-RESOLVED `studios.slug` for the appointment's own studio.
+   *
+   * THIS POLICY HAS ITS OWN AUTHORITY, AND IT IS DELIBERATELY NOT THE NEW
+   * ADMISSION MODE.
+   *
+   * NEW-CLIENT-MODE-01 briefly routed this through
+   * `studioIsInWaitlistMode(studio)` - the owner-facing canonical mode - and
+   * that was wrong in a way no test caught: `new_client_admission_mode` governs
+   * whether a NEW client may be admitted, while this policy governs whether an
+   * ALREADY-CONFIRMED appointment may be self-service moved. Coupling them let
+   * an owner flipping OPEN -> WAITLIST silently freeze every confirmed future
+   * free consultation, and a persisted OPEN silently unfreeze them - changing
+   * booked clients' rights through a control documented as new-client only.
+   *
+   * So the EMERG-01 authority stays exactly what it was before this PR: the
+   * server-only env list, read here and nowhere else. Deploying
+   * NEW-CLIENT-MODE-01 therefore changes nothing about an appointment that is
+   * already confirmed.
+   *
+   * FOLLOW-UP DEBT, bounded and deliberately not taken here: this legacy env
+   * authority needs its own product decision and its own durable authority
+   * before it can be retired. Until that exists it must NOT be deleted with the
+   * new-client admission bridge - see
+   * docs/production/new-client-admission-activation.md, step H.
+   */
   studioSlug: string | null | undefined;
   service: FreeConsultPolicyService | null | undefined;
 }): boolean {
   const { studioSlug, service } = input;
-  // Studio scope first: outside a waitlisted studio nothing else is even asked,
-  // and DEFAULT OFF means an unconfigured deployment answers `false` here for
-  // every studio in the world.
+  // Studio scope first: outside a waitlisted studio nothing else is even asked.
   if (!isNewClientWaitlistEnabled(studioSlug)) return false;
   if (!service) return false;
   if (!isConsultationService(service)) return false;
