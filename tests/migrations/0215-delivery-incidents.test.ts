@@ -157,3 +157,29 @@ describe("0215 privacy", () => {
     expect(table).toContain("last_reason ~ '^[a-z][a-z0-9_]{1,63}$'");
   });
 });
+
+describe("0215 grants EXACTLY the intended roles, and nothing else", () => {
+  // Every GRANT statement in the file -- any privilege, any object, every role
+  // of a comma list -- as "privilege | object -> role". A stray grant beside
+  // the intended one (to anon, a second role, \`grant all\`, a schema-wide
+  // grant) changes this list, so the assertion is exact, not "contains".
+  const grants = (code: string): string[] => {
+    const out: string[] = [];
+    for (const m of code.matchAll(/^\s*grant\s+([^;]+?)\s+on\s+([^;]+?)\s+to\s+([^;]+);/gim)) {
+      const obj = m[2]!.replace(/\s+/g, " ").trim().replace(/^function /i, "");
+      for (const role of m[3]!.split(",")) out.push(`${m[1]!.trim().toLowerCase()} | ${obj} -> ${role.trim().toLowerCase()}`);
+    }
+    return out.sort();
+  };
+
+  it("matches the intended grant list exactly", () => {
+    expect(grants(CODE)).toEqual([
+      "execute | public.email_delivery_health() -> service_role",
+      "execute | public.owner_delivery_incidents(uuid) -> authenticated",
+      "execute | public.record_email_sweep_run(integer, integer, integer) -> service_role",
+      "execute | public.resolve_delivery_incident(uuid, text) -> service_role",
+      "execute | public.support_delivery_incidents(boolean) -> service_role",
+      "execute | public.support_email_receipt_outcomes() -> service_role",
+    ]);
+  });
+});
