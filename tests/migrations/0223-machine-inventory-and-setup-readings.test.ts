@@ -50,6 +50,11 @@ const COMMANDS = [
   // ONE SAVE of every settings group, atomically. An ENTRY POINT - granted to
   // `authenticated` - so every posture rule below applies to it unchanged.
   "public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb)",
+  // THE INITIAL SAVE: the treatment area AND its machine settings, in one
+  // transaction. Also an entry point, and the long signature is the price of
+  // DELEGATING the area to 0166's command instead of writing a second path to
+  // `session_blocks` - see the guard below.
+  "public.create_block_with_initial_setup(uuid, uuid, jsonb, jsonb, jsonb, boolean, text, text[], text, uuid, text, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric, uuid, text, text, jsonb)",
 ] as const;
 
 // THE TWO SHARED BUILDING BLOCKS, which are deliberately NOT entry points.
@@ -67,6 +72,38 @@ const INTERNALS = [
   "public.assert_setup_scope(uuid, uuid)",
   "public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid)",
 ] as const;
+
+/**
+ * 0223's code with the DELEGATING WRAPPER removed.
+ *
+ * `create_block_with_initial_setup` creates the treatment area and records the
+ * machine settings in one transaction, and it does that by CALLING 0166's
+ * `create_block_with_entry` rather than writing a block itself - so
+ * `session_blocks` keeps a single write path. Forwarding that command means
+ * DECLARING its twenty-six parameters, whose names are the legacy schema's
+ * vocabulary: `p_apilus_modality`, `p_energy_level`, `p_machine_frequency`.
+ *
+ * Two raw-text bans in this file trip on those names: "0223 reads and
+ * rewrites no existing clinical column", and "no model id belongs in applied
+ * SQL" (which bans the substring `apilus`). Neither is being violated - a
+ * forwarded parameter name is not a read, a write, or a frozen model id - but
+ * a substring ban cannot tell the difference.
+ *
+ * SO THE EXEMPTION IS NARROW AND PAID FOR. The two bans skip this one
+ * function, and in exchange the suite below asserts the thing they were
+ * PROXIES for, directly and more strictly: the wrapper performs no DML at all
+ * against any existing clinical table, and reaches the block only through
+ * 0166's command.
+ */
+function codeWithoutWrapper(): string {
+  const at = CODE.indexOf(
+    "create or replace function public.create_block_with_initial_setup(",
+  );
+  if (at === -1) return CODE;
+  const end = CODE.indexOf("$$;", at);
+  expect(end, "the wrapper must be a complete function body").toBeGreaterThan(at);
+  return CODE.slice(0, at) + CODE.slice(end + 3);
+}
 
 /** The body of one `create or replace function` in the migration. */
 function bodyOf(name: string): string {
@@ -296,14 +333,41 @@ describe("0223 is additive, and touches no existing value", () => {
   it("reads and rewrites no existing clinical column", () => {
     // Named explicitly because these are the ones it would be tempting to
     // reinterpret: the retired percentage and the legacy frequency.
+    //
+    // SCOPED PAST THE DELEGATING WRAPPER, whose parameter names are the legacy
+    // schema's own vocabulary - see `codeWithoutWrapper`. The claim this test
+    // makes about that function is stronger and lives in its own suite: it
+    // performs no DML against any existing clinical table at all.
+    const code = codeWithoutWrapper();
     for (const column of [
       "galvanic_intensity_percent",
       "apilus_modality",
       "energy_level",
       "machine_frequency",
     ]) {
-      expect(CODE, `0223 must not touch ${column}`).not.toContain(column);
+      expect(code, `0223 must not touch ${column}`).not.toContain(column);
     }
+  });
+
+  it("NEGATIVE CONTROL: the exemption is a window, not a hole", () => {
+    // `codeWithoutWrapper` removes exactly one function. If it ever removed
+    // more - a bad anchor, a changed delimiter - these bans would silently
+    // stop applying to most of the migration, and this file would keep
+    // passing. So: the window is small, and the rest is still there.
+    const full = CODE.length;
+    const scoped = codeWithoutWrapper().length;
+    expect(scoped, "the exemption removed nothing").toBeLessThan(full);
+    expect(
+      scoped / full,
+      "the exemption must remove ONE function, not most of the migration",
+    ).toBeGreaterThan(0.85);
+    // And the migration's own substance is unquestionably still in scope.
+    expect(codeWithoutWrapper()).toContain(
+      "create table if not exists public.studio_machines",
+    );
+    expect(codeWithoutWrapper()).toContain(
+      "create or replace function public.record_treatment_setup_submission(",
+    );
   });
 
   it("drops nothing", () => {
@@ -388,6 +452,23 @@ describe("0223 makes the commands the only write path", () => {
         expect(CODE).toContain(`revoke execute on function ${sig} from ${role};`);
       }
       expect(CODE).toContain(`grant execute on function ${sig} to authenticated;`);
+      // AND TO NOTHING ELSE, which this loop did not say until a negative
+      // control showed it: adding a stray `to service_role;` beside the
+      // intended grant left the whole file green. The revokes above are only
+      // half the posture - what is granted BACK is the other half, and a
+      // command the service role can call is a command that runs with no
+      // tenant boundary at all.
+      const grants = [
+        ...CODE.matchAll(
+          new RegExp(
+            `grant execute on function ${sig.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} to (\\w+);`,
+            "g",
+          ),
+        ),
+      ].map((m) => m[1]!);
+      expect(grants, `${sig} must be granted to authenticated ONLY`).toEqual([
+        "authenticated",
+      ]);
     }
   });
 
@@ -401,14 +482,14 @@ describe("0223 makes the commands the only write path", () => {
 
   it("every command is SECURITY DEFINER with a pinned search_path", () => {
     const defs = CODE.match(/create or replace function[\s\S]*?\$\$;/g) ?? [];
-    // Twelve routines now:
-    //   5 inventory/recording write commands (the whole-save command joined)
+    // Thirteen routines now:
+    //   6 inventory/recording write commands (the INITIAL SAVE joined)
     //   1 contract publication command (deployment authority)
     //   1 shared scope assertion      - internal, definer, takes the locks
     //   1 shared per-group writer     - internal, INVOKER on purpose
     //   2 immutability trigger functions (readings, captures)
     //   2 read queries (the latest setup's groups, block history)
-    expect(defs.length).toBe(12);
+    expect(defs.length).toBe(13);
     // Every routine pins its search_path, definer or not.
     for (const d of defs) {
       expect(d).toMatch(/set search_path = pg_catalog, pg_temp/);
@@ -421,7 +502,7 @@ describe("0223 makes the commands the only write path", () => {
     //     so RLS must stay in force rather than be bypassed and
     //     re-implemented. Making a read definer is how a read becomes a leak.
     const definer = defs.filter((d) => /security definer/.test(d));
-    expect(definer).toHaveLength(7); // five writes, publication, scope
+    expect(definer).toHaveLength(8); // six writes, publication, scope
     for (const name of [
       "register_studio_machine",
       "retire_studio_machine",
@@ -429,6 +510,9 @@ describe("0223 makes the commands the only write path", () => {
       "record_treatment_setup_group",
       // ONE SAVE, atomically. A write, and an entry point, so the same rule.
       "record_treatment_setup_submission",
+      // THE INITIAL SAVE - the area and its settings in one transaction. A
+      // write, and the entry point the create form calls.
+      "create_block_with_initial_setup",
       // The shared scope assertion READS session_blocks, sessions and
       // studio_machines and takes row locks on them, none of which a tenant
       // role may do directly. It is definer for the same reason the commands
@@ -654,9 +738,42 @@ describe("0223 keeps model activation out of applied SQL", () => {
         /\bin\s*\(/,
       );
     }
+    // SCOPED PAST THE DELEGATING WRAPPER for `apilus` only in the sense that
+    // the whole function is skipped: `p_apilus_modality` is a legacy CLINICAL
+    // COLUMN's name, not a manufacturer's model id, and this ban exists to
+    // stop an evidence review being frozen into applied SQL. See
+    // `codeWithoutWrapper`.
     for (const id of ["dectro", "silhouettone", "permanence", "gemm", "apilus"]) {
-      expect(CODE.toLowerCase(), `no model id belongs in applied SQL`).not.toContain(
+      expect(
+        codeWithoutWrapper().toLowerCase(),
+        `no model id belongs in applied SQL`,
+      ).not.toContain(id);
+    }
+    // AND THE WRAPPER ITSELF carries no model id either - only the one legacy
+    // column name it is obliged to forward. Asserted rather than assumed,
+    // because the exemption above would otherwise be unbounded.
+    const wrapper = CODE.slice(
+      CODE.indexOf(
+        "create or replace function public.create_block_with_initial_setup(",
+      ),
+    ).split("$$;")[0]!;
+    for (const id of ["dectro", "silhouettone", "permanence", "gemm"]) {
+      expect(wrapper.toLowerCase(), `${id} must not reach the wrapper`).not.toContain(
         id,
+      );
+    }
+    // `apilus` appears ONLY as part of the legacy column's parameter name.
+    //
+    // ASSERTED AS A SHAPE, NOT A COUNT. My first spelling pinned the number of
+    // occurrences at two and the real number is three - the declaration once,
+    // the named forwarding twice on one line - so the count was both wrong and
+    // brittle: it would break again the moment the forwarding was reformatted.
+    // What matters is that every occurrence is that one parameter.
+    const apilusHits = wrapper.toLowerCase().match(/\w*apilus\w*/g) ?? [];
+    expect(apilusHits.length).toBeGreaterThan(0);
+    for (const hit of apilusHits) {
+      expect(hit, "apilus may appear only as p_apilus_modality").toBe(
+        "p_apilus_modality",
       );
     }
   });
@@ -692,5 +809,149 @@ describe("0223 keeps model activation out of applied SQL", () => {
   it("requires a native unit and a precision on every reading", () => {
     expect(CODE).toMatch(/native_unit text not null/);
     expect(CODE).toMatch(/decimals smallint not null check \(decimals between 0 and 6\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE INITIAL SAVE DELEGATES THE AREA, AND THE FORWARDING IS PINNED.
+//
+// `create_block_with_initial_setup` creates the treatment area and records the
+// machine settings in ONE transaction, which closes the only window the two
+// separate commands leave: an area that silently has no machine settings while
+// the practitioner believes she entered them.
+//
+// IT IS NOT ABOUT A PHANTOM OR PARTIAL SUBMISSION. Since the submissions table
+// landed, `record_treatment_setup_submission` writes the submission row and
+// every group's captures in one transaction with no exception handler, so
+// neither is reachable. The residual was block-versus-submission.
+//
+// It closes that by CALLING `create_block_with_entry` (0166) rather than
+// inserting a block itself, so `session_blocks` keeps a SINGLE write path -
+// and the price is forwarding twenty-six parameters. A wrapper that size is
+// exactly the class of SQL that cannot be trusted unexecuted: one wrong
+// parameter name fails only at runtime, which is the 0204 shape.
+//
+// So this suite RE-DERIVES the list from 0166's own declaration and compares.
+// A later redefinition of that command fails here instead of silently
+// diverging from the wrapper. IT REDUCES THE RISK AND DOES NOT REPLACE A
+// DATABASE RUN: a name that matches can still be wired to the wrong value, and
+// only an execution shows that.
+// ---------------------------------------------------------------------------
+describe("0223's INITIAL SAVE forwards 0166's command faithfully", () => {
+  /** `create_block_with_entry`'s own parameter list, from 0166. */
+  function sourceParams(): Array<{ name: string; type: string }> {
+    const src = readFileSync(
+      path.join(
+        process.cwd(),
+        "supabase/migrations/0166_session_block_electrolysis_commands.sql",
+      ),
+      "utf8",
+    );
+    const m =
+      /create or replace function public\.create_block_with_entry\(\n([\s\S]*?)\n\)\nreturns/.exec(
+        src,
+      );
+    expect(m, "0166's create_block_with_entry declaration must be findable").not.toBeNull();
+    return m![1]!
+      .split("\n")
+      .map((l) => l.trim().replace(/,$/, ""))
+      .filter(Boolean)
+      .map((l) => {
+        const [name, ...rest] = l.split(/\s+/);
+        return { name: name!, type: rest.join(" ") };
+      });
+  }
+
+  /** This command's own declaration, from 0223. */
+  function wrapperBlock(): string {
+    const at = CODE.indexOf(
+      "create or replace function public.create_block_with_initial_setup(",
+    );
+    expect(at, "the initial-save command must exist").toBeGreaterThan(-1);
+    return CODE.slice(at).split("$$;")[0]!;
+  }
+
+  it("finds 0166's parameters, so nothing below is vacuous", () => {
+    const p = sourceParams();
+    expect(p.length).toBe(26);
+    expect(p[0]!.name).toBe("p_session_id");
+    expect(p[0]!.type).toBe("uuid");
+    expect(p[p.length - 1]!.name).toBe("p_units_of_lye");
+  });
+
+  it("DECLARES every one of them, in order, with the same type", () => {
+    const decl = wrapperBlock().split(")")[0]!;
+    const lines = decl
+      .split("\n")
+      .map((l) => l.trim().replace(/,$/, ""))
+      .filter((l) => /^p_\w+\s/.test(l))
+      .map((l) => {
+        const [name, ...rest] = l.split(/\s+/);
+        return { name: name!, type: rest.join(" ") };
+      });
+    const source = sourceParams();
+    // The source list first, in order, then this command's own four.
+    expect(lines.slice(0, source.length)).toEqual(source);
+    expect(lines.slice(source.length).map((p) => p.name)).toEqual([
+      "p_studio_machine_id",
+      "p_setup_mode_key",
+      "p_setup_idempotency_key",
+      "p_setup_groups",
+    ]);
+  });
+
+  it("FORWARDS every one BY NAME, never positionally", () => {
+    // Positional forwarding of twenty-six arguments makes a transposition
+    // silent and permanent. Named forwarding makes an order mistake
+    // impossible and leaves only a name mistake, which this catches.
+    const body = wrapperBlock();
+    const call = body.slice(body.indexOf("public.create_block_with_entry("));
+    const forwarded = [...call.matchAll(/(p_\w+)\s*=>\s*(p_\w+)/g)].map((m) => [
+      m[1]!,
+      m[2]!,
+    ]);
+    const names = sourceParams().map((p) => p.name);
+    expect(forwarded.map(([to]) => to)).toEqual(names);
+    // Each one is passed the parameter OF THE SAME NAME. A cross-wire - say
+    // p_energy_level => p_minutes_performed - is the defect this catches, and
+    // it is the one a reader of thirty lines of `=>` will not see.
+    for (const [to, from] of forwarded) {
+      expect(from, `${to} must be forwarded its own argument`).toBe(to);
+    }
+  });
+
+  it("does NOT write session_blocks itself — one write path", () => {
+    const body = wrapperBlock();
+    expect(body).toMatch(/public\.create_block_with_entry\(/);
+    expect(body, "a second write path to session_blocks").not.toMatch(
+      /insert into public\.session_blocks/,
+    );
+    expect(body).not.toMatch(/public\.create_session_block_with_areas\(/);
+  });
+
+  it("CATCHES NOTHING, which is what makes it atomic", () => {
+    // An exception handler here would reintroduce exactly the half-saved state
+    // the command exists to remove: the block committed, the settings not.
+    expect(wrapperBlock()).not.toMatch(/exception\s+when/);
+  });
+
+  it("records the settings through the SHARED save command", () => {
+    // Not a third copy of the per-group rules. One definition, reached from
+    // here too.
+    expect(wrapperBlock()).toMatch(/public\.record_treatment_setup_submission\(/);
+    expect(wrapperBlock()).not.toMatch(/machine_profile_field_contract/);
+    expect(wrapperBlock()).not.toMatch(/insert into public\.treatment_setup_captures/);
+  });
+
+  it("treats NO settings as a valid save, not a refusal", () => {
+    // An area saved with no machine settings is an ordinary state. The
+    // submission command is reached only when there is something to record.
+    const body = wrapperBlock();
+    expect(body).toMatch(/jsonb_array_length\(p_setup_groups\) > 0/);
+    expect(body).toMatch(/'setup', v_setup/);
+  });
+
+  it("refuses to proceed if the area somehow came back empty", () => {
+    expect(wrapperBlock()).toMatch(/The treatment area could not be created/);
   });
 });

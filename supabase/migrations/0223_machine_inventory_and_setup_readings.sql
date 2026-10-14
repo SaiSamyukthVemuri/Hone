@@ -2184,6 +2184,169 @@ comment on function public.setup_capture_history_for_block(uuid) is
   '0223. The captures of one treatment block, oldest first, each with the machine, profile version, mode, channels, recorder, instant and field count it was recorded under. Exposes the CHRONOLOGY of a treatment rather than only the storage rows: a setting changed mid-treatment appears as two captures in order. SECURITY INVOKER, with is_studio_member as a fail-closed second lock.';
 
 -- ---------------------------------------------------------------------------
+-- PART 6 COMMAND — THE INITIAL SAVE: create the area AND record the settings
+-- ---------------------------------------------------------------------------
+--
+-- WHY THIS EXISTS. Creating the treatment area and recording the machine
+-- settings are two commands, so they are two transactions, so the first can
+-- commit and the second fail. The result is an area that silently has NO
+-- machine settings recorded while the practitioner believes she entered them.
+-- `lib/machines/create-and-record.ts` reports that state honestly and keeps
+-- the save retryable, and `MachineRecordedSetups` now shows her what IS
+-- recorded, so the window is visible rather than silent - but visible is not
+-- the same as impossible, and for the INITIAL save it does not have to be
+-- either (Codex, #860 6174886692).
+--
+-- WHAT IS *NOT* THE REASON, because the record should not carry a claim I do
+-- not believe: this is NOT about a phantom or partial submission. Since the
+-- submissions table landed, `record_treatment_setup_submission` inserts the
+-- submission row and every group's captures in ONE transaction with no
+-- exception handler, so a submission with no captures, or with some groups
+-- and not others, is already unreachable. The residual is block-versus-
+-- submission, and that is what this closes.
+--
+-- IT DELEGATES, AND THAT IS THE WHOLE DESIGN. It calls
+-- `create_block_with_entry` (0166) rather than inserting a block itself, so
+-- `session_blocks` keeps a SINGLE write path. A command that wrote the block
+-- directly would be a second one, and the two would drift - 0166's own body
+-- resolves the studio through `assert_session_writable`, reuses 0128/0129's
+-- area boundary, and writes the legacy projection. None of that is
+-- reimplemented here.
+--
+-- THE COST, STATED RATHER THAN HIDDEN. Delegating means forwarding
+-- twenty-six parameters, and a forwarding wrapper of that size is exactly the
+-- class of SQL that cannot be trusted unexecuted: one wrong parameter name
+-- fails only at runtime. 0204 shipped a command writing to a column that did
+-- not exist, applied clean, and had never once succeeded.
+--
+-- Two things reduce that risk and neither replaces a DB run:
+--   1. THIS DECLARATION AND ITS FORWARDING WERE GENERATED from
+--      `create_block_with_entry`'s own declaration in 0166, not typed;
+--   2. a source-contract test re-derives the same list and asserts this
+--      function declares and forwards exactly those names, in that order, so
+--      a later redefinition of 0166's command fails the guard instead of
+--      silently diverging from it.
+--
+-- EVERY ARGUMENT IS PASSED BY NAME. Positional forwarding of twenty-six
+-- arguments would make a transposition silent and permanent; named forwarding
+-- makes an order mistake impossible and leaves only a name mistake, which the
+-- guard above catches.
+--
+-- THE SETTINGS ARE OPTIONAL. With no groups this is exactly
+-- `create_block_with_entry` plus a row count of zero: an area saved with no
+-- machine settings is an ordinary state, and this command must not invent a
+-- reason to refuse it.
+create or replace function public.create_block_with_initial_setup(
+  p_session_id                     uuid,
+  p_client_id                      uuid,
+  p_block                          jsonb,
+  p_block_extra                    jsonb,
+  p_areas                          jsonb,
+  p_with_entry                     boolean,
+  p_area                           text,
+  p_areas_list                     text[],
+  p_probe_size                     text,
+  p_probe_lot_id                   uuid,
+  p_mode                           text,
+  p_pulse_count                    integer,
+  p_pulse_delay_seconds            numeric,
+  p_comments                       text,
+  p_observation_chips              jsonb,
+  p_apilus_modality                text,
+  p_energy_level                   integer,
+  p_minutes_performed              integer,
+  p_probe_type                     text,
+  p_machine_frequency              text,
+  p_hairs_treated                  integer,
+  p_galvanic_ma                    numeric,
+  p_galvanic_duration_seconds      integer,
+  p_thermolysis_intensity_percent  integer,
+  p_thermolysis_duration_seconds   numeric,
+  p_units_of_lye                   numeric,
+  -- The machine settings half. Null/empty means "no settings to record",
+  -- which is a valid save.
+  p_studio_machine_id              uuid,
+  p_setup_mode_key                 text,
+  p_setup_idempotency_key          text,
+  p_setup_groups                   jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_block_id uuid;
+  v_entry_id uuid;
+  v_setup jsonb := null;
+begin
+  -- THE AREA FIRST, through the one command that creates one.
+  select c.block_id, c.entry_id
+    into v_block_id, v_entry_id
+    from public.create_block_with_entry(
+    p_session_id                    => p_session_id,
+    p_client_id                     => p_client_id,
+    p_block                         => p_block,
+    p_block_extra                   => p_block_extra,
+    p_areas                         => p_areas,
+    p_with_entry                    => p_with_entry,
+    p_area                          => p_area,
+    p_areas_list                    => p_areas_list,
+    p_probe_size                    => p_probe_size,
+    p_probe_lot_id                  => p_probe_lot_id,
+    p_mode                          => p_mode,
+    p_pulse_count                   => p_pulse_count,
+    p_pulse_delay_seconds           => p_pulse_delay_seconds,
+    p_comments                      => p_comments,
+    p_observation_chips             => p_observation_chips,
+    p_apilus_modality               => p_apilus_modality,
+    p_energy_level                  => p_energy_level,
+    p_minutes_performed             => p_minutes_performed,
+    p_probe_type                    => p_probe_type,
+    p_machine_frequency             => p_machine_frequency,
+    p_hairs_treated                 => p_hairs_treated,
+    p_galvanic_ma                   => p_galvanic_ma,
+    p_galvanic_duration_seconds     => p_galvanic_duration_seconds,
+    p_thermolysis_intensity_percent => p_thermolysis_intensity_percent,
+    p_thermolysis_duration_seconds  => p_thermolysis_duration_seconds,
+    p_units_of_lye                  => p_units_of_lye
+    ) c;
+
+  if v_block_id is null then
+    raise exception 'The treatment area could not be created.'
+      using errcode = 'no_data_found';
+  end if;
+
+  -- THEN THE SETTINGS, IN THE SAME TRANSACTION. No exception handler, which
+  -- is what makes this atomic: a refusal below aborts the whole call and the
+  -- block created above rolls back with it. Catching anything here would
+  -- reintroduce precisely the half-saved state the command exists to remove.
+  if p_setup_groups is not null
+     and jsonb_typeof(p_setup_groups) = 'array'
+     and jsonb_array_length(p_setup_groups) > 0 then
+    v_setup := public.record_treatment_setup_submission(
+      v_block_id,
+      p_studio_machine_id,
+      p_setup_mode_key,
+      p_setup_idempotency_key,
+      p_setup_groups
+    );
+  end if;
+
+  return jsonb_build_object(
+    'block_id', v_block_id,
+    'entry_id', v_entry_id,
+    -- NULL when nothing was entered, which the caller must be able to tell
+    -- apart from a save that recorded zero readings.
+    'setup', v_setup
+  );
+end;
+$$;
+
+comment on function public.create_block_with_initial_setup(uuid, uuid, jsonb, jsonb, jsonb, boolean, text, text[], text, uuid, text, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric, uuid, text, text, jsonb) is
+  '0223. THE INITIAL SAVE of a treatment area together with the machine settings recorded on it, in ONE transaction: either the area and its settings both exist or neither does. Closes the only window the two separate commands leave - an area that silently has no machine settings while the practitioner believes she entered them. NOT about a phantom or partial submission: record_treatment_setup_submission has been atomic in itself since the submissions table landed. DELEGATES the area to create_block_with_entry (0166) so session_blocks keeps a single write path, forwarding all twenty-six parameters BY NAME; the declaration and forwarding were generated from that function''s own declaration and are pinned by a source-contract guard, which reduces but does not replace a database run. The settings are OPTIONAL - an area saved with none is an ordinary state. Returns {block_id, entry_id, setup}, where setup is NULL when nothing was entered and otherwise the submission result including its reused flag.';
+
+-- ---------------------------------------------------------------------------
 -- GRANTS — re-asserted by name on every command
 -- ---------------------------------------------------------------------------
 --
@@ -2246,6 +2409,13 @@ revoke execute on function public.record_treatment_setup_submission(uuid, uuid, 
 revoke execute on function public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb) from authenticated;
 revoke execute on function public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb) from service_role;
 grant execute on function public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb) to authenticated;
+
+-- THE INITIAL SAVE. An entry point: it is what the create form calls.
+revoke execute on function public.create_block_with_initial_setup(uuid, uuid, jsonb, jsonb, jsonb, boolean, text, text[], text, uuid, text, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric, uuid, text, text, jsonb) from public;
+revoke execute on function public.create_block_with_initial_setup(uuid, uuid, jsonb, jsonb, jsonb, boolean, text, text[], text, uuid, text, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric, uuid, text, text, jsonb) from anon;
+revoke execute on function public.create_block_with_initial_setup(uuid, uuid, jsonb, jsonb, jsonb, boolean, text, text[], text, uuid, text, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric, uuid, text, text, jsonb) from authenticated;
+revoke execute on function public.create_block_with_initial_setup(uuid, uuid, jsonb, jsonb, jsonb, boolean, text, text[], text, uuid, text, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric, uuid, text, text, jsonb) from service_role;
+grant execute on function public.create_block_with_initial_setup(uuid, uuid, jsonb, jsonb, jsonb, boolean, text, text[], text, uuid, text, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric, uuid, text, text, jsonb) to authenticated;
 
 -- The immutability trigger function is internal: nothing may call it directly.
 -- A READ, but granted exactly as explicitly as the writes: Supabase's ALTER
