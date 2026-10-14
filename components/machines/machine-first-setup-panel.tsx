@@ -23,6 +23,7 @@ import type {
 } from "@/lib/machines/machine-queries";
 import { MachineReadingEntry } from "./machine-reading-entry";
 import { MachinePriorSetup } from "./machine-prior-setup";
+import { MachineRecordedSetups } from "./machine-recorded-setups";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
 import { nativeFieldGroups } from "@/lib/machines/charting";
 import {
@@ -92,7 +93,7 @@ export type MachineFirstSetupPanelProps = {
    * Recorded unit id -> the studio's name for it, for next-visit guidance.
    * Resolved on the server, where retired units are visible.
    */
-  priorUnitNames?: Readonly<Record<string, string>>;
+  unitNames?: Readonly<Record<string, string>>;
   /** Injectable for tests and for a future studio-scoped catalogue. */
   catalogue?: readonly MachineProfile[];
   /**
@@ -112,6 +113,14 @@ export type MachineFirstSetupPanelProps = {
   canManageMachines?: boolean;
   /** The studio's most recent recorded setup, for next-visit prep. */
   priorSetup?: RecordedReading[];
+  /**
+   * What is ALREADY RECORDED against this block.
+   *
+   * Closes the defect that a recorded capture was permanent and invisible:
+   * after a page load the only thing she saw was nothing, so her options were
+   * to re-record - appending a second immutable capture - or to guess.
+   */
+  recordedSetup?: RecordedReading[];
   /**
    * Persists the chosen machine as this practitioner's default. Supplied by
    * the connected wrapper.
@@ -192,8 +201,9 @@ export function MachineFirstSetupPanel({
   blockId = null,
   canManageMachines = false,
   priorSetup = [],
+  recordedSetup = [],
   unavailableSelection = null,
-  priorUnitNames = {},
+  unitNames = {},
   onSelectMachine,
   onRecord,
 }: MachineFirstSetupPanelProps) {
@@ -581,10 +591,24 @@ export function MachineFirstSetupPanel({
         </p>
       )}
 
+      {/*
+        WHAT SHE HAS ALREADY RECORDED TODAY, ABOVE what she did last time, and
+        both above the entry fields. The order is the order of the questions
+        she actually asks: which machine, what have I already recorded on this
+        treatment, what did she have last time, and then what am I entering
+        now. Putting today's record below last visit's reference would bury
+        the one that stops a double capture.
+      */}
+      <MachineRecordedSetups
+        readings={recordedSetup}
+        catalogue={catalogue}
+        unitNames={unitNames}
+      />
+
       <MachinePriorSetup
         readings={priorSetup}
         catalogue={catalogue}
-        unitNames={priorUnitNames}
+        unitNames={unitNames}
       />
 
       <PersistenceStatus

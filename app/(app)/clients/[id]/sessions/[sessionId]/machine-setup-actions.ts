@@ -127,6 +127,21 @@ export type MachineSetupContext = {
   /** The most recent recorded setup in this studio, for next-visit prep. */
   priorSetup: RecordedReading[];
   /**
+   * What is ALREADY RECORDED against the block being charted.
+   *
+   * THE DEFECT THIS CLOSES: a recorded capture was permanent and INVISIBLE.
+   * `setup_capture_history_for_block` and `readingsForBlockAction` were both
+   * built, granted and proved against Postgres, and neither reached a screen,
+   * so after a page load the practitioner saw nothing and could only
+   * re-record - appending a second immutable capture indistinguishable from a
+   * genuine mid-treatment change - or guess.
+   *
+   * EMPTY WITHOUT A BLOCK ID, which is not a special case to apologise for: in
+   * create mode the block has no row, so there is nothing recorded against it
+   * yet, by definition.
+   */
+  recordedSetup: RecordedReading[];
+  /**
    * Recorded unit id -> the studio's own name for it.
    *
    * Resolved here rather than in the component because only the server can see
@@ -134,8 +149,13 @@ export type MachineSetupContext = {
    * reach a picker, which also meant nothing could NAME one. A studio with two
    * units of the same model needs the name most once one is out of service
    * (Codex, 27061e88).
+   *
+   * RENAMED from `priorUnitNames` when the recorded-setup surface landed. It
+   * now names the units of BOTH reads plus the unusable stored selection, from
+   * one lookup, so a name tied to the prior setup alone was misleading - and a
+   * misleading field name on a clinical surface is worth a mechanical rename.
    */
-  priorUnitNames: Record<string, string>;
+  unitNames: Record<string, string>;
 };
 
 const ANONYMOUS: MachineSetupContext = {
@@ -148,7 +168,8 @@ const ANONYMOUS: MachineSetupContext = {
   catalogue: [],
   canManageMachines: false,
   priorSetup: [],
-  priorUnitNames: {},
+  recordedSetup: [],
+  unitNames: {},
 };
 
 /** Everything the panel needs, derived entirely on the server. */
@@ -156,6 +177,17 @@ export async function loadMachineSetupContext(input: {
   /** Route values. Authorized below against the server-derived studio. */
   clientId: string;
   sessionId: string;
+  /**
+   * The settings block being charted, when one exists.
+   *
+   * FOLDED INTO THIS LOAD RATHER THAN A SECOND ACTION CALL, deliberately. The
+   * panel loads on demand precisely because an extra server-action POST to
+   * this route broke two browser specs - repeat-client-fast-charting
+   * classifies any POST without an idempotencyKey as a source re-read, and
+   * conditional-numbing-notes lost its save to a racing round trip. Reading
+   * the block's captures in a SECOND call would reintroduce exactly that.
+   */
+  blockId?: string | null;
 }): Promise<MachineSetupContext> {
   const scope = await identity();
   if (!scope) return ANONYMOUS;
@@ -252,16 +284,32 @@ export async function loadMachineSetupContext(input: {
   // Degrades silently: if this read fails, names are simply absent and the
   // wording stays as resolved. A failed cosmetic lookup must not cost the
   // practitioner the setup itself.
-  const priorUnitNames: Record<string, string> = {};
+  // WHAT IS ALREADY RECORDED against the block being charted, read in the
+  // SAME round trip. Empty without a block, which in create mode is simply
+  // true: the block has no row, so nothing is recorded against it.
+  //
+  // Degrades to empty on a failed read rather than throwing. This surface is
+  // reassurance - "here is what you have already recorded" - and a failed
+  // cosmetic read must not cost her the chart.
+  const recorded = input.blockId
+    ? await readingsForBlock(db, input.blockId)
+    : null;
+  const recordedSetup = recorded?.ok ? recorded.value : [];
+
+  const unitNames: Record<string, string> = {};
   const needNames = [
     ...priorSetup.map((r) => r.deviceId),
+    // THE RECORDED BLOCK'S UNITS TOO, in the same lookup. A treatment recorded
+    // on a unit that has since been retired is exactly the case that must
+    // still name it, and only the server can see one.
+    ...recordedSetup.map((r) => r.deviceId),
     ...(rememberedUnavailable ? [rememberedUnavailable.deviceId] : []),
   ].filter((id): id is string => typeof id === "string" && id.length > 0);
 
   if (needNames.length > 0) {
     const named = await machinesByIds(db, scope.studioId, needNames);
     if (named.ok) {
-      for (const m of named.value) priorUnitNames[m.deviceId] = m.displayName;
+      for (const m of named.value) unitNames[m.deviceId] = m.displayName;
       if (rememberedUnavailable) {
         const stored = named.value.find(
           (m) => m.deviceId === rememberedUnavailable!.deviceId,
@@ -286,7 +334,8 @@ export async function loadMachineSetupContext(input: {
     catalogue,
     canManageMachines: who?.practitioner.role === "owner",
     priorSetup,
-    priorUnitNames,
+    recordedSetup,
+    unitNames,
   };
 }
 

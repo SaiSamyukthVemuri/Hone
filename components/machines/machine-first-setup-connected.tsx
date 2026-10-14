@@ -84,7 +84,7 @@ export function MachineFirstSetupConnected({
           const mod = await import(
             "@/app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions"
           );
-          return mod.loadMachineSetupContext({ clientId, sessionId });
+          return mod.loadMachineSetupContext({ clientId, sessionId, blockId });
         });
       setCtx(await loader());
       setState("idle");
@@ -93,7 +93,7 @@ export function MachineFirstSetupConnected({
       // reported in place rather than escalated.
       setState("failed");
     }
-  }, [load, clientId, sessionId]);
+  }, [load, clientId, sessionId, blockId]);
 
   if (!ctx) {
     return (
@@ -194,7 +194,17 @@ export function MachineFirstSetupConnected({
       // inert in production while the direct-render tests passed - they supply
       // the prop themselves and so cannot see a wiring gap
       // (Codex, 2351742d).
-      priorUnitNames={ctx.priorUnitNames}
+      unitNames={ctx.unitNames}
+      // WHAT IS ALREADY RECORDED against this block. Forwarded here, which is
+      // the step that was missing for `priorUnitNames` and the remembered
+      // mode: both existed in the loader, the props and the panel's own
+      // forwarding, and died HERE, so the feature was inert in production
+      // while every direct-render test passed (Codex, 2351742d and 15cc6c99).
+      // The context-forwarding guard in
+      // tests/components/machine-first-setup-panel.test.ts derives the field
+      // list from MachineSetupContext's own declaration, so this line is not
+      // optional - omitting it fails that test.
+      recordedSetup={ctx.recordedSetup}
       blockId={blockId}
       onSelectMachine={select ?? onSelectMachine}
       onRecord={onRecord}

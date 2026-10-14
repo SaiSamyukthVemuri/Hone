@@ -428,7 +428,16 @@ describe("the connected wrapper makes NO request until asked", () => {
     // test conflated them: it demanded a no-argument loader, which is exactly
     // what made the prior-setup read fall back to the whole studio and show
     // one client's settings on another's chart (Codex, 9c6fbbe5).
-    expect(code).toMatch(/loadMachineSetupContext\(\{\s*clientId,\s*sessionId\s*\}\)/);
+    // `blockId` joined the argument list when the recorded-setup read was
+    // folded into this SAME round trip. It is the same KIND of value as the
+    // other two - which block is open is a route subject, not an authority
+    // claim, and the server authorizes it - so the regex admits it rather than
+    // this test demanding a shape that would force a SECOND server-action
+    // POST, which is what broke repeat-client-fast-charting and
+    // conditional-numbing-notes before.
+    expect(code).toMatch(
+      /loadMachineSetupContext\(\{\s*clientId,\s*sessionId,\s*blockId\s*\}\)/,
+    );
     // No ownership, in any spelling.
     expect(code).not.toMatch(/studioId/);
     expect(code).not.toMatch(/practitionerId/);
@@ -881,7 +890,7 @@ describe("next-visit guidance names the unit, not just the model", () => {
       devices: [DEVICE],
       catalogue: CAT,
       priorSetup: [reading()],
-      priorUnitNames: { [DEVICE.deviceId]: "Room 9 unit" },
+      unitNames: { [DEVICE.deviceId]: "Room 9 unit" },
     });
     expect(html).toContain('data-testid="prior-setup-unit"');
     const prior = html.slice(html.indexOf('data-testid="machine-prior-setup"'));
@@ -911,7 +920,7 @@ describe("next-visit guidance names the unit, not just the model", () => {
       devices: [DEVICE],
       catalogue: CAT,
       priorSetup: [reading({ deviceId: "device-no-longer-listed" })],
-      priorUnitNames: { [DEVICE.deviceId]: "Room 9 unit" },
+      unitNames: { [DEVICE.deviceId]: "Room 9 unit" },
     });
     const prior = html.slice(html.indexOf('data-testid="machine-prior-setup"'));
     expect(prior).not.toContain("device-no-longer-listed");
@@ -935,7 +944,7 @@ describe("next-visit guidance names the unit, not just the model", () => {
       devices: [], // retired units are absent from the picker, as in production
       catalogue: CAT,
       priorSetup: [reading()],
-      priorUnitNames: { [DEVICE.deviceId]: "Room 9 unit" },
+      unitNames: { [DEVICE.deviceId]: "Room 9 unit" },
     });
     const prior = html.slice(html.indexOf('data-testid="machine-prior-setup"'));
     expect(prior).toContain("Room 9 unit");
@@ -1006,7 +1015,15 @@ describe("the connected wrapper forwards the whole context", () => {
     // matching, this fails here rather than passing an empty loop below.
     expect(fields.length).toBeGreaterThanOrEqual(8);
     expect(fields).toContain("priorSetup");
-    expect(fields).toContain("priorUnitNames");
+    // RENAMED from `priorUnitNames` when the recorded-setup surface landed:
+    // one lookup now names the units of BOTH reads plus the unusable stored
+    // selection, so a name tied to the prior setup alone was misleading.
+    expect(fields).toContain("unitNames");
+    // WHAT IS ALREADY RECORDED against the block being charted. The field
+    // exists because a recorded capture was permanent and INVISIBLE - both
+    // reads were built, granted and proved against Postgres, and neither ever
+    // reached a screen.
+    expect(fields).toContain("recordedSetup");
     expect(fields).toContain("persistence");
   });
 
@@ -1543,7 +1560,7 @@ describe("the Previous treatment reference", () => {
     devices: [DEVICE],
     catalogue: CAT,
     priorSetup: prior,
-    priorUnitNames: { [DEVICE.deviceId]: "Room 9 unit" },
+    unitNames: { [DEVICE.deviceId]: "Room 9 unit" },
   });
 
   it("is labelled as PREVIOUS, not as a current reading", () => {
@@ -1590,7 +1607,7 @@ describe("the Previous treatment reference", () => {
       blockId: "block-1",
       onRecord: async () => ({ ok: true }),
       priorSetup: prior,
-      priorUnitNames: { [DEVICE.deviceId]: "Room 9 unit" },
+      unitNames: { [DEVICE.deviceId]: "Room 9 unit" },
     });
     const input = (withEntry.match(/<input[^>]*>/g) ?? []).find((t) =>
       t.includes('data-testid="reading-current"'),
@@ -1606,5 +1623,96 @@ describe("the Previous treatment reference", () => {
     const none = render({ scope: SCOPE, devices: [DEVICE], catalogue: CAT });
     expect(none).not.toContain('data-testid="machine-prior-setup"');
     expect(none).not.toContain("Previous treatment");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WHAT IS ALREADY RECORDED reaches the practitioner.
+//
+// A recorded capture was permanent and INVISIBLE: nothing in the application
+// read what had already been recorded against the block being charted, so
+// after a page load the only thing she saw was nothing, and her options were
+// to re-record - appending a second immutable capture indistinguishable from
+// a genuine mid-treatment change - or to guess.
+//
+// The surface itself is proved in tests/components/machine-recorded-setups.
+// What is proved HERE is that the panel renders it at all, in the right place,
+// and only when there is something to show - which is the part a direct test
+// of the component cannot see.
+// ---------------------------------------------------------------------------
+describe("the panel shows what is already recorded on this block", () => {
+  const recorded = [
+    {
+      blockId: "block-1",
+      captureId: "cap-1",
+      revision: 1,
+      deviceId: DEVICE.deviceId,
+      profileId: "fixture:panel",
+      profileVersion: 1,
+      modeKey: "galvanic",
+      groupKey: "g1",
+      channels: [],
+      stageKey: null,
+      fieldKey: "current",
+      value: { kind: "value" as const, value: 120 },
+      nativeUnit: "µA",
+      decimals: 0,
+      recordedAt: "2026-10-14T14:00:00Z",
+    },
+  ];
+
+  it("renders the recorded surface when there is something recorded", () => {
+    const html = render({
+      scope: SCOPE,
+      devices: [DEVICE],
+      catalogue: CAT,
+      recordedSetup: recorded,
+      unitNames: { [DEVICE.deviceId]: "Room 9 unit" },
+    });
+    expect(html).toContain('data-testid="machine-recorded-setups"');
+    expect(html).toContain("Recorded this treatment");
+  });
+
+  it("renders NOTHING of it when nothing is recorded", () => {
+    // The default. A heading over no content reads as a surface that failed
+    // to load, which is the opposite of the reassurance it exists to give.
+    const html = render({ scope: SCOPE, devices: [DEVICE], catalogue: CAT });
+    expect(html).not.toContain('data-testid="machine-recorded-setups"');
+    expect(html).not.toContain("Recorded this treatment");
+  });
+
+  it("puts TODAY'S RECORD ABOVE last visit's reference", () => {
+    // The order of the questions she actually asks. Putting today's record
+    // below last visit's reference buries the one that stops a double
+    // capture.
+    const html = render({
+      scope: SCOPE,
+      devices: [DEVICE],
+      catalogue: CAT,
+      recordedSetup: recorded,
+      priorSetup: recorded.map((r) => ({ ...r, blockId: "older-block" })),
+      unitNames: { [DEVICE.deviceId]: "Room 9 unit" },
+    });
+    const recordedAt = html.indexOf('data-testid="machine-recorded-setups"');
+    const priorAt = html.indexOf('data-testid="machine-prior-setup"');
+    expect(recordedAt).toBeGreaterThan(-1);
+    expect(priorAt).toBeGreaterThan(-1);
+    expect(recordedAt, "today's record must come first").toBeLessThan(priorAt);
+  });
+
+  it("names the recorded unit from the SAME map that names the prior one", () => {
+    // One server lookup feeds both, which is why the context field is called
+    // `unitNames` and not `priorUnitNames` any more.
+    const html = render({
+      scope: SCOPE,
+      devices: [DEVICE],
+      catalogue: CAT,
+      recordedSetup: recorded,
+      unitNames: { [DEVICE.deviceId]: "Room 9 unit" },
+    });
+    const section = html.slice(
+      html.indexOf('data-testid="machine-recorded-setups"'),
+    );
+    expect(section).toContain("Room 9 unit");
   });
 });

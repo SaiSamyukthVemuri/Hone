@@ -1200,3 +1200,122 @@ describe("a RETIRED remembered machine is named as retired, not as missing", () 
     expect(ctx.rememberedUnavailable?.reason).not.toMatch(/no longer registered/i);
   });
 });
+
+// ===========================================================================
+// THE LOADER READS WHAT IS ALREADY RECORDED — in the SAME round trip.
+//
+// Folded into `loadMachineSetupContext` rather than a second action call, and
+// that is not a micro-optimisation: the panel loads on demand precisely
+// because an extra server-action POST to this route broke two browser specs.
+// repeat-client-fast-charting classifies any POST without an idempotencyKey as
+// a source re-read, and conditional-numbing-notes lost its save to a racing
+// round trip. A second call for the captures would reintroduce exactly that.
+// ===========================================================================
+
+describe("loadMachineSetupContext reads the block's recorded captures", () => {
+  const READING_ROW = {
+    session_block_id: "block-1",
+    capture_id: "cap-1",
+    revision: 1,
+    studio_machine_id: "dev-1",
+    machine_profile_id: "synthetic:demo-multineedle",
+    machine_profile_version: 2,
+    mode_key: "galvanic",
+    group_key: "g1",
+    channels: [],
+    stage_key: null,
+    field_key: "current",
+    value_numeric: "120",
+    absence_reason: null,
+    native_unit: "µA",
+    decimals: 0,
+    observation_source: "practitioner-entered",
+    recorded_at: "2026-10-14T14:00:00Z",
+    recorded_by_practitioner_id: "pract-sabrina",
+  };
+
+  it("returns them when a block is being charted", async () => {
+    signIn("studio-fett", "pract-sabrina", "owner");
+    DB.rowsFor = { treatment_setup_readings: [READING_ROW] };
+    const ctx = await actions.loadMachineSetupContext({
+      clientId: "client-1",
+      sessionId: "session-1",
+      blockId: "block-1",
+    });
+    expect(ctx.recordedSetup).toHaveLength(1);
+    expect(ctx.recordedSetup[0]!.fieldKey).toBe("current");
+    expect(ctx.recordedSetup[0]!.captureId).toBe("cap-1");
+  });
+
+  it("returns NONE without a block, which in create mode is simply true", async () => {
+    // The block has no row yet, so nothing is recorded against it. The read
+    // must not happen at all rather than returning something arbitrary.
+    signIn("studio-fett", "pract-sabrina", "owner");
+    DB.rowsFor = { treatment_setup_readings: [READING_ROW] };
+    const ctx = await actions.loadMachineSetupContext({
+      clientId: "client-1",
+      sessionId: "session-1",
+    });
+    expect(ctx.recordedSetup).toEqual([]);
+  });
+
+  it("degrades to EMPTY when the read fails, rather than losing the chart", async () => {
+    // This surface is reassurance. A failed cosmetic read must not cost her
+    // the machine panel, so it must not throw.
+    signIn("studio-fett", "pract-sabrina", "owner");
+    DB.errorFor = { treatment_setup_readings: { message: "boom" } };
+    const ctx = await actions.loadMachineSetupContext({
+      clientId: "client-1",
+      sessionId: "session-1",
+      blockId: "block-1",
+    });
+    expect(ctx.recordedSetup).toEqual([]);
+    // And the rest of the context still resolved.
+    expect(ctx.scope).not.toBeNull();
+  });
+
+  it("asks for the recorded unit's NAME too, in ONE lookup", async () => {
+    // A treatment recorded on a unit that has since been retired is exactly
+    // the case that must still name it, and only the server can see one.
+    // `machinesByIds` has no retired filter; the device list does.
+    signIn("studio-fett", "pract-sabrina", "owner");
+    DB.rowsFor = {
+      treatment_setup_readings: [READING_ROW],
+      studio_machines: [
+        {
+          id: "dev-1",
+          studio_id: "studio-fett",
+          machine_profile_id: "synthetic:demo-multineedle",
+          machine_profile_version: 2,
+          display_name: "Room 9 unit",
+          installed_options: [],
+          retired_at: "2026-10-01T00:00:00Z",
+        },
+      ],
+    };
+    const ctx = await actions.loadMachineSetupContext({
+      clientId: "client-1",
+      sessionId: "session-1",
+      blockId: "block-1",
+    });
+    expect(ctx.unitNames["dev-1"]).toBe("Room 9 unit");
+  });
+
+  it("reads the captures through ONE round trip, with no second action", () => {
+    // Source-pinned, because the cost this avoids is invisible in a unit test:
+    // the fix is that `loadMachineSetupContext` takes the block id, so there
+    // is no separate call to make.
+    const src = readFileSync(
+      path.resolve(
+        __dirname,
+        "../../../components/machines/machine-first-setup-connected.tsx",
+      ),
+      "utf8",
+    ).replace(/^\s*(\/\/|\*|\/\*).*$/gm, " ");
+    expect(src).toMatch(
+      /loadMachineSetupContext\(\{\s*clientId,\s*sessionId,\s*blockId\s*\}\)/,
+    );
+    // And the wrapper does NOT call the per-block read separately.
+    expect(src).not.toMatch(/readingsForBlockAction/);
+  });
+});
