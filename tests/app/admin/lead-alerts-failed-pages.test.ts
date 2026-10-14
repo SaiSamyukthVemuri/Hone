@@ -112,3 +112,26 @@ describe("possible duplicates are said out loud", () => {
     expect(html).not.toContain("Send again anyway");
   });
 });
+
+// Codex P2 4276835172: every failed row links to its own lead, so the
+// operator can reconcile the right message before accepting a duplicate risk.
+describe("each failed alert links to its lead", () => {
+  it("a demo request row links to /admin/leads/demo-request/<id>", () => {
+    const html = render({ ...view(1, 1), failed: [{ ...failedRow(0), demo_request_id: "11111111-1111-4111-8111-111111111111", last_error_code: "provider_timeout" }] });
+    expect(html).toContain('href="/admin/leads/demo-request/11111111-1111-4111-8111-111111111111"');
+    expect(html).toContain('data-testid="lead-alert-failed-lead-link"');
+  });
+
+  it("an early-access row links to /admin/leads/early-access/<id>", () => {
+    const html = render({
+      ...view(1, 1),
+      failed: [{ ...failedRow(0), lead_kind: "early_access", demo_request_id: null, waitlist_id: "22222222-2222-4222-8222-222222222222" }],
+    });
+    expect(html).toContain('href="/admin/leads/early-access/22222222-2222-4222-8222-222222222222"');
+  });
+
+  it("every row on a full page has its own link", () => {
+    const html = render(view(1, 23));
+    expect(html.match(/data-testid="lead-alert-failed-lead-link"/g)).toHaveLength(10);
+  });
+});

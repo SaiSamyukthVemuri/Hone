@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
   leadAlertMayHaveBeenSent,
+  leadDetailPath,
   describeLeadAlert,
   leadAlertReason,
   LEAD_ALERT_MAX_ATTEMPTS,
@@ -231,9 +232,22 @@ export function LeadAlertsCard({
           <h3 className="text-sm font-medium">Failed alerts</h3>
           <FailedPager page={view.failedPage} shown={view.failed.length} total={view.counts.failed} />
           <ul className="mt-2 flex flex-col gap-2 text-sm">
-            {view.failed.map((a) => (
+            {view.failed.map((a) => {
+              // WHICH LEAD (Codex P2 4276835172): the operator must be able to
+              // reconcile THIS alert against the inbox, whatever page of the
+              // lead tables it has fallen off. The kind and the minute are not
+              // an identity; the lead's own page is.
+              const leadId = a.lead_kind === "demo_request" ? a.demo_request_id : a.waitlist_id;
+              const label = a.lead_kind === "demo_request" ? "Demo request" : "Early-access signup";
+              return (
               <li key={a.id} className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <span>{a.lead_kind === "demo_request" ? "Demo request" : "Early-access signup"}</span>
+                {leadId ? (
+                  <a className="underline" href={leadDetailPath(a.lead_kind, leadId)} data-testid="lead-alert-failed-lead-link">
+                    {label}
+                  </a>
+                ) : (
+                  <span>{label}</span>
+                )}
                 <span className="text-xs opacity-80">
                   saved <FormattedDateTime iso={a.created_at} />
                 </span>
@@ -270,7 +284,8 @@ export function LeadAlertsCard({
                   </form>
                 )}
               </li>
-            ))}
+              );
+            })}
           </ul>
         </div>
       )}
