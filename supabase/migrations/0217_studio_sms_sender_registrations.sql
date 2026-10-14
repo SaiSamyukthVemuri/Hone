@@ -69,6 +69,14 @@ create table public.studio_sms_sender_registrations (
   -- A +1 number only (the CA/US scope of #824).
   constraint studio_sms_sender_registrations_phone_ck
     check (phone_number ~ '^\+1[2-9][0-9]{2}[2-9][0-9]{6}$'),
+  -- ONLY NUMBERS HONE SERVES (Codex P2 4274747633): lib/sms/nanp.ts
+  -- classifyNanpNumber calls the Caribbean/Atlantic members `other_nanp` and an
+  -- N11 code no area code at all; neither has a registration kind
+  -- (registrationKindFor), so neither may be stored as one. The list is
+  -- OTHER_NANP_AREA_CODES exactly (pinned by test).
+  constraint studio_sms_sender_registrations_supported_number_ck
+    check (phone_number !~ '^\+1(242|246|264|268|284|345|441|473|649|658|664|721|758|767|784|809|829|849|868|869|876)'
+           and phone_number !~ '^\+1[2-9]11'),
   -- THE KIND IS THE NUMBER'S: 8XX toll-free (lib/sms/nanp.ts
   -- TOLL_FREE_AREA_CODES) is held to toll-free verification, every other +1
   -- long code to A2P 10DLC. No other pairing can be stored.
@@ -167,6 +175,14 @@ begin
   -- ... and only the NUMBER the operator verified, on that same sender.
   if v_phones[1] <> p_expected_phone then
     return query select 'sender_changed'::text, null::uuid, null::text, null::text;
+    return;
+  end if;
+
+  -- ONLY A NUMBER HONE SERVES (Codex P2 4274747633): an other-NANP member or an
+  -- N11 code has no registration kind (lib/sms/nanp.ts, registrationKindFor).
+  -- Refused here as well as by the table, for any service-role caller.
+  if v_phones[1] ~ '^\+1(242|246|264|268|284|345|441|473|649|658|664|721|758|767|784|809|829|849|868|869|876)' or v_phones[1] ~ '^\+1[2-9]11' then
+    return query select 'unsupported_number'::text, null::uuid, null::text, null::text;
     return;
   end if;
 

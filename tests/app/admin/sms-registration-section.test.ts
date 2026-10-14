@@ -170,3 +170,24 @@ describe("a replacement sender gets a fresh form (Codex P2 4253596170)", () => {
 
 
 });
+
+// Codex P2 4274699533: the kept result must never read as the replacement
+// sender's approval.
+describe("success names the number it recorded for", () => {
+  it("says which number, and says plainly when the studio's number has since changed", async () => {
+    const { successText } = await import("@/app/admin/studios/[id]/SmsRegistrationForm");
+    expect(successText("+12125550123", "+12125550123")).toBe("Recorded for +12125550123.");
+    const moved = successText("+12125550123", "+12125550199");
+    expect(moved).toMatch(/^Recorded for \+12125550123\. That is no longer this studio's number; nothing is recorded for the number shown now\.$/);
+    expect(moved).not.toContain("+12125550199");
+    // The sender released (no number shown any more).
+    expect(successText("+12125550123", null)).toMatch(/no longer this studio's number/);
+  });
+
+  it("the panel renders success through successText with the number shown now", async () => {
+    const { readFileSync } = await import("node:fs");
+    const form = readFileSync("app/admin/studios/[id]/SmsRegistrationForm.tsx", "utf8");
+    expect(form).toMatch(/state\.ok \? successText\(state\.phoneNumber, target\?\.phoneNumber \?\? null\)/);
+    expect(form).not.toMatch(/state\.ok \? "Recorded\."/);
+  });
+});

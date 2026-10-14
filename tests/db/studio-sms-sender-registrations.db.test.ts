@@ -495,3 +495,30 @@ describe("concurrent registration writes take turns, and a stale form never wins
     expect((await snapshot(other.studioId)).registrations).toEqual([]);
   });
 });
+
+// Codex P2 4274747633: a live sender with an other-NANP number (a Caribbean
+// member such as +1876) is not a number Hone serves; no registration evidence
+// can be recorded for it, by the command or by any direct write.
+describe("unsupported NANP senders", () => {
+  it("the command refuses an other-NANP sender (+1876), and writes nothing", async () => {
+    const s = await seedStudio("reg-other-nanp");
+    const jm = `+1876555${String(Math.floor(1000 + Math.random() * 9000))}`;
+    await seedActiveSender(s, jm);
+    expect(await record(s.studioId, "approved")).toMatchObject({ result: "unsupported_number", registration_id: null });
+    expect((await snapshot(s.studioId)).registrations).toEqual([]);
+  });
+
+  it("the table refuses other-NANP and N11 numbers even from a direct write", async () => {
+    const s = await seedStudio("reg-other-nanp-direct");
+    const id = await seedActiveSender(s, phone());
+    for (const bad of ["+18765550123", "+12465550123", "+18095550123", "+14115550123"]) {
+      await expect(
+        adminQuery(
+          "insert into public.studio_sms_sender_registrations (studio_id, sender_id, phone_number, kind, status) values ($1, $2, $3, 'us_10dlc', 'approved')",
+          [s.studioId, id, bad],
+        ),
+        bad,
+      ).rejects.toMatchObject({ code: "23514" });
+    }
+  });
+});

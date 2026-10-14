@@ -129,7 +129,8 @@ describe("privileges", () => {
   it("the kind is derived from the number, never taken from the caller (Codex P2 4244484022)", () => {
     expect(CODE).not.toMatch(/p_kind/);
     // The toll-free prefixes in SQL (the table check and the command) are exactly lib/sms/nanp.ts's.
-    const lists = [...CODE.matchAll(/'\^\\\+1\(([0-9|]+)\)'/g)].map((m) => m[1].split("|").sort());
+    // (The other-NANP exclusion lists, below, are pinned separately.)
+    const lists = [...CODE.matchAll(/'\^\\\+1\(([0-9|]+)\)'/g)].map((m) => m[1].split("|").sort()).filter((l) => l.includes("800"));
     expect(lists).toHaveLength(2);
     for (const l of lists) expect(l).toEqual([...TOLL_FREE_AREA_CODES].sort());
   });
@@ -162,5 +163,22 @@ describe("exactly these grants, and no other", () => {
       "grant execute on function public.get_live_studio_sms_sender_registration_state(uuid) to service_role",
     ]);
     expect(TOP_LEVEL).not.toMatch(/alter\s+default\s+privileges/i);
+  });
+});
+
+// Codex P2 4274747633: only numbers Hone serves. The other-NANP list in the
+// table constraint AND the command is lib/sms/nanp.ts OTHER_NANP_AREA_CODES,
+// exactly, and N11 service codes are refused too.
+describe("unsupported NANP numbers are refused by the table and the command", () => {
+  it("both SQL lists are OTHER_NANP_AREA_CODES exactly, and N11 is excluded", async () => {
+    const { OTHER_NANP_AREA_CODES } = await import("@/lib/sms/nanp");
+    const lists = [...CODE.matchAll(/!?~ '\^\\\+1\(([0-9|]+)\)'/g)].map((m) => m[1].split("|").sort());
+    const expected = [...OTHER_NANP_AREA_CODES].sort();
+    const otherLists = lists.filter((l) => l.length === expected.length);
+    expect(otherLists).toHaveLength(2);
+    for (const l of otherLists) expect(l).toEqual(expected);
+    expect(CODE.match(/\^\\\+1\[2-9\]11'/g)).toHaveLength(2);
+    expect(CODE).toMatch(/constraint studio_sms_sender_registrations_supported_number_ck/);
+    expect(CODE).toMatch(/return query select 'unsupported_number'::text/);
   });
 });

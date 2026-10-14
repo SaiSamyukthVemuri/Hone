@@ -127,7 +127,7 @@ describe("recordSmsRegistrationFormAction", () => {
   it("a recorded write stays recorded even if refreshing the page cache throws", async () => {
     rpc.mockResolvedValue({ data: [{ result: "recorded", registration_id: "r", kind: "us_10dlc" }], error: null });
     cache.throws = true;
-    expect(await recordSmsRegistrationFormAction(STUDIO, null, form(valid))).toEqual({ ok: true, result: "recorded" });
+    expect(await recordSmsRegistrationFormAction(STUDIO, null, form(valid))).toEqual({ ok: true, result: "recorded", phoneNumber: "+12125550123" });
   });
 
   it("refuses before the command without a sender id or a supported number", async () => {
