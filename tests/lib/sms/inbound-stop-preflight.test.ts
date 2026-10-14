@@ -978,7 +978,7 @@ describe("a live Setting's retries must recover EVERY delivery failure (Codex P1
     it(`${why}: refused`, () => {
       const f = underRule(liveSetting({ retryOn: [...retryOn] }));
       expect(checkOf(f, "stop_redelivery")?.status).toBe("fail");
-      expect(checkOf(f, "stop_redelivery")?.detail).toMatch(/connect\/TLS, read timeout or 5xx/);
+      expect(checkOf(f, "stop_redelivery")?.detail).toMatch(/connect\/TLS, read timeout, a transient 4xx or 5xx/);
     });
   }
 
@@ -1674,4 +1674,66 @@ describe("NEGATIVE CONTROLS — the route's transient 400 must be retried too (C
     });
     expect(evaluateInboundStopPreflight(f).checks.find((c) => c.id === "stop_redelivery")?.status).toBe("fail");
   });
+});
+
+describe("the operator guidance names the FOUR implemented classes and is itself sufficient (Codex P2 4272303186)", () => {
+  const E = "&ct=1000&rt=5000&e=ashburn,umatilla";
+  const redelivery = (inbound: string, mutate?: (f: InboundStopFacts) => void) => {
+    const f = allProven();
+    Object.assign(f.service!, { inboundRequestUrl: inbound, fallbackUrl: null, fallbackMethod: null });
+    mutate?.(f);
+    return evaluateInboundStopPreflight(f);
+  };
+  const detail = (r: ReturnType<typeof evaluateInboundStopPreflight>) => r.checks.find((c) => c.id === "stop_redelivery")?.detail ?? "";
+
+  it("the failure instruction recommends rp=4xx,5xx,ct,rt / rp=all and the Setting classes, never the stale ct,rt,5xx", () => {
+    const d = detail(redelivery(`${URL_OK}#rp=ct,rt,5xx${E}`));
+    expect(d).toMatch(/rp=all or rp=4xx,5xx,ct,rt/);
+    expect(d).toMatch(/HTTP_4XX, HTTP_5XX, CONNECTION_TIMEOUT and READ_TIMEOUT/);
+    expect(d).toMatch(/rc>=1; tt>=2\*\(ct\+rt\)/);
+    expect(d).not.toMatch(/rp=all or ct,rt,5xx/);
+    // Retries are bounded, and a bad signature is never "fixed" by retrying.
+    expect(d).toMatch(/bounded by rc/);
+    expect(d).toMatch(/never by retrying/);
+  });
+
+  it("BOTH pass descriptions name 4xx (URL overrides and Settings), with the partial-response limit", () => {
+    const url = detail(redelivery(`${URL_OK}#rp=4xx,5xx,ct,rt${E}`));
+    expect(url).toMatch(/4xx and 5xx/);
+    expect(url).toMatch(/rp=4xx,5xx,ct,rt/);
+    expect(url).toMatch(/partial response is never retried/);
+    const setting = detail(
+      redelivery(URL_OK, (f) => {
+        f.webhookRules = {
+          matched: true,
+          settings: [{ percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY }],
+        };
+      }),
+    );
+    expect(setting).toMatch(/4xx and 5xx/);
+    expect(setting).toMatch(/HTTP_4XX/);
+    expect(setting).toMatch(/partial response is never retried/);
+  });
+
+  it("the EXACT recommended policy passes the policy check; the same policy without 4xx is still refused", () => {
+    const recommended = `${URL_OK}#ct=1000&rt=5000&rc=2&rp=4xx,5xx,ct,rt&e=ashburn,umatilla`;
+    expect(retriesRecoverDelivery(recommended)).toBe(true);
+    expect(redelivery(recommended).checks.find((c) => c.id === "stop_redelivery")?.status).toBe("pass");
+    expect(redelivery(`${URL_OK}#ct=1000&rt=5000&rc=2&rp=5xx,ct,rt&e=ashburn,umatilla`).checks.find((c) => c.id === "stop_redelivery")?.status).toBe("fail");
+  });
+
+  for (const [why, mutate, blocker] of [
+    ["the Rules unread", (f: InboundStopFacts) => (f.webhookRules = undefined), "webhook_rules"],
+    ["the signing account unconfirmed", (f: InboundStopFacts) => (f.honeAccountSid = null), "signing_account"],
+    ["a SHARED_KEY Setting", (f: InboundStopFacts) => (f.webhookRules = { matched: true, settings: [{ percentage: 100, authScheme: "NONE", signatureType: "SHARED_KEY", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY }] }), "webhook_rules"],
+    ["signing not proven under the current credentials", (f: InboundStopFacts) => (f.signatureProof = { lastVerifiedCallbackAt: null, credentialsActiveSince: null }), "signing_proven"],
+    ["no live STOP observed", (f: InboundStopFacts) => (f.liveStopObservation = undefined), "stop_forwarded"],
+    ["the opt-out flag absent", (f: InboundStopFacts) => (f.optOutConfiguration = { lastChangedAt: "2026-10-01T00:00:00Z" } as never), "stop_forwarded"],
+  ] as const) {
+    it(`the recommended policy does NOT make the whole preflight ready with ${why}`, () => {
+      const r = redelivery(`${URL_OK}#ct=1000&rt=5000&rc=2&rp=4xx,5xx,ct,rt&e=ashburn,umatilla`, mutate);
+      expect(r.ready).toBe(false);
+      expect(r.blockers).toContain(blocker);
+    });
+  }
 });

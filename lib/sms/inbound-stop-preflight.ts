@@ -102,7 +102,8 @@ const SETTING_POLICY: Record<string, DeliveryFailure[]> = {
 };
 
 /**
- * Do retries recover EVERY delivery failure? All three must be named, at least
+ * Do retries recover EVERY delivery failure? All four classes (connect,
+ * read_timeout, server_error, client_error) must be named, at least
  * one retry allowed, and the total budget must hold a worst-case first attempt
  * (connect + read timeout) AND one full retry: tt >= 2 * (ct + rt). A smaller
  * budget can expire before the retry starts or finishes, which configuration
@@ -115,8 +116,8 @@ function retriesRecoverEveryFailure(r: { named: readonly DeliveryFailure[]; coun
 /**
  * Under a URL's own connection overrides (no Webhook Rule matches), do
  * Twilio's retries recover every delivery failure? Naming `rp` REPLACES the
- * default `ct`, so `#rp=5xx` alone leaves connect failures and read timeouts
- * unretried. No fragment means the defaults (ct only, budget 15000 < 40000):
+ * default `ct`, so `#rp=5xx` alone leaves connect failures, read timeouts and
+ * the route's transient 4xx unretried. No fragment means the defaults (ct only, budget 15000 < 40000):
  * no. An invalid fragment: no.
  *
  * SNI (Codex P1 4265363596): `sni=n` disables SNI on HTTPS connects; a
@@ -295,7 +296,8 @@ export type InboundStopFacts = {
     /**
      * The service's fallback_url and fallback_method, read-only: Twilio sends a
      * request there when the primary fails. A fallback that is exactly the
-     * expected route, by POST, also redelivers a STOP the route answered 5xx.
+     * expected route, by POST, may redeliver a STOP the primary failed, if it
+     * recovers its own failures (redelivers / recovers below).
      */
     fallbackUrl?: string | null;
     fallbackMethod?: string | null;
@@ -721,13 +723,13 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
    * fallback. ASSUMPTION (recorded in the handoff): Twilio requests the
    * fallback "if an error occurs while retrieving or executing the TwiML" at
    * the primary URL (Messaging Services and IncomingPhoneNumbers docs), which
-   * covers connect failures, timeouts and 5xx alike. The fallback is the same
+   * covers connect failures, timeouts, 4xx and 5xx alike. The fallback is the same
    * URL, so the same Rule, Setting and edge zones govern it too.
    */
   const ruleState = rules === undefined ? "unknown" : rules.matched ? "matched" : "none";
   /**
    * Does ONE requested URL recover its own delivery failures? Its retries must
-   * cover connect/TLS, read timeout AND 5xx with at least one retry and the
+   * cover connect/TLS, read timeout, 4xx AND 5xx with at least one retry and the
    * 2 * (ct + rt) budget (the URL's overrides with no Rule; every live
    * Setting's under a matching Rule; unknown with the Rules unread), and its
    * transport (SNI, edges, Static Proxy) must not defeat them. The SAME test
@@ -772,8 +774,8 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
             "stop_redelivery",
             "pass",
             ruleRetries === "yes"
-              ? "every live Setting retries connect failures, read timeouts and 5xx within its budget (a partial response is never retried by Twilio)"
-              : "the inbound URL's overrides retry connect failures, read timeouts and 5xx within tt (rp=all or ct,rt,5xx; rc>=1; tt>=2*(ct+rt))",
+              ? "every live Setting retries connect failures, read timeouts, 4xx and 5xx within its budget (retryOn ALL, or HTTP_4XX, HTTP_5XX, CONNECTION_TIMEOUT and READ_TIMEOUT; retryCount>=1; totalTimeoutMs>=2*(connect+read)); a partial response is never retried by Twilio"
+              : "the inbound URL's overrides retry connect failures, read timeouts, 4xx and 5xx within tt (rp=all or rp=4xx,5xx,ct,rt; rc>=1; tt>=2*(ct+rt)); a partial response is never retried by Twilio",
           )
         : verdict === "fallback"
           ? check("stop_redelivery", "pass", `${fallbackName} is the same route, by POST`)
@@ -786,7 +788,7 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
             : check(
                 "stop_redelivery",
                 "fail",
-                `a STOP whose delivery fails (connect/TLS, read timeout or 5xx) may never be redelivered: the retries do not cover all three within their budget (rp=all or ct,rt,5xx; rc>=1; tt>=2*(ct+rt)) and ${fallbackName} is not the same route`,
+                `a STOP whose delivery fails (connect/TLS, read timeout, a transient 4xx or 5xx) may never be redelivered: the retries do not cover all four within their budget, and ${fallbackName} does not recover its own failures. Needed: rp=all or rp=4xx,5xx,ct,rt (a Setting: retryOn ALL, or HTTP_4XX, HTTP_5XX, CONNECTION_TIMEOUT and READ_TIMEOUT); rc>=1; tt>=2*(ct+rt). Retries are bounded by rc (at most 5): a signature failure (403) is fixed through the signing checks, never by retrying`,
               ),
     );
   }
