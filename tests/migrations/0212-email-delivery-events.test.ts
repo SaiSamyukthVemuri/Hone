@@ -218,3 +218,28 @@ describe("0212 processing is exactly once", () => {
     expect(claim.match(/for update skip locked/g)).toHaveLength(2);
   });
 });
+
+describe("0212 grants EXACTLY the intended roles, and nothing else", () => {
+  // Every GRANT statement in the file -- any privilege, any object, every role
+  // of a comma list -- as "privilege | object -> role". A stray grant beside
+  // the intended one (to anon, a second role, \`grant all\`, a schema-wide
+  // grant) changes this list, so the assertion is exact, not "contains".
+  const grants = (code: string): string[] => {
+    const out: string[] = [];
+    for (const m of code.matchAll(/^\s*grant\s+([^;]+?)\s+on\s+([^;]+?)\s+to\s+([^;]+);/gim)) {
+      const obj = m[2]!.replace(/\s+/g, " ").trim().replace(/^function /i, "");
+      for (const role of m[3]!.split(",")) out.push(`${m[1]!.trim().toLowerCase()} | ${obj} -> ${role.trim().toLowerCase()}`);
+    }
+    return out.sort();
+  };
+
+  it("matches the intended grant list exactly", () => {
+    expect(grants(CODE)).toEqual([
+      "execute | public.begin_appointment_email_message(uuid, uuid, text) -> service_role",
+      "execute | public.claim_email_provider_events(uuid, integer) -> service_role",
+      "execute | public.process_email_provider_event(uuid) -> service_role",
+      "execute | public.record_email_provider_event(text, text, text, uuid, timestamptz, text, text, text, text) -> service_role",
+      "execute | public.settle_email_message(uuid, text, text, text, text) -> service_role",
+    ]);
+  });
+});
