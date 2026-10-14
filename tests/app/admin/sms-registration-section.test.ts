@@ -129,9 +129,14 @@ describe("approved means COMPLETE for this number (Codex P2 4253281361)", () => 
 describe("a replacement sender gets a fresh form (Codex P2 4253596170)", () => {
   // The repo's unit tests run without a DOM; React's documented key semantics
   // (a changed key remounts) do the reset, and this pins that the key exists.
-  it("the form is keyed by the sender and its number, so stale field values cannot carry over", async () => {
+  it("the form is keyed by the sender, its number AND the record version, so stale field values cannot carry over", async () => {
     const { readFileSync } = await import("node:fs");
     const src = readFileSync("app/admin/studios/[id]/SmsRegistrationSection.tsx", "utf8");
-    expect(src).toMatch(/<SmsRegistrationForm\s+(\/\/[^\n]*\n\s*)*key=\{`\$\{sender\.id\}:\$\{sender\.phone_number\}`\}/);
+    // The version part (Codex P2 4266543216): a refreshed record after a
+    // stale_record refusal is a NEW form, so the hidden version and the
+    // visible fields always come from the same record.
+    expect(src).toMatch(
+      /<SmsRegistrationForm\s+(\/\/[^\n]*\n\s*)*key=\{`\$\{sender\.id\}:\$\{sender\.phone_number\}:\$\{current\?\.updated_at \?\? "none"\}`\}/,
+    );
   });
 });
