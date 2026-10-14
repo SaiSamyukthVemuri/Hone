@@ -392,8 +392,10 @@ describe("privileges", () => {
       ).rejects.toMatchObject({ code: "42501" });
     }
     const phoneB = (await liveSender(b.studioId))?.phone;
+    // A fresh form: the version of whatever record b already holds (or none).
+    const shownB = await shownVersion(b.studioId, senderB, phoneB);
     const ok = await asRole("service_role", (q) =>
-      q("select result from public.record_studio_sms_sender_registration($1, $2, $3, 'approved', null, null, null)", [b.studioId, senderB, phoneB]),
+      q("select result from public.record_studio_sms_sender_registration($1, $2, $3, 'approved', null, null, $4)", [b.studioId, senderB, phoneB, shownB]),
     );
     expect(ok.rows[0].result).toBe("recorded");
   });
