@@ -51,6 +51,21 @@ export type StripeCustomerResolution =
 // currently provisioning the same tuple). The portal action treats
 // that as a retryable error and surfaces "Please try again." to
 // the visitor without crashing.
+// Payload version of the customers.create request, appended to the RPC's
+// idempotency key. Stripe rejects a reused key whose parameters differ, and
+// the stale-claim path replays the attempt's ORIGINAL key. An attempt that
+// reached Stripe before G-09 shipped sent the client name, so replaying its
+// bare key with the opaque-id payload would fail and block that client's card
+// setup. A new version gives the new payload its own key space: a pre-G-09
+// attempt that already created a customer leaves that customer unmapped on
+// the connected account instead of blocking. Bump it whenever the
+// customers.create parameters change.
+export const CUSTOMER_CREATE_PAYLOAD_VERSION = "opaque_ids_v2";
+
+export function customerCreateIdempotencyKey(attemptKey: string): string {
+  return `${attemptKey}:${CUSTOMER_CREATE_PAYLOAD_VERSION}`;
+}
+
 export async function getOrCreateStripeCustomerForCardOnFile(params: {
   admin: SupabaseClient;
   studioId: string;
@@ -130,7 +145,9 @@ export async function getOrCreateStripeCustomerForCardOnFile(params: {
       },
       {
         stripeAccount: stripeAccountId,
-        idempotencyKey: claim.out_idempotency_key as string,
+        idempotencyKey: customerCreateIdempotencyKey(
+          claim.out_idempotency_key as string,
+        ),
       },
     );
     stripeCustomerId = customer.id;

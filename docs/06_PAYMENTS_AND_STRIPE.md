@@ -113,6 +113,13 @@ The practitioner-side `PaymentMethodCard` on the client profile mirrors the same
   portal action no longer selects the name.
 - Customers created earlier keep their old metadata. A backfill would be a
   live Stripe write and needs explicit authorization.
+- The Stripe idempotency key is the attempt's key plus a payload version
+  (`CUSTOMER_CREATE_PAYLOAD_VERSION`). A stale attempt that reached Stripe
+  before this change is replayed with its original key. Without the version,
+  the new parameters would hit Stripe's same-key/different-parameters error
+  and block that client's card setup. With it, such an attempt may leave one
+  unmapped Customer on the connected account instead. Bump the version
+  whenever the `customers.create` parameters change.
 - Pinned by `tests/lib/stripe/setup-intent-no-client-identity.test.ts`.
 
 The shared helper `lib/consent/current-card-authorization.ts:getCardAuthorizationStatus` is the single source of truth for "is the signature current?". It compares `client_consent_signatures.template_version` (snapshot from migration 0057) to the live template's current `version`. The same helper is used by `createCardSetupIntentAction`; the `lib/billing/manual-fee-eligibility.ts` helper performs the same comparison inline; the PR #172 session payment eligibility helper `lib/billing/session-payment-eligibility.ts:getSessionPaymentEligibility` calls the same helper directly. See [docs/05 §Current-version signature gate (PR #170)](./05_CONSENT_AND_FORMS.md#current-version-signature-gate-pr-170).

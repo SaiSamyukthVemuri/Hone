@@ -75,8 +75,66 @@ describe("Stripe customer provisioning sends no client identity", () => {
     }
     expect(opts).toEqual({
       stripeAccount: "acct_synthetic",
-      idempotencyKey: "idem_synthetic",
+      idempotencyKey: "idem_synthetic:opaque_ids_v2",
     });
+  });
+
+  // Codex P2 on #857: the stale-claim path replays an attempt's ORIGINAL
+  // idempotency key. An attempt that reached Stripe before this change sent
+  // hone_client_name under that key; Stripe rejects the same key with
+  // different parameters. The fake below behaves that way.
+  it("a pre-change attempt replayed after deploy is not blocked by Stripe idempotency", async () => {
+    const seen = new Map<string, string>();
+    createCustomer.mockImplementation(
+      async (body: unknown, opts: { idempotencyKey: string }) => {
+        const payload = JSON.stringify(body);
+        const prior = seen.get(opts.idempotencyKey);
+        if (prior !== undefined && prior !== payload) {
+          throw new Error(
+            "Keys for idempotent requests can only be used with the same parameters they were first used with.",
+          );
+        }
+        seen.set(opts.idempotencyKey, payload);
+        return { id: "cus_synthetic" };
+      },
+    );
+    // The request a pre-change worker sent under the attempt's bare key.
+    seen.set(
+      "idem_synthetic",
+      JSON.stringify({
+        description: `Hone studio ${STUDIO} / client ${CLIENT}`,
+        metadata: {
+          hone_studio_id: STUDIO,
+          hone_client_id: CLIENT,
+          hone_client_name: "Synthetic Person",
+          hone_source: "portal_card_on_file",
+        },
+      }),
+    );
+
+    const { getOrCreateStripeCustomerForCardOnFile } = await import(
+      "@/lib/stripe/setup-intent"
+    );
+    const result = await getOrCreateStripeCustomerForCardOnFile({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      admin: fakeAdmin() as any,
+      studioId: STUDIO,
+      clientId: CLIENT,
+      stripeAccountId: "acct_synthetic",
+      stripeLivemode: false,
+    });
+
+    expect(result).toEqual({ ok: true, stripeCustomerId: "cus_synthetic" });
+    // A retry inside the new version still collapses onto one request.
+    const again = await getOrCreateStripeCustomerForCardOnFile({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      admin: fakeAdmin() as any,
+      studioId: STUDIO,
+      clientId: CLIENT,
+      stripeAccountId: "acct_synthetic",
+      stripeLivemode: false,
+    });
+    expect(again).toEqual({ ok: true, stripeCustomerId: "cus_synthetic" });
   });
 
   it("no source file writes a client name into Stripe metadata", () => {
