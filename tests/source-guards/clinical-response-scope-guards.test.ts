@@ -639,14 +639,17 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
     expect(typeof responseIsBlockOwned()).toBe("boolean");
   });
 
-  it("response stays multi-area-owned through the entry-side chip store (Codex P2 4265583716)", () => {
+  it("the response gate counts the entry-side chip store (Codex P2 4265583716, 4265695230)", () => {
     // New charting writes reactions to ElectrolysisEntry.observation_chips, and an
-    // entry may cover several areas. Even if the legacy SessionBlock response
-    // columns moved, the prohibition must hold while that store is multi-area.
+    // entry may cover several areas, so the gate must stay ON while that store is
+    // multi-area, even if the legacy SessionBlock columns moved. This pins the
+    // gate's COMPOSITION, not its current value: a future model that moves both
+    // stores to area-owned storage turns the gate off without editing this test.
     const entry = block("ElectrolysisEntry");
-    expect(has(entry, "observation_chips")).toBe(true);
-    expect(has(entry, ENTRY_MULTI_AREA_FIELD)).toBe(true);
-    expect(responseIsBlockOwned()).toBe(true);
+    const legacyOnBlock = RESPONSE_FIELDS.some((f) => has(block("SessionBlock"), f));
+    const chipsOnMultiAreaEntry =
+      has(entry, "observation_chips") && has(entry, ENTRY_MULTI_AREA_FIELD);
+    expect(responseIsBlockOwned()).toBe(legacyOnBlock || chipsOnMultiAreaEntry);
   });
 
   it("every guidance-scoped surface is still swept", () => {
