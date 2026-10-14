@@ -16,6 +16,10 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CMD="${1:?usage: app.sh export|build|serve ...}"
 CLI="npx --yes supabase@2.102.0"
 PORT="${FETT_TWIN_APP_PORT:-3995}"
+# The fake processor's run id names its ledger (/tmp/hone-e2e-stripe-<id>.jsonl). Override it to start a
+# fresh ledger; never delete an old one, it is the evidence a replay is checked against.
+RUN_ID="${FETT_TWIN_RUN_ID:-fett-twin-demo}"
+[[ "$RUN_ID" =~ ^[a-z0-9-]{1,48}$ ]] || { echo "REFUSED: FETT_TWIN_RUN_ID must be [a-z0-9-]{1,48}"; exit 2; }
 
 if [ "$CMD" = "export" ]; then
   COMMIT="${2:?commit}"; APP="${3:?app-dir}"
@@ -42,7 +46,7 @@ ENVV=(
   PORT="$PORT" NEXT_PUBLIC_APP_ORIGIN="$ORIGIN" PUBLIC_APP_URL="$ORIGIN"
   NEXT_PUBLIC_SUPABASE_URL="http://127.0.0.1:$API_PORT" NEXT_PUBLIC_SUPABASE_ANON_KEY="$ANON" SUPABASE_SERVICE_ROLE_KEY="$SERVICE"
   HONE_E2E_FAKE_RESEND=1 HONE_E2E_FAKE_RESEND_DEFAULT_MODE=success
-  HONE_E2E_FAKE_STRIPE=1 HONE_E2E_RUN_ID=fett-twin-demo
+  HONE_E2E_FAKE_STRIPE=1 HONE_E2E_RUN_ID="$RUN_ID"
   HONE_SYNTHETIC_MACHINE_PROFILE=1
   RESEND_API_KEY=re_dummy_resend_key
   STRIPE_SECRET_KEY=sk_test_dummy NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_dummy STRIPE_WEBHOOK_SECRET=whsec_dummy STRIPE_ALLOW_LIVE_MODE=false
