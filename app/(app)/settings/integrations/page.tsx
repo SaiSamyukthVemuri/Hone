@@ -6,8 +6,8 @@ import { getOwnConnectionReadiness } from "@/lib/google-calendar/connection";
 import { SmsSenderStatusCard } from "./SmsSenderStatusCard";
 import { SmsSenderReadinessPanel } from "./SmsSenderReadinessPanel";
 import { SmsSenderControls } from "./SmsSenderControls";
-import { senderControlsGate, senderRecoveryFor } from "@/lib/sms/sender-controls";
-import { demoAdoptionInventory } from "@/lib/sms/sender-controls-demo";
+import { resolveDemoInventory, senderControlsGate, senderRecoveryFor } from "@/lib/sms/sender-controls";
+import { createAdminClient } from "@/lib/supabase/admin-server";
 import { studioSenderReadiness } from "@/lib/sms/sender-readiness";
 import {
   readOwnSenderRegistrations,
@@ -117,7 +117,7 @@ export default async function IntegrationsSettingsPage() {
           nothing renders there; each action re-checks it. */}
       {senderControlsGate().open ? (
         <SmsSenderControls
-          inventory={demoAdoptionInventory(studio.id)}
+          inventory={await resolveDemoInventory(createAdminClient(), studio.id)}
           recovery={senderRecoveryFor(sender?.status, sender?.last_error_code)}
         />
       ) : null}

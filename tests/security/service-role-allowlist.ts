@@ -353,6 +353,13 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "verifyCancellationToken",
   },
   {
+    path: "app/(app)/settings/integrations/page.tsx",
+    purpose:
+      "SMS-SENDER-CONTROL-01 (#824, Codex P2 4274756044): chooses which FAKE demo number pair the owner's sender controls advertise, the studio's first candidate that no other studio records, via 0226's studio_sms_resource_recorded (service_role only, existence only).",
+    why: "Reached only inside the senderControlsGate().open branch (never in production, never on hosted previews, never with live provisioning armed, only HONE_SMS_SENDER_CONTROLS=fake against the loopback database). It is a READ: one existence check per candidate number, scoped to the studio the page already resolved for the signed-in practitioner. It writes nothing and returns only a boolean per number.",
+    scopeGuard: "senderControlsGate",
+  },
+  {
     path: "app/(app)/settings/integrations/sender-control-actions.ts",
     purpose:
       "SMS-SENDER-CONTROL-01 (#824): the studio owner's number provisioning and adoption controls, FAKE PROVIDER ONLY. The service-role client is the transport for the 0191 provisioning store (claim/finalize/fail/renew), whose definer commands re-derive membership and OWNER role from (studio_id, actor_user_id).",

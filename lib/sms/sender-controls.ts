@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { liveProvisioningArmed, FakeSmsProvisioningProvider } from "./provider";
 import { classifyNanpNumber } from "./nanp";
-import { demoAdoptionInventory } from "./sender-controls-demo";
+import { DEMO_CANDIDATES, demoAdoptionInventory, demoOwnedNumbers, type DemoAdoptionInventory } from "./sender-controls-demo";
 
 export { demoAdoptionInventory };
 import type { SmsProvisioningProvider, AvailableNumberCandidate } from "./provider/types";
@@ -197,14 +197,16 @@ export function senderControlsFakeProvider(
   const key = `${studioId}|${u.inbound}|${u.status}`;
   let fake = controlsFakes.get(key);
   if (!fake) {
+    // The account owns EVERY candidate pair (Codex P2 4274756044), so whichever
+    // one resolveDemoInventory advertises can be adopted.
     const inv = demoAdoptionInventory(studioId);
-    const { CA, US } = inv.numbers;
+    const owned = demoOwnedNumbers(studioId);
     fake = new FakeSmsProvisioningProvider({
-      preOwnedNumbers: { [CA.phoneNumber]: CA.phoneNumberSid, [US.phoneNumber]: US.phoneNumberSid },
+      preOwnedNumbers: owned,
       accountServices: [
         {
           sid: inv.messagingServiceSid,
-          numbers: [CA.phoneNumber, US.phoneNumber],
+          numbers: Object.keys(owned),
           inboundUrl: u.inbound,
           statusUrl: u.status,
         },
@@ -213,6 +215,24 @@ export function senderControlsFakeProvider(
     controlsFakes.set(key, fake);
   }
   return fake;
+}
+
+/**
+ * The demo pair this studio's page should advertise: its first candidate whose
+ * numbers no OTHER studio records (0226 studio_sms_resource_recorded, which
+ * excludes this studio's own live attempt). A read only; if it cannot answer,
+ * candidate 0 is shown and the adoption's own pre-claim check still refuses a
+ * number another studio holds.
+ */
+export async function resolveDemoInventory(admin: SupabaseClient, studioId: string): Promise<DemoAdoptionInventory> {
+  for (let i = 0; i < DEMO_CANDIDATES; i += 1) {
+    const inv = demoAdoptionInventory(studioId, i);
+    const ca = await resourceRecorded(admin, studioId, inv.numbers.CA.phoneNumber, null);
+    const us = await resourceRecorded(admin, studioId, inv.numbers.US.phoneNumber, null);
+    if (ca === null || us === null) return demoAdoptionInventory(studioId, 0);
+    if (!ca && !us) return inv;
+  }
+  return demoAdoptionInventory(studioId, 0);
 }
 
 export type SenderControlsDeps = {
