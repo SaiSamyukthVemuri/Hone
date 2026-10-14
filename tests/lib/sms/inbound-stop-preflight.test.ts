@@ -65,6 +65,8 @@ const allProven = (): InboundStopFacts => ({
   liveStopObservation: { reachedRoute: true, routeStatus: 200, phoneWideOptOutStamped: true, observedAt: "2026-10-12T12:00:00Z" },
   // The service forwards keyword messages, unchanged since before that STOP.
   optOutConfiguration: { dropsKeywordMessages: false, lastChangedAt: "2026-10-01T00:00:00Z" },
+  // The handler deployment and database migration now serving STOP predate that STOP.
+  currentActivation: { handlerDeployedAt: "2026-10-11T00:00:00Z", databaseMigratedAt: "2026-10-10T00:00:00Z" },
 });
 
 describe("expectedInboundWebhookUrl", () => {
@@ -1736,4 +1738,59 @@ describe("the operator guidance names the FOUR implemented classes and is itself
       expect(r.blockers).toContain(blocker);
     });
   }
+});
+
+describe("the live STOP proves only the handler and database it ran against (Codex P1 4273253239)", () => {
+  const run = (mutate: (f: InboundStopFacts) => void) => {
+    const f = allProven();
+    mutate(f);
+    const r = evaluateInboundStopPreflight(f);
+    const c = r.checks.find((x) => x.id === "stop_forwarded");
+    return { status: c?.status, detail: c?.detail ?? "", ready: r.ready };
+  };
+
+  it("POSITIVE CONTROL: the STOP postdates the opt-out change, the deployment and the migration", () => {
+    expect(run(() => undefined)).toMatchObject({ status: "pass", ready: true });
+  });
+
+  for (const [why, activation] of [
+    ["a handler deployed AFTER the STOP", { handlerDeployedAt: "2026-10-13T00:00:00Z", databaseMigratedAt: "2026-10-10T00:00:00Z" }],
+    ["a migration applied AFTER the STOP", { handlerDeployedAt: "2026-10-11T00:00:00Z", databaseMigratedAt: "2026-10-13T00:00:00Z" }],
+    ["a deployment at the very instant of the STOP", { handlerDeployedAt: "2026-10-12T12:00:00Z", databaseMigratedAt: "2026-10-10T00:00:00Z" }],
+  ] as const) {
+    it(`${why}: stale, unknown, never ready (re-verify)`, () => {
+      const r = run((f) => (f.currentActivation = { ...activation }));
+      expect(r).toMatchObject({ status: "unknown", ready: false });
+      expect(r.detail).toMatch(/deployed or the database migrated after the live STOP/);
+    });
+  }
+
+  for (const [why, activation] of [
+    ["absent", undefined],
+    ["null", null],
+    ["the deployment time null", { handlerDeployedAt: null, databaseMigratedAt: "2026-10-10T00:00:00Z" }],
+    ["the migration time null", { handlerDeployedAt: "2026-10-11T00:00:00Z", databaseMigratedAt: null }],
+    ["an unparseable time", { handlerDeployedAt: "yesterday", databaseMigratedAt: "2026-10-10T00:00:00Z" }],
+    ["a numeric time", { handlerDeployedAt: 1696118400000, databaseMigratedAt: "2026-10-10T00:00:00Z" }],
+    ["an empty object", {}],
+  ] as const) {
+    it(`activation ${why}: unknown, never ready`, () => {
+      const r = run((f) => (f.currentActivation = activation as never));
+      expect(r).toMatchObject({ status: "unknown", ready: false });
+      expect(r.detail).toMatch(/was not read/);
+    });
+  }
+
+  it("a fresh STOP after the deployment and migration restores the pass", () => {
+    const r = run((f) => {
+      f.currentActivation = { handlerDeployedAt: "2026-10-13T00:00:00Z", databaseMigratedAt: "2026-10-13T00:00:00Z" };
+      f.liveStopObservation = { reachedRoute: true, routeStatus: 200, phoneWideOptOutStamped: true, observedAt: "2026-10-13T06:00:00Z" };
+    });
+    expect(r).toMatchObject({ status: "pass", ready: true });
+  });
+
+  it("the opt-out ordering still binds: a fresh deployment does not excuse a later opt-out change", () => {
+    const r = run((f) => (f.optOutConfiguration = { dropsKeywordMessages: false, lastChangedAt: "2026-10-12T13:00:00Z" }));
+    expect(r).toMatchObject({ status: "unknown", ready: false });
+  });
 });

@@ -450,6 +450,20 @@ export type InboundStopFacts = {
    * only the configuration it ran under, so it counts only when it postdates
    * the last change to this configuration. A null field = not read.
    */
+  /**
+   * When the CURRENT inbound STOP handler and its database became active
+   * (Codex P1 4273253239): the live STOP proves only the code and schema it
+   * ran against. A later deployment or migration (a permission, schema or
+   * handler regression) can make every STOP answer 500 before suppression, so
+   * the observation counts only when it postdates BOTH. Read-only: the
+   * production deployment serving /api/twilio/inbound-sms (Vercel, its
+   * ready time) and the newest applied migration (its applied time). ISO
+   * strings; null or undefined = not read.
+   */
+  currentActivation?: {
+    handlerDeployedAt: string | null;
+    databaseMigratedAt: string | null;
+  };
   optOutConfiguration?: {
     /** The service drops opt-out keyword messages instead of forwarding them. */
     dropsKeywordMessages: boolean | null;
@@ -876,6 +890,9 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
   const isoTime = (v: unknown) => (typeof v === "string" && v.length > 0 ? Date.parse(v) : NaN);
   const observedAt = isoTime(stop?.observedAt);
   const optOutChangedAt = isoTime(optOut?.lastChangedAt);
+  const activation = f.currentActivation ?? undefined;
+  const handlerDeployedAt = isoTime(activation?.handlerDeployedAt);
+  const databaseMigratedAt = isoTime(activation?.databaseMigratedAt);
   const stopObservedOk = stop?.reachedRoute === true && stop.routeStatus === 200 && stop.phoneWideOptOutStamped === true;
   checks.push(
     optOut?.dropsKeywordMessages === true
@@ -894,9 +911,13 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
                   ? check("stop_forwarded", "unknown", "the service's opt-out configuration (does it drop keyword messages?) was not read as an explicit true/false")
                   : Number.isNaN(observedAt) || Number.isNaN(optOutChangedAt)
                     ? check("stop_forwarded", "unknown", "the live STOP's time or the opt-out configuration's last change was not read: the observation cannot be tied to the current configuration")
-                    : observedAt > optOutChangedAt
-                      ? check("stop_forwarded", "pass", "a live STOP, after the last opt-out configuration change, was accepted (200) and stamped the phone-wide opt-out")
-                      : check("stop_forwarded", "unknown", "the opt-out configuration changed after the live STOP was observed: re-verify with a new approved live STOP"),
+                    : !(observedAt > optOutChangedAt)
+                      ? check("stop_forwarded", "unknown", "the opt-out configuration changed after the live STOP was observed: re-verify with a new approved live STOP")
+                      : Number.isNaN(handlerDeployedAt) || Number.isNaN(databaseMigratedAt)
+                        ? check("stop_forwarded", "unknown", "when the current inbound handler deployment and database migration became active was not read: the observation cannot be tied to the code and schema now serving STOP")
+                        : observedAt > handlerDeployedAt && observedAt > databaseMigratedAt
+                          ? check("stop_forwarded", "pass", "a live STOP, after the last opt-out change and after the current handler deployment and database migration, was accepted (200) and stamped the phone-wide opt-out")
+                          : check("stop_forwarded", "unknown", "the inbound handler was deployed or the database migrated after the live STOP was observed: re-verify with a new approved live STOP"),
   );
 
   // The URL #863's sender controls would configure and require, from the same
