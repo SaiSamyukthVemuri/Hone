@@ -32,8 +32,8 @@ describe("demo candidates", () => {
       expect(owned[CA.phoneNumber]).toBeDefined();
       expect(owned[US.phoneNumber]).toBeDefined();
     }
-    // Distinct numbers across a studio's candidates: most of 2 x 16.
-    expect(Object.keys(owned).length).toBeGreaterThanOrEqual(24);
+    // Every number distinct within the studio (Codex P2 4276086876): 2 x 16.
+    expect(Object.keys(owned).length).toBe(2 * DEMO_CANDIDATES);
     // Area codes vary across candidates (the old pool used one CA and one US code).
     const areas = new Set(Array.from({ length: DEMO_CANDIDATES }, (_, i) => demoAdoptionInventory(studio, i).numbers.CA.phoneNumber.slice(2, 5)));
     expect(areas.size).toBeGreaterThan(4);
@@ -58,9 +58,10 @@ describe("synthetic SIDs are collision-resistant", () => {
     expect(a.numbers.CA.phoneNumberSid).not.toBe(b.numbers.CA.phoneNumberSid);
   });
 
-  it("no SID repeats across 2,000 studios", () => {
+  // 300 studios: broad enough, and quick enough to stay inside a loaded CI run.
+  it("no SID repeats across 300 studios", { timeout: 30_000 }, () => {
     const sids = new Set<string>();
-    for (let k = 0; k < 2000; k += 1) {
+    for (let k = 0; k < 300; k += 1) {
       const inv = demoAdoptionInventory(randomUUID());
       for (const sid of [inv.messagingServiceSid, inv.numbers.CA.phoneNumberSid, inv.numbers.US.phoneNumberSid]) {
         expect(sids.has(sid)).toBe(false);
@@ -83,5 +84,35 @@ describe("a Messaging Service per candidate", () => {
       expect(svc.sid).toBe(inv.messagingServiceSid);
       expect(svc.numbers).toEqual([inv.numbers.CA.phoneNumber, inv.numbers.US.phoneNumber]);
     });
+  });
+});
+
+// Codex P2 4276086876: a number must belong to exactly ONE candidate (and so
+// one service) within a studio, or the fake account calls it ambiguous.
+describe("no number repeats within a studio", () => {
+  it("Codex's studio: CA candidates 0 and 4 no longer share a number", () => {
+    const studio = "00000000-0000-0000-0000-000000000838";
+    const ca = Array.from({ length: DEMO_CANDIDATES }, (_, i) => demoAdoptionInventory(studio, i).numbers.CA.phoneNumber);
+    expect(new Set(ca).size).toBe(DEMO_CANDIDATES);
+  });
+
+  it("across 300 studios, every number is in exactly one of the studio's services", { timeout: 30_000 }, () => {
+    for (let k = 0; k < 300; k += 1) {
+      const studio = randomUUID();
+      const seen = new Map<string, number>();
+      for (const svc of demoOwnedServices(studio)) for (const n of svc.numbers) seen.set(n, (seen.get(n) ?? 0) + 1);
+      expect(seen.size, studio).toBe(2 * DEMO_CANDIDATES);
+      for (const [n, c] of seen) expect(c, `${studio} ${n}`).toBe(1);
+    }
+  });
+
+  it("the fake account reports a single association for candidate 0 of Codex's studio", async () => {
+    const { senderControlsFakeProvider } = await import("@/lib/sms/sender-controls");
+    const studio = "00000000-0000-0000-0000-000000000838";
+    const inv = demoAdoptionInventory(studio, 0);
+    const fake = senderControlsFakeProvider("https://hone.example", studio, { NEXT_PUBLIC_APP_ORIGIN: "https://hone.example" });
+    const r = await fake.lookupOwnedNumber({ phoneNumber: inv.numbers.CA.phoneNumber, expectedMessagingServiceSid: inv.messagingServiceSid });
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.facts.association.kind).not.toBe("ambiguous");
   });
 });

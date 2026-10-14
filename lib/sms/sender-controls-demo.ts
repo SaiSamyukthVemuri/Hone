@@ -63,11 +63,41 @@ function demoNumber(areas: readonly string[], seed: string): string {
 }
 
 /**
+ * A studio's candidate numbers, generated TOGETHER so that no number repeats
+ * within the studio (Codex P2 4276086876): two candidates sharing a number put
+ * it in two services, and the fake account then reports its association as
+ * ambiguous. Candidate i takes the first draw (i, 0), (i, 1), ... that no
+ * earlier candidate of the same country holds. Deterministic per studio; the
+ * 1,000-number space per country makes a long search impossible in practice,
+ * and the bound is defensive.
+ */
+function demoNumbersFor(studioId: string): Array<{ CA: string; US: string }> {
+  const used = { CA: new Set<string>(), US: new Set<string>() };
+  const draw = (country: "CA" | "US", i: number): string => {
+    const areas = country === "CA" ? DEMO_CA_AREAS : DEMO_US_AREAS;
+    const tag = country === "CA" ? "ca" : "us";
+    for (let j = 0; j < 1000; j += 1) {
+      const n = demoNumber(areas, j === 0 ? `${tag}#${i}:${studioId}` : `${tag}#${i}.${j}:${studioId}`);
+      if (!used[country].has(n)) {
+        used[country].add(n);
+        return n;
+      }
+    }
+    throw new Error("demo number space exhausted");
+  };
+  const out: Array<{ CA: string; US: string }> = [];
+  for (let i = 0; i < DEMO_CANDIDATES; i += 1) out.push({ CA: draw("CA", i), US: draw("US", i) });
+  return out;
+}
+
+/**
  * The studio's candidate `index` (0 .. DEMO_CANDIDATES-1). Candidate 0 is the
- * default; resolveDemoInventory picks the first one no other studio records.
+ * default; resolveDemoInventory picks the first one whose numbers and service
+ * nothing else records.
  */
 export function demoAdoptionInventory(studioId: string, index = 0): DemoAdoptionInventory {
   const i = Math.max(0, Math.min(DEMO_CANDIDATES - 1, Math.trunc(index)));
+  const numbers = demoNumbersFor(studioId)[i];
   return {
     // PER CANDIDATE (Codex P2 4275860500): a released adoption keeps its
     // service SID in history under 0191's global uniqueness, so a studio that
@@ -75,8 +105,8 @@ export function demoAdoptionInventory(studioId: string, index = 0): DemoAdoption
     // also unrecorded, not only its numbers.
     messagingServiceSid: `MG${hex32(`mg#${i}:${studioId}`)}`,
     numbers: {
-      CA: { phoneNumber: demoNumber(DEMO_CA_AREAS, `ca#${i}:${studioId}`), phoneNumberSid: `PN${hex32(`ca#${i}:${studioId}`)}` },
-      US: { phoneNumber: demoNumber(DEMO_US_AREAS, `us#${i}:${studioId}`), phoneNumberSid: `PN${hex32(`us#${i}:${studioId}`)}` },
+      CA: { phoneNumber: numbers.CA, phoneNumberSid: `PN${hex32(`ca#${i}:${studioId}`)}` },
+      US: { phoneNumber: numbers.US, phoneNumberSid: `PN${hex32(`us#${i}:${studioId}`)}` },
     },
   };
 }
