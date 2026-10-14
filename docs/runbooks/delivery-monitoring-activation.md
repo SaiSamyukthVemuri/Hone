@@ -79,7 +79,7 @@ What this stack adds stays inside the boundary #828 asked for:
   - `select * from email_delivery_health()` shows `last_sweep_at` advancing;
   - a deliberately held receipt is finished by the sweep (rehearsed on a local stack: `tests/db/email-delivery-events.db.test.ts`, CRASH RECOVERY);
   - findings raise at most one unresolved ops alert per event, always at **warning**: the sweep never records a critical alert, because critical ops alerts are emailed to `OPS_ALERT_EMAILS` (#828 gate). A finding assessed critical carries `assessed_severity: "critical"` in its details.
-- **Rollback:** remove the cron entry. Health then reports `last_sweep_at` going stale, which is the intended signal.
+- **Rollback:** remove the cron entry. `last_sweep_at` in `email_delivery_health()` then stops advancing. **No health finding reports a stale sweep by time**: the only sweep finding is a failed count. So check `last_sweep_at` directly, or on the support page, after a rollback.
 
 ## 4. Go / no-go for the Friday demo (synthetic only)
 
@@ -214,9 +214,13 @@ select pg_get_constraintdef(oid) from pg_constraint where conname = 'email_outbo
 
 **Rollback:** disable or delete the endpoint and unset the secret, then redeploy. Recorded receipts stay as evidence; nothing is resent or deleted.
 
-**Behaviour to expect:**
-- while a receipt is still pending, the route answers 500, so Resend retries that delivery;
-- after five failed attempts the database quarantines the receipt, and the next retry gets 200. A poison event cannot keep the endpoint failing indefinitely.
+**Behaviour to expect,** as of #832 `27c111f3`, which every dependent head now carries (#843 `0c388cc4` through this branch, and composed `bfa6f11c` / `82046d94`):
+- **Answer first, drain afterwards.** The route records the receipt, then claims and processes **this** delivery, then answers. Only **after** the response, in Next `after()` (Codex P2 4266147060), does it sweep up to five older pending receipts. A slow or failing drain never delays or changes the answer; a drain that throws is logged as `resend_webhook_sweep_failed`.
+- **Non-pending duplicate, excluded before any work.** A retried delivery whose receipt is already processed is answered 200 at once: applied, stale, unmatched, ignored or quarantined. It is not reprocessed and schedules no drain.
+- **Pending duplicate.** A retry whose earlier attempt never finished is claimed and processed like a first delivery.
+- **Still pending after this request:** the route answers 500, so Resend retries that delivery.
+- **After five failed attempts** the database quarantines the receipt, and the next retry gets 200, so a poison event cannot keep the endpoint failing indefinitely.
+- An **older #865 base** (`94b6118c` and earlier) awaited the drain before answering. Wording that described the drain as part of the pre-response path applied only to that base, and is superseded (#825 6165891209).
 
 ### D5. Register the recovery sweep (§3)
 
@@ -239,7 +243,7 @@ The route already exists and authenticates with the existing `CRON_SECRET`.
 - `/admin/ops-alerts` shows no `email_delivery_*` alert at **critical** (pinned by `tests/app/api/email-delivery-sweep.test.ts`);
 - the sweep sends no email or SMS and calls no provider.
 
-**Rollback:** remove the cron entry and redeploy. `last_sweep_at` then goes stale, which health reports as a finding.
+**Rollback:** remove the cron entry and redeploy. `last_sweep_at` then stops advancing. No health finding fires on that by time, so verify it directly.
 
 ### Emailed delivery alerts stay off (#828)
 
@@ -257,3 +261,22 @@ Everything else depends on it, and it is inert:
 - it adds two empty tables and service-only commands;
 - it touches no existing table;
 - nothing reads it until #832 merges.
+
+## 6. Delivery evidence packet: every count attributed to the head it ran on (2026-10-14)
+
+| Head | What ran | Result |
+|---|---|---|
+| **#832 `27c111f3`** (0212 frozen; webhook answers first) | CI `38503187996` | **11/11 success** |
+| | Codex exact-head review | **clean**: completed 02:54:36Z for `27c111f`, 👍, no findings |
+| | Local route suite at this head | **25/25**, including the answer-before-drain and pending-500 cases. Negative control: restoring the awaited drain turns both red |
+| **#876 `084d8dc6`** (0227 blob `67e837de`, sha256 `8b62d4d8…`) | Codex exact-head review | **clean**: completed 02:54:44Z for `084d8dc`, no findings |
+| | CI `38503246394` | validate: only the branch-local contiguity hole (by design). DB integration died at runner startup (port 54324 already bound; no test ran) and was **re-run**; see the PR |
+| **#876 `bcdc5ef4`** (same 0227 SQL) | Local isolated chain `0001`–`0212` + `0227` | **113/113**: 0227 file, 0212 suite, export registry. Negative control: the transient cases are red on the previous 0227 |
+| **Composed `82046d94`** (`integration/fett-composed-824`) | Guarded fresh reset; DB lane (6 files) | **174/174** |
+| | Unit and source contracts (32 files) | **546/546** |
+| | Browser `e2e/delivery-visibility.spec.ts` | **5/5** |
+| **Composed `bfa6f11c`** (the current composed head) | Contains #832 `27c111f3` and #876 `084d8dc6` | **None of the counts above ran on it.** The ordered proof is `82046d94`'s |
+
+**Upper stack, synced to #832 `27c111f3` by normal merge:** #843 `0c388cc4`, #846 `372085d7`, #849 `794ed588`, #865 `afc56e5c` and this branch.
+- **Local runs on each** (docs, migrations, API routes, delivery components): pass, except the documented contiguity hole and the local-only A3/A5.
+- **No live** scheduling, webhook, provider or send action was taken.
