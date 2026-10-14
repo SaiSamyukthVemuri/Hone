@@ -92,7 +92,13 @@ const REGISTRATION_STATUS_VALUES = new Set([
   "suspended",
 ]);
 
-export type RecordSmsRegistrationResult = { ok: boolean; result?: string; error?: string };
+export type RecordSmsRegistrationResult = {
+  ok: boolean;
+  result?: string;
+  error?: string;
+  /** The number a successful write recorded against (Codex P2 4274699533). */
+  phoneNumber?: string;
+};
 
 // Said whenever the command MAY have run but its answer was not seen (a lost
 // response, an exception after dispatch): never "nothing was saved"
@@ -233,7 +239,7 @@ export async function recordSmsRegistrationAction(
   } catch {
     // A stale page is reloaded by the operator; it never changes the answer.
   }
-  if (result === "recorded") return { ok: true, result };
+  if (result === "recorded") return { ok: true, result, phoneNumber: expectedPhone };
   if (result === "outcome_unknown") return OUTCOME_UNKNOWN;
   const message: Record<string, string> = {
     invalid_input: "Check the fields: a reason is required exactly when information is missing, and the reference must be a plain identifier.",
@@ -242,6 +248,7 @@ export async function recordSmsRegistrationAction(
     sender_changed: "The studio's number changed after this page loaded. Nothing was recorded; reload and verify the current number.",
     sender_has_no_number: "The studio's sender has no number yet, so there is nothing to record registration against.",
     stale_record: "This registration was changed after this page loaded. Nothing was recorded; reload to see the current record, then decide again.",
+    unsupported_number: "The studio's number is not a Canadian, US or toll-free number, so Hone records no registration for it.",
   };
   return { ok: false, result, error: message[result] ?? OUTCOME_UNKNOWN.error };
 }
