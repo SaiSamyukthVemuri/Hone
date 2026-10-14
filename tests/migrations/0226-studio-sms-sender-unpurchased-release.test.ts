@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
+import { countVersion, fileForVersion } from "./helpers/migration-state";
 
 // Migration 0226 (SMS-SENDER-CONTROL-01, #863): release a never-purchased,
 // never-activated errored sender claim. SOURCE CONTRACT; behaviour is proved
@@ -25,10 +25,27 @@ const body = (fn: string) => {
 };
 
 describe("0226 in the sequence", () => {
-  it("is the repository maximum on this branch, allocated once", () => {
-    expect(isRepoMax(VERSION)).toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
+  // NOT `isRepoMax`, either way: 0226 is the maximum on this branch, but in the
+  // ordered composition Sentry's 0227 (#876) sits above it (shared census,
+  // /home/sam/hone-migration-coordination.md). Per CLAUDE.md §2 only the
+  // current max asserts it. What follows holds in both trees, and every line
+  // can fail (a "everything above is later" check cannot: versionsAbove
+  // filters on exactly that).
+  it("is allocated once, under its own file", () => {
     expect(countVersion(VERSION)).toBe(1);
+    expect(fileForVersion(VERSION)).toBe("0226_studio_sms_sender_unpurchased_release.sql");
+  });
+
+  it("the migrations it builds on are each allocated once, under their own files", () => {
+    // 0191: the sender lifecycle and transition guard its release runs through.
+    // 0217: the registration evidence this lane stacks 0226 on (#844).
+    for (const [v, file] of [
+      ["0191", "0191_studio_sms_sender_provisioning.sql"],
+      ["0217", "0217_studio_sms_sender_registrations.sql"],
+    ] as const) {
+      expect(countVersion(v), v).toBe(1);
+      expect(fileForVersion(v), v).toBe(file);
+    }
   });
 
   it("leaves 0191, whose lifecycle it relies on, byte-identical", () => {
