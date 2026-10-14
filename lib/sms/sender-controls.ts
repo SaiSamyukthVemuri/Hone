@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { liveProvisioningArmed, FakeSmsProvisioningProvider } from "./provider";
 import { classifyNanpNumber } from "./nanp";
-import { DEMO_CANDIDATES, demoAdoptionInventory, demoOwnedNumbers, type DemoAdoptionInventory } from "./sender-controls-demo";
+import { DEMO_CANDIDATES, demoAdoptionInventory, demoOwnedNumbers, demoOwnedServices, type DemoAdoptionInventory } from "./sender-controls-demo";
 
 export { demoAdoptionInventory };
 import type { SmsProvisioningProvider, AvailableNumberCandidate } from "./provider/types";
@@ -199,18 +199,16 @@ export function senderControlsFakeProvider(
   if (!fake) {
     // The account owns EVERY candidate pair (Codex P2 4274756044), so whichever
     // one resolveDemoInventory advertises can be adopted.
-    const inv = demoAdoptionInventory(studioId);
-    const owned = demoOwnedNumbers(studioId);
+    // ...and one Messaging Service per candidate, holding that candidate's
+    // two numbers (Codex P2 4275860500).
     fake = new FakeSmsProvisioningProvider({
-      preOwnedNumbers: owned,
-      accountServices: [
-        {
-          sid: inv.messagingServiceSid,
-          numbers: Object.keys(owned),
-          inboundUrl: u.inbound,
-          statusUrl: u.status,
-        },
-      ],
+      preOwnedNumbers: demoOwnedNumbers(studioId),
+      accountServices: demoOwnedServices(studioId).map((svc) => ({
+        sid: svc.sid,
+        numbers: svc.numbers,
+        inboundUrl: u.inbound,
+        statusUrl: u.status,
+      })),
     });
     controlsFakes.set(key, fake);
   }
@@ -219,8 +217,9 @@ export function senderControlsFakeProvider(
 
 /**
  * The demo pair this studio's page should advertise: its first candidate whose
- * numbers no OTHER studio records (0226 studio_sms_resource_recorded, which
- * excludes this studio's own live attempt). A read only; if it cannot answer,
+ * numbers AND service no row records outside this studio's live attempt (0226
+ * studio_sms_resource_recorded, which counts released history too, including
+ * this studio's own; Codex P2 4274756044, 4275860500). A read only; if it cannot answer,
  * candidate 0 is shown and the adoption's own pre-claim check still refuses a
  * number another studio holds.
  */
@@ -229,8 +228,9 @@ export async function resolveDemoInventory(admin: SupabaseClient, studioId: stri
     const inv = demoAdoptionInventory(studioId, i);
     const ca = await resourceRecorded(admin, studioId, inv.numbers.CA.phoneNumber, null);
     const us = await resourceRecorded(admin, studioId, inv.numbers.US.phoneNumber, null);
-    if (ca === null || us === null) return demoAdoptionInventory(studioId, 0);
-    if (!ca && !us) return inv;
+    const svc = await resourceRecorded(admin, studioId, null, inv.messagingServiceSid);
+    if (ca === null || us === null || svc === null) return demoAdoptionInventory(studioId, 0);
+    if (!ca && !us && !svc) return inv;
   }
   return demoAdoptionInventory(studioId, 0);
 }
@@ -314,7 +314,7 @@ const WEBHOOK_BASE_UNUSABLE: WebhookBaseRefusal = { ok: false, result: "refused"
 async function resourceRecorded(
   admin: SupabaseClient,
   studioId: string,
-  phoneNumber: string,
+  phoneNumber: string | null,
   messagingServiceSid: string | null,
 ): Promise<boolean | null> {
   try {

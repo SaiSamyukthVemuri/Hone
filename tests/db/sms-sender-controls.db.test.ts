@@ -449,10 +449,34 @@ describe("per-studio demo inventory and the recorded-resource check", () => {
     // ...so the page advertises another pair, which b's fake account also owns.
     const offered = await controls.resolveDemoInventory(admin, b.studioId);
     expect(offered.numbers.CA.phoneNumber).not.toBe(first.numbers.CA.phoneNumber);
-    expect(offered.messagingServiceSid).toBe(first.messagingServiceSid);
+    // A different candidate is a different service (Codex P2 4275860500).
+    expect(offered.messagingServiceSid).not.toBe(first.messagingServiceSid);
     expect(await controls.runSenderAdoption(deps(provider), {
       studioId: b.studioId, actorUserId: b.userId, country: "CA", phoneNumber: offered.numbers.CA.phoneNumber, messagingServiceSid: offered.messagingServiceSid,
     })).toMatchObject({ ok: true, result: "adopted", phoneNumber: offered.numbers.CA.phoneNumber });
+    expect(provider.calls.purchase).toBe(0);
+  });
+
+  // Codex P2 4275860500: released history keeps the adopted SERVICE SID under
+  // 0191's global uniqueness, so the studio's next demo must use a candidate
+  // whose service is unrecorded too.
+  it("ADOPT, RELEASE, ADOPT AGAIN: the released service is skipped and the studio adopts a fresh candidate", async () => {
+    const s = await seedStudio("ctl-inv-readopt");
+    const provider = controls.senderControlsFakeProvider(ORIGIN, s.studioId);
+    const first = await controls.resolveDemoInventory(admin, s.studioId);
+    expect(await controls.runSenderAdoption(deps(provider), {
+      studioId: s.studioId, actorUserId: s.userId, country: "CA", phoneNumber: first.numbers.CA.phoneNumber, messagingServiceSid: first.messagingServiceSid,
+    })).toMatchObject({ ok: true, result: "adopted" });
+    // The sender is released (0191's lifecycle), and stays as history.
+    await adminQuery("update public.studio_sms_senders set status = 'releasing' where studio_id = $1 and status = 'active'", [s.studioId]);
+    await adminQuery("update public.studio_sms_senders set status = 'released', released_at = now() where studio_id = $1 and status = 'releasing'", [s.studioId]);
+
+    const second = await controls.resolveDemoInventory(admin, s.studioId);
+    expect(second.messagingServiceSid).not.toBe(first.messagingServiceSid);
+    expect(second.numbers.CA.phoneNumber).not.toBe(first.numbers.CA.phoneNumber);
+    expect(await controls.runSenderAdoption(deps(provider), {
+      studioId: s.studioId, actorUserId: s.userId, country: "CA", phoneNumber: second.numbers.CA.phoneNumber, messagingServiceSid: second.messagingServiceSid,
+    })).toMatchObject({ ok: true, result: "adopted", phoneNumber: second.numbers.CA.phoneNumber });
     expect(provider.calls.purchase).toBe(0);
   });
 
@@ -467,7 +491,8 @@ describe("per-studio demo inventory and the recorded-resource check", () => {
     let expected = controls.demoAdoptionInventory(s.studioId, 0);
     for (let i = 0; i < 16; i += 1) {
       const inv = controls.demoAdoptionInventory(s.studioId, i);
-      if (!(await recorded(inv.numbers.CA.phoneNumber)) && !(await recorded(inv.numbers.US.phoneNumber))) {
+      const svcRecorded = (await adminQuery("select public.studio_sms_resource_recorded($1, null, $2) r", [s.studioId, inv.messagingServiceSid])).rows[0].r as boolean;
+      if (!(await recorded(inv.numbers.CA.phoneNumber)) && !(await recorded(inv.numbers.US.phoneNumber)) && !svcRecorded) {
         expected = inv;
         break;
       }

@@ -5,7 +5,7 @@
 // PER STUDIO (Codex P2 4251747847). One shared demo service across studios
 // meant the second studio to adopt passed every check and then hit 0191's
 // uniqueness on the finalize, parked behind a write-once claim. Each studio
-// gets its own Messaging Service, derived from its id.
+// gets its own Messaging Service per candidate, derived from its id.
 //
 // AND NUMBERS NO OTHER STUDIO HOLDS (Codex P2 4274756044). Hashing every studio
 // into one 50-slot line range meant two studios could share BOTH numbers, and
@@ -69,12 +69,26 @@ function demoNumber(areas: readonly string[], seed: string): string {
 export function demoAdoptionInventory(studioId: string, index = 0): DemoAdoptionInventory {
   const i = Math.max(0, Math.min(DEMO_CANDIDATES - 1, Math.trunc(index)));
   return {
-    messagingServiceSid: `MG${hex32(`mg:${studioId}`)}`,
+    // PER CANDIDATE (Codex P2 4275860500): a released adoption keeps its
+    // service SID in history under 0191's global uniqueness, so a studio that
+    // released its demo sender must be offered a candidate whose SERVICE is
+    // also unrecorded, not only its numbers.
+    messagingServiceSid: `MG${hex32(`mg#${i}:${studioId}`)}`,
     numbers: {
       CA: { phoneNumber: demoNumber(DEMO_CA_AREAS, `ca#${i}:${studioId}`), phoneNumberSid: `PN${hex32(`ca#${i}:${studioId}`)}` },
       US: { phoneNumber: demoNumber(DEMO_US_AREAS, `us#${i}:${studioId}`), phoneNumberSid: `PN${hex32(`us#${i}:${studioId}`)}` },
     },
   };
+}
+
+/** Every candidate's Messaging Service, with the two numbers in its sender pool. */
+export function demoOwnedServices(studioId: string): Array<{ sid: string; numbers: string[] }> {
+  const out: Array<{ sid: string; numbers: string[] }> = [];
+  for (let i = 0; i < DEMO_CANDIDATES; i += 1) {
+    const inv = demoAdoptionInventory(studioId, i);
+    out.push({ sid: inv.messagingServiceSid, numbers: [inv.numbers.CA.phoneNumber, inv.numbers.US.phoneNumber] });
+  }
+  return out;
 }
 
 /** Every number the studio's fake account owns, with its SID. */

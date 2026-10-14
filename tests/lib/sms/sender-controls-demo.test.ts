@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { DEMO_CANDIDATES, demoAdoptionInventory, demoOwnedNumbers } from "@/lib/sms/sender-controls-demo";
+import { DEMO_CANDIDATES, demoAdoptionInventory, demoOwnedNumbers, demoOwnedServices } from "@/lib/sms/sender-controls-demo";
 import { classifyNanpNumber } from "@/lib/sms/nanp";
 
 // Codex P2 4274756044: each studio's fake account owns several candidate
@@ -67,5 +67,21 @@ describe("synthetic SIDs are collision-resistant", () => {
         sids.add(sid);
       }
     }
+  });
+});
+
+// Codex P2 4275860500: one service per candidate, so a released adoption's
+// service never blocks the studio's next demo.
+describe("a Messaging Service per candidate", () => {
+  it("every candidate has its own service SID, holding exactly that candidate's two numbers", () => {
+    const studio = randomUUID();
+    const services = demoOwnedServices(studio);
+    expect(services).toHaveLength(DEMO_CANDIDATES);
+    expect(new Set(services.map((x) => x.sid)).size).toBe(DEMO_CANDIDATES);
+    services.forEach((svc, i) => {
+      const inv = demoAdoptionInventory(studio, i);
+      expect(svc.sid).toBe(inv.messagingServiceSid);
+      expect(svc.numbers).toEqual([inv.numbers.CA.phoneNumber, inv.numbers.US.phoneNumber]);
+    });
   });
 });
