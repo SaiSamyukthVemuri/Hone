@@ -17,7 +17,7 @@ const read = (f: string) => readFileSync(path.join(MIGRATIONS, f), "utf8");
 const SQL = read("0217_studio_sms_sender_registrations.sql");
 const CODE = SQL.replace(/^\s*--.*$/gm, " ").replace(/\s+--.*$/gm, " ");
 const TOP_LEVEL = CODE.replace(/\$\$[\s\S]*?\$\$/g, " ");
-const SIG = "public.record_studio_sms_sender_registration(uuid, uuid, text, text, text, text)";
+const SIG = "public.record_studio_sms_sender_registration(uuid, uuid, text, text, text, text, timestamptz)";
 
 describe("0217 in the sequence", () => {
   it("is the repository maximum on this branch, allocated once", () => {
@@ -62,6 +62,17 @@ describe("blast radius", () => {
     expect(fn.match(/p_expected_sender_id/g)).toHaveLength(3);
     expect(CODE).toMatch(/where s\.studio_id = p_studio_id\s+and s\.status <> 'released'\s+for update\) l;/);
     expect(CODE).toMatch(/security definer\s+set search_path = pg_catalog, pg_temp/);
+  });
+
+  it("a write replaces only the record its form showed, checked after the sender lock and before the upsert (Codex P2 4266275222)", () => {
+    const body = CODE.slice(CODE.indexOf("create or replace function public.record_studio_sms_sender_registration("));
+    const fn = body.slice(0, body.indexOf("$$;", body.indexOf("as $$") + 5));
+    const lock = fn.indexOf("for update) l;");
+    const check = fn.search(/if \(v_exists and p_expected_updated_at is distinct from v_prev_at\)\s+or \(not v_exists and p_expected_updated_at is not null\) then\s+return query select 'stale_record'/);
+    const upsert = fn.indexOf("insert into public.studio_sms_sender_registrations");
+    expect(lock).toBeGreaterThan(0);
+    expect(check).toBeGreaterThan(lock);
+    expect(upsert).toBeGreaterThan(check);
   });
 });
 

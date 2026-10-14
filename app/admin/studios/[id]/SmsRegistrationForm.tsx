@@ -7,6 +7,8 @@ export type CurrentRecord = {
   status: string;
   missing_information: string | null;
   provider_reference: string | null;
+  /** The record's version, exactly as the database gave it. */
+  updated_at: string;
 };
 
 // SMS-SENDER-REG-01 (#824): the operator's record form, bound to ONE sender
@@ -47,6 +49,9 @@ export function SmsRegistrationForm({
       <form action={formAction} className="mt-3 flex flex-wrap items-end gap-2 text-sm">
         <input type="hidden" name="expected_sender_id" value={senderId} />
         <input type="hidden" name="expected_phone_number" value={phoneNumber} />
+        {/* NO LOST UPDATE (Codex P2 4266275222): the record this form shows, or
+            none. A write against a record changed since is refused. */}
+        <input type="hidden" name="expected_updated_at" value={current?.updated_at ?? ""} />
         <p className="flex flex-col">
           Kind
           <strong data-testid="admin-sms-registration-kind">{kindLabel}</strong>
