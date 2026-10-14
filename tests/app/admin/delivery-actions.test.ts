@@ -35,7 +35,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
   }),
 }));
 
-const { resolveDeliveryIncidentAction } = await import("@/app/admin/delivery/actions");
+const { resolveDeliveryIncidentAction, closeDeliveryConcernAction } = await import("@/app/admin/delivery/actions");
 
 const ID = "6e5d4c3b-2a19-4807-a6b5-c4d3e2f1a0b9";
 const form = (fields: Record<string, string>) => {
@@ -96,12 +96,43 @@ describe("resolveDeliveryIncidentAction", () => {
   });
 });
 
+describe("closeDeliveryConcernAction (DELIVERY-VISIBILITY-04)", () => {
+  it("refuses a non-admin, audited, without reaching the command", async () => {
+    h.email = "owner@studio.test";
+    await expect(closeDeliveryConcernAction(form({ concern_id: ID, resolution: "explained" }))).rejects.toThrow("Unauthorized.");
+    expect(h.audits).toEqual([expect.objectContaining({ action: "delivery_concern_closed", outcome: "blocked" })]);
+    expect(h.rpcCalls).toEqual([]);
+  });
+
+  it("closes through the service-role command and audits the resolution word only", async () => {
+    h.email = "support@hone.test";
+    h.answer = { data: "closed", error: null };
+    await closeDeliveryConcernAction(form({ concern_id: ID, resolution: "provider_issue" }));
+    expect(h.rpcCalls).toEqual([["close_delivery_concern", { p_concern_id: ID, p_resolution: "provider_issue" }]]);
+    expect(h.audits[0]).toMatchObject({ outcome: "succeeded", metadata: { resolution: "provider_issue", result: "closed" } });
+  });
+
+  it("refuses an unknown resolution or a malformed id before any command, and audits both", async () => {
+    h.email = "support@hone.test";
+    await expect(closeDeliveryConcernAction(form({ concern_id: ID, resolution: "deleted" }))).rejects.toThrow();
+    await expect(closeDeliveryConcernAction(form({ concern_id: "1; drop", resolution: "explained" }))).rejects.toThrow();
+    expect(h.rpcCalls).toEqual([]);
+    expect(h.audits).toEqual([
+      expect.objectContaining({ action: "delivery_concern_closed", outcome: "failed", targetId: ID, metadata: { result: "invalid_input", invalid: "resolution" } }),
+      expect.objectContaining({ action: "delivery_concern_closed", outcome: "failed", targetId: null, metadata: { result: "invalid_input", invalid: "concern_id" } }),
+    ]);
+    expect(JSON.stringify(h.audits)).not.toContain("1; drop");
+    expect(JSON.stringify(h.audits)).not.toContain("deleted");
+  });
+});
+
 describe("the support queue page", () => {
   const PAGE = readFileSync("app/admin/delivery/page.tsx", "utf8");
 
   it("reads only through the service-role support commands", () => {
     expect(PAGE).toContain('admin.rpc("support_delivery_incidents"');
     expect(PAGE).toContain('admin.rpc("support_email_receipt_outcomes")');
+    expect(PAGE).toContain('admin.rpc("support_delivery_concerns"');
     expect(PAGE).not.toMatch(/\.from\(/);
   });
 
