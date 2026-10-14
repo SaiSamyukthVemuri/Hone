@@ -334,6 +334,11 @@ it("seeds (or proves) the persistent synthetic Fett twin", { timeout: 600_000 },
   note("F1 fake Stripe TEST account (US) bound + card on file for client 05", true, String((account as { accountId?: string }).accountId ?? ""));
   const payable = await pastVisit(studioId, e1.practitionerId, c(5), IDS.treatment, 1);
   note("F2 completed USD visit ready to charge (fake Stripe) — client 05", true, payable.sessionId);
+  // Two OLDER payable visits for the restart scenario (scripts/fett-twin/pay-step.mjs): charge one, restart
+  // the server, charge the other on the new process, refund the first. The walkthrough keeps the newest.
+  const restartA = await pastVisit(studioId, e1.practitionerId, c(5), IDS.treatment, 2);
+  const restartB = await pastVisit(studioId, e1.practitionerId, c(5), IDS.treatment, 3);
+  note("F2b two older USD visits for the restart scenario — client 05", !!restartA.sessionId && !!restartB.sessionId, `${restartA.sessionId} ${restartB.sessionId}`);
   const otherWay = await pastVisit(studioId, e1.practitionerId, c(6), IDS.treatment, 2);
   const settled = await asUser(e1.userId, (q) =>
     q(`select * from public.record_appointment_settlement($1, $2, 'paid_other_external', 15000, 'Zelle (synthetic)', false)`, [studioId, otherWay.appointmentId]),
