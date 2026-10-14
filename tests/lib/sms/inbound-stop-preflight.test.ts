@@ -1125,3 +1125,52 @@ describe("a live Setting's edge zones must not drop a STOP on one zone's outage 
     expect(checkOf(f, "webhook_zones")).toBeUndefined();
   });
 });
+
+describe("URL overrides that defeat their own retries (Codex P1 4265363596, P2 4265363603)", () => {
+  const noFallback = (url: string) => {
+    const f = allProven();
+    f.service!.inboundRequestUrl = url;
+    Object.assign(f.service!, { fallbackUrl: null, fallbackMethod: null });
+    return f;
+  };
+  const redelivery = (f: InboundStopFacts) => evaluateInboundStopPreflight(f).checks.find((c) => c.id === "stop_redelivery")?.status;
+
+  it("sni=n with otherwise complete retries: every TLS handshake to a virtual host fails, refused", () => {
+    expect(retriesRecoverDelivery(`${URL_RETRY}&sni=n`)).toBe(false);
+    expect(redelivery(noFallback(`${URL_RETRY}&sni=n`))).toBe("fail");
+  });
+
+  it("sni=y or sni omitted: certified as before", () => {
+    expect(retriesRecoverDelivery(`${URL_RETRY}&sni=y`)).toBe(true);
+    expect(retriesRecoverDelivery(URL_RETRY)).toBe(true);
+  });
+
+  for (const e of ["ashburn", "dublin", "ashburn-ix"]) {
+    it(`a ONE-edge list (e=${e}) gives retries no alternate origin: refused`, () => {
+      expect(retriesRecoverDelivery(`${URL_RETRY}&e=${e}`)).toBe(false);
+      expect(redelivery(noFallback(`${URL_RETRY}&e=${e}`))).toBe("fail");
+    });
+  }
+
+  it("two or more edges: certified", () => {
+    expect(retriesRecoverDelivery(`${URL_RETRY}&e=ashburn,umatilla`)).toBe(true);
+    expect(retriesRecoverDelivery(`${URL_RETRY}&e=dublin,sydney,ashburn`)).toBe(true);
+  });
+
+  it("a same-route POST fallback still recovers a one-edge or sni=n primary", () => {
+    for (const frag of ["&sni=n", "&e=ashburn"]) {
+      const f = noFallback(`${URL_RETRY}${frag}`);
+      Object.assign(f.service!, { fallbackUrl: URL_OK, fallbackMethod: "POST" });
+      expect(redelivery(f)).toBe("pass");
+    }
+  });
+
+  it("under a matching Rule the Setting decides, so the URL's sni/e are not consulted", () => {
+    const f = noFallback(`${URL_RETRY}&e=ashburn`);
+    f.webhookRules = {
+      matched: true,
+      settings: [{ percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY }],
+    };
+    expect(redelivery(f)).toBe("pass");
+  });
+});

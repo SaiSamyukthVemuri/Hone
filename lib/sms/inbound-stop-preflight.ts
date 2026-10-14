@@ -105,11 +105,23 @@ function retriesRecoverEveryFailure(r: { named: readonly DeliveryFailure[]; coun
  * default `ct`, so `#rp=5xx` alone leaves connect failures and read timeouts
  * unretried. No fragment means the defaults (ct only, budget 15000 < 40000):
  * no. An invalid fragment: no.
+ *
+ * SNI (Codex P1 4265363596): `sni=n` disables SNI on HTTPS connects; a
+ * virtual-hosted endpoint then fails EVERY attempt at the TLS handshake, so
+ * no retry count helps. Not certified (nothing here proves the endpoint works
+ * without SNI).
+ *
+ * EDGES (Codex P2 4265363603): retries move through the `e=` list, so an
+ * explicit ONE-edge list gives no alternate origin when that edge fails. Not
+ * certified. An omitted `e` leaves the origin to Twilio's default edge
+ * selection, which this preflight does not second-guess (handoff A7).
  */
 export function retriesRecoverDelivery(url: string | null | undefined): boolean {
   const n = normalizeTwilioWebhookUrl(url);
   if (!n.ok) return false;
   const o = n.overrides ?? {};
+  if (o.sni === "n") return false;
+  if (o.e !== undefined && o.e.length < 2) return false;
   return retriesRecoverEveryFailure({
     named: (o.rp ?? ["ct"]).flatMap((t) => URL_POLICY[t] ?? []),
     count: o.rc ?? 1,
