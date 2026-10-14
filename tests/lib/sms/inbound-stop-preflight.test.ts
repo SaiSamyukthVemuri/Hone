@@ -56,7 +56,7 @@ const allProven = (): InboundStopFacts => ({
   webhookRules: { matched: false },
   // Static Proxy off, so the URL's e= list is real (Codex P2 4267597875).
   staticProxyEnabled: false,
-  // The Webhooks configuration has settled (Operations COMPLETED, unchanged >= 60 s).
+  // The Webhooks configuration has settled (Operations COMPLETED, unchanged >= 90 s).
   webhookPropagation: { ruleOperationStatuses: ["COMPLETED"], secondsSinceLastConfigChange: 3600 },
   honeAccountSid: ACCOUNT,
   mappedStudioId: "studio-b",
@@ -629,15 +629,24 @@ describe("evaluateInboundStopPreflight", () => {
         });
       }
 
-      it("exactly 60 s and COMPLETED: settled", () => {
+      it("exactly 90 s and COMPLETED: settled (FAQ: 30 to 90 s)", () => {
         const f = allProven();
-        f.webhookPropagation = { ruleOperationStatuses: ["COMPLETED"], secondsSinceLastConfigChange: 60 };
+        f.webhookPropagation = { ruleOperationStatuses: ["COMPLETED"], secondsSinceLastConfigChange: 90 };
         expect(prop(f)?.status).toBe("pass");
       });
 
-      it("no Rule written and settled for 60 s: settled", () => {
+      for (const secs of [60, 89]) {
+        it(`${secs} s after a change, even COMPLETED: still within the documented 90 s, unknown, never ready`, () => {
+          const f = allProven();
+          f.webhookPropagation = { ruleOperationStatuses: ["COMPLETED"], secondsSinceLastConfigChange: secs };
+          expect(prop(f)?.status).toBe("unknown");
+          expect(evaluateInboundStopPreflight(f).ready).toBe(false);
+        });
+      }
+
+      it("no Rule written and settled for 90 s: settled", () => {
         const f = allProven();
-        f.webhookPropagation = { ruleOperationStatuses: [], secondsSinceLastConfigChange: 60 };
+        f.webhookPropagation = { ruleOperationStatuses: [], secondsSinceLastConfigChange: 90 };
         expect(prop(f)?.status).toBe("pass");
       });
 

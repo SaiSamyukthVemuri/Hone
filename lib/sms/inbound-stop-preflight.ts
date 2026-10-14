@@ -342,11 +342,11 @@ export type InboundStopFacts = {
    * no exact, prefix or default Rule matches. Undefined = not read.
    */
   /**
-   * Propagation of the Webhooks configuration (Codex P1 4259214614; FAQ and
-   * Rules docs, checked 2026-10-13): a write is saved at once but takes 30-60 s
-   * to reach the delivery plane. Rule writes return an Operation to poll until
-   * COMPLETED; Settings, AuthProfiles and SharedKeys create none, so 60 s must
-   * pass. Until then a STOP may be signed or retried by the OLD configuration.
+   * Propagation of the Webhooks configuration (Codex P1 4259214614; the
+   * Webhooks configuration FAQ, re-checked 2026-10-14, now says 30 TO 90 s):
+   * a write is saved at once but takes up to 90 s to reach the delivery plane.
+   * Rule writes return an Operation to poll until COMPLETED; Settings,
+   * AuthProfiles and SharedKeys create none, so 90 s must pass. Until then a STOP may be signed or retried by the OLD configuration.
    */
   webhookPropagation?: {
     /**
@@ -686,7 +686,7 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
   // Operation is a failure, since waiting cannot make it take effect.
   if (rules !== undefined) {
     const p = f.webhookPropagation;
-    const PROPAGATION_SECONDS = 60;
+    const PROPAGATION_SECONDS = 90;
     const statuses = p?.ruleOperationStatuses ?? null;
     const terminal = (statuses ?? []).filter((st) => st === "FAILED" || st === "CANCELLED");
     const unrecognised = (statuses ?? []).filter((st) => !["PENDING", "RUNNING", "COMPLETED", "FAILED", "CANCELLED"].includes(st));
@@ -698,15 +698,15 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
             `a Rule Operation ended ${terminal.join(", ")}: that change will never take effect. Read the Operation's error, fix and re-apply the Rule, then re-read`,
           )
         : p === undefined || statuses === null || p.secondsSinceLastConfigChange === null
-          ? check("webhook_propagation", "unknown", "Webhooks configuration propagation not read: confirm Rule Operations are COMPLETED and 60 s have passed since the last change")
+          ? check("webhook_propagation", "unknown", "Webhooks configuration propagation not read: confirm Rule Operations are COMPLETED and 90 s have passed since the last change")
           : unrecognised.length > 0
             ? check("webhook_propagation", "unknown", `unrecognised Rule Operation status ${unrecognised.join(", ")}: re-read`)
             : statuses.every((st) => st === "COMPLETED") && p.secondsSinceLastConfigChange >= PROPAGATION_SECONDS
-              ? check("webhook_propagation", "pass", "Rule Operations COMPLETED and the configuration has been unchanged for at least 60 s")
+              ? check("webhook_propagation", "pass", "Rule Operations COMPLETED and the configuration has been unchanged for at least 90 s")
               : check(
                   "webhook_propagation",
                   "unknown",
-                  "Webhooks configuration still propagating (an Operation is PENDING or RUNNING, or less than 60 s since the last change): wait, then re-read",
+                  "Webhooks configuration still propagating (an Operation is PENDING or RUNNING, or less than 90 s since the last change): wait, then re-read",
                 ),
     );
   }
