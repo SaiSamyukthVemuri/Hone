@@ -581,7 +581,15 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
   // Supporting OAuth2 would need its own design and proof.
   const rules = f.webhookRules;
   const allSettings = rules?.matched ? rules.settings : [];
-  const sharesKnown = allSettings.length > 0 && allSettings.every((x) => x.percentage !== null);
+  // A COMPLETE split (Codex P1 4274472921; Webhook Rules docs): one or two
+  // Settings whose integer shares, each 0-100, sum to exactly 100. A partial
+  // read (one 50% Setting with its partner omitted), an invalid share or a
+  // bad sum leaves traffic unaccounted for, so nothing is certified from it.
+  const sharesKnown =
+    allSettings.length >= 1 &&
+    allSettings.length <= 2 &&
+    allSettings.every((x) => typeof x.percentage === "number" && Number.isInteger(x.percentage) && x.percentage >= 0 && x.percentage <= 100) &&
+    allSettings.reduce((sum, x) => sum + (x.percentage as number), 0) === 100;
   const live = allSettings.filter((x) => (x.percentage ?? 1) > 0);
   const signing: "yes" | "no" | "unknown" =
     !sharesKnown || live.length === 0

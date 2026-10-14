@@ -1794,3 +1794,46 @@ describe("the live STOP proves only the handler and database it ran against (Cod
     expect(r).toMatchObject({ status: "unknown", ready: false });
   });
 });
+
+describe("NEGATIVE CONTROLS — a Rule's split must be COMPLETE before any Setting is certified (Codex P1 4274472921)", () => {
+  const healthy = (percentage: unknown) =>
+    ({ percentage, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY }) as never;
+  const run = (percentages: unknown[]) => {
+    const f = allProven();
+    Object.assign(f.service!, { inboundRequestUrl: URL_OK, fallbackUrl: null, fallbackMethod: null });
+    f.webhookRules = { matched: true, settings: percentages.map(healthy) };
+    const r = evaluateInboundStopPreflight(f);
+    const st = (id: string) => r.checks.find((c) => c.id === id)?.status;
+    return { rules: st("webhook_rules"), redelivery: st("stop_redelivery"), zones: st("webhook_zones"), ready: r.ready };
+  };
+
+  for (const [why, shares] of [
+    ["one healthy 50% Setting, its partner omitted (the reported case)", [50]],
+    ["two Settings summing to 90", [60, 30]],
+    ["two Settings summing to 110", [70, 40]],
+    ["three Settings summing to 100", [50, 30, 20]],
+    ["fractional shares", [50.5, 49.5]],
+    ["a negative share", [-10, 110]],
+    ["a share over 100", [150]],
+    ["a STRING share", ["100"]],
+    ["a null share", [null]],
+    ["no Settings", []],
+  ] as const) {
+    it(`${why}: nothing certified, never ready`, () => {
+      const r = run([...shares]);
+      expect(r.rules).toBe("unknown");
+      expect(r.redelivery).toBe("unknown");
+      expect(r.ready).toBe(false);
+    });
+  }
+
+  for (const [why, shares] of [
+    ["one Setting at 100", [100]],
+    ["a 70/30 split", [70, 30]],
+    ["a 100/0 rollout", [100, 0]],
+  ] as const) {
+    it(`POSITIVE CONTROL: ${why}, both healthy: ready`, () => {
+      expect(run([...shares])).toEqual({ rules: "pass", redelivery: "pass", zones: "pass", ready: true });
+    });
+  }
+});
