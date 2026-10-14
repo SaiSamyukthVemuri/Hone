@@ -545,4 +545,72 @@ describe('G1 / P1: "Any available" resolves against eligible practitioners', () 
         "no_practitioner_available",
     ).toBe(true);
   });
+
+  // Codex P1 4265796478. The union is correct for the command a NEW client
+  // commits through (0225 -> 0222, practitioner-aware) and WRONG for the one an
+  // EXISTING client still commits through (the legacy studio-wide
+  // `create_public_appointment`). The first version of the union fix ignored
+  // that and so reintroduced the page/command mismatch one branch over: an
+  // existing client was offered a slot only practitioner B was free for, passed
+  // re-verification on the union, and had the legacy command refuse it.
+  it("the union is gated on the client type, in BOTH places", () => {
+    const grid = actionCode("fetchPublicSlotsAction");
+    expect(
+      /forNewClient\s*&&\s*studio\.practitioner_capacity_booking_enabled === true/.test(
+        grid,
+      ),
+      "the GRID must union only for the client type whose command is " +
+        "practitioner-aware",
+    ).toBe(true);
+
+    // PIN THE CONJUNCTION, NOT THE TOKEN. The first version of this guard
+    // tested `/clientType === "new"/` against the whole action and passed
+    // against a mutant that removed the gate from the re-verification --
+    // because that phrase occurs FOUR other times in this action (the
+    // admission gate, the consultation rule, the submitted-practitioner
+    // branch). A token that appears elsewhere cannot witness a condition
+    // here. The mutant run caught it; the three operands must be asserted
+    // together, as one condition.
+    const commit = actionCode("publicBookAppointmentAction");
+    expect(
+      /!chosenPractitionerId\s*&&\s*clientType === "new"\s*&&\s*studio\.practitioner_capacity_booking_enabled === true/.test(
+        commit,
+      ),
+      "the RE-VERIFICATION must gate the union on the same discriminator the " +
+        "commit uses, or it is more permissive than the command it hands to",
+    ).toBe(true);
+    expect(
+      commit.includes("unionEligibleSlots"),
+      "the re-verification must still ask the union on the new-client path",
+    ).toBe(true);
+  });
+
+  it("absent means legacy — the union is opt-in, never inferred", () => {
+    const grid = actionCode("fetchPublicSlotsAction");
+    expect(
+      grid.includes("params.newClient === true"),
+      "an omitted flag must get the STUDIO-WIDE answer: that is pre-G1 " +
+        "behaviour and the one the legacy command shares, so a caller that " +
+        "does not opt in cannot be handed the more permissive grid",
+    ).toBe(true);
+  });
+
+  it("a practitioner id outside the new-client path is refused, not scoped", () => {
+    const grid = actionCode("fetchPublicSlotsAction");
+    expect(
+      grid.includes("public_slots_practitioner_not_new_client"),
+      "the picker is new-client only, so a practitioner elsewhere is a call " +
+        "the UI cannot make; scoping it would offer a scoped grid for a " +
+        "booking the studio-wide command decides -- the same mismatch by " +
+        "another route",
+    ).toBe(true);
+  });
+
+  it("the form tells the action which command will commit", () => {
+    expect(
+      /newClient:\s*isNewClient/.test(FORM),
+      "without this the grid falls back to legacy for NEW clients too, " +
+        "silently undoing the union fix",
+    ).toBe(true);
+  });
 });

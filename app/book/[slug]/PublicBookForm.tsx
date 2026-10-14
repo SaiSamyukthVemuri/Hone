@@ -426,6 +426,11 @@ export function PublicBookForm({
         date,
         // Scoped only where the choice is honoured at commit.
         practitionerId: pickerApplies ? practitionerId || null : null,
+        // WHICH COMMAND WILL COMMIT THIS. A new client goes through 0225/0222
+        // and is practitioner-aware; an existing client commits through the
+        // legacy studio-wide command, so it must get the studio-wide grid or
+        // the page offers times that command refuses.
+        newClient: isNewClient,
       });
       if (cancelled) return;
       if (!r.ok) {
@@ -443,6 +448,10 @@ export function PublicBookForm({
     serviceId,
     date,
     clientType,
+    // Derived from `clientType` above, so it never changes independently —
+    // listed because the effect now READS it, and an omitted dependency the
+    // linter can see is how a stale flag reaches a server action.
+    isNewClient,
     newClientBlocked,
     pickerApplies,
     practitionerId,

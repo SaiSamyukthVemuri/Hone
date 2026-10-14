@@ -354,6 +354,26 @@ export async function fetchPublicSlotsAction(params: {
    *  exactly: getAvailableSlots consults the per-practitioner columns only when
    *  given BOTH the 0134 studio flag and an explicit id. */
   practitionerId?: string | null;
+  /**
+   * G1 / CODEX P1 4265796478 — WHICH COMMAND THIS GRID IS FOR.
+   *
+   * The grid must answer the question the COMMIT will ask, and which command
+   * commits is decided by the client type: a NEW client goes through
+   * `create_public_appointment_for_new_client_v2` -> 0222's
+   * `create_public_appointment_v2`, which is practitioner-aware, while an
+   * EXISTING client still commits through the legacy `create_public_appointment`,
+   * whose availability authority is STUDIO-WIDE.
+   *
+   * So the eligible-practitioner union is correct for one of them and wrong for
+   * the other. Unioning for an existing client offered a slot only practitioner
+   * B was free for and then had the legacy command refuse it — the page/command
+   * mismatch this lane exists to remove, reintroduced one branch over.
+   *
+   * ABSENT MEANS LEGACY, deliberately: an omitted flag gets the studio-wide
+   * answer, which is pre-G1 behaviour and the one the legacy command shares. The
+   * union is opt-in and never inferred.
+   */
+  newClient?: boolean;
 }): Promise<{ ok: true; slots: Slot[] } | { ok: false; error: string }> {
   // Rate limit (v1) before any DB read or the heavy getAvailableSlots call.
   // Generous per (IP, slug). Fails open when Upstash is unconfigured or down.
@@ -441,8 +461,22 @@ export async function fetchPublicSlotsAction(params: {
   // option Codex offered; it is worse here, because "no availability" tells the
   // visitor the practitioner is busy when the truth is that the choice is no
   // longer offerable.
+  // G1 / CODEX P1 4265796478. Which command this grid is for -- see `newClient`
+  // on the parameter object. Absent means the LEGACY studio-wide command.
+  const forNewClient = params.newClient === true;
   let scopedPractitionerId: string | null = null;
   if (params.practitionerId) {
+    // THE PICKER IS NEW-CLIENT ONLY, so a practitioner on any other path is a
+    // call the UI cannot make (`pickerApplies` in PublicBookForm requires a new
+    // client on an OPEN studio). Scoping it would offer a practitioner-scoped
+    // grid for a booking the legacy studio-wide command then decides -- the same
+    // mismatch as the union, by a different route. Refused rather than widened.
+    if (!forNewClient) {
+      logInternalBookingError("public_slots_practitioner_not_new_client", {
+        studioId: studio.id,
+      });
+      return { ok: false, error: PRACTITIONER_CHOICE_UNAVAILABLE_ERROR };
+    }
     if (studio.practitioner_capacity_booking_enabled !== true) {
       logInternalBookingError("public_slots_practitioner_assignment_disabled", {
         studioId: studio.id,
@@ -498,7 +532,7 @@ export async function fetchPublicSlotsAction(params: {
       undefined,
       scopedPractitionerId,
     );
-  } else if (studio.practitioner_capacity_booking_enabled === true) {
+  } else if (forNewClient && studio.practitioner_capacity_booking_enabled === true) {
     const eligible = await loadEligiblePractitioners(
       admin,
       studio.id,
@@ -523,9 +557,12 @@ export async function fetchPublicSlotsAction(params: {
       eligible.map((o) => o.id),
     );
   } else {
-    // LEGACY, AND UNCHANGED BY CONSTRUCTION: with the assignment switch off the
-    // sixth argument is NULL exactly as it was pre-G1, so this is byte-for-byte
-    // today's studio-wide behaviour for every studio in that state.
+    // LEGACY, AND UNCHANGED BY CONSTRUCTION: the sixth argument is NULL exactly
+    // as it was pre-G1, so this is byte-for-byte today's studio-wide behaviour.
+    // Reached by an EXISTING client (which commits through the legacy
+    // studio-wide `create_public_appointment`) and by any studio with the
+    // assignment switch off -- in both cases the studio-wide answer is the one
+    // the commit will agree with.
     slots = await getAvailableSlots(
       admin,
       studioRowForSlots,
@@ -1150,8 +1187,23 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // at all — the moment ANY practitioner became busy at that instant, even
   // though an eligible one was still free and `create_public_appointment_v2`
   // would have assigned them. Same union, same inputs, same answer.
+  //
+  // CODEX P1 4265796478 — "THE SAME QUESTION" IS PER CLIENT TYPE, and omitting
+  // that is how the first version of this reintroduced the mismatch one branch
+  // over. A NEW client commits through
+  // `create_public_appointment_for_new_client_v2` -> 0222's
+  // `create_public_appointment_v2`, which is practitioner-aware; an EXISTING
+  // client still commits through the legacy `create_public_appointment` below,
+  // whose authority is STUDIO-WIDE. So unioning for an existing client made
+  // this re-verification MORE permissive than the command it hands off to: the
+  // slot passed here and the legacy command refused it. `clientType` is the
+  // same discriminator the commit uses, read from the same submission.
   let slots: Slot[];
-  if (!chosenPractitionerId && studio.practitioner_capacity_booking_enabled === true) {
+  if (
+    !chosenPractitionerId &&
+    clientType === "new" &&
+    studio.practitioner_capacity_booking_enabled === true
+  ) {
     const eligible = await loadEligiblePractitioners(admin, studio.id, serviceId);
     slots =
       eligible.length === 0
