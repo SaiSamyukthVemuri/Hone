@@ -43,6 +43,11 @@ export type FakeStripeCall = {
   amountCents: number | null;
   currency: string | null;
   resultId: string;
+  // The synthetic charge a pi_create produced / a refund_create targeted
+  // (PAY-CCY-09). Optional here: ledgers written before it carry none.
+  chargeId?: string | null;
+  // PAY-CCY-09 (Codex P2 4265594520): pi_create only, digest of the sent metadata.
+  metadataDigest?: string | null;
   // INVOCATION vs EFFECT: every adapter call is recorded (an invocation);
   // replay=false marks the calls that created a NEW processor result for a
   // previously-unseen idempotency key (an effect). See lib/stripe/e2e-fake-stripe.

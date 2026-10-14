@@ -9,9 +9,11 @@ import {
 } from "@/lib/stripe/e2e-fake-guard";
 import {
   createFakeStripe,
+  fakeMetadataDigest,
   getFakeStripeCalls,
   resetFakeStripeState,
 } from "@/lib/stripe/e2e-fake-stripe";
+import { metadataDigest } from "@/e2e-payment/helpers/fake-stripe-metadata-digest";
 
 // Security proof for the server-only fake-Stripe activation boundary. The guard
 // is a PURE env-evaluation function, so the matrix passes an env object and never
@@ -289,14 +291,232 @@ describe("fake-call recorder — invocation vs effect, run-isolated, test-safe",
   });
 
   it("the recorded shape carries no client/email/card/PHI fields", () => {
-    // The recorder type is method/key/account/amount/currency/resultId/replay only.
-    const keys = ["method", "idempotencyKey", "stripeAccount", "amountCents", "currency", "resultId", "replay"];
+    // The recorder type is method/key/account/amount/currency/resultId/chargeId/
+    // metadataDigest/replay only. chargeId (PAY-CCY-09) is a synthetic provider
+    // id; metadataDigest is a one-way hash, never the metadata values.
+    const keys = ["method", "idempotencyKey", "stripeAccount", "amountCents", "currency", "resultId", "chargeId", "metadataDigest", "replay"];
     const src = readFileSync(join(process.cwd(), "lib/stripe/e2e-fake-stripe.ts"), "utf8");
     for (const forbidden of ["email", "last4", "customer", "client_id", "card_", "signature", "cvc", "secret"]) {
       // no forbidden field is recorded (the FakeStripeCall type block)
       const typeBlock = src.slice(src.indexOf("export type FakeStripeCall"), src.indexOf("};", src.indexOf("export type FakeStripeCall")));
       expect(typeBlock.toLowerCase()).not.toContain(forbidden);
     }
-    expect(keys.length).toBe(7);
+    expect(keys.length).toBe(9);
+  });
+});
+
+// PAY-CCY-09 (Codex P2 4265594520). The fake records WHAT METADATA THE CHARGE
+// PATH SENT, as a digest, so a webhook test cannot manufacture correct metadata
+// from the row when the charge path sent something else.
+describe("fake create records a digest of the metadata it received", () => {
+  const RUN = "run-mdigest0001";
+  const SENT = {
+    hone_studio_id: "studio-1",
+    hone_client_id: "client-1-SECRETLIKE",
+    hone_session_id: null,
+    hone_appointment_id: "",
+    hone_session_payment_charge_attempt_id: "att-1",
+    hone_charge_reason: "session_payment",
+    hone_card_authorization_signature_id: "sig-1",
+    hone_environment: "test",
+  };
+
+  afterEach(() => resetFakeStripeState(RUN));
+
+  async function create(metadata: Record<string, string | null>) {
+    process.env.HONE_E2E_RUN_ID = RUN;
+    const s = createFakeStripe();
+    await (s.paymentIntents.create as unknown as (p: unknown, o: unknown) => Promise<unknown>)(
+      { amount: 18500, currency: "usd", metadata },
+      { idempotencyKey: `k-${Math.random()}` },
+    );
+    return getFakeStripeCalls(RUN).at(-1)!;
+  }
+
+  it("records the digest of what was SENT, and never the values", async () => {
+    const c = await create(SENT);
+    expect(c.metadataDigest).toBe(fakeMetadataDigest(SENT));
+    expect(JSON.stringify(c)).not.toContain("client-1-SECRETLIKE");
+    expect(JSON.stringify(c)).not.toContain("studio-1");
+  });
+
+  it("a wrong value sent by the charge path yields a DIFFERENT digest", async () => {
+    const right = await create(SENT);
+    const wrong = await create({ ...SENT, hone_studio_id: SENT.hone_client_id });
+    expect(wrong.metadataDigest).not.toBe(right.metadataDigest);
+  });
+
+  it("the Playwright-side digest is the same function (null/empty dropped, order-free)", () => {
+    const fromRow = {
+      hone_environment: "test",
+      hone_card_authorization_signature_id: "sig-1",
+      hone_charge_reason: "session_payment",
+      hone_session_payment_charge_attempt_id: "att-1",
+      hone_appointment_id: "",
+      hone_session_id: "",
+      hone_client_id: "client-1-SECRETLIKE",
+      hone_studio_id: "studio-1",
+    };
+    expect(metadataDigest(fromRow)).toBe(fakeMetadataDigest(SENT));
+    for (const m of [SENT, {}, { a: "1" }, { b: "2", a: "1" }, { a: undefined }]) {
+      expect(metadataDigest(m)).toBe(fakeMetadataDigest(m));
+    }
+    expect(metadataDigest(null)).toBeNull();
+    expect(fakeMetadataDigest(undefined)).toBeNull();
+    expect(metadataDigest({ ...fromRow, hone_studio_id: "client-1-SECRETLIKE" })).not.toBe(
+      fakeMetadataDigest(SENT),
+    );
+  });
+});
+
+// PAY-CCY-09. Refund outcomes, selected by the SAME run-scoped, server-side
+// selector as PaymentIntent create (the refund's idempotency key). They map onto
+// the two refund failure classes production already handles.
+describe("fake refunds: selectable outcomes match production's failure classes", () => {
+  const RUN = "run-refund0001";
+  const KEY = "hone:payment_refund:att-r1:v1";
+  const prevRun = process.env.HONE_E2E_RUN_ID;
+  const prevFlag = process.env.HONE_E2E_FAKE_STRIPE;
+  afterEach(async () => {
+    const { clearFakeStripeBehavior, cleanupFakeStripeFiles } = await import("@/lib/stripe/e2e-fake-ledger");
+    clearFakeStripeBehavior(RUN);
+    cleanupFakeStripeFiles(RUN);
+    resetFakeStripeState(RUN);
+    if (prevRun === undefined) delete process.env.HONE_E2E_RUN_ID;
+    else process.env.HONE_E2E_RUN_ID = prevRun;
+    if (prevFlag === undefined) delete process.env.HONE_E2E_FAKE_STRIPE;
+    else process.env.HONE_E2E_FAKE_STRIPE = prevFlag;
+  });
+
+  async function setup(outcome: "success" | "decline" | "processing") {
+    process.env.HONE_E2E_FAKE_STRIPE = "1";
+    process.env.HONE_E2E_RUN_ID = RUN;
+    const { setFakeStripeBehavior } = await import("@/lib/stripe/e2e-fake-ledger");
+    setFakeStripeBehavior(RUN, KEY, outcome);
+    const stripe = createFakeStripe();
+    const charge = await (stripe.paymentIntents.create as unknown as (
+      p: unknown,
+      o: unknown,
+    ) => Promise<{ latest_charge: string }>)(
+      { amount: 18500, currency: "usd" },
+      { stripeAccount: "acct_test_r", idempotencyKey: "hone:session_payment:att-r1:v1" },
+    );
+    const refund = () =>
+      (stripe.refunds.create as unknown as (p: unknown, o: unknown) => Promise<{ id: string }>)(
+        { charge: charge.latest_charge, amount: 18500 },
+        { stripeAccount: "acct_test_r", idempotencyKey: KEY },
+      );
+    const refundCalls = () => getFakeStripeCalls(RUN).filter((c) => c.method === "refund_create");
+    return { refund, refundCalls, chargeId: charge.latest_charge };
+  }
+
+  it("decline: a genuine StripeError (production records 'failed'); no refund exists", async () => {
+    const { refund, refundCalls } = await setup("decline");
+    const StripeSdk = (await import("stripe")).default;
+    const err = await refund().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StripeSdk.errors.StripeError);
+    expect(err).toMatchObject({ code: "e2e_fake_refund_refused" });
+    expect(refundCalls()).toHaveLength(1);
+    expect(refundCalls()[0].resultId).toMatch(/_refused$/);
+  });
+
+  it("processing: the refund EXISTS, then a non-Stripe error (production leaves 'pending_stripe')", async () => {
+    const { refund, refundCalls } = await setup("processing");
+    const StripeSdk = (await import("stripe")).default;
+    const err = await refund().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(StripeSdk.errors.StripeError);
+    const [effect] = refundCalls();
+    expect(effect).toMatchObject({ replay: false, amountCents: 18500 });
+    expect(effect.resultId).toMatch(/^re_test_e2e_/);
+    expect(effect.resultId).not.toMatch(/_refused$/);
+  });
+
+  it("success (default): unchanged — a refund in the charge's currency", async () => {
+    const { refund, refundCalls } = await setup("success");
+    const r = (await refund()) as unknown as { status: string; currency: string; amount: number };
+    expect(r).toMatchObject({ status: "succeeded", currency: "usd", amount: 18500 });
+    expect(refundCalls()).toHaveLength(1);
+  });
+
+  // Codex P2 4264919593: lineage is recorded by the processor itself.
+  it("lineage: the create records the charge it produced; the refund records the charge it targeted", async () => {
+    const { refund, refundCalls, chargeId } = await setup("success");
+    await refund();
+    const [create] = getFakeStripeCalls(RUN).filter((c) => c.method === "pi_create" && !c.replay);
+    expect(create.chargeId).toBe(chargeId);
+    expect(refundCalls()[0].chargeId).toBe(chargeId);
+    // Codex P2 4265803389: both record the connected account they ran on, so an
+    // event is delivered under the processor's account, not the row's.
+    expect(create.stripeAccount).toBe("acct_test_r");
+    expect(refundCalls()[0].stripeAccount).toBe("acct_test_r");
+  });
+
+  // Twin finding 2026-10-14: the ledger outlives the server process; ids must not.
+  it("ids stay unique across a server restart within one run (continues from the ledger)", async () => {
+    await setup("success");
+    const create = (key: string) =>
+      (createFakeStripe().paymentIntents.create as unknown as (
+        p: unknown,
+        o: unknown,
+      ) => Promise<{ id: string; latest_charge: string }>)(
+        { amount: 100, currency: "usd" },
+        { stripeAccount: "acct_test_r2", idempotencyKey: key },
+      );
+    const before = await create("hone:session_payment:att-restart-1:v1");
+    // A server restart: this process's memory is gone, the run's ledger is not.
+    resetFakeStripeState(RUN);
+    const after = await create("hone:session_payment:att-restart-2:v1");
+    expect(after.id).not.toBe(before.id);
+    expect(after.latest_charge).not.toBe(before.latest_charge);
+    const { readFakeStripeCalls } = await import("@/lib/stripe/e2e-fake-ledger");
+    const ids = readFakeStripeCalls(RUN)
+      .filter((c) => c.method === "pi_create" && !c.replay)
+      .map((c) => c.resultId);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("after a restart, the fake still states money and honours idempotency from the ledger", async () => {
+    await setup("success");
+    const stripe = () => createFakeStripe();
+    const KEY1 = "hone:session_payment:att-restart-m:v1";
+    const charge = await (stripe().paymentIntents.create as unknown as (
+      p: unknown,
+      o: unknown,
+    ) => Promise<{ id: string; latest_charge: string }>)(
+      { amount: 15000, currency: "usd" },
+      { stripeAccount: "acct_test_r3", idempotencyKey: KEY1 },
+    );
+    resetFakeStripeState(RUN); // restart
+
+    // Retrieve states the original money.
+    const got = await (stripe().paymentIntents.retrieve as unknown as (
+      id: string,
+      p: unknown,
+      o: unknown,
+    ) => Promise<{ amount: number; currency: string }>)(charge.id, undefined, { stripeAccount: "acct_test_r3" });
+    expect(got).toMatchObject({ amount: 15000, currency: "usd" });
+
+    // A retried create with the same key is the SAME PaymentIntent, a replay.
+    const again = await (stripe().paymentIntents.create as unknown as (
+      p: unknown,
+      o: unknown,
+    ) => Promise<{ id: string; amount: number; currency: string }>)(
+      { amount: 15000, currency: "usd" },
+      { stripeAccount: "acct_test_r3", idempotencyKey: KEY1 },
+    );
+    expect(again).toMatchObject({ id: charge.id, amount: 15000, currency: "usd" });
+    const creates = getFakeStripeCalls(RUN).filter((c) => c.method === "pi_create");
+    expect(creates.at(-1)).toMatchObject({ resultId: charge.id, replay: true });
+
+    // A refund of the pre-restart charge is in the CHARGE's currency.
+    const refund = await (stripe().refunds.create as unknown as (
+      p: unknown,
+      o: unknown,
+    ) => Promise<{ amount: number; currency: string }>)(
+      { charge: charge.latest_charge, amount: 15000 },
+      { stripeAccount: "acct_test_r3", idempotencyKey: "hone:payment_refund:att-restart-m:v1" },
+    );
+    expect(refund).toMatchObject({ amount: 15000, currency: "usd" });
   });
 });
