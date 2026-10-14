@@ -3,17 +3,13 @@
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { SectionLabel } from "@/components/ui/section-label";
 import { nativeFieldGroups } from "@/lib/machines/charting";
+import { SettingDraftFields } from "./setting-draft-fields";
 import {
-  addGroup,
   assembleGroupSubmissions,
-  channelChoices,
-  draftKey,
   firstGroup,
   groupIssues,
   groupReadiness,
-  supportsDistinctGroups,
   toggleChannel,
   type SettingGroupDraft,
 } from "@/lib/machines/setting-groups";
@@ -127,8 +123,8 @@ export function MachineReadingEntry({
   const [save, setSave] = useState<SaveState>(initialSaveState);
   const [pending, setPending] = useState(false);
 
-  const channels = channelChoices(profile);
-  const canAdd = supportsDistinctGroups(profile);
+  // `channelChoices` and `supportsDistinctGroups` moved with the fields they
+  // drive; what stays here is what the SAVE needs to decide.
   const readiness = groups.map((g) => groupReadiness(fieldGroups, g));
   // SAVEABLE when something is complete and nothing is half-finished. A
   // partially filled group blocks rather than being skipped: skipping would
@@ -278,192 +274,22 @@ export function MachineReadingEntry({
 
   return (
     <div className="flex flex-col gap-3" data-testid="machine-reading-entry">
-      {groups.map((setting, settingIndex) => (
-        <div
-          key={setting.id}
-          className={
-            groups.length > 1
-              ? "flex flex-col gap-2 rounded-md border border-neutral-200 p-3 dark:border-neutral-800"
-              : "flex flex-col gap-2"
-          }
-          data-testid={`setting-group-${setting.id}`}
-        >
-          {/*
-            THE GROUP HEADER ONLY EXISTS WHEN THERE IS MORE THAN ONE.
-            A single group is the whole setup, and labelling it "Group 1" would
-            invent a distinction the practitioner has not made.
-          */}
-          {groups.length > 1 && (
-            <div className="flex items-baseline justify-between gap-2">
-              <SectionLabel size="caption">
-                Setting group {settingIndex + 1}
-              </SectionLabel>
-              {/*
-                NO PER-GROUP OUTCOME BADGE ANY MORE. "recorded" and "outcome
-                unknown" described a state that one atomic save cannot reach:
-                a group cannot be recorded while its neighbour is not. Leaving
-                them would be a UI that can report a mixed outcome the
-                database can no longer produce.
-              */}
-              {readiness[settingIndex] === "empty" && (
-                <Button
-                  type="button"
-                  variant="quiet"
-                  size="sm"
-                  onClick={() =>
-                    editDraft((prev) => prev.filter((g) => g.id !== setting.id))
-                  }
-                  data-testid={`setting-group-remove-${setting.id}`}
-                >
-                  Remove
-                </Button>
-              )}
-            </div>
-          )}
-
-          {/*
-            CHANNEL ASSOCIATION, offered only where the contract declares
-            channels, and never required: `associationRequired` is false by a
-            recorded practitioner ruling, so a setup saves without naming
-            probes.
-
-            THE EMPTY STATE IS NAMED HONESTLY. An unassociated group records NO
-            association - it does NOT mean "every probe". Saying "all channels"
-            here would assert a clinical fact nobody entered, which is the one
-            thing this surface must not do.
-          */}
-          {channels.length > 0 && (
-            <div className="flex flex-col gap-1.5">
-              <span className="text-xs text-neutral-600 dark:text-neutral-400">
-                {profile.channels!.nativeLabel}s these settings applied to
-              </span>
-              <div className="flex flex-wrap gap-2">
-                {channels.map((c) => {
-                  const on = setting.channels.includes(c);
-                  return (
-                    <Button
-                      key={c}
-                      type="button"
-                      variant={on ? "primary" : "secondary"}
-                      size="sm"
-                      aria-pressed={on}
-                      onClick={() => flipChannel(setting.id, c)}
-                      data-testid={`setting-group-${setting.id}-channel-${c}`}
-                    >
-                      {c}
-                    </Button>
-                  );
-                })}
-              </div>
-              {setting.channels.length === 0 && (
-                <span
-                  className="text-xs text-neutral-500"
-                  data-testid={`setting-group-${setting.id}-no-channels`}
-                >
-                  No {profile.channels!.nativeLabel.toLowerCase()} recorded for this
-                  group. This is saved as no association — not as every{" "}
-                  {profile.channels!.nativeLabel.toLowerCase()}.
-                </span>
-              )}
-            </div>
-          )}
-
-          {fieldGroups.map((fieldGroup) => (
-            <div key={fieldGroup.key} className="flex flex-col gap-2">
-              <SectionLabel size="caption">{fieldGroup.label}</SectionLabel>
-              <div className="grid gap-3 md:grid-cols-2">
-                {fieldGroup.fields.map((f) => {
-                  const k = draftKey(fieldGroup.key, f);
-                  return (
-                    <label key={k} className="flex flex-col gap-1">
-                      <span className="text-sm font-medium">
-                        {/* Same ids as the panel's read-only list; only one of
-                            the two renders at a time. See the note there. */}
-                        <span data-testid={`field-label-${f.key}`}>{f.label}</span>
-                        {f.unit && (
-                          <span
-                            className="ml-1 font-normal text-neutral-500"
-                            data-testid={`field-unit-${f.key}`}
-                          >
-                            ({f.unit})
-                          </span>
-                        )}
-                        {f.optional && (
-                          <span className="ml-1 font-normal text-neutral-500">
-                            optional
-                          </span>
-                        )}
-                        {/*
-                          MACHINE-DERIVED FIELDS ARE STILL MARKED. Removing the
-                          `disabled` attribute took away the only signal this
-                          surface had, and the distinction matters even though
-                          the value is transcribed by hand: the practitioner is
-                          reading it off the device rather than deciding it.
-                        */}
-                        {!f.editable && (
-                          <span
-                            className="ml-1 font-normal text-neutral-500"
-                            data-testid={`field-machine-shown-${f.key}`}
-                          >
-                            shown by the machine
-                          </span>
-                        )}
-                      </span>
-                      <input
-                        type="number"
-                        inputMode="decimal"
-                        step={f.decimals === 0 ? 1 : 1 / 10 ** f.decimals}
-                        // NOT DISABLED by `editable: false`: that flag means
-                        // she cannot change the value ON THE MACHINE, not that
-                        // it cannot be charted, and nothing else populates it
-                        // (Codex, 15cc6c99).
-                        value={setting.values[k] ?? ""}
-                        onChange={(e) => setValue(setting.id, k, e.target.value)}
-                        data-testid={
-                          groups.length > 1
-                            ? `reading-${setting.id}-${f.key}`
-                            : `reading-${f.key}`
-                        }
-                        className="min-h-[44px] rounded-md border border-neutral-300 px-3 py-2 text-base pointer-fine:text-sm dark:border-neutral-700 dark:bg-neutral-950"
-                      />
-                      {f.advisory.map((note, i) => (
-                        <span key={i} className="text-xs text-neutral-500">
-                          {note}
-                        </span>
-                      ))}
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-        </div>
-      ))}
-
       {/*
-        ADD A GROUP, only where the model says its probes can differ.
-        `supportsDistinctSettingGroups` is the contract's own answer and the
-        reason it exists is in its docblock: a simple form must never label a
-        per-probe setting as a global control. Nothing is copied into the new
-        group - carrying values over would assert that she ran the second set of
-        probes at the first set's settings.
+        THE FIELDS, SHARED WITH THE CREATE-MODE SURFACE. Moved out verbatim so
+        one set of inputs serves both save paths; the render lock in
+        tests/components/machine-reading-entry-render.test.ts pins that the
+        move changed nothing.
       */}
-      {canAdd && (
-        <div>
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={() => {
-              editDraft((prev) => addGroup(prev, groupOrdinal + 1));
-              setGroupOrdinal((n) => n + 1);
-            }}
-            data-testid="setting-group-add"
-          >
-            Add setting group
-          </Button>
-        </div>
-      )}
+      <SettingDraftFields
+        profile={profile}
+        mode={mode}
+        groups={groups}
+        groupOrdinal={groupOrdinal}
+        editDraft={editDraft}
+        onAdvanceOrdinal={() => setGroupOrdinal((n) => n + 1)}
+        setValue={setValue}
+        flipChannel={flipChannel}
+      />
 
       <div className="flex items-center gap-3">
         <Button
