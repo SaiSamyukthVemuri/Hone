@@ -157,7 +157,29 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     //     one block save, one reading save and six queries.
     // So about a minute at worst against a ~6 min target and a 15 min ceiling.
     // The margin is not the concern; the visibility is.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(40);
+    //
+    // Now 41: MPX-03's machine-create-mode-journey.spec.ts joined `sessions`
+    // for the same reason as its sibling - it drives the settings-block form.
+    // It is a SEPARATE file rather than more steps on the existing one because
+    // it proves something that spec structurally cannot: what the machine
+    // panel may and may not do BEFORE the settings block exists. The sibling
+    // enters on a block that already exists, so the create-mode half of the
+    // journey has never been mounted at all.
+    //
+    // RECORDED AS A DECISION, with the cost stated in terms a reader can check
+    // against the file. ONE test() at 390px only, with eight steps, and its
+    // runtime depends on the SERVER's environment exactly as the sibling's
+    // does:
+    //   * without HONE_SYNTHETIC_MACHINE_PROFILE=1 in webServer.env it runs
+    //     step 1 and the gate-closed branch - two page interactions and one
+    //     query, roughly 15-20s - and still asserts that no real model is
+    //     offered and that nothing was recorded;
+    //   * with the flag set it runs all eight, roughly 60-90s: four
+    //     navigations, one block save, two reading saves and seven queries.
+    // Against a ~6 min target and a 15 min ceiling that is visible and
+    // affordable; the pair together is now about two and a half minutes of a
+    // six-minute lane, which is the number worth watching next time.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(41);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {

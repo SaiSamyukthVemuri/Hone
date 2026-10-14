@@ -47,6 +47,10 @@ export const BROWSER_GROUPS = {
       // the same surface conditional-numbing-notes and
       // repeat-client-fast-charting drive.
       "machine-first-charting.spec.ts",
+      // MPX-03: the CREATE-mode journey through the same surface — the panel
+      // before a block exists, then the one atomic save that follows. Same
+      // group as its sibling for the same reason.
+      "machine-create-mode-journey.spec.ts",
       "copy-settings-machine-readings.spec.ts",
       "custom-area-commit.spec.ts",
       "galvanic-intensity-retirement.spec.ts",
