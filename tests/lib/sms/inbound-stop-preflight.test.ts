@@ -16,7 +16,15 @@ const URL_OK = `${BASE}/api/twilio/inbound-sms`;
  * 4254444665, 4264761390): connect/TLS, read timeout and 5xx, one retry or
  * more, and a total budget holding two worst-case attempts (2 * (1000 + 5000)).
  */
-const FULL_RETRY = "#ct=1000&rt=5000&tt=15000&rc=2&rp=ct,rt,5xx";
+const FULL_RETRY = "#ct=1000&rt=5000&tt=15000&rc=2&rp=ct,rt,5xx&e=ashburn,umatilla";
+/**
+ * The same-route URL with two explicit edges and nothing else: without them
+ * Twilio uses its single default edge, ashburn, so a retry or fallback has no
+ * alternate origin (Codex P2 4266813200).
+ */
+const URL_EDGES = `${URL_OK}#e=ashburn,umatilla`;
+/** FULL_RETRY without its edge list, for tests that set `e` themselves. */
+const URL_RETRY_NO_EDGES = `${URL_OK}#ct=1000&rt=5000&tt=15000&rc=2&rp=ct,rt,5xx`;
 const URL_RETRY = `${URL_OK}${FULL_RETRY}`;
 /** A live Setting's retries that recover every failure within the assumed 15000 ms total. */
 const SETTING_RECOVERY = {
@@ -352,7 +360,7 @@ describe("evaluateInboundStopPreflight", () => {
       f.routedFromNumber = undefined;
       f.service!.senderPool = [
         { phoneNumber: "+14165550100", smsUrl: URL_RETRY, smsMethod: "POST", smsApplicationSid: null },
-        { phoneNumber: "+14165550101", smsUrl: `${URL_OK}#ct=500&rt=2000&rp=all`, smsMethod: "POST", smsApplicationSid: null },
+        { phoneNumber: "+14165550101", smsUrl: `${URL_OK}#ct=500&rt=2000&rp=all&e=dublin,sydney`, smsMethod: "POST", smsApplicationSid: null },
       ];
       expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
       f.service!.senderPool[1].smsUrl = `${URL_OK}#bogus=1`;
@@ -365,7 +373,7 @@ describe("evaluateInboundStopPreflight", () => {
 
     for (const frag of [
       FULL_RETRY,
-      "#ct=1000&rt=5000&rp=all",
+      "#ct=1000&rt=5000&rp=all&e=ashburn,umatilla",
       // Twilio's own "example with all overrides": 2 * (500 + 1000) <= 15000.
       "#ct=500&rt=1000&tt=15000&rc=2&rp=4xx,5xx,ct,rt&sni=y&e=dublin,sydney",
     ]) {
@@ -413,9 +421,9 @@ describe("evaluateInboundStopPreflight", () => {
         });
       }
       for (const frag of [
-        "#tt=12000&rp=all&ct=1000&rt=5000",
+        "#tt=12000&rp=all&ct=1000&rt=5000&e=ashburn,umatilla",
         FULL_RETRY,
-        "#ct=2500&rt=5000&rp=ct,rt,5xx",
+        "#ct=2500&rt=5000&rp=ct,rt,5xx&e=ashburn,umatilla",
         "#ct=500&rt=1000&tt=15000&rc=2&rp=4xx,5xx,ct,rt&sni=y&e=dublin,sydney",
       ]) {
         it(`${frag}: certified`, () => {
@@ -580,8 +588,8 @@ describe("evaluateInboundStopPreflight", () => {
       it("plain primary URLs, each with its own same-route POST fallback: ready", () => {
         const f = poolRoute();
         f.service!.senderPool = [
-          { phoneNumber: "+14165550100", smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: null, smsFallbackUrl: URL_OK, smsFallbackMethod: "POST" },
-          { phoneNumber: "+14165550101", smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: null, smsFallbackUrl: URL_OK, smsFallbackMethod: "POST" },
+          { phoneNumber: "+14165550100", smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: null, smsFallbackUrl: URL_EDGES, smsFallbackMethod: "POST" },
+          { phoneNumber: "+14165550101", smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: null, smsFallbackUrl: URL_EDGES, smsFallbackMethod: "POST" },
         ];
         expect(evaluateInboundStopPreflight(f).checks.find((c) => c.id === "sender_pool")?.status).toBe("pass");
       });
@@ -589,7 +597,7 @@ describe("evaluateInboundStopPreflight", () => {
       it("one member with neither a 5xx retry nor its own fallback: blocked", () => {
         const f = poolRoute();
         f.service!.senderPool = [
-          { phoneNumber: "+14165550100", smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: null, smsFallbackUrl: URL_OK, smsFallbackMethod: "POST" },
+          { phoneNumber: "+14165550100", smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: null, smsFallbackUrl: URL_EDGES, smsFallbackMethod: "POST" },
           { phoneNumber: "+14165550101", smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: null, smsFallbackUrl: null, smsFallbackMethod: null },
         ];
         expect(evaluateInboundStopPreflight(f).checks.find((c) => c.id === "sender_pool")?.status).toBe("fail");
@@ -667,7 +675,7 @@ describe("evaluateInboundStopPreflight", () => {
           numberSmsUrl: URL_OK, // no 5xx retry on the number's own URL
           numberSmsMethod: "POST",
           numberSmsApplicationSid: null,
-          fallbackUrl: URL_OK, // the SERVICE fallback: ignored on this path
+          fallbackUrl: URL_EDGES, // the SERVICE fallback: ignored on this path
           fallbackMethod: "POST",
         });
         return f;
@@ -682,14 +690,14 @@ describe("evaluateInboundStopPreflight", () => {
 
       it("the number's own fallback to the same route by POST does", () => {
         const f = numberRoute();
-        Object.assign(f.service!, { numberSmsFallbackUrl: URL_OK, numberSmsFallbackMethod: "POST" });
+        Object.assign(f.service!, { numberSmsFallbackUrl: URL_EDGES, numberSmsFallbackMethod: "POST" });
         expect(redelivery(f)?.status).toBe("pass");
         expect(redelivery(f)?.detail).toMatch(/number's sms_fallback_url/);
       });
 
       it("the number's fallback by GET, or elsewhere, does not", () => {
         const f = numberRoute();
-        Object.assign(f.service!, { numberSmsFallbackUrl: URL_OK, numberSmsFallbackMethod: "GET" });
+        Object.assign(f.service!, { numberSmsFallbackUrl: URL_EDGES, numberSmsFallbackMethod: "GET" });
         expect(redelivery(f)?.status).toBe("fail");
         Object.assign(f.service!, { numberSmsFallbackUrl: "https://elsewhere.example/sms", numberSmsFallbackMethod: "POST" });
         expect(redelivery(f)?.status).toBe("fail");
@@ -698,13 +706,13 @@ describe("evaluateInboundStopPreflight", () => {
 
     it("a plain URL with a fallback to the SAME route by POST: redelivered", () => {
       const f = allProven();
-      Object.assign(f.service!, { inboundRequestUrl: URL_OK, fallbackUrl: URL_OK, fallbackMethod: "POST" });
+      Object.assign(f.service!, { inboundRequestUrl: URL_OK, fallbackUrl: URL_EDGES, fallbackMethod: "POST" });
       expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
     });
 
     it("a fallback that IS the route but whose method was not read: unknown, never misconfigured", () => {
       const f = allProven();
-      Object.assign(f.service!, { inboundRequestUrl: URL_OK, fallbackUrl: URL_OK, fallbackMethod: undefined });
+      Object.assign(f.service!, { inboundRequestUrl: URL_OK, fallbackUrl: URL_EDGES, fallbackMethod: undefined });
       expect(redelivery(f)?.status).toBe("unknown");
     });
 
@@ -713,14 +721,14 @@ describe("evaluateInboundStopPreflight", () => {
       Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: URL_RETRY, numberSmsMethod: "POST", numberSmsApplicationSid: null });
       f.routedFromNumber = undefined;
       f.service!.senderPool = [
-        { phoneNumber: "+14165550100", smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: null, smsFallbackUrl: URL_OK },
+        { phoneNumber: "+14165550100", smsUrl: URL_OK, smsMethod: "POST", smsApplicationSid: null, smsFallbackUrl: URL_EDGES },
       ];
       expect(evaluateInboundStopPreflight(f).checks.find((c) => c.id === "sender_pool")?.status).toBe("unknown");
     });
 
     for (const [why, fb] of [
       ["another URL", { fallbackUrl: "https://elsewhere.example/sms", fallbackMethod: "POST" }],
-      ["GET", { fallbackUrl: URL_OK, fallbackMethod: "GET" }],
+      ["GET", { fallbackUrl: URL_EDGES, fallbackMethod: "GET" }],
       ["none (null)", { fallbackUrl: null, fallbackMethod: null }],
     ] as const) {
       it(`a plain URL with a fallback that is ${why}: fails`, () => {
@@ -987,7 +995,7 @@ describe("a live Setting's retries must recover EVERY delivery failure (Codex P1
 
   it("every failure named and within budget, but ZERO retries: nothing is retried, refused (URL and Setting)", () => {
     expect(retriesRecoverDelivery(`${URL_OK}#ct=1000&rt=5000&rc=0&rp=all`)).toBe(false);
-    expect(retriesRecoverDelivery(`${URL_OK}#ct=1000&rt=5000&rc=1&rp=all`)).toBe(true);
+    expect(retriesRecoverDelivery(`${URL_OK}#ct=1000&rt=5000&rc=1&rp=all&e=ashburn,umatilla`)).toBe(true);
     expect(checkOf(underRule(liveSetting({ retryCount: 0 })), "stop_redelivery")?.status).toBe("fail");
   });
 
@@ -1014,7 +1022,7 @@ describe("a live Setting's retries must recover EVERY delivery failure (Codex P1
 
   it("a same-route POST fallback still recovers when the retries do not", () => {
     const f = underRule(liveSetting({ retryOn: ["HTTP_5XX"] }));
-    Object.assign(f.service!, { fallbackUrl: URL_OK, fallbackMethod: "POST" });
+    Object.assign(f.service!, { fallbackUrl: URL_EDGES, fallbackMethod: "POST" });
     expect(checkOf(f, "stop_redelivery")?.status).toBe("pass");
     expect(checkOf(f, "stop_redelivery")?.detail).toMatch(/same route, by POST/);
   });
@@ -1149,26 +1157,26 @@ describe("URL overrides that defeat their own retries (Codex P1 4265363596, P2 4
 
   for (const e of ["ashburn", "dublin", "ashburn-ix"]) {
     it(`a ONE-edge list (e=${e}) gives retries no alternate origin: refused`, () => {
-      expect(retriesRecoverDelivery(`${URL_RETRY}&e=${e}`)).toBe(false);
-      expect(redelivery(noFallback(`${URL_RETRY}&e=${e}`))).toBe("fail");
+      expect(retriesRecoverDelivery(`${URL_RETRY_NO_EDGES}&e=${e}`)).toBe(false);
+      expect(redelivery(noFallback(`${URL_RETRY_NO_EDGES}&e=${e}`))).toBe("fail");
     });
   }
 
   it("two or more edges: certified", () => {
-    expect(retriesRecoverDelivery(`${URL_RETRY}&e=ashburn,umatilla`)).toBe(true);
-    expect(retriesRecoverDelivery(`${URL_RETRY}&e=dublin,sydney,ashburn`)).toBe(true);
+    expect(retriesRecoverDelivery(`${URL_RETRY_NO_EDGES}&e=ashburn,umatilla`)).toBe(true);
+    expect(retriesRecoverDelivery(`${URL_RETRY_NO_EDGES}&e=dublin,sydney,ashburn`)).toBe(true);
   });
 
   it("a same-route POST fallback still recovers a one-edge or sni=n primary", () => {
     for (const frag of ["&sni=n", "&e=ashburn"]) {
-      const f = noFallback(`${URL_RETRY}${frag}`);
-      Object.assign(f.service!, { fallbackUrl: URL_OK, fallbackMethod: "POST" });
+      const f = noFallback(`${URL_RETRY_NO_EDGES}${frag}`);
+      Object.assign(f.service!, { fallbackUrl: URL_EDGES, fallbackMethod: "POST" });
       expect(redelivery(f)).toBe("pass");
     }
   });
 
   it("under a matching Rule the Setting decides, so the URL's sni/e are not consulted", () => {
-    const f = noFallback(`${URL_RETRY}&e=ashburn`);
+    const f = noFallback(`${URL_RETRY_NO_EDGES}&e=ashburn`);
     f.webhookRules = {
       matched: true,
       settings: [{ percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY }],
@@ -1190,7 +1198,10 @@ describe("the FALLBACK's transport is judged like the primary's (Codex P1 426552
   for (const [why, frag] of [
     ["sni=n (the fallback TLS handshake to this virtual host fails)", "#sni=n"],
     ["a one-edge e=", "#e=ashburn"],
-    ["sni=n among other overrides", "#ct=1000&sni=n"],
+    ["sni=n among other overrides", "#ct=1000&sni=n&e=ashburn,umatilla"],
+    // Codex P2 4266813200: no e = Twilio's single default edge, ashburn.
+    ["no fragment (the single default edge)", ""],
+    ["timeouts only (the single default edge)", "#ct=1000&rt=5000"],
   ] as const) {
     it(`primary refused + same-route POST fallback with ${why}: never ready`, () => {
       const f = withFallback(`${URL_OK}${frag}`);
@@ -1200,10 +1211,9 @@ describe("the FALLBACK's transport is judged like the primary's (Codex P1 426552
   }
 
   for (const [why, url] of [
-    ["no fragment", URL_OK],
-    ["sni=y", `${URL_OK}#sni=y`],
-    ["two edges", `${URL_OK}#e=ashburn,umatilla`],
-    ["timeouts only", `${URL_OK}#ct=1000&rt=5000`],
+    ["two edges", URL_EDGES],
+    ["sni=y and two edges", `${URL_OK}#sni=y&e=ashburn,umatilla`],
+    ["timeouts and three edges", `${URL_OK}#ct=1000&rt=5000&e=dublin,sydney,ashburn`],
   ] as const) {
     it(`POSITIVE CONTROL: a safe same-route fallback (${why}) recovers: ready`, () => {
       const f = withFallback(url);
@@ -1223,7 +1233,7 @@ describe("the FALLBACK's transport is judged like the primary's (Codex P1 426552
       numberSmsFallbackMethod: "POST",
     });
     expect(status(f, "stop_redelivery")).toBe("fail");
-    f.service!.numberSmsFallbackUrl = URL_OK;
+    f.service!.numberSmsFallbackUrl = URL_EDGES;
     expect(status(f, "stop_redelivery")).toBe("pass");
   });
 
@@ -1244,7 +1254,7 @@ describe("the FALLBACK's transport is judged like the primary's (Codex P1 426552
       member(`${URL_OK}#sni=n`),
     ];
     expect(status(f, "sender_pool")).toBe("fail");
-    f.service!.senderPool[1] = member(URL_OK);
+    f.service!.senderPool[1] = member(URL_EDGES);
     expect(status(f, "sender_pool")).toBe("pass");
   });
 
@@ -1345,5 +1355,36 @@ describe("the live STOP proves only the opt-out configuration it ran under (Code
     const f = allProven();
     f.liveStopObservation = { reachedRoute: true, routeStatus: 403, phoneWideOptOutStamped: null, observedAt: "2026-10-12T12:00:00Z" };
     expect(stop(f)?.status).toBe("fail");
+  });
+});
+
+describe("an OMITTED edge list is Twilio's single default edge, ashburn (Codex P2 4266813200)", () => {
+  const status = (f: InboundStopFacts) => evaluateInboundStopPreflight(f).checks.find((c) => c.id === "stop_redelivery")?.status;
+
+  it("complete retries with no e=: no alternate origin, refused; with two edges, certified", () => {
+    expect(retriesRecoverDelivery(URL_RETRY_NO_EDGES)).toBe(false);
+    expect(retriesRecoverDelivery(URL_RETRY)).toBe(true);
+    const f = allProven();
+    Object.assign(f.service!, { inboundRequestUrl: URL_RETRY_NO_EDGES, fallbackUrl: null, fallbackMethod: null });
+    expect(status(f)).toBe("fail");
+    expect(evaluateInboundStopPreflight(f).ready).toBe(false);
+  });
+
+  it("an edgeless primary is rescued only by a fallback that has two edges", () => {
+    const f = allProven();
+    Object.assign(f.service!, { inboundRequestUrl: URL_RETRY_NO_EDGES, fallbackUrl: URL_OK, fallbackMethod: "POST" });
+    expect(status(f)).toBe("fail");
+    f.service!.fallbackUrl = URL_EDGES;
+    expect(status(f)).toBe("pass");
+  });
+
+  it("under a matching Rule the Setting's edgeZones govern, so an edgeless URL is not refused here", () => {
+    const f = allProven();
+    Object.assign(f.service!, { inboundRequestUrl: URL_OK, fallbackUrl: null, fallbackMethod: null });
+    f.webhookRules = {
+      matched: true,
+      settings: [{ percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY }],
+    };
+    expect(status(f)).toBe("pass");
   });
 });

@@ -111,10 +111,10 @@ function retriesRecoverEveryFailure(r: { named: readonly DeliveryFailure[]; coun
  * no retry count helps. Not certified (nothing here proves the endpoint works
  * without SNI).
  *
- * EDGES (Codex P2 4265363603): retries move through the `e=` list, so an
- * explicit ONE-edge list gives no alternate origin when that edge fails. Not
- * certified. An omitted `e` leaves the origin to Twilio's default edge
- * selection, which this preflight does not second-guess (handoff A7).
+ * EDGES (Codex P2s 4265363603, 4266813200): retries move through the `e=`
+ * list, so fewer than two edges give no alternate origin when that edge
+ * fails. An omitted `e` is the documented single default edge (`ashburn`).
+ * Not certified without two or more explicit edges (handoff A7).
  */
 export function retriesRecoverDelivery(url: string | null | undefined): boolean {
   if (urlTransport(url, "none") !== "ok") return false;
@@ -135,20 +135,23 @@ export function retriesRecoverDelivery(url: string | null | undefined): boolean 
  * fallback (Codex P1s 4265363596, 4265522953; P2 4265363603). Under the
  * account's Webhook Rules (`rules`):
  *   "none"    no Rule matches, so the URL's overrides apply: `sni=n` (every
- *             TLS handshake to this virtual-hosted endpoint fails) and an
- *             explicit one-edge `e=` (no alternate origin) are UNSAFE;
+ *             TLS handshake to this virtual-hosted endpoint fails) is UNSAFE,
+ *             and so is any edge list of fewer than two (no alternate
+ *             origin). An OMITTED `e` is Twilio's documented single default
+ *             edge, `ashburn` (Codex P2 4266813200): one edge, so UNSAFE;
  *   "matched" the Setting decides edges (webhook_zones judges them), so `e=`
  *             is ignored; Settings have no SNI field, so whether a URL
  *             `sni=n` still applies is undocumented: UNKNOWN (handoff A8);
  *   "unknown" the Rules are unread, so `sni=n` or a one-edge `e=` is UNKNOWN.
- * An unparseable URL or fragment is unsafe. Omitted sni/e are Twilio's
- * defaults and fine.
+ * An unparseable URL or fragment is unsafe. An omitted sni is Twilio's
+ * default (SNI on) and fine.
  */
 function urlTransport(url: string | null | undefined, rules: "none" | "matched" | "unknown"): "ok" | "unsafe" | "unknown" {
   const n = normalizeTwilioWebhookUrl(url);
   if (!n.ok) return "unsafe";
   const o = n.overrides ?? {};
-  const oneEdge = o.e !== undefined && o.e.length < 2;
+  // Omitted e = the single default edge (ashburn).
+  const oneEdge = (o.e?.length ?? 1) < 2;
   if (rules === "none") return o.sni === "n" || oneEdge ? "unsafe" : "ok";
   if (rules === "matched") return o.sni === "n" ? "unknown" : "ok";
   return o.sni === "n" || oneEdge ? "unknown" : "ok";
