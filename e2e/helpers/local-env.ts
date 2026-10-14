@@ -63,6 +63,18 @@ export function assertSameStackPair(supabaseUrl: string, dbUrl: string): void {
         `but ${apiMoved ? "HONE_LOCAL_DB_URL" : "E2E_SUPABASE_URL"} does not. Set both to the same stack, or neither.`,
     );
   }
+  // Both moved: they must name the SAME stack, or this is the original defect
+  // between two isolated stacks (API on one, fixtures seeding another). A CONVENTION,
+  // not a law: the Supabase CLI allocates each stack a contiguous port block with the
+  // database one above the API (54321/54322, 63321/63322, ...), the same assumption
+  // the two defaults above encode. A stack laid out otherwise is refused, fail-closed.
+  const offset = (api: string, db: string) => Number(port(db)) - Number(port(api));
+  if (apiMoved && offset(supabaseUrl, dbUrl) !== offset(LOCAL_SUPABASE_URL, LOCAL_DB_URL)) {
+    throw new Error(
+      `e2e refuses to run: E2E_SUPABASE_URL (port ${port(supabaseUrl)}) and HONE_LOCAL_DB_URL (port ${port(dbUrl)}) ` +
+        `are not one stack (expected the database on the API port + ${offset(LOCAL_SUPABASE_URL, LOCAL_DB_URL)}).`,
+    );
+  }
 }
 
 function refuseHostedOverrides() {
@@ -120,7 +132,10 @@ export const E2E_WORKTREE: string = RESOURCES.worktree;
 // mirror image -- app on the isolated stack, e2e fixtures seeding the shared 54322
 // -- would be a green run against the wrong database. So a half-moved pair is
 // REFUSED below, never silently half-honoured. Neither set: byte-for-byte unchanged.
-// (Mailpit stays 54324; a lane on another stack fails LOUDLY there, finding no mail.)
+// LIMITATION: Mailpit has no override and stays 54324, so a spec that reads a
+// GoTrue email (magic link, invite) CANNOT run on an isolated stack -- it finds no
+// mail and fails loudly. Isolated runs must exclude mail-dependent specs until a
+// validated Mailpit override joins this pair.
 export const E2E_SUPABASE_URL = process.env.E2E_SUPABASE_URL || LOCAL_SUPABASE_URL;
 export const E2E_DB_URL = process.env.HONE_LOCAL_DB_URL || LOCAL_DB_URL;
 assertSameStackPair(E2E_SUPABASE_URL, E2E_DB_URL);

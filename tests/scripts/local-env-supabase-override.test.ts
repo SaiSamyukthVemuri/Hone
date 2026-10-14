@@ -56,6 +56,10 @@ describe("isolated-stack override", () => {
     await expect(importWith("", ISO_DB)).rejects.toThrow(/HONE_LOCAL_DB_URL selects another local stack but E2E_SUPABASE_URL does not/);
   });
 
+  it("both moved but to DIFFERENT stacks: refused (API on one, fixtures on another)", async () => {
+    await expect(importWith("http://127.0.0.1:65421", ISO_DB)).rejects.toThrow(/are not one stack/);
+  });
+
   // Honouring the values must not open a hole. Each MENTIONS loopback (or is
   // hosted) without its host BEING loopback; the old substring check admitted
   // all but the hosted one.
