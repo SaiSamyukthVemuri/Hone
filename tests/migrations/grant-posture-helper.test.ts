@@ -70,6 +70,78 @@ describe("grantedRoles finds a grant wherever it is written", () => {
   });
 });
 
+describe("grantedRoles does not depend on how the signature is SPELLED", () => {
+  // Measured by the History lane and then reproduced here: before
+  // `normalizeSql`, the matcher tolerated whitespace between KEYWORDS but
+  // matched the argument list as an escaped literal, so the separator had to be
+  // exactly `, `. Each spelling below is legal SQL for the same function, and
+  // each one hid a grant to `public` while the exact-set assertion stayed green
+  // -- the original hole, reopened from another door.
+  //
+  // Multi-argument on purpose: 0222 and 0225 both have multi-argument
+  // signatures, so this was live for them and not a hypothetical.
+  const MULTI = "uuid, uuid, timestamptz";
+  const gm = (sql: string) => grantedRoles(sql, "f", MULTI);
+
+  it("extra whitespace between keywords", () => {
+    expect(
+      gm(`grant  execute   on  function  public.f(uuid, uuid, timestamptz)  to  public;`),
+    ).toEqual(["public"]);
+  });
+
+  it("the signature reformatted across lines", () => {
+    expect(
+      gm(`grant execute on function public.f(\n  uuid,\n  uuid,\n  timestamptz\n) to public;`),
+    ).toEqual(["public"]);
+  });
+
+  it("two spaces after each comma", () => {
+    expect(gm(`grant execute on function public.f(uuid,  uuid,  timestamptz) to public;`)).toEqual([
+      "public",
+    ]);
+  });
+
+  it("no space after the comma at all", () => {
+    expect(gm(`grant execute on function public.f(uuid,uuid,timestamptz) to public;`)).toEqual([
+      "public",
+    ]);
+  });
+
+  it("a space before the opening paren", () => {
+    expect(gm(`grant execute on function public.f (uuid, uuid, timestamptz) to public;`)).toEqual([
+      "public",
+    ]);
+  });
+
+  it("and the NEEDLE may be spelled differently too", () => {
+    // The caller writes ARGS by hand in each migration test. If only the source
+    // were normalised, a hand-written needle with odd spacing would silently
+    // match nothing -- a green assertion over zero grants, which is the worst
+    // outcome of the set.
+    expect(gm(`grant execute on function public.f(uuid, uuid, timestamptz) to public;`)).toEqual([
+      "public",
+    ]);
+    expect(
+      grantedRoles(
+        `grant execute on function public.f(uuid, uuid, timestamptz) to public;`,
+        "f",
+        "uuid,uuid,  timestamptz",
+      ),
+      "a differently-spelled needle must still find the grant",
+    ).toEqual(["public"]);
+  });
+
+  it("STILL does not over-match across overloads once normalised", () => {
+    // Normalising must not blur `f(uuid)` into `f(uuid, uuid)`. If it did, the
+    // exact assertions would red for innocent reasons and the fix would be
+    // loosened again.
+    expect(grantedRoles(`grant execute on function public.f(uuid,uuid) to public;`, "f", "uuid")).toEqual(
+      [],
+    );
+    expect(gm(`grant execute on function public.f(uuid, uuid) to public;`)).toEqual([]);
+  });
+});
+
 describe("grantedRoles does not OVER-match, which would be its own failure mode", () => {
   // A matcher that reports grants belonging to a DIFFERENT function would make
   // every exact assertion red for innocent reasons, and the obvious response

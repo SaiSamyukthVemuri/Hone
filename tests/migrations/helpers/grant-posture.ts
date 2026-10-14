@@ -30,6 +30,28 @@
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
+ * Squash whitespace, then collapse it around `( ) , ;`.
+ *
+ * WITHOUT THIS THE "EXACT" CHECK WAS STILL EVADABLE, which the History lane
+ * measured and I then reproduced: the matcher tolerated `\s+` between KEYWORDS
+ * but matched the argument list as an escaped literal, so the separator had to
+ * be exactly `, `. Every one of these spellings is legal SQL for the same
+ * function, and each one hid a grant:
+ *
+ *   public.f(uuid,uuid,timestamptz)        -- no space after the comma
+ *   public.f(uuid,  uuid,  timestamptz)    -- two spaces
+ *   public.f(\n  uuid,\n  uuid\n)            -- signature across lines
+ *
+ * Reformatting a signature is the most ordinary edit there is, so binding the
+ * check to one spelling of it reopened the original hole from another door.
+ * Normalising BOTH the source and the needle removes the spelling from the
+ * question entirely.
+ */
+export function normalizeSql(sql: string): string {
+  return sql.replace(/\s+/g, " ").replace(/\s*([(),;])\s*/g, "$1");
+}
+
+/**
  * Every role granted anything on `public.<fn>(<args>)`, lower-cased and sorted.
  *
  * Deliberately matches ANY privilege word (`execute`, `all`, `all privileges`)
@@ -45,14 +67,16 @@ export function grantedRoles(
   fn: string,
   args: string,
 ): string[] {
+  // Both sides normalised, so no spelling of the signature can hide a grant.
+  const haystack = normalizeSql(executableSql);
   const re = new RegExp(
-    `grant\\s+[a-z ,]+?\\s+on\\s+function\\s+public\\.${escape(fn)}\\s*\\(\\s*${escape(
-      args,
-    )}\\s*\\)\\s+to\\s+([^;]+);`,
+    `grant\\s+[a-z ,]+?\\s+on\\s+function\\s+public\\.${escape(fn)}\\(${escape(
+      normalizeSql(args),
+    )}\\)\\s*to\\s*([^;]+);`,
     "gi",
   );
   const roles: string[] = [];
-  for (const m of executableSql.matchAll(re)) {
+  for (const m of haystack.matchAll(re)) {
     for (const role of m[1].split(",")) {
       const clean = role.trim().toLowerCase().replace(/^"|"$/g, "");
       if (clean) roles.push(clean);
