@@ -159,12 +159,6 @@ type TransportContext = {
    * or null = not read.
    */
   staticProxyEnabled?: boolean | null;
-  /**
-   * FALLBACK only (Codex P2 4267597869): the request must be allowed to run a
-   * whole attempt, tt >= ct + rt. With no Rule the URL's own values decide;
-   * under a matching Rule the live Settings' values do, given here.
-   */
-  attemptBudget?: { settings: Transport } | "url";
 };
 
 function urlTransport(url: string | null | undefined, rules: "none" | "matched" | "unknown", ctx: TransportContext = {}): Transport {
@@ -193,15 +187,7 @@ function urlTransport(url: string | null | undefined, rules: "none" | "matched" 
         : ctx.staticProxyEnabled === false
           ? "ok"
           : "unknown";
-  const budget: Transport =
-    ctx.attemptBudget === undefined
-      ? "ok"
-      : ctx.attemptBudget !== "url"
-        ? ctx.attemptBudget.settings
-        : tt >= ct + rt
-          ? "ok"
-          : bad;
-  return worst(sni, edges, budget);
+  return worst(sni, edges);
 }
 
 /**
@@ -726,57 +712,35 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
    * URL, so the same Rule, Setting and edge zones govern it too.
    */
   const ruleState = rules === undefined ? "unknown" : rules.matched ? "matched" : "none";
-  // Under a matching Rule a fallback request runs on the live Settings'
-  // timeouts: each must allow one whole attempt (Codex P2 4267597869).
-  const settingsAttemptBudget: Transport =
-    !sharesKnown || live.length === 0
-      ? "unknown"
-      : worst(
-          ...live.map((x): Transport =>
-            x.connectTimeoutMs === null || x.readTimeoutMs === null || x.totalTimeoutMs === null
-              ? "unknown"
-              : (x.totalTimeoutMs ?? TWILIO_DEFAULT_TOTAL_TIME_MS) >=
-                  (x.connectTimeoutMs ?? TWILIO_DEFAULT_CONNECT_TIMEOUT_MS) + (x.readTimeoutMs ?? TWILIO_DEFAULT_READ_TIMEOUT_MS)
-                ? "ok"
-                : "unsafe",
-          ),
-        );
+  /**
+   * Does ONE requested URL recover its own delivery failures? Its retries must
+   * cover connect/TLS, read timeout AND 5xx with at least one retry and the
+   * 2 * (ct + rt) budget (the URL's overrides with no Rule; every live
+   * Setting's under a matching Rule; unknown with the Rules unread), and its
+   * transport (SNI, edges, Static Proxy) must not defeat them. The SAME test
+   * for the primary and the fallback (Codex P1 4269949178): a fallback is
+   * just another request, and the same database-backed route can answer it
+   * 500 again, so endpoint, method and edges alone never certify it.
+   */
+  const recovers = (u: string | null | undefined): "yes" | "no" | "unknown" => {
+    const transport = urlTransport(u, ruleState, { staticProxyEnabled: f.staticProxyEnabled });
+    const retries = ruleRetries === "n/a" ? (retriesRecoverDelivery(u, false) ? "yes" : "no") : ruleRetries;
+    if (retries === "no" || transport === "unsafe") return "no";
+    if (retries === "unknown" || transport === "unknown") return "unknown";
+    return "yes";
+  };
   const redelivers = (url: string | null | undefined, fbUrl: string | null | undefined, fbMethod: string | null | undefined) => {
-    // The primary's retries, under the SAME precedence as its transport: with a
-    // Rule matching, the Setting's retries count only if the URL's own
-    // transport cannot defeat them.
-    const primaryTransport = urlTransport(url, ruleState, { staticProxyEnabled: f.staticProxyEnabled });
-    const retries =
-      ruleRetries === "n/a"
-        ? // Coverage and budget assuming Static Proxy off; then the real transport.
-          !retriesRecoverDelivery(url, false) || primaryTransport === "unsafe"
-          ? "no"
-          : primaryTransport === "unknown"
-            ? "unknown"
-            : "yes"
-        : ruleRetries === "yes" && primaryTransport === "unknown"
-          ? "unknown"
-          : ruleRetries;
-    if (retries === "yes") return "yes" as const;
+    const primary = recovers(url);
+    if (primary === "yes") return "yes" as const;
+    // The fallback's fragment is stripped only to compare endpoints.
     const fallbackIsRoute = !!expected.ok && signedFormOfConfiguredUrl(fbUrl ?? null) === expected.url;
-    // The fallback's own fragment is stripped only to compare endpoints; its
-    // transport is judged by the same validator and precedence (Codex P1
-    // 4265522953): an unsafe fallback recovers nothing, an undetermined one is
-    // unknown.
-    const fallbackTransport = fallbackIsRoute
-      ? urlTransport(fbUrl, ruleState, {
-          staticProxyEnabled: f.staticProxyEnabled,
-          attemptBudget: ruleState === "matched" ? { settings: settingsAttemptBudget } : "url",
-        })
-      : "unsafe";
-    if (fallbackIsRoute && (fbMethod ?? "").toUpperCase() === "POST" && fallbackTransport === "ok") return "fallback" as const;
-    // Anything not read stays UNKNOWN (Codex P2 4254851468): the URL, or, for a
-    // fallback that IS the route, its method or its effective transport.
-    const fallbackUnread =
-      fbUrl === undefined ||
-      (fallbackIsRoute && fbMethod === undefined) ||
-      (fallbackIsRoute && (fbMethod ?? "").toUpperCase() === "POST" && fallbackTransport === "unknown");
-    return retries === "unknown" || fallbackUnread ? ("unknown" as const) : ("no" as const);
+    const fallbackPost = fallbackIsRoute && typeof fbMethod === "string" && fbMethod.toUpperCase() === "POST";
+    const fallback = fallbackPost ? recovers(fbUrl) : "no";
+    if (fallback === "yes") return "fallback" as const;
+    // Anything not read stays UNKNOWN (Codex P2 4254851468): the fallback URL,
+    // or, for a fallback that IS the route, its method or its recovery.
+    const fallbackUnread = fbUrl === undefined || (fallbackIsRoute && fbMethod === undefined) || fallback === "unknown";
+    return primary === "unknown" || fallbackUnread ? ("unknown" as const) : ("no" as const);
   };
 
   // A STOP the route answers 500 must be redelivered (Codex P1 4254444665).
@@ -888,10 +852,15 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
         : check("studio_mapping", "fail", "the service maps to another studio, or to none"),
   );
 
-  const stop = f.liveStopObservation;
-  const optOut = f.optOutConfiguration;
-  const observedAt = stop?.observedAt ? Date.parse(stop.observedAt) : NaN;
-  const optOutChangedAt = optOut?.lastChangedAt ? Date.parse(optOut.lastChangedAt) : NaN;
+  // Raw facts may be partial or malformed (Codex P2 4270134232): only an
+  // explicit, well-typed value counts. dropsKeywordMessages must be exactly
+  // false to pass and exactly true to refuse; anything else is unknown. A null
+  // object never throws.
+  const stop = f.liveStopObservation ?? undefined;
+  const optOut = f.optOutConfiguration ?? undefined;
+  const isoTime = (v: unknown) => (typeof v === "string" && v.length > 0 ? Date.parse(v) : NaN);
+  const observedAt = isoTime(stop?.observedAt);
+  const optOutChangedAt = isoTime(optOut?.lastChangedAt);
   const stopObservedOk = stop?.reachedRoute === true && stop.routeStatus === 200 && stop.phoneWideOptOutStamped === true;
   checks.push(
     optOut?.dropsKeywordMessages === true
@@ -900,14 +869,14 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
         ? check("stop_forwarded", "unknown", "STOP suppression not yet observed (first approved live verification)")
         : stop.reachedRoute === false
           ? check("stop_forwarded", "fail", "the service consumed STOP without forwarding it to Hone")
-          : stop.routeStatus !== null && stop.routeStatus !== 200
+          : typeof stop.routeStatus === "number" && stop.routeStatus !== 200
             ? check("stop_forwarded", "fail", `the route answered ${stop.routeStatus} to the STOP: it was forwarded but not accepted, so nothing was suppressed`)
             : stop.routeStatus === 200 && stop.phoneWideOptOutStamped === false
               ? check("stop_forwarded", "fail", "the route accepted the STOP but no phone-wide opt-out was stamped")
               : !stopObservedOk
-                ? check("stop_forwarded", "unknown", "the live STOP's delivery, response status or phone-wide stamp was not read")
-                : optOut === undefined || optOut.dropsKeywordMessages === null
-                  ? check("stop_forwarded", "unknown", "the service's opt-out configuration (does it drop keyword messages?) was not read")
+                ? check("stop_forwarded", "unknown", "the live STOP's delivery, response status or phone-wide stamp was not read (or not well-formed)")
+                : optOut?.dropsKeywordMessages !== false
+                  ? check("stop_forwarded", "unknown", "the service's opt-out configuration (does it drop keyword messages?) was not read as an explicit true/false")
                   : Number.isNaN(observedAt) || Number.isNaN(optOutChangedAt)
                     ? check("stop_forwarded", "unknown", "the live STOP's time or the opt-out configuration's last change was not read: the observation cannot be tied to the current configuration")
                     : observedAt > optOutChangedAt

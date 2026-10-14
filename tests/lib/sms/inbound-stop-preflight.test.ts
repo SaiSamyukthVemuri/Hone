@@ -18,12 +18,11 @@ const URL_OK = `${BASE}/api/twilio/inbound-sms`;
  */
 const FULL_RETRY = "#ct=1000&rt=5000&tt=15000&rc=2&rp=ct,rt,5xx&e=ashburn,umatilla";
 /**
- * The same-route URL with two explicit edges (without them Twilio uses its
- * single default edge, ashburn: Codex P2 4266813200) and timeouts that let a
- * whole attempt fit the default 15000 ms total, 1000 + 5000 (Codex P2
- * 4267597869). Used as a fallback.
+ * A same-route FALLBACK that recovers its OWN failures (Codex P1 4269949178):
+ * retries on connect/TLS, read timeout and 5xx, two explicit edges (Codex P2
+ * 4266813200), and 2 * (1000 + 5000) within the default 15000 ms total.
  */
-const URL_EDGES = `${URL_OK}#ct=1000&rt=5000&e=ashburn,umatilla`;
+const URL_EDGES = `${URL_OK}#ct=1000&rt=5000&rc=2&rp=ct,rt,5xx&e=ashburn,umatilla`;
 /** FULL_RETRY without its edge list, for tests that set `e` themselves. */
 const URL_RETRY_NO_EDGES = `${URL_OK}#ct=1000&rt=5000&tt=15000&rc=2&rp=ct,rt,5xx`;
 const URL_RETRY = `${URL_OK}${FULL_RETRY}`;
@@ -1023,9 +1022,16 @@ describe("a live Setting's retries must recover EVERY delivery failure (Codex P1
     expect(checkOf(underRule(liveSetting({ percentage: 100 }), liveSetting({ percentage: 0, retryOn: ["HTTP_5XX"] })), "stop_redelivery")?.status).toBe("pass");
   });
 
-  it("a same-route POST fallback still recovers when the retries do not", () => {
+  it("under a Rule the fallback runs on the SAME Setting: a non-recovering Setting is not rescued by it (Codex P1 4269949178)", () => {
     const f = underRule(liveSetting({ retryOn: ["HTTP_5XX"] }));
     Object.assign(f.service!, { fallbackUrl: URL_EDGES, fallbackMethod: "POST" });
+    expect(checkOf(f, "stop_redelivery")?.status).toBe("fail");
+    expect(evaluateInboundStopPreflight(f).ready).toBe(false);
+  });
+
+  it("with no Rule, a fallback that recovers its own failures does rescue a non-recovering primary", () => {
+    const f = allProven();
+    Object.assign(f.service!, { inboundRequestUrl: `${URL_OK}#ct=1000&rt=5000&rp=5xx&e=ashburn,umatilla`, fallbackUrl: URL_EDGES, fallbackMethod: "POST" });
     expect(checkOf(f, "stop_redelivery")?.status).toBe("pass");
     expect(checkOf(f, "stop_redelivery")?.detail).toMatch(/same route, by POST/);
   });
@@ -1215,8 +1221,8 @@ describe("the FALLBACK's transport is judged like the primary's (Codex P1 426552
 
   for (const [why, url] of [
     ["two edges", URL_EDGES],
-    ["sni=y, two edges and an attempt-sized budget", `${URL_OK}#sni=y&ct=1000&rt=5000&e=ashburn,umatilla`],
-    ["timeouts and three edges", `${URL_OK}#ct=1000&rt=5000&e=dublin,sydney,ashburn`],
+    ["sni=y and full own recovery", `${URL_OK}#sni=y&ct=1000&rt=5000&rp=all&e=ashburn,umatilla`],
+    ["full own recovery and three edges", `${URL_OK}#ct=1000&rt=5000&rp=ct,rt,5xx&e=dublin,sydney,ashburn`],
   ] as const) {
     it(`POSITIVE CONTROL: a safe same-route fallback (${why}) recovers: ready`, () => {
       const f = withFallback(url);
@@ -1273,12 +1279,10 @@ describe("the FALLBACK's transport is judged like the primary's (Codex P1 426552
       return f;
     };
 
-    it("a one-edge e= on the fallback is NOT consulted (the Setting's edgeZones govern): recovers", () => {
-      expect(status(ruled(`${URL_OK}#e=ashburn`), "stop_redelivery")).toBe("pass");
-    });
-
-    it("sni=n on the fallback: Settings carry no SNI field, so undetermined: unknown", () => {
-      expect(status(ruled(`${URL_OK}#sni=n`), "stop_redelivery")).toBe("unknown");
+    it("a non-recovering Setting governs the fallback too: refused whatever the fallback URL says (Codex P1 4269949178)", () => {
+      for (const fb of [URL_OK, URL_EDGES, `${URL_OK}#e=ashburn`, `${URL_OK}#sni=n`]) {
+        expect(status(ruled(fb), "stop_redelivery")).toBe("fail");
+      }
     });
 
     it("complete Setting retries, but the PRIMARY URL says sni=n: undetermined, unknown (no fallback either)", () => {
@@ -1289,10 +1293,10 @@ describe("the FALLBACK's transport is judged like the primary's (Codex P1 426552
       expect(status(f, "stop_redelivery")).toBe("pass");
     });
 
-    it("SPLIT: one share without recovery is rescued by a safe fallback, not by an sni=n one", () => {
+    it("SPLIT: a 30% share without recovery is not rescued by any fallback (the fallback lands on the same split)", () => {
       const split = [{ percentage: 70 }, { percentage: 30, retryOn: ["HTTP_5XX"] }];
-      expect(status(ruled(URL_OK, PRIMARY_NO_RECOVERY, ...split), "stop_redelivery")).toBe("pass");
-      expect(status(ruled(`${URL_OK}#sni=n`, PRIMARY_NO_RECOVERY, ...split), "stop_redelivery")).toBe("unknown");
+      expect(status(ruled(URL_EDGES, PRIMARY_NO_RECOVERY, ...split), "stop_redelivery")).toBe("fail");
+      expect(status(ruled(URL_EDGES, PRIMARY_NO_RECOVERY, { percentage: 100 }, { percentage: 0, retryOn: ["HTTP_5XX"] }), "stop_redelivery")).toBe("pass");
     });
   });
 
@@ -1418,8 +1422,11 @@ describe("the fallback must have budget for one whole attempt, tt >= ct + rt (Co
     ["tt one ms short of ct + rt", "#tt=5999&ct=1000&rt=5000&e=ashburn,umatilla", "fail"],
     // An attempt fits (6000), but failing over to the second edge needs 2 * ct + rt = 7000 (Codex P1 4268714206).
     ["tt exactly ct + rt (no time to fail over to the second edge)", "#tt=6000&ct=1000&rt=5000&e=ashburn,umatilla", "fail"],
-    ["tt exactly 2 * ct + rt", "#tt=7000&ct=1000&rt=5000&e=ashburn,umatilla", "pass"],
-    ["defaults with short timeouts", "#ct=1000&rt=5000&e=ashburn,umatilla", "pass"],
+    // Codex P1 4269949178: the fallback must retry its OWN connect, read and 5xx failures within 2 * (ct + rt).
+    ["tt exactly 2 * ct + rt, but the default policy (ct only)", "#tt=7000&ct=1000&rt=5000&e=ashburn,umatilla", "fail"],
+    ["short timeouts, default policy (ct only: a 5xx or read timeout on the fallback is lost)", "#ct=1000&rt=5000&e=ashburn,umatilla", "fail"],
+    ["rp=all with tt one ms short of 2 * (ct + rt)", "#tt=11999&ct=1000&rt=5000&rp=all&e=ashburn,umatilla", "fail"],
+    ["rp=all with tt exactly 2 * (ct + rt)", "#tt=12000&ct=1000&rt=5000&rp=all&e=ashburn,umatilla", "pass"],
   ] as const) {
     it(`no Rule, fallback with ${why}: ${want}`, () => {
       const f = viaFallback(`${URL_OK}${frag}`);
@@ -1437,11 +1444,12 @@ describe("the fallback must have budget for one whole attempt, tt >= ct + rt (Co
       };
       return f;
     };
-    it("Setting 1000 + 5000 within the assumed 15000 total: the fallback recovers", () => {
-      expect(status(ruled({}))).toBe("pass");
+    it("a 5xx-only Setting cannot recover the fallback either: refused (Codex P1 4269949178)", () => {
+      expect(status(ruled({}))).toBe("fail");
     });
-    it("the URL's own tt=100 is overridden by the Setting: still recovers", () => {
-      expect(status(ruled({}, `${URL_OK}#tt=100`))).toBe("pass");
+    it("a fully recovering Setting: the primary itself recovers, the fallback is not needed", () => {
+      expect(status(ruled({ retryOn: ["ALL"] }))).toBe("pass");
+      expect(status(ruled({ retryOn: ["ALL"] }, `${URL_OK}#tt=100`))).toBe("pass");
     });
     it("Setting totalTimeoutMs 100: the fallback cannot finish an attempt, refused", () => {
       expect(status(ruled({ totalTimeoutMs: 100 }))).toBe("fail");
@@ -1508,9 +1516,12 @@ describe("an edge list is resilience only if a connect failure is RETRIED onto t
     ["rc=0 (no retry, so never the second edge)", "#ct=1000&rt=5000&rc=0&e=ashburn,umatilla", "fail"],
     ["rp=5xx (a connect/TLS failure is not retried)", "#ct=1000&rt=5000&rp=5xx&e=ashburn,umatilla", "fail"],
     ["rp=rt,5xx (no ct)", "#ct=1000&rt=5000&rp=rt,5xx&e=ashburn,umatilla", "fail"],
-    ["the default policy (ct) and default rc (1)", "#ct=1000&rt=5000&e=ashburn,umatilla", "pass"],
+    // Codex P1 4269949178: edge failover alone is not enough, the fallback must also retry rt and 5xx.
+    ["the default policy (ct) and default rc (1)", "#ct=1000&rt=5000&e=ashburn,umatilla", "fail"],
+    ["rp=ct,5xx (read timeouts on the fallback lost)", "#ct=1000&rt=5000&rp=ct,5xx&e=dublin,sydney", "fail"],
+    ["rp=ct,rt (a 5xx on the fallback lost)", "#ct=1000&rt=5000&rp=ct,rt&e=dublin,sydney", "fail"],
     ["rp=all, rc=2", "#ct=1000&rt=5000&rp=all&rc=2&e=ashburn,umatilla", "pass"],
-    ["rp=ct,5xx", "#ct=1000&rt=5000&rp=ct,5xx&e=dublin,sydney", "pass"],
+    ["rp=ct,rt,5xx", "#ct=1000&rt=5000&rp=ct,rt,5xx&e=dublin,sydney", "pass"],
   ] as const) {
     it(`no Rule, two-edge fallback with ${why}: ${want}`, () => {
       expect(status(`${URL_OK}${frag}`)).toBe(want);
@@ -1523,4 +1534,96 @@ describe("an edge list is resilience only if a connect failure is RETRIED onto t
     f.webhookRules = undefined;
     expect(evaluateInboundStopPreflight(f).checks.find((c) => c.id === "stop_redelivery")?.status).toBe("unknown");
   });
+});
+
+describe("NEGATIVE CONTROLS — a fallback certifies only by recovering its OWN failures (Codex P1 4269949178, review 5517134248)", () => {
+  const PRIMARY_NO_RECOVERY = `${URL_OK}#ct=1000&rt=5000&rp=5xx&e=ashburn,umatilla`;
+  const verdict = (fallbackUrl: string, mutate?: (f: InboundStopFacts) => void) => {
+    const f = allProven();
+    Object.assign(f.service!, { inboundRequestUrl: PRIMARY_NO_RECOVERY, fallbackUrl, fallbackMethod: "POST" });
+    mutate?.(f);
+    const r = evaluateInboundStopPreflight(f);
+    return { status: r.checks.find((c) => c.id === "stop_redelivery")?.status, ready: r.ready };
+  };
+  const E = "&e=ashburn,umatilla";
+  for (const [why, frag] of [
+    ["ct only", `#ct=1000&rt=5000&rp=ct${E}`],
+    ["ct + 5xx without rt", `#ct=1000&rt=5000&rp=ct,5xx${E}`],
+    ["ct + rt without 5xx", `#ct=1000&rt=5000&rp=ct,rt${E}`],
+    ["no retries (rc=0)", `#ct=1000&rt=5000&rp=all&rc=0${E}`],
+    ["an insufficient budget", `#ct=1000&rt=5000&tt=11999&rp=all${E}`],
+    ["the defaults' budget (2 * (5000 + 15000) > 15000)", `#rp=all${E}`],
+    ["a malformed fragment", `#rp=all&ct=oops${E}`],
+  ] as const) {
+    it(`no Rule, fallback with ${why}: never certified, never ready`, () => {
+      expect(verdict(`${URL_OK}${frag}`)).toEqual({ status: "fail", ready: false });
+    });
+  }
+
+  it("POSITIVE CONTROL: full own recovery (ct, rt, 5xx; rc >= 1; 2 * (ct + rt) <= tt; two edges; Static Proxy off)", () => {
+    expect(verdict(URL_EDGES)).toEqual({ status: "pass", ready: true });
+  });
+
+  it("incomplete effective facts: Static Proxy unread, or a live Setting's retryOn unread, stay unknown", () => {
+    expect(verdict(URL_EDGES, (f) => (f.staticProxyEnabled = null))).toEqual({ status: "unknown", ready: false });
+    expect(
+      verdict(URL_EDGES, (f) => {
+        f.webhookRules = {
+          matched: true,
+          settings: [{ percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY, retryOn: null }],
+        };
+      }),
+    ).toEqual({ status: "unknown", ready: false });
+  });
+
+  it("the fallback's method must be exactly POST (a non-string method is not POST)", () => {
+    expect(verdict(URL_EDGES, (f) => Object.assign(f.service!, { fallbackMethod: 7 as unknown as string })).status).toBe("fail");
+  });
+});
+
+describe("NEGATIVE CONTROLS — opt-out passes only on an EXPLICIT false (Codex P2 4270134232)", () => {
+  const run = (optOut: unknown, stop?: unknown) => {
+    const f = allProven();
+    f.optOutConfiguration = optOut as InboundStopFacts["optOutConfiguration"];
+    if (stop !== undefined) f.liveStopObservation = stop as InboundStopFacts["liveStopObservation"];
+    const r = evaluateInboundStopPreflight(f);
+    return { status: r.checks.find((c) => c.id === "stop_forwarded")?.status, ready: r.ready };
+  };
+
+  it("POSITIVE CONTROL: explicit false, unchanged since the observed STOP", () => {
+    expect(run({ dropsKeywordMessages: false, lastChangedAt: "2026-10-01T00:00:00Z" })).toEqual({ status: "pass", ready: true });
+  });
+
+  it("explicit true refuses", () => {
+    expect(run({ dropsKeywordMessages: true, lastChangedAt: "2026-10-01T00:00:00Z" })).toEqual({ status: "fail", ready: false });
+  });
+
+  for (const [why, optOut] of [
+    ["the flag ABSENT (the reported pass-through)", { lastChangedAt: "2026-10-01T00:00:00Z" }],
+    ["the flag null", { dropsKeywordMessages: null, lastChangedAt: "2026-10-01T00:00:00Z" }],
+    ["the flag 0", { dropsKeywordMessages: 0, lastChangedAt: "2026-10-01T00:00:00Z" }],
+    ["the flag empty string", { dropsKeywordMessages: "", lastChangedAt: "2026-10-01T00:00:00Z" }],
+    ["the flag the STRING 'false'", { dropsKeywordMessages: "false", lastChangedAt: "2026-10-01T00:00:00Z" }],
+    ["the whole object null (must not throw)", null],
+    ["the whole object empty", {}],
+    ["lastChangedAt a number", { dropsKeywordMessages: false, lastChangedAt: 1696118400000 }],
+    ["lastChangedAt empty", { dropsKeywordMessages: false, lastChangedAt: "" }],
+    ["lastChangedAt an ARRAY holding a date (coerces to a parseable string)", { dropsKeywordMessages: false, lastChangedAt: ["2026-10-01T00:00:00Z"] }],
+  ] as const) {
+    it(`${why}: unknown, and ready can never become true`, () => {
+      expect(run(optOut)).toEqual({ status: "unknown", ready: false });
+    });
+  }
+
+  for (const [why, stop] of [
+    ["the observation object null (must not throw)", null],
+    ["routeStatus the STRING '200'", { reachedRoute: true, routeStatus: "200", phoneWideOptOutStamped: true, observedAt: "2026-10-12T12:00:00Z" }],
+    ["reachedRoute the STRING 'true'", { reachedRoute: "true", routeStatus: 200, phoneWideOptOutStamped: true, observedAt: "2026-10-12T12:00:00Z" }],
+    ["the stamp 1 instead of true", { reachedRoute: true, routeStatus: 200, phoneWideOptOutStamped: 1, observedAt: "2026-10-12T12:00:00Z" }],
+    ["observedAt a number", { reachedRoute: true, routeStatus: 200, phoneWideOptOutStamped: true, observedAt: 1697112000000 }],
+  ] as const) {
+    it(`malformed observation, ${why}: unknown, never ready`, () => {
+      expect(run({ dropsKeywordMessages: false, lastChangedAt: "2026-10-01T00:00:00Z" }, stop)).toEqual({ status: "unknown", ready: false });
+    });
+  }
 });
