@@ -118,7 +118,7 @@ export default async function IntegrationsSettingsPage() {
       {senderControlsGate().open ? (
         <SmsSenderControls
           inventory={demoAdoptionInventory(studio.id)}
-          recovery={senderRecoveryFor(sender?.status, sender?.last_error_code, Boolean(sender?.phone_number))}
+          recovery={senderRecoveryFor(sender?.status, sender?.last_error_code)}
         />
       ) : null}
     </section>

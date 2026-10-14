@@ -5,7 +5,6 @@ import {
   adoptSenderNumberAction,
   provisionSenderNumberAction,
   releaseSenderClaimAction,
-  retrySenderClaimAction,
   searchSenderNumbersAction,
   type SenderControlResult,
 } from "./sender-control-actions";
@@ -27,9 +26,9 @@ export function SmsSenderControls({
   inventory: DemoAdoptionInventory;
   /**
    * What an errored setup offers (senderRecoveryFor): release ("choose a
-   * different number"), retry (the same number, before any identifier is
-   * recorded), support (no self-service action), or none (not in error). Each
-   * action re-derives it on the server.
+   * different number"), support (no self-service action can be honest without
+   * the setup's origin), or none (not in error). The release action re-checks
+   * everything on the server.
    */
   recovery: SenderRecovery;
 }) {
@@ -37,7 +36,6 @@ export function SmsSenderControls({
   const [provision, provisionAction, provisioning] = useActionState<SenderControlResult | null, FormData>(provisionSenderNumberAction, null);
   const [adopt, adoptAction, adopting] = useActionState<SenderControlResult | null, FormData>(adoptSenderNumberAction, null);
   const [release, releaseAction, releasing] = useActionState<SenderControlResult | null, FormData>(releaseSenderClaimAction, null);
-  const [retry, retryAction, retrying] = useActionState<SenderControlResult | null, FormData>(retrySenderClaimAction, null);
 
   return (
     <div data-testid="sms-sender-controls" className="rounded-lg border border-dashed border-amber-400 p-5">
@@ -80,18 +78,6 @@ export function SmsSenderControls({
         </ul>
       )}
       {provision && <p role="status" className={`mt-2 text-sm ${provision.ok ? "text-emerald-800" : "text-red-700"}`}>{provision.message}</p>}
-
-      {recovery === "retry" && (
-        <form action={retryAction} className="mt-4 text-sm" data-testid="sms-sender-retry">
-          <p className="text-neutral-600 dark:text-neutral-400">
-            The last setup attempt did not finish. Retrying uses the same number and first checks what the provider already holds, so nothing is bought twice.
-          </p>
-          <button type="submit" disabled={retrying} className="mt-2 rounded-md border px-3 py-1">
-            Retry setup
-          </button>
-          {retry && <p role="status" className={`mt-2 ${retry.ok ? "text-emerald-800" : "text-red-700"}`}>{retry.message}</p>}
-        </form>
-      )}
 
       {recovery === "support" && (
         <p className="mt-4 text-sm text-neutral-600 dark:text-neutral-400" data-testid="sms-sender-support">
