@@ -14,10 +14,15 @@ const auth = vi.hoisted(() => ({
   reconcile: { data: { status: "none" } } as unknown,
 }));
 
+const { query } = vi.hoisted(() => ({
+  query: (data: unknown) => Object.assign(Promise.resolve({ data, error: null }), { limit: async () => ({ data, error: null }) }),
+}));
 vi.mock("@supabase/ssr", () => ({
   createServerClient: () => ({
     auth: { getUser: async () => ({ data: { user: auth.user } }) },
-    from: () => ({ select: () => ({ eq: () => ({ eq: async () => ({ data: [] }) }) }) }),
+    // Awaitable AND .limit()-able, so the mock holds whichever membership
+    // reads the middleware makes.
+    from: () => ({ select: () => ({ eq: () => ({ eq: () => query([]) }) }) }),
   }),
 }));
 vi.mock("@/lib/supabase/server", () => ({

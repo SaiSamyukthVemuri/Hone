@@ -75,10 +75,16 @@ vi.mock("@/lib/supabase/server", () => ({
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ({ rpc: async () => ({ data: h.accept, error: null }) }),
 }));
+const { query } = vi.hoisted(() => ({
+  query: (data: unknown) => Object.assign(Promise.resolve({ data, error: null }), { limit: async () => ({ data, error: null }) }),
+}));
 vi.mock("@supabase/ssr", () => ({
   createServerClient: () => ({
     auth: { getUser: async () => ({ data: { user: { id: "u1", email: h.email } } }) },
-    from: () => ({ select: () => ({ eq: () => ({ eq: async () => ({ data: h.memberships }) }) }) }),
+    // Awaitable AND .limit()-able, per table, so the mock holds whichever
+    // membership reads the middleware makes (practitioners; studio_receptionists
+    // where that lane is composed): no receptionist rows here.
+    from: (table: string) => ({ select: () => ({ eq: () => ({ eq: () => query(table === "practitioners" ? h.memberships : []) }) }) }),
   }),
 }));
 vi.mock("@/lib/analytics/server", () => ({ captureServerEvent: vi.fn(), identifyServerUser: vi.fn() }));
