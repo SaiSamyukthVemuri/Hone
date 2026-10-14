@@ -336,8 +336,8 @@ it("seeds (or proves) the persistent synthetic Fett twin", { timeout: 600_000 },
   note("F2 completed USD visit ready to charge (fake Stripe) — client 05", true, payable.sessionId);
   // Two OLDER payable visits for the restart scenario (scripts/fett-twin/pay-step.mjs): charge one, restart
   // the server, charge the other on the new process, refund the first. The walkthrough keeps the newest.
-  const restartA = await pastVisit(studioId, e1.practitionerId, c(5), IDS.treatment, 2);
-  const restartB = await pastVisit(studioId, e1.practitionerId, c(5), IDS.treatment, 3);
+  const restartA = await pastVisit(studioId, e1.practitionerId, c(5), IDS.treatment, 4);
+  const restartB = await pastVisit(studioId, e1.practitionerId, c(5), IDS.treatment, 5);
   note("F2b two older USD visits for the restart scenario — client 05", !!restartA.sessionId && !!restartB.sessionId, `${restartA.sessionId} ${restartB.sessionId}`);
   const otherWay = await pastVisit(studioId, e1.practitionerId, c(6), IDS.treatment, 2);
   const settled = await asUser(e1.userId, (q) =>

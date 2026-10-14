@@ -1,10 +1,10 @@
 // LOCAL-ONLY synthetic Fett twin (#825): ONE payment step against the served twin, so a scenario can put a
 // server restart BETWEEN steps (the walkthrough runs its charge and refund in one process lifetime).
 //
-//   node scripts/fett-twin/pay-step.mjs charge <daysAgo>   electrologist 1 charges client 05's visit <daysAgo> days back
-//   node scripts/fett-twin/pay-step.mjs refund <daysAgo>   the owner refunds that visit's charge
+//   node scripts/fett-twin/pay-step.mjs charge <n>       electrologist 1 charges client 05's <n>th-newest visit
+//   node scripts/fett-twin/pay-step.mjs refund <n>       the owner refunds that visit's charge
 //
-// The seed provides client-05 visits 1, 2 and 3 days back; the walkthrough uses the newest (1). Prints one
+// <n> is the ordinal of client 05's visits, newest first (1..3): the seed makes three, the walkthrough uses 1. Prints one
 // JSON line: the attempt row as the database records it after the step. Same ports/env as walkthrough.mjs.
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -33,9 +33,9 @@ await db.connect();
 const one = async (sql, p = []) => (await db.query(sql, p)).rows[0];
 const studio = await one(`select id from public.studios where slug = 'fett-twin'`);
 const c05 = await one(`select id from public.clients where studio_id = $1 and name = 'SYNTH-FETT Client 05'`, [studio.id]);
-// Visits are ordered newest first; daysAgo 1 is the newest.
+// Visits are ordered newest first; n = 1 is the newest.
 const visit = (await db.query(`select id from public.sessions where studio_id = $1 and client_id = $2 order by started_at desc`, [studio.id, c05.id])).rows[daysAgo - 1];
-if (!visit) throw new Error(`no client-05 visit ${daysAgo} days back: reseed with scripts/fett-twin/reset.sh`);
+if (!visit) throw new Error(`no ${daysAgo}th-newest client-05 visit: reseed with scripts/fett-twin/reset.sh`);
 
 async function magicLogin(page, email) {
   const ids = async () => (((await (await fetch(`${MAIL}/api/v1/search?query=${encodeURIComponent(`to:${email}`)}`)).json()).messages) ?? []).map((m) => m.ID);
