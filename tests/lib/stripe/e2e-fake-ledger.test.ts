@@ -41,6 +41,7 @@ const call = (over = {}) => ({
   currency: "cad",
   resultId: "pi_test_e2e_x_1",
   chargeId: "ch_test_e2e_x_1",
+  metadataDigest: null,
   replay: false,
   ...over,
 });

@@ -30,7 +30,9 @@ import {
 //   HONE_E2E_WEBHOOK_ORIGIN     the twin app's LOOPBACK origin, e.g. http://127.0.0.1:3995
 //   HONE_E2E_WEBHOOK_SECRET     the twin server's STRIPE_WEBHOOK_SECRET (whsec_…)
 //   HONE_E2E_REPLAY_EVENTS      optional, comma list of succeeded,refunded
-//                               (default: both; refunded only if the fake refunded)
+//                               (default: both; refunded only if the fake refunded).
+//                               An unknown or empty name, refunded named with no
+//                               fake refund, or nothing to build FAILS the tool.
 //
 // Each event's FIRST delivery may settle state (a refund left pending_stripe by
 // an unknown processor outcome becomes succeeded). It is then delivered again
@@ -55,6 +57,8 @@ async function state(attemptId: string) {
   return r.rows[0] as Record<string, unknown> | undefined;
 }
 
+const KNOWN_EVENTS = new Set(["succeeded", "refunded"]);
+
 const REQUIRED = [
   "HONE_E2E_RUN_ID",
   "HONE_LOCAL_DB_URL",
@@ -75,9 +79,21 @@ test("FAKE webhook replay for one attempt is idempotent", async () => {
     throw new Error(`replay tool: set ${missing.join(", ")} (no defaults, by design)`);
   }
   const target = webhookTarget(); // throws unless loopback + whsec_ secret
+  // Every requested name must be known, and at least one event must be built:
+  // an empty list or a typo would otherwise deliver nothing and "prove"
+  // idempotence by comparing an untouched row to itself (Codex P2 4265594526).
   const wanted = (process.env.HONE_E2E_REPLAY_EVENTS ?? "succeeded,refunded")
     .split(",")
-    .map((s) => s.trim());
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const unknown = wanted.filter((w) => !KNOWN_EVENTS.has(w));
+  if (wanted.length === 0 || unknown.length > 0) {
+    throw new Error(
+      `replay tool: HONE_E2E_REPLAY_EVENTS must name succeeded and/or refunded; got ${JSON.stringify(
+        process.env.HONE_E2E_REPLAY_EVENTS ?? "",
+      )}`,
+    );
+  }
 
   const before = await state(attemptId);
   expect(before, `attempt ${attemptId} not found on this database`).toBeDefined();
@@ -86,8 +102,16 @@ test("FAKE webhook replay for one attempt is idempotent", async () => {
   if (wanted.includes("succeeded")) {
     builders.push(["payment_intent.succeeded", () => paymentIntentSucceededEvent(attemptId)]);
   }
-  if (wanted.includes("refunded") && processorRefund(attemptId)) {
-    builders.push(["charge.refunded", () => chargeRefundedEvent(attemptId)]);
+  if (wanted.includes("refunded")) {
+    if (processorRefund(attemptId)) {
+      builders.push(["charge.refunded", () => chargeRefundedEvent(attemptId)]);
+    } else if (process.env.HONE_E2E_REPLAY_EVENTS !== undefined) {
+      // Asked for by name, but the fake processor made no refund to report.
+      throw new Error(`replay tool: refunded was requested, but the fake processor made no refund for ${attemptId}`);
+    }
+  }
+  if (builders.length === 0) {
+    throw new Error("replay tool: no requested event can be built for this attempt; nothing would be proven");
   }
 
   const log: Array<{ type: string; eventId: string; status: number; replay: boolean }> = [];

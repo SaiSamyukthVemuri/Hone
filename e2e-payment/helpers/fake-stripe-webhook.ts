@@ -6,6 +6,7 @@ import { E2E_APP_ORIGIN, E2E_WEB_SERVER_ENV } from "../../e2e/helpers/local-env"
 // (Codex P2 4265382406). Specs that SEED still import payment-fixture.
 import { adminQuery } from "../../tests/db/helpers/harness";
 import { activeRunId, readFakeStripeCalls } from "./fake-stripe-ledger-e2e";
+import { metadataDigest } from "./fake-stripe-metadata-digest";
 
 // ===========================================================================
 // PAY-CCY-09 (#824): FAKE Stripe webhook transport for the disposable stack.
@@ -25,7 +26,10 @@ import { activeRunId, readFakeStripeCalls } from "./fake-stripe-ledger-e2e";
 //     (Codex P2 4264919593) — a broken lineage is a finding, not an event.
 //   * METADATA is what the charge path really sends at PaymentIntent create
 //     (lib/billing/session-payment-charge.ts), which real Stripe echoes on the
-//     PaymentIntent and its Charge.
+//     PaymentIntent and its Charge. It is only signed when it hashes to the
+//     digest the fake processor recorded of the metadata it RECEIVED (Codex P2
+//     4265594520), so a wrong value sent by the charge path fails the test
+//     instead of being silently corrected from the row.
 //   * The event is SIGNED with the stack's webhook secret using the Stripe
 //     SDK's own test signer, and POSTed to the app's real route, which verifies
 //     it with the real constructEvent. Nothing in the app is bypassed.
@@ -107,7 +111,20 @@ function processorCreate(paymentIntentId: string, runId: string) {
     amount: create.amountCents,
     currency: create.currency,
     chargeId: create.chargeId ?? null,
+    metadataDigest: create.metadataDigest ?? null,
   };
+}
+
+/** The metadata an event will carry must be what the charge path actually SENT
+ * at create (Codex P2 4265594520). Built from the row, it is only trusted when
+ * it hashes to the processor's own record of the create. */
+function eventMetadata(a: AttemptFacts, created: { metadataDigest: string | null }) {
+  const md = chargeMetadata(a);
+  assertLineage(
+    created.metadataDigest !== null && metadataDigest(md) === created.metadataDigest,
+    `the metadata the processor received for ${a.stripe_payment_intent_id} differs from the attempt row`,
+  );
+  return md;
 }
 
 /** The refund the fake processor actually made for this attempt, if any, with
@@ -183,7 +200,7 @@ export async function paymentIntentSucceededEvent(
       amount_received: amount,
       currency: over.currency ?? created.currency,
       latest_charge: created.chargeId,
-      metadata: chargeMetadata(a),
+      metadata: eventMetadata(a, created),
       livemode: false,
     },
     runId,
@@ -229,7 +246,7 @@ export async function chargeRefundedEvent(
       amount_refunded: refunded,
       currency,
       refunded: refunded === amount,
-      metadata: chargeMetadata(a),
+      metadata: eventMetadata(a, created),
       livemode: false,
       refunds: {
         object: "list",

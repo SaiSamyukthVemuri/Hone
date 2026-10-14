@@ -9,9 +9,11 @@ import {
 } from "@/lib/stripe/e2e-fake-guard";
 import {
   createFakeStripe,
+  fakeMetadataDigest,
   getFakeStripeCalls,
   resetFakeStripeState,
 } from "@/lib/stripe/e2e-fake-stripe";
+import { metadataDigest } from "@/e2e-payment/helpers/fake-stripe-metadata-digest";
 
 // Security proof for the server-only fake-Stripe activation boundary. The guard
 // is a PURE env-evaluation function, so the matrix passes an env object and never
@@ -289,16 +291,81 @@ describe("fake-call recorder — invocation vs effect, run-isolated, test-safe",
   });
 
   it("the recorded shape carries no client/email/card/PHI fields", () => {
-    // The recorder type is method/key/account/amount/currency/resultId/chargeId/replay
-    // only. chargeId (PAY-CCY-09) is a synthetic provider id, not client data.
-    const keys = ["method", "idempotencyKey", "stripeAccount", "amountCents", "currency", "resultId", "chargeId", "replay"];
+    // The recorder type is method/key/account/amount/currency/resultId/chargeId/
+    // metadataDigest/replay only. chargeId (PAY-CCY-09) is a synthetic provider
+    // id; metadataDigest is a one-way hash, never the metadata values.
+    const keys = ["method", "idempotencyKey", "stripeAccount", "amountCents", "currency", "resultId", "chargeId", "metadataDigest", "replay"];
     const src = readFileSync(join(process.cwd(), "lib/stripe/e2e-fake-stripe.ts"), "utf8");
     for (const forbidden of ["email", "last4", "customer", "client_id", "card_", "signature", "cvc", "secret"]) {
       // no forbidden field is recorded (the FakeStripeCall type block)
       const typeBlock = src.slice(src.indexOf("export type FakeStripeCall"), src.indexOf("};", src.indexOf("export type FakeStripeCall")));
       expect(typeBlock.toLowerCase()).not.toContain(forbidden);
     }
-    expect(keys.length).toBe(8);
+    expect(keys.length).toBe(9);
+  });
+});
+
+// PAY-CCY-09 (Codex P2 4265594520). The fake records WHAT METADATA THE CHARGE
+// PATH SENT, as a digest, so a webhook test cannot manufacture correct metadata
+// from the row when the charge path sent something else.
+describe("fake create records a digest of the metadata it received", () => {
+  const RUN = "run-mdigest0001";
+  const SENT = {
+    hone_studio_id: "studio-1",
+    hone_client_id: "client-1-SECRETLIKE",
+    hone_session_id: null,
+    hone_appointment_id: "",
+    hone_session_payment_charge_attempt_id: "att-1",
+    hone_charge_reason: "session_payment",
+    hone_card_authorization_signature_id: "sig-1",
+    hone_environment: "test",
+  };
+
+  afterEach(() => resetFakeStripeState(RUN));
+
+  async function create(metadata: Record<string, string | null>) {
+    process.env.HONE_E2E_RUN_ID = RUN;
+    const s = createFakeStripe();
+    await (s.paymentIntents.create as unknown as (p: unknown, o: unknown) => Promise<unknown>)(
+      { amount: 18500, currency: "usd", metadata },
+      { idempotencyKey: `k-${Math.random()}` },
+    );
+    return getFakeStripeCalls(RUN).at(-1)!;
+  }
+
+  it("records the digest of what was SENT, and never the values", async () => {
+    const c = await create(SENT);
+    expect(c.metadataDigest).toBe(fakeMetadataDigest(SENT));
+    expect(JSON.stringify(c)).not.toContain("client-1-SECRETLIKE");
+    expect(JSON.stringify(c)).not.toContain("studio-1");
+  });
+
+  it("a wrong value sent by the charge path yields a DIFFERENT digest", async () => {
+    const right = await create(SENT);
+    const wrong = await create({ ...SENT, hone_studio_id: SENT.hone_client_id });
+    expect(wrong.metadataDigest).not.toBe(right.metadataDigest);
+  });
+
+  it("the Playwright-side digest is the same function (null/empty dropped, order-free)", () => {
+    const fromRow = {
+      hone_environment: "test",
+      hone_card_authorization_signature_id: "sig-1",
+      hone_charge_reason: "session_payment",
+      hone_session_payment_charge_attempt_id: "att-1",
+      hone_appointment_id: "",
+      hone_session_id: "",
+      hone_client_id: "client-1-SECRETLIKE",
+      hone_studio_id: "studio-1",
+    };
+    expect(metadataDigest(fromRow)).toBe(fakeMetadataDigest(SENT));
+    for (const m of [SENT, {}, { a: "1" }, { b: "2", a: "1" }, { a: undefined }]) {
+      expect(metadataDigest(m)).toBe(fakeMetadataDigest(m));
+    }
+    expect(metadataDigest(null)).toBeNull();
+    expect(fakeMetadataDigest(undefined)).toBeNull();
+    expect(metadataDigest({ ...fromRow, hone_studio_id: "client-1-SECRETLIKE" })).not.toBe(
+      fakeMetadataDigest(SENT),
+    );
   });
 });
 
