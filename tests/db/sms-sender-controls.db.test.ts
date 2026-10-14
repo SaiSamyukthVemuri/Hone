@@ -524,22 +524,22 @@ describe("release and choose again", () => {
   it("the release COMMAND re-checks eligibility itself: a timeout-coded claim is refused even with the right sender and key", async () => {
     const { s, claimKey } = await wedge("ctl-release-cmd-timeout", "provider_timeout");
     const sender = (await adminQuery("select id from public.studio_sms_senders where studio_id = $1", [s.studioId])).rows[0].id;
-    expect((await adminQuery("select public.release_unpurchased_studio_sms_claim($1, $2, $3, $4) r", [s.studioId, s.userId, sender, claimKey])).rows[0].r).toBe("not_releasable");
+    expect((await adminQuery("select public.release_unpurchased_studio_sms_claim($1, $2, $3, $4, $5) r", [s.studioId, s.userId, sender, claimKey, 1])).rows[0].r).toBe("not_releasable");
     expect((await status(s.studioId)).map((r) => r.status)).toEqual(["error"]);
   });
 
   it("the release command is compare-and-set, owner-derived and service_role only", async () => {
     const { s, claimKey } = await wedge("ctl-release-cas");
     const sender = (await adminQuery("select id from public.studio_sms_senders where studio_id = $1", [s.studioId])).rows[0].id;
-    expect((await adminQuery("select public.release_unpurchased_studio_sms_claim($1, $2, $3, $4) r", [s.studioId, s.userId, sender, "hone-sms-" + "0".repeat(32)])).rows[0].r).toBe("sender_changed");
-    expect((await adminQuery("select public.release_unpurchased_studio_sms_claim($1, $2, $3, $4) r", [s.studioId, s.userId, "00000000-0000-4000-8000-000000000000", claimKey])).rows[0].r).toBe("sender_changed");
+    expect((await adminQuery("select public.release_unpurchased_studio_sms_claim($1, $2, $3, $4, $5) r", [s.studioId, s.userId, sender, "hone-sms-" + "0".repeat(32), 1])).rows[0].r).toBe("sender_changed");
+    expect((await adminQuery("select public.release_unpurchased_studio_sms_claim($1, $2, $3, $4, $5) r", [s.studioId, s.userId, "00000000-0000-4000-8000-000000000000", claimKey, 1])).rows[0].r).toBe("sender_changed");
     for (const role of ["anon", "authenticated"] as const) {
       for (const sql of [
-        "select public.release_unpurchased_studio_sms_claim($1, $2, $3, $4)",
+        "select public.release_unpurchased_studio_sms_claim($1, $2, $3, $4, $5)",
         "select * from public.get_releasable_studio_sms_claim($1, $2)",
         "select public.studio_sms_resource_recorded($1, $2, null)",
       ]) {
-        const params = sql.includes("release_") ? [s.studioId, s.userId, sender, claimKey] : sql.includes("releasable") ? [s.studioId, s.userId] : [s.studioId, "+19055550100"];
+        const params = sql.includes("release_") ? [s.studioId, s.userId, sender, claimKey, 1] : sql.includes("releasable") ? [s.studioId, s.userId] : [s.studioId, "+19055550100"];
         await expect(asRole(role, (q) => q(sql, params)), `${role} ${sql.slice(7, 40)}`).rejects.toMatchObject({ code: "42501" });
       }
     }
@@ -624,6 +624,59 @@ describe("resource history and the atomic reservation", () => {
     await holding.purchaseNumber({ claimKey: rows[0].claim_key, phoneNumber: number });
     expect(await controls.runSenderRelease(deps(holding), { studioId: s.studioId, actorUserId: s.userId })).toMatchObject({ ok: false, reason: "resources_found" });
     expect(await controls.runSenderRelease(deps(new FakeSmsProvisioningProvider()), { studioId: s.studioId, actorUserId: s.userId })).toMatchObject({ ok: true, result: "released" });
+  });
+
+  // Codex P2 4266274277: a RETRY between the provider read and the release
+  // keeps the sender and key, takes the lease forward, may buy, and can park
+  // the row back in a releasable `error`. The provider's "nothing" was about
+  // the earlier attempt, so the release must refuse.
+  const senderStatuses = async (studioId: string): Promise<string[]> =>
+    (await adminQuery("select status from public.studio_sms_senders where studio_id = $1 order by created_at", [studioId])).rows.map((r) => r.status as string);
+
+  it("FENCED: a retry that runs after the provider read and buys is never released by that stale answer", async () => {
+    const s = await seedStudio("ctl-rel-fence");
+    const number = await rand();
+    const first = (await adminQuery("select * from public.claim_studio_sms_provisioning($1, $2, 'CA', null, $3)", [s.studioId, s.userId, number])).rows[0];
+    await adminQuery("select public.fail_studio_sms_provisioning($1, $2, $3, 'number_no_longer_available')", [s.studioId, first.claim_key, first.lease_generation]);
+
+    const bought = new FakeSmsProvisioningProvider();
+    let retried: { claim_key: string; lease_generation: number } | null = null;
+    // The provider answers "nothing" for the claim as it stood -- and, before
+    // the release command runs, a retry takes the lease forward, buys, and is
+    // parked back in error with a releasable code.
+    const racing = new FakeSmsProvisioningProvider();
+    const lookup = racing.lookupResourcesByClaim.bind(racing);
+    racing.lookupResourcesByClaim = async (claimKey: string) => {
+      const answer = await lookup(claimKey);
+      retried = (await adminQuery("select * from public.claim_studio_sms_provisioning($1, $2, 'CA', null, $3)", [s.studioId, s.userId, number])).rows[0];
+      await bought.purchaseNumber({ claimKey: retried!.claim_key, phoneNumber: number });
+      await adminQuery("select public.fail_studio_sms_provisioning($1, $2, $3, 'finalize_conflict')", [s.studioId, retried!.claim_key, retried!.lease_generation]);
+      return answer;
+    };
+
+    expect(await controls.runSenderRelease(deps(racing), { studioId: s.studioId, actorUserId: s.userId })).toEqual({
+      ok: false, result: "refused", reason: "sender_changed", uncertain: false,
+    });
+    // The retry kept the key and moved the generation; the row is still live.
+    expect(retried!.claim_key).toBe(first.claim_key);
+    expect(retried!.lease_generation).toBeGreaterThan(first.lease_generation);
+    expect(await senderStatuses(s.studioId)).toEqual(["error"]);
+    // Asked afresh, the provider reports what the retry bought: still refused.
+    expect(await controls.runSenderRelease(deps(bought), { studioId: s.studioId, actorUserId: s.userId })).toMatchObject({ ok: false, reason: "resources_found" });
+    expect(await senderStatuses(s.studioId)).toEqual(["error"]);
+  });
+
+  it("the release command refuses a stale lease generation even with the right sender and key", async () => {
+    const s = await seedStudio("ctl-release-cmd-gen");
+    const c = (await adminQuery("select * from public.claim_studio_sms_provisioning($1, $2, 'CA', null, $3)", [s.studioId, s.userId, await rand()])).rows[0];
+    await adminQuery("select public.fail_studio_sms_provisioning($1, $2, $3, 'number_no_longer_available')", [s.studioId, c.claim_key, c.lease_generation]);
+    const claimKey = c.claim_key as string;
+    const { rows } = await adminQuery("select * from public.get_releasable_studio_sms_claim($1, $2)", [s.studioId, s.userId]);
+    expect(rows[0]).toMatchObject({ result: "releasable", claim_key: claimKey });
+    const gen = rows[0].lease_generation as number;
+    expect((await adminQuery("select public.release_unpurchased_studio_sms_claim($1, $2, $3, $4, $5) r", [s.studioId, s.userId, rows[0].sender_id, claimKey, gen + 1])).rows[0].r).toBe("sender_changed");
+    expect((await adminQuery("select public.release_unpurchased_studio_sms_claim($1, $2, $3, $4, $5) r", [s.studioId, s.userId, rows[0].sender_id, claimKey, null])).rows[0].r).toBe("invalid_input");
+    expect((await adminQuery("select public.release_unpurchased_studio_sms_claim($1, $2, $3, $4, $5) r", [s.studioId, s.userId, rows[0].sender_id, claimKey, gen])).rows[0].r).toBe("released");
   });
 });
 

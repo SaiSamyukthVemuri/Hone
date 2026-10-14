@@ -15,13 +15,17 @@
 -- nothing, and nothing else:
 --
 --   1. get_releasable_studio_sms_claim(studio, actor) -- read: the studio's
---      live claim and its key, IF it is releasable. The caller then asks the
+--      live claim, its key and its lease generation, IF it is releasable. The caller then asks the
 --      PROVIDER what exists under that key (a read): the database alone cannot
 --      prove nothing was bought, because a purchase whose answer was lost is
 --      recorded nowhere here until reconciled.
---   2. release_unpurchased_studio_sms_claim(studio, actor, sender, key) --
---      compare-and-set on that sender and key, every condition re-checked under
---      the row lock, then `error` -> `releasing` -> `released` through 0191's
+--   2. release_unpurchased_studio_sms_claim(studio, actor, sender, key,
+--      generation) -- compare-and-set on that sender, key AND lease generation,
+--      every condition re-checked under the row lock (Codex P2 4266274277: a
+--      retry between the provider read and the release bumps the generation,
+--      may buy, and can park the row back in a releasable `error`; the
+--      generation is what proves the provider's "nothing" is still about the
+--      attempt it was asked about), then `error` -> `releasing` -> `released` through 0191's
 --      own transition guard. The released row stays as history; the next claim
 --      opens a new row with a new key.
 --   3. studio_sms_resource_recorded(studio, number, service) -- whether any
@@ -71,7 +75,7 @@ set local lock_timeout = '5s';
 create or replace function public.get_releasable_studio_sms_claim(
   p_studio_id     uuid,
   p_actor_user_id uuid
-) returns table (result text, sender_id uuid, claim_key text, claimed_phone_number text)
+) returns table (result text, sender_id uuid, claim_key text, claimed_phone_number text, lease_generation integer)
 language plpgsql
 stable
 security definer
@@ -82,7 +86,7 @@ declare
   v_row  public.studio_sms_senders%rowtype;
 begin
   if p_studio_id is null or p_actor_user_id is null then
-    return query select 'invalid_input'::text, null::uuid, null::text, null::text;
+    return query select 'invalid_input'::text, null::uuid, null::text, null::text, null::integer;
     return;
   end if;
 
@@ -91,11 +95,11 @@ begin
    where p.studio_id = p_studio_id and p.user_id = p_actor_user_id and p.active = true
    limit 1;
   if v_role is null then
-    return query select 'not_a_member'::text, null::uuid, null::text, null::text;
+    return query select 'not_a_member'::text, null::uuid, null::text, null::text, null::integer;
     return;
   end if;
   if v_role <> 'owner' then
-    return query select 'not_owner'::text, null::uuid, null::text, null::text;
+    return query select 'not_owner'::text, null::uuid, null::text, null::text, null::integer;
     return;
   end if;
 
@@ -103,7 +107,7 @@ begin
     from public.studio_sms_senders s
    where s.studio_id = p_studio_id and s.status <> 'released';
   if v_row.id is null then
-    return query select 'no_live_sender'::text, null::uuid, null::text, null::text;
+    return query select 'no_live_sender'::text, null::uuid, null::text, null::text, null::integer;
     return;
   end if;
 
@@ -114,11 +118,12 @@ begin
      or v_row.provisioned_at is not null
      or v_row.provisioning_claim_key is null
      or coalesce(v_row.last_error_code, '') not in ('number_no_longer_available', 'provider_resource_mismatch', 'finalize_conflict') then
-    return query select 'not_releasable'::text, v_row.id, null::text, v_row.claimed_phone_number;
+    return query select 'not_releasable'::text, v_row.id, null::text, v_row.claimed_phone_number, null::integer;
     return;
   end if;
 
-  return query select 'releasable'::text, v_row.id, v_row.provisioning_claim_key, v_row.claimed_phone_number;
+  return query select 'releasable'::text, v_row.id, v_row.provisioning_claim_key, v_row.claimed_phone_number,
+    v_row.provisioning_lease_generation;
 end;
 $$;
 
@@ -129,7 +134,8 @@ create or replace function public.release_unpurchased_studio_sms_claim(
   p_studio_id          uuid,
   p_actor_user_id      uuid,
   p_expected_sender_id uuid,
-  p_claim_key          text
+  p_claim_key          text,
+  p_lease_generation   integer
 ) returns text
 language plpgsql
 volatile
@@ -142,7 +148,8 @@ declare
   v_row  public.studio_sms_senders%rowtype;
 begin
   if p_studio_id is null or p_actor_user_id is null
-     or p_expected_sender_id is null or p_claim_key is null then
+     or p_expected_sender_id is null or p_claim_key is null
+     or p_lease_generation is null then
     return 'invalid_input';
   end if;
 
@@ -165,8 +172,11 @@ begin
     return 'no_live_sender';
   end if;
   -- COMPARE-AND-SET: the claim the provider was asked about, and no other.
+  -- The generation too: a retry in between keeps the sender and key but takes
+  -- the lease forward, and what it may have bought was not in that answer.
   if v_row.id <> p_expected_sender_id
-     or v_row.provisioning_claim_key is distinct from p_claim_key then
+     or v_row.provisioning_claim_key is distinct from p_claim_key
+     or v_row.provisioning_lease_generation is distinct from p_lease_generation then
     return 'sender_changed';
   end if;
   if v_row.status <> 'error'
@@ -232,11 +242,11 @@ revoke execute on function public.get_releasable_studio_sms_claim(uuid, uuid) fr
 revoke execute on function public.get_releasable_studio_sms_claim(uuid, uuid) from service_role;
 grant execute on function public.get_releasable_studio_sms_claim(uuid, uuid) to service_role;
 
-revoke execute on function public.release_unpurchased_studio_sms_claim(uuid, uuid, uuid, text) from public;
-revoke execute on function public.release_unpurchased_studio_sms_claim(uuid, uuid, uuid, text) from anon;
-revoke execute on function public.release_unpurchased_studio_sms_claim(uuid, uuid, uuid, text) from authenticated;
-revoke execute on function public.release_unpurchased_studio_sms_claim(uuid, uuid, uuid, text) from service_role;
-grant execute on function public.release_unpurchased_studio_sms_claim(uuid, uuid, uuid, text) to service_role;
+revoke execute on function public.release_unpurchased_studio_sms_claim(uuid, uuid, uuid, text, integer) from public;
+revoke execute on function public.release_unpurchased_studio_sms_claim(uuid, uuid, uuid, text, integer) from anon;
+revoke execute on function public.release_unpurchased_studio_sms_claim(uuid, uuid, uuid, text, integer) from authenticated;
+revoke execute on function public.release_unpurchased_studio_sms_claim(uuid, uuid, uuid, text, integer) from service_role;
+grant execute on function public.release_unpurchased_studio_sms_claim(uuid, uuid, uuid, text, integer) to service_role;
 
 revoke execute on function public.studio_sms_resource_recorded(uuid, text, text) from public;
 revoke execute on function public.studio_sms_resource_recorded(uuid, text, text) from anon;
@@ -245,9 +255,9 @@ revoke execute on function public.studio_sms_resource_recorded(uuid, text, text)
 grant execute on function public.studio_sms_resource_recorded(uuid, text, text) to service_role;
 
 comment on function public.get_releasable_studio_sms_claim(uuid, uuid) is
-  'SMS-SENDER-CONTROL-01 (0226): the studio''s live sender claim and its key IF it is releasable (owner actor; error; no recorded number, SID, service or provisioned_at; last error number_no_longer_available or provider_resource_mismatch). The caller must confirm with the provider that nothing exists under the key before releasing. service_role only.';
-comment on function public.release_unpurchased_studio_sms_claim(uuid, uuid, uuid, text) is
-  'SMS-SENDER-CONTROL-01 (0226): releases a never-purchased, never-activated errored claim (compare-and-set on sender and key, every condition re-checked under the row lock) via error -> releasing -> released, so the owner can choose another number. service_role only.';
+  'SMS-SENDER-CONTROL-01 (0226): the studio''s live sender claim, its key and its lease generation IF it is releasable (owner actor; error; no recorded number, SID, service or provisioned_at; last error number_no_longer_available or provider_resource_mismatch). The caller must confirm with the provider that nothing exists under the key before releasing. service_role only.';
+comment on function public.release_unpurchased_studio_sms_claim(uuid, uuid, uuid, text, integer) is
+  'SMS-SENDER-CONTROL-01 (0226): releases a never-purchased, never-activated errored claim (compare-and-set on sender, key and lease generation, every condition re-checked under the row lock) via error -> releasing -> released, so the owner can choose another number. service_role only.';
 comment on function public.studio_sms_resource_recorded(uuid, text, text) is
   'SMS-SENDER-CONTROL-01 (0226): whether any sender row in any studio or state already records this number or Messaging Service (0191 unique indexes). Existence only. service_role only.';
 

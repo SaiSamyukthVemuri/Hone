@@ -16,7 +16,7 @@ const CODE = SQL.replace(/^\s*--.*$/gm, " ").replace(/\s+--.*$/gm, " ");
 const TOP_LEVEL = CODE.replace(/\$\$[\s\S]*?\$\$/g, " ");
 const FNS = [
   ["get_releasable_studio_sms_claim", "uuid, uuid"],
-  ["release_unpurchased_studio_sms_claim", "uuid, uuid, uuid, text"],
+  ["release_unpurchased_studio_sms_claim", "uuid, uuid, uuid, text, integer"],
   ["studio_sms_resource_recorded", "uuid, text, text"],
 ] as const;
 const body = (fn: string) => {
@@ -95,9 +95,14 @@ describe("only a claim that provably owns nothing is released", () => {
     }
   });
 
-  it("compare-and-set on the sender and its key, under the row lock", () => {
+  it("compare-and-set on the sender, its key and its lease generation, under the row lock (Codex P2 4266274277)", () => {
     expect(RELEASE).toMatch(/for update;/);
-    expect(RELEASE).toMatch(/v_row\.id <> p_expected_sender_id\s+or v_row\.provisioning_claim_key is distinct from p_claim_key/);
+    expect(RELEASE).toMatch(
+      /v_row\.id <> p_expected_sender_id\s+or v_row\.provisioning_claim_key is distinct from p_claim_key\s+or v_row\.provisioning_lease_generation is distinct from p_lease_generation/,
+    );
+    expect(RELEASE).toMatch(/or p_lease_generation is null then\s+return 'invalid_input'/);
+    // The read hands out the generation the provider is then asked about.
+    expect(body("get_releasable_studio_sms_claim")).toMatch(/v_row\.provisioning_claim_key, v_row\.claimed_phone_number,\s+v_row\.provisioning_lease_generation;/);
   });
 
   it("error only, no recorded resource, and only the two definitive pre-purchase codes", () => {

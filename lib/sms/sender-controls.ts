@@ -441,7 +441,7 @@ export async function runSenderRelease(
   });
 
   // 1. Is the studio's live claim releasable, and what is its key?
-  let row: { result?: string; sender_id?: string | null; claim_key?: string | null } | null = null;
+  let row: { result?: string; sender_id?: string | null; claim_key?: string | null; lease_generation?: number | null } | null = null;
   try {
     const { data, error } = await deps.admin.rpc("get_releasable_studio_sms_claim", {
       p_studio_id: input.studioId,
@@ -453,7 +453,7 @@ export async function runSenderRelease(
     return refuse("store_unavailable", true);
   }
   if (!row?.result) return refuse("store_unavailable", true);
-  if (row.result !== "releasable" || !row.sender_id || !row.claim_key) {
+  if (row.result !== "releasable" || !row.sender_id || !row.claim_key || typeof row.lease_generation !== "number") {
     const known = ["invalid_input", "not_a_member", "not_owner", "no_live_sender", "not_releasable"] as const;
     return refuse((known as readonly string[]).includes(row.result) ? (row.result as (typeof known)[number]) : "not_releasable");
   }
@@ -464,13 +464,17 @@ export async function runSenderRelease(
   const f = found.found;
   if (f.phoneNumberSid || f.phoneNumber || f.messagingServiceSid) return refuse("resources_found");
 
-  // 3. Release: compare-and-set on the sender and key, re-checked under lock.
+  // 3. Release: compare-and-set on the sender, key AND lease generation the
+  // provider was asked about, re-checked under lock. A retry in between takes
+  // the generation forward, so its purchases cannot be released by this
+  // answer (Codex P2 4266274277).
   try {
     const { data, error } = await deps.admin.rpc("release_unpurchased_studio_sms_claim", {
       p_studio_id: input.studioId,
       p_actor_user_id: input.actorUserId,
       p_expected_sender_id: row.sender_id,
       p_claim_key: row.claim_key,
+      p_lease_generation: row.lease_generation,
     });
     if (error) return refuse("store_unavailable", true);
     if (data === "released") return { ok: true, result: "released", senderId: row.sender_id };
