@@ -220,9 +220,22 @@ async function openMachinePanel(page: Page): Promise<boolean> {
   // mount showed the chosen machine and this read it as a failure. The ops01
   // lane's gate-open run found exactly that at step 6, on the edit form of the
   // block just saved. A consequence of fixing persistence, not of the panel.
-  const picker = page.getByText(/Choose the machine you are working on/i);
+  // THE DROPDOWN IS THE GATE SIGNAL NOW. The pill row this used to look for
+  // is gone: a labelled, always-visible <select> replaced it (Sam, 19:16).
+  //
+  // The three states it has to tell apart are unchanged in meaning:
+  //   no dropdown at all            -> CLOSED (nothing selectable, or no scope)
+  //   a dropdown with real options  -> OPEN
+  //   a dropdown plus machine-chosen -> OPEN, already selected
+  //
+  // Counting OPTIONS rather than the select's presence matters: the control
+  // also renders disabled with only the empty option when the studio has
+  // nothing usable, and that is the gate-CLOSED case wearing the same testid.
+  const select = page.getByTestId("machine-select");
   const chosen = page.getByTestId("machine-chosen");
-  return (await picker.count()) > 0 || (await chosen.count()) > 0;
+  if ((await select.count()) === 0) return (await chosen.count()) > 0;
+  const options = await select.locator("option").count();
+  return options > 1 || (await chosen.count()) > 0;
 }
 
 test("machine-first: no real model is ever offered, and the synthetic workflow records and retrieves @390px", async ({
@@ -258,7 +271,7 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
     }
     // And none of them is a choice.
     expect(
-      await page.locator('[data-testid^="machine-pick-"]').count(),
+      await page.getByTestId("machine-select").locator("option").count(),
       "a real model was offered as selectable",
     ).toBeLessThanOrEqual(1);
   });
@@ -272,7 +285,15 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
       await expect(
         page.getByText(/No verified machine is available to select yet/i),
       ).toBeVisible({ timeout: T });
-      expect(await page.locator('[data-testid^="machine-pick-"]').count()).toBe(0);
+      // Either no dropdown at all, or one carrying ONLY the empty option -
+      // both mean nothing real is offered. Asserting "no options" alone would
+      // miss the disabled-with-placeholder rendering.
+      const sel = page.getByTestId("machine-select");
+      const real =
+        (await sel.count()) === 0
+          ? 0
+          : (await sel.locator("option").count()) - 1;
+      expect(real, "no real machine may be offered with the gate closed").toBe(0);
       // Nothing was recorded, because nothing could be.
       //
       // THIS ASSERTION WAS VACUOUS until Codex found it at 9c6fbbe5: it called
@@ -300,17 +321,17 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
   let blockId = "";
 
   await test.step("3: the synthetic machine is selectable, and names its model", async () => {
-    await expect(page.getByTestId(`machine-pick-${machineId}`)).toBeVisible({
+    await expect(page.getByTestId("machine-select")).toBeVisible({
       timeout: T,
     });
     // Scoped to the BUTTON and then to the CHOSEN block. Page-wide text
     // locators are what broke step 4 (3 matches, the field's advisory notes
     // contain its name), and the same shape would bite here as soon as a
     // prior-setup card renders the model too.
-    await expect(page.getByTestId(`machine-pick-${machineId}`)).toContainText(
+    await expect(page.getByTestId("machine-select")).toContainText(
       "Synthetic Demo Multineedle",
     );
-    await page.getByTestId(`machine-pick-${machineId}`).click();
+    await page.getByTestId("machine-select").selectOption(machineId);
     await expect(page.getByTestId("machine-chosen")).toContainText("Room 1 demo", {
       timeout: T,
     });
@@ -370,9 +391,9 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
     );
 
     // The remembered machine is already chosen - step 8 asserts that properly.
-    if ((await page.getByTestId(`machine-pick-${machineId}`).count()) > 0) {
-      await page.getByTestId(`machine-pick-${machineId}`).click();
-    }
+    // The dropdown is always present, so selecting is unconditional now -
+    // it is a no-op when the remembered machine is already chosen.
+    await page.getByTestId("machine-select").selectOption(machineId);
 
     await page.getByTestId("reading-current").fill("135");
     await page.getByTestId("reading-duration").fill("300.5");
@@ -687,9 +708,9 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
       .not.toBe("");
     await page.getByTestId(/^edit-area-/).first().click({ timeout: T });
     await openMachinePanel(page);
-    if ((await page.getByTestId(`machine-pick-${machineId}`).count()) > 0) {
-      await page.getByTestId(`machine-pick-${machineId}`).click();
-    }
+    // The dropdown is always present, so selecting is unconditional now -
+    // it is a no-op when the remembered machine is already chosen.
+    await page.getByTestId("machine-select").selectOption(machineId);
 
     // GROUP 1: probes 1 and 2 at one current.
     await page.getByTestId("setting-group-g1-channel-1").click();
@@ -785,10 +806,10 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
 
     // POSITIVE CONTROL: the clear path genuinely works, so the refusal proved
     // below is the retirement and not a broken selection path.
-    await page.getByTestId("machine-change").click({ timeout: T });
-    await expect(page.getByTestId(`machine-pick-${machineId}`)).toBeVisible({
-      timeout: T,
-    });
+    // CLEARING IS THE EMPTY OPTION now; the "Change machine" link is gone
+    // because the dropdown never disappears.
+    await page.getByTestId("machine-select").selectOption("");
+    await expect(page.getByTestId("machine-select")).toBeVisible({ timeout: T });
     await expect(page.getByTestId("machine-first-status")).toContainText(
       "nothing yet",
       { timeout: T },
@@ -805,8 +826,9 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
       machineId,
     ]);
 
-    // The stale button is still there, and clicking it is an ordinary action.
-    await page.getByTestId(`machine-pick-${machineId}`).click({ timeout: T });
+    // The stale OPTION is still in the dropdown - the page was rendered
+    // before the retirement - and selecting it is an ordinary action.
+    await page.getByTestId("machine-select").selectOption(machineId);
 
     // THE NOTE MUST BE VISIBLE. It used to render only inside the
     // chosen-machine block, so the message a practitioner most needed could be
@@ -860,7 +882,11 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
 
     // AND IT IS NOT OFFERED. The SQL guard that hid it from the picker is
     // still doing its job; naming it did not re-expose it.
-    await expect(page.getByTestId(`machine-pick-${machineId}`)).toHaveCount(0);
+    // Not offered any more: the retired unit must be absent from the
+    // dropdown's options, which is where `selectableDevices` filters it.
+    await expect(
+      page.getByTestId("machine-select").locator(`option[value="${machineId}"]`),
+    ).toHaveCount(0);
 
     const stillRetired = await sql<{ retired: boolean }>(
       `select retired_at is not null as retired from public.studio_machines where id = $1`,

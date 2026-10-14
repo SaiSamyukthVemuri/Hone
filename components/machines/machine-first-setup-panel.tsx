@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { FieldLabel, fieldControlClass } from "@/components/ui/field";
 import { SectionLabel } from "@/components/ui/section-label";
 import { MACHINE_CATALOGUE } from "@/lib/machines/catalogue";
 import {
@@ -140,7 +141,20 @@ export type MachineFirstSetupPanelProps = {
 };
 
 /** Every profile a practitioner might expect to see, with its real status. */
-function withheld(catalogue: readonly MachineProfile[]) {
+/**
+ * The models this catalogue withholds, with the reason each is withheld.
+ *
+ * EXPORTED, though this file no longer renders it. The treatment form used to
+ * list all eleven entries with their full evidence reasons, which Sam's
+ * screenshot rejected as procurement detail in the middle of charting - but
+ * the data is correct and someone deciding what to REGISTER needs exactly
+ * this. It belongs on an owner or support machine-readiness surface, and this
+ * is the seam for it (#860 6156583955).
+ *
+ * tests/components/machine-first-setup-panel.test.ts asserts both halves: that
+ * charting does not render it, and that this still returns it.
+ */
+export function withheld(catalogue: readonly MachineProfile[]) {
   return catalogue
     .filter((p) => p.availability !== "active")
     .map((p) => ({
@@ -250,7 +264,6 @@ export function MachineFirstSetupPanel({
   const modes = chosen ? supportedModes(chosen.device, chosen.profile) : [];
   const mode = modes.find((m) => m.key === modeKey) ?? modes[0] ?? null;
   const groups = chosen && mode ? nativeFieldGroups(chosen.profile, mode) : [];
-  const blocked = withheld(catalogue);
 
   /**
    * onRecord, plus the one side effect the status line needs. Counting here
@@ -276,17 +289,69 @@ export function MachineFirstSetupPanel({
         <SectionLabel as="h3" className="!text-neutral-700 dark:!text-neutral-300">
           <span id="machine-first-heading">Machine</span>
         </SectionLabel>
-        {chosen && (
-          <button
-            type="button"
-            onClick={() => void chooseDevice(null)}
-            data-testid="machine-change"
-            className="text-xs font-medium text-neutral-600 underline hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
-          >
-            Change machine
-          </button>
-        )}
+        {/*
+          NO "CHANGE MACHINE" LINK ANY MORE. The dropdown below is always
+          visible, so switching is just choosing a different option and
+          clearing is choosing "Choose machine". A separate link would be a
+          second way to do what the control already does.
+        */}
       </div>
+
+      {/*
+        THE MACHINE DROPDOWN - compact, labelled, and ALWAYS VISIBLE.
+        Sam's correction (19:16, recorded at #860 6156583955): "it should be a
+        dropdown to select the machine then each machine's settings show up so
+        we can do live charting."
+
+        WHAT IT REPLACED: a row of pills that disappeared once something was
+        chosen, with a separate "Change machine" link to get back. For a studio
+        with several units that is a worse control than a list, and it hid the
+        current choice behind a mode change.
+
+        It lists the studio's own USABLE units - `selectableDevices` already
+        excludes retired units, other studios' units, unknown or inactive
+        profiles and stale contract versions - with the unit's own name first
+        and the model qualifying it, because a studio names its rooms and two
+        rooms can hold the same model.
+
+        SHARED CONTROLS, not a hand-rolled select: `fieldControlClass` carries
+        the 44px floor, the 16px type that stops iOS zooming on focus, the
+        focus ring and the disabled treatment, and `FieldLabel` carries the
+        label and required marker. The pills it replaced were hand-rolled at
+        about 36px, under DESIGN.md LAW 6.
+      */}
+      {scope && (
+        <FieldLabel
+          label="Machine"
+          hint={
+            selectable.length === 0
+              ? (inventoryReason ??
+                "No verified machine is available for this studio yet.")
+              : undefined
+          }
+        >
+          <select
+            className={fieldControlClass()}
+            value={deviceId ?? ""}
+            onChange={(e) => void chooseDevice(e.target.value || null)}
+            disabled={selectable.length === 0}
+            data-testid="machine-select"
+          >
+            {/*
+              THE EMPTY OPTION IS THE EXPLICIT "not chosen" STATE, and it is
+              also how a selection is cleared. It stays present after a choice
+              so clearing remains reachable.
+            */}
+            <option value="">Choose machine…</option>
+            {selectable.map(({ device, profile }) => (
+              <option key={device.deviceId} value={device.deviceId}>
+                {device.displayName} — {profile.manufacturer} {profile.model}
+                {profile.variant ? ` (${profile.variant})` : ""}
+              </option>
+            ))}
+          </select>
+        </FieldLabel>
+      )}
 
       {/* Selection. An empty list is a legitimate answer and says why. */}
       {/*
@@ -314,35 +379,18 @@ export function MachineFirstSetupPanel({
               "This studio has no registered machine on a reviewed profile.")}
         </p>
       ) : !chosen ? (
-        <div className="flex flex-col gap-2">
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            Choose the machine you are working on before entering settings.
-          </p>
-          {/*
-            THE SAME LAW, one control over, and not in the finding. `py-2
-            text-sm` with no minimum height is about 36px, also under the 44px
-            floor. It predates the mode picker and nobody flagged it, but
-            fixing the new violation while leaving its neighbour would be
-            knowingly shipping the one I had just been taught to see.
-          */}
-          <div className="flex flex-wrap gap-2">
-            {selectable.map(({ device, profile }) => (
-              <Button
-                key={device.deviceId}
-                type="button"
-                variant="secondary"
-                size="md"
-                onClick={() => void chooseDevice(device.deviceId)}
-                data-testid={`machine-pick-${device.deviceId}`}
-              >
-                {device.displayName}
-                <span className="ml-1.5 text-neutral-500">
-                  {profile.manufacturer} {profile.model}
-                </span>
-              </Button>
-            ))}
-          </div>
-        </div>
+        /*
+          NOTHING CHOSEN YET - and the prompt is all this arm needs now.
+          The pill row that used to live here is gone: the labelled dropdown
+          above is always visible and does the same job better for a studio
+          with more than one unit. Keeping both would give the form two
+          controls for one decision, which is the "additional conflicting
+          set" the assignment rules out (#860 6156583955).
+        */
+        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          Choose the machine you are working on, and its own settings appear
+          here.
+        </p>
       ) : (
         <div className="flex flex-col gap-3" data-testid="machine-chosen">
           <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
@@ -480,29 +528,23 @@ export function MachineFirstSetupPanel({
         </div>
       )}
 
-      {blocked.length > 0 && (
-        <div className="flex flex-col gap-1.5 border-t border-neutral-200 pt-3 dark:border-neutral-800">
-          <SectionLabel size="caption">Not yet selectable</SectionLabel>
-          <ul className="flex flex-col gap-1.5">
-            {blocked.map((b) => (
-              <li
-                key={b.key}
-                className="text-xs text-neutral-600 dark:text-neutral-400"
-              >
-                <span className="font-medium text-neutral-800 dark:text-neutral-200">
-                  {b.name}
-                </span>
-                {b.availability === "legacy-only" && (
-                  <span className="ml-1.5 text-neutral-500">
-                    (historical records only)
-                  </span>
-                )}
-                <span className="mt-0.5 block">{b.reason}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      {/*
+        THE WITHHELD-MODEL CATALOGUE IS GONE FROM THE TREATMENT FORM.
+
+        This rendered every unverified model in the catalogue with its full
+        evidence reason - firmware conflicts, unread operating screens,
+        403ing manuals - eleven entries deep. On a charting form, during a
+        treatment, that is a wall of procurement detail between the
+        practitioner and the fields she is trying to fill, and Sam's screenshot
+        said so ("this looks weird ... is this all prepopulated").
+
+        The information is not deleted: it is `withheld(catalogue)`, still
+        computed from the same contract, and belongs on an owner or support
+        machine-readiness surface where someone is actually deciding what to
+        register. What charting needs is a concise reason when there is
+        nothing to choose and a useful next action, which is the hint on the
+        dropdown above and the owner line below (#860 6156583955).
+      */}
 
       {canManageMachines && selectable.length === 0 && scope && (
         <p
