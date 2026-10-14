@@ -17,7 +17,10 @@ import { adminQuery, adminTx, closePool } from "./helpers/harness";
 //   2. a targeted call still quarantines exactly its own receipt and no other;
 //   3. competing sweeps: while one sweep holds its batch (uncommitted), a
 //      second sweep takes the NEXT batch without waiting, and the two batches
-//      are disjoint.
+//      are disjoint;
+//   4. recovery is not starved: in the same bounded sweep, a live receipt
+//      whose first attempt never finished is still claimed and then processed
+//      to its true outcome, while the exhausted backlog drains at the limit.
 //
 // Every receipt here is a "never matched" email.sent with no ledger row, so
 // nothing outside email_provider_events is touched. The exhausted state is
@@ -60,6 +63,20 @@ async function exhausted(n: number): Promise<string[]> {
   for (let i = 0; i < n; i++) ids.push(await record());
   await q(`update public.email_provider_events set processing_attempts = 5 where id = any($1::uuid[])`, [ids]);
   return ids;
+}
+
+/** Move a receipt into the past. received_at is write-once by trigger, so the
+ *  trigger is disabled for this one statement, in one transaction, as the table
+ *  owner -- the same route the 0212 suite's backdateReceived takes. */
+async function backdateReceived(id: string, seconds: number): Promise<void> {
+  await adminTx(async (tx) => {
+    await tx(`alter table public.email_provider_events disable trigger email_provider_events_identity_guard`);
+    await tx(`update public.email_provider_events set received_at = now() - make_interval(secs => $2) where id = $1`, [
+      id,
+      seconds,
+    ]);
+    await tx(`alter table public.email_provider_events enable trigger email_provider_events_identity_guard`);
+  });
 }
 
 async function rows(ids: string[]): Promise<Map<string, Row>> {
@@ -189,3 +206,35 @@ describe("competing sweeps are safe (0227)", () => {
     }
   });
 });
+
+describe("recovery is not starved by an exhausted backlog (0227)", () => {
+  it("one bounded sweep quarantines exactly its batch AND still claims a live receipt, which then processes to its true outcome", async () => {
+    const L = 2;
+    await exhausted(3 * L);
+    // A live receipt whose first attempt never ran, older than anything else
+    // pending, so the claim step's oldest-first order reaches it first.
+    const live = await record();
+    await backdateReceived(live, 30 * 24 * 3600);
+    const before = await exhaustedBacklog();
+
+    const claimed = (
+      await q<{ receipt_id: string }>(`select * from public.claim_email_provider_events(null, $1)`, [L])
+    ).map((r) => r.receipt_id);
+
+    // Bounded quarantine...
+    expect(before.length - (await exhaustedBacklog()).length).toBe(L);
+    // ...and the live receipt was still claimed in the same call, one attempt counted.
+    expect(claimed).toContain(live);
+    expect(claimed.length).toBeLessThanOrEqual(L);
+    expect((await rows([live])).get(live)).toMatchObject({ processing_state: "pending", processing_attempts: 1 });
+
+    // Processing it records its true outcome: an email.sent for an id no
+    // ledger row holds is unmatched, not quarantined and not left pending.
+    const p = await q<{ result: string; reason: string | null }>(`select * from public.process_email_provider_event($1)`, [
+      live,
+    ]);
+    expect(p[0]).toMatchObject({ result: "unmatched" });
+    expect((await rows([live])).get(live)).toMatchObject({ processing_state: "unmatched", processing_result: "unmatched_email_id" });
+  });
+});
+
