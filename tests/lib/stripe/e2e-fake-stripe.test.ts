@@ -446,5 +446,9 @@ describe("fake refunds: selectable outcomes match production's failure classes",
     const [create] = getFakeStripeCalls(RUN).filter((c) => c.method === "pi_create" && !c.replay);
     expect(create.chargeId).toBe(chargeId);
     expect(refundCalls()[0].chargeId).toBe(chargeId);
+    // Codex P2 4265803389: both record the connected account they ran on, so an
+    // event is delivered under the processor's account, not the row's.
+    expect(create.stripeAccount).toBe("acct_test_r");
+    expect(refundCalls()[0].stripeAccount).toBe("acct_test_r");
   });
 });

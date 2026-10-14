@@ -24,6 +24,9 @@ import { metadataDigest } from "./fake-stripe-metadata-digest";
 //     into an event, and refuses to build an event whose provider lineage
 //     (refund -> charge -> PaymentIntent, and the row's charge) does not hold
 //     (Codex P2 4264919593) — a broken lineage is a finding, not an event.
+//     The event's Connect `account` is the account the processor created the
+//     PaymentIntent (and made the refund) on, and the row must name it too
+//     (Codex P2 4265803389).
 //   * METADATA is what the charge path really sends at PaymentIntent create
 //     (lib/billing/session-payment-charge.ts), which real Stripe echoes on the
 //     PaymentIntent and its Charge. It is only signed when it hashes to the
@@ -112,7 +115,30 @@ function processorCreate(paymentIntentId: string, runId: string) {
     currency: create.currency,
     chargeId: create.chargeId ?? null,
     metadataDigest: create.metadataDigest ?? null,
+    stripeAccount: create.stripeAccount ?? null,
   };
+}
+
+/** The connected account an event is delivered under is the one the processor
+ * CREATED the object on (Codex P2 4265803389): Stripe delivers a Connect event
+ * from that account, and the webhook route derives studio context from it. The
+ * row must name the same account, and a refund must have been made on it. */
+function connectAccount(
+  a: AttemptFacts,
+  created: { stripeAccount: string | null },
+  refund?: { id: string; stripeAccount: string | null },
+): string {
+  assertLineage(
+    created.stripeAccount !== null && created.stripeAccount === a.stripe_account_id,
+    `${a.stripe_payment_intent_id} was created on ${created.stripeAccount}, the attempt names ${a.stripe_account_id}`,
+  );
+  if (refund) {
+    assertLineage(
+      refund.stripeAccount === created.stripeAccount,
+      `refund ${refund.id} was made on ${refund.stripeAccount}, the charge on ${created.stripeAccount}`,
+    );
+  }
+  return created.stripeAccount as string;
 }
 
 /** The metadata an event will carry must be what the charge path actually SENT
@@ -139,7 +165,12 @@ export function processorRefund(attemptId: string, runId: string = activeRunId()
       !c.resultId.endsWith("_refused"),
   );
   return effect
-    ? { id: effect.resultId, amount: effect.amountCents, chargeId: effect.chargeId ?? null }
+    ? {
+        id: effect.resultId,
+        amount: effect.amountCents,
+        chargeId: effect.chargeId ?? null,
+        stripeAccount: effect.stripeAccount ?? null,
+      }
     : null;
 }
 
@@ -191,7 +222,7 @@ export async function paymentIntentSucceededEvent(
   const amount = over.amount ?? created.amount;
   return eventEnvelope(
     "payment_intent.succeeded",
-    a.stripe_account_id,
+    connectAccount(a, created),
     {
       id: a.stripe_payment_intent_id,
       object: "payment_intent",
@@ -236,7 +267,7 @@ export async function chargeRefundedEvent(
   const refunded = over.amountRefunded ?? refund.amount ?? amount;
   return eventEnvelope(
     "charge.refunded",
-    a.stripe_account_id,
+    connectAccount(a, created, refund),
     {
       id: chargeId,
       object: "charge",
