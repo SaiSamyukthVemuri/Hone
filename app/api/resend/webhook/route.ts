@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
   normalizeResendEvent,
@@ -173,12 +173,22 @@ export async function POST(req: Request): Promise<Response> {
     reason: processed && processed !== "held" ? processed.reason : null,
   });
 
-  // Help finish receipts whose first attempt never completed. Bounded, and
-  // its outcome never changes this delivery's answer.
-  const sweep = await drainEmailProviderEvents(admin, { limit: SWEEP_LIMIT });
-  if (sweep && sweep.claimed > 0) {
-    logEvent("resend_webhook_sweep", sweep);
-  }
+  // Help finish receipts whose first attempt never completed -- AFTER this
+  // delivery is answered (Codex P2 4266147060). The drain (one bounded claim
+  // plus up to SWEEP_LIMIT serial processing calls) never delays or changes
+  // this delivery's answer: a slow drain cannot push an already-durable
+  // receipt past the provider's webhook deadline and trigger retries. A drain
+  // that fails is logged; the scheduled sweep and later deliveries retry it.
+  after(async () => {
+    try {
+      const sweep = await drainEmailProviderEvents(admin, { limit: SWEEP_LIMIT });
+      if (sweep && sweep.claimed > 0) {
+        logEvent("resend_webhook_sweep", sweep);
+      }
+    } catch {
+      logError("resend_webhook_sweep_failed", {});
+    }
+  });
 
   if (processed === null || processed === "held") {
     // The receipt is still pending: this attempt failed, or a claim (possibly
