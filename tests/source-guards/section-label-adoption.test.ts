@@ -7,11 +7,18 @@ import { describe, expect, it } from "vitest";
 // ===========================================================================
 // UX-02 — SECTION LABEL ADOPTION, PROVED FOR THIS BOUNDED SLICE.
 //
-// `components/ui/section-label.tsx` owns the uppercase section label. Twenty-one
-// call sites across Settings → Availability spelled its class list out by hand;
-// this slice replaced them with the primitive. `--color-fg-muted` is
-// `oklch(55.6% 0 0)`, annotated "neutral-500" in app/globals.css, so the two
-// render identically and the hand-rolled form carried no information.
+// `components/ui/section-label.tsx` owns the uppercase section label. Call
+// sites across Settings (slices 1 and 2) and session charting (slice 3) spelled
+// its class list out by hand; those slices replaced them with the primitive.
+// `--color-fg-muted` is `oklch(55.6% 0 0)`, annotated "neutral-500" in
+// app/globals.css, and that token is defined exactly once while Hone's `dark`
+// variant maps to a `.dark` class that is never applied — so the two render
+// identically in every reachable theme and the hand-rolled form carried no
+// information.
+//
+// The class STRING still changes at each call site. That is why the claims below
+// are about the primitive being adopted and the duplicates being gone, never
+// about byte-identical output.
 //
 // WHAT THIS PROVES, AND DELIBERATELY NOTHING MORE:
 //
@@ -54,6 +61,11 @@ const PRIMITIVE_SOURCE = readFileSync(path.join(REPO_ROOT, PRIMITIVE), "utf8");
  * ScopeSelector.tsx, which carried no hand-rolled label and were correctly left
  * alone. A prefix match would have demanded the primitive from files that never
  * needed it.
+ *
+ * Slice 3 is the same shape, measured the same way rather than assumed: the
+ * session-charting directory holds thirteen `.tsx` files and the other eight
+ * contain no `uppercase` at all, so the five listed below are the whole
+ * population of that surface and not a chosen subset.
  */
 const CONVERTED: readonly string[] = [
   // Slice 1 (#746) — Settings > Availability.
@@ -67,6 +79,12 @@ const CONVERTED: readonly string[] = [
   "app/(app)/settings/intake/page.tsx",
   "app/(app)/settings/services/page.tsx",
   "app/(app)/settings/tracking/TrackingProviderSelector.tsx",
+  // Slice 3 — session charting, which completes that directory.
+  "app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx",
+  "app/(app)/clients/[id]/sessions/[sessionId]/page.tsx",
+  "app/(app)/clients/[id]/sessions/[sessionId]/session-blocks-view.tsx",
+  "app/(app)/clients/[id]/sessions/[sessionId]/simplified-entry-form.tsx",
+  "app/(app)/clients/[id]/sessions/new/page.tsx",
 ];
 
 /**
@@ -337,8 +355,12 @@ function entryIsOrphaned(file: string): boolean {
  * bookkeeping churn without protecting anything more, because the regression
  * being guarded against is growth.
  *
- * `calendar/QuickBookDrawer.tsx` and `records/page.tsx` are owned by another PR
- * and are not this lane's to convert.
+ * Everything still listed here is simply OUT OF THIS SLICE'S SCOPE, which is
+ * the session-charting directory. An earlier revision of this note attributed
+ * two of these files to another open PR; that attribution had already gone
+ * stale, and a count table is the wrong place to track branch state. What a
+ * reader needs from this list is the number, and the number is read from the
+ * source on every run.
  */
 const LEGACY_BASELINE: ReadonlyArray<readonly [string, number]> = [
   ["app/(app)/calendar/AppointmentNotesEditor.tsx", 1],
@@ -350,11 +372,6 @@ const LEGACY_BASELINE: ReadonlyArray<readonly [string, number]> = [
   ["app/(app)/clients/[id]/BookAppointment.tsx", 6],
   ["app/(app)/clients/[id]/intake/page.tsx", 1],
   ["app/(app)/clients/[id]/page.tsx", 1],
-  ["app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx", 4],
-  ["app/(app)/clients/[id]/sessions/[sessionId]/page.tsx", 4],
-  ["app/(app)/clients/[id]/sessions/[sessionId]/session-blocks-view.tsx", 1],
-  ["app/(app)/clients/[id]/sessions/[sessionId]/simplified-entry-form.tsx", 3],
-  ["app/(app)/clients/[id]/sessions/new/page.tsx", 1],
   ["app/(app)/dashboard/practice-snapshot.tsx", 2],
   ["app/(app)/records/page.tsx", 2],
   ["components/appointment/postcare-section.tsx", 1],
@@ -424,7 +441,7 @@ const FILES = ROOTS.flatMap((root) => walk(path.join(REPO_ROOT, root))).map((f) 
 );
 const ADOPTED = CONVERTED;
 
-describe("UX-02: SectionLabel adoption at the selected Settings sites", () => {
+describe("UX-02: SectionLabel adoption at the converted Settings and session-charting sites", () => {
   it("4. the contract is read from the primitive, not restated here", () => {
     for (const c of ["font-medium", "uppercase", "tracking-wider"]) {
       expect(CONTRACT.typography.has(c), `contract lost ${c}`).toBe(true);
@@ -436,7 +453,7 @@ describe("UX-02: SectionLabel adoption at the selected Settings sites", () => {
   });
 
   it("1. every converted file uses SectionLabel", () => {
-    expect(ADOPTED.length, "the converted set disappeared").toBe(9);
+    expect(ADOPTED.length, "the converted set disappeared").toBe(14);
     for (const file of ADOPTED) {
       expect(FILES, `${file} is no longer in the tree`).toContain(file);
     }
@@ -453,17 +470,17 @@ describe("UX-02: SectionLabel adoption at the selected Settings sites", () => {
     }
   });
 
-  it("2b. the conversion is complete — 28 sites across the nine converted files", () => {
+  it("2b. the conversion is complete — 41 sites across the fourteen converted files", () => {
     // The slice's own claim, asserted rather than described: counting the
     // primitive's usages is what makes the conversion total checkable.
-    // 21 from slice 1 (#746) + 7 from slice 2 = 28.
+    // 21 from slice 1 (#746) + 7 from slice 2 + 13 from slice 3 = 41.
     const total = ADOPTED.reduce(
       (sum, file) =>
         sum +
         (readFileSync(path.join(REPO_ROOT, file), "utf8").match(/<SectionLabel[\s>]/g) ?? []).length,
       0,
     );
-    expect(total, "the converted site count moved").toBe(28);
+    expect(total, "the converted site count moved").toBe(41);
   });
 
   it("5. the detector's blind spot is REAL, and is stated here rather than hidden", () => {
