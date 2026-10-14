@@ -1,0 +1,350 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:f0d66054df43f32a11b2b1bc1b692ba6ca3962cbfca12532206172429e943a9f",
+  "claims": [
+    {
+      "id": "claim_8781cd5a78ac41c1ae50dc836aefe847",
+      "statement": "Row-level security filters rows only for SELECT, INSERT, UPDATE and DELETE and does not govern TRUNCATE, REFERENCES or TRIGGER, so audit and append-only tables need a table-privilege revocation in addition to RLS policies.",
+      "evidence": [
+        {
+          "resource": "repo://docs/09_DATABASE_AND_RLS.md#L268-L300",
+          "version": "repo-lines-v1:sha256:9fd9c226a3e26e6ad6959883317a6dd09eaa1372bf2f959b0346a5f06331f066:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhkMjhmNDJkYTA0ZTJjOWY3NTg3ZDI2ZDM0MDU4MGFiMGYzMDVmMGRjYmY3ZDA1ZDY1ZjNlMjBjZGMxYzVhNGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIzMjIwNzI1ZDk5NDAwZmZlNzJkNmNlNjhlZGY2MGQzNDMyNTkzZGQ5YzdkMTU5YThhOTZjMzM0ZmQ5ZjhkNGYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjdmMDg4ZWFjMjg5ZjAyNTVmYmQwMGRkMTE3YzkyZDA4NWQ3NzZkM2JhZmE0ZWYxMTAwMGE2NmQ0YmU5MWI5YzYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZhMjQ0OTI2ZjEyMGRiNjk5NzdkN2JkNDMzMmM4YWRjOGQ1ZTVlNTE2Y2E4NmExZDllY2ZhNzkxNjkzMzY4Y2YifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0184_client_budget_context_least_privilege.sql#L32-L50",
+          "version": "repo-lines-v1:sha256:e105d8a7cd6f68f273d0efcba970133e7445e36d70ac9c1b86225b2182addd04:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMTBmNTBkYWIzNWE1MzczNDVlZTk3NDgyNWQyNjQ0N2QzN2VhYzgxMzljMGMwYWIwN2M3ZDAyMTAxNmI0ZWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE5YTMyMGQ4YWIwN2I2ZDFkYTBkZGFjNDRjZWVlNmY4ZDI0YzkzM2NhOWM0MDVjMWQ2ZTc5NDRmNTQwNmQzYTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI0ZGMzMzViMTI0MGY5Nzc2MGZhMjQ4Y2MwMzgxMmZmNzY4ZTlmOWZlNzBhODA4ZGYwNDAyOTJiNDgzZjMyYmYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRhMTc1NjVhZjMyMjI1YzhjN2E3MmQ2ZTAwOGNkNDUzYjZmOTQ4MzQ3OGM2OWU0NWNkMDUyOGJhNGRhNDA2MjIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_66e76ee3f25e4c80b184d0869c720643",
+      "statement": "Because Supabase's default privileges grant the full table privilege set (including PostgreSQL 17's MAINTAIN) to runtime roles, later migrations state a table posture as revoke-all-then-grant-back rather than a by-name denylist, as 0178 does for practitioners.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0178_practitioner_identity_boundary.sql#L505-L535",
+          "version": "repo-lines-v1:sha256:2e9a9b1f593fda5c8e91c94667269d99ffca26e27f9d499e84da910b8318ae03:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0MmFhYWVhZGE3MWVhZDRiMGZjZjlkZDhkYTAxMzk1ZjAxYjcyYzkxMDdkNzc3ZTk3ZGY4NDc3NTNlNTAyNzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhMjg0NmM0MmMzZjZlOWEwNzQ3MzNjZGJmMmRjMmZmODExY2U2MjEwY2FmZDQ2NzJkZjJkZTllOGI2ZTNkNGMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImYwMmRmZDBhNzgwZDMzNmMzNDZmYTNmYjIyYjBiNjQwMjkzMzYzMzlkMjA0YWUyNDFiZTllODU1NDdmYjZkNmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImU0MDk4MGE0OTRhMjEyNDNhMGIxZDkzYmE4N2MwYTM1NjgyOTZmMDgyMmM4MGM0YTgxNmRlZjM2Y2MwYWU1NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b79b7a5f91c04836b3767fb18818e52a",
+      "statement": "is_studio_member and is_studio_owner are the RLS tenant predicates: SECURITY DEFINER SQL functions that check auth.uid() against an active practitioners row (owner role for the owner variant), granted to authenticated.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0001_init.sql#L151-L189",
+          "version": "repo-lines-v1:sha256:dc4df3da55f2ad2b4152190afd75f42e1324d6dae8badb2dff2219cb08e45cd2:eyJzZWxlY3RlZExpbmVDb3VudCI6MzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNhNThlMjVhZDRiNDBmNmRkMmIxMWM0OWNmZDlhODFjMjJmZDA5OGRjZTFkOGYwN2M5NGQzZWEyY2YwYjUwZjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjlkMWRmNzA1YTU2MTg5OWI2M2MxMWU1ZmJhOWIyMGMyZDgyNWFiMWM2YzNkNmFlOTk0ZTVmMmExNjU2MWMyZGMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjlmZDYyODdmNDA4M2YyOTU4YzUxMTc1NzRlYjI3OThiOWQ1OTFjNmE3ODJhYmFjNDQ4MDg4NTRiZDQ4YWVmOWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhmZWViNDAxMjg3OGY2ZjE1NGM1MjJlNjQ2NGE3NGQyNmU5MGI1MmFhYzM1YjgwOTY1YmUxMmJhY2E1OGMyZjUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_55132c4e05d04051b7275cf8ba92e17e",
+      "statement": "Migration 0172 revoked INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER and MAINTAIN from anon and authenticated on appointments and appointment_audit, replaced the member FOR ALL appointment policy with a SELECT-only policy, and dropped the member audit-insert policy.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0172_revoke_authenticated_appointment_dml.sql#L264-L287",
+          "version": "repo-lines-v1:sha256:9f05533b0d686bc4771dc29590ee9d40428872ad3dc68b64ffb276debee54c08:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjViZjg0MjFhNWFkMWQwNmEyYmU3YTMxYjlkOWNkOTUyYmYyZjQ1NWNiNWI2ZjUyMzVjMWIyNjE3OGZjZDc0MzQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA0M2I2MDM2N2Q2M2MzNzY0ZjNiNGQ1MmU1NGUyM2NkM2MyNWIzMjViMDNkMzQ0YjI3MTk1MjhiYTFkZjc5YmQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ2NDUxODIxNTdkNGMwYzk5MTQzNGI2NTMyNmIwNDI1MWQ2OThjOWI5MjAyYmM1M2VkMDdkMjQwNDc1NjhkZTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoyLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg4ODJlNTcyZjI4M2I3MmMxMjYyYmQxMDA2NTZjN2RhM2NhYTEyMGNlZGY2MjQ2NDI4OTUwNTEyMTU3ZTgyZGQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f0bca893d1e74ace9b2c6e60262f83af",
+      "statement": "Since 0135 the studio availability default and override tables allow members to read but only studio owners to write, through a FOR ALL owner policy.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0135_practitioner_availability.sql#L101-L124",
+          "version": "repo-lines-v1:sha256:9b8e5fb9b1576833313a80746b2a2930a552b1f1aaf062c1a9716baf707650db:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMxZDM3NTA3OThhYjc2MmVkYjkxN2Y1YjBlMWI4ZmEyYzIzMGZkMGU5NjIyYjk3YzVjOTYxZDUyZTZmNTdiMDciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVhMmM1YTdkMzYyNmMxNGI5MDY3Y2Q3Y2Q2NWM5YTQzOGUzMDc4Y2JmZjVmMmNjMmIxMTAwZThhNmI2MjM5MDIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjExOTU2MTQxMDQ4Mjc4MjBhMjIzNGI4NDMzYzRkNTRkYWFkNWJkNzE3ZmY0ODhkYjdmMDQ0NmI4YmNiYmFhNGYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ed23e389d9bc427e80acbbdf76aadf07",
+      "statement": "Migration 0173 revoked DELETE on services and practitioners from anon and authenticated and replaced the services FOR ALL member policy with member SELECT, INSERT and UPDATE policies and no DELETE policy.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0173_appointment_repair_commands.sql#L773-L801",
+          "version": "repo-lines-v1:sha256:91ecb7076afbf84cc9d9ab55048ad59c5865edcdca5fc7585a89be313739f1a4:eyJzZWxlY3RlZExpbmVDb3VudCI6MjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI4MGIwNDM3YWQ5YjI2ZGJlYjFhOGQzZGY0NGIxYmMyODNkNjM4ZDgxODVmYzc1MzI5MzYxNmM4ZDNkZTVkYzEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNiZGQzNDFiNzg2MTE5YzI0MjJiYzAwMTRkMmUyNTYyMTMzNTQyNWRhMjBmM2I5YzlmZjBlZTc5NmM0YzQzZWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjIxZWNkZjE1NDJmNmIxNjhhMjIyYjc5NWQxMmM2MGQwZjRjNTlkYmU4YmU5Mjk3ZjY2ZWJmMjMxMzhjY2JkMGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoyLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg4ODJlNTcyZjI4M2I3MmMxMjYyYmQxMDA2NTZjN2RhM2NhYTEyMGNlZGY2MjQ2NDI4OTUwNTEyMTU3ZTgyZGQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1527d0c8b31042fd80716f589e1a757f",
+      "statement": "studio_blockouts still carries the 0010 member FOR ALL policy, and no later migration changes its policies or table privileges.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0010_booking_v1.sql#L258-L263",
+          "version": "repo-lines-v1:sha256:5e7a081b7ef957c4a787533cebc8f90065caa8125c4b27745e71f0e6c241303d:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiN2JmMDU5NjE3N2QyMjkzOTY3MDAzMTlkZWE4ZDEyZjIwODkxN2VmYTlkYTE0OTRiOTRlZGY2ZGU3MDBmOGU0YyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiY2JkZDM0MWI3ODYxMTljMjQyMmJjMDAxNGQyZTI1NjIxMzM1NDI1ZGEyMGYzYjljOWZmMGVlNzk2YzRjNDNlYiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYTZlOTUyMGYyNWM2ZDg0ZDM3OTM3ZGRkNTYyZmRkMWUzYjJlZDViNWYzNzE3YTFlZWQ5YmNmNzE5MDdkNDE2ZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOTdjY2I1ZjlmNDdiMDkzYzc0MGUzNzE2ZWMzMjI1ZDU3MDgwMmZmMGI2ZWY1ZDAxNDk4MTlkM2Y0ZWE4MTFmYiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_1f7727deb6f247c1bc268b41d1ced1f5",
+      "statement": "Migration 0159 revoked every write and maintenance verb from anon on the six clinical tables and revoked TRUNCATE, REFERENCES and TRIGGER from authenticated on them.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0159_retire_signed_clinical_records.sql#L474-L506",
+          "version": "repo-lines-v1:sha256:8d2697bf4bdafd787d935355efee12e698bfcafdc8f181d50722dce7ab9b27a1:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNiNTQ4NTcyMzhhMTRjMGU1MzZmMzRhMjNjZjNkNWViYmFmZGRiMTdiNTM0MjdlZTU0NmNmNTUwM2M1OTkxY2UiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIwNjg5MzA4ZDYyNzEyYWZjNWZjYWUyNDhjZjlmMDlmYmFhZDBlMTM2YWM0MWFhOGE3YzQ3NDIzMGZiNzYxMjkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjUyNDM2YzRkY2IxMmVkN2RkODk0NDcyODk3YzYyNDVjYjFmYjZiMmJiZGM4YzFkNjIxYWMzNjE0NWUyNTUxYTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQwNzlkNjEwYzVkNGI3NmYzNjVlNzFhYmE4NGEyODk4ZWY4YjRhYWY5Njg5NTkzNzg4N2RlMGZmZDg0N2M4ZjgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9594f5c9fd5949e59cd4d6f5c80ec68c",
+      "statement": "An authenticated-only SECURITY DEFINER command must revoke EXECUTE from public, anon and service_role by name, because default privileges grant all of them; 0129 missed anon and 0164 missed service_role, and a static grant guard now enforces the rule.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0181_multi_studio_command_authority.sql#L316-L338",
+          "version": "repo-lines-v1:sha256:4c04859177f1f5d32bee1548ca8c0efab2b1f2ada619e0c54aad0c234173f628:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY4M2MyNmUwZWIwNzk0NjlhODhjZDE3OTNmYzc3NWRiMjg3NTI4MGI5ZThkZTVlODEwMDBmZWExMTJjYjcxYTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNhOTliZWI1ZTFlOWNhOGMwMzYwMWZlMzAzMzI0OWU2MjUzZTVlOTEwMzE4OTc4OWI5OTZjNzE0ZTE0N2M1YTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFhNDk0Nzg5NWQ1ZjdkYTc3ZjNiMzJhODhhYjhjMjc1OTdlMzdiNTY1YjA2OTE3NzYxYmFlZTExODdiZjQzZTQifQ"
+        },
+        {
+          "resource": "repo://tests/security/clinical-rpc-grant-guard.test.ts#L5-L37",
+          "version": "repo-lines-v1:sha256:498a2f9de9529aabfc0375fd959674cb1307bda95eafefcafb65ec0ef777cfc8:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmZDA3NzE0Zjg5ZDk2MjNiMTkzZjU2MDUzNWU1NmE1YTg1MDdhMGIzNDA1OTc3MjE5ZmIwMWRlYzBmNzg2NTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEzNDkzMTc2YWVjOGQ0NzU2NjY2YWQ4NDRmZGQ4ZTM2NzQ3MzIwNmEzMjI3NDFmOGFmYmUwNTg4OGEyN2U4NjAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE0MmE5NjgwMTMzYTNlMzE0NjIxNTRjZjBmMzkxNjBkYjE1ZmIxNDgzYzc3OGZiYjI3ZGIwZGNlNzZjZmUwOGQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUwOGQxOTlmMjM5Yjg5MjYzYjkwYWZmZDllOGUzNTk2YjhlYmVmZjQ4Y2U2YTAxMDAyNjI3N2E4ZWI2NjIxNTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_d2697d823cd74f3091110f04ab555ea6",
+      "statement": "The clinical RPC grant guard checks every migration-created, directly callable function that requires a non-null auth.uid() for revokes from public, anon and service_role and a grant to authenticated, keeps internal helpers ungranted, limits the service-role exemption list, and excludes trigger functions on principle.",
+      "evidence": [
+        {
+          "resource": "repo://tests/security/clinical-rpc-grant-guard.test.ts#L26-L49",
+          "version": "repo-lines-v1:sha256:0cd8bc558e491efcc0fe91f228df09eeaba34dd1442233049ea04388c5227815:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNhYTRmMDNjZGYwYWFlZjY1YmNjNzIzNDVhNGVjZDRhNzhmNjZkNDA2MWRmMGYyNmM3YzMwNzIyODMzYjI3YjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwMmQyYzBkNmRjNWU3NGQ5MmZhMTRiOTFkYmVhMjY0MDkwYmViMzVmZGI5MTg4ZDliMzQxMTgxZGNlOWY0Y2UiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVlMGM4YTU0NWVmMWY5YzUyYzFiNTFlMTlmZjNlMjgxNzQ2MmEyYWQ3ODhjZDYzN2ZmMmU3YzE0NGRmOGQ5NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVhMGI3YTU0MGJlMjgxNGMzMGQ2OTdmODNhMWE2MTM5NGQ0NWFhNTE3YWNkMjk5ZTZkYjk5NGM4MThlZTJiMTEifQ"
+        },
+        {
+          "resource": "repo://tests/security/clinical-rpc-grant-guard.test.ts#L93-L229",
+          "version": "repo-lines-v1:sha256:5de9a8dec4a04e42aebb470522d19df3b9b4799326a5dd5e340c54d939230821:eyJzZWxlY3RlZExpbmVDb3VudCI6MTM3LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJhYzA1YzA2ZTcyNzc1MmMyM2ZlMTQyYTMxYWU3MDc2ZGRlMjhmM2EyNzJjMmVhMmVkNjI5ZWJiYmFhNzdhNDdiIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI0Mjc5YjY4MDUyMGVkNTI2ZGNjNGM4YWEzNzM1Mjc1OTBlMjgxOTVlNDBmYmU2MTA3ZTFlNWI0OTVhNDU3NzM1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_ddeb2720ef554957b43d5c89ea3e953e",
+      "statement": "0178 revokes EXECUTE from PUBLIC, anon, authenticated and service_role on its new functions and grants back only the three own-preference commands to authenticated, leaving its internal helpers granted to nobody.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0178_practitioner_identity_boundary.sql#L546-L578",
+          "version": "repo-lines-v1:sha256:c7f0a4cee410a67655c9de73ef849c238e0bf1a4714570b5677f4245c0ac54a6:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJhMjBkMTIzZDVmZWI1NzNkYzZiMzQ0ODUyYjhlNWZjMjRhZjZkN2JhNTFjMzM0NjY0NDYxNzI4OGVkMzAxZTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVhNzRkYjcxYzMyZDRkMDFmOTUzNTVhNGE0MTljZDNjYmZhMjczNjNjYTE3NjNhODJhNzUzOTEyNTcyYzliNmIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2b5278fbe3e849eb8c6e18f3e2acea76",
+      "statement": "Migration 0094 replaced single-column parent foreign keys on clinical and import child tables with composite (parent_id, studio_id) foreign keys that mirror the previous ON DELETE actions and keep exactly one relationship per table pair so PostgREST embeds stay unambiguous.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0094_tenant_consistency_constraints.sql#L1-L45",
+          "version": "repo-lines-v1:sha256:23b319df730987f63b21db3f9b38680e5ecaf731b1001c7170ed8bb98bf77f4c:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUzYmYwZDRiZTM5ZDRlZmJmNWUyNTFkYTExY2NmZDc5NzllZmYxODE3YzY5MTcyYjFjZDg3ODVkMWU2MTY0ZTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNhNmUwMDgzNjdkMWVjNTI4MTlkZWIzMWIzNjBlOGY1ZGFiYjg3YzRjZmI1NzgyMzc1ZTcxOTkxNDM2YWFjM2UifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9c4197fd46a34d2a902a7185583727e7",
+      "statement": "Migration 0151 applied composite same-studio foreign keys to appointments' client, service and practitioner references under an exclusive lock with a preflight that raises a fixed non-PII error on any existing cross-studio reference.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0151_appointment_tenant_consistency.sql#L1-L34",
+          "version": "repo-lines-v1:sha256:45fe31f078da7e5818e1ec227befeeb264c5caa4d991beb20e955b4207e1af45:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNkY2YxYWNiNDZjNDFiNjE3YzdiYzE4OTdlYjA1ZjYzZDNmYWNlNjk0NzY4Zjg2NGMwNjZjNWI4ZTAwMzQzODEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjljZWZhYzU2NDgwMmZhMzE5MWY4MmQ0YzVkNjczOWM0ZDU1MmU4ZTk3ZThjMWE0MzU4ZjFkMWRhZTdkYTljMzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFhMTI1YWI3NGY3NjBmYmQ3N2ZjNWRmNGY3YzhlMTRlMmQ2ZDE3NWM4NzA5ZTQxODBmNGVkYjVhMTdhOTQ0ZTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0241b3630f3540e49eb1284f8ca9e444",
+      "statement": "DB tests prove cross-studio parent references are rejected by the composite foreign keys even when RLS allows the write, that cascade behaviour is preserved, that exactly one FK exists per table pair, and that appointment client, service and practitioner cross-studio references trip three distinct 23503 constraints.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/cross-studio-isolation.db.test.ts#L268-L395",
+          "version": "repo-lines-v1:sha256:bb9cb718364f3d7836be12c7a1f48bb40e8e30c0d9389f362cef4f8118280355:eyJzZWxlY3RlZExpbmVDb3VudCI6MTI4LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJhYzZlZWJlN2RjNTAzNTAxODVkN2MyZTZkYWRjNzA3ZTU4MmY2ZmZkMTUwYjlhODgyNTY5Yjk5Y2MzZGM1NDNiIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIwMWJhNDcxOWM4MGI2ZmU5MTFiMDkxYTdjMDUxMjRiNjRlZWVjZTk2NGUwOWMwNThlZjhmOTgwNWRhY2E1NDZiIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJkNzRlNjVmNjRiY2VmZWUxN2M3OGM2ZDgwNGQ1MWE3MzU3NTk5NzNlYWY4MWM5NTQzMjhhMzFjNzEwOTJlZmI1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlMjcxZjUzM2I3MmY0NGZiMWY5YzIyYjE3ODZhNTc3NzhjOTZjMWFjZDE5YjhlNDYxMTljZWQ1YTg3ZjIzODFiIn0"
+        },
+        {
+          "resource": "repo://tests/db/tenant-consistency.db.test.ts#L49-L263",
+          "version": "repo-lines-v1:sha256:6363ed123caaf88a6b37b90a6aaa52413eabb27f7541c7f0919796ad59d04e39:eyJzZWxlY3RlZExpbmVDb3VudCI6MjE1LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJlNGY3NWQ5MTRjNTdlNmFlM2Q5NDMzYTQ3ZGEzZmVhMzQ3Mjc3ZWY1NWIyMWYzZjE4M2M0ZDI5OTRjZWY5MDYwIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJhY2NmNjg0NWFmZTQ4NzBiMmM2NDNkMjcwZTBlZGVlMjNlY2JjNDZlYjgxMTJkMjNjZTc2MDI1OGU4ZGU0OTM1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_de966fe511334f08a68989285b469ca9",
+      "statement": "The service-role allowlist test requires the set of app/ and lib/ files calling createAdminClient() to equal the allowlist exactly, every entry to carry a purpose, a justification and a scope-guard string present in its file, and justification-only entries to stay under 5%.",
+      "evidence": [
+        {
+          "resource": "repo://tests/security/service-role-allowlist.test.ts#L49-L117",
+          "version": "repo-lines-v1:sha256:61b43bc0e1349d3b6c8e75ecd4e9958f6c322dc6f748fee984939b84ce239e9d:eyJzZWxlY3RlZExpbmVDb3VudCI6NjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMxMGY2MTQyM2MyMTFmMjhhYjllNDI3NmVjYmUwYWRhYzNlMjhjMzU0MzQ4YWQ4MDJlMWExMjAzZDdiZjA2M2IiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ2OWY1MGNmMWFkNzdkYmQ0NDkyZjc4MGUyY2ZiMGNiNjY2NmQ1NDkzMTBhMjRlNzllMmRmOTU2MmM3OTdiZDQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://tests/security/service-role-allowlist.ts#L1-L11",
+          "version": "repo-lines-v1:sha256:b5fff87b043ff52d8d76b0b07df4c1c1ccd25017585cf4eebc85998829a1c2a2:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk4YTQ3YzJkMzQ1Yzk3NTQzNTRhY2NlMWExNmI2MjdlY2E0MWViNTc2MGJjMGI0MzI3Y2QwZjJhYzRmNzBlNTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcwMTlkMmZmYmMwNTI4YTBhZDI1ZTcxOGFjN2RmY2MyYjg2MzVjN2YyZGNmNjAxNjM1YjgwNWMzY2MyYjIyZTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ2MTg1ZDkxMzMwYzJiYWNiMjQ0ZTVkOTg1NzJkMTFmNDJjNDJhZTgzNGZiMWE1NTdjNzlmM2IyM2U4NDdjNzgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e3fd6928b6e24106a0b580c67d8c4348",
+      "statement": "The Supabase write census parses runtime source under app, lib, components, scripts and middleware with the TypeScript compiler API and fails closed by reporting any write expression it cannot resolve as unresolved rather than skipping it.",
+      "evidence": [
+        {
+          "resource": "repo://tests/security/helpers/supabase-write-census.ts#L5-L46",
+          "version": "repo-lines-v1:sha256:7e1da80799c8240a4dcc165c2dd6ebdd429d1f7523c1069f3f86cacc7836dcb2:eyJzZWxlY3RlZExpbmVDb3VudCI6NDIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmZDA3NzE0Zjg5ZDk2MjNiMTkzZjU2MDUzNWU1NmE1YTg1MDdhMGIzNDA1OTc3MjE5ZmIwMWRlYzBmNzg2NTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU1ZTI2Y2Q5MjM2NmY2MGQ4ZWQ5MmQwMjM5ZjA3ZmVmNzRjYWMxNGFhNjlhZGRmOWMyY2MwZDExZWIwMGE0NjMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQxM2Q3YjUzNDg4OTYzZmI2YTgwNzgyMzNlMTYyZTZjYWZlMGY4YWZmOTU0N2E2YTg0ZTRhMzY2M2ZlYWEzZTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNkMjAyM2I5ODFhYjFhZDczYWZmZjEwMDE1ZDQxZDViMmE2MjlkMzVjMWMzMWY3ZTMxNDZjNDRhMTZkMDNiMjkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0fa650f1f697485aaa0450e56104e798",
+      "statement": "No migration performs a schema-wide grant sweep or changes Supabase's default privileges, and session_audit and record_keeping_audit_events have never been named in a grant or revoke, so known limitation L19(a) records them as still carrying the default TRUNCATE grant (narrowed, not closed).",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/known-limitations.md#L331-L395",
+          "version": "repo-lines-v1:sha256:74a73eb0586d8702ff1a8e486d72ed1f71cd52e4c67f766087195a57f25435d2:eyJzZWxlY3RlZExpbmVDb3VudCI6NjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM1MTQ0Y2M3NDU2YmJhMmJiMmQwZjIwNTgwZDljZmRiYWY4NGJiN2VjOWZmMjgyOGQxZDM2MzU2YmFiNWFiY2MiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUxMGNlNzY4N2Q0MmI4MTdjZDU4NmViODZhZjgwMzQzMzJlNjhhZDI1ZjNmYWZiZGExOWYyMDAxZjY1YzRmMzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjgwY2NkM2QyODU3MjRmMDc0OTk0NzdkMmM3NmNiMjU5NzZjN2RlNzZmMWI4NTJjZjdkM2NhZmU2ZDdjNzM1OGUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQwMmI3YmZiM2MzNGI3MjcwZTBmNjc5M2ZkOTAyNDYxMzUzODdlNzVmNjI5MjdhOGM2ZDZlZTg0MjA3YWFhM2IifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0184_client_budget_context_least_privilege.sql#L5-L30",
+          "version": "repo-lines-v1:sha256:1ff38a7b1e4c9e475f4c81be9a59b45508a7e9de5e6c960475f0578b12ad7aa3:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZkMDFkMmU4MWMzY2RlZDI0YTRkNmM3Y2RhNDZjOGYwYjM5MGEzM2IwNDA2MjI1NWVlNzNmZDVjYTcwOTA3ZmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJjZTE5MjVjNTZjMzQ0M2Q2ZTJhMmQ5ODhlNjNhYTI0M2UyOGEyMjAxYzk0ODc2MWRmOGUwYTMzYjJjYjQxMDEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZkZjIwMDFmYWNjMmUxMzYwNWZhMmNjNzNhZjJhZjEyNmFjNGJkYmJjZGM0NTBiODdlMmZmMGE4MDljNzYwZjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI2YzMwODAzZjI5NGE0OWUwNmQ0YzczYjBiYzc2ZTAyMTIwMzVmZWQ5YWU4ZjU5MDgyMTVkZTkxZTczOGIwMzMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_163fea5550f84156a2698e83174f18f2",
+      "statement": "Known limitation L20 is recorded open: service_role retains TRIGGER on sessions, session_blocks, electrolysis_entries and laser_entries, so 0160's lineage guards are not tamper-proof against that role, though it is not reachable from the application.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/known-limitations.md#L288-L299",
+          "version": "repo-lines-v1:sha256:88c34a242481fccce9abe54e44ff4ce3172b079c67b631d3936c355ccb00de45:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMzOTA2NjgwMGM1ODg5ODk3YjUyMDM0YTVjZjZhNjdhODlhZjA4M2ZkYzNkNGE2OGU1YzQ0YjZkMTFiNDAxMWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUyYmIxNDkzN2RkNDRjODZjZTIxMGMyMTdiODNmMmNkNDE5YmQ5MDIyNDYxYzJkOTJhNTAwYjcxYThmMWYzNTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJkNWYwNDA0MTMzZjg2YmEzZjM5NDA5NThmMGNmZTVlYTg4YmEwMjA3ZThjMjE5NDhkMDUwNDhhNmQwOWY1N2UiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA4OTRjOGUxNGU2YTg3MWY1MWQwYzY2ODBkMzU4MzJmZTE2NTY0NDA5ZThkMjhmYzk5N2RlNzRlNjExM2JmODgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_d141f352f0784596b5c70d2310d899fb",
+      "statement": "Known limitation L33 is recorded open at P3 and not exploitable: 0204's studios_admission_mode_guard() trigger function holds EXECUTE for anon, authenticated, service_role and PUBLIC according to a recorded read-only verification, and closing it requires a new migration.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/current-state.md#L135-L135",
+          "version": "repo-lines-v1:sha256:db2ecfccca3fc72b78beb8755624e5b9ab1270ec9b013250de2d1cb34461ea1a:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZGIyZWNmY2NjYTNmYzcyYjc4YmViODc1NTYyNGU1YjlhYjEyNzBlYzliMDEzMjUwZGUyZDFjYjM0NDYxZWExYSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZGIyZWNmY2NjYTNmYzcyYjc4YmViODc1NTYyNGU1YjlhYjEyNzBlYzliMDEzMjUwZGUyZDFjYjM0NDYxZWExYSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZWI1MGJjZTQ5ZmMyM2FlZTAyZmM3ZDA0NmY0NzRhNTdhZTY4NDhjNzMyN2ZhNjBlMTgwZGM4MDIzMmE1M2NhYSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMWM0NWI1ZDQ0OGUwZTg1M2JhMzhmZTk1ZDBkODMyOTBlN2U2YjFjZDkyMTJlYmVkYTk4ZTA0OTU4Y2RlZDBlOCJ9"
+        },
+        {
+          "resource": "repo://docs/production/known-limitations.md#L658-L670",
+          "version": "repo-lines-v1:sha256:04cad262b5072698c8296b4dd3e6ddca9877291394ebf94c91fea0bbdef218e0:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQwMDdiM2Y4MjkyNWFjNmU4Y2JiNGRkZmE0MTkyNjY4MjU5MDkzMTE0ZWQzNzY1OGRlZmQzYzViMTdiMzQ3MTEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM3MTA4YzhkOTFlZTJjYjY4MDAxZWQ5ZjY5ZGM3YmU0Y2RjODJhNmM4ZGQ3ZjQ2NWIzNjFhMjE3N2Y4NzE2ZmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU2ZmI0ODQ1NDczNDk0ZTRjNWU5NzgxYjQzOGZmZWY0MzM5YjFkZDFkZGM1ODBhNzAyYzk4ZWQyMDdlMmY0MTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0de7be98790948dc821f2e16d7d9d46a",
+      "statement": "Known limitations L18 (authenticated clinical row writes, closed by migration 0169) and L23 (foreign-key actions writing appointments, closed by migration 0173) are recorded closed.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/known-limitations.md#L314-L329",
+          "version": "repo-lines-v1:sha256:54fdb541c57b12077cda68c3745c1a2f576a7db3dfa714e53adca1bd13a45e33:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYyYWFhMTQ5YTk4NGVjNTI1NTdjMjg5YmI2YjFiZThiMjc5YWFiMjgyMDUzM2EzMDFjMjJlN2Q3MTZhYjFhMTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdhMmJlOGEzN2ViNjM1YzcxZTc4N2EyNzg5NmY1ODg3Y2Q5YjE0MjhjMzlkMzJlNDQwNjcwMGRiYTlhNTg5MTkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg0YTRiOTFiZDU1YzUxYjlhOGVlMGEwOTJhMWIwMTA2MmUxN2ZiZTQzMDBjZjRiMTk3MmFlZTRkM2I3OGM3ZDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFjNjgyZmZiMWFkMzcyNDJmOWM3YWNmMDY0OGUwYzAwNzBhOWFjNDhkMDFhNWU3MmQ4ZWUyMGUzZDhmMzRmY2MifQ"
+        },
+        {
+          "resource": "repo://docs/production/known-limitations.md#L397-L417",
+          "version": "repo-lines-v1:sha256:6beae5c32239d5fc85830f06c412f48d998f978decf1d1a9dd21bc83405b3853:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI3MTgyNzVhOTI3NDY3MGU4MzU5MWNiYTJhNTA3MDIwNGNjMDA4OWY1ZDQ2YTc4YzYyODZhYmVkOTFhNTA1NGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU2YmI2YmViZmM5YTgwYzRmMmY5M2EzMGZjYzQ2MjNlOTA1YmViNGQxMTVkNGU0NzhmYTQ5ZmFlYjg0MDY4OTAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM0MmM0ZjJhZDgzYTRlMWRmNmQzNDQxNzFhNmQxYjNhMDI5NDQzYWFhM2QxYmY3MmJlMzFkY2U1MTI3ZTUyZGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM5YzI4Y2IzZjRkNWYwNzFlMDNjMzIwMzgzMzMzY2VhMmNjYTJkMzE0ODZlZmQzNGIzMTliNDA3MTZjZmVmM2MifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9355b44644a84cc7871c0fc727f21cc4",
+      "statement": "Known limitation L17 records that the deep production, security and code audit has not been performed and that it blocks broader launch.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/known-limitations.md#L277-L286",
+          "version": "repo-lines-v1:sha256:865dd2fac4bd004576c0902f6bdfeb22b656ee65300dba3e8a18d37bcf7d8226:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY5MDk5ZmQzMTIxOTRkMjI1NmRjYWY4MDZlMTRmMzEzYjE0MDY2ODExMzJkZmEwMTE4NWRmZTEzZmIzYzBlNGQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdjM2I4NTliZGJmNjU5MTYwYjY2ZmFjYjgxNzkxYmJiYjc2YTE2ODNjNzJlMTYxN2FhN2QyZWM4NDYzMzNkNTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhkOWU0NDczNTZkOTBjY2M1M2Q4ZTQyNmNkY2UwNzQzYzg5YWZjOGEzYTM0ZDQ5MjI3YTE1N2U2Zjc1MDI2MWQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ4ZGNmMzYwNWM3MGJkNjhkYzUzZmJlNjM3ZmQ0NTY3OTFjZjczYTQ3ZTkyNjYyY2E3MGFjNjMzMTg2OTZmYWQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e1487f5bfcc94312bbef681f0de8291c",
+      "statement": "docs/09 records a production inventory of SECURITY DEFINER functions in the public schema that found none without a pinned search_path, with every function executable by authenticated or anon being an RLS predicate or a trigger function.",
+      "evidence": [
+        {
+          "resource": "repo://docs/09_DATABASE_AND_RLS.md#L313-L329",
+          "version": "repo-lines-v1:sha256:0e90badc481183c211a764478e002c5345dfaf50c55dbafd52c19a89aec36b79:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI5ZjVhNjM5YTY0OTNkNWRkZTFhYWIyMmM2Zjg3YjQ4MjMyOTAxNTkwYzI4MTkyYjJkZTViZjViZmMwYTE2MWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE5NmI5NzkyZjEzYmU1YjY4ZDJjZTc1MGU1YmE1YzRkZTMyMjJhNTcxNDk5MzE1YTAxYmU1Y2UzZTljMjU3NDgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjMyODgyNzhmMTcyNjJjMGZmODg2NzQ4ZWU2OTQ3MWRjMmJlNGU5MDNmYWUyYTc2MmRiMTg2MDNhNjYyZDFmMDkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjlkNGRhODkwM2Y5NjAzMTRkMTcxYTk1ZjFmMzg5YjZiMWNhMzAyZGU3ZjE2OGQ5M2RiNWM5OGJiYTEzMTkwZjgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f27ccedcd3ba47a980720427e6160b23",
+      "statement": "docs/09 still states that L23 remains open in production and that 0173 is not merged or applied, while known-limitations.md records L23 closed by 0173.",
+      "evidence": [
+        {
+          "resource": "repo://docs/09_DATABASE_AND_RLS.md#L210-L213",
+          "version": "repo-lines-v1:sha256:4a3d7a92307f788230c1d8e8d89b746ca9453a143f217813eac1bc960d6c9a0f:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYzFlZWViZDY5MDkyNTFlMTVkYmQ0NzlmZGI3ZjFiMWM0ODNjYjllZDE2NmFiN2Q2MDM1NDA5MDNiZjFkMTZiYyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYzQ4MzJkNDYyZmUxYTczZGFkZTIxMmE4NGFmNmEyMmQwNTViYzQyYTZkODg2ZWYzNjhjYmJkYzkyMjA3YjMyNSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiM2VhZGY0YjExZDdmNmMxYzFmODc1ODA4YjVjZGFhOWMyOGZmZDFkMzMwOTMzN2MzNTA5ZTUzZGQ0ZGIxYWMwMSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMWFjNjMwNGFmNDNiZWQ2YjNjMDJhZjdjODNkM2YzOWZjMDBmYTcyMzg1YTQwNTcwZTNmODVhMTI1NmQzYTAyMiJ9"
+        },
+        {
+          "resource": "repo://docs/production/known-limitations.md#L314-L329",
+          "version": "repo-lines-v1:sha256:54fdb541c57b12077cda68c3745c1a2f576a7db3dfa714e53adca1bd13a45e33:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYyYWFhMTQ5YTk4NGVjNTI1NTdjMjg5YmI2YjFiZThiMjc5YWFiMjgyMDUzM2EzMDFjMjJlN2Q3MTZhYjFhMTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdhMmJlOGEzN2ViNjM1YzcxZTc4N2EyNzg5NmY1ODg3Y2Q5YjE0MjhjMzlkMzJlNDQwNjcwMGRiYTlhNTg5MTkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg0YTRiOTFiZDU1YzUxYjlhOGVlMGEwOTJhMWIwMTA2MmUxN2ZiZTQzMDBjZjRiMTk3MmFlZTRkM2I3OGM3ZDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFjNjgyZmZiMWFkMzcyNDJmOWM3YWNmMDY0OGUwYzAwNzBhOWFjNDhkMDFhNWU3MmQ4ZWUyMGUzZDhmMzRmY2MifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0bf87db01fda4490b66b1ec140f4d818",
+      "statement": "docs/09 lists owner-only ALL policies for studios, services, availability and blockouts, but the migrations give any active member INSERT and UPDATE on services and FOR ALL on studio_blockouts, with only the two availability tables owner-write.",
+      "evidence": [
+        {
+          "resource": "repo://docs/09_DATABASE_AND_RLS.md#L159-L159",
+          "version": "repo-lines-v1:sha256:76b34963e958403384d6c8a306b1e3d87cf9c234104ec3542ee2cdc02521ae54:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNzZiMzQ5NjNlOTU4NDAzMzg0ZDZjOGEzMDZiMWUzZDg3Y2Y5YzIzNDEwNGVjMzU0MmVlMmNkYzAyNTIxYWU1NCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNzZiMzQ5NjNlOTU4NDAzMzg0ZDZjOGEzMDZiMWUzZDg3Y2Y5YzIzNDEwNGVjMzU0MmVlMmNkYzAyNTIxYWU1NCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiN2UzZDNkODg0ZjExMDEyNTgzZjljNzIzNGZkNzdkMzg1NTg3NjU3ODEwNGM3MGQzNTE1OWU5NzZmOTIyNmQxNCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYjVkZTk4Y2U2OGJkNGE5M2U1M2NkYWU3MDA2MmJiMmMzMGUzMWMxZmU5YWRiYjU1OTlkNjhlMzdkMTYwYzY1NCJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0010_booking_v1.sql#L258-L263",
+          "version": "repo-lines-v1:sha256:5e7a081b7ef957c4a787533cebc8f90065caa8125c4b27745e71f0e6c241303d:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiN2JmMDU5NjE3N2QyMjkzOTY3MDAzMTlkZWE4ZDEyZjIwODkxN2VmYTlkYTE0OTRiOTRlZGY2ZGU3MDBmOGU0YyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiY2JkZDM0MWI3ODYxMTljMjQyMmJjMDAxNGQyZTI1NjIxMzM1NDI1ZGEyMGYzYjljOWZmMGVlNzk2YzRjNDNlYiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYTZlOTUyMGYyNWM2ZDg0ZDM3OTM3ZGRkNTYyZmRkMWUzYjJlZDViNWYzNzE3YTFlZWQ5YmNmNzE5MDdkNDE2ZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOTdjY2I1ZjlmNDdiMDkzYzc0MGUzNzE2ZWMzMjI1ZDU3MDgwMmZmMGI2ZWY1ZDAxNDk4MTlkM2Y0ZWE4MTFmYiJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0135_practitioner_availability.sql#L101-L124",
+          "version": "repo-lines-v1:sha256:9b8e5fb9b1576833313a80746b2a2930a552b1f1aaf062c1a9716baf707650db:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMxZDM3NTA3OThhYjc2MmVkYjkxN2Y1YjBlMWI4ZmEyYzIzMGZkMGU5NjIyYjk3YzVjOTYxZDUyZTZmNTdiMDciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVhMmM1YTdkMzYyNmMxNGI5MDY3Y2Q3Y2Q2NWM5YTQzOGUzMDc4Y2JmZjVmMmNjMmIxMTAwZThhNmI2MjM5MDIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjExOTU2MTQxMDQ4Mjc4MjBhMjIzNGI4NDMzYzRkNTRkYWFkNWJkNzE3ZmY0ODhkYjdmMDQ0NmI4YmNiYmFhNGYifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0173_appointment_repair_commands.sql#L782-L801",
+          "version": "repo-lines-v1:sha256:1025bb3daa5ebf88aae620b7d5baa5f227aeb8a20aa5a86072f9d573a6865f8e:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxM2ZjMjdjNjc4YTBjZGUzODY2NDE0YmYyOTVlY2YwYWI3ZjFmODFhYTE3MDc1NTBmMGEzZWI5MmNjMGMyNzgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNiZGQzNDFiNzg2MTE5YzI0MjJiYzAwMTRkMmUyNTYyMTMzNTQyNWRhMjBmM2I5YzlmZjBlZTc5NmM0YzQzZWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM2MTI0MjIwYTFlY2JmODAyMjNmZWViZTcyYWQzODg2ZTUwMjBkZmM2MGEyNTZiNmY3MmU0NzQzMjlkMTA0YTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoyLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg4ODJlNTcyZjI4M2I3MmMxMjYyYmQxMDA2NTZjN2RhM2NhYTEyMGNlZGY2MjQ2NDI4OTUwNTEyMTU3ZTgyZGQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_530a988dcc7f49f0bf64fca9048ebb0c",
+      "statement": "The 0138 lock-only trigger that takes the studio capacity lock covers timed blocks, recurring break rules, break occurrences and blockouts but not the availability default or override tables, whose owner FOR ALL policy still permits direct writes outside the locked schedule commands.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0135_practitioner_availability.sql#L101-L124",
+          "version": "repo-lines-v1:sha256:9b8e5fb9b1576833313a80746b2a2930a552b1f1aaf062c1a9716baf707650db:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMxZDM3NTA3OThhYjc2MmVkYjkxN2Y1YjBlMWI4ZmEyYzIzMGZkMGU5NjIyYjk3YzVjOTYxZDUyZTZmNTdiMDciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVhMmM1YTdkMzYyNmMxNGI5MDY3Y2Q3Y2Q2NWM5YTQzOGUzMDc4Y2JmZjVmMmNjMmIxMTAwZThhNmI2MjM5MDIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjExOTU2MTQxMDQ4Mjc4MjBhMjIzNGI4NDMzYzRkNTRkYWFkNWJkNzE3ZmY0ODhkYjdmMDQ0NmI4YmNiYmFhNGYifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0138_scoped_sources_lock_and_dormancy.sql#L58-L72",
+          "version": "repo-lines-v1:sha256:bb8a767e85ba68d297438c68d081122da5abf0810e233b428a42d90f05e97d72:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNmNDk3NThhOWZjZTJlZjdhMTg5NTVlMGNjOGRlNzUyNDI0NjE1NjA5YjkyNmJlNzgwYTg0Yjk4YzExYjcyNjAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMxZDM3NTA3OThhYjc2MmVkYjkxN2Y1YjBlMWI4ZmEyYzIzMGZkMGU5NjIyYjk3YzVjOTYxZDUyZTZmNTdiMDciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNhOTliZWI1ZTFlOWNhOGMwMzYwMWZlMzAzMzI0OWU2MjUzZTVlOTEwMzE4OTc4OWI5OTZjNzE0ZTE0N2M1YTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFjODVjYzhiNjMxZGQ2MjE5NzU3Mjc4MTBjN2ZkNzlhMGQ2Y2EwMmY3MTIyMTkyMjEwMmI5ZDMzOGM0Y2E2NWIifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0150_single_row_schedule_writers_locked.sql#L1-L30",
+          "version": "repo-lines-v1:sha256:4a6a0360d147a262b08732d7e1cf85107a1aa9a9208f9d90009f4095860fbf45:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImViMWFiY2M3YWUyMmM3M2M1ZjExMDdhZDAzMjVkNWU5N2E4MjE0MTI1ODBhNmRmODhjNjEzNTAwZjVjNTMwZWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFhMzE3NDg0ZjY0ZTEyNmE3Y2FkYTg3OWQ4ZTdjZDBiZmQwNDg3M2FlNTdhY2Y5OGFiYzQ1MDI2NWUwYmY1MjcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b5334aa43e4f480098315a24ecc7d592",
+      "statement": "Known limitation L22's heading and status say both intake review boundaries are closed by 0162 and 0163, while its next-gate and blocks cells still describe the INSERT path as open.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/known-limitations.md#L419-L437",
+          "version": "repo-lines-v1:sha256:76d5f12fc4d1c4be8db82355ba41857f54237991afbf10a283e23633f8bf6a6d:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNjYTkxODU3YzY5MTM5NTQ3MjJlMDdjYWRhMTBlYjA5NDAwNWI3N2ZkYzc5ZDAyNmZlZGFjZmUxMmNhY2ZkNDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU5NDQ4N2YyZDYyMWJjMTc4ZGI5ZjNjNjEyOTllODkwZTJiZmQ0MWU5MzgxMjU2MDM1MGMxNWRjMmJiOTllODgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM3MTc4MTNkNTk0OGFkOTE3ZjJkOTdkZDY4NzVmMTgyN2ViNTE0YjlmMDk0MDdlZDI5MGRlOGM0ZGMwMzllMTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVjYjA1ZDUyZmY3YjhkMzg4OGY4YTEyZTg0MTJlNzgwZTNkYzhmYjE2OGYyY2VlOTE2Y2I2NDE4ZDBlZmQyYjAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0b1378534cc5406997beacecd4b9af93",
+      "statement": "The grant guard excludes trigger functions as inert, while known limitation L33 treats the default EXECUTE on 0204's trigger function as a defect and asks for the guard to be extended to trigger functions.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/known-limitations.md#L669-L669",
+          "version": "repo-lines-v1:sha256:4bc9b7806d2fa60b17bbe22b82b8bf401b9864e74ca449b558504fa323558e46:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNGJjOWI3ODA2ZDJmYTYwYjE3YmJlMjJiODJiOGJmNDAxYjk4NjRlNzRjYTQ0OWI1NTg1MDRmYTMyMzU1OGU0NiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNGJjOWI3ODA2ZDJmYTYwYjE3YmJlMjJiODJiOGJmNDAxYjk4NjRlNzRjYTQ0OWI1NTg1MDRmYTMyMzU1OGU0NiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNzNlZjViNTI0NmY0MWMyZDUyNmE5ZDE1ZTI1ZDFhMmVjYTE1YjViODg0YTBhMWQyY2ExY2U5ZTIyM2JjZTYxNSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjEsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMzcxMDhjOGQ5MWVlMmNiNjgwMDFlZDlmNjlkYzdiZTRjZGM4MmE2YzhkZDdmNDY1YjM2MWEyMTc3Zjg3MTZmZSJ9"
+        },
+        {
+          "resource": "repo://tests/security/clinical-rpc-grant-guard.test.ts#L26-L31",
+          "version": "repo-lines-v1:sha256:889c650a33d1c2b7e89000aae6b41a0b929a2d362c2cab39ff82b2036bff6024:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiY2FhNGYwM2NkZjBhYWVmNjViY2M3MjM0NWE0ZWNkNGE3OGY2NmQ0MDYxZGYwZjI2YzdjMzA3MjI4MzNiMjdiNyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiY2MwZDUwNDA4ZTlhYzA3YzY5NzJhMjQ3YjY3ZGFiZmZlNGIxZDkwZWFiMTViNzJkY2FkNzM2MjRmZDU3NjY1YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNWUwYzhhNTQ1ZWYxZjljNTJjMWI1MWUxOWZmM2UyODE3NDYyYTJhZDc4OGNkNjM3ZmYyZTdjMTQ0ZGY4ZDk1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOWFhMzhmM2NmNGIzNTE5NjJkOWRlYTJmMzdlOTRmODcwZTY5MWI2ZGM1MzExOWY1MDRiMzc5MWFlMmMwY2Y1MCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_8b898735b7be42e7ad167e052415446c",
+      "statement": "The migration ledger records that 0205, which had been earmarked to close the studios_admission_mode_guard() grant deviation, was used for another change and contains no grant or revoke statements, so the deviation remains open and needs a new migration.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/migration-ledger.md#L57-L64",
+          "version": "repo-lines-v1:sha256:3e0d1033573d86e816c807d31bb23d3edf37d6395ee24f33b171c250bbc7305e:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiM2YwOGEwYzVjNDBjM2EyZWNiNTU1NjQ1ZDdiNmZjMWYzZjQxYTM3MDFlYTk5YzE3YjZlZWM1Zjk1YTA3YzZlNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZjlmNDdmOGZjOTNhMDUzOWJmNjg2ZTMxYzk4OTQ0OWMzMDk2MGVkODhiOTBjM2VkYmQ3Yjk2ODMwMTk1MmVhYiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNzU0MGUzM2YwMjE2ZjQ5ZjI0NmMyNTk5OTZiMDYxYTA1YTBlYWIzZTc1MzI1OGVjNmZmZTFmOGZkYjM3MjgwOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYzkxOGE0NDk4ZDI5NTczY2E5YWVkMGIyNmI1OGVlMDQxNDY4ZDE5YzUxYTUzYTIyYjI0NDdlMmU1YTNiODlmOCJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-04T01:59:59.625Z"
+  }
+}

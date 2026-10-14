@@ -1,0 +1,1 @@
+{"data":{"repository":{"pullRequest":{"number":720,"createdAt":"2026-09-17T16:37:17Z","changedFiles":8,"baseRefChanges":{"pageInfo":{"hasNextPage":false},"nodes":[{"__typename":"BaseRefChangedEvent"}]}},"object":{"__typename":"Commit","associatedPullRequests":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":720}]}}}}}

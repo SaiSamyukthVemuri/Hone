@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { currentProse, ignoreMarkers, matchAll } from "./helpers/canonical-facts";
 
@@ -138,6 +139,11 @@ const NON_SHIPPING_ROOTS: ReadonlyArray<readonly [RegExp, string]> = [
   [/^playwright(\.[\w.-]+)?\.config\./, "test-runner configuration"],
   [/^vitest(\.[\w.-]+)?\.config\./, "test-runner configuration"],
   [/^eslint\.config\./, "linter configuration: gates the build, never served by it"],
+  // WIKI-AUTO-01. Each changed file is classified ALONE, and only Markdown is
+  // docs-only, so OpenWiki's Claim sidecars and run metadata (JSON) counted as
+  // runtime: every wiki regeneration would have invalidated a correct pin.
+  [/^openwiki\//, "OpenWiki generated docs, Claim sidecars and run metadata: never built or served"],
+  [/^\.openwikiignore$/, "OpenWiki read-boundary configuration: never built or served"],
 ];
 
 /**
@@ -1348,6 +1354,74 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
   });
 });
 
+const APPLY_HISTORY_ENTRIES = 13;
+const APPLY_HISTORY_DIGEST =
+  "fed1cd9b704626f739f9459a1bdc3b4a9b786a881b052fbd117fac1eaab98e33";
+
+describe("canonical production docs: the apply history is append-only", () => {
+  /**
+   * HISTORICAL APPLY RECORDS ARE NOT REWRITTEN -- and until now nothing enforced it.
+   *
+   * CLAUDE.md states the rule, `hosted_note` carries a "PREVIOUS ENTRY, PRESERVED"
+   * boundary by convention, and `$comment` accumulates one dated entry per apply.
+   * No test read any of it. #779 Codex P2 found that out the hard way: I appended an
+   * evidence correction, wrote that the superseded entry "is asserted byte-identical
+   * programmatically", and what I actually had was a one-time check inside the script
+   * that performed the edit. A transient verification described as a standing
+   * guarantee is worse than no guarantee, because it stops anyone looking.
+   *
+   * So the prefix is pinned the same way the execution record is: entries may be
+   * ADDED, never edited or removed. Advance ENTRIES and DIGEST together, and only
+   * when a genuinely new apply record is appended.
+   */
+  const comments = CANONICAL_RECORD["$comment"] as unknown;
+
+  it("$comment is an array of dated entries, not a single blob", () => {
+    expect(Array.isArray(comments)).toBe(true);
+  });
+
+  it("no entry is removed", () => {
+    expect(
+      (comments as string[]).length,
+      "an entry was REMOVED from the apply history. Historical apply records are " +
+        "not deleted; if one is wrong, append a dated correction entry as entry [9] " +
+        "and entry [11] do",
+    ).not.toBeLessThan(APPLY_HISTORY_ENTRIES);
+  });
+
+  it("an APPEND must advance the pin, so the new entry is immutable immediately", () => {
+    // THE PIN IS AN EQUALITY, NOT A FLOOR. A floor pinned only the history that
+    // existed when the constant was written: entry [12] would have been appendable
+    // and then freely rewritten or deleted for as long as the count stayed above
+    // the floor. That preserves a snapshot, not an append-only history -- which is
+    // the property this block claims, so the floor was the claim outrunning the
+    // code for the second time in one round.
+    //
+    // With equality, recording a new apply means advancing ENTRIES and DIGEST in the
+    // same commit, and the entry you just recorded is frozen from that moment.
+    expect(
+      (comments as string[]).length,
+      "a new apply entry was appended without advancing the pin. Update " +
+        "APPLY_HISTORY_ENTRIES and APPLY_HISTORY_DIGEST in the SAME commit, so the " +
+        "entry you just recorded becomes immutable immediately rather than staying " +
+        "editable until someone notices",
+    ).not.toBeGreaterThan(APPLY_HISTORY_ENTRIES);
+  });
+
+  it("no existing entry may be rewritten", () => {
+    // Hashed WHOLE, not as a prefix: with the equality above, the array and the
+    // pinned prefix are the same thing, and slicing would quietly re-admit the gap.
+    expect(
+      createHash("sha256")
+        .update(JSON.stringify(comments as string[]))
+        .digest("hex"),
+      "a recorded apply entry was edited. Historical records are not rewritten -- " +
+        "append a dated correction entry instead, as entry [9] and entry [11] do, " +
+        "and advance APPLY_HISTORY_ENTRIES with the new DIGEST in the same commit",
+    ).toBe(APPLY_HISTORY_DIGEST);
+  });
+});
+
 describe("canonical production docs: frozen-region markers are explicit and justified", () => {
   /**
    * EVERY DOCUMENT WHOSE IGNORE BLOCKS ARE VALIDATED.
@@ -1727,6 +1801,10 @@ describe("RULE A — current-state.md pins a real, current production SHA", () =
       "vitest.config.ts",
       "docs/production/current-state.md",
       "README.md",
+      "openwiki/.claims/payments/stripe-payments-and-settlement.json",
+      "openwiki/.last-update.json",
+      "openwiki/.page-manifest.json",
+      ".openwikiignore",
     ]) {
       expect(deployed(f), `${f} must NOT count as deployed runtime`).toBe(false);
     }

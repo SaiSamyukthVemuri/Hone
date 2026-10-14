@@ -556,3 +556,124 @@ describe("precision domain — JavaScript milliseconds, by truncation", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// WAIT-v4 PR0 — a protected buffer that crosses LOCAL MIDNIGHT
+// ---------------------------------------------------------------------------
+
+describe("WAIT-v4 PR0: the buffer that crosses local midnight", () => {
+  // `studio_calendar_reservations` stores an appointment's ACTUAL end (0152);
+  // both engines re-apply the studio buffer to reach its PROTECTED end. Both
+  // read the reservation set with `ends_at > window_start` — the ACTUAL end —
+  // so a 23:50 appointment under a 30-minute buffer, protected to 00:20, was
+  // never loaded for the following day and LOCAL MIDNIGHT WAS OFFERED, while
+  // validate_public_booking_slot and 0152's enforce_appointment_buffer both
+  // refused it.
+  //
+  // Reachable ONLY by a studio whose open time falls within `buffer` minutes of
+  // local midnight, which is why every fixture here opens at 00:00.
+  //
+  // The existing cases in this file seed `studio_timed_blocks`, and a timed
+  // block is protected to its RAW end — it takes no buffer. That is precisely
+  // why none of them reaches this, and why the defect sat in both engines
+  // unnoticed.
+
+  /** 23:50-local the previous day, derived from the studio's own timezone. */
+  async function seedPrevEveningAppointment(f: Fixture, dateStr: string) {
+    const clientId = randomUUID();
+    await adminQuery(
+      `insert into public.clients (id, studio_id, name) values ($1,$2,'Prev')`,
+      [clientId, f.studioId],
+    );
+    await adminQuery(
+      `insert into public.appointments
+         (id, studio_id, client_id, service_id, practitioner_id,
+          starts_at, ends_at, duration_minutes, status)
+       select $1, $2, $3, $4, $5,
+              (($6::date - 1)::text || ' 23:00')::timestamp at time zone st.timezone,
+              (($6::date - 1)::text || ' 23:50')::timestamp at time zone st.timezone,
+              50, 'confirmed'
+         from public.studios st where st.id = $2`,
+      [randomUUID(), f.studioId, clientId, f.serviceId, f.ownerId, dateStr],
+    );
+    return clientId;
+  }
+
+  /** The studio-local wall time of an instant, as HH:MM. */
+  async function localOf(f: Fixture, iso: string): Promise<string> {
+    const r = await adminQuery(
+      `select to_char($1::timestamptz at time zone st.timezone, 'HH24:MI') as t
+         from public.studios st where st.id = $2`,
+      [iso, f.studioId],
+    );
+    return r.rows[0].t as string;
+  }
+
+  const DATE = "2027-06-16"; // mid-month, clear of both DST transition weeks
+
+  it("1. SQL no longer offers local midnight", async () => {
+    const f = await seed("mid-sql", { open: "00:00", close: "08:00", buffer: 30 });
+    await seedPrevEveningAppointment(f, DATE);
+    const sql = await sqlCandidates(f, DATE);
+    expect(sql.length, "the day produced no candidates at all").toBeGreaterThan(0);
+    const locals = await Promise.all(
+      sql.map((ms) => localOf(f, new Date(ms).toISOString())),
+    );
+    expect(
+      locals,
+      "00:00 is protected until 00:20 — offering it is an offer the authority refuses",
+    ).not.toContain("00:00");
+  });
+
+  it("2. and it still offers the protected end itself", async () => {
+    // The over-correction control: a repair that dropped the whole morning would
+    // satisfy case 1. 00:20 is the protected end, and touching is allowed.
+    const f = await seed("mid-end", { open: "00:00", close: "08:00", buffer: 30 });
+    await seedPrevEveningAppointment(f, DATE);
+    const sql = await sqlCandidates(f, DATE);
+    const locals = await Promise.all(
+      sql.map((ms) => localOf(f, new Date(ms).toISOString())),
+    );
+    expect(locals, "the earliest legal start was withheld too").toContain("00:20");
+  });
+
+  it("3. CONTROL — with a ZERO buffer local midnight still stands", async () => {
+    // The reservation protects nothing past its own end, so 00:00 is genuinely
+    // free and the authority accepts it. Proves the repair is scoped to the
+    // buffered case and did not simply narrow the morning.
+    const f = await seed("mid-zero", { open: "00:00", close: "08:00", buffer: 0 });
+    await seedPrevEveningAppointment(f, DATE);
+    const sql = await sqlCandidates(f, DATE);
+    const locals = await Promise.all(
+      sql.map((ms) => localOf(f, new Date(ms).toISOString())),
+    );
+    expect(locals).toContain("00:00");
+  });
+
+  it("4. SET EQUALITY — TS and SQL agree in the midnight scenario", async () => {
+    // The case the rest of this file could not reach. Before the repair the two
+    // engines agreed only by sharing the same defect; after it they agree on the
+    // corrected set. This is the parity claim PR0 exists to make.
+    const f = await seed("mid-parity", { open: "00:00", close: "08:00", buffer: 30 });
+    await seedPrevEveningAppointment(f, DATE);
+    const [ts, sql] = await Promise.all([tsOffered(f, DATE), sqlCandidates(f, DATE)]);
+    expect(sql.length, "no candidates to compare").toBeGreaterThan(0);
+    expect(fmt(ts), "the two engines disagree about the midnight boundary").toEqual(
+      fmt(sql),
+    );
+  });
+
+  it("5. and the write authority accepts exactly what they now offer", async () => {
+    // Closes the loop the defect opened: the first offered start must validate.
+    const f = await seed("mid-accept", { open: "00:00", close: "08:00", buffer: 30 });
+    await seedPrevEveningAppointment(f, DATE);
+    const sql = await sqlCandidates(f, DATE);
+    const first = new Date(sql[0]!).toISOString();
+    const end = new Date(sql[0]! + f.duration * 60_000).toISOString();
+    const v = await adminQuery(
+      `select public.validate_public_booking_slot($1,$2,$3,$4::timestamptz,$5::timestamptz) as v`,
+      [f.studioId, f.ownerId, f.serviceId, first, end],
+    );
+    expect(v.rows[0].v, `${first} is offered and must be accepted`).toBe("ok");
+  });
+});

@@ -10,8 +10,9 @@ import { consentRowState, type ConsentRowState } from "./signature-status";
 // PR #134. Shared read-side queries for consent templates and
 // signatures. Every function is scoped by an explicit studioId
 // (and clientId where applicable) so callers MUST resolve the
-// studio from getCurrentPractitionerWithStudio() (practitioner
-// side) or getCurrentPortalSession() (portal side) before passing
+// studio from the practitioner session (requirePractitionerWithStudio()
+// in a page, getCurrentPractitionerWithStudio() in an action) or
+// getCurrentPortalSession() (portal side) before passing
 // it in; no function here accepts a slug, email, or other client-
 // supplied lookup key.
 

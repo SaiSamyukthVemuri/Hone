@@ -800,17 +800,27 @@ describe("GATE 4 CONTRACT is stated verbatim in the script", () => {
       path.resolve(REPO_ROOT, "app/book/[slug]/waitlist-actions.ts"),
       "utf8",
     );
-    const gateCheck = action.indexOf("if (!isNewClientWaitlistEnabled(studio.slug))");
-    const durableCheck = action.indexOf("return isNewClientWaitlistDurableEnabled(studio.slug)");
+    // NEW-CLIENT-MODE-01 RETARGET. This pinned the ORDER of two env gates -
+    // admission before the durable list - which was the right property while a
+    // SECOND switch chose the commit point. That switch is gone: `waitlist` now
+    // MEANS durable, so there is no durable branch left to order against, and
+    // no way for the two to disagree.
+    //
+    // What still matters, and is stronger: admission is consulted first, it
+    // RETURNS on refusal, and the durable command is the only commit point.
+    const gateCheck = action.indexOf("if (!newClientMayJoinWaitlist(admission))");
     expect(gateCheck, "admission check must exist").toBeGreaterThan(-1);
-    expect(durableCheck, "durable branch must exist").toBeGreaterThan(-1);
-    // ORDER: admission first...
-    expect(gateCheck).toBeLessThan(durableCheck);
-    // ...and it RETURNS, so the durable list is never reached when it refuses.
     expect(action.slice(gateCheck, gateCheck + 160)).toMatch(
       /return \{ ok: false, error: NEW_CLIENT_WAITLIST_SUBMIT_FAILED \};/,
     );
-    // And the two allowlists really are different variables.
+    // The refusal precedes every commit path.
+    const commit = action.indexOf("return submitToDurableWaitlist(");
+    expect(commit, "the durable commit must exist").toBeGreaterThan(-1);
+    expect(gateCheck).toBeLessThan(commit);
+    // There is NO second commit point to fall out of step with the gate.
+    expect(action).not.toMatch(/isNewClientWaitlistDurableEnabled\s*\(/);
+    // The env constants still EXIST - the transition bridge reads the first one
+    // until cutover - but nothing in the submit path consults either directly.
     const lib = readFileSync(
       path.resolve(REPO_ROOT, "lib/booking/new-client-waitlist.ts"),
       "utf8",

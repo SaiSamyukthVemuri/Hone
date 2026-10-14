@@ -18,16 +18,20 @@ const h = vi.hoisted(() => ({
   payloads: [] as Array<Record<string, unknown>>,
 }));
 
+// RESCHEDULE-E2E-01: the seam is now `getResendTransport()`, not the raw
+// `resend` export. Stubbing the RESOLVER rather than the client is also what
+// the send path actually calls, so this mock can no longer pass while the real
+// path reaches a different transport.
 vi.mock("@/lib/email/client", () => ({
   FROM_ADDRESS: "Hone <hello@hone.care>",
-  resend: {
+  getResendTransport: () => ({
     emails: {
       send: async (payload: Record<string, unknown>) => {
         h.payloads.push(payload);
         return { data: { id: "msg_1" }, error: null };
       },
     },
-  },
+  }),
 }));
 
 import { sendEmailSafely } from "@/lib/email/send-appointment";

@@ -34,6 +34,14 @@ import {
 // asks the right questions and renders the right answers.
 
 const STUDIO_ID = "44444444-4444-4444-8444-444444444444";
+/**
+ * The one entries projection. 0208 added the four SMS-standing columns; the
+ * evidence reference and the recorder are deliberately absent, because the
+ * queue states what is on record and never renders the owner's own note.
+ */
+const ENTRY_COLUMNS =
+  "id,name,email,phone,joined_at,status,source,joined_at_provenance," +
+  "sms_consent_at,sms_consent_source,sms_consent_given_on,sms_opted_out_at";
 const USER_ID = "55555555-5555-4555-8555-555555555555";
 const SLUG = "queue-studio";
 
@@ -187,16 +195,51 @@ function reset() {
   });
 }
 
+// NEW-CLIENT-MODE-01: admission now comes from the canonical authority.
+// Delegating to the REAL resolver with no stored value routes it through the
+// transition bridge, so the env stubbing below keeps meaning what it meant.
+vi.mock("@/lib/booking/new-client-admission", async (orig) => {
+  const actual =
+    await orig<typeof import("@/lib/booking/new-client-admission")>();
+  return {
+    ...actual,
+    getNewClientAdmissionMode: vi.fn(async (studio: { slug: string | null }) =>
+      actual.resolveAdmission({
+        storedMode: null,
+          storedSetAt: null,
+        readFailed: false,
+        studioSlug: studio.slug,
+      }),
+    ),
+    studioIsInWaitlistMode: vi.fn(async (studio: { slug?: string | null }) => {
+      const a = actual.resolveAdmission({
+        storedMode: null,
+          storedSetAt: null,
+        readFailed: false,
+        studioSlug: studio?.slug ?? null,
+      });
+      return a.ok && a.mode === "waitlist";
+    }),
+  };
+});
+
 vi.mock("next/cache", () => ({
   revalidatePath: (p: string) => revalidated.push(p),
 }));
 
-vi.mock("@/lib/supabase/queries", () => ({
-  getCurrentPractitionerWithStudio: async () => ({
+vi.mock("@/lib/supabase/queries", () => {
+  // ONE identity under both names: the page and the settings layout resolve it
+  // through the redirecting guard, server actions through the throwing
+  // backstop (SENTRY-IDENTITY-01).
+  const identity = async () => ({
     practitioner: { id: "prac-1", role: scenario.role, user_id: scenario.userId },
     studio: { id: STUDIO_ID, slug: SLUG, name: "Queue Studio", timezone: "America/Toronto" },
-  }),
-}));
+  });
+  return {
+    getCurrentPractitionerWithStudio: identity,
+    requirePractitionerWithStudio: identity,
+  };
+});
 
 // A minimal PostgREST-shaped builder that RECORDS the question rather than
 // answering a pre-baked one, so the assertions are about the query the page
@@ -435,6 +478,12 @@ function entry(overrides: Partial<Record<string, unknown>> = {}) {
     // been made against a row that cannot exist.
     source: "public_booking",
     joined_at_provenance: "form",
+    // 0202's consent columns are nullable with no default, so a row that
+    // nobody has recorded consent or STOP for reads exactly like this.
+    sms_consent_at: null,
+    sms_consent_source: null,
+    sms_consent_given_on: null,
+    sms_opted_out_at: null,
     ...overrides,
   };
 }
@@ -526,7 +575,7 @@ describe("the query the page asks", () => {
 
   it("selects only the columns it renders — no `*`", async () => {
     await render();
-    expect(entriesQuery().columns).toBe("id,name,email,phone,joined_at,status,source,joined_at_provenance");
+    expect(entriesQuery().columns).toBe(ENTRY_COLUMNS);
     expect(entriesQuery().columns).not.toContain("*");
   });
 
@@ -696,12 +745,19 @@ describe("rendered rows", () => {
     //
     // Enumerated, not excluded, exactly as before: the next unannounced
     // control still fails here.
+    //
+    // 0208 — AND AGAIN, PER-ROW. The owner's SMS-consent record: a disclosure
+    // naming the person, and its one submit. Offered only on a row with a
+    // mobile, no consent and no STOP, which this fixture is; the cases where
+    // it is withheld are proved in the 0208 block below.
     expect(controls.sort()).toEqual([
       "Add to waitlist",
       "Cancel",
       "Confirm removal",
       "Invite to book",
       "Record",
+      "Record SMS consent for Jo Smith",
+      "Record consent",
       "Remove",
       "Send invitation",
       "Start inviting",
@@ -1319,14 +1375,19 @@ describe("the Settings tab is server-gated", () => {
     "utf8",
   );
 
-  it("requires BOTH rollout flags for the live path, OR an active queue", () => {
-    // Either flag alone describes a studio that is not taking durable waitlist
-    // requests, so the LIVE path still needs both (the durable flag is
-    // SUBORDINATE to the gate). WAITLIST-NAV-VIS-01 adds the second path: a
-    // studio already holding active entries keeps its navigation to them.
-    // Behavioural proof lives in waitlist-nav-visibility.test.ts.
+  it("requires the DURABLE COMMIT PATH for the live path, OR an active queue", () => {
+    // NEW-CLIENT-MODE-01: the two rollout flags are replaced by the one mode.
+    // WAITLIST-NAV-VIS-01's second path is UNCHANGED and load-bearing: a studio
+    // already holding active entries keeps its navigation to them, whatever the
+    // mode says - which is also why UNKNOWN cannot strand a real queue.
+    //
+    // P2-B: the FIRST path is the durable commit decision, not the mode. A
+    // bridged WAITLIST studio whose joins still commit by email has no durable
+    // queue, so the tab would open an empty operator surface. Reusing the
+    // bridge's own decision is what stops the nav and the commit point drifting
+    // apart. Behavioural proof lives in waitlist-nav-visibility.test.ts.
     expect(LAYOUT).toMatch(
-      /const waitlistLive =\s*\n\s*isNewClientWaitlistEnabled\(studio\.slug\) &&\s*\n\s*isNewClientWaitlistDurableEnabled\(studio\.slug\);/,
+      /const waitlistLive = newClientWaitlistCommitIsDurable\(admission, studio\.slug\);/,
     );
     expect(LAYOUT).toMatch(
       /const waitlistTabVisible =\s*\n\s*isOwner &&\s*\n\s*\(waitlistLive \|\|\s*\n\s*\(await hasActiveWaitlistEntries\(await createClient\(\), studio\.id\)\)\);/,
@@ -1334,9 +1395,14 @@ describe("the Settings tab is server-gated", () => {
     expect(LAYOUT).toContain('{ href: "/settings/waitlist", label: "Waitlist" }');
   });
 
-  it("derives BOTH flags from the SERVER-RESOLVED studio, never a browser value", () => {
-    expect(LAYOUT).toContain("isNewClientWaitlistEnabled(studio.slug)");
-    expect(LAYOUT).toContain("isNewClientWaitlistDurableEnabled(studio.slug)");
+  it("derives the mode from the SERVER-RESOLVED studio, never a browser value", () => {
+    // NEW-CLIENT-MODE-01: the two env predicates are gone from this consumer.
+    // The property that mattered is unchanged and now stronger - the authority
+    // is keyed by the server-resolved studio, and nothing browser-supplied
+    // reaches it.
+    expect(LAYOUT).toContain("getNewClientAdmissionMode(studio)");
+    expect(LAYOUT).not.toContain("isNewClientWaitlistEnabled");
+    expect(LAYOUT).not.toContain("isNewClientWaitlistDurableEnabled");
     expect(LAYOUT).not.toMatch(/searchParams|useSearchParams|props\.slug/);
   });
 
@@ -1947,7 +2013,7 @@ describe("a section past one page is navigable, not truncated", () => {
       ["eq", "studio_id", STUDIO_ID],
       ["eq", "status", "claimed"],
     ]);
-    expect(readFor("claimed").columns).toBe("id,name,email,phone,joined_at,status,source,joined_at_provenance");
+    expect(readFor("claimed").columns).toBe(ENTRY_COLUMNS);
   });
 });
 
@@ -2658,6 +2724,106 @@ describe("WAIT-04A — truncation copy is provenance-neutral", () => {
     expect(row).toBeTruthy();
     for (const forbidden of [/\bposition\b/i, /\brank\b/i, /\b#\d+\b/, /\b\d+(st|nd|rd|th)\b/i]) {
       expect(row!, `ordinal leaked: ${forbidden}`).not.toMatch(forbidden);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0208 — EACH ROW STATES ITS SMS STANDING, AS RECORDED
+// ---------------------------------------------------------------------------
+//
+// The row says what is on record and nothing more: STOP first, then whose
+// consent it is and when, then "none". The owner's recording form appears only
+// where the command would accept it. The command's own refusals are proved in
+// tests/db/waitlist-sms-consent-practitioner-and-signup.db.test.ts; the action
+// in tests/app/settings/waitlist-sms-consent-action.test.ts.
+describe("0208 — each row states its SMS standing, as recorded", () => {
+  const standing = (row: string) =>
+    row.match(/data-testid="sms-consent-status"[^>]*>([^<]*)</)?.[1] ?? null;
+  const rowOf = async (over: Record<string, unknown>) => {
+    scenario.rows = [entry({ id: "e-sms", ...over })];
+    scenario.count = 1;
+    const row = rowMarkup(await render(), "e-sms");
+    expect(row, "the row must render").not.toBeNull();
+    return row!;
+  };
+
+  it("a row with a mobile and no consent offers the recording form, nothing preselected", async () => {
+    const row = await rowOf({});
+    expect(standing(row)).toBe("Texts: no consent on record");
+    expect(row).toContain('data-testid="sms-consent-form"');
+    expect(row).toMatch(/<input type="hidden" name="entry_id" value="e-sms"\/>/);
+    // NO DEFAULTS: the attestation is unticked and neither date answer is
+    // chosen, so a hurried press records nothing nobody stated.
+    const form = row.slice(row.indexOf('data-testid="sms-consent-form"'));
+    expect(form).toContain('name="sms_consent_attest"');
+    expect(form).toContain('name="sms_consent_date_known"');
+    expect(form).not.toMatch(/\bchecked\b/);
+    // The day field appears only once "I know the day" is chosen.
+    expect(form).not.toContain('name="sms_consent_given_on"');
+  });
+
+  it("STOP wins: an opted-out row says so and offers no form, even with consent on record", async () => {
+    const row = await rowOf({
+      sms_consent_at: "2026-08-20T09:00:00.000Z",
+      sms_consent_source: "public_form",
+      sms_opted_out_at: "2026-08-21T09:00:00.000Z",
+    });
+    expect(standing(row)).toBe("Texts: opted out (replied STOP)");
+    expect(row).not.toContain('data-testid="sms-consent-form"');
+    expect(row).not.toMatch(/agreed/);
+  });
+
+  it("the person's own Yes reads as theirs, on the studio's calendar day", async () => {
+    // 02:30 UTC on the 21st is still the 20th in Toronto: the day is the
+    // studio's, not the server's.
+    const row = await rowOf({
+      sms_consent_at: "2026-08-21T02:30:00.000Z",
+      sms_consent_source: "public_form",
+    });
+    expect(standing(row)).toBe("Texts: agreed on the waitlist form on Aug 20, 2026");
+    expect(row).not.toContain('data-testid="sms-consent-form"');
+  });
+
+  it("a studio-recorded consent says so, with the day they agreed, unshifted", async () => {
+    // A bare date read as an instant would render as Feb 28 in Toronto.
+    const row = await rowOf({
+      sms_consent_at: "2026-08-22T15:00:00.000Z",
+      sms_consent_source: "practitioner",
+      sms_consent_given_on: "2026-03-01",
+    });
+    expect(standing(row)).toBe(
+      "Texts: consent recorded by the studio on Aug 22, 2026 · they agreed on Mar 1, 2026",
+    );
+    expect(row).not.toContain('data-testid="sms-consent-form"');
+  });
+
+  it("an unknown agreement day is stated as unknown, never as the recording day", async () => {
+    const row = await rowOf({
+      sms_consent_at: "2026-08-22T15:00:00.000Z",
+      sms_consent_source: "practitioner",
+      sms_consent_given_on: null,
+    });
+    expect(standing(row)).toBe(
+      "Texts: consent recorded by the studio on Aug 22, 2026 · they agreed on a day not known",
+    );
+  });
+
+  it("a row with no mobile says so, and offers no form", async () => {
+    const row = await rowOf({ phone: null });
+    expect(standing(row)).toBe("Texts: no consent on record · no mobile number on file");
+    expect(row).not.toContain('data-testid="sms-consent-form"');
+  });
+
+  it("the read never asks for the owner's evidence note, the recorder or the scope", async () => {
+    await rowOf({});
+    for (const column of [
+      "sms_consent_evidence_ref",
+      "sms_consent_recorded_by_practitioner_id",
+      "sms_consent_scope",
+      "sms_consent_text_version",
+    ]) {
+      expect(entriesQuery().columns).not.toContain(column);
     }
   });
 });

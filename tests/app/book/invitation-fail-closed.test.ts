@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { NEW_CLIENT_WAITLIST_SLUGS_ENV } from "@/lib/booking/new-client-waitlist";
 
@@ -17,8 +17,17 @@ const EMAIL = "chloe@example.test";
 const HASH = createHash("sha256").update(EMAIL, "utf8").digest("hex");
 const START = new Date("2026-10-07T14:00:00.000Z"); // a WEDNESDAY in Toronto
 const START_ISO = START.toISOString();
+// Every instant this suite books is ABSOLUTE, and the action refuses a start at
+// or before the WALL CLOCK (its public past-time guard, which runs after the
+// invitation is authorised). Left unpinned, the fixture expired as the calendar
+// caught up with it: from 2026-10-05T14:00Z the two P3-D acceptance controls
+// failed on every branch, and four of the five P3-D refusal cases went on
+// passing with the element check deleted, because the guard refused them
+// instead. `now` is a fixture fact here, before every instant below.
+const FROZEN_NOW = new Date("2026-10-01T12:00:00.000Z");
 
 const rpcCalls: string[] = [];
+const rpcArgs: Array<{ fn: string; args: Record<string, unknown> }> = [];
 const clientWrites: Array<{ table: string; op: string }> = [];
 const scenario = { weekdays: null as unknown, redeemResult: "redeemed" as string };
 
@@ -44,7 +53,16 @@ function makeChain(table: string) {
       table === "services"
         ? { data: { id: SERVICE_ID, studio_id: STUDIO_ID, name: "Consultation",
                     modality: "consultation", default_duration_minutes: 45, active: true }, error: null }
-        : { data: null, error: null },
+        // The studio EXISTS, as it does in production. A missing row is now
+        // UNKNOWN admission and refuses every new-client mutation, which is
+        // correct and is not what this suite is about: its subject is the
+        // invitation weekday authority. `set_at` is stamped so the mode is a
+        // persisted OPEN and no env list can perturb it.
+        : table === "studios"
+          ? { data: { new_client_admission_mode: "open",
+                      new_client_admission_mode_set_at: "2026-09-30T12:00:00.000Z" },
+              error: null }
+          : { data: null, error: null },
     single: async () =>
       table === "clients" && inserted
         ? { data: { id: CLIENT_ID, name: "Chloe", email: EMAIL, phone: null,
@@ -57,8 +75,9 @@ function makeChain(table: string) {
 
 const admin = {
   from: (t: string) => makeChain(t),
-  rpc: async (fn: string) => {
+  rpc: async (fn: string, args: Record<string, unknown> = {}) => {
     rpcCalls.push(fn);
+    rpcArgs.push({ fn, args });
     if (fn === "resolve_new_client_waitlist_invitation") {
       return { data: [{ result: "live", invitation_id: "inv-1", studio_id: STUDIO_ID,
         entry_id: "entry-1", scope_service_id: SERVICE_ID, scope_start_date: "2026-10-01",
@@ -68,13 +87,22 @@ const admin = {
     if (fn === "redeem_new_client_waitlist_invitation_verified") {
       return { data: [{ result: scenario.redeemResult, studio_id: STUDIO_ID, entry_id: "entry-1" }], error: null };
     }
-    if (fn === "create_public_appointment") {
-      return { data: [{ result: "created", appointment_id: APPT_ID, created_at: new Date().toISOString() }], error: null };
+    // NEW-client bookings now reach ONE composed command, which owns admission
+    // + client creation + the appointment as a single commit and tells the
+    // ordinary path from the invited one by the SERVER-DERIVED entry id.
+    // `create_public_appointment` stays for EXISTING clients, unchanged.
+    if (
+      fn === "create_public_appointment" ||
+      (fn === "create_public_appointment_for_new_client" && args.p_entry_id == null)
+    ) {
+      return { data: [{ result: "created",
+            client_id: (args.p_client_id as string | null) ?? CLIENT_ID, appointment_id: APPT_ID, created_at: new Date().toISOString() }], error: null };
     }
     // WAIT-03. An INVITATION booking commits through 0195, which answers with
     // its own success word. Nothing else about these journeys changed.
-    if (fn === "create_waitlist_public_appointment") {
-      return { data: [{ result: "created_and_converted", appointment_id: APPT_ID, created_at: new Date().toISOString() }], error: null };
+    if (fn === "create_public_appointment_for_new_client" && args.p_entry_id != null) {
+      return { data: [{ result: "created_and_converted",
+            client_id: (args.p_client_id as string | null) ?? CLIENT_ID, appointment_id: APPT_ID, created_at: new Date().toISOString() }], error: null };
     }
     return { data: null, error: null };
   },
@@ -130,10 +158,37 @@ function form(over: Record<string, string> = {}) {
 }
 const clientRowsCreated = () => clientWrites.filter((w) => w.table === "clients" && w.op === "insert").length;
 
+type BookResult = Awaited<ReturnType<typeof publicBookAppointmentAction>>;
+// ACCEPTED means booked through the INVITED commit (0195): the entry id is what
+// tells it from the ordinary new-client path.
+function expectBookedThroughInvitation(out: BookResult) {
+  expect(out.ok).toBe(true);
+  expect(
+    rpcArgs.some((c) => c.fn === "create_public_appointment_for_new_client" && c.args.p_entry_id != null),
+    "the invited path must carry the entry id",
+  ).toBe(true);
+}
+// REFUSED means refused by the INVITATION AUTHORITY, before anything is spent:
+// its code, and no redeem or commit. A later refusal fails one or the other -
+// the past-time guard answers with no code, and the consume step's refusal
+// shares the code but only after the redeem has run.
+function expectRefusedByInvitationAuthority(out: BookResult) {
+  expect(out).toMatchObject({ ok: false, code: "invitation_refused" });
+  expect(rpcCalls).not.toContain("redeem_new_client_waitlist_invitation_verified");
+  expect(rpcCalls).not.toContain("create_public_appointment_for_new_client");
+}
+
 beforeEach(() => {
+  // Only `Date` is faked. The action awaits real promises, and faking timers
+  // wholesale would stall them.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(FROZEN_NOW);
   process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = SLUG;
-  rpcCalls.length = 0; clientWrites.length = 0;
+  rpcCalls.length = 0; rpcArgs.length = 0; clientWrites.length = 0;
   scenario.weekdays = null; scenario.redeemResult = "redeemed";
+});
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("P2-A — the allowed-weekday authority must fail CLOSED", () => {
@@ -175,18 +230,30 @@ describe("P3-D — an unreadable weekday ELEMENT must not coerce into a real day
   const SUNDAY = "2026-10-04T14:00:00.000Z";
   const MONDAY = "2026-10-05T14:00:00.000Z";
 
+  // ANTI-VACUITY. A refusal is evidence only while the SAME request would
+  // otherwise book. So each case first books a LEGITIMATE authority for the same
+  // instant -- for the coercing elements, the very day `Number()` would mint --
+  // and only then must the malformed one be refused by the invitation authority
+  // itself. The Sunday cases had no such twin, so when their instant passed and
+  // the clock began refusing them, nothing noticed.
   it.each([
-    ["a NULL element", [null], SUNDAY],
-    ["an empty-string element", [""], SUNDAY],
-    ["a boolean element", [true], MONDAY],
-    ["a NULL beside a real day", [1, null], SUNDAY],
-    ["an object element", [{}], SUNDAY],
-  ])("refuses %s rather than coercing it to a weekday", async (_label, weekdays, when) => {
+    ["a NULL element", [null], [0], SUNDAY],
+    ["an empty-string element", [""], [0], SUNDAY],
+    ["a boolean element", [true], [1], MONDAY],
+    ["a NULL beside a real day", [1, null], [1, 0], SUNDAY],
+    ["an object element", [{}], [0], SUNDAY],
+  ])("refuses %s rather than coercing it to a weekday", async (_label, weekdays, legitimate, when) => {
+    const book = () =>
+      publicBookAppointmentAction(form({ invitation_token: TOKEN, invitation_capability: CAP, starts_at: when }));
+
+    scenario.weekdays = legitimate;
+    expectBookedThroughInvitation(await book());
+
+    rpcCalls.length = 0; rpcArgs.length = 0;
     scenario.weekdays = weekdays;
-    const out = await publicBookAppointmentAction(
-      form({ invitation_token: TOKEN, invitation_capability: CAP, starts_at: when }),
-    );
+    const out = await book();
     expect(out.ok, "a weekday that only exists via coercion must never authorise").toBe(false);
+    expectRefusedByInvitationAuthority(out);
   });
 
   // Representation is validated here; RANGE stays the scope module's job. These
@@ -196,7 +263,7 @@ describe("P3-D — an unreadable weekday ELEMENT must not coerce into a real day
     const out = await publicBookAppointmentAction(
       form({ invitation_token: TOKEN, invitation_capability: CAP, starts_at: MONDAY }),
     );
-    expect(out.ok).toBe(true);
+    expectBookedThroughInvitation(out);
   });
 
   it("still accepts a plain numeric element", async () => {
@@ -204,7 +271,7 @@ describe("P3-D — an unreadable weekday ELEMENT must not coerce into a real day
     const out = await publicBookAppointmentAction(
       form({ invitation_token: TOKEN, invitation_capability: CAP, starts_at: MONDAY }),
     );
-    expect(out.ok).toBe(true);
+    expectBookedThroughInvitation(out);
   });
 
   it("still refuses an out-of-range day, which the scope evaluator owns", async () => {
@@ -212,7 +279,24 @@ describe("P3-D — an unreadable weekday ELEMENT must not coerce into a real day
     const out = await publicBookAppointmentAction(
       form({ invitation_token: TOKEN, invitation_capability: CAP, starts_at: MONDAY }),
     );
+    expectRefusedByInvitationAuthority(out);
+  });
+
+  // NEGATIVE CONTROL for the refusal check, and the production failure itself:
+  // past its instant, a LEGITIMATE day is authorised and then refused by the
+  // clock. That refusal must not pass as the invitation authority's, or a broken
+  // element check could hide behind it again.
+  it("NEGATIVE CONTROL: a refusal from the clock does not pass as the authority's", async () => {
+    vi.setSystemTime(new Date("2026-10-05T16:43:57.000Z")); // the failing production run's clock
+    scenario.weekdays = [1];
+    const out = await publicBookAppointmentAction(
+      form({ invitation_token: TOKEN, invitation_capability: CAP, starts_at: MONDAY }),
+    );
     expect(out.ok).toBe(false);
+    expect(rpcCalls, "authorised, then stopped before anything was spent").toEqual([
+      "resolve_new_client_waitlist_invitation",
+    ]);
+    expect(() => expectRefusedByInvitationAuthority(out)).toThrow();
   });
 });
 
@@ -220,10 +304,14 @@ describe("P3-A — a refused consume must leave no newly-created client row", ()
   it("POSITIVE CONTROL: an accepted consume still books and creates its client", async () => {
     const out = await publicBookAppointmentAction(form({ invitation_token: TOKEN, invitation_capability: CAP }));
     expect(out.ok).toBe(true);
-    // NAMED PRECISELY, because "either command booked" would still pass if an
-    // invitation were routed through the ordinary one — and that is exactly the
-    // booked-but-still-invited state 0195 exists to remove.
-    expect(rpcCalls).toContain("create_waitlist_public_appointment");
+    // NAMED PRECISELY, because "it booked somehow" would still pass if an
+    // invitation were routed down the ordinary path - exactly the
+    // booked-but-still-invited state 0195 exists to remove. The composed command
+    // is one name for both, so the ENTRY ID is what distinguishes them now.
+    const invitedCall = rpcArgs.find(
+      (c) => c.fn === "create_public_appointment_for_new_client" && c.args.p_entry_id != null,
+    );
+    expect(invitedCall, "the invited path must carry the entry id").toBeDefined();
     expect(rpcCalls).not.toContain("create_public_appointment");
   });
 
@@ -234,7 +322,7 @@ describe("P3-A — a refused consume must leave no newly-created client row", ()
       const out = await publicBookAppointmentAction(form({ invitation_token: TOKEN, invitation_capability: CAP }));
       expect(out.ok).toBe(false);
       expect(rpcCalls).not.toContain("create_public_appointment");
-      expect(rpcCalls).not.toContain("create_waitlist_public_appointment");
+      expect(rpcCalls).not.toContain("create_public_appointment_for_new_client");
       expect(clientRowsCreated(), "a refused consume must not leave a client row").toBe(0);
     },
   );

@@ -33,16 +33,31 @@ const CODE = SQL.replace(/^\s*--.*$/gm, " ").replace(/comment on [\s\S]*?;/gi, "
 const SIG = "public.mark_waitlist_mobile_verified(uuid, text)";
 
 describe("0203 takes the number it derived", () => {
-  it("is the repository maximum with nothing above it", () => {
-    expect(isRepoMax(VERSION)).toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
+  it("is no longer the repository maximum — 0204 is", () => {
+    // HANDED OFF, per CLAUDE.md: only the CURRENT max may assert `isRepoMax`.
+    // It moved from here when NEW-CLIENT-MODE-01 authored 0204. Leaving the
+    // claim here would have made this file red the moment anything landed above
+    // it, which is the failure mode that hand-off exists to prevent.
+    expect(isRepoMax(VERSION)).toBe(false);
+    // DERIVED, NOT PINNED. A literal list here is exactly the "trip on the next
+    // one" pin CLAUDE.md s2 forbids: it goes red for every later migration,
+    // which is the eighteen-file mechanical sweep that took 0163, 0164 and 0165
+    // red after push. Two facts about an older migration are true forever and
+    // for any future head -- something is above it, and everything above it is
+    // greater. Those are what this asserts.
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above this older migration").toBeGreaterThan(0);
+    expect(
+      above.every((v) => Number(v) > Number(VERSION)),
+      "versionsAbove returned a version at or below its own",
+    ).toBe(true);
   });
 
   it("claims its version exactly once", () => {
     expect(countVersion(VERSION)).toBe(1);
   });
 
-  it("IS APPLIED to production and is the hosted head, at PARITY", () => {
+  it("IS APPLIED to production, and hosted has not gone backwards past it", () => {
     // THE EQUALITY CLAIM ARRIVED HERE when `0203` was applied on 2026-09-27 under
     // explicit per-change owner authorization, from the reviewed PR #768 head
     // 1275486e7197d834294f58a85da774f4244aa176, sha256
@@ -62,11 +77,25 @@ describe("0203 takes the number it derived", () => {
     // take the equality. Leaving it here would go red on that apply, which is the
     // whole reason the claim travels.
     const state = migrationState();
-    expect(state.hosted_migration_max).toBe(VERSION);
-    expect(state.repo_migration_max).toBe(VERSION);
-    expect(state.repo_equals_hosted).toBe(true);
-    expect(state.pending_migrations).toEqual([]);
-    expect(state.next_free_migration).toBe("0204");
+    // NARROWED TO A FLOOR 2026-10-01, when 0204 was applied. The block above said
+    // equality is a current claim that exactly one file may hold, and that whoever
+    // applied 0204 had to move it; this is that move. 0203 now asserts only that
+    // hosted has not gone BACKWARDS past it -- which is what its own title claims.
+    //
+    // THE EQUALITY NO LONGER TRAVELS BETWEEN FILES. 0204's file held it until
+    // 0205 was applied on 2026-10-03, and that apply took 0200, 0202 and 0204
+    // red together -- three files holding one current claim. It is now owned by
+    // NO per-migration file: CURRENT migration state is derived from
+    // migrationState() and proved centrally, once, by
+    // tests/docs/canonical-production-facts.test.ts. That is why nothing here
+    // has to move on the next apply.
+    //
+    // IT WENT RED BEFORE IT WAS MOVED, and the reason is worth recording: the
+    // docs-only risk classification skips the validate lane, so a migration-state
+    // change made inside a documentation commit was invisible to CI for eight pushes,
+    // until an unrelated new test file flipped the diff to `application`.
+    expect(Number(state.hosted_migration_max)).toBeGreaterThanOrEqual(Number(VERSION));
+    expect(state.pending_migrations).not.toContain(VERSION);
   });
 });
 

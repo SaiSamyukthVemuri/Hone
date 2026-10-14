@@ -1,0 +1,240 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:90406482851c27c72919ebe412e98d5318ad2da0887bf55d9e8a8bbdaf0fe914",
+  "claims": [
+    {
+      "id": "claim_b7aa5ba1def94319aaaae9f68aa2e7a9",
+      "statement": "Migration 0174 establishes that every legitimate appointment mutation goes through a reviewed SECURITY DEFINER command that writes exactly one semantic appointment_audit event, while raw lifecycle DML is denied and triggers never invent audit events.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0174_appointment_attribution_and_audit_integrity.sql#L31-L50",
+          "version": "repo-lines-v1:sha256:15b989cc4701b6b0227f9b43260ea82adff1fe944aec01a3149e2ada2383cec9:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY5MTk5ODkzMTQ3ZTljOTQ3NTIxNDkwNzllYzU4YmIwYTlkZTRlMDAyZjI0YTZlNGY3NjU2YjAwZTE3YmNmY2IiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0MmFhYWVhZGE3MWVhZDRiMGZjZjlkZDhkYTAxMzk1ZjAxYjcyYzkxMDdkNzc3ZTk3ZGY4NDc3NTNlNTAyNzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY5NzZiNjUzYzJhYTg0YjVlZDhkNDE0ODVmOTQ2YWE3N2M0ZWQxNWM4NzlkNmM0OTRiNmVhM2MyOGUxNDZkNjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImYwNGVkNjFkNGY3ZjYxYzI4ZTE1NzQxMDIxMGQwMGI2ZGRlODI0N2ZmZjY0OTU0ODMxMDBhYWE5NmI1MzdiNzAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c63474dd12de466dbb0ae18f014597f6",
+      "statement": "Migration 0172 revokes INSERT, UPDATE and DELETE (plus TRUNCATE, REFERENCES, TRIGGER and MAINTAIN) on appointments and appointment_audit from anon and authenticated.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0172_revoke_authenticated_appointment_dml.sql#L1-L45",
+          "version": "repo-lines-v1:sha256:158bfdc13edbb2ae4174563e5fc4d7373a04aa4d6aa1b4f25ad086adc9a74d8b:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRiNzcxNGI4ZWFjNjdhN2VmYTQyZjI4ODNkMDNhMDUyY2Q5NWQ2YzA3YTA0NzMxZGE3NzgwMjIxNjczMzYyZmQifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0172_revoke_authenticated_appointment_dml.sql#L265-L287",
+          "version": "repo-lines-v1:sha256:864d23759643468cbf626f5a5db930e93b72c793802ae9d03a5ce5f51abea10c:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM4NWY5NjdkMjhkZTkxMTNhZGJjNTQ2Nzg3NDAyZGUyNWU0NjBhNzQ4YzBmMjU0ZmViNTUzMDU2Mjk3OWQwYmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA0M2I2MDM2N2Q2M2MzNzY0ZjNiNGQ1MmU1NGUyM2NkM2MyNWIzMjViMDNkMzQ0YjI3MTk1MjhiYTFkZjc5YmQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM3ZGU3ODlhNTljMjI4YTRmNmVkNjQ5YzFiYmQ5ZGZkNjNjNTJmZDMyZjAzNWU0OTAyNjRiYWMwM2VjYzcwNDMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoyLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg4ODJlNTcyZjI4M2I3MmMxMjYyYmQxMDA2NTZjN2RhM2NhYTEyMGNlZGY2MjQ2NDI4OTUwNTEyMTU3ZTgyZGQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b7c0d3815d8b4df38bc18e226dffc676",
+      "statement": "Migration 0174 removes service_role lifecycle DML on appointments except a temporary column-level UPDATE on postcare bookkeeping columns.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0174_appointment_attribution_and_audit_integrity.sql#L1-L80",
+          "version": "repo-lines-v1:sha256:2851775694f951374c906d6b5103fb6215dbd05f0a86e0a7065f6cb860c08e91:eyJzZWxlY3RlZExpbmVDb3VudCI6ODAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNkZmE0ZDY1NGJjY2QzZjliMzA3N2RhZmY0MGUyOWQwYWJjYjEzNTAyZTNkNTNmY2I4OTU0NmZlODVjYjMzODUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZmZjdiNjFhM2YxOWUzNDUxZTFhNGYyMjYwMzJiNGExMTQyMjMyNTVkZjJhMTYxZmE0NDJjZjFkNmMyYzkwYzEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a491a05435cc4562a94cb5ef0131d131",
+      "statement": "After migration 0177, service_role holds only SELECT on appointments with no column-level UPDATE, and postcare bookkeeping moved to the claim_postcare_send and settle_postcare_send commands.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0177_postcare_write_boundary.sql#L1-L28",
+          "version": "repo-lines-v1:sha256:d4f881134a145f91ccc2db2d2ff272272e1bbba3e0c065bee5bdebab437768f5:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFjNDNmYjJlMzkzMWI5NWFiZGZiZTgzZGFkMDQyMzYzNjEwNGU2YmE5MDg3YmU0ZWEyYjFmOWNiYzk2NzQ0NTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImIyYTU5OGJhYzEzN2M0YzY5MjA0Nzk0MmQ5YzAwZmJiNmZkYzA1NzVhOTU4NzQ2NDdiNmJhNmVmNjhkMjE5OTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_287f93a8e9ca477397ea9a0a1161365e",
+      "statement": "A TypeScript-compiler-based census guard with non-vacuity controls requires that application code has no direct appointments writer and no appointment_audit runtime writer, and pins the reviewed set of variable-table writers.",
+      "evidence": [
+        {
+          "resource": "repo://tests/security/appointment-direct-dml-guard.test.ts#L518-L740",
+          "version": "repo-lines-v1:sha256:0d0379785a21e5ba6d03b046d969685658b7cd8bc2b2117e4dbed9d7407098a9:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIzLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI3MGRhNzY1N2E1M2IyOTVjZWYyOTdmZjE5OTgxZmE2NmE4ZmI5ZjYyZjFlYTUzYTliNTg0YjA0ZDRmZWRhM2M3IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI4NzkxZDQyZDQ5MTJiMGQwZDM4NDI4NjUyOGI5OGJiYjczOWI1N2FkMzRmM2U5NmI1MTIwNTMwNzA0OWVhYmExIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI5YjFjNzM0MWIwNTc5YjJjMjU5MTg5ZDNiZDdjZTQ3OTIzY2IyYjAwY2UzMGQ2MzRlZWI4NjRjODFkNWIyM2FiIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJmMzdkNGJlNzA2MjVhMTI0Y2M3NDg3YWMyYzhhNDgxZmFjOWUxOTU3NWRiOWMyYTllZWU3ZTczODA3OTEwMzAwIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_30681f8c629c4f46afdfc74517ff94a0",
+      "statement": "create_public_appointment (0170) locks the studio row, takes the studio capacity advisory lock, validates availability, time, studio-local horizon, client and service, inserts the appointment with server-derived fields, and inserts its created audit row in the same transaction, executable only by service_role.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0170_public_appointment_command.sql#L636-L923",
+          "version": "repo-lines-v1:sha256:87c0c773cd27ad0bb7c1cdecf0d138a7ccdccdf9ab3e17f94ded515d49f75692:eyJzZWxlY3RlZExpbmVDb3VudCI6Mjg4LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIyOGFhZGFjNWE0YWY5YjIwZGQwMmNhOTY3OWM3ZWJiN2YzZmM3OTllZTA3YjRkYTBmNDMwNDA2ZDMzYmJiNTM5IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0NTc4ZGE4ODIyMDhiNzI1YjljZDExMDhmNmI4YzY0Y2E1NzlhM2QzNzRjYWNhOTUyMzljMjhhNzI1OGMxYTdhIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI1M2Y3MTVhMzE4YjcyZDkyYmU0YzFhZTkzNzVkZDI5MTg0YjYzODM5N2YwZmJkZjhmY2Q3NmIzODc3Nzg2MmQwIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI1NThmN2Y5YTI3MjIxZGFkMzhlYzY3NWRjNzRmNTJiNjQ4ZjU2Njk2ZGU2MmM2NWQ1MjdjMDMzMTE4MWRlNTZhIn0"
+        },
+        {
+          "resource": "repo://supabase/migrations/0170_public_appointment_command.sql#L964-L964",
+          "version": "repo-lines-v1:sha256:dbd077768b9da2796bc66883304de93a3c2b6719964388b34b9c27f9d77d8ed3:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZGJkMDc3NzY4YjlkYTI3OTZiYzY2ODgzMzA0ZGU5M2EzYzJiNjcxOTk2NDM4OGIzNGI5YzI3ZjlkNzdkOGVkMyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZGJkMDc3NzY4YjlkYTI3OTZiYzY2ODgzMzA0ZGU5M2EzYzJiNjcxOTk2NDM4OGIzNGI5YzI3ZjlkNzdkOGVkMyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNDY5ODBmYzZiZjFjNmJlMGUzNTg4NzI5MThjYTRhNTFmZjgyNTVlZmNkODM0M2Q5NTI0MDQyNmVjZWI3YmEzMiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOTI4YjllZThlZmU1OTY2OGU2YzUyODRiMjg0NTBjYWU4OTI5NTZhZjgwOTVhMGVjZjZlZjc0NGMwYjg5ZWMxNCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_311a5b23240545fbbcb4e666d816d37b",
+      "statement": "create_public_appointment_for_new_client (0204) and create_waitlist_public_appointment (0195) both delegate appointment creation to create_public_appointment and are executable only by service_role.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0195_waitlist_atomic_booking_conversion.sql#L528-L528",
+          "version": "repo-lines-v1:sha256:2f0b3a4de2b8d609c6737cce9e5548549065fd29ed49d3045a1aef2f3b4ad37d:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMmYwYjNhNGRlMmI4ZDYwOWM2NzM3Y2NlOWU1NTQ4NTQ5MDY1ZmQyOWVkNDlkMzA0NWExYWVmMmYzYjRhZDM3ZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMmYwYjNhNGRlMmI4ZDYwOWM2NzM3Y2NlOWU1NTQ4NTQ5MDY1ZmQyOWVkNDlkMzA0NWExYWVmMmYzYjRhZDM3ZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMDA0NjYxZTdiZjE1OGM5NzIwYWM3MjZiMDI3ZTBiZmVlMjI5ODE1Njc4MDUwNTNiMWZmNmIzOWY3MzMxMDBmZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZGQ4NzAxNDFmOTE1ZTUzNTIxZGU4MTgzZGZlZTQyY2NkNjM2ZGNlYWVhZDZjOWUwOGMyOWMxYTk5OWRlZTY0NyJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0195_waitlist_atomic_booking_conversion.sql#L602-L606",
+          "version": "repo-lines-v1:sha256:388d733146b9119ca559dcfa5ad7275b6b1fdfbc7198656c976c53a297a090d1:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiODU2YzIyMDdiYjFiN2NmYmE4ODQ0NDhkZTI0NDJiOTNjMjI5YmQyM2U5MGE4ZjA0NThmYjc2YTgxMTAxYjRkNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMzhiMjIxYTkzYWE3MjQ5MTQ3OGVlNjcwZGUwMGMwNmEzZmU0OGY2MGQ4YmMyZTNjZTQ4N2UzNzMxZDViNDY2YyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOGUzODFjMThjMWFmOTM4ZDZlNWFlZjMyNDc0OGNmYWZlMjBiYmUyYTZkN2MzN2Y0MGRjMDllNzk5NWY2YzlmNCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjIsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiODg4MmU1NzJmMjgzYjcyYzEyNjJiZDEwMDY1NmM3ZGEzY2FhMTIwY2VkZjYyNDY0Mjg5NTA1MTIxNTdlODJkZCJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0204_new_client_admission_mode.sql#L730-L730",
+          "version": "repo-lines-v1:sha256:e9e2f5ec5856309adc86c65d0e10008672ad680068965b60bbd8415616b1cf42:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZTllMmY1ZWM1ODU2MzA5YWRjODZjNjVkMGUxMDAwODY3MmFkNjgwMDY4OTY1YjYwYmJkODQxNTYxNmIxY2Y0MiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZTllMmY1ZWM1ODU2MzA5YWRjODZjNjVkMGUxMDAwODY3MmFkNjgwMDY4OTY1YjYwYmJkODQxNTYxNmIxY2Y0MiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZmVjNDE3ODg5N2Q2ZmFiNDc2NjE0MjNkYmRmZWVjYzQzODYzM2Y2N2EzNjcxMmE3MWJjZjBjNGE0ODlhNjdlZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNjIzYzk3OTRjN2VlODJlMzBkOWI1YTBkMGM2NGIyMzE1YjlkYzU0NTYxZjlmYzQyYWYxMTQ0M2U5OTAzNjNhMCJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0204_new_client_admission_mode.sql#L788-L792",
+          "version": "repo-lines-v1:sha256:3fb687bb7326a16ce5be49d1db99e3f54140398babdd6126e38dce39dfa9d84f:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNmFlYTg1MTRiYWI0M2M4MmM5ZWIwNTg4YjRlNzE5MmUwMjFiMTA2ZGJmYjk1MDk0MjM1Nzc5ZTcxYTJiYjViMCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMGQ1ODA1MDU2MTlkODY4NGYzZTQ2ZjA2NTYxYTJmZTVlMWMxYzhlNjljYWRmMTMzNWZmODRjMzJmYTBhZTcyMSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjIxOWYyMjdiNzBhYjI1NDRmNGIyZDUxNzY0Y2I5ZjQ3OTVhMzc2MjVhOWRhZGZhNDAxZjYzYzJjYzM2NDVmOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjIsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiODg4MmU1NzJmMjgzYjcyYzEyNjJiZDEwMDY1NmM3ZGEzY2FhMTIwY2VkZjYyNDY0Mjg5NTA1MTIxNTdlODJkZCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_5072171c54ce4a5f9f723e0f5a9ad343",
+      "statement": "The latest definitions of create_internal_appointment_v2, practitioner_cancel_appointment and move_or_reassign_appointment are in migration 0174, which revokes EXECUTE on them from public, anon and authenticated and retains service_role.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0174_appointment_attribution_and_audit_integrity.sql#L1120-L1135",
+          "version": "repo-lines-v1:sha256:cff6f988ae0eab9e9b5bf2e020d6d21f38ea11d10f1ed6c6d7b10620a9e47021:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJlOTY3NjhkNWIyOTFmM2M3MTdiNWY2YjI4YTc3ZDg3YjI3MGI1ZjVmNzQ5MWVmMmFlNGVkZWQ1YmRiYWE2YWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjYzMDU0ZDYyM2MyNjM2M2I1MmYxNjIwMDI5YmMyYjdmMTA0OWY0NWE0MDdiN2QzNzQ0Nzc3YTA0ZTk3YWU3ODUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM1NWY3ZDBhYWNhZmZmZDRmNWU3ODc0N2JhNjVmMjQ3ODlkYTVhZDBlMjZhYjFmNGI1Y2M4NTJiNDMwZWNlZjAifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0174_appointment_attribution_and_audit_integrity.sql#L693-L693",
+          "version": "repo-lines-v1:sha256:32e4a8a9b774b33da65766ed6aef1564001328f8d7a024f9e3db981552f4d2c1:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMzJlNGE4YTliNzc0YjMzZGE2NTc2NmVkNmFlZjE1NjQwMDEzMjhmOGQ3YTAyNGY5ZTNkYjk4MTU1MmY0ZDJjMSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMzJlNGE4YTliNzc0YjMzZGE2NTc2NmVkNmFlZjE1NjQwMDEzMjhmOGQ3YTAyNGY5ZTNkYjk4MTU1MmY0ZDJjMSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNGM2ODA2ZTRlNjAyZmE3OWQ1NTcwMzlmZjZiYThmNzg2OTMzMzUyZjA0ZDI2NzI0ZmI3MjdiNWQ0YmE4NDg4YiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYTI0ZDZiM2I2NWQ3NTg0NDhiY2FjZDBjNjI5M2VmOWFjYThhN2RlYTI2MGRjOWFiYjU2ZTMxODg0YTY3NzA1OCJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0174_appointment_attribution_and_audit_integrity.sql#L855-L855",
+          "version": "repo-lines-v1:sha256:3f19d0777e8e7e269bde2946c32b35ca8747be267936bf857ede5f82a4711a50:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiM2YxOWQwNzc3ZThlN2UyNjliZGUyOTQ2YzMyYjM1Y2E4NzQ3YmUyNjc5MzZiZjg1N2VkZTVmODJhNDcxMWE1MCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiM2YxOWQwNzc3ZThlN2UyNjliZGUyOTQ2YzMyYjM1Y2E4NzQ3YmUyNjc5MzZiZjg1N2VkZTVmODJhNDcxMWE1MCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNWE1ZGVhZTk0MDcxMmQ0ZGFmNjQzY2JkOGM0ZWJmYzQzYzE5YmU0NzQyMmZhODUwZDFhMjhjZDQzNDk0MzllNiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiN2JhYTkwYTNkZWNhNGY0M2YwMzI5NWFkZjcwMDJlMDQzMWJlYWYxZGUyMTRhNzY4MmZjY2ZmYThhNjI2MWI3YiJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0174_appointment_attribution_and_audit_integrity.sql#L936-L936",
+          "version": "repo-lines-v1:sha256:ac0646b7cd3b8d31e0cfa569a34a643ac0f29aa8b7ee514af8fbea3921c9ee3a:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYWMwNjQ2YjdjZDNiOGQzMWUwY2ZhNTY5YTM0YTY0M2FjMGYyOWFhOGI3ZWU1MTRhZjhmYmVhMzkyMWM5ZWUzYSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYWMwNjQ2YjdjZDNiOGQzMWUwY2ZhNTY5YTM0YTY0M2FjMGYyOWFhOGI3ZWU1MTRhZjhmYmVhMzkyMWM5ZWUzYSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNmViMjJmMDk1NmRlYTViNWY1MDg5NGI4ZTc4NTE1NmQ1MjY3Y2M4MDAzYjA4ZGU0OTE1NThhYjk2Yjc4YzcwOSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMDAxMTM4NWY1MzhiNTBmYjM1ZGYwMTU5YmY4ZWM0ZTg2Mzc0Mzg0NzYxNmFkYjJlNWNmZGY4N2RjMWMzZTNjNSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_30f9463c0c464ddb8c6f9f8a7f6e1376",
+      "statement": "A DB test pins the installed functions that insert into appointment_audit to exactly create_internal_appointment_v2, create_public_appointment, mark_appointment_complete, mark_appointment_no_show, move_or_reassign_appointment, practitioner_cancel_appointment, public_cancel_appointment_with_token, reschedule_appointment_v2 and write_appointment_audit, with no trigger writing audit rows.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/appointment-audit-invariant.db.test.ts#L253-L300",
+          "version": "repo-lines-v1:sha256:b161bf99b4b92be01ad84bac0063b0969f5a0b9bb1119dc64bed147678722155:eyJzZWxlY3RlZExpbmVDb3VudCI6NDgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNiYjU4N2VkNjg0MjgwYzk4ZTY0YjE1ZTkyYTRkODdiM2RhOGYyMDg4Y2ZlOTc4ZjYyMjA0N2Y0ODFjN2IwZmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjYjk1OWYxMDE2MGMxMDJmZjgzYzk4OTgyMTFiYWExMmI3YjE0YTkxMzE2M2NkOTA1NTc4NDc2NjdiYzdiMTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE3NTAyYmZmMWExNmE1ZjBkYzVjMTFlZjBkMThmZTVkMmYzZWY2Yzg3MTYxZDFhNzE0ZWI1MzVkODg2ODFmZmUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFjNWVjYmNlNWIwMmVmZmI4ODUxYmYyZDI3MmVlNzljZjVlNzE4Y2ZhNDQzMzEyNzY2ZTEwNjFkN2IwOWY2ZjIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_22564e1c129d49869061ffa193c8c9c8",
+      "statement": "Migration 0175 dropped the legacy reschedule_appointment, practitioner_move_appointment and create_internal_appointment functions.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0175_appointment_transition_integrity.sql#L236-L250",
+          "version": "repo-lines-v1:sha256:171af988dcb9ab97779c09ea6710a67c4ed97f8334257006afaab8159465ef44:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkwNjVkNDE1MWViODc1NTYzOTRmNzc5NTI4NWQ3MjNjMDIwMjUyN2RiNGQ1MzkyY2M1ZTc0YzZkNDgwOTk1NGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhiYTAxYTczNGQ3YTUwMzMzNjUyY2FjNDZhN2I5NTQ4ZWE3YWIwZDQxNjY1MzM0Nzg3OGEyOTQwN2NhNjBmNGUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVhNzRkYjcxYzMyZDRkMDFmOTUzNTVhNGE0MTljZDNjYmZhMjczNjNjYTE3NjNhODJhNzUzOTEyNTcyYzliNmIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8bac084a79c344fe8271a6c9071ddb73",
+      "statement": "A BEFORE UPDATE OF status trigger allows only confirmed to completed, cancelled or no_show and the repair edges from those terminal states back to confirmed, and refuses any other change or same-status rewrite with SQLSTATE 23514.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0175_appointment_transition_integrity.sql#L120-L184",
+          "version": "repo-lines-v1:sha256:593098cf65a804414d0a7dc72b6a6e78589fc52a3a0c5e7fc074c71900a61ae4:eyJzZWxlY3RlZExpbmVDb3VudCI6NjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBmYWRhNTgwOTk0OWViYWZiNDM4ZGFhNjhhMzU4YjI2ZWFkODljNjFkMTQzMGEwNzYyMTVkYzQxZjU5ZTk1YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgxNDdkZWRmZjM5MzRlZGEyODZjZWJlMWYyYWI2NmU2ZmM5ZDQyYTczYjdhMmFiZTg0ZDNlYjZiY2I4ODA3NjIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFmMjE2MDc2NmMxZWIzYjJlY2FkYTI3ZDZiYTE4ZDUyZmFiY2MyNDIzMjAwZjE3N2I2MmY5ZGI5OWI0ODU1MDUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM0N2RiNmFiN2UwZTAyYjFhNGU4NDRhZTNhNWM3NjgzMzVhYjM5YjI0MTYyNWVkMTI1ODhkY2Y0MzhmZmNkMTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_99f3e34e2d284dd0841c017be66dfdee",
+      "statement": "Appointment completion is allowed from starts_at while no-show stays gated on ends_at, and early completion does not release the booked interval's capacity.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0175_appointment_transition_integrity.sql#L1-L58",
+          "version": "repo-lines-v1:sha256:bcdfb5ba1c8fcf4fb29f042d8046cc9d8deb10178c15b6f459cdcfb0850916de:eyJzZWxlY3RlZExpbmVDb3VudCI6NTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMWMwZjg1MmI0MTRiOTVmZjhhNDhmOGQ0YmFiYTMzOTBkNmRhM2NjNmQ3OGViOWU3N2Q5YjhlODYzOGVhMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMxMDlhYzkxMzM0MmVmZThkYmE0NmJjZTI5MGVjZDJiYjUwYmVjZDMzNjZlZjRlNTA0ODM4OTQyMWUwNWEyYWYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjliODUwZGM5NGVmMzc2MThjOTMxODcwYWYyZWM2MTg5NjJjNGU4MjA0YzY0ZDEyYTM3NGQwMjJmMGQxYmRhM2QifQ"
+        },
+        {
+          "resource": "repo://tests/db/appointment-transition-integrity.db.test.ts#L73-L320",
+          "version": "repo-lines-v1:sha256:5e4f07d0c229b747530ee2bb0af0f77763882e3168f625219ded757649f3d1f1:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQ4LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJiOTMxMGZhNjBkYjViMWI5YjU2N2ZlYjg2ODE0N2MzODc0ZDI5MmI1ZGU3NDFmNzEzYjhiZTMxMzA1MGM3NWZlIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI1YTkwMzcxYzYwOGEzOTZjOTIzMjI4YTZmZmFhZmViZTlhYmY1ODQ2ZjJlZTJlMGNmZWM0Y2JmYWQ2NGM3MzNhIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI0NWViYjI4YzA4NDMzOTIwYzE0MDdkZjVmMWMyNWVjZDY4YzYyYTFjNzRlNmQ0ZDAxYjMxMWJlZjc5YTA4ZGEyIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI5MjMwZDZjNTZkMjYyOWU3NmE3NzZlNmM0Y2I2MGJiNzU5ZWIxZjlmY2UxMjNiMjU4YjY0ZWVlZThjMzg5MjE2In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_c2759c5bde684de69f95b54ff378927c",
+      "statement": "Internal booking lets owners book for any eligible practitioner and members only for themselves, refuses inactive, ineligible, cross-studio, past and non-positive-duration bookings, yields 23P01 for a double booking of one practitioner, and serializes concurrent bookings with a studio advisory lock.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/internal-booking-command.db.test.ts#L105-L180",
+          "version": "repo-lines-v1:sha256:a3954a1177cdf356e6d3a70b994e97dcc154662f44bf1ccdde47108e1c9ce906:eyJzZWxlY3RlZExpbmVDb3VudCI6NzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFlYjViNWUzODRiNmJmNjk3YmRkNDNkYzE2MDVhNmE1OGI3OTAxMzhjYWI4ZmY1Nzc5MWE1YTc5MmY0YWVjZTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjExZGY4N2E0NzMxNmM3MDhjNTUwMjA5OGU5YWY2YzQ0NTM0ZWI4MGJlYWRjZjYwNjMwMjhlZmNhODU5MzdhYmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ3YjU3Mzg4MmQ2YmE3ZGJmMjNmOGQ1MDI4NGZiMzNhOWE3Y2ZkYjM4MDFjOGQ1MTQzYmU1MTFhMDA5NzY5YmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUyZmYwMTU1MTYyYjQwN2U1MmRiNDljMGVjZWYzZDc2YjI1ZjJhNmQ5N2MxYzM0YTMyNGExYmZkOTkwYjk4MTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_02eb3f0100f447a0afe9feaec0c6a024",
+      "statement": "revert_appointment_outcome is an owner-only, service_role-executed repair limited to a 72-hour window that refuses when blocking dependents exist, and repair commands lock studio row, then studio capacity advisory lock, then the appointment row.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0173_appointment_repair_commands.sql#L1-L80",
+          "version": "repo-lines-v1:sha256:938abb813ff0d95933f26860ace95d755b1ee300c6a31ee752f40256ab0f83b8:eyJzZWxlY3RlZExpbmVDb3VudCI6ODAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjllNzgzYmRiMjQ1NDlkMWU2ZTJkYzk5YmJhMzVhN2ZkMmM5YzBiMTQwNWQ0YjIzNzczYTg2YzYzYTFjNjNmNjIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ3ODYyNGNmOWQ1NDc1NjY0NTg5ZmJmNmJlMWI1Njg2MWQ1YjJiNGFjZTU5MWEyNDYxODM5NmM3YzljNDFmZDIifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0173_appointment_repair_commands.sql#L334-L410",
+          "version": "repo-lines-v1:sha256:af40394054314373179998a61c55d520c308c3e3ebe9015185b0b11c7fabbc8b:eyJzZWxlY3RlZExpbmVDb3VudCI6NzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiM2I3ZjM1ZTFhMzAyMzlmYzdkMjM1MDBiNDU2ZjEzYTY4YWJlMGFjYWMyNTY4NDMwYTFhZTAzYWQwM2EyNmYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVkMWFlOTYzN2I4YmE3NmI4MWU3MzgwZjY2OGNkYzcwMjExMDhlMzUxZjY3OWUzNWQ3NDJjNjVlNDhiZGU0YmQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI2NTY3N2U3ZWNjNDBjZGI2ZmFmYmIxNWI3ODk3MTMxMTg0ODJiZjNkY2Y2OWQwNGZhOGNhODY2OGM5ZTM1MjIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUwMWEyYWE3YzYwNzM3OTcyNzdjNTcxZWIwMDk1OGVjYzI2OTgyZjQ0NzE0MTU1Nzg2NTIzZDczNzFlMDhkMDEifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0173_appointment_repair_commands.sql#L588-L604",
+          "version": "repo-lines-v1:sha256:805378307aa8585e6c248feec710b541afaa8adcd648861cb10a4df19f4b0c0e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE2YTk4MDFmOGMwMDkzOGQwMGZlM2ZhZmNhYWUzNjkxNzQ2Y2I0ZDZkZmY1MGFlZDUyOGEyZWMxMjExNjA2YWEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ3OTliNTRkYmUzMDVmOWI1MjVhZjM2Mjg5ZDllNDRlMmJjYWUwYjhmMTBhMTYwZjIzMjZiNDNhNDE5NGE0NTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc4MmYyYTY5MjA2MmQ3ZTdlZDU4MzU2MTBmNDYyNGJiYzgxNzVhMjJjMmM0NmNlNGE3OWU2MTUwZTJmZDFhM2YifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a296f0b7fa494c8e9d417fca0bc0083b",
+      "statement": "Migration 0174 adds creator, canceller and outside-availability authoriser practitioner attribution columns to appointments, with NULL meaning no practitioner actor, and DB tests prove public bookings and client-token cancellations leave them NULL.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0174_appointment_attribution_and_audit_integrity.sql#L95-L110",
+          "version": "repo-lines-v1:sha256:e7e3bd079057ad6fc37195e712339f0238501dc716957f6d138a3478946cafcd:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmZjkyNjNiNjAzMjUyYWQyN2FhODk4MDEwODUzMWFmNjEyZjI3ZDgzN2U0NGI5ZDNmNjI3ZjM4ZDY5YzlhM2YiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM0YmVhYzFlNTMwYWU1YzZmMWY5ODYyMGI1MmY0NDA3ZWQ0YTdlM2FkMjFhYWM0NGJlMTA2ZDM0ZmY0MDZmMTAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQyOTFlYzlhMTFjOTRmMDgwMGNjZDNlMGY0N2UzNmM3NDIzZmJjNjVlOWQ1MjgzNjhjN2IyNjlmMWM4NTY4Y2MiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImMyNzkzMDg0Y2VmNGM3ZmE4MjdhNjk2ODczMGNkOGM2MzA4NThmOTQ3OGZkNDdlYjA5MjgxZGQ3YTc2OTBlMDgifQ"
+        },
+        {
+          "resource": "repo://tests/db/appointment-attribution-audit-integrity.db.test.ts#L194-L380",
+          "version": "repo-lines-v1:sha256:11c4f96f75833940e94a270ec645f6e49a615958b0bb9673687dedca3cfd76d0:eyJzZWxlY3RlZExpbmVDb3VudCI6MTg3LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJiNDExYWQ2NWUyNmQ3NzM1Yjg0YzdmNGRiY2E3MzI3ZmViOTNjNTllY2Y4MGIwNzE3YzJhY2JiMzlkNDI1NWZmIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIxODU1NzE3MmUxNzkzZmNkNGY5ZDA2Y2I1NmQ2NDdkYjg5NmZkNGI0ZDlmMzQ2NDg0NWRkYmMzOTFjMDcyOTcwIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI1ZmViYzUwYjVlN2FiMjg4YTg5Y2E1MmJkY2NlNjBiNThhNzM2NDE5ZWZjNjNjNzg1ZTFjNWI0MzNjYjdiNWIwIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlOTU2MWYzNzQ5ODdlZjY3MDNjMWY5YmM3ODNiMGY2M2FiMDUyMzA5NjczM2EyNzgwMzg0ODcxNzhmOTJlZWU4In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_3223f9fee8b6477697aeadd75f6fe347",
+      "statement": "Migrations 0173 and 0175 record a standing prohibition on re-emitting snapshot_appointment_buffer() because production carries out-of-band behaviour in that function that exists in no repository migration.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0173_appointment_repair_commands.sql#L31-L36",
+          "version": "repo-lines-v1:sha256:90f1209533e9227bcf69d9bc07cabea8e4675bfd3bce76e4b75810acc9a9016e:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOTNjYWE2MjY1ZDIzZDJiYWJmNmY0M2EyODUxYmJlNmZjMzA0NDQyOWYyMGVhMGI0OWIzNzRjOWI5YTNkNjZjZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZThhYTk0NzMwYWVlZTEzMzI1M2UzYTFjMmY2NmY4OTBlNjhhYWQwMTRkMDM3MjYwYzU1ODQ2MWFiMDVhYTZiNSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZmJhNjdiMjQ2ODYyOWJiZmU3MDg4OTI2MGY2YzE1YjcwZGZlMTY4YjIxNWQ2ZGQzZWE1ZjEzYzJlNmU4ZTBiZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMzkxMjVkNjgzOTlkZjkzMWYwNTY4MTQ4NDZiODBkOWU3OTkwY2FiNTgzNDlkMzk0NDQ3NTk0ODU2MGY2MTRlZiJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0175_appointment_transition_integrity.sql#L18-L22",
+          "version": "repo-lines-v1:sha256:692666e788f0859feae3a743685878b1d5251e6556553a7b51fc788921db4b5c:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZGFhNWYzN2EyZTA4NmZjMjVkMWQwOWIyOWUyYjI0YTQwMTgwNzlmMDhjNDJhZWFiMGRiNDk5ODEyYWEzM2M4NiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNjQxZmZhYWRlMWE3ZWZiNzBhMGY1NzkyMmRhNTVjYWE1NmUwMTk0Y2UyMjM4NjZmNTg4MjdiMjM1NWY4MDU5NCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjkzMzI0NDliMjc2MzM0NDFlYWYxNzZjZTA5NWExMzgyOGI3ZDhiMGEyNzEyNjExZGFjYjcxOTI2ZDBhMzBhZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYTkwZTU0OWFiMDMzNDZiZWFlNjdhOWI1MTg2Mjk4YzEyM2IyYmY4MDUyYWY0Mzc5N2RjMjYyN2JmYzc5YzJkZSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_e9a74591c44d4835a422bd2935b8487d",
+      "statement": "The service-role allowlist entry for move-appointment-actions.ts still says move_or_reassign_appointment's effective definition is 0152 and that practitioner_move_appointment is a caller-less delegate, although 0174 redefined the former and 0175 dropped the latter.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0174_appointment_attribution_and_audit_integrity.sql#L936-L936",
+          "version": "repo-lines-v1:sha256:ac0646b7cd3b8d31e0cfa569a34a643ac0f29aa8b7ee514af8fbea3921c9ee3a:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYWMwNjQ2YjdjZDNiOGQzMWUwY2ZhNTY5YTM0YTY0M2FjMGYyOWFhOGI3ZWU1MTRhZjhmYmVhMzkyMWM5ZWUzYSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYWMwNjQ2YjdjZDNiOGQzMWUwY2ZhNTY5YTM0YTY0M2FjMGYyOWFhOGI3ZWU1MTRhZjhmYmVhMzkyMWM5ZWUzYSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNmViMjJmMDk1NmRlYTViNWY1MDg5NGI4ZTc4NTE1NmQ1MjY3Y2M4MDAzYjA4ZGU0OTE1NThhYjk2Yjc4YzcwOSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMDAxMTM4NWY1MzhiNTBmYjM1ZGYwMTU5YmY4ZWM0ZTg2Mzc0Mzg0NzYxNmFkYjJlNWNmZGY4N2RjMWMzZTNjNSJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0175_appointment_transition_integrity.sql#L236-L250",
+          "version": "repo-lines-v1:sha256:171af988dcb9ab97779c09ea6710a67c4ed97f8334257006afaab8159465ef44:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkwNjVkNDE1MWViODc1NTYzOTRmNzc5NTI4NWQ3MjNjMDIwMjUyN2RiNGQ1MzkyY2M1ZTc0YzZkNDgwOTk1NGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhiYTAxYTczNGQ3YTUwMzMzNjUyY2FjNDZhN2I5NTQ4ZWE3YWIwZDQxNjY1MzM0Nzg3OGEyOTQwN2NhNjBmNGUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVhNzRkYjcxYzMyZDRkMDFmOTUzNTVhNGE0MTljZDNjYmZhMjczNjNjYTE3NjNhODJhNzUzOTEyNTcyYzliNmIifQ"
+        },
+        {
+          "resource": "repo://tests/security/service-role-allowlist.ts#L84-L92",
+          "version": "repo-lines-v1:sha256:dfd0007cc36a72d4cd9376ac2a8693dfe4929f9ee6183524ccdd4ad64f52a089:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMGVlYWNiMjYxY2EwZDgxYmZkNWMyNDMxY2EzNTI1N2M2OWM4M2JhMjc5ZDBkYmQ3Zjk2MmEwNWQ1OGVlYTUzNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDI1MzQyYzFkNTdhYmIxZWRiZmQ4ZTgxNmZlMWMyNTEzYzlmZWU2OTBhMmU4NjdkNmQzZjE5MTQ3ZmY1NzMxYiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZGEyOWNlZGU0N2Q2YTk4YWNlNDBiZWZiZTBhMmQ5MDJlZWMwMmYwMzZjMWE1NjMwZDRkMDBkZDIyMDU5OWNkZCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYWFlMWI1MzUzYzRmNTI4MTRiZjI4YjJjMzhlOGNlODJlMmE3OWE2NjRiNzdlODliNjhhMjU3ZTIxZTJlMjUxNiJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-04T01:59:59.625Z"
+  }
+}

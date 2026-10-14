@@ -100,15 +100,18 @@ export const MOBILE_ON_FILE_NOTE =
   "Contact the studio if this number needs to change.";
 
 /**
- * Shown beside a mobile a legacy prospect is supplying for the first time.
+ * Shown beside a mobile someone is typing in: at the public join, or a legacy
+ * prospect supplying one for the first time.
  *
- * SAYS THE UNVERIFIED PART OUT LOUD. A number someone types is not yet a number
- * we can text — it may have a typo, or belong to someone else. Promising texts
- * against it would be a promise the system cannot keep, so the copy commits only
- * to what is true: we will confirm it first.
+ * SAYS THE IMPORTANT PART OUT LOUD, AND ONLY WHAT IS TRUE. Since Roadmap v1.25
+ * (operator decision D4(2), 2026-10-08) nobody confirms the number before a
+ * text: texts the person agrees to go to exactly this number, and a stored
+ * number can never be changed afterwards. So the copy asks them to check it
+ * is their own. It must never promise a confirmation step that does not
+ * exist.
  */
 export const MOBILE_CANDIDATE_NOTE =
-  "We'll confirm this number before sending any texts to it.";
+  "Check this is your own mobile number. If you agree to texts, they'll go to this number.";
 
 /**
  * Shown when the mobile ALREADY ON FILE cannot be used — it is present, so a

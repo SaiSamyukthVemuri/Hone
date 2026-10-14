@@ -287,8 +287,14 @@ export async function getAppointmentsForRange(
   });
 }
 
-// Service-role lookup of a studio by public slug. Used by /book/[slug] and
-// /cancel/[token]: both pre-auth flows.
+// Service-role lookup of a studio by public slug, for the pre-auth flows that
+// identify a studio by its slug.
+//
+// TWO DIFFERENT ANSWERS, AND CALLERS MUST KEEP THEM APART:
+//   * null   - the read completed and no studio has this slug.
+//   * throws - the read did not complete (PostgREST error, or a transport
+//              failure, which supabase-js reports as "TypeError: fetch failed").
+//              Whether the studio exists is UNKNOWN, so this is never null.
 export async function getStudioBySlug(slug: string): Promise<Studio | null> {
   const admin = createAdminClient();
   const { data, error } = await admin

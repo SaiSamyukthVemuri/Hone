@@ -4,6 +4,23 @@ import {
   readLocalDatabaseState,
   SCHEMA_FINGERPRINT_ENV,
 } from "./helpers/schema-preflight";
+import { SENTRY_EGRESS_MARK_ENV, sentryEgressReport } from "./helpers/sentry-egress";
+
+// SENTRY-E2E-NOISE-02. What the Sentry egress guard held during this run, and
+// any error raised in it - which no longer reaches the operational project, so
+// it is printed here instead. Report-only, and unable to fail the run: it is
+// evidence about the run, not a gate on it.
+function reportSentryEgress(): void {
+  const mark = process.env[SENTRY_EGRESS_MARK_ENV];
+  if (mark === undefined) return;
+  try {
+    for (const line of sentryEgressReport({ offset: Number(mark) })) console.log(line);
+  } catch (err) {
+    console.log(
+      `[sentry egress guard] report unavailable: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
 
 // ===========================================================================
 // Playwright globalTeardown — did the database stay the one we verified?
@@ -37,6 +54,8 @@ import {
 // run where nothing reset the stack, this reads one table once and returns.
 
 export default async function globalTeardown(): Promise<void> {
+  reportSentryEgress();
+
   const expected = process.env[SCHEMA_FINGERPRINT_ENV];
   if (!expected) {
     // globalSetup did not record one, which means it never reached its PASS

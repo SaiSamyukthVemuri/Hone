@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 
 // Relative + @ts-expect-error, matching tests/ci/browser-selection.test.ts,
@@ -32,11 +34,24 @@ const FILES = [
 ] as const;
 
 const read = (p: string) => readFileSync(p, "utf8");
-const code = (p: string) =>
-  read(p)
+
+/**
+ * Comment-stripped source, as a STRING transform.
+ *
+ * Split out from `code()` so the same stripping can be applied to a baseline
+ * that is read from somewhere other than a path. The historical comparison
+ * previously measured RAW git output against STRIPPED current source — an
+ * inconsistency that happened to be harmless (both sides tally the same either
+ * way today) but would have silently inflated the baseline the moment a comment
+ * contained a `rounded … border` sequence.
+ */
+const strip = (src: string) =>
+  src
     .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^\s*\/\/.*$/gm, "");
+
+const code = (p: string) => strip(read(p));
 
 /** Boxed containers and the JSX depth each sits at. */
 function boxes(src: string): number[] {
@@ -150,46 +165,110 @@ describe("UI-06: the nesting is gone and scanning is preserved", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// THE HISTORICAL BASELINE (UI06-HIST-BASE-01).
+//
+// WHAT BROKE. This comparison named `origin/claude/build-hone-saas-hOex7` as
+// the "previous source". That ref is PRODUCTION, and it moves. While UI-06 was
+// an open PR it genuinely pointed at the pre-UI-06 tree; the moment UI-06
+// merged, production BECAME the UI-06 tree and the test began comparing
+// production against itself. `boxes 11 -> 11` is then inevitable and
+// deterministic — a historical proof that had quietly become a tautology.
+//
+// The previous comment in this block diagnosed exactly this hazard for the ref
+// BEFORE it ("a base ref must outlive the PR that created it") and then
+// re-pointed at the branch the PR was about to merge into, which has the same
+// defect one level up.
+//
+// THE BASELINE IS NOW AN IMMUTABLE COMMIT, VENDORED SO IT IS ALWAYS REACHABLE.
+//
+//   6b36061b3e818250fc64d3dfd41ec90cb6929102
+//   "Merge pull request #723 from SaiSamyukthVemuri/feat/ui05-native-confirm-retirement"
+//
+// WHY THAT COMMIT IS THE INTENDED PRE-UI-06 SOURCE, proved three ways rather
+// than asserted:
+//
+//   1. UI-06's own branch declares it. The slice carries the commit
+//      "Merge current production 6b36061b (UI-05 #723) into UI-06" — so this
+//      is, by UI-06's own record, the production tree it was measured against.
+//   2. It is UI-05's merged head, which is the ref this block's older comment
+//      already named as byte-identical to the original merge-base baseline.
+//   3. Measured: all three files at 6b36061b are byte-for-byte identical to
+//      the same files at `feat/ui05-native-confirm-retirement`, and all three
+//      DIFFER from production. 6b36061b gives boxes=15 depth=4; production
+//      gives boxes=11 depth=3 — which is the real UI-06 claim, and the claim
+//      the broken ref had erased.
+//
+// WHY VENDORED RATHER THAN READ FROM GIT. CI cannot reach that commit. Exactly
+// one of the eight `actions/checkout` steps in ci.yml sets `fetch-depth: 0`
+// (the `changes` job); the validate lane that runs `npm test` is a depth-1
+// shallow clone, so `git show 6b36061b:…` fails there. Pinning the SHA alone
+// would have moved the defect rather than fixed it: the catch below would fire
+// on every production run and the proof would skip — green-by-skip, which is
+// the failure this block has already been caught committing twice.
+//
+// Deepening the clone was the alternative and was rejected: it is a CI-workflow
+// change, which the classifier routes to the FULL MATRIX, and it would arm
+// history-derived assertions elsewhere that have never once executed in CI.
+// That is a larger blast radius than a historical proof warrants.
+//
+// So the baseline is vendored under tests/fixtures/ui06-pre-slice-baseline/,
+// and its PROVENANCE is re-proved on every run: each fixture is hashed as a git
+// blob and must equal the blob id recorded from 6b36061b. A fixture edited by
+// anyone, for any reason, fails that check — the bytes cannot drift away from
+// the commit they claim to be without the suite saying so.
+//
+// The files carry a `.tsx.txt` extension on purpose: tsconfig includes
+// `**/*.tsx`, so a vendored `.tsx` would enter the TypeScript program and be
+// compiled as live source.
+// ---------------------------------------------------------------------------
+
+/** The pre-UI-06 blob id of each file, recorded from 6b36061b. */
+const BASELINE_COMMIT = "6b36061b3e818250fc64d3dfd41ec90cb6929102";
+const BASELINE_BLOBS: Record<(typeof FILES)[number], string> = {
+  "components/before-today-card.tsx": "f225216eefe90b70ae662866e7e33a550a001477",
+  "components/last-treatment-memory-card.tsx": "6dada08cd587f3c93f65fa5f2b46a87df7ceb3b8",
+  "components/appointment-prep-memory-card.tsx": "65f9f24394ae5e463c359b7dda2a8847a93fab84",
+};
+
+const baselineFixture = (f: (typeof FILES)[number]) =>
+  join(
+    "tests/fixtures/ui06-pre-slice-baseline",
+    `${f.replace(/^components\//, "").replace(/\.tsx$/, "")}.tsx.txt`,
+  );
+
+/** git's own blob id for a byte string: sha1("blob <len>\0" + content). */
+function gitBlobId(buf: Buffer): string {
+  return createHash("sha1")
+    .update(Buffer.concat([Buffer.from(`blob ${buf.length}\0`, "utf8"), buf]))
+    .digest("hex");
+}
+
 describe("UI-06: measured against the real previous source", () => {
-  it("strictly fewer boxes and shallower nesting than the base", (ctx) => {
-    // Compared against git rather than a restated count, so the claim cannot
-    // drift. Skips loudly on a shallow clone, per the UI-05 proof-truth rule.
-    //
-    // RE-POINTED AT PRODUCTION during the UI-05 reconciliation. This named
-    // `origin/feat/ui05-native-confirm-retirement` — #727's base while UI-05
-    // was still open. That branch is now MERGED, so it is deletable at any
-    // moment, and the moment it goes away this comparison stops running and
-    // reports itself green-by-skip: precisely the failure the catch block
-    // below exists to prevent. A base ref must outlive the PR that created it.
-    //
-    // Safe because it is the SAME baseline, proved by blob hash rather than
-    // assumed: all three files are byte-identical at the old merge-base, at
-    // UI-05's merged head, and at production — production never touched them.
-    const BASE = "origin/claude/build-hone-saas-hOex7";
+  it("the vendored baseline IS the pre-UI-06 commit, byte for byte", () => {
+    // Provenance, re-proved on every run and without needing git history. This
+    // is what lets the comparison below trust a file in the working tree as a
+    // historical artefact.
+    for (const f of FILES) {
+      const actual = gitBlobId(readFileSync(baselineFixture(f)));
+      expect(
+        actual,
+        `${baselineFixture(f)} is not the ${BASELINE_COMMIT} blob for ${f}`,
+      ).toBe(BASELINE_BLOBS[f]);
+    }
+  });
+
+  it("strictly fewer boxes and shallower nesting than the base", () => {
+    // NO try/catch and NO skip: the baseline is in the working tree, so this
+    // runs on every clone including CI's shallow one. If a fixture were missing
+    // the read throws and the test FAILS, which is the correct outcome — a
+    // historical proof whose evidence is gone must never report green.
     let beforeBoxes = 0;
     let beforeDeepest = 0;
-    try {
-      for (const f of FILES) {
-        const src = execFileSync("git", ["show", `${BASE}:${f}`], {
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "ignore"],
-        });
-        const d = boxes(src);
-        beforeBoxes += d.length;
-        beforeDeepest = Math.max(beforeDeepest, ...d);
-      }
-    } catch {
-      // MUST NOT RETURN NORMALLY. A bare `return` here is reported as PASS, so
-      // on any clone without this ref the "fewer boxes than the base" claim
-      // would be recorded green while doing nothing.
-      //
-      // I fixed exactly this defect in UI-02 — where a missing base made a
-      // historical proof pass without executing — and then wrote the same
-      // `catch { warn; return }` again here, two slices later. Codex caught it
-      // a second time. The UI-02 repair guarded that suite only; the HABIT
-      // travelled to a new file, which is the part worth recording.
-      ctx.skip(`base ${BASE} unreachable — the box-count comparison did NOT run`);
-      return;
+    for (const f of FILES) {
+      const d = boxes(strip(readFileSync(baselineFixture(f), "utf8")));
+      beforeBoxes += d.length;
+      beforeDeepest = Math.max(beforeDeepest, ...d);
     }
 
     let afterBoxes = 0;
@@ -199,8 +278,41 @@ describe("UI-06: measured against the real previous source", () => {
       afterBoxes += d.length;
       afterDeepest = Math.max(afterDeepest, ...d);
     }
+
+    // Non-vacuity: a baseline that measured nothing would satisfy "<" trivially
+    // for an empty after-set, and a zero depth would make the second assertion
+    // meaningless.
+    expect(beforeBoxes, "the baseline measured no boxes — vacuous").toBeGreaterThan(0);
+    expect(beforeDeepest, "the baseline measured no depth — vacuous").toBeGreaterThan(0);
+
     expect(afterBoxes, `boxes ${beforeBoxes} -> ${afterBoxes}`).toBeLessThan(beforeBoxes);
     expect(afterDeepest, `depth ${beforeDeepest} -> ${afterDeepest}`).toBeLessThan(beforeDeepest);
+  });
+
+  it("corroborates against git history where history is available", (ctx) => {
+    // OPTIONAL CORROBORATION ONLY. The proof above does not depend on this; it
+    // exists so a full clone re-checks the fixture against the real commit
+    // rather than against a recorded hash alone. It is the ONE thing here that
+    // may legitimately skip, and it skips loudly — never silently, and never in
+    // place of the proof.
+    for (const f of FILES) {
+      let fromGit: Buffer;
+      try {
+        fromGit = execFileSync("git", ["show", `${BASELINE_COMMIT}:${f}`], {
+          stdio: ["ignore", "pipe", "ignore"],
+          maxBuffer: 1 << 24,
+        });
+      } catch {
+        ctx.skip(
+          `${BASELINE_COMMIT} unreachable (shallow clone) — corroboration did NOT run; the fixture proof above DID`,
+        );
+        return;
+      }
+      expect(
+        gitBlobId(fromGit),
+        `${f} at ${BASELINE_COMMIT} no longer matches the vendored fixture`,
+      ).toBe(BASELINE_BLOBS[f]);
+    }
   });
 
   it("adds no dependency and no client boundary", () => {

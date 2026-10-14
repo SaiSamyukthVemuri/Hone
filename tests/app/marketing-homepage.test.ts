@@ -50,8 +50,9 @@ const SURFACE = [PAGE, VISUAL, FILM_PLAYER, HEADER, FOOTER, MOBILE]
 describe("positioning: category + treatment-memory differentiator", () => {
   it("hero is not the eyebrow==H1 duplication of the old site", () => {
     expect(POSITIONING.heroEyebrow).toBe("Electrolysis practice software");
+    // No closing full stop since MKT-03 revision 3: no heading on the site has one.
     expect(POSITIONING.heroH1).toBe(
-      "Start the next treatment where the last one ended.",
+      "Start the next treatment where the last one ended",
     );
     expect(POSITIONING.heroEyebrow).not.toBe(POSITIONING.heroH1);
   });
@@ -65,8 +66,13 @@ describe("positioning: category + treatment-memory differentiator", () => {
     expect(WALKTHROUGH.primaryLabel).toMatch(/^Request /);
   });
 
-  it("keeps the category phrase in supporting copy + footer", () => {
-    expect(PAGE).toMatch(/POSITIONING\.keepPhrase/);
+  // MKT-03 REVISION 3: THE PHRASE LIVES IN THE FOOTER AND THE METADATA, ONCE.
+  // It was also the label above the film's heading, a few hundred pixels below
+  // the film's own title card saying the same words: a repeated slogan, so the
+  // homepage body no longer carries it. The register's rule (keep the phrase in
+  // supporting copy, metadata and footer) is met by the footer on every page.
+  it("keeps the category phrase in the footer, not repeated in the homepage body", () => {
+    expect(PAGE).not.toMatch(/POSITIONING\.keepPhrase/);
     expect(FOOTER).toMatch(/POSITIONING\.keepPhrase/);
     expect(POSITIONING.keepPhrase).toBe("Treatment memory for electrologists");
   });
@@ -81,28 +87,30 @@ describe("required homepage sections (copy deck v2.2 §3)", () => {
   // The nine blocks, in the deck's order. Each is pinned by ONE stable anchor —
   // a heading, a constant it consumes, or a route it links to — never by a
   // paragraph, so ordinary copy editing does not turn this file red.
+  //
+  // EIGHT SINCE MKT-03 REVISION 3: the trust strip was removed, because every
+  // one of its four lines is said again in full in blocks 6 and 7.
   const BLOCKS: { name: string; anchor: RegExp }[] = [
     { name: "1 film", anchor: /Before the client sits down/ },
-    { name: "2 trust strip", anchor: /POSITIONING\.trustStrip/ },
-    { name: "3 per-area history", anchor: /Every area keeps its own history/ },
-    { name: "4 more than a note", anchor: /More than a note/ },
-    { name: "5 connected workflow", anchor: /<WorkflowGrid steps=/ },
-    { name: "6 what was used", anchor: /Know what was used, and when/ },
-    { name: "7 records stay yours", anchor: /POSITIONING\.recordsHeading/ },
-    { name: "8 pricing", anchor: /PRICING_PLANS\.map/ },
-    { name: "9 walkthrough CTA", anchor: /POSITIONING\.walkthroughHeading/ },
+    { name: "2 per-area history", anchor: /Every area keeps its own history/ },
+    { name: "3 each detail in its own field", anchor: /Each detail in its own field/ },
+    { name: "4 connected workflow", anchor: /<WorkflowGrid steps=/ },
+    { name: "5 what was used", anchor: /Know what was used, and when/ },
+    { name: "6 how records are kept", anchor: /POSITIONING\.recordsHeading/ },
+    { name: "7 pricing", anchor: /PRICING_PLANS\.map/ },
+    { name: "8 walkthrough CTA", anchor: /POSITIONING\.walkthroughHeading/ },
   ];
 
-  it("renders all nine blocks", () => {
+  it("renders all eight blocks", () => {
     for (const b of BLOCKS) {
       expect(PAGE, `missing block: ${b.name}`).toMatch(b.anchor);
     }
   });
 
   it("renders them in the deck's order", () => {
-    // Editorial pacing is an ORDER, not a set. The film has to land before the
-    // trust strip can trade on it, and the CTA has to close. A reshuffle that
-    // left every block present would otherwise pass the test above.
+    // Editorial pacing is an ORDER, not a set. The film has to land first and
+    // the CTA has to close. A reshuffle that left every block present would
+    // otherwise pass the test above.
     const positions = BLOCKS.map((b) => ({ name: b.name, at: PAGE.search(b.anchor) }));
     for (const p of positions) expect(p.at, `${p.name} not found`).toBeGreaterThan(-1);
     const order = positions.map((p) => p.at);
@@ -135,17 +143,22 @@ describe("required homepage sections (copy deck v2.2 §3)", () => {
     }
   });
 
-  it("the trust strip renders four lines, not one", () => {
-    // MKT-02A ships trustStrip as ONE string joined with " · " and the homepage
-    // splits it into a four-column ruled row. That split is a runtime read of a
-    // display string: change the separator upstream and the strip does not
-    // break loudly, it silently becomes a single long line that still renders.
-    // So the separator contract is pinned on both sides.
-    expect(PAGE).toMatch(/POSITIONING\.trustStrip\.split\(" · "\)/);
-    const lines = POSITIONING.trustStrip.split(" · ");
-    expect(lines, `trustStrip split into ${lines.length} lines`).toHaveLength(4);
-    for (const line of lines) expect(line.trim()).toBe(line);
-    for (const line of lines) expect(line.length).toBeGreaterThan(0);
+  it("the trust strip is gone, and what it said is still said once", () => {
+    // MKT-03 revision 3. The strip's four lines (studio isolation, imported
+    // history, CSV export, no setup fee) each reappeared in full lower on the
+    // page. The strip goes; each claim must still be made, once, where it is
+    // explained.
+    expect("trustStrip" in POSITIONING).toBe(false);
+    expect(PAGE).not.toMatch(/trustStrip/);
+    const rendered = stripComments(PAGE);
+    for (const claim of [
+      /Each studio's records are kept apart/,
+      /Imported history stays labelled/,
+      /Export your records as CSV, on every plan/,
+      /No setup fee, and you can cancel anytime/,
+    ]) {
+      expect(rendered, `the homepage no longer makes this claim: ${claim}`).toMatch(claim);
+    }
   });
 
   it("keeps the editorial pacing: three tones, and the band used as a spine", () => {
@@ -201,7 +214,7 @@ describe("required homepage sections (copy deck v2.2 §3)", () => {
     // Forbidden together with the larger substitutes it would be tempting to
     // reach for.
     const rendered = stripComments(PAGE);
-    const scanned = `${rendered}\n${POSITIONING.trustStrip}`;
+    const scanned = `${rendered}\n${POSITIONING.assuranceLine}`;
     for (const promise of [
       /the person who built hone/i,
       /\bfounder\b[^.]{0,30}\b(answers|handles|replies)/i,
@@ -213,8 +226,6 @@ describe("required homepage sections (copy deck v2.2 §3)", () => {
       expect(scanned, `homepage makes an unsupported support promise: ${promise}`)
         .not.toMatch(promise);
     }
-    // And the strip still renders four items.
-    expect(POSITIONING.trustStrip.split(" · ")).toHaveLength(4);
   });
 
   it("describes the real multi-area model, not one treatment per area", () => {
@@ -252,7 +263,7 @@ describe("required homepage sections (copy deck v2.2 §3)", () => {
       expect(rendered, `homepage over-promises append-only behaviour: ${overbroad}`)
         .not.toMatch(overbroad);
     }
-    expect(rendered).toMatch(/clinical note corrections are kept as revisions/i);
+    expect(rendered).toMatch(/a corrected clinical note is saved as a new revision, and the original stays readable/i);
   });
 
   it("makes no contract or minimum-term claim", () => {
@@ -272,12 +283,53 @@ describe("required homepage sections (copy deck v2.2 §3)", () => {
     expect(PAGE).toMatch(/href="\/privacy"/);
   });
 
-  it("closes on the walkthrough conversion, in the film's own words", () => {
-    // The film's end card, reused as the CTA eyebrow. The STRING is MKT-02A's
-    // (it is copy); this lane only pins that the close actually renders it.
-    expect(PAGE).toMatch(/POSITIONING\.filmClosingLine/);
-    expect(POSITIONING.filmClosingLine).toBe("Pick up where you left off.");
+  it("closes on the walkthrough conversion, with no slogan above it", () => {
+    // The close carried the film's end-card line as a label above its heading:
+    // a slogan the visitor had already seen in the film. MKT-03 revision 3
+    // removed it and the constant with it; the end card stays in the film and
+    // in its transcript, where it is the film's own words.
+    expect("filmClosingLine" in POSITIONING).toBe(false);
     expect(PAGE).toMatch(/POSITIONING\.walkthroughHeading/);
+    const close = PAGE.slice(PAGE.indexOf("── 8. Walkthrough CTA"));
+    expect(close.slice(0, close.indexOf("</Section>"))).not.toMatch(/<Eyebrow\b/);
+  });
+});
+
+describe("the opening row and the film's band (MKT-03 revision 3)", () => {
+  // The browser spec measures the composition; these pin the two mechanisms
+  // whose failure would be silent there. The band's colour layer is computed
+  // from the shell's own gutter, so a shell change that forgot it would leave
+  // the band starting at the wrong height behind the film, with nothing red.
+  it("the band starts behind the film, at half its height, from the shell's own width", () => {
+    const at = CSS.indexOf(".marketing-surface .mk-film-rise::before");
+    expect(at, "the rise rule is gone").toBeGreaterThan(-1);
+    const rule = CSS.slice(at, CSS.indexOf("}", at));
+    expect(rule).toMatch(
+      /padding-top:\s*calc\(min\(100%\s*-\s*clamp\(3rem,\s*14vw,\s*15rem\),\s*87\.5rem\)\s*\*\s*9\s*\/\s*32\)/,
+    );
+    expect(rule, "the rise must not measure the viewport").not.toMatch(/100vw/);
+    // THE BAND IS DRAWN BELOW THE RISE; NOTHING IS PAINTED AT THE TOP EDGE. The
+    // first version painted paper over the band, and in a real Chrome the two
+    // half-pixel edges left a 1px grey seam across the gutters. So the band
+    // colour is clipped to the content box under the padding, and the section
+    // itself is transparent: no layer may paint paper over the band.
+    expect(rule).toMatch(/background:\s*var\(--color-band\)/);
+    expect(rule).toMatch(/background-clip:\s*content-box/);
+    expect(rule, "paper painted over the band again").not.toMatch(/--color-paper/);
+    const section = CSS.slice(CSS.indexOf(".marketing-surface .mk-film-rise {"), at);
+    expect(section).toMatch(/background-color:\s*transparent/);
+    // The shell it mirrors: the same gutter clamp and the same ceiling.
+    expect(CSS).toMatch(/\.mk-shell\s*\{\s*width:\s*min\(100%\s*-\s*clamp\(3rem,\s*14vw,\s*15rem\),\s*87\.5rem\)/);
+    // And the homepage's band uses it, with no padding of its own above the film.
+    expect(PAGE).toMatch(/<Section tone="band" className="mk-film-rise !pt-0">\s*<Container>\s*<ProductFilm autoplay bleed framed \/>/);
+  });
+
+  it("only a film on paper draws its own edge", () => {
+    const player = stripComments(FILM_PLAYER);
+    expect(player).toMatch(/framed \? "ring-1 ring-\[color:var\(--color-hairline-strong\)\]/);
+    expect(player).toMatch(/framed = false/);
+    // The /demo film sits on the band from its first pixel, so it does not.
+    expect(read("app/demo/page.tsx")).not.toMatch(/<ProductFilm[^>]*framed/);
   });
 });
 
@@ -289,8 +341,21 @@ describe("CTA truthfulness: request, never book", () => {
 });
 
 describe("static rendering + no horizontal overflow", () => {
-  it("main clips horizontal overflow", () => {
-    expect(PAGE).toMatch(/overflow-x-hidden/);
+  // INVERTED IN MKT-03 REVISION 2, deliberately. This asserted that <main>
+  // clipped horizontal overflow, which hid whatever overflowed instead of
+  // fixing it. The thing it was hiding was the phone film bleed: it used
+  // `100vw`, which includes a classic scrollbar, so on a narrow desktop window
+  // the frame overshot the page by the scrollbar's width. The bleed now cancels
+  // the shell's own gutter (the same clamp `.mk-shell` subtracts), so there is
+  // nothing to clip — and the browser specs measure every element against the
+  // viewport edge with an anti-vacuity probe, rather than trusting a clip.
+  it("main no longer hides horizontal overflow, because nothing overflows", () => {
+    expect(PAGE).not.toMatch(/overflow-x-hidden/);
+    const bleed = CSS.slice(CSS.indexOf(".marketing-surface .mk-bleed"));
+    expect(bleed).toMatch(/margin-inline:\s*calc\(clamp\(3rem,\s*14vw,\s*15rem\)\s*\/\s*-2\)/);
+    expect(bleed.slice(0, bleed.indexOf("}"))).not.toMatch(/100vw/);
+    // The gutter the bleed cancels must be the one the shell actually uses.
+    expect(CSS).toMatch(/\.mk-shell\s*\{\s*width:\s*min\(100%\s*-\s*clamp\(3rem,\s*14vw,\s*15rem\)/);
   });
   it("renders content statically visible (no opacity-gated reveal that can stick)", () => {
     // The fragile intersection-observer reveal + SVG-thread assembly were removed
@@ -342,15 +407,20 @@ describe("demo-data discipline", () => {
   it("every product asset carries the film's own demo-data label, verbatim", () => {
     // One wording across the film, the poster and every still, so nothing needs
     // recutting to agree with the page. The film already burns these exact
-    // words into its own corner.
+    // words into its own corner, and so does the poster frame.
     expect(POSITIONING.demoDataLabel).toBe("Demo data. Actual Hone application.");
-    expect(FILM_PLAYER).toMatch(/POSITIONING\.demoDataLabel/);
-    // On the poster AND under the player: a visitor who never presses play
-    // still sees it.
+    // Under the player, as the figure's caption, OUTSIDE every playback branch:
+    // a visitor who never sees the film move still reads it. Once, not twice —
+    // MKT-03 dropped the copy that sat on the poster on top of the frame's own,
+    // which put the same line in the same place three times.
+    const player = stripComments(FILM_PLAYER);
     expect(
-      (FILM_PLAYER.match(/POSITIONING\.demoDataLabel/g) ?? []).length,
-      "the label must appear on the poster and under the player",
-    ).toBeGreaterThanOrEqual(2);
+      (player.match(/POSITIONING\.demoDataLabel/g) ?? []).length,
+      "the label must be rendered by the player exactly once",
+    ).toBe(1);
+    expect(player).toMatch(
+      /<figcaption[^>]*>\s*\{POSITIONING\.demoDataLabel\}\s*<\/figcaption>\s*<\/figure>/,
+    );
   });
 });
 

@@ -659,7 +659,7 @@ describe("initial invitation delivery", () => {
     expect(attemptType).not.toContain("indeterminate");
   });
 
-  it("the raw token reaches the mail constructor and NOTHING else", () => {
+  it("the raw token reaches the invitation URL of its two channels and NOTHING else", () => {
     const code = stripComments(readFileSync("lib/waitlist/invite-to-book-adapter.ts", "utf8"));
 
     // IT IS ACTUALLY SPENT. This is the load-bearing half, and the first
@@ -676,20 +676,34 @@ describe("initial invitation delivery", () => {
     expect(committedArm).toMatch(/await deliverInvitation\(\{/);
     expect(committedArm).toMatch(/\n\s*rawToken,/);
     expect(committedArm).toMatch(/return \{ state: "committed", expiresAt, delivery \};/);
+    // SMS-01: the same request also hands it to the invitation's text, the
+    // only other consumer. The token exists nowhere else, so there is no later
+    // send.
+    expect(committedArm).toMatch(/deliverInvitationSms\(\{ studio, invitationId, rawToken \}\)/);
 
     // It is read from the committed row...
     expect(code).toContain('readString(row, "raw_token")');
-    // ...and the ONLY place it is used is the invitation URL handed to #680.
+    // ...and its ONLY use is the invitation URL, built by ONE builder for both
+    // channels: #680's email and SMS-01's text.
+    const builder = "return `${getRequiredAppOrigin()}/invitation/${rawToken}`;";
+    expect(code.split(builder).length - 1).toBe(1);
+    expect([...code.matchAll(/invitationUrl: invitationUrlFor\(args\.rawToken\)/g)]).toHaveLength(2);
     const uses = [...code.matchAll(/rawToken/g)].length;
-    // read + pass into deliverInvitation + destructure + the URL = a small,
-    // enumerable set. A larger count means it leaked into a new expression.
-    expect(uses).toBeLessThanOrEqual(5);
-    expect(code).toContain("invitationUrl: `${origin}/invitation/${args.rawToken}`");
+    // Ten uses, all enumerable: the read, the presence check, the pass to the
+    // email, the pass to the text, the two argument types, the two URL builds,
+    // and the builder's parameter and template. A larger count means the token
+    // leaked into a new expression.
+    expect(uses).toBeLessThanOrEqual(10);
 
-    // NOT persisted, NOT logged, NOT returned, NOT attached to an error.
+    // NOT persisted, NOT logged, NOT returned (except as that URL), NOT
+    // attached to an error.
     expect(code).not.toMatch(/console\.[a-z]+\([^)]*rawToken/);
     expect(code).not.toMatch(/(insert|update|upsert)[^\n]*rawToken/i);
-    expect(code).not.toMatch(/return[^\n]*rawToken/);
+    const returnsOfToken = code
+      .split("\n")
+      .filter((line) => /return[^\n]*rawToken/.test(line))
+      .map((line) => line.trim());
+    expect(returnsOfToken).toEqual([builder]);
     expect(code).not.toMatch(/throw[^\n]*rawToken/);
     // And the practitioner-facing outcome type has no field that could carry it.
     const contract = readFileSync("lib/waitlist/invite-to-book-contract.ts", "utf8");

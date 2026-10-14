@@ -1623,6 +1623,14 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "The per-studio SMS sender Hone rents on a studio's behalf, live since migration 0191 (COMMS-01B). Studio-scoped and genuinely split down the middle, which is why this is a field review rather than a whole-resource verdict: the E.164 number IS studio-meaningful — it is the number their clients see and reply to — while phone_number_sid, messaging_service_sid and provisioning_claim_key are Hone's provider-infrastructure identifiers, carry no customer meaning, and are already withheld from the studio's own browser session by a column-level grant. Dumping them into an export would hand out through one door what the schema deliberately closes at another. The claim key is additionally an idempotency handle whose whole purpose is to be the unique thing that identifies one billable provisioning attempt. Same shape as calendar_connections: a real customer-facing half beside provider material that must never be emitted raw, decided column by column rather than by excluding the resource and hiding the studio's own number from the backlog. No export surface ships in COMMS-01B.",
   },
+  sms_outbound_messages: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "The outbound SMS delivery ledger, live since migration 0206 (SMS-00): one row per appointment or waitlist-invitation text attempt, with its purpose, status, skip reason and timestamps. It holds no message body and no phone number. Studio-scoped operational history, so PENDING rather than EXCLUDED, and field-review-required for the same reason as studio_sms_senders: provider_message_sid is Hone's provider identifier for one message and carries no customer meaning, while the status history is what a studio would recognise (whether a reminder reached a client). No export surface ships in SMS-00.",
+  },
   new_client_waitlist_entry_events: {
     kind: "pending",
     ticket: "TRUTH-01B",

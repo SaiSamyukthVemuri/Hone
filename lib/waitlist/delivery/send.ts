@@ -229,6 +229,22 @@ export async function sendWaitlistInvitationEmail(args: {
   }
 
   const email = buildWaitlistInvitationEmail({
+    // P1 CLIENT TRUST. The prospect must be able to tell who is inviting them
+    // BEFORE clicking an unfamiliar link. Server-resolved from `studios.name`
+    // by the caller; never request input.
+    //
+    // This is the BODY, not the headers — the From/Reply-To note below is
+    // unchanged. The idempotency objection that kept the name out of the body
+    // is retired, and the reasoning is written out in full in
+    // lib/email/templates/waitlist-invitation.ts. In short: a rename can only
+    // move the bytes under an unchanged key if a SECOND invocation renders
+    // this invitation again, and the "ONE INVITATION ID = ONE DELIVERY EVENT"
+    // law at the top of this file forbids exactly that — the raw token is
+    // never persisted, there is no resend operation, a reissue mints a new id,
+    // and the one permitted retry reuses the same in-memory payload object.
+    // The proof send below already carries the studio name under the identical
+    // event-only key shape, for precisely this reason.
+    studioName: args.studio.name ?? "",
     invitationUrl: args.invitationUrl,
     // An ABSOLUTE instant, in the studio's timezone. Both previous shapes
     // failed: remaining time drifted between retries and moved the key; the
@@ -237,21 +253,26 @@ export async function sendWaitlistInvitationEmail(args: {
     expiresAtLabel: invitationExpiryLabel(args.expiresAt),
   });
 
-  // V1 SENDS AS HONE, NOT AS THE STUDIO — no `studioIdentity` below, which
-  // yields exactly `FROM_ADDRESS` with no Reply-To.
+  // THE SEND STAYS ON HONE'S PLATFORM IDENTITY — no `studioIdentity` below,
+  // which yields exactly `FROM_ADDRESS` with no Reply-To.
   //
-  // Passing it would put `studios.name` in the From header and
-  // `postcare_contact_email` / `owner_email` in Reply-To: three mutable
-  // operator fields, in a payload that must be a pure function of the
-  // invitation because the key carries no digest. Renaming a studio or
-  // correcting its contact address would move the bytes under an unchanged key,
-  // and the provider answers that with `invalid_idempotent_request` rather than
-  // a replay. The prospect learns whose offer it is on the invitation page,
-  // which renders fresh every visit and has no key to contradict.
+  // THE BODY NAMES THE STUDIO; THE HEADERS DO NOT. That is not an oversight,
+  // and the two are not the same decision:
   //
-  // The send is DECLARED in the client-facing email guard's
-  // PLATFORM_IDENTITY_CLIENT_CALLERS list, because it is unbranded yet writes
-  // to a prospect — a third case that guard did not previously have a word for.
+  //   * the BODY is prospect-facing copy. The P1 trust fix needs the studio
+  //     named there, and the idempotency objection to it is closed by the
+  //     one-invitation-one-event law above;
+  //   * the HEADERS are a DELIVERABILITY and SENDER-AUTHENTICITY question.
+  //     Putting `studios.name` in From and `postcare_contact_email` /
+  //     `owner_email` in Reply-To means sending as a domain Hone does not
+  //     authenticate, and routing replies to an address nothing has verified
+  //     belongs to that studio. That needs a studio-sender contract review of
+  //     its own; it is deliberately out of scope for this hotfix.
+  //
+  // The send therefore remains DECLARED in the client-facing email guard's
+  // PLATFORM_IDENTITY_CLIENT_CALLERS list. That guard classifies a call site
+  // by whether it passes `studioIdentity`, not by what its body says, so this
+  // site is still correctly described as platform-identity.
   //
   // THE PAYLOAD ALSO CARRIES THE RAW BEARER TOKEN, inside the URL. Two reasons
   // this send is event-only, either sufficient alone:

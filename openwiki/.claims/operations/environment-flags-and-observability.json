@@ -1,0 +1,220 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:e8a93aff5f11e456e108da26db730c92bb0f7ca4141fbdf18aff313cd44fa68f",
+  "claims": [
+    {
+      "id": "claim_cd5e0d4cb6f24d96b82e2efe49dff22d",
+      "statement": "The production build runs scripts/check-production-env-gates.mjs before next build, and the script acts only when VERCEL_ENV is 'production', printing SKIP and exiting 0 everywhere else.",
+      "evidence": [
+        {
+          "resource": "repo://package.json#L7-L7",
+          "version": "repo-lines-v1:sha256:f5ced31c7bd36d31b2556bab388f7f4284f01d9a5fb79167ef8d55c361651c8e:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZjVjZWQzMWM3YmQzNmQzMWIyNTU2YmFiMzg4ZjdmNDI4NGYwMWQ5YTVmYjc5MTY3ZWY4ZDU1YzM2MTY1MWM4ZSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZjVjZWQzMWM3YmQzNmQzMWIyNTU2YmFiMzg4ZjdmNDI4NGYwMWQ5YTVmYjc5MTY3ZWY4ZDU1YzM2MTY1MWM4ZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMmY2NmRkNDg4MDJjNGUwZDU2YTE1OTA5YzhkNTY4NzU1ODU4NDY0NmQ1YTk5NDk1M2RjYTgxOWQ5MjIxZjg2MCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOTUzNzgzZDQwMmEyMjBlNThlZjY3YzI5NGJiOTFhZTI5Y2MyOTkwMzA3M2MyMTdhYTFkYmMyMDVmZTcwY2U1YiJ9"
+        },
+        {
+          "resource": "repo://scripts/check-production-env-gates.mjs#L193-L195",
+          "version": "repo-lines-v1:sha256:855b3c0b1246b0cea4935d67b0d3f457dbc36757a3353377df626983f642f5d4:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOTkyYjYxNTgxZGUwNDVmMzVlNmVjMjAxNzM3NDdkOTM1YjE3NGJiZjNmMTY0ZTg3YmUzZDdmZDg4ODM1ZWRlYSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiM2VlYTE3NTFjZjliZDZkMDJhM2MwNDllNGNiOWY3YjhmNWZmYTBkMTllZmU0N2E2OGQ0NmYwNjhkNDI3NzEzNCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNjFhYTBmYzU0NzBkYTVlMWMxYzhlN2I0ZjYzNzdmNjZjMDkxM2VlOWFlM2QyZTIzYzBlOWVjMjhjNWVlYTdlMyJ9"
+        },
+        {
+          "resource": "repo://scripts/check-production-env-gates.mjs#L360-L372",
+          "version": "repo-lines-v1:sha256:7b718fc0a7883ec0f81c5c8ac16e340bc3574d1178e9d5c9adc0cecdd294f2b1:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRjZGE0MzIzZDljZmI1MmI1MjAyYmVlMjkyMTlmYjk1ZDdjNWM5YjBjYWZlNzJhZjA1ZmNkZDRhZDEzYWRhNTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE2OGI0ZmJlM2UwYmE5ZTg3NjkxNTg5MDlkNzU3M2FhMGUxYTQ0ZGYzNWU1NWJhNjVmZDgwYmI4M2QwMDcyYTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA1OGZjODVkMzA2NTI2NTFkZTk5NmRkMWRkODVjY2JkNDgxMWYyNjZiMGViYzkyMDJlZWI4NDVjY2QyZDI3MzcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_fd063f47f4d045269275454b16bb9f3f",
+      "statement": "Production env gate 1 fails the production build when the Upstash rate-limit variables are missing because runtime public rate limiting fails open, and there is deliberately no bypass.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/check-production-env-gates.mjs#L10-L46",
+          "version": "repo-lines-v1:sha256:d308a2f1e3a97a2c99b9b5eced74de712c3f31eaa75c5ad7eb48c6db81096a25:eyJzZWxlY3RlZExpbmVDb3VudCI6MzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE5MGQxNzU4YTU1ZTE3NDI0Y2RhNmVlZjI4OGM2NThkYjAyMGQ3NjE2OGE5ZTIxMjMzOGI0NjNlNTdiYTA5N2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk1MTg1ZGM2NTMzNzNiODA3ODE3NzE4ZDk5ZjQ1MjUyZDFkNjlmNzI0YzllN2VlYzY5YWM2Nzg2MDU0Y2YyMDEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM4ZWI3MzBkY2MyNzQ3NGY2MWNmZmI1NjJjZjRmMGJiODE3NDczYjVjOTFkNTcyZmFiMmRhNzVlZjVlZWFiNzciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFkMjA4ZjBkZTEzZjViZTI4ZmRiZGY3N2U1Y2ZhNTg4ODVkNjVkNzg3ZjM3YzRmZWMxMjRhYmQ5NWI1YjU5YjgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6a3b71c754f94db0bb9adeb10d48f492",
+      "statement": "Production env gate 2 fails the production build when OPS_ALERT_EMAILS does not parse to at least one recipient.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/check-production-env-gates.mjs#L48-L57",
+          "version": "repo-lines-v1:sha256:eef268525cc7c1c8fc09f3da413d96c4acb24c9d42d99afdc46a8c207a89cb14:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEwODJhMWFjZjhlMDFhYzE3ZGMyYmM5YWViNDNmNTNkYjA1YmZjOTBmZmE3ZDM1ODAzNjI3NDEwZGExMTVlMGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYyNTg4ZjE4OTQxNzc3ZWM0ZGZhZmY1MDMxM2YzOTIyYjM2ZmE2NjJhMmIyOTgzZmI1NWMwMzVlMzA2ZGYyMWMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjgxMjUxMjMwMmQ2Mjk2NTY3YWFiMjY1ZmE5YTBlNGQ1ZjVmZmE5M2I4NmIzMDJmMjc4NWQ2YTY1ZTJjYWY1ZjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ3ZjBkYWJlODkxZjVkZWE4MTEwNGY0MTQxMjlmYThiYWY2YzFiMTA1ZGUwNWNmYzFlZjI4NzFiNjc3NDc0ZWUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3085343ade0845618949203b63b61f03",
+      "statement": "Production env gate 3 passes as dormant when all Google Calendar variables are absent and fails when they are partially set, the token encryption key does not decode to 32 bytes, or the key version is not a positive integer.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/check-production-env-gates.mjs#L313-L358",
+          "version": "repo-lines-v1:sha256:2dedc6bb746dc7841cd5b9491bdc01eb1818c88de8ad75642667b617242ecb4e:eyJzZWxlY3RlZExpbmVDb3VudCI6NDYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI4YTNhZWU1NjA5MDI5YWI1MTI2YjI3MzhhZjM2NDBmMzAxNDQzNmU4YTNkMThiZmYyOTA0MzFlMDM5OGRlODIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIwZjM4MTI3MGZkYmMwYTljNmM1Yjg1MmQ2OTEyYjgzYTA3YzZiNTM2NDE5NTA1M2M4YTIxMzJiNTg3YWYzYzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzODZmYTc5YjRmNjFmZWU1MTg1MTFhYjRhN2VlZjM4NzE2YzE0NDhkNzI2YTU0MzFjMDMzYzBmYjVlNWNlMzEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_271758cff1e84634b6dda4fe27883ef1",
+      "statement": "Production env gate 4 is report-only for the durable waitlist allowlist, proves neither studio existence nor activation, and states that a durable-allowlisted studio is activated only if it is also in NEW_CLIENT_WAITLIST_STUDIO_SLUGS.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/check-production-env-gates.mjs#L59-L82",
+          "version": "repo-lines-v1:sha256:0fedf9f03e3828b988b08371458732a5ae84d78cdb023a37974b480bcf9abee8:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkxZWZkYjYyMjY5ZGQ0MzI3NzFlMmUzMDc3ZmZhN2Y4MDEzZGFlMzlkNjNmNWQwYzFlYjFmODYwN2NlZjY1YmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkxZWZkYjYyMjY5ZGQ0MzI3NzFlMmUzMDc3ZmZhN2Y4MDEzZGFlMzlkNjNmNWQwYzFlYjFmODYwN2NlZjY1YmEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhkYzNhNGVlYzc3NmQzMWQ1ODRhNTYzNDQ3ZGJkMTY3NzgxNTYzYmY1ZmNlNWMzMWI3M2I0YWQ0OWNhODkxZjMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImYzNmZiOTg4YzcwMWI0ZTRkZDZjMjMzZmU2MWE5MDRjZDI5MzUwNDhmYjY0ZTk1MDFlZWQ0YzE2ZGU0OTRlOGQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3c758e57b1114474b8a29e891a89746b",
+      "statement": "Live SMS provisioning and live prospect mobile verification each require a dedicated *_LIVE environment flag in addition to Twilio credentials.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sms/provider/index.ts#L23-L48",
+          "version": "repo-lines-v1:sha256:8a26c7b609225ebe1da5c91e5feafdf11f8147b9c9eee0312c7b7c517f0efaf7:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFkYjQxZDZmNjM1ZDY4Y2U4ZWQ0MWY4YWMzYmI0MjY5ZWQzNDMwNWI2Mzk2NTAxZWUwZWE1ODY5NTRhN2M5OTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkzOGM3NGI1ZTE2NTE4MGJjMTJjZjM0ZGRkYzQ1M2I5ZmIyYTczMjliOGEwMjRhYTIxMWYxYmFjOGU0NzI0OWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVhZTcyN2RlNjUwMDE4MWM5ZGYzMDliNDZhNGM3ZjY3OWVkMjcxYjZiY2UzM2MwYjczODcxNDZhMTRkZjUzN2IifQ"
+        },
+        {
+          "resource": "repo://lib/waitlist/mobile-verification/arming.ts#L30-L31",
+          "version": "repo-lines-v1:sha256:efa9d3d63a64e07d82490ff9a695c6a3305fa23def9075ec9ef624da1665cd81:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYjY1NWVmYTIwMmUzODllNGE5YzQ3MWYwYjY4ZmNiZDYzNjEyYTM2Mzk3ZmUxMDE0ZjAzMjU1NjdlYTZkMWQxOSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNWZhNmFiZGZjYmVhZDMwZTBlYTc0ZTZkMGMyOTI1MThmMWU5YTQwMzEwZjY4Y2ZkYzhiNDM2MWYyYTBjZTA5MCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMDRiOWEzNzQ3YzMxNDNkOGU2YjEwMWZlNzFjZjgyNzA1MzkxYmNmMzE1YmNkZDgwZTYwMWFjMWIyNDg0MDIwZCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZDQxNjgzZTUzYWIzYWQ2ZWQwZGNhY2Y1YTgzYmI1NThlNThkNmMxMGI3NTExM2UxYjY4MTgzYzYwYTRkYTM5OSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_7ecc9bdc25c14f5b8aa84e63fa77bcd1",
+      "statement": "Per-studio configuration columns include the Google Calendar flags, practitioner capacity flags, onboarding v2, the persisted new-client admission mode, email/SMS/intake reminder toggles and the postcare delivery mode.",
+      "evidence": [
+        {
+          "resource": "repo://lib/types/database.ts#L39-L168",
+          "version": "repo-lines-v1:sha256:2aa5e784d59bea6a44d8771e6aa4c57cc5b6f209f187fcfdd73244b9d63f7afb:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJkMTk2ZTMzNDM0NDVmOTA5OGQ1OTNkNDljMzI1ZTQ0MWM5YzRlOWVjMzU5YWE0ODlhODY5MWQxZmE2MDMxZGQ4IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJhMDA2NDQwMWFiMDg5NjM3YjU0ZDljNjk3NDNiODk3NTFjYTU3OGFlODQwN2QyYTExNWI0YzNlN2Y5ZmU2ODEwIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlODI4OWU5M2U3ZjdjM2MxOWU5YjNlNTgyYjliYzJhNmEwMDcxNzgxMTA1MWViYjA5Y2IyYWQ5YmZkOWFiYjliIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2RjYTAxNmQ3MDg1NWUyNWE1MjVjNWQxM2YwMGVlZmUxMzNjMGMxNzVlNGQ0YmQzMmMzYWYzMDI2MmE5MzQyIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_a14e06c90134417da14e3331ee210dde",
+      "statement": "Sentry initializes with sendDefaultPii false and deny-by-default scrubbers on errors, transactions and breadcrumbs, with browser Session Replay and Sentry Logs disabled and events sent through the /monitoring tunnel.",
+      "evidence": [
+        {
+          "resource": "repo://instrumentation-client.ts#L14-L33",
+          "version": "repo-lines-v1:sha256:84810028485bd2fb7e470896d2f87d76b17709ec0cba8e7ee67e30230cc4899c:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0YjhlNmJjNzRmZTg2MTgzYzNkOTBkYWZiY2IzNjE4NTI4MmY5NGI0NmEzNTM4MmM2MjFiMGI3NjNkZDNjNWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg2YTQ0OWI3NzA4YWQ0YTk0OThlZDQ2ZGQ0NmZkZDBkMWFiNmIxMmZlNzBkMmM2ZDczOGRmMjQwYWVlZWU1ODIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjExMGFiZTUzNDRkODNiYTUxYWJkMGVkODgyNjk5OTU0YzlhNTYyMDJlMTQzNDY1NTZkOWQ1YmNlOWIzMTMwNzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAzZTBiNGM5NDVmNGIxNTZlYTMwYWNlYWM4OGFkZWM1NWRiZGZiZmIxOGI2NjQzMGU5Y2E2MjQxNjlmMjJmMWUifQ"
+        },
+        {
+          "resource": "repo://sentry.server.config.ts#L1-L26",
+          "version": "repo-lines-v1:sha256:6804f61e30dc806df9c8d395f4db931c6d450246e42163b013c8263730109e6a:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk5NGI1OGMxZTM5NTMxMjFkNjc5ZGIwZDg1YjdmOTc4ZTBhNTBjNGZhYzZkNjVlZTdlZmRhNDRhNjBkNjg0NmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ea773149c67742b6b361abcc9566192d",
+      "statement": "Sentry traces are sampled at 0.1 in production and 1 elsewhere.",
+      "evidence": [
+        {
+          "resource": "repo://lib/observability/sentry-scrub.ts#L363-L365",
+          "version": "repo-lines-v1:sha256:c2808988d4ef6333153bb48f75adc4b1a4a2b55e21d7aca5aacd1f903df8ff07:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZDU5ZTQ0ZjkzZWRkZTNkZGEwMWQ0MGM4NGJkMmZlNTNmN2VhZjRkNGZlOWRhNTY5NzEwYTQ3ZWM5ODEyMzdiZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNTFiZjBlZmNmMTYyYWJkNDQwMGVmZmI5NDEyYTQyMmZiYjVhNzU0MDM1NTk2NDIyMTVlZTdiZDNlZDM5YTNlMiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjAsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_05a192ded4a74efc869a7b79c037971a",
+      "statement": "The PostHog browser client disables recording, surveys, exception capture, heatmaps and web-vitals, masks all text, and passes every event through guardBrowserEvent, which allows only pageview, pageleave, autocapture and marketing events on canonical marketing routes.",
+      "evidence": [
+        {
+          "resource": "repo://instrumentation-client.ts#L39-L83",
+          "version": "repo-lines-v1:sha256:aab1337e566af46f4473974e2d9d4d960ebf3f63592fcdd1749728676236417b:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMzE3MjliYTMzODkwM2I1NGQ4NGYwMDYzNGJjODk4MTViMWY3M2M1MTIwYWIyZjk5NWM0MjIxY2RhODgzMDIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE2NTBmZDY5OGJkOGM2NjY0MGU2OWJiYWUzNDA3YmEwM2NhYTljYjM3NTRiNWVjOWJiNzliNWQ3OGY3MjUwMzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://lib/analytics/client-boundary.ts#L95-L230",
+          "version": "repo-lines-v1:sha256:e734326e477f50a0624fa62ae22be68b10b181f7d3c9af35c0f6f946a1945481:eyJzZWxlY3RlZExpbmVDb3VudCI6MTM2LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJjMjc3OWU4ZDIzMjFhMDMyODg0MzBiODE3ZjczZmEzZGZhOGYxMDVjNmUyNTlhODI5MTE4ODYxZDgxZDAzYzcyIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI2MjlmYjE1M2VhMzFiOGRkMDBiNjZiZjE5NzUxZDc2YWE2NmY3Zjk2YmE4ODc2MjgwYzE5NDZhY2JkN2Y2OTJjIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_27d623b0cd31436593e1e266364eceb6",
+      "statement": "Authenticated analytics identification is performed server-side only with an opaque id and coarse role.",
+      "evidence": [
+        {
+          "resource": "repo://lib/analytics/server.ts#L152-L171",
+          "version": "repo-lines-v1:sha256:b3e8fa9789d11ce3076de09169605f347c051fb7951acbcb58bf4a0f7f78cd15:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI5M2VhMjU4OTZhZTlhMGY5ZTYyMDY5YjdiY2JiYzU4YzYyYzAwMGI4MGI3NzRhMTc1YWJjMjA5ZjMzMTI0YTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5YzRhMWRlYjI1MzNiODcxNjY0MmZmN2Y0OThmZDI5YTdjZDliNzkwODU1MGJmY2UwOTkyMGZhODYzMTQyZGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_fe99654905604ccd97fa8e7562ce08bc",
+      "statement": "Marketing conversions are dispatched only with booking marketing consent, an enabled studio tracking provider, a won dedup claim and the studio's own decrypted server token, and the dispatcher never throws.",
+      "evidence": [
+        {
+          "resource": "repo://lib/conversion/dispatch.ts#L1-L30",
+          "version": "repo-lines-v1:sha256:97ef75968788df931e076eccb5750622eafa7f685a918d17de26ad6453973b4d:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJlMmFjYmE0MjkxYWI3ZjJiMjI1OTVkMGFmYzI0M2YwMGE2ZjMyYjY0OGUwODU4MGUxZGQ0NWM2YWQ3YzFmYWUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdjN2FiMmQ0NzRlZTE1YzdiZmU0ODFjMTQ5ZTU3NjJlZTFmYWJhZDllNTljY2M1M2QzMTliZjJjMmVhZGFhNGUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0f5b731e5190470aa268d9e97452465e",
+      "statement": "The canonical record states marketing conversion tracking is deployed but inert per studio until a provider token is configured.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/current-state.md#L875-L876",
+          "version": "repo-lines-v1:sha256:396766a8685458494256e82357e96dbed92626be98012eb33fb97f6a53e7e637:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYzEyNjgxYmU2ZTFjMWVkMmZlNmM2MmYzZDk1Y2YwMTVjNmU2NWZkMjRiNzRlMjEzNTg4ZTliNWNmNDNiMDU0YyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNTA5MDgyMjM4NTcxYzEzMTgyMzcxMzRjMDY3MjJmOWNkNTMyN2RjNGFhNWFkMGVjOTA4MDhlY2EzZmY0YzllMiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNGVhOWU2MmEyZDc2ZGJhMTMwMWQ2ZjMyZmZjZTc1YTMwOGNmYjY5ZWU5NGFmYTQ0NjA4OWEwNWVhODY2M2MyMyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOWFhMzI2ZTg5YjVlMzljNTU4OWQ1MTc0ZjFmZjZjZmM2NTgxNWZhNDEwMzM5NWM5MzRiMDAyMjRhZGE1YTNhYiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_4aea6d5390b8454b955cc34b2dbfff14",
+      "statement": "Public rate limiting fails open at runtime when Upstash is unconfigured or unavailable, returning allowed for every request.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/current-state.md#L1102-L1103",
+          "version": "repo-lines-v1:sha256:7bd0a1ef65cb4c48cd0051ddf3df1a5c3967f4f577ff57aaf61cf066a29a8304:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYzY1NmZiNTFhNjkyMmM4MDcyNDg3MTcyNDI5ZmY0ZGRkNDZlODNkNmY3MzE2NTczZjE5NGIyZGQ3OWE5OGU3NCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOTA1YjQ5YzdhNjMyYTdiMDZjMjllYmU5MDkzYmEyMDkzMGMxODJlNDRlYjMzOTNkZGU1MjhkZjZmZGQ1ZmM2ZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNTk2MWMxNDNjMDY4MmFhMGU0MWE0NDdkMGMwMTliNWQzMjVmNjJkYjlkZDNmN2FjNmNjMWRiNDcyMTE2Zjc4MCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNzZjMGFkNGE4YzYxMDFjNGVlNzgzZDQ2YjgyNDZiYjU5N2ZhYzFmYWQ3M2UyNmQzNGNhOTAxNjUyNWY3MmI4ZCJ9"
+        },
+        {
+          "resource": "repo://lib/rate-limit/public.ts#L16-L24",
+          "version": "repo-lines-v1:sha256:e63c89b0804385a0462fa2f523cec4d3b122fbb62ed6d177f64fadb39e03eb8d:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZjUwZWRlNTJhM2E3NjQxNzg5ZmNmOTRmZGEyMDE5YWFmYThmMTFlMDU2ZTdjNDQ5ZDM3MGI0MTRlNjQyNzNmNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNTkwNDFmODBhYmMyMjIxOTlhZmZhMTE1N2Q1YzI2ZjA1ZWFiMTY0Nzk5NzkwMTM3NjdhOGY4YjAxMDhlYTdjMyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjdlNDM2YWNjMGIzNmMwNWEwNGEyN2NiYWE0YzJmMGE1ODY4NTE4NzY5ODQzYmEzMTNlZmNkYjNkMjI2NGQwNiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOGFhMTRhYmE1ZTdiZjA2MjI3ZTYyMTI1NGFiNzk4Zjk2Y2UzNzI1MDczYjkwMGM0ZGY4Y2M0N2JmN2JiYmQ1MSJ9"
+        },
+        {
+          "resource": "repo://lib/rate-limit/public.ts#L213-L261",
+          "version": "repo-lines-v1:sha256:4f6f72601d65de48e5ab88855f6bdcf992731cb5748bb751efe88f8b42aa1e06:eyJzZWxlY3RlZExpbmVDb3VudCI6NDksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUzZGExMjEzMDNiYjMyMDI1ZmY2OWEyZjNhZGY3MGViY2NkZmFlYTE2ZDM2ZTU3MTQ2NDczNDU3MjA4MWZkOWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYxMmY3MzlkMGZjMzk2YmRjYjM1NmJhM2Y4MDdmOWZiYTRmYWZjYzk1ZjkzZTYyMTQ4ZmZmYmZkMWQwYjhiMDQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA4N2I3ZWM2Y2U4ZThlNWM4ZTNiNDk4Yjg0MWJkM2VlMWQ5YzVlZDMzOTgxNmZhMDdjMDNmYWMzNThkMDZmYzMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZiNTgwZTk2NGY4M2E0NzNmNDNkNDQzODQ2Mjk0OWQ2OGI1NjAwZmRhNzg3ZjE2Mzc0NWQwMGRlODljYmYzNmEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_909569f65b65403495d351cfdd8bfa73",
+      "statement": "Several environment variables read by runtime code (Google OAuth and token-encryption keys, PostHog project token and host, the tracking-token encryption key, the Twilio Verify service id and the two *_LIVE arming flags) appear in neither .env.local.example nor docs/10_DEPLOYMENT_AND_ENV.md.",
+      "evidence": [
+        {
+          "resource": "repo://.env.local.example#L1-L296",
+          "version": "repo-lines-v1:sha256:39f54fced2e1b323ed3022b3ea3576e98496d6d30063a273533931d2122db1a0:eyJzZWxlY3RlZExpbmVDb3VudCI6Mjk2LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI1YjQ5MjNmN2VkMTAzNjIwMzM1M2FkYzVkMTgyN2FjZDU5MDhiNDVhNTE2NjI3NzJlMzA3YmI3ODU3MmIwNDEyIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI4NmU2ZWUwYjM5N2I2YTExNGVjMjBlMDczNWJiZmE5NzYyNjk0ZmEyZDkzMzYwNWE3ZWFjMDc2YjM4YWQwZThkIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        },
+        {
+          "resource": "repo://instrumentation-client.ts#L56-L56",
+          "version": "repo-lines-v1:sha256:5ad64cb6c328d4312c65fe087dcb18c02ec8b7c91a034812d05aff5a7f19e98c:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNWFkNjRjYjZjMzI4ZDQzMTJjNjVmZTA4N2RjYjE4YzAyZWM4YjdjOTFhMDM0ODEyZDA1YWZmNWE3ZjE5ZTk4YyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNWFkNjRjYjZjMzI4ZDQzMTJjNjVmZTA4N2RjYjE4YzAyZWM4YjdjOTFhMDM0ODEyZDA1YWZmNWE3ZjE5ZTk4YyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiN2FjYWVkN2I5ZmU1ODYxZThjMzI4YzEzYzYyYmU5ZTU1MmVhMDA2NzFjNTE0OWJmMzY2ZTM5MTg0MTM2YWRlOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZDBjZjA5NGQ5M2YzNjRlNDg2ODMyMzNiMzU5OGVhOGZlZmJkNTE0MDEyZThkNjMxN2UxMjYwNGEwZDA2NzY2MCJ9"
+        },
+        {
+          "resource": "repo://lib/google-calendar/token-crypto.ts#L49-L80",
+          "version": "repo-lines-v1:sha256:7fe64629c85f8cc865d6a9a1d812584373bd20ba67f49094800ee33aece32e71:eyJzZWxlY3RlZExpbmVDb3VudCI6MzIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk1OGUzYjExMGE1MjVhNjBjMDMzNzJkMGVlMGQ0ZjI0MmU5ZGYzYzcxYThlNDUwMGNlOTNlOWU5OTZkYWU4NDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZhNTdlMzJjNjNkMTVlM2FlYWQ2YzFmMzVlMDE1ZWM0MWE1OWI3Zjk5MmJhMTcxM2I5Y2JkODMyNDAzNWM0NjQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM2MmNlZGJlYWY1ZTMxN2ZkMWVmMjRkNDgwZjAxZTI4N2FkM2FkNzI4Y2U5OThjMTg1YWE1ZjAzYmRmODhjMTIifQ"
+        },
+        {
+          "resource": "repo://lib/waitlist/mobile-verification/arming.ts#L30-L31",
+          "version": "repo-lines-v1:sha256:efa9d3d63a64e07d82490ff9a695c6a3305fa23def9075ec9ef624da1665cd81:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYjY1NWVmYTIwMmUzODllNGE5YzQ3MWYwYjY4ZmNiZDYzNjEyYTM2Mzk3ZmUxMDE0ZjAzMjU1NjdlYTZkMWQxOSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNWZhNmFiZGZjYmVhZDMwZTBlYTc0ZTZkMGMyOTI1MThmMWU5YTQwMzEwZjY4Y2ZkYzhiNDM2MWYyYTBjZTA5MCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMDRiOWEzNzQ3YzMxNDNkOGU2YjEwMWZlNzFjZjgyNzA1MzkxYmNmMzE1YmNkZDgwZTYwMWFjMWIyNDg0MDIwZCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZDQxNjgzZTUzYWIzYWQ2ZWQwZGNhY2Y1YTgzYmI1NThlNThkNmMxMGI3NTExM2UxYjY4MTgzYzYwYTRkYTM5OSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_0d8ca3f5f3f94b4e8290b4133a7db8b8",
+      "statement": "The env-gate script says its gate-4 contract consists of eight sentences, but the contract it pins lists nine.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/check-production-env-gates.mjs#L59-L82",
+          "version": "repo-lines-v1:sha256:0fedf9f03e3828b988b08371458732a5ae84d78cdb023a37974b480bcf9abee8:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkxZWZkYjYyMjY5ZGQ0MzI3NzFlMmUzMDc3ZmZhN2Y4MDEzZGFlMzlkNjNmNWQwYzFlYjFmODYwN2NlZjY1YmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkxZWZkYjYyMjY5ZGQ0MzI3NzFlMmUzMDc3ZmZhN2Y4MDEzZGFlMzlkNjNmNWQwYzFlYjFmODYwN2NlZjY1YmEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhkYzNhNGVlYzc3NmQzMWQ1ODRhNTYzNDQ3ZGJkMTY3NzgxNTYzYmY1ZmNlNWMzMWI3M2I0YWQ0OWNhODkxZjMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImYzNmZiOTg4YzcwMWI0ZTRkZDZjMjMzZmU2MWE5MDRjZDI5MzUwNDhmYjY0ZTk1MDFlZWQ0YzE2ZGU0OTRlOGQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_26dfec63d70e4e4f80d06f6548eb0e85",
+      "statement": "The canonical record states that whether Sentry or PostHog receive events, and whether the PostHog variables are set in Vercel, is unknown pending verification.",
+      "evidence": [
+        {
+          "resource": "repo://docs/production/current-state.md#L1099-L1101",
+          "version": "repo-lines-v1:sha256:5961c143c0682aa0e41a447d0c019b5d325f62db9dd3f7ac6cc1db472116f780:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiY2JiOWEzNmE2MzQ5MjMxYjRlMDJjZTUzNDgzZTAyYmUwNzA5NTNhODhhNzhiNWRmMzI3NDg4NjBkYTcwMGZjNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMGM2MzlkMmMzNTVlNDczNWViY2U4Y2JkY2Y0ODY0ZmQ4YjZkMDM5MjBjMzkwMGMyNDMwYzVjODA0MmIxMDc2YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYjMzMGQ1MzdjNjcwOWMyZTFmY2VmMmUzZjUzZjIyZjJiNTcxN2I2N2JhZmMzZGY5ZGVjM2NmZjBjMWJjOWZhMSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOGE4NjEwN2Y2NzI0M2JjNjJmYzU5YjJhM2QyODk0MTU3ZWJlMDg2NjM0ZjJjZWVjOTRiZTk2ZjNkMmI0ZWVjOCJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-04T01:59:59.625Z"
+  }
+}

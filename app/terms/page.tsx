@@ -8,9 +8,9 @@ import {
 } from "@/app/_components/PolicyLayout";
 
 export const metadata: Metadata = {
-  title: "Terms of Service",
+  title: { absolute: "Terms of Service | Hone" },
   description:
-    "Terms governing your use of Hone, the practice memory system for permanent hair removal. Includes data processing agreement, acceptable use, and limitation of liability.",
+    "The terms for using Hone, electrolysis practice software, including the data processing agreement, acceptable use and limitation of liability.",
 };
 
 export default function TermsOfServicePage() {

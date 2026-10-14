@@ -28,7 +28,17 @@ describe("Sentry init configs (client/server/edge)", () => {
   ] as const) {
     it(`${name}: disables PII and wires all three scrubbers`, () => {
       expect(src).toMatch(/sendDefaultPii:\s*false/);
-      expect(src).toMatch(/beforeSend:\s*scrubErrorEvent/);
+      // SENTRY-NOISE-01: the SERVER-side runtimes wrap the error hook so a
+      // PROVEN deliberate E2E fault (exact canary AND the harness's own
+      // server-only activation invariant) is dropped; the wrapper delegates
+      // every KEPT event to scrubErrorEvent, so scrubbing is unchanged. The
+      // client cannot prove harness context without a NEXT_PUBLIC_* bypass, so
+      // it wires the scrubber directly and fails open.
+      expect(src).toMatch(
+        name === "server"
+          ? /beforeSend:\s*beforeSendWithE2eFaultSuppression/
+          : /beforeSend:\s*scrubErrorEvent/,
+      );
       expect(src).toMatch(/beforeSendTransaction:\s*scrubTransactionEvent/);
       expect(src).toMatch(/beforeBreadcrumb:\s*scrubBreadcrumb/);
       expect(src).toMatch(/tracesSampleRate:\s*tracesSampleRate\(\)/);

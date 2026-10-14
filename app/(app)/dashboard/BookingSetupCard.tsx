@@ -73,6 +73,7 @@ const AUTHORITY_LABEL: Record<ReadinessAuthority, string> = {
   services: "services",
   availability: "availability",
   treatment_consent: "treatment consent",
+  admission: "new-client admission",
 };
 
 export function BookingSetupCard({ readiness }: Props) {
