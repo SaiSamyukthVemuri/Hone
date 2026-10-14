@@ -451,4 +451,72 @@ describe("fake refunds: selectable outcomes match production's failure classes",
     expect(create.stripeAccount).toBe("acct_test_r");
     expect(refundCalls()[0].stripeAccount).toBe("acct_test_r");
   });
+
+  // Twin finding 2026-10-14: the ledger outlives the server process; ids must not.
+  it("ids stay unique across a server restart within one run (continues from the ledger)", async () => {
+    await setup("success");
+    const create = (key: string) =>
+      (createFakeStripe().paymentIntents.create as unknown as (
+        p: unknown,
+        o: unknown,
+      ) => Promise<{ id: string; latest_charge: string }>)(
+        { amount: 100, currency: "usd" },
+        { stripeAccount: "acct_test_r2", idempotencyKey: key },
+      );
+    const before = await create("hone:session_payment:att-restart-1:v1");
+    // A server restart: this process's memory is gone, the run's ledger is not.
+    resetFakeStripeState(RUN);
+    const after = await create("hone:session_payment:att-restart-2:v1");
+    expect(after.id).not.toBe(before.id);
+    expect(after.latest_charge).not.toBe(before.latest_charge);
+    const { readFakeStripeCalls } = await import("@/lib/stripe/e2e-fake-ledger");
+    const ids = readFakeStripeCalls(RUN)
+      .filter((c) => c.method === "pi_create" && !c.replay)
+      .map((c) => c.resultId);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("after a restart, the fake still states money and honours idempotency from the ledger", async () => {
+    await setup("success");
+    const stripe = () => createFakeStripe();
+    const KEY1 = "hone:session_payment:att-restart-m:v1";
+    const charge = await (stripe().paymentIntents.create as unknown as (
+      p: unknown,
+      o: unknown,
+    ) => Promise<{ id: string; latest_charge: string }>)(
+      { amount: 15000, currency: "usd" },
+      { stripeAccount: "acct_test_r3", idempotencyKey: KEY1 },
+    );
+    resetFakeStripeState(RUN); // restart
+
+    // Retrieve states the original money.
+    const got = await (stripe().paymentIntents.retrieve as unknown as (
+      id: string,
+      p: unknown,
+      o: unknown,
+    ) => Promise<{ amount: number; currency: string }>)(charge.id, undefined, { stripeAccount: "acct_test_r3" });
+    expect(got).toMatchObject({ amount: 15000, currency: "usd" });
+
+    // A retried create with the same key is the SAME PaymentIntent, a replay.
+    const again = await (stripe().paymentIntents.create as unknown as (
+      p: unknown,
+      o: unknown,
+    ) => Promise<{ id: string; amount: number; currency: string }>)(
+      { amount: 15000, currency: "usd" },
+      { stripeAccount: "acct_test_r3", idempotencyKey: KEY1 },
+    );
+    expect(again).toMatchObject({ id: charge.id, amount: 15000, currency: "usd" });
+    const creates = getFakeStripeCalls(RUN).filter((c) => c.method === "pi_create");
+    expect(creates.at(-1)).toMatchObject({ resultId: charge.id, replay: true });
+
+    // A refund of the pre-restart charge is in the CHARGE's currency.
+    const refund = await (stripe().refunds.create as unknown as (
+      p: unknown,
+      o: unknown,
+    ) => Promise<{ amount: number; currency: string }>)(
+      { charge: charge.latest_charge, amount: 15000 },
+      { stripeAccount: "acct_test_r3", idempotencyKey: "hone:payment_refund:att-restart-m:v1" },
+    );
+    expect(refund).toMatchObject({ amount: 15000, currency: "usd" });
+  });
 });
