@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 // PAY-CCY-09 (Codex P2 4264919601). The payment web server's Stripe egress
 // guard, run as a real preload: every network stack that could
@@ -115,6 +115,19 @@ describe("stripe egress guard (server preload)", () => {
 });
 
 describe("the payment web server loads it", () => {
+  // The e2e env modules refuse, AT IMPORT, a non-local Supabase URL, and the
+  // unit lane sets NEXT_PUBLIC_SUPABASE_URL to a hosted-looking placeholder for
+  // the build. Clear those first, as tests/scripts/sentry-egress-guard.test.ts
+  // does (green on a bare shell, red in CI otherwise).
+  beforeAll(() => {
+    for (const name of ["NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_DB_URL", "HONE_LOCAL_DB_URL", "E2E_SUPABASE_URL"]) {
+      vi.stubEnv(name, "");
+    }
+  });
+  afterAll(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("keeps the core lanes' Sentry --require exactly, and adds the Stripe guard by --import", async () => {
     const env = await import("@/e2e-payment/helpers/payment-env");
     const core = await import("@/e2e/helpers/local-env");
