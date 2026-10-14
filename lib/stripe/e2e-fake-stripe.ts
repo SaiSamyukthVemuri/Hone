@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 // The SDK VALUE is needed only to construct a genuine StripeError for the
 // fake's terminal refund refusal (production classifies by instanceof).
 import StripeSdk from "stripe";
@@ -15,7 +16,8 @@ import {
 // never construct in a deployed environment.
 //
 // Recorded call metadata is TEST-SAFE ONLY: method, idempotency key,
-// connected-account context, amount, currency, and the synthetic result id. It
+// connected-account context, amount, currency, the synthetic result and charge
+// ids, and a one-way DIGEST of the create metadata (never its values). It
 // never records client identity, email, card data, authorization signatures,
 // secrets, or any PHI. Calls are isolated by HONE_E2E_RUN_ID so parallel CI
 // workers / distinct runs never read each other's state.
@@ -40,6 +42,17 @@ export type FakeStripeCall = {
   amountCents: number | null;
   currency: string | null;
   resultId: string;
+  // PAY-CCY-09 (Codex P2 4264919593). The synthetic CHARGE this call produced
+  // (pi_create: the PaymentIntent's latest_charge) or targeted (refund_create:
+  // the charge refunded). A provider id, not client data. It lets a test build
+  // and VERIFY provider lineage (refund -> charge -> PaymentIntent) from the
+  // processor's own record instead of trusting the application's row.
+  chargeId: string | null;
+  // PAY-CCY-09 (Codex P2 4265594520). pi_create only: a DIGEST of the metadata
+  // the charge path actually sent (fakeMetadataDigest), never the values, which
+  // carry client and authorization ids. A webhook test validates the metadata it
+  // signs against this processor fact instead of re-deriving it from the row.
+  metadataDigest: string | null;
   // INVOCATION vs EFFECT (PR #419 concurrency pass). Every adapter call is
   // recorded (an "invocation"); replay=false marks the calls that actually
   // created a NEW synthetic processor result for a previously-unseen idempotency
@@ -136,7 +149,24 @@ export function resetFakeStripeState(run: string = runId()): void {
 type CreatePiParams = {
   amount?: number | null;
   currency?: string | null;
+  metadata?: Record<string, string | null | undefined> | null;
 };
+
+/** Digest of PaymentIntent metadata in canonical form: null, undefined and empty
+ * values dropped (Stripe stores no empty metadata value), the rest as strings,
+ * sorted by key. The Playwright runner has its own copy (it cannot import this
+ * server-only module); tests/lib/stripe/e2e-fake-stripe.test.ts pins the two to
+ * the same output. */
+export function fakeMetadataDigest(
+  metadata: Record<string, string | null | undefined> | null | undefined,
+): string | null {
+  if (!metadata) return null;
+  const entries = Object.entries(metadata)
+    .filter(([, v]) => v !== null && v !== undefined && v !== "")
+    .map(([k, v]) => [k, String(v)] as const)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return createHash("sha256").update(JSON.stringify(entries)).digest("hex");
+}
 type RequestOpts = { stripeAccount?: string; idempotencyKey?: string } | undefined;
 
 function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiParams) {
@@ -163,6 +193,8 @@ function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiPar
     amountCents: params?.amount ?? null,
     currency: params?.currency ?? null,
     resultId: id,
+    chargeId: outcome === "success" ? chargeId : null,
+    metadataDigest: fakeMetadataDigest(params?.metadata),
     replay,
   });
   // Success → succeeded (+ latest_charge); decline → non-succeeded status the
@@ -205,6 +237,8 @@ export function createFakeStripe(): Stripe {
           amountCents: null,
           currency: null,
           resultId: id,
+          chargeId: `ch_test_e2e_${runId()}_r`,
+          metadataDigest: null,
           replay: false, // a read, not a keyed effect
         });
         const run = runId();
@@ -230,6 +264,8 @@ export function createFakeStripe(): Stripe {
           amountCents: null,
           currency: null,
           resultId: id,
+          chargeId: null,
+          metadataDigest: null,
           replay: false,
         });
         return { id, status: "canceled" };
@@ -271,6 +307,8 @@ export function createFakeStripe(): Stripe {
             amountCents: params?.amount ?? null,
             currency: params?.currency ?? null,
             resultId: `re_test_e2e_${run}_refused`,
+            chargeId: params?.charge ?? null,
+            metadataDigest: null,
             replay: false,
           });
           throw new StripeSdk.errors.StripeInvalidRequestError({
@@ -302,6 +340,8 @@ export function createFakeStripe(): Stripe {
           amountCents: params?.amount ?? null,
           currency: params?.currency ?? null,
           resultId: id,
+          chargeId: params?.charge ?? null,
+          metadataDigest: null,
           replay,
         });
         if (outcome === "processing") {

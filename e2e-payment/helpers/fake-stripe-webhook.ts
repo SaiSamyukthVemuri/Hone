@@ -1,7 +1,12 @@
 import StripeSdk from "stripe";
 import { E2E_APP_ORIGIN, E2E_WEB_SERVER_ENV } from "../../e2e/helpers/local-env";
-import { adminQuery } from "./payment-fixture";
+// The harness directly (loopback-only by its own checks), NOT ./payment-fixture:
+// that module's import-time seed guard pins the database to local-env's, which
+// would stop the operator replay tool from reading a twin on another port
+// (Codex P2 4265382406). Specs that SEED still import payment-fixture.
+import { adminQuery } from "../../tests/db/helpers/harness";
 import { activeRunId, readFakeStripeCalls } from "./fake-stripe-ledger-e2e";
+import { metadataDigest } from "./fake-stripe-metadata-digest";
 
 // ===========================================================================
 // PAY-CCY-09 (#824): FAKE Stripe webhook transport for the disposable stack.
@@ -12,14 +17,22 @@ import { activeRunId, readFakeStripeCalls } from "./fake-stripe-ledger-e2e";
 // ledger. Real Stripe would then DELIVER events about them. This module plays
 // that delivery, and nothing else:
 //
-//   * PROVIDER FACTS come from the fake ledger: the PaymentIntent / Refund id,
-//     and the amount and currency the synthetic processor created them with.
-//     It never invents a refund the fake did not make, and never copies money
-//     from the Hone row into an event (that would make every money check pass
-//     by construction).
+//   * PROVIDER FACTS come from the fake ledger: the PaymentIntent id, the money
+//     the processor created it with, the CHARGE it produced, and the refund it
+//     actually made and the charge that refund targeted. It never invents a
+//     refund the fake did not make, never copies money or ids from the Hone row
+//     into an event, and refuses to build an event whose provider lineage
+//     (refund -> charge -> PaymentIntent, and the row's charge) does not hold
+//     (Codex P2 4264919593) — a broken lineage is a finding, not an event.
+//     The event's Connect `account` is the account the processor created the
+//     PaymentIntent (and made the refund) on, and the row must name it too
+//     (Codex P2 4265803389).
 //   * METADATA is what the charge path really sends at PaymentIntent create
 //     (lib/billing/session-payment-charge.ts), which real Stripe echoes on the
-//     PaymentIntent and its Charge.
+//     PaymentIntent and its Charge. It is only signed when it hashes to the
+//     digest the fake processor recorded of the metadata it RECEIVED (Codex P2
+//     4265594520), so a wrong value sent by the charge path fails the test
+//     instead of being silently corrected from the row.
 //   * The event is SIGNED with the stack's webhook secret using the Stripe
 //     SDK's own test signer, and POSTed to the app's real route, which verifies
 //     it with the real constructEvent. Nothing in the app is bypassed.
@@ -89,18 +102,59 @@ function chargeMetadata(a: AttemptFacts): Record<string, string> {
   };
 }
 
-/** The money the fake processor CREATED this PaymentIntent with. */
-function processorMoney(paymentIntentId: string, runId: string) {
+/** What the fake processor CREATED for this PaymentIntent: money and charge. */
+function processorCreate(paymentIntentId: string, runId: string) {
   const create = readFakeStripeCalls(runId).find(
     (c) => c.method === "pi_create" && !c.replay && c.resultId === paymentIntentId,
   );
   if (!create || create.amountCents == null || !create.currency) {
     throw new Error(`the fake ledger has no create for ${paymentIntentId} in run ${runId}`);
   }
-  return { amount: create.amountCents, currency: create.currency };
+  return {
+    amount: create.amountCents,
+    currency: create.currency,
+    chargeId: create.chargeId ?? null,
+    metadataDigest: create.metadataDigest ?? null,
+    stripeAccount: create.stripeAccount ?? null,
+  };
 }
 
-/** The refund the fake processor actually made for this attempt, if any. */
+/** The connected account an event is delivered under is the one the processor
+ * CREATED the object on (Codex P2 4265803389): Stripe delivers a Connect event
+ * from that account, and the webhook route derives studio context from it. The
+ * row must name the same account, and a refund must have been made on it. */
+function connectAccount(
+  a: AttemptFacts,
+  created: { stripeAccount: string | null },
+  refund?: { id: string; stripeAccount: string | null },
+): string {
+  assertLineage(
+    created.stripeAccount !== null && created.stripeAccount === a.stripe_account_id,
+    `${a.stripe_payment_intent_id} was created on ${created.stripeAccount}, the attempt names ${a.stripe_account_id}`,
+  );
+  if (refund) {
+    assertLineage(
+      refund.stripeAccount === created.stripeAccount,
+      `refund ${refund.id} was made on ${refund.stripeAccount}, the charge on ${created.stripeAccount}`,
+    );
+  }
+  return created.stripeAccount as string;
+}
+
+/** The metadata an event will carry must be what the charge path actually SENT
+ * at create (Codex P2 4265594520). Built from the row, it is only trusted when
+ * it hashes to the processor's own record of the create. */
+function eventMetadata(a: AttemptFacts, created: { metadataDigest: string | null }) {
+  const md = chargeMetadata(a);
+  assertLineage(
+    created.metadataDigest !== null && metadataDigest(md) === created.metadataDigest,
+    `the metadata the processor received for ${a.stripe_payment_intent_id} differs from the attempt row`,
+  );
+  return md;
+}
+
+/** The refund the fake processor actually made for this attempt, if any, with
+ * the charge it targeted. */
 export function processorRefund(attemptId: string, runId: string = activeRunId()) {
   const key = `hone:payment_refund:${attemptId}:v1`;
   const effect = readFakeStripeCalls(runId).find(
@@ -110,7 +164,21 @@ export function processorRefund(attemptId: string, runId: string = activeRunId()
       c.idempotencyKey === key &&
       !c.resultId.endsWith("_refused"),
   );
-  return effect ? { id: effect.resultId, amount: effect.amountCents } : null;
+  return effect
+    ? {
+        id: effect.resultId,
+        amount: effect.amountCents,
+        chargeId: effect.chargeId ?? null,
+        stripeAccount: effect.stripeAccount ?? null,
+      }
+    : null;
+}
+
+/** Refuse to build an event whose provider lineage does not hold. */
+function assertLineage(holds: boolean, what: string): void {
+  if (!holds) {
+    throw new Error(`fake-stripe-webhook: provider lineage broken: ${what}; no event built`);
+  }
 }
 
 let seq = 0;
@@ -145,19 +213,25 @@ export async function paymentIntentSucceededEvent(
   runId: string = activeRunId(),
 ) {
   const a = await attemptFacts(attemptId);
-  const money = processorMoney(a.stripe_payment_intent_id, runId);
+  const created = processorCreate(a.stripe_payment_intent_id, runId);
+  assertLineage(created.chargeId !== null, `the processor produced no charge for ${a.stripe_payment_intent_id}`);
+  assertLineage(
+    a.stripe_charge_id === created.chargeId,
+    `the attempt names charge ${a.stripe_charge_id}, the processor produced ${created.chargeId}`,
+  );
+  const amount = over.amount ?? created.amount;
   return eventEnvelope(
     "payment_intent.succeeded",
-    a.stripe_account_id,
+    connectAccount(a, created),
     {
       id: a.stripe_payment_intent_id,
       object: "payment_intent",
       status: "succeeded",
-      amount: over.amount ?? money.amount,
-      amount_received: over.amount ?? money.amount,
-      currency: over.currency ?? money.currency,
-      latest_charge: a.stripe_charge_id,
-      metadata: chargeMetadata(a),
+      amount,
+      amount_received: amount,
+      currency: over.currency ?? created.currency,
+      latest_charge: created.chargeId,
+      metadata: eventMetadata(a, created),
       livemode: false,
     },
     runId,
@@ -171,27 +245,39 @@ export async function chargeRefundedEvent(
   runId: string = activeRunId(),
 ) {
   const a = await attemptFacts(attemptId);
-  if (!a.stripe_charge_id) throw new Error(`attempt ${attemptId} has no charge`);
-  const money = processorMoney(a.stripe_payment_intent_id, runId);
+  const created = processorCreate(a.stripe_payment_intent_id, runId);
   const refund = processorRefund(attemptId, runId);
   if (!refund) {
     throw new Error(`the fake processor made no refund for attempt ${attemptId}; nothing to report`);
   }
-  const currency = over.currency ?? money.currency;
-  const amount = over.amount ?? money.amount;
+  // refund -> charge -> PaymentIntent from the processor's own record, and the
+  // Hone row must name that same charge.
+  assertLineage(refund.chargeId !== null, `refund ${refund.id} names no charge`);
+  assertLineage(
+    refund.chargeId === created.chargeId,
+    `refund ${refund.id} targeted ${refund.chargeId}, but ${a.stripe_payment_intent_id} produced ${created.chargeId}`,
+  );
+  assertLineage(
+    a.stripe_charge_id === refund.chargeId,
+    `the attempt names charge ${a.stripe_charge_id}, the processor refunded ${refund.chargeId}`,
+  );
+  const chargeId = refund.chargeId as string;
+  const currency = over.currency ?? created.currency;
+  const amount = over.amount ?? created.amount;
+  const refunded = over.amountRefunded ?? refund.amount ?? amount;
   return eventEnvelope(
     "charge.refunded",
-    a.stripe_account_id,
+    connectAccount(a, created, refund),
     {
-      id: a.stripe_charge_id,
+      id: chargeId,
       object: "charge",
       payment_intent: a.stripe_payment_intent_id,
       amount,
       amount_captured: amount,
-      amount_refunded: over.amountRefunded ?? refund.amount ?? amount,
+      amount_refunded: refunded,
       currency,
-      refunded: (over.amountRefunded ?? refund.amount ?? amount) === amount,
-      metadata: chargeMetadata(a),
+      refunded: refunded === amount,
+      metadata: eventMetadata(a, created),
       livemode: false,
       refunds: {
         object: "list",
@@ -201,7 +287,7 @@ export async function chargeRefundedEvent(
             object: "refund",
             amount: refund.amount,
             currency,
-            charge: a.stripe_charge_id,
+            charge: chargeId,
             payment_intent: a.stripe_payment_intent_id,
             status: "succeeded",
           },

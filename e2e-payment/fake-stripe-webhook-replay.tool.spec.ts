@@ -1,5 +1,8 @@
 import { test, expect } from "@playwright/test";
-import { adminQuery, closePool } from "./helpers/payment-fixture";
+// The loopback-only harness, not ./helpers/payment-fixture: that module's seed
+// guard pins the database to local-env's, and this tool reads the TWIN's
+// (Codex P2 4265382406). This tool only reads; it seeds nothing.
+import { adminQuery, closePool } from "../tests/db/helpers/harness";
 import {
   chargeRefundedEvent,
   deliverStripeEvent,
@@ -15,15 +18,21 @@ import {
 // the normal payment suite.
 // ===========================================================================
 //
-// Inputs (all required except the event list):
+// Run it with its OWN config, which starts no server (Codex P2 4265382410):
+//
+//   npx playwright test --config e2e-payment/replay-tool.playwright.config.ts
+//
+// Inputs (all required except the event list; none falls back to a default, so
+// the tool can never quietly read the shared stack or post to the lane's port):
 //   HONE_E2E_REPLAY_ATTEMPT_ID  payment_charge_attempts.id to replay for
 //   HONE_E2E_RUN_ID             the twin server's fake-processor run id (its ledger)
-//   HONE_LOCAL_DB_URL           the twin's LOOPBACK database (the db-target guard
-//                               refuses a mismatch with e2e/helpers/local-env.ts)
+//   HONE_LOCAL_DB_URL           the twin's LOOPBACK database, any port (read only)
 //   HONE_E2E_WEBHOOK_ORIGIN     the twin app's LOOPBACK origin, e.g. http://127.0.0.1:3995
 //   HONE_E2E_WEBHOOK_SECRET     the twin server's STRIPE_WEBHOOK_SECRET (whsec_…)
 //   HONE_E2E_REPLAY_EVENTS      optional, comma list of succeeded,refunded
-//                               (default: both; refunded only if the fake refunded)
+//                               (default: both; refunded only if the fake refunded).
+//                               An unknown or empty name, refunded named with no
+//                               fake refund, or nothing to build FAILS the tool.
 //
 // Each event's FIRST delivery may settle state (a refund left pending_stripe by
 // an unknown processor outcome becomes succeeded). It is then delivered again
@@ -48,12 +57,43 @@ async function state(attemptId: string) {
   return r.rows[0] as Record<string, unknown> | undefined;
 }
 
+const KNOWN_EVENTS = new Set(["succeeded", "refunded"]);
+
+const REQUIRED = [
+  "HONE_E2E_RUN_ID",
+  "HONE_LOCAL_DB_URL",
+  "HONE_E2E_WEBHOOK_ORIGIN",
+  "HONE_E2E_WEBHOOK_SECRET",
+] as const;
+
 test("FAKE webhook replay for one attempt is idempotent", async () => {
   const attemptId = ATTEMPT!;
+  if (process.env.HONE_E2E_REPLAY_TOOL_CONFIG !== "1") {
+    throw new Error(
+      "replay tool: run it with --config e2e-payment/replay-tool.playwright.config.ts " +
+        "(no webServer); a lane config would start its own server instead of using the twin",
+    );
+  }
+  const missing = REQUIRED.filter((k) => !process.env[k]);
+  if (missing.length) {
+    throw new Error(`replay tool: set ${missing.join(", ")} (no defaults, by design)`);
+  }
   const target = webhookTarget(); // throws unless loopback + whsec_ secret
+  // Every requested name must be known, and at least one event must be built:
+  // an empty list or a typo would otherwise deliver nothing and "prove"
+  // idempotence by comparing an untouched row to itself (Codex P2 4265594526).
   const wanted = (process.env.HONE_E2E_REPLAY_EVENTS ?? "succeeded,refunded")
     .split(",")
-    .map((s) => s.trim());
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const unknown = wanted.filter((w) => !KNOWN_EVENTS.has(w));
+  if (wanted.length === 0 || unknown.length > 0) {
+    throw new Error(
+      `replay tool: HONE_E2E_REPLAY_EVENTS must name succeeded and/or refunded; got ${JSON.stringify(
+        process.env.HONE_E2E_REPLAY_EVENTS ?? "",
+      )}`,
+    );
+  }
 
   const before = await state(attemptId);
   expect(before, `attempt ${attemptId} not found on this database`).toBeDefined();
@@ -62,8 +102,16 @@ test("FAKE webhook replay for one attempt is idempotent", async () => {
   if (wanted.includes("succeeded")) {
     builders.push(["payment_intent.succeeded", () => paymentIntentSucceededEvent(attemptId)]);
   }
-  if (wanted.includes("refunded") && processorRefund(attemptId)) {
-    builders.push(["charge.refunded", () => chargeRefundedEvent(attemptId)]);
+  if (wanted.includes("refunded")) {
+    if (processorRefund(attemptId)) {
+      builders.push(["charge.refunded", () => chargeRefundedEvent(attemptId)]);
+    } else if (process.env.HONE_E2E_REPLAY_EVENTS !== undefined) {
+      // Asked for by name, but the fake processor made no refund to report.
+      throw new Error(`replay tool: refunded was requested, but the fake processor made no refund for ${attemptId}`);
+    }
+  }
+  if (builders.length === 0) {
+    throw new Error("replay tool: no requested event can be built for this attempt; nothing would be proven");
   }
 
   const log: Array<{ type: string; eventId: string; status: number; replay: boolean }> = [];
@@ -82,6 +130,19 @@ test("FAKE webhook replay for one attempt is idempotent", async () => {
     firsts.push([type, ev, build]);
   }
   const settled = await state(attemptId);
+
+  // A delivered charge.refunded must have RECONCILED the refund to the
+  // processor's own refund, not merely been acknowledged: a route that answers
+  // 200 and ignores the event would otherwise leave pending_stripe in place and
+  // the replays below would "prove" idempotence of a failure (Codex P2 4265724221).
+  const processor = processorRefund(attemptId);
+  if (firsts.some(([type]) => type === "charge.refunded") && processor) {
+    expect(settled, "charge.refunded did not reconcile the refund").toMatchObject({
+      refund_status: "succeeded",
+      stripe_refund_id: processor.id,
+      refund_amount_cents: processor.amount,
+    });
+  }
 
   // REPLAYS (same id again, then a fresh id with the same facts) change nothing.
   for (const [type, ev, build] of firsts) {
