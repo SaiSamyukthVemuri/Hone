@@ -54,7 +54,14 @@ case "$CMD" in
   build) cd "$APP" && env -i "${ENVV[@]}" ./node_modules/.bin/next build ;;
   serve)
     LOG="$(dirname "$APP")/egress-refused.jsonl"; : > "$LOG"
-    cd "$APP" && env -i "${ENVV[@]}" FETT_TWIN_EGRESS_LOG="$LOG" NODE_OPTIONS="--require $ROOT/scripts/fett-twin/egress-deny.cjs" \
+    OPTS="--require $ROOT/scripts/fett-twin/egress-deny.cjs"
+    # The payment lane's own Stripe egress guard (#878), when the exported tree carries it. Loaded with
+    # --import, not a second --require (Next merges repeated --require values into one broken path).
+    # It writes an "armed" record per process and logs any refused *.stripe.com connection.
+    STRIPE_GUARD="$APP/e2e-payment/helpers/stripe-egress-guard.cjs"
+    STRIPE_LOG="$(dirname "$APP")/stripe-egress.jsonl"; : > "$STRIPE_LOG"
+    [ -f "$STRIPE_GUARD" ] && OPTS="$OPTS --import file://$STRIPE_GUARD"
+    cd "$APP" && env -i "${ENVV[@]}" FETT_TWIN_EGRESS_LOG="$LOG" HONE_E2E_STRIPE_EGRESS_LOG="$STRIPE_LOG" NODE_OPTIONS="$OPTS" \
       ./node_modules/.bin/next start -H 127.0.0.1 -p "$PORT" ;;
   *) echo "usage: app.sh export|build|serve"; exit 2 ;;
 esac

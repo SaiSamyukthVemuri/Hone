@@ -40,6 +40,11 @@ function guard(original, kind) {
   };
 }
 
+// Positive proof the fence loaded in THIS process (a missing preload would otherwise be silent).
+try {
+  fs.appendFileSync(LOG, JSON.stringify({ at: new Date().toISOString(), kind: "armed", pid: process.pid }) + "\n");
+} catch {}
+
 net.connect = net.createConnection = guard(net.createConnection, "net");
 tls.connect = guard(tls.connect, "tls");
 
