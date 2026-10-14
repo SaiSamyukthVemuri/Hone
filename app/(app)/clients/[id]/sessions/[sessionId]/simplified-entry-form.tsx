@@ -26,6 +26,7 @@ import {
 import { pickSavedLabel } from "@/lib/saved-label";
 import { MultiChipSelector } from "@/components/multi-chip-selector";
 import { addElectrolysisEntryAction } from "./actions";
+import { SectionLabel } from "@/components/ui/section-label";
 
 // SimplifiedEntryForm is the primary entry-creation surface inside a block.
 // Treatment params (mode, modality, energy_level, probe_type, probe_size,
@@ -209,9 +210,9 @@ export function SimplifiedEntryForm({
       {(block.mode === "galv" || block.mode === "blend") && (
         <div className="flex flex-col gap-3">
           {block.mode === "blend" && (
-            <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            <SectionLabel>
               Galvanic
-            </span>
+            </SectionLabel>
           )}
           <div className="grid gap-4 md:grid-cols-2">
             <label className="flex flex-col gap-1.5">
@@ -262,9 +263,9 @@ export function SimplifiedEntryForm({
       {(block.mode === "thermo" || block.mode === "blend") && (
         <div className="flex flex-col gap-3">
           {block.mode === "blend" && (
-            <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            <SectionLabel>
               Thermolysis
-            </span>
+            </SectionLabel>
           )}
           <div className="grid gap-4 md:grid-cols-2">
             <label className="flex flex-col gap-1.5">
@@ -376,9 +377,9 @@ export function SimplifiedEntryForm({
       <div className="flex flex-col gap-2 border-t border-neutral-200 pt-4 dark:border-neutral-800">
         {clientTagLabels.length > 0 && (
           <div className="flex flex-col gap-1.5 rounded-md border border-neutral-200 bg-white px-3 py-2 dark:border-neutral-800 dark:bg-neutral-950">
-            <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            <SectionLabel>
               Client tags
-            </span>
+            </SectionLabel>
             <div className="flex flex-wrap gap-1.5">
               {clientTagLabels.map((label) => (
                 <span
