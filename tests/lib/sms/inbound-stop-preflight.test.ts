@@ -52,7 +52,9 @@ const allProven = (): InboundStopFacts => ({
   mappedStudioId: "studio-b",
   expectedStudioId: "studio-b",
   // The approved live STOP was accepted and stamped phone-wide.
-  liveStopObservation: { reachedRoute: true, routeStatus: 200, phoneWideOptOutStamped: true },
+  liveStopObservation: { reachedRoute: true, routeStatus: 200, phoneWideOptOutStamped: true, observedAt: "2026-10-12T12:00:00Z" },
+  // The service forwards keyword messages, unchanged since before that STOP.
+  optOutConfiguration: { dropsKeywordMessages: false, lastChangedAt: "2026-10-01T00:00:00Z" },
 });
 
 describe("expectedInboundWebhookUrl", () => {
@@ -1287,5 +1289,61 @@ describe("the FALLBACK's transport is judged like the primary's (Codex P1 426552
       f.webhookRules = undefined;
       expect(status(f, "stop_redelivery")).toBe("unknown");
     }
+  });
+});
+
+describe("the live STOP proves only the opt-out configuration it ran under (Codex P1 4266130958)", () => {
+  const stop = (f: InboundStopFacts) => evaluateInboundStopPreflight(f).checks.find((c) => c.id === "stop_forwarded");
+
+  it("POSITIVE CONTROL: forwarding configuration unchanged since the observed STOP: ready", () => {
+    const f = allProven();
+    expect(stop(f)?.status).toBe("pass");
+    expect(evaluateInboundStopPreflight(f).ready).toBe(true);
+  });
+
+  it("the service now DROPS keyword messages: refused, even with a perfect earlier observation", () => {
+    const f = allProven();
+    f.optOutConfiguration = { dropsKeywordMessages: true, lastChangedAt: "2026-10-13T00:00:00Z" };
+    expect(stop(f)?.status).toBe("fail");
+    expect(evaluateInboundStopPreflight(f).blockers).toEqual(["stop_forwarded"]);
+  });
+
+  it("dropping keyword messages fails even before any live STOP is observed", () => {
+    const f = allProven();
+    f.liveStopObservation = undefined;
+    f.optOutConfiguration = { dropsKeywordMessages: true, lastChangedAt: null };
+    expect(stop(f)?.status).toBe("fail");
+  });
+
+  for (const [why, mutate] of [
+    ["the configuration changed AFTER the observation (back to forwarding)", (f: InboundStopFacts) => (f.optOutConfiguration = { dropsKeywordMessages: false, lastChangedAt: "2026-10-13T00:00:00Z" })],
+    ["the configuration changed at the very instant of the observation", (f: InboundStopFacts) => (f.optOutConfiguration = { dropsKeywordMessages: false, lastChangedAt: "2026-10-12T12:00:00Z" })],
+    ["the opt-out configuration not read", (f: InboundStopFacts) => (f.optOutConfiguration = undefined)],
+    ["whether it drops keywords not read", (f: InboundStopFacts) => (f.optOutConfiguration = { dropsKeywordMessages: null, lastChangedAt: "2026-10-01T00:00:00Z" })],
+    ["its last change time not read", (f: InboundStopFacts) => (f.optOutConfiguration = { dropsKeywordMessages: false, lastChangedAt: null })],
+    ["the observation's time not read", (f: InboundStopFacts) => (f.liveStopObservation = { reachedRoute: true, routeStatus: 200, phoneWideOptOutStamped: true })],
+    ["an unparseable observation time", (f: InboundStopFacts) => (f.liveStopObservation = { reachedRoute: true, routeStatus: 200, phoneWideOptOutStamped: true, observedAt: "last week" })],
+  ] as const) {
+    it(`${why}: unknown, a blocker (re-verify)`, () => {
+      const f = allProven();
+      mutate(f);
+      expect(stop(f)?.status).toBe("unknown");
+      expect(evaluateInboundStopPreflight(f).blockers).toEqual(["stop_forwarded"]);
+    });
+  }
+
+  it("the operator is told WHICH fact is missing: unread times vs a later change", () => {
+    const unread = allProven();
+    unread.optOutConfiguration = { dropsKeywordMessages: false, lastChangedAt: null };
+    expect(stop(unread)?.detail).toMatch(/not read/);
+    const later = allProven();
+    later.optOutConfiguration = { dropsKeywordMessages: false, lastChangedAt: "2026-10-13T00:00:00Z" };
+    expect(stop(later)?.detail).toMatch(/changed after the live STOP.*re-verify/);
+  });
+
+  it("a FAILED observation still fails, whatever the configuration's freshness", () => {
+    const f = allProven();
+    f.liveStopObservation = { reachedRoute: true, routeStatus: 403, phoneWideOptOutStamped: null, observedAt: "2026-10-12T12:00:00Z" };
+    expect(stop(f)?.status).toBe("fail");
   });
 });

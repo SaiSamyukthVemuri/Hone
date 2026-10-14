@@ -377,6 +377,23 @@ export type InboundStopFacts = {
     routeStatus: number | null;
     /** The phone-wide opt-out was stamped for that phone by that STOP. */
     phoneWideOptOutStamped: boolean | null;
+    /** ISO time of that STOP; undefined or null = not read. */
+    observedAt?: string | null;
+  };
+  /**
+   * The studio service's opt-out handling, read-only from the Console (Codex
+   * P1 4266130958): Twilio forwards keyword messages (STOP and its family) to
+   * the inbound webhook only when the service is NOT configured to drop them
+   * (Advanced Opt-Out; Twilio help "How to Track Opt-Out, In and Help
+   * Messages Using the OptOutType Parameter"). The live observation proves
+   * only the configuration it ran under, so it counts only when it postdates
+   * the last change to this configuration. A null field = not read.
+   */
+  optOutConfiguration?: {
+    /** The service drops opt-out keyword messages instead of forwarding them. */
+    dropsKeywordMessages: boolean | null;
+    /** ISO time of the last change to the service's opt-out configuration (its creation if never changed). */
+    lastChangedAt: string | null;
   };
 };
 
@@ -789,18 +806,30 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
   );
 
   const stop = f.liveStopObservation;
+  const optOut = f.optOutConfiguration;
+  const observedAt = stop?.observedAt ? Date.parse(stop.observedAt) : NaN;
+  const optOutChangedAt = optOut?.lastChangedAt ? Date.parse(optOut.lastChangedAt) : NaN;
+  const stopObservedOk = stop?.reachedRoute === true && stop.routeStatus === 200 && stop.phoneWideOptOutStamped === true;
   checks.push(
-    stop === undefined
-      ? check("stop_forwarded", "unknown", "STOP suppression not yet observed (first approved live verification)")
-      : stop.reachedRoute === false
-        ? check("stop_forwarded", "fail", "the service consumed STOP without forwarding it to Hone")
-        : stop.routeStatus !== null && stop.routeStatus !== 200
-          ? check("stop_forwarded", "fail", `the route answered ${stop.routeStatus} to the STOP: it was forwarded but not accepted, so nothing was suppressed`)
-          : stop.routeStatus === 200 && stop.phoneWideOptOutStamped === false
-            ? check("stop_forwarded", "fail", "the route accepted the STOP but no phone-wide opt-out was stamped")
-            : stop.reachedRoute === true && stop.routeStatus === 200 && stop.phoneWideOptOutStamped === true
-              ? check("stop_forwarded", "pass", "a live STOP to the studio number was accepted (200) and stamped the phone-wide opt-out")
-              : check("stop_forwarded", "unknown", "the live STOP's delivery, response status or phone-wide stamp was not read"),
+    optOut?.dropsKeywordMessages === true
+      ? check("stop_forwarded", "fail", "the service is configured to drop opt-out keyword messages: a STOP never reaches Hone, whatever an earlier observation showed")
+      : stop === undefined
+        ? check("stop_forwarded", "unknown", "STOP suppression not yet observed (first approved live verification)")
+        : stop.reachedRoute === false
+          ? check("stop_forwarded", "fail", "the service consumed STOP without forwarding it to Hone")
+          : stop.routeStatus !== null && stop.routeStatus !== 200
+            ? check("stop_forwarded", "fail", `the route answered ${stop.routeStatus} to the STOP: it was forwarded but not accepted, so nothing was suppressed`)
+            : stop.routeStatus === 200 && stop.phoneWideOptOutStamped === false
+              ? check("stop_forwarded", "fail", "the route accepted the STOP but no phone-wide opt-out was stamped")
+              : !stopObservedOk
+                ? check("stop_forwarded", "unknown", "the live STOP's delivery, response status or phone-wide stamp was not read")
+                : optOut === undefined || optOut.dropsKeywordMessages === null
+                  ? check("stop_forwarded", "unknown", "the service's opt-out configuration (does it drop keyword messages?) was not read")
+                  : Number.isNaN(observedAt) || Number.isNaN(optOutChangedAt)
+                    ? check("stop_forwarded", "unknown", "the live STOP's time or the opt-out configuration's last change was not read: the observation cannot be tied to the current configuration")
+                    : observedAt > optOutChangedAt
+                      ? check("stop_forwarded", "pass", "a live STOP, after the last opt-out configuration change, was accepted (200) and stamped the phone-wide opt-out")
+                      : check("stop_forwarded", "unknown", "the opt-out configuration changed after the live STOP was observed: re-verify with a new approved live STOP"),
   );
 
   // The URL #863's sender controls would configure and require, from the same
