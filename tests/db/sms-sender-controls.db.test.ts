@@ -456,9 +456,23 @@ describe("per-studio demo inventory and the recorded-resource check", () => {
     expect(provider.calls.purchase).toBe(0);
   });
 
-  it("with nothing recorded, the page offers candidate 0", async () => {
+  // THE CONTRACT, not an assumption about a shared database: other tests'
+  // random numbers can land on a candidate, so the expected pair is computed
+  // from what the database actually records (CI found the earlier
+  // "candidate 0" assumption flaky).
+  it("the page offers the FIRST candidate whose numbers no other studio records", async () => {
     const s = await seedStudio("ctl-inv-free");
-    expect(await controls.resolveDemoInventory(admin, s.studioId)).toEqual(controls.demoAdoptionInventory(s.studioId, 0));
+    const recorded = async (n: string) =>
+      (await adminQuery("select public.studio_sms_resource_recorded($1, $2, null) r", [s.studioId, n])).rows[0].r as boolean;
+    let expected = controls.demoAdoptionInventory(s.studioId, 0);
+    for (let i = 0; i < 16; i += 1) {
+      const inv = controls.demoAdoptionInventory(s.studioId, i);
+      if (!(await recorded(inv.numbers.CA.phoneNumber)) && !(await recorded(inv.numbers.US.phoneNumber))) {
+        expected = inv;
+        break;
+      }
+    }
+    expect(await controls.resolveDemoInventory(admin, s.studioId)).toEqual(expected);
   });
 
   it("a number or service already recorded for another studio is refused before any claim", async () => {
