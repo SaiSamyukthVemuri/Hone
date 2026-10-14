@@ -43,7 +43,7 @@ What this stack adds stays inside the boundary #828 asked for:
 
 | # | Step | Gate |
 |---|---|---|
-| 1 | Apply `0211` (#827), then `0212` (#832) | Migration-first, each from its exact reviewed head ([migration-first-process.md](./migration-first-process.md)). `supabase db push` applies in lexical order, so the hosted chain must already hold every lower pending number. |
+| 1 | ~~Apply `0211` (#827), then `0212` (#832)~~ **DONE 2026-10-12** (0212 from `7116c668`; see §5 D1 and the ledger) | Migration-first, each from its exact reviewed head ([migration-first-process.md](./migration-first-process.md)). `supabase db push` applies in lexical order, so the hosted chain must already hold every lower pending number. |
 | 2 | Merge #832 | After its `0212` apply. **Inert on merge**: the webhook answers 500 and records nothing without `RESEND_WEBHOOK_SECRET`, and no send path is tagged yet. |
 | 3 | Apply `0213`, `0214` (other lanes), then `0215` (#843) | Migration-first. `0215` adds an AFTER trigger to **both** ledgers, including the live SMS ledger, so its first effect is that **SMS failures start opening incidents** in production. That is visibility only, with no message and no alert email. |
 | 4 | Merge #843, #846, #849 | **Behaviour changes on merge:** reminder and confirmation emails begin creating ledger rows and carry the `hone_m` tag, and owners see the delivery card (Settings → Launch on this stack; Settings → Overview once #867 lands, which moves it). With no webhook yet, email rows stop at `accepted` / `refused` / `unknown`. The card and health say so; they do not claim delivery. |
@@ -96,14 +96,22 @@ What this stack adds stays inside the boundary #828 asked for:
 
 The demo states these limits on screen. The card never claims bounce reporting is live: it states that a bounce appears only once Hone receives the provider's delivery reports, so no listed problem is not proof of delivery. A stored `RESEND_WEBHOOK_SECRET` is not treated as activation (Codex P2 4253217747). §2's controlled test is the activation evidence.
 
-## 5. Decisions still open: exact steps, validation, rollback
+## 5. Decisions: exact steps, validation, rollback
 
-Nothing here has been done. Each numbered decision is approved on its own. Before every step, run the CLAUDE.md §5 checks:
+**D1 is DONE.** `0211` and `0212` were applied to production on 2026-10-12, migration-first and before any merge:
+- `0211` from #827 `481e60c6`;
+- `0212` from #832 **`7116c668`**, not `ba8fc505`. The SQL is byte-identical; the head moved for two ledger-only review findings.
+
+The hosted max is **0212**. The authoritative apply records are `docs/production/migration-state.json` and `docs/production/migration-ledger.md`. **Do not re-apply** `0211` or `0212`: both are frozen.
+
+**D2–D5 remain open.** Each is approved on its own. Before every step, run the CLAUDE.md §5 checks:
 - `supabase/.temp/project-ref` is the canonical Hone project;
 - read-only SQL only, through `supabase db query --linked`;
-- re-derive the hosted max at that moment. `docs/production/migration-state.json` records **0210** as of this writing; that is a declaration, not a reading.
+- re-derive the hosted max at that moment from the live project. `migration-state.json` is a declaration, not a reading.
 
-### D1. Apply `0211`, then `0212` (#832)
+### D1. Apply `0211`, then `0212` (#832): DONE 2026-10-12, kept as the historical plan
+
+> **Completed. Do not run this section.** It is the pre-apply plan, kept for the record. The executed gates, verification and exceptions are in `docs/production/migration-ledger.md`.
 
 The exact release packet (heads, evidence, commands, permission and behaviour effects, verification, recovery) is [delivery-d1-release-packet.md](./delivery-d1-release-packet.md). It separates `0211`'s consent guard on the live `clients` table from `0212`'s new, unused tables. The summary below is for `0212`.
 
@@ -253,14 +261,18 @@ No step above enables an emailed delivery alert:
 
 Turning any of that on is a separate decision after D-4.
 
-### The smallest decision that unblocks the rest
+### What remains, in order
 
-**Approve D1: apply `0211` then `0212` from their reviewed heads.**
+1. **The pending chain `0213`–`0227`.** Each migration is applied migration-first from its owner's reviewed head, in number order, under its own approval; owners are listed in #876's manifest. This lane's are:
+   - `0215` (D2);
+   - `0221` (D3);
+   - `0227` (#876): the two forward fixes to `0212`, the bounded quarantine and non-terminal transient bounces.
 
-Everything else depends on it, and it is inert:
-- it adds two empty tables and service-only commands;
-- it touches no existing table;
-- nothing reads it until #832 merges.
+   The ordered composition was proved on `integration/fett-composed-824` `82046d94` (§6).
+2. **D4, the Resend webhook, only after `0227` is applied.** The bounded quarantine and the transient-bounce fix are receiver preconditions, so activating the receiver on `0212`'s original functions is not authorized.
+3. **D5, the daily recovery sweep, after D4.**
+
+Merges, the webhook secret and endpoint, and the cron entry are each a separate decision. None is authorized here.
 
 ## 6. Delivery evidence packet: every count attributed to the head it ran on (2026-10-14)
 
