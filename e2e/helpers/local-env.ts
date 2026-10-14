@@ -41,6 +41,16 @@ const LOCAL_SERVICE_ROLE_KEY =
 const BANNED_URL_PATTERNS =
   /supabase\.co|supabase\.com|supabase\.in|pooler\.|amazonaws\.com|rds\.|azure|neon\.tech/i;
 
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
+
+export function isLoopbackUrl(value: string): boolean {
+  try {
+    return LOOPBACK_HOSTS.has(new URL(value).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 function refuseHostedOverrides() {
   for (const name of [
     "NEXT_PUBLIC_SUPABASE_URL",
@@ -50,7 +60,9 @@ function refuseHostedOverrides() {
   ]) {
     const value = process.env[name];
     if (!value) continue;
-    if (BANNED_URL_PATTERNS.test(value) || !/127\.0\.0\.1|localhost/.test(value)) {
+    // The HOST must be loopback, not merely MENTION it: a substring test let
+    // `http://127.0.0.1.attacker.example` or `https://x.example/?127.0.0.1` through.
+    if (BANNED_URL_PATTERNS.test(value) || !isLoopbackUrl(value)) {
       throw new Error(
         `e2e refuses to run: ${name} points away from the local Supabase stack. This lane is local-only.`,
       );
@@ -86,7 +98,12 @@ const RESOURCES: { port: number; origin: string; host: string; worktree: string 
 export const E2E_APP_ORIGIN: string = RESOURCES.origin;
 export const E2E_APP_PORT: number = RESOURCES.port;
 export const E2E_WORKTREE: string = RESOURCES.worktree;
-export const E2E_SUPABASE_URL = LOCAL_SUPABASE_URL;
+// An isolated stack is selected by E2E_SUPABASE_URL, which refuseHostedOverrides()
+// has already proven loopback by the time this runs. Without it, tests that read
+// this export (every tests/db PostgREST/GoTrue client) reached the shared 54321
+// stack even when HONE_LOCAL_DB_URL pointed the pg pool elsewhere -- a split
+// target that wrote auth users into the wrong stack. Unset: byte-for-byte unchanged.
+export const E2E_SUPABASE_URL = process.env.E2E_SUPABASE_URL || LOCAL_SUPABASE_URL;
 export const E2E_DB_URL = LOCAL_DB_URL;
 export const E2E_MAILPIT_URL = LOCAL_MAILPIT_URL;
 export const E2E_SERVICE_ROLE_KEY = LOCAL_SERVICE_ROLE_KEY;
