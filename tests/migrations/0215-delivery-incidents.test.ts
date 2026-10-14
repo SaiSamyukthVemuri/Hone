@@ -164,16 +164,22 @@ describe("0215 grants EXACTLY the intended roles, and nothing else", () => {
   // the intended one (to anon, a second role, \`grant all\`, a schema-wide
   // grant) changes this list, so the assertion is exact, not "contains".
   const grants = (code: string): string[] => {
+    // Both comment forms are stripped first, so a commented-out grant neither
+    // counts nor hides one. Then statement by statement (split on ";"), so a
+    // grant on the same line as another statement is still seen.
+    const bare = code.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ");
     const out: string[] = [];
-    for (const m of code.matchAll(/^\s*grant\s+([^;]+?)\s+on\s+([^;]+?)\s+to\s+([^;]+);/gim)) {
+    for (const stmt of bare.split(";")) {
+      const m = /^\s*grant\s+([\s\S]+?)\s+on\s+([\s\S]+?)\s+to\s+([\s\S]+?)\s*$/i.exec(stmt);
+      if (!m) continue;
       const obj = m[2]!.replace(/\s+/g, " ").trim().replace(/^function /i, "");
-      for (const role of m[3]!.split(",")) out.push(`${m[1]!.trim().toLowerCase()} | ${obj} -> ${role.trim().toLowerCase()}`);
+      for (const role of m[3]!.split(",")) out.push(`${m[1]!.replace(/\s+/g, " ").trim().toLowerCase()} | ${obj} -> ${role.trim().toLowerCase()}`);
     }
     return out.sort();
   };
 
   it("matches the intended grant list exactly", () => {
-    expect(grants(CODE)).toEqual([
+    expect(grants(SQL)).toEqual([
       "execute | public.email_delivery_health() -> service_role",
       "execute | public.owner_delivery_incidents(uuid) -> authenticated",
       "execute | public.record_email_sweep_run(integer, integer, integer) -> service_role",
