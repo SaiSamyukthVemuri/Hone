@@ -6,30 +6,54 @@ import { senderControlsGate } from "@/lib/sms/sender-controls";
 // never in production and never with live provisioning armed.
 
 const never = () => false;
+/** The local stack: the only database these controls may write to. */
+const LOCAL = { NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321" };
 const armed = () => true;
 
 describe("senderControlsGate", () => {
   it("opens only for HONE_SMS_SENDER_CONTROLS=fake", () => {
-    expect(senderControlsGate({ HONE_SMS_SENDER_CONTROLS: "fake" }, never)).toEqual({ open: true, mode: "fake" });
+    expect(senderControlsGate({ ...LOCAL, HONE_SMS_SENDER_CONTROLS: "fake" }, never)).toEqual({ open: true, mode: "fake" });
     for (const v of [undefined, "", "true", "live", "FAKE"]) {
-      expect(senderControlsGate({ HONE_SMS_SENDER_CONTROLS: v }, never), String(v)).toEqual({ open: false, reason: "not_enabled" });
+      expect(senderControlsGate({ ...LOCAL, HONE_SMS_SENDER_CONTROLS: v }, never), String(v)).toEqual({ open: false, reason: "not_enabled" });
     }
   });
 
   it("stays shut on a Vercel PREVIEW, which uses the production database (Codex P1 4251747841)", () => {
     for (const env of ["preview", "staging", "anything-hosted"]) {
-      expect(senderControlsGate({ HONE_SMS_SENDER_CONTROLS: "fake", VERCEL_ENV: env }, never), env).toEqual({ open: false, reason: "hosted_deployment" });
+      expect(senderControlsGate({ ...LOCAL, HONE_SMS_SENDER_CONTROLS: "fake", VERCEL_ENV: env }, never), env).toEqual({ open: false, reason: "hosted_deployment" });
     }
-    expect(senderControlsGate({ HONE_SMS_SENDER_CONTROLS: "fake", VERCEL_ENV: "development" }, never)).toEqual({ open: true, mode: "fake" });
-    expect(senderControlsGate({ HONE_SMS_SENDER_CONTROLS: "fake" }, never)).toEqual({ open: true, mode: "fake" });
+    expect(senderControlsGate({ ...LOCAL, HONE_SMS_SENDER_CONTROLS: "fake", VERCEL_ENV: "development" }, never)).toEqual({ open: true, mode: "fake" });
+    expect(senderControlsGate({ ...LOCAL, HONE_SMS_SENDER_CONTROLS: "fake" }, never)).toEqual({ open: true, mode: "fake" });
   });
 
   it("stays shut in production, whatever the flag says", () => {
-    expect(senderControlsGate({ HONE_SMS_SENDER_CONTROLS: "fake", VERCEL_ENV: "production" }, never)).toEqual({ open: false, reason: "production" });
+    expect(senderControlsGate({ ...LOCAL, HONE_SMS_SENDER_CONTROLS: "fake", VERCEL_ENV: "production" }, never)).toEqual({ open: false, reason: "production" });
+  });
+
+  it("stays shut in a SELF-HOSTED production runtime and against any non-local database (Codex P2 4266736587)", () => {
+    const fake = { HONE_SMS_SENDER_CONTROLS: "fake" };
+    // `next start` in production, no VERCEL_ENV, pointed at the hosted project.
+    expect(senderControlsGate({ ...fake, NODE_ENV: "production", NEXT_PUBLIC_SUPABASE_URL: "https://alhhybgqdmcdyzpybykj.supabase.co" }, never)).toEqual({ open: false, reason: "not_local_database" });
+    // ... or with no database URL at all, a LAN host, a lookalike or a malformed value.
+    for (const url of [undefined, "", "http://10.0.0.5:54321", "http://127.0.0.1.evil.example", "https://localhost.example.com", "not a url"]) {
+      expect(senderControlsGate({ ...fake, NODE_ENV: "production", NEXT_PUBLIC_SUPABASE_URL: url }, never), String(url)).toEqual({ open: false, reason: "not_local_database" });
+    }
+    // `next dev` against the hosted project is shut too: NODE_ENV is not the authority.
+    expect(senderControlsGate({ ...fake, NODE_ENV: "development", NEXT_PUBLIC_SUPABASE_URL: "https://alhhybgqdmcdyzpybykj.supabase.co" }, never)).toEqual({ open: false, reason: "not_local_database" });
+    // A deployed platform's own markers refuse even with a loopback URL.
+    for (const marker of [{ VERCEL: "1" }, { AWS_REGION: "us-east-1" }, { AWS_EXECUTION_ENV: "AWS_Lambda_nodejs20.x" }]) {
+      expect(senderControlsGate({ ...LOCAL, ...fake, NODE_ENV: "production", ...marker }, never), JSON.stringify(marker)).toEqual({ open: false, reason: "deployed_runtime" });
+    }
+  });
+
+  it("opens for a LOCAL production build (next start against the loopback stack), as the e2e lane and the local twin run", () => {
+    for (const url of ["http://127.0.0.1:54321", "http://localhost:55821", "http://[::1]:54321"]) {
+      expect(senderControlsGate({ HONE_SMS_SENDER_CONTROLS: "fake", NODE_ENV: "production", NEXT_PUBLIC_SUPABASE_URL: url }, never), url).toEqual({ open: true, mode: "fake" });
+    }
   });
 
   it("stays shut when live provisioning is armed (a click could buy a number)", () => {
-    expect(senderControlsGate({ HONE_SMS_SENDER_CONTROLS: "fake" }, armed)).toEqual({ open: false, reason: "live_provisioning_armed" });
+    expect(senderControlsGate({ ...LOCAL, HONE_SMS_SENDER_CONTROLS: "fake" }, armed)).toEqual({ open: false, reason: "live_provisioning_armed" });
   });
 });
 

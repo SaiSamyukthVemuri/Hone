@@ -27,9 +27,9 @@ import { inboundReaches } from "./inbound-routing";
 // below opens ONLY for an explicit fake mode:
 //
 //   HONE_SMS_SENDER_CONTROLS = "fake"   set deliberately, in a test or a
-//                                       local/preview demo; unset everywhere else
+//                                       local demo; unset everywhere else
 //
-// and it stays shut, whatever that variable says, when either is true:
+// and it stays shut, whatever that variable says, when any of these is true:
 //
 //   * live provisioning is ARMED (HONE_SMS_PROVISIONING_LIVE + credentials):
 //     the resolver would hand back the real provider, so a click could buy a
@@ -39,6 +39,11 @@ import { inboundReaches } from "./inbound-routing";
 //     write a fake "active" sender into the production database. Refused.
 //   * the deployment is ANY OTHER HOSTED Vercel environment (preview): previews
 //     use the production database. Refused (Codex P1 4251747841).
+//   * the run is not explicitly LOCAL (Codex P2 4266736587): a deployed
+//     platform's markers (VERCEL=1, AWS_*), or a database URL that is not the
+//     loopback stack. A self-hosted `next start` in production, or a `next dev`
+//     pointed at the hosted project, is refused; NODE_ENV is not the
+//     authority, the database the fake would write to is.
 //
 // The provider the operations use is therefore always the fake, and it is
 // passed in explicitly rather than resolved, so nothing here can reach the
@@ -56,7 +61,34 @@ type Env = Readonly<Record<string, string | undefined>>;
 
 export type SenderControlsGate =
   | { open: true; mode: "fake" }
-  | { open: false; reason: "not_enabled" | "live_provisioning_armed" | "production" | "hosted_deployment" };
+  | {
+      open: false;
+      reason:
+        | "not_enabled"
+        | "live_provisioning_armed"
+        | "production"
+        | "hosted_deployment"
+        | "deployed_runtime"
+        | "not_local_database";
+    };
+
+/**
+ * Is this the LOCAL stack? The controls write fake senders through the
+ * service-role client to whatever database NEXT_PUBLIC_SUPABASE_URL names, so
+ * that URL is the authority on whether a fake record could land anywhere real.
+ * Loopback only; anything else (a hosted project, a LAN host, a missing or
+ * malformed URL) is not local.
+ */
+function isLoopbackDatabase(raw: string | undefined): boolean {
+  if (!raw) return false;
+  let host: string;
+  try {
+    host = new URL(raw).hostname;
+  } catch {
+    return false;
+  }
+  return host === "127.0.0.1" || host === "localhost" || host === "[::1]" || host === "::1";
+}
 
 export function senderControlsGate(
   env: Env = process.env,
@@ -68,6 +100,14 @@ export function senderControlsGate(
   // fake "active" production record. Only an unhosted run (no VERCEL_ENV) or
   // Vercel's local development environment may open these controls.
   if (env.VERCEL_ENV && env.VERCEL_ENV !== "development") return { open: false, reason: "hosted_deployment" };
+  // NOT ONLY VERCEL (Codex P2 4266736587): a self-hosted production runtime
+  // (`next start` with NODE_ENV=production and no VERCEL_ENV), or a deployed
+  // platform's own markers, must not open these either. The run must be
+  // explicitly LOCAL: no deployed-runtime marker, and the database it would
+  // write to is the loopback stack. This also shuts a `next dev` pointed at a
+  // hosted project, whatever NODE_ENV says.
+  if (env.VERCEL === "1" || env.AWS_REGION || env.AWS_EXECUTION_ENV) return { open: false, reason: "deployed_runtime" };
+  if (!isLoopbackDatabase(env.NEXT_PUBLIC_SUPABASE_URL)) return { open: false, reason: "not_local_database" };
   if (liveArmed()) return { open: false, reason: "live_provisioning_armed" };
   if (env[SENDER_CONTROLS_ENV] !== "fake") return { open: false, reason: "not_enabled" };
   return { open: true, mode: "fake" };
