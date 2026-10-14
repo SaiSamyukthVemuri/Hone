@@ -16,19 +16,19 @@ const URL_OK = `${BASE}/api/twilio/inbound-sms`;
  * 4254444665, 4264761390): connect/TLS, read timeout and 5xx, one retry or
  * more, and a total budget holding two worst-case attempts (2 * (1000 + 5000)).
  */
-const FULL_RETRY = "#ct=1000&rt=5000&tt=15000&rc=2&rp=ct,rt,5xx&e=ashburn,umatilla";
+const FULL_RETRY = "#ct=1000&rt=5000&tt=15000&rc=2&rp=4xx,5xx,ct,rt&e=ashburn,umatilla";
 /**
  * A same-route FALLBACK that recovers its OWN failures (Codex P1 4269949178):
  * retries on connect/TLS, read timeout and 5xx, two explicit edges (Codex P2
  * 4266813200), and 2 * (1000 + 5000) within the default 15000 ms total.
  */
-const URL_EDGES = `${URL_OK}#ct=1000&rt=5000&rc=2&rp=ct,rt,5xx&e=ashburn,umatilla`;
+const URL_EDGES = `${URL_OK}#ct=1000&rt=5000&rc=2&rp=4xx,5xx,ct,rt&e=ashburn,umatilla`;
 /** FULL_RETRY without its edge list, for tests that set `e` themselves. */
-const URL_RETRY_NO_EDGES = `${URL_OK}#ct=1000&rt=5000&tt=15000&rc=2&rp=ct,rt,5xx`;
+const URL_RETRY_NO_EDGES = `${URL_OK}#ct=1000&rt=5000&tt=15000&rc=2&rp=4xx,5xx,ct,rt`;
 const URL_RETRY = `${URL_OK}${FULL_RETRY}`;
 /** A live Setting's retries that recover every failure within the assumed 15000 ms total. */
 const SETTING_RECOVERY = {
-  retryOn: ["HTTP_5XX", "CONNECTION_TIMEOUT", "READ_TIMEOUT"],
+  retryOn: ["HTTP_4XX", "HTTP_5XX", "CONNECTION_TIMEOUT", "READ_TIMEOUT"],
   retryCount: 2,
   connectTimeoutMs: 1000,
   readTimeoutMs: 5000,
@@ -425,7 +425,7 @@ describe("evaluateInboundStopPreflight", () => {
       for (const frag of [
         "#tt=12000&rp=all&ct=1000&rt=5000&e=ashburn,umatilla",
         FULL_RETRY,
-        "#ct=2500&rt=5000&rp=ct,rt,5xx&e=ashburn,umatilla",
+        "#ct=2500&rt=5000&rp=4xx,ct,rt,5xx&e=ashburn,umatilla",
         "#ct=500&rt=1000&tt=15000&rc=2&rp=4xx,5xx,ct,rt&sni=y&e=dublin,sydney",
       ]) {
         it(`${frag}: certified`, () => {
@@ -1222,7 +1222,7 @@ describe("the FALLBACK's transport is judged like the primary's (Codex P1 426552
   for (const [why, url] of [
     ["two edges", URL_EDGES],
     ["sni=y and full own recovery", `${URL_OK}#sni=y&ct=1000&rt=5000&rp=all&e=ashburn,umatilla`],
-    ["full own recovery and three edges", `${URL_OK}#ct=1000&rt=5000&rp=ct,rt,5xx&e=dublin,sydney,ashburn`],
+    ["full own recovery and three edges", `${URL_OK}#ct=1000&rt=5000&rp=4xx,ct,rt,5xx&e=dublin,sydney,ashburn`],
   ] as const) {
     it(`POSITIVE CONTROL: a safe same-route fallback (${why}) recovers: ready`, () => {
       const f = withFallback(url);
@@ -1521,7 +1521,8 @@ describe("an edge list is resilience only if a connect failure is RETRIED onto t
     ["rp=ct,5xx (read timeouts on the fallback lost)", "#ct=1000&rt=5000&rp=ct,5xx&e=dublin,sydney", "fail"],
     ["rp=ct,rt (a 5xx on the fallback lost)", "#ct=1000&rt=5000&rp=ct,rt&e=dublin,sydney", "fail"],
     ["rp=all, rc=2", "#ct=1000&rt=5000&rp=all&rc=2&e=ashburn,umatilla", "pass"],
-    ["rp=ct,rt,5xx", "#ct=1000&rt=5000&rp=ct,rt,5xx&e=dublin,sydney", "pass"],
+    ["rp=ct,rt,5xx (a transient 400 on the fallback lost)", "#ct=1000&rt=5000&rp=ct,rt,5xx&e=dublin,sydney", "fail"],
+    ["rp=4xx,ct,rt,5xx", "#ct=1000&rt=5000&rp=4xx,ct,rt,5xx&e=dublin,sydney", "pass"],
   ] as const) {
     it(`no Rule, two-edge fallback with ${why}: ${want}`, () => {
       expect(status(`${URL_OK}${frag}`)).toBe(want);
@@ -1626,4 +1627,51 @@ describe("NEGATIVE CONTROLS — opt-out passes only on an EXPLICIT false (Codex 
       expect(run({ dropsKeywordMessages: false, lastChangedAt: "2026-10-01T00:00:00Z" }, stop)).toEqual({ status: "unknown", ready: false });
     });
   }
+});
+
+describe("NEGATIVE CONTROLS — the route's transient 400 must be retried too (Codex P1 4270801222)", () => {
+  // app/api/twilio/inbound-sms/route.ts answers 400 when reading the body
+  // throws, before any suppression: only a 4xx-retrying policy recovers it.
+  const urlStatus = (inbound: string) => {
+    const f = allProven();
+    Object.assign(f.service!, { inboundRequestUrl: inbound, fallbackUrl: null, fallbackMethod: null });
+    const r = evaluateInboundStopPreflight(f);
+    return { status: r.checks.find((c) => c.id === "stop_redelivery")?.status, ready: r.ready };
+  };
+  const E = "&ct=1000&rt=5000&e=ashburn,umatilla";
+
+  it("rp=ct,rt,5xx (no 4xx): refused, never ready", () => {
+    expect(urlStatus(`${URL_OK}#rp=ct,rt,5xx${E}`)).toEqual({ status: "fail", ready: false });
+  });
+  it("POSITIVE CONTROLS: rp=4xx,5xx,ct,rt and rp=all recover", () => {
+    expect(urlStatus(`${URL_OK}#rp=4xx,5xx,ct,rt${E}`)).toEqual({ status: "pass", ready: true });
+    expect(urlStatus(`${URL_OK}#rp=all${E}`)).toEqual({ status: "pass", ready: true });
+  });
+  it("standalone: retriesRecoverDelivery demands 4xx", () => {
+    expect(retriesRecoverDelivery(`${URL_OK}#rp=ct,rt,5xx${E}`)).toBe(false);
+    expect(retriesRecoverDelivery(`${URL_OK}#rp=4xx,ct,rt,5xx${E}`)).toBe(true);
+  });
+  it("a live Setting without HTTP_4XX: refused; with it, or ALL: recovers", () => {
+    const ruled = (retryOn: string[]) => {
+      const f = allProven();
+      Object.assign(f.service!, { inboundRequestUrl: URL_OK, fallbackUrl: null, fallbackMethod: null });
+      f.webhookRules = {
+        matched: true,
+        settings: [{ percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY, retryOn }],
+      };
+      return evaluateInboundStopPreflight(f).checks.find((c) => c.id === "stop_redelivery")?.status;
+    };
+    expect(ruled(["HTTP_5XX", "CONNECTION_TIMEOUT", "READ_TIMEOUT"])).toBe("fail");
+    expect(ruled(["HTTP_4XX", "HTTP_5XX", "CONNECTION_TIMEOUT", "READ_TIMEOUT"])).toBe("pass");
+    expect(ruled(["ALL"])).toBe("pass");
+  });
+  it("a fallback without 4xx retries does not rescue a non-recovering primary", () => {
+    const f = allProven();
+    Object.assign(f.service!, {
+      inboundRequestUrl: `${URL_OK}#rp=5xx${E}`,
+      fallbackUrl: `${URL_OK}#rp=ct,rt,5xx${E}`,
+      fallbackMethod: "POST",
+    });
+    expect(evaluateInboundStopPreflight(f).checks.find((c) => c.id === "stop_redelivery")?.status).toBe("fail");
+  });
 });

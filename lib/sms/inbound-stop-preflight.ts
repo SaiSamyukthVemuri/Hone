@@ -75,16 +75,29 @@ const INVALID_FRAGMENT = "invalid-fragment:";
  *   connect      TCP connect or TLS handshake failure   (rp ct / CONNECTION_TIMEOUT)
  *   read_timeout no response within the read timeout    (rp rt / READ_TIMEOUT)
  *   server_error the route answered 5xx (a failed scan or write)  (rp 5xx / HTTP_5XX)
- * `all` / `ALL` names all three. Twilio does NOT retry a partial response
- * (connection-overrides docs), so nothing here claims to recover one.
+ *   client_error the route answered 4xx for a TRANSIENT failure: it returns
+ *                400 when reading the request body throws, before any
+ *                suppression (app/api/twilio/inbound-sms/route.ts; Codex P1
+ *                4270801222)                                    (rp 4xx / HTTP_4XX)
+ * `all` / `ALL` names all four. Twilio does NOT retry a partial response
+ * (connection-overrides docs), so nothing here claims to recover one. The
+ * route's own status codes are not changed here (that would alter live STOP
+ * handling); the preflight demands the policy that survives them.
  */
-type DeliveryFailure = "connect" | "read_timeout" | "server_error";
-const DELIVERY_FAILURES: readonly DeliveryFailure[] = ["connect", "read_timeout", "server_error"];
-const URL_POLICY: Record<string, DeliveryFailure[]> = { ct: ["connect"], rt: ["read_timeout"], "5xx": ["server_error"], all: [...DELIVERY_FAILURES] };
+type DeliveryFailure = "connect" | "read_timeout" | "server_error" | "client_error";
+const DELIVERY_FAILURES: readonly DeliveryFailure[] = ["connect", "read_timeout", "server_error", "client_error"];
+const URL_POLICY: Record<string, DeliveryFailure[]> = {
+  ct: ["connect"],
+  rt: ["read_timeout"],
+  "5xx": ["server_error"],
+  "4xx": ["client_error"],
+  all: [...DELIVERY_FAILURES],
+};
 const SETTING_POLICY: Record<string, DeliveryFailure[]> = {
   CONNECTION_TIMEOUT: ["connect"],
   READ_TIMEOUT: ["read_timeout"],
   HTTP_5XX: ["server_error"],
+  HTTP_4XX: ["client_error"],
   ALL: [...DELIVERY_FAILURES],
 };
 
