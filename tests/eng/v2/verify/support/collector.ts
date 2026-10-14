@@ -491,6 +491,21 @@ export const gitBlob = (bytes: Buffer | string) => {
   const b = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
   return createHash("sha1").update(Buffer.concat([Buffer.from(`blob ${b.length}\0`), b])).digest("hex");
 };
+/**
+ * The local CI definition the RECORDED golden world pairs with: its blobs are
+ * the independently recorded production blobs at 6cdd830b (PROD_BLOBS), not
+ * this checkout's files. The golden world serves those same recordings as
+ * production's blobs, so "local equals production" holds by construction, as
+ * the historical recording did, and stays true when a later PR edits ci.yml or
+ * the classifier. Pairing the recorded world with TODAY's checkout (localFrom)
+ * made every ci.yml change read as ci_definition_mismatch in these verifiers
+ * (#881, CI 38502782722: 18 failures). Mismatch cases still mutate prodBlobs
+ * or the local blobs explicitly; localFrom keeps its own byte-hashing control.
+ */
+export function historicalLocal(classify: (files: string[]) => any, over: Partial<{ blobs: Record<string, string>; tablePinned: boolean; classify: any }> = {}) {
+  return { classify: over.classify ?? classify, blobs: over.blobs ?? { ...PROD_BLOBS }, tablePinned: over.tablePinned ?? true };
+}
+
 export function localFrom(root: string, classify: (files: string[]) => any, over: Partial<{ blobs: Record<string, string>; tablePinned: boolean; classify: any }> = {}) {
   const blobs = {
     [BLOB_CI]: gitBlob(readFileSync(path.join(root, BLOB_CI))),
