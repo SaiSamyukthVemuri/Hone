@@ -89,12 +89,49 @@ export function MachinePriorSetup({
   // unit simply leaves the model standing alone, as before.
   const unitName = unitNames[first.deviceId] ?? null;
 
+  // WHEN IT WAS RECORDED, from the reading's own timestamp.
+  //
+  // The DATE only, deliberately: a time of day invites reading it as "the
+  // setting at that moment", and with several groups these rows can carry
+  // different instants. The date answers the question that matters - this is a
+  // previous visit, not today - without implying a precision the row set does
+  // not have.
+  const recordedOn = (() => {
+    const iso = first.recordedAt;
+    if (!iso) return null;
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime())
+      ? null
+      : d.toLocaleDateString(undefined, {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+        });
+  })();
+
   return (
     <div
       className="flex flex-col gap-2 border-t border-neutral-200 pt-3 dark:border-neutral-800"
       data-testid="machine-prior-setup"
     >
-      <SectionLabel size="caption">Last recorded setup</SectionLabel>
+      {/*
+        "PREVIOUS TREATMENT", in Sam's own words, and dated.
+
+        Sam's screenshot asked "is this all prepopulated" - which is the
+        question a reader asks when past values are rendered in the same visual
+        register as the fields they are about to fill in. Nothing here ever WAS
+        prepopulated: the entry draft starts empty and
+        tests/.../setting-groups prove a new capture begins blank. The defect
+        was that it READ as prepopulated.
+
+        So this says what it is, in three ways at once: the label names it as
+        previous rather than "last recorded", the date makes it unambiguously a
+        past event, and the line below states that these are not today's
+        entries. Honest timing is also what the engineering decision requires -
+        independently timed revisions must not be presented as one instant
+        (#860 6156583955, 6157725545).
+      */}
+      <SectionLabel size="caption">Previous treatment</SectionLabel>
       <p className="text-sm text-neutral-700 dark:text-neutral-300">
         {unitName ? (
           <>
@@ -107,6 +144,24 @@ export function MachinePriorSetup({
         <span className="ml-2 text-neutral-500">
           {historical ? first.modeKey : (mode?.nativeLabel ?? first.modeKey)}
         </span>
+        {recordedOn && (
+          <span className="ml-2 text-neutral-500" data-testid="prior-setup-when">
+            {recordedOn}
+          </span>
+        )}
+      </p>
+      {/*
+        THE ONE LINE THAT ANSWERS SAM'S QUESTION. Reference, not entries, and
+        not a default: a value she has not re-read off the machine today is not
+        a reading, and the record must not be able to acquire one by her
+        failing to notice a pre-filled box.
+      */}
+      <p
+        className="text-xs text-neutral-500"
+        data-testid="prior-setup-reference-note"
+      >
+        For reference only — these are the previous values, not today&apos;s
+        entries. Enter today&apos;s settings below.
       </p>
 
       {[...byGroup.entries()].map(([groupKey, rows]) => (

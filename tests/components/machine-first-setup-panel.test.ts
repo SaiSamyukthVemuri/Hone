@@ -631,7 +631,14 @@ describe("the next-visit retrieval renders the prior setup", () => {
 
   it("names the machine, the mode, the value and its unit", () => {
     expect(html).toContain('data-testid="machine-prior-setup"');
-    expect(html).toContain("Last recorded setup");
+    // "PREVIOUS TREATMENT", in Sam's words, replacing "Last recorded setup".
+    // The rename is the product point rather than wording: Sam's screenshot
+    // asked "is this all prepopulated", which is what a reader asks when past
+    // values sit in the same visual register as the fields to be filled in.
+    expect(html).toContain("Previous treatment");
+    expect(html, "the old label must not linger").not.toContain(
+      "Last recorded setup",
+    );
     expect(html).toContain("Fixture Panel");
     expect(html).toContain("Galvanic");
     expect(html).toContain("120");
@@ -1498,5 +1505,106 @@ describe("the machine dropdown", () => {
     // guessing is what the server-derived identity exists to prevent.
     const html = render({ devices: [DEVICE], catalogue: CAT });
     expect(html).not.toContain('data-testid="machine-select"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PREVIOUS TREATMENT is a REFERENCE, and has to read as one.
+//
+// Sam's screenshot asked "is this all prepopulated". Nothing ever was - the
+// entry draft starts empty and the setting-groups suite proves a new capture
+// begins blank - but it READ as prepopulated, because past values sat in the
+// same visual register as the fields about to be filled in. Queue item 2 of
+// #860 6156583955: "Prior treatment setup is a small clearly labelled
+// Previous treatment reference. Its values are seeded history, not today's
+// entries."
+// ---------------------------------------------------------------------------
+describe("the Previous treatment reference", () => {
+  const prior = [
+    {
+      blockId: "b1",
+      deviceId: DEVICE.deviceId,
+      profileId: "fixture:panel",
+      profileVersion: 1,
+      modeKey: "galvanic",
+      groupKey: "g1",
+      channels: [],
+      stageKey: null,
+      fieldKey: "current",
+      value: { kind: "value", value: 120 },
+      nativeUnit: "µA",
+      decimals: 0,
+      recordedAt: "2026-09-20T15:04:00Z",
+    },
+  ];
+
+  const html = render({
+    scope: SCOPE,
+    devices: [DEVICE],
+    catalogue: CAT,
+    priorSetup: prior,
+    priorUnitNames: { [DEVICE.deviceId]: "Room 9 unit" },
+  });
+
+  it("is labelled as PREVIOUS, not as a current reading", () => {
+    expect(html).toContain("Previous treatment");
+  });
+
+  it("says in words that these are not today's entries", () => {
+    // The line that actually answers the question Sam asked.
+    expect(html).toContain('data-testid="prior-setup-reference-note"');
+    // The apostrophe is asserted AROUND rather than through: the source writes
+    // &apos; and renderToStaticMarkup emits &#x27;, which is the renderer's
+    // choice and not the product's claim. Pinning one encoding makes the test
+    // fail on a React upgrade that picks another.
+    expect(html).toMatch(/not today/);
+    expect(html).toMatch(/s entries/);
+    expect(html).toMatch(/reference only/i);
+  });
+
+  it("is DATED, so it cannot be mistaken for this visit", () => {
+    // A date is the cheapest unambiguous signal that this is a past event.
+    expect(html).toContain('data-testid="prior-setup-when"');
+    expect(html).toMatch(/2026/);
+  });
+
+  it("shows the DATE only, not a time of day", () => {
+    // Deliberate: a clock time invites reading the row set as "the settings at
+    // that instant", and with several groups these rows can carry different
+    // instants. Codex's decision is explicit that independently timed
+    // revisions must not be presented as one moment (#860 6157725545).
+    const when = html.slice(html.indexOf('data-testid="prior-setup-when"'));
+    const text = when.slice(when.indexOf(">") + 1, when.indexOf("</span>"));
+    expect(text).not.toMatch(/\d{1,2}:\d{2}/);
+  });
+
+  it("does NOT pre-fill today's entry fields from it", () => {
+    // The property Sam's question was really about. A value she has not
+    // re-read off the machine is not a reading, and the record must not be
+    // able to acquire one by her failing to notice a filled box.
+    const withEntry = render({
+      scope: SCOPE,
+      devices: [DEVICE],
+      catalogue: CAT,
+      initialDeviceId: DEVICE.deviceId,
+      blockId: "block-1",
+      onRecord: async () => ({ ok: true }),
+      priorSetup: prior,
+      priorUnitNames: { [DEVICE.deviceId]: "Room 9 unit" },
+    });
+    const input = (withEntry.match(/<input[^>]*>/g) ?? []).find((t) =>
+      t.includes('data-testid="reading-current"'),
+    );
+    expect(input, "no entry input was rendered").toBeTruthy();
+    expect(input, "today's field must start empty").toMatch(/value=""|(?!.*value=)/);
+    expect(input, "the previous 120 must not be pre-filled").not.toContain(
+      'value="120"',
+    );
+  });
+
+  it("renders nothing at all when there is no history", () => {
+    const none = render({ scope: SCOPE, devices: [DEVICE], catalogue: CAT });
+    expect(none).not.toContain('data-testid="machine-prior-setup"');
+    expect(none).not.toContain("Previous treatment");
   });
 });
