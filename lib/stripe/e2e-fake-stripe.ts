@@ -7,6 +7,7 @@ import type Stripe from "stripe";
 import {
   appendFakeCallToLedger,
   readFakeOutcome,
+  readFakeStripeCalls,
 } from "@/lib/stripe/e2e-fake-ledger";
 
 // Minimal, server-only FAKE Stripe processor for the disposable E2E stack. It
@@ -91,9 +92,31 @@ function runId(): string {
   return process.env.HONE_E2E_RUN_ID ?? "no-run";
 }
 function nextSeq(run: string): number {
-  const n = (seqByRun.get(run) ?? 0) + 1;
+  const n = (seqByRun.get(run) ?? ledgerMaxSeq(run)) + 1;
   seqByRun.set(run, n);
   return n;
+}
+
+// PAY-CCY-09 (twin finding, 2026-10-14). The run's ledger file OUTLIVES this
+// process, but the counter above does not: a restarted server re-issued
+// pi_test_e2e_<run>_1 for a different attempt on a different account, so a
+// lookup by id resolved another attempt's record. Real Stripe ids never repeat,
+// so the first use of a run in a process continues from the highest sequence
+// that run's ledger already holds. Best-effort: no ledger (guard off, ordinary
+// unit tests) starts at 0 exactly as before.
+function ledgerMaxSeq(run: string): number {
+  try {
+    const escaped = run.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const seqOf = new RegExp(`_${escaped}_(\\d+)$`);
+    let max = 0;
+    for (const c of readFakeStripeCalls(run)) {
+      const m = c.resultId.match(seqOf);
+      if (m) max = Math.max(max, Number(m[1]));
+    }
+    return max;
+  } catch {
+    return 0;
+  }
 }
 function record(run: string, call: FakeStripeCall): void {
   const list = callsByRun.get(run) ?? [];

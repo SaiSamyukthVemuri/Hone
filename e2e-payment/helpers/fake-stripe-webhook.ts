@@ -71,13 +71,14 @@ type AttemptFacts = {
   stripe_account_id: string;
   stripe_payment_intent_id: string;
   stripe_charge_id: string | null;
+  stripe_idempotency_key: string | null;
 };
 
 async function attemptFacts(attemptId: string): Promise<AttemptFacts> {
   const r = await adminQuery(
     `select id, studio_id, client_id, session_id, appointment_id, charge_reason,
             card_authorization_signature_id, stripe_account_id,
-            stripe_payment_intent_id, stripe_charge_id
+            stripe_payment_intent_id, stripe_charge_id, stripe_idempotency_key
        from public.payment_charge_attempts where id = $1`,
     [attemptId],
   );
@@ -103,13 +104,28 @@ function chargeMetadata(a: AttemptFacts): Record<string, string> {
 }
 
 /** What the fake processor CREATED for this PaymentIntent: money and charge. */
-function processorCreate(paymentIntentId: string, runId: string) {
-  const create = readFakeStripeCalls(runId).find(
+function processorCreate(a: AttemptFacts, runId: string) {
+  const paymentIntentId = a.stripe_payment_intent_id;
+  // THIS attempt's create: the PaymentIntent id AND the idempotency key the
+  // charge path stored on the row. An id alone is not enough: a ledger that
+  // outlived a server restart once held three creates all named
+  // pi_test_e2e_<run>_1 (twin finding, 2026-10-14), and the first one found
+  // belonged to another attempt. More than one match is ambiguous lineage.
+  const creates = readFakeStripeCalls(runId).filter(
     (c) => c.method === "pi_create" && !c.replay && c.resultId === paymentIntentId,
   );
+  assertLineage(
+    creates.length <= 1,
+    `${creates.length} processor creates are named ${paymentIntentId} in run ${runId} (ids reused)`,
+  );
+  const create = creates[0];
   if (!create || create.amountCents == null || !create.currency) {
     throw new Error(`the fake ledger has no create for ${paymentIntentId} in run ${runId}`);
   }
+  assertLineage(
+    a.stripe_idempotency_key !== null && create.idempotencyKey === a.stripe_idempotency_key,
+    `${paymentIntentId} was created under key ${create.idempotencyKey}, the attempt stored ${a.stripe_idempotency_key}`,
+  );
   return {
     amount: create.amountCents,
     currency: create.currency,
@@ -157,13 +173,20 @@ function eventMetadata(a: AttemptFacts, created: { metadataDigest: string | null
  * the charge it targeted. */
 export function processorRefund(attemptId: string, runId: string = activeRunId()) {
   const key = `hone:payment_refund:${attemptId}:v1`;
-  const effect = readFakeStripeCalls(runId).find(
+  const effects = readFakeStripeCalls(runId).filter(
     (c) =>
       c.method === "refund_create" &&
       !c.replay &&
       c.idempotencyKey === key &&
       !c.resultId.endsWith("_refused"),
   );
+  // One refund per attempt key. Two effects under one key mean the processor's
+  // idempotency did not hold (e.g. across a server restart): ambiguous lineage.
+  assertLineage(
+    effects.length <= 1,
+    `${effects.length} processor refunds were made under ${key} in run ${runId}`,
+  );
+  const effect = effects[0];
   return effect
     ? {
         id: effect.resultId,
@@ -213,7 +236,7 @@ export async function paymentIntentSucceededEvent(
   runId: string = activeRunId(),
 ) {
   const a = await attemptFacts(attemptId);
-  const created = processorCreate(a.stripe_payment_intent_id, runId);
+  const created = processorCreate(a, runId);
   assertLineage(created.chargeId !== null, `the processor produced no charge for ${a.stripe_payment_intent_id}`);
   assertLineage(
     a.stripe_charge_id === created.chargeId,
@@ -245,7 +268,7 @@ export async function chargeRefundedEvent(
   runId: string = activeRunId(),
 ) {
   const a = await attemptFacts(attemptId);
-  const created = processorCreate(a.stripe_payment_intent_id, runId);
+  const created = processorCreate(a, runId);
   const refund = processorRefund(attemptId, runId);
   if (!refund) {
     throw new Error(`the fake processor made no refund for attempt ${attemptId}; nothing to report`);
