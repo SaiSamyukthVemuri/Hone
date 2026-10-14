@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
+import { countVersion, migrationVersions } from "./helpers/migration-state";
 
 const VERSION = "0225";
 const FILE = "supabase/migrations/0225_public_new_client_practitioner_selection.sql";
@@ -14,9 +14,40 @@ const ARGS =
   "uuid, uuid, text, text, text, timestamptz, uuid, timestamptz, text, boolean, text, text, uuid, uuid";
 
 describe("0225 sits correctly in the migration sequence", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    expect(isRepoMax(VERSION), "0225 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
+  it("is present under its own version, and what it builds on is still there", () => {
+    // NO isRepoMax PIN HERE, DELIBERATELY.
+    //
+    // "0225 is the repository maximum" is a claim about WHICH TREE the test is
+    // running in, not about 0225. It is true of this branch alone and false of
+    // the ordered composition, where 0226 (#863) and 0227 (#876) sit above --
+    // so it went red there while nothing about this migration had changed.
+    // CLAUDE.md §2 puts the "nothing above me" tripwire centrally: in the
+    // current maximum's own test and in
+    // tests/docs/canonical-production-facts.test.ts. This file keeps only facts
+    // that hold in EITHER place.
+    //
+    // TWO SHAPES WERE REJECTED FOR BEING UNFALSIFIABLE, and both read as
+    // reasonable:
+    //
+    //   `versionsAbove(VERSION).every((v) => Number(v) > Number(VERSION))`
+    //     -- `versionsAbove` filters on exactly that predicate, so this is
+    //        tautological. It cannot fail, in any tree, ever.
+    //
+    //   `expect(Number(VERSION)).toBeGreaterThan(222)`
+    //     -- VERSION is a literal in this file, so both sides are constants.
+    //        It reads like a dependency-ordering check and asserts nothing.
+    //
+    // What CAN change is the repository's set of migrations, so that is what is
+    // asserted: this file still exists under its own version, and the two
+    // migrations it is built on are still allocated where it expects them --
+    // 0222, whose `create_public_appointment_v2` the ordinary branch delegates
+    // to, and 0204, whose command it supersedes without redefining. Renumber
+    // either away and the delegation target moves silently; both facts survive
+    // any composition.
+    const versions = migrationVersions();
+    expect(versions, "0225's own file is gone or renumbered").toContain(VERSION);
+    expect(versions, "0225 delegates to 0222's command").toContain("0222");
+    expect(versions, "0225 is 0204's v2 and must not outlive it").toContain("0204");
   });
 
   it("is allocated exactly once", () => {
