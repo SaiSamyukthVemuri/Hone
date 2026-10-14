@@ -743,7 +743,11 @@ describe("expiry, configuration blockers and the operator's retry", () => {
     expect(await alertRow(r.alert_id!)).toMatchObject({ status: "failed", last_error_code: "expired", attempt_count: 2 });
 
     // Only the operator's retry sends again, and under a NEW key generation.
-    expect((await adminQuery("select public.requeue_platform_lead_alert($1) r", [r.alert_id])).rows[0].r).toBe("requeued");
+    // Attempts were made, so the alert MAY have been sent: the operator must
+    // confirm first (Codex P2 4276616247), and until then nothing changes.
+    expect((await adminQuery("select public.requeue_platform_lead_alert($1) r", [r.alert_id])).rows[0].r).toBe("possible_duplicate");
+    expect(await alertRow(r.alert_id!)).toMatchObject({ status: "failed", attempt_count: 2, idempotency_key: `lead-alert/${r.alert_id}/1` });
+    expect((await adminQuery("select public.requeue_platform_lead_alert($1, true) r", [r.alert_id])).rows[0].r).toBe("requeued");
     expect(await alertRow(r.alert_id!)).toMatchObject({ first_attempted_at: null, attempt_count: 0, idempotency_key: `lead-alert/${r.alert_id}/2` });
     expect((await claim(r.alert_id)).idempotency_key).toBe(`lead-alert/${r.alert_id}/2`);
   });
@@ -1090,5 +1094,63 @@ describe("fair claim order", () => {
     await adminQuery("update public.platform_lead_alerts set next_attempt_at = clock_timestamp() - interval '30 minutes' where id = $1", [newer.alert_id]);
     expect((await claim(null)).alert_id).toBe(newer.alert_id);
     expect((await claim(null)).alert_id).toBe(older.alert_id);
+  });
+});
+
+// Codex P2 4276616247: a manual retry mints a NEW idempotency key, which the
+// provider cannot match to an earlier request. Only failures KNOWN not to have
+// been sent are retried unasked; an ambiguous one needs the operator's
+// confirmation (after checking the inbox), and nothing changes until then.
+describe("the operator's retry never silently risks a duplicate", () => {
+  const failWith = async (code: string) => {
+    const r = await recordDemo();
+    const c = await claim(r.alert_id);
+    expect(await settle(r.alert_id!, c.claim_token, "fail", code)).toBe("failed");
+    return r.alert_id!;
+  };
+  const requeue = async (id: string, confirm?: boolean) =>
+    (await adminQuery(
+      confirm === undefined ? "select public.requeue_platform_lead_alert($1) r" : "select public.requeue_platform_lead_alert($1, $2) r",
+      confirm === undefined ? [id] : [id, confirm],
+    )).rows[0].r as string;
+
+  it("AMBIGUOUS failures (timeout, provider exception, provider unavailable): possible_duplicate, nothing changes; confirmed, a new generation", async () => {
+    for (const code of ["provider_timeout", "provider_exception", "provider_unavailable"]) {
+      const id = await failWith(code);
+      const before = await alertRow(id);
+      expect(await requeue(id), code).toBe("possible_duplicate");
+      expect(await requeue(id, false), code).toBe("possible_duplicate");
+      expect(await alertRow(id), code).toEqual(before);
+      expect(await requeue(id, true), code).toBe("requeued");
+      expect(await alertRow(id), code).toMatchObject({ status: "pending", send_generation: 2, attempt_count: 0 });
+    }
+  });
+
+  it("an abandoned FIFTH attempt (lease_expired) is ambiguous too", async () => {
+    const r = await recordDemo();
+    for (let i = 1; i <= 4; i += 1) {
+      const c = await claim(r.alert_id);
+      await settle(r.alert_id!, c.claim_token, "retry", "provider_timeout");
+      await makeDue(r.alert_id!);
+    }
+    await claim(r.alert_id);
+    await expireLease(r.alert_id!);
+    await adminQuery("select public.expire_platform_lead_alerts()");
+    expect(await alertRow(r.alert_id!)).toMatchObject({ status: "failed", last_error_code: "lease_expired" });
+    expect(await requeue(r.alert_id!)).toBe("possible_duplicate");
+  });
+
+  it("KNOWN-UNSENT failures (rejection, recipient changed, render failed) are retried without confirmation", async () => {
+    for (const code of ["provider_rejected", "recipient_changed", "render_failed"]) {
+      const id = await failWith(code);
+      expect(await requeue(id), code).toBe("requeued");
+      expect(await alertRow(id), code).toMatchObject({ send_generation: 2 });
+    }
+  });
+
+  it("NULL confirmation is invalid input, and changes nothing", async () => {
+    const id = await failWith("provider_timeout");
+    expect((await adminQuery("select public.requeue_platform_lead_alert($1, null) r", [id])).rows[0].r).toBe("invalid_input");
+    expect((await alertRow(id)).status).toBe("failed");
   });
 });

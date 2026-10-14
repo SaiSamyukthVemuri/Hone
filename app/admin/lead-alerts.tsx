@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
+  leadAlertMayHaveBeenSent,
   describeLeadAlert,
   leadAlertReason,
   LEAD_ALERT_MAX_ATTEMPTS,
@@ -240,15 +241,34 @@ export function LeadAlertsCard({
                   {leadAlertReason(a.last_error_code) ?? "Failed."} ({a.attempt_count} of{" "}
                   {LEAD_ALERT_MAX_ATTEMPTS} attempts)
                 </span>
-                <form action={retryLeadAlertAction}>
-                  <input type="hidden" name="id" value={a.id} />
-                  <button
-                    type="submit"
-                    className="rounded-md border border-current/30 px-2 py-0.5 text-xs hover:bg-white/50 dark:hover:bg-black/30"
-                  >
-                    Retry
-                  </button>
-                </form>
+                {leadAlertMayHaveBeenSent(a.last_error_code, a.attempt_count) ? (
+                  // MAY ALREADY HAVE ARRIVED (Codex P2 4276616247): a retry
+                  // uses a new key the provider cannot match to the earlier
+                  // request, so it can send a duplicate. Say so, and ask.
+                  <form action={retryLeadAlertAction} className="flex flex-wrap items-center gap-2" data-testid="lead-alert-possible-duplicate">
+                    <input type="hidden" name="id" value={a.id} />
+                    <input type="hidden" name="confirm_possible_duplicate" value="yes" />
+                    <span className="text-xs">
+                      This alert may already have reached the operator inbox. Check it first; sending again may deliver a duplicate.
+                    </span>
+                    <button
+                      type="submit"
+                      className="rounded-md border border-current/30 px-2 py-0.5 text-xs hover:bg-white/50 dark:hover:bg-black/30"
+                    >
+                      Send again anyway
+                    </button>
+                  </form>
+                ) : (
+                  <form action={retryLeadAlertAction}>
+                    <input type="hidden" name="id" value={a.id} />
+                    <button
+                      type="submit"
+                      className="rounded-md border border-current/30 px-2 py-0.5 text-xs hover:bg-white/50 dark:hover:bg-black/30"
+                    >
+                      Retry
+                    </button>
+                  </form>
+                )}
               </li>
             ))}
           </ul>

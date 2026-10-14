@@ -46,7 +46,7 @@ const COMMANDS: ReadonlyArray<readonly [string, string]> = [
   ["settle_platform_lead_alert", "uuid, uuid, text, text, text, text"],
   ["expire_platform_lead_alerts", ""],
   ["record_platform_lead_alerts_unconfigured", "text, uuid"],
-  ["requeue_platform_lead_alert", "uuid"],
+  ["requeue_platform_lead_alert", "uuid, boolean"],
 ];
 const GUARD = "platform_lead_alerts_guard";
 
@@ -259,8 +259,23 @@ describe("exactly these grants, and no other", () => {
       "grant execute on function public.settle_platform_lead_alert(uuid, uuid, text, text, text, text) to service_role",
       "grant execute on function public.expire_platform_lead_alerts() to service_role",
       "grant execute on function public.record_platform_lead_alerts_unconfigured(text, uuid) to service_role",
-      "grant execute on function public.requeue_platform_lead_alert(uuid) to service_role",
+      "grant execute on function public.requeue_platform_lead_alert(uuid, boolean) to service_role",
     ]);
     expect(TOP_LEVEL).not.toMatch(/alter\s+default\s+privileges/i);
+  });
+});
+
+// Codex P2 4276616247: the list of failures retried WITHOUT confirmation is
+// exactly lib/platform-leads/alert-status.ts LEAD_ALERT_KNOWN_UNSENT_CODES.
+describe("the operator's retry and possible duplicates", () => {
+  it("the SQL known-unsent list matches the console's, and anything else needs confirmation", async () => {
+    const { LEAD_ALERT_KNOWN_UNSENT_CODES } = await import("@/lib/platform-leads/alert-status");
+    const body = normalise(definition("requeue_platform_lead_alert"));
+    const m = body.match(/v_code in \(([^)]*)\)/);
+    expect(m).not.toBeNull();
+    const sqlList = [...m![1].matchAll(/'([a-z_]+)'/g)].map((x) => x[1]).sort();
+    expect(sqlList).toEqual([...LEAD_ALERT_KNOWN_UNSENT_CODES].sort());
+    expect(body).toMatch(/v_code = 'expired' and v_attempts = 0/);
+    expect(body).toMatch(/and not p_confirm_possible_duplicate then return 'possible_duplicate'/);
   });
 });

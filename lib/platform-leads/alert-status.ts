@@ -137,3 +137,23 @@ export function describeLeadAlert(alert: LeadAlertSummary | null): LeadAlertBadg
       return { tone: "waiting", label: "Alert waiting to send", detail: null };
   }
 }
+
+/**
+ * Failure codes KNOWN not to have reached the provider as an accepted send
+ * (0213 requeue_platform_lead_alert's list, pinned by test). Only these, and
+ * an expiry before any attempt, may be retried under a new idempotency key
+ * without the operator's confirmation (Codex P2 4276616247).
+ */
+export const LEAD_ALERT_KNOWN_UNSENT_CODES = ["provider_rejected", "recipient_changed", "render_failed"] as const;
+
+/**
+ * True when a FAILED alert may already have been accepted by the provider: a
+ * timeout, provider exception or unavailability, an abandoned lease, or an
+ * expiry after an attempt. Retrying it mints a new key the provider cannot
+ * match to the earlier request, so it may send a duplicate.
+ */
+export function leadAlertMayHaveBeenSent(code: string | null | undefined, attempts: number): boolean {
+  if (code && (LEAD_ALERT_KNOWN_UNSENT_CODES as readonly string[]).includes(code)) return false;
+  if (code === "expired" && attempts === 0) return false;
+  return true;
+}
