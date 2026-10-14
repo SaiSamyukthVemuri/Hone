@@ -56,11 +56,43 @@ const PRIMITIVE_SOURCE = readFileSync(path.join(REPO_ROOT, PRIMITIVE), "utf8");
  * needed it.
  */
 const CONVERTED: readonly string[] = [
+  // Slice 1 (#746) — Settings > Availability.
   "app/(app)/settings/availability/AvailabilityClient.tsx",
   "app/(app)/settings/availability/RecurringBreaksSection.tsx",
   "app/(app)/settings/availability/ScopeField.tsx",
   "app/(app)/settings/availability/TimedBlocksSection.tsx",
+  // Slice 2 — the rest of Settings, which is what completes the directory.
+  "app/(app)/settings/booking/BookingLinkCard.tsx",
+  "app/(app)/settings/consent/ConsentTemplatesEditor.tsx",
+  "app/(app)/settings/intake/page.tsx",
+  "app/(app)/settings/services/page.tsx",
+  "app/(app)/settings/tracking/TrackingProviderSelector.tsx",
 ];
+
+/**
+ * The shape that retired the directory-wide claim.
+ *
+ * This slice originally asserted that `app/(app)/settings/` was COMPLETE. It is
+ * not, and the assertion could not have discovered that: `isHandRolledDuplicate`
+ * rejects any class list carrying an extra utility, so a label spelling the
+ * primitive's typography beside `scroll-mt-24` was invisible to it and the
+ * directory read as finished while two such labels were still there.
+ *
+ * Broadening the detector was measured rather than assumed, and it is not safe
+ * inside this PR: tolerating extras wholesale raises the count in six more
+ * files — `calendar/[id]/page.tsx` alone goes 14 -> 16, and five files not on
+ * the baseline at all start tripping rule 3b — so the guard could only be kept
+ * green by converting them, which is the directory-wide conversion this PR is
+ * explicitly not doing. The allowlist it would need is 14 classes wide and
+ * includes `hover:text-neutral-700` and `dark:hover:text-neutral-300`, which are
+ * COLOURS the primitive does not have; tolerating those would call a
+ * hover-tinted label "the primitive" and be wrong on the merits, not merely
+ * broad.
+ *
+ * So the claim shrank to what is provable and the blind spot is pinned instead.
+ */
+const LAYOUT_DECORATED_LABEL =
+  "scroll-mt-24 text-xs font-medium uppercase tracking-wider text-neutral-500";
 const ROOTS = ["app", "components"];
 
 /**
@@ -158,18 +190,61 @@ function duplicates(file: string): string[] {
     if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return [];
     throw error;
   }
-  return classNameLiterals(source, file).filter((literal) => {
-    const classes = [...new Set(literal.split(/\s+/).filter(Boolean))];
-    const set = new Set(classes);
-    if (![...CONTRACT.typography].every((c) => set.has(c))) return false;
-    if (!classes.some((c) => CONTRACT.muted.has(c))) return false;
-    if (classes.filter((c) => CONTRACT.sizes.has(c)).length !== 1) return false;
-    // Anything else makes it a VARIANT — a caution colour, a layout class — and
-    // the primitive does not own those.
-    return !classes.some(
-      (c) => !CONTRACT.typography.has(c) && !CONTRACT.muted.has(c) && !CONTRACT.sizes.has(c),
-    );
-  });
+  return classNameLiterals(source, file).filter(isHandRolledDuplicate);
+}
+
+/** The primitive's typography, present in a class list regardless of anything else. */
+function hasPrimitiveTypography(literal: string): boolean {
+  const set = new Set(literal.split(/\s+/).filter(Boolean));
+  return [...CONTRACT.typography].every((c) => set.has(c));
+}
+
+/**
+ * The primitive's full contract — typography, ONE contract size, a muted tone —
+ * carried alongside extra utilities.
+ *
+ * This is `isHandRolledDuplicate` without its "and nothing else" clause, and it
+ * is the class the detector deliberately cannot see. It is NOT "shares the
+ * typography": that looser reading admits an off-scale `text-sm` label, a
+ * `text-[10px]` status pill in emerald, and a size-less label — six such
+ * literals in Settings alone — none of which is a duplicate of the primitive.
+ * A control built on the loose reading stays green after the real duplicates are
+ * converted, which is exactly the way it would lie.
+ */
+function isLayoutDecoratedDuplicate(literal: string): boolean {
+  const classes = [...new Set(literal.split(/\s+/).filter(Boolean))];
+  const set = new Set(classes);
+  if (![...CONTRACT.typography].every((c) => set.has(c))) return false;
+  if (!classes.some((c) => CONTRACT.muted.has(c))) return false;
+  if (classes.filter((c) => CONTRACT.sizes.has(c)).length !== 1) return false;
+  // The ONLY difference from isHandRolledDuplicate: extras are present.
+  return classes.some(
+    (c) => !CONTRACT.typography.has(c) && !CONTRACT.muted.has(c) && !CONTRACT.sizes.has(c),
+  );
+}
+
+/**
+ * One class list, judged against the primitive.
+ *
+ * EXTRACTED SO THE DETECTOR'S LIMIT CAN BE TESTED DIRECTLY rather than inferred
+ * from a file scan. The limit is real and is asserted below: a class list that
+ * spells the primitive's typography AND carries any further utility is NOT
+ * reported. That is deliberate — `hover:text-neutral-700` is a colour the
+ * primitive does not have, so tolerating extras wholesale would call things the
+ * primitive that are not — but a deliberate blind spot still has to be stated
+ * where a reader will find it, which is what `duplicates()` alone could not do.
+ */
+function isHandRolledDuplicate(literal: string): boolean {
+  const classes = [...new Set(literal.split(/\s+/).filter(Boolean))];
+  const set = new Set(classes);
+  if (![...CONTRACT.typography].every((c) => set.has(c))) return false;
+  if (!classes.some((c) => CONTRACT.muted.has(c))) return false;
+  if (classes.filter((c) => CONTRACT.sizes.has(c)).length !== 1) return false;
+  // Anything else makes it a VARIANT — a caution colour, a layout class — and
+  // the primitive does not own those.
+  return !classes.some(
+    (c) => !CONTRACT.typography.has(c) && !CONTRACT.muted.has(c) && !CONTRACT.sizes.has(c),
+  );
 }
 
 /**
@@ -282,11 +357,6 @@ const LEGACY_BASELINE: ReadonlyArray<readonly [string, number]> = [
   ["app/(app)/clients/[id]/sessions/new/page.tsx", 1],
   ["app/(app)/dashboard/practice-snapshot.tsx", 2],
   ["app/(app)/records/page.tsx", 2],
-  ["app/(app)/settings/booking/BookingLinkCard.tsx", 1],
-  ["app/(app)/settings/consent/ConsentTemplatesEditor.tsx", 1],
-  ["app/(app)/settings/intake/page.tsx", 1],
-  ["app/(app)/settings/services/page.tsx", 2],
-  ["app/(app)/settings/tracking/TrackingProviderSelector.tsx", 2],
   ["components/appointment/postcare-section.tsx", 1],
   ["components/clinical-notes-section.tsx", 3],
   ["components/consultation-notes-card.tsx", 2],
@@ -354,7 +424,7 @@ const FILES = ROOTS.flatMap((root) => walk(path.join(REPO_ROOT, root))).map((f) 
 );
 const ADOPTED = CONVERTED;
 
-describe("UX-02: SectionLabel adoption on Settings → Availability", () => {
+describe("UX-02: SectionLabel adoption at the selected Settings sites", () => {
   it("4. the contract is read from the primitive, not restated here", () => {
     for (const c of ["font-medium", "uppercase", "tracking-wider"]) {
       expect(CONTRACT.typography.has(c), `contract lost ${c}`).toBe(true);
@@ -366,7 +436,7 @@ describe("UX-02: SectionLabel adoption on Settings → Availability", () => {
   });
 
   it("1. every converted file uses SectionLabel", () => {
-    expect(ADOPTED.length, "the converted set disappeared").toBe(4);
+    expect(ADOPTED.length, "the converted set disappeared").toBe(9);
     for (const file of ADOPTED) {
       expect(FILES, `${file} is no longer in the tree`).toContain(file);
     }
@@ -383,16 +453,104 @@ describe("UX-02: SectionLabel adoption on Settings → Availability", () => {
     }
   });
 
-  it("2b. the conversion is complete — 21 sites across the four converted files", () => {
+  it("2b. the conversion is complete — 28 sites across the nine converted files", () => {
     // The slice's own claim, asserted rather than described: counting the
-    // primitive's usages is what makes "21 exact conversions" checkable.
+    // primitive's usages is what makes the conversion total checkable.
+    // 21 from slice 1 (#746) + 7 from slice 2 = 28.
     const total = ADOPTED.reduce(
       (sum, file) =>
         sum +
         (readFileSync(path.join(REPO_ROOT, file), "utf8").match(/<SectionLabel[\s>]/g) ?? []).length,
       0,
     );
-    expect(total, "the converted site count moved").toBe(21);
+    expect(total, "the converted site count moved").toBe(28);
+  });
+
+  it("5. the detector's blind spot is REAL, and is stated here rather than hidden", () => {
+    // THE REGRESSION CONTROL FOR THE RETIRED CLAIM.
+    //
+    // This exact shape is in Settings today (services/page.tsx). It spells the
+    // primitive's typography by hand and the detector does not see it, which is
+    // precisely how the directory-wide "complete" assertion managed to pass.
+    expect(
+      hasPrimitiveTypography(LAYOUT_DECORATED_LABEL),
+      "the control shape must really spell the primitive's typography, or it proves nothing",
+    ).toBe(true);
+    expect(
+      isHandRolledDuplicate(LAYOUT_DECORATED_LABEL),
+      "the detector silently ignores a layout-decorated label — say so, do not claim completeness",
+    ).toBe(false);
+    // It is a duplicate by the PRECISE reading — full contract plus a layout
+    // utility — not merely something sharing the typography.
+    expect(
+      isLayoutDecoratedDuplicate(LAYOUT_DECORATED_LABEL),
+      "the control must be a real duplicate of the primitive, not a lookalike",
+    ).toBe(true);
+    // A lookalike that shares only the typography must NOT qualify, or the
+    // predicate is back to the loose reading this finding retired.
+    expect(
+      isLayoutDecoratedDuplicate(
+        "rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-800",
+      ),
+      "a status pill is not a duplicate of the primitive",
+    ).toBe(false);
+
+    // NON-VACUITY: strip only the layout utility and the SAME detector reports
+    // it. Without this the assertion above is satisfied by a detector that
+    // returns false for everything.
+    const withoutLayout = LAYOUT_DECORATED_LABEL.replace("scroll-mt-24 ", "");
+    expect(
+      isHandRolledDuplicate(withoutLayout),
+      "the blind spot must be caused by the extra utility, not by a broken detector",
+    ).toBe(true);
+  });
+
+  it("5b. nothing here claims the adoption is finished", () => {
+    // The census this PR advances is explicitly NOT claimed empty. A future
+    // reader must not be able to take this file as evidence that SectionLabel
+    // adoption is done, in Settings or anywhere else.
+    const remaining = FILES.filter((file) => duplicates(file).length > 0);
+    expect(
+      remaining.length,
+      "the known remaining census is not empty and must not be asserted as such",
+    ).toBeGreaterThan(0);
+
+    // And the layout-decorated shape means even THAT number understates it, so
+    // the census is a FLOOR rather than a total.
+    //
+    // SCOPED TO SETTINGS DELIBERATELY, not swept across the tree. A second
+    // whole-tree AST pass put this test at 2.6-5.4s against vitest's 5s default
+    // and it failed on the slow runs — a guard that reds on machine load teaches
+    // people to re-run it, which is worse than not having it. Settings is where
+    // the retired claim lived, so it is where the floor has to be demonstrated;
+    // the systemic version of this belongs to whoever tightens the detector.
+    const settingsFiles = FILES.filter((file) => file.startsWith("app/(app)/settings/"));
+    expect(settingsFiles.length, "no Settings files found — vacuous").toBeGreaterThan(9);
+    const undercounted = settingsFiles.filter((file) =>
+      classNameLiterals(readFileSync(path.join(REPO_ROOT, file), "utf8"), file).some(
+        isLayoutDecoratedDuplicate,
+      ),
+    );
+    expect(
+      undercounted.length,
+      "Settings still contains labels the detector cannot see — the census is a floor, not a total",
+    ).toBeGreaterThan(0);
+
+    // AND THIS IS THE ASSERTION THAT MAKES IT HONEST WHEN THEY ARE CONVERTED.
+    // The predicate matches the primitive's FULL contract plus extras, so it
+    // falls to zero the moment the last layout-decorated duplicate is adopted —
+    // and this test then reds, telling whoever did it that the detector can be
+    // tightened and this control retired. A looser predicate would have stayed
+    // green on status pills forever, still claiming an undercount that no longer
+    // existed.
+    expect(
+      undercounted.every((file) =>
+        classNameLiterals(readFileSync(path.join(REPO_ROOT, file), "utf8"), file).some(
+          (literal) => isLayoutDecoratedDuplicate(literal) && !isHandRolledDuplicate(literal),
+        ),
+      ),
+      "every undercounted file must hold a real layout-decorated duplicate, not a lookalike",
+    ).toBe(true);
   });
 
   it("3. legacy occurrence counts never increase from the baseline", () => {
