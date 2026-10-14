@@ -121,3 +121,21 @@ describe("only a claim that provably owns nothing is released", () => {
     expect(RELEASE.match(/update public\.studio_sms_senders/g)).toHaveLength(2);
   });
 });
+
+// EXACT PRIVILEGES (cross-lane finding from History 0223): the grantee lists
+// above match one grantee per statement, so a stray multi-grantee grant
+// (`to anon, authenticated`) or `grant all` slipped past them. This compares
+// EVERY top-level grant statement, of any shape or case, to the exact list.
+describe("exactly these grants, and no other", () => {
+  it("every top-level GRANT statement, normalised, is exactly the intended list; no default-privilege change", () => {
+    const grants = TOP_LEVEL.split(";")
+      .map((st) => st.replace(/\s+/g, " ").trim())
+      .filter((st) => /^grant\b/i.test(st));
+    expect(grants).toEqual([
+      "grant execute on function public.get_releasable_studio_sms_claim(uuid, uuid) to service_role",
+      "grant execute on function public.release_unpurchased_studio_sms_claim(uuid, uuid, uuid, text, integer) to service_role",
+      "grant execute on function public.studio_sms_resource_recorded(uuid, text, text) to service_role",
+    ]);
+    expect(TOP_LEVEL).not.toMatch(/alter\s+default\s+privileges/i);
+  });
+});
