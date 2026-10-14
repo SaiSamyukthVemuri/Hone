@@ -1,0 +1,371 @@
+import { describe, expect, it } from "vitest";
+
+import type { MachineProfile } from "@/lib/machines/profile-contract";
+import type { RecordedReading } from "@/lib/machines/machine-queries";
+
+// ===========================================================================
+// WHAT HAS ALREADY BEEN RECORDED ON THIS TREATMENT — the render.
+//
+// Run through react-dom/server rather than grepped, which is the idiom this
+// repo uses for render contracts, and the only way to prove copy here: there
+// is no jsdom, so a mounted browser is the alternative.
+//
+// WHAT IT CLOSES. A recorded capture was permanent and INVISIBLE: nothing read
+// what had already been recorded against the block being charted, so after a
+// page load the practitioner saw nothing and could only re-record - appending
+// a second immutable capture indistinguishable from a genuine mid-treatment
+// change - or guess. Both reads existed, granted and proved against Postgres,
+// and neither reached a screen.
+//
+// THE COPY'S LIMITS ARE `changesWithin`'s REFUSALS, not this component's
+// opinion, which is why the word "changed" cannot overclaim however it is
+// phrased: that function never pairs the same field across groups, across
+// modes or profile versions, or a field re-read at the same value.
+//
+// Synthetic records only. Nothing here corresponds to anything real.
+// ===========================================================================
+
+const { createElement } = await import("react");
+const { renderToStaticMarkup } = await import("react-dom/server");
+const { MachineRecordedSetups } = await import(
+  "@/components/machines/machine-recorded-setups"
+);
+
+const PROFILE: MachineProfile = {
+  profileId: "fixture:recorded",
+  version: 2,
+  family: "Synthetic/Demo",
+  manufacturer: "Fixture",
+  model: "Recorded",
+  availability: "active",
+  verification: "device-confirmed",
+  frequency: { kind: "not-applicable" },
+  channels: { kind: "independent", count: 4 },
+  evidence: [],
+  modes: [
+    {
+      key: "galvanic",
+      nativeLabel: "Galvanic",
+      stages: [],
+      fields: [
+        {
+          key: "current",
+          nativeLabel: "Current",
+          unit: "µA",
+          decimals: 0,
+          quantity: "current",
+          scope: "per-channel",
+          optional: false,
+          editable: true,
+          source: "practitioner-entered",
+          advisory: [],
+        },
+        {
+          key: "duration",
+          nativeLabel: "Time",
+          unit: "s",
+          decimals: 1,
+          quantity: "duration",
+          scope: "per-channel",
+          optional: false,
+          editable: true,
+          source: "practitioner-entered",
+          advisory: [],
+        },
+      ],
+    },
+  ],
+} as unknown as MachineProfile;
+
+const CAT = [PROFILE];
+
+const base = {
+  blockId: "block-1",
+  deviceId: "dev-1",
+  profileId: "fixture:recorded",
+  profileVersion: 2,
+  modeKey: "galvanic",
+  stageKey: null,
+  nativeUnit: "µA",
+  decimals: 0,
+};
+
+function reading(o: {
+  captureId?: string | null;
+  groupKey?: string;
+  revision?: number;
+  recordedAt: string;
+  fieldKey?: string;
+  value?: number;
+  absent?: "not-recorded" | "not-applicable" | "not-legible";
+  channels?: number[];
+  profileVersion?: number;
+  nativeUnit?: string;
+  decimals?: number;
+}): RecordedReading {
+  return {
+    ...base,
+    captureId: o.captureId === undefined ? "cap-1" : o.captureId,
+    groupKey: o.groupKey ?? "g1",
+    revision: o.revision ?? 1,
+    recordedAt: o.recordedAt,
+    fieldKey: o.fieldKey ?? "current",
+    channels: o.channels ?? [],
+    profileVersion: o.profileVersion ?? base.profileVersion,
+    nativeUnit: o.nativeUnit ?? base.nativeUnit,
+    decimals: o.decimals ?? base.decimals,
+    value:
+      o.absent !== undefined
+        ? { kind: "absent", reason: o.absent }
+        : { kind: "value", value: o.value ?? 120 },
+  } as RecordedReading;
+}
+
+const render = (props: {
+  readings: RecordedReading[];
+  catalogue?: readonly MachineProfile[];
+  unitNames?: Record<string, string>;
+}) =>
+  renderToStaticMarkup(
+    createElement(MachineRecordedSetups, {
+      catalogue: CAT,
+      ...props,
+    }),
+  );
+
+describe("with nothing recorded", () => {
+  it("renders NOTHING AT ALL, not an empty section", () => {
+    // A heading over no content reads as a surface that failed to load, which
+    // is the opposite of the reassurance this exists to give.
+    expect(render({ readings: [] })).toBe("");
+  });
+});
+
+describe("one capture", () => {
+  const html = render({
+    readings: [
+      reading({ recordedAt: "2026-10-14T14:00:00Z", fieldKey: "current", value: 120 }),
+      reading({
+        recordedAt: "2026-10-14T14:00:00Z",
+        fieldKey: "duration",
+        value: 300.5,
+        nativeUnit: "s",
+        decimals: 1,
+      }),
+    ],
+    unitNames: { "dev-1": "Room 1 unit" },
+  });
+
+  it("says it is THIS treatment, not a previous one", () => {
+    // The whole reason it is a separate surface from Previous treatment: that
+    // panel answers "what did I do last time" and is reference; this is the
+    // record of today.
+    expect(html).toContain('data-testid="machine-recorded-setups"');
+    expect(html).toContain("Recorded this treatment");
+    expect(html).not.toContain("Previous treatment");
+    expect(html).not.toMatch(/reference only/i);
+  });
+
+  it("states that a capture is PERMANENT, which is what decides what she does next", () => {
+    // "Record it again to fix it" does not fix anything - it appends. Saying
+    // so is what makes recording a genuine change legible as a different act.
+    expect(html).toContain('data-testid="recorded-setups-note"');
+    expect(html).toMatch(/permanent/i);
+    expect(html).toMatch(/cannot be edited/i);
+    expect(html).toMatch(/One capture is recorded/);
+  });
+
+  it("shows the machine's OWN labels and units", () => {
+    expect(html).toContain("Current");
+    expect(html).toContain("µA");
+    // The profile's own word for duration, not the quantity's.
+    expect(html).toContain("Time");
+    expect(html).toContain("300.5");
+    expect(html).toContain("120");
+  });
+
+  it("shows the TIME OF DAY of that capture", () => {
+    // Deliberately unlike machine-prior-setup, which shows a date and no
+    // clock time because it renders several groups under one heading. Every
+    // entry here is ONE capture with its OWN instant, and the time is what
+    // distinguishes a change made twenty minutes ago from the starting setup.
+    expect(html).toContain('data-testid="recorded-capture-when"');
+    expect(html).toMatch(/\d{1,2}:\d{2}/);
+  });
+
+  it("names the physical unit the studio knows", () => {
+    expect(html).toContain("Room 1 unit");
+    // Never the bare id - a uuid is noise to a practitioner.
+    expect(html).not.toContain("dev-1");
+  });
+
+  it("shows NO unit at all when the studio has no name for it", () => {
+    // THE ASSERTION ABOVE CANNOT CATCH THIS, and a negative control proved it:
+    // that case supplies a name, so the fallback is never taken and swapping
+    // `?? null` for `?? entry.deviceId` left the suite green. The claim is
+    // about the UNNAMED case, so it needs a fixture with no names - without
+    // this, "never the bare id" was an assertion about a branch no test ran.
+    const unnamed = render({
+      readings: [reading({ recordedAt: "2026-10-14T14:00:00Z", value: 120 })],
+    });
+    expect(unnamed).toContain('data-testid="machine-recorded-setups"');
+    expect(unnamed, "a bare device id reached the practitioner").not.toContain(
+      "dev-1",
+    );
+    // The reading is still shown; only the unit's name is absent.
+    expect(unnamed).toContain("120");
+  });
+
+  it("does NOT label a first capture as a revision", () => {
+    // "capture 1" is noise. The number only means something once there is an
+    // earlier one.
+    expect(html).not.toMatch(/capture 1\b/);
+  });
+
+  it("shows no CHANGED section when nothing changed", () => {
+    expect(html).not.toContain('data-testid="recorded-changes"');
+    expect(html).not.toContain("Changed during this treatment");
+  });
+});
+
+describe("two setting groups of one save", () => {
+  const at = "2026-10-14T14:00:00Z";
+  const html = render({
+    readings: [
+      reading({ captureId: "cap-a", groupKey: "g1", channels: [1, 2], recordedAt: at, value: 120 }),
+      reading({ captureId: "cap-b", groupKey: "g2", channels: [3, 4], recordedAt: at, value: 80 }),
+    ],
+  });
+
+  it("renders TWO entries, never one", () => {
+    // They are two facts. Merging them would assert she ran both probe sets at
+    // one setting.
+    expect(html).toContain('data-testid="recorded-capture-g1-1"');
+    expect(html).toContain('data-testid="recorded-capture-g2-1"');
+    expect(html).toMatch(/2 captures are recorded/);
+  });
+
+  it("keeps each group's channels with its own values", () => {
+    expect(html).toContain("Channels 1, 2");
+    expect(html).toContain("Channels 3, 4");
+  });
+
+  it("does NOT call one probe's setting a change in the other's", () => {
+    // changesWithin refuses to pair the same field across groups, so this
+    // cannot claim it however the line is phrased.
+    expect(html).not.toContain('data-testid="recorded-changes"');
+  });
+});
+
+describe("a setting changed during the treatment", () => {
+  const html = render({
+    readings: [
+      reading({ captureId: "cap-1", revision: 1, recordedAt: "2026-10-14T14:00:00Z", value: 120 }),
+      reading({ captureId: "cap-2", revision: 2, recordedAt: "2026-10-14T14:30:00Z", value: 150 }),
+    ],
+  });
+
+  it("names the change, both values, and when", () => {
+    expect(html).toContain('data-testid="recorded-changes"');
+    expect(html).toContain("Changed during this treatment");
+    expect(html).toContain('data-testid="recorded-change-g1-current"');
+    expect(html).toContain("120");
+    expect(html).toContain("150");
+    expect(html).toMatch(/\d{1,2}:\d{2}/);
+  });
+
+  it("marks the later capture as a revision, and keeps the earlier one", () => {
+    // Append-only is the clinical contract of this table, and the surface has
+    // to show it rather than replacing the first value with the second.
+    expect(html).toContain('data-testid="recorded-capture-g1-1"');
+    expect(html).toContain('data-testid="recorded-capture-g1-2"');
+    expect(html).toMatch(/capture 2/);
+  });
+
+  it("prints each side's OWN recorded unit", () => {
+    // Not one of them applied to both, and never the catalogue's: a profile
+    // version change can move the unit, and where it has, changesWithin
+    // refuses to pair the readings at all.
+    const line = html.slice(html.indexOf('data-testid="recorded-change-g1-current"'));
+    const upto = line.slice(0, line.indexOf("</li>"));
+    expect((upto.match(/µA/g) ?? []).length).toBe(2);
+  });
+});
+
+describe("a setting RE-READ at the same value", () => {
+  const html = render({
+    readings: [
+      reading({ captureId: "cap-1", revision: 1, recordedAt: "2026-10-14T14:00:00Z", value: 120 }),
+      reading({ captureId: "cap-2", revision: 2, recordedAt: "2026-10-14T14:30:00Z", value: 120 }),
+    ],
+  });
+
+  it("shows BOTH captures, because both are in the record", () => {
+    expect(html).toContain('data-testid="recorded-capture-g1-1"');
+    expect(html).toContain('data-testid="recorded-capture-g1-2"');
+  });
+
+  it("does NOT call it a change", () => {
+    // She re-read the machine and it still said 120. Calling that an
+    // adjustment invents one she did not make.
+    expect(html).not.toContain('data-testid="recorded-changes"');
+    expect(html).not.toContain("Changed during this treatment");
+  });
+});
+
+describe("a capture recorded under an older field contract", () => {
+  const html = render({
+    readings: [
+      reading({
+        recordedAt: "2026-10-14T14:00:00Z",
+        profileVersion: 1,
+        fieldKey: "current",
+        value: 120,
+        nativeUnit: "mA",
+      }),
+    ],
+  });
+
+  it("shows the RECORDED key, not today's label", () => {
+    // Relabelling an old number with a newer contract's words is how a record
+    // quietly starts lying.
+    expect(html).toContain("current");
+    expect(html).not.toContain(">Current<");
+  });
+
+  it("shows the RECORDED unit, not the catalogue's", () => {
+    expect(html).toContain("mA");
+    expect(html).not.toContain("µA");
+  });
+
+  it("says the contract has changed, so the keys are explained", () => {
+    expect(html).toMatch(/field contract has changed/i);
+  });
+});
+
+describe("an absence is rendered as what it is", () => {
+  it("names the reason rather than printing a number", () => {
+    const html = render({
+      readings: [reading({ recordedAt: "2026-10-14T14:00:00Z", absent: "not-legible" })],
+    });
+    expect(html).toContain("not legible");
+    expect(html).not.toMatch(/\b120\b/);
+  });
+});
+
+describe("a reading with NO capture id", () => {
+  it("is still shown, and separate captures are not merged", () => {
+    // A null capture id is a reading recorded before captures existed. It is a
+    // historical fact, not missing data, and it must not vanish from the
+    // surface that tells her what is recorded.
+    const html = render({
+      readings: [
+        reading({ captureId: null, revision: 1, recordedAt: "2026-10-14T13:00:00Z", value: 100 }),
+        reading({ captureId: null, revision: 2, recordedAt: "2026-10-14T13:30:00Z", value: 110 }),
+      ],
+    });
+    expect(html).toContain('data-testid="recorded-capture-g1-1"');
+    expect(html).toContain('data-testid="recorded-capture-g1-2"');
+    expect(html).toMatch(/2 captures are recorded/);
+  });
+});
