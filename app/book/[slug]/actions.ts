@@ -122,6 +122,21 @@ const EXISTING_CLIENT_NO_MATCH_ERROR =
 // (deactivated, unpinned from the service, or the eligibility read failed).
 // It names no practitioner and leaks no studio configuration, and it asks for
 // a retry rather than silently booking someone else.
+// G1 / CODEX P2 4264946618. A NORMAL stale-slot refusal, in the visitor's
+// language: somebody took the time between the grid being rendered and the
+// command taking its locks. Named rather than inlined because it is now
+// returned from TWO boundaries -- the pre-insert guard for a new client, and
+// the later result mapping for an existing one -- and two copies of one
+// sentence is how they drift.
+//
+// It is deliberately the same wording for both the "this practitioner is now
+// busy" and "nobody eligible is free" cases: the visitor's action is identical
+// (choose another time) and distinguishing them would leak which practitioners
+// a studio has and how booked they are. The DISTINCTION survives for the
+// operator, in the log event, which is where it belongs.
+const PUBLIC_BOOKING_SLOT_TAKEN_ERROR =
+  "That time has just been taken. Please choose another.";
+
 const PRACTITIONER_CHOICE_UNAVAILABLE_ERROR =
   "That practitioner is no longer available for this service. Please choose a time again.";
 
@@ -1516,10 +1531,23 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     // copy, exactly as it does in the later group.
     return {
       ok: false,
+      // THE EARLY BOUNDARY IS THE REACHABLE ONE, and this is the third time in
+      // this PR that a message I added sat behind a guard that returns first.
+      // `no_practitioner_available` is an ORDINARY stale-slot outcome on the
+      // new-client path -- the page offered a time and somebody took it -- so
+      // it gets the slot-taken copy here rather than the generic error, and
+      // the later mapping is kept for the existing-client path where this
+      // guard does not fire.
+      //
+      // invalid_practitioner / not_eligible stay GENERIC on purpose: they are
+      // operator-visible configuration states, not something a visitor can act
+      // on, and saying more would describe the studio's roster.
       error:
         rawCommandResult === "practitioner_assignment_disabled"
           ? PRACTITIONER_CHOICE_UNAVAILABLE_ERROR
-          : PUBLIC_BOOKING_GENERIC_ERROR,
+          : rawCommandResult === "no_practitioner_available"
+            ? PUBLIC_BOOKING_SLOT_TAKEN_ERROR
+            : PUBLIC_BOOKING_GENERIC_ERROR,
     };
   }
 
@@ -1691,7 +1719,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       logInternalBookingError("public_booking_no_practitioner_available", {
         studioId: studio.id,
       });
-      return { ok: false, error: "That time has just been taken. Please choose another." };
+      return { ok: false, error: PUBLIC_BOOKING_SLOT_TAKEN_ERROR };
     }
     if (commandResult === "practitioner_assignment_disabled") {
       logInternalBookingError("public_booking_practitioner_assignment_disabled_at_commit", {

@@ -552,3 +552,179 @@ test("history navigation does not survive a practitioner change", async ({ page 
       "navigate to a date this practitioner may have no availability on",
   ).toHaveCount(0);
 });
+
+test("a slot taken between render and submit is refused with actionable copy, and writes no client", async ({
+  page,
+}) => {
+  // CODEX P2 4264946618, proved on the path that actually reaches a visitor.
+  //
+  // `no_practitioner_available` is answered by 0225's PRE-INSERT guard, which
+  // returns before the later result mapping -- so the "just been taken"
+  // sentence I had added there was dead code for a new client, and the
+  // reachable surface showed the GENERIC error for an ordinary race. Third time
+  // in this PR that a message sat behind a guard that returns first, which is
+  // why this is proved through the rendered page and not by reading source.
+  //
+  // THE RACE IS ARRANGED, not waited for: the grid renders, a slot is chosen,
+  // THEN every eligible practitioner is occupied at that instant, and only then
+  // is the form submitted. That is precisely the window the message exists for.
+  await page.goto(`/book/${seed.slug}`);
+  await page.getByRole("button", { name: /new client/i }).first().click();
+  await page.getByLabel("Date").fill(bookDate);
+  await page.getByLabel("Service").selectOption(serviceId);
+
+  // "Any available" stays selected -- the DEFAULT interaction the finding is
+  // about.
+  await expect(page.getByTestId("practitioner-picker")).toHaveValue("");
+  await waitForGrid(page, bookDate);
+
+  const slot = page.getByRole("button", { name: /^\d{1,2}:\d{2}\s*(AM|PM)$/i }).first();
+  await expect(slot).toBeVisible({ timeout: 20_000 });
+  const slotLabel = (await slot.textContent())?.trim() ?? "";
+  expect(slotLabel, "a slot label is needed to occupy that exact instant").toMatch(
+    /^\d{1,2}:\d{2}\s*(AM|PM)$/i,
+  );
+  await slot.click();
+
+  // CLOSE THE WINDOW, through the real command so the fixture cannot be more
+  // permissive than production. Each occupying booking gets its OWN client row:
+  // one client holding two appointments at one instant could trip a
+  // client-level rule and refuse for the wrong reason.
+  //
+  // Postgres parses "7:00 AM" directly, so the label needs no conversion --
+  // my first attempt invented a to24h() helper for a problem that does not
+  // exist.
+  //
+  // ONE ELIGIBLE PRACTITIONER, SO THE SCENARIO IS DETERMINISTIC. Two earlier
+  // attempts failed on fixture detail rather than on the product: the first
+  // occupied only A and B and the booking SUCCEEDED, because
+  // `services_default_eligibility_trg` pins the OWNER to every new service and
+  // the owner was eligible and free; the second derived the whole eligible set
+  // and could not occupy one of them at the chosen instant.
+  //
+  // Restricting eligibility to A needs exactly ONE occupancy and removes every
+  // unknown. Restored in `finally`, because this spec's fixture is shared and a
+  // later reader should not inherit a narrowed service.
+  const saved = await sql<{ practitioner_id: string }>(
+    `select practitioner_id from public.service_practitioners where service_id = $1`,
+    [serviceId],
+  );
+  try {
+    await sql(`delete from public.service_practitioners where service_id = $1`, [serviceId]);
+    await sql(
+      `insert into public.service_practitioners (studio_id, service_id, practitioner_id)
+       values ($1, $2, $3)`,
+      [seed.studioId, serviceId, A.practitionerId],
+    );
+
+    // Occupy A at the chosen instant, through the real command so the fixture
+    // cannot be more permissive than production. Postgres parses "7:00 AM"
+    // directly, so the label needs no conversion.
+    const occupant = await sql<{ id: string }>(
+      `insert into public.clients (studio_id, name, email)
+       values ($1, $2, $3) returning id`,
+      [seed.studioId, "SYNTH-FETT occupy A", `occupy-a-${seed.runId.slice(0, 6)}@synth.local`],
+    );
+    const r = await sql<{ result: string }>(
+      `select (public.create_public_appointment_v2(
+                 $1, $2, $3,
+                 (($4::text || ' ' || $5::text)::timestamp at time zone $6),
+                 $7, null, null, $8)).result as result`,
+      [
+        seed.studioId,
+        occupant[0]!.id,
+        serviceId,
+        bookDate,
+        slotLabel,
+        tz,
+        randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, ""),
+        A.practitionerId,
+      ],
+    );
+    expect(
+      r[0]?.result,
+      `the only eligible practitioner must actually be occupied at ${slotLabel}`,
+    ).toBe("created");
+
+    // THE PREMISE, asserted rather than assumed: the resolver must now find
+    // nobody. Without this the final expectation could pass for some unrelated
+    // reason, and two of my attempts at this test did exactly that.
+    const none = await sql<{ resolved: string | null }>(
+      `select public.resolve_public_any_available_practitioner(
+                $1, $2,
+                (($3::text || ' ' || $4::text)::timestamp at time zone $5),
+                (($3::text || ' ' || $4::text)::timestamp at time zone $5)
+                  + make_interval(mins => (select default_duration_minutes
+                                             from public.services where id = $2))
+              )::text as resolved`,
+      [seed.studioId, serviceId, bookDate, slotLabel, tz],
+    );
+    expect(
+      none[0]?.resolved,
+      "nobody eligible may be free, or the refusal under test cannot occur",
+    ).toBeNull();
+
+    await page.getByLabel("Your name").fill("SYNTH-FETT Stale Slot");
+    await page.locator('input[type="email"]').fill(`stale-${randomUUID().slice(0, 8)}@synth.local`);
+    await page.locator('input[type="tel"]').fill("+15555550199");
+    await page.getByRole("button", { name: /^book appointment$/i }).click();
+
+    // THE CLAIM, CORRECTED AFTER THREE FAILURES, and the correction is the
+    // finding rather than a concession.
+    //
+    // I expected "that time has just been taken" -- the command's
+    // `no_practitioner_available` copy. The page shows "That time is no longer
+    // available" instead, because the ACTION's own pre-commit slot
+    // re-verification (actions.ts:920) refuses FIRST: with no practitioner
+    // submitted it asks a studio-wide question, the instant is now occupied,
+    // and it never calls the command at all.
+    //
+    // So this scenario is ALREADY actionable for the visitor, and the generic
+    // error Codex found is NOT reachable from the new-client UI this way. The
+    // window where it IS reachable is between that re-verification and the
+    // command taking its locks -- sub-second, inside one server action, and not
+    // arrangeable from a browser. The mapping fix is still right (the
+    // existing-client path and any other caller reach it), and it is proved at
+    // command level in tests/db/public-any-available-eligibility plus a source
+    // guard that the EARLY boundary carries the copy.
+    //
+    // What this test therefore proves, honestly stated: a slot taken between
+    // render and submit is refused with copy the visitor can act on, and
+    // writes no client row. That is worth having, and it is not proof of the
+    // code path I set out to prove.
+    await expect(
+      page.getByText(/that time is no longer available/i),
+      "a stale-slot race must be refused with actionable copy, not the generic error",
+    ).toBeVisible({ timeout: 20_000 });
+
+    // AND NO ORPHAN: the refusal happened before the client was created.
+    const orphans = await sql<{ n: string }>(
+      `select count(*)::text as n from public.clients
+        where studio_id = $1 and name = $2`,
+      [seed.studioId, "SYNTH-FETT Stale Slot"],
+    );
+    expect(orphans[0].n, "a refused booking must write no client row").toBe("0");
+  } finally {
+    // RESTORE ONLY WHAT CAN BE RE-CREATED, and the exception is not a shortcut.
+    // A database guard refuses to "mark inactive practitioner … eligible for a
+    // service", so the saved row belonging to the deliberately-INACTIVE
+    // practitioner C cannot be re-inserted -- my first restore attempt failed
+    // on exactly that. Not restoring it changes nothing observable: every
+    // eligibility decision also requires `active`, so a row for an inactive
+    // practitioner cannot affect any outcome. Filtering is therefore faithful,
+    // where blanket re-insertion is impossible.
+    await sql(`delete from public.service_practitioners where service_id = $1`, [serviceId]);
+    for (const row of saved) {
+      const active = await sql<{ ok: boolean }>(
+        `select active as ok from public.practitioners where id = $1`,
+        [row.practitioner_id],
+      );
+      if (!active[0]?.ok) continue;
+      await sql(
+        `insert into public.service_practitioners (studio_id, service_id, practitioner_id)
+         values ($1, $2, $3) on conflict do nothing`,
+        [seed.studioId, serviceId, row.practitioner_id],
+      );
+    }
+  }
+});

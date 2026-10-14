@@ -396,3 +396,54 @@ describe("G1: the jump history does not survive a scope change", () => {
     ).not.toContain("practitionerId");
   });
 });
+
+describe("G1: every refusal is answered at the boundary that actually fires", () => {
+  // CODEX P2 4264946618, and the THIRD instance of one shape in this PR: a
+  // message added to the later result mapping while an earlier guard returns
+  // first, so the copy is dead exactly on the reachable path. It happened with
+  // practitioner_assignment_disabled, then with the pre-insert refusals, and
+  // then with no_practitioner_available.
+  //
+  // The pre-insert guard fires for a NEW CLIENT -- the reachable public surface
+  // -- because 0225 answers these before the resolve-or-create and they
+  // therefore carry a null client_id. So any code handled there must get its
+  // final copy THERE, not later.
+  it("gives no_practitioner_available the stale-slot copy at the EARLY boundary", () => {
+    const block = ACTIONS.slice(
+      ACTIONS.indexOf("public_booking_practitioner_refused_pre_insert"),
+      ACTIONS.indexOf("public_booking_client_not_resolved"),
+    );
+    expect(block, "expected the pre-insert refusal block").not.toBe("");
+    expect(
+      block,
+      "an ordinary stale-slot outcome must not reach the visitor as the " +
+        "generic error just because the early guard returned first",
+    ).toContain("PUBLIC_BOOKING_SLOT_TAKEN_ERROR");
+  });
+
+  it("keeps operator-visible states GENERIC, so copy does not describe the roster", () => {
+    // invalid_practitioner / not_eligible are configuration states a visitor
+    // cannot act on. Telling them apart in copy would leak which practitioners
+    // a studio has and how booked they are; the distinction stays in the log.
+    const block = ACTIONS.slice(
+      ACTIONS.indexOf("public_booking_practitioner_refused_pre_insert"),
+      ACTIONS.indexOf("public_booking_client_not_resolved"),
+    );
+    expect(block).toContain("PUBLIC_BOOKING_GENERIC_ERROR");
+    expect(block, "the refused code is still recorded for the operator").toContain(
+      "code: rawCommandResult",
+    );
+  });
+
+  it("uses ONE constant for the stale-slot sentence, not two copies", () => {
+    const code = ACTIONS.split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+    const inline = code.match(/"That time has just been taken/g) ?? [];
+    expect(
+      inline.length,
+      "the sentence must live in the constant only -- it is returned from two " +
+        "boundaries and two copies of one sentence is how they drift",
+    ).toBe(1);
+  });
+});
