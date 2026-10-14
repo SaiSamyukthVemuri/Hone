@@ -131,6 +131,19 @@ test("FAKE webhook replay for one attempt is idempotent", async () => {
   }
   const settled = await state(attemptId);
 
+  // A delivered charge.refunded must have RECONCILED the refund to the
+  // processor's own refund, not merely been acknowledged: a route that answers
+  // 200 and ignores the event would otherwise leave pending_stripe in place and
+  // the replays below would "prove" idempotence of a failure (Codex P2 4265724221).
+  const processor = processorRefund(attemptId);
+  if (firsts.some(([type]) => type === "charge.refunded") && processor) {
+    expect(settled, "charge.refunded did not reconcile the refund").toMatchObject({
+      refund_status: "succeeded",
+      stripe_refund_id: processor.id,
+      refund_amount_cents: processor.amount,
+    });
+  }
+
   // REPLAYS (same id again, then a fresh id with the same facts) change nothing.
   for (const [type, ev, build] of firsts) {
     await deliver(type, ev, true);

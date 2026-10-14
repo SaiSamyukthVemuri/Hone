@@ -82,6 +82,19 @@ describe("the read-only webhook replay tool", () => {
     expect(code(TOOL)).toMatch(/HONE_E2E_REPLAY_TOOL_CONFIG !== "1"/);
   });
 
+  it("cannot pass on a no-op: unknown events fail, and a delivered refund event must reconcile", () => {
+    // Codex P2 4265594526: no silent zero-delivery run.
+    expect(code(TOOL)).toMatch(/KNOWN_EVENTS = new Set\(\["succeeded", "refunded"\]\)/);
+    expect(code(TOOL)).toMatch(/builders\.length === 0/);
+    // Codex P2 4265724221: acknowledged-but-ignored charge.refunded is a failure,
+    // checked BEFORE the replays compare state to itself.
+    const tool = code(TOOL);
+    const reconcile = tool.indexOf('refund_status: "succeeded"');
+    expect(reconcile).toBeGreaterThan(tool.indexOf("const settled = await state(attemptId)"));
+    expect(reconcile).toBeLessThan(tool.indexOf("const after = await state(attemptId)"));
+    expect(tool).toMatch(/stripe_refund_id: processor\.id/);
+  });
+
   it("requires every target explicitly: no fallback to the shared stack or the lane's port", () => {
     for (const k of ["HONE_E2E_RUN_ID", "HONE_LOCAL_DB_URL", "HONE_E2E_WEBHOOK_ORIGIN", "HONE_E2E_WEBHOOK_SECRET"]) {
       expect(code(TOOL)).toContain(`"${k}"`);
