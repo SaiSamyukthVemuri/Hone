@@ -26,9 +26,10 @@ export function SmsSenderControls({
   /** This studio's own fake account inventory (lib/sms/sender-controls-demo.ts). */
   inventory: DemoAdoptionInventory;
   /**
-   * What an errored setup offers, from its stored error code (senderRecoveryFor):
-   * release ("choose a different number"), retry (the same number), or nothing.
-   * Each action re-derives it on the server.
+   * What an errored setup offers (senderRecoveryFor): release ("choose a
+   * different number"), retry (the same number, before any identifier is
+   * recorded), support (no self-service action), or none (not in error). Each
+   * action re-derives it on the server.
    */
   recovery: SenderRecovery;
 }) {
@@ -90,6 +91,12 @@ export function SmsSenderControls({
           </button>
           {retry && <p role="status" className={`mt-2 ${retry.ok ? "text-emerald-800" : "text-red-700"}`}>{retry.message}</p>}
         </form>
+      )}
+
+      {recovery === "support" && (
+        <p className="mt-4 text-sm text-neutral-600 dark:text-neutral-400" data-testid="sms-sender-support">
+          The last setup attempt did not finish and cannot be continued from this screen. Contact Hone support to finish or undo it.
+        </p>
       )}
 
       {recovery === "release" && (

@@ -773,7 +773,7 @@ describe("retry an errored setup, server-side", () => {
     expect(provider.calls.purchase).toBe(1);
     expect(await live(s.studioId)).toMatchObject({ status: "error", last_error_code: "provider_unavailable", claimed_phone_number: number });
     // The page offers RETRY for this code, not release.
-    expect(controls.senderRecoveryFor("error", "provider_unavailable")).toBe("retry");
+    expect(controls.senderRecoveryFor("error", "provider_unavailable", false)).toBe("retry");
     // And release would indeed fail: this is the dead end Codex described.
     expect(await controls.runSenderRelease(deps(provider), { studioId: s.studioId, actorUserId: s.userId })).toMatchObject({ ok: false, reason: "not_releasable" });
 
@@ -786,12 +786,56 @@ describe("retry an errored setup, server-side", () => {
     expect(await live(s.studioId)).toMatchObject({ status: "active", phone_number: number });
   });
 
+  // Codex P2 4271749292. Once identifiers are recorded the setup may be
+  // ADOPTED (untagged resources a provisioning retry cannot see) and its
+  // origin is not stored, so no retry is offered and the action refuses
+  // before any provider or claim call. Origin-aware retry is a follow-up.
+  it("ADOPTED, test failed retryably: identifiers recorded -> support, and the retry refuses with nothing changed", async () => {
+    const s = await seedStudio("ctl-retry-adopted");
+    const provider = controls.senderControlsFakeProvider(ORIGIN, s.studioId);
+    const inventory = (await import("@/lib/sms/sender-controls-demo")).demoAdoptionInventory(s.studioId);
+    const own = inventory.numbers.CA;
+    provider.script = { ...provider.script, testSendFails: "provider_unavailable" };
+    const first = await controls.runSenderAdoption(deps(provider), {
+      studioId: s.studioId, actorUserId: s.userId, country: "CA", phoneNumber: own.phoneNumber, messagingServiceSid: inventory.messagingServiceSid,
+    });
+    expect(first.ok).toBe(false);
+    const before = await live(s.studioId);
+    expect(before).toMatchObject({ status: "error", phone_number: own.phoneNumber, last_error_code: "provider_unavailable" });
+    expect(controls.senderRecoveryFor(before.status, before.last_error_code, before.phone_number !== null)).toBe("support");
+
+    provider.script = { ...provider.script, testSendFails: undefined };
+    const calls = { ...provider.calls };
+    expect(await controls.runSenderRetry(retryDeps(provider, s.studioId), { studioId: s.studioId, actorUserId: s.userId })).toEqual({
+      ok: false, result: "refused", reason: "not_retryable", uncertain: false,
+    });
+    // No provider call at all, and the row is exactly as it was.
+    expect(provider.calls).toEqual(calls);
+    expect(await live(s.studioId)).toEqual(before);
+  });
+
+  it("PROVISIONED, finalized, then the test failed: identifiers recorded -> support, the same refusal, no purchase", async () => {
+    const s = await seedStudio("ctl-retry-finalized");
+    const number = await freshNumber("416");
+    const provider = new FakeSmsProvisioningProvider({ testSendFails: "provider_unavailable" });
+    const first = await controls.runSenderProvision(deps(provider), { studioId: s.studioId, actorUserId: s.userId, country: "CA", areaCode: "416", phoneNumber: number });
+    expect(first.ok).toBe(false);
+    const before = await live(s.studioId);
+    expect(before).toMatchObject({ status: "error", phone_number: number, last_error_code: "provider_unavailable" });
+    expect(controls.senderRecoveryFor(before.status, before.last_error_code, true)).toBe("support");
+    provider.script = {};
+    const purchases = provider.calls.purchase;
+    expect(await controls.runSenderRetry(retryDeps(provider, s.studioId), { studioId: s.studioId, actorUserId: s.userId })).toMatchObject({ ok: false, reason: "not_retryable" });
+    expect(provider.calls.purchase).toBe(purchases);
+    expect(await live(s.studioId)).toEqual(before);
+  });
+
   it("a definitive pre-purchase failure is RELEASED, not retried: retry refuses and changes nothing", async () => {
     const s = await seedStudio("ctl-retry-release");
     const number = await freshNumber("905");
     const c = (await adminQuery("select * from public.claim_studio_sms_provisioning($1, $2, 'CA', null, $3)", [s.studioId, s.userId, number])).rows[0];
     await adminQuery("select public.fail_studio_sms_provisioning($1, $2, $3, 'number_no_longer_available')", [s.studioId, c.claim_key, c.lease_generation]);
-    expect(controls.senderRecoveryFor("error", "number_no_longer_available")).toBe("release");
+    expect(controls.senderRecoveryFor("error", "number_no_longer_available", false)).toBe("release");
     const provider = new FakeSmsProvisioningProvider();
     expect(await controls.runSenderRetry(retryDeps(provider, s.studioId), { studioId: s.studioId, actorUserId: s.userId })).toEqual({
       ok: false, result: "refused", reason: "release_instead", uncertain: false,
@@ -807,7 +851,7 @@ describe("retry an errored setup, server-side", () => {
     const c = (await adminQuery("select * from public.claim_studio_sms_provisioning($1, $2, 'CA', null, $3)", [s.studioId, s.userId, number])).rows[0];
     await adminQuery("select public.fail_studio_sms_provisioning($1, $2, $3, 'provider_rejected')", [s.studioId, c.claim_key, c.lease_generation]);
     const provider = new FakeSmsProvisioningProvider();
-    expect(controls.senderRecoveryFor("error", "provider_rejected")).toBe("none");
+    expect(controls.senderRecoveryFor("error", "provider_rejected", false)).toBe("support");
     expect(await controls.runSenderRetry(retryDeps(provider, s.studioId), { studioId: s.studioId, actorUserId: s.userId })).toMatchObject({ ok: false, reason: "not_retryable" });
 
     // A retryable code, but the actor is a member, not the owner: the definer read refuses.

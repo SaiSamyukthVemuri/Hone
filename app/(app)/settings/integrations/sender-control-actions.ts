@@ -181,11 +181,17 @@ export async function retrySenderClaimAction(
   );
   revalidatePath("/settings/integrations");
   if (out.ok) {
-    return { ok: true, message: out.result === "activated" ? `Studio number ${out.phoneNumber} is set up (fake provider).` : "This studio already has an active number." };
+    return {
+      ok: true,
+      message:
+        out.result === "activated"
+          ? `Studio number ${out.phoneNumber} is set up (fake provider).`
+          : "This studio already has an active number.",
+    };
   }
   const words: Record<string, string> = {
     release_instead: "This setup failed before a number was bought. Choose a different number instead.",
-    not_retryable: "This setup cannot be retried here. Contact Hone support.",
+    not_retryable: "This setup cannot be continued from this screen. Contact Hone support to finish or undo it.",
     no_live_sender: "There is no setup to retry.",
     claim_held: "A setup attempt is already running. Wait a moment and reload.",
   };

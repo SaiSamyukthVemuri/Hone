@@ -453,29 +453,38 @@ export async function runSenderAdoption(
 // refuses: only a retry, which reconciles first, may continue that claim.
 
 // ---------------------------------------------------------------------------
-// WHICH RECOVERY AN ERRORED CLAIM OFFERS (Codex P2 4266736587's sibling,
-// 4271461595)
+// WHICH RECOVERY AN ERRORED SETUP OFFERS (Codex P2 4271461595, 4271749292)
 // ---------------------------------------------------------------------------
-// Derived from the stored last_error_code, never from the browser:
-//   * release -- 0226's definitive pre-purchase codes: the claim may own
-//     nothing, so the owner may give it up and choose again (the release still
-//     asks the provider first);
-//   * retry   -- a code RECOVERY_ROUTE_BY_ERROR_CODE routes to "retry"
-//     (transport, capacity, finalize_failed, lease_lost): the SAME claim is
-//     retried, which reconciles with the provider first, so anything a failed
-//     attempt bought is found rather than bought again;
-//   * none    -- anything else (support, operator decision, unknown): no
-//     self-service action is honest.
+// The full routing table, every stored code against every origin and stage,
+// is /srv/hone/handoffs/SMS_863_RECOVERY_ROUTING_TABLE_2026-10-14.md. Its
+// rule, from what the server can actually read (the setup's ORIGIN,
+// provisioned or adopted, is not stored):
+//   * release -- 0226's definitive pre-purchase codes: give the claim up and
+//     choose again (the release still asks the provider first);
+//   * retry   -- a code RECOVERY_ROUTE_BY_ERROR_CODE routes to "retry" AND no
+//     identifiers recorded yet: the provisioning reconcile, which finds what a
+//     failed attempt bought under the claim key and never buys again;
+//   * support -- anything else while in error, INCLUDING a retry code once
+//     identifiers are recorded: whether the setup was provisioned or adopted
+//     decides the only honest retry, and that cannot be told here (an adopted
+//     sender's untagged resources would strand under a provisioning retry).
+//     An origin-aware retry is a follow-up feature, not this slice;
+//   * none    -- not in error.
 
 /** Exactly 0226's release_unpurchased_studio_sms_claim codes (pinned to the SQL by test). */
 export const RELEASABLE_ERROR_CODES = ["number_no_longer_available", "provider_resource_mismatch", "finalize_conflict"] as const;
 
-export type SenderRecovery = "retry" | "release" | "none";
+export type SenderRecovery = "retry" | "release" | "support" | "none";
 
-export function senderRecoveryFor(status: string | null | undefined, lastErrorCode: string | null | undefined): SenderRecovery {
-  if (status !== "error" || !lastErrorCode) return "none";
-  if ((RELEASABLE_ERROR_CODES as readonly string[]).includes(lastErrorCode)) return "release";
-  return RECOVERY_ROUTE_BY_ERROR_CODE[lastErrorCode] === "retry" ? "retry" : "none";
+export function senderRecoveryFor(
+  status: string | null | undefined,
+  lastErrorCode: string | null | undefined,
+  identifiersRecorded: boolean,
+): SenderRecovery {
+  if (status !== "error") return "none";
+  if (lastErrorCode && (RELEASABLE_ERROR_CODES as readonly string[]).includes(lastErrorCode)) return "release";
+  if (lastErrorCode && RECOVERY_ROUTE_BY_ERROR_CODE[lastErrorCode] === "retry" && !identifiersRecorded) return "retry";
+  return "support";
 }
 
 export type RetryRefusal = {
@@ -495,10 +504,15 @@ export type RetryRefusal = {
  *     read (`get_releasable_studio_sms_claim` names the claimed number of a
  *     claim it will not release).
  * The recovery is re-derived here from the stored code: only a "retry" code
- * proceeds. The provisioning claim then re-checks everything under its lock:
- * the bound number (`number_mismatch` otherwise), the owner, the state. It
- * reuses the claim key, so the attempt first asks the provider what already
- * exists under it and never buys a second number.
+ * proceeds.
+ *
+ * ONLY BEFORE ANY IDENTIFIER IS RECORDED (Codex P2 4271749292): the retry is
+ * the provisioning reconcile. Once finalize has recorded identifiers, the
+ * setup may have been ADOPTED (untagged resources a provisioning retry cannot
+ * see) and its origin is not stored, so senderRecoveryFor answers "support"
+ * and this refuses `not_retryable` before any provider or claim call. The
+ * provisioning claim re-checks the bound number (`number_mismatch`), the owner
+ * and the state under its lock.
  */
 export async function runSenderRetry(
   deps: SenderControlsDeps & { readOwnSender: () => Promise<{ ok: true; sender: StudioSmsSenderState | null } | { ok: false }> },
@@ -509,7 +523,7 @@ export async function runSenderRetry(
   const own = await deps.readOwnSender().catch(() => ({ ok: false as const }));
   if (!own.ok) return refuse("store_unavailable", true);
   if (!own.sender || own.sender.status === "released") return refuse("no_live_sender");
-  const recovery = senderRecoveryFor(own.sender.status, own.sender.last_error_code);
+  const recovery = senderRecoveryFor(own.sender.status, own.sender.last_error_code, own.sender.phone_number !== null);
   if (recovery === "release") return refuse("release_instead");
   if (recovery !== "retry" || !isSenderCountry(own.sender.country)) return refuse("not_retryable");
 
