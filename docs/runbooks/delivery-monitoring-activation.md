@@ -74,7 +74,7 @@ What this stack adds stays inside the boundary #828 asked for:
 
 ## 3. Recovery sweep and heartbeat
 
-- Register `GET /api/cron/email-delivery-sweep` in `vercel.json` (with the existing CRON_SECRET), **every 15 minutes**. That cadence lets the 15-minute backlog finding mean something.
+- Register `GET /api/cron/email-delivery-sweep` in `vercel.json` (with the existing CRON_SECRET), **once a day**. The Vercel plan caps cron at once a day, as `docs/08_EMAIL_SMS_AND_CRON.md` already records for `calendar-reconcile`. Recovery does not wait for it: Resend's retries and each webhook's post-response drain recover receipts first. The daily sweep is the backstop, and the point at which backlog findings are evaluated, so a stuck backlog is reported within a day.
 - **Verify:**
   - `select * from email_delivery_health()` shows `last_sweep_at` advancing;
   - a deliberately held receipt is finished by the sweep (rehearsed on a local stack: `tests/db/email-delivery-events.db.test.ts`, CRASH RECOVERY);
@@ -223,14 +223,16 @@ select pg_get_constraintdef(oid) from pg_constraint where conname = 'email_outbo
 **Exact change:** add one entry to `vercel.json` `crons`:
 
 ```json
-{ "path": "/api/cron/email-delivery-sweep", "schedule": "*/15 * * * *" }
+{ "path": "/api/cron/email-delivery-sweep", "schedule": "30 10 * * *" }
 ```
+
+10:30 UTC is after the existing daily crons (08:00, 09:00, 09:30).
 
 The route already exists and authenticates with the existing `CRON_SECRET`.
 
-**Precondition, unverified:** the Vercel plan must allow sub-daily crons. Every existing cron is daily, and the plan is not readable from the API this lane used. On a plan limited to daily crons, a 15-minute schedule fails the deployment.
-- If it is limited, choose between a daily schedule and an external scheduler calling the route with the bearer.
-- With a daily schedule the 15-minute backlog finding fires late. It is a backstop either way: D4's retries are the primary recovery.
+**Plan limit, resolved:** the Vercel plan caps cron at **once a day**. `docs/08_EMAIL_SMS_AND_CRON.md` records it for `calendar-reconcile`, and every existing cron is daily. A sub-daily schedule here would fail the deployment.
+- A faster cadence would need an external scheduler calling the route with the `CRON_SECRET` bearer, or a plan change. Either is its own decision.
+- With a daily sweep, the backlog finding (15 minutes, critical at 6 hours, recorded at warning) is evaluated once a day. Recovery itself is primary through Resend's retries (D4) and each webhook's post-response drain. The sweep is the backstop.
 
 **Validation:**
 - `select last_sweep_at, last_sweep_failed from public.email_delivery_health();` advances each run;
