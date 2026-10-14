@@ -50,8 +50,12 @@ import {
 //      stating different money or a partial refund are refused.
 //   B  USD, refund outcome UNKNOWN (processor refunded, response lost): the row
 //      waits in pending_stripe; the charge.refunded webhook settles it, once.
+//      The owner's card is truthful at both points (PAY-CCY-10): while pending
+//      it claims no success and offers no second refund; once settled it shows
+//      refunded with the right money and nothing still pending.
 //   C  USD, refund REFUSED by the processor: recorded failed; there is no refund
-//      to report, so no refund event can be built.
+//      to report, so no refund event can be built. The owner's card still shows
+//      paid, says the refund failed, and offers the refund again (PAY-CCY-10).
 //   D  CANADIAN REGRESSION: the same charge/refund/replay in CAD.
 
 const PRICE_CENTS = 18_500; // $185.00
@@ -134,6 +138,15 @@ async function requestRefundInUi(page: Page) {
 }
 
 const refundKey = (attemptId: string) => `hone:payment_refund:${attemptId}:v1`;
+
+/** The owner's payment card as a fresh page load renders it from persisted
+ * state (PAY-CCY-10): what the owner would actually see after the fact. */
+async function ownerPaymentView(page: Page) {
+  await page.reload();
+  const region = page.getByRole("region", { name: "Session payment" });
+  await expect(region).toBeVisible({ timeout: 20_000 });
+  return region;
+}
 
 test.describe.configure({ mode: "serial" });
 
@@ -260,6 +273,18 @@ test("B · USD refund outcome UNKNOWN: pending until the charge.refunded webhook
   const refund = processorRefund(attemptId);
   expect(refund).not.toBeNull();
 
+  // OWNER VIEW while the outcome is unknown (PAY-CCY-10): truthful. It says
+  // pending, claims no success and no refunded money, and offers no second
+  // refund (a retry here could refund twice).
+  let view = await ownerPaymentView(page);
+  await expect(view.getByText("Refund pending.")).toBeVisible();
+  await expect(view.getByTestId("payment-summary-refund_pending")).toContainText(/Refund processing · \$185\.00 USD/);
+  await expect(view.getByTestId("payment-summary-refunded")).toHaveCount(0);
+  await expect(view.getByText("Refund succeeded.")).toHaveCount(0);
+  await expect(view.getByText(/Amount refunded/)).toHaveCount(0);
+  await expect(view.getByText(/^Refunded/)).toHaveCount(0);
+  await expect(view.getByRole("button", { name: /^refund charge$/i })).toHaveCount(0);
+
   // Stripe tells us: the pending refund settles to succeeded with its id.
   const ev = await chargeRefundedEvent(attemptId);
   expect((await deliverStripeEvent(ev)).status).toBe(200);
@@ -269,6 +294,17 @@ test("B · USD refund outcome UNKNOWN: pending until the charge.refunded webhook
     refund_amount_cents: PRICE_CENTS,
     stripe_refund_id: refund!.id,
   });
+
+  // OWNER VIEW after the webhook settled it: refunded, with the right money,
+  // and nothing still saying pending.
+  view = await ownerPaymentView(page);
+  await expect(view.getByText("Refund succeeded.")).toBeVisible();
+  await expect(view.getByText(/Amount refunded: \$185\.00 USD/)).toBeVisible();
+  await expect(view.getByTestId("payment-summary-refunded")).toContainText(/Refunded · \$185\.00 USD/);
+  await expect(view.getByTestId("payment-summary-refund_pending")).toHaveCount(0);
+  await expect(view.getByText("Refund pending.")).toHaveCount(0);
+  await expect(view.getByText(/Refund processing/)).toHaveCount(0);
+  await expect(view.getByRole("button", { name: /^refund charge$/i })).toHaveCount(0);
 
   // Replays change nothing.
   expect((await deliverStripeEvent(ev)).status).toBe(200);
@@ -300,6 +336,17 @@ test("C · USD refund REFUSED by the processor: recorded failed, and no refund e
   // The processor made no refund, so the transport refuses to report one.
   expect(processorRefund(attemptId)).toBeNull();
   await expect(chargeRefundedEvent(attemptId)).rejects.toThrow(/made no refund/);
+
+  // OWNER VIEW after a refusal (PAY-CCY-10): still paid, says the refund
+  // failed, claims no refunded money, and offers the refund again.
+  const view = await ownerPaymentView(page);
+  await expect(view.getByText("Refund failed.")).toBeVisible();
+  await expect(view.getByTestId("payment-summary-paid")).toContainText(/Paid · \$185\.00 USD/);
+  await expect(view.getByTestId("payment-summary-refunded")).toHaveCount(0);
+  await expect(view.getByText("Refund succeeded.")).toHaveCount(0);
+  await expect(view.getByText(/Amount refunded/)).toHaveCount(0);
+  await expect(view.getByText(/^Refunded/)).toHaveCount(0);
+  await expect(view.getByRole("button", { name: /^refund charge$/i })).toBeVisible();
   expect(stripeNetwork).toEqual([]); // browser side
   expect(stripeEgressGuardArmed()).toBe(true); // the guard IS in the payment server
   expect(readStripeEgress()).toEqual([]); // SERVER side: the payment web server never reached Stripe
