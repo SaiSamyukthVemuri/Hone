@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
+import { grantedRoles, BLANKET_FUNCTION_GRANT } from "./helpers/grant-posture";
 
 const VERSION = "0222";
 const FILE = "supabase/migrations/0222_public_practitioner_booking_command.sql";
@@ -77,13 +78,37 @@ describe("0222 is additive — the live public booking path is untouched", () =>
         `the resolver must revoke execute from ${role} by name`,
       ).toContain(`revoke execute on function public.${sig} from ${role};`);
     }
-    expect(EXECUTABLE).toContain(
-      `grant execute on function public.${sig} to service_role;`,
-    );
-    // And never to a public-facing role.
-    expect(EXECUTABLE).not.toMatch(
-      new RegExp(`grant execute on function public\\.${sig.replace(/[()]/g, "\\$&")} to (anon|authenticated)`),
-    );
+    // EXACTLY service_role, not "service_role and not these two".
+    //
+    // The previous form asserted the intended grant plus a hand-written
+    // (anon|authenticated) exclusion, which left a stray grant to ANY other
+    // role green -- `public` above all, since every one of these files
+    // legitimately revokes from public, and a later grant BACK to public would
+    // satisfy the revoke assertion, the service_role assertion and the
+    // anon/authenticated exclusion at once while granting the function to the
+    // whole database. Found cross-lane by History on 0223's identical loop.
+    const [fnName, fnArgs] = ["resolve_public_any_available_practitioner", "uuid, uuid, timestamptz, timestamptz"];
+    expect(
+      grantedRoles(EXECUTABLE, fnName, fnArgs),
+      "the resolver must be granted to service_role and NOTHING else",
+    ).toEqual(["service_role"]);
+
+    // NEGATIVE CONTROL, without touching the migration -- which this session
+    // may not write anyway. Inject a stray grant into a COPY of the real source
+    // and prove the assertion above would have caught it.
+    expect(
+      grantedRoles(
+        `${EXECUTABLE}\ngrant execute on function public.${fnName}(${fnArgs}) to public;`,
+        fnName,
+        fnArgs,
+      ),
+      "a stray grant must be visible to the matcher, or the assertion is inert",
+    ).toEqual(["public", "service_role"]);
+
+    expect(
+      EXECUTABLE,
+      "a blanket schema-wide function grant bypasses every per-signature check",
+    ).not.toMatch(BLANKET_FUNCTION_GRANT);
   });
 
   it("does NOT redefine 0170's command or validator", () => {
@@ -121,15 +146,17 @@ describe("0222 grant posture — revoke all three by name, then service_role onl
         );
       }
     });
-    it(`${fn} grants EXECUTE to service_role only`, () => {
-      expect(sql).toContain(
-        `grant execute on function public.${fn}(${args}) to service_role;`,
-      );
-      for (const role of ["anon", "authenticated"]) {
-        expect(sql).not.toContain(
-          `grant execute on function public.${fn}(${args}) to ${role};`,
-        );
-      }
+    it(`${fn} grants EXECUTE to service_role and NOTHING else`, () => {
+      expect(grantedRoles(EXECUTABLE, fn, args)).toEqual(["service_role"]);
+      // Stray-grant control, against a copy of the real source.
+      expect(
+        grantedRoles(
+          `${EXECUTABLE}\ngrant execute on function public.${fn}(${args}) to authenticator;`,
+          fn,
+          args,
+        ),
+      ).toEqual(["authenticator", "service_role"]);
+      expect(EXECUTABLE).not.toMatch(BLANKET_FUNCTION_GRANT);
     });
   }
 });

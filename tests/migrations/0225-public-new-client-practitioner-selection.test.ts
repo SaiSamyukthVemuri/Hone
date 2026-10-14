@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { countVersion, migrationVersions } from "./helpers/migration-state";
+import { grantedRoles, BLANKET_FUNCTION_GRANT } from "./helpers/grant-posture";
 
 const VERSION = "0225";
 const FILE = "supabase/migrations/0225_public_new_client_practitioner_selection.sql";
@@ -126,12 +127,30 @@ describe("0225 grant posture — revoke all three by name, then service_role onl
       );
     }
   });
-  it("grants EXECUTE to service_role only", () => {
-    expect(sql).toContain(`grant execute on function public.${FN}(${ARGS}) to service_role;`);
-    for (const role of ["anon", "authenticated"]) {
-      expect(sql).not.toContain(
-        `grant execute on function public.${FN}(${ARGS}) to ${role};`,
-      );
-    }
+  it("grants EXECUTE to service_role and NOTHING else", () => {
+    // EXACT, not "and not these two". The previous form left a stray grant to
+    // any unlisted role green -- `public` especially, which this file revokes
+    // from and could be granted back to while every assertion still held.
+    // Found cross-lane by History on 0223's identical posture loop.
+    expect(
+      grantedRoles(EXECUTABLE, FN, ARGS),
+      "the command must be granted to service_role and NOTHING else",
+    ).toEqual(["service_role"]);
+
+    // NEGATIVE CONTROL against a COPY of the real source, so no migration byte
+    // is touched -- this session may not write them.
+    expect(
+      grantedRoles(
+        `${EXECUTABLE}\ngrant execute on function public.${FN}(${ARGS}) to public;`,
+        FN,
+        ARGS,
+      ),
+      "a stray grant must be visible to the matcher, or the assertion is inert",
+    ).toEqual(["public", "service_role"]);
+
+    expect(
+      EXECUTABLE,
+      "a blanket schema-wide function grant bypasses every per-signature check",
+    ).not.toMatch(BLANKET_FUNCTION_GRANT);
   });
 });
