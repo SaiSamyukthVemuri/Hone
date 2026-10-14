@@ -51,6 +51,20 @@ export function isLoopbackUrl(value: string): boolean {
   }
 }
 
+/** Refuse a half-moved stack: the API and the database must leave the default together or not at all. */
+export function assertSameStackPair(supabaseUrl: string, dbUrl: string): void {
+  // By PORT, so `localhost:54322` and `127.0.0.1:54322` are the same default stack.
+  const port = (u: string) => new URL(u).port;
+  const apiMoved = port(supabaseUrl) !== port(LOCAL_SUPABASE_URL);
+  const dbMoved = port(dbUrl) !== port(LOCAL_DB_URL);
+  if (apiMoved !== dbMoved) {
+    throw new Error(
+      `e2e refuses to run: ${apiMoved ? "E2E_SUPABASE_URL" : "HONE_LOCAL_DB_URL"} selects another local stack ` +
+        `but ${apiMoved ? "HONE_LOCAL_DB_URL" : "E2E_SUPABASE_URL"} does not. Set both to the same stack, or neither.`,
+    );
+  }
+}
+
 function refuseHostedOverrides() {
   for (const name of [
     "NEXT_PUBLIC_SUPABASE_URL",
@@ -98,13 +112,18 @@ const RESOURCES: { port: number; origin: string; host: string; worktree: string 
 export const E2E_APP_ORIGIN: string = RESOURCES.origin;
 export const E2E_APP_PORT: number = RESOURCES.port;
 export const E2E_WORKTREE: string = RESOURCES.worktree;
-// An isolated stack is selected by E2E_SUPABASE_URL, which refuseHostedOverrides()
-// has already proven loopback by the time this runs. Without it, tests that read
-// this export (every tests/db PostgREST/GoTrue client) reached the shared 54321
-// stack even when HONE_LOCAL_DB_URL pointed the pg pool elsewhere -- a split
-// target that wrote auth users into the wrong stack. Unset: byte-for-byte unchanged.
+// An isolated stack is selected as a PAIR: E2E_SUPABASE_URL (API + GoTrue) and
+// HONE_LOCAL_DB_URL (Postgres), both already proven loopback by
+// refuseHostedOverrides(). Honouring only one half is the defect this replaces:
+// tests/db's PostgREST/GoTrue clients reached the shared 54321 stack while its pg
+// pool followed HONE_LOCAL_DB_URL, and wrote auth users into the wrong stack. The
+// mirror image -- app on the isolated stack, e2e fixtures seeding the shared 54322
+// -- would be a green run against the wrong database. So a half-moved pair is
+// REFUSED below, never silently half-honoured. Neither set: byte-for-byte unchanged.
+// (Mailpit stays 54324; a lane on another stack fails LOUDLY there, finding no mail.)
 export const E2E_SUPABASE_URL = process.env.E2E_SUPABASE_URL || LOCAL_SUPABASE_URL;
-export const E2E_DB_URL = LOCAL_DB_URL;
+export const E2E_DB_URL = process.env.HONE_LOCAL_DB_URL || LOCAL_DB_URL;
+assertSameStackPair(E2E_SUPABASE_URL, E2E_DB_URL);
 export const E2E_MAILPIT_URL = LOCAL_MAILPIT_URL;
 export const E2E_SERVICE_ROLE_KEY = LOCAL_SERVICE_ROLE_KEY;
 
