@@ -1416,7 +1416,9 @@ describe("the fallback must have budget for one whole attempt, tt >= ct + rt (Co
     ["tt=100 (times out before the handler can finish)", "#tt=100&ct=1000&rt=5000&e=ashburn,umatilla", "fail"],
     ["default ct/rt (5000 + 15000) over the default 15000 total", "#e=ashburn,umatilla", "fail"],
     ["tt one ms short of ct + rt", "#tt=5999&ct=1000&rt=5000&e=ashburn,umatilla", "fail"],
-    ["tt exactly ct + rt", "#tt=6000&ct=1000&rt=5000&e=ashburn,umatilla", "pass"],
+    // An attempt fits (6000), but failing over to the second edge needs 2 * ct + rt = 7000 (Codex P1 4268714206).
+    ["tt exactly ct + rt (no time to fail over to the second edge)", "#tt=6000&ct=1000&rt=5000&e=ashburn,umatilla", "fail"],
+    ["tt exactly 2 * ct + rt", "#tt=7000&ct=1000&rt=5000&e=ashburn,umatilla", "pass"],
     ["defaults with short timeouts", "#ct=1000&rt=5000&e=ashburn,umatilla", "pass"],
   ] as const) {
     it(`no Rule, fallback with ${why}: ${want}`, () => {
@@ -1492,5 +1494,33 @@ describe("Static Proxy makes Twilio ignore e=, so an edge list proves nothing un
       settings: [{ percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY }],
     };
     expect(status(f)).toBe("pass");
+  });
+});
+
+describe("an edge list is resilience only if a connect failure is RETRIED onto the next edge (Codex P1 4268714206)", () => {
+  const PRIMARY_NO_RECOVERY = `${URL_OK}#ct=1000&rt=5000&rp=5xx&e=ashburn,umatilla`;
+  const status = (fallbackUrl: string) => {
+    const f = allProven();
+    Object.assign(f.service!, { inboundRequestUrl: PRIMARY_NO_RECOVERY, fallbackUrl, fallbackMethod: "POST" });
+    return evaluateInboundStopPreflight(f).checks.find((c) => c.id === "stop_redelivery")?.status;
+  };
+  for (const [why, frag, want] of [
+    ["rc=0 (no retry, so never the second edge)", "#ct=1000&rt=5000&rc=0&e=ashburn,umatilla", "fail"],
+    ["rp=5xx (a connect/TLS failure is not retried)", "#ct=1000&rt=5000&rp=5xx&e=ashburn,umatilla", "fail"],
+    ["rp=rt,5xx (no ct)", "#ct=1000&rt=5000&rp=rt,5xx&e=ashburn,umatilla", "fail"],
+    ["the default policy (ct) and default rc (1)", "#ct=1000&rt=5000&e=ashburn,umatilla", "pass"],
+    ["rp=all, rc=2", "#ct=1000&rt=5000&rp=all&rc=2&e=ashburn,umatilla", "pass"],
+    ["rp=ct,5xx", "#ct=1000&rt=5000&rp=ct,5xx&e=dublin,sydney", "pass"],
+  ] as const) {
+    it(`no Rule, two-edge fallback with ${why}: ${want}`, () => {
+      expect(status(`${URL_OK}${frag}`)).toBe(want);
+    });
+  }
+
+  it("Rules unread: an edge list without connect retries is unknown, not certified", () => {
+    const f = allProven();
+    Object.assign(f.service!, { inboundRequestUrl: PRIMARY_NO_RECOVERY, fallbackUrl: `${URL_OK}#ct=1000&rt=5000&rc=0&e=ashburn,umatilla`, fallbackMethod: "POST" });
+    f.webhookRules = undefined;
+    expect(evaluateInboundStopPreflight(f).checks.find((c) => c.id === "stop_redelivery")?.status).toBe("unknown");
   });
 });

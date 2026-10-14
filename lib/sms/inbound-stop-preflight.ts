@@ -175,11 +175,20 @@ function urlTransport(url: string | null | undefined, rules: "none" | "matched" 
   const sni: Transport = o.sni === "n" ? (rules === "none" ? "unsafe" : "unknown") : "ok";
   // Edges: under a matching Rule the Setting's edgeZones govern. Otherwise an
   // omitted e is the single default edge (ashburn), and an edge list counts
-  // only once Static Proxy is known to be off.
+  // only once Static Proxy is known to be off. Twilio moves to the next edge
+  // only ON A RETRY (Codex P1 4268714206), so the list counts only when a
+  // connect/TLS failure at the first edge is retried: rc >= 1, a policy
+  // naming ct (or all; the default is ct), and a total that holds the failed
+  // connect plus one whole attempt, tt >= 2 * ct + rt.
+  const ct = o.ct ?? TWILIO_DEFAULT_CONNECT_TIMEOUT_MS;
+  const rt = o.rt ?? TWILIO_DEFAULT_READ_TIMEOUT_MS;
+  const tt = o.tt ?? TWILIO_DEFAULT_TOTAL_TIME_MS;
+  const failsOverEdges =
+    (o.rc ?? 1) >= 1 && (o.rp ?? ["ct"]).flatMap((t) => URL_POLICY[t] ?? []).includes("connect") && tt >= 2 * ct + rt;
   const edges: Transport =
     rules === "matched"
       ? "ok"
-      : (o.e?.length ?? 1) < 2
+      : (o.e?.length ?? 1) < 2 || !failsOverEdges
         ? bad
         : ctx.staticProxyEnabled === false
           ? "ok"
@@ -189,7 +198,7 @@ function urlTransport(url: string | null | undefined, rules: "none" | "matched" 
       ? "ok"
       : ctx.attemptBudget !== "url"
         ? ctx.attemptBudget.settings
-        : (o.tt ?? TWILIO_DEFAULT_TOTAL_TIME_MS) >= (o.ct ?? TWILIO_DEFAULT_CONNECT_TIMEOUT_MS) + (o.rt ?? TWILIO_DEFAULT_READ_TIMEOUT_MS)
+        : tt >= ct + rt
           ? "ok"
           : bad;
   return worst(sni, edges, budget);
