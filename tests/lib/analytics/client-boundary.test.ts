@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { MARKETING_PAGES } from "@/lib/marketing/content";
+import { TOKEN_ROUTE_PREFIXES } from "@/lib/security/token-routes";
 import {
+  TOKEN_PATH_PREFIXES,
   AUTOCAPTURE_URL_ALLOWLIST,
   guardBrowserEvent,
   isMarketingPath,
@@ -35,6 +37,7 @@ const TOKEN_ROUTE_URLS = [
   `${HOST}/intake/tok_SYNTH_intake`,
   `${HOST}/portal/verify/tok_SYNTH_portal`,
   `${HOST}/calendar-feed/tok_SYNTH_feed.ics`,
+  `${HOST}/invitation/tok_SYNTH_invitation`,
 ];
 
 const AUTHENTICATED_URLS = [
@@ -146,6 +149,28 @@ describe("Scenario 10 — marketing URLs drop unapproved query params + fragment
     expect(url).not.toContain("secret_ref");
     expect(url).not.toContain("email=");
     expect(url).not.toContain("#plans");
+  });
+});
+
+describe("Scenario 12 — token paths follow the canonical registry (#828)", () => {
+  it("covers every registered token route, /invitation included", () => {
+    expect(TOKEN_ROUTE_PREFIXES).toContain("/invitation");
+    for (const prefix of TOKEN_ROUTE_PREFIXES) {
+      expect(TOKEN_PATH_PREFIXES).toContain(`${prefix}/`);
+    }
+  });
+  it("redacts an invitation token carried by a marketing pageview", () => {
+    const token = "SYNTHtokenABCDEFGHIJKLMNOPQRSTUV";
+    const out = guardBrowserEvent(
+      ev("$pageview", `${HOST}/`, {
+        $prev_pageview_pathname: `/invitation/${token}`,
+        $referrer: `${HOST}/invitation/${token}`,
+      }),
+    );
+    expect(out).not.toBeNull();
+    expect(JSON.stringify(out)).not.toContain(token);
+    const props = out!.properties as Record<string, unknown>;
+    expect(props.$prev_pageview_pathname).toBe("/invitation/[token]");
   });
 });
 

@@ -182,6 +182,8 @@ document ever promised one. Reasoning, retained legacy artifact and the reintrod
 | Payments | Dispute handling | Merged | ✅ applied | Deployed | Enabled | **❌ never** | — | `stripe_disputes` = **0 rows** | **Alert-only** — a `charge.dispute.created` raises a critical ops alert; no automated response |
 | Payments | Live manual no-show / late-cancellation fees | Merged | ✅ applied | Deployed | **HELD** — server-side allow-list blocks every live non-`session_payment` reason | test mode only: 2 fee charges on Willow, both `stripe_livemode=false` | — | `lib/billing/live-charge-reason-allowlist.ts`; fee rows are test-mode only | **Held.** Enabling needs a dedicated PR + approval |
 | Payments | Public-booking card collection | Merged (path exists) | ✅ applied | Deployed | **OFF — not wired** | ❌ | — | `pending_booking_payment_sessions` = **0 rows**; `require_card_on_file` false everywhere | A Stripe gate proves the `set_studio_require_card_on_file` path has zero runtime occurrences |
+| Payments | **Provider-money integrity** — a Stripe object is recorded against a prepared attempt only when its amount and currency equal the attempt's (PAY-CCY-01) | Merged (#834, `6f7281bb`) | — (no migration) | Deployed 2026-10-13 (`2Q9aZM1QYN7WMn76MSxTBrFEaex5`) | **Enabled** for every charge, refund, reconciliation and webhook write | ⚠️ not measured — no production mismatch observed or queried at this sync | — | PR #834 validation: fake-provider writer suite 44/44 with a negative control; CI 38402261265 | A mismatch leaves the attempt unresolved and raises an ops alert; manual review is the recovery |
+| Payments | **US/USD**: per-studio payment jurisdiction, USD Stripe accounts, USD activation | **Not merged** (#833, #836, #839, #847 drafts) | **Not applied** (0214 onward unmerged) | — | **PENDING** | ❌ | — | #824 US/USD lane | Release packet, platform eligibility and separate activation authorization |
 | Payments | Deposits / packages / partial payments | — | — | — | — | — | — | no schema, no code | **Not built** |
 | Payments | Broad self-serve live payments | — | — | — | — | — | — | — | **Not ready.** A new studio starts in test mode and is enabled only after supervised onboarding + approval |
 | Payments | Automatic / batch / public-triggered charging | — | — | — | — | — | — | — | **Not built and not planned.** Charging is one manual practitioner click |
@@ -313,23 +315,23 @@ prospects at every measured instant.
 
 ## 15. Capabilities added since the 2026-08-23 reconciliation
 
-**Eighty-one** production merges landed between `b9e0003f` and the current branch head. That is
+**140** production merges landed between `b9e0003f` and the current branch head (2026-10-13 sync, `6f7281bb`; it was 138 at the 2026-10-12 sync through `d5efa20a`, and eighty-one at the 2026-09-21 sync through `410e5039`). That is
 the current ancestry count and nothing more — capability was **not** re-derived over it.
 
 Over the **twenty-nine** merges through `bf6f09c4`, derived on **2026-08-30**, **Ten**
-carry a capability that belongs in this register. The other fifty-two merges are recorded in
+carry a capability that belongs in this register. The other 111 merges are recorded in
 [release-changelog.md](./release-changelog.md) and are **not** enumerated for capability here.
 
 **THOSE TWO NUMBERS ARE DERIVED OVER DIFFERENT SPANS, AND SAYING SO IS THE POINT.** The
-**eighty-one** is the merge ancestry through the *current* branch head, `410e5039`. The **ten**
+**140** is the merge ancestry through the *current* branch head, `6f7281bb`. The **ten**
 is **not** derived over it: it is the **2026-08-30** derivation over the twenty-nine merges
 through `bf6f09c4`, and it has not been re-run since.
 
 **This section is scoped to that dated derivation and must not be read as a current capability
-count.** The fifty-two merges between `bf6f09c4` and `410e5039` are recorded row by row in
+count.** The 111 merges between `bf6f09c4` and `6f7281bb` are recorded row by row in
 [release-changelog.md](./release-changelog.md), and several of them plainly ship capability —
 `#702`'s automatic card receipts and `#745`'s next-setup-step checklist among them. This register
-has **not** re-enumerated them. Re-running the capability derivation across all eighty-one merges
+has **not** re-enumerated them. Re-running the capability derivation across all 140 merges
 is its own lane with its own evidence; raising the number here without doing that work would
 manufacture a figure nobody derived, which is the precise failure this document exists to
 prevent.
