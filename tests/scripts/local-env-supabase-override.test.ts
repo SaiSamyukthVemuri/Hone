@@ -92,6 +92,23 @@ describe("isolated-stack override", () => {
     await expect(importWith(value, ISO_DB)).rejects.toThrow(/e2e refuses to run: E2E_SUPABASE_URL points away/);
   });
 
+  // Codex P1: a query parameter the PostgreSQL client honours OVER the authority
+  // redirects the connection while the authority still reads as loopback.
+  it.each([
+    "postgresql://postgres:postgres@127.0.0.1:63322/postgres?host=prod-db.internal",
+    "postgresql://postgres:postgres@127.0.0.1:63322/postgres?port=54322",
+    "postgresql://postgres:postgres@127.0.0.1:63322/postgres?sslmode=disable&HOST=db.example.com",
+    "postgresql://postgres:postgres@127.0.0.1:63322/postgres?hostaddr=10.0.0.5",
+    "postgresql://postgres:postgres@127.0.0.1:63322/postgres?service=prod",
+  ])("a connection override in HONE_LOCAL_DB_URL is refused at import: %s", async (value) => {
+    await expect(importWith(ISO_API, value)).rejects.toThrow(/e2e refuses to run: HONE_LOCAL_DB_URL points away/);
+  });
+
+  it("an ordinary non-connection query parameter is still accepted", async () => {
+    const env = await importWith(ISO_API, `${ISO_DB}?sslmode=disable`);
+    expect(env.E2E_DB_URL).toBe(`${ISO_DB}?sslmode=disable`);
+  });
+
   it("an off-machine HONE_LOCAL_DB_URL still throws at import", async () => {
     await expect(importWith(ISO_API, "postgresql://u:p@127.0.0.1@db.example.com:5432/postgres")).rejects.toThrow(
       /e2e refuses to run: HONE_LOCAL_DB_URL points away/,

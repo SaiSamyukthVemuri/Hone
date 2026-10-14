@@ -43,9 +43,21 @@ const BANNED_URL_PATTERNS =
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
 
+// Query parameters a PostgreSQL client gives PRECEDENCE over the URL authority
+// (pg-connection-string, libpq). With one present, the authority this guard
+// checks is not where the client connects: `postgresql://…@127.0.0.1:63322/
+// postgres?host=prod-db.internal` would pass a hostname check and seed SQL
+// off-machine, and `?port=54322` would pass the pair check while reaching the
+// shared stack (Codex P1 on #879). So any such override is refused outright.
+const CONNECTION_OVERRIDES = new Set(["host", "hostaddr", "port", "service"]);
+
 export function isLoopbackUrl(value: string): boolean {
   try {
-    return LOOPBACK_HOSTS.has(new URL(value).hostname.toLowerCase());
+    const url = new URL(value);
+    for (const key of url.searchParams.keys()) {
+      if (CONNECTION_OVERRIDES.has(key.toLowerCase())) return false;
+    }
+    return LOOPBACK_HOSTS.has(url.hostname.toLowerCase());
   } catch {
     return false;
   }
