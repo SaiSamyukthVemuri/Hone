@@ -743,3 +743,59 @@ describe("connection-override fragments on adoption", () => {
     }
   });
 });
+
+// Codex P2 4271461595, 4271749292, 4272070468: an errored setup offers only
+// what is honest without its ORIGIN (not stored): 0226's release for the
+// definitive pre-purchase codes, and a truthful support line for everything
+// else. Every case below would have been offered a "retry" by an earlier
+// head, and each is a case where a provisioning retry is wrong or unproven.
+describe("errored setups: release or a truthful support line, never a retry that cannot work", () => {
+  const live = async (studioId: string) =>
+    (await adminQuery("select status, phone_number, claimed_phone_number, last_error_code from public.studio_sms_senders where studio_id = $1 and status <> 'released'", [studioId])).rows[0];
+
+  it("PROVISIONED, stranded after a purchase (nothing recorded): support, and release is correctly refused", async () => {
+    const s = await seedStudio("ctl-err-stranded");
+    const number = await freshNumber("416");
+    const provider = new FakeSmsProvisioningProvider({ attachFails: "provider_unavailable" });
+    expect((await controls.runSenderProvision(deps(provider), { studioId: s.studioId, actorUserId: s.userId, country: "CA", areaCode: "416", phoneNumber: number })).ok).toBe(false);
+    const row = await live(s.studioId);
+    expect(row).toMatchObject({ status: "error", phone_number: null, last_error_code: "provider_unavailable", claimed_phone_number: number });
+    expect(controls.senderRecoveryFor(row.status, row.last_error_code)).toBe("support");
+    expect(await controls.runSenderRelease(deps(provider), { studioId: s.studioId, actorUserId: s.userId })).toMatchObject({ ok: false, reason: "not_releasable" });
+    expect(provider.calls.purchase).toBe(1);
+  });
+
+  it("ADOPTED, test failed (identifiers recorded; Codex 4271749292): support", async () => {
+    const s = await seedStudio("ctl-err-adopted");
+    const provider = controls.senderControlsFakeProvider(ORIGIN, s.studioId);
+    const inventory = (await import("@/lib/sms/sender-controls-demo")).demoAdoptionInventory(s.studioId);
+    provider.script = { ...provider.script, testSendFails: "provider_unavailable" };
+    expect((await controls.runSenderAdoption(deps(provider), {
+      studioId: s.studioId, actorUserId: s.userId, country: "CA", phoneNumber: inventory.numbers.CA.phoneNumber, messagingServiceSid: inventory.messagingServiceSid,
+    })).ok).toBe(false);
+    const row = await live(s.studioId);
+    expect(row).toMatchObject({ status: "error", phone_number: inventory.numbers.CA.phoneNumber, last_error_code: "provider_unavailable" });
+    expect(controls.senderRecoveryFor(row.status, row.last_error_code)).toBe("support");
+    expect(provider.calls.purchase).toBe(0);
+  });
+
+  it("PROVISIONED, finalized then the test failed: support", async () => {
+    const s = await seedStudio("ctl-err-finalized");
+    const number = await freshNumber("416");
+    const provider = new FakeSmsProvisioningProvider({ testSendFails: "provider_unavailable" });
+    expect((await controls.runSenderProvision(deps(provider), { studioId: s.studioId, actorUserId: s.userId, country: "CA", areaCode: "416", phoneNumber: number })).ok).toBe(false);
+    const row = await live(s.studioId);
+    expect(row).toMatchObject({ status: "error", phone_number: number, last_error_code: "provider_unavailable" });
+    expect(controls.senderRecoveryFor(row.status, row.last_error_code)).toBe("support");
+  });
+
+  it("a definitive pre-purchase failure: release, and it releases", async () => {
+    const s = await seedStudio("ctl-err-release");
+    const number = await freshNumber("905");
+    const c = (await adminQuery("select * from public.claim_studio_sms_provisioning($1, $2, 'CA', null, $3)", [s.studioId, s.userId, number])).rows[0];
+    await adminQuery("select public.fail_studio_sms_provisioning($1, $2, $3, 'number_no_longer_available')", [s.studioId, c.claim_key, c.lease_generation]);
+    const row = await live(s.studioId);
+    expect(controls.senderRecoveryFor(row.status, row.last_error_code)).toBe("release");
+    expect(await controls.runSenderRelease(deps(new FakeSmsProvisioningProvider()), { studioId: s.studioId, actorUserId: s.userId })).toMatchObject({ ok: true, result: "released" });
+  });
+});

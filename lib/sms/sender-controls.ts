@@ -451,6 +451,37 @@ export async function runSenderAdoption(
 // what exists under the claim key. Anything found, or no complete answer,
 // refuses: only a retry, which reconciles first, may continue that claim.
 
+// ---------------------------------------------------------------------------
+// WHICH RECOVERY AN ERRORED SETUP OFFERS (Codex P2 4271461595, 4271749292,
+// 4272070468)
+// ---------------------------------------------------------------------------
+// The full routing table, every stored code against every origin and stage,
+// is /srv/hone/handoffs/SMS_863_RECOVERY_ROUTING_TABLE_2026-10-14.md. Its
+// finding: a setup's ORIGIN (provisioned by Hone, or adopted from the studio's
+// own account) is not stored, and every retry-routed code can come from either
+// origin, before or after identifiers are recorded. A provisioning retry of an
+// adopted setup cannot find its untagged resources, and an adoption retry of a
+// provisioned one is not proven. So no retry is honest without the origin, and
+// this slice offers exactly:
+//   * release -- 0226's definitive pre-purchase codes: give the claim up and
+//     choose again (the release still asks the provider first);
+//   * support -- any other code while in error: a truthful line that the
+//     setup cannot be continued from this screen;
+//   * none    -- not in error.
+// An origin-aware retry (persist the origin, then retry through provisioning
+// or adoption accordingly) is a follow-up feature, not this slice.
+
+/** Exactly 0226's release_unpurchased_studio_sms_claim codes (pinned to the SQL by test). */
+export const RELEASABLE_ERROR_CODES = ["number_no_longer_available", "provider_resource_mismatch", "finalize_conflict"] as const;
+
+export type SenderRecovery = "release" | "support" | "none";
+
+export function senderRecoveryFor(status: string | null | undefined, lastErrorCode: string | null | undefined): SenderRecovery {
+  if (status !== "error") return "none";
+  if (lastErrorCode && (RELEASABLE_ERROR_CODES as readonly string[]).includes(lastErrorCode)) return "release";
+  return "support";
+}
+
 export type ReleaseOutcome =
   | { ok: true; result: "released"; senderId: string }
   | {

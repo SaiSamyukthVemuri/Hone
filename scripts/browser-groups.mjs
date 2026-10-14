@@ -331,6 +331,10 @@ export const BROWSER_GROUPS = {
       // moving to the owner console) and the /admin/delivery support queue.
       // Owner-authority and platform-admin surfaces, so the owner/admin family.
       "delivery-visibility.spec.ts",
+      // SMS-SENDER-REG-01 (#844): the mounted no-lost-update proof of the
+      // operator's registration form on /admin/studios/[id] (two operators,
+      // stale submit refused, refresh, safe resubmit). Admin surface.
+      "sms-registration-stale-form.spec.ts",
       "practitioner-availability-compat.spec.ts",
       "practitioner-booking-studio-b.spec.ts",
       "practitioner-quick-book-studio-b.spec.ts",

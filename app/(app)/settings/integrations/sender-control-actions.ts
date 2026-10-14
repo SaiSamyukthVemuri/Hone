@@ -139,8 +139,8 @@ export async function releaseSenderClaimAction(
   revalidatePath("/settings/integrations");
   if (out.ok) return { ok: true, message: "Released. Search again and choose a different number." };
   const words: Record<string, string> = {
-    not_releasable: "This setup cannot be released here: it may own a number. Retry it, or contact Hone support.",
-    resources_found: "The provider holds something under this setup, so it is not released. Retry it to finish, or contact Hone support.",
+    not_releasable: "This setup cannot be released here: it may own a number. Contact Hone support to finish or undo it.",
+    resources_found: "The provider holds something under this setup, so it is not released. Contact Hone support to finish or undo it.",
     no_live_sender: "There is nothing to release.",
     sender_changed: "The setup changed while you were looking. Reload and try again.",
   };
