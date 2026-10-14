@@ -310,6 +310,10 @@ export const BROWSER_GROUPS = {
       "onboarding.spec.ts",
       "quick-import.spec.ts",
       "welcome-email-admin.spec.ts",
+      // DELIVERY-VISIBILITY-02: the owner's delivery card (Settings -> Launch,
+      // moving to the owner console) and the /admin/delivery support queue.
+      // Owner-authority and platform-admin surfaces, so the owner/admin family.
+      "delivery-visibility.spec.ts",
       "practitioner-availability-compat.spec.ts",
       "practitioner-booking-studio-b.spec.ts",
       "practitioner-quick-book-studio-b.spec.ts",
