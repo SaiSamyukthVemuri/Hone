@@ -77,6 +77,13 @@ export function assertSameStackPair(supabaseUrl: string, dbUrl: string): void {
   }
 }
 
+/** The Mailpit of the stack whose API is `supabaseUrl`: same loopback host, API port + the default offset (3). */
+export function mailpitFor(supabaseUrl: string): string {
+  const port = (u: string) => Number(new URL(u).port);
+  const api = new URL(supabaseUrl);
+  return `http://${api.hostname}:${port(supabaseUrl) + port(LOCAL_MAILPIT_URL) - port(LOCAL_SUPABASE_URL)}`;
+}
+
 function refuseHostedOverrides() {
   for (const name of [
     "NEXT_PUBLIC_SUPABASE_URL",
@@ -132,14 +139,15 @@ export const E2E_WORKTREE: string = RESOURCES.worktree;
 // mirror image -- app on the isolated stack, e2e fixtures seeding the shared 54322
 // -- would be a green run against the wrong database. So a half-moved pair is
 // REFUSED below, never silently half-honoured. Neither set: byte-for-byte unchanged.
-// LIMITATION: Mailpit has no override and stays 54324, so a spec that reads a
-// GoTrue email (magic link, invite) CANNOT run on an isolated stack -- it finds no
-// mail and fails loudly. Isolated runs must exclude mail-dependent specs until a
-// validated Mailpit override joins this pair.
+// The APP SERVER (E2E_WEB_SERVER_ENV) and MAILPIT follow the same stack, so the
+// browser, the fixtures and GoTrue's mail all reach ONE stack (Codex P2 4265873832).
+// Mailpit takes no variable of its own: it is DERIVED from the validated API URL by
+// the same contiguous-port convention the pair check relies on (API, DB = API+1,
+// Mailpit = API+3), so it cannot name a different stack or leave this machine.
 export const E2E_SUPABASE_URL = process.env.E2E_SUPABASE_URL || LOCAL_SUPABASE_URL;
 export const E2E_DB_URL = process.env.HONE_LOCAL_DB_URL || LOCAL_DB_URL;
 assertSameStackPair(E2E_SUPABASE_URL, E2E_DB_URL);
-export const E2E_MAILPIT_URL = LOCAL_MAILPIT_URL;
+export const E2E_MAILPIT_URL = mailpitFor(E2E_SUPABASE_URL);
 export const E2E_SERVICE_ROLE_KEY = LOCAL_SERVICE_ROLE_KEY;
 
 // SENTRY-E2E-NOISE-02. The preload that keeps every browser lane out of the
@@ -241,7 +249,7 @@ export const E2E_WEB_SERVER_ENV: Record<string, string> = {
   // package.json - which also keeps the npm script portable.
   PORT: String(E2E_APP_PORT),
   NEXT_PUBLIC_APP_ORIGIN: E2E_APP_ORIGIN,
-  NEXT_PUBLIC_SUPABASE_URL: LOCAL_SUPABASE_URL,
+  NEXT_PUBLIC_SUPABASE_URL: E2E_SUPABASE_URL,
   NEXT_PUBLIC_SUPABASE_ANON_KEY: LOCAL_ANON_KEY,
   SUPABASE_SERVICE_ROLE_KEY: LOCAL_SERVICE_ROLE_KEY,
   RESEND_API_KEY: "re_dummy_resend_key",

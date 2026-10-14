@@ -42,6 +42,24 @@ describe("isolated-stack override", () => {
     );
   });
 
+  // Codex P2 4265873832: the BROWSER's app server and GoTrue's mail must follow the
+  // fixtures, or setup writes one stack while the app under test reads another.
+  it("neither set: the app server and Mailpit stay on the default stack", async () => {
+    const env = await importWith("");
+    expect(env.E2E_WEB_SERVER_ENV.NEXT_PUBLIC_SUPABASE_URL).toBe("http://127.0.0.1:54321");
+    expect(env.E2E_MAILPIT_URL).toBe("http://127.0.0.1:54324");
+  });
+
+  it("a moved pair moves the app server and Mailpit with it, in every browser lane", async () => {
+    const env = await importWith(ISO_API, ISO_DB);
+    expect(env.E2E_WEB_SERVER_ENV.NEXT_PUBLIC_SUPABASE_URL).toBe(ISO_API);
+    expect(env.E2E_MAILPIT_URL).toBe("http://127.0.0.1:63324");
+    const { PAYMENT_WEB_SERVER_ENV } = await import("../../e2e-payment/helpers/payment-env");
+    const { GOOGLE_WEB_SERVER_ENV } = await import("../../e2e-google/helpers/google-env");
+    expect(PAYMENT_WEB_SERVER_ENV.NEXT_PUBLIC_SUPABASE_URL).toBe(ISO_API);
+    expect(GOOGLE_WEB_SERVER_ENV.NEXT_PUBLIC_SUPABASE_URL).toBe(ISO_API);
+  });
+
   it("the default stack spelled with localhost is still the default, not a move", async () => {
     const env = await importWith("", "postgresql://postgres:postgres@localhost:54322/postgres");
     expect(env.E2E_SUPABASE_URL).toBe("http://127.0.0.1:54321");
