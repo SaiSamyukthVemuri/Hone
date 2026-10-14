@@ -1,5 +1,8 @@
 import { test, expect } from "@playwright/test";
-import { adminQuery, closePool } from "./helpers/payment-fixture";
+// The loopback-only harness, not ./helpers/payment-fixture: that module's seed
+// guard pins the database to local-env's, and this tool reads the TWIN's
+// (Codex P2 4265382406). This tool only reads; it seeds nothing.
+import { adminQuery, closePool } from "../tests/db/helpers/harness";
 import {
   chargeRefundedEvent,
   deliverStripeEvent,
@@ -15,11 +18,15 @@ import {
 // the normal payment suite.
 // ===========================================================================
 //
-// Inputs (all required except the event list):
+// Run it with its OWN config, which starts no server (Codex P2 4265382410):
+//
+//   npx playwright test --config e2e-payment/replay-tool.playwright.config.ts
+//
+// Inputs (all required except the event list; none falls back to a default, so
+// the tool can never quietly read the shared stack or post to the lane's port):
 //   HONE_E2E_REPLAY_ATTEMPT_ID  payment_charge_attempts.id to replay for
 //   HONE_E2E_RUN_ID             the twin server's fake-processor run id (its ledger)
-//   HONE_LOCAL_DB_URL           the twin's LOOPBACK database (the db-target guard
-//                               refuses a mismatch with e2e/helpers/local-env.ts)
+//   HONE_LOCAL_DB_URL           the twin's LOOPBACK database, any port (read only)
 //   HONE_E2E_WEBHOOK_ORIGIN     the twin app's LOOPBACK origin, e.g. http://127.0.0.1:3995
 //   HONE_E2E_WEBHOOK_SECRET     the twin server's STRIPE_WEBHOOK_SECRET (whsec_…)
 //   HONE_E2E_REPLAY_EVENTS      optional, comma list of succeeded,refunded
@@ -48,8 +55,25 @@ async function state(attemptId: string) {
   return r.rows[0] as Record<string, unknown> | undefined;
 }
 
+const REQUIRED = [
+  "HONE_E2E_RUN_ID",
+  "HONE_LOCAL_DB_URL",
+  "HONE_E2E_WEBHOOK_ORIGIN",
+  "HONE_E2E_WEBHOOK_SECRET",
+] as const;
+
 test("FAKE webhook replay for one attempt is idempotent", async () => {
   const attemptId = ATTEMPT!;
+  if (process.env.HONE_E2E_REPLAY_TOOL_CONFIG !== "1") {
+    throw new Error(
+      "replay tool: run it with --config e2e-payment/replay-tool.playwright.config.ts " +
+        "(no webServer); a lane config would start its own server instead of using the twin",
+    );
+  }
+  const missing = REQUIRED.filter((k) => !process.env[k]);
+  if (missing.length) {
+    throw new Error(`replay tool: set ${missing.join(", ")} (no defaults, by design)`);
+  }
   const target = webhookTarget(); // throws unless loopback + whsec_ secret
   const wanted = (process.env.HONE_E2E_REPLAY_EVENTS ?? "succeeded,refunded")
     .split(",")

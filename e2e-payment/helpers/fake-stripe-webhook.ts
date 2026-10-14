@@ -1,6 +1,10 @@
 import StripeSdk from "stripe";
 import { E2E_APP_ORIGIN, E2E_WEB_SERVER_ENV } from "../../e2e/helpers/local-env";
-import { adminQuery } from "./payment-fixture";
+// The harness directly (loopback-only by its own checks), NOT ./payment-fixture:
+// that module's import-time seed guard pins the database to local-env's, which
+// would stop the operator replay tool from reading a twin on another port
+// (Codex P2 4265382406). Specs that SEED still import payment-fixture.
+import { adminQuery } from "../../tests/db/helpers/harness";
 import { activeRunId, readFakeStripeCalls } from "./fake-stripe-ledger-e2e";
 
 // ===========================================================================
