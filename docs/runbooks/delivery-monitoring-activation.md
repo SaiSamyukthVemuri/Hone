@@ -300,10 +300,14 @@ Merges, the webhook secret and endpoint, and the cron entry are each a separate 
 | **#876 `084d8dc6`** (0227 blob `67e837de`, sha256 `8b62d4d8…`) | Codex exact-head review | **clean**: completed 02:54:44Z for `084d8dc`, no findings |
 | | CI `38503246394` | validate: only the branch-local contiguity hole (by design). DB integration died at runner startup (port 54324 already bound; no test ran) and was **re-run**; see the PR |
 | **#876 `bcdc5ef4`** (same 0227 SQL) | Local isolated chain `0001`–`0212` + `0227` | **113/113**: 0227 file, 0212 suite, export registry. Negative control: the transient cases are red on the previous 0227 |
-| **Composed `82046d94`** (`integration/fett-composed-824`) | Guarded fresh reset; DB lane (6 files) | **174/174** |
+| **Composed `781be179`** (`integration/fett-composed-824`; carries the REVIEWED `0213` from #831, blob `47205a35`, plus #832 `27c111f3` and #876 `084d8dc6`) | Fresh reset; chain `0210`–`0227` contiguous; DB lane (the 6 delivery files plus 3 lead-alert files) | **256/256**. **This is the current ordered proof** and supersedes `82046d94` |
+| | Unit and source contracts | **574/574** |
+| | Browser `e2e/delivery-visibility.spec.ts` | **5/5** |
+| **Composed `82046d94`** (superseded: it carried a stale `0213`) | Guarded fresh reset; DB lane (6 files) | 174/174 |
 | | Unit and source contracts (32 files) | **546/546** |
 | | Browser `e2e/delivery-visibility.spec.ts` | **5/5** |
-| **Composed `bfa6f11c`** (the current composed head) | Contains #832 `27c111f3` and #876 `084d8dc6` | **None of the counts above ran on it.** The ordered proof is `82046d94`'s |
+| **Composed `bfa6f11c`** | Contains #832 `27c111f3` and #876 `084d8dc6` | **None of the counts above ran on it** |
+| **#876 after `084d8dc6`** (`61534986`, `8069c055`) | Test-only: exact-grant posture for 0212 and 0227. 0227's SQL is unchanged (blob `67e837de`) | Not in any composed proof. Mutation proof: 28 + 16 cases behaved as required on 0212, 0215, 0221 and 0227 |
 
 **Upper stack, synced to #832 `27c111f3` by normal merge:** #843 `0c388cc4`, #846 `372085d7`, #849 `794ed588`, #865 `afc56e5c` and this branch.
 - **Local runs on each** (docs, migrations, API routes, delivery components): pass, except the documented contiguity hole and the local-only A3/A5.
