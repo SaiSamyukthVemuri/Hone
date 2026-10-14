@@ -887,75 +887,153 @@ create index if not exists treatment_setup_readings_capture_idx
   on public.treatment_setup_readings (capture_id);
 
 -- ---------------------------------------------------------------------------
--- PART 3 COMMAND — record one settings group
+-- ===========================================================================
+-- PART 6 - public.treatment_setup_submissions: ONE SAVE, as a fact
+-- ===========================================================================
+--
+-- WHY THIS EXISTS. `record_treatment_setup_group` records ONE group per call,
+-- which was right while a setup meant one group. Once the entry surface could
+-- record several, a Save became several independent calls - and nothing in the
+-- database tied them together. Three invariants were unreachable as a result
+-- (Codex, #860 6157725545):
+--
+--   * ATOMICITY. Two calls can half-succeed, leaving a block with one group of
+--     a two-group setup and no record that a second was ever intended.
+--   * CROSS-GROUP CHANNEL EXCLUSIVITY. Each call carries its own
+--     duplicate-free channel array, so two calls claiming probe 2 are two
+--     individually VALID calls. The database cannot see them as related, so a
+--     UI check was the only guard - and a UI check is bypassable by anything
+--     that calls the RPC directly.
+--   * IDEMPOTENCY AFTER A LOST RESPONSE. With no identity for the Save, a
+--     retry cannot be distinguished from a genuine second capture, so the
+--     honest UI behaviour was to refuse to retry at all.
+--
+-- A SUBMISSION IS NOT A NEW CLINICAL CONCEPT. It is the boundary that already
+-- existed in the practitioner's action - she pressed Save once - and simply
+-- had no representation. Each capture keeps its own revision, timestamp and
+-- source exactly as before; this records which Save produced it.
+--
+-- A MACHINE OR MODE SWITCH IS A DIFFERENT SUBMISSION by construction: the
+-- machine and mode are columns here, so a Save under a different one cannot
+-- join an earlier submission. That is what stops a stale group reappearing
+-- when she returns to a machine she had left.
+create table if not exists public.treatment_setup_submissions (
+  id uuid primary key default gen_random_uuid(),
+  studio_id uuid not null references public.studios(id) on delete cascade,
+  session_block_id uuid not null
+    references public.session_blocks(id) on delete cascade,
+
+  -- The setup identity this Save was made under. Denormalised from the
+  -- captures deliberately: it is what makes "a different machine is a
+  -- different submission" a schema fact rather than a convention.
+  studio_machine_id uuid not null
+    references public.studio_machines(id) on delete restrict,
+  machine_profile_id text not null
+    check (length(btrim(machine_profile_id)) between 1 and 120),
+  machine_profile_version integer not null check (machine_profile_version >= 1),
+  mode_key text not null check (length(btrim(mode_key)) between 1 and 60),
+
+  -- THE RETRY KEY, supplied by the caller.
+  --
+  -- A lost response leaves the caller unable to tell a committed write from a
+  -- dropped one. With this, a repeat of the SAME Save returns the original
+  -- submission instead of creating a second one - so a retry is safe without
+  -- being a blind replay. It is scoped per block, because a key is only ever
+  -- reused by the form that generated it.
+  idempotency_key text not null
+    check (length(btrim(idempotency_key)) between 8 and 100),
+
+  recorded_by_practitioner_id uuid,
+  recorded_at timestamptz not null default now(),
+
+  constraint treatment_setup_submissions_idempotency_uniq
+    unique (session_block_id, idempotency_key)
+);
+
+comment on table public.treatment_setup_submissions is
+  '0223. ONE Save of machine settings, tying together the setting-group captures it produced. Records the setup identity the Save was made under (unit, profile version, mode), so a Save under a different machine or mode is necessarily a different submission and a stale group cannot reappear when a practitioner returns to a machine she had left. `idempotency_key` makes a retry after a LOST RESPONSE safe: repeating the same Save returns the original submission rather than appending a second capture. Each capture keeps its own revision, timestamp and observation source; this does not flatten them and must never be read as "all observed at one instant".';
+
+create index if not exists treatment_setup_submissions_block_idx
+  on public.treatment_setup_submissions (session_block_id, recorded_at desc);
+
+-- Direct DML is revoked from every runtime role, as for every other clinical
+-- table here: the command is the only writer.
+alter table public.treatment_setup_submissions enable row level security;
+revoke all on public.treatment_setup_submissions from public;
+revoke all on public.treatment_setup_submissions from anon;
+revoke all on public.treatment_setup_submissions from authenticated;
+revoke all on public.treatment_setup_submissions from service_role;
+grant select on public.treatment_setup_submissions to authenticated;
+grant select on public.treatment_setup_submissions to service_role;
+
+drop policy if exists treatment_setup_submissions_member_select
+  on public.treatment_setup_submissions;
+create policy treatment_setup_submissions_member_select
+  on public.treatment_setup_submissions
+  for select
+  to authenticated
+  using (public.is_studio_member(studio_id));
+
+-- The capture's link to the Save that produced it.
+--
+-- NULLABLE, and this is the one place a null is meaningful: captures written
+-- by `record_treatment_setup_group` before this extension existed have no
+-- submission, and a historical row must not be invented one. A null means
+-- "recorded as a single group, before submissions" - not "unknown".
+alter table public.treatment_setup_captures
+  add column if not exists setup_submission_id uuid
+  references public.treatment_setup_submissions(id) on delete restrict;
+
+create index if not exists treatment_setup_captures_submission_idx
+  on public.treatment_setup_captures (setup_submission_id);
+
+comment on column public.treatment_setup_captures.setup_submission_id is
+  '0223. The Save that produced this capture, or NULL for a capture recorded as a single group before submissions existed. A null is a HISTORICAL FACT, not missing data, and must not be backfilled by guessing which captures were once saved together.';
+
+
+-- ---------------------------------------------------------------------------
+-- PART 3 SHARED SCOPE — the checks EVERY setup write makes, in one place
 -- ---------------------------------------------------------------------------
 --
--- The payload is one group's readings. Each element names its field and, for a
--- staged mode, its stage; carries either a value or an absence reason; and
--- states the native unit, the precision and who or what observed it.
+-- WHY THIS IS A FUNCTION AND NOT A SECOND COPY. Recording a settings group
+-- and recording a whole submission need identical answers to identical
+-- questions: which studio does this block belong to, is the session and the
+-- block still live, is the caller a member, does this machine belong to that
+-- studio, is it in service, and which profile version is it on. A second
+-- implementation of those checks is a second place for them to drift, and a
+-- validation rule that exists twice is one that will eventually disagree with
+-- itself. One definition, two callers.
 --
--- The BLOCK determines the studio. The caller never names one, so there is no
--- studio parameter to forge: the block's own `studio_id` is resolved first and
--- the caller is then required to be an active member OF THAT STUDIO. A block
--- in another studio is refused because the membership lookup returns NULL.
-
-create or replace function public.record_treatment_setup_group(
+-- IT TAKES THE LOCKS, AND THEREFORE IT IS CALLED EXACTLY ONCE PER WRITE.
+-- Calling it per group would retake the same three row locks for every group
+-- in a submission - harmless but pointless - and, more importantly, would
+-- re-read liveness between groups, so a session retired mid-submission could
+-- leave the first group written and the second refused. Called once, every
+-- group in a submission is written under one consistent, locked scope.
+--
+-- THE LOCK ORDER IS THE MIGRATION'S ORDER, unchanged:
+--     sessions -> session_blocks -> studio_machines -> practitioners
+-- Moving the locks here is what makes that order impossible to get wrong in a
+-- new command: a caller cannot take them in a different sequence, because it
+-- does not take them at all.
+create or replace function public.assert_setup_scope(
   p_block_id uuid,
   p_studio_machine_id uuid,
-  p_mode_key text,
-  p_group_key text,
-  p_channels smallint[],
-  p_readings jsonb
+  out o_studio uuid,
+  out o_practitioner uuid,
+  out o_profile_id text,
+  out o_profile_version integer,
+  out o_installed_options text[]
 )
-returns integer
 language plpgsql
 security definer
 set search_path = pg_catalog, pg_temp
 as $$
 declare
-  v_studio uuid;
   v_session_id uuid;
-  v_pract uuid;
   v_machine_studio uuid;
-  v_profile_id text;
-  v_profile_version integer;
   v_retired timestamptz;
-  v_installed text[];
-  v_count integer := 0;
-  v_item jsonb;
-  -- Derived per reading from the published contract, never accepted from input.
-  v_stage text;
-  v_field text;
-  v_unit text;
-  v_decimals smallint;
-  v_quantity text;
-  v_value numeric;
-  v_absence text;
-  v_source text;
-  -- Mode-level contract facts.
-  v_channels_max smallint;
-  v_requires_option text;
-  -- The ONE capture this call creates.
-  v_capture uuid;
-  v_revision smallint;
-  v_group text;
-  v_mode text;
-  v_channel smallint;
 begin
-  -- A NON-EMPTY array, and the emptiness check is not cosmetic.
-  --
-  -- An empty array previously allocated a capture with no readings and
-  -- returned 0. Because `latest_setup_for_client` picks the NEWEST capture and
-  -- then aggregates its rows, that empty capture became the newest and made
-  -- valid prior guidance vanish as `[]` - a direct authenticated call could
-  -- erase a client's next-visit setup without deleting anything. The server
-  -- action already refused this; the command has to as well.
-  if p_readings is null or jsonb_typeof(p_readings) <> 'array'
-     or jsonb_array_length(p_readings) = 0 then
-    raise exception 'At least one reading is required.'
-      using errcode = 'check_violation';
-  end if;
-
   -- The block decides the studio. Nothing the caller sends does.
   --
   -- RESOLVED THROUGH ITS SESSION, and both records must be live. Checking only
@@ -1002,19 +1080,19 @@ begin
   -- RE-CHECKED AFTER THE LOCKS ARE HELD, in its own statement, so the liveness
   -- this proceeds on is the state at lock time rather than at first read. A
   -- retirement that committed while we waited is seen here and refused.
-  select b.studio_id into v_studio
+  select b.studio_id into o_studio
     from public.session_blocks b
     join public.sessions sn on sn.id = b.session_id
    where b.id = p_block_id
      and b.deleted_at is null
      and sn.deleted_at is null;
 
-  if v_studio is null then
+  if o_studio is null then
     raise exception 'Unknown treatment block.' using errcode = 'no_data_found';
   end if;
 
-  v_pract := public.own_practitioner_in_studio(v_studio);
-  if v_pract is null then
+  o_practitioner := public.own_practitioner_in_studio(o_studio);
+  if o_practitioner is null then
     raise exception 'Not an active member of this studio.'
       using errcode = 'insufficient_privilege';
   end if;
@@ -1034,27 +1112,13 @@ begin
   -- below, and the capture is IMMUTABLE, so a setup is permanently recorded
   -- against a unit that was out of service when it was written
   -- (Codex, 87c88017).
-  --
-  -- THE TOTAL LOCK ORDER for this migration's commands, stated once:
-  --
-  --     sessions -> session_blocks -> studio_machines -> practitioners
-  --
-  -- Every command's own subsequence is consistent with it, which is what
-  -- makes the set deadlock-free:
-  --   record_treatment_setup_group  sessions, session_blocks, studio_machines
-  --   retire_studio_machine         studio_machines, practitioners
-  --   set_own_default_machine       studio_machines, practitioners
-  --   soft_delete_session (0167)    sessions
-  --   soft_delete_session_block     session_blocks
-  -- A future command that takes studio_machines before a session would be the
-  -- first to break it.
   perform 1 from public.studio_machines m
    where m.id = p_studio_machine_id for share;
 
   select m.studio_id, m.machine_profile_id, m.machine_profile_version,
          m.retired_at, m.installed_options
-    into v_machine_studio, v_profile_id, v_profile_version,
-         v_retired, v_installed
+    into v_machine_studio, o_profile_id, o_profile_version,
+         v_retired, o_installed_options
     from public.studio_machines m
    where m.id = p_studio_machine_id;
 
@@ -1062,13 +1126,95 @@ begin
     raise exception 'Unknown machine.' using errcode = 'no_data_found';
   end if;
 
-  if v_machine_studio <> v_studio then
+  if v_machine_studio <> o_studio then
     raise exception 'That machine belongs to another studio.'
       using errcode = 'insufficient_privilege';
   end if;
 
   if v_retired is not null then
     raise exception 'That machine is out of service.'
+      using errcode = 'check_violation';
+  end if;
+end;
+$$;
+
+comment on function public.assert_setup_scope(uuid, uuid) is
+  '0223. INTERNAL. Resolves and LOCKS the scope every machine-settings write shares: the block''s studio through its session (both must be live), the caller''s active membership of that studio, and the machine''s ownership, service state and profile version. Takes the migration''s row locks in their fixed order - sessions, session_blocks, studio_machines - so no caller can take them in a different sequence. Called ONCE per write, not once per group, so every group of one submission is written under one consistent locked scope. Not granted to any role: it is a building block of the commands, never an entry point.';
+
+-- ---------------------------------------------------------------------------
+-- PART 3 SHARED WRITER — one settings group, inside an asserted scope
+-- ---------------------------------------------------------------------------
+--
+-- Everything that decides WHAT GETS STORED for one group lives here and
+-- nowhere else: the mode contract lookup, the installed-option requirement,
+-- the channel bounds, the per-field unit/precision/quantity derivation, the
+-- value rules and the capture allocation. `record_treatment_setup_group` and
+-- `record_treatment_setup_submission` both call it, so a clinical validation
+-- rule cannot hold on one path and not the other.
+--
+-- IT IS SECURITY INVOKER, AND THAT IS THE SECURITY DESIGN. It TRUSTS its
+-- scope arguments - studio, practitioner, profile version - because its
+-- callers have just proved them. A SECURITY DEFINER function that trusts its
+-- arguments is only as safe as its EXECUTE revoke: lose the revoke and any
+-- authenticated caller forges a capture into another studio. As INVOKER it
+-- runs with the privileges of whoever is executing, which inside a SECURITY
+-- DEFINER command is the definer, and from outside is a role with NO insert
+-- privilege on `treatment_setup_captures` or `treatment_setup_readings` - so
+-- it fails closed at the privilege layer even if the revoke below is ever
+-- lost. The revoke is still written, by name, for all four roles. Two locks,
+-- not one.
+create or replace function public.record_setup_group_in_scope(
+  p_block_id uuid,
+  p_studio_machine_id uuid,
+  p_studio uuid,
+  p_practitioner uuid,
+  p_profile_id text,
+  p_profile_version integer,
+  p_installed_options text[],
+  p_mode_key text,
+  p_group_key text,
+  p_channels smallint[],
+  p_readings jsonb,
+  p_submission_id uuid
+)
+returns integer
+language plpgsql
+security invoker
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_count integer := 0;
+  v_item jsonb;
+  -- Derived per reading from the published contract, never accepted from input.
+  v_stage text;
+  v_field text;
+  v_unit text;
+  v_decimals smallint;
+  v_quantity text;
+  v_value numeric;
+  v_absence text;
+  v_source text;
+  -- Mode-level contract facts.
+  v_channels_max smallint;
+  v_requires_option text;
+  -- The ONE capture this call creates.
+  v_capture uuid;
+  v_revision smallint;
+  v_group text;
+  v_mode text;
+  v_channel smallint;
+begin
+  -- A NON-EMPTY array, and the emptiness check is not cosmetic.
+  --
+  -- An empty array previously allocated a capture with no readings and
+  -- returned 0. Because `latest_setup_for_client` picks the newest setup and
+  -- then aggregates its rows, that empty capture became the newest and made
+  -- valid prior guidance vanish as `[]` - a direct authenticated call could
+  -- erase a client's next-visit setup without deleting anything. The server
+  -- action already refused this; the command has to as well.
+  if p_readings is null or jsonb_typeof(p_readings) <> 'array'
+     or jsonb_array_length(p_readings) = 0 then
+    raise exception 'At least one reading is required.'
       using errcode = 'check_violation';
   end if;
 
@@ -1088,8 +1234,8 @@ begin
   select c.channels_max, c.requires_installed_option
     into v_channels_max, v_requires_option
     from public.machine_profile_mode_contract c
-   where c.machine_profile_id = v_profile_id
-     and c.machine_profile_version = v_profile_version
+   where c.machine_profile_id = p_profile_id
+     and c.machine_profile_version = p_profile_version
      and c.mode_key = v_mode;
 
   if not found then
@@ -1102,7 +1248,7 @@ begin
   -- The profile describes the model; the device records what is actually
   -- fitted, and the device wins.
   if v_requires_option is not null
-     and not (v_requires_option = any (coalesce(v_installed, '{}'::text[]))) then
+     and not (v_requires_option = any (coalesce(p_installed_options, '{}'::text[]))) then
     raise exception
       'This machine does not have the % option fitted, so its % mode cannot be recorded.',
       v_requires_option, v_mode
@@ -1135,7 +1281,7 @@ begin
     end if;
   end if;
 
-  -- ALLOCATE ONE CAPTURE FOR THIS WHOLE CALL, SAFELY UNDER CONCURRENCY.
+  -- ALLOCATE ONE CAPTURE FOR THIS WHOLE GROUP, SAFELY UNDER CONCURRENCY.
   --
   -- The revision belongs to the CAPTURE, not to each field: allocating per
   -- field let one block's fields sit at different revisions, and a per-field
@@ -1158,15 +1304,19 @@ begin
   insert into public.treatment_setup_captures (
     studio_id, session_block_id, studio_machine_id,
     machine_profile_id, machine_profile_version, mode_key,
-    group_key, channels, revision, recorded_by_practitioner_id
+    group_key, channels, revision, recorded_by_practitioner_id,
+    setup_submission_id
   )
   values (
-    v_studio, p_block_id, p_studio_machine_id,
+    p_studio, p_block_id, p_studio_machine_id,
     -- The profile identity is copied from the UNIT at record time, so a later
     -- re-registration cannot retroactively change what a capture was made
     -- under.
-    v_profile_id, v_profile_version, v_mode,
-    v_group, coalesce(p_channels, '{}'), v_revision, v_pract
+    p_profile_id, p_profile_version, v_mode,
+    v_group, coalesce(p_channels, '{}'), v_revision, p_practitioner,
+    -- NULL when this group was recorded on its own, which is a fact about how
+    -- it was recorded and not missing data. See the column's comment.
+    p_submission_id
   )
   returning id into v_capture;
 
@@ -1181,8 +1331,8 @@ begin
     select c.native_unit, c.decimals, c.quantity
       into v_unit, v_decimals, v_quantity
       from public.machine_profile_field_contract c
-     where c.machine_profile_id = v_profile_id
-       and c.machine_profile_version = v_profile_version
+     where c.machine_profile_id = p_profile_id
+       and c.machine_profile_version = p_profile_version
        and c.mode_key = v_mode
        and c.stage_key = v_stage
        and c.field_key = v_field;
@@ -1268,8 +1418,8 @@ begin
     )
     values (
       v_capture,
-      v_studio, p_block_id, p_studio_machine_id,
-      v_profile_id, v_profile_version, v_mode,
+      p_studio, p_block_id, p_studio_machine_id,
+      p_profile_id, p_profile_version, v_mode,
       v_group, coalesce(p_channels, '{}'),
       nullif(v_stage, ''),
       v_field,
@@ -1281,7 +1431,7 @@ begin
       v_source,
       -- The CAPTURE's revision, identical for every field in this call.
       v_revision,
-      v_pract
+      p_practitioner
     );
     v_count := v_count + 1;
   end loop;
@@ -1290,8 +1440,354 @@ begin
 end;
 $$;
 
+comment on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid) is
+  '0223. INTERNAL. Writes ONE settings group inside an already-asserted scope: validates the mode contract, the installed-option requirement, the channel bounds and every per-field value rule, derives unit, precision and quantity FROM THE PUBLISHED CONTRACT, allocates one capture at the next revision and inserts its readings. The single definition of what gets stored for a group, shared by record_treatment_setup_group and record_treatment_setup_submission so a clinical rule cannot hold on one path and not the other. SECURITY INVOKER ON PURPOSE: it trusts the scope its caller proved, so it must not carry the definer''s privileges - called directly by a runtime role it fails at the table privilege layer, independently of its EXECUTE revoke. Not granted to any role.';
+
+-- PART 3 COMMAND — record one settings group
+-- ---------------------------------------------------------------------------
+--
+-- The payload is one group's readings. Each element names its field and, for a
+-- staged mode, its stage; carries either a value or an absence reason; and
+-- states the native unit, the precision and who or what observed it.
+--
+-- The BLOCK determines the studio. The caller never names one, so there is no
+-- studio parameter to forge: the block's own `studio_id` is resolved first and
+-- the caller is then required to be an active member OF THAT STUDIO. A block
+-- in another studio is refused because the membership lookup returns NULL.
+
+create or replace function public.record_treatment_setup_group(
+  p_block_id uuid,
+  p_studio_machine_id uuid,
+  p_mode_key text,
+  p_group_key text,
+  p_channels smallint[],
+  p_readings jsonb
+)
+returns integer
+language plpgsql
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_scope record;
+begin
+  -- THIS COMMAND'S BEHAVIOUR IS UNCHANGED. Every check it used to perform
+  -- inline it still performs, in the same order, with the same messages and
+  -- the same error codes - they moved into `assert_setup_scope` and
+  -- `record_setup_group_in_scope`, which this calls and which
+  -- `record_treatment_setup_submission` calls too. The extraction exists so
+  -- that the two commands cannot drift apart, not to change this one.
+  --
+  -- THE SUBMISSION ID IS NULL HERE, DELIBERATELY. A group recorded through
+  -- this command was recorded on its own, and that is a true fact about it
+  -- rather than a gap to be filled in later. Making this a thin wrapper over
+  -- the submission command instead would have stamped every such capture with
+  -- a synthetic one-group submission, which would quietly destroy the
+  -- distinction `treatment_setup_captures.setup_submission_id` exists to
+  -- record.
+  select * into v_scope
+    from public.assert_setup_scope(p_block_id, p_studio_machine_id);
+
+  return public.record_setup_group_in_scope(
+    p_block_id,
+    p_studio_machine_id,
+    v_scope.o_studio,
+    v_scope.o_practitioner,
+    v_scope.o_profile_id,
+    v_scope.o_profile_version,
+    v_scope.o_installed_options,
+    p_mode_key,
+    p_group_key,
+    p_channels,
+    p_readings,
+    null
+  );
+end;
+$$;
+
 comment on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb) is
   '0223. Records ONE settings group for one treatment block. The block determines the studio and the caller must be an active member of it, so a block or machine in another studio is refused. The machine is required and its profile identity is copied at record time. Readings are append-only; recording again for the same field raises a unique violation rather than overwriting.';
+
+-- ---------------------------------------------------------------------------
+-- PART 6 COMMAND — record ONE SAVE: every settings group, atomically
+-- ---------------------------------------------------------------------------
+--
+-- WHAT THIS ADDS OVER CALLING `record_treatment_setup_group` SEVERAL TIMES.
+-- Three invariants that are unreachable from outside a single command, each
+-- of which was a real hole while the entry surface could record more than one
+-- group (Codex, #860 6157725545):
+--
+--   ATOMICITY. One call, one statement, one transaction: either the
+--   submission and every one of its groups is recorded, or none of it is. A
+--   failure on the third group does not leave the first two behind as a setup
+--   nobody chose. This is not achieved by catching anything - it is achieved
+--   by NOT catching anything, so an exception in the loop aborts the whole
+--   call and the submission row inserted above it rolls back with the rest.
+--
+--   CROSS-GROUP CHANNEL EXCLUSIVITY. Each separate call carried its own
+--   duplicate-free channel array, so two calls both claiming probe 2 were two
+--   individually VALID calls - the conflict was invisible to the database and
+--   a UI check was the only guard, which anything calling the RPC directly
+--   bypassed. A probe cannot be on two settings at once, and that is now
+--   enforced where it cannot be skipped.
+--
+--   IDEMPOTENCY AFTER A LOST RESPONSE. A caller that never learns the outcome
+--   of its Save could not retry: a retry was indistinguishable from a
+--   deliberate second capture, so the honest UI behaviour was to refuse to
+--   retry at all. With a caller-supplied key, repeating the SAME Save returns
+--   the original submission instead of appending a second one.
+--
+-- WHAT IT IS DELIBERATELY NOT. It does not interpret the settings, pair
+-- groups with areas, copy one group's values into another, or assert that an
+-- unassigned group applies to every probe. It records what the practitioner
+-- entered, grouped the way she grouped it.
+create or replace function public.record_treatment_setup_submission(
+  p_block_id uuid,
+  p_studio_machine_id uuid,
+  p_mode_key text,
+  p_idempotency_key text,
+  p_groups jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_scope record;
+  v_mode text;
+  v_key text;
+  v_submission uuid;
+  v_existing record;
+  v_count integer := 0;
+  v_groups integer := 0;
+  v_group_item jsonb;
+  v_channels smallint[];
+  v_dup_channel smallint;
+  v_dup_group text;
+begin
+  -- PAYLOAD SHAPE FIRST, because it costs no I/O and a malformed call should
+  -- not take locks on its way to being refused.
+  if p_groups is null or jsonb_typeof(p_groups) <> 'array'
+     or jsonb_array_length(p_groups) = 0 then
+    raise exception 'At least one settings group is required.'
+      using errcode = 'check_violation';
+  end if;
+
+  v_mode := btrim(coalesce(p_mode_key, ''));
+  if v_mode = '' then
+    raise exception 'A mode is required.' using errcode = 'check_violation';
+  end if;
+
+  -- THE RETRY KEY IS THE CALLER'S, AND IT MUST BE SUBSTANTIAL. A short key
+  -- collides, and a colliding key makes a DIFFERENT Save look like a retry of
+  -- this one - which is the one failure mode worse than not retrying at all.
+  -- The table's own check says the same; saying it here fails with a sentence
+  -- rather than a constraint name.
+  v_key := btrim(coalesce(p_idempotency_key, ''));
+  if length(v_key) < 8 or length(v_key) > 100 then
+    raise exception
+      'A save needs its own retry key of at least 8 characters.'
+      using errcode = 'check_violation';
+  end if;
+
+  -- SERIALISE THIS SAVE AGAINST ITS OWN RETRIES.
+  --
+  -- Without this, two concurrent retries of the same lost Save both find no
+  -- submission, both insert, and the second fails on the unique constraint -
+  -- a 23505 the caller cannot distinguish from a genuine conflict. Keyed on
+  -- (block, retry key), so unrelated saves never wait on each other. Taken
+  -- BEFORE the lookup, which is the whole point: the check and the insert have
+  -- to be one indivisible step.
+  perform pg_advisory_xact_lock(
+    hashtextextended(p_block_id::text || ':submission:' || v_key, 0)
+  );
+
+  -- SCOPE BEFORE IDEMPOTENCY, deliberately. The scope assertion is also the
+  -- authorization check, so answering "does this key already exist" first
+  -- would tell a caller with no membership of this studio something about its
+  -- records. Nothing is disclosed before the caller is known to belong here.
+  select * into v_scope
+    from public.assert_setup_scope(p_block_id, p_studio_machine_id);
+
+  -- ALREADY RECORDED? Then this is a retry, and the answer is the ORIGINAL.
+  select sub.id, sub.studio_machine_id, sub.machine_profile_id,
+         sub.machine_profile_version, sub.mode_key
+    into v_existing
+    from public.treatment_setup_submissions sub
+   where sub.session_block_id = p_block_id
+     and sub.idempotency_key = v_key;
+
+  if found then
+    -- A KEY REUSED FOR A DIFFERENT SAVE IS A BUG, NOT A RETRY, and returning
+    -- the old submission would tell the caller its new groups were stored
+    -- when nothing was written. Refused loudly instead.
+    --
+    -- A re-registered machine lands here too, and correctly: if the unit is
+    -- now on a different profile version, the Save being retried is no longer
+    -- the Save that was made.
+    if v_existing.studio_machine_id <> p_studio_machine_id
+       or v_existing.machine_profile_id <> v_scope.o_profile_id
+       or v_existing.machine_profile_version <> v_scope.o_profile_version
+       or v_existing.mode_key <> v_mode then
+      raise exception
+        'That retry key already belongs to a different save on this treatment.'
+        using errcode = 'unique_violation';
+    end if;
+
+    select count(*)::integer into v_count
+      from public.treatment_setup_readings r
+      join public.treatment_setup_captures c on c.id = r.capture_id
+     where c.setup_submission_id = v_existing.id;
+
+    select count(*)::integer into v_groups
+      from public.treatment_setup_captures c
+     where c.setup_submission_id = v_existing.id;
+
+    return jsonb_build_object(
+      'submission_id', v_existing.id,
+      'groups', v_groups,
+      'readings', v_count,
+      -- The caller needs to know its retry was ABSORBED rather than written,
+      -- or a "saved" confirmation is indistinguishable from a duplicate.
+      'reused', true
+    );
+  end if;
+
+  -- GROUP IDENTITY MUST BE UNAMBIGUOUS WITHIN ONE SAVE. Two groups under one
+  -- key are not two groups; they are a caller that has lost track of which is
+  -- which, and each would silently become a separate revision of the other.
+  select btrim(coalesce(g.value->>'group_key', '')) into v_dup_group
+    from jsonb_array_elements(p_groups) g
+   group by btrim(coalesce(g.value->>'group_key', ''))
+  having count(*) > 1
+   limit 1;
+
+  if v_dup_group is not null then
+    raise exception 'Settings group "%" is given more than once in this save.',
+      v_dup_group using errcode = 'check_violation';
+  end if;
+
+  -- A CHANNEL LIST MUST BE A LIST OF NUMBERS, checked before it is cast, so a
+  -- malformed payload fails with a sentence instead of an
+  -- invalid_text_representation from a cast nobody can see.
+  if exists (
+    select 1 from jsonb_array_elements(p_groups) g
+     where g.value ? 'channels'
+       and jsonb_typeof(g.value->'channels') not in ('array', 'null')
+  ) then
+    raise exception 'A settings group''s channels must be given as a list.'
+      using errcode = 'check_violation';
+  end if;
+
+  if exists (
+    select 1
+      from jsonb_array_elements(p_groups) g
+      cross join lateral
+        jsonb_array_elements(
+          case when jsonb_typeof(g.value->'channels') = 'array'
+               then g.value->'channels' else '[]'::jsonb end
+        ) ch
+     where jsonb_typeof(ch.value) <> 'number'
+  ) then
+    raise exception 'A channel must be named by its number.'
+      using errcode = 'check_violation';
+  end if;
+
+  -- CROSS-GROUP EXCLUSIVITY — the invariant that only a whole-save command
+  -- can see. Per-channel bounds and WITHIN-group duplicates are the shared
+  -- writer's job and are checked there for both callers; this is the claim
+  -- that spans groups, so it belongs to the save.
+  select t.ch into v_dup_channel
+    from (
+      select (ch.value)::text::smallint as ch
+        from jsonb_array_elements(p_groups) g
+        cross join lateral
+          jsonb_array_elements(
+            case when jsonb_typeof(g.value->'channels') = 'array'
+                 then g.value->'channels' else '[]'::jsonb end
+          ) ch
+    ) t
+   group by t.ch
+  having count(*) > 1
+   limit 1;
+
+  if v_dup_channel is not null then
+    raise exception
+      'Channel % is claimed by more than one settings group in this save; a probe can only be on one setting at a time.',
+      v_dup_channel
+      using errcode = 'check_violation';
+  end if;
+
+  -- THE SAVE ITSELF. Its machine, profile version and mode are recorded, so a
+  -- Save made under a different one is necessarily a different submission and
+  -- a stale group cannot rejoin this one.
+  insert into public.treatment_setup_submissions (
+    studio_id, session_block_id, studio_machine_id,
+    machine_profile_id, machine_profile_version, mode_key,
+    idempotency_key, recorded_by_practitioner_id
+  )
+  values (
+    v_scope.o_studio, p_block_id, p_studio_machine_id,
+    v_scope.o_profile_id, v_scope.o_profile_version, v_mode,
+    v_key, v_scope.o_practitioner
+  )
+  returning id into v_submission;
+
+  -- IN SORTED GROUP ORDER, AND THAT IS A DEADLOCK FIX, NOT TIDINESS.
+  --
+  -- The shared writer takes `pg_advisory_xact_lock` on (block, group) to
+  -- allocate a revision. Two concurrent saves on the same block naming the
+  -- same groups in OPPOSITE input order would each hold the lock the other
+  -- wants - a genuine deadlock, detected and aborted by Postgres, surfacing
+  -- as a failed save with no cause a practitioner could act on. Sorting by
+  -- group key gives every caller the same total order, so they queue instead.
+  for v_group_item in
+    select g.value
+      from jsonb_array_elements(p_groups) g
+     order by btrim(coalesce(g.value->>'group_key', ''))
+  loop
+    -- INPUT ORDER IS PRESERVED INSIDE a group's channel list. The array is
+    -- part of the capture's identity, so re-ordering it here would make the
+    -- same save store a different identity depending on how it was sorted.
+    select coalesce(
+             array_agg((ch.value)::text::smallint order by ch.ord),
+             '{}'::smallint[]
+           )
+      into v_channels
+      from jsonb_array_elements(
+             case when jsonb_typeof(v_group_item->'channels') = 'array'
+                  then v_group_item->'channels' else '[]'::jsonb end
+           ) with ordinality as ch(value, ord);
+
+    v_count := v_count + public.record_setup_group_in_scope(
+      p_block_id,
+      p_studio_machine_id,
+      v_scope.o_studio,
+      v_scope.o_practitioner,
+      v_scope.o_profile_id,
+      v_scope.o_profile_version,
+      v_scope.o_installed_options,
+      v_mode,
+      v_group_item->>'group_key',
+      v_channels,
+      v_group_item->'readings',
+      v_submission
+    );
+    v_groups := v_groups + 1;
+  end loop;
+
+  return jsonb_build_object(
+    'submission_id', v_submission,
+    'groups', v_groups,
+    'readings', v_count,
+    'reused', false
+  );
+end;
+$$;
+
+comment on function public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb) is
+  '0223. Records ONE SAVE of machine settings - every settings group the practitioner entered - as a single atomic unit. Adds the three invariants that several separate record_treatment_setup_group calls cannot have: ATOMICITY (one call, so a failure on a later group rolls back the submission and every group already written), CROSS-GROUP CHANNEL EXCLUSIVITY (a probe cannot be claimed by two groups of one save, enforced in the database rather than only in the UI), and IDEMPOTENCY (a caller-supplied retry key, so a save repeated after a LOST RESPONSE returns the original submission with reused=true instead of appending a second one; a key reused for a DIFFERENT save is refused). Shares every scope and per-group validation rule with record_treatment_setup_group through assert_setup_scope and record_setup_group_in_scope - there is one definition of each rule, not two. Groups are written in sorted group-key order so two concurrent saves cannot deadlock on the per-group revision locks. Returns {submission_id, groups, readings, reused}. Interprets nothing clinical: no pairing of groups to areas, no copying between groups, and no assertion that an unassigned group applies to every probe.';
 
 -- ---------------------------------------------------------------------------
 -- PART 3b — PUBLISHING A CONTRACT: deployment authority, and immutable
@@ -1513,18 +2009,6 @@ stable
 security invoker
 set search_path = pg_catalog, pg_temp
 as $$
-  -- ONE COHERENT CAPTURE, OR NOTHING.
-  --
-  -- The first version returned the latest revision of each FIELD independently,
-  -- which can assemble a setup that never existed: a current from one capture
-  -- beside a duration from another, possibly under a different mode, machine or
-  -- profile version. Next-visit guidance has to be a real thing that was
-  -- actually set at one moment, so this picks the newest CAPTURE and returns
-  -- exactly its readings.
-  --
-  -- A field the practitioner did not record in that capture is therefore simply
-  -- ABSENT from the result. It is never filled in from an older capture, which
-  -- is the behaviour that would quietly invent a setting.
   -- EVERY SETTING GROUP OF THE LATEST SETUP, not one capture of it.
   --
   -- This selected a SINGLE capture: `order by recorded_at desc, revision desc
@@ -1544,6 +2028,25 @@ as $$
   -- profile version, same mode. One visit, one machine, one mode - and within
   -- it the LATEST REVISION of each group, so a superseded value is never
   -- offered back as guidance.
+  --
+  -- TIMING IS PER GROUP, AND IS REPORTED THAT WAY. Each group's rows carry
+  -- their own `recorded_at`, and two groups of one setup are genuinely
+  -- recorded at different instants - a practitioner sets one probe, then the
+  -- next. Nothing here collapses them to a single moment, and no consumer may
+  -- present them as observed together: that is why the Previous treatment
+  -- panel shows a DATE and no clock time.
+  --
+  -- WHAT THIS IS NOT, now that submissions exist. `treatment_setup_captures`
+  -- may carry a `setup_submission_id` - the one Save that produced it - and a
+  -- submission is a STRONGER coherence claim than this anchor makes: those
+  -- groups were entered together, in one action, deliberately. The anchor
+  -- below reconstructs "the latest setup" from IDENTITY (block, unit, profile
+  -- version, mode) because it must still work for every capture recorded
+  -- before submissions existed, where that id is NULL. So this returns the
+  -- LATEST OBSERVED GROUPS of one setup identity, which is not the same thing
+  -- as one submission, and the difference is worth naming rather than
+  -- blurring. Preferring a submission when one is present is a separate
+  -- increment with its own proof.
   --
   -- 0223 was editable for this: the declared hosted maximum is 0210, so this
   -- migration is PENDING and not frozen. The defect is a read contract that
@@ -1625,7 +2128,7 @@ as $$
 $$;
 
 comment on function public.latest_setup_for_client(uuid, uuid) is
-  '0223. The readings of ONE COHERENT CAPTURE - the most recent capture in a NON-RETIRED block RECORDED FOR THIS CLIENT - as a jsonb array, for next-visit guidance. Deliberately NOT the latest revision of each field independently: that can assemble a setup that never existed, mixing fields from different capture times, modes, machines or profile versions. A field absent from that capture is absent from the result and is never filled in from an older one. Scoped through session_blocks -> sessions.client_id so a studio-mate''s newer capture can never be shown as this client''s setup. SECURITY INVOKER: RLS stays in force and is_studio_member is a fail-closed second lock. value_numeric is emitted as TEXT so a recorded zero and the machine''s own precision survive JSON.';
+  '0223. EVERY SETTING GROUP of this client''s most recent recorded setup, each at its own highest revision, as a jsonb array for next-visit guidance. The setup is identified by (block, physical unit, profile version, mode) and must be in a NON-RETIRED block and session. Deliberately NOT the latest revision of each FIELD independently: that can assemble a setup that never existed, mixing fields from different capture times, modes, machines or profile versions. A field absent from a group is absent from the result and is never filled in from an older capture. Equally NOT one capture: a practitioner with probes at different settings records several groups, and returning only the newest silently omitted the others. TIMING IS PER GROUP - each row carries its own recorded_at and the groups are genuinely recorded at different instants, so no consumer may present them as observed together. This is LATEST-OBSERVED GROUPS of one setup identity, which is weaker than one submission (treatment_setup_captures.setup_submission_id): submissions did not exist for historical captures, so identity is what every row can be matched on. Scoped through session_blocks -> sessions.client_id so a studio-mate''s newer capture can never be shown as this client''s setup. SECURITY INVOKER: RLS stays in force and is_studio_member is a fail-closed second lock. value_numeric is emitted as TEXT so a recorded zero and the machine''s own precision survive JSON.';
 
 -- ---------------------------------------------------------------------------
 -- CHRONOLOGICAL HISTORY — the captures themselves, not just the rows
@@ -1712,6 +2215,37 @@ revoke execute on function public.record_treatment_setup_group(uuid, uuid, text,
 revoke execute on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb) from authenticated;
 revoke execute on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb) from service_role;
 grant execute on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb) to authenticated;
+
+-- THE TWO SHARED BUILDING BLOCKS ARE NOT ENTRY POINTS, and their revokes are
+-- the load-bearing half of that sentence.
+--
+-- `record_setup_group_in_scope` TRUSTS the studio and practitioner it is
+-- handed, because its callers have just proved them. Called directly by an
+-- authenticated role it would write a capture into any studio it names. It is
+-- SECURITY INVOKER precisely so that the revoke is not the only thing
+-- standing in the way - a direct caller also has no insert privilege on
+-- `treatment_setup_captures` or `treatment_setup_readings` - but the revoke is
+-- written anyway, for all four roles, by name. Supabase's ALTER DEFAULT
+-- PRIVILEGES hands EXECUTE to anon, authenticated AND service_role at
+-- function-create time, which is how 0129 missed `anon` and 0164 missed
+-- `service_role`. Neither function is granted back to anything.
+revoke execute on function public.assert_setup_scope(uuid, uuid) from public;
+revoke execute on function public.assert_setup_scope(uuid, uuid) from anon;
+revoke execute on function public.assert_setup_scope(uuid, uuid) from authenticated;
+revoke execute on function public.assert_setup_scope(uuid, uuid) from service_role;
+
+revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid) from public;
+revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid) from anon;
+revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid) from authenticated;
+revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid) from service_role;
+
+-- The whole-save command IS an entry point: it is what the treatment form
+-- calls.
+revoke execute on function public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb) from public;
+revoke execute on function public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb) from anon;
+revoke execute on function public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb) from authenticated;
+revoke execute on function public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb) from service_role;
+grant execute on function public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb) to authenticated;
 
 -- The immutability trigger function is internal: nothing may call it directly.
 -- A READ, but granted exactly as explicitly as the writes: Supabase's ALTER

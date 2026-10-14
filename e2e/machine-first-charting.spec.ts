@@ -254,26 +254,59 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
     await noOverflow(page);
   });
 
-  await test.step("2: every REAL model is listed as not selectable, with a reason", async () => {
-    // True in BOTH halves, and the single most important claim in this file:
-    // evidence-gating is visible to the practitioner rather than silent.
-    await expect(page.getByText("Not yet selectable")).toBeVisible({ timeout: T });
-    for (const name of [
-      "Silhouet-Tone Evolution ST 350",
-      "Silhouet-Tone ST 250",
-      "Permanence GEMM-16 (US)",
-      "Dectro Junior 3G",
-    ]) {
-      await expect(
-        page.getByText(name, { exact: false }).first(),
-        `${name} must be shown as withheld, not silently omitted`,
-      ).toBeVisible({ timeout: T });
+  await test.step("2: no REAL model is offered, and no procurement wall is shown", async () => {
+    // THIS STEP ASSERTED THE OPPOSITE CLAIM UNTIL 5667205d, AND I BROKE IT.
+    //
+    // It required the charting form to DISPLAY every unverified model with its
+    // evidence reason - "Not yet selectable", eleven entries deep. That was
+    // the right claim while the catalogue lived here. Then Sam's screenshot
+    // ("this looks weird ... is this all prepopulated") and #860 6156583955
+    // moved the catalogue OUT of the treatment form: mid-treatment, a wall of
+    // procurement detail sat between the practitioner and the fields she was
+    // filling in. I removed the render and inverted the seven unit
+    // assertions, and did not come back to this file - so the browser proof
+    // was left asserting a surface that no longer exists. Codex found it at
+    // #860 6158881104. The string "Not yet selectable" is now in no component
+    // in the repository; this step could only fail.
+    //
+    // WHAT IS STILL TRUE HERE is the claim that actually protects a client,
+    // and it holds in BOTH halves: no real manufacturer's model can be
+    // selected, or named, on a charting form. Where the withheld models are
+    // listed WITH their reasons is a readiness question for whoever registers
+    // equipment, and `withheld(catalogue)` is proved to still compute it in
+    // tests/components/machine-first-setup-panel.test.ts. That is the right
+    // home for it; it is not this spec's claim any more.
+    const optionText = (
+      await page.getByTestId("machine-select").locator("option").allTextContents()
+    ).join(" | ");
+
+    // EVERY option must be a machine this studio registered. Not one may name
+    // a real manufacturer - the synthetic fixture is "Synthetic", which is the
+    // whole point of its name.
+    for (const real of ["Silhouet-Tone", "Permanence", "Dectro", "Apilus"]) {
+      expect(
+        optionText,
+        `${real} was OFFERED as selectable while its evidence is incomplete`,
+      ).not.toContain(real);
     }
-    // And none of them is a choice.
-    expect(
-      await page.getByTestId("machine-select").locator("option").count(),
-      "a real model was offered as selectable",
-    ).toBeLessThanOrEqual(1);
+
+    // And the wall is gone from the form, which is the part Sam corrected.
+    // Asserted on the panel, not the page: the page also carries chrome this
+    // step has no opinion about.
+    const panel = await page.getByTestId("machine-first-panel").innerText();
+    for (const gone of [
+      "Not yet selectable",
+      "Silhouet-Tone",
+      "Permanence",
+      "Dectro",
+      "firmware",
+      "operating-screen",
+    ]) {
+      expect(
+        panel,
+        `${gone} is procurement detail; it does not belong on a charting form`,
+      ).not.toContain(gone);
+    }
   });
 
   if (!gateOpen) {
