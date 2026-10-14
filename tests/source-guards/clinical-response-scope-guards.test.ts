@@ -187,9 +187,17 @@ function ownership(
  * 4265583716). Moving only the legacy columns to SessionBlockArea must not
  * switch the response checks off.
  */
-function responseIsBlockOwned(): boolean {
-  return familyIsMultiAreaOwned(RESPONSE_FIELDS, ["observation_chips"]);
+function responseIsBlockOwned(schema: ModelSchema = REAL_SCHEMA): boolean {
+  return familyIsMultiAreaOwned(RESPONSE_FIELDS, ["observation_chips"], schema);
 }
+
+/** The two model sources the ownership gates read. Injectable so a test can
+ *  exercise a regime the current schema is not in (Codex P2 4265776481). */
+type ModelSchema = { sessionBlock: string; entry: string };
+const REAL_SCHEMA: ModelSchema = {
+  sessionBlock: block("SessionBlock"),
+  entry: block("ElectrolysisEntry"),
+};
 /**
  * Is ANY model that carries this family still attached to a multi-area
  * container?
@@ -201,9 +209,10 @@ function responseIsBlockOwned(): boolean {
 function familyIsMultiAreaOwned(
   blockFields: string[],
   entryFields: string[],
+  schema: ModelSchema = REAL_SCHEMA,
 ): boolean {
-  const onBlock = blockFields.some((f) => has(block("SessionBlock"), f));
-  const entry = block("ElectrolysisEntry");
+  const onBlock = blockFields.some((f) => has(schema.sessionBlock, f));
+  const entry = schema.entry;
   const onEntry = entryFields.some((f) => has(entry, f));
   const entryCoversManyAreas = has(entry, ENTRY_MULTI_AREA_FIELD);
   return onBlock || (onEntry && entryCoversManyAreas);
@@ -650,6 +659,23 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
     const chipsOnMultiAreaEntry =
       has(entry, "observation_chips") && has(entry, ENTRY_MULTI_AREA_FIELD);
     expect(responseIsBlockOwned()).toBe(legacyOnBlock || chipsOnMultiAreaEntry);
+  });
+
+  it("the chip branch alone keeps the gate on: injected regimes (Codex P2 4265776481)", () => {
+    // Today both branches are true, so the real schema cannot tell a gate that
+    // dropped the chip branch from a correct one. Inject each regime explicitly.
+    const noLegacy = "export type SessionBlock = {\n  id: string;\n";
+    const legacy = `export type SessionBlock = {\n${RESPONSE_FIELDS.map((f) => `  ${f}: string | null;`).join("\n")}\n`;
+    const chipsMultiArea = "export type ElectrolysisEntry = {\n  observation_chips: string[];\n  areas: string[] | null;\n";
+    const chipsSingleArea = "export type ElectrolysisEntry = {\n  observation_chips: string[];\n";
+    const noChips = "export type ElectrolysisEntry = {\n  areas: string[] | null;\n";
+    // entry-only: legacy columns gone, chips still on a multi-area entry -> ON
+    expect(responseIsBlockOwned({ sessionBlock: noLegacy, entry: chipsMultiArea })).toBe(true);
+    // legacy-only -> ON
+    expect(responseIsBlockOwned({ sessionBlock: legacy, entry: noChips })).toBe(true);
+    // fully area-owned: no legacy columns, chips on a single-area entry -> OFF
+    expect(responseIsBlockOwned({ sessionBlock: noLegacy, entry: chipsSingleArea })).toBe(false);
+    expect(responseIsBlockOwned({ sessionBlock: noLegacy, entry: noChips })).toBe(false);
   });
 
   it("every guidance-scoped surface is still swept", () => {
