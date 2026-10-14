@@ -129,15 +129,30 @@ export type MachineFirstSetupPanelProps = {
     deviceId: string | null;
     modeKey: string | null;
   }) => Promise<{ ok: boolean; error?: string }>;
-  /** Records one settings group. Supplied by the connected wrapper. */
+  /**
+   * Records ONE SAVE - every settings group at once. Supplied by the connected
+   * wrapper.
+   *
+   * It used to record one GROUP, and the entry form looped. The command is
+   * atomic now, so the save is one call and a partial outcome is unreachable.
+   */
   onRecord?: (input: {
     blockId: string;
     machineId: string;
     modeKey: string;
-    groupKey: string;
-    channels: number[];
-    readings: ReadingSubmission[];
-  }) => Promise<{ ok: boolean; error?: string }>;
+    idempotencyKey: string;
+    groups: Array<{
+      groupKey: string;
+      channels: number[];
+      readings: ReadingSubmission[];
+    }>;
+  }) => Promise<{
+    ok: boolean;
+    error?: string;
+    captures?: number;
+    written?: number;
+    reused?: boolean;
+  }>;
 };
 
 /** Every profile a practitioner might expect to see, with its real status. */
@@ -274,7 +289,17 @@ export function MachineFirstSetupPanel({
   const recordAndCount: typeof onRecord = onRecord
     ? async (input) => {
         const out = await onRecord(input);
-        if (out.ok) setSavedCount((n) => n + input.readings.length);
+        if (out.ok) {
+          // THE DATABASE'S OWN COUNT where it gave one, and it does. Summing
+          // what was SENT is wrong on a reused submission: that call wrote
+          // nothing, and the readings it reports are the ones the earlier
+          // attempt recorded - which is the true answer and the one this
+          // status line must show.
+          const written =
+            out.written ??
+            input.groups.reduce((n, g) => n + g.readings.length, 0);
+          setSavedCount((n) => n + written);
+        }
         return out;
       }
     : undefined;

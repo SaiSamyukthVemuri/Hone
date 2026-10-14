@@ -306,56 +306,46 @@ describe("one channel cannot belong to TWO groups", () => {
   });
 });
 
-describe("a group already recorded is never resubmitted", () => {
-  // Captures are append-only, so resubmitting a group that succeeded would
-  // create a SECOND immutable revision of settings entered once -
-  // indistinguishable in the record from a genuine mid-treatment change
-  // (Codex, f175e732).
+describe("a save sends every group that has something to record", () => {
+  // THESE TWO SUITES REPLACE FOUR THAT PROVED AN `alreadySaved` PARAMETER, and
+  // the parameter is gone because the state it guarded is now unreachable, not
+  // because the risk stopped mattering.
+  //
+  // It existed because a Save was several independent calls: the first group
+  // could commit and the second fail, so a retry had to send only the untold
+  // remainder. Resubmitting a committed group would have appended a second
+  // immutable revision of settings entered once - indistinguishable in the
+  // record from a genuine mid-treatment change (Codex, f175e732) - and an
+  // UNKNOWN outcome had to be excluded the same way, while never being
+  // REPORTED as recorded (Codex, ef45a4b0).
+  //
+  // `record_treatment_setup_submission` is one transaction, so no group can be
+  // recorded while its neighbour is not, and a retry carries the save's
+  // idempotency key, so the DATABASE returns the original submission instead
+  // of appending to it. Both replacements are stronger than the set they
+  // replace, which lived in component memory and died on reload. The
+  // lifecycle of that key is proved in tests/lib/machines/save-attempt.test.ts.
   const two = [
     withValues("g1", { current: "120" }, [1]),
     withValues("g2", { current: "80" }, [2]),
   ];
 
-  it("excludes it from the submissions on a retry", () => {
-    const retry = assembleGroupSubmissions([FIELDS], two, new Set(["g1"]));
-    expect(retry.map((s) => s.groupKey)).toEqual(["g2"]);
-  });
-
-  it("CONTROL: with nothing recorded yet, both are submitted", () => {
+  it("sends both groups of a two-group save, in order", () => {
     expect(
       assembleGroupSubmissions([FIELDS], two).map((s) => s.groupKey),
     ).toEqual(["g1", "g2"]);
   });
 
-  it("submits nothing when every group has already been recorded", () => {
+  it("sends nothing at all when no group has a value", () => {
     expect(
-      assembleGroupSubmissions([FIELDS], two, new Set(["g1", "g2"])),
+      assembleGroupSubmissions([FIELDS], [withValues("g1", {}, [1])]),
     ).toEqual([]);
   });
-});
 
-describe("an UNKNOWN outcome is excluded from resubmission, like a saved one", () => {
-  // A transport failure leaves the server's answer LOST, not negative: the
-  // write may well have committed. Resubmitting is the blind replay that would
-  // duplicate an immutable capture; treating it as saved is fake success. So
-  // both sets exclude a group from the next submission, while only
-  // `savedGroups` is ever REPORTED as recorded (Codex, ef45a4b0).
-  //
-  // The component keeps them as two sets and passes the union here, which is
-  // why one parameter serves both: the distinction matters for what is SAID,
-  // not for what is SENT.
-  const two = [
-    withValues("g1", { current: "120" }, [1]),
-    withValues("g2", { current: "80" }, [2]),
-  ];
-
-  it("excludes an unresolved group exactly as it excludes a saved one", () => {
-    expect(
-      assembleGroupSubmissions([FIELDS], two, new Set(["g2"])).map((x) => x.groupKey),
-    ).toEqual(["g1"]);
-  });
-
-  it("excludes a saved and an unresolved group together", () => {
-    expect(assembleGroupSubmissions([FIELDS], two, new Set(["g1", "g2"]))).toEqual([]);
+  it("keeps each group's own channels with its own readings", () => {
+    const subs = assembleGroupSubmissions([FIELDS], two);
+    expect(subs[0]!.channels).toEqual([1]);
+    expect(subs[1]!.channels).toEqual([2]);
+    expect(subs[0]!.readings).not.toEqual(subs[1]!.readings);
   });
 });

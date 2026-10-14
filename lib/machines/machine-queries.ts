@@ -364,6 +364,101 @@ export async function recordSetupGroup(
   return { ok: true, value: Number(data ?? 0) };
 }
 
+/** One settings group of a whole-save submission. */
+export type SetupSubmissionGroup = {
+  groupKey: string;
+  channels: number[];
+  readings: ReadingInputRow[];
+};
+
+/** What the database says one Save produced. */
+export type SetupSubmissionResult = {
+  submissionId: string;
+  /** Captures the submission holds, as the database counted them. */
+  groups: number;
+  readings: number;
+  /**
+   * True when the retry key matched an EXISTING submission.
+   *
+   * Nothing was written by this call and nothing was duplicated: an earlier
+   * attempt committed and its answer was lost. The caller needs to know,
+   * because "saved" and "already saved" are different facts about the record.
+   */
+  reused: boolean;
+};
+
+/**
+ * Record ONE SAVE - every settings group the practitioner entered - atomically.
+ *
+ * The block determines the studio in the database, so no studio is sent. A
+ * block or machine in another studio is refused there, not here.
+ *
+ * `idempotencyKey` identifies the SAVE, and the caller must reuse it on every
+ * retry of that save: that is what makes a retry safe after a lost response.
+ * `lib/machines/save-attempt.ts` owns its lifetime.
+ *
+ * The per-reading payload is identical to `recordSetupGroup`'s and for the same
+ * reasons: `value` goes as a string so a recorded zero survives JSON, and an
+ * absence sends `absence_reason` with no value at all.
+ */
+export async function recordSetupSubmission(
+  db: MachineDb,
+  input: {
+    blockId: string;
+    machineId: string;
+    modeKey: string;
+    idempotencyKey: string;
+    groups: SetupSubmissionGroup[];
+  },
+): Promise<MachineOutcome<SetupSubmissionResult>> {
+  const { data, error } = await db.rpc("record_treatment_setup_submission", {
+    p_block_id: input.blockId,
+    p_studio_machine_id: input.machineId,
+    p_mode_key: input.modeKey,
+    p_idempotency_key: input.idempotencyKey,
+    p_groups: input.groups.map((g) => ({
+      group_key: g.groupKey,
+      channels: g.channels,
+      readings: g.readings.map((r) => ({
+        stage_key: r.stageKey,
+        field_key: r.fieldKey,
+        ...(r.value.kind === "value"
+          ? { value: String(r.value.value) }
+          : { absence_reason: r.value.reason }),
+        native_unit: r.nativeUnit,
+        decimals: r.decimals,
+        observation_source: r.observationSource,
+      })),
+    })),
+  });
+  if (error) {
+    return { ok: false, error: fail(error, "Could not save those settings.") };
+  }
+  // SHAPE-CHECKED RATHER THAN CAST. The command returns a jsonb object; a
+  // deployment where the migration has not been applied, or an older function
+  // still resolving, hands back something else entirely. Casting that would
+  // report a successful save with an undefined submission id.
+  const row = data as Partial<Record<string, unknown>> | null;
+  const submissionId = typeof row?.submission_id === "string" ? row.submission_id : null;
+  if (!submissionId) {
+    return {
+      ok: false,
+      error:
+        "The save did not report which capture it created, so whether it was " +
+        "recorded cannot be confirmed.",
+    };
+  }
+  return {
+    ok: true,
+    value: {
+      submissionId,
+      groups: Number(row?.groups ?? 0),
+      readings: Number(row?.readings ?? 0),
+      reused: row?.reused === true,
+    },
+  };
+}
+
 export type RecordedReading = {
   blockId: string;
   /**

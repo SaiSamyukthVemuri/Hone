@@ -132,8 +132,20 @@ export function MachineFirstSetupConnected({
       const mod = await import(
         "@/app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions"
       );
-      const out = await mod.recordReadingsAction(input);
-      return out.ok ? { ok: true } : { ok: false, error: out.error };
+      // THE WHOLE-SAVE COMMAND, not one call per group. The per-group action
+      // is still exported and still correct for a single group recorded on its
+      // own - that is why a capture made through it carries no submission id -
+      // but the treatment form saves every group the practitioner entered, and
+      // that has to be one atomic fact with one retry key.
+      const out = await mod.recordSetupSubmissionAction(input);
+      return out.ok
+        ? {
+            ok: true,
+            captures: out.captures,
+            written: out.written,
+            reused: out.reused,
+          }
+        : { ok: false, error: out.error };
     });
 
   // The selection action the panel calls on every pick and on "Change

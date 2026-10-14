@@ -10,12 +10,14 @@ import {
   publishedModesFor,
   readingsForBlock,
   recordSetupGroup,
+  recordSetupSubmission,
   registerStudioMachine,
   retireStudioMachine,
   type MachineDb,
   type ReadingInputRow,
   type ReadingSubmission,
   type RecordedReading,
+  type SetupSubmissionGroup,
 } from "@/lib/machines/machine-queries";
 import {
   resolveSelection,
@@ -470,6 +472,81 @@ const OBSERVATION_SOURCES = [
   "estimated",
 ] as const;
 
+/**
+ * Validate one group's readings against the DEVICE's registered contract, and
+ * return the rows to store.
+ *
+ * SHARED BY BOTH RECORDING ACTIONS, and that is the whole reason it is a
+ * function. The whole-save action validates several groups; doing it inline
+ * would have been a second copy of this loop, and a second copy of a clinical
+ * validation rule is a second place for it to drift. The same mistake has been
+ * made and corrected three times in this feature already.
+ *
+ * EVERY CHECK HERE COMES FROM `lib/machines/validate-reading.ts` rather than
+ * being re-derived. An earlier version of this code derived the descriptor
+ * from `nativeFieldGroups` and checked only that the field EXISTS, which was a
+ * partial reimplementation of a validator already written for exactly this and
+ * checking more than it did:
+ *
+ *   * malformed_value - a negative current or duration. The database has no
+ *     equivalent constraint, so without this an impossible value becomes an
+ *     IMMUTABLE clinical row through the ordinary UI;
+ *   * stale_profile_version - the device is registered against a contract
+ *     version, and the version passed below is the DEVICE's, not the
+ *     catalogue's. A direct action call bypasses selectableDevices, so without
+ *     this the action could derive version-N units while the RPC stamps the
+ *     row with the device's older version: a permanently mislabelled reading;
+ *   * unknown_field / unknown_mode / channel bounds /
+ *     mode_requires_installed_option, against the options the device actually
+ *     has.
+ *
+ * Both gaps found by Codex at a66f5ec9. The lesson is the same one twice:
+ * reach for the validator that exists rather than re-deriving a weaker version
+ * of it at the call site.
+ */
+function validateSubmittedReadings(
+  device: StudioDevice,
+  profile: MachineProfile,
+  modeKey: string,
+  readings: readonly ReadingSubmission[],
+): { rows: ReadingInputRow[] } | { error: string } {
+  const rows: ReadingInputRow[] = [];
+  for (const r of readings) {
+    if (!OBSERVATION_SOURCES.includes(r.observationSource)) {
+      return { error: "That is not a recognised way of observing a reading." };
+    }
+    const checked = validateReading(
+      {
+        profileId: profile.profileId,
+        // The DEVICE's registered version, so a stale registration is refused
+        // here rather than silently captured under today's contract.
+        version: device.profileVersion,
+        modeKey,
+        stageKey: r.stageKey,
+        fieldKey: r.fieldKey,
+        value: r.value,
+        source: r.observationSource,
+      },
+      {
+        installedOptions: device.installedOptions,
+        catalogue: catalogueForRuntime(),
+      },
+    );
+    if (!checked.ok) return { error: checked.message };
+    rows.push({
+      stageKey: r.stageKey,
+      fieldKey: r.fieldKey,
+      // The machine's own unit and precision, off the field the VALIDATOR
+      // resolved. Never the caller's opinion of them.
+      nativeUnit: checked.field.unit ?? "none",
+      decimals: checked.field.decimals,
+      observationSource: r.observationSource,
+      value: checked.recorded,
+    });
+  }
+  return { rows };
+}
+
 export async function recordReadingsAction(input: {
   blockId: string;
   machineId: string;
@@ -534,46 +611,16 @@ export async function recordReadingsAction(input: {
   // Both gaps found by Codex at a66f5ec9. The lesson is the same one twice:
   // reach for the validator that exists rather than re-deriving a weaker
   // version of it at the call site.
-  const rows: ReadingInputRow[] = [];
-  for (const r of input.readings) {
-    if (!OBSERVATION_SOURCES.includes(r.observationSource)) {
-      return {
-        ok: false,
-        code: "rejected",
-        error: "That is not a recognised way of observing a reading.",
-      };
-    }
-    const checked = validateReading(
-      {
-        profileId: profile.profileId,
-        // The DEVICE's registered version, so a stale registration is refused
-        // here rather than silently captured under today's contract.
-        version: device.profileVersion,
-        modeKey: input.modeKey,
-        stageKey: r.stageKey,
-        fieldKey: r.fieldKey,
-        value: r.value,
-        source: r.observationSource,
-      },
-      {
-        installedOptions: device.installedOptions,
-        catalogue: catalogueForRuntime(),
-      },
-    );
-    if (!checked.ok) {
-      return { ok: false, code: "rejected", error: checked.message };
-    }
-    rows.push({
-      stageKey: r.stageKey,
-      fieldKey: r.fieldKey,
-      // The machine's own unit and precision, off the field the VALIDATOR
-      // resolved. Never the caller's opinion of them.
-      nativeUnit: checked.field.unit ?? "none",
-      decimals: checked.field.decimals,
-      observationSource: r.observationSource,
-      value: checked.recorded,
-    });
+  const checkedRows = validateSubmittedReadings(
+    device,
+    profile,
+    input.modeKey,
+    input.readings,
+  );
+  if ("error" in checkedRows) {
+    return { ok: false, code: "rejected", error: checkedRows.error };
   }
+  const rows = checkedRows.rows;
 
   const written = await recordSetupGroup(db, {
     blockId: input.blockId,
@@ -587,6 +634,122 @@ export async function recordReadingsAction(input: {
     return { ok: false, code: "rejected", error: written.error };
   }
   return { ok: true, written: written.value };
+}
+
+/**
+ * Record ONE SAVE - every settings group the practitioner entered - atomically.
+ *
+ * WHY THIS EXISTS BESIDE `recordReadingsAction`. Several separate calls, one
+ * per group, cannot have three properties that a save needs (Codex, #860
+ * 6157725545): a failure on the third group cannot roll back the first two;
+ * two groups claiming the same probe are two individually valid calls the
+ * database cannot see as related; and a lost response is indistinguishable
+ * from a deliberate second capture, so retrying was unsafe. One command, one
+ * transaction, one retry key.
+ *
+ * `recordReadingsAction` is KEPT, and is not a special case of this. A group
+ * recorded through it was recorded on its own, which is a true fact about it
+ * and is why the capture's submission id is null there.
+ *
+ * EVERY GROUP IS VALIDATED BEFORE ANY IS SENT. A group that fails validation
+ * must not be discovered after the request is in flight: the command would
+ * refuse the whole save, which is correct, but the practitioner would have
+ * waited for a round trip to be told something this process already knew.
+ */
+export async function recordSetupSubmissionAction(input: {
+  blockId: string;
+  machineId: string;
+  modeKey: string;
+  idempotencyKey: string;
+  groups: Array<{
+    groupKey: string;
+    channels: number[];
+    readings: ReadingSubmission[];
+  }>;
+}): Promise<
+  ActionResult & {
+    submissionId?: string;
+    captures?: number;
+    written?: number;
+    reused?: boolean;
+  }
+> {
+  const scope = await identity();
+  if (!scope) {
+    return { ok: false, code: "unauthenticated", error: "Sign in first." };
+  }
+  if (input.groups.length === 0) {
+    return { ok: false, code: "rejected", error: "Nothing to save." };
+  }
+  if (input.groups.some((g) => g.readings.length === 0)) {
+    return { ok: false, code: "rejected", error: "Nothing to save." };
+  }
+
+  const db = await machineDb();
+  const inventory = await listStudioDevices(db, scope.studioId);
+  const device = inventory.devices.find((d) => d.deviceId === input.machineId);
+  if (!device) {
+    return {
+      ok: false,
+      code: "rejected",
+      error: "That machine is not registered to this studio.",
+    };
+  }
+
+  const profile = catalogueForRuntime().find(
+    (p) => p.profileId === device.profileId,
+  );
+  const mode = profile
+    ? activeModes(profile).find((m) => m.key === input.modeKey)
+    : undefined;
+  if (!profile || !mode) {
+    return {
+      ok: false,
+      code: "rejected",
+      error: "That machine does not offer that mode.",
+    };
+  }
+
+  const groups: SetupSubmissionGroup[] = [];
+  for (const g of input.groups) {
+    const checked = validateSubmittedReadings(
+      device,
+      profile,
+      input.modeKey,
+      g.readings,
+    );
+    if ("error" in checked) {
+      return { ok: false, code: "rejected", error: checked.error };
+    }
+    groups.push({
+      groupKey: g.groupKey,
+      channels: g.channels,
+      readings: checked.rows,
+    });
+  }
+
+  // CROSS-GROUP CHANNEL EXCLUSIVITY IS NOT RE-IMPLEMENTED HERE. The command
+  // enforces it, which is the point of having moved it there - a check in this
+  // process is bypassed by anything calling the RPC directly, and a check in
+  // both is two definitions of one rule. The form warns before the round trip
+  // through `settingGroupIssues`; this relies on the database.
+  const out = await recordSetupSubmission(db, {
+    blockId: input.blockId,
+    machineId: input.machineId,
+    modeKey: input.modeKey,
+    idempotencyKey: input.idempotencyKey,
+    groups,
+  });
+  if (!out.ok) {
+    return { ok: false, code: "rejected", error: out.error };
+  }
+  return {
+    ok: true,
+    submissionId: out.value.submissionId,
+    captures: out.value.groups,
+    written: out.value.readings,
+    reused: out.value.reused,
+  };
 }
 
 /** Everything recorded against one block, for the chart being edited. */

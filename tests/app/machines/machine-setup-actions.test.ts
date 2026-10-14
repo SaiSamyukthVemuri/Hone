@@ -387,6 +387,353 @@ describe("the prior-setup read is scoped to the ROUTE CLIENT, not the studio", (
   });
 });
 
+// ===========================================================================
+// THE WHOLE-SAVE PATH — one Save, one call, one retry key.
+//
+// Several separate record_treatment_setup_group calls could not be atomic,
+// could not see a channel claimed by two groups, and could not be retried
+// after a lost response (Codex, #860 6157725545).
+// `record_treatment_setup_submission` is the command; these are the claims
+// about the SERVER SURFACE in front of it.
+//
+// THE RETRY KEY IS THE THING MOST WORTH GUARDING. If it is dropped anywhere
+// between the form and the RPC the feature is silently inert: every retry
+// becomes a new save and a lost response duplicates an immutable capture.
+// This lane has already shipped one field the wrapper never forwarded
+// (`priorUnitNames`, Codex 2351742d), so the forwarding is asserted, not
+// assumed.
+// ===========================================================================
+
+/** A studio, a signed-in owner and one registered synthetic device. */
+function synthDevice() {
+  vi.stubEnv("HONE_SYNTHETIC_MACHINE_PROFILE", "1");
+  vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "http://127.0.0.1:54321");
+  signIn("studio-fett", "pract-sabrina", "owner");
+  DB.rows = [
+    {
+      id: "dev-1",
+      studio_id: "studio-fett",
+      machine_profile_id: "synthetic:demo-multineedle",
+      machine_profile_version: 2,
+      display_name: "Room 1",
+      installed_options: [],
+      retired_at: null,
+    },
+  ];
+}
+
+const READING = (value: number) => ({
+  stageKey: null,
+  fieldKey: "current",
+  value: { kind: "value" as const, value },
+  observationSource: "practitioner-entered" as const,
+});
+
+describe("recordSetupSubmissionAction sends ONE call for the whole save", () => {
+  it("sends every group, with its own channels, in one RPC", async () => {
+    synthDevice();
+    DB.rpcResult = {
+      submission_id: "sub-1",
+      groups: 2,
+      readings: 2,
+      reused: false,
+    };
+    const out = await actions.recordSetupSubmissionAction({
+      blockId: "block-1",
+      machineId: "dev-1",
+      modeKey: "galvanic",
+      idempotencyKey: "save-key-0001",
+      groups: [
+        { groupKey: "g1", channels: [1, 2], readings: [READING(120)] },
+        { groupKey: "g2", channels: [3], readings: [READING(80)] },
+      ],
+    });
+    expect(out.ok, out.ok ? "" : out.error).toBe(true);
+
+    const calls = DB.calls.filter(
+      (c) => c.fn === "record_treatment_setup_submission",
+    );
+    // ONE CALL. Two would mean the atomicity this exists for was never
+    // obtained, whatever the command does.
+    expect(calls).toHaveLength(1);
+    // And NOT through the per-group command.
+    expect(
+      DB.calls.filter((c) => c.fn === "record_treatment_setup_group"),
+    ).toHaveLength(0);
+
+    const args = calls[0]!.args as Record<string, unknown>;
+    expect(args.p_block_id).toBe("block-1");
+    expect(args.p_studio_machine_id).toBe("dev-1");
+    expect(args.p_mode_key).toBe("galvanic");
+    // THE KEY REACHES THE DATABASE. Dropped anywhere along the way, every
+    // retry becomes a new save.
+    expect(args.p_idempotency_key).toBe("save-key-0001");
+
+    const groups = args.p_groups as Array<Record<string, unknown>>;
+    expect(groups).toHaveLength(2);
+    expect(groups[0]!.group_key).toBe("g1");
+    expect(groups[0]!.channels).toEqual([1, 2]);
+    expect(groups[1]!.group_key).toBe("g2");
+    expect(groups[1]!.channels).toEqual([3]);
+  });
+
+  it("DERIVES unit and precision for every group, never taking the caller's", async () => {
+    synthDevice();
+    DB.rpcResult = { submission_id: "sub-1", groups: 1, readings: 1, reused: false };
+    await actions.recordSetupSubmissionAction({
+      blockId: "block-1",
+      machineId: "dev-1",
+      modeKey: "galvanic",
+      idempotencyKey: "save-key-0002",
+      groups: [{ groupKey: "g1", channels: [1], readings: [READING(120)] }],
+    });
+    const args = DB.calls.find(
+      (c) => c.fn === "record_treatment_setup_submission",
+    )!.args as Record<string, unknown>;
+    const readings = (args.p_groups as Array<Record<string, unknown>>)[0]!
+      .readings as Array<Record<string, unknown>>;
+    // The machine's own unit, from the contract the DEVICE is registered
+    // against - not from the payload, which has no field for it.
+    expect(readings[0]!.native_unit).toBeTruthy();
+    expect(typeof readings[0]!.decimals).toBe("number");
+    // Sent as a STRING so a recorded zero and the machine's precision survive
+    // JSON, exactly as the per-group command does it.
+    expect(readings[0]!.value).toBe("120");
+  });
+
+  it("refuses the WHOLE save when any group has an impossible field", async () => {
+    // Validated before anything is sent: the command would refuse the save
+    // too, which is correct, but she should not wait for a round trip to be
+    // told something this process already knew.
+    synthDevice();
+    const out = await actions.recordSetupSubmissionAction({
+      blockId: "block-1",
+      machineId: "dev-1",
+      modeKey: "galvanic",
+      idempotencyKey: "save-key-0003",
+      groups: [
+        { groupKey: "g1", channels: [1], readings: [READING(120)] },
+        {
+          groupKey: "g2",
+          channels: [2],
+          readings: [
+            {
+              stageKey: null,
+              fieldKey: "not_a_real_field",
+              value: { kind: "value" as const, value: 3 },
+              observationSource: "practitioner-entered" as const,
+            },
+          ],
+        },
+      ],
+    });
+    expect(out.ok).toBe(false);
+    expect(out.ok ? "" : out.error).toMatch(/not_a_real_field/);
+    // NOTHING WAS SENT. A refusal that had already issued the call would have
+    // recorded the first group.
+    expect(
+      DB.calls.filter((c) => c.fn === "record_treatment_setup_submission"),
+    ).toHaveLength(0);
+  });
+
+  it("reports a REUSED submission as reused, not as a fresh save", async () => {
+    // The caller cannot otherwise tell a retry that was absorbed from a save
+    // that wrote, and the two are different facts about the record.
+    synthDevice();
+    DB.rpcResult = {
+      submission_id: "sub-1",
+      groups: 2,
+      readings: 5,
+      reused: true,
+    };
+    const out = await actions.recordSetupSubmissionAction({
+      blockId: "block-1",
+      machineId: "dev-1",
+      modeKey: "galvanic",
+      idempotencyKey: "save-key-0004",
+      groups: [{ groupKey: "g1", channels: [1], readings: [READING(120)] }],
+    });
+    expect(out.ok).toBe(true);
+    expect(out.reused).toBe(true);
+    // THE DATABASE'S OWN TALLY, not the one group that was sent: a reused
+    // submission reports what the ORIGINAL save recorded.
+    expect(out.captures).toBe(2);
+    expect(out.written).toBe(5);
+  });
+
+  it("refuses a save that reports no submission id", async () => {
+    // A deployment where the migration has not been applied, or an older
+    // function still resolving, returns something else entirely. Casting it
+    // would report a successful save with an undefined capture.
+    synthDevice();
+    DB.rpcResult = { nothing: true };
+    const out = await actions.recordSetupSubmissionAction({
+      blockId: "block-1",
+      machineId: "dev-1",
+      modeKey: "galvanic",
+      idempotencyKey: "save-key-0005",
+      groups: [{ groupKey: "g1", channels: [1], readings: [READING(120)] }],
+    });
+    expect(out.ok).toBe(false);
+    expect(out.ok ? "" : out.error).toMatch(/cannot be confirmed/i);
+  });
+
+  it("refuses an empty save, and a group with no readings", async () => {
+    synthDevice();
+    expect(
+      (
+        await actions.recordSetupSubmissionAction({
+          blockId: "block-1",
+          machineId: "dev-1",
+          modeKey: "galvanic",
+          idempotencyKey: "save-key-0006",
+          groups: [],
+        })
+      ).ok,
+    ).toBe(false);
+    expect(
+      (
+        await actions.recordSetupSubmissionAction({
+          blockId: "block-1",
+          machineId: "dev-1",
+          modeKey: "galvanic",
+          idempotencyKey: "save-key-0007",
+          groups: [{ groupKey: "g1", channels: [], readings: [] }],
+        })
+      ).ok,
+    ).toBe(false);
+  });
+
+  it("requires a signed-in practitioner", async () => {
+    SESSION.current = null;
+    const out = await actions.recordSetupSubmissionAction({
+      blockId: "block-1",
+      machineId: "dev-1",
+      modeKey: "galvanic",
+      idempotencyKey: "save-key-0008",
+      groups: [{ groupKey: "g1", channels: [], readings: [READING(1)] }],
+    });
+    expect(out.ok).toBe(false);
+    expect(out.ok ? "" : out.code).toBe("unauthenticated");
+  });
+
+  it("takes no studio, so none can be forged", () => {
+    const src = readFileSync(
+      path.resolve(
+        __dirname,
+        "../../../app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts",
+      ),
+      "utf8",
+    );
+    const body = src
+      .slice(src.indexOf("export async function recordSetupSubmissionAction"))
+      .split("\n}\n")[0]!;
+    expect(body).not.toMatch(/studioId:\s*input\./);
+    expect(body).not.toMatch(/p_studio_id/);
+  });
+});
+
+describe("THE VALIDATION IS SHARED, not copied", () => {
+  // A second implementation of a clinical validation rule is a second place
+  // for it to drift, and this feature has corrected that exact defect three
+  // times. Both recording actions reach `validateSubmittedReadings`, which is
+  // the only caller of `validateReading` in this file.
+  const SRC = readFileSync(
+    path.resolve(
+      __dirname,
+      "../../../app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts",
+    ),
+    "utf8",
+  );
+  const code = SRC.replace(/^\s*(\/\/|\*|\/\*).*$/gm, " ");
+
+  it("has exactly ONE call site for the reading validator", () => {
+    const hits = code.match(/validateReading\(/g) ?? [];
+    expect(
+      hits.length,
+      "a second validateReading call site is a second definition of the rule",
+    ).toBe(1);
+  });
+
+  it("is reached by BOTH recording actions", () => {
+    for (const fn of ["recordReadingsAction", "recordSetupSubmissionAction"]) {
+      const body = code.slice(code.indexOf(`export async function ${fn}`)).split(
+        "\n}\n",
+      )[0]!;
+      expect(
+        body,
+        `${fn} must validate through the shared helper`,
+      ).toMatch(/validateSubmittedReadings\(/);
+    }
+  });
+});
+
+describe("the connected wrapper forwards the whole SAVE", () => {
+  // The same failure class as the context-forwarding guard above, on the path
+  // that matters most: a dropped `idempotencyKey` makes idempotency silently
+  // inert, and nothing fails until a lost response duplicates a capture.
+  const CONNECTED = readFileSync(
+    path.resolve(
+      __dirname,
+      "../../../components/machines/machine-first-setup-connected.tsx",
+    ),
+    "utf8",
+  ).replace(/^\s*(\/\/|\*|\/\*).*$/gm, " ");
+
+  it("calls the SAVE action, not the per-group one", () => {
+    expect(CONNECTED).toMatch(/recordSetupSubmissionAction\(/);
+    expect(CONNECTED).not.toMatch(/recordReadingsAction\(/);
+  });
+
+  it("passes the form's input through WHOLE, rather than rebuilding it", () => {
+    // Rebuilding is how a field gets dropped. Passing the object through means
+    // a new field cannot be forgotten here.
+    expect(CONNECTED).toMatch(/recordSetupSubmissionAction\(input\)/);
+  });
+
+  it("returns the reuse flag and the counts to the form", () => {
+    // Without these the form cannot distinguish "saved" from "already saved",
+    // and would report a fresh capture for an absorbed retry.
+    for (const field of ["reused", "captures", "written"]) {
+      expect(CONNECTED, `${field} must reach the form`).toContain(field);
+    }
+  });
+});
+
+describe("the entry form holds the key across retries", () => {
+  const ENTRY = readFileSync(
+    path.resolve(
+      __dirname,
+      "../../../components/machines/machine-reading-entry.tsx",
+    ),
+    "utf8",
+  ).replace(/^\s*(\/\/|\*|\/\*).*$/gm, " ");
+
+  it("takes the key from the state machine, never minting one inline", () => {
+    // `crypto.randomUUID()` called directly at the call site would mint a new
+    // key per attempt, which is exactly the defect that makes a retry a
+    // duplicate. It may only be the MINTER passed to keyForSave.
+    expect(ENTRY).toMatch(/keyForSave\(save,/);
+    const direct = ENTRY.match(/crypto\.randomUUID\(\)/g) ?? [];
+    expect(direct.length, "the key must come from keyForSave").toBe(1);
+    expect(ENTRY).toMatch(/keyForSave\(save, mintKey \?\? \(\(\) => crypto\.randomUUID\(\)\)\)/);
+  });
+
+  it("sends it as the save's idempotency key", () => {
+    expect(ENTRY).toMatch(/idempotencyKey: key/);
+  });
+
+  it("sends ONE call, not one per group", () => {
+    // The loop is gone. A `for` over the submissions here would reintroduce
+    // every state the atomic command removed.
+    const submit = ENTRY.slice(ENTRY.indexOf("async function submit()")).split(
+      "\n  }\n",
+    )[0]!;
+    expect(submit).not.toMatch(/for\s*\(/);
+    expect((submit.match(/await onRecord\(/g) ?? []).length).toBe(1);
+  });
+});
+
 describe("reading metadata is DERIVED from the profile, never accepted", () => {
   // The caller may say which field and what it read. The field's native unit
   // and precision are machine facts, so an earlier shape that accepted them

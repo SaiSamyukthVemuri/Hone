@@ -232,35 +232,37 @@ export type GroupSubmission = {
 };
 
 /**
- * The submissions to send, one per group that has something to record.
+ * Every group that has something to record, as one SAVE.
  *
- * ONE CALL PER GROUP, deliberately. `record_treatment_setup_group` is one
- * atomic capture of one group, and that boundary is the design: two groups are
- * two facts, each with its own revision sequence within the block. They are
- * NOT batched into one call, because that would require the command to mean
- * something it does not.
+ * IT USED TO MEAN ONE CALL PER GROUP, and said so: `record_treatment_setup_group`
+ * was one atomic capture of one group, two groups were two facts, and batching
+ * would have required the command to mean something it did not. That is no
+ * longer true. `record_treatment_setup_submission` means exactly that - one
+ * Save, every group, one transaction - so this returns the groups OF one save
+ * rather than a list of calls to make.
  *
- * The consequence the caller must handle: with two groups, the first can
- * succeed and the second fail. That is a representable state, not an incoherent
- * one - but it must be REPORTED, not rounded to "saved" or "failed".
+ * THE `alreadySaved` PARAMETER IS GONE, and the state it guarded is now
+ * unreachable rather than merely unhandled. It existed because the first group
+ * could commit and the second fail, so a retry had to send only the untold
+ * remainder - resubmitting a committed group would have appended a second
+ * immutable revision of settings entered once, indistinguishable in the record
+ * from a genuine mid-treatment change (Codex, f175e732).
+ *
+ * Two things replaced it, and both are stronger than a set in component
+ * memory, which died on reload:
+ *
+ *   * a save either commits entirely or not at all, so "already recorded" is
+ *     never true of SOME groups;
+ *   * a retry of an unresolved save carries the same idempotency key, so the
+ *     DATABASE recognises it and returns the original submission. Deduplication
+ *     moved from the client's memory to the record itself.
  */
 export function assembleGroupSubmissions(
   fieldGroups: readonly FieldGroup[],
   groups: readonly SettingGroupDraft[],
-  /**
-   * Groups already recorded, which must NOT be sent again.
-   *
-   * With several groups the first can succeed and a later one fail. Retrying
-   * after fixing the failure used to resubmit the successful group too, and
-   * because captures are append-only that created an extra immutable revision
-   * - a second capture of settings she entered once, indistinguishable in the
-   * record from a genuine mid-treatment change (Codex, f175e732).
-   */
-  alreadySaved: ReadonlySet<string> = new Set(),
 ): GroupSubmission[] {
   const out: GroupSubmission[] = [];
   for (const g of groups) {
-    if (alreadySaved.has(g.id)) continue;
     const readings = assembleReadings(fieldGroups, g.values);
     if (readings.length === 0) continue;
     out.push({ groupKey: g.id, channels: g.channels, readings });
