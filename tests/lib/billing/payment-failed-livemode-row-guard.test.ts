@@ -69,6 +69,7 @@ function attemptRow(over: Record<string, unknown> = {}) {
     stripe_payment_intent_id: "pi_row",
     stripe_charge_id: null,
     amount_cents: 2500,
+    currency: "cad",
     charged_at: null,
     refund_status: null,
     refund_amount_cents: null,
@@ -89,6 +90,9 @@ function failedEvent(over: Record<string, unknown> = {}) {
     data: {
       object: {
         id: "pi_1",
+        // A real PaymentIntent states its money (PAY-CCY-01).
+        amount: 2500,
+        currency: "cad",
         metadata: {
           hone_payment_charge_attempt_id: "att_1",
           hone_studio_id: "stud_1",
