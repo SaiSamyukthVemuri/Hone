@@ -114,10 +114,12 @@ function retriesRecoverEveryFailure(r: { named: readonly DeliveryFailure[]; coun
  * EDGES (Codex P2s 4265363603, 4266813200): retries move through the `e=`
  * list, so fewer than two edges give no alternate origin when that edge
  * fails. An omitted `e` is the documented single default edge (`ashburn`).
- * Not certified without two or more explicit edges (handoff A7).
+ * Not certified without two or more explicit edges (handoff A7). The edge
+ * list counts only with Static Proxy off (the evaluator passes the account
+ * fact; standalone callers get "off").
  */
-export function retriesRecoverDelivery(url: string | null | undefined): boolean {
-  if (urlTransport(url, "none") !== "ok") return false;
+export function retriesRecoverDelivery(url: string | null | undefined, staticProxyEnabled: boolean | null = false): boolean {
+  if (urlTransport(url, "none", { staticProxyEnabled }) !== "ok") return false;
   const n = normalizeTwilioWebhookUrl(url);
   if (!n.ok) return false;
   const o = n.overrides ?? {};
@@ -146,15 +148,51 @@ export function retriesRecoverDelivery(url: string | null | undefined): boolean 
  * An unparseable URL or fragment is unsafe. An omitted sni is Twilio's
  * default (SNI on) and fine.
  */
-function urlTransport(url: string | null | undefined, rules: "none" | "matched" | "unknown"): "ok" | "unsafe" | "unknown" {
+type Transport = "ok" | "unsafe" | "unknown";
+const worst = (...ts: Transport[]): Transport => (ts.includes("unsafe") ? "unsafe" : ts.includes("unknown") ? "unknown" : "ok");
+
+/** The account facts the transport validator needs besides the URL. */
+type TransportContext = {
+  /**
+   * Static Proxy on the account (Codex P2 4267597875): Twilio IGNORES `e=`
+   * when it is enabled, so an edge list proves no alternate origin. Undefined
+   * or null = not read.
+   */
+  staticProxyEnabled?: boolean | null;
+  /**
+   * FALLBACK only (Codex P2 4267597869): the request must be allowed to run a
+   * whole attempt, tt >= ct + rt. With no Rule the URL's own values decide;
+   * under a matching Rule the live Settings' values do, given here.
+   */
+  attemptBudget?: { settings: Transport } | "url";
+};
+
+function urlTransport(url: string | null | undefined, rules: "none" | "matched" | "unknown", ctx: TransportContext = {}): Transport {
   const n = normalizeTwilioWebhookUrl(url);
   if (!n.ok) return "unsafe";
   const o = n.overrides ?? {};
-  // Omitted e = the single default edge (ashburn).
-  const oneEdge = (o.e?.length ?? 1) < 2;
-  if (rules === "none") return o.sni === "n" || oneEdge ? "unsafe" : "ok";
-  if (rules === "matched") return o.sni === "n" ? "unknown" : "ok";
-  return o.sni === "n" || oneEdge ? "unknown" : "ok";
+  const bad: Transport = rules === "none" ? "unsafe" : "unknown";
+  const sni: Transport = o.sni === "n" ? (rules === "none" ? "unsafe" : "unknown") : "ok";
+  // Edges: under a matching Rule the Setting's edgeZones govern. Otherwise an
+  // omitted e is the single default edge (ashburn), and an edge list counts
+  // only once Static Proxy is known to be off.
+  const edges: Transport =
+    rules === "matched"
+      ? "ok"
+      : (o.e?.length ?? 1) < 2
+        ? bad
+        : ctx.staticProxyEnabled === false
+          ? "ok"
+          : "unknown";
+  const budget: Transport =
+    ctx.attemptBudget === undefined
+      ? "ok"
+      : ctx.attemptBudget !== "url"
+        ? ctx.attemptBudget.settings
+        : (o.tt ?? TWILIO_DEFAULT_TOTAL_TIME_MS) >= (o.ct ?? TWILIO_DEFAULT_CONNECT_TIMEOUT_MS) + (o.rt ?? TWILIO_DEFAULT_READ_TIMEOUT_MS)
+          ? "ok"
+          : bad;
+  return worst(sni, edges, budget);
 }
 
 /**
@@ -196,7 +234,10 @@ export function expectedInboundWebhookUrl(env: Env = process.env): ExpectedInbou
     return { ok: false, reason: "base_unparseable" };
   }
   if (u.protocol !== "https:") return { ok: false, reason: "base_not_https" };
-  if (u.pathname !== "/" || u.search !== "" || u.hash !== "" || u.username || u.password) {
+  // The RAW base too (Codex P2 4267597865): an empty "?" or "#" parses to an
+  // empty search/hash, yet the route path appended after it would be query or
+  // fragment text, never the pathname.
+  if (u.pathname !== "/" || u.search !== "" || u.hash !== "" || u.username || u.password || /[?#]/.test(base)) {
     return { ok: false, reason: "base_has_path_query_or_fragment" };
   }
   return { ok: true, url: `${base}${INBOUND_STOP_PATH}` };
@@ -355,6 +396,13 @@ export type InboundStopFacts = {
           edgeZones: "omitted" | { zones: readonly string[]; allowZoneFallback?: boolean | null } | null;
         }>;
       };
+  /**
+   * Whether Static Proxy is enabled on the account (Console, read-only).
+   * Twilio ignores the URL `e=` parameter under it, so with no Rule matching
+   * an edge list is resilience proof only when this is false (Codex P2
+   * 4267597875). Undefined or null = not read.
+   */
+  staticProxyEnabled?: boolean | null;
   /**
    * The current edge-zone catalog (GET /v1/Webhooks/EdgeZones): each zone's ID
    * and how many edge locations are active in it. Needed only to judge a
@@ -669,16 +717,34 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
    * URL, so the same Rule, Setting and edge zones govern it too.
    */
   const ruleState = rules === undefined ? "unknown" : rules.matched ? "matched" : "none";
+  // Under a matching Rule a fallback request runs on the live Settings'
+  // timeouts: each must allow one whole attempt (Codex P2 4267597869).
+  const settingsAttemptBudget: Transport =
+    !sharesKnown || live.length === 0
+      ? "unknown"
+      : worst(
+          ...live.map((x): Transport =>
+            x.connectTimeoutMs === null || x.readTimeoutMs === null || x.totalTimeoutMs === null
+              ? "unknown"
+              : (x.totalTimeoutMs ?? TWILIO_DEFAULT_TOTAL_TIME_MS) >=
+                  (x.connectTimeoutMs ?? TWILIO_DEFAULT_CONNECT_TIMEOUT_MS) + (x.readTimeoutMs ?? TWILIO_DEFAULT_READ_TIMEOUT_MS)
+                ? "ok"
+                : "unsafe",
+          ),
+        );
   const redelivers = (url: string | null | undefined, fbUrl: string | null | undefined, fbMethod: string | null | undefined) => {
     // The primary's retries, under the SAME precedence as its transport: with a
     // Rule matching, the Setting's retries count only if the URL's own
     // transport cannot defeat them.
-    const primaryTransport = ruleState === "none" ? "ok" : urlTransport(url, ruleState);
+    const primaryTransport = urlTransport(url, ruleState, { staticProxyEnabled: f.staticProxyEnabled });
     const retries =
       ruleRetries === "n/a"
-        ? retriesRecoverDelivery(url)
-          ? "yes"
-          : "no"
+        ? // Coverage and budget assuming Static Proxy off; then the real transport.
+          !retriesRecoverDelivery(url, false) || primaryTransport === "unsafe"
+          ? "no"
+          : primaryTransport === "unknown"
+            ? "unknown"
+            : "yes"
         : ruleRetries === "yes" && primaryTransport === "unknown"
           ? "unknown"
           : ruleRetries;
@@ -688,7 +754,12 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
     // transport is judged by the same validator and precedence (Codex P1
     // 4265522953): an unsafe fallback recovers nothing, an undetermined one is
     // unknown.
-    const fallbackTransport = fallbackIsRoute ? urlTransport(fbUrl, ruleState) : "unsafe";
+    const fallbackTransport = fallbackIsRoute
+      ? urlTransport(fbUrl, ruleState, {
+          staticProxyEnabled: f.staticProxyEnabled,
+          attemptBudget: ruleState === "matched" ? { settings: settingsAttemptBudget } : "url",
+        })
+      : "unsafe";
     if (fallbackIsRoute && (fbMethod ?? "").toUpperCase() === "POST" && fallbackTransport === "ok") return "fallback" as const;
     // Anything not read stays UNKNOWN (Codex P2 4254851468): the URL, or, for a
     // fallback that IS the route, its method or its effective transport.

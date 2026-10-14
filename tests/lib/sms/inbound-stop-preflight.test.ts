@@ -18,11 +18,12 @@ const URL_OK = `${BASE}/api/twilio/inbound-sms`;
  */
 const FULL_RETRY = "#ct=1000&rt=5000&tt=15000&rc=2&rp=ct,rt,5xx&e=ashburn,umatilla";
 /**
- * The same-route URL with two explicit edges and nothing else: without them
- * Twilio uses its single default edge, ashburn, so a retry or fallback has no
- * alternate origin (Codex P2 4266813200).
+ * The same-route URL with two explicit edges (without them Twilio uses its
+ * single default edge, ashburn: Codex P2 4266813200) and timeouts that let a
+ * whole attempt fit the default 15000 ms total, 1000 + 5000 (Codex P2
+ * 4267597869). Used as a fallback.
  */
-const URL_EDGES = `${URL_OK}#e=ashburn,umatilla`;
+const URL_EDGES = `${URL_OK}#ct=1000&rt=5000&e=ashburn,umatilla`;
 /** FULL_RETRY without its edge list, for tests that set `e` themselves. */
 const URL_RETRY_NO_EDGES = `${URL_OK}#ct=1000&rt=5000&tt=15000&rc=2&rp=ct,rt,5xx`;
 const URL_RETRY = `${URL_OK}${FULL_RETRY}`;
@@ -54,6 +55,8 @@ const allProven = (): InboundStopFacts => ({
   routedFromNumber: "+14165550100",
   // No exact, prefix or default Webhook Rule matches the inbound URL.
   webhookRules: { matched: false },
+  // Static Proxy off, so the URL's e= list is real (Codex P2 4267597875).
+  staticProxyEnabled: false,
   // The Webhooks configuration has settled (Operations COMPLETED, unchanged >= 60 s).
   webhookPropagation: { ruleOperationStatuses: ["COMPLETED"], secondsSinceLastConfigChange: 3600 },
   honeAccountSid: ACCOUNT,
@@ -1212,7 +1215,7 @@ describe("the FALLBACK's transport is judged like the primary's (Codex P1 426552
 
   for (const [why, url] of [
     ["two edges", URL_EDGES],
-    ["sni=y and two edges", `${URL_OK}#sni=y&e=ashburn,umatilla`],
+    ["sni=y, two edges and an attempt-sized budget", `${URL_OK}#sni=y&ct=1000&rt=5000&e=ashburn,umatilla`],
     ["timeouts and three edges", `${URL_OK}#ct=1000&rt=5000&e=dublin,sydney,ashburn`],
   ] as const) {
     it(`POSITIVE CONTROL: a safe same-route fallback (${why}) recovers: ready`, () => {
@@ -1381,6 +1384,109 @@ describe("an OMITTED edge list is Twilio's single default edge, ashburn (Codex P
   it("under a matching Rule the Setting's edgeZones govern, so an edgeless URL is not refused here", () => {
     const f = allProven();
     Object.assign(f.service!, { inboundRequestUrl: URL_OK, fallbackUrl: null, fallbackMethod: null });
+    f.webhookRules = {
+      matched: true,
+      settings: [{ percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY }],
+    };
+    expect(status(f)).toBe("pass");
+  });
+});
+
+describe("a base with an EMPTY query or fragment delimiter is refused (Codex P2 4267597865)", () => {
+  for (const base of ["https://hone.example?", "https://hone.example#", "https://hone.example/?", "https://hone.example/#/"]) {
+    it(`${base}: the route path would be query/fragment text, refused`, () => {
+      expect(expectedInboundWebhookUrl({ TWILIO_WEBHOOK_BASE_URL: base })).toEqual({ ok: false, reason: "base_has_path_query_or_fragment" });
+      const f = allProven();
+      f.env = { ...f.env, TWILIO_WEBHOOK_BASE_URL: base };
+      expect(evaluateInboundStopPreflight(f).checks.find((c) => c.id === "base_url")?.status).toBe("fail");
+    });
+  }
+});
+
+describe("the fallback must have budget for one whole attempt, tt >= ct + rt (Codex P2 4267597869)", () => {
+  const PRIMARY_NO_RECOVERY = `${URL_OK}#ct=1000&rt=5000&rp=5xx&e=ashburn,umatilla`;
+  const status = (f: InboundStopFacts) => evaluateInboundStopPreflight(f).checks.find((c) => c.id === "stop_redelivery")?.status;
+  const viaFallback = (fallbackUrl: string) => {
+    const f = allProven();
+    Object.assign(f.service!, { inboundRequestUrl: PRIMARY_NO_RECOVERY, fallbackUrl, fallbackMethod: "POST" });
+    return f;
+  };
+
+  for (const [why, frag, want] of [
+    ["tt=100 (times out before the handler can finish)", "#tt=100&ct=1000&rt=5000&e=ashburn,umatilla", "fail"],
+    ["default ct/rt (5000 + 15000) over the default 15000 total", "#e=ashburn,umatilla", "fail"],
+    ["tt one ms short of ct + rt", "#tt=5999&ct=1000&rt=5000&e=ashburn,umatilla", "fail"],
+    ["tt exactly ct + rt", "#tt=6000&ct=1000&rt=5000&e=ashburn,umatilla", "pass"],
+    ["defaults with short timeouts", "#ct=1000&rt=5000&e=ashburn,umatilla", "pass"],
+  ] as const) {
+    it(`no Rule, fallback with ${why}: ${want}`, () => {
+      const f = viaFallback(`${URL_OK}${frag}`);
+      expect(status(f)).toBe(want);
+      expect(evaluateInboundStopPreflight(f).ready).toBe(want === "pass");
+    });
+  }
+
+  describe("under a matching Rule the live Settings' timeouts govern the fallback", () => {
+    const ruled = (over: Record<string, unknown>, fallbackUrl = URL_EDGES) => {
+      const f = viaFallback(fallbackUrl);
+      f.webhookRules = {
+        matched: true,
+        settings: [{ percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY, retryOn: ["HTTP_5XX"], ...over }] as never,
+      };
+      return f;
+    };
+    it("Setting 1000 + 5000 within the assumed 15000 total: the fallback recovers", () => {
+      expect(status(ruled({}))).toBe("pass");
+    });
+    it("the URL's own tt=100 is overridden by the Setting: still recovers", () => {
+      expect(status(ruled({}, `${URL_OK}#tt=100`))).toBe("pass");
+    });
+    it("Setting totalTimeoutMs 100: the fallback cannot finish an attempt, refused", () => {
+      expect(status(ruled({ totalTimeoutMs: 100 }))).toBe("fail");
+    });
+    it("a Setting timeout not read: unknown", () => {
+      expect(status(ruled({ connectTimeoutMs: null }))).toBe("unknown");
+    });
+  });
+});
+
+describe("Static Proxy makes Twilio ignore e=, so an edge list proves nothing under it (Codex P2 4267597875)", () => {
+  const status = (f: InboundStopFacts) => evaluateInboundStopPreflight(f).checks.find((c) => c.id === "stop_redelivery")?.status;
+
+  for (const [why, sp, want] of [
+    ["known off", false, "pass"],
+    ["enabled", true, "unknown"],
+    ["not read (null)", null, "unknown"],
+    ["not read (absent)", undefined, "unknown"],
+  ] as const) {
+    it(`no Rule, complete two-edge retries, Static Proxy ${why}: ${want}`, () => {
+      const f = allProven();
+      Object.assign(f.service!, { fallbackUrl: null, fallbackMethod: null });
+      f.staticProxyEnabled = sp;
+      expect(status(f)).toBe(want);
+      expect(evaluateInboundStopPreflight(f).ready).toBe(want === "pass");
+    });
+  }
+
+  it("a two-edge FALLBACK is undetermined under Static Proxy too", () => {
+    const f = allProven();
+    Object.assign(f.service!, { inboundRequestUrl: `${URL_OK}#ct=1000&rt=5000&rp=5xx&e=ashburn,umatilla`, fallbackUrl: URL_EDGES, fallbackMethod: "POST" });
+    f.staticProxyEnabled = true;
+    expect(status(f)).toBe("unknown");
+    f.staticProxyEnabled = false;
+    expect(status(f)).toBe("pass");
+  });
+
+  it("standalone retriesRecoverDelivery takes the fact: Static Proxy on or unread is never certified", () => {
+    expect(retriesRecoverDelivery(URL_RETRY, false)).toBe(true);
+    expect(retriesRecoverDelivery(URL_RETRY, true)).toBe(false);
+    expect(retriesRecoverDelivery(URL_RETRY, null)).toBe(false);
+  });
+
+  it("under a matching Rule the Setting's edgeZones govern: Static Proxy is not consulted here", () => {
+    const f = allProven();
+    Object.assign(f.service!, { inboundRequestUrl: URL_OK, fallbackUrl: null, fallbackMethod: null });
+    f.staticProxyEnabled = true;
     f.webhookRules = {
       matched: true,
       settings: [{ percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY }],
