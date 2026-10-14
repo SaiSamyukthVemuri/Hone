@@ -237,3 +237,27 @@ describe("privileges and blast radius", () => {
     expect(TOP_LEVEL).not.toMatch(new RegExp(`grant [^;]*${GUARD}`));
   });
 });
+
+// EXACT PRIVILEGES (cross-lane finding from History 0223): the grantee lists
+// above match one grantee per statement, so a stray multi-grantee grant
+// (`to anon, authenticated`) or `grant all` slipped past them. This compares
+// EVERY top-level grant statement, of any shape or case, to the exact list.
+describe("exactly these grants, and no other", () => {
+  it("every top-level GRANT statement, normalised, is exactly the intended list; no default-privilege change", () => {
+    const grants = TOP_LEVEL.split(";")
+      .map((st) => st.replace(/\s+/g, " ").trim())
+      .filter((st) => /^grant\b/i.test(st));
+    expect(grants).toEqual([
+      "grant select on table public.platform_lead_alerts to service_role",
+      "grant execute on function public.record_platform_demo_request(text, text, text, text, text, text, text, text) to service_role",
+      "grant execute on function public.record_platform_early_access_signup(text) to service_role",
+      "grant execute on function public.claim_platform_lead_alert(uuid, integer) to service_role",
+      "grant execute on function public.freeze_platform_lead_alert_message(uuid, uuid, jsonb, text) to service_role",
+      "grant execute on function public.settle_platform_lead_alert(uuid, uuid, text, text, text, text) to service_role",
+      "grant execute on function public.expire_platform_lead_alerts() to service_role",
+      "grant execute on function public.record_platform_lead_alerts_unconfigured(text, uuid) to service_role",
+      "grant execute on function public.requeue_platform_lead_alert(uuid) to service_role",
+    ]);
+    expect(TOP_LEVEL).not.toMatch(/alter\s+default\s+privileges/i);
+  });
+});
