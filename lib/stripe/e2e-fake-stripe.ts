@@ -85,7 +85,35 @@ function rememberMoney(run: string, id: string, money: FakeMoney): void {
 }
 function recalledMoney(run: string, id: string | null | undefined): FakeMoney {
   if (!id) return { amount: null, currency: null };
-  return moneyByIdByRun.get(run)?.get(id) ?? { amount: null, currency: null };
+  return moneyByIdByRun.get(run)?.get(id) ?? ledgerMoney(run, id);
+}
+
+// PAY-CCY-09 (twin finding, 2026-10-14). This process's memory is lost on a
+// server restart; the run's ledger is not. Everything the fake must state BACK
+// (an object's money, an idempotent replay's result, the next id) falls back to
+// the ledger's EFFECT records, so a restarted server behaves as real Stripe
+// does: same objects, same money, same idempotency. Memory still answers first;
+// with no ledger (guard off, ordinary unit tests) the answers are as before.
+function ledgerEffects(run: string): FakeStripeCall[] {
+  try {
+    return readFakeStripeCalls(run).filter((c) => !c.replay && !c.resultId.endsWith("_refused"));
+  } catch {
+    return [];
+  }
+}
+function ledgerMoney(run: string, id: string): FakeMoney {
+  const effects = ledgerEffects(run);
+  // A PaymentIntent, or the charge a PaymentIntent create produced: its create money.
+  const create = effects.find(
+    (c) => c.method === "pi_create" && (c.resultId === id || c.chargeId === id),
+  );
+  if (create) return { amount: create.amountCents, currency: create.currency };
+  // A refund: its amount, in its CHARGE's currency (as Stripe states it).
+  const refund = effects.find((c) => c.method === "refund_create" && c.resultId === id);
+  if (refund) {
+    return { amount: refund.amountCents, currency: ledgerMoney(run, refund.chargeId ?? "").currency };
+  }
+  return { amount: null, currency: null };
 }
 
 function runId(): string {
@@ -148,7 +176,10 @@ function idempotentResult(
   key: string | null | undefined,
 ): string | null {
   if (!key) return null;
-  return idempotentResultByRun.get(run)?.get(key) ?? null;
+  const remembered = idempotentResultByRun.get(run)?.get(key);
+  if (remembered) return remembered;
+  // After a restart: the effect this key already produced, from the ledger.
+  return ledgerEffects(run).find((c) => c.idempotencyKey === key)?.resultId ?? null;
 }
 function rememberIdempotent(run: string, key: string | null | undefined, id: string): void {
   if (!key) return;
