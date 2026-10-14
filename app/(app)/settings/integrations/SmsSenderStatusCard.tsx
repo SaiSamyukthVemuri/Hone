@@ -82,8 +82,8 @@ export function SmsSenderStatusCard({ view }: { view: SenderStatusView }) {
       ) : null}
 
       <p className="mt-3 text-xs text-neutral-500">
-        Setting up a studio number is not available in Hone yet. This panel
-        reports the current state only.
+        Buying or configuring a studio number is not available in Hone yet.
+        This panel reports the current state only.
       </p>
     </div>
   );
