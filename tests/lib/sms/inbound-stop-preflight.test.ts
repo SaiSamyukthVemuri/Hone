@@ -1174,3 +1174,118 @@ describe("URL overrides that defeat their own retries (Codex P1 4265363596, P2 4
     expect(redelivery(f)).toBe("pass");
   });
 });
+
+describe("the FALLBACK's transport is judged like the primary's (Codex P1 4265522953)", () => {
+  /** A primary whose retries do not recover (5xx only), so only the fallback can. */
+  const PRIMARY_NO_RECOVERY = `${URL_OK}#ct=1000&rt=5000&rp=5xx`;
+  const withFallback = (fallbackUrl: string) => {
+    const f = allProven();
+    Object.assign(f.service!, { inboundRequestUrl: PRIMARY_NO_RECOVERY, fallbackUrl, fallbackMethod: "POST" });
+    return f;
+  };
+  const status = (f: InboundStopFacts, id: string) => evaluateInboundStopPreflight(f).checks.find((c) => c.id === id)?.status;
+
+  for (const [why, frag] of [
+    ["sni=n (the fallback TLS handshake to this virtual host fails)", "#sni=n"],
+    ["a one-edge e=", "#e=ashburn"],
+    ["sni=n among other overrides", "#ct=1000&sni=n"],
+  ] as const) {
+    it(`primary refused + same-route POST fallback with ${why}: never ready`, () => {
+      const f = withFallback(`${URL_OK}${frag}`);
+      expect(status(f, "stop_redelivery")).toBe("fail");
+      expect(evaluateInboundStopPreflight(f).ready).toBe(false);
+    });
+  }
+
+  for (const [why, url] of [
+    ["no fragment", URL_OK],
+    ["sni=y", `${URL_OK}#sni=y`],
+    ["two edges", `${URL_OK}#e=ashburn,umatilla`],
+    ["timeouts only", `${URL_OK}#ct=1000&rt=5000`],
+  ] as const) {
+    it(`POSITIVE CONTROL: a safe same-route fallback (${why}) recovers: ready`, () => {
+      const f = withFallback(url);
+      expect(status(f, "stop_redelivery")).toBe("pass");
+      expect(evaluateInboundStopPreflight(f).ready).toBe(true);
+    });
+  }
+
+  it("NUMBER path: the number's sms_fallback_url is judged the same way", () => {
+    const f = allProven();
+    Object.assign(f.service!, {
+      useInboundWebhookOnNumber: true,
+      numberSmsUrl: PRIMARY_NO_RECOVERY,
+      numberSmsMethod: "POST",
+      numberSmsApplicationSid: null,
+      numberSmsFallbackUrl: `${URL_OK}#sni=n`,
+      numberSmsFallbackMethod: "POST",
+    });
+    expect(status(f, "stop_redelivery")).toBe("fail");
+    f.service!.numberSmsFallbackUrl = URL_OK;
+    expect(status(f, "stop_redelivery")).toBe("pass");
+  });
+
+  it("POOL path: a member whose only recovery is an sni=n fallback fails sender_pool; a safe one passes", () => {
+    const f = allProven();
+    Object.assign(f.service!, { useInboundWebhookOnNumber: true, numberSmsUrl: URL_RETRY, numberSmsMethod: "POST", numberSmsApplicationSid: null });
+    f.routedFromNumber = undefined;
+    const member = (fb: string) => ({
+      phoneNumber: "+14165550101",
+      smsUrl: PRIMARY_NO_RECOVERY,
+      smsMethod: "POST",
+      smsApplicationSid: null,
+      smsFallbackUrl: fb,
+      smsFallbackMethod: "POST",
+    });
+    f.service!.senderPool = [
+      { phoneNumber: "+14165550100", smsUrl: URL_RETRY, smsMethod: "POST", smsApplicationSid: null },
+      member(`${URL_OK}#sni=n`),
+    ];
+    expect(status(f, "sender_pool")).toBe("fail");
+    f.service!.senderPool[1] = member(URL_OK);
+    expect(status(f, "sender_pool")).toBe("pass");
+  });
+
+  describe("under a matching Rule the Setting decides what it can", () => {
+    const ruled = (fallbackUrl: string, primary = PRIMARY_NO_RECOVERY, ...settings: Array<Record<string, unknown>>) => {
+      const f = withFallback(fallbackUrl);
+      f.service!.inboundRequestUrl = primary;
+      const base = { percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY };
+      f.webhookRules = {
+        matched: true,
+        settings: (settings.length ? settings : [{ retryOn: ["HTTP_5XX"] }]).map((o) => ({ ...base, ...o })) as never,
+      };
+      return f;
+    };
+
+    it("a one-edge e= on the fallback is NOT consulted (the Setting's edgeZones govern): recovers", () => {
+      expect(status(ruled(`${URL_OK}#e=ashburn`), "stop_redelivery")).toBe("pass");
+    });
+
+    it("sni=n on the fallback: Settings carry no SNI field, so undetermined: unknown", () => {
+      expect(status(ruled(`${URL_OK}#sni=n`), "stop_redelivery")).toBe("unknown");
+    });
+
+    it("complete Setting retries, but the PRIMARY URL says sni=n: undetermined, unknown (no fallback either)", () => {
+      const f = ruled(URL_OK, `${URL_OK}#sni=n`, {});
+      Object.assign(f.service!, { fallbackUrl: null, fallbackMethod: null });
+      expect(status(f, "stop_redelivery")).toBe("unknown");
+      f.service!.inboundRequestUrl = URL_OK;
+      expect(status(f, "stop_redelivery")).toBe("pass");
+    });
+
+    it("SPLIT: one share without recovery is rescued by a safe fallback, not by an sni=n one", () => {
+      const split = [{ percentage: 70 }, { percentage: 30, retryOn: ["HTTP_5XX"] }];
+      expect(status(ruled(URL_OK, PRIMARY_NO_RECOVERY, ...split), "stop_redelivery")).toBe("pass");
+      expect(status(ruled(`${URL_OK}#sni=n`, PRIMARY_NO_RECOVERY, ...split), "stop_redelivery")).toBe("unknown");
+    });
+  });
+
+  it("Rules unread: an sni=n or one-edge fallback is unknown, never certified", () => {
+    for (const frag of ["#sni=n", "#e=ashburn"]) {
+      const f = withFallback(`${URL_OK}${frag}`);
+      f.webhookRules = undefined;
+      expect(status(f, "stop_redelivery")).toBe("unknown");
+    }
+  });
+});

@@ -117,11 +117,10 @@ function retriesRecoverEveryFailure(r: { named: readonly DeliveryFailure[]; coun
  * selection, which this preflight does not second-guess (handoff A7).
  */
 export function retriesRecoverDelivery(url: string | null | undefined): boolean {
+  if (urlTransport(url, "none") !== "ok") return false;
   const n = normalizeTwilioWebhookUrl(url);
   if (!n.ok) return false;
   const o = n.overrides ?? {};
-  if (o.sni === "n") return false;
-  if (o.e !== undefined && o.e.length < 2) return false;
   return retriesRecoverEveryFailure({
     named: (o.rp ?? ["ct"]).flatMap((t) => URL_POLICY[t] ?? []),
     count: o.rc ?? 1,
@@ -129,6 +128,30 @@ export function retriesRecoverDelivery(url: string | null | undefined): boolean 
     rt: o.rt ?? TWILIO_DEFAULT_READ_TIMEOUT_MS,
     tt: o.tt ?? TWILIO_DEFAULT_TOTAL_TIME_MS,
   });
+}
+
+/**
+ * THE ONE TRANSPORT VALIDATOR for a webhook URL Twilio requests, primary or
+ * fallback (Codex P1s 4265363596, 4265522953; P2 4265363603). Under the
+ * account's Webhook Rules (`rules`):
+ *   "none"    no Rule matches, so the URL's overrides apply: `sni=n` (every
+ *             TLS handshake to this virtual-hosted endpoint fails) and an
+ *             explicit one-edge `e=` (no alternate origin) are UNSAFE;
+ *   "matched" the Setting decides edges (webhook_zones judges them), so `e=`
+ *             is ignored; Settings have no SNI field, so whether a URL
+ *             `sni=n` still applies is undocumented: UNKNOWN (handoff A8);
+ *   "unknown" the Rules are unread, so `sni=n` or a one-edge `e=` is UNKNOWN.
+ * An unparseable URL or fragment is unsafe. Omitted sni/e are Twilio's
+ * defaults and fine.
+ */
+function urlTransport(url: string | null | undefined, rules: "none" | "matched" | "unknown"): "ok" | "unsafe" | "unknown" {
+  const n = normalizeTwilioWebhookUrl(url);
+  if (!n.ok) return "unsafe";
+  const o = n.overrides ?? {};
+  const oneEdge = o.e !== undefined && o.e.length < 2;
+  if (rules === "none") return o.sni === "n" || oneEdge ? "unsafe" : "ok";
+  if (rules === "matched") return o.sni === "n" ? "unknown" : "ok";
+  return o.sni === "n" || oneEdge ? "unknown" : "ok";
 }
 
 /**
@@ -625,14 +648,34 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
    * covers connect failures, timeouts and 5xx alike. The fallback is the same
    * URL, so the same Rule, Setting and edge zones govern it too.
    */
+  const ruleState = rules === undefined ? "unknown" : rules.matched ? "matched" : "none";
   const redelivers = (url: string | null | undefined, fbUrl: string | null | undefined, fbMethod: string | null | undefined) => {
-    const retries = ruleRetries === "n/a" ? (retriesRecoverDelivery(url) ? "yes" : "no") : ruleRetries;
+    // The primary's retries, under the SAME precedence as its transport: with a
+    // Rule matching, the Setting's retries count only if the URL's own
+    // transport cannot defeat them.
+    const primaryTransport = ruleState === "none" ? "ok" : urlTransport(url, ruleState);
+    const retries =
+      ruleRetries === "n/a"
+        ? retriesRecoverDelivery(url)
+          ? "yes"
+          : "no"
+        : ruleRetries === "yes" && primaryTransport === "unknown"
+          ? "unknown"
+          : ruleRetries;
     if (retries === "yes") return "yes" as const;
     const fallbackIsRoute = !!expected.ok && signedFormOfConfiguredUrl(fbUrl ?? null) === expected.url;
-    if (fallbackIsRoute && (fbMethod ?? "").toUpperCase() === "POST") return "fallback" as const;
+    // The fallback's own fragment is stripped only to compare endpoints; its
+    // transport is judged by the same validator and precedence (Codex P1
+    // 4265522953): an unsafe fallback recovers nothing, an undetermined one is
+    // unknown.
+    const fallbackTransport = fallbackIsRoute ? urlTransport(fbUrl, ruleState) : "unsafe";
+    if (fallbackIsRoute && (fbMethod ?? "").toUpperCase() === "POST" && fallbackTransport === "ok") return "fallback" as const;
     // Anything not read stays UNKNOWN (Codex P2 4254851468): the URL, or, for a
-    // fallback that IS the route, its method.
-    const fallbackUnread = fbUrl === undefined || (fallbackIsRoute && fbMethod === undefined);
+    // fallback that IS the route, its method or its effective transport.
+    const fallbackUnread =
+      fbUrl === undefined ||
+      (fallbackIsRoute && fbMethod === undefined) ||
+      (fallbackIsRoute && (fbMethod ?? "").toUpperCase() === "POST" && fallbackTransport === "unknown");
     return retries === "unknown" || fallbackUnread ? ("unknown" as const) : ("no" as const);
   };
 
