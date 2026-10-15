@@ -746,6 +746,39 @@ describe("0223 enforces ownership in the database, not only in the server", () =
     expect(save).toMatch(
       /jsonb_agg\(g\.value order by btrim\(coalesce\(g\.value->>'group_key', ''\)\)\)/,
     );
+    // AND THE DIGEST BINDS THE IDENTITY TOO, not only the groups. The first
+    // version hashed the payload alone and left the setup identity to four
+    // column comparisons; both still run, and they do different jobs - the
+    // columns give the DISTINGUISHABLE sentence, the digest is the backstop
+    // that a column added to the row later cannot slip past (Codex, #860).
+    for (const part of [
+      /'machine', p_studio_machine_id::text/,
+      /'profile', v_scope\.o_profile_id/,
+      /'version', v_scope\.o_profile_version/,
+      /'mode', +v_mode/,
+    ]) {
+      expect(save, `the digest must bind ${String(part)}`).toMatch(part);
+    }
+    // FROM THE SCOPE, WHICH MEANS AFTER IT. The profile and version in the
+    // digest are the UNIT'S REGISTERED ones that assert_setup_scope resolved,
+    // never the caller's claim - so the digest can only be computed once that
+    // has run, and a digest built before it would be hashing an assertion
+    // nobody had checked.
+    expect(
+      save.indexOf("assert_setup_scope"),
+      "the scope must be asserted before the digest is built from it",
+    ).toBeLessThan(save.indexOf("into v_digest"));
+    // THE RECORDER IS DELIBERATELY ABSENT. Binding it would turn a colleague's
+    // retry of a lost save into a refusal, when it is the same save and the
+    // honest answer is the original submission with its original author.
+    const digestExpr = save.slice(
+      save.indexOf("select md5("),
+      save.indexOf("into v_digest"),
+    );
+    expect(digestExpr, "the digest must not bind the recorder").not.toMatch(
+      /practitioner/,
+    );
+
     // STORED, or there would be nothing to compare on the retry.
     expect(save).toMatch(/idempotency_key, payload_digest,/);
     expect(CODE).toMatch(/payload_digest text not null/);

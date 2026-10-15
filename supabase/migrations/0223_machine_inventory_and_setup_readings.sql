@@ -1612,22 +1612,6 @@ begin
       using errcode = 'check_violation';
   end if;
 
-  -- WHAT THIS KEY IS BEING USED FOR, canonicalised before it is hashed.
-  --
-  -- ORDERED BY GROUP KEY so the same save sent with its groups in a different
-  -- order still matches - the command writes them in sorted order anyway, for
-  -- the deadlock reason below, so a digest over the input order would make an
-  -- identical save look different purely because of how the caller listed it.
-  -- jsonb normalises object keys itself, so nothing else needs canonicalising.
-  select md5(
-           coalesce(
-             jsonb_agg(g.value order by btrim(coalesce(g.value->>'group_key', '')))::text,
-             '[]'
-           )
-         )
-    into v_digest
-    from jsonb_array_elements(p_groups) g;
-
   -- SERIALISE THIS SAVE AGAINST ITS OWN RETRIES.
   --
   -- Without this, two concurrent retries of the same lost Save both find no
@@ -1646,6 +1630,61 @@ begin
   -- records. Nothing is disclosed before the caller is known to belong here.
   select * into v_scope
     from public.assert_setup_scope(p_block_id, p_studio_machine_id);
+
+  -- WHAT THIS KEY IS BEING USED FOR: the payload AND the identity the readings
+  -- would be recorded under, canonicalised and then hashed into one value.
+  --
+  -- ORDERED BY GROUP KEY so the same save sent with its groups in a different
+  -- order still matches - the command writes them in sorted order anyway, for
+  -- the deadlock reason below, so a digest over the input order would make an
+  -- identical save look different purely because of how the caller listed it.
+  -- jsonb normalises object keys itself, so nothing else needs canonicalising.
+  --
+  -- THE IDENTITY IS IN IT, which it was not when the digest was first added.
+  -- Then the digest covered only the groups and the setup identity was
+  -- compared COLUMN BY COLUMN below. Both still happen, and the reason for
+  -- each is different:
+  --
+  --   * the column comparison stays FIRST because it produces its own
+  --     sentence - a key reused on another machine and a key reused with other
+  --     values are two different bugs with two different fixes, and a caller
+  --     that cannot tell them apart cannot tell her what to do;
+  --   * the digest is the BACKSTOP, and it is the one that does not have to be
+  --     maintained: a column added to the submissions row later is bound by it
+  --     automatically, where a new column comparison has to be remembered
+  --     (Codex, #860).
+  --
+  -- COMPUTED AFTER `assert_setup_scope`, deliberately, because the profile and
+  -- version in it are the UNIT'S REGISTERED ones that the scope assertion
+  -- resolved - not anything the caller claimed. So a unit re-registered onto a
+  -- different profile version between a save and its retry changes the digest,
+  -- which is correct: the Save being retried is no longer the Save that was
+  -- made.
+  --
+  -- THE RECORDER IS DELIBERATELY NOT IN IT. `recorded_by_practitioner_id` is
+  -- also recorded on the row, and binding it would make a colleague's retry of
+  -- a lost save a REFUSAL - but it is the same save, on the same block, under
+  -- the same machine, with the same values, and the honest outcome is to return
+  -- the original and keep its original author. Re-attributing it to whoever
+  -- happened to press the button again would be worse than either.
+  select md5(
+           jsonb_build_object(
+             'machine', p_studio_machine_id::text,
+             'profile', v_scope.o_profile_id,
+             'version', v_scope.o_profile_version,
+             'mode',    v_mode,
+             -- ON ONE LINE on purpose: the source contract pins this exact
+             -- canonical-order expression, and wrapping it put the aggregate
+             -- and its ORDER BY on separate lines so the guard stopped
+             -- matching. A guard that a reformat can switch off is worth
+             -- keeping matchable.
+             'groups',  coalesce(
+               (select jsonb_agg(g.value order by btrim(coalesce(g.value->>'group_key', ''))) from jsonb_array_elements(p_groups) g),
+               '[]'::jsonb
+             )
+           )::text
+         )
+    into v_digest;
 
   -- ALREADY RECORDED? Then this is a retry, and the answer is the ORIGINAL.
   select sub.id, sub.studio_machine_id, sub.machine_profile_id,
