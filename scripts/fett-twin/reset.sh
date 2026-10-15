@@ -43,7 +43,9 @@ fi
 FILE="tests/twin/fett-twin.seed.twin.ts"
 [ "$MODE" = "--cleanup-dry-run" ] && FILE="tests/twin/fett-twin.cleanup.twin.ts"
 cd "$ROOT"
+# #879's paired-target guard refuses a half-moved pair, so the API side names the SAME twin stack too.
 HONE_LOCAL_DB_URL="postgresql://postgres:postgres@127.0.0.1:${DB_PORT}/postgres" \
+E2E_SUPABASE_URL="http://127.0.0.1:${API_PORT}" \
 FETT_TWIN_API_URL="http://127.0.0.1:${API_PORT}" \
 FETT_TWIN_SERVICE_ROLE_KEY="$SERVICE_KEY" \
   npx vitest run --config vitest.twin.config.ts "$FILE"
