@@ -646,6 +646,13 @@ export async function fetchNextAvailableDateAction(params: {
   slug: string;
   serviceId: string;
   fromDate: string;
+  /**
+   * G1 / CODEX P2 4265796486 — which command this jump is for, same contract as
+   * `fetchPublicSlotsAction`. Absent means the LEGACY studio-wide answer, which
+   * is what an EXISTING client commits through and what every studio with the
+   * assignment switch off must get.
+   */
+  newClient?: boolean;
 }): Promise<
   { ok: true; date: string | null } | { ok: false; error: string }
 > {
@@ -719,6 +726,35 @@ export async function fetchNextAvailableDateAction(params: {
   // iterations (shared helper in lib/booking/slots.ts, PR #149).
   const nowRef = new Date();
 
+  // G1 / CODEX P2 4265796486 — THE JUMP MUST ASK THE SAME QUESTION AS THE GRID.
+  //
+  // It used to be studio-wide by construction, so with the assignment switch ON
+  // it could skip the earliest date another eligible practitioner was free on
+  // (capacity-ON fans studio-wide closures out per practitioner, so a
+  // studio-wide reservation filter collects everyone's conflicts), and could
+  // land on a date whose union grid is empty (the studio fallback window can be
+  // open where every eligible practitioner is closed). Either way the control
+  // took the visitor somewhere the grid beneath it disagreed with.
+  //
+  // Scoped on the SAME condition as the grid: the new-client path with the
+  // switch on. `loadPublicSlotsByDate` unions in memory from reservations it
+  // already loads, adding two bulk queries for the whole window and none per
+  // day, so BOOK-NEXT-FAST-01's bound is intact.
+  const scopedJump =
+    params.newClient === true &&
+    studio.practitioner_capacity_booking_enabled === true;
+  const eligibleForJump = scopedJump
+    ? (await loadEligiblePractitioners(admin, studio.id, params.serviceId)).map(
+        (o) => o.id,
+      )
+    : [];
+
+  // An empty list means studio-wide to the range loader. A scoped request
+  // must instead refuse when eligibility is empty or its reads fail.
+  if (scopedJump && eligibleForJump.length === 0) {
+    return { ok: false, error: UNAVAILABLE_PUBLIC_BOOKING_MESSAGE };
+  }
+
   const range = await loadPublicSlotsByDate(
     admin,
     {
@@ -727,6 +763,7 @@ export async function fetchNextAvailableDateAction(params: {
       publicBookingHorizonMonths: studio.public_booking_horizon_months,
       bufferMinutes: studio.buffer_minutes,
       serviceDurationMinutes: service.default_duration_minutes,
+      practitionerIds: eligibleForJump,
     },
     dates,
     nowRef,

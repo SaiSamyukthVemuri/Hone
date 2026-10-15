@@ -605,6 +605,11 @@ export function PublicBookForm({
         slug,
         serviceId,
         fromDate: startFrom,
+        // Same discriminator the grid and the commit use: a new client is
+        // assigned by 0225/0222 and so wants the eligible-practitioner union;
+        // an existing client commits studio-wide and must get the studio-wide
+        // jump, or the jump and the commit disagree.
+        newClient: isNewClient,
       });
       // G1 / CODEX P2 — DISCARD A STUDIO-WIDE ANSWER THE VISITOR HAS SINCE
       // NARROWED AWAY FROM.
