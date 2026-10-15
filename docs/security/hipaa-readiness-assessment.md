@@ -106,7 +106,7 @@ means bytes the provider can read.
 | F15 | Ops alerts | `ops_alerts` table plus "[Hone CRITICAL]" email via Resend | Designed to be PHI-free (tests under `tests/source-guards`, `tests/app/*privacy*`) | **PARTIAL** — re-audit payloads; they still go through Resend |
 | F16 | Supabase Auth email | Practitioner invite and password reset | Workforce email addresses (not patients) | **PARTIAL** — **verified 2026-10-12: no custom SMTP is configured** (`smtp_host` null), so auth email goes through Supabase's built-in sender; workforce-only, but production auth email should move to a configured sender as part of D-2/D-4 |
 | F17 | Patient portal | Magic links (Resend), portal messages (`client_portal_messages`), "New secure message from {studio}" notifications | Message bodies stay in the database; notifications reveal the studio relationship | **MISSING** — same Resend dependency as F4 |
-| F18 | Exports | `app/(app)/settings/data/actions.ts`, `lib/export/*` (JSZip and PDF) | Full record export downloaded to the practitioner's device | **PARTIAL** — export is audited (`audit_logs`); device handling is a policy control (G-20) |
+| F18 | Exports | `app/(app)/settings/data/actions.ts`, `lib/export/*` (JSZip and PDF) | A **named subset** of the studio's records, downloaded as a ZIP to the practitioner's device. `lib/export/resource-registry.ts` marks other studio-owned records as `pending` (TRUTH-01B). These include client intake forms, treatment images and legacy photos (metadata and binaries), and payment records (for example `appointment_payments`, `payment_charge_attempts`, `stripe_refunds`) | **PARTIAL**. The export is audited (`audit_logs`), but it is **incomplete** for patient access and offboarding (G-21). Device handling is a policy control (G-20) |
 | F19 | Demo and early-access forms | `app/_components/DemoForm.tsx`, `demo_requests` (#826) | Free text could carry patient detail | **PARTIAL** — business-only by design; a free-text field can become a PHI channel (G-17) |
 | F20 | Developer, CI, preview and test paths | GitHub, CI local Supabase stacks, Vercel previews, Playwright fixtures | Synthetic fixtures by convention, but **verified 2026-10-13: Vercel previews share the production Supabase URL and service-role key, plus live Twilio and Resend credentials** (G-16) | **MISSING, HIGH.** Previews have production-data access, and there is no written "no real PHI in dev tools" rule (G-16) |
 | F21 | AI/OCR | `lib/intake/review-flags.ts`: "NO AI/OCR" | None | **READY** — no AI processor in the tree |
@@ -131,9 +131,11 @@ available" fact comes from the vendor's public page, read 2026-10-11.
 
 ## 5. Gap matrix
 
-The owner is Sam unless a lane is named. The "Gate" column says what this
-gap blocks: **P** means HIPAA-dependent patient onboarding; **C** means any
-public HIPAA claim. Every row below blocks both.
+The owner is Sam unless a lane is named. Gate: every row whose status is
+**not READY** (MISSING, PARTIAL or UNKNOWN) blocks both **P**,
+HIPAA-dependent patient onboarding, and **C**, any public HIPAA claim. A
+**READY** row blocks neither, though its evidence must stay current. There is
+no separate Gate column: the status column is the gate.
 
 | ID | Area | Status | Evidence (2026-10-11) | Remediation | Lane |
 |---|---|---|---|---|---|
@@ -157,7 +159,7 @@ public HIPAA claim. Every row below blocks both.
 | G-18 | Security Advisor findings disposition | **UNKNOWN** | Issue baseline: no ERROR; WARN/INFO unclassified | Classify each against callers and grants (§6); **no blanket fixes** | DB lane |
 | G-19 | Incident response, breach assessment and notification (§164.308(a)(6), Part 164 Subpart D) | **MISSING** | No procedure document | Write the procedure; include vendor notice paths | Sam + advisor |
 | G-20 | Workforce training, device and access practice, contingency plan, periodic review | **MISSING** | None on record | Policies proportionate to a small team | Sam + advisor |
-| G-21 | Retention, export, correction and offboarding policy | **PARTIAL** | Export exists; clinical amendments are append-only | Separate legal retention decisions from the software's immutable history | Sam + advisor |
+| G-21 | Retention, export, correction and offboarding policy | **PARTIAL** | Clinical amendments are append-only. The export is a **named subset** (F18): intake forms, treatment images and photos, and payment records are still `pending` (TRUTH-01B) | Complete the export for the pending studio-owned records (TRUTH-01B) before relying on it for patient access or offboarding. Separate legal retention decisions from the software's immutable history | Sam + advisor; export completeness: TRUTH-01B owner |
 | G-22 | Studio-to-Hone BAA template | **MISSING** | None | Have counsel draft it; packet §1 lists its required content | Counsel |
 
 ## 6. Security Advisor findings: classification method
@@ -193,6 +195,7 @@ Any resulting migration needs a fresh migration census
 | Date | Change |
 |---|---|
 | 2026-10-11 | First assessment (HIPAA-READY-01), source at `6c5eac80`. |
+| 2026-10-15 | Codex review of `0504724a`. F18 and G-21 now describe the export as a named subset (intake forms, treatment images and photos, and payment records are pending, TRUTH-01B). The gate rule is stated: only non-READY rows block P and C. |
 | 2026-10-15 | Codex review of `2931821f`. G-09 now records #857 as merged (new writes minimized; historical Customers remain). F20 now matches the verified G-16 exposure (MISSING, HIGH). The decision packet's option M now includes the Vercel HIPAA BAA at $350/mo (public price). |
 | 2026-10-13 | **G-16 raised to MISSING, HIGH:** preview deployments share the production Supabase service-role key and URL, plus live Twilio and Resend credentials (Vercel env metadata, read-only; reported by ops01 and verified). |
 | 2026-10-12 | Packet §0: the open questions reduced to four business decisions (B1 to B4); routine items adopted as engineering defaults under the delegation; hosted changes listed as per-change authorizations. |
