@@ -442,7 +442,7 @@ jobs:
         # resolver), that needs kong (54321), not just Postgres (54322). Bring
         # up the same trimmed stack the browser-e2e job uses (proven in CI); the
         # node-pg harness (54322) and `db reset --local` are unaffected.
-        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 
       - name: Apply full migration chain from scratch
         # Fails the job if ANY migration 0001-current cannot apply to
@@ -582,7 +582,7 @@ jobs:
           sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
 
       - name: Start local Supabase stack (db + auth + mail capture)
-        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
@@ -844,7 +844,7 @@ jobs:
           sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
 
       - name: Start local Supabase stack (db + auth + mail capture)
-        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
@@ -947,7 +947,7 @@ jobs:
           sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
 
       - name: Start local Supabase stack (db + auth + mail capture)
-        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
@@ -1054,7 +1054,7 @@ jobs:
           sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
 
       - name: Start local Supabase stack (db + auth + mail capture)
-        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
