@@ -146,17 +146,17 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // those two are exactly the specs an earlier version of that panel broke,
     // so it must run in the lane that can break it.
     //
-    // RECORDED AS A DECISION, with the cost stated in terms a reader can check
-    // against the file. ONE test() at 390px only, with ten steps. Its runtime
-    // depends on the SERVER's environment, which is unusual enough to state:
+    // RECORDED AS A DECISION, with the cost MEASURED rather than estimated.
+    // ONE test() at 390px only, with ten steps. Its runtime depends on the
+    // SERVER's environment, which is unusual enough to state:
     //   * without HONE_SYNTHETIC_MACHINE_PROFILE=1 in webServer.env it runs
-    //     steps 1-2 and the gate-closed branch - three page interactions and
-    //     one query, roughly 15-20s - and still asserts the claim that matters,
-    //     that no real model is offered;
-    //   * with the flag set it runs all ten, roughly 45-70s: four page loads,
-    //     one block save, one reading save and six queries.
-    // So about a minute at worst against a ~6 min target and a 15 min ceiling.
-    // The margin is not the concern; the visibility is.
+    //     steps 1-2 and the gate-closed branch - MEASURED 7.3s - and still
+    //     asserts the claim that matters, that no real model is offered;
+    //   * with the flag set it runs all ten - MEASURED 37.1s.
+    // Both on an isolated local stack on 2026-10-15. THE ESTIMATES THIS
+    // REPLACES WERE 15-20s AND 45-70s, so the one that matters for CI was
+    // overstated by more than double - and CI only ever runs the CLOSED half,
+    // because the flag is not in its webServer.env.
     //
     // Now 41: MPX-03's machine-create-mode-journey.spec.ts joined `sessions`
     // for the same reason as its sibling - it drives the settings-block form.
@@ -166,19 +166,14 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // enters on a block that already exists, so the create-mode half of the
     // journey has never been mounted at all.
     //
-    // RECORDED AS A DECISION, with the cost stated in terms a reader can check
-    // against the file. ONE test() at 390px only, with eight steps, and its
-    // runtime depends on the SERVER's environment exactly as the sibling's
-    // does:
-    //   * without HONE_SYNTHETIC_MACHINE_PROFILE=1 in webServer.env it runs
-    //     step 1 and the gate-closed branch - two page interactions and one
-    //     query, roughly 15-20s - and still asserts that no real model is
-    //     offered and that nothing was recorded;
-    //   * with the flag set it runs all eight, roughly 60-90s: four
-    //     navigations, one block save, two reading saves and seven queries.
-    // Against a ~6 min target and a 15 min ceiling that is visible and
-    // affordable; the pair together is now about two and a half minutes of a
-    // six-minute lane, which is the number worth watching next time.
+    // RECORDED AS A DECISION, with the cost MEASURED. ONE test() at 390px
+    // only, with eight steps, and its runtime depends on the SERVER's
+    // environment exactly as the sibling's does:
+    //   * gate closed, step 1 and the gate-closed branch - MEASURED 9.5s;
+    //   * gate open, all eight steps - MEASURED 24.6s.
+    // The estimate this replaces was 60-90s for the open half: nearly three
+    // times the truth. Estimating browser cost upward feels prudent and is
+    // not - it is how a lane acquires a budget nobody trusts.
     //
     // Now 42: MPX-03's machine-switch-discards-draft.spec.ts joined `sessions`
     // for the third time for the same reason - it drives the settings-block
@@ -193,16 +188,13 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // every count in the journey for cases unrelated to it, which is exactly
     // how that spec's counts went stale three times.
     //
-    // COST, STATED AS AN ESTIMATE AND MARKED AS ONE. ONE test() at 390px with
-    // seven steps:
-    //   * gate closed: step 1 and the gate-closed branch - two page
-    //     interactions and one query, in line with its siblings' measured
-    //     7.5-10.0s;
-    //   * gate open: all seven, with four navigations, one block save, three
-    //     reading saves, one refused save and roughly fifteen queries. The
-    //     journey measured 22.3s gate-open for eight comparable steps, so this
-    //     should land near it; it is UNMEASURED here and this number is to be
-    //     replaced with the observed one.
+    // COST, MEASURED on an isolated local stack on 2026-10-15. ONE test() at
+    // 390px with seven steps:
+    //   * gate closed - 6.8s, the cheapest of the four;
+    //   * gate open - 18.7s, with four navigations, one block save, three
+    //     reading saves, one refused save and about fifteen queries.
+    // The estimate said "should land near the journey's 22.3s", and it came in
+    // under it.
     //
     // Now 43: MPX-03's machine-initial-save-retry.spec.ts, the fourth spec in
     // `sessions` from this lane and the one with the least substitutable job.
@@ -214,10 +206,17 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // and a form minting a fresh key per attempt would leave every one of
     // those tests passing with the hole wide open.
     //
-    // COST, ESTIMATED AND MARKED AS SUCH. ONE test() at 390px, four steps,
-    // two saves and about eight queries - the lightest of the four. Its
-    // gate-closed half is one navigation and one query. UNMEASURED; to be
-    // replaced with the observed number.
+    // COST, MEASURED on an isolated local stack on 2026-10-15. ONE test() at
+    // 390px, four steps, two saves and about eight queries:
+    //   * gate closed - 8.2s;
+    //   * gate open - 13.0s, the lightest of the four, as predicted.
+    //
+    // THE FOUR MACHINE SPECS TOGETHER, which is the number this pin exists to
+    // keep visible: 31.8s with the gate CLOSED and 93.4s with it open. CI runs
+    // the closed half, so the lane pays about half a minute for all four -
+    // against a ~6 min target and a 15 min ceiling. The estimates these
+    // measurements replace added up to roughly two and a half minutes for two
+    // of them alone.
     expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(43);
   });
 

@@ -820,6 +820,13 @@ describe("0223 · the initial save IS idempotent per (session, retry key)", () =
       machine: machineId,
       groups: JSON.stringify([group("g1", [1], "120")]),
     });
+    // OBSERVED, NOT ASSUMED, and the first run of this test is why: it
+    // hard-coded `toBe(1)` and found TWO blocks, with the absorb assertions
+    // above passing. `seedSession` inserts a session_blocks row of its own, so
+    // the session starts with one - the delta is the claim, and the total never
+    // was. Every other case in this file was already written as a delta; this
+    // one was the exception and the run caught it.
+    const before = await blocksIn(sessionId);
 
     const a = await beginAsUser(studio.userId);
     const b = await beginAsUser(studio.userId);
@@ -861,7 +868,10 @@ describe("0223 · the initial save IS idempotent per (session, retry key)", () =
       const second = rb.value.rows[0].r as SaveOut;
       expect(second.block_id, "two areas were created").toBe(first.block_id);
       expect(second.reused).toBe(true);
-      expect(await blocksIn(sessionId), "exactly one area exists").toBe(1);
+      expect(
+        await blocksIn(sessionId),
+        "the concurrent retry created a second area",
+      ).toBe(before + 1);
       expect(await claimsIn(sessionId)).toHaveLength(1);
     } finally {
       await a.query("rollback").catch(() => undefined);
