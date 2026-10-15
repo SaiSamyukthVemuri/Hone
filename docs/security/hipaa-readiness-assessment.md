@@ -110,6 +110,7 @@ means bytes the provider can read.
 | F19 | Demo and early-access forms | `app/_components/DemoForm.tsx`, `demo_requests` (#826) | Free text could carry patient detail | **PARTIAL** — business-only by design; a free-text field can become a PHI channel (G-17) |
 | F20 | Developer, CI, preview and test paths | GitHub, CI local Supabase stacks, Vercel previews, Playwright fixtures | Synthetic fixtures by convention, but **verified 2026-10-13: Vercel previews share the production Supabase URL and service-role key, plus live Twilio and Resend credentials** (G-16) | **MISSING, HIGH.** Previews have production-data access, and there is no written "no real PHI in dev tools" rule (G-16) |
 | F21 | AI/OCR | `lib/intake/review-flags.ts`: "NO AI/OCR" | None | **READY** — no AI processor in the tree |
+| F22 | Booking conversion tracking | `app/book/[slug]/actions.ts` → `dispatchBookingConversion` → `lib/conversion/adapters/meta.ts` (Meta Conversions API) | When a studio owner enables the self-service Meta integration **and** the booker grants tracking consent, a confirmed booking posts a `Schedule` event with SHA-256-hashed email and phone, client IP, user agent, the booking-page URL and a generic service category. It is inert in production today (no studio has an enabled config) | **MISSING control for covered studios** (G-23). Hashed identifiers plus the booking event and the studio relationship go to Meta, and nothing prevents a covered studio from enabling it (Codex P1 4277870216) |
 
 ## 4. Processor register
 
@@ -126,6 +127,7 @@ available" fact comes from the vendor's public page, read 2026-10-11.
 | Sentry | Error tracking | Designed out (scrubbed) | Publishes a Business Associate Amendment v1.0.1 (2026-01-15) ([sentry.io/legal/baa](https://sentry.io/legal/baa/)); plan eligibility unverified | No BAA known |
 | PostHog | Analytics (browser, marketing only; server, practitioner) | Designed out | BAA "contact us" ([PostHog HIPAA](https://posthog.com/docs/privacy/hipaa-compliance)) | No BAA known; keep PHI out |
 | Upstash | Redis rate limiting | Hashed identifiers | States Redis is HIPAA compliant ([compliance](https://upstash.com/docs/common/help/compliance)); BAA and plan terms unverified | **UNKNOWN** |
+| Meta (Conversions API) | Booking conversion events (F22), per studio, opt-in | Hashed email and phone, IP, user agent, booking URL, service category | No Meta BAA is known or verified; treat it as **unavailable** | Self-service; inert today; must be **off for covered studios** (G-23) |
 | Google | Calendar API (the studio's own calendar) | Times only | Workspace BAA covers "Included Functionality" only, not consumer accounts or add-ons ([Google](https://support.google.com/a/answer/3407054)) | Studio-side; Hone sends minimized events |
 | GitHub | Source and CI | Must be none | Not a PHI processor; **must stay that way** | Enforce via G-16 |
 
@@ -161,6 +163,7 @@ no separate Gate column: the status column is the gate.
 | G-20 | Workforce training, device and access practice, contingency plan, periodic review | **MISSING** | None on record | Policies proportionate to a small team | Sam + advisor |
 | G-21 | Retention, export, correction and offboarding policy | **PARTIAL** | Clinical amendments are append-only. The export is a **named subset** (F18): intake forms, treatment images and photos, and payment records are still `pending` (TRUTH-01B) | Complete the export for the pending studio-owned records (TRUTH-01B) before relying on it for patient access or offboarding. Separate legal retention decisions from the software's immutable history | Sam + advisor; export completeness: TRUTH-01B owner |
 | G-22 | Studio-to-Hone BAA template | **MISSING** | None | Have counsel draft it; packet §1 lists its required content | Counsel |
+| G-23 | Marketing conversion tracking for covered studios (F22) | **MISSING** | The Meta conversion integration is self-service per studio; nothing ties it to the studio's HIPAA status | Block enabling (and disable) conversion tracking for any studio marked HIPAA-covered, or obtain a counsel determination and the agreements before allowing it. Until then, option M requires it **off** for the covered studio | ENG (guard); Sam + counsel (determination) |
 
 ## 6. Security Advisor findings: classification method
 
@@ -195,6 +198,7 @@ Any resulting migration needs a fresh migration census
 | Date | Change |
 |---|---|
 | 2026-10-11 | First assessment (HIPAA-READY-01), source at `6c5eac80`. |
+| 2026-10-15 | Codex review of `f999dcc7`. Added F22, the Meta processor row and G-23: Meta conversion tracking is self-service, inert today, and must be off for covered studios. Option M's floor now includes Supabase Small compute, which PITR on HIPAA projects requires. |
 | 2026-10-15 | Codex review of `69ce2a31`. Option M's floor now includes the Vercel Pro platform fee: $1,069/mo total, or $1,024/mo more than today's $45/mo. Either email posture under M needs a BAA-covered transport unless counsel rules the envelope PHI-free. F10's Sentry exposure is narrowed to ordinary local development, because the CI browser lanes are guarded. |
 | 2026-10-15 | Codex review of `0504724a`. F18 and G-21 now describe the export as a named subset (intake forms, treatment images and photos, and payment records are pending, TRUTH-01B). The gate rule is stated: only non-READY rows block P and C. |
 | 2026-10-15 | Codex review of `2931821f`. G-09 now records #857 as merged (new writes minimized; historical Customers remain). F20 now matches the verified G-16 exposure (MISSING, HIGH). The decision packet's option M now includes the Vercel HIPAA BAA at $350/mo (public price). |
