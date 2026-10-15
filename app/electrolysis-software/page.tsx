@@ -171,7 +171,7 @@ export default function ElectrolysisSoftwarePage() {
           <figure className="m-0 overflow-hidden rounded-[var(--mk-radius-frame)] border border-[color:var(--color-hairline)] bg-warm">
             <Image
               src={posterFrame}
-              alt="Hone&rsquo;s treatment-memory panel, headed &ldquo;The exact setup you used&rdquo;, listing what was recorded for two treated areas (midline upper lip and bilateral chin), each with machine frequency, probe and lot number, mode, energy, timing and minutes."
+              alt="Hone&rsquo;s treatment-memory panel, headed &ldquo;The exact setup you used&rdquo;, listing, for two treated areas (midline upper lip and bilateral chin), the machine frequency, probe and lot number, mode, energy, timing and minutes carried from the settings block it was charted under."
               priority
               sizes="(min-width: 1640px) 680px, (min-width: 1024px) 43vw, 92vw"
               className="block aspect-video w-full object-cover"
@@ -280,9 +280,9 @@ export default function ElectrolysisSoftwarePage() {
             <div>
               <Title>Electrolysis is a course of treatment</Title>
               <Lede className="mt-4">
-                What matters at the next appointment is what was done to each area and how it
-                responded. Hone keeps that for each area and brings it forward before the client
-                sits down.
+                What matters at the next appointment is what was done last time and how the
+                skin responded. Hone keeps every treated area findable and brings that history
+                forward before the client sits down.
               </Lede>
             </div>
             <TreatmentMemoryPanel />
