@@ -4,7 +4,7 @@
 > configuration and spending Hone would need *before* any HIPAA-dependent
 > patient onboarding or claim.
 > - Nothing here has been purchased, toggled, signed, or requested from a vendor.
-> - Prices come from public pages read on 2026-10-11 and are not quotes.
+> - Prices come from public pages read on 2026-10-11, re-read on 2026-10-15 where marked. They are not quotes.
 > - Every decision row belongs to Sam. The legal rows also need qualified counsel.
 >
 > Evidence and statuses: [hipaa-readiness-assessment.md](./hipaa-readiness-assessment.md).
@@ -20,9 +20,48 @@ question.
 | # | Business decision | Why only Sam can make it | What it unblocks |
 |---|---|---|---|
 | **B1** | **Will Hone serve HIPAA-covered studios, starting with the LA studio?** Ask the studio whether it bills insurance or sends HIPAA standard transactions (covered-entity test), and decide whether Hone accepts business-associate obligations at all. | Market and liability choice; a cash-pay studio may not be covered, and then none of B2–B4 is HIPAA-required | Whether B2–B4 happen now or later |
-| **B2** | **Approve a spend envelope** for the BAA-capable stack: Supabase **Team** (from $599/mo, public price) plus its HIPAA add-on (quote); the Vercel HIPAA add-on (price in Billing); Twilio **Security or Enterprise Edition** (sales quote); a BAA-capable email route such as Amazon SES under an AWS BAA (usage-priced); a separate synthetic preview project if wanted. | Recurring cost | Quotes, then the plan changes |
+| **B2** | **Authorize the quote requests for option M (§0.1)** (was: approve a spend envelope) for the BAA-capable stack: Supabase **Team** (from $599/mo, public price) plus its HIPAA add-on (quote); the Vercel HIPAA add-on (price in Billing); Twilio **Security or Enterprise Edition** (sales quote); a BAA-capable email route such as Amazon SES under an AWS BAA (usage-priced); a separate synthetic preview project if wanted. | Recurring cost | Quotes, then the plan changes |
 | **B3** | **Legal: engage counsel and an advisor, appoint a privacy official, and authorize who signs BAAs.** Counsel drafts the studio-to-Hone BAA. | Signing authority and accountability | Executed agreements; risk analysis; policies |
 | **B4** | **Patient email posture for covered studios.** Either (a) keep detailed emails, but only once they run through a BAA-covered provider, or (b) switch covered studios to "sign in to see details" notifications. Until then, covered studios get no detail-bearing email. | Changes what patients receive; a product and liability trade-off | The D-4 transport route and the email copy |
+
+### 0.1 The options, priced (2026-10-15)
+
+This replaces an open "spend envelope" with concrete options. It is an
+**evidence and options packet only**:
+- it is not a HIPAA-ready declaration;
+- nothing here is purchased, requested, signed or configured;
+- no external activation, contract or real patient import is authorized by it.
+
+How figures are labelled:
+- **Verified (account)**: read from Hone's own accounts, read-only, on the date shown.
+- **Verified (public)**: read from the vendor's public page on 2026-10-15. It is a price, not a quote.
+- **Estimate**: arithmetic on a stated assumption.
+- **Quote needed**: no public figure exists.
+
+**Account facts today.**
+- Supabase: the organisation is on **Pro**. Verified (account), 2026-10-12.
+- Vercel: the team exists, but its plan is **not exposed by the API** (the team read on 2026-10-15 returns no plan or billing field). So whether it is Pro, and the BAA add-on price, must be read in Billing.
+- Twilio: the edition has not been read. **Unknown.**
+
+| Option | What it is | Monthly cost | Agreements and who signs | Patient-communication consequence |
+|---|---|---|---|---|
+| **S: synthetic-only demo** (recommended until B1–B3 are settled) | The prospective-studio demo runs on synthetic data only, on the current stack. Preview isolation (§0.2) still comes first if a preview is used. | **$0 incremental.** No plan change is needed. | None. No BAA is needed, because no PHI is processed. | None for real patients. Demo messages go only to synthetic recipients, and today's production email/SMS behaviour is unchanged. |
+| **M: minimum live for ONE covered studio** | The smallest stack that can carry PHI under executed BAAs (agreement chain below). | **Floor of $699/mo total + quotes** ($674/mo more than today's $25/mo Pro). The verified (public) floor is Supabase Team $599/mo, which replaces Pro, plus PITR $100/mo for 7 days of retention. Estimate: SES at $0.10 per 1,000 emails, about $0.20/mo at 2,000 emails. Quote needed: Supabase HIPAA add-on; Vercel HIPAA BAA add-on (read in Billing); Twilio Security or Enterprise Edition; counsel; Upstash (or remove it from the PHI path). The real total is unknown until those quotes exist, so the floor is not a budget. | See below the table. | Email moves off Resend, which cannot sign a BAA, to a BAA-covered route such as SES, or uses B4(b) "sign in to see details". SMS stays on Twilio only under an executed BAA with eligible products. Until every agreement is executed, a covered studio gets no detail-bearing email or SMS. |
+| **N: the studio is not a covered entity** (decided by B1) | Cash-pay studio with no HIPAA standard transactions: HIPAA BAAs are not required. | **$0 incremental for HIPAA.** The security hardening in §2 is still recommended on its own merits. | None for HIPAA. Counsel should confirm the covered-entity test. | Current minimized email/SMS continues. Marketing still makes **no** HIPAA claim. |
+
+**Option M agreements and signatories:**
+- **Studio → Hone BAA.** Counsel drafts it. The studio signs, and Hone signs through the person B3 authorizes.
+- **Hone → processor BAAs.** One each for Supabase (needs Team plus the add-on), Vercel (Pro add-on or Enterprise), Twilio (Security or Enterprise Edition), and AWS (SES, via the AWS BAA).
+- **Upstash and other processors.** Each is either removed from the PHI path or brought under a BAA.
+- **Who signs for Hone.** Each vendor BAA is signed by Hone's account owner on that vendor, unless B3 delegates.
+
+**What Sam actually decides** (B1–B4 unchanged in substance):
+- B1 picks S, M or N for the LA studio.
+- B2 becomes **"authorize the quote requests for M"**. That needs vendor contact, so it is Sam's to authorize; it is no longer an open spend envelope.
+- B3 names the signatory.
+- B4 chooses the email posture under M.
+
+Option S needs none of B1–B4, and authorized synthetic development continues without waiting for them.
 
 ### 0.2 Engineering defaults adopted under the delegation
 
@@ -290,13 +329,13 @@ else needs a quote.
 
 | Item | Public figure | Status |
 |---|---|---|
-| Supabase Team plan | "From $599 / month", first project included ([pricing](https://supabase.com/pricing)) | Verified public price |
+| Supabase Team plan | "From $599 / month", first project included; re-read 2026-10-15 ([pricing](https://supabase.com/pricing)) | Verified public price |
 | Supabase HIPAA add-on | "HIPAA available as paid add-on"; price not published | **Quote needed** |
-| Supabase PITR and any compute upgrade it requires | Add-on; price depends on retention and compute | **Quote or calculator needed** |
+| Supabase PITR | $100 / month per 7 days of retention (public pricing, 2026-10-15); any compute upgrade it requires is not priced here | Verified public price (compute: **calculator needed**) |
 | Vercel HIPAA BAA add-on (Pro) | Purchased in team Billing; price not shown on the public pricing page read | **Read in Billing (read-only)** |
 | Vercel Pro seats | Developer seat $20 / month ([pricing](https://vercel.com/pricing)) | Verified public price |
 | Twilio BAA | Requires **Security Edition or Enterprise Edition** (verified 2026-10-12); edition pricing via sales | **Quote needed** |
-| BAA-capable email provider | Amazon SES is HIPAA-eligible under an AWS BAA (verified); usage pricing not read | **Read AWS pricing; confirm AWS BAA steps** |
+| BAA-capable email provider | Amazon SES is HIPAA-eligible under an AWS BAA (verified); outbound email $0.10 per 1,000 ([pricing](https://aws.amazon.com/ses/pricing/), 2026-10-15) | Verified public price; **confirm AWS BAA steps** |
 | Upstash plan with BAA | Not stated | **Quote needed** |
 | Counsel (studio BAA, risk analysis review, policies) | Not applicable | **Quote needed** |
 
