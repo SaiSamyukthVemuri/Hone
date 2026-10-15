@@ -9,9 +9,13 @@
 >   The agreed points are recorded in §7.
 > - This does not establish HIPAA compliance.
 
-Today Hone audits clinical **changes**: `clinical_audit_events` records only
-`correction` and `amendment`, `session_audit` records session events, and
-`audit_logs` records export and archive. It does **not** record who
+Today Hone audits clinical **changes** through `session_audit` (session
+events) and `audit_logs` (export and archive). `clinical_audit_events` is
+**retired legacy evidence**: migration 0159 installs
+`clinical_audit_events_retired_no_insert`, so no new correction or amendment
+event can be recorded there, and the table holds zero rows (the same applies to
+`clinical_record_snapshots` and `clinical_record_amendments`; Codex P2
+4280803260). It does **not** record who
 **viewed** a client record, intake, note, session or photo. HIPAA's audit
 controls standard, 45 CFR 164.312(b), requires mechanisms that "record and
 examine activity" in systems containing ePHI. Their scope is set by the
