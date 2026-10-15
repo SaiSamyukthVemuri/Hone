@@ -522,18 +522,62 @@ describe('G1 / P1: "Any available" resolves against eligible practitioners', () 
     ).toBe(true);
   });
 
-  it("the horizon scan is NOT routed through the union", () => {
-    // BOOK-NEXT-FAST-01. fetchNextAvailableDateAction is ONE bulk read across
-    // the whole horizon; per-practitioner fan-out there multiplies the hot
-    // path. Codex's finding is about the single-day grid and the single-slot
-    // re-verification, and the fix is scoped to exactly those two.
+  it("the horizon scan unions through the BULK context, never per day", () => {
+    // SUPERSEDED INTENT, DELIBERATELY REWRITTEN. This guard used to assert that
+    // the horizon scan was NOT unioned at all, which was right while the fix
+    // covered only the single-day grid -- and became a guard documenting the
+    // OPPOSITE of the design once Codex P2 4265796486 was repaired. A guard
+    // that still passes while describing the wrong invariant is worse than no
+    // guard, so it now pins what actually has to hold.
+    //
+    // BOOK-NEXT-FAST-01 is unchanged and still the binding constraint: the
+    // union happens inside `loadPublicSlotsByDate`, in memory, over
+    // reservations that one bulk pass already loaded, with the eligible set
+    // handed down as `practitionerIds`. What is forbidden is reaching for the
+    // SINGLE-DAY engines here -- `getAvailableSlots` or `unionEligibleSlots` --
+    // because either one puts a query inside the horizon loop, which is the
+    // 4N-serial shape that law exists to prevent.
     const code = actionCode("fetchNextAvailableDateAction");
     expect(code, "fetchNextAvailableDateAction must exist").not.toBe("");
     expect(
-      code.includes("unionEligibleSlots"),
-      "unioning the horizon scan reintroduces the cost BOOK-NEXT-FAST-01 " +
-        "removed; if it is ever wanted it needs its own measurement",
+      code.includes("practitionerIds"),
+      "the jump must pass the eligible set to the bulk loader, or it asks a " +
+        "studio-wide question the grid beneath it disagrees with",
+    ).toBe(true);
+    expect(
+      code.includes("unionEligibleSlots") || code.includes("getAvailableSlots"),
+      "the single-day engines must stay out of the horizon scan -- that is the " +
+        "per-day query shape BOOK-NEXT-FAST-01 removed",
     ).toBe(false);
+  });
+
+  it("the jump is gated on the client type, like the grid and the commit", () => {
+    const code = actionCode("fetchNextAvailableDateAction");
+    expect(
+      /params\.newClient === true\s*&&/.test(code),
+      "an EXISTING client commits studio-wide, so their jump must be " +
+        "studio-wide too; absent means legacy, as everywhere else",
+    ).toBe(true);
+  });
+
+  it("the form tells BOTH server actions which command will commit", () => {
+    // NOT A CHARACTER-DISTANCE GUARD. The first attempt matched
+    // `fetchNextAvailableDateAction\([\s\S]{0,260}?newClient: isNewClient`,
+    // and it failed on the comment I had just written above the argument --
+    // the guard was measuring prose length, not behaviour, and widening the
+    // number would only move the next break. Both call sites must pass the
+    // flag, so COUNT them in comment-stripped code: the grid and the jump.
+    const code = FORM.split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+    const callSites = code.match(/fetch(PublicSlots|NextAvailableDate)Action\(/g) ?? [];
+    const flagged = code.match(/newClient:\s*isNewClient/g) ?? [];
+    expect(callSites.length, "expected the grid and the jump").toBe(2);
+    expect(
+      flagged.length,
+      "every server action whose answer depends on which command commits must " +
+        "be told -- a missing flag silently falls back to legacy for NEW clients",
+    ).toBe(callSites.length);
   });
 
   it("an enabled studio with nobody eligible refuses instead of lying", () => {

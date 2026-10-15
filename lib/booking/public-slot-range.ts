@@ -183,12 +183,101 @@ export async function fetchPublicSlotsForDates(params: {
 }
 
 /** A studio + service context that has ALREADY passed the authority checks. */
+/** Union slot lists by START INSTANT, earliest first. Two practitioners free at
+ *  the same moment are one offer to the visitor. */
+function unionByStart(lists: readonly Slot[][]): Slot[] {
+  const byStart = new Map<number, Slot>();
+  for (const list of lists) {
+    for (const slot of list) {
+      const key = new Date(slot.start).getTime();
+      if (!byStart.has(key)) byStart.set(key, slot);
+    }
+  }
+  return [...byStart.entries()].sort((a, b) => a[0] - b[0]).map(([, s]) => s);
+}
+
+/** A reservation row plus the 0134 column that says WHOSE it is. Local to this
+ *  module so `ReservationRow` in lib/booking/slots.ts keeps its shape. */
+type ScopedReservationRow = ReservationRow & { resource_key?: string | null };
+
+type ScopedAvailabilityRow = { practitioner_id: string } & Record<string, unknown>;
+
+/**
+ * Per-practitioner availability for the whole window, for ALL eligible ids at
+ * once — two queries, not two per practitioner.
+ *
+ * Fails CLOSED by throwing: an unreadable availability row is not an open day,
+ * and generating slots over one would invent times the command then refuses.
+ */
+async function loadScopedAvailability(
+  admin: ReturnType<typeof createAdminClient>,
+  studioId: string,
+  ids: readonly string[],
+  first: string,
+  last: string,
+): Promise<{
+  overrideByKey: Map<string, ScopedAvailabilityRow>;
+  defaultByKey: Map<string, ScopedAvailabilityRow>;
+}> {
+  const [ov, df] = await Promise.all([
+    admin
+      .from("studio_availability_overrides")
+      .select("*")
+      .eq("studio_id", studioId)
+      .in("practitioner_id", ids as string[])
+      .gte("effective_date", first)
+      .lte("effective_date", last),
+    admin
+      .from("studio_availability_default")
+      .select("*")
+      .eq("studio_id", studioId)
+      .in("practitioner_id", ids as string[]),
+  ]);
+  if (ov.error || df.error) {
+    throw new Error("Practitioner availability could not be read.");
+  }
+  const overrideByKey = new Map<string, ScopedAvailabilityRow>();
+  for (const row of (ov.data ?? []) as ScopedAvailabilityRow[]) {
+    overrideByKey.set(`${row.practitioner_id}|${String(row.effective_date)}`, row);
+  }
+  const defaultByKey = new Map<string, ScopedAvailabilityRow>();
+  for (const row of (df.data ?? []) as ScopedAvailabilityRow[]) {
+    defaultByKey.set(`${row.practitioner_id}|${String(row.day_of_week)}`, row);
+  }
+  return { overrideByKey, defaultByKey };
+}
+
 export type PublicRangeContext = {
   studioId: string;
   timezone: string;
   publicBookingHorizonMonths: number | null;
   bufferMinutes: number | null;
   serviceDurationMinutes: number;
+  /**
+   * G1 / CODEX P2 4265796486 — "ANY AVAILABLE" OVER A RANGE.
+   *
+   * The eligible practitioners whose availability this scan should UNION.
+   * Absent or empty keeps the studio-wide answer, which is pre-G1 behaviour and
+   * the only correct one when the assignment switch is off.
+   *
+   * Why the studio-wide answer is wrong when the switch is ON, in both
+   * directions: capacity-ON fans a studio-wide closure out to one reservation
+   * row PER practitioner, so a studio-wide reservation filter collects
+   * EVERYONE's conflicts and skips the earliest date another practitioner is
+   * free on; and the studio fallback window can report a date open that every
+   * eligible practitioner has individually closed, landing the caller on a date
+   * whose own grid is empty.
+   *
+   * COST, because this path carries a performance law (BOOK-NEXT-FAST-01). The
+   * scoped reads are `.in("practitioner_id", ids)` over the whole window, so
+   * this adds TWO bulk queries in total — not two per practitioner, and no
+   * per-day query of any kind. The extra work is slot GENERATION, which is what
+   * the measurement in `stopAfterFirstMatch` identified as the real cost; with
+   * that flag the scan still stops at the first date that has a slot, and under
+   * capacity-ON that date is EARLIER than the studio-wide answer in exactly the
+   * false-negative case this fixes.
+   */
+  practitionerIds?: readonly string[];
 };
 
 export type PublicSlotsByDateResult =
@@ -302,6 +391,24 @@ export async function loadPublicSlotsByDate(
     return { ok: false, error: "Availability could not be read." };
   }
 
+  // G1. The eligible set, or none. Empty is treated as unscoped on purpose: a
+  // caller that passes no ids wants today's studio-wide answer.
+  const scopedIds = (ctx.practitionerIds ?? []).filter((id) => id.length > 0);
+  let scoped: Awaited<ReturnType<typeof loadScopedAvailability>> | null = null;
+  if (scopedIds.length > 0) {
+    try {
+      scoped = await loadScopedAvailability(
+        admin,
+        ctx.studioId,
+        scopedIds,
+        first,
+        last,
+      );
+    } catch {
+      return { ok: false, error: "Availability could not be read." };
+    }
+  }
+
   const [blockoutRes, reservationRes] = await Promise.all([
     admin
       .from("studio_blockouts")
@@ -326,7 +433,7 @@ export async function loadPublicSlotsByDate(
     fetchAllRows<ReservationRow>((from, to) =>
       admin
         .from("studio_calendar_reservations")
-        .select("starts_at, ends_at, source_kind, source_id")
+        .select("starts_at, ends_at, source_kind, source_id, resource_key")
         .eq("studio_id", ctx.studioId)
         .lt("starts_at", rangeEndUtc.toISOString())
         // Same widened boundary as the day loader — one rule, one helper, so
@@ -369,11 +476,16 @@ export async function loadPublicSlotsByDate(
     // Override wins over the weekday default — `pickDayWindow` owns that
     // precedence, and its own comment names this batched shape as the reason it
     // takes both rows at once.
+    const dow = weekdayOfLocalDate(dateStr);
     const { isOpen, openTime, closeTime } = pickDayWindow(
       (overrideByDate.get(dateStr) ?? null) as never,
-      (defaultByDow.get(weekdayOfLocalDate(dateStr)) ?? null) as never,
+      (defaultByDow.get(dow) ?? null) as never,
     );
-    if (!isOpen || !openTime || !closeTime) continue;
+    // UNSCOPED ONLY. With an eligible set, a closed STUDIO-WIDE window says
+    // nothing: each practitioner may carry their own open window, and the
+    // studio row is only their fallback. Skipping here would reintroduce the
+    // false negative one layer down.
+    if (!scoped && (!isOpen || !openTime || !closeTime)) continue;
 
     const dayStart = utcInstantFromLocal(dateStr, "00:00", tz).getTime();
     const dayEnd = dayStart + 36 * 3600 * 1000;
@@ -402,19 +514,57 @@ export async function loadPublicSlotsByDate(
     // cannot drift about whether today's earlier hours are offerable. Applied
     // PER DATE with the caller's single `now`, which is what lets a long scan
     // avoid letting the boundary move underneath it.
-    const daySlots = filterFutureSlots(
-      // The SAME candidate generation the single-date path uses. One algorithm.
-      buildDaySlots({
-        dateStr,
-        tz,
-        duration,
-        buffer,
-        openTime,
-        closeTime,
-        reservations: dayReservations,
-      }),
-      now,
-    );
+    const daySlots = scoped
+      ? // G1 — THE UNION OVER ELIGIBLE PRACTITIONERS, generated in memory from
+        // the reservations this scan already loaded. No extra query per
+        // practitioner and none per day.
+        //
+        // Each practitioner's window is resolved with the SAME four-way
+        // fallback `getAvailableSlots` uses under capacity-ON (own override,
+        // else studio override; else own default, else studio default), and
+        // their conflicts are the rows carrying their own `resource_key` --
+        // which under capacity-ON already include studio-wide closures, because
+        // 0134 fans those out per practitioner.
+        unionByStart(
+          scopedIds.map((pid) => {
+            const win = pickDayWindow(
+              (scoped!.overrideByKey.get(`${pid}|${dateStr}`) ??
+                overrideByDate.get(dateStr) ??
+                null) as never,
+              (scoped!.defaultByKey.get(`${pid}|${dow}`) ??
+                defaultByDow.get(dow) ??
+                null) as never,
+            );
+            if (!win.isOpen || !win.openTime || !win.closeTime) return [];
+            return filterFutureSlots(
+              buildDaySlots({
+                dateStr,
+                tz,
+                duration,
+                buffer,
+                openTime: win.openTime,
+                closeTime: win.closeTime,
+                reservations: (dayReservations as ScopedReservationRow[]).filter(
+                  (r) => r.resource_key === pid,
+                ),
+              }),
+              now,
+            );
+          }),
+        )
+      : filterFutureSlots(
+          // The SAME candidate generation the single-date path uses. One algorithm.
+          buildDaySlots({
+            dateStr,
+            tz,
+            duration,
+            buffer,
+            openTime: openTime!,
+            closeTime: closeTime!,
+            reservations: dayReservations,
+          }),
+          now,
+        );
 
     // A date with no offerable time is not a date — omitting it here is what
     // makes "the first group" mean "the first date that actually has a slot"
