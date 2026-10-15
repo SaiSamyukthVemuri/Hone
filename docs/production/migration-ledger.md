@@ -75,10 +75,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0211** (`0211_client_sms_permission_guard.sql`), applied 2026-10-12 from #827's reviewed head. |
-| **Repo migration max** | **0214** — `0214_studio_payment_jurisdiction.sql`, authored on the PAY-CCY-02 branch and NOT applied. This is the MIGRATION-FIRST PENDING shape, with a gap: `0212`–`0213` are reserved by other lanes and are not in this tree. |
+| **Repo migration max** | **0224** — `0224_us_settlement_method_guard.sql` (PAY-CCY-07, the database backstop for #871 option B), authored on its draft branch above `0214_studio_payment_jurisdiction.sql`, both NOT applied. This is the MIGRATION-FIRST PENDING shape, with gaps: `0212`–`0213` and `0215`–`0223` are reserved by other lanes and are not in this tree. |
 | **Remote-only migrations** | **none**: no migration exists on production that this branch lacks. |
-| **Pending migrations** | **`0214`** on this branch, applied only after `0212`–`0213` (other lanes' reservations) are applied or renumbered by agreement. |
-| **Next free migration** | Next free number is **0215**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
+| **Pending migrations** | **`0214`** and **`0224`** on this branch: `0214` only after `0212`–`0213`, and `0224` only after `0214` and `0215`–`0223` (other lanes' reservations) are applied or renumbered by agreement. |
+| **Next free migration** | Next free number is **0225**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
 | **Project ref** | `alhhybgqdmcdyzpybykj`, the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
 | **Reviewed release head** | `481e60c60ae8c873a2e1b6e2a0ccc5b9dc0b8c11` (PR #827): CI green (run `38164242975`), 0 review threads, migration bytes reviewed byte-identical inside #831. The shepherd was UNKNOWN (`read_failed`), and that was accepted by the operator for this migration-only apply. |
 | **Production application SHA at apply time** | `6c5eac80` (the #821 merge). **No application behaviour was deployed by this apply.** |
