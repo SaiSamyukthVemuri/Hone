@@ -10,7 +10,7 @@
 | #849 | DELIVERY-VISIBILITY-03: booking confirmation ledgering | none |
 | #865 | DELIVERY-VISIBILITY-04: cancellation and postcare ledgering, "client says they didn't receive it" | `0221` |
 
-**Status (2026-10-12):** nothing below has been done. No migration is applied, nothing is merged or configured, and no message has been sent.
+**Status (2026-10-12):** `0211` and `0212` are **applied** to production, migration-first (D1; see [delivery-d1-release-packet.md](./delivery-d1-release-packet.md) and the migration ledger). Nothing else below has been done. No PR is merged, nothing is configured, no message has been sent, and `0215`/`0221` are not applied.
 
 Every step that touches production needs the operator's explicit approval **at that step**:
 - a migration apply;
@@ -43,13 +43,14 @@ What this stack adds stays inside the boundary #828 asked for:
 
 | # | Step | Gate |
 |---|---|---|
-| 1 | Apply `0211` (#827), then `0212` (#832) | Migration-first, each from its exact reviewed head ([migration-first-process.md](./migration-first-process.md)). `supabase db push` applies in lexical order, so the hosted chain must already hold every lower pending number. |
+| 1 | ~~Apply `0211` (#827), then `0212` (#832)~~ **DONE 2026-10-12** (0212 from `7116c668`; see §5 D1 and the ledger) | Migration-first, each from its exact reviewed head ([migration-first-process.md](./migration-first-process.md)). `supabase db push` applies in lexical order, so the hosted chain must already hold every lower pending number. |
 | 2 | Merge #832 | After its `0212` apply. **Inert on merge**: the webhook answers 500 and records nothing without `RESEND_WEBHOOK_SECRET`, and no send path is tagged yet. |
 | 3 | Apply `0213`, `0214` (other lanes), then `0215` (#843) | Migration-first. `0215` adds an AFTER trigger to **both** ledgers, including the live SMS ledger, so its first effect is that **SMS failures start opening incidents** in production. That is visibility only, with no message and no alert email. |
-| 4 | Merge #843, #846, #849 | **Behaviour changes on merge:** reminder and confirmation emails begin creating ledger rows and carry the `hone_m` tag, and owners see the delivery card (Settings → Launch, later the owner console). With no webhook yet, email rows stop at `accepted` / `refused` / `unknown`. The card and health say so; they do not claim delivery. |
+| 4 | Merge #843, #846, #849 | **Behaviour changes on merge:** reminder and confirmation emails begin creating ledger rows and carry the `hone_m` tag, and owners see the delivery card (Settings → Launch on this stack; Settings → Overview once #867 lands, which moves it). With no webhook yet, email rows stop at `accepted` / `refused` / `unknown`. The card and health say so; they do not claim delivery. |
 | 5 | Apply `0216`-`0220` (other lanes), then `0221` (#865), then merge #865 | Cancellation and postcare join the ledger; owners can report "client says they didn't receive it". |
-| 6 | Configure the Resend webhook (§2) | Separate approval. This is the step that makes bounce, delay, delivery and complaint visible. |
-| 7 | Register the recovery sweep (§3) | Separate approval. Without it, unfinished receipts are recovered only by later deliveries. |
+| 6 | Apply `0222`-`0226` (other lanes), then `0227` (#876), then merge #876 | Migration-first, in number order, each under its own approval. `0227` carries the two forward fixes to `0212`: bounded quarantine, and transient bounces non-terminal. **The webhook must not be configured before this step is complete.** |
+| 7 | Configure the Resend webhook (§2) | Separate approval. **Precondition: the full chain `0213`-`0227` is applied** (**every** version `0213`-`0227` present exactly once, checked by D4's enumerating query, not just the max or `0227`); see D4. This is the step that makes bounce, delay, delivery and complaint visible. |
+| 8 | Register the recovery sweep (§3) | Separate approval. Without it, an unfinished receipt is recovered only by Resend's own retries of that delivery (the webhook answers 500 while the receipt is pending), or by a later delivery. |
 
 ## 2. Resend webhook: configuration and controlled test
 
@@ -74,12 +75,20 @@ What this stack adds stays inside the boundary #828 asked for:
 
 ## 3. Recovery sweep and heartbeat
 
-- Register `GET /api/cron/email-delivery-sweep` in `vercel.json` (with the existing CRON_SECRET), **every 15 minutes**. That cadence lets the 15-minute backlog finding mean something.
+- Register `GET /api/cron/email-delivery-sweep` in `vercel.json` (with the existing CRON_SECRET), **once a day**. The Vercel plan caps cron at once a day, as `docs/08_EMAIL_SMS_AND_CRON.md` already records for `calendar-reconcile`. How recovery is layered, with nothing claimed beyond what each layer does:
+  - **Primary:** Resend's own retries of the pending delivery. The route answers 500 while that receipt is pending, so the provider re-delivers it.
+  - **Best effort:** after each successful response, the route's post-response drain tries up to five *other* older pending receipts. It runs only when some webhook arrives, and it can fail or find nothing to do. It is an opportunistic helper, not a per-webhook recovery guarantee.
+  - **Backstop:** the daily sweep. Backlog findings are evaluated **only inside a sweep invocation that actually runs**. At a once-a-day cadence, a stuck backlog can go unreported for up to about a day.
+  - **What detects what:**
+    - `email_delivery_sweep_failing` is raised only by a sweep that **runs** and finds its own drain or health read failing.
+    - A sweep that **never starts** records nothing. A run can also fail before the heartbeat, or after writing it but before health evaluation and alert handling finish. No time-based stale-sweep finding exists.
+    - `last_sweep_at` is written **before** the health read and alert handling. It proves the heartbeat step ran, not that the sweep completed or evaluated the backlog successfully.
+    - Check **daily** using the existing Vercel cron invocation/completion logs and result **alongside** `last_sweep_at` on `/admin/delivery` or `public.email_delivery_health()`. Distinguish no invocation, failure before the heartbeat, and failure after it. A fresh heartbeat without successful completion is not a healthy run; an old one alone does not distinguish a missed invocation from an early failure.
 - **Verify:**
-  - `select * from email_delivery_health()` shows `last_sweep_at` advancing;
+  - the existing cron logs show the invocation completed, its result has `ok: true` and `heartbeat: true`, and `select * from public.email_delivery_health()` shows the corresponding `last_sweep_at`; a timestamp alone is insufficient;
   - a deliberately held receipt is finished by the sweep (rehearsed on a local stack: `tests/db/email-delivery-events.db.test.ts`, CRASH RECOVERY);
-  - findings raise at most one unresolved ops alert per event.
-- **Rollback:** remove the cron entry. Health then reports `last_sweep_at` going stale, which is the intended signal.
+  - findings raise at most one unresolved ops alert per event, always at **warning**: the sweep never records a critical alert, because critical ops alerts are emailed to `OPS_ALERT_EMAILS` (#828 gate). A finding assessed critical carries `assessed_severity: "critical"` in its details.
+- **Rollback:** remove the cron entry. `last_sweep_at` in `email_delivery_health()` then stops advancing. **No health finding reports a stale sweep by time**: the only sweep finding is a failed count. So check `last_sweep_at` directly, or on the support page, after a rollback.
 
 ## 4. Go / no-go for the Friday demo (synthetic only)
 
@@ -94,4 +103,220 @@ What this stack adds stays inside the boundary #828 asked for:
 - the webhook is configured and tested (§2);
 - the sweep is registered (§3).
 
-The demo states these limits on screen. The card's own copy already says when email bounce reporting is not switched on.
+The demo states these limits on screen. The card never claims bounce reporting is live: it states that a bounce appears only once Hone receives the provider's delivery reports, so no listed problem is not proof of delivery. A stored `RESEND_WEBHOOK_SECRET` is not treated as activation (Codex P2 4253217747). §2's controlled test is the activation evidence.
+
+## 5. Decisions: exact steps, validation, rollback
+
+**D1 is DONE.** `0211` and `0212` were applied to production on 2026-10-12, migration-first and before any merge:
+- `0211` from #827 `481e60c6`;
+- `0212` from #832 **`7116c668`**, not `ba8fc505`. The SQL is byte-identical; the head moved for two ledger-only review findings.
+
+The hosted max is **0212**. The authoritative apply records are `docs/production/migration-state.json` and `docs/production/migration-ledger.md`. **Do not re-apply** `0211` or `0212`: both are frozen.
+
+**D2–D5 remain open.** Each is approved on its own. Before every step, run the CLAUDE.md §5 checks:
+- `supabase/.temp/project-ref` is the canonical Hone project;
+- read-only SQL only, through `supabase db query --linked`;
+- re-derive the hosted max at that moment from the live project. `migration-state.json` is a declaration, not a reading.
+
+### D1. Apply `0211`, then `0212` (#832): DONE 2026-10-12, kept as the historical plan
+
+> **Completed. Do not run this section.** It is the pre-apply plan, kept for the record. The executed gates, verification and exceptions are in `docs/production/migration-ledger.md`.
+
+The exact release packet (heads, evidence, commands, permission and behaviour effects, verification, recovery) is [delivery-d1-release-packet.md](./delivery-d1-release-packet.md). It separates `0211`'s consent guard on the live `clients` table from `0212`'s new, unused tables. The summary below is for `0212`.
+
+**Precondition:** `0211` (#827) is applied first. `0212` is not applicable on top of 0210 alone, because the pending suffix must be contiguous.
+
+**File:** `supabase/migrations/0212_email_delivery_events.sql`, sha256 `cc2abfa3059157b841c1c1c095a84045410121be13d96ff93e34f8332f81d6d1`. Verify the hash at the reviewed head before applying.
+
+**What it does:**
+- creates two new tables, `email_outbound_messages` and `email_provider_events`, each with two guard/default triggers;
+- creates five service_role-only commands: `begin_appointment_email_message`, `settle_email_message`, `record_email_provider_event`, `claim_email_provider_events`, `process_email_provider_event`;
+- adds no column, trigger or constraint to any existing table, and has no top-level DML.
+
+**Validation (read-only):**
+
+```sql
+select version from supabase_migrations.schema_migrations where version >= '0211' order by 1;
+  -- expect 0211, 0212 exactly once each, nothing above
+select p.proname, r.rolname, has_function_privilege(r.oid, p.oid, 'execute') as can_exec
+from pg_proc p cross join pg_roles r
+where p.pronamespace = 'public'::regnamespace
+  and p.proname in ('begin_appointment_email_message','settle_email_message','record_email_provider_event',
+                    'claim_email_provider_events','process_email_provider_event')
+  and r.rolname in ('anon','authenticated','service_role') order by 1, 2;
+  -- expect can_exec false for anon and authenticated, true for service_role
+select c.relname, r.rolname, has_table_privilege(r.oid, c.oid, 'select') as can_select
+from pg_class c cross join pg_roles r
+where c.relnamespace = 'public'::regnamespace
+  and c.relname in ('email_outbound_messages','email_provider_events')
+  and r.rolname in ('anon','authenticated');
+  -- expect false everywhere
+select (select count(*) from public.email_outbound_messages) as ledger_rows,
+       (select count(*) from public.email_provider_events) as receipts;
+  -- expect 0, 0 until #832 is merged
+```
+
+**Rollback:** never edit the applied file.
+- Before #832 is merged, the tables are empty and nothing reads them, so a new forward migration that drops the five functions and two tables is safe. It is a separate approved change.
+- After the merge, revert the merge first; then the drop migration.
+
+### D2. Apply `0215` (#843)
+
+**Precondition:** `0213` (#831) and `0214` (#833) are applied. `0214` was amended twice; its current sha256 is `25da63b7…65f`, per the coordination record.
+
+**File:** `0215_delivery_incidents.sql`, sha256 `09b01315e5159a1786a0bcabf0c5a3a8abffe62790123099b887c3d29de5e9d2`.
+
+**What it does:**
+- creates two tables, `delivery_incidents` and `delivery_sweep_heartbeat`;
+- creates commands, all service_role-only except `owner_delivery_incidents`, which goes to authenticated and checks `is_studio_owner` inside;
+- adds **AFTER `UPDATE OF status` triggers on both ledgers, including the live `sms_outbound_messages`.**
+
+**SMS trigger risk:** the trigger has no exception handler, so an error inside it would roll back the SMS status write. Checked against every value the SMS ledger admits:
+- all five SMS purposes in 0210's check match `delivery_incidents_purpose_ck`;
+- the trigger fires only for `refused` / `undelivered` / `failed`, which are exactly the SMS failure classes the incident check allows;
+- the reason `twilio_<integer>` matches `delivery_incidents_reason_ck`.
+
+No admissible SMS row can make it raise. The residual cost is a row lock on the one open incident per (studio, purpose, class), which serializes only concurrent failures of the same kind.
+
+**Validation (read-only):**
+
+```sql
+select tgname, tgrelid::regclass, tgenabled from pg_trigger
+where tgname in ('sms_outbound_messages_open_incident','email_outbound_messages_open_incident');
+  -- expect both present, tgenabled 'O'
+-- the privilege query from D1 over: email_delivery_health, owner_delivery_incidents, record_email_sweep_run,
+--   resolve_delivery_incident, support_delivery_incidents, support_email_receipt_outcomes
+  -- expect anon false everywhere; authenticated true ONLY for owner_delivery_incidents; service_role true
+select channel, failure_class, count(*) from public.delivery_incidents group by 1, 2;
+  -- expect 0 rows at apply; afterwards only SMS rows until email ledgering is merged
+```
+
+**Rollback:**
+- The first lever is a forward migration `drop trigger sms_outbound_messages_open_incident on public.sms_outbound_messages;`. It stops SMS incidents and leaves the SMS ledger and Twilio callbacks untouched. It is a production write and needs its own approval.
+- Dropping the tables follows only after #843 is reverted.
+
+### D3. Apply `0221` (#865)
+
+**Precondition:** `0216`–`0220` are applied (other lanes; `0220` is confirmed by its lane).
+
+**File:** `0221_delivery_concerns_and_purposes.sql`, sha256 `b881fa9052edabee0af3140ee8b7e09108b2013b16268dce894003f5bec4e19a`.
+
+**What it does:**
+- replaces `email_outbound_messages_purpose_ck` to admit `appointment_cancellation` and `appointment_postcare`;
+- redefines `begin_appointment_email_message`;
+- creates `delivery_concerns` with two triggers;
+- creates the commands `report_delivery_concern` and `owner_delivery_concerns` (authenticated, owner-checked inside), and `support_delivery_concerns` and `close_delivery_concern` (service_role).
+
+**Validation:**
+
+```sql
+select pg_get_constraintdef(oid) from pg_constraint where conname = 'email_outbound_messages_purpose_ck';
+  -- expect both new purposes listed
+-- the privilege query from D1 over the four concern commands
+  -- expect authenticated true only for report_delivery_concern and owner_delivery_concerns
+```
+
+**Rollback:** a forward migration restoring 0212's purpose check is safe only while `select count(*) from email_outbound_messages where purpose in ('appointment_cancellation','appointment_postcare')` is 0. Otherwise revert #865 first and keep the wider check.
+
+### D4. Resend webhook (§2)
+
+**Exact configuration:**
+- one endpoint, `https://hone.care/api/resend/webhook`;
+- the seven `email.*` delivery events in §2, and no others;
+- `RESEND_WEBHOOK_SECRET` set in Vercel **Production only**, then a redeploy.
+
+**Precondition: all of these must hold.**
+- **The full chain `0213`-`0227` is applied, in order.** `0227` replaces `0212`'s claim and processing functions with the bounded quarantine and the non-terminal transient bounce. Activating the receiver on `0212`'s original functions would expose production to the unbounded quarantine and the permanent-bounce misreport that `0227` fixes. Verify read-only:
+
+  ```sql
+  -- one row per required version: every one must be applied exactly once
+  select v.version,
+         (select count(*) from supabase_migrations.schema_migrations m where m.version = v.version) as applied
+    from (select lpad(g::text, 4, '0') as version from generate_series(213, 227) g) v
+   order by v.version;
+  ```
+
+  Expect **15 rows, each with `applied = 1`**. Any `0` means a required migration is missing; any value above 1 means a duplicate. **Stop** in either case. A max of `0227`, or `0227` being present, is not enough, because a history missing any of `0213`-`0226` would still show both.
+- **#832 is merged and deployed.** That is the receiving route, which answers before draining.
+- **#876 is merged,** so the repository and hosted state agree on `0227`.
+
+Without the secret, the route answers 500 and writes nothing.
+
+**Validation:** §2 steps 3 and 4. The dashboard test event comes first; the staff-mailbox send needs its own approval, because it is a live message.
+
+**Rollback:** disable or delete the endpoint and unset the secret, then redeploy. Recorded receipts stay as evidence; nothing is resent or deleted.
+
+**Behaviour to expect,** as of #832 `27c111f3`, which every dependent head now carries (#843 `0c388cc4` through this branch, and composed `781be179`):
+- **Answer first, drain afterwards.** The route records the receipt, then claims and processes **this** delivery, then answers. Only **after** the response, in Next `after()` (Codex P2 4266147060), does it sweep up to five older pending receipts. A slow or failing drain never delays or changes the answer; a drain that throws is logged as `resend_webhook_sweep_failed`.
+- **Non-pending duplicate, excluded before any work.** A retried delivery whose receipt is already processed is answered 200 at once: applied, stale, unmatched, ignored or quarantined. It is not reprocessed and schedules no drain.
+- **Pending duplicate.** A retry whose earlier attempt never finished is claimed and processed like a first delivery.
+- **Still pending after this request:** the route answers 500, so Resend retries that delivery.
+- **After five failed attempts** the database quarantines the receipt, and the next retry gets 200, so a poison event cannot keep the endpoint failing indefinitely.
+- An **older #865 base** (`94b6118c` and earlier) awaited the drain before answering. Wording that described the drain as part of the pre-response path applied only to that base, and is superseded (#825 6165891209).
+
+### D5. Register the recovery sweep (§3)
+
+**Exact change:** add one entry to `vercel.json` `crons`:
+
+```json
+{ "path": "/api/cron/email-delivery-sweep", "schedule": "30 10 * * *" }
+```
+
+10:30 UTC is after the existing daily crons (08:00, 09:00, 09:30).
+
+The route already exists and authenticates with the existing `CRON_SECRET`.
+
+**Plan limit, resolved:** the Vercel plan caps cron at **once a day**. `docs/08_EMAIL_SMS_AND_CRON.md` records it for `calendar-reconcile`, and every existing cron is daily. A sub-daily schedule here would fail the deployment.
+- A faster cadence would need an external scheduler calling the route with the `CRON_SECRET` bearer, or a plan change. Either is its own decision.
+- With a daily sweep, the backlog finding (15 minutes, critical at 6 hours, recorded at warning) is evaluated once a day. Recovery is layered as §3 describes. Resend's retries are primary, the post-response drain is best effort, and the sweep is the backstop, with up to about a day of reporting latency at this cadence. A **skipped** run raises nothing; daily review must pair invocation/completion logs and result with `last_sweep_at`, which is written before health evaluation (§3, "What detects what").
+
+**Validation:**
+- the existing cron logs show a completed invocation and its result has `ok: true` and `heartbeat: true`; pair that with `select last_sweep_at, last_sweep_failed from public.email_delivery_health();`. These fields describe the recorded drain step, not completion of the later health read or alert handling;
+- `/admin/ops-alerts` shows no `email_delivery_*` alert at **critical** (pinned by `tests/app/api/email-delivery-sweep.test.ts`);
+- the sweep sends no email or SMS and calls no provider.
+
+**Rollback:** remove the cron entry and redeploy. `last_sweep_at` then stops advancing. No health finding fires on that by time, so verify it directly.
+
+### Emailed delivery alerts stay off (#828)
+
+No step above enables an emailed delivery alert:
+- owners read the card; support reads `/admin/delivery`;
+- the sweep caps its ops alerts at warning, so nothing reaches the critical-only `OPS_ALERT_EMAILS` path.
+
+Turning any of that on is a separate decision after D-4.
+
+### What remains, in order
+
+1. **The pending chain `0213`–`0227`.** Each migration is applied migration-first from its owner's reviewed head, in number order, under its own approval; owners are listed in #876's manifest. This lane's are:
+   - `0215` (D2);
+   - `0221` (D3);
+   - `0227` (#876): the two forward fixes to `0212`, the bounded quarantine and non-terminal transient bounces.
+
+   The ordered composition was proved on `integration/fett-composed-824` **`781be179`** (§6): a fresh reset with `0210`-`0227` contiguous and the reviewed `0213`, giving DB 256/256, unit and contracts 574/574, browser 5/5. The earlier `82046d94` proof is superseded (stale `0213`).
+2. **D4, the Resend webhook, only after the full chain `0213`-`0227` is applied** (D4's precondition). The bounded quarantine and the transient-bounce fix are receiver preconditions, so activating the receiver on `0212`'s original functions is not authorized.
+3. **D5, the daily recovery sweep, after D4.**
+
+Merges, the webhook secret and endpoint, and the cron entry are each a separate decision. None is authorized here.
+
+## 6. Delivery evidence packet: every count attributed to the head it ran on (2026-10-14)
+
+| Head | What ran | Result |
+|---|---|---|
+| **#832 `27c111f3`** (0212 frozen; webhook answers first) | CI `38503187996` | **11/11 success** |
+| | Codex exact-head review | **clean**: completed 02:54:36Z for `27c111f`, 👍, no findings |
+| | Local route suite at this head | **25/25**, including the answer-before-drain and pending-500 cases. Negative control: restoring the awaited drain turns both red |
+| **#876 `084d8dc6`** (0227 blob `67e837de`, sha256 `8b62d4d8…`) | Codex exact-head review | **clean**: completed 02:54:44Z for `084d8dc`, no findings |
+| | CI `38503246394` | validate: only the branch-local contiguity hole (by design). DB integration died at runner startup (port 54324 already bound; no test ran) and was **re-run**; see the PR |
+| **#876 `bcdc5ef4`** (same 0227 SQL) | Local isolated chain `0001`–`0212` + `0227` | **113/113**: 0227 file, 0212 suite, export registry. Negative control: the transient cases are red on the previous 0227 |
+| **Composed `781be179`** (`integration/fett-composed-824`; carries the REVIEWED `0213` from #831, blob `47205a35`, plus #832 `27c111f3` and #876 `084d8dc6`) | Fresh reset; chain `0210`–`0227` contiguous; DB lane (the 6 delivery files plus 3 lead-alert files) | **256/256**. **This is the current ordered proof** and supersedes `82046d94` |
+| | Unit and source contracts | **574/574** |
+| | Browser `e2e/delivery-visibility.spec.ts` | **5/5** |
+| **Composed `82046d94`** (superseded: it carried a stale `0213`) | Guarded fresh reset; DB lane (6 files) | 174/174 |
+| | Unit and source contracts (32 files) | **546/546** |
+| | Browser `e2e/delivery-visibility.spec.ts` | **5/5** |
+| **Composed `bfa6f11c`** | Contains #832 `27c111f3` and #876 `084d8dc6` | **None of the counts above ran on it** |
+| **#876 after `084d8dc6`** (`61534986`, `8069c055`) | Test-only: exact-grant posture for 0212 and 0227. 0227's SQL is unchanged (blob `67e837de`) | Not in any composed proof. Mutation proof: 28 + 16 cases behaved as required on 0212, 0215, 0221 and 0227 |
+
+**Upper stack, synced to #832 `27c111f3` by normal merge:** #843 `0c388cc4`, #846 `372085d7`, #849 `794ed588`, #865 `afc56e5c` and this branch.
+- **Local runs on each** (docs, migrations, API routes, delivery components): pass, except the documented contiguity hole and the local-only A3/A5.
+- **No live** scheduling, webhook, provider or send action was taken.

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
+import { countVersion } from "./helpers/migration-state";
 
 // ===========================================================================
 // Migration 0221 — DELIVERY-VISIBILITY-04: cancellation and postcare email
@@ -26,14 +26,9 @@ const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const sha = (f: string) => createHash("sha256").update(read(f), "utf8").digest("hex");
 
 describe("0221 sits correctly in the migration sequence", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    // Only the CURRENT maximum migration's own test may assert this — see
-    // CLAUDE.md §2. It reached this file from 0215's test.
-    expect(isRepoMax(VERSION)).toBe(false); // handed off to 0222 on this branch
-    const above = versionsAbove(VERSION);
-    expect(above.length, "nothing sits above 0221").toBeGreaterThan(0);
-    expect(above.every((v) => Number(v) > Number(VERSION))).toBe(true);
-  });
+  // No repo-max claim here (CLAUDE.md §2): "nothing above 0221" is a fact
+  // about one branch, and it turns red for whichever lane lands above it
+  // (0227 on the composed chain). The central tripwire covers it.
 
   it("is allocated exactly once", () => {
     expect(countVersion(VERSION)).toBe(1);
@@ -124,5 +119,36 @@ describe("0221 privacy and evidence", () => {
   it("keeps the reporter as evidence, not a foreign key", () => {
     expect(table).toMatch(/reported_by_practitioner_id uuid not null,/);
     expect(table).not.toMatch(/reported_by_practitioner_id[^,]*references/);
+  });
+});
+
+describe("0221 grants EXACTLY the intended roles, and nothing else", () => {
+  // Every GRANT statement in the file -- any privilege, any object, every role
+  // of a comma list -- as "privilege | object -> role". A stray grant beside
+  // the intended one (to anon, a second role, \`grant all\`, a schema-wide
+  // grant) changes this list, so the assertion is exact, not "contains".
+  const grants = (code: string): string[] => {
+    // Both comment forms are stripped first, so a commented-out grant neither
+    // counts nor hides one. Then statement by statement (split on ";"), so a
+    // grant on the same line as another statement is still seen.
+    const bare = code.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ");
+    const out: string[] = [];
+    for (const stmt of bare.split(";")) {
+      const m = /^\s*grant\s+([\s\S]+?)\s+on\s+([\s\S]+?)\s+to\s+([\s\S]+?)\s*$/i.exec(stmt);
+      if (!m) continue;
+      const obj = m[2]!.replace(/\s+/g, " ").trim().replace(/^function /i, "");
+      for (const role of m[3]!.split(",")) out.push(`${m[1]!.replace(/\s+/g, " ").trim().toLowerCase()} | ${obj} -> ${role.trim().toLowerCase()}`);
+    }
+    return out.sort();
+  };
+
+  it("matches the intended grant list exactly", () => {
+    expect(grants(SQL)).toEqual([
+      "execute | public.begin_appointment_email_message(uuid, uuid, text) -> service_role",
+      "execute | public.close_delivery_concern(uuid, text) -> service_role",
+      "execute | public.owner_delivery_concerns(uuid) -> authenticated",
+      "execute | public.report_delivery_concern(uuid, uuid, text, text) -> authenticated",
+      "execute | public.support_delivery_concerns(boolean) -> service_role",
+    ]);
   });
 });
