@@ -15,13 +15,20 @@ import {
 // ===========================================================================
 // 0223 — ONE SAVE of machine settings: record_treatment_setup_submission.
 //
-// *** UNEXECUTED AT THE TIME OF WRITING. *** This file was authored against
-// 2839d9a0 with NO database available. Nothing below has been run. Until it
-// has, it is a specification of the command's behaviour and not evidence of
-// it — and the distinction is the whole reason this file exists at all:
-// 0204 shipped a command writing to a column that did not exist, applied
-// clean, passed its source test, and had never once succeeded. A source
-// contract cannot see inside a plpgsql body.
+// EXECUTED 2026-10-15, 25/25 green, against an isolated local stack
+// (hone-mpx-0223 / 64822) on a fresh chain with 0223 applied. It was written
+// against 2839d9a0 with no database available and said UNEXECUTED until this
+// run, because the distinction is the whole reason the file exists: 0204
+// shipped a command writing to a column that did not exist, applied clean,
+// passed its source test, and had never once succeeded. A source contract
+// cannot see inside a plpgsql body.
+//
+// AND THE FIRST RUN EARNED ITS KEEP. The no-deadlock test SELF-DEADLOCKED:
+// it launched both saves and awaited `Promise.allSettled` with the commits
+// after it, so A held g1 while B waited for it and A could not commit until
+// allSettled returned, which waited for B. The cycle was in the HARNESS, not
+// the command, and only `lock_timeout` stopped the suite hanging. See the
+// comment on that test for the shape that actually proves the claim.
 //
 // WHAT THE COMMAND IS FOR. `record_treatment_setup_group` records ONE group
 // per call. Once the entry surface could record several, a Save became
@@ -469,10 +476,26 @@ describe("0223 · two concurrent saves of the same groups do not deadlock", () =
     const { blockId } = await seedSession(studio);
     const machineId = await registerMachine(studio);
 
+    // THIS TEST SELF-DEADLOCKED ON ITS FIRST EVER RUN, and the first shape is
+    // worth recording because it is the same mistake this lane made once
+    // before. It launched BOTH saves and awaited `Promise.allSettled`, with
+    // the commits after it. Advisory transaction locks are held until COMMIT,
+    // so A held g1 while B waited for it, and A could not commit until
+    // allSettled returned, which waited for B. The cycle was in the HARNESS,
+    // not in the command, and only the `lock_timeout` saved the suite from
+    // hanging: save A came back "canceling statement due to lock timeout".
+    //
+    // THE SHAPE THAT ACTUALLY TESTS THE CLAIM is sequenced: let A finish its
+    // statement and KEEP its transaction open, start B, prove B is blocked
+    // rather than aborted, then commit A and watch B proceed. That tests real
+    // contention, cannot deadlock by construction, and fails loudly if the
+    // sort order is ever removed - at which point Postgres reports 40P01 and
+    // the assertion below catches it.
     const a = await beginAsUser(studio.userId);
     const b = await beginAsUser(studio.userId);
     try {
-      const runA = a.query(
+      // A runs to completion and holds its locks: its transaction is open.
+      await a.query(
         `select public.record_treatment_setup_submission($1,$2,$3,$4,$5::jsonb) as r`,
         [
           blockId,
@@ -482,6 +505,9 @@ describe("0223 · two concurrent saves of the same groups do not deadlock", () =
           JSON.stringify([group("g1", [1], "120"), group("g2", [2], "80")]),
         ],
       );
+
+      const bPid = (await b.query("select pg_backend_pid() as pid")).rows[0]
+        .pid as number;
       const runB = b.query(
         `select public.record_treatment_setup_submission($1,$2,$3,$4,$5::jsonb) as r`,
         [
@@ -493,25 +519,27 @@ describe("0223 · two concurrent saves of the same groups do not deadlock", () =
           JSON.stringify([group("g2", [3], "90"), group("g1", [4], "70")]),
         ],
       );
-      // BOTH SETTLED BEFORE ANYTHING IS ASSERTED. An unsettled query is an
+
+      // IT MUST BLOCK, not abort. A deadlock would have been detected and
+      // aborted immediately; waiting is what the sorted order buys.
+      const blocked = await waitUntilBlocked(bPid);
+      expect(blocked, "save B never waited for save A's group lock").toBe(true);
+
+      await a.query("commit");
+
+      // SETTLED BEFORE ANYTHING IS ASSERTED. An unsettled query is an
       // unhandled rejection, and Vitest warns that one can make a test pass
       // for the wrong reason.
-      const [ra, rb] = await Promise.allSettled([runA, runB]);
-      await a.query("commit");
-      await b.query("commit");
+      const [rb] = await Promise.allSettled([runB]);
+      await b.query("commit").catch(() => undefined);
 
-      for (const [name, result] of [
-        ["A", ra],
-        ["B", rb],
-      ] as const) {
-        if (result.status === "rejected") {
-          const message = String(result.reason);
-          expect(message, `save ${name} DEADLOCKED`).not.toMatch(/deadlock/i);
-          expect(message, `save ${name} timed out waiting`).not.toMatch(
-            /lock timeout|canceling statement/i,
-          );
-          throw new Error(`save ${name} failed unexpectedly: ${message}`);
-        }
+      if (rb.status === "rejected") {
+        const message = String(rb.reason);
+        expect(message, "save B DEADLOCKED").not.toMatch(/deadlock/i);
+        expect(message, "save B timed out waiting").not.toMatch(
+          /lock timeout|canceling statement/i,
+        );
+        throw new Error(`save B failed unexpectedly: ${message}`);
       }
 
       // Both committed, and each group now has two revisions.
@@ -608,13 +636,23 @@ describe("0223 · a session retired MID-SAVE records nothing", () => {
 
       // IT MUST ACTUALLY BLOCK. If it does not, the `for share` is not doing
       // its job and the rest of this test would pass for the wrong reason.
+      //
+      // THE QUERY IS SETTLED BEFORE EITHER ASSERTION RUNS. An assertion that
+      // throws while `run` is still pending orphans its rejection, and Vitest
+      // warns that an unhandled rejection can make a test pass for the wrong
+      // reason - the first run of this file reported exactly that.
       const blocked = await waitUntilBlocked(pid);
-      expect(blocked, "the save never waited for the sessions lock").toBe(true);
-
       await retire.query("commit");
+      const [settled] = await Promise.allSettled([run]);
 
+      expect(blocked, "the save never waited for the sessions lock").toBe(true);
       // Unblocked, it re-reads liveness and refuses.
-      await expect(run).rejects.toThrow(/Unknown treatment block/i);
+      expect(settled.status, "the save should have been refused").toBe(
+        "rejected",
+      );
+      expect(
+        String(settled.status === "rejected" ? settled.reason : ""),
+      ).toMatch(/Unknown treatment block/i);
     } finally {
       await retire.query("rollback").catch(() => undefined);
       await saver.query("rollback").catch(() => undefined);

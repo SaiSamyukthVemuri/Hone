@@ -2232,6 +2232,24 @@ comment on function public.setup_capture_history_for_block(uuid) is
 -- makes an order mistake impossible and leaves only a name mistake, which the
 -- guard above catches.
 --
+-- APPLIED AND EXERCISED 2026-10-15 on an isolated local stack
+-- (hone-mpx-0223 / 64822), fresh chain, 14/14 in
+-- tests/db/machine-initial-save.db.test.ts - including a forwarding proof
+-- that gives every numeric parameter a DISTINCT value and reads it back off
+-- the row it should have reached, so a cross-wire fails rather than
+-- mislabelling a clinical row for ever. That is the check a source contract
+-- cannot make.
+--
+-- ONE LIMITATION THE RUN REVEALED, recorded here because it is a property of
+-- this command and not of its tests: THE RETRY KEY DOES NOT MAKE THE INITIAL
+-- SAVE IDEMPOTENT. `record_treatment_setup_submission`'s key is unique per
+-- (BLOCK, key), and this command creates a NEW block before using it - so a
+-- repeat cannot collide, nothing is absorbed, and a lost response retried
+-- here produces a SECOND treatment area carrying a second copy of the
+-- settings. The key protects a save against an EXISTING block, which is the
+-- edit path. Closing it would need an idempotency key on the block create
+-- itself, which is a change to 0166's command and a decision of its own.
+--
 -- THE SETTINGS ARE OPTIONAL. With no groups this is exactly
 -- `create_block_with_entry` plus a row count of zero: an area saved with no
 -- machine settings is an ordinary state, and this command must not invent a
