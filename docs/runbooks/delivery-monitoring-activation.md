@@ -49,7 +49,7 @@ What this stack adds stays inside the boundary #828 asked for:
 | 4 | Merge #843, #846, #849 | **Behaviour changes on merge:** reminder and confirmation emails begin creating ledger rows and carry the `hone_m` tag, and owners see the delivery card (Settings → Launch on this stack; Settings → Overview once #867 lands, which moves it). With no webhook yet, email rows stop at `accepted` / `refused` / `unknown`. The card and health say so; they do not claim delivery. |
 | 5 | Apply `0216`-`0220` (other lanes), then `0221` (#865), then merge #865 | Cancellation and postcare join the ledger; owners can report "client says they didn't receive it". |
 | 6 | Apply `0222`-`0226` (other lanes), then `0227` (#876), then merge #876 | Migration-first, in number order, each under its own approval. `0227` carries the two forward fixes to `0212`: bounded quarantine, and transient bounces non-terminal. **The webhook must not be configured before this step is complete.** |
-| 7 | Configure the Resend webhook (§2) | Separate approval. **Precondition: the full chain `0213`-`0227` is applied** (hosted max at least `0227`, with `0227` present exactly once); see D4. This is the step that makes bounce, delay, delivery and complaint visible. |
+| 7 | Configure the Resend webhook (§2) | Separate approval. **Precondition: the full chain `0213`-`0227` is applied** (**every** version `0213`-`0227` present exactly once, checked by D4's enumerating query, not just the max or `0227`); see D4. This is the step that makes bounce, delay, delivery and complaint visible. |
 | 8 | Register the recovery sweep (§3) | Separate approval. Without it, an unfinished receipt is recovered only by Resend's own retries of that delivery (the webhook answers 500 while the receipt is pending), or by a later delivery. |
 
 ## 2. Resend webhook: configuration and controlled test
@@ -78,7 +78,12 @@ What this stack adds stays inside the boundary #828 asked for:
 - Register `GET /api/cron/email-delivery-sweep` in `vercel.json` (with the existing CRON_SECRET), **once a day**. The Vercel plan caps cron at once a day, as `docs/08_EMAIL_SMS_AND_CRON.md` already records for `calendar-reconcile`. How recovery is layered, with nothing claimed beyond what each layer does:
   - **Primary:** Resend's own retries of the pending delivery. The route answers 500 while that receipt is pending, so the provider re-delivers it.
   - **Best effort:** after each successful response, the route's post-response drain tries up to five *other* older pending receipts. It runs only when some webhook arrives, and it can fail or find nothing to do. It is an opportunistic helper, not a per-webhook recovery guarantee.
-  - **Backstop:** the daily sweep. Backlog findings are evaluated only when it runs. At a once-a-day cadence, a stuck backlog can go unreported for up to about a day, and longer if a sweep run fails; `email_delivery_sweep_failing` then records that failure.
+  - **Backstop:** the daily sweep. Backlog findings are evaluated **only inside a sweep invocation that actually runs**. At a once-a-day cadence, a stuck backlog can go unreported for up to about a day.
+  - **What detects what:**
+    - `email_delivery_sweep_failing` is raised only by a sweep that **runs** and finds its own drain or health read failing.
+    - A sweep that **never runs** records nothing at all: Vercel skips the invocation, the deploy drops the cron entry, or the function dies before its health handling. No time-based stale-sweep finding exists.
+    - A missed run is therefore detected **only by a person looking**: the "last sweep" time on `/admin/delivery`, `select last_sweep_at from public.email_delivery_health()`, or Vercel's cron logs.
+    - Until an external monitor exists, check it **daily**. If `last_sweep_at` is more than about 26 hours old, the daily run was missed, and the backlog has gone unreported for that whole period.
 - **Verify:**
   - `select * from email_delivery_health()` shows `last_sweep_at` advancing;
   - a deliberately held receipt is finished by the sweep (rehearsed on a local stack: `tests/db/email-delivery-events.db.test.ts`, CRASH RECOVERY);
@@ -224,11 +229,14 @@ select pg_get_constraintdef(oid) from pg_constraint where conname = 'email_outbo
 - **The full chain `0213`-`0227` is applied, in order.** `0227` replaces `0212`'s claim and processing functions with the bounded quarantine and the non-terminal transient bounce. Activating the receiver on `0212`'s original functions would expose production to the unbounded quarantine and the permanent-bounce misreport that `0227` fixes. Verify read-only:
 
   ```sql
-  select count(*) filter (where version = '0227') as v0227, max(version)
-    from supabase_migrations.schema_migrations;
+  -- one row per required version: every one must be applied exactly once
+  select v.version,
+         (select count(*) from supabase_migrations.schema_migrations m where m.version = v.version) as applied
+    from (select lpad(g::text, 4, '0') as version from generate_series(213, 227) g) v
+   order by v.version;
   ```
 
-  Expect `v0227 = 1` and a max of at least `0227`.
+  Expect **15 rows, each with `applied = 1`**. Any `0` means a required migration is missing; any value above 1 means a duplicate. **Stop** in either case. A max of `0227`, or `0227` being present, is not enough, because a history missing any of `0213`-`0226` would still show both.
 - **#832 is merged and deployed.** That is the receiving route, which answers before draining.
 - **#876 is merged,** so the repository and hosted state agree on `0227`.
 
@@ -238,7 +246,7 @@ Without the secret, the route answers 500 and writes nothing.
 
 **Rollback:** disable or delete the endpoint and unset the secret, then redeploy. Recorded receipts stay as evidence; nothing is resent or deleted.
 
-**Behaviour to expect,** as of #832 `27c111f3`, which every dependent head now carries (#843 `0c388cc4` through this branch, and composed `bfa6f11c` / `82046d94`):
+**Behaviour to expect,** as of #832 `27c111f3`, which every dependent head now carries (#843 `0c388cc4` through this branch, and composed `781be179`):
 - **Answer first, drain afterwards.** The route records the receipt, then claims and processes **this** delivery, then answers. Only **after** the response, in Next `after()` (Codex P2 4266147060), does it sweep up to five older pending receipts. A slow or failing drain never delays or changes the answer; a drain that throws is logged as `resend_webhook_sweep_failed`.
 - **Non-pending duplicate, excluded before any work.** A retried delivery whose receipt is already processed is answered 200 at once: applied, stale, unmatched, ignored or quarantined. It is not reprocessed and schedules no drain.
 - **Pending duplicate.** A retry whose earlier attempt never finished is claimed and processed like a first delivery.
@@ -260,7 +268,7 @@ The route already exists and authenticates with the existing `CRON_SECRET`.
 
 **Plan limit, resolved:** the Vercel plan caps cron at **once a day**. `docs/08_EMAIL_SMS_AND_CRON.md` records it for `calendar-reconcile`, and every existing cron is daily. A sub-daily schedule here would fail the deployment.
 - A faster cadence would need an external scheduler calling the route with the `CRON_SECRET` bearer, or a plan change. Either is its own decision.
-- With a daily sweep, the backlog finding (15 minutes, critical at 6 hours, recorded at warning) is evaluated once a day. Recovery is layered as §3 describes. Resend's retries are primary, the post-response drain is best effort, and the sweep is the backstop, with up to about a day of reporting latency at this cadence.
+- With a daily sweep, the backlog finding (15 minutes, critical at 6 hours, recorded at warning) is evaluated once a day. Recovery is layered as §3 describes. Resend's retries are primary, the post-response drain is best effort, and the sweep is the backstop, with up to about a day of reporting latency at this cadence. A **skipped** run raises nothing, so check `last_sweep_at` daily (§3, "What detects what").
 
 **Validation:**
 - `select last_sweep_at, last_sweep_failed from public.email_delivery_health();` advances each run;
@@ -284,7 +292,7 @@ Turning any of that on is a separate decision after D-4.
    - `0221` (D3);
    - `0227` (#876): the two forward fixes to `0212`, the bounded quarantine and non-terminal transient bounces.
 
-   The ordered composition was proved on `integration/fett-composed-824` `82046d94` (§6).
+   The ordered composition was proved on `integration/fett-composed-824` **`781be179`** (§6): a fresh reset with `0210`-`0227` contiguous and the reviewed `0213`, giving DB 256/256, unit and contracts 574/574, browser 5/5. The earlier `82046d94` proof is superseded (stale `0213`).
 2. **D4, the Resend webhook, only after the full chain `0213`-`0227` is applied** (D4's precondition). The bounded quarantine and the transient-bounce fix are receiver preconditions, so activating the receiver on `0212`'s original functions is not authorized.
 3. **D5, the daily recovery sweep, after D4.**
 
