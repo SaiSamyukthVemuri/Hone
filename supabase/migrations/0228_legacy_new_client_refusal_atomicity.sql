@@ -270,7 +270,25 @@ begin
   end if;
 
   -- THE ROLLBACK. Identical in shape to 0225's, because the defect is identical.
-  if v_result <> 'created' and v_created_client then
+  -- THE REFUSAL TEST IS "NO APPOINTMENT", NOT A SUCCESS STRING.
+  --
+  -- This first read `v_result <> 'created'`, which silently treated every
+  -- successful INVITED booking as a refusal: `create_public_appointment_v2`
+  -- signals success as 'created' but `create_waitlist_public_appointment`
+  -- (0195) signals it as 'created_and_converted'. So the raise fired on
+  -- success, rolled back the conversion, and the invitation ended 'closed'
+  -- instead of 'booked' -- caught by
+  -- tests/db/waitlist-recipient-journey.db.test.ts, on exactly the path this
+  -- file's own atomicity tests record as uncovered for want of a waitlist
+  -- fixture. Enumerating success strings is what broke; asking the delegates'
+  -- shared output is what cannot.
+  --
+  -- Both delegates return a non-null `appointment_id` if and only if they
+  -- created one, and 0195 guards explicitly against a success with no id. So
+  -- "no appointment" is the delegate-agnostic statement of "nothing was
+  -- booked", and it is what decides whether a client row this transaction
+  -- created has to be undone.
+  if v_appt_id is null and v_created_client then
     raise exception 'hone_refused:%', v_result using errcode = 'HB228';
   end if;
   exception

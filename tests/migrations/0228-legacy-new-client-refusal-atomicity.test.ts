@@ -126,7 +126,18 @@ describe("0228 makes a refused legacy booking atomic", () => {
     expect(
       EXECUTABLE,
       "the rollback must be conditional on this transaction having created it",
-    ).toMatch(/v_result <> 'created' and v_created_client/);
+    ).toMatch(/v_appt_id is null and v_created_client/);
+    // AND NOT BY SUCCESS STRING. The first version tested
+    // `v_result <> 'created'`, which read every successful INVITED booking as a
+    // refusal: this wrapper's ordinary delegate signals success as 'created'
+    // while `create_waitlist_public_appointment` (0195) signals it as
+    // 'created_and_converted'. The raise fired on success and rolled the
+    // conversion back. Pinned so the string comparison cannot return.
+    expect(
+      EXECUTABLE,
+      "never gate the rollback on a delegate's success STRING — the two " +
+        "delegates disagree, and the invited path is the one that breaks",
+    ).not.toMatch(/v_result <> 'created'/);
   });
 
   it("returns the refusal rather than raising out of the function", () => {

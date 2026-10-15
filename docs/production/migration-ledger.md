@@ -14,7 +14,17 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-15 on `feat/g1-public-booking-picker`; hosted `0211` DECLARED; repo max `0228`; `0212`–`0222`, `0225`, `0228` AUTHORED AND PENDING — **NOT contiguous on this branch**)
+## Current state (verified 2026-10-15 on `feat/g1-public-booking-picker`, post-0211 apply; hosted `0211` DECLARED; repo max `0228`; `0212`–`0222`, `0225`, `0228` AUTHORED AND PENDING — **NOT contiguous on this branch**)
+
+> **The `post-0211 apply` phrasing is load-bearing, not decoration.** It is the
+> apply receipt this block carries forward, and
+> `tests/migrations/0177-postcare-write-boundary.test.ts` reads it to confirm
+> that 0177's apply is still RECORDED rather than silently dropped by a later
+> rewrite of this header. An earlier revision of this block restated the state
+> accurately and lost that phrase, which is exactly the receipt-discarding the
+> guard exists to catch. `0211` is the hosted figure DECLARED in
+> `docs/production/migration-state.json` on this branch, so the phrase is true
+> as written; re-derive it from that file rather than editing it by hand.
 
 > **THIS BRANCH IS NOT AT PARITY, and the production copy of this block says it
 > is.** That line is correct on production and false here, which is why it is
