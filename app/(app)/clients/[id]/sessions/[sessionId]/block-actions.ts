@@ -6,6 +6,14 @@ import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { assertSessionForClient } from "@/lib/sessions/session-lineage";
 import { findProbeOptionByKey } from "@/lib/probes";
 import { normalizeChips } from "@/lib/observation-chips";
+import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
+import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
+import { listStudioDevices } from "@/lib/machines/studio-devices";
+import type {
+  MachineDb,
+  ReadingSubmission,
+  SetupSubmissionGroup,
+} from "@/lib/machines/machine-queries";
 import { resolveProbeInventorySelection } from "@/lib/record-keeping/probe-inventory-validation";
 import { validateTreatmentArea } from "@/lib/sessions/area-validation";
 import {
@@ -1082,17 +1090,21 @@ export type InitialSetupInput = {
    * the repeat and returns the original submission.
    */
   idempotencyKey: string;
+  /**
+   * The groups, carrying only what a CALLER may assert.
+   *
+   * NO `nativeUnit` AND NO `decimals`, and the omission is the point: those
+   * are properties of the MACHINE, derived on the server from the published
+   * contract. An earlier shape of this type required them, which would have
+   * let a crafted request persist a permanent row claiming the wrong unit -
+   * the defect `ReadingSubmission` was narrowed for (Codex, 9c6fbbe5). The
+   * TYPE CHECKER caught it here, which is the only reason it is not in this
+   * commit.
+   */
   groups: Array<{
     groupKey: string;
     channels: number[];
-    readings: Array<{
-      stageKey: string | null;
-      fieldKey: string;
-      value: { kind: "value"; value: number } | { kind: "absent"; reason: string };
-      nativeUnit: string;
-      decimals: number;
-      observationSource: string;
-    }>;
+    readings: ReadingSubmission[];
   }>;
 };
 
@@ -1280,13 +1292,63 @@ export async function createTreatmentAreaWithEntryAction(
   const withSetup =
     input.initialSetup != null && input.initialSetup.groups.length > 0;
 
+  // EVERY READING IS VALIDATED BEFORE ANY OF IT IS SENT, through the SAME
+  // validator the other two recording paths use.
+  //
+  // This path had none at all until the type checker exposed the input shape,
+  // and the database would not have covered it: the command validates against
+  // the UNIT'S OWN registered contract version, so a reading derived under a
+  // newer catalogue version is recorded under the older one and permanently
+  // mislabelled - `stale_profile_version` is the check that catches it and it
+  // can only run here. Also malformed values (a negative current has no
+  // database constraint), unknown fields, channel bounds and the mode's
+  // installed-option requirement.
+  const setupGroups: SetupSubmissionGroup[] = [];
+  if (withSetup) {
+    const setup = input.initialSetup!;
+    // THE SAME AUTHENTICATED CLIENT this action already holds, narrowed to
+    // the two capabilities the machine queries use rather than passed whole.
+    // One cast, at the seam, exactly as machine-setup-actions does it.
+    const db = supabase as unknown as MachineDb;
+    const inventory = await listStudioDevices(db, studio.id);
+    const device = inventory.devices.find((d) => d.deviceId === setup.machineId);
+    if (!device) {
+      return {
+        ok: false,
+        error: "That machine is not registered to this studio.",
+      };
+    }
+    const profile = catalogueForRuntime().find(
+      (p) => p.profileId === device.profileId,
+    );
+    if (!profile) {
+      return { ok: false, error: "That machine does not offer that mode." };
+    }
+    for (const g of setup.groups) {
+      const checked = validateSubmittedReadings(
+        device,
+        profile,
+        setup.modeKey,
+        g.readings,
+      );
+      if ("error" in checked) return { ok: false, error: checked.error };
+      setupGroups.push({
+        groupKey: g.groupKey,
+        channels: g.channels,
+        readings: checked.rows,
+      });
+    }
+  }
+
   const { data: createdRows, error: cmdErr } = withSetup
     ? await supabase.rpc("create_block_with_initial_setup", {
         ...blockArgs,
         p_studio_machine_id: input.initialSetup!.machineId,
         p_setup_mode_key: input.initialSetup!.modeKey,
         p_setup_idempotency_key: input.initialSetup!.idempotencyKey,
-        p_setup_groups: input.initialSetup!.groups.map((g) => ({
+        // THE DERIVED ROWS, never the caller's: unit and precision come from
+        // the contract the validator resolved.
+        p_setup_groups: setupGroups.map((g) => ({
           group_key: g.groupKey,
           channels: g.channels,
           readings: g.readings.map((r) => ({

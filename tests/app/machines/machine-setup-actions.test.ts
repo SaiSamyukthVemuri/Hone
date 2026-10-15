@@ -636,28 +636,47 @@ describe("recordSetupSubmissionAction sends ONE call for the whole save", () => 
 describe("THE VALIDATION IS SHARED, not copied", () => {
   // A second implementation of a clinical validation rule is a second place
   // for it to drift, and this feature has corrected that exact defect three
-  // times. Both recording actions reach `validateSubmittedReadings`, which is
-  // the only caller of `validateReading` in this file.
-  const SRC = readFileSync(
-    path.resolve(
-      __dirname,
-      "../../../app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts",
-    ),
-    "utf8",
-  );
-  const code = SRC.replace(/^\s*(\/\/|\*|\/\*).*$/gm, " ");
+  // times. THREE server paths now record machine settings: the per-group
+  // command, the whole-save command, and the INITIAL save that creates the
+  // treatment area and its settings in one transaction - and the third lives
+  // in a DIFFERENT module, which is why the validator moved to lib/.
+  const read = (rel: string) =>
+    readFileSync(path.resolve(__dirname, "../../..", rel), "utf8").replace(
+      /^\s*(\/\/|\*|\/\*).*$/gm,
+      " ",
+    );
 
-  it("has exactly ONE call site for the reading validator", () => {
-    const hits = code.match(/validateReading\(/g) ?? [];
+  const SETUP_ACTIONS =
+    "app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts";
+  const BLOCK_ACTIONS =
+    "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts";
+  const VALIDATOR = "lib/machines/validate-submitted-readings.ts";
+
+  it("has exactly ONE call site for the reading validator, and it is in lib/", () => {
+    // Counted ACROSS the three files rather than within one, which is the
+    // claim that actually matters now that the paths span two modules. The
+    // previous version of this test counted inside machine-setup-actions only
+    // and would have been satisfied by a second copy in block-actions.
+    const perFile = [SETUP_ACTIONS, BLOCK_ACTIONS, VALIDATOR].map((f) => ({
+      f,
+      hits: (read(f).match(/validateReading\(/g) ?? []).length,
+    }));
     expect(
-      hits.length,
-      "a second validateReading call site is a second definition of the rule",
+      perFile.find((p) => p.f === VALIDATOR)!.hits,
+      "the shared validator must call it exactly once",
     ).toBe(1);
+    for (const p of perFile.filter((x) => x.f !== VALIDATOR)) {
+      expect(
+        p.hits,
+        `${p.f} must not call validateReading itself`,
+      ).toBe(0);
+    }
   });
 
-  it("is reached by BOTH recording actions", () => {
+  it("is reached by ALL THREE recording paths", () => {
+    const setup = read(SETUP_ACTIONS);
     for (const fn of ["recordReadingsAction", "recordSetupSubmissionAction"]) {
-      const body = code.slice(code.indexOf(`export async function ${fn}`)).split(
+      const body = setup.slice(setup.indexOf(`export async function ${fn}`)).split(
         "\n}\n",
       )[0]!;
       expect(
@@ -665,6 +684,22 @@ describe("THE VALIDATION IS SHARED, not copied", () => {
         `${fn} must validate through the shared helper`,
       ).toMatch(/validateSubmittedReadings\(/);
     }
+    // The INITIAL save, in the other module. It had NO validator at all until
+    // the type checker exposed its input shape - and the database would not
+    // have covered the gap, because `stale_profile_version` compares the
+    // DEVICE's registered contract version against the catalogue's and the
+    // command only ever sees the device's.
+    const block = read(BLOCK_ACTIONS);
+    const create = block.slice(
+      block.indexOf("export async function createTreatmentAreaWithEntryAction"),
+      block.indexOf("export type UpdateAreaWithEntryInput"),
+    );
+    expect(create).toMatch(/validateSubmittedReadings\(/);
+  });
+
+  it("DERIVES unit and precision there, and nowhere else", () => {
+    expect(read(VALIDATOR)).toMatch(/nativeUnit: checked\.field\.unit/);
+    expect(read(VALIDATOR)).toMatch(/decimals: checked\.field\.decimals/);
   });
 });
 
@@ -789,6 +824,11 @@ describe("reading metadata is DERIVED from the profile, never accepted", () => {
     // The submission type has no nativeUnit/decimals at all, so this is a
     // compile-time guarantee as well as a runtime one. Pinned on the source so
     // a future widening is a visible decision.
+    //
+    // THE DERIVATION MOVED to lib/machines/validate-submitted-readings.ts
+    // when a third recording path in another module needed it; the assertion
+    // that it HAPPENS lives with it, in the suite above. What stays here is
+    // the type-level half, which is where this test's name points.
     const src = readFileSync(
       path.resolve(__dirname, "../../../lib/machines/machine-queries.ts"),
       "utf8",
@@ -798,23 +838,23 @@ describe("reading metadata is DERIVED from the profile, never accepted", () => {
     expect(sub![0]).not.toMatch(/nativeUnit/);
     expect(sub![0]).not.toMatch(/decimals/);
 
-    const action = readFileSync(
-      path.resolve(
-        __dirname,
-        "../../../app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts",
-      ),
+    // THE DERIVATION NOW LIVES IN lib/, because a THIRD recording path - the
+    // initial save, in block-actions.ts - needed the same validator and a
+    // rule reachable from one module only is a rule that holds on some paths
+    // and not others. These assertions followed it rather than being dropped.
+    const validator = readFileSync(
+      path.resolve(__dirname, "../../../lib/machines/validate-submitted-readings.ts"),
       "utf8",
     );
     // The unit and precision come off the field the VALIDATOR resolved, not
     // off anything the caller sent and not off a descriptor re-derived at the
     // call site. `checked` is validateReading's successful outcome.
-    expect(action).toMatch(/nativeUnit: checked\.field\.unit/);
-    expect(action).toMatch(/decimals: checked\.field\.decimals/);
-    // And that the capture goes through the shared validator at all.
-    expect(action).toMatch(/validateReading\(/);
+    expect(validator).toMatch(/nativeUnit: checked\.field\.unit/);
+    expect(validator).toMatch(/decimals: checked\.field\.decimals/);
+    expect(validator).toMatch(/validateReading\(/);
     // Validated against the DEVICE's registered version, so a stale
     // registration is refused rather than captured under today's contract.
-    expect(action).toMatch(/version: device\.profileVersion/);
+    expect(validator).toMatch(/version: device\.profileVersion/);
   });
 });
 

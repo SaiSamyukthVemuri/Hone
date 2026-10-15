@@ -6,6 +6,26 @@ import {
 } from "@/lib/machines/pending-setup";
 
 /**
+ * SUPERSEDED, AND DELIBERATELY NOT YET DELETED.
+ *
+ * `create_block_with_initial_setup` (0223) now writes the treatment area and
+ * its machine settings in ONE transaction, so the create form calls that and
+ * nothing calls this. The two-call sequence it orchestrates is no longer the
+ * path, and its `created-not-recorded` outcome is unreachable through the
+ * atomic command.
+ *
+ * IT STAYS UNTIL THE ATOMIC PATH HAS RUN AGAINST A DATABASE. 0223 is pending
+ * and unexecuted; a twenty-six parameter forwarding wrapper is exactly the
+ * class that can be wrong in a way only execution reveals. Deleting the
+ * fallback before the replacement has ever executed would leave nothing to
+ * fall back to. Its rules - the honest partial state, the pinned draft, the
+ * preserved retry key - are proved and would be needed again.
+ *
+ * REMOVE IT once the DB suite has run green, or keep it and wire it as the
+ * explicit fallback. Either is a decision; leaving it unreferenced and
+ * unexplained is not.
+ *
+ * ---------------------------------------------------------------------------
  * CREATE THE TREATMENT AREA, THEN RECORD THE MACHINE SETTINGS SHE ENTERED.
  *
  * ---------------------------------------------------------------------------

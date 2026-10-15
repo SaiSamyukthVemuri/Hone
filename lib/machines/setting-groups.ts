@@ -225,6 +225,48 @@ export function groupReadiness(
   return requiredComplete ? "complete" : "partial";
 }
 
+/**
+ * Why this draft must not be saved yet, or null.
+ *
+ * EXTRACTED FROM THE CREATE-MODE COLLECTOR because a negative control caught
+ * it: the collector computed this inline, so "a half-finished draft is
+ * reported as ready" could be mutated in and every test stayed green. What
+ * decides whether a clinical save proceeds does not belong where only a
+ * mounted browser can reach it.
+ *
+ * TWO REASONS, in priority order:
+ *   1. A CROSS-GROUP CONFLICT - two groups claiming the same probe. The
+ *      command refuses it too; naming it here means she sees it before a
+ *      round trip rather than after one.
+ *   2. A PARTIALLY FILLED GROUP - some values and a missing required field.
+ *      Neither ready nor empty: skipping it would silently discard numbers
+ *      she typed, and submitting it would be refused.
+ *
+ * The conflict wins because it is the one she cannot fix by typing more.
+ */
+export function draftBlocking(
+  profile: MachineProfile,
+  fieldGroups: readonly FieldGroup[],
+  groups: readonly SettingGroupDraft[],
+): string | null {
+  const issues = settingGroupIssues(
+    profile,
+    groups.map((g) => ({ groupId: g.id, channels: g.channels, readings: {} })),
+  );
+  if (issues.length > 0) return issues[0]!.problem;
+
+  const partial = groups.filter(
+    (g) => groupReadiness(fieldGroups, g) === "partial",
+  );
+  if (partial.length === 0) return null;
+  const numbers = partial.map(
+    (g) => groups.findIndex((x) => x.id === g.id) + 1,
+  );
+  return `Setting group${partial.length > 1 ? "s" : ""} ${numbers.join(", ")} ${
+    partial.length > 1 ? "are" : "is"
+  } missing a required field.`;
+}
+
 export type GroupSubmission = {
   groupKey: string;
   channels: number[];

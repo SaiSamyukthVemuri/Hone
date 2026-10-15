@@ -269,11 +269,24 @@ test("create mode: choose the machine, save the block, record one save, retrieve
   let blockId = "";
   let firstSubmission: string | null = null;
 
-  await test.step("2: BEFORE the block exists, the machine is offered but nothing can be recorded", async () => {
-    // THE CLAIM THIS SPEC EXISTS FOR, and nothing proved it mounted. A new
-    // settings block has no row yet, so there is nowhere to put a reading -
-    // and a form that collected one would have to discard it. The panel shows
-    // the model's contract as a reference instead.
+  await test.step("2: BEFORE the block exists, the settings are COLLECTED for the same save", async () => {
+    // THIS STEP ASSERTED THE OPPOSITE UNTIL `create_block_with_initial_setup`,
+    // AND THE CHANGE IS DELIBERATE RATHER THAN A REPAIR.
+    //
+    // It required that no reading could be entered in create mode, which was
+    // the honest behaviour while it was true: a new settings block has no row,
+    // so there was nowhere to put a reading, and a form that collected one
+    // would have had to discard it. She saved the area, re-opened it, and
+    // recorded - two steps for one act.
+    //
+    // 0223's initial-save command writes the area AND its settings in one
+    // transaction, so there IS somewhere to put them now: the save that
+    // creates the block carries them. The old assertion is not weakened here,
+    // it is replaced by the claim that is now true - and the old one still
+    // holds wherever no host can carry a draft, where the panel shows the
+    // contract read-only (proved in tests/components/machine-setting-draft).
+    //
+    // THE SQL HAS NOT RUN. This step is a specification until it does.
     await page.getByTestId("machine-select").selectOption(machineId);
     await expect(page.getByTestId("machine-chosen")).toContainText("Room 1 demo", {
       timeout: T,
@@ -293,12 +306,27 @@ test("create mode: choose the machine, save the block, record one save, retrieve
     });
     await expect(page.getByTestId("field-unit-current")).toHaveText("(µA)");
 
-    // But there is no entry form and no save.
+    // THE FIELDS ARE COLLECTABLE, and this is the COLLECTOR, not the
+    // recorder: it offers no save, because the area's Save is the only one.
+    await expect(page.getByTestId("machine-setting-draft")).toBeVisible({
+      timeout: T,
+    });
+    await expect(page.getByTestId("setting-draft-note")).toContainText(
+      /saved together with the treatment area/i,
+    );
+    expect(
+      await page.getByTestId("machine-reading-save").count(),
+      "the collector must not offer a save of its own",
+    ).toBe(0);
     expect(
       await page.getByTestId("machine-reading-entry").count(),
-      "a reading could be entered against a block that does not exist yet",
+      "the RECORDING form belongs to a block that already exists",
     ).toBe(0);
-    expect(await page.getByTestId("machine-reading-save").count()).toBe(0);
+
+    // Entered now; step 3's single Save is what writes them.
+    await page.getByTestId("reading-current").fill("120");
+    await page.getByTestId("reading-duration").fill("300.5");
+    await page.getByTestId("reading-energy_shown").fill("1.25");
     await noOverflow(page);
   });
 
@@ -313,6 +341,19 @@ test("create mode: choose the machine, save the block, record one save, retrieve
         { timeout: T, message: "the create form saved no settings block" },
       )
       .not.toBe("");
+
+    // THE SETTINGS LANDED WITH IT, in that one save. This is the claim the
+    // atomic command exists for: no second action, no window in which the
+    // area exists and its settings do not.
+    const firstCaps = await capturesFor(blockId);
+    expect(
+      firstCaps.length,
+      "the area saved but its machine settings did not",
+    ).toBeGreaterThan(0);
+    expect(
+      firstCaps[0]!.setup_submission_id,
+      "an initial save must carry its submission",
+    ).not.toBeNull();
 
     // Re-enter the block being charted and open the panel again.
     await page.goto(`/clients/${clientId}/sessions/${sessionId}`);

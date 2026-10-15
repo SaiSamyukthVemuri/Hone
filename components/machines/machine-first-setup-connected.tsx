@@ -53,6 +53,16 @@ export type MachineFirstSetupConnectedProps = {
   load?: () => Promise<MachineSetupContext>;
   /** Injected by tests; production uses the server action. */
   record?: MachineFirstSetupPanelRecord;
+  /**
+   * Collect settings in CREATE mode and hand them to the host form's save.
+   *
+   * Passed straight through to the panel. The host supplies it only when it
+   * can actually carry them into its own Save - `block-setup-form.tsx` does,
+   * through `initialSetup`.
+   */
+  onSettingDraft?: NonNullable<
+    Parameters<typeof MachineFirstSetupPanel>[0]["onSettingDraft"]
+  >;
   /** Injected by tests; production uses the server action. */
   select?: (choice: {
     deviceId: string | null;
@@ -71,6 +81,7 @@ export function MachineFirstSetupConnected({
   load,
   select,
   record,
+  onSettingDraft,
 }: MachineFirstSetupConnectedProps) {
   const [ctx, setCtx] = useState<MachineSetupContext | null>(null);
   const [state, setState] = useState<"idle" | "loading" | "failed">("idle");
@@ -206,6 +217,11 @@ export function MachineFirstSetupConnected({
       // optional - omitting it fails that test.
       recordedSetup={ctx.recordedSetup}
       blockId={blockId}
+      // CREATE MODE. Forwarded rather than recreated here, and the
+      // context-forwarding guard cannot see this one because it is not a
+      // context field - so it is pinned by its own source assertion in
+      // tests/components/machine-first-setup-panel.test.ts.
+      onSettingDraft={onSettingDraft}
       onSelectMachine={select ?? onSelectMachine}
       onRecord={onRecord}
     />

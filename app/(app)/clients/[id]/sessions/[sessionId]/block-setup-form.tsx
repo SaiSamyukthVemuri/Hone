@@ -91,6 +91,8 @@ import { MachineFirstSetupConnected } from "@/components/machines/machine-first-
 import { ProbePicker } from "@/components/probe-picker";
 import { READING_INPUT_CLS } from "@/lib/sessions/charting-input-styles";
 import { resolveModeSections } from "@/lib/sessions/mode-sections";
+import { prepareHandoff, type PendingSetupIdentity } from "@/lib/machines/pending-setup";
+import type { GroupSubmission } from "@/lib/machines/setting-groups";
 import {
   createTreatmentAreaWithEntryAction,
   updateTreatmentAreaWithEntryAction,
@@ -415,6 +417,48 @@ export function BlockSetupForm({
     () => draft.probeKey,
   );
   const [error, setError] = useState<string | null>(null);
+  /**
+   * The machine settings the panel is collecting, in CREATE mode only.
+   *
+   * HELD HERE BECAUSE THIS FORM'S SAVE CARRIES THEM. With no block there is
+   * nothing to record against, so the panel cannot save them itself - and
+   * `create_block_with_initial_setup` writes the area and the settings in one
+   * transaction, so there is exactly one Save for both.
+   *
+   * `blocking` is non-null when the draft is half-finished - a group with
+   * some values and a missing required field, or two groups claiming the same
+   * probe - and `submit` refuses rather than discarding her numbers.
+   */
+  const [machineDraft, setMachineDraft] = useState<{
+    groups: GroupSubmission[];
+    blocking: string | null;
+    identity: PendingSetupIdentity;
+  } | null>(null);
+
+  /**
+   * The settings to send with the area, or null.
+   *
+   * THE RETRY KEY IS MINTED HERE, ONCE PER SAVE, through `prepareHandoff` -
+   * which also COPIES the groups, so a keystroke landing after the save began
+   * cannot change what is recorded while the key still claims it is the same
+   * save. A key minted per attempt would make every retry a new save; a key
+   * that never changed would make a deliberate second capture impossible.
+   */
+  const machineSetupForSave = () => {
+    const chosen = machineDraft;
+    if (!chosen || chosen.groups.length === 0) return null;
+    const identity = chosen.identity;
+    const pending = prepareHandoff(identity, chosen.groups, () =>
+      crypto.randomUUID(),
+    );
+    if (!pending) return null;
+    return {
+      machineId: identity.deviceId,
+      modeKey: identity.modeKey,
+      idempotencyKey: pending.idempotencyKey,
+      groups: pending.groups,
+    };
+  };
   // PR #191: inline feedback after "Copy settings" so the
   // practitioner knows what was copied and from where.
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
@@ -576,6 +620,13 @@ export function BlockSetupForm({
 
   function submit() {
     setError(null);
+    // THE MACHINE DRAFT BLOCKS THE SAVE WHEN IT IS HALF-FINISHED, and says
+    // which group and why. Skipping it would discard numbers she typed;
+    // sending it would be refused by the command after a round trip.
+    if (machineDraft?.blocking) {
+      setError(machineDraft.blocking);
+      return;
+    }
     const el = draft.energyLevel.trim();
     const elNum = el === "" ? null : Number(el);
     if (el !== "" && (!Number.isFinite(elNum) || (elNum as number) < 0)) {
@@ -775,6 +826,12 @@ export function BlockSetupForm({
         areas: draft.areas,
         readings,
         ...clinicalResponse,
+        // THE SETTINGS, WHEN THERE ARE ANY. `prepareHandoff` mints the retry
+        // key ONCE and copies the groups, so a keystroke after the save began
+        // cannot change what is recorded while the key still claims it is the
+        // same save. Null when nothing was entered, which is an ordinary save
+        // of an area with no machine settings.
+        initialSetup: machineSetupForSave(),
       });
       if (!res.ok) {
         setError(res.error);
@@ -1013,6 +1070,12 @@ export function BlockSetupForm({
         blockId={block?.id ?? null}
         clientId={clientId}
         sessionId={sessionId}
+        // CREATE MODE ONLY. With no block there is nothing to record against,
+        // so the panel hands its draft here and THIS form's Save carries it:
+        // `create_block_with_initial_setup` writes the area and the settings
+        // in one transaction. On an EXISTING block the panel records directly
+        // and this is not supplied, so the two paths never both run.
+        onSettingDraft={block ? undefined : setMachineDraft}
       />
 
       {copyMessage && (

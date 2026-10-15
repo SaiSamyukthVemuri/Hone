@@ -6,6 +6,7 @@ import {
   addGroup,
   groupIssues,
   assembleGroupSubmissions,
+  draftBlocking,
   channelChoices,
   draftKey,
   firstGroup,
@@ -347,5 +348,54 @@ describe("a save sends every group that has something to record", () => {
     expect(subs[0]!.channels).toEqual([1]);
     expect(subs[1]!.channels).toEqual([2]);
     expect(subs[0]!.readings).not.toEqual(subs[1]!.readings);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WHY A DRAFT MUST NOT BE SAVED YET.
+//
+// EXTRACTED FROM THE CREATE-MODE COLLECTOR BECAUSE A NEGATIVE CONTROL CAUGHT
+// IT. The collector computed this inline, so the mutation "a half-finished
+// draft is reported as ready" left every test green: a static render cannot
+// type into a field, and this repository has no jsdom. What decides whether a
+// clinical save proceeds does not belong where only a mounted browser can
+// reach it.
+// ---------------------------------------------------------------------------
+describe("draftBlocking", () => {
+  const complete = withValues("g1", { current: "120" }, [1]);
+  const empty = withValues("g2", {}, [2]);
+
+  it("allows a complete draft", () => {
+    expect(draftBlocking(MULTI, [FIELDS], [complete])).toBeNull();
+  });
+
+  it("allows an EMPTY group beside a complete one", () => {
+    // An empty group is how she adds one and changes her mind. Blocking on it
+    // would make the form unusable.
+    expect(draftBlocking(MULTI, [FIELDS], [complete, empty])).toBeNull();
+  });
+
+  it("names a PARTIAL group, by its position", () => {
+    // Neither ready nor empty: skipping it would discard numbers she typed,
+    // and submitting it would be refused by the command.
+    const partial = withValues("g2", { duration: "30" }, [2]);
+    const out = draftBlocking(MULTI, [FIELDS], [complete, partial]);
+    expect(out).toMatch(/Setting group 2 is missing a required field/);
+  });
+
+  it("names SEVERAL partial groups together, in plural", () => {
+    const a = withValues("g1", { duration: "30" }, [1]);
+    const b = withValues("g2", { duration: "30" }, [2]);
+    const out = draftBlocking(MULTI, [FIELDS], [a, b]);
+    expect(out).toMatch(/Setting groups 1, 2 are missing a required field/);
+  });
+
+  it("reports a CROSS-GROUP CONFLICT ahead of a partial group", () => {
+    // The conflict wins because it is the one she cannot fix by typing more.
+    const a = withValues("g1", { current: "120" }, [1]);
+    const b = withValues("g2", { duration: "30" }, [1]);
+    const out = draftBlocking(MULTI, [FIELDS], [a, b]);
+    expect(out).not.toMatch(/missing a required field/);
+    expect(out).toBeTruthy();
   });
 });

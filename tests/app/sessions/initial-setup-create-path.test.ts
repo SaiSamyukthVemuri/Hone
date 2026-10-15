@@ -133,6 +133,22 @@ describe("validation still precedes the write, on BOTH arms", () => {
 });
 
 describe("the settings payload keeps the rules the other write paths use", () => {
+  it("sends the DERIVED rows, never the caller's", () => {
+    // A NEGATIVE CONTROL CAUGHT THIS ONE: swapping `setupGroups` back for
+    // `input.initialSetup!.groups` left every assertion in this file green,
+    // because the per-reading shape is identical either way. The difference
+    // is that one set has been through the validator and carries the
+    // CONTRACT's unit and precision, and the other carries whatever the
+    // browser sent.
+    expect(createBody).toMatch(/p_setup_groups: setupGroups\.map\(\(g\) => \(\{/);
+    expect(
+      createBody,
+      "the caller's groups must not be mapped straight to the command",
+    ).not.toMatch(/p_setup_groups: input\.initialSetup!\.groups\.map/);
+    // And the rows that are mapped came OUT of the validator.
+    expect(createBody).toMatch(/readings: checked\.rows,/);
+  });
+
   it("sends a value as a STRING, so a recorded zero survives JSON", () => {
     // Identical to `recordSetupGroup` and `recordSetupSubmission`, because it
     // is the same rule and not a new one: a bare 0 is indistinguishable from

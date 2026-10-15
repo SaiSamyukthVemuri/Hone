@@ -24,6 +24,9 @@ import type {
 import { MachineReadingEntry } from "./machine-reading-entry";
 import { MachinePriorSetup } from "./machine-prior-setup";
 import { MachineRecordedSetups } from "./machine-recorded-setups";
+import { MachineSettingDraft } from "./machine-setting-draft";
+import type { GroupSubmission } from "@/lib/machines/setting-groups";
+import type { PendingSetupIdentity } from "@/lib/machines/pending-setup";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
 import { nativeFieldGroups } from "@/lib/machines/charting";
 import {
@@ -109,6 +112,29 @@ export type MachineFirstSetupPanelProps = {
   inventoryReason?: string | null;
   /** The treatment block being charted. Entry is impossible without it. */
   blockId?: string | null;
+  /**
+   * Collect settings in CREATE mode, before any block exists.
+   *
+   * SUPPLIED ONLY BY A HOST THAT CAN CARRY THEM. Without it the panel shows
+   * the model's field contract read-only, exactly as before, because there is
+   * nowhere to put a reading - and a form that collected one would have to
+   * discard it. With it, the host's own Save writes the area and these
+   * settings in one transaction through `create_block_with_initial_setup`.
+   */
+  onSettingDraft?: (draft: {
+    groups: GroupSubmission[];
+    blocking: string | null;
+    /**
+     * WHAT THE READINGS MEAN - device, profile, version and mode.
+     *
+     * Supplied by the PANEL rather than by the collector, which knows the
+     * profile and the mode but not which physical unit is chosen. The host
+     * needs all four: a draft typed under one machine and saved under
+     * another is numbers she never read off anything, and
+     * `pending-setup.ts` refuses exactly that comparison.
+     */
+    identity: PendingSetupIdentity;
+  }) => void;
   /** Owner-only affordances appear only when the SERVER says so. */
   canManageMachines?: boolean;
   /** The studio's most recent recorded setup, for next-visit prep. */
@@ -202,6 +228,7 @@ export function MachineFirstSetupPanel({
   canManageMachines = false,
   priorSetup = [],
   recordedSetup = [],
+  onSettingDraft,
   unavailableSelection = null,
   unitNames = {},
   onSelectMachine,
@@ -481,7 +508,39 @@ export function MachineFirstSetupPanel({
           {/* ENTRY when we know which block is being charted; otherwise the
               field contract as a read-only reference. The panel never collects
               a reading it has nowhere to put. */}
-          {blockId && recordAndCount && mode ? (
+          {/*
+            THREE ARMS, and the middle one is new.
+              block + a recorder -> record against it (MachineReadingEntry);
+              NO block + a host that can carry a draft -> collect it;
+              otherwise -> the field contract, read-only.
+            The third is unchanged and is still the honest answer when nothing
+            can carry a reading: the panel never collects one it has nowhere
+            to put.
+          */}
+          {!blockId && onSettingDraft && mode ? (
+            <MachineSettingDraft
+              // REMOUNTED WHEN THE IDENTITY CHANGES, for the same reason the
+              // entry form is: the draft is keyed by group, stage and field
+              // and NOT by mode, so two modes sharing a field identity would
+              // otherwise let a value typed under one be submitted under the
+              // other without being re-read (Codex, ebc69ff6).
+              key={`${chosen.device.deviceId}::${chosen.profile.profileId}::${chosen.profile.version}::${mode.key}`}
+              profile={chosen.profile}
+              mode={mode}
+              // THE IDENTITY IS ADDED HERE, where the chosen unit is known.
+              onDraftChange={(d) =>
+                onSettingDraft({
+                  ...d,
+                  identity: {
+                    deviceId: chosen.device.deviceId,
+                    profileId: chosen.profile.profileId,
+                    profileVersion: chosen.profile.version,
+                    modeKey: mode.key,
+                  },
+                })
+              }
+            />
+          ) : blockId && recordAndCount && mode ? (
             <MachineReadingEntry
               // REMOUNTED WHEN THE IDENTITY CHANGES, which is the whole fix.
               //
