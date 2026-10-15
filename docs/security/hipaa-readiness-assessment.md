@@ -201,6 +201,7 @@ Any resulting migration needs a fresh migration census
 | Date | Change |
 |---|---|
 | 2026-10-11 | First assessment (HIPAA-READY-01), source at `6c5eac80`. |
+| 2026-10-15 | Codex review of `db9ace27`: audit row 19 now lists **every** Upstash key family. Added: the two durable no-TTL studio cursors (`gcal_reconcile:studio_cursor`, `gcal_reconcile:dead_alerts:cursor`) with their ordering role in the remediation, the coordinator locks, all `rl:*` limiter prefixes and the heartbeats. |
 | 2026-10-15 | Codex review of `5c5cad96`: F22 and the Meta register row now carry the raw appointment UUID in `event_id` (audit row 17, G-26). Audit-row to flow-row cross-check: rows 1→F13, 2-4→F10, 5→F8, 6-9 and 11→F4, 8-9 and 22→F5, 12-15→F9, 17→F22, 18→F12, 19→F14, 20→F7, 24→F15, 25-26→F1. Rows 10, 16, 21 and 23 are acceptable. Every audit row is now reflected. |
 | 2026-10-15 | Codex review of `ab8cd7b0`: **one-pass propagation of the egress audit**. Every flow row (F1, F4, F5, F9, F12, F13, F14) and every processor-register row (Vercel, Resend, Twilio, Stripe, PostHog, Google) the audit touches now states the record ids it found and the G-26 status, so no earlier "designed out", "opaque ids only" or "times only" claim remains. |
 | 2026-10-15 | Codex review of `a852bbbe` (after two Codex-side ref failures and a retry). The packet's §2.4 checklist now carries the egress audit's remediations for Sentry (G-25), PostHog (row 18), Stripe (rows 12-15) and Google (row 20), and adds Meta (G-23). |
