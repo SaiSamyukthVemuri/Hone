@@ -17,12 +17,17 @@ import type { recordSetupSubmissionAction } from "@/app/(app)/clients/[id]/sessi
 // ===========================================================================
 // Carrying a machine draft across the BLOCK-CREATE boundary.
 //
-// THE FEATURE DOES NOT EXIST YET, and this file is deliberately not written as
-// if it did. In create mode the settings block has no row, so the panel
-// refuses to collect a reading it has nowhere to put: she saves the area,
-// re-opens it, and records. The browser journey spec asserts that two-step as
-// the current truth. What is proved here is the RULE a one-step version would
-// have to obey, not that anything obeys it - nothing calls this module.
+// THE FEATURE EXISTS NOW, and this header said otherwise until it did. When
+// these cases were written the panel refused to collect a reading it had
+// nowhere to put, and the browser journey asserted that two-step flow as the
+// truth. `create_block_with_initial_setup` (0223) changed it: the create form
+// collects the settings and ONE save writes the area and them together,
+// proved by 183 DB tests and a mounted gate-open run on 2026-10-15, with the
+// gate-closed twin holding.
+//
+// What is proved HERE is still the same thing - the RULE the handoff obeys -
+// and it is still worth proving separately, because a mounted run exercises
+// one path through it while these cases exercise all of them.
 //
 // WHY THE RULE IS WORTH PROVING BEFORE THE WIRE. Captures are append-only, so
 // every way this handoff can be wrong is permanent and unamendable:

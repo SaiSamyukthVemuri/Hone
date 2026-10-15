@@ -4,16 +4,19 @@ import type { GroupSubmission } from "@/lib/machines/setting-groups";
  * Carrying a machine-settings draft across the BLOCK-CREATE boundary.
  *
  * ---------------------------------------------------------------------------
- * THE GAP THIS IS FOR, STATED PLAINLY
+ * WHAT THIS IS FOR
  * ---------------------------------------------------------------------------
- * There is no create-and-record today, and that is deliberate rather than
- * missing: in create mode the settings block has no row, so the panel refuses
- * to collect a reading it has nowhere to put. A practitioner therefore saves
- * the treatment area, re-opens it, and only then records what the machine
- * showed. Two steps for one act.
+ * The create form collects machine settings before any settings block exists,
+ * and `create_block_with_initial_setup` (0223) writes the area and those
+ * settings in ONE transaction. This carries the draft across that boundary.
  *
- * Doing it in one needs a draft to survive the moment the block is created,
- * and that handoff has four ways to record the WRONG thing permanently -
+ * IT USED TO SAY THERE WAS NO CREATE-AND-RECORD, which was true when it was
+ * written: the panel refused to collect a reading it had nowhere to put, and
+ * she saved the area, re-opened it, and recorded. That two-step flow is gone,
+ * and the one-step path is proved - 183 DB tests and a mounted gate-open run
+ * on 2026-10-15.
+ *
+ * The handoff still has four ways to record the WRONG thing permanently, and
  * captures are append-only, so each of them is unamendable:
  *
  *   1. nothing to record, handed off anyway, allocating an empty capture;
@@ -25,21 +28,20 @@ import type { GroupSubmission } from "@/lib/machines/setting-groups";
  *   4. a retry after a lost answer recorded as a second capture.
  *
  * ---------------------------------------------------------------------------
- * WHY IT IS A PURE MODULE, AND WHY NOTHING CALLS IT YET
+ * WHY IT IS A PURE MODULE
  * ---------------------------------------------------------------------------
  * This decides what gets written to an append-only clinical table, and this
  * repository has no jsdom, so the same logic inside a component would be
  * provable only by mounting a browser. Three defects in the sibling save path
  * were found by review rather than by a test for exactly that reason.
  *
- * AND THE FORM IS NOT WIRED TO IT. The wire from the create form through the
- * block-create action is the half that only a mounted run can prove, and this
- * lane has already shipped two features that were inert in production while
- * every unit test passed - `priorUnitNames`, which the connected wrapper never
- * forwarded (Codex, 2351742d), and the remembered mode, which the loader
- * resolved and the wrapper dropped (Codex, 15cc6c99). So the rule lands with
- * its proof; the wire lands when it can be mounted. Until then this module is
- * a building block and the feature does not exist.
+ * THE FORM CALLS IT NOW - `block-setup-form.tsx` mints the retry key through
+ * `prepareHandoff` on every save attempt. The wire was held back until it
+ * could be mounted, because this lane had already shipped two features that
+ * were inert in production while every unit test passed: `priorUnitNames`,
+ * which the connected wrapper never forwarded (Codex, 2351742d), and the
+ * remembered mode, which the loader resolved and the wrapper dropped
+ * (Codex, 15cc6c99). It has been mounted since.
  *
  * NOT ATOMIC WITH THE BLOCK CREATE, and that is a real property rather than an
  * oversight. Creating the block and recording the settings are two commands,
