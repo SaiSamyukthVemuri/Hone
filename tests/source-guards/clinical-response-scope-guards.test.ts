@@ -500,8 +500,14 @@ for (const [fam, noun, label] of [
 // preposition directly follows "area", so the block only says which block the
 // AREA sits in and attributes nothing. A clause between them still attributes
 // ("minutes recorded per treated area are kept on the settings block"), so
-// only the immediately-following form is refused.
-const NOT_AFTER_AREA = String.raw`(?<!\bareas?\s)`;
+// only the immediately-following form is refused. Any whitespace run counts as
+// adjacent, since JSX copy wraps across indented lines (Codex P2 4283410159).
+// KNOWN LIMITATION, recorded rather than chased: punctuation between "area"
+// and the block ("each area, on the block") is not refused, because the same
+// shape is the deliberately rescued "per treated area, from the settings block
+// they belong to". This guard is a tripwire over phrasing and cannot be
+// complete against paraphrase; reading the live copy is the real control.
+const NOT_AFTER_AREA = String.raw`(?<!\bareas?\s+)`;
 const OWNER_EVIDENCE: Record<Family, RegExp> = {
   response: new RegExp(
     `(${RESPONSE_WORD})[^.|]{0,40}?${NOT_AFTER_AREA}\\b(on|from|under|to|against)\\s+(the\\s+|that\\s+|its\\s+)?(settings[\\s-]|machine[\\s-]settings[\\s-])?block`,
@@ -774,6 +780,9 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
       "We capture modality for every area on its treatment block.",
       "Record the probe and lot for each area under the settings block.",
       "Tolerance is kept for each area on the block.",
+      // Any run of whitespace, as JSX copy wraps (Codex P2 4283410159).
+      "Record settings for each area  on the block.",
+      "Record settings for each area\n              on the block.",
     ]) {
       expect(fires(claim), claim).toBe(true);
     }
