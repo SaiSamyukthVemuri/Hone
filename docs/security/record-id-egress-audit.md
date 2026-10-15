@@ -4,6 +4,7 @@
 > - Audited at #835 head `ce4b84cc` on 2026-10-15. No edits, network calls, vendor contact or configuration were involved.
 > - Every vendor's contractual coverage is **UNKNOWN**. Nothing here says a BAA exists.
 > - Under [the assessment](./hipaa-readiness-assessment.md), a record identifier next to appointment or clinical context is PHI. So each row below is **NOT READY** unless it says "acceptable".
+> - **Clearing rule (Codex P1 4280528834).** The remediations below (HMAC, opaque or random tokens, redaction) **reduce exposure; they do not by themselves make a flow PHI-free.** An HMAC'd or random token that Hone can map back to one record is still a record identifier under this audit's scope, and most rows also send dates or times beside it. So a row is cleared for option M only by one of three things: (a) the destination is covered by an executed agreement, with evidence; (b) the record-linked value **and** its identifying context are removed from the payload; or (c) a documented de-identification determination by a qualified reviewer (HIPAA §164.514). Rows marked "acceptable" are acceptable only as transport hygiene. They still sit inside the agreement chain of their destination.
 
 **Scope.** Every place a record identifier leaves Hone's own infrastructure (the Supabase database and Storage, and the app server). "Record identifier" covers:
 - the UUID of a client, appointment, treatment session, intake form, calendar link, connection, studio, practitioner, charge or SMS-ledger row;

@@ -67,7 +67,8 @@ details, note text, file names, search strings, IP addresses or user agents.
 | `actor_practitioner_id`, `actor_receptionist_id` | uuid, nullable, **typed** | Composite same-studio FKs (the 0174 pattern, as in the RBAC lane's 0220 audit columns), with a CHECK tying each `actor_kind` to exactly one column. A role change stays attributable |
 | `action` | `view_client_record`, `view_intake`, `view_clinical_notes`, `view_session`, `view_photo` (signing), `print_clinical_notes`, `export_records`, `search_clinical`, `view_access_audit` | Closed enum; adding a value is a contract change. `view_access_audit` records a read of this audit log itself (the support path in §5), so support access is self-auditing without overloading another action (Codex P2 4280483523) |
 | `client_id` | uuid, nullable | The subject |
-| `target_type`, `target_id` | text enum, uuid | e.g. `session`, `clinical_note`, `treatment_image` |
+| `target_type`, `target_id` | text enum, uuid (**nullable only** for collection reads) | e.g. `session`, `clinical_note`, `treatment_image`. For `view_access_audit` on a list or filtered audit page, `target_type = 'access_audit_query'` and `target_id` is NULL; the read is described by `query` (Codex P2 4280528845) |
+| `query` | jsonb, nullable | Only for collection reads: the studio scope, actor filter, time range and returned row count. **Never** row contents or patient identifiers. Required when `target_id` is NULL |
 | `access_basis` | `treatment`, `operations`, `support_ticket`, `export_request` | Platform access **requires** `support_ticket` plus `support_reference` |
 | `support_reference` | text, nullable, bounded and pattern-checked | An opaque ticket id, never free text about the patient |
 | `request_id` | text, nullable | Correlates with `admin_action_events` |

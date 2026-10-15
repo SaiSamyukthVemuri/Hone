@@ -54,7 +54,7 @@ How figures are labelled:
 - **Hone → processor BAAs.** One each for Supabase (needs Team plus the add-on), Vercel (Pro add-on or Enterprise), Twilio (Security or Enterprise Edition), and AWS (SES, via the AWS BAA).
 - **Upstash and other processors.** Each is either removed from the PHI path or brought under a BAA. For Upstash this means raw ids in **every** family listed in [egress audit](./record-id-egress-audit.md) row 19, the single exhaustive key list: the per-studio and refresh lock keys (studio and connection UUIDs), the **two durable no-TTL studio cursors** (`gcal_reconcile:studio_cursor`, `gcal_reconcile:dead_alerts:cursor`), the appointment/link continuation cursor, the raw waitlist keys `<invitationId>:<studioId>` (proof) and `<entryId>:<studioId>` (mobile verification), and the **raw studio UUID suffix** on the hashed new-client-waitlist and waitlist-proof-IP limiter keys (`<hash>:<studioId>`). Heartbeats and coordinator locks hold no ids. The remedy: **Keys**: HMAC every id with a server secret, and salt `hashId`. **Cursor values**: an HMAC is not usable, because they are passed back to `.gt("id", …)` and `.gt("studio_id", …)` keyset queries (`lib/google-calendar/sync/reconcile-store.ts:84-105, 228-237`). Store them with **reversible authenticated encryption** (for example AES-GCM under a server key), or keep the raw boundary in Postgres and put only an opaque pointer in Upstash (Codex P2 4280380207). **Or** a BAA covering every use (Codex P2 4280325402).
 - **Meta conversion tracking (G-23).** It must be **off** for the covered studio. No Meta BAA is known, and the integration is self-service per studio.
-- **Record-identifier egress ([audit](./record-id-egress-audit.md), G-26).** Every audit row marked NOT READY must be remediated, or its destination covered by an executed agreement with evidence. Contractual coverage without evidence is UNKNOWN.
+- **Record-identifier egress ([audit](./record-id-egress-audit.md), G-26).** Every audit row marked NOT READY must be cleared by the audit's **clearing rule**: an executed agreement with evidence; removal of the record-linked value and its identifying context; or a documented qualified de-identification determination. **HMAC or opaque tokens alone do not clear a row** (Codex P1 4280528834). Contractual coverage without evidence is UNKNOWN.
 - **Record ids to non-BAA processors.** Option M also needs two fixes, both engineering-only with no spend. G-24: remove the ids from critical alert emails sent through Resend. G-25: redact clinical ids from Sentry URLs. The alternative to G-25 is a Sentry BAA on an eligible plan.
 - **Who signs for Hone.** Each vendor BAA is signed by Hone's account owner on that vendor, unless B3 delegates.
 
@@ -278,6 +278,8 @@ authorization; nothing has been changed):
    the sender lane of #824.
 
 ### 2.4 Other processors
+
+> The remediations in this table (HMAC, redaction, opaque tokens) **reduce exposure; they do not clear a row**. A processor is cleared for option M only under the [egress audit's clearing rule](./record-id-egress-audit.md): an executed agreement with evidence; removal of the record-linked value and its context; or a qualified de-identification determination.
 
 | Processor | Recommended stance | Check |
 |---|---|---|
