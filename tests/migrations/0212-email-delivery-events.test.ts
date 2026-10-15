@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { emailDeliveryGrants as grants } from "./helpers/email-delivery-grants";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
+import { countVersion, isRepoMax } from "./helpers/migration-state";
 
 // ===========================================================================
 // Migration 0212 — DELIVERY-EVENTS-01 email delivery events. SOURCE CONTRACT.
@@ -58,12 +59,10 @@ function tableOf(name: string): string {
 }
 
 describe("0212 sits correctly in the migration sequence", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    // Only the CURRENT maximum migration's own test may assert this — see
-    // CLAUDE.md §2. It reached this file from 0211's test when this branch
-    // stacked on #827.
-    expect(isRepoMax(VERSION), "0212 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION), "something was added above 0212").toEqual([]);
+  it("is APPLIED and frozen: later fixes redefine its commands forward instead of editing it", () => {
+    // The repo-max claim moved to the current maximum's own test (CLAUDE.md
+    // §2) when DELIVERY-QUARANTINE-BOUND-01 stacked on this branch.
+    expect(isRepoMax(VERSION)).toBe(false);
   });
 
   it("is allocated exactly once", () => {
@@ -218,5 +217,22 @@ describe("0212 processing is exactly once", () => {
     expect(claim).toMatch(/processing_attempts\s+= e\.processing_attempts \+ 1/);
     expect(claim).toMatch(/processing_result\s+= 'processing_exhausted'/);
     expect(claim.match(/for update skip locked/g)).toHaveLength(2);
+  });
+});
+
+describe("0212 grants EXACTLY the intended roles, and nothing else", () => {
+  // Every top-level GRANT statement in the file -- any privilege, any object, every role
+  // of a comma list -- as "privilege | object -> role". A stray grant beside
+  // the intended one (to anon, a second role, \`grant all\`, a schema-wide
+  // grant) changes this list, so the assertion is exact, not "contains".
+
+  it("matches the intended grant list exactly", () => {
+    expect(grants(SQL)).toEqual([
+      "execute | public.begin_appointment_email_message(uuid, uuid, text) -> service_role",
+      "execute | public.claim_email_provider_events(uuid, integer) -> service_role",
+      "execute | public.process_email_provider_event(uuid) -> service_role",
+      "execute | public.record_email_provider_event(text, text, text, uuid, timestamptz, text, text, text, text) -> service_role",
+      "execute | public.settle_email_message(uuid, text, text, text, text) -> service_role",
+    ]);
   });
 });

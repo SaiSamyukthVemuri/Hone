@@ -721,7 +721,10 @@ describe("PROVIDER FAILURE: answers are recorded for what they are", () => {
   it.each([
     ["email.failed", { failureReason: "reached_daily_quota" }, { status: "failed", provider_reason: "reached_daily_quota", bounce_type: null }],
     ["email.suppressed", { suppressionType: "on_account_suppression_list" }, { status: "suppressed", provider_reason: "on_account_suppression_list", bounce_type: null }],
-    ["email.bounced", { bounceType: "transient", bounceSubtype: "mailbox_full" }, { status: "bounced", provider_reason: "mailbox_full", bounce_type: "transient" }],
+    // A PERMANENT bounce records its reason slug. A transient bounce is not
+    // terminal since 0227 (Codex P2 4265450918): it is recorded as
+    // delivery_delayed -- see tests/db/email-receipt-quarantine-bound.db.test.ts.
+    ["email.bounced", { bounceType: "permanent", bounceSubtype: "general" }, { status: "bounced", provider_reason: "general", bounce_type: "permanent" }],
   ] as const)("records %s with its reason slug", async (type, extra, expected) => {
     const m = await acceptedMessage();
     await deliver({ type: "email.delivery_delayed", emailId: m.emailId, tag: m.id });
