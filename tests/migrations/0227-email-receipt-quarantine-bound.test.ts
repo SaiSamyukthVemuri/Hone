@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { emailDeliveryGrants as grants } from "./helpers/email-delivery-grants";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -155,5 +156,19 @@ describe("0227 sits correctly in the migration sequence", () => {
 
   it("is allocated exactly once", () => {
     expect(countVersion(VERSION)).toBe(1);
+  });
+});
+
+describe("0227 grants EXACTLY the intended roles, and nothing else", () => {
+  // Every top-level GRANT statement in the file -- any privilege, any object, every role
+  // of a comma list -- as "privilege | object -> role". A stray grant beside
+  // the intended one (to anon, a second role, \`grant all\`, a schema-wide
+  // grant) changes this list, so the assertion is exact, not "contains".
+
+  it("matches the intended grant list exactly", () => {
+    expect(grants(SQL)).toEqual([
+      "execute | public.claim_email_provider_events(uuid, integer) -> service_role",
+      "execute | public.process_email_provider_event(uuid) -> service_role",
+    ]);
   });
 });
