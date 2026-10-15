@@ -54,6 +54,7 @@ How figures are labelled:
 - **Hone → processor BAAs.** One each for Supabase (needs Team plus the add-on), Vercel (Pro add-on or Enterprise), Twilio (Security or Enterprise Edition), and AWS (SES, via the AWS BAA).
 - **Upstash and other processors.** Each is either removed from the PHI path or brought under a BAA.
 - **Meta conversion tracking (G-23).** It must be **off** for the covered studio. No Meta BAA is known, and the integration is self-service per studio.
+- **Record ids to non-BAA processors.** Option M also needs two fixes, both engineering-only with no spend. G-24: remove the ids from critical alert emails sent through Resend. G-25: redact clinical ids from Sentry URLs. The alternative to G-25 is a Sentry BAA on an eligible plan.
 - **Who signs for Hone.** Each vendor BAA is signed by Hone's account owner on that vendor, unless B3 delegates.
 
 **What Sam actually decides** (B1–B4 unchanged in substance):
