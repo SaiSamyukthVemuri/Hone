@@ -439,7 +439,7 @@ deployed; neither depends on a decision above):
   The waitlist family is excluded (idempotency payload) and handed to the
   WAIT lane. **Email is not PHI-free.**
 - Provider-visible email inventory:
-  `docs/security/email-provider-visible-inventory.md` (in #870).
+  `docs/security/email-provider-visible-inventory.md` (in #870; **not in this tree** until #870 merges).
 - G-13 clinical access audit: contract proposed in
   [clinical-access-audit-contract.md](./clinical-access-audit-contract.md);
   shape agreed in principle with the RBAC lane; no migration number held (≥ 0224: #868 claims 0222 and #860 (MPX) holds 0223; allocated via the shared register).

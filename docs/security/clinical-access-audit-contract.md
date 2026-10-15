@@ -19,7 +19,7 @@ risk analysis (G-01).
 
 ## 1. The coverage problem (source-confirmed)
 
-From the #830 inventory (`docs/roadmap/STUDIO_READINESS_824.md` §2.3) and
+From the #830 inventory (`docs/roadmap/STUDIO_READINESS_824.md` §2.3, **evidence available only in the external #830 draft**: the file is not in this tree; Codex P2 4280704832) and
 current source:
 
 | Read path | Example | Seen by a server-side audit hook? |
@@ -142,7 +142,7 @@ grants back only what is needed.
 | Q1 direct API | **B1, incremental**: clinical notes, intake answers and photos first. The read and its event commit in one definer transaction. **B3 with documented sign-off** covers tables not yet moved. B2 (pgaudit) is **not relied on**: it is unverified on hosted Supabase and records SQL, not the actor or membership |
 | Q3 failure | **Fail closed** under B1. Any remaining app-level hook on a direct read can only **alert** |
 | Q6 search | A search that returns clinical content (note or intake snippets) is `search_clinical`; a search over name or phone is not |
-| Permissions | No new permission engine. In code, use the fixed role map `ROLE_CAPABILITIES` in `lib/auth/capabilities.ts` (#852) |
+| Permissions | No new permission engine. In code, use the fixed role map `ROLE_CAPABILITIES` in `lib/auth/capabilities.ts` (#852; **not in this tree**: the file arrives with the receptionist-scheduling branch of #852) |
 | Owner console | Do **not** mount anything on #851 yet; it is read-only today |
 | **Product authority (Sam)** | **Q2**: RBAC lane recommends the full log on the platform/support path (§4), with an owner-scoped "who accessed your clients' records" projection later. **Q4**: recommends owner-only for V1 |
 
