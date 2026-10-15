@@ -179,7 +179,31 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // Against a ~6 min target and a 15 min ceiling that is visible and
     // affordable; the pair together is now about two and a half minutes of a
     // six-minute lane, which is the number worth watching next time.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(41);
+    //
+    // Now 42: MPX-03's machine-switch-discards-draft.spec.ts joined `sessions`
+    // for the third time for the same reason - it drives the settings-block
+    // form's machine panel - and filing it anywhere else would hide it from
+    // the only lane its subject can regress in.
+    //
+    // A SEPARATE FILE, again for a structural reason rather than convenience:
+    // it changes the machine and the mode UNDERNEATH a draft and asserts what
+    // must NOT be in the record afterwards, so its row counts are deltas of
+    // things that did not happen. The journey's counts are the arithmetic of
+    // one walk down the happy path; merging the two would mean re-deriving
+    // every count in the journey for cases unrelated to it, which is exactly
+    // how that spec's counts went stale three times.
+    //
+    // COST, STATED AS AN ESTIMATE AND MARKED AS ONE. ONE test() at 390px with
+    // seven steps:
+    //   * gate closed: step 1 and the gate-closed branch - two page
+    //     interactions and one query, in line with its siblings' measured
+    //     7.5-10.0s;
+    //   * gate open: all seven, with four navigations, one block save, three
+    //     reading saves, one refused save and roughly fifteen queries. The
+    //     journey measured 22.3s gate-open for eight comparable steps, so this
+    //     should land near it; it is UNMEASURED here and this number is to be
+    //     replaced with the observed one.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(42);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {

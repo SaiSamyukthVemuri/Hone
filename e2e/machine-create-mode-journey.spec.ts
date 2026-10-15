@@ -6,11 +6,20 @@ import { loginAsOwner } from "./helpers/flows";
 
 // MPX-03 — THE CREATE-MODE JOURNEY, end to end, in a real browser.
 //
-// *** UNEXECUTED AT THE TIME OF WRITING. *** Authored against 269362db with no
-// stack available. Nothing below has been run. A Playwright spec that has
-// never executed is a specification, not evidence, and this one is especially
-// easy to be wrong about: it drives a surface whose save path changed in the
-// same change that added it.
+// *** EXECUTED 2026-10-15 *** on an isolated local stack (hone-mpx-0223 /
+// 64822), as a GATE-OPEN / GATE-CLOSED PAIR: 22.3s with the flag set in
+// webServer.env and 10.0s without, with zero readings and zero submissions in
+// the studio afterwards in the closed half.
+//
+// IT WAS AUTHORED UNEXECUTED, against 269362db with no stack available, and
+// the first run is why that distinction is written down rather than quietly
+// dropped. A Playwright spec that has never run is a specification, not
+// evidence - and this one was wrong in five places that only a run could
+// find: a label I had renamed and not updated here, three hard-coded capture
+// counts that predated step 2 collecting anything, a control that does not
+// exist on a fresh mount after a reload, a value the journey never records,
+// and one assertion that COULD NOT FAIL because it sat behind a count that is
+// zero on this step. Every one of them read like a broken feature.
 //
 // WHAT THIS FILE ADDS over machine-first-charting.spec.ts. That file is a
 // feature matrix - retirement, cross-client isolation, failed selection,
@@ -292,7 +301,9 @@ test("create mode: choose the machine, save the block, record one save, retrieve
     // holds wherever no host can carry a draft, where the panel shows the
     // contract read-only (proved in tests/components/machine-setting-draft).
     //
-    // THE SQL HAS NOT RUN. This step is a specification until it does.
+    // THE SQL HAS NOW RUN: 0223 applied to a fresh chain on the isolated
+    // stack and this step passed against it, which is what moved this claim
+    // from specification to evidence.
     await page.getByTestId("machine-select").selectOption(machineId);
     await expect(page.getByTestId("machine-chosen")).toContainText("Room 1 demo", {
       timeout: T,

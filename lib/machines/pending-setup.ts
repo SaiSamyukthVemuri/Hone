@@ -43,14 +43,26 @@ import type { GroupSubmission } from "@/lib/machines/setting-groups";
  * remembered mode, which the loader resolved and the wrapper dropped
  * (Codex, 15cc6c99). It has been mounted since.
  *
- * NOT ATOMIC WITH THE BLOCK CREATE, and that is a real property rather than an
- * oversight. Creating the block and recording the settings are two commands,
- * so the block can exist with no settings recorded against it. That state is
- * REPRESENTABLE and honest - an area with no machine settings yet is an
- * ordinary thing - and the retry key is what makes the second half safely
- * repeatable. The alternative, one command that does both, would put block
- * creation inside the clinical setup command and give it a second
- * responsibility it should not have.
+ * ATOMIC WITH THE BLOCK CREATE SINCE 0223, and this paragraph said the
+ * opposite until the command existed. It argued that two commands were the
+ * right design and that one doing both would give the clinical setup command a
+ * second responsibility - which was a fair reading of the choice at the time,
+ * and was wrong about where the responsibility lands:
+ * `create_block_with_initial_setup` DELEGATES the area to
+ * `create_block_with_entry` (0166) rather than inserting a block itself, so
+ * `session_blocks` keeps a single write path and nothing moved into the setup
+ * command at all.
+ *
+ * WHAT SURVIVES FROM IT, because it was the true half: an area with no machine
+ * settings is still an ordinary, representable state, and the command must not
+ * invent a reason to refuse one. What is gone is the window where the area
+ * committed and its settings did not.
+ *
+ * AND ONE THING THE RUN ADDED THAT NO REASONING HERE PREDICTED: the retry key
+ * does NOT make the initial save idempotent, because the key is unique per
+ * (BLOCK, key) and this path creates the block first. See
+ * `INITIAL_SAVE_UNRESOLVED` below - it is measured against a real database,
+ * not inferred.
  */
 
 /**

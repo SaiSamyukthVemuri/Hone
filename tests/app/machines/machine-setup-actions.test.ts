@@ -1074,6 +1074,57 @@ describe("the synthetic demo profile cannot reach production", () => {
     expect(single.modes[0]!.key).not.toBe(multi.modes[0]!.key);
   });
 
+  it("the second model's TWO MODES disagree, so a mode switch is falsifiable", () => {
+    // THE SAME ARGUMENT AS THE TEST ABOVE, one level down. That one makes a
+    // change of UNIT falsifiable; this one makes a change of MODE falsifiable,
+    // and they are different paths: a mode switch keeps the device, the
+    // profile and the version fixed and moves only the field contract.
+    //
+    // IT ALSO GUARDS A BRANCH THAT WOULD OTHERWISE BE UNREACHABLE. The panel
+    // renders its mode picker only when a unit offers more than one mode, so
+    // while every profile carried exactly one, `machine-mode-picker` could not
+    // appear in any browser run. If someone later trims this profile back to a
+    // single mode, that branch silently stops being exercised and the e2e
+    // mode-switch step starts passing for the wrong reason - so the count is
+    // asserted here rather than assumed by the spec.
+    const single = synthetic.SYNTHETIC_SINGLE_PROBE;
+    expect(single.modes.length, "the mode picker needs a choice to render").toBeGreaterThan(1);
+
+    const byKey = new Map(single.modes.map((m) => [m.key, m]));
+    const blend = byKey.get("blend")!;
+    const therm = byKey.get("thermolysis")!;
+    expect(blend, "blend must stay - existing tests read modes[0]").toBeDefined();
+    expect(therm).toBeDefined();
+    expect(single.modes[0]!.key, "blend stays first").toBe("blend");
+
+    const f = (m: typeof blend) => new Map(m.fields.map((x) => [x.key, x]));
+    const a = f(blend);
+    const b = f(therm);
+
+    // 1. A SHARED KEY, so a value typed under one mode would be VISIBLE in the
+    //    other's box if anything failed to discard it.
+    expect([...a.keys()]).toContain("current");
+    expect([...b.keys()]).toContain("current");
+    // 2. ...at a different unit AND precision, so a stale label is detectable
+    //    and the recording command's scale rule can actually bite.
+    expect(b.get("current")!.unit).not.toBe(a.get("current")!.unit);
+    expect(b.get("current")!.decimals).not.toBe(a.get("current")!.decimals);
+    // 3. A key unique to EACH mode, so "gone" and "relabelled" are different
+    //    observations in both directions.
+    expect([...a.keys()]).toContain("pulse_width");
+    expect([...b.keys()]).not.toContain("pulse_width");
+    expect([...b.keys()]).toContain("intensity");
+    expect([...a.keys()]).not.toContain("intensity");
+
+    // NEITHER MODE IS GATED ON AN INSTALLED OPTION, or `supportedModes` would
+    // filter it out on a unit seeded with none and the picker would not render
+    // however many modes the profile declares.
+    for (const m of single.modes) {
+      expect(m.requiresInstalledOption, `${m.key} must need no option`).toBeUndefined();
+      expect(m.availability, `${m.key} must be active to be offered`).toBe("active");
+    }
+  });
+
   it("the second model is also explicitly synthetic, never a borrowed family", () => {
     // `family` is the field a reader trusts to say what a profile IS. Both
     // demo profiles previously declared `Permanence/GEMM-16` because the

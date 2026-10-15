@@ -214,6 +214,11 @@ export const SYNTHETIC_DEMO_PROFILE: MachineProfile = {
  * that hardcodes one mode would otherwise skip this profile's contract
  * silently rather than fail.
  *
+ * AND TWO MODES RATHER THAN ONE, which is what makes the panel's mode picker
+ * reachable at all: it renders only when a unit offers a choice, so with one
+ * mode per profile that branch had never executed in a browser. See the
+ * `thermolysis` mode's own comment.
+ *
  * EXPLICITLY SYNTHETIC, and gated identically to the multineedle. The product
  * rule is that an unverified manufacturer profile is NEVER activated to make
  * the dropdown look fuller; this is a fixture that says so in its own labels
@@ -273,6 +278,75 @@ const SYNTHETIC_SINGLE_PROBE: MachineProfile = {
           unit: "ms",
           decimals: 0,
           optional: true,
+          expectedSource: "practitioner-entered",
+          editable: true,
+          verification: "device-confirmed",
+          evidence: ["synthetic-single"],
+        },
+      ],
+    },
+    {
+      // A SECOND MODE ON ONE UNIT, and until it existed an entire shipped UI
+      // branch had never rendered in any browser run.
+      //
+      // The panel shows its mode picker only `modes.length > 1` - correctly,
+      // since one active mode needs no control. But both synthetic profiles
+      // carried exactly one mode each, so `machine-mode-picker` and every
+      // `machine-mode-<key>` button were unreachable mounted, and the only
+      // identity change any proof could exercise was a change of UNIT. A mode
+      // change is a DIFFERENT path: same device, same profile, same version,
+      // different field contract - and it is the one the draft-discarding fix
+      // has to survive with nothing else moving.
+      //
+      // THE FIELD KEYS ARE CHOSEN TO MAKE THE DANGEROUS CASE REACHABLE, on the
+      // same reasoning as the second model's:
+      //
+      //   * `current` is the SAME KEY as blend's, at µA / 1 decimal against
+      //     blend's mA / 2. Sharing the key is what lets a value typed under
+      //     one mode be VISIBLE in the other's box if anything failed to
+      //     discard it; differing in both unit and precision means a stale
+      //     label is detectable too, and `scale(v_value) > v_decimals` in the
+      //     recording command makes the precision difference enforceable
+      //     rather than cosmetic.
+      //   * `intensity` exists only here, and `pulse_width` only in blend, so
+      //     "the other mode's fields are GONE" is distinguishable from "the
+      //     other mode's fields were RELABELLED".
+      //
+      // BOTH FIELDS REQUIRED, unlike blend's optional `pulse_width`: a mode
+      // switch must leave a save genuinely incomplete rather than
+      // accidentally saveable, so the blocking path is exercised too.
+      //
+      // IT REQUIRES NO INSTALLED OPTION, so `supportedModes` cannot filter it
+      // out and the picker is reachable on a unit seeded with no options.
+      key: "thermolysis",
+      nativeLabel: "Thermolysis",
+      family: "thermolysis",
+      availability: "active",
+      verification: "device-confirmed",
+      evidence: ["synthetic-single"],
+      stages: [],
+      fields: [
+        {
+          // SAME KEY as blend's, DIFFERENT unit and precision.
+          key: "current",
+          nativeLabel: "Current",
+          quantity: "current",
+          unit: "µA",
+          decimals: 1,
+          optional: false,
+          expectedSource: "practitioner-entered",
+          editable: true,
+          verification: "device-confirmed",
+          evidence: ["synthetic-single"],
+        },
+        {
+          // Unique to this mode.
+          key: "intensity",
+          nativeLabel: "Intensity",
+          quantity: "intensity",
+          unit: "%",
+          decimals: 0,
+          optional: false,
           expectedSource: "practitioner-entered",
           editable: true,
           verification: "device-confirmed",
