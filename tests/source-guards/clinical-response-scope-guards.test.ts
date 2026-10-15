@@ -375,6 +375,14 @@ const SETTINGS_NOUN = `${MACHINE_NOUN}|${PROBE_NOUN}`;
 // promise survived the first sweep for it.
 const OWNERSHIP_VERB =
   "record\\w*|keep\\w*|kept|stor\\w*|captur\\w*|logs?|logged|track\\w*";
+// Active voice (Codex P2 4283032258): "Record settings for each treated area"
+// and "We capture modality for every area" put the ownership verb BEFORE the
+// noun, which the passive patterns below never see. The minutes pattern
+// already had this branch; machine and probe now share it. Up to two words may
+// sit between verb and noun ("record the probe") and a short tail between noun
+// and quantifier ("probe and lot for each area").
+const activeVoice = (noun: string) =>
+  `\\b(${OWNERSHIP_VERB})\\s+(?:\\w+\\s+){0,2}?(${noun})\\b[^.|]{0,30}?\\s(per|for each|for every)\\s+(\\w+\\s+)?area\\b`;
 type Family = "response" | "machine" | "probe" | "minutes";
 const PATTERNS: Array<[string, RegExp, Family]> = [
   [
@@ -392,7 +400,7 @@ const PATTERNS: Array<[string, RegExp, Family]> = [
   [
     "block-owned machine settings said to be recorded per area",
     new RegExp(
-      `(${MACHINE_NOUN})[^.|]{0,30}?\\b(${OWNERSHIP_VERB})\\s+(per|for each|for every)\\s+(\\w+\\s+)?area\\b`,
+      `(${MACHINE_NOUN})[^.|]{0,30}?\\b(${OWNERSHIP_VERB})\\s+(per|for each|for every)\\s+(\\w+\\s+)?area\\b|${activeVoice(MACHINE_NOUN)}`,
       "i",
     ),
     "machine",
@@ -424,7 +432,7 @@ const PATTERNS: Array<[string, RegExp, Family]> = [
   [
     "block-owned probe/lot said to be recorded per area",
     new RegExp(
-      `(${PROBE_NOUN})[^.|]{0,30}?\\b(${OWNERSHIP_VERB})\\s+(per|for each|for every)\\s+(\\w+\\s+)?area\\b`,
+      `(${PROBE_NOUN})[^.|]{0,30}?\\b(${OWNERSHIP_VERB})\\s+(per|for each|for every)\\s+(\\w+\\s+)?area\\b|${activeVoice(PROBE_NOUN)}`,
       "i",
     ),
     "probe",
@@ -725,6 +733,29 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
       expect(re.test("area stays findable on its own")).toBe(false);
       expect(re.test("Memory is kept per treatment area, so multi-area sessions stay legible.")).toBe(false);
       expect(re.test("Record several treatment areas under one machine-settings block, each with its own laterality")).toBe(false);
+    }
+  });
+
+  it("active-voice per-area settings claims are caught, per family (Codex P2 4283032258)", () => {
+    const familyOf = (s: string) =>
+      PATTERNS.filter(([, re]) => re.test(s)).map(([, , f]) => f);
+    for (const [claim, family] of [
+      ["Record settings for each treated area", "machine"],
+      ["We capture modality for every area", "machine"],
+      ["Hone records the machine frequency for each area.", "machine"],
+      ["Record the probe and lot for each treated area", "probe"],
+      ["We track probe for every area you work.", "probe"],
+    ] as const) {
+      expect(familyOf(claim), claim).toContain(family);
+    }
+    // Truthful active-voice copy stays legal: laterality is per area, and
+    // naming the block as the owner is not a per-area claim.
+    for (const legal of [
+      "Record laterality for each treated area",
+      "Record the settings once for the block, and the side for each area",
+      "Select every area treated using this settings setup",
+    ]) {
+      expect(familyOf(legal), legal).toEqual([]);
     }
   });
 
