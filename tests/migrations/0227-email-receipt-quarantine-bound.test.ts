@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { emailDeliveryGrants as grants } from "./helpers/email-delivery-grants";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -159,24 +160,10 @@ describe("0227 sits correctly in the migration sequence", () => {
 });
 
 describe("0227 grants EXACTLY the intended roles, and nothing else", () => {
-  // Every GRANT statement in the file -- any privilege, any object, every role
+  // Every top-level GRANT statement in the file -- any privilege, any object, every role
   // of a comma list -- as "privilege | object -> role". A stray grant beside
   // the intended one (to anon, a second role, \`grant all\`, a schema-wide
   // grant) changes this list, so the assertion is exact, not "contains".
-  const grants = (code: string): string[] => {
-    // Both comment forms are stripped first, so a commented-out grant neither
-    // counts nor hides one. Then statement by statement (split on ";"), so a
-    // grant on the same line as another statement is still seen.
-    const bare = code.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ");
-    const out: string[] = [];
-    for (const stmt of bare.split(";")) {
-      const m = /^\s*grant\s+([\s\S]+?)\s+on\s+([\s\S]+?)\s+to\s+([\s\S]+?)\s*$/i.exec(stmt);
-      if (!m) continue;
-      const obj = m[2]!.replace(/\s+/g, " ").trim().replace(/^function /i, "");
-      for (const role of m[3]!.split(",")) out.push(`${m[1]!.replace(/\s+/g, " ").trim().toLowerCase()} | ${obj} -> ${role.trim().toLowerCase()}`);
-    }
-    return out.sort();
-  };
 
   it("matches the intended grant list exactly", () => {
     expect(grants(SQL)).toEqual([
