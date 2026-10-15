@@ -550,6 +550,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "privacy_accepted_at", reason: "internal_state", note: "See terms_accepted_at." },
       { column: "privacy_version", reason: "internal_state", note: "See terms_accepted_at." },
       { column: "calendar_feed_token_hash", reason: "security_material", note: "Calendar-feed credential material. Never exported." },
+      { column: "last_public_assignment_at", reason: "internal_state", note: "0222 fair-assignment bookkeeping: when public booking last assigned this practitioner, read only by create_public_appointment_v2's ordering. It is a scheduling-fairness cursor, not studio-owned content, and it describes Hone's assignment mechanism rather than anything the studio recorded. Exporting it would invite reading it as an activity history, which it is not: NULL means NEVER RECORDED rather than never assigned, it is written only for capacity-ON assignments, and every legacy studio's rows are therefore empty. The practitioner's real activity is already exported through appointments and sessions." },
     ],
     sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is TRUTH-01B; declaring the gap here is what stops the manifest reading as though every file were verified." },
     rowScope:

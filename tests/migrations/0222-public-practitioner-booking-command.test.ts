@@ -128,15 +128,50 @@ describe("0222 is additive — the live public booking path is untouched", () =>
     );
   });
 
-  it("writes nothing and alters no schema object WHEN APPLIED", () => {
+  it("writes no ROWS and alters nothing beyond the one additive column", () => {
+    // NARROWED, NOT RELAXED. This guard banned `alter table` outright, because
+    // 0222 was function-only. It now carries exactly ONE schema change -- the
+    // nullable `practitioners.last_public_assignment_at` the fair ordering's
+    // second key is read from -- so the ban is narrowed to that one statement
+    // and everything else stays forbidden.
+    //
+    // The column lives in THIS pending migration rather than a later one on
+    // purpose: the resolver reads it, and a column added above 0222 would leave
+    // this file applying cleanly on a fresh chain while the command it defines
+    // was broken for every call before that later migration landed. That is the
+    // "applies clean, still broken" trap, so the guard has to permit the column
+    // here rather than push it somewhere that reads as safer.
     for (const banned of [
-      /\bcreate table\b/i, /\balter table\b/i, /\bdrop table\b/i,
+      /\bcreate table\b/i, /\bdrop table\b/i,
       /\bcreate index\b/i, /\bcreate trigger\b/i, /\bcreate policy\b/i,
       /\binsert into\b/i, /\bupdate \w/i, /\bdelete from\b/i, /\btruncate\b/i,
       /\bdrop function\b/i,
+      // Still no COLUMN REMOVAL or RETYPING, which are the destructive shapes.
+      /\bdrop column\b/i, /\balter column\b/i,
     ]) {
       expect(TOP_LEVEL, `0222 must not contain ${banned} at top level`).not.toMatch(banned);
     }
+
+    // EXACTLY ONE `alter table`, and exactly the additive one.
+    const alters = TOP_LEVEL.match(/\balter\s+table\b[\s\S]*?;/gi) ?? [];
+    expect(alters.length, "0222 carries one schema change, no more").toBe(1);
+    expect(
+      alters[0]!.replace(/\s+/g, " ").toLowerCase(),
+      "the only permitted change is the additive, nullable assignment-history column",
+    ).toBe(
+      "alter table public.practitioners add column if not exists last_public_assignment_at timestamptz;",
+    );
+
+    // ADDITIVE MEANS NO BACKFILL. A default or an UPDATE would fabricate
+    // assignment history for practitioners who have never been assigned, and
+    // NULL is load-bearing in the ordering: it means "never recorded" and sorts
+    // FIRST. A backfilled value would silently re-rank every existing studio.
+    expect(TOP_LEVEL, "the column must carry no DEFAULT").not.toMatch(
+      /last_public_assignment_at[^;]*\bdefault\b/i,
+    );
+    expect(TOP_LEVEL, "the column must not be NOT NULL").not.toMatch(
+      /last_public_assignment_at[^;]*\bnot\s+null\b/i,
+    );
   });
 });
 

@@ -147,11 +147,15 @@ describe("0227 keeps Resend's transient bounces non-terminal (Codex P2 426545091
 });
 
 describe("0227 sits correctly in the migration sequence", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    // Only the CURRENT maximum migration's own test may assert this
-    // (CLAUDE.md §2). It moved here from 0212's test.
-    expect(isRepoMax(VERSION), "0227 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
+  it("is no longer the repository maximum, and everything above it is newer", () => {
+    // Only the CURRENT maximum migration's own test may assert isRepoMax
+    // (CLAUDE.md §2). In composition 0228 (#874) sits above 0227, and 0228's
+    // own test deliberately pins no maximum (the central tripwire owns
+    // "nothing above me"), so this hand-off asserts only what stays true.
+    expect(isRepoMax(VERSION), "0227 claims the max in a tree that has 0228").toBe(false);
+    const above = versionsAbove(VERSION);
+    expect(above.length).toBeGreaterThan(0);
+    for (const v of above) expect(Number(v)).toBeGreaterThan(Number(VERSION));
   });
 
   it("is allocated exactly once", () => {
