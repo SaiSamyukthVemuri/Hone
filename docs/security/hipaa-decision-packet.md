@@ -427,8 +427,9 @@ deployed; neither depends on a decision above):
 - G-12 isolated restore drill: #848.
 - G-09 Stripe Customer metadata without the client name: #857 is **merged**
   (`ce133c18`, recorded in the production record by a834daf4). New writes carry
-  opaque ids only; existing Customers keep the old metadata, and a backfill needs
-  Sam's authorization.
+  no client name, but still carry raw record UUIDs (egress audit rows 12-15, G-26);
+  existing Customers keep the old metadata, and a backfill needs Sam's
+  authorization.
 - Email subjects without client name, service, date, time, attendance or
   treatment fact: #859. This reduces exposure but does **not** clear G-05.
 - PostHog token-path redaction derived from the canonical registry: #869.
