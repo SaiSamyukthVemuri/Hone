@@ -20,7 +20,7 @@ question.
 | # | Business decision | Why only Sam can make it | What it unblocks |
 |---|---|---|---|
 | **B1** | **Will Hone serve HIPAA-covered studios, starting with the LA studio?** Ask the studio whether it bills insurance or sends HIPAA standard transactions (covered-entity test), and decide whether Hone accepts business-associate obligations at all. | Market and liability choice; a cash-pay studio may not be covered, and then none of B2–B4 is HIPAA-required | Whether B2–B4 happen now or later |
-| **B2** | **Authorize the quote requests for option M (§0.1)** (was: approve a spend envelope) for the BAA-capable stack: Supabase **Team** (from $599/mo, public price) plus its HIPAA add-on (quote); the Vercel HIPAA add-on (price in Billing); Twilio **Security or Enterprise Edition** (sales quote); a BAA-capable email route such as Amazon SES under an AWS BAA (usage-priced); a separate synthetic preview project if wanted. | Recurring cost | Quotes, then the plan changes |
+| **B2** | **Authorize the quote requests for option M (§0.1)** (was: approve a spend envelope) for the BAA-capable stack: Supabase **Team** (from $599/mo, public price) plus its HIPAA add-on (quote); the Vercel HIPAA BAA add-on ($350/mo, public price); Twilio **Security or Enterprise Edition** (sales quote); a BAA-capable email route such as Amazon SES under an AWS BAA (usage-priced); a separate synthetic preview project if wanted. | Recurring cost | Quotes, then the plan changes |
 | **B3** | **Legal: engage counsel and an advisor, appoint a privacy official, and authorize who signs BAAs.** Counsel drafts the studio-to-Hone BAA. | Signing authority and accountability | Executed agreements; risk analysis; policies |
 | **B4** | **Patient email posture for covered studios.** Either (a) keep detailed emails, but only once they run through a BAA-covered provider, or (b) switch covered studios to "sign in to see details" notifications. Until then, covered studios get no detail-bearing email. | Changes what patients receive; a product and liability trade-off | The D-4 transport route and the email copy |
 
@@ -40,13 +40,13 @@ How figures are labelled:
 
 **Account facts today.**
 - Supabase: the organisation is on **Pro**. Verified (account), 2026-10-12.
-- Vercel: the team exists, but its plan is **not exposed by the API** (the team read on 2026-10-15 returns no plan or billing field). So whether it is Pro, and the BAA add-on price, must be read in Billing.
+- Vercel: the team exists, but its plan is **not exposed by the API** (the team read on 2026-10-15 returns no plan or billing field). Whether it is Pro must be read in Billing. The HIPAA BAA add-on itself has a **public price of $350/month** (Vercel pricing docs, 2026-10-15; Codex P1 4277783063).
 - Twilio: the edition has not been read. **Unknown.**
 
 | Option | What it is | Monthly cost | Agreements and who signs | Patient-communication consequence |
 |---|---|---|---|---|
 | **S: synthetic-only demo** (recommended until B1–B3 are settled) | The prospective-studio demo runs on synthetic data only, on the current stack. Preview isolation (§0.2) still comes first if a preview is used. | **$0 incremental.** No plan change is needed. | None. No BAA is needed, because no PHI is processed. | None for real patients. Demo messages go only to synthetic recipients, and today's production email/SMS behaviour is unchanged. |
-| **M: minimum live for ONE covered studio** | The smallest stack that can carry PHI under executed BAAs (agreement chain below). | **Floor of $699/mo total + quotes** ($674/mo more than today's $25/mo Pro). The verified (public) floor is Supabase Team $599/mo, which replaces Pro, plus PITR $100/mo for 7 days of retention. Estimate: SES at $0.10 per 1,000 emails, about $0.20/mo at 2,000 emails. Quote needed: Supabase HIPAA add-on; Vercel HIPAA BAA add-on (read in Billing); Twilio Security or Enterprise Edition; counsel; Upstash (or remove it from the PHI path). The real total is unknown until those quotes exist, so the floor is not a budget. | See below the table. | Email moves off Resend, which cannot sign a BAA, to a BAA-covered route such as SES, or uses B4(b) "sign in to see details". SMS stays on Twilio only under an executed BAA with eligible products. Until every agreement is executed, a covered studio gets no detail-bearing email or SMS. |
+| **M: minimum live for ONE covered studio** | The smallest stack that can carry PHI under executed BAAs (agreement chain below). | **Floor of $1,049/mo total + quotes** ($1,024/mo more than today's $25/mo Supabase Pro), *if the Vercel team is already on Pro*. Otherwise add Vercel Pro at $20/seat. The verified (public) floor is Supabase Team $599/mo (replacing Pro), Supabase PITR $100/mo for 7 days of retention, and the Vercel HIPAA BAA add-on at $350/mo. Estimate: SES at $0.10 per 1,000 emails, about $0.20/mo at 2,000 emails. Quote needed: Supabase HIPAA add-on; Twilio Security or Enterprise Edition; counsel; Upstash (or remove it from the PHI path). The real total is unknown until those quotes exist, so the floor is not a budget. | See below the table. | Email moves off Resend, which cannot sign a BAA, to a BAA-covered route such as SES, or uses B4(b) "sign in to see details". SMS stays on Twilio only under an executed BAA with eligible products. Until every agreement is executed, a covered studio gets no detail-bearing email or SMS. |
 | **N: the studio is not a covered entity** (decided by B1) | Cash-pay studio with no HIPAA standard transactions: HIPAA BAAs are not required. | **$0 incremental for HIPAA.** The security hardening in §2 is still recommended on its own merits. | None for HIPAA. Counsel should confirm the covered-entity test. | Current minimized email/SMS continues. Marketing still makes **no** HIPAA claim. |
 
 **Option M agreements and signatories:**
@@ -272,7 +272,7 @@ authorization; nothing has been changed):
 |---|---|---|
 | Sentry | Keep PHI out (current scrubbers); consider a BAA as defence in depth | Check plan eligibility for its published BAA; gate the DSN so local and CI runs never report to production |
 | PostHog | Keep PHI out; browser marketing-only, server events practitioner-only | Wire capture with synthetic data (G-08) |
-| Stripe | Minimize: remove `hone_client_name` from customer metadata (G-09) | Confirm reconciliation needs only opaque ids |
+| Stripe | New writes minimized: #857 (merged, `ce133c18`) sends opaque ids only (G-09) | Historical Customers keep `hone_client_name`; any backfill needs Sam's authorization |
 | Upstash | Hashed keys only | Confirm BAA availability and plan if hashed email plus studio counts as PHI |
 | Google Calendar | Times only, constant title | Studio guidance only (G-15) |
 
@@ -332,7 +332,7 @@ else needs a quote.
 | Supabase Team plan | "From $599 / month", first project included; re-read 2026-10-15 ([pricing](https://supabase.com/pricing)) | Verified public price |
 | Supabase HIPAA add-on | "HIPAA available as paid add-on"; price not published | **Quote needed** |
 | Supabase PITR | $100 / month per 7 days of retention (public pricing, 2026-10-15); any compute upgrade it requires is not priced here | Verified public price (compute: **calculator needed**) |
-| Vercel HIPAA BAA add-on (Pro) | Purchased in team Billing; price not shown on the public pricing page read | **Read in Billing (read-only)** |
+| Vercel HIPAA BAA add-on (Pro) | $350 / month, purchased in team Billing ([pricing docs](https://vercel.com/docs/pricing), 2026-10-15) | Verified public price; whether the team is on Pro: **read in Billing** |
 | Vercel Pro seats | Developer seat $20 / month ([pricing](https://vercel.com/pricing)) | Verified public price |
 | Twilio BAA | Requires **Security Edition or Enterprise Edition** (verified 2026-10-12); edition pricing via sales | **Quote needed** |
 | BAA-capable email provider | Amazon SES is HIPAA-eligible under an AWS BAA (verified); outbound email $0.10 per 1,000 ([pricing](https://aws.amazon.com/ses/pricing/), 2026-10-15) | Verified public price; **confirm AWS BAA steps** |
@@ -375,7 +375,7 @@ else needs a quote.
 Engineering can start these now, with no spend and no hosted change:
 - G-07 analytics unmount or strip;
 - G-08 wire-capture tests;
-- G-09 Stripe metadata minimization;
+- G-09 Stripe metadata minimization (new writes done: #857 merged; historical Customers remain);
 - G-13 clinical read-audit design;
 - G-16 Sentry DSN gate;
 - G-17 form copy;
@@ -413,8 +413,10 @@ Nothing here is authorized until Sam approves that row.
 deployed; neither depends on a decision above):
 - G-07 Vercel analytics URL redaction: #842;
 - G-12 isolated restore drill: #848.
-- G-09 Stripe Customer metadata without the client name: #857 (by agreement
-  with the Audit lane).
+- G-09 Stripe Customer metadata without the client name: #857 is **merged**
+  (`ce133c18`, recorded in the production record by a834daf4). New writes carry
+  opaque ids only; existing Customers keep the old metadata, and a backfill needs
+  Sam's authorization.
 - Email subjects without client name, service, date, time, attendance or
   treatment fact: #859. This reduces exposure but does **not** clear G-05.
 - PostHog token-path redaction derived from the canonical registry: #869.
