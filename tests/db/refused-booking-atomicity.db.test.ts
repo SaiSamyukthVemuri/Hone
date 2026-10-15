@@ -217,6 +217,19 @@ function atomicityScenario(spec: {
   tz: string;
   consent: boolean;
   name: string;
+  /**
+   * Is the wrapper under test FIXED yet?
+   *
+   * 0225's rollback has landed, so its scenarios assert atomicity POSITIVELY --
+   * the five assertions that were inverted here went red the moment the fix
+   * applied, which is exactly what the tripwire was for, and leaving them
+   * inverted would now assert that the defect is still present.
+   *
+   * 0204's repair is a NEW FORWARD MIGRATION (0204 is applied and frozen) and is
+   * not in this head, so the legacy scenario stays inverted and still measures a
+   * real, unfixed leak.
+   */
+  fixed: boolean;
 }) {
   describe(spec.label, () => {
     let fett: FettStudio;
@@ -264,12 +277,15 @@ function atomicityScenario(spec: {
       ).toBe(apptsBefore);
     });
 
-    it.fails(`persists NO client row from the refusal — ${KNOWN}`, () => {
+    const assertAtomic = spec.fixed ? it : it.fails;
+    const suffix = spec.fixed ? "" : ` — ${KNOWN}`;
+
+    assertAtomic(`persists NO client row from the refusal${suffix}`, () => {
       expect(clientsAfter).toBe(clientsBefore);
     });
 
     if (spec.consent) {
-      it.fails(`records NO SMS consent from the refusal — ${KNOWN}`, () => {
+      assertAtomic(`records NO SMS consent from the refusal${suffix}`, () => {
         // One consent record: the booking that actually happened.
         expect(consented).toBe(1);
       });
@@ -370,6 +386,7 @@ describe("refused-booking atomicity", () => {
     tz: LA,
     consent: true,
     name: "SYNTH-FETT v2 la consent",
+    fixed: true,
   });
 
   atomicityScenario({
@@ -378,6 +395,7 @@ describe("refused-booking atomicity", () => {
     tz: LA,
     consent: false,
     name: "SYNTH-FETT v2 la plain",
+    fixed: true,
   });
 
   atomicityScenario({
@@ -386,6 +404,7 @@ describe("refused-booking atomicity", () => {
     tz: TORONTO,
     consent: true,
     name: "SYNTH-FETT v2 toronto consent",
+    fixed: true,
   });
 
   // 0204 shares the shape, and its own comment says it was written to stop
@@ -399,5 +418,11 @@ describe("refused-booking atomicity", () => {
     tz: LA,
     consent: true,
     name: "SYNTH-FETT legacy la consent",
+    // 0204 is APPLIED and frozen, so its repair is the FORWARD migration
+    // 0228_legacy_new_client_refusal_atomicity.sql rather than an edit. With
+    // that in the chain this scenario asserts atomicity positively, like the
+    // 0225 ones -- and it went red while still inverted the moment 0228
+    // applied, which is the tripwire doing its job rather than a surprise.
+    fixed: true,
   });
 });

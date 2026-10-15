@@ -14,7 +14,36 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-12, post-0211 apply; `0211` APPLIED, repo == hosted on this branch)
+## Current state (verified 2026-10-15 on `feat/g1-public-booking-picker`; hosted `0211` DECLARED; repo max `0228`; `0212`–`0222`, `0225`, `0228` AUTHORED AND PENDING — **NOT contiguous on this branch**)
+
+> **THIS BRANCH IS NOT AT PARITY, and the production copy of this block says it
+> is.** That line is correct on production and false here, which is why it is
+> restated rather than inherited: syncing production brought its "repo == hosted"
+> header onto a branch that carries twelve pending migrations, and the canonical
+> docs guard caught it.
+>
+> **Hosted `0211` is the DECLARED figure in
+> `docs/production/migration-state.json` on this branch.** The composed branch
+> records hosted `0212` from the #832 apply, and #832 is unmerged, so production's
+> own file lags it. A branch's copy of a declared-state file is a snapshot, not
+> the authority — quote hosted state as "N per the <PR> apply record", and read it
+> from the production branch plus the newest apply record on any unmerged PR that
+> applied.
+>
+> **PENDING ON THIS BRANCH:** `0212`, `0213`, `0214`, `0215`, `0216`, `0217`,
+> `0218`, `0219`, `0220`, `0221`, `0222`, `0225`, `0228`.
+>
+> **THE GAPS ARE OTHER LANES', NOT LOST WORK.** `0223` and `0224` belong to the
+> MPX and Audit lanes and `0226`/`0227` to the SMS and delivery lanes; all four
+> exist on the composed branch. So the pending suffix here has holes by
+> construction, the contiguity guard reds while this branch is viewed alone, and
+> it resolves on composition. That red is an isolation artifact, not a defect.
+>
+> **`0228` IS A FORWARD-ONLY REPAIR of the applied, frozen `0204`** — it
+> redefines `create_public_appointment_for_new_client` and nothing else, restates
+> its grants by name, and writes no rows. `0204`'s bytes are unchanged and pinned
+> by hash in `tests/migrations/0228-*.test.ts`. Same shape as `0227` against the
+> applied `0212`.
 
 > **0211 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #827 HEAD, BEFORE ANY MERGE.**
 > `0211_client_sms_permission_guard.sql` was applied to production on
@@ -66,10 +95,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0211** (`0211_client_sms_permission_guard.sql`), applied 2026-10-12 from #827's reviewed head. |
-| **Repo migration max** | **0211** on this branch, so repo and hosted are equal here: the PARITY shape. A branch stacked above it carries its own pending suffix. |
-| **Remote-only migrations** | **none**: no migration exists on production that this branch lacks. |
-| **Pending migrations** | **none** on this branch. |
-| **Next free migration** | Next free number is **0212**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. The coordination record already holds it for #832. |
+| **Repo migration max** | **0228** on this branch — `0228_legacy_new_client_refusal_atomicity.sql`, a FORWARD-ONLY repair of the applied, frozen `0204`. Repo and hosted are NOT equal here: this is the MIGRATION-FIRST PENDING shape, and the production copy of this block says PARITY because it is correct there and not here. |
+| **Remote-only migrations** | **none**: no migration exists on production that this branch lacks. (Other lanes' pending numbers are absent here, which is the reverse case and is covered under Pending migrations.) |
+| **Pending migrations** | `0212`, `0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0225`, `0228` — thirteen, and **NOT a contiguous suffix**: `0223`/`0224` (MPX, Audit) and `0226`/`0227` (SMS, delivery) belong to other lanes and exist on the composed branch, not here. The contiguity guard therefore reds while this branch is viewed alone and resolves on composition. |
+| **Next free migration** | Next free number is **0229**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. `0228` was taken as the lowest number free across every visible ref at authoring time; a number is only free relative to the tree it lands on, so the landing tree is re-derived before any apply. |
 | **Project ref** | `alhhybgqdmcdyzpybykj`, the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
 | **Reviewed release head** | `481e60c60ae8c873a2e1b6e2a0ccc5b9dc0b8c11` (PR #827): CI green (run `38164242975`), 0 review threads, migration bytes reviewed byte-identical inside #831. The shepherd was UNKNOWN (`read_failed`), and that was accepted by the operator for this migration-only apply. |
 | **Production application SHA at apply time** | `6c5eac80` (the #821 merge). **No application behaviour was deployed by this apply.** |

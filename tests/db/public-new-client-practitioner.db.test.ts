@@ -122,8 +122,24 @@ describe("0225 — the chosen practitioner reaches the delegate", () => {
     }
   });
 
-  it("NULL reproduces 0204 exactly — the active owner", async () => {
-    const fett = await seedFettStudio({ treatingCount: 2 });
+  it("NULL reproduces 0204 exactly — the active owner, on a LEGACY studio", async () => {
+    // NARROWED TO ITS ACTUAL SUBJECT, the same way its 0222 sibling was.
+    //
+    // This asserted owner assignment on a studio `seedFettStudio` had left
+    // capacity-LIVE, because `capacity: "live"` is the FIXTURE DEFAULT -- never
+    // a product decision, and invisible here because this file never mentions a
+    // capacity flag. So it read as "legacy parity" while actually pinning the
+    // capacity-ON branch, and it went red the moment fair assignment stopped
+    // privileging the owner.
+    //
+    // The equivalence it legitimately protects is CAPACITY-OFF: pointing the
+    // new-client route at v2 must not change what today's studios get, and
+    // today every studio has the assignment switch off. That path is unchanged.
+    //
+    // NOT WEAKENED: the capacity-ON default is asserted far harder than this
+    // ever did, by tests/db/public-fair-assignment.db.test.ts, which requires
+    // that the owner does NOT receive bookings by privilege.
+    const fett = await seedFettStudio({ treatingCount: 2, capacity: "legacy" });
     try {
       await setAdmission(fett, "open");
       const res = await bookAsNewClient(fett, null);
