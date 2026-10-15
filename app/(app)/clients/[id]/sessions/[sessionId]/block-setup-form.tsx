@@ -91,7 +91,11 @@ import { MachineFirstSetupConnected } from "@/components/machines/machine-first-
 import { ProbePicker } from "@/components/probe-picker";
 import { READING_INPUT_CLS } from "@/lib/sessions/charting-input-styles";
 import { resolveModeSections } from "@/lib/sessions/mode-sections";
-import { prepareHandoff, type PendingSetupIdentity } from "@/lib/machines/pending-setup";
+import {
+  INITIAL_SAVE_UNRESOLVED,
+  prepareHandoff,
+  type PendingSetupIdentity,
+} from "@/lib/machines/pending-setup";
 import type { GroupSubmission } from "@/lib/machines/setting-groups";
 import {
   createTreatmentAreaWithEntryAction,
@@ -429,6 +433,14 @@ export function BlockSetupForm({
    * some values and a missing required field, or two groups claiming the same
    * probe - and `submit` refuses rather than discarding her numbers.
    */
+  /**
+   * An initial save whose answer was lost.
+   *
+   * HELD, NOT RETRIED, and unlike every other unresolved state in this
+   * feature that is not caution - it is the measured behaviour of the
+   * command. See `INITIAL_SAVE_UNRESOLVED`.
+   */
+  const [saveUnresolved, setSaveUnresolved] = useState(false);
   const [machineDraft, setMachineDraft] = useState<{
     groups: GroupSubmission[];
     blocking: string | null;
@@ -627,6 +639,13 @@ export function BlockSetupForm({
       setError(machineDraft.blocking);
       return;
     }
+    // AN UNRESOLVED INITIAL SAVE IS NOT RETRYABLE. See the catch below: a
+    // second attempt creates a second treatment area, so the only safe next
+    // step is to reload and look.
+    if (saveUnresolved) {
+      setError(INITIAL_SAVE_UNRESOLVED);
+      return;
+    }
     const el = draft.energyLevel.trim();
     const elNum = el === "" ? null : Number(el);
     if (el !== "" && (!Number.isFinite(elNum) || (elNum as number) < 0)) {
@@ -759,6 +778,10 @@ export function BlockSetupForm({
       observationChips: draft.observationChips,
     };
 
+    // COMPUTED ONCE PER ATTEMPT. Calling `machineSetupForSave()` again in
+    // the catch would mint a SECOND retry key for the same save, which is the
+    // defect the key exists to prevent.
+    const attachedSetup = machineSetupForSave();
     startTransition(async () => {
       if (block) {
         // Edit: update the treatment area + its first entry's readings.
@@ -831,10 +854,30 @@ export function BlockSetupForm({
         // cannot change what is recorded while the key still claims it is the
         // same save. Null when nothing was entered, which is an ordinary save
         // of an area with no machine settings.
-        initialSetup: machineSetupForSave(),
+        initialSetup: attachedSetup,
+      }).catch((cause: unknown) => {
+        // THE TRANSPORT FAILED, so the server's answer is UNKNOWN - not
+        // negative. The area may well have been created.
+        //
+        // AND HERE THE ADVICE IS THE OPPOSITE OF THE EDIT PATH'S. A save
+        // against an existing block is safely retryable, because the
+        // submission command recognises its retry key. This one creates the
+        // block FIRST, so the key is scoped to a block that did not exist on
+        // the first attempt: pressing Save again produces a SECOND treatment
+        // area with a second copy of the settings. Proved against a real
+        // database in tests/db/machine-initial-save.db.test.ts.
+        //
+        // So she is told to LOOK, and the control is held closed, rather than
+        // being offered a retry that duplicates her treatment.
+        return {
+          ok: false as const,
+          error: attachedSetup ? INITIAL_SAVE_UNRESOLVED : String(cause),
+          unresolved: Boolean(attachedSetup),
+        };
       });
       if (!res.ok) {
         setError(res.error);
+        if ("unresolved" in res && res.unresolved) setSaveUnresolved(true);
         return;
       }
       onCancel();

@@ -8,7 +8,9 @@ import {
   pinToBlock,
   prepareHandoff,
   type PendingSetupIdentity,
+  INITIAL_SAVE_UNRESOLVED,
 } from "@/lib/machines/pending-setup";
+import { UNKNOWN_NOTE } from "@/lib/machines/save-attempt";
 import type { GroupSubmission } from "@/lib/machines/setting-groups";
 import type { recordSetupSubmissionAction } from "@/app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions";
 
@@ -271,5 +273,62 @@ describe("the handoff feeds the EXISTING action with no new server code", () => 
     // artefact that a `skip` could silently remove.
     expect(input.groups).toHaveLength(2);
     expect(input.idempotencyKey).toBe("k1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AN UNRESOLVED *INITIAL* SAVE IS NOT RETRYABLE, and this is the one place in
+// the feature where the advice after a lost response is "look", not "try
+// again".
+//
+// MEASURED, NOT REASONED. tests/db/machine-initial-save.db.test.ts ran against
+// a real database and showed it: the submission command's retry key is unique
+// per (BLOCK, key), and the initial save creates a NEW block before using it -
+// so a repeat cannot collide, nothing is absorbed, and pressing Save again
+// produces a SECOND treatment area carrying a second copy of the settings.
+//
+// The edit path keeps the opposite advice, correctly, and that asymmetry is
+// the point rather than an inconsistency.
+// ---------------------------------------------------------------------------
+describe("the wording for a lost initial save", () => {
+  it("tells her to LOOK, not to retry", () => {
+    expect(INITIAL_SAVE_UNRESOLVED).toMatch(/reload this chart/i);
+    expect(INITIAL_SAVE_UNRESOLVED).toMatch(/do not save again/i);
+  });
+
+  it("says WHY, in terms of what a second save would do", () => {
+    // Without the consequence she has no reason to believe the instruction,
+    // and "do not save again" on a clinical form reads as a bug.
+    expect(INITIAL_SAVE_UNRESOLVED).toMatch(/second area/i);
+    expect(INITIAL_SAVE_UNRESOLVED).toMatch(/second copy/i);
+  });
+
+  it("does not claim the save failed", () => {
+    // The write may well have committed. Saying it failed is as wrong as
+    // saying it succeeded.
+    expect(INITIAL_SAVE_UNRESOLVED).toMatch(/not known/i);
+    expect(INITIAL_SAVE_UNRESOLVED).toMatch(/may have been/i);
+  });
+
+  it("is DIFFERENT advice from the edit path's", () => {
+    // MY FIRST SPELLING OF THIS BANNED THE SUBSTRING "save again:" - which
+    // this very sentence contains, in "Do NOT save again:". The substring is
+    // common to both messages; the ADVICE is what differs, and guessing at a
+    // phrase instead of comparing the two constants is what made the test
+    // wrong.
+    //
+    // Compared against the real edit-path wording, so the two cannot drift
+    // into agreeing: one tells her to press Save again because the key
+    // absorbs the repeat, the other tells her not to because it does not.
+    expect(INITIAL_SAVE_UNRESOLVED).not.toBe(UNKNOWN_NOTE);
+    expect(UNKNOWN_NOTE, "the edit path offers the retry").toMatch(
+      /press save again/i,
+    );
+    expect(INITIAL_SAVE_UNRESOLVED, "the create path refuses it").toMatch(
+      /do not save again/i,
+    );
+    // And only one of them promises the database will absorb it.
+    expect(UNKNOWN_NOTE).toMatch(/returns the same capture/i);
+    expect(INITIAL_SAVE_UNRESOLVED).not.toMatch(/returns the same capture/i);
   });
 });

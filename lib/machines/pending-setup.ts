@@ -89,6 +89,30 @@ export const IDENTITY_CHANGED =
   "The machine or mode changed after these settings were entered, so they " +
   "have to be read off the machine again before they can be recorded.";
 
+/**
+ * What to say when the INITIAL save's answer is lost.
+ *
+ * THE OPPOSITE ADVICE FROM THE EDIT PATH, and the difference is proven rather
+ * than assumed. `save-attempt.ts` offers a retry after a lost response,
+ * because the submission command's key is unique per (BLOCK, key) and a repeat
+ * returns the original. The INITIAL save creates a NEW block FIRST, so its
+ * retry key is scoped to a block that did not exist when the first attempt
+ * ran: it cannot collide, nothing is absorbed, and pressing Save again
+ * produces a SECOND treatment area carrying a second copy of the settings.
+ *
+ * Measured, not reasoned: tests/db/machine-initial-save.db.test.ts asserts
+ * exactly that outcome against a real database.
+ *
+ * So she is told to LOOK, not to retry. Only the chart can settle whether the
+ * area was created, and that is the honest instruction until the block create
+ * has an idempotency key of its own - which is a change to 0166's command.
+ */
+export const INITIAL_SAVE_UNRESOLVED =
+  "The connection failed while saving, so whether this treatment area was " +
+  "created is not known — it may have been. Do NOT save again: reload this " +
+  "chart and check. Saving again would create a second area with a second " +
+  "copy of these settings.";
+
 export const WRONG_BLOCK =
   "These settings were entered for a different treatment area and cannot be " +
   "recorded against this one.";

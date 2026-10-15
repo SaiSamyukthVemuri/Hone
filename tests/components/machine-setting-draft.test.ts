@@ -192,6 +192,27 @@ describe("the handoff's shape, pinned on source", () => {
     expect(src).toMatch(/setError\(machineDraft\.blocking\)/);
   });
 
+  it("the FORM holds an unresolved save instead of offering a retry", () => {
+    // MEASURED, not cautious. tests/db/machine-initial-save.db.test.ts showed
+    // that a repeated INITIAL save creates a second treatment area with a
+    // second copy of the settings, because the submission key is scoped per
+    // BLOCK and this path creates the block first. So the catch reports
+    // INITIAL_SAVE_UNRESOLVED and the next attempt is refused.
+    const src = read(FORM);
+    expect(src).toMatch(/INITIAL_SAVE_UNRESOLVED/);
+    expect(src).toMatch(/setSaveUnresolved\(true\)/);
+    expect(src).toMatch(/if \(saveUnresolved\)/);
+  });
+
+  it("the FORM computes the settings ONCE per attempt", () => {
+    // Calling `machineSetupForSave()` again in the catch would mint a SECOND
+    // retry key for the same save - the defect the key exists to prevent.
+    const src = read(FORM);
+    expect((src.match(/machineSetupForSave\(\)/g) ?? []).length).toBe(1);
+    expect(src).toMatch(/const attachedSetup = machineSetupForSave\(\)/);
+    expect(src).toMatch(/initialSetup: attachedSetup/);
+  });
+
   it("the FORM mints the retry key ONCE, through prepareHandoff", () => {
     // Minting per attempt would make every retry a new save; never minting a
     // new one would make a deliberate second capture impossible. And
@@ -199,7 +220,10 @@ describe("the handoff's shape, pinned on source", () => {
     // save began cannot change what is recorded under the same key.
     const src = read(FORM);
     expect(src).toMatch(/prepareHandoff\(identity, chosen\.groups,/);
-    expect(src).toMatch(/initialSetup: machineSetupForSave\(\)/);
+    // The payload now reaches the action through `attachedSetup`, which is
+    // computed once per attempt - see the case above. Asserting the inline
+    // call here would contradict that.
+    expect(src).toMatch(/initialSetup: attachedSetup/);
     expect((src.match(/randomUUID/g) ?? []).length).toBe(1);
   });
 });
