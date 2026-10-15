@@ -52,6 +52,25 @@ export type MachineDb = {
             n: number,
           ) => Promise<{ data: unknown; error: MachineDbError }>;
         };
+        // `gt` is the KEYSET predicate: "the page after the last id I saw".
+        // Declared rather than cast around, because this type's narrowness is
+        // the point - a shape it does not describe is a query this module has
+        // no business performing, and `readingsForBlock` genuinely performs
+        // this one now that it reads a block's readings COMPLETELY instead of
+        // taking the first 500 (Codex, #860 4288424513).
+        gt: (
+          column: string,
+          value: string,
+        ) => {
+          order: (
+            column: string,
+            opts: { ascending: boolean },
+          ) => {
+            limit: (
+              n: number,
+            ) => Promise<{ data: unknown; error: MachineDbError }>;
+          };
+        };
         // `in` is how a lookup names SPECIFIC units by id. Declared here
         // because the slice is deliberately narrow: a query shape this type
         // does not describe is one this module has no business performing.
@@ -654,20 +673,95 @@ export async function publishMachineContract(
   return { ok: true, value: Number(data ?? 0) };
 }
 
-/** Every reading recorded against one block, for the chart being edited. */
+/** One keyset page of this read. 1,000 is PostgREST's own ceiling on Hone. */
+export const BLOCK_READING_PAGE_SIZE = 1000;
+/** 50 pages: past this the read is bounded out and fails closed. */
+export const BLOCK_READING_MAX_PAGES = 50;
+
+/**
+ * Every reading recorded against one block, for the chart being edited.
+ *
+ * READ COMPLETELY OR NOT AT ALL, and the version this replaces was neither.
+ * It asked for `.order("field_key").limit(500)`, which has two faults that
+ * compound (Codex, #860 4288424513):
+ *
+ *   1. A BLOCK CAN EXCEED THE CAP. Each capture carries one row per field and a
+ *      save appends one capture per settings group, so a four-channel unit
+ *      re-read through a long treatment reaches several hundred rows without
+ *      anything unusual happening.
+ *   2. ORDERED BY `field_key` ALONE, the cap does not cut at a capture
+ *      boundary - it cuts mid-alphabet across every capture at once. The
+ *      surface groups these rows into captures, so the result is not "the last
+ *      N captures missing" but captures rendered with SOME of their fields.
+ *      A setup is only reproducible as a set: a current without its duration is
+ *      not a setting anyone can repeat, and a capture silently missing a field
+ *      reads as a complete record of a different treatment.
+ *
+ * AND RAISING THE LIMIT WOULD HAVE MOVED THE CLIFF, not removed it. PostgREST
+ * answers a read past `max_rows` with 200, the first window and NO error, so
+ * dropping `.limit(500)` just relocates the same silent truncation to 1,000.
+ * That is the trap `lib/sms/suppression-candidates.ts` was written for, and
+ * this uses its idiom: KEYSET pages by `id`, each after the last id seen, until
+ * a page comes back EMPTY. A short page is never trusted to be the last one, so
+ * a row limit below the page size cannot end the read early.
+ *
+ * FAIL-CLOSED. A failed page, a keyset that does not advance, or more pages
+ * than the ceiling allows returns `{ ok: false }` - never a partial list
+ * wearing `ok: true`. The caller already handles a failed read by saying so;
+ * what it cannot do is notice that a successful one was incomplete.
+ *
+ * THE RETURNED ORDER IS UNCHANGED - sorted by `field_key` in memory - so the
+ * rendering contract this read has always had is not quietly altered by the
+ * repair.
+ */
 export async function readingsForBlock(
   db: MachineDb,
   blockId: string,
 ): Promise<MachineOutcome<RecordedReading[]>> {
-  const { data, error } = await db
-    .from("treatment_setup_readings")
-    .select(READING_COLUMNS)
-    .eq("session_block_id", blockId)
-    .order("field_key", { ascending: true })
-    .limit(500);
+  const rows: ReadingRow[] = [];
+  let after: string | null = null;
 
-  if (error) return { ok: false, error: fail(error, "Could not read settings.") };
-  return { ok: true, value: ((data ?? []) as ReadingRow[]).map(toReading) };
+  for (let page = 0; page < BLOCK_READING_MAX_PAGES; page += 1) {
+    const base = db
+      .from("treatment_setup_readings")
+      .select(`id, ${READING_COLUMNS}`)
+      .eq("session_block_id", blockId);
+    // THE KEYSET PREDICATE applies only after the first page. Written as two
+    // whole chains rather than a reassigned builder: `gt` narrows the shape,
+    // so a `let` holding the pre-`gt` type cannot hold the post-`gt` one.
+    const { data, error } = await (after === null
+      ? base.order("id", { ascending: true }).limit(BLOCK_READING_PAGE_SIZE)
+      : base
+          .gt("id", after)
+          .order("id", { ascending: true })
+          .limit(BLOCK_READING_PAGE_SIZE));
+
+    if (error) return { ok: false, error: fail(error, "Could not read settings.") };
+    if (!Array.isArray(data)) {
+      return { ok: false, error: fail(null, "Could not read settings.") };
+    }
+    // AN EMPTY PAGE ENDS THE READ. A short one does not: that is the whole
+    // difference between this and the version it replaces.
+    if (data.length === 0) break;
+
+    const keyed = data as Array<ReadingRow & { id?: unknown }>;
+    rows.push(...keyed);
+    const last = keyed[keyed.length - 1]!.id;
+    // The keyset must move forward, or the loop could re-read a page for ever.
+    if (typeof last !== "string" || (after !== null && last <= after)) {
+      return { ok: false, error: fail(null, "Could not read settings.") };
+    }
+    after = last;
+
+    if (page === BLOCK_READING_MAX_PAGES - 1) {
+      // The ceiling was reached with a full page still arriving, so this read
+      // cannot be shown complete. Refusing is the only honest answer.
+      return { ok: false, error: fail(null, "Could not read settings.") };
+    }
+  }
+
+  rows.sort((a, b) => a.field_key.localeCompare(b.field_key));
+  return { ok: true, value: rows.map(toReading) };
 }
 
 /**

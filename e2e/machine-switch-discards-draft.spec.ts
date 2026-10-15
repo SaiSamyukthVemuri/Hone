@@ -533,6 +533,70 @@ test("a machine or mode switch discards the draft, and an out-of-service unit re
     ).toEqual(["4.5", "70"]);
   });
 
+  await test.step("6b: CLEARING the machine discards the draft too - the limb this file missed", async () => {
+    // THE FOURTH LIMB, and the one my widening did not have (Codex, #860
+    // 4288424506). Steps 3, 5 and 7 cover switching UNIT, switching MODE and
+    // the unit going out of service. Clearing to NOTHING is a fourth, and it
+    // was the only one that was actually broken: the panel renders its draft
+    // reset inside the chosen-machine arm, so choosing "Choose machine..."
+    // unmounted the reset along with everything else, nothing reported, and
+    // the host form kept the draft it was last told about.
+    //
+    // WHY THE JOURNEY'S OWN CLEAR STEP DID NOT CATCH IT. That spec clears the
+    // machine, re-selects it, and asserts the fields are empty - and the
+    // re-selection remounts the collector, which reports an empty draft on
+    // mount. The host is repaired by the re-selection, so the assertion passes
+    // whether or not clearing did anything. The dangerous sequence is clear
+    // and then SAVE, with no re-selection in between, which nothing exercised.
+    //
+    // A FRESH SESSION, so this is about an area that must not acquire
+    // settings rather than a count on one that already has them.
+    const cleared = await seedE2eDraftElectrolysisSession(seed);
+    await openCreateForm(page, cleared.clientId, cleared.sessionId);
+    expect(await openMachinePanel(page)).toBe(true);
+
+    await page.getByTestId("machine-select").selectOption(unitA);
+    await expect(page.getByTestId("machine-chosen")).toContainText(
+      "Room 1 multineedle",
+      { timeout: T },
+    );
+    await page.getByTestId("reading-current").fill("77");
+    await page.getByTestId("reading-duration").fill("210.5");
+    await page.getByTestId("reading-energy_shown").fill("3.33");
+
+    // CLEAR IT. The collector vanishes with the chosen-machine block.
+    await page.getByTestId("machine-select").selectOption("");
+    await expect(page.getByTestId("machine-setting-draft")).toHaveCount(0, {
+      timeout: T,
+    });
+    await expect(page.getByTestId("machine-chosen")).toHaveCount(0);
+
+    // SAVE WITH NOTHING CHOSEN. The area is an ordinary save; the readings she
+    // typed under a unit she then un-chose must not be recorded against it.
+    await page.getByTestId("save-treatment-area").click({ timeout: T });
+    await expect
+      .poll(async () => await blockCountOf(cleared.sessionId), {
+        timeout: T,
+        message: "the create form saved no treatment area",
+      })
+      .toBe(1);
+
+    const clearedBlock = await blockIdOf(cleared.sessionId);
+    expect(
+      await capturesFor(clearedBlock),
+      "the draft survived the clear and was recorded under the un-chosen unit",
+    ).toHaveLength(0);
+    expect(await readingsFor(clearedBlock)).toHaveLength(0);
+    // AND NOWHERE ELSE EITHER: 77 is a value this file records nowhere, so a
+    // studio-wide search for it cannot pass by coincidence.
+    const anywhere = await sql<{ n: string }>(
+      `select count(*)::text as n from public.treatment_setup_readings
+        where studio_id = $1 and value_numeric = 77`,
+      [seed.studioId],
+    );
+    expect(Number(anywhere[0]!.n), "the cleared draft reached the record").toBe(0);
+  });
+
   await test.step("7: a unit taken OUT OF SERVICE mid-draft refuses the save, and no area is created", async () => {
     // THE STRONGEST CLAIM IN THIS FILE, and it is only true because the area
     // and its settings are ONE transaction: refusing the settings must take

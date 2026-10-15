@@ -437,6 +437,33 @@ export function MachineFirstSetupPanel({
           {selectionNote}
         </p>
       )}
+      {/*
+        NO COLLECTOR, NO DRAFT - AND THIS MUST LIVE ABOVE THE BRANCH, for the
+        same reason the failure note above it does.
+        ------------------------------------------------------------------
+        It was nested inside the chosen-machine arm, and from there it could
+        never fire on the one case it was written for. Clearing the machine
+        takes the `!chosen` arm, so the whole subtree - this component included
+        - unmounts, nothing reports, and the host form keeps the non-empty
+        draft it was last told about. Press Save then and the readings are
+        recorded under the PREVIOUSLY selected machine, as an immutable
+        capture: numbers she never read off the unit now chosen, and no unit
+        chosen at all (Codex, #860 4288424506).
+        ------------------------------------------------------------------
+        THE PRECEDENT WAS ALREADY IN THIS FILE, ten lines up: the selection
+        note was moved above the branch because rendering it inside the
+        chosen-machine block hid a failed CLEAR, which is the identical shape.
+        I read that comment, wrote the same defect underneath it, and the
+        earlier widening missed it too - it covered switch, mode and retire,
+        and clearing to none is a fourth limb.
+        ------------------------------------------------------------------
+        The condition is unchanged - `!(chosen && mode)` already covered
+        "nothing chosen"; only its position was wrong. It renders nothing, so
+        sitting here costs nothing.
+      */}
+      {!blockId && onSettingDraft && !(chosen && mode) && (
+        <MachineSettingDraftReset onSettingDraft={onSettingDraft} />
+      )}
       {selectable.length === 0 ? (
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           No verified machine is available to select yet.{" "}
@@ -523,16 +550,9 @@ export function MachineFirstSetupPanel({
             to put.
           */}
           {/*
-            NO COLLECTOR, NO DRAFT. The arms below render one only when a
-            machine is chosen and a mode resolved; clearing the machine makes
-            this component vanish, and the host would otherwise keep the
-            draft it last reported - the same stale-draft defect as a switch,
-            one shape over. `MachineSettingDraftReset` exists for exactly that
-            and renders nothing.
+            THE DRAFT RESET USED TO SIT HERE, and it could not do its job from
+            inside this branch. See the hoisted copy above the branch.
           */}
-          {!blockId && onSettingDraft && !(chosen && mode) && (
-            <MachineSettingDraftReset onSettingDraft={onSettingDraft} />
-          )}
           {!blockId && onSettingDraft && mode ? (
             <MachineSettingDraft
               // REMOUNTED WHEN THE IDENTITY CHANGES, for the same reason the

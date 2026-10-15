@@ -203,6 +203,27 @@ function pgMachineDb(q: UserQuery): MachineDb {
                     },
                   };
                 },
+                // `gt` is the KEYSET predicate: the page after the last id
+                // seen. The cursor is a PARAMETER, not interpolated text, for
+                // the same reason `in`'s ids are - a fake that builds SQL by
+                // concatenation teaches the habit the real call sites must not
+                // have.
+                gt(gtCol, gtValue) {
+                  return {
+                    order(orderCol, opts) {
+                      return {
+                        limit(n) {
+                          return run(
+                            `${base} and ${gtCol} > $2 order by ${orderCol} ${
+                              opts.ascending ? "asc" : "desc"
+                            } limit ${n}`,
+                            [value, gtValue],
+                          );
+                        },
+                      };
+                    },
+                  };
+                },
                 // `in` names specific rows by id. Sent as a pg array with
                 // `= any($2)` rather than an interpolated list, so the ids stay
                 // parameters and never become SQL text.

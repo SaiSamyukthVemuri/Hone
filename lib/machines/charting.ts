@@ -50,12 +50,40 @@ import {
 // Native field projection
 // ---------------------------------------------------------------------------
 
-/** How a unit is written next to an input. */
+/**
+ * The units that are WRITTEN AS NOTHING, in one place.
+ *
+ * `device-display` and `none` are sentinels, not units: the machine's own label
+ * already carries the meaning, and inventing a unit for a 5HD's UE or an ST
+ * 350's UL would be the exact normalisation the contract forbids. Printing the
+ * sentinel itself is worse than printing nothing - "1.25 device-display" reads
+ * as a unit the machine has and does not.
+ */
+const UNWRITTEN_UNITS: ReadonlySet<string> = new Set(["device-display", "none"]);
+
+/** How a unit is written next to an input, from TODAY'S contract. */
 export function unitLabel(unit: NativeUnit): string {
-  // `device-display` and `none` render nothing: the machine's own label already
-  // carries the meaning, and inventing a unit for UE or UL would be the exact
-  // normalisation the contract forbids.
-  return unit === "device-display" || unit === "none" ? "" : unit;
+  return UNWRITTEN_UNITS.has(unit) ? "" : unit;
+}
+
+/**
+ * The same rule for a unit read back off the RECORD.
+ *
+ * SEPARATE FROM `unitLabel` BECAUSE THE INPUT IS DIFFERENT, not because the
+ * rule is. `treatment_setup_readings.native_unit` is a free text column holding
+ * whatever the contract said when the row was written, so it is a `string` and
+ * may be a unit today's `NativeUnit` union no longer contains. Anything that is
+ * not a sentinel is therefore printed VERBATIM - a historical µA stays µA, and
+ * harmonising it to today's vocabulary is the one thing this must never do.
+ *
+ * It exists because the recorded-history surface printed the sentinels
+ * literally while the entry form beside it did not: the same reading rendered
+ * "1.25" with an input and "1.25 device-display" in the history below
+ * (Codex, #860 4288424526).
+ */
+export function recordedUnitLabel(unit: string | null | undefined): string {
+  if (!unit) return "";
+  return UNWRITTEN_UNITS.has(unit) ? "" : unit;
 }
 
 export type FieldDescriptor = {

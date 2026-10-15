@@ -327,6 +327,43 @@ describe("switching machine or mode clears the collected draft", () => {
     expect(src).toMatch(/<MachineSettingDraftReset onSettingDraft=\{onSettingDraft\} \/>/);
   });
 
+  it("and the reset is REACHABLE when nothing is chosen, not nested in the chosen arm", () => {
+    // THE ASSERTION ABOVE PASSED WHILE THE FIX DID NOT WORK, which is the
+    // whole reason this one exists (Codex, #860 4288424506).
+    //
+    // The condition `!(chosen && mode)` already covered "nothing chosen". The
+    // component carrying it sat INSIDE the chosen-machine arm of the panel's
+    // three-way branch, so clearing the machine took the `!chosen` arm and
+    // unmounted the entire subtree - the reset included. It never ran on the
+    // one case it was written for: the host kept a non-empty draft, and Save
+    // recorded those readings under the PREVIOUSLY selected machine as an
+    // immutable capture.
+    //
+    // A PREDICATE IS NOT REACHABILITY, and only position can tell them apart,
+    // so position is what this reads. The panel's branch opens at
+    // `{selectable.length === 0 ? (`; the reset must come BEFORE it, like the
+    // selection note that was moved above the same branch for the same reason.
+    const src = read(PANEL_SRC);
+    const reset = src.indexOf("<MachineSettingDraftReset");
+    const branch = src.indexOf("{selectable.length === 0 ? (");
+    const chosenArm = src.indexOf('data-testid="machine-chosen"');
+
+    expect(reset, "the reset must exist").toBeGreaterThan(-1);
+    expect(branch, "the panel's three-way branch must be findable").toBeGreaterThan(-1);
+    expect(
+      reset,
+      "the reset is inside the branch, so clearing the machine unmounts it",
+    ).toBeLessThan(branch);
+    expect(
+      reset,
+      "the reset is inside the chosen-machine arm and cannot fire on a clear",
+    ).toBeLessThan(chosenArm);
+    // AND IT IS RENDERED EXACTLY ONCE. A copy left behind in the old position
+    // would make the assertions above pass while the stale one still runs on
+    // its own schedule.
+    expect(src.match(/<MachineSettingDraftReset/g) ?? []).toHaveLength(1);
+  });
+
   it("the reset hands up NULL, not an empty draft with an invented identity", () => {
     // With no machine chosen there is no setup identity, and an empty draft
     // carrying a plausible one is exactly the shape the host is meant to be

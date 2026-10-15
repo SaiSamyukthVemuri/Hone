@@ -20,6 +20,7 @@ import {
   nativeFieldGroups,
   priorSetupView,
   proposeSetup,
+  recordedUnitLabel,
   settingGroupIssues,
   unitLabel,
   type RecordedSetup,
@@ -399,6 +400,34 @@ describe("the chart shows that model's native fields", () => {
     expect(unitLabel("device-display")).toBe("");
     expect(unitLabel("none")).toBe("");
     expect(unitLabel("µA")).toBe("µA");
+  });
+
+  it("applies the SAME rule to a unit read back off the record", () => {
+    // THE ENTRY FORM OBEYED THIS AND THE HISTORY BESIDE IT DID NOT, so one
+    // reading rendered as "1.25" above and "1.25 device-display" below
+    // (Codex, #860 4288424526). The rule is one rule; what differs is the
+    // input, which is why there are two entry points and one sentinel set.
+    expect(recordedUnitLabel("device-display")).toBe("");
+    expect(recordedUnitLabel("none")).toBe("");
+    expect(recordedUnitLabel("µA")).toBe("µA");
+  });
+
+  it("prints a HISTORICAL unit verbatim rather than harmonising it", () => {
+    // `native_unit` is free text holding whatever the contract said when the
+    // row was written, so it can be a unit today's union no longer contains.
+    // Anything that is not a sentinel is printed as recorded - rewriting it to
+    // today's vocabulary would destroy the native precision the whole contract
+    // exists to preserve.
+    expect(recordedUnitLabel("mC")).toBe("mC");
+    expect(recordedUnitLabel("UE")).toBe("UE");
+  });
+
+  it("treats a missing recorded unit as nothing to write, not as a crash", () => {
+    // The column is NOT NULL today, but this reads rows written by a command
+    // that predates it, and a renderer is the wrong place to discover that.
+    expect(recordedUnitLabel("")).toBe("");
+    expect(recordedUnitLabel(null)).toBe("");
+    expect(recordedUnitLabel(undefined)).toBe("");
   });
 
   it("keeps MultiPlex's two stages as two visible groups, in order", () => {

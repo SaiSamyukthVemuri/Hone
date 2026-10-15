@@ -79,11 +79,33 @@ vi.mock("@/lib/supabase/server", () => ({
       const error = DB.errorFor[table] ?? DB.selectError;
       const rows = DB.rowsFor[table] ?? DB.rows;
       const result = async () => ({ data: error ? null : rows, error });
+      /**
+       * A KEYSET PAGE, MODELLED RATHER THAN IGNORED.
+       *
+       * `readingsForBlock` reads a block's readings COMPLETELY now - pages by
+       * `id`, each after the last one seen, until a page comes back EMPTY -
+       * because `.limit(500)` silently truncated and could cut a capture in
+       * half (Codex, #860 4288424513). A fake that answered every page with
+       * the same rows would loop or look complete when it was not, so it
+       * filters here exactly as the database does. The rows it serves need an
+       * `id` for the same reason.
+       */
+      const pageAfter = (cursor: string) => async () => ({
+        data: error
+          ? null
+          : (rows as Array<{ id?: unknown }>).filter(
+              (r) => typeof r.id === "string" && r.id > cursor,
+            ),
+        error,
+      });
       return {
         select: () => ({
           eq: () => ({
             is: () => ({ order: result }),
             order: () => ({ limit: result }),
+            gt: (_column: string, value: string) => ({
+              order: () => ({ limit: pageAfter(value) }),
+            }),
             in: () => ({ limit: result }),
             maybeSingle: result,
             limit: result,
@@ -1305,6 +1327,10 @@ describe("a RETIRED remembered machine is named as retired, not as missing", () 
 
 describe("loadMachineSetupContext reads the block's recorded captures", () => {
   const READING_ROW = {
+    // THE KEYSET CURSOR. The complete read pages by `id`, so a row without one
+    // cannot be paged past and the read fails closed rather than guessing -
+    // which is the behaviour, not an inconvenience of the fixture.
+    id: "rd-0001",
     session_block_id: "block-1",
     capture_id: "cap-1",
     revision: 1,

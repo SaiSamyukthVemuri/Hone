@@ -5,6 +5,7 @@ import {
   type ChronologyEntry,
   type SettingChange,
 } from "@/lib/machines/capture-chronology";
+import { recordedUnitLabel } from "@/lib/machines/charting";
 import type { RecordedReading } from "@/lib/machines/machine-queries";
 import { findMode, modeFields } from "@/lib/machines/profile-contract";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
@@ -134,15 +135,19 @@ function ChangeLine({
         changesWithin refuses to pair them at all, so a mismatch here is
         visible rather than silently harmonised.
       */}
-      {change.from.nativeUnit ? (
-        <span className="ml-0.5 text-neutral-500">{change.from.nativeUnit}</span>
+      {recordedUnitLabel(change.from.nativeUnit) ? (
+        <span className="ml-0.5 text-neutral-500">
+          {recordedUnitLabel(change.from.nativeUnit)}
+        </span>
       ) : null}
       <span className="mx-1.5 text-neutral-500" aria-label="changed to">
         →
       </span>
       <span className="font-medium">{formatValue(change.to)}</span>
-      {change.to.nativeUnit ? (
-        <span className="ml-0.5 text-neutral-500">{change.to.nativeUnit}</span>
+      {recordedUnitLabel(change.to.nativeUnit) ? (
+        <span className="ml-0.5 text-neutral-500">
+          {recordedUnitLabel(change.to.nativeUnit)}
+        </span>
       ) : null}
       {at && <span className="ml-2 text-xs text-neutral-500">{at}</span>}
     </li>
@@ -227,9 +232,19 @@ export function MachineRecordedSetups({
                       {labels.get(r.fieldKey) ?? r.fieldKey}
                     </span>{" "}
                     <span className="font-medium">{formatValue(r)}</span>
-                    {/* ALWAYS the recorded unit, never today's catalogue. */}
-                    {r.nativeUnit ? (
-                      <span className="ml-0.5 text-neutral-500">{r.nativeUnit}</span>
+                    {/*
+                      ALWAYS the recorded unit, never today's catalogue - but
+                      through the sentinel rule, which this printed straight
+                      past. `device-display` and `none` are not units, and
+                      rendering them literally put "1.25 device-display" in the
+                      history under an entry form showing the same reading as
+                      plain "1.25" (Codex, #860 4288424526). A real unit,
+                      including a historical one, still prints verbatim.
+                    */}
+                    {recordedUnitLabel(r.nativeUnit) ? (
+                      <span className="ml-0.5 text-neutral-500">
+                        {recordedUnitLabel(r.nativeUnit)}
+                      </span>
                     ) : null}
                   </li>
                 ))}

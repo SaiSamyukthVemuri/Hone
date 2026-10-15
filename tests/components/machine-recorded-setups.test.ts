@@ -369,3 +369,90 @@ describe("a reading with NO capture id", () => {
     expect(html).toMatch(/2 captures are recorded/);
   });
 });
+
+describe("the unit sentinels are never printed as if they were units", () => {
+  // `device-display` and `none` are the contract's way of saying "this machine
+  // has no unit for this field" - a 5HD's UE, an ST 350's UL. The entry form
+  // has always honoured that through `unitLabel`; this surface printed the
+  // sentinel verbatim, so one reading rendered "1.25" in the form above and
+  // "1.25 device-display" in the history below it (Codex, #860 4288424526).
+  //
+  // RENDERED, not grepped: the claim is about what reaches a screen, and the
+  // repo has no jsdom, so react-dom/server is the honest alternative to
+  // mounting a browser for it.
+
+  it("renders a device-display reading with its value and NO unit", () => {
+    const html = render({
+      readings: [
+        reading({
+          recordedAt: "2026-10-14T14:00:00Z",
+          fieldKey: "current",
+          value: 125,
+          nativeUnit: "device-display",
+          decimals: 2,
+        }),
+      ],
+    });
+    expect(html, "the sentinel reached the screen").not.toContain("device-display");
+    expect(html, "the value must survive the repair").toMatch(/125/);
+  });
+
+  it("renders a `none` reading the same way", () => {
+    const html = render({
+      readings: [
+        reading({ recordedAt: "2026-10-14T14:00:00Z", value: 7, nativeUnit: "none" }),
+      ],
+    });
+    // SCOPED, because "none" is a common English word and a blanket
+    // `not.toContain("none")` would pass or fail for reasons unrelated to the
+    // unit - the markup legitimately contains class names and copy using it.
+    expect(html).not.toMatch(/>\s*none\s*</);
+    expect(html).toMatch(/\b7\b/);
+  });
+
+  it("CONTROL: a real unit is still printed, including a historical one", () => {
+    // The repair must not become "print no units". A unit today's catalogue
+    // no longer declares is still what the record says, and harmonising it
+    // would destroy the native precision the contract exists to preserve.
+    const html = render({
+      readings: [
+        reading({ recordedAt: "2026-10-14T14:00:00Z", value: 5, nativeUnit: "ms" }),
+      ],
+    });
+    expect(html).toContain("ms");
+  });
+
+  it("applies it to the CHANGE summary too, which had the same defect", () => {
+    // Two captures of one field at different values pair into a change line,
+    // and that line prints BOTH sides' recorded units. It read
+    // "1.1 device-display -> 1.4 device-display" before this.
+    const html = render({
+      readings: [
+        reading({
+          captureId: "cap-1",
+          revision: 1,
+          recordedAt: "2026-10-14T13:00:00Z",
+          fieldKey: "current",
+          value: 110,
+          nativeUnit: "device-display",
+        }),
+        reading({
+          captureId: "cap-2",
+          revision: 2,
+          recordedAt: "2026-10-14T13:30:00Z",
+          fieldKey: "current",
+          value: 140,
+          nativeUnit: "device-display",
+        }),
+      ],
+    });
+    expect(html).toContain('data-testid="recorded-changes"');
+    expect(html, "the change line printed the sentinel").not.toContain(
+      "device-display",
+    );
+    // The change itself must still be legible, or the assertion above could
+    // pass because nothing rendered at all.
+    expect(html).toMatch(/110/);
+    expect(html).toMatch(/140/);
+  });
+});
