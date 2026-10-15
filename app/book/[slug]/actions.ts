@@ -739,13 +739,20 @@ export async function fetchNextAvailableDateAction(params: {
   // switch on. `loadPublicSlotsByDate` unions in memory from reservations it
   // already loads, adding two bulk queries for the whole window and none per
   // day, so BOOK-NEXT-FAST-01's bound is intact.
-  const eligibleForJump =
+  const scopedJump =
     params.newClient === true &&
-    studio.practitioner_capacity_booking_enabled === true
-      ? (await loadEligiblePractitioners(admin, studio.id, params.serviceId)).map(
-          (o) => o.id,
-        )
-      : [];
+    studio.practitioner_capacity_booking_enabled === true;
+  const eligibleForJump = scopedJump
+    ? (await loadEligiblePractitioners(admin, studio.id, params.serviceId)).map(
+        (o) => o.id,
+      )
+    : [];
+
+  // An empty list means studio-wide to the range loader. A scoped request
+  // must instead refuse when eligibility is empty or its reads fail.
+  if (scopedJump && eligibleForJump.length === 0) {
+    return { ok: false, error: UNAVAILABLE_PUBLIC_BOOKING_MESSAGE };
+  }
 
   const range = await loadPublicSlotsByDate(
     admin,

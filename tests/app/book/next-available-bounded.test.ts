@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { UNAVAILABLE_PUBLIC_BOOKING_MESSAGE } from "@/lib/booking/readiness";
 
 // ===========================================================================
 // BOOK-NEXT-FAST-01 — "Next available" is bounded, and still correct
@@ -51,6 +52,12 @@ const scenario = {
   blockoutError: null as { code: string } | null,
   reservationError: null as { code: string } | null,
   defaultsThrow: false,
+  practitionerOptions: [] as Array<{
+    practitioner_id: string; display_name: string; is_owner: boolean;
+  }>,
+  practitionerOptionsError: null as { code: string } | null,
+  servicePins: [] as Array<{ practitioner_id: string }>,
+  servicePinsError: null as { code: string } | null,
 };
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
@@ -86,12 +93,29 @@ vi.mock("@/lib/booking/studio-wide-availability", () => ({
 
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ({
+    rpc: async (name: string) => {
+      queries.push({ table: name, op: "rpc" });
+      return {
+        data: scenario.practitionerOptions,
+        error: scenario.practitionerOptionsError,
+      };
+    },
     from(table: string) {
       queries.push({ table, op: "select" });
       const chain: Record<string, unknown> = {};
       const self = () => chain;
       let page: { from: number; to: number } | null = null;
+      let scopedRead = false;
       const settle = () => {
+        if (table === "service_practitioners") {
+          return { data: scenario.servicePins, error: scenario.servicePinsError };
+        }
+        if (scopedRead && (
+          table === "studio_availability_default" ||
+          table === "studio_availability_overrides"
+        )) {
+          return { data: [], error: null };
+        }
         if (table === "services") {
           return {
             data:
@@ -119,6 +143,10 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       Object.assign(chain, {
         select: self, eq: self, lte: self, gte: self, lt: self, gt: self, is: self,
         order: self,
+        in: () => {
+          scopedRead = true;
+          return chain;
+        },
         range: (f: number, t: number) => {
           page = { from: f, to: t };
           return chain;
@@ -192,10 +220,83 @@ beforeEach(() => {
   scenario.blockoutError = null;
   scenario.reservationError = null;
   scenario.defaultsThrow = false;
+  scenario.practitionerOptions = [];
+  scenario.practitionerOptionsError = null;
+  scenario.servicePins = [];
+  scenario.servicePinsError = null;
   vi.useFakeTimers();
   // A Monday, 08:00 in Toronto. Fixed so "today", the past-time filter and the
   // horizon edge are all deterministic.
   vi.setSystemTime(new Date("2026-10-05T12:00:00.000Z"));
+});
+
+describe("next available: empty practitioner eligibility stays scoped", () => {
+  const practitioner = {
+    practitioner_id: "practitioner-1", display_name: "Practitioner", is_owner: true,
+  };
+
+  it.each([
+    ["no eligible practitioners", () => {}],
+    ["practitioner-options RPC failure", () => {
+      scenario.practitionerOptionsError = { code: "42501" };
+    }],
+    ["service-pin read failure", () => {
+      scenario.practitionerOptions = [practitioner];
+      scenario.servicePinsError = { code: "42501" };
+    }],
+    ["service pins exclude every practitioner", () => {
+      scenario.practitionerOptions = [practitioner];
+      scenario.servicePins = [{ practitioner_id: "other-practitioner" }];
+    }],
+  ] as const)("refuses before the range read: %s", async (_label, setup) => {
+    scenario.studio!.practitioner_capacity_booking_enabled = true;
+    setup();
+
+    // The studio is open on this date. Widening [] into a studio-wide scan
+    // would offer it, so the refusal cannot pass because availability is empty.
+    const result = await fetchNextAvailableDateAction({
+      ...CALL, fromDate: "2026-10-06", newClient: true,
+    });
+
+    expect(result).toEqual({
+      ok: false, error: UNAVAILABLE_PUBLIC_BOOKING_MESSAGE,
+    });
+    expect(queries.some((q) => q.op === "bulk")).toBe(false);
+    expect(queries.some((q) => q.table === "studio_calendar_reservations")).toBe(false);
+  });
+
+  it("still offers the open date when an eligible practitioner exists", async () => {
+    scenario.studio!.practitioner_capacity_booking_enabled = true;
+    scenario.practitionerOptions = [practitioner];
+    scenario.servicePins = [{ practitioner_id: practitioner.practitioner_id }];
+
+    const result = await fetchNextAvailableDateAction({
+      ...CALL, fromDate: "2026-10-06", newClient: true,
+    });
+
+    expect(result).toEqual({ ok: true, date: "2026-10-06" });
+    expect(queries.some((q) => q.op === "bulk")).toBe(true);
+    expect(queries.some((q) => q.table === "service_practitioners")).toBe(true);
+  });
+
+  it.each([
+    ["existing client", true, false],
+    ["assignment switch off", false, true],
+    ["legacy caller", true, undefined],
+  ] as const)("preserves the studio-wide answer for %s", async (_label, enabled, newClient) => {
+    scenario.studio!.practitioner_capacity_booking_enabled = enabled;
+    // If these paths accidentally ask eligibility, it fails; they still need
+    // the legacy studio-wide answer.
+    scenario.practitionerOptionsError = { code: "42501" };
+
+    const result = await fetchNextAvailableDateAction({
+      ...CALL, fromDate: "2026-10-06", newClient,
+    });
+
+    expect(result).toEqual({ ok: true, date: "2026-10-06" });
+    expect(queries.some((q) => q.op === "rpc")).toBe(false);
+    expect(queries.some((q) => q.op === "bulk")).toBe(true);
+  });
 });
 
 describe("BOOK-NEXT-FAST-01: the date it returns", () => {
