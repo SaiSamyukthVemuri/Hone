@@ -145,11 +145,15 @@ grants back only what is needed.
 | Owner console | Do **not** mount anything on #851 yet; it is read-only today |
 | **Product authority (Sam)** | **Q2**: RBAC lane recommends the full log on the platform/support path (§4), with an owner-scoped "who accessed your clients' records" projection later. **Q4**: recommends owner-only for V1 |
 
-## Migration census (2026-10-12)
+## Migration census (refreshed 2026-10-15)
 
-- **Production repository maximum:** `0210`; hosted maximum `0210`, per
-  `docs/production/migration-state.json`.
-- **Claimed by open PRs:** 0211 (#827/#831), 0212 (#831/#832), 0213 (#831),
+- **Production repository maximum:** `0211`
+  (`supabase/migrations/0211_client_sms_permission_guard.sql`, merged via
+  #827). **Hosted maximum:** `0211`, per `docs/production/migration-state.json`
+  (`hosted_migration_max`). 0211 is applied and is no longer a claim (Codex P2
+  4279192876).
+- **Claimed by open PRs, as of the 2026-10-12 census** (re-derive at claim
+  time; some may have merged since): 0212 (#831/#832), 0213 (#831),
   0214 (#833), 0215 (#843), 0216 (#838), 0217 (#844), 0218 (#850).
 - **Also claimed in #824 comments** (missed by a PR-file-only census):
   **0219** (DB/WAIT, G1 queue position) and **0220** (STUDIO-READY-02c,
