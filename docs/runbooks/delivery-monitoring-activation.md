@@ -81,11 +81,11 @@ What this stack adds stays inside the boundary #828 asked for:
   - **Backstop:** the daily sweep. Backlog findings are evaluated **only inside a sweep invocation that actually runs**. At a once-a-day cadence, a stuck backlog can go unreported for up to about a day.
   - **What detects what:**
     - `email_delivery_sweep_failing` is raised only by a sweep that **runs** and finds its own drain or health read failing.
-    - A sweep that **never runs** records nothing at all: Vercel skips the invocation, the deploy drops the cron entry, or the function dies before its health handling. No time-based stale-sweep finding exists.
-    - A missed run is therefore detected **only by a person looking**: the "last sweep" time on `/admin/delivery`, `select last_sweep_at from public.email_delivery_health()`, or Vercel's cron logs.
-    - Until an external monitor exists, check it **daily**. If `last_sweep_at` is more than about 26 hours old, the daily run was missed, and the backlog has gone unreported for that whole period.
+    - A sweep that **never starts** records nothing. A run can also fail before the heartbeat, or after writing it but before health evaluation and alert handling finish. No time-based stale-sweep finding exists.
+    - `last_sweep_at` is written **before** the health read and alert handling. It proves the heartbeat step ran, not that the sweep completed or evaluated the backlog successfully.
+    - Check **daily** using the existing Vercel cron invocation/completion logs and result **alongside** `last_sweep_at` on `/admin/delivery` or `public.email_delivery_health()`. Distinguish no invocation, failure before the heartbeat, and failure after it. A fresh heartbeat without successful completion is not a healthy run; an old one alone does not distinguish a missed invocation from an early failure.
 - **Verify:**
-  - `select * from email_delivery_health()` shows `last_sweep_at` advancing;
+  - the existing cron logs show the invocation completed, its result has `ok: true` and `heartbeat: true`, and `select * from public.email_delivery_health()` shows the corresponding `last_sweep_at`; a timestamp alone is insufficient;
   - a deliberately held receipt is finished by the sweep (rehearsed on a local stack: `tests/db/email-delivery-events.db.test.ts`, CRASH RECOVERY);
   - findings raise at most one unresolved ops alert per event, always at **warning**: the sweep never records a critical alert, because critical ops alerts are emailed to `OPS_ALERT_EMAILS` (#828 gate). A finding assessed critical carries `assessed_severity: "critical"` in its details.
 - **Rollback:** remove the cron entry. `last_sweep_at` in `email_delivery_health()` then stops advancing. **No health finding reports a stale sweep by time**: the only sweep finding is a failed count. So check `last_sweep_at` directly, or on the support page, after a rollback.
@@ -268,10 +268,10 @@ The route already exists and authenticates with the existing `CRON_SECRET`.
 
 **Plan limit, resolved:** the Vercel plan caps cron at **once a day**. `docs/08_EMAIL_SMS_AND_CRON.md` records it for `calendar-reconcile`, and every existing cron is daily. A sub-daily schedule here would fail the deployment.
 - A faster cadence would need an external scheduler calling the route with the `CRON_SECRET` bearer, or a plan change. Either is its own decision.
-- With a daily sweep, the backlog finding (15 minutes, critical at 6 hours, recorded at warning) is evaluated once a day. Recovery is layered as §3 describes. Resend's retries are primary, the post-response drain is best effort, and the sweep is the backstop, with up to about a day of reporting latency at this cadence. A **skipped** run raises nothing, so check `last_sweep_at` daily (§3, "What detects what").
+- With a daily sweep, the backlog finding (15 minutes, critical at 6 hours, recorded at warning) is evaluated once a day. Recovery is layered as §3 describes. Resend's retries are primary, the post-response drain is best effort, and the sweep is the backstop, with up to about a day of reporting latency at this cadence. A **skipped** run raises nothing; daily review must pair invocation/completion logs and result with `last_sweep_at`, which is written before health evaluation (§3, "What detects what").
 
 **Validation:**
-- `select last_sweep_at, last_sweep_failed from public.email_delivery_health();` advances each run;
+- the existing cron logs show a completed invocation and its result has `ok: true` and `heartbeat: true`; pair that with `select last_sweep_at, last_sweep_failed from public.email_delivery_health();`. These fields describe the recorded drain step, not completion of the later health read or alert handling;
 - `/admin/ops-alerts` shows no `email_delivery_*` alert at **critical** (pinned by `tests/app/api/email-delivery-sweep.test.ts`);
 - the sweep sends no email or SMS and calls no provider.
 
