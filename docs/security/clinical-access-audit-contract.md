@@ -65,7 +65,7 @@ details, note text, file names, search strings, IP addresses or user agents.
 | `actor_kind` | `owner`, `practitioner`, `receptionist`, `platform_support`, `platform_admin`, `system` | From the #830 fixed roles, resolved server-side, never from the browser |
 | `actor_user_id` | uuid (`auth.users`) | Attributable to a person; null only for `system` |
 | `actor_practitioner_id`, `actor_receptionist_id` | uuid, nullable, **typed** | Composite same-studio FKs (the 0174 pattern, as in the RBAC lane's 0220 audit columns), with a CHECK tying each `actor_kind` to exactly one column. A role change stays attributable |
-| `action` | `view_client_record`, `view_intake`, `view_clinical_notes`, `view_session`, `view_photo` (signing), `print_clinical_notes`, `export_records`, `search_clinical` | Closed enum; adding a value is a contract change |
+| `action` | `view_client_record`, `view_intake`, `view_clinical_notes`, `view_session`, `view_photo` (signing), `print_clinical_notes`, `export_records`, `search_clinical`, `view_access_audit` | Closed enum; adding a value is a contract change. `view_access_audit` records a read of this audit log itself (the support path in §5), so support access is self-auditing without overloading another action (Codex P2 4280483523) |
 | `client_id` | uuid, nullable | The subject |
 | `target_type`, `target_id` | text enum, uuid | e.g. `session`, `clinical_note`, `treatment_image` |
 | `access_basis` | `treatment`, `operations`, `support_ticket`, `export_request` | Platform access **requires** `support_ticket` plus `support_reference` |
@@ -94,7 +94,7 @@ grants back only what is needed.
 | Owner | Own studio's events, through a projection (owner console, #851) showing actor display names resolved at read time |
 | Practitioner | **No** access by default (Q4) |
 | Receptionist | **No** access |
-| Platform support | Only through the audited support path (#830 §4); reading the audit is itself an event |
+| Platform support | Only through the audited support path (#830 §4); reading the audit is itself an event (`action = view_access_audit`) |
 | Platform admin | Through `/admin`, logged in `admin_action_events` |
 
 ## 4. Retention and review
