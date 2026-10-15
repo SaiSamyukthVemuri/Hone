@@ -201,6 +201,7 @@ Any resulting migration needs a fresh migration census
 | Date | Change |
 |---|---|
 | 2026-10-11 | First assessment (HIPAA-READY-01), source at `6c5eac80`. |
+| 2026-10-15 | Codex review of `a852bbbe` (after two Codex-side ref failures and a retry). The packet's §2.4 checklist now carries the egress audit's remediations for Sentry (G-25), PostHog (row 18), Stripe (rows 12-15) and Google (row 20), and adds Meta (G-23). |
 | 2026-10-15 | Codex review of `3e3a19ed`. F7 is now PARTIAL, aligned with G-15 (deterministic Google event id and marker). The clinical-access contract's migration census is refreshed to the canonical 0211 repository and hosted maximum. |
 | 2026-10-15 | Codex review of `41f565f7`. The packet's agreement chain now matches the audit: Upstash is needed for every use, and "keep PHI out by design" is not met for Sentry, PostHog, Stripe, Meta or Google. Audit row 20 (Google deterministic hashes) is NOT READY, G-15 becomes PARTIAL, and G-26 covers row 20. |
 | 2026-10-15 | **Record-identifier egress audit** ([record-id-egress-audit.md](./record-id-egress-audit.md), #835 option a): 26 channels inventoried with file:line, destination, identifiers, context, controls and remediation. Main findings: the appointment and intake tokens are decodable; raw UUID paths reach Vercel Analytics and Sentry; Stripe, Meta, Twilio, Upstash and Resend receive raw UUIDs; logs. New gap G-26 (MISSING). Vendor contracts are all UNKNOWN. |

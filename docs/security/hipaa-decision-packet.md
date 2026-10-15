@@ -281,11 +281,12 @@ authorization; nothing has been changed):
 
 | Processor | Recommended stance | Check |
 |---|---|---|
-| Sentry | Keep PHI out (current scrubbers); consider a BAA as defence in depth | Check plan eligibility for its published BAA; gate the DSN so ordinary local development never reports to production (the CI browser lanes are already guarded: SENTRY-E2E-NOISE-02) |
-| PostHog | Keep PHI out; browser marketing-only, server events practitioner-only | Wire capture with synthetic data (G-08) |
-| Stripe | New writes minimized: #857 (merged, `ce133c18`) sends opaque ids only (G-09) | Historical Customers keep `hone_client_name`; any backfill needs Sam's authorization |
+| Sentry | Keep PHI out. **Not met today**: the scrubbers keep clinical path UUIDs in URLs, breadcrumbs and spans ([egress audit](./record-id-egress-audit.md) rows 2-4, G-25) | Redact UUIDs and dynamic clinical segments to route templates in events, breadcrumbs, transaction names and span data, and verify with a captured event. **Or** bring Sentry under its published BAA on an eligible plan, with evidence. Gate the DSN so ordinary local development never reports to production (the CI browser lanes are already guarded: SENTRY-E2E-NOISE-02) |
+| PostHog | Keep PHI out. The browser is marketing-only. **Server events carry raw practitioner and studio UUIDs with activity data**, such as session started with its modality, and payment charged or refunded (audit row 18, G-26) | HMAC `distinctId` and `studio_id`, and drop `modality`. **Or** a BAA with evidence. Wire capture with synthetic data (G-08) |
+| Stripe | The client **name** is gone from new writes (#857, merged `ce133c18`). **Raw record UUIDs remain** across Customers, SetupIntents, PaymentIntents (including descriptions such as "No-show fee for appointment <id>"), refunds and idempotency keys (audit rows 12-15, G-09 and G-26) | Generic descriptions, one opaque or HMAC reference in metadata, and HMAC idempotency keys. Payment processing has a HIPAA exemption, but ids beyond payment need are still in scope. Historical Customers keep `hone_client_name`; any backfill needs Sam's authorization |
 | Upstash | **Not** hashed keys only. Calendar-sync locks and the continuation cursor hold raw studio, connection and appointment/link UUIDs, and the waitlist rate-limit key holds raw ids ([egress audit](./record-id-egress-audit.md) row 19) | Every Upstash use needs coverage under a BAA or removal from the PHI path; HMAC the ids and salt `hashId` (Codex P2 4277963235) |
-| Google Calendar | Times only, constant title | Studio guidance only (G-15) |
+| Google Calendar | Times only and a constant title, **plus deterministic per-link hashes** as the event id and marker (audit row 20, G-15 PARTIAL) | HMAC the event id and marker with a server secret, plus studio guidance (a Workspace account under its own BAA if it wants times there) |
+| Meta (Conversions API) | Self-service per studio and consent-gated; inert in production today. Sends the raw appointment UUID inside `event_id` and hashed contact details (audit row 17, F22) | **Off for covered studios** (G-23). HMAC `event_id` before any use |
 
 ## 3. Provider routes for PHI-bearing communications
 
