@@ -11,11 +11,11 @@
 
 Today Hone audits clinical **changes** through `session_audit` (session
 events) and `audit_logs` (export and archive). `clinical_audit_events` is
-**retired legacy evidence**: migration 0159 installs
-`clinical_audit_events_retired_no_insert`, so no new correction or amendment
-event can be recorded there, and the table holds zero rows (the same applies to
-`clinical_record_snapshots` and `clinical_record_amendments`; Codex P2
-4280803260). It does **not** record who
+**retired legacy evidence**: migration 0159 blocks new inserts into
+`clinical_audit_events`, `clinical_record_snapshots` and
+`clinical_record_amendments`. These are retired tables, not active correction
+or amendment ledgers; this source assessment makes no current row-count claim.
+It does **not** record who
 **viewed** a client record, intake, note, session or photo. HIPAA's audit
 controls standard, 45 CFR 164.312(b), requires mechanisms that "record and
 examine activity" in systems containing ePHI. Their scope is set by the
