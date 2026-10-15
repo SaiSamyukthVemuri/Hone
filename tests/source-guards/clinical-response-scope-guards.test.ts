@@ -495,21 +495,28 @@ for (const [fam, noun, label] of [
 // family's claim: "tolerance is recorded on the settings block, and minutes per
 // area" was rescued by the response attribution while the minutes half stayed
 // false. Each family must now show ITS OWN noun attached to the block.
+// The block phrase must attach to the NOUN, not to the area (Codex P2
+// 4283213840). In "Record settings for each area on the block" the
+// preposition directly follows "area", so the block only says which block the
+// AREA sits in and attributes nothing. A clause between them still attributes
+// ("minutes recorded per treated area are kept on the settings block"), so
+// only the immediately-following form is refused.
+const NOT_AFTER_AREA = String.raw`(?<!\bareas?\s)`;
 const OWNER_EVIDENCE: Record<Family, RegExp> = {
   response: new RegExp(
-    `(${RESPONSE_WORD})[^.|]{0,40}?\\b(on|from|under|to|against)\\s+(the\\s+|that\\s+|its\\s+)?(settings[\\s-]|machine[\\s-]settings[\\s-])?block`,
+    `(${RESPONSE_WORD})[^.|]{0,40}?${NOT_AFTER_AREA}\\b(on|from|under|to|against)\\s+(the\\s+|that\\s+|its\\s+)?(settings[\\s-]|machine[\\s-]settings[\\s-])?block`,
     "i",
   ),
   machine: new RegExp(
-    `(${MACHINE_NOUN})[^.|]{0,40}?\\b(on|from|under|to|against|with)\\s+(the\\s+|that\\s+|each\\s+|its\\s+)?(settings[\\s-]|machine[\\s-]settings[\\s-]|treatment[\\s-])?block`,
+    `(${MACHINE_NOUN})[^.|]{0,40}?${NOT_AFTER_AREA}\\b(on|from|under|to|against|with)\\s+(the\\s+|that\\s+|each\\s+|its\\s+)?(settings[\\s-]|machine[\\s-]settings[\\s-]|treatment[\\s-])?block`,
     "i",
   ),
   probe: new RegExp(
-    `(${PROBE_NOUN})[^.|]{0,40}?\\b(on|from|under|to|against|with)\\s+(the\\s+|that\\s+|each\\s+|its\\s+)?(settings[\\s-]|machine[\\s-]settings[\\s-]|treatment[\\s-])?block`,
+    `(${PROBE_NOUN})[^.|]{0,40}?${NOT_AFTER_AREA}\\b(on|from|under|to|against|with)\\s+(the\\s+|that\\s+|each\\s+|its\\s+)?(settings[\\s-]|machine[\\s-]settings[\\s-]|treatment[\\s-])?block`,
     "i",
   ),
   minutes: new RegExp(
-    `(${MINUTES_NOUN})[^.|]{0,40}?\\b(on|from|under|to|against|for)\\s+(the\\s+|that\\s+|each\\s+|its\\s+)?(settings[\\s-]|treatment[\\s-])?block`,
+    `(${MINUTES_NOUN})[^.|]{0,40}?${NOT_AFTER_AREA}\\b(on|from|under|to|against|for)\\s+(the\\s+|that\\s+|each\\s+|its\\s+)?(settings[\\s-]|treatment[\\s-])?block`,
     "i",
   ),
 };
@@ -756,6 +763,27 @@ describe("marketing may not claim per-area tolerance / reaction / settings", () 
       "Select every area treated using this settings setup",
     ]) {
       expect(familyOf(legal), legal).toEqual([]);
+    }
+  });
+
+  it("a block phrase that modifies the AREA does not rescue a per-area claim (Codex P2 4283213840)", () => {
+    // The full detector, rescue included, exactly as the sweep runs it.
+    const fires = (t: string) => offendersIn("synthetic", t, false).length > 0;
+    for (const claim of [
+      "Record settings for each area on the block.",
+      "We capture modality for every area on its treatment block.",
+      "Record the probe and lot for each area under the settings block.",
+      "Tolerance is kept for each area on the block.",
+    ]) {
+      expect(fires(claim), claim).toBe(true);
+    }
+    // Attribution of the noun to the block still rescues.
+    for (const truth of [
+      "Tolerance and response are recorded on the settings block.",
+      "Probe and lot come from the block it was charted under.",
+      "minutes recorded per treated area are kept on the settings block",
+    ]) {
+      expect(fires(truth), truth).toBe(false);
     }
   });
 
