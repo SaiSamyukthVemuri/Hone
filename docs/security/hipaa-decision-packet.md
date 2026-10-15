@@ -54,6 +54,7 @@ How figures are labelled:
 - **Hone → processor BAAs.** One each for Supabase (needs Team plus the add-on), Vercel (Pro add-on or Enterprise), Twilio (Security or Enterprise Edition), and AWS (SES, via the AWS BAA).
 - **Upstash and other processors.** Each is either removed from the PHI path or brought under a BAA. For Upstash this covers **every** use, not just rate limiting: the calendar-sync locks, heartbeats and the appointment-UUID continuation cursor too.
 - **Meta conversion tracking (G-23).** It must be **off** for the covered studio. No Meta BAA is known, and the integration is self-service per studio.
+- **Record-identifier egress ([audit](./record-id-egress-audit.md), G-26).** Every audit row marked NOT READY must be remediated, or its destination covered by an executed agreement with evidence. Contractual coverage without evidence is UNKNOWN.
 - **Record ids to non-BAA processors.** Option M also needs two fixes, both engineering-only with no spend. G-24: remove the ids from critical alert emails sent through Resend. G-25: redact clinical ids from Sentry URLs. The alternative to G-25 is a Sentry BAA on an eligible plan.
 - **Who signs for Hone.** Each vendor BAA is signed by Hone's account owner on that vendor, unless B3 delegates.
 
@@ -275,7 +276,7 @@ authorization; nothing has been changed):
 | Sentry | Keep PHI out (current scrubbers); consider a BAA as defence in depth | Check plan eligibility for its published BAA; gate the DSN so ordinary local development never reports to production (the CI browser lanes are already guarded: SENTRY-E2E-NOISE-02) |
 | PostHog | Keep PHI out; browser marketing-only, server events practitioner-only | Wire capture with synthetic data (G-08) |
 | Stripe | New writes minimized: #857 (merged, `ce133c18`) sends opaque ids only (G-09) | Historical Customers keep `hone_client_name`; any backfill needs Sam's authorization |
-| Upstash | Hashed keys only | Confirm BAA availability and plan if hashed email plus studio counts as PHI |
+| Upstash | **Not** hashed keys only. Calendar-sync locks and the continuation cursor hold raw studio, connection and appointment/link UUIDs, and the waitlist rate-limit key holds raw ids ([egress audit](./record-id-egress-audit.md) row 19) | Every Upstash use needs coverage under a BAA or removal from the PHI path; HMAC the ids and salt `hashId` (Codex P2 4277963235) |
 | Google Calendar | Times only, constant title | Studio guidance only (G-15) |
 
 ## 3. Provider routes for PHI-bearing communications

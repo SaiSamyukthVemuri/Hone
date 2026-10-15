@@ -1,0 +1,81 @@
+# Record-identifier egress audit (HIPAA-READY-01, #828; #835 option a)
+
+> **Read-only evidence, not a compliance determination.**
+> - Audited at #835 head `ce4b84cc` on 2026-10-15. No edits, network calls, vendor contact or configuration were involved.
+> - Every vendor's contractual coverage is **UNKNOWN**. Nothing here says a BAA exists.
+> - Under [the assessment](./hipaa-readiness-assessment.md), a record identifier next to appointment or clinical context is PHI. So each row below is **NOT READY** unless it says "acceptable".
+
+**Scope.** Every place a record identifier leaves Hone's own infrastructure (the Supabase database and Storage, and the app server). "Record identifier" covers:
+- the UUID of a client, appointment, treatment session, intake form, calendar link, connection, studio, practitioner, charge or SMS-ledger row;
+- any token that maps 1:1 to one of those records.
+
+**Method.** A whole-tree search of `app/`, `lib/`, `components/`, `middleware.ts`, `instrumentation*.ts`, `sentry*.config.ts` and `next.config.ts`, by channel, with every file:line read. A sample of the high-impact rows was independently re-read before commit. Line numbers refer to `ce4b84cc`.
+
+## Headline findings
+
+1. **The "HMAC" appointment and intake tokens are not opaque.** Each is `base64url(JSON{appointment_id | intake_id, expires_at}).signature` (`lib/booking/tokens.ts:57-63`, `lib/intake/tokens.ts:64-71`). The signature prevents forgery, but anyone holding the link (Resend, Twilio, the recipient's mail or SMS provider) can decode the raw UUID.
+2. **Authenticated app paths carry raw UUIDs to Vercel Analytics and Sentry.** Examples are `/clients/<id>/sessions/<id>` and `/calendar/<id>` (rows 1-4).
+3. **Stripe descriptions and metadata, Meta `event_id`, Twilio callback URLs, Upstash keys and cursors, Resend idempotency keys, and the calendar feed and ICS UIDs all carry raw UUIDs** (rows 5-6, 11-15, 17, 19, 22).
+4. **Vercel runtime and request logs** receive raw UUIDs from about 72 `console` calls across 34 files, and from every authenticated request path (rows 25-26).
+
+## Inventory
+
+| # | Channel | Source (file:line) | Destination | Identifiers sent | Context alongside | Existing controls | Proposed remediation |
+|---|---|---|---|---|---|---|---|
+| 1 | Vercel Web Analytics and Speed Insights pageviews | `app/_components/SafeAnalytics.tsx:34-35`. Mounted at `app/(app)/layout.tsx:256`, `app/admin/layout.tsx:70`, `app/book/layout.tsx:17` | Vercel | Raw client, session, appointment and studio UUIDs in the path. The query (`?intake=<uuid>`, `&clientId=`) is sent only if the script includes the query: **UNKNOWN** | Page type (for example clinical-notes print, images), time, device, UA, geo | Not mounted on token routes. **No `beforeSend`** | Unmount from `(app)` and `admin`, or add `beforeSend` sending the parameterized route without the query (G-07, draft #842) |
+| 2 | Sentry error events (`request.url`, messages) | `sentry.server.config.ts:21`, `sentry.edge.config.ts:15`, `instrumentation-client.ts:25`, `instrumentation.ts:13`. Scrubber `lib/observability/sentry-scrub.ts:113-120, 216-218` | Sentry | Raw UUID paths kept (`lib/security/token-routes.ts:458-459`). Any UUID inside an error string is kept | Route family, stack, runtime | Token routes canonicalized. Query and fragment dropped. `sendDefaultPii:false`. Replay and Logs off. No `enabled` gate | UUID → `[id]` redaction in `redactString`, or a parameterized route. Gate to production (G-25) |
+| 3 | Sentry transactions and spans (10% sampled in production) | `sentry-scrub.ts:278-280, 345-353, 363-365` | Sentry | Span URL attributes (for example PostgREST `?id=eq.<uuid>`) are only value-scrubbed, so raw UUIDs likely survive. The exact attributes are **UNKNOWN** | Database and HTTP timing, table names | Key-based redaction does not match url or query keys | Strip the query and UUIDs from span `description`/`data`. Verify with a captured transaction (G-25) |
+| 4 | Sentry fetch/xhr breadcrumbs | `sentry-scrub.ts:245-250` | Sentry | Path UUIDs | Method, status | Query stripped. Token routes canonicalized | As row 2 (G-25) |
+| 5 | ICS subscription feed (F8) | `app/calendar-feed/[token]/route.ts:152` (DESCRIPTION `/calendar/${row.id}`), `:155` (`uid: row.id`) → `lib/booking/ical.ts:52, 58, 61` | The subscriber's calendar provider (Google, Apple, Outlook) | Raw appointment UUID, twice per event | Start and end time, studio address, constant summary | Bearer token stored hash-only. `no-store`. **No feature gate** | Opaque UID (HMAC or random), no id in the description link, a feature gate (F8, NOT READY) |
+| 6 | Email ICS attachment (client confirmation) | `lib/email/send-appointment.ts:440-452` (UID), attached `:157-160`. ATTENDEE `lib/booking/ical.ts:94-101` | Resend, then the recipient's mail and calendar provider | Raw appointment UUID (UID). Cancel token in DESCRIPTION (decodable, row 8) | Service, studio name and address, times, client name and email | None for ids | Opaque UID. No cancel URL in DESCRIPTION, or a random token (G-05) |
+| 7 | Practitioner notification email links | `app/book/[slug]/actions.ts:1842`, `app/portal/rebook-actions.ts:867` (`/calendar/<id>`), rendered at `lib/email/templates/appointment.ts:241, 260`. `app/portal/portal-message-actions.ts:293-294` (`/clients/<id>`) | Resend, then the practitioner's mailbox | Raw appointment and client UUIDs | Client name, email, phone, notes, service, times (`send-appointment.ts:484-497`) | Link target needs login | Id-free landing link, or a covered transport (G-05) |
+| 8 | Appointment "HMAC" tokens in email and SMS | Minted at `app/(app)/calendar/actions.ts:882-891`, `app/api/cron/appointment-reminders/route.ts:334, 550`, `lib/email/notify-appointment-moved.ts:103-105`, `lib/portal/queries.ts:143`. Format `lib/booking/tokens.ts:57-63`. SMS `lib/sms/twilio.ts:186-187` | Resend, Twilio | Decodable raw appointment UUID plus expiry | Studio, time, service, recipient | Telemetry canonicalization. `no-referrer` | Use the random hash-only `appointment_token` (`lib/booking/appointment-token.ts:27`), or encrypt the payload |
+| 9 | Intake tokens in email and SMS | `lib/intake/tokens.ts:64-71`. URLs at `lib/intake/queries.ts:157-158, 235-236`. Email `send-appointment.ts:434`. SMS `lib/sms/templates.ts:94, 106, 120` | Resend, Twilio | Decodable raw intake-form UUID | Studio, time | Telemetry canonicalization | Random hash-only intake token, or an encrypted payload |
+| 10 | Random-token links (portal magic link, `/manage`, `/invitation`, public cancel and reschedule) | `app/book/[slug]/actions.ts:1669-1676`, `lib/portal/magic-link.ts:72`, `lib/waitlist/invite-to-book-adapter.ts:360`. SMS `lib/sms/templates.ts:95, 149` | Resend, Twilio | Opaque 256-bit random token, hash-only at rest, 1:1 to a record | Studio, times | Random. Canonicalized. `no-referrer` | **Acceptable**. 1:1 linkable only within the vendor |
+| 11 | Resend `Idempotency-Key` header | `lib/email/new-client-waitlist-send.ts:187, 228` (sent `:276`). Scopes: `app/book/[slug]/waitlist-actions.ts:450`, `lib/waitlist/delivery/send.ts:291, 416` | Resend | Raw studio plus waitlist entry, invitation or challenge UUIDs | None beyond the key | Credential-bearing sends use the event-only shape | HMAC(server secret, ids) for the key |
+| 12 | Stripe Customer | `lib/stripe/setup-intent.ts:139` (description `Hone studio <id> / client <id>`), `:140-144` metadata | Stripe (the studio's connected account) | Raw studio and client UUIDs | Source tag | No name or email since #857 | Remove ids from the description. Opaque or HMAC metadata (G-09) |
+| 13 | Stripe SetupIntent | `setup-intent.ts:215-221` metadata. Idempotency key `:229-230` | Stripe | Raw studio, client and signature UUIDs | Card-on-file purpose | None | HMAC the ids (G-09) |
+| 14 | Stripe PaymentIntent | Description `lib/billing/session-payment-charge.ts:1533` via `lib/billing/charge-description.ts:19-27` (`… for appointment <id>`, `… for session <id>`). Metadata `:1534-1545`. Key `:90-95` | Stripe | Raw appointment or session UUID in the description. Studio, client, session, appointment, attempt and signature UUIDs in metadata | Amount, charge reason (no-show, late cancellation, session payment) | None | Generic description. One opaque attempt reference. HMAC key (G-09) |
+| 15 | Stripe Refund and Connect account | `lib/billing/payment-refund.ts:469-475` (metadata), `:113` (key). `lib/stripe/account.ts:115-117` | Stripe | Raw attempt, studio and client UUIDs. Studio UUID on the account | Charge reason, amount | None | As row 14 (G-09) |
+| 16 | Receipt email and PDF, test mode only | `lib/billing/receipt-document.ts:264-274` (the live branch omits ids, `:239-240`) | Resend | Stripe `pi_`/`ch_` ids (test only) | Studio, amount, reason, date | Live mode removes ids | **Acceptable for live**. Optionally drop in test mode |
+| 17 | Meta Conversions API (F22) | `lib/conversion/meta-capi.ts:107` (`hone_booking_<appointmentId>`), `lib/conversion/adapters/meta.ts:53-61`, POST `:100` | Meta | Raw appointment UUID inside `event_id` | Event time, sha256 email and phone, `/book/<slug>` URL, service category | Consent gate (`lib/conversion/dispatch.ts:62`). Needs an enabled provider row. Inert in production | `event_id` = HMAC(secret, id). Off for covered studios (G-23) |
+| 18 | PostHog server (`posthog-node`) | `lib/analytics/server.ts:173` (capture), `:195-198` (identify). Callers include `app/(app)/layout.tsx:46` and the payment and session actions | PostHog | Raw practitioner UUID (distinctId), `studio:<uuid>`, `studio_id` | Activity events (session started plus modality, payment charged or refunded, appointment booked, client created), role, time | UUID-only actors. Property allowlist (`server.ts:42-49`). No client or appointment ids | HMAC distinctId and `studio_id`. Drop `modality` (G-08) |
+| 19 | Upstash keys and values | `lib/google-calendar/sync/reconcile-lock.ts:55-56` (`gcal_reconcile:lock:<studioId>`). `reconcile-continuation.ts:33-34, 81` (cursor = raw appointment or link UUID, no TTL). `upstash-refresh-coordinator.ts:55-56` (`gcal_refresh:lock:<connectionId>`). `lib/rate-limit/public.ts:530, 536, 709-710` | Upstash | Raw studio, connection, waitlist-invitation and appointment/link UUIDs | Reconcile timestamps | Rate-limit IP, email and actor ids are hashed (unsalted sha256, `public.ts:40-41, 612`). Heartbeats hold counts only | HMAC ids in keys and cursors. Salt or HMAC `hashId`. **All Upstash uses** need coverage or removal |
+| 20 | Google Calendar events | `lib/google-calendar/sync/serializer.ts:54-60`, `event-id.ts:51-58, 70-78`, insert `operations.ts:265` | Google | **Hashed**: event id = sha256(studio:link); marker = sha256(link). Deterministic, so recomputable from a known UUID | Start and end, time zone, constant summary, private visibility | No raw ids, client data or location | Optional: key the hash (HMAC) so it is not recomputable |
+| 21 | Google secondary-calendar description | `app/(app)/settings/profile/google-calendar-actions.ts:71, 380-382` | Google | Random attempt token | Calendar name | Random | **Acceptable** |
+| 22 | Twilio StatusCallback URL | `lib/sms/delivery-ledger.ts:144` (`?m=<messageId>`), set at `lib/sms/twilio.ts:192-193` | Twilio (stores it per message) | Raw SMS-ledger row UUID, 1:1 to an appointment or waitlist SMS | Recipient phone and body | Signed callback | Random or HMAC message reference |
+| 23 | Twilio provisioning FriendlyName | `lib/sms/provider/types.ts:425-426`, used `twilio-provider.ts:550, 578` | Twilio | Random claim key | None | Random | **Acceptable** |
+| 24 | Critical ops-alert email (F15) | `lib/ops/alert-email.ts:86-95`, send `:109`. Trigger `lib/ops/alerts.ts:182` | Resend → `OPS_ALERT_EMAILS` | Raw studio, appointment and client UUIDs. Stripe event and PaymentIntent ids | Event, message, environment, time | Critical only. Redaction keeps UUIDs by design | Send only the alert row id and an `/admin/alerts` link (G-24) |
+| 25 | Application logs → Vercel runtime logs | For example `lib/ops/alerts.ts:113-127`, `lib/email/send-appointment.ts:239-242, 351-354`, `lib/sms/send-appointment.ts:169-172`, `lib/billing/session-payment-charge.ts:99, 605-606`, `app/(app)/clients/[id]/actions.ts:39-42`. About 72 id-bearing `console` calls in 34 files, plus logger helpers | Vercel log storage. Dashboard log drains: **UNKNOWN** (none in `vercel.json`) | Raw appointment, client, session, studio, practitioner, attempt, reply and SMS-ledger UUIDs | Failure events, error codes, time | Sentry drops console breadcrumbs. Sentry Logs off | One logger that HMACs `*Id` fields. Confirm retention and drains (Vercel BAA path, G-04) |
+| 26 | Vercel platform request logs | Every request path, for example `app/(app)/clients/[id]`, `app/(app)/calendar/[id]` | Vercel | Raw UUIDs in paths. Token routes carry bearer and HMAC tokens (decodable, rows 8-9) | IP, UA, status, timing | None in code | Contract and retention review (G-04). Move ids out of the most sensitive paths |
+
+## Checked: no record identifier leaves, or opaque only
+
+- **PostHog browser:** events off the exact marketing routes are dropped (`client-boundary.ts:216-221`; `before_send` at `instrumentation-client.ts:82`). Replay, heatmaps and performance are off (`:62-66`).
+- **Vercel `track()`:** event names only (`DemoForm.tsx:71, 102`; `MarketingAnalytics.tsx:17`).
+- **Stripe:** Stripe.js loads only at `app/portal/PortalPaymentMethodForm.tsx:359`, and its `return_url` is `/portal` (`:433`). Connect account links use static URLs (`lib/stripe/account.ts:192-196`).
+- **Google OAuth:** random `state`, stored hashed (`lib/google-calendar/state.ts:40, 49`); fixed `redirect_uri`.
+- **Referrer:** `strict-origin-when-cross-origin` globally (`lib/security/headers.ts:107, 227`), and `no-referrer` on token routes (`next.config.ts:100-101`).
+- **Inbound Twilio TwiML:** static (`app/api/twilio/inbound-sms/route.ts:58-62`).
+- **Static-link emails:** the invitation and welcome emails use `/login` and `/book/<slug>`. The client portal notice uses `/portal/login?studio=<slug>`.
+- **Receipt PDF:** the filename is date-only (`receipt-document.ts:315`).
+- **Sentry:** no explicit tags, extras or `setUser` calls in app code.
+- **Crons and webhooks:** Vercel crons hit internal paths only. No Slack or outbound webhooks.
+
+## Could not determine (UNKNOWN; dashboard or runtime facts)
+
+- Whether the Vercel Analytics and Speed Insights scripts send the query string or the full href.
+- Vercel log drains and retention.
+- The exact Sentry span attributes in SDK 10.66, and whether client pageload names are parameterized in this build.
+- Whether posthog-js `/flags` and remote-config requests on authenticated pages carry `$current_url`. `advanced_disable_flags` is not set.
+- Resend click and open tracking, which would rewrite token URLs through a tracking domain.
+- Twilio link shortening or click tracking on the Messaging Service.
+- Whether the calendar feed is reachable in production (there is no code gate). F8 stays NOT READY.
+- Every vendor's BAA or contract status.
+
+## What this changes in the assessment and packet
+
+- **G-26** (new, MISSING) tracks the rows above that are not covered by an existing gap: rows 8-9 (decodable tokens), 11, 13-15, 17, 19, 22, 25 and 26. Rows 1, 2-4, 5, 7, 12 and 24 map to G-07, G-25, F8, G-05, G-09 and G-24.
+- **F8 stays NOT READY** (row 5).
+- **Packet §2.4, Upstash:** "hashed keys only" is wrong. Row 19 applies, and coverage or removal covers every Upstash use (Codex P2 4277963235).
+- **Option M** requires each row marked NOT READY to be remediated, or its destination covered by an executed agreement with evidence. Rows 10, 16, 21 and 23 are acceptable as they stand.
