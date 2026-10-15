@@ -312,6 +312,27 @@ before assuming the diff broke something.**
 
 ## 5. Production safety
 
+### Local test-stack isolation
+
+Before mutating DB/browser tests, verify one run-scoped target: source SHA,
+Supabase project/container, API and SQL endpoints, and the existing app/mail
+and outbound guards. Read back the CLI/container mapping; adjacent port numbers
+alone do not establish that two services belong to the same stack.
+
+Use the current paired-target guard in `e2e/helpers/local-env.ts` (#879).
+`vitest.db.config.ts` imports it before test collection, including for SQL-only
+suites. Set `E2E_SUPABASE_URL` and `HONE_LOCAL_DB_URL` together for an owned
+isolated stack. Do not rewrite tracked helper ports, skip the guard, or use a
+stale branch that lacks it. Raw GoTrue admin `fetch` calls are writes too.
+
+The config guard checks startup endpoints; it does not sandbox arbitrary test
+code or prove physical container identity. For a containment repair, prove
+API-only/SQL-only/cross-stack refusal and a valid owned pair, then compare the
+frozen shared stack before/after the affected run and require zero delta.
+One named owner controls resets. Shared-stack cleanup uses a verified exact-ID
+manifest, preserved evidence, rollback dry run and measured execution receipt;
+never a blanket reset or email-domain deletion.
+
 - No production write or migration without explicit, per-change authorization.
 - Read-only production SQL is `supabase db query --linked`. Never `db execute`.
 - Confirm `supabase/.temp/project-ref` is the intended project before every
