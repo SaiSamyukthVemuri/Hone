@@ -134,6 +134,19 @@ declare
   v_phone         text;
   v_consent_at    timestamptz;
   v_opted_out_at  timestamptz;
+  -- Did THIS transaction insert the client row? Only then is there anything of
+  -- ours to undo when the delegate refuses.
+  v_created_client boolean := false;
+  -- The delegate's verdict, CAPTURED rather than streamed. `return query
+  -- select … from <delegate>()` sends the refusal straight to the caller and
+  -- leaves nothing to inspect, which is why the leak was invisible from here.
+  v_result        text;
+  v_appt_id       uuid;
+  v_starts        timestamptz;
+  v_ends          timestamptz;
+  v_dur           integer;
+  v_pract         uuid;
+  v_appt_created  timestamptz;
 begin
   if v_gate <> 'ok' then
     -- BEFORE the insert, so a refused request writes no client row.
@@ -277,6 +290,38 @@ begin
     end if;
   end if;
 
+  -- ===================================================================
+  -- ONE SUBTRANSACTION AROUND THE CLIENT INSERT **AND** THE DELEGATE.
+  -- ===================================================================
+  --
+  -- Codex P2 4266252488, measured before it was fixed: a refused booking
+  -- committed a client row -- contact details AND `sms_consent_at` /
+  -- `sms_consent_source` -- for an appointment that never happened.
+  --
+  --   PROBE         result=time_unavailable client_id=non-null
+  --   CONSENT-PROBE result=time_unavailable client_id=non-null
+  --                 has_consent=true source=public_booking
+  --
+  -- The mechanism is that every refusal in this tree is RETURNED as a result
+  -- row rather than raised. A returned refusal is not an error, so the
+  -- transaction commits whatever was written before it -- and the insert below
+  -- happens before the delegate that refuses.
+  --
+  -- WHY THE BLOCK HAS TO START HERE AND NOT AT THE DELEGATE. A plpgsql
+  -- exception block rolls back only to the start of ITS OWN block. Wrapping
+  -- just the delegate call would catch the refusal and undo NOTHING, because
+  -- the client row was inserted earlier in the function. That is the tempting
+  -- patch, it looks correct, and it would pass every test that existed when
+  -- this was written. The insert and the delegate must be inside the same
+  -- block.
+  --
+  -- A PRE-CHECK WAS REJECTED as the fix. At this point the transaction holds
+  -- the studios row lock but NOT the studio capacity advisory lock, which the
+  -- delegate acquires; so a pre-check could still be overtaken between here and
+  -- there, turning a deterministic leak into a race. Undo is total; a pre-check
+  -- has to enumerate what to undo, and the next column added to the insert
+  -- below is the one it forgets.
+  begin
   if v_client_id is null then
     -- RE-RESOLVE UNDER THE LOCK. The caller's own lookup ran before this
     -- transaction, so another booking could have created this client since. The
@@ -330,6 +375,11 @@ begin
           case when p_sms_consent_at is null then null else 'public_booking' end
         )
         returning id into v_client_id;
+        -- ONLY HERE. A row the caller supplied, or one the lookup above or the
+        -- unique-violation re-read below adopted, was NOT created by this
+        -- transaction -- and undoing a pre-existing client would be a worse bug
+        -- than the leak this fixes.
+        v_created_client := true;
       exception
         when unique_violation then
           -- RE-READ THE WINNER, and distinguish active from archived exactly as
@@ -377,19 +427,18 @@ begin
    where c.id = v_client_id;
 
   if p_entry_id is null then
-    return query
-      select c.result, c.appointment_id, c.starts_at, c.ends_at,
-             c.duration_minutes, c.practitioner_id, c.created_at, v_client_id,
-             v_name, v_phone, v_consent_at, v_opted_out_at
-        from public.create_public_appointment_v2(
-               p_studio_id, v_client_id, p_service_id, p_starts_at,
-               p_cancellation_token_hash, p_notes, p_referral_source,
-               -- THE ONE CHANGE THAT MATTERS. Everything above this line is
-               -- 0204 verbatim: the admission decision, the resolve-or-create,
-               -- the unique-violation re-read and the authoritative client
-               -- fields. Only the delegate changes, and only on this branch.
-               p_practitioner_id
-             ) c;
+    select c.result, c.appointment_id, c.starts_at, c.ends_at,
+           c.duration_minutes, c.practitioner_id, c.created_at
+      into v_result, v_appt_id, v_starts, v_ends, v_dur, v_pract, v_appt_created
+      from public.create_public_appointment_v2(
+             p_studio_id, v_client_id, p_service_id, p_starts_at,
+             p_cancellation_token_hash, p_notes, p_referral_source,
+             -- THE ONE CHANGE THAT MATTERS. Everything above this line is
+             -- 0204 verbatim: the admission decision, the resolve-or-create,
+             -- the unique-violation re-read and the authoritative client
+             -- fields. Only the delegate changes, and only on this branch.
+             p_practitioner_id
+           ) c;
   else
     -- 0195 already takes the studios row lock and converts the entry in the same
     -- transaction, so the admission decision above simply precedes it.
@@ -402,15 +451,44 @@ begin
     -- on an invited booking and `p_practitioner_id` is ignored on this path.
     -- Making invited bookings practitioner-aware is a WAIT-round question
     -- (v4 reserves the practitioner at round launch), not a G1 one.
-    return query
-      select c.result, c.appointment_id, c.starts_at, c.ends_at,
-             c.duration_minutes, c.practitioner_id, c.created_at, v_client_id,
-             v_name, v_phone, v_consent_at, v_opted_out_at
-        from public.create_waitlist_public_appointment(
-               p_studio_id, v_client_id, p_service_id, p_starts_at,
-               p_cancellation_token_hash, p_entry_id, p_notes, p_referral_source
-             ) c;
+    select c.result, c.appointment_id, c.starts_at, c.ends_at,
+           c.duration_minutes, c.practitioner_id, c.created_at
+      into v_result, v_appt_id, v_starts, v_ends, v_dur, v_pract, v_appt_created
+      from public.create_waitlist_public_appointment(
+             p_studio_id, v_client_id, p_service_id, p_starts_at,
+             p_cancellation_token_hash, p_entry_id, p_notes, p_referral_source
+           ) c;
   end if;
+
+  -- THE ROLLBACK. A refusal that arrives after THIS transaction created the
+  -- client row must undo it, and raising is how a plpgsql subtransaction is
+  -- told to. The verdict rides out in the message so the refusal is still
+  -- RETURNED and this function's signature is unchanged -- callers keep reading
+  -- a result row, not catching an exception.
+  --
+  -- A PRE-EXISTING client plus a refusal is NOT rolled back: there is nothing
+  -- of ours to undo, and the caller still gets today's answer with the client
+  -- fields intact. That is what `v_created_client` buys.
+  if v_result <> 'created' and v_created_client then
+    raise exception 'hone_refused:%', v_result using errcode = 'HB225';
+  end if;
+  exception
+    when sqlstate 'HB225' then
+      -- The subtransaction is rolled back, so the client row and its consent
+      -- columns no longer exist. Every client field is therefore NULL:
+      -- returning the profile read a few lines above would describe a row that
+      -- is gone.
+      return query select split_part(sqlerrm, ':', 2)::text,
+                          null::uuid, null::timestamptz, null::timestamptz,
+                          null::integer, null::uuid, null::timestamptz,
+                          null::uuid, null::text, null::text,
+                          null::timestamptz, null::timestamptz;
+      return;
+  end;
+
+  return query select v_result, v_appt_id, v_starts, v_ends, v_dur, v_pract,
+                      v_appt_created, v_client_id, v_name, v_phone,
+                      v_consent_at, v_opted_out_at;
 end;
 $$;
 

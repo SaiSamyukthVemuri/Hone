@@ -82,6 +82,48 @@ begin;
 set local lock_timeout = '5s';
 
 -- ---------------------------------------------------------------------------
+-- (0) THE ASSIGNMENT-HISTORY FACT, so the documented ordering can be complete.
+-- ---------------------------------------------------------------------------
+--
+-- `docs/roadmap/PRACTITIONER_CAPACITY_ARCHITECTURE.md:295` orders PR C's fair
+-- rule: eligible + available -> lowest booked minutes in the comparison window
+-- -> OLDEST LAST ASSIGNMENT -> stable practitioner id. Nothing in this schema
+-- recorded the penultimate key, and dropping it would weaken the accepted
+-- repair rather than implement it, so the smallest sufficient fact is recorded
+-- here: WHEN THIS STUDIO LAST SUCCESSFULLY ASSIGNED THIS PRACTITIONER THROUGH A
+-- PUBLIC BOOKING.
+--
+-- WHY IT IS NOT DERIVED FROM APPOINTMENTS. An appointment's `starts_at` is when
+-- the work happens, `created_at` is when any row was written by any path. Both
+-- answer a different question from "when did public assignment last choose
+-- this practitioner", and substituting either would silently re-rank on
+-- internal bookings, moves, and back-dated entries. The fact is recorded
+-- explicitly or it is unknown.
+--
+-- NULL MEANS NEVER RECORDED, NOT ZERO. A practitioner with no fact sorts FIRST
+-- among equal loads, which is the correct reading of "oldest last assignment"
+-- for someone who has never been assigned. Existing history carries no fact and
+-- is therefore explicitly unknown -- there is no backfill here, because any
+-- backfill would be fabricated.
+--
+-- SAFE TO APPLY: one nullable column, no default, no rewrite, no index, no
+-- backfill. It is added in THIS pending migration rather than a later one on
+-- purpose -- the resolver below reads it, and a column added in a higher
+-- migration would leave this file applying cleanly on a fresh chain while the
+-- command it defines was broken for every call made before that later
+-- migration landed.
+alter table public.practitioners
+  add column if not exists last_public_assignment_at timestamptz;
+
+comment on column public.practitioners.last_public_assignment_at is
+  'When public booking last SUCCESSFULLY assigned this practitioner (0222). '
+  'Advanced only by create_public_appointment_v2 on a CREATED capacity-ON '
+  'assignment, inside that command''s studio transaction; refusals never '
+  'advance it. NULL means never recorded -- which sorts FIRST among equal '
+  'loads in the fair-assignment ordering -- and is never backfilled, because '
+  'history carries no such fact.';
+
+-- ---------------------------------------------------------------------------
 -- (1) The practitioner-scoped validator.
 -- ---------------------------------------------------------------------------
 create or replace function public.validate_public_booking_slot_v2(
@@ -421,10 +463,46 @@ $$;
 -- treating role, and -- only when the service HAS an eligibility list -- on it.
 -- A studio that never configured `service_practitioners` keeps working.
 --
--- `order by pr.id` IS A STABLE TIEBREAK, NOT A PRODUCT CLAIM. Determinism is
--- required so two identical requests cannot resolve differently; it does not
--- say lower ids have priority. This file already refuses to invent "the oldest
--- active owner receives all public bookings" and the same restraint applies.
+-- THE FAIR ORDERING, COMPLETE: eligible + available -> lowest booked minutes in
+-- the comparison window -> oldest last assignment -> stable practitioner id.
+-- That is `PRACTITIONER_CAPACITY_ARCHITECTURE.md:295`, and all four keys are
+-- implemented rather than three. `pr.id` is now the LAST key: it breaks a final
+-- tie so two identical requests cannot resolve differently, and it does not say
+-- lower ids have priority.
+--
+-- THE COMPARISON WINDOW IS THE CHOSEN CURRENT MECHANISM, NOT A RECOVERED
+-- REQUIREMENT. The doc asks for "lowest booked minutes in the comparison
+-- window" and never defines the window; the phrase occurs exactly once in this
+-- repository. So the definition below is an engineering decision made here, and
+-- is labelled as one -- it may be replaced without contradicting the doc, and
+-- nothing in the doc should be read as having specified it.
+--
+--   WINDOW: the half-open interval [p_starts_at - 7 days, p_starts_at + 7 days).
+--     Rolling and ABSOLUTE -- an interval around an instant, not a local
+--     calendar range -- so it needs no timezone and carries none of the
+--     local-date hazards the rest of this file fights. Half-open at both ends,
+--     stated explicitly, so an appointment starting exactly on a boundary is
+--     counted once and by one rule rather than by whichever comparison ran.
+--
+--   COUNTED BOOKED MINUTES: sum of `appointments.duration_minutes` for rows of
+--     this studio assigned to that practitioner whose `starts_at` falls in the
+--     window, with `status in ('confirmed','completed')` -- the same active
+--     predicate this command already uses for its own lock window, so "booked"
+--     cannot come to mean two things in one file. Cancelled and no-show rows
+--     are not load.
+--
+--   A SINGLE DAY WOULD MAKE THE KEY INERT rather than neutral: a booking three
+--     weeks out finds every candidate at zero for that date, every comparison
+--     ties, and the ordering collapses straight to the final id tiebreak --
+--     the concentration this ranking exists to remove, with a load key that can
+--     never fire.
+--
+-- OLDEST LAST ASSIGNMENT comes from `practitioners.last_public_assignment_at`,
+-- added at the top of this file. NULLS FIRST is deliberate and is the correct
+-- reading: a practitioner who has never been assigned is the oldest possible
+-- candidate, not the newest. It is never derived from appointment times -- see
+-- the column's own comment for why that substitution would silently re-rank on
+-- internal bookings and moves.
 create or replace function public.resolve_public_any_available_practitioner(
   p_studio_id  uuid,
   p_service_id uuid,
@@ -439,6 +517,10 @@ set search_path = ''
 as $$
 declare
   v_cand uuid;
+  -- The chosen comparison window, in ONE place. See the header: this is an
+  -- engineering decision, not a recovered requirement, and it is the only knob
+  -- a future product ruling needs to turn.
+  v_window constant interval := interval '7 days';
 begin
   for v_cand in
     select pr.id
@@ -457,7 +539,20 @@ begin
               and sp.practitioner_id = pr.id
          )
        )
-     order by pr.id
+     -- KEY 1 — booked minutes in the half-open window [start - 7d, start + 7d).
+     order by (
+       select coalesce(sum(a.duration_minutes), 0)
+         from public.appointments a
+        where a.studio_id       = p_studio_id
+          and a.practitioner_id = pr.id
+          and a.status in ('confirmed', 'completed')
+          and a.starts_at >= p_starts_at - v_window
+          and a.starts_at <  p_starts_at + v_window
+     ) asc,
+     -- KEY 2 — oldest last assignment; NEVER ASSIGNED sorts first.
+     pr.last_public_assignment_at asc nulls first,
+     -- KEY 3 — stable final tiebreak, so two identical requests agree.
+     pr.id asc
   loop
     if public.validate_public_booking_slot_v2(
          p_studio_id, v_cand, p_service_id, p_starts_at, p_ends_at
@@ -714,46 +809,28 @@ begin
     -- lower ids have priority. The same file already refuses to invent
     -- "the oldest active owner receives all public bookings"; this comment
     -- exists so the next reader does not mistake determinism for policy.
-    -- THE LEGACY ASSIGNMENT STILL WINS WHENEVER IT STILL WORKS, and my first
-    -- version of this got it wrong by resolving away from the owner
-    -- unconditionally. That reddened 0222's own equivalence control ("NULL
-    -- reproduces 0170 exactly"), and the control was right: the DEFAULT public
-    -- booking assigns the single active owner, and changing that for every
-    -- capacity-enabled studio is a product change nobody asked for. Codex's
-    -- finding is narrower -- resolve "when the legacy owner is ineligible" --
-    -- and so is this.
+    -- NO OWNER PRIVILEGE HERE. The fair rule decides, and the owner competes in
+    -- it on the same terms as everyone else.
     --
-    -- So: compute the legacy answer first, on exactly the same
-    -- EXACTLY-ONE-ACTIVE-OWNER terms as the flag-off branch below (0 or 2+
-    -- active owners is NULL, because this file refuses to invent "the oldest
-    -- active owner receives all public bookings"), and keep it if the
-    -- authoritative validator still accepts it.
-    with active_owners as materialized (
-      select pr.id
-        from public.practitioners pr
-       where pr.studio_id = p_studio_id
-         and pr.active = true
-         and pr.role = 'owner'
-       order by pr.id
-       limit 2
-    )
-    select case when count(*) = 1 then (array_agg(id))[1] else null end
-      into v_owner_id
-      from active_owners;
-
-    if v_owner_id is null
-       or public.validate_public_booking_slot_v2(
-            p_studio_id, v_owner_id, p_service_id, v_starts_at, v_ends_at
-          ) <> 'ok'
-    then
-      -- The legacy answer is unusable -- the owner is unpinned from this
-      -- service, inactive, busy at this instant, or ambiguous. ONLY NOW does
-      -- the resolver look wider. This is the case the finding describes, and
-      -- the only case whose behaviour changes.
-      v_owner_id := public.resolve_public_any_available_practitioner(
-        p_studio_id, p_service_id, v_starts_at, v_ends_at
-      );
-    end if;
+    -- An earlier revision computed the legacy exactly-one-active-owner answer
+    -- first and kept it whenever the validator still accepted it, so the owner
+    -- was only ever passed over when they were ineligible or busy. That is
+    -- precisely what `PRACTITIONER_CAPACITY_ARCHITECTURE.md:293-297` forbids --
+    -- "never silently assigns the owner" -- and with it in place repeated
+    -- default bookings concentrated on the owner regardless of workload, which
+    -- is the behaviour the fair rule exists to remove.
+    --
+    -- IT WAS KEPT BECAUSE OF A TEST, AND THE TEST IS THE THING THAT IS WRONG.
+    -- 0222's "NULL reproduces 0170 exactly" control asserts owner assignment
+    -- under capacity LIVE, because `seedFettStudio` defaults to
+    -- `capacity: "live"` -- a fixture default, not a product decision. The
+    -- equivalence that control legitimately protects is the CAPACITY-OFF path,
+    -- which the `else` branch below leaves byte-for-byte unchanged. That
+    -- control is narrowed to its real subject in the same change; it is not
+    -- weakened, and the capacity-ON contract is not bent to fit it.
+    v_owner_id := public.resolve_public_any_available_practitioner(
+      p_studio_id, p_service_id, v_starts_at, v_ends_at
+    );
 
     -- NOBODY ELIGIBLE IS FREE AT THIS INSTANT. Refused, and deliberately NOT
     -- degraded to the owner: attributing the booking to someone the service
@@ -908,6 +985,37 @@ begin
      v_starts_at, v_ends_at, v_service_dur, 'confirmed',
      p_notes, p_cancellation_token_hash, p_referral_source)
   returning a.id, a.created_at into v_appt_id, v_created_at;
+
+  -- RECORD THE ASSIGNMENT FACT — only here, only now.
+  --
+  -- This is the second key of the fair ordering (see the resolver's header), and
+  -- where it is written is the whole of its correctness:
+  --
+  --   * AFTER the insert succeeded, so only a CREATED assignment advances it. A
+  --     refusal returns earlier and leaves the fact untouched -- which matters
+  --     because every refusal path in this command RETURNS a row rather than
+  --     raising, so anything written before them would commit.
+  --   * INSIDE this command's transaction, holding the studios row lock and the
+  --     studio capacity advisory lock, so two concurrent assignments cannot
+  --     interleave a read of this column with the other's write and both pick
+  --     the same practitioner as "oldest".
+  --   * ONLY when capacity assignment is ON (`v_booking_on`). With the switch
+  --     off the legacy branch assigns the single active owner and no fair rule
+  --     runs, so recording a history the ordering never consults would be noise
+  --     that silently re-ranks the studio the day the switch is turned on.
+  --   * FOR EXPLICIT SELECTIONS TOO, not just resolver-chosen ones. A visitor
+  --     naming a practitioner is still a successful public assignment of that
+  --     practitioner, and omitting it would make heavily hand-picked
+  --     practitioners read as "never assigned" and therefore sort FIRST --
+  --     inverting the rule exactly where it matters most.
+  --
+  -- `v_owner_id` is the assigned practitioner on both paths by this point.
+  if v_booking_on and v_owner_id is not null then
+    update public.practitioners
+       set last_public_assignment_at = v_created_at
+     where id = v_owner_id
+       and studio_id = p_studio_id;
+  end if;
 
   -- The mandatory audit row, same transaction. Shape is byte-for-byte the one
   -- the route writes today (app/book/[slug]/actions.ts:875-881); the email is

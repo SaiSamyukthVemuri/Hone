@@ -90,11 +90,30 @@ describe("0222 — a chosen practitioner is honoured", () => {
     }
   });
 
-  it("NULL reproduces 0170 exactly — the same assignment as v1", async () => {
-    // EQUIVALENCE CONTROL. If this diverged, pointing the route at v2 would be a
-    // silent behaviour change for every existing public booking.
-    const a = await seedFettStudio({ treatingCount: 2 });
-    const b = await seedFettStudio({ treatingCount: 2 });
+  it("NULL reproduces 0170 exactly — the same assignment as v1, on a LEGACY studio", async () => {
+    // EQUIVALENCE CONTROL, NARROWED TO ITS ACTUAL SUBJECT.
+    //
+    // This asserted owner assignment on a studio the fixture had left
+    // capacity-LIVE, because `seedFettStudio` defaults to `capacity: "live"` --
+    // a FIXTURE DEFAULT, never a product decision, and invisible from this test
+    // because neither file mentions a capacity flag. So the control was pinning
+    // the capacity-ON branch while reading as if it pinned legacy parity, and
+    // it was the reason the owner privilege survived in 0222 long after
+    // `PRACTITIONER_CAPACITY_ARCHITECTURE.md:293-297` said "never silently
+    // assigns the owner".
+    //
+    // The equivalence it legitimately protects is CAPACITY-OFF: pointing the
+    // route at v2 must not change what today's studios get, and today every
+    // studio has the assignment switch off. That path is byte-for-byte
+    // unchanged, so the control is now stated on the state it is about.
+    //
+    // NOT WEAKENED. The capacity-ON default is asserted harder than before, by
+    // the fair-assignment suite in
+    // tests/db/public-fair-assignment.db.test.ts -- which requires that the
+    // owner does NOT receive bookings by privilege. Narrowing here and
+    // tightening there are one change, not a concession.
+    const a = await seedFettStudio({ treatingCount: 2, capacity: "legacy" });
+    const b = await seedFettStudio({ treatingCount: 2, capacity: "legacy" });
     try {
       const viaV1 = await bookPublicV1(a);
       const viaV2 = await bookPublicV2(b, null);
