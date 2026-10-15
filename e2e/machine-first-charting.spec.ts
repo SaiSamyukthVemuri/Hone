@@ -626,7 +626,14 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
     // here, so the chosen-machine block names the same model and a page-wide
     // locator is a 2-match strict-mode violation. Found by auditing the rest of
     // the file after step 4 failed, rather than waiting for the next run.
-    await expect(prior).toContainText("Last recorded setup");
+    // "PREVIOUS TREATMENT", not "Last recorded setup". I renamed this label at
+    // 9a656146 on Sam's instruction - the old one described the row's
+    // provenance rather than its relationship to today - inverted the unit
+    // assertions, and missed this one. The gate-open run caught it: the panel
+    // rendered correctly and the SPEC was wrong. Second assertion of this
+    // class in this file; the first was the evidence wall at step 2.
+    await expect(prior).toContainText("Previous treatment");
+    await expect(prior).toContainText(/reference only/i);
     await expect(prior).toContainText("Synthetic Demo Multineedle");
 
     // THE PHYSICAL UNIT'S NAME, and this is the only assertion in the suite

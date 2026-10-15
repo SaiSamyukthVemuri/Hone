@@ -268,6 +268,12 @@ test("create mode: choose the machine, save the block, record one save, retrieve
 
   let blockId = "";
   let firstSubmission: string | null = null;
+  // OBSERVED, NOT ASSUMED. Later steps compare against what was actually
+  // recorded, because a hard-coded total has to be revisited every time an
+  // earlier step records one more thing - which is exactly how steps 5, 6
+  // and 7 all came to hold stale numbers at once.
+  let capturesAfterEdit = 0;
+  let submissionsAfterEdit = new Set<string>();
 
   await test.step("2: BEFORE the block exists, the settings are COLLECTED for the same save", async () => {
     // THIS STEP ASSERTED THE OPPOSITE UNTIL `create_block_with_initial_setup`,
@@ -354,6 +360,8 @@ test("create mode: choose the machine, save the block, record one save, retrieve
       firstCaps[0]!.setup_submission_id,
       "an initial save must carry its submission",
     ).not.toBeNull();
+    // HELD FOR STEP 5, which distinguishes this save from the edit's.
+    firstSubmission = firstCaps[0]!.setup_submission_id;
 
     // Re-enter the block being charted and open the panel again.
     await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
@@ -405,38 +413,67 @@ test("create mode: choose the machine, save the block, record one save, retrieve
     await noOverflow(page);
   });
 
-  await test.step("5: the DATABASE holds ONE submission with both groups", async () => {
+  await test.step("5: the DATABASE holds TWO saves — the initial one, then the edit", async () => {
     // GROUND TRUTH. The UI saying "saved" is not the claim; the record is.
+    //
+    // THIS STEP EXPECTED TWO CAPTURES AND THE FIRST RUN FOUND THREE, which is
+    // my arithmetic rather than a defect - and the extra one is the evidence
+    // the atomic command works. When I rewrote step 2 to ENTER values in
+    // create mode, that save became real: one group, no channel, recorded
+    // atomically WITH the block. Step 4 then added channels and a second
+    // group on the saved block, which is a SECOND submission. Three captures,
+    // two saves, exactly as designed - and the old count was written before
+    // step 2 collected anything.
     const caps = await capturesFor(blockId);
-    expect(caps, "two setting groups were entered").toHaveLength(2);
+    expect(caps, "initial save + the edit's two groups").toHaveLength(3);
 
-    const submissions = new Set(caps.map((c) => c.setup_submission_id));
+    const submissions = [...new Set(caps.map((c) => c.setup_submission_id))];
     expect(
-      submissions.size,
-      "the two groups were recorded as separate saves, not one",
-    ).toBe(1);
-    firstSubmission = caps[0]!.setup_submission_id;
+      submissions.every((s) => s !== null),
+      "every capture must carry the save that produced it",
+    ).toBe(true);
     expect(
-      firstSubmission,
-      "a save through the treatment form must carry its submission",
-    ).not.toBeNull();
+      submissions.length,
+      "the initial save and the edit are two distinct saves",
+    ).toBe(2);
 
-    // Each group keeps its own channels, unmerged.
-    const byGroup = new Map(caps.map((c) => [c.group_key, c]));
-    const channelSets = [...byGroup.values()].map((c) => c.channels);
-    expect(channelSets.flat()).toHaveLength(
-      new Set(channelSets.flat()).size,
+    // THE INITIAL SAVE'S OWN CAPTURE: g1 at revision 1, recorded with the
+    // block in step 3, with no channel because step 2 named none.
+    const initial = caps.find((c) => c.revision === 1 && c.group_key === "g1")!;
+    expect(initial.setup_submission_id).toBe(firstSubmission);
+    expect(initial.channels, "step 2 selected no probe").toEqual([]);
+
+    // HELD FOR STEP 6, so a reload is compared against what was actually
+    // there rather than against a number written earlier in the file.
+    capturesAfterEdit = caps.length;
+    submissionsAfterEdit = new Set(
+      caps.map((c) => c.setup_submission_id).filter((id): id is string => !!id),
     );
+
+    // THE EDIT'S TWO GROUPS share ONE submission - the claim the whole-save
+    // command exists for.
+    const edit = caps.filter((c) => c.setup_submission_id !== firstSubmission);
+    expect(edit).toHaveLength(2);
+    expect(new Set(edit.map((c) => c.setup_submission_id)).size).toBe(1);
+    // Each keeps its own channels, unmerged and non-overlapping.
+    const channels = edit.flatMap((c) => c.channels);
+    expect(channels).toHaveLength(new Set(channels).size);
 
     // THE MACHINE'S OWN UNITS AND PRECISION, derived from the published
     // contract rather than from anything the browser sent.
     const rows = await readingsFor(blockId);
-    expect(rows).toHaveLength(6);
+    // Three captures x three fields.
+    expect(rows).toHaveLength(9);
     const current = rows.filter((r) => r.field_key === "current");
-    expect(current).toHaveLength(2);
+    expect(current).toHaveLength(3);
     expect(current.every((r) => r.native_unit === "µA")).toBe(true);
     expect(current.every((r) => r.decimals === 0)).toBe(true);
-    expect(current.map((r) => r.value_numeric).sort()).toEqual(["120", "80"]);
+    // 120 from create mode, then 120 and 80 from the edit's two groups.
+    expect(current.map((r) => r.value_numeric).sort()).toEqual([
+      "120",
+      "120",
+      "80",
+    ]);
     // PER-FIELD PROVENANCE: the contract says this one is read off the
     // machine's own display, and the record has to agree.
     expect(
@@ -451,25 +488,43 @@ test("create mode: choose the machine, save the block, record one save, retrieve
     await expect(page.getByTestId("machine-chosen")).toContainText("Room 1 demo", {
       timeout: T,
     });
-    // The record is unchanged by a reload. Stated as a row count because a
-    // re-save on mount would be invisible in the UI and permanent in the
-    // record.
-    expect(await capturesFor(blockId)).toHaveLength(2);
+    // THE RECORD IS UNCHANGED BY A RELOAD, which is the claim - not the
+    // absolute number. Stated as a count because a re-save on mount would be
+    // invisible in the UI and permanent in the record.
+    //
+    // CAPTURED BEFORE AND COMPARED, rather than hard-coded. The literal 2
+    // here was the same slip as step 5's: it predated step 2 collecting
+    // anything, and a fixed total has to be revisited every time an earlier
+    // step records one more thing. What this step cares about is that the
+    // reload added nothing.
+    expect(await capturesFor(blockId)).toHaveLength(capturesAfterEdit);
   });
 
-  await test.step("7: a SECOND capture is a new save, not an edit of the first", async () => {
-    // A setting changed mid-treatment. The earlier capture is immutable and
-    // stays; this appends.
-    // THROUGH THE EXPLICIT CONTROL. After a save the form shows the
-    // confirmation, not the fields: recording again is a deliberate act, and
-    // the draft is cleared rather than pre-filled - a value she has not
-    // re-read off the machine is not a reading.
-    await page.getByTestId("machine-reading-record-change").click({ timeout: T });
+  await test.step("7: after the reload, a SECOND capture appends — it never edits", async () => {
+    // A setting changed mid-treatment. The earlier captures are immutable and
+    // stay; this appends.
+    // NO "RECORD A SETTING CHANGE" CLICK HERE, and the run is what taught me
+    // why. That control belongs to the SAVED view, which is state held in the
+    // mount that did the saving. Step 6 RELOADED the page, so this is a fresh
+    // mount: it shows an empty entry form directly, and the control the first
+    // spelling waited twenty seconds for does not exist.
+    //
+    // THAT IS THE RIGHT PRODUCT BEHAVIOUR, not a gap. After a reload she is
+    // ready to record the next capture without asking for permission to - and
+    // it is precisely why the "Recorded this treatment" surface matters, since
+    // the only other thing telling her what is already stored died with that
+    // earlier mount.
     await expect(page.getByTestId("machine-reading-entry")).toBeVisible({
       timeout: T,
     });
+    // WHAT IS ALREADY RECORDED IS ON SCREEN, which is the point of the
+    // surface: she can see the earlier capture before adding another.
+    await expect(page.getByTestId("machine-recorded-setups")).toBeVisible({
+      timeout: T,
+    });
 
-    // ONE group again, so the input testids revert to their unsuffixed form.
+    // ONE group on a fresh mount, so the input testids are unsuffixed - and
+    // EMPTY, because nothing is ever pre-filled from what is stored.
     await expect(page.getByTestId("reading-current")).toHaveValue("");
     await page.getByTestId("setting-group-g1-channel-1").click();
     await page.getByTestId("reading-current").fill("150");
@@ -480,20 +535,30 @@ test("create mode: choose the machine, save the block, record one save, retrieve
       timeout: T,
     });
 
+    // EXACTLY ONE NEW SAVE APPEARED, and everything that was there still is.
+    //
+    // THE FIRST SPELLING COUNTED "every submission that is not the initial
+    // one" and expected ONE - which was true only while the initial save was
+    // the sole earlier save. Once step 2 began collecting in create mode
+    // there were two earlier saves, so the assertion failed on arithmetic
+    // rather than on behaviour. Comparing the SETS before and after says what
+    // the step actually means.
     const caps = await capturesFor(blockId);
-    expect(caps.length).toBeGreaterThan(2);
-    const second = caps
-      .map((c) => c.setup_submission_id)
-      .filter((id) => id !== firstSubmission);
-    expect(
-      new Set(second).size,
-      "the second capture must belong to a DIFFERENT save",
-    ).toBe(1);
-    // The first capture is still there, unchanged. Append-only is the whole
-    // clinical contract of this table.
-    expect(
-      caps.some((c) => c.setup_submission_id === firstSubmission),
-    ).toBe(true);
+    expect(caps.length).toBe(capturesAfterEdit + 1);
+    const after = new Set(
+      caps.map((c) => c.setup_submission_id).filter((id): id is string => !!id),
+    );
+    const added = [...after].filter((id) => !submissionsAfterEdit.has(id));
+    expect(added, "a mid-treatment change is ONE new save").toHaveLength(1);
+    // EVERY EARLIER SAVE IS STILL THERE, unchanged. Append-only is the whole
+    // clinical contract of this table, and "the earlier one stays" is what
+    // the confirmation copy promises her.
+    for (const id of submissionsAfterEdit) {
+      expect(after.has(id), `an earlier save vanished: ${id}`).toBe(true);
+    }
+    // Including the INITIAL save specifically, which is the one the atomic
+    // command wrote alongside the block.
+    expect(after.has(firstSubmission!)).toBe(true);
   });
 
   await test.step("8: NEXT VISIT — guidance shows the groups, as PREVIOUS values", async () => {
@@ -521,11 +586,41 @@ test("create mode: choose the machine, save the block, record one save, retrieve
     );
 
     // NOTHING IS PRE-FILLED from it. A value she has not re-read off the
-    // machine is not a reading.
-    const entry = page.getByTestId("machine-reading-entry");
-    if ((await entry.count()) > 0) {
-      await expect(entry.getByTestId("reading-current")).toHaveValue("");
-    }
+    // machine is not a reading, and the record must not be able to acquire
+    // one by her failing to notice a filled box.
+    //
+    // ASSERTED ON THE COLLECTOR, which is what this surface renders now. The
+    // first spelling looked for `machine-reading-entry` behind an
+    // `if (count() > 0)` - and on THIS step that count is zero, because the
+    // next visit opens the CREATE form and create mode renders
+    // `machine-setting-draft` instead. The claim would have been silently
+    // skipped: the exact shape of assertion that cannot fail.
+    const draft = page.getByTestId("machine-setting-draft");
+    await expect(draft).toBeVisible({ timeout: T });
+    await expect(draft.getByTestId("reading-current")).toHaveValue("");
+    // AND THE PRIOR VALUES ARE ON SCREEN at the same time, so this is a real
+    // juxtaposition rather than an empty form with nothing to be tempted by.
+    //
+    // I FIRST ASSERTED "180", a value this journey never records - copied from
+    // the sibling spec's fixture. The run handed me the real content, and it
+    // is a far stronger claim than the one I guessed at:
+    //
+    //   BOTH GROUPS appear, each at its OWN HIGHEST REVISION. g1 shows 150 -
+    //   the mid-treatment change from step 7 - and NOT the 120 it held
+    //   before; g2 shows 80 from the step-4 save. That is the multi-group
+    //   guidance repair working mounted: a single-capture read would have
+    //   shown one group and silently omitted the other probe's settings.
+    await expect(prior).toContainText("Channels 1");
+    await expect(prior).toContainText("Channels 2");
+    await expect(prior, "g1's LATEST value, not its first").toContainText("150");
+    await expect(prior).toContainText("80");
+    expect(
+      (await prior.innerText()).includes("120"),
+      "a superseded value must not be offered back as guidance",
+    ).toBe(false);
+    // PER-FIELD PROVENANCE survives the round trip: this field's contract says
+    // the machine displays it, and the record says so too.
+    await expect(prior).toContainText("device-display");
     await noOverflow(page);
   });
 });
