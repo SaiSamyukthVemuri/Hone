@@ -2274,6 +2274,104 @@ comment on function public.setup_capture_history_for_block(uuid) is
   '0223. The captures of one treatment block, oldest first, each with the machine, profile version, mode, channels, recorder, instant and field count it was recorded under. Exposes the CHRONOLOGY of a treatment rather than only the storage rows: a setting changed mid-treatment appears as two captures in order. SECURITY INVOKER, with is_studio_member as a fail-closed second lock.';
 
 -- ---------------------------------------------------------------------------
+-- PART 6a — THE CREATE CLAIM: what makes the initial save repeatable
+-- ---------------------------------------------------------------------------
+--
+-- WHY A TABLE AND NOT A COLUMN. `record_treatment_setup_submission` is
+-- idempotent because its retry key is unique per (BLOCK, key) - and the block
+-- pre-exists the save, so a repeat collides with the first attempt's row. The
+-- INITIAL save has no such anchor: it CREATES the block, so a key scoped to
+-- that block cannot collide with anything, nothing is absorbed, and a retry
+-- after a lost answer produces a SECOND treatment area carrying a second copy
+-- of the settings. Measured on a real database before this existed, not
+-- reasoned about: tests/db/machine-initial-save.db.test.ts asserted exactly
+-- that outcome, and the practitioner-facing advice was to reload and look
+-- rather than to press Save again.
+--
+-- A KEY SCOPED TO SOMETHING THAT PRE-EXISTS is the whole fix, and the only
+-- such thing here is the SESSION. So the claim is unique per (session, key):
+-- the row she is charting on exists before the area does.
+--
+-- WHAT IT STORES, and why each part:
+--
+--   payload_digest — THE WHOLE initial payload, not only the settings. The
+--     same key arriving with a different area, a different probe lot or
+--     different readings is a DIFFERENT save wearing a used key; returning the
+--     first one's ids would tell the caller its new area was created when
+--     nothing was written. Refused loudly instead.
+--   block_id, entry_id, submission_id — so an absorbed retry can answer with
+--     the ORIGINAL ids. A claim that could not name them would prove a repeat
+--     had happened and still leave the caller unable to continue.
+--
+-- IT IS NOT CLINICAL DATA. Every fact in it is also recorded on the rows it
+-- points at; this is the receipt that says those rows are the answer to this
+-- key. It is nonetheless studio-scoped and member-read like everything else
+-- here, because a key names a session and a session names a client.
+create table if not exists public.treatment_area_create_claims (
+  id uuid primary key default gen_random_uuid(),
+  studio_id uuid not null references public.studios(id) on delete cascade,
+  session_id uuid not null references public.sessions(id) on delete cascade,
+
+  -- THE CALLER'S OWN KEY, and it must be substantial for the same reason the
+  -- submission's must: a short key collides, and a colliding key makes a
+  -- DIFFERENT save look like a retry of this one.
+  idempotency_key text not null
+    check (length(btrim(idempotency_key)) between 8 and 100),
+  payload_digest text not null check (length(payload_digest) = 32),
+
+  -- WHAT THE CLAIMED SAVE PRODUCED. `block_id` is NOT NULL because a claim
+  -- that cannot name its block answers nothing on a retry; the row is
+  -- therefore written AFTER the create, inside the same transaction, which is
+  -- safe because the advisory lock in the command - not this constraint - is
+  -- what serialises a save against its own retries. The constraint is the
+  -- backstop.
+  block_id uuid not null references public.session_blocks(id) on delete cascade,
+  -- NULLABLE because `create_block_with_entry` creates an entry only when
+  -- asked to. A null means "no entry was created", never "unknown".
+  entry_id uuid,
+  -- NULLABLE because the settings half is optional: an area saved with no
+  -- machine settings is an ordinary save, and this records that it had none.
+  submission_id uuid
+    references public.treatment_setup_submissions(id) on delete set null,
+
+  claimed_by_practitioner_id uuid,
+  claimed_at timestamptz not null default now(),
+
+  constraint treatment_area_create_claims_key_uniq
+    unique (session_id, idempotency_key)
+);
+
+comment on table public.treatment_area_create_claims is
+  '0223. The receipt that makes the INITIAL save of a treatment area repeatable. One row per (session, caller-supplied retry key), recording the digest of the whole initial payload and the block, entry and submission that key produced. A retry carrying the same key and the same payload returns those ids instead of creating a second area; the same key with a different payload is refused. Needed because the submission command''s own key is unique per BLOCK and the initial save creates the block, so nothing a repeat could collide with exists yet. NOT clinical data - every fact in it is also on the rows it points at.';
+
+comment on column public.treatment_area_create_claims.payload_digest is
+  '0223. md5 over a canonical form of the WHOLE initial payload - the block bag, the areas, every charting scalar and the setup groups ordered by group key - so the same save listed differently still matches while a genuinely different save wearing a used key is refused rather than silently answered with the first one''s ids.';
+
+comment on column public.treatment_area_create_claims.block_id is
+  '0223. The treatment area this key created. NOT NULL: a claim that cannot name its block answers nothing on a retry, so the row is written after the create inside the same transaction.';
+
+-- Direct DML is revoked from every runtime role, as for every other table
+-- here: the command is the only writer.
+alter table public.treatment_area_create_claims enable row level security;
+revoke all on public.treatment_area_create_claims from public;
+revoke all on public.treatment_area_create_claims from anon;
+revoke all on public.treatment_area_create_claims from authenticated;
+revoke all on public.treatment_area_create_claims from service_role;
+grant select on public.treatment_area_create_claims to authenticated;
+grant select on public.treatment_area_create_claims to service_role;
+
+drop policy if exists treatment_area_create_claims_member_select
+  on public.treatment_area_create_claims;
+create policy treatment_area_create_claims_member_select
+  on public.treatment_area_create_claims
+  for select
+  to authenticated
+  using (public.is_studio_member(studio_id));
+
+create index if not exists treatment_area_create_claims_block_idx
+  on public.treatment_area_create_claims (block_id);
+
+-- ---------------------------------------------------------------------------
 -- PART 6 COMMAND — THE INITIAL SAVE: create the area AND record the settings
 -- ---------------------------------------------------------------------------
 --
@@ -2330,15 +2428,27 @@ comment on function public.setup_capture_history_for_block(uuid) is
 -- mislabelling a clinical row for ever. That is the check a source contract
 -- cannot make.
 --
--- ONE LIMITATION THE RUN REVEALED, recorded here because it is a property of
--- this command and not of its tests: THE RETRY KEY DOES NOT MAKE THE INITIAL
--- SAVE IDEMPOTENT. `record_treatment_setup_submission`'s key is unique per
--- (BLOCK, key), and this command creates a NEW block before using it - so a
--- repeat cannot collide, nothing is absorbed, and a lost response retried
--- here produces a SECOND treatment area carrying a second copy of the
--- settings. The key protects a save against an EXISTING block, which is the
--- edit path. Closing it would need an idempotency key on the block create
--- itself, which is a change to 0166's command and a decision of its own.
+-- THE LIMITATION THE FIRST RUN REVEALED IS NOW CLOSED, and the paragraph that
+-- recorded it is kept here in substance because it was the measurement that
+-- justified the fix. It said: the retry key does NOT make the initial save
+-- idempotent, because `record_treatment_setup_submission`'s key is unique per
+-- (BLOCK, key) and this command creates a NEW block before using it - so a
+-- repeat cannot collide, nothing is absorbed, and a lost response retried here
+-- produces a SECOND treatment area carrying a second copy of the settings.
+-- That was measured against a real database, not reasoned about.
+--
+-- IT ALSO PREDICTED THE WRONG FIX, which is worth keeping visible: it said
+-- closing the hole would need an idempotency key on the block create itself,
+-- "a change to 0166's command and a decision of its own". It does not. A key
+-- needs an anchor that PRE-EXISTS the thing it protects, and the session is
+-- one - so `treatment_area_create_claims` is unique per (session, key), 0166
+-- is untouched and still frozen, and the claim is written by this command
+-- alone. See PART 6a.
+--
+-- WHAT IS IDEMPOTENT NOW, precisely: a call carrying a retry key. A caller
+-- that supplies none keeps the old forwarding behaviour exactly, because
+-- idempotence requires a caller that mints one key per save and REUSES it on
+-- a retry - a fresh key per attempt would make every retry a new save.
 --
 -- THE SETTINGS ARE OPTIONAL. With no groups this is exactly
 -- `create_block_with_entry` plus a row count of zero: an area saved with no
@@ -2387,7 +2497,162 @@ declare
   v_block_id uuid;
   v_entry_id uuid;
   v_setup jsonb := null;
+  v_studio uuid;
+  v_key text;
+  v_digest text;
+  v_claim record;
+  v_submission_id uuid;
+  v_groups integer;
+  v_readings integer;
 begin
+  v_key := btrim(coalesce(p_setup_idempotency_key, ''));
+
+  -- -----------------------------------------------------------------------
+  -- THE CLAIM, when the caller supplied a key.
+  -- -----------------------------------------------------------------------
+  --
+  -- NO KEY, NO CLAIM, and that is deliberate rather than a gap: a caller that
+  -- supplies none gets exactly the forwarding behaviour this command had
+  -- before, which is what `create_block_with_entry` has always done. Only a
+  -- caller that can mint one key per save and REUSE it on a retry can be given
+  -- idempotence; minting a fresh key per attempt would make every retry a new
+  -- save and this table a log of nothing.
+  if v_key <> '' then
+    -- SHAPE FIRST, because it costs no I/O. The same bound as the
+    -- submission's key, for the same reason - a short key collides, and a
+    -- colliding key makes a DIFFERENT save look like a retry of this one.
+    if length(v_key) < 8 or length(v_key) > 100 then
+      raise exception
+        'A save needs its own retry key of at least 8 characters.'
+        using errcode = 'check_violation';
+    end if;
+
+    -- AUTHORIZATION BEFORE DISCLOSURE, exactly as in the submission command.
+    -- Answering "does this key already exist on this session" first would tell
+    -- a caller with no membership of this studio something about its records.
+    -- `create_block_with_entry` asserts this again on its own account; the
+    -- duplicate read is the price of not reaching into it, and 0166 stays
+    -- frozen.
+    v_studio := public.assert_session_writable(p_session_id, p_client_id);
+
+    -- THE WHOLE PAYLOAD, canonicalised then hashed. Every argument the save
+    -- would record is in it: a retry that differs in ANY of them is a
+    -- different save and must not be answered with this one's ids.
+    --
+    -- THE KEYS ARE THE PARAMETER NAMES, prefix included, so the digest's
+    -- coverage can be checked against the declaration above by reading down
+    -- the two lists. It also keeps the model-activation guard satisfied for
+    -- the right reason: that guard bans the bare string "apilus" anywhere in
+    -- this migration except as `p_apilus_modality`, and a digest key called
+    -- 'apilus_modality' tripped it. Naming the key after the parameter is the
+    -- fix; carving out an exception in the guard would not have been.
+    --
+    -- NUMERIC SCALE IS TRIMMED so 120 and 120.0 are the same save. They are
+    -- the same number; refusing a retry over a scale difference would be a
+    -- definite refusal of a legitimate repeat.
+    --
+    -- THE SETUP GROUPS ARE ORDERED BY GROUP KEY, the same canonicalisation
+    -- `record_treatment_setup_submission` uses, so the same save listed in a
+    -- different order still matches.
+    v_digest := md5(
+      jsonb_build_object(
+        'p_block', coalesce(p_block, 'null'::jsonb),
+        'p_block_extra', coalesce(p_block_extra, 'null'::jsonb),
+        'p_areas', coalesce(p_areas, 'null'::jsonb),
+        'p_with_entry', p_with_entry,
+        'p_area', p_area,
+        'p_areas_list', to_jsonb(p_areas_list),
+        'p_probe_size', p_probe_size,
+        'p_probe_lot_id', p_probe_lot_id::text,
+        'p_mode', p_mode,
+        'p_pulse_count', p_pulse_count,
+        'p_pulse_delay_seconds', to_jsonb(trim_scale(p_pulse_delay_seconds)),
+        'p_comments', p_comments,
+        'p_observation_chips', coalesce(p_observation_chips, 'null'::jsonb),
+        'p_apilus_modality', p_apilus_modality,
+        'p_energy_level', p_energy_level,
+        'p_minutes_performed', p_minutes_performed,
+        'p_probe_type', p_probe_type,
+        'p_machine_frequency', p_machine_frequency,
+        'p_hairs_treated', p_hairs_treated,
+        'p_galvanic_ma', to_jsonb(trim_scale(p_galvanic_ma)),
+        'p_galvanic_duration_seconds', p_galvanic_duration_seconds,
+        'p_thermolysis_intensity_percent', p_thermolysis_intensity_percent,
+        'p_thermolysis_duration_seconds',
+          to_jsonb(trim_scale(p_thermolysis_duration_seconds)),
+        'p_units_of_lye', to_jsonb(trim_scale(p_units_of_lye)),
+        'p_studio_machine_id', p_studio_machine_id::text,
+        'p_setup_mode_key', p_setup_mode_key,
+        'p_setup_groups', coalesce(
+          (select jsonb_agg(g.value order by btrim(coalesce(g.value->>'group_key', ''))) from jsonb_array_elements(case when jsonb_typeof(p_setup_groups) = 'array' then p_setup_groups else '[]'::jsonb end) g),
+          '[]'::jsonb
+        )
+      )::text
+    );
+
+    -- SERIALISE THIS SAVE AGAINST ITS OWN RETRIES, keyed on (session, key) so
+    -- unrelated saves never wait on each other. Taken BEFORE the lookup, which
+    -- is the whole point: the check, the create and the claim have to be one
+    -- indivisible step. Without it two concurrent retries both find no claim,
+    -- both create an area, and the second dies on the unique constraint - a
+    -- 23505 the caller cannot distinguish from a genuine conflict, after the
+    -- duplicate area has already been written and rolled back.
+    perform pg_advisory_xact_lock(
+      hashtextextended(p_session_id::text || ':area-create:' || v_key, 0)
+    );
+
+    select c.payload_digest, c.block_id, c.entry_id, c.submission_id
+      into v_claim
+      from public.treatment_area_create_claims c
+     where c.session_id = p_session_id
+       and c.idempotency_key = v_key;
+
+    if found then
+      -- A KEY REUSED FOR A DIFFERENT SAVE IS A BUG, NOT A RETRY. Its own
+      -- sentence, distinguishable from the submission command's, because the
+      -- remedy differs: this one means a second treatment area was about to be
+      -- created under a used key.
+      if v_claim.payload_digest <> v_digest then
+        raise exception
+          'That retry key was already used to create a different treatment area.'
+          using errcode = 'unique_violation';
+      end if;
+
+      -- THE ORIGINAL IDS, so a retry after a lost answer can continue rather
+      -- than having to be told to go and look. The settings half is rebuilt in
+      -- the SAME SHAPE a fresh save returns, counted from what is actually
+      -- stored, so a caller cannot tell an absorbed retry from the original
+      -- except by `reused`.
+      if v_claim.submission_id is null then
+        v_setup := null;
+      else
+        select count(*)::integer into v_groups
+          from public.treatment_setup_captures c
+         where c.setup_submission_id = v_claim.submission_id;
+        select count(*)::integer into v_readings
+          from public.treatment_setup_readings r
+          join public.treatment_setup_captures c on c.id = r.capture_id
+         where c.setup_submission_id = v_claim.submission_id;
+        v_setup := jsonb_build_object(
+          'submission_id', v_claim.submission_id,
+          'groups', v_groups,
+          'readings', v_readings,
+          'reused', true
+        );
+      end if;
+
+      return jsonb_build_object(
+        'block_id', v_claim.block_id,
+        'entry_id', v_claim.entry_id,
+        'setup', v_setup,
+        -- THE AREA ITSELF was not created by this call, which the caller needs
+        -- to know: a confirmation built from this is honest either way, but a
+        -- caller counting creations would otherwise count one too many.
+        'reused', true
+      );
+    end if;
+  end if;
+
   -- THE AREA FIRST, through the one command that creates one.
   select c.block_id, c.entry_id
     into v_block_id, v_entry_id
@@ -2441,18 +2706,48 @@ begin
     );
   end if;
 
+  -- THE RECEIPT, written LAST and inside this same transaction.
+  --
+  -- LAST because `block_id` is NOT NULL and a claim that cannot name its block
+  -- answers nothing on a retry. Safe because the advisory lock above - not
+  -- this insert - is what serialises a save against its own retries: no other
+  -- caller can be between the lookup and here with the same (session, key).
+  --
+  -- AND IF ANYTHING ABOVE RAISED, THIS NEVER RUNS AND THE CLAIM DOES NOT
+  -- EXIST, which is correct rather than unfortunate: nothing was recorded, so
+  -- a later attempt with the same key SHOULD be a fresh save rather than being
+  -- answered with ids that no longer point at anything.
+  if v_key <> '' then
+    insert into public.treatment_area_create_claims (
+      studio_id, session_id, idempotency_key, payload_digest,
+      block_id, entry_id, submission_id, claimed_by_practitioner_id
+    )
+    values (
+      v_studio, p_session_id, v_key, v_digest,
+      v_block_id, v_entry_id,
+      nullif(v_setup->>'submission_id', '')::uuid,
+      (select p.id from public.practitioners p
+        where p.studio_id = v_studio and p.user_id = auth.uid()
+          and p.active = true
+        limit 1)
+    );
+  end if;
+
   return jsonb_build_object(
     'block_id', v_block_id,
     'entry_id', v_entry_id,
     -- NULL when nothing was entered, which the caller must be able to tell
     -- apart from a save that recorded zero readings.
-    'setup', v_setup
+    'setup', v_setup,
+    -- FALSE, not absent: a caller reading this field must not have to treat
+    -- "missing" as "fresh", because the absorbed branch above returns true.
+    'reused', false
   );
 end;
 $$;
 
 comment on function public.create_block_with_initial_setup(uuid, uuid, jsonb, jsonb, jsonb, boolean, text, text[], text, uuid, text, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric, uuid, text, text, jsonb) is
-  '0223. THE INITIAL SAVE of a treatment area together with the machine settings recorded on it, in ONE transaction: either the area and its settings both exist or neither does. Closes the only window the two separate commands leave - an area that silently has no machine settings while the practitioner believes she entered them. NOT about a phantom or partial submission: record_treatment_setup_submission has been atomic in itself since the submissions table landed. DELEGATES the area to create_block_with_entry (0166) so session_blocks keeps a single write path, forwarding all twenty-six parameters BY NAME; the declaration and forwarding were generated from that function''s own declaration and are pinned by a source-contract guard, which reduces but does not replace a database run. The settings are OPTIONAL - an area saved with none is an ordinary state. Returns {block_id, entry_id, setup}, where setup is NULL when nothing was entered and otherwise the submission result including its reused flag.';
+  '0223. THE INITIAL SAVE of a treatment area together with the machine settings recorded on it, in ONE transaction: either the area and its settings both exist or neither does. Closes the only window the two separate commands leave - an area that silently has no machine settings while the practitioner believes she entered them. NOT about a phantom or partial submission: record_treatment_setup_submission has been atomic in itself since the submissions table landed. DELEGATES the area to create_block_with_entry (0166) so session_blocks keeps a single write path, forwarding all twenty-six parameters BY NAME; the declaration and forwarding were generated from that function''s own declaration and are pinned by a source-contract guard, which reduces but does not replace a database run. The settings are OPTIONAL - an area saved with none is an ordinary state. IDEMPOTENT WHEN GIVEN A RETRY KEY: the key is claimed per (SESSION, key) in treatment_area_create_claims together with a digest of the whole initial payload, so a retry after a lost answer returns the ORIGINAL block, entry and submission instead of creating a second treatment area, while the same key carrying a different payload is refused. The session is the anchor because the block does not exist yet - which is why the submission command''s own per-block key could not do this job. A caller supplying no key keeps the plain forwarding behaviour. Returns {block_id, entry_id, setup, reused}, where setup is NULL when nothing was entered and otherwise the submission result including its own reused flag, and the outer reused says whether the AREA was created by this call.';
 
 -- ---------------------------------------------------------------------------
 -- GRANTS — re-asserted by name on every command

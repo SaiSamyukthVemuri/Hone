@@ -436,16 +436,57 @@ export function BlockSetupForm({
   /**
    * An initial save whose answer was lost.
    *
-   * HELD, NOT RETRIED, and unlike every other unresolved state in this
-   * feature that is not caution - it is the measured behaviour of the
-   * command. See `INITIAL_SAVE_UNRESOLVED`.
+   * RETRYABLE NOW, and it was not when this state was added: 0223's create
+   * claim anchors the retry key to the SESSION, so pressing Save again returns
+   * the original area instead of creating a second one. The flag survives
+   * because it still has a job - it keeps the key alive across attempts and
+   * puts the instruction on screen. See `INITIAL_SAVE_UNRESOLVED`.
    */
   const [saveUnresolved, setSaveUnresolved] = useState(false);
+  /**
+   * The retry key of the save in progress, or null when none is open.
+   *
+   * THIS IS THE WHOLE MECHANISM, and its lifetime is the subtle part - the
+   * same rule `save-attempt.ts` states for the edit path. The key identifies a
+   * SAVE, not an attempt:
+   *
+   *   * minted when a save starts and there is none;
+   *   * REUSED by every retry of that save, which is what makes the retry
+   *     safe - if the first attempt committed and only its answer was lost,
+   *     the command returns the original area;
+   *   * dropped when she changes the draft, because a changed draft is a
+   *     DIFFERENT save - EXCEPT while an attempt is unresolved, where dropping
+   *     it would turn the retry into a second area.
+   *
+   * A key minted per attempt makes idempotence useless while every test still
+   * passes, which is precisely why it is held here rather than inside
+   * `machineSetupForSave`.
+   */
+  const [pendingSaveKey, setPendingSaveKey] = useState<string | null>(null);
   const [machineDraft, setMachineDraft] = useState<{
     groups: GroupSubmission[];
     blocking: string | null;
     identity: PendingSetupIdentity;
   } | null>(null);
+
+  /**
+   * The collector's report, plus the key's lifetime rule.
+   *
+   * A CHANGED DRAFT IS A DIFFERENT SAVE, so the open key is dropped and the
+   * next attempt mints a new one. WHILE AN ATTEMPT IS UNRESOLVED it is kept
+   * instead: that key is the retry's safety, and dropping it because a
+   * remount reported an empty draft would turn the retry into a second area.
+   */
+  const onSettingDraftChanged = (
+    next: {
+      groups: GroupSubmission[];
+      blocking: string | null;
+      identity: PendingSetupIdentity;
+    } | null,
+  ) => {
+    setMachineDraft(next);
+    if (!saveUnresolved) setPendingSaveKey(null);
+  };
 
   /**
    * The settings to send with the area, or null.
@@ -467,9 +508,12 @@ export function BlockSetupForm({
     // typed under one machine could still be live after a switch and would be
     // saved under its own stale identity (Codex, db3373bc P1).
     const identity = chosen.identity;
-    const pending = prepareHandoff(identity, chosen.groups, () =>
-      crypto.randomUUID(),
-    );
+    // ONE KEY PER SAVE, reused by every attempt at it. `prepareHandoff` still
+    // mints through an injected function, so the module stays pure and a test
+    // can pin the key; what changed is that the function returns the HELD one.
+    const key = pendingSaveKey ?? crypto.randomUUID();
+    if (key !== pendingSaveKey) setPendingSaveKey(key);
+    const pending = prepareHandoff(identity, chosen.groups, () => key);
     if (!pending) return null;
     return {
       machineId: identity.deviceId,
@@ -646,13 +690,10 @@ export function BlockSetupForm({
       setError(machineDraft.blocking);
       return;
     }
-    // AN UNRESOLVED INITIAL SAVE IS NOT RETRYABLE. See the catch below: a
-    // second attempt creates a second treatment area, so the only safe next
-    // step is to reload and look.
-    if (saveUnresolved) {
-      setError(INITIAL_SAVE_UNRESOLVED);
-      return;
-    }
+    // AN UNRESOLVED INITIAL SAVE IS RETRYABLE, and this is where it used to be
+    // refused: the form returned early and told her to reload the chart,
+    // because a second attempt created a second treatment area. 0223's create
+    // claim closed that, so the retry now proceeds and carries the same key.
     const el = draft.energyLevel.trim();
     const elNum = el === "" ? null : Number(el);
     if (el !== "" && (!Number.isFinite(elNum) || (elNum as number) < 0)) {
@@ -887,6 +928,11 @@ export function BlockSetupForm({
         if ("unresolved" in res && res.unresolved) setSaveUnresolved(true);
         return;
       }
+      // THE SAVE IS CLOSED. The next one is a different save and mints its own
+      // key; keeping this one would make a deliberate second area look like a
+      // retry of the first and be answered with it.
+      setPendingSaveKey(null);
+      setSaveUnresolved(false);
       onCancel();
     });
   }
@@ -1125,7 +1171,7 @@ export function BlockSetupForm({
         // `create_block_with_initial_setup` writes the area and the settings
         // in one transaction. On an EXISTING block the panel records directly
         // and this is not supplied, so the two paths never both run.
-        onSettingDraft={block ? undefined : setMachineDraft}
+        onSettingDraft={block ? undefined : onSettingDraftChanged}
       />
 
       {copyMessage && (

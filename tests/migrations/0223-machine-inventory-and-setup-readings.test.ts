@@ -161,7 +161,7 @@ describe("0223 sits correctly in the migration sequence", () => {
 });
 
 describe("0223 is additive, and touches no existing value", () => {
-  it("creates its six tables and alters only practitioners", () => {
+  it("creates its seven tables and alters only practitioners", () => {
     expect(CODE).toMatch(/create table if not exists public\.studio_machines/);
     expect(CODE).toMatch(
       /create table if not exists public\.treatment_setup_readings/,
@@ -197,6 +197,25 @@ describe("0223 is additive, and touches no existing value", () => {
     expect(CODE).toMatch(
       /add column if not exists setup_submission_id uuid\s*\n?\s*references public\.treatment_setup_submissions/,
     );
+    // THE CREATE CLAIM: the receipt that makes the INITIAL save repeatable.
+    // The submission command's retry key is unique per BLOCK and this command
+    // creates the block, so a repeat had nothing to collide with and a lost
+    // answer produced a second treatment area - measured on a real database
+    // before this table existed, not reasoned about.
+    expect(CODE).toMatch(
+      /create table if not exists public\.treatment_area_create_claims/,
+    );
+    // UNIQUE PER (SESSION, KEY), which is the whole mechanism: the anchor has
+    // to be something that PRE-EXISTS the thing the key protects, and the
+    // session is the only such row here.
+    expect(CODE).toMatch(
+      /constraint treatment_area_create_claims_key_uniq\s*\n?\s*unique \(session_id, idempotency_key\)/,
+    );
+    // AND 0166 STAYS FROZEN. The earlier note in this migration predicted the
+    // fix would need an idempotency key on `create_block_with_entry` itself;
+    // it did not, and nothing here may edit that command.
+    expect(CODE).not.toMatch(/create or replace function public\.create_block_with_entry/);
+
     const alters = CODE.match(/^alter table public\.(\w+)/gm) ?? [];
     const altered = new Set(
       alters.map((a) => a.replace(/^alter table public\./, "")),
@@ -209,6 +228,7 @@ describe("0223 is additive, and touches no existing value", () => {
     altered.delete("machine_profile_mode_contract");
     altered.delete("treatment_setup_captures");
     altered.delete("treatment_setup_submissions");
+    altered.delete("treatment_area_create_claims");
     expect([...altered]).toEqual(["practitioners"]);
   });
 
@@ -1050,5 +1070,220 @@ describe("0223's INITIAL SAVE forwards 0166's command faithfully", () => {
 
   it("refuses to proceed if the area somehow came back empty", () => {
     expect(wrapperBlock()).toMatch(/The treatment area could not be created/);
+  });
+});
+
+describe("0223's INITIAL SAVE is idempotent through a session-scoped claim", () => {
+  // WHAT A SOURCE CONTRACT CAN AND CANNOT SAY HERE. It can hold the ORDER of
+  // the steps and the presence of each one; it cannot prove the command
+  // actually absorbs a retry. tests/db/machine-initial-save.db.test.ts does
+  // that against a real database, and the division is deliberate: 0204 shipped
+  // a command writing to a column that did not exist, applied clean, and
+  // passed its own source test.
+  //
+  // ITS OWN HELPERS. The forwarding describe above keeps `wrapperBlock` to
+  // itself, and reaching across would couple two sets of claims that fail for
+  // different reasons.
+  function command(): string {
+    const at = CODE.indexOf(
+      "create or replace function public.create_block_with_initial_setup(",
+    );
+    expect(at, "the initial-save command must exist").toBeGreaterThan(-1);
+    return CODE.slice(at).split("$$;")[0]!;
+  }
+
+  /** Everything between the digest and the lock - the digest expression. */
+  function digestExpr(): string {
+    const b = command();
+    const from = b.indexOf("v_digest := md5(");
+    const to = b.indexOf("pg_advisory_xact_lock");
+    expect(from, "the digest must exist").toBeGreaterThan(-1);
+    expect(to, "the advisory lock must exist").toBeGreaterThan(from);
+    return b.slice(from, to);
+  }
+
+  /** This command's OWN declared parameters, parsed rather than listed here. */
+  function declaredParams(): string[] {
+    const decl = command().split(")")[0]!;
+    return [...decl.matchAll(/^\s*(p_\w+)\s+\S/gm)].map((m) => m[1]!);
+  }
+
+  it("claims the key on the SESSION, because the block does not exist yet", () => {
+    // THE WHOLE MECHANISM IN ONE LINE. A retry key needs an anchor that
+    // PRE-EXISTS the thing it protects. The submission command's key is unique
+    // per BLOCK and this command CREATES the block, so a repeat had nothing to
+    // collide with - which is why a lost answer produced a second treatment
+    // area carrying a second copy of the settings.
+    const b = command();
+    expect(b).toContain("from public.treatment_area_create_claims");
+    expect(b).toContain("c.session_id = p_session_id");
+    expect(b).toContain("c.idempotency_key = v_key");
+  });
+
+  it("does the four steps IN ORDER: shape, authorization, digest, lock", () => {
+    // EACH ORDERING IS A SEPARATE CLAIM, and three are security or
+    // correctness properties rather than style:
+    //
+    //   shape before I/O       - a malformed call should not take locks on its
+    //                            way to being refused;
+    //   AUTHORIZATION BEFORE   - answering "does this key exist on this
+    //   THE CLAIM LOOKUP         session" first would tell a caller with no
+    //                            membership something about its records;
+    //   digest before the lock - it reads no tables, so holding the lock while
+    //                            computing it buys nothing;
+    //   LOCK BEFORE THE LOOKUP - the check, the create and the claim have to
+    //                            be ONE indivisible step, or two concurrent
+    //                            retries both create an area.
+    const b = command();
+    const steps = {
+      shape: b.indexOf("length(v_key) < 8"),
+      auth: b.indexOf("assert_session_writable(p_session_id, p_client_id)"),
+      digest: b.indexOf("v_digest := md5("),
+      lock: b.indexOf("pg_advisory_xact_lock"),
+      lookup: b.indexOf("from public.treatment_area_create_claims"),
+    };
+    for (const [name, i] of Object.entries(steps)) {
+      expect(i, `${name} is missing from the command`).toBeGreaterThan(-1);
+    }
+    expect(steps.shape, "the key's shape must be checked before any I/O").toBeLessThan(
+      steps.auth,
+    );
+    expect(steps.auth, "authorization must precede the claim lookup").toBeLessThan(
+      steps.lookup,
+    );
+    expect(
+      steps.digest,
+      "the digest must be built before the lock is taken",
+    ).toBeLessThan(steps.lock);
+    expect(steps.lock, "the lock must be taken before the lookup").toBeLessThan(
+      steps.lookup,
+    );
+  });
+
+  it("locks on (SESSION, key), so unrelated saves never wait on each other", () => {
+    expect(command()).toContain("p_session_id::text || ':area-create:' || v_key");
+  });
+
+  it("hashes the WHOLE payload - every parameter it would record", () => {
+    // A retry carrying the same key but a different AREA, probe lot or set of
+    // readings is a different save wearing a used key, and answering it with
+    // the first save's ids would report a creation that never happened.
+    //
+    // DERIVED FROM THE DECLARATION rather than listed by hand, so a parameter
+    // added to this command later and left out of the digest fails HERE
+    // instead of silently escaping the binding. That is the whole value of
+    // this test: a hand-written list would have to be remembered twice.
+    const skip = new Set([
+      // The key is what the digest is stored UNDER, not part of what it binds.
+      "p_setup_idempotency_key",
+      // Both are the claim's own scope: the session is the unique constraint's
+      // first column, and the client is re-asserted against it by
+      // assert_session_writable, which refuses rather than redirects.
+      "p_session_id",
+      "p_client_id",
+    ]);
+    const bound = declaredParams().filter((p) => !skip.has(p));
+    expect(
+      bound.length,
+      "the declaration should have parsed to the full parameter list",
+    ).toBe(27);
+    const expr = digestExpr();
+    for (const p of bound) {
+      expect(expr.includes(`'${p}',`), `${p} is recorded but not bound by the digest`)
+        .toBe(true);
+    }
+  });
+
+  it("trims numeric scale, so 120 and 120.0 are the same save", () => {
+    // They are the same number. Refusing a retry over a scale difference would
+    // be a DEFINITE refusal of a legitimate repeat, which is worse than the
+    // laxity it avoids.
+    const expr = digestExpr();
+    for (const p of [
+      "p_pulse_delay_seconds",
+      "p_galvanic_ma",
+      "p_thermolysis_duration_seconds",
+      "p_units_of_lye",
+    ]) {
+      expect(expr.includes(`trim_scale(${p})`), `${p} must be scale-normalised`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("canonicalises the setup groups the same way the save command does", () => {
+    // Otherwise the same save listed in a different order would be refused by
+    // one command and absorbed by the other.
+    expect(digestExpr()).toContain(
+      "jsonb_agg(g.value order by btrim(coalesce(g.value->>'group_key', '')))",
+    );
+  });
+
+  it("refuses a used key with a different payload, in its OWN words", () => {
+    // Distinguishable from the submission command's refusal, because the
+    // remedy differs: this one means a second treatment AREA was about to be
+    // created under a used key.
+    const b = command();
+    expect(b).toContain("already used to create a different treatment area");
+    expect(b).toContain("v_claim.payload_digest <> v_digest");
+  });
+
+  it("answers an absorbed retry with the ORIGINAL ids and says it is a reuse", () => {
+    const b = command();
+    expect(b).toContain("'block_id', v_claim.block_id");
+    expect(b).toContain("'entry_id', v_claim.entry_id");
+    expect(b).toContain("'reused', true");
+    // AND `reused` IS ALWAYS PRESENT, false on a fresh save: a caller reading
+    // this field must not have to treat "missing" as "fresh".
+    expect(b).toContain("'reused', false");
+    // The settings half is rebuilt in the SAME SHAPE a fresh save returns,
+    // counted from what is stored, so an absorbed retry is indistinguishable
+    // from the original except by the flag.
+    expect(b).toContain("'submission_id', v_claim.submission_id");
+    expect(b).toContain("from public.treatment_setup_captures c");
+  });
+
+  it("writes the claim LAST, and only when a key was given", () => {
+    const b = command();
+    const insertAt = b.indexOf("insert into public.treatment_area_create_claims");
+    const createAt = b.indexOf("from public.create_block_with_entry(");
+    expect(insertAt, "the claim is never written").toBeGreaterThan(-1);
+    // AFTER THE CREATE, because `block_id` is NOT NULL and a claim that cannot
+    // name its block answers nothing on a retry. Safe because the advisory
+    // lock - not the unique constraint - is what serialises the retries.
+    expect(createAt, "the area must be created before the claim").toBeLessThan(
+      insertAt,
+    );
+    // GUARDED BY THE KEY, so a caller that supplies none keeps the plain
+    // forwarding behaviour and writes no receipt.
+    const guardAt = b.lastIndexOf("if v_key <> ''", insertAt);
+    expect(guardAt, "the claim insert must sit inside a key guard").toBeGreaterThan(
+      createAt,
+    );
+  });
+
+  it("keeps the claim table out of every role's write reach", () => {
+    // Same posture as every other table here: the command is the only writer,
+    // and a member may read its own studio's rows.
+    for (const role of ["public", "anon", "authenticated", "service_role"]) {
+      expect(
+        CODE.includes(`revoke all on public.treatment_area_create_claims from ${role}`),
+        `direct DML is not revoked from ${role}`,
+      ).toBe(true);
+    }
+    expect(CODE).toContain(
+      "grant select on public.treatment_area_create_claims to authenticated",
+    );
+    expect(CODE).toContain(
+      "alter table public.treatment_area_create_claims enable row level security",
+    );
+    const policyAt = CODE.indexOf(
+      "create policy treatment_area_create_claims_member_select",
+    );
+    expect(policyAt, "the read policy must exist").toBeGreaterThan(-1);
+    expect(
+      CODE.slice(policyAt, policyAt + 400),
+      "the read policy must be scoped to studio membership",
+    ).toContain("is_studio_member(studio_id)");
   });
 });

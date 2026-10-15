@@ -203,7 +203,22 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     //     journey measured 22.3s gate-open for eight comparable steps, so this
     //     should land near it; it is UNMEASURED here and this number is to be
     //     replaced with the observed one.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(42);
+    //
+    // Now 43: MPX-03's machine-initial-save-retry.spec.ts, the fourth spec in
+    // `sessions` from this lane and the one with the least substitutable job.
+    // It drops the RESPONSE to the first Save - performing the request so the
+    // server commits, then failing the page's fetch - reads the database to
+    // prove the area is already there, and presses Save again. What that shows
+    // is that the APPLICATION reuses its retry key, which no database test can
+    // see: the DB proves the command absorbs a repeat carrying the same key,
+    // and a form minting a fresh key per attempt would leave every one of
+    // those tests passing with the hole wide open.
+    //
+    // COST, ESTIMATED AND MARKED AS SUCH. ONE test() at 390px, four steps,
+    // two saves and about eight queries - the lightest of the four. Its
+    // gate-closed half is one navigation and one query. UNMEASURED; to be
+    // replaced with the observed number.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(43);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {

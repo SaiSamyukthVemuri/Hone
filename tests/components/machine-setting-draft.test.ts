@@ -179,9 +179,13 @@ describe("the handoff's shape, pinned on source", () => {
   it("the FORM supplies it ONLY in create mode", () => {
     // On an existing block the panel records directly, so the two paths must
     // never both be live.
+    // THE HANDLER, not the setter. It wraps `setMachineDraft` to drop the open
+    // retry key - a changed draft is a different save - which is a rule the
+    // bare setter cannot carry.
     expect(read(FORM)).toMatch(
-      /onSettingDraft=\{block \? undefined : setMachineDraft\}/,
+      /onSettingDraft=\{block \? undefined : onSettingDraftChanged\}/,
     );
+    expect(read(FORM)).toMatch(/setMachineDraft\(next\)/);
   });
 
   it("the FORM refuses to save a half-finished draft", () => {
@@ -192,16 +196,40 @@ describe("the handoff's shape, pinned on source", () => {
     expect(src).toMatch(/setError\(machineDraft\.blocking\)/);
   });
 
-  it("the FORM holds an unresolved save instead of offering a retry", () => {
-    // MEASURED, not cautious. tests/db/machine-initial-save.db.test.ts showed
-    // that a repeated INITIAL save creates a second treatment area with a
-    // second copy of the settings, because the submission key is scoped per
-    // BLOCK and this path creates the block first. So the catch reports
-    // INITIAL_SAVE_UNRESOLVED and the next attempt is refused.
+  it("the FORM OFFERS the retry, and keeps its key alive to make it safe", () => {
+    // THIS ASSERTED THE OPPOSITE: that the form refused a second attempt,
+    // because a repeated INITIAL save created a second treatment area - the
+    // submission key is scoped per BLOCK and this path creates the block
+    // first. That was measured, not cautious, and it is why
+    // treatment_area_create_claims exists: the key is anchored to the SESSION
+    // now, so the repeat is absorbed.
+    //
+    // WHAT MUST BE TRUE INSTEAD, and all three parts matter:
     const src = read(FORM);
+    //   1. the unresolved state still reports itself, so she is told;
     expect(src).toMatch(/INITIAL_SAVE_UNRESOLVED/);
     expect(src).toMatch(/setSaveUnresolved\(true\)/);
-    expect(src).toMatch(/if \(saveUnresolved\)/);
+    //   2. the early return that refused the retry is GONE;
+    expect(src, "the form still refuses the retry").not.toMatch(
+      /if \(saveUnresolved\) \{\s*setError/,
+    );
+    //   3. and the key is HELD across attempts rather than minted per attempt,
+    //      which is the only thing that makes the retry safe. A fresh key per
+    //      attempt would leave every test here passing and the hole open.
+    expect(src).toMatch(/pendingSaveKey \?\? crypto\.randomUUID\(\)/);
+    expect(src).toMatch(/prepareHandoff\(identity, chosen\.groups, \(\) => key\)/);
+    //   ...and dropped on an acknowledged success, or a deliberate second area
+    //      would be answered with the first one.
+    expect(src).toMatch(/setPendingSaveKey\(null\)/);
+  });
+
+  it("the FORM keeps the key through a draft change ONLY while unresolved", () => {
+    // The two halves of the key's lifetime, and they pull in opposite
+    // directions: a changed draft is a DIFFERENT save, so the key is dropped -
+    // except while an attempt is unresolved, where dropping it would turn the
+    // retry into a second treatment area. A remount reporting an empty draft
+    // is exactly such a change.
+    expect(read(FORM)).toMatch(/if \(!saveUnresolved\) setPendingSaveKey\(null\)/);
   });
 
   it("the FORM computes the settings ONCE per attempt", () => {

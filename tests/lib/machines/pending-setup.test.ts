@@ -296,16 +296,36 @@ describe("the handoff feeds the EXISTING action with no new server code", () => 
 // the point rather than an inconsistency.
 // ---------------------------------------------------------------------------
 describe("the wording for a lost initial save", () => {
-  it("tells her to LOOK, not to retry", () => {
-    expect(INITIAL_SAVE_UNRESOLVED).toMatch(/reload this chart/i);
-    expect(INITIAL_SAVE_UNRESOLVED).toMatch(/do not save again/i);
+  it("tells her to RETRY, which is the instruction that inverted", () => {
+    // THIS ASSERTED THE OPPOSITE, and the old expectation is the reason the
+    // claim table exists: "reload this chart" and "do not save again", because
+    // a second attempt created a second treatment area. 0223's create claim
+    // anchors the retry key to the SESSION, so the repeat is absorbed and the
+    // honest instruction is the simple one.
+    expect(INITIAL_SAVE_UNRESOLVED).toMatch(/press save again/i);
+    expect(INITIAL_SAVE_UNRESOLVED, "the old advice must be gone").not.toMatch(
+      /do not save again/i,
+    );
+    expect(INITIAL_SAVE_UNRESOLVED).not.toMatch(/reload this chart/i);
   });
 
-  it("says WHY, in terms of what a second save would do", () => {
-    // Without the consequence she has no reason to believe the instruction,
-    // and "do not save again" on a clinical form reads as a bug.
-    expect(INITIAL_SAVE_UNRESOLVED).toMatch(/second area/i);
+  it("says WHY the retry is safe, in terms of what she will get back", () => {
+    // Without the consequence she has no reason to believe the instruction. It
+    // used to have to justify a refusal; now it has to justify a retry, and
+    // the thing that makes it safe is the key.
+    expect(INITIAL_SAVE_UNRESOLVED).toMatch(/retry key/i);
+    expect(INITIAL_SAVE_UNRESOLVED).toMatch(/same area/i);
+    // AND IT STILL NAMES THE DUPLICATE SHE IS AVOIDING, because that is what
+    // makes "press Save again" credible on a clinical form.
     expect(INITIAL_SAVE_UNRESOLVED).toMatch(/second copy/i);
+  });
+
+  it("warns against EDITING before the retry, the part that did not change", () => {
+    // The key identifies a SAVE, not an attempt. A changed draft is a
+    // different save, so retrying after an edit either records the edited
+    // version - if the first attempt never arrived - or is refused as a used
+    // key if it did. Neither is harmful and both are confusing.
+    expect(INITIAL_SAVE_UNRESOLVED).toMatch(/without changing anything/i);
   });
 
   it("does not claim the save failed", () => {
@@ -315,25 +335,33 @@ describe("the wording for a lost initial save", () => {
     expect(INITIAL_SAVE_UNRESOLVED).toMatch(/may have been/i);
   });
 
-  it("is DIFFERENT advice from the edit path's", () => {
-    // MY FIRST SPELLING OF THIS BANNED THE SUBSTRING "save again:" - which
-    // this very sentence contains, in "Do NOT save again:". The substring is
-    // common to both messages; the ADVICE is what differs, and guessing at a
-    // phrase instead of comparing the two constants is what made the test
-    // wrong.
+  it("now AGREES with the edit path on the advice, and differs on the noun", () => {
+    // THIS TEST EXISTED TO HOLD THE TWO MESSAGES APART, and that was right
+    // while the two paths genuinely behaved differently: the edit path's key
+    // absorbed a repeat and the create path's could not. Both do now, so
+    // asserting they still disagree would be pinning a difference that has
+    // become a defect.
     //
-    // Compared against the real edit-path wording, so the two cannot drift
-    // into agreeing: one tells her to press Save again because the key
-    // absorbs the repeat, the other tells her not to because it does not.
+    // WHAT IS STILL ASSERTED, because it is still true: they are not the same
+    // sentence. One is about settings recorded against an existing treatment,
+    // the other about the treatment area itself - and telling her "these
+    // settings may not have been recorded" when the whole AREA may be missing
+    // would understate what she has to check.
     expect(INITIAL_SAVE_UNRESOLVED).not.toBe(UNKNOWN_NOTE);
     expect(UNKNOWN_NOTE, "the edit path offers the retry").toMatch(
       /press save again/i,
     );
-    expect(INITIAL_SAVE_UNRESOLVED, "the create path refuses it").toMatch(
-      /do not save again/i,
+    expect(INITIAL_SAVE_UNRESOLVED, "and so does the create path now").toMatch(
+      /press save again/i,
     );
-    // And only one of them promises the database will absorb it.
-    expect(UNKNOWN_NOTE).toMatch(/returns the same capture/i);
-    expect(INITIAL_SAVE_UNRESOLVED).not.toMatch(/returns the same capture/i);
+    // THE NOUN IS THE DIFFERENCE: the area, not the settings.
+    expect(INITIAL_SAVE_UNRESOLVED).toMatch(/treatment area/i);
+    expect(UNKNOWN_NOTE).toMatch(/these settings/i);
+    // MY FIRST SPELLING OF THE OLD VERSION OF THIS TEST banned the substring
+    // "save again:" - which the message itself contained, in "Do NOT save
+    // again:". The substring was common to both; the ADVICE was what differed.
+    // Guessing at a phrase instead of comparing the two constants is what made
+    // that test wrong, and it is why both constants are still read here rather
+    // than one being described.
   });
 });

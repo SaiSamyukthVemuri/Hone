@@ -1,3 +1,4 @@
+import { Pool, type PoolClient } from "pg";
 import { afterAll, describe, expect, it } from "vitest";
 
 import {
@@ -5,6 +6,7 @@ import {
   asRole,
   asUser,
   closePool,
+  resolveLocalDbUrl,
   seedSession,
   seedStudio,
   type SeededStudio,
@@ -33,9 +35,52 @@ import {
 const PROFILE = "fixture:db-initial";
 const VERSION = 1;
 
+/**
+ * A SECOND POOL, for the ONE test that needs two connections at once.
+ *
+ * `asUser` opens its own transaction and commits at the end, which is right
+ * for everything else and useless for a concurrency proof: a lock held inside
+ * it is released before the next statement in the test runs. The concurrent
+ * retry below drives raw clients so one transaction can be held OPEN while
+ * another runs.
+ */
+const pool = new Pool({ connectionString: resolveLocalDbUrl(), max: 4 });
+
 afterAll(async () => {
+  await pool.end();
   await closePool();
 });
+
+/** A raw client, in a transaction, acting as one signed-in practitioner. */
+async function beginAsUser(userId: string): Promise<PoolClient> {
+  const c = await pool.connect();
+  await c.query("begin");
+  await c.query("set local role authenticated");
+  await c.query("select set_config('request.jwt.claims', $1, true)", [
+    JSON.stringify({ sub: userId, role: "authenticated" }),
+  ]);
+  // A BOUND, so a bug here fails the test instead of hanging the suite.
+  // lock_timeout covers advisory lock waits as well as row locks.
+  await c.query("set local lock_timeout = '8s'");
+  return c;
+}
+
+/** Wait until `pid` is actually BLOCKED on a lock, or give up. */
+async function waitUntilBlocked(pid: number): Promise<boolean> {
+  // POLLED ON THE SERVER'S OWN VIEW, not slept. A fixed sleep is the classic
+  // way a concurrency test passes without the race it claims to exercise ever
+  // having happened.
+  for (let i = 0; i < 200; i += 1) {
+    const r = await adminQuery(
+      `select count(*)::int as n from pg_stat_activity
+        where pid = $1 and wait_event_type = 'Lock'`,
+      [pid],
+    );
+    if ((r.rows[0].n as number) > 0) return true;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return false;
+}
 
 async function registerMachine(studio: SeededStudio): Promise<string> {
   await adminQuery(
@@ -141,6 +186,8 @@ type SaveOut = {
   block_id: string;
   entry_id: string | null;
   setup: { submission_id: string; groups: number; readings: number; reused: boolean } | null;
+  /** Whether the AREA was created by this call, or answered from a claim. */
+  reused: boolean;
 };
 
 async function initialSave(
@@ -163,6 +210,64 @@ async function blocksIn(sessionId: string): Promise<number> {
     [sessionId],
   );
   return r.rows[0].n as number;
+}
+
+/** The create claims of one session - the receipts, in order. */
+async function claimsIn(sessionId: string) {
+  const r = await adminQuery(
+    `select idempotency_key, payload_digest, block_id, entry_id, submission_id
+       from public.treatment_area_create_claims
+      where session_id = $1
+      order by claimed_at`,
+    [sessionId],
+  );
+  return r.rows as Array<{
+    idempotency_key: string;
+    payload_digest: string;
+    block_id: string;
+    entry_id: string | null;
+    submission_id: string | null;
+  }>;
+}
+
+/**
+ * Everything one session could have accumulated, for the no-writes claims.
+ *
+ * SCOPED TO THE SESSION rather than to the block, deliberately: a refused
+ * retry that created a SECOND area would be invisible to any count scoped to
+ * the first one.
+ */
+async function sessionTotals(sessionId: string) {
+  const r = await adminQuery(
+    `select
+       (select count(*)::int from public.session_blocks
+         where session_id = $1) as blocks,
+       -- electrolysis_entries carries its own session_id, and its block
+       -- column is block_id rather than session_block_id - the clinical
+       -- tables below use the longer name and this one does not.
+       (select count(*)::int from public.electrolysis_entries e
+         where e.session_id = $1) as entries,
+       (select count(*)::int from public.treatment_setup_submissions s
+         join public.session_blocks b on b.id = s.session_block_id
+        where b.session_id = $1) as submissions,
+       (select count(*)::int from public.treatment_setup_captures c
+         join public.session_blocks b on b.id = c.session_block_id
+        where b.session_id = $1) as captures,
+       (select count(*)::int from public.treatment_setup_readings g
+         join public.session_blocks b on b.id = g.session_block_id
+        where b.session_id = $1) as readings,
+       (select count(*)::int from public.treatment_area_create_claims cl
+         where cl.session_id = $1) as claims`,
+    [sessionId],
+  );
+  return r.rows[0] as {
+    blocks: number;
+    entries: number;
+    submissions: number;
+    captures: number;
+    readings: number;
+    claims: number;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -412,28 +517,192 @@ describe("0223 · a refused settings payload takes the area with it", () => {
 // Part 3 — what the retry key does and does NOT cover here
 // ---------------------------------------------------------------------------
 
-describe("0223 · the retry key does NOT make the INITIAL save idempotent", () => {
-  it("a repeated initial save creates a SECOND area and a SECOND submission", async () => {
-    // A FINDING, NOT A FEATURE, and it is recorded as a test so it cannot be
-    // forgotten or quietly assumed away.
-    //
-    // `record_treatment_setup_submission`'s key is unique per (BLOCK, key).
-    // The initial save creates a NEW block first, so the retry's key is
-    // scoped to a block that did not exist when the first attempt ran - it
-    // cannot collide, and nothing is absorbed. The area is duplicated too,
-    // because `create_block_with_entry` has no idempotency key of its own.
-    //
-    // CONSEQUENCE, stated plainly: a lost response on the INITIAL save is NOT
-    // safely retryable. Retrying creates a second treatment area carrying a
-    // second copy of the settings. The retry key protects a save against an
-    // EXISTING block, which is the edit path, and that is proved in
-    // tests/db/machine-setup-submission.db.test.ts.
-    //
-    // The honest UI consequence is that an unresolved initial save must send
-    // her to look at the chart, not offer a retry. Closing it properly needs
-    // an idempotency key on the block create, which is a change to 0166's
-    // command and a decision above this test.
+describe("0223 · the initial save IS idempotent per (session, retry key)", () => {
+  // THIS BLOCK ASSERTED THE OPPOSITE, and that measurement is why the claim
+  // table exists. It read: "a repeated initial save creates a SECOND area and
+  // a SECOND submission", and it was correct - `record_treatment_setup_
+  // submission`'s key is unique per (BLOCK, key), the initial save creates the
+  // block first, so the retry's key was scoped to a row that did not exist on
+  // the first attempt. Nothing could collide and nothing was absorbed.
+  //
+  // IT ALSO PREDICTED THE WRONG FIX: "closing it properly needs an idempotency
+  // key on the block create, which is a change to 0166's command". It does not.
+  // A key needs an anchor that PRE-EXISTS what it protects, and the SESSION is
+  // one - so the claim is unique per (session, key), 0166 is untouched, and the
+  // UI can offer a retry instead of sending her to look at the chart.
+  //
+  // The old expectations are not deleted so much as inverted: every one of
+  // them has a successor below asserting the opposite outcome.
+
+  it("a repeated initial save is ABSORBED: one area, one submission", async () => {
     const studio = await seedStudio("init-retry");
+    const { sessionId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+    const before = await blocksIn(sessionId);
+    const payload = {
+      machine: machineId,
+      groups: JSON.stringify([group("g1", [1], "120")]),
+    };
+
+    const first = await initialSave(studio, sessionId, payload);
+    const retry = await initialSave(studio, sessionId, payload);
+
+    // THE ORIGINAL IDS, so the caller can carry on rather than being told to
+    // go and look at the chart.
+    expect(retry.block_id, "the retry created a second area").toBe(first.block_id);
+    expect(retry.entry_id).toBe(first.entry_id);
+    expect(retry.setup!.submission_id).toBe(first.setup!.submission_id);
+    // AND IT SAYS SO, on both levels: the area was not created by this call,
+    // and neither was the submission.
+    expect(first.reused, "the FIRST call cannot be a reuse").toBe(false);
+    expect(retry.reused, "an absorbed retry must say so").toBe(true);
+    expect(retry.setup!.reused).toBe(true);
+
+    expect(await blocksIn(sessionId), "exactly one area exists").toBe(before + 1);
+    const totals = await sessionTotals(sessionId);
+    expect(totals.submissions, "one save, one submission").toBe(1);
+    expect(totals.captures, "one group, one capture").toBe(1);
+    expect(totals.readings).toBe(1);
+    expect(totals.claims, "one key, one receipt").toBe(1);
+  });
+
+  it("the absorbed retry reports what is STORED, in a fresh save's shape", async () => {
+    // A caller builds her confirmation from these numbers. Returning zeros, or
+    // a different shape, would make an absorbed retry indistinguishable from a
+    // save that recorded nothing.
+    const studio = await seedStudio("init-retry-shape");
+    const { sessionId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+    const payload = {
+      machine: machineId,
+      groups: JSON.stringify([group("g1", [1], "120"), group("g2", [2], "80")]),
+    };
+
+    const first = await initialSave(studio, sessionId, payload);
+    const retry = await initialSave(studio, sessionId, payload);
+
+    expect(first.setup!.groups).toBe(2);
+    expect(first.setup!.readings).toBe(2);
+    expect(retry.setup!.groups, "the retry under-reported the groups").toBe(2);
+    expect(retry.setup!.readings).toBe(2);
+    expect(Object.keys(retry.setup!).sort()).toEqual(
+      Object.keys(first.setup!).sort(),
+    );
+  });
+
+  it("the claim NAMES what the key produced", async () => {
+    // A receipt that could not name its block would prove a repeat had
+    // happened and still leave the caller unable to continue.
+    const studio = await seedStudio("init-claim-row");
+    const { sessionId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+
+    const out = await initialSave(studio, sessionId, {
+      machine: machineId,
+      groups: JSON.stringify([group("g1", [1], "120")]),
+    });
+
+    const claims = await claimsIn(sessionId);
+    expect(claims).toHaveLength(1);
+    expect(claims[0]!.block_id).toBe(out.block_id);
+    expect(claims[0]!.entry_id).toBe(out.entry_id);
+    expect(claims[0]!.submission_id).toBe(out.setup!.submission_id);
+    expect(claims[0]!.payload_digest).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it("refuses the same key with a DIFFERENT AREA, and writes nothing", async () => {
+    // The digest covers the WHOLE payload, not only the settings: answering
+    // this with the first save's ids would report a creation that never
+    // happened, and the area she just typed would be silently discarded.
+    const studio = await seedStudio("init-key-area");
+    const { sessionId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+
+    await initialSave(studio, sessionId, {
+      machine: machineId,
+      groups: JSON.stringify([group("g1", [1], "120")]),
+    });
+    const before = await sessionTotals(sessionId);
+
+    await expect(
+      initialSave(studio, sessionId, {
+        machine: machineId,
+        area: "lip",
+        areasList: ["lip"],
+        groups: JSON.stringify([group("g1", [1], "120")]),
+      }),
+    ).rejects.toThrow(/already used to create a different treatment area/i);
+
+    // NO WRITES AT ALL, in any of the six places a save touches - and scoped
+    // to the SESSION, because a refused retry that created a second area would
+    // be invisible to any count scoped to the first one.
+    expect(await sessionTotals(sessionId)).toEqual(before);
+  });
+
+  it("refuses the same key with DIFFERENT SETTINGS, and writes nothing", async () => {
+    const studio = await seedStudio("init-key-settings");
+    const { sessionId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+
+    await initialSave(studio, sessionId, {
+      machine: machineId,
+      groups: JSON.stringify([group("g1", [1], "120")]),
+    });
+    const before = await sessionTotals(sessionId);
+
+    await expect(
+      initialSave(studio, sessionId, {
+        machine: machineId,
+        groups: JSON.stringify([group("g1", [1], "150")]),
+      }),
+    ).rejects.toThrow(/already used to create a different treatment area/i);
+    expect(await sessionTotals(sessionId)).toEqual(before);
+  });
+
+  it("refuses the same key with a DIFFERENT CHARTING SCALAR too", async () => {
+    // Every parameter the save records is bound, not just the obvious ones. A
+    // changed minutes count is the same clinical act with a different fact in
+    // it, and absorbing it would discard the correction.
+    const studio = await seedStudio("init-key-scalar");
+    const { sessionId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+
+    await initialSave(studio, sessionId, { machine: machineId });
+    const before = await sessionTotals(sessionId);
+
+    await expect(
+      initialSave(studio, sessionId, { machine: machineId, minutes: 23 }),
+    ).rejects.toThrow(/already used to create a different treatment area/i);
+    expect(await sessionTotals(sessionId)).toEqual(before);
+  });
+
+  it("treats 120 and 120.0 as the SAME save", async () => {
+    // They are the same number. A refusal over a scale difference would be a
+    // definite refusal of a legitimate repeat, which is worse than the laxity
+    // it avoids - hence trim_scale on every numeric in the digest.
+    const studio = await seedStudio("init-key-scale");
+    const { sessionId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+
+    const first = await initialSave(studio, sessionId, {
+      machine: machineId,
+      lye: 88.5,
+    });
+    const retry = await initialSave(studio, sessionId, {
+      machine: machineId,
+      lye: "88.50",
+    });
+    expect(retry.block_id, "a trailing zero was read as a different save").toBe(
+      first.block_id,
+    );
+    expect(retry.reused).toBe(true);
+  });
+
+  it("CONTROL: a DIFFERENT key creates a second area, deliberately", async () => {
+    // Idempotence must not become an inability to chart two areas in one
+    // session. A new key is a new save, which is what pressing Save a second
+    // time on a second area IS.
+    const studio = await seedStudio("init-second-area");
     const { sessionId } = await seedSession(studio);
     const machineId = await registerMachine(studio);
     const before = await blocksIn(sessionId);
@@ -442,18 +711,164 @@ describe("0223 · the retry key does NOT make the INITIAL save idempotent", () =
       machine: machineId,
       groups: JSON.stringify([group("g1", [1], "120")]),
     });
-    const retry = await initialSave(studio, sessionId, {
+    const second = await initialSave(studio, sessionId, {
+      machine: machineId,
+      key: "initial-save-key-0002",
+      area: "lip",
+      areasList: ["lip"],
+      groups: JSON.stringify([group("g1", [1], "90")]),
+    });
+
+    expect(second.block_id).not.toBe(first.block_id);
+    expect(second.reused).toBe(false);
+    expect(await blocksIn(sessionId)).toBe(before + 2);
+    expect(await claimsIn(sessionId)).toHaveLength(2);
+  });
+
+  it("CONTROL: with NO SETTINGS the claim still absorbs, and setup stays null", async () => {
+    // An area saved with no machine settings is an ordinary save. The receipt
+    // records that it had none, and a retry must not acquire some.
+    const studio = await seedStudio("init-no-setup");
+    const { sessionId } = await seedSession(studio);
+    const before = await blocksIn(sessionId);
+
+    const first = await initialSave(studio, sessionId, {});
+    const retry = await initialSave(studio, sessionId, {});
+
+    expect(first.setup, "nothing was entered").toBeNull();
+    expect(retry.setup, "a retry must not invent settings").toBeNull();
+    expect(retry.block_id).toBe(first.block_id);
+    expect(retry.reused).toBe(true);
+    expect(await blocksIn(sessionId)).toBe(before + 1);
+    const claims = await claimsIn(sessionId);
+    expect(claims).toHaveLength(1);
+    expect(claims[0]!.submission_id, "a save with no settings has no submission")
+      .toBeNull();
+  });
+
+  it("CONTROL: with NO KEY nothing is claimed and the old behaviour stands", async () => {
+    // DELIBERATELY PRESERVED, not an oversight. Idempotence requires a caller
+    // that mints one key per save and REUSES it on a retry; a caller that
+    // supplies none cannot be given it, and inventing a key here - hashing the
+    // payload, say - would make two genuinely separate saves of identical
+    // settings collapse into one.
+    const studio = await seedStudio("init-no-key");
+    const { sessionId } = await seedSession(studio);
+    const before = await blocksIn(sessionId);
+
+    const first = await initialSave(studio, sessionId, { key: null });
+    const again = await initialSave(studio, sessionId, { key: null });
+
+    expect(again.block_id).not.toBe(first.block_id);
+    expect(again.reused).toBe(false);
+    expect(await blocksIn(sessionId), "two areas, as before the claim").toBe(
+      before + 2,
+    );
+    expect(await claimsIn(sessionId), "no key, no receipt").toHaveLength(0);
+  });
+
+  it("refuses a key too short to be unique, before touching anything", async () => {
+    const studio = await seedStudio("init-key-short");
+    const { sessionId } = await seedSession(studio);
+    const before = await sessionTotals(sessionId);
+
+    await expect(
+      initialSave(studio, sessionId, { key: "short" }),
+    ).rejects.toThrow(/at least 8 characters/i);
+    expect(await sessionTotals(sessionId)).toEqual(before);
+  });
+
+  it("scopes the key to its SESSION, so two visits never collide", async () => {
+    // The same client's next visit is a different session, and a key is only
+    // ever reused within the save that minted it. A key accidentally shared
+    // across sessions must not make the second visit answer with the first
+    // visit's area.
+    const studio = await seedStudio("init-key-session");
+    const a = await seedSession(studio);
+    const b = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+    const payload = {
+      machine: machineId,
+      groups: JSON.stringify([group("g1", [1], "120")]),
+    };
+
+    const first = await initialSave(studio, a.sessionId, payload);
+    const other = await initialSave(studio, b.sessionId, payload);
+
+    expect(other.block_id).not.toBe(first.block_id);
+    expect(other.reused).toBe(false);
+    expect(await claimsIn(a.sessionId)).toHaveLength(1);
+    expect(await claimsIn(b.sessionId)).toHaveLength(1);
+  });
+
+  it("CONCURRENT retries: the second WAITS, then is absorbed", async () => {
+    // THE RACE, which is what a lost response actually looks like: the browser
+    // retries while the first attempt is still in flight. Without the advisory
+    // lock both calls find no claim, BOTH create a treatment area, and the
+    // second then dies on the unique constraint - after the duplicate area was
+    // written and rolled back, reported to her as a failure.
+    //
+    // SEQUENCED SO IT CANNOT SELF-DEADLOCK: A runs to completion and keeps its
+    // transaction open, B is launched and PROVED to be waiting, then A is
+    // committed and B allowed to finish.
+    const studio = await seedStudio("init-concurrent");
+    const { sessionId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+    const params = args({
+      session: sessionId,
+      client: studio.clientId,
       machine: machineId,
       groups: JSON.stringify([group("g1", [1], "120")]),
     });
 
-    expect(retry.block_id).not.toBe(first.block_id);
-    expect(retry.setup!.submission_id).not.toBe(first.setup!.submission_id);
-    expect(retry.setup!.reused, "nothing was absorbed").toBe(false);
-    expect(
-      await blocksIn(sessionId),
-      "two areas exist, which is the limitation this test records",
-    ).toBe(before + 2);
+    const a = await beginAsUser(studio.userId);
+    const b = await beginAsUser(studio.userId);
+    try {
+      const first = (await a.query(SQL, params)).rows[0].r as SaveOut;
+      expect(first.reused).toBe(false);
+
+      const bPid = (await b.query("select pg_backend_pid() as pid")).rows[0]
+        .pid as number;
+      const runB = b.query(SQL, params);
+
+      // IT MUST BLOCK. If B sailed through, the two calls were never
+      // concurrent and everything below would hold for two sequential saves -
+      // the vacuity guard for this whole test.
+      expect(
+        await waitUntilBlocked(bPid),
+        "the retry never waited, so the two calls were never concurrent",
+      ).toBe(true);
+
+      await a.query("commit");
+      const [rb] = await Promise.allSettled([runB]);
+      await b.query("commit").catch(() => undefined);
+
+      if (rb.status === "rejected") {
+        const message = String(rb.reason);
+        // NAMED SEPARATELY, because each means something different: a 23505 is
+        // the defect the lock prevents, a deadlock is a lock-ordering bug, a
+        // timeout means B waited past the bound instead of being absorbed.
+        expect(message, "the concurrent retry hit the unique constraint").not.toMatch(
+          /duplicate key|create_claims_key_uniq|23505/i,
+        );
+        expect(message, "the concurrent retry DEADLOCKED").not.toMatch(/deadlock/i);
+        expect(message, "the concurrent retry timed out").not.toMatch(
+          /lock timeout|canceling statement/i,
+        );
+        throw new Error(`the concurrent retry failed unexpectedly: ${message}`);
+      }
+
+      const second = rb.value.rows[0].r as SaveOut;
+      expect(second.block_id, "two areas were created").toBe(first.block_id);
+      expect(second.reused).toBe(true);
+      expect(await blocksIn(sessionId), "exactly one area exists").toBe(1);
+      expect(await claimsIn(sessionId)).toHaveLength(1);
+    } finally {
+      await a.query("rollback").catch(() => undefined);
+      await b.query("rollback").catch(() => undefined);
+      a.release();
+      b.release();
+    }
   });
 
   it("a SECOND save against the block it created IS absorbed", async () => {
