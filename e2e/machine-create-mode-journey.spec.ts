@@ -329,11 +329,49 @@ test("create mode: choose the machine, save the block, record one save, retrieve
       "the RECORDING form belongs to a block that already exists",
     ).toBe(0);
 
-    // Entered now; step 3's single Save is what writes them.
+    // DELIBERATELY DIFFERENT NUMBERS from the ones re-entered in step 2b.
+    // If a machine switch left this draft live, step 5's readback would find
+    // THESE values rather than the re-entered ones - so the staleness is
+    // visible as a wrong number, not as a coincidence.
+    await page.getByTestId("reading-current").fill("99");
+    await page.getByTestId("reading-duration").fill("111.1");
+    await page.getByTestId("reading-energy_shown").fill("9.99");
+    await noOverflow(page);
+  });
+
+  await test.step("2b: SWITCHING AWAY AND BACK discards what was typed", async () => {
+    // SAM'S PROOF ITEM, and the defect Codex found at db3373bc P1.
+    //
+    // The panel remounts the collector when the machine or mode changes, so
+    // its fields clear - but the HOST FORM held the draft it was last told
+    // about, and the collector said nothing until the next keystroke. So a
+    // Save after a switch could send the PREVIOUS machine's values: numbers
+    // she never read off the unit now chosen, recorded permanently.
+    //
+    // There is only one registered unit in this journey, so the switch is
+    // through "Choose machine…" - the empty option, which is how a selection
+    // is cleared - and back. That exercises BOTH shapes of the fix: the
+    // collector vanishing while nothing is chosen (the panel clears the host),
+    // and the collector remounting when it is chosen again (it reports empty).
+    await page.getByTestId("machine-select").selectOption("");
+    await expect(page.getByTestId("machine-setting-draft")).toHaveCount(0, {
+      timeout: T,
+    });
+
+    await page.getByTestId("machine-select").selectOption(machineId);
+    await expect(page.getByTestId("machine-setting-draft")).toBeVisible({
+      timeout: T,
+    });
+    // THE FIELDS ARE EMPTY AGAIN, which is the visible half.
+    await expect(page.getByTestId("reading-current")).toHaveValue("");
+
+    // AND THE INVISIBLE HALF: re-enter the values so step 3 has something to
+    // save. If the host had kept the stale draft, step 5's readback would
+    // find the values typed BEFORE the switch - and they are deliberately
+    // different numbers, so it would fail rather than coincide.
     await page.getByTestId("reading-current").fill("120");
     await page.getByTestId("reading-duration").fill("300.5");
     await page.getByTestId("reading-energy_shown").fill("1.25");
-    await noOverflow(page);
   });
 
   await test.step("3: saving the settings block creates it, and the panel becomes recordable", async () => {
@@ -441,7 +479,19 @@ test("create mode: choose the machine, save the block, record one save, retrieve
     // block in step 3, with no channel because step 2 named none.
     const initial = caps.find((c) => c.revision === 1 && c.group_key === "g1")!;
     expect(initial.setup_submission_id).toBe(firstSubmission);
-    expect(initial.channels, "step 2 selected no probe").toEqual([]);
+    expect(initial.channels, "step 2b selected no probe").toEqual([]);
+
+    // THE STALE-DRAFT PROOF. Step 2 typed 99 and then switched machines; step
+    // 2b re-entered 120. The record must hold 120 - the value entered under
+    // the machine that was actually chosen when she saved.
+    const initialReadings = (await readingsFor(blockId)).filter(
+      (r) => r.group_key === initial.group_key,
+    );
+    const initialCurrent = initialReadings.find((r) => r.field_key === "current")!;
+    expect(
+      initialCurrent.value_numeric,
+      "a draft typed before a machine switch was saved",
+    ).toBe("120");
 
     // HELD FOR STEP 6, so a reload is compared against what was actually
     // there rather than against a number written earlier in the file.

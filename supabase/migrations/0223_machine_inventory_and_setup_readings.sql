@@ -943,12 +943,32 @@ create table if not exists public.treatment_setup_submissions (
   idempotency_key text not null
     check (length(btrim(idempotency_key)) between 8 and 100),
 
+  -- WHAT THE KEY WAS USED FOR, so a retry cannot absorb a DIFFERENT save.
+  --
+  -- The key alone identifies an attempt, not its content. Reusing it with the
+  -- same block, machine, profile version and mode but DIFFERENT groups,
+  -- channels, fields or values was accepted as a retry: the command returned
+  -- the ORIGINAL submission with reused=true and the new values were silently
+  -- discarded (Codex, db3373bc P2). Silently discarding clinical values she
+  -- entered is worse than refusing the save.
+  --
+  -- A DIGEST RATHER THAN THE PAYLOAD. What is needed is only "is this the
+  -- same save", so storing the readings a second time would duplicate
+  -- clinical data for a comparison. Computed over a CANONICAL form - groups
+  -- ordered by key, and jsonb already normalises object keys - so the same
+  -- save spelled in a different group order still matches.
+  payload_digest text not null
+    check (length(payload_digest) = 32),
+
   recorded_by_practitioner_id uuid,
   recorded_at timestamptz not null default now(),
 
   constraint treatment_setup_submissions_idempotency_uniq
     unique (session_block_id, idempotency_key)
 );
+
+comment on column public.treatment_setup_submissions.payload_digest is
+  '0223. md5 of the CANONICAL settings payload this save was made with - groups ordered by key, so the same save spelled in a different order still matches. Compared when a retry key is reused: the same key with DIFFERENT groups, channels, fields or values is a different save and is REFUSED, because returning the original would silently discard the values the practitioner just entered. The key identifies an attempt; the digest is what binds it to its content.';
 
 comment on table public.treatment_setup_submissions is
   '0223. ONE Save of machine settings, tying together the setting-group captures it produced. Records the setup identity the Save was made under (unit, profile version, mode), so a Save under a different machine or mode is necessarily a different submission and a stale group cannot reappear when a practitioner returns to a machine she had left. `idempotency_key` makes a retry after a LOST RESPONSE safe: repeating the same Save returns the original submission rather than appending a second capture. Each capture keeps its own revision, timestamp and observation source; this does not flatten them and must never be read as "all observed at one instant".';
@@ -1565,6 +1585,7 @@ declare
   v_channels smallint[];
   v_dup_channel smallint;
   v_dup_group text;
+  v_digest text;
 begin
   -- PAYLOAD SHAPE FIRST, because it costs no I/O and a malformed call should
   -- not take locks on its way to being refused.
@@ -1591,6 +1612,22 @@ begin
       using errcode = 'check_violation';
   end if;
 
+  -- WHAT THIS KEY IS BEING USED FOR, canonicalised before it is hashed.
+  --
+  -- ORDERED BY GROUP KEY so the same save sent with its groups in a different
+  -- order still matches - the command writes them in sorted order anyway, for
+  -- the deadlock reason below, so a digest over the input order would make an
+  -- identical save look different purely because of how the caller listed it.
+  -- jsonb normalises object keys itself, so nothing else needs canonicalising.
+  select md5(
+           coalesce(
+             jsonb_agg(g.value order by btrim(coalesce(g.value->>'group_key', '')))::text,
+             '[]'
+           )
+         )
+    into v_digest
+    from jsonb_array_elements(p_groups) g;
+
   -- SERIALISE THIS SAVE AGAINST ITS OWN RETRIES.
   --
   -- Without this, two concurrent retries of the same lost Save both find no
@@ -1612,7 +1649,7 @@ begin
 
   -- ALREADY RECORDED? Then this is a retry, and the answer is the ORIGINAL.
   select sub.id, sub.studio_machine_id, sub.machine_profile_id,
-         sub.machine_profile_version, sub.mode_key
+         sub.machine_profile_version, sub.mode_key, sub.payload_digest
     into v_existing
     from public.treatment_setup_submissions sub
    where sub.session_block_id = p_block_id
@@ -1632,6 +1669,20 @@ begin
        or v_existing.mode_key <> v_mode then
       raise exception
         'That retry key already belongs to a different save on this treatment.'
+        using errcode = 'unique_violation';
+    end if;
+
+    -- AND THE PAYLOAD MUST MATCH, not merely the setup identity.
+    --
+    -- Same block, same machine, same profile version, same mode - and
+    -- different groups, channels, fields or values. That is a DIFFERENT save
+    -- wearing a used key, and absorbing it returns the original submission
+    -- while the values she just entered are discarded with no error. Refused
+    -- instead, with its own sentence, so a caller can tell this apart from the
+    -- identity mismatch above.
+    if v_existing.payload_digest <> v_digest then
+      raise exception
+        'That retry key was already used for a save with different settings.'
         using errcode = 'unique_violation';
     end if;
 
@@ -1725,12 +1776,12 @@ begin
   insert into public.treatment_setup_submissions (
     studio_id, session_block_id, studio_machine_id,
     machine_profile_id, machine_profile_version, mode_key,
-    idempotency_key, recorded_by_practitioner_id
+    idempotency_key, payload_digest, recorded_by_practitioner_id
   )
   values (
     v_scope.o_studio, p_block_id, p_studio_machine_id,
     v_scope.o_profile_id, v_scope.o_profile_version, v_mode,
-    v_key, v_scope.o_practitioner
+    v_key, v_digest, v_scope.o_practitioner
   )
   returning id into v_submission;
 
@@ -1787,7 +1838,7 @@ end;
 $$;
 
 comment on function public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb) is
-  '0223. Records ONE SAVE of machine settings - every settings group the practitioner entered - as a single atomic unit. Adds the three invariants that several separate record_treatment_setup_group calls cannot have: ATOMICITY (one call, so a failure on a later group rolls back the submission and every group already written), CROSS-GROUP CHANNEL EXCLUSIVITY (a probe cannot be claimed by two groups of one save, enforced in the database rather than only in the UI), and IDEMPOTENCY (a caller-supplied retry key, so a save repeated after a LOST RESPONSE returns the original submission with reused=true instead of appending a second one; a key reused for a DIFFERENT save is refused). Shares every scope and per-group validation rule with record_treatment_setup_group through assert_setup_scope and record_setup_group_in_scope - there is one definition of each rule, not two. Groups are written in sorted group-key order so two concurrent saves cannot deadlock on the per-group revision locks. Returns {submission_id, groups, readings, reused}. Interprets nothing clinical: no pairing of groups to areas, no copying between groups, and no assertion that an unassigned group applies to every probe.';
+  '0223. Records ONE SAVE of machine settings - every settings group the practitioner entered - as a single atomic unit. Adds the three invariants that several separate record_treatment_setup_group calls cannot have: ATOMICITY (one call, so a failure on a later group rolls back the submission and every group already written), CROSS-GROUP CHANNEL EXCLUSIVITY (a probe cannot be claimed by two groups of one save, enforced in the database rather than only in the UI), and IDEMPOTENCY (a caller-supplied retry key, so a save repeated after a LOST RESPONSE returns the original submission with reused=true instead of appending a second one). The key is BOUND TO ITS PAYLOAD by a stored md5 digest over the canonical groups, so a key reused with a different setup identity OR different groups, channels, fields or values is REFUSED rather than absorbed - returning the original would silently discard the values just entered. Shares every scope and per-group validation rule with record_treatment_setup_group through assert_setup_scope and record_setup_group_in_scope - there is one definition of each rule, not two. Groups are written in sorted group-key order so two concurrent saves cannot deadlock on the per-group revision locks. Returns {submission_id, groups, readings, reused}. Interprets nothing clinical: no pairing of groups to areas, no copying between groups, and no assertion that an unassigned group applies to every probe.';
 
 -- ---------------------------------------------------------------------------
 -- PART 3b — PUBLISHING A CONTRACT: deployment authority, and immutable

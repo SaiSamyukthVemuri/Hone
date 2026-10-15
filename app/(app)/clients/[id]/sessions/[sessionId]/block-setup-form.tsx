@@ -459,6 +459,13 @@ export function BlockSetupForm({
   const machineSetupForSave = () => {
     const chosen = machineDraft;
     if (!chosen || chosen.groups.length === 0) return null;
+    // THE IDENTITY COMES WITH THE DRAFT, from the report that produced it.
+    //
+    // That is safe only because every change of identity REPORTS - the
+    // collector announces its remount with an empty draft, and the panel
+    // clears this when no collector renders at all. Without those, a draft
+    // typed under one machine could still be live after a switch and would be
+    // saved under its own stale identity (Codex, db3373bc P1).
     const identity = chosen.identity;
     const pending = prepareHandoff(identity, chosen.groups, () =>
       crypto.randomUUID(),

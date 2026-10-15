@@ -735,6 +735,20 @@ describe("0223 enforces ownership in the database, not only in the server", () =
     // groups that were never written.
     expect(save).toMatch(/'reused', true/);
     expect(save).toMatch(/already belongs to a different save/);
+    // AND THE KEY IS BOUND TO ITS PAYLOAD. Identity alone was not enough:
+    // the same key with the same machine, version and mode but DIFFERENT
+    // groups was absorbed, and the values just entered were discarded with no
+    // error (Codex, db3373bc P2).
+    expect(save).toMatch(/payload_digest <> v_digest/);
+    expect(save).toMatch(/used for a save with different settings/);
+    // COMPUTED OVER A CANONICAL FORM, ordered by group key, so the same save
+    // listed in a different order is not mistaken for a different one.
+    expect(save).toMatch(
+      /jsonb_agg\(g\.value order by btrim\(coalesce\(g\.value->>'group_key', ''\)\)\)/,
+    );
+    // STORED, or there would be nothing to compare on the retry.
+    expect(save).toMatch(/idempotency_key, payload_digest,/);
+    expect(CODE).toMatch(/payload_digest text not null/);
     // Check-then-insert is serialised against its own retries, or two
     // concurrent retries both insert and the second dies on the unique
     // constraint with a 23505 the caller cannot interpret.

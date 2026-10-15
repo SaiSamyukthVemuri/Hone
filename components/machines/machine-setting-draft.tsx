@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { SettingDraftFields } from "./setting-draft-fields";
 import {
@@ -52,6 +52,32 @@ export type MachineSettingDraftProps = {
   }) => void;
 };
 
+/**
+ * Clears the host's collected draft, and renders nothing.
+ *
+ * WHY A COMPONENT AND NOT A CALL. The panel decides whether a collector
+ * renders at all - no machine chosen, or no mode resolved, and there is
+ * none. The host form would then keep the last draft it was told about and
+ * save it, which is the stale-draft defect in a second shape: not "she
+ * switched machines" but "she cleared the machine". A component can own that
+ * as an effect; the panel's render body cannot call setState on its parent.
+ */
+export function MachineSettingDraftReset({
+  onSettingDraft,
+}: {
+  onSettingDraft: (draft: null) => void;
+}) {
+  useEffect(() => {
+    // NULL, NOT AN EMPTY DRAFT. With no machine chosen there is no setup
+    // identity to report, and inventing one would be worse than saying
+    // nothing: an empty draft carrying a plausible identity is exactly the
+    // shape the host is meant to be able to trust.
+    onSettingDraft(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return null;
+}
+
 export function MachineSettingDraft({
   profile,
   mode,
@@ -59,6 +85,29 @@ export function MachineSettingDraft({
 }: MachineSettingDraftProps) {
   const fieldGroups = nativeFieldGroups(profile, mode);
   const [groups, setGroups] = useState<SettingGroupDraft[]>(firstGroup);
+
+  // REPORT THE EMPTY DRAFT ON MOUNT, which is what makes a machine or mode
+  // SWITCH safe.
+  //
+  // THE DEFECT THIS CLOSES (Codex, db3373bc P1). The panel remounts this
+  // component when the setup identity changes, so ITS state resets - but the
+  // host form holds the previous draft, and this component said nothing until
+  // her first keystroke. Switch machine, press Save, and the form sends the
+  // PREVIOUS machine's values: numbers she never read off the unit now
+  // chosen, recorded permanently.
+  //
+  // A remount therefore announces itself. The parent's draft is replaced with
+  // an empty one carrying the NEW identity before anything can be saved, so
+  // the window in which a stale draft is live does not exist.
+  //
+  // RUNS ON MOUNT ONLY, which is the whole point: the key gives each identity
+  // its own mount, so one report per mount is one report per identity. An
+  // effect keyed on the identity instead would fire on a re-render and clear
+  // a draft she was still typing into.
+  useEffect(() => {
+    onDraftChange({ groups: [], blocking: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // MONOTONIC, never derived from the list: a removed group's identity is
   // retired for the life of the mount, because reuse would corrupt a group's
   // revision history. Same rule as the entry form, same reason.

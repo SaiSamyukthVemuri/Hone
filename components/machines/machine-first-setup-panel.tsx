@@ -24,7 +24,10 @@ import type {
 import { MachineReadingEntry } from "./machine-reading-entry";
 import { MachinePriorSetup } from "./machine-prior-setup";
 import { MachineRecordedSetups } from "./machine-recorded-setups";
-import { MachineSettingDraft } from "./machine-setting-draft";
+import {
+  MachineSettingDraft,
+  MachineSettingDraftReset,
+} from "./machine-setting-draft";
 import type { GroupSubmission } from "@/lib/machines/setting-groups";
 import type { PendingSetupIdentity } from "@/lib/machines/pending-setup";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
@@ -121,9 +124,10 @@ export type MachineFirstSetupPanelProps = {
    * discard it. With it, the host's own Save writes the area and these
    * settings in one transaction through `create_block_with_initial_setup`.
    */
-  onSettingDraft?: (draft: {
-    groups: GroupSubmission[];
-    blocking: string | null;
+  onSettingDraft?: (
+    draft: {
+      groups: GroupSubmission[];
+      blocking: string | null;
     /**
      * WHAT THE READINGS MEAN - device, profile, version and mode.
      *
@@ -133,8 +137,9 @@ export type MachineFirstSetupPanelProps = {
      * another is numbers she never read off anything, and
      * `pending-setup.ts` refuses exactly that comparison.
      */
-    identity: PendingSetupIdentity;
-  }) => void;
+      identity: PendingSetupIdentity;
+    } | null,
+  ) => void;
   /** Owner-only affordances appear only when the SERVER says so. */
   canManageMachines?: boolean;
   /** The studio's most recent recorded setup, for next-visit prep. */
@@ -517,6 +522,17 @@ export function MachineFirstSetupPanel({
             can carry a reading: the panel never collects one it has nowhere
             to put.
           */}
+          {/*
+            NO COLLECTOR, NO DRAFT. The arms below render one only when a
+            machine is chosen and a mode resolved; clearing the machine makes
+            this component vanish, and the host would otherwise keep the
+            draft it last reported - the same stale-draft defect as a switch,
+            one shape over. `MachineSettingDraftReset` exists for exactly that
+            and renders nothing.
+          */}
+          {!blockId && onSettingDraft && !(chosen && mode) && (
+            <MachineSettingDraftReset onSettingDraft={onSettingDraft} />
+          )}
           {!blockId && onSettingDraft && mode ? (
             <MachineSettingDraft
               // REMOUNTED WHEN THE IDENTITY CHANGES, for the same reason the

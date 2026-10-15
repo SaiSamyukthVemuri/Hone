@@ -801,3 +801,161 @@ describe("0223 · guidance returns every group of the latest save", () => {
     }
   });
 });
+// ---------------------------------------------------------------------------
+// THE KEY IS BOUND TO ITS PAYLOAD (Codex, db3373bc P2)
+//
+// The key alone identifies an ATTEMPT, not its content. Reusing it with the
+// same block, machine, profile version and mode but DIFFERENT groups was
+// accepted as a retry: the command returned the ORIGINAL submission with
+// reused=true, and the values she had just entered were discarded with no
+// error at all. Silently discarding clinical values is worse than refusing
+// the save.
+// ---------------------------------------------------------------------------
+describe("0223 · a retry key cannot absorb a DIFFERENT payload", () => {
+  it("refuses the same key with a different VALUE", async () => {
+    const studio = await seedStudio("sub-digest-value");
+    const { blockId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+    const key = "save-key-digest1";
+
+    await save(studio.userId, blockId, machineId, key, [group("g1", [1], "120")]);
+    await expect(
+      save(studio.userId, blockId, machineId, key, [group("g1", [1], "150")]),
+    ).rejects.toThrow(/different settings/i);
+  });
+
+  it("refuses the same key with a different CHANNEL", async () => {
+    const studio = await seedStudio("sub-digest-chan");
+    const { blockId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+    const key = "save-key-digest2";
+
+    await save(studio.userId, blockId, machineId, key, [group("g1", [1], "120")]);
+    await expect(
+      save(studio.userId, blockId, machineId, key, [group("g1", [2], "120")]),
+    ).rejects.toThrow(/different settings/i);
+  });
+
+  it("refuses the same key with an ADDED group", async () => {
+    const studio = await seedStudio("sub-digest-add");
+    const { blockId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+    const key = "save-key-digest3";
+
+    await save(studio.userId, blockId, machineId, key, [group("g1", [1], "120")]);
+    await expect(
+      save(studio.userId, blockId, machineId, key, [
+        group("g1", [1], "120"),
+        group("g2", [2], "80"),
+      ]),
+    ).rejects.toThrow(/different settings/i);
+  });
+
+  it("refuses the same key with a different FIELD", async () => {
+    const studio = await seedStudio("sub-digest-field");
+    const { blockId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+    const key = "save-key-digest4";
+
+    await save(studio.userId, blockId, machineId, key, [group("g1", [1], "120")]);
+    await expect(
+      save(studio.userId, blockId, machineId, key, [
+        {
+          group_key: "g1",
+          channels: [1],
+          readings: [
+            {
+              field_key: "duration",
+              value: "120",
+              observation_source: "practitioner-entered",
+            },
+          ],
+        },
+      ]),
+    ).rejects.toThrow(/different settings/i);
+  });
+
+  it("NOTHING IS WRITTEN by the refused retry", async () => {
+    // The refusal must not append either. The first save's record is the whole
+    // record.
+    const studio = await seedStudio("sub-digest-clean");
+    const { blockId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+    const key = "save-key-digest5";
+
+    await save(studio.userId, blockId, machineId, key, [group("g1", [1], "120")]);
+    await expect(
+      save(studio.userId, blockId, machineId, key, [group("g1", [1], "150")]),
+    ).rejects.toThrow();
+
+    expect(await capturesOf(blockId)).toHaveLength(1);
+    expect(await readingCount(blockId)).toBe(1);
+  });
+
+  it("CONTROL: the IDENTICAL payload is still absorbed", async () => {
+    // Otherwise the digest would have turned every retry into a refusal,
+    // which breaks the thing the key exists for.
+    const studio = await seedStudio("sub-digest-same");
+    const { blockId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+    const key = "save-key-digest6";
+    const groups = [group("g1", [1], "120"), group("g2", [2], "80")];
+
+    const first = await save(studio.userId, blockId, machineId, key, groups);
+    const retry = await save(studio.userId, blockId, machineId, key, groups);
+    expect(retry.submission_id).toBe(first.submission_id);
+    expect(retry.reused).toBe(true);
+    expect(await capturesOf(blockId)).toHaveLength(2);
+  });
+
+  it("CONTROL: the same groups in a DIFFERENT ORDER are the same save", async () => {
+    // The digest is computed over a CANONICAL form - groups ordered by key -
+    // because the command writes them sorted anyway. A digest over the input
+    // order would make an identical save look different purely because of how
+    // the caller listed it, and turn a legitimate retry into a refusal.
+    const studio = await seedStudio("sub-digest-order");
+    const { blockId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+    const key = "save-key-digest7";
+    const a = group("g1", [1], "120");
+    const b = group("g2", [2], "80");
+
+    const first = await save(studio.userId, blockId, machineId, key, [a, b]);
+    const retry = await save(studio.userId, blockId, machineId, key, [b, a]);
+    expect(retry.submission_id).toBe(first.submission_id);
+    expect(retry.reused).toBe(true);
+  });
+
+  it("stores the digest, and it is a 32-character md5", async () => {
+    const studio = await seedStudio("sub-digest-col");
+    const { blockId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+    const out = await save(studio.userId, blockId, machineId, "save-key-digest8", [
+      group("g1", [1], "120"),
+    ]);
+    const r = await adminQuery(
+      `select payload_digest from public.treatment_setup_submissions where id = $1`,
+      [out.submission_id],
+    );
+    expect(String(r.rows[0].payload_digest)).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it("keeps the IDENTITY refusal distinguishable from the payload one", async () => {
+    // Two different bugs with two different fixes: a key reused on another
+    // machine, and a key reused with other values. A caller that cannot tell
+    // them apart cannot tell her what to do.
+    const studio = await seedStudio("sub-digest-two");
+    const { blockId } = await seedSession(studio);
+    const a = await registerMachine(studio, "Room 1");
+    const b = await registerMachine(studio, "Room 2");
+    const key = "save-key-digest9";
+
+    await save(studio.userId, blockId, a, key, [group("g1", [1], "120")]);
+    await expect(
+      save(studio.userId, blockId, b, key, [group("g1", [1], "120")]),
+    ).rejects.toThrow(/different save on this treatment/i);
+    await expect(
+      save(studio.userId, blockId, a, key, [group("g1", [1], "150")]),
+    ).rejects.toThrow(/different settings/i);
+  });
+});

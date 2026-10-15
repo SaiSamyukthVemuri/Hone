@@ -23,7 +23,7 @@ import type { MachineProfile } from "@/lib/machines/profile-contract";
 
 const { createElement } = await import("react");
 const { renderToStaticMarkup } = await import("react-dom/server");
-const { MachineSettingDraft } = await import(
+const { MachineSettingDraft, MachineSettingDraftReset } = await import(
   "@/components/machines/machine-setting-draft"
 );
 
@@ -225,5 +225,94 @@ describe("the handoff's shape, pinned on source", () => {
     // call here would contradict that.
     expect(src).toMatch(/initialSetup: attachedSetup/);
     expect((src.match(/randomUUID/g) ?? []).length).toBe(1);
+  });
+});
+// ---------------------------------------------------------------------------
+// A MACHINE OR MODE SWITCH MUST NOT LEAVE A STALE DRAFT LIVE
+// (Codex, db3373bc P1)
+//
+// The panel remounts the collector when the setup identity changes, so ITS
+// state resets - but the host form holds the draft it was last told about, and
+// the collector said nothing until her first keystroke. Switch machine, press
+// Save, and the form sends the PREVIOUS machine's values: numbers she never
+// read off the unit now chosen, recorded permanently and unamendably.
+//
+// TWO SHAPES, TWO FIXES. A remount announces itself with an empty draft, and
+// when no collector renders at all - no machine chosen, or no mode resolved -
+// the panel clears the host's draft instead.
+//
+// NEITHER IS PROVABLE BY STATIC RENDER, because both are effects. They are
+// pinned on source here and proved MOUNTED in
+// e2e/machine-create-mode-journey.spec.ts, which switches away and back and
+// then saves.
+// ---------------------------------------------------------------------------
+describe("switching machine or mode clears the collected draft", () => {
+  const read = (rel: string) =>
+    readFileSync(nodePath.resolve(__dirname, "../..", rel), "utf8").replace(
+      /^\s*(\/\/|\*|\/\*).*$/gm,
+      " ",
+    );
+  const DRAFT_SRC = "components/machines/machine-setting-draft.tsx";
+  const PANEL_SRC = "components/machines/machine-first-setup-panel.tsx";
+
+  it("the collector reports an EMPTY draft on mount", () => {
+    const src = read(DRAFT_SRC);
+    expect(src).toMatch(
+      /useEffect\(\(\) => \{\s*onDraftChange\(\{ groups: \[\], blocking: null \}\);/,
+    );
+  });
+
+  it("reports on MOUNT ONLY, not on every render", () => {
+    // The key gives each identity its own mount, so one report per mount is
+    // one per identity. An effect keyed on the draft would fire on a
+    // re-render and clear values she was still typing.
+    //
+    // MY FIRST SPELLING OF THIS WAS VACUOUS TWICE OVER, and the negative
+    // control caught it: it took `src.indexOf("useEffect")`, which finds the
+    // RESET's effect rather than the collector's, and then sliced up to
+    // `indexOf("}, [") + 4` and asserted the result ENDS in `}, [` - which it
+    // always does, by construction. Changing the collector's deps to
+    // `[groups]` left it green.
+    //
+    // Anchored on the call itself now, so it is the collector's effect being
+    // measured and the dependency list is read rather than reconstructed.
+    const src = read(DRAFT_SRC);
+    const at = src.indexOf("onDraftChange({ groups: [], blocking: null })");
+    expect(at, "the collector's mount report must be findable").toBeGreaterThan(-1);
+    const deps = /\}, (\[[^\]]*\])\);/.exec(src.slice(at));
+    expect(deps, "the effect's dependency list must be findable").not.toBeNull();
+    expect(deps![1], "a non-empty dependency list clears live typing").toBe("[]");
+  });
+
+  it("the PANEL remounts the collector on any identity change", () => {
+    // All four parts, because each one changes what the same numbers mean.
+    const src = read(PANEL_SRC);
+    const arm = src.slice(src.indexOf("!blockId && onSettingDraft && mode ?"));
+    expect(arm).toMatch(/key=\{`\$\{chosen\.device\.deviceId\}::\$\{chosen\.profile\.profileId\}::\$\{chosen\.profile\.version\}::\$\{mode\.key\}`\}/);
+  });
+
+  it("the PANEL clears the host's draft when NO collector renders", () => {
+    // The second shape: she clears the machine, the collector vanishes, and
+    // the host would otherwise keep the draft it last heard about.
+    const src = read(PANEL_SRC);
+    expect(src).toMatch(/!blockId && onSettingDraft && !\(chosen && mode\) && \(/);
+    expect(src).toMatch(/<MachineSettingDraftReset onSettingDraft=\{onSettingDraft\} \/>/);
+  });
+
+  it("the reset hands up NULL, not an empty draft with an invented identity", () => {
+    // With no machine chosen there is no setup identity, and an empty draft
+    // carrying a plausible one is exactly the shape the host is meant to be
+    // able to trust.
+    const src = read(DRAFT_SRC);
+    const reset = src.slice(src.indexOf("export function MachineSettingDraftReset"));
+    expect(reset).toMatch(/onSettingDraft\(null\)/);
+    expect(reset).toMatch(/return null;/);
+  });
+
+  it("the reset renders nothing at all", () => {
+    const html = renderToStaticMarkup(
+      createElement(MachineSettingDraftReset, { onSettingDraft: () => {} }),
+    );
+    expect(html).toBe("");
   });
 });
