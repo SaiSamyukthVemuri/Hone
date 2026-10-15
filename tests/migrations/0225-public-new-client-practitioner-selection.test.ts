@@ -1,7 +1,12 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { countVersion, migrationVersions } from "./helpers/migration-state";
-import { grantedRoles, BLANKET_FUNCTION_GRANT } from "./helpers/grant-posture";
+import {
+  grantedRoles,
+  revokedRoles,
+  REQUIRED_REVOKES,
+  BLANKET_FUNCTION_GRANT,
+} from "./helpers/grant-posture";
 
 const VERSION = "0225";
 const FILE = "supabase/migrations/0225_public_new_client_practitioner_selection.sql";
@@ -121,11 +126,15 @@ describe("0225 delegates rather than re-implements", () => {
 describe("0225 grant posture — revoke all three by name, then service_role only", () => {
   const FN = "create_public_appointment_for_new_client_v2";
   it("revokes from public, anon, authenticated and service_role", () => {
-    for (const role of ["public", "anon", "authenticated", "service_role"]) {
-      expect(sql, `does not revoke from ${role}`).toContain(
-        `revoke execute on function public.${FN}(${ARGS}) from ${role};`,
-      );
-    }
+    // COMMENT-STRIPPED AND EXACT. `toContain` over raw `sql` accepted a
+    // COMMENTED-OUT revoke: the assertion found the text inside the comment and
+    // passed, while the default anon/authenticated EXECUTE that Supabase's
+    // ALTER DEFAULT PRIVILEGES creates stayed in force. The grant side of this
+    // file was made exact first and this side was left raw.
+    expect(
+      revokedRoles(EXECUTABLE, FN, ARGS),
+      "the command must revoke from all four roles BY NAME",
+    ).toEqual(REQUIRED_REVOKES);
   });
   it("grants EXECUTE to service_role and NOTHING else", () => {
     // EXACT, not "and not these two". The previous form left a stray grant to

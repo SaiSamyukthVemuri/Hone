@@ -59,6 +59,10 @@ export function normalizeSql(sql: string): string {
  * service_role, anon;` reports both roles rather than slipping past a matcher
  * built for one role per statement.
  *
+ * Accepts PostgreSQL's `ON ROUTINE` spelling as well as `ON FUNCTION`: both are
+ * legal and grant the same privilege, so a matcher that knows only one of them
+ * leaves every exact assertion green while the extra role can execute.
+ *
  * Pass COMMENT-STRIPPED source. A commented-out grant is not a grant, and these
  * files carry long prose about grants that would otherwise match.
  */
@@ -70,7 +74,7 @@ export function grantedRoles(
   // Both sides normalised, so no spelling of the signature can hide a grant.
   const haystack = normalizeSql(executableSql);
   const re = new RegExp(
-    `grant\\s+[a-z ,]+?\\s+on\\s+function\\s+public\\.${escape(fn)}\\(${escape(
+    `grant\\s+[a-z ,]+?\\s+on\\s+(?:function|routine)\\s+public\\.${escape(fn)}\\(${escape(
       normalizeSql(args),
     )}\\)\\s*to\\s*([^;]+);`,
     "gi",
@@ -86,10 +90,51 @@ export function grantedRoles(
 }
 
 /**
+ * Every role a REVOKE names on `public.<fn>(<args>)`, lower-cased and sorted.
+ *
+ * SYMMETRY IS THE POINT, and its absence was a hole. The grant side was made
+ * exact and comment-stripped while the companion revoke assertions still ran
+ * `toContain` over RAW source -- so commenting out a revoke left the revoke
+ * assertion passing (it found the commented text) AND the exact grant assertion
+ * passing (the explicit grant set was unchanged), while Supabase's
+ * ALTER DEFAULT PRIVILEGES left `anon` and `authenticated` able to execute the
+ * function. Half a file hardened is a file with a hole in it.
+ *
+ * Pass COMMENT-STRIPPED source, for the same reason `grantedRoles` does.
+ */
+export function revokedRoles(
+  executableSql: string,
+  fn: string,
+  args: string,
+): string[] {
+  const haystack = normalizeSql(executableSql);
+  const re = new RegExp(
+    `revoke\\s+[a-z ,]+?\\s+on\\s+(?:function|routine)\\s+public\\.${escape(fn)}\\(${escape(
+      normalizeSql(args),
+    )}\\)\\s*from\\s*([^;]+);`,
+    "gi",
+  );
+  const roles: string[] = [];
+  for (const m of haystack.matchAll(re)) {
+    for (const role of m[1].split(",")) {
+      const clean = role.trim().toLowerCase().replace(/^"|"$/g, "");
+      if (clean) roles.push(clean);
+    }
+  }
+  return roles.sort();
+}
+
+/** The four roles every authenticated-only command must revoke BY NAME.
+ *  CLAUDE.md section 5: ALTER DEFAULT PRIVILEGES grants EXECUTE to anon,
+ *  authenticated AND service_role at create time, and `public` is the one that
+ *  is easiest to forget because the grant back to it looks innocuous. */
+export const REQUIRED_REVOKES = ["anon", "authenticated", "public", "service_role"];
+
+/**
  * A BLANKET grant bypasses any per-signature check: `grant execute on all
  * functions in schema public to anon;` grants the function under test without
  * ever naming it, so `grantedRoles` would report nothing amiss. Asserted
  * separately, because the per-function parser structurally cannot see it.
  */
 export const BLANKET_FUNCTION_GRANT =
-  /grant\s+[a-z ,]+?\s+on\s+all\s+functions\s+in\s+schema/i;
+  /grant\s+[a-z ,]+?\s+on\s+all\s+(?:functions|routines)\s+in\s+schema/i;

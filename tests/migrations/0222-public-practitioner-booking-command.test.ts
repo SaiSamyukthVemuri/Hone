@@ -1,7 +1,12 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
-import { grantedRoles, BLANKET_FUNCTION_GRANT } from "./helpers/grant-posture";
+import {
+  grantedRoles,
+  revokedRoles,
+  REQUIRED_REVOKES,
+  BLANKET_FUNCTION_GRANT,
+} from "./helpers/grant-posture";
 
 const VERSION = "0222";
 const FILE = "supabase/migrations/0222_public_practitioner_booking_command.sql";
@@ -71,13 +76,15 @@ describe("0222 is additive — the live public booking path is untouched", () =>
     // command must revoke from all three explicitly plus public. Missed once in
     // 0129 (anon) and again in 0164 (service_role); a new function is exactly
     // where it gets missed a third time.
-    const sig = "resolve_public_any_available_practitioner(uuid, uuid, timestamptz, timestamptz)";
-    for (const role of ["public", "anon", "authenticated", "service_role"]) {
-      expect(
-        EXECUTABLE,
-        `the resolver must revoke execute from ${role} by name`,
-      ).toContain(`revoke execute on function public.${sig} from ${role};`);
-    }
+    // REVOKES, EXACT AND COMMENT-STRIPPED. `toContain` over raw source accepted
+    // a COMMENTED-OUT revoke -- the assertion found the text inside the comment
+    // and passed, while Supabase's ALTER DEFAULT PRIVILEGES left anon and
+    // authenticated able to execute. The grant side was hardened first and this
+    // side was left behind, which is a file with a hole in it.
+    expect(
+      revokedRoles(EXECUTABLE, "resolve_public_any_available_practitioner", "uuid, uuid, timestamptz, timestamptz"),
+      "the resolver must revoke from all four roles BY NAME",
+    ).toEqual(REQUIRED_REVOKES);
     // EXACTLY service_role, not "service_role and not these two".
     //
     // The previous form asserted the intended grant plus a hand-written
@@ -140,11 +147,8 @@ describe("0222 grant posture — revoke all three by name, then service_role onl
   ];
   for (const [fn, args] of fns) {
     it(`${fn} revokes from public, anon, authenticated and service_role`, () => {
-      for (const role of ["public", "anon", "authenticated", "service_role"]) {
-        expect(sql, `${fn} does not revoke from ${role}`).toContain(
-          `revoke execute on function public.${fn}(${args}) from ${role};`,
-        );
-      }
+      // Comment-stripped and exact: a commented-out revoke used to satisfy this.
+      expect(revokedRoles(EXECUTABLE, fn, args)).toEqual(REQUIRED_REVOKES);
     });
     it(`${fn} grants EXECUTE to service_role and NOTHING else`, () => {
       expect(grantedRoles(EXECUTABLE, fn, args)).toEqual(["service_role"]);

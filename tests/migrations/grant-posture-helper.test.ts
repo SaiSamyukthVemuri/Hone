@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { grantedRoles, BLANKET_FUNCTION_GRANT } from "./helpers/grant-posture";
+import {
+  grantedRoles,
+  revokedRoles,
+  REQUIRED_REVOKES,
+  BLANKET_FUNCTION_GRANT,
+} from "./helpers/grant-posture";
 
 // The matcher that every exact grant-posture assertion now depends on, tested
 // directly against adversarial SQL rather than only through the two migrations
@@ -200,6 +205,83 @@ describe("BLANKET_FUNCTION_GRANT catches what no per-signature check can see", (
   it("does not match an ordinary per-function grant", () => {
     expect(`grant execute on function public.f(uuid) to service_role;`).not.toMatch(
       BLANKET_FUNCTION_GRANT,
+    );
+  });
+});
+
+describe("ON ROUTINE is the same privilege under a different legal spelling", () => {
+  // PostgreSQL documents both `ON FUNCTION` and `ON ROUTINE`, and both grant
+  // EXECUTE. A matcher that knows only FUNCTION leaves every exact-set
+  // assertion green while the extra role can execute -- the hole this helper
+  // exists to close, reached by a keyword instead of by whitespace. Third
+  // distinct evasion of the same guard, so the spellings are now enumerated
+  // rather than assumed.
+  it("finds a stray grant written ON ROUTINE", () => {
+    expect(grantedRoles(`grant execute on routine public.f(uuid) to public;`, "f", "uuid")).toEqual(
+      ["public"],
+    );
+    expect(
+      grantedRoles(`GRANT ALL ON ROUTINE public.f(uuid) TO authenticator;`, "f", "uuid"),
+    ).toEqual(["authenticator"]);
+  });
+
+  it("finds a REVOKE written ON ROUTINE", () => {
+    expect(revokedRoles(`revoke execute on routine public.f(uuid) from anon;`, "f", "uuid")).toEqual(
+      ["anon"],
+    );
+  });
+
+  it("treats ALL ROUTINES IN SCHEMA as a blanket grant", () => {
+    expect(`grant execute on all routines in schema public to anon;`).toMatch(
+      BLANKET_FUNCTION_GRANT,
+    );
+    expect(`GRANT ALL ON ALL ROUTINES IN SCHEMA public TO authenticator;`).toMatch(
+      BLANKET_FUNCTION_GRANT,
+    );
+  });
+});
+
+describe("revokedRoles — the companion that was left raw", () => {
+  const FOUR = `revoke execute on function public.f(uuid) from public;
+revoke execute on function public.f(uuid) from anon;
+revoke execute on function public.f(uuid) from authenticated;
+revoke execute on function public.f(uuid) from service_role;`;
+
+  it("reports all four roles, in the order REQUIRED_REVOKES states", () => {
+    expect(revokedRoles(FOUR, "f", "uuid")).toEqual(REQUIRED_REVOKES);
+  });
+
+  it("DOES NOT count a commented-out revoke once comments are stripped", () => {
+    // THE DEFECT THIS CLOSES. The old assertion was `toContain` over RAW source,
+    // so the text inside a comment satisfied it -- the revoke appeared present
+    // while anon and authenticated kept the EXECUTE that Supabase's
+    // ALTER DEFAULT PRIVILEGES hands out at create time.
+    const oneCommented = FOUR.replace(
+      `revoke execute on function public.f(uuid) from anon;`,
+      `-- revoke execute on function public.f(uuid) from anon;`,
+    );
+    expect(
+      revokedRoles(oneCommented, "f", "uuid"),
+      "a commented-out revoke must not count in RAW source either -- it does, " +
+        "which is exactly why callers strip comments first",
+    ).toEqual(REQUIRED_REVOKES);
+    const stripped = oneCommented.replace(/--[^\n]*/g, " ");
+    expect(
+      revokedRoles(stripped, "f", "uuid"),
+      "stripped, the missing revoke must be VISIBLE as missing",
+    ).toEqual(["authenticated", "public", "service_role"]);
+  });
+
+  it("is spelling-independent, like the grant side", () => {
+    expect(
+      revokedRoles(`revoke  execute  on function public.f(\n  uuid\n)  from  anon;`, "f", "uuid"),
+    ).toEqual(["anon"]);
+  });
+
+  it("does not confuse a GRANT for a REVOKE, or an overload for its sibling", () => {
+    expect(revokedRoles(`grant execute on function public.f(uuid) to anon;`, "f", "uuid")).toEqual([]);
+    expect(revokedRoles(`revoke execute on function public.f(uuid, uuid) from anon;`, "f", "uuid")).toEqual(
+      [],
     );
   });
 });
