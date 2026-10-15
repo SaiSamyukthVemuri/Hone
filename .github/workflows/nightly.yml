@@ -192,7 +192,7 @@ jobs:
 
       - name: Bring up the database
         if: matrix.needs_supabase
-        run: supabase start
+        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start
 
       - name: Run lane
         run: ${{ matrix.command }}
