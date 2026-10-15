@@ -114,9 +114,17 @@ Studio (covered entity, if D-0 says so)
              ├─ BAA ─ Vercel     (hosting, functions, logs)  required
              ├─ BAA ─ Twilio     (SMS, Verify)               required if SMS carries PHI
              ├─ BAA ─ email route (see §3.1)                 required unless email is PHI-free
-             ├─ BAA ─ Upstash    (rate limiting)             confirm need: keys are hashed
-             └─ none ─ Sentry, PostHog, Stripe, Google, GitHub
-                       → keep PHI out by design; verify at the wire (G-08)
+             ├─ BAA ─ Upstash    (rate limiting AND calendar-sync state)
+             │                    required for EVERY use unless removed; raw
+             │                    studio, connection and appointment/link UUIDs today
+             │                    (egress audit row 19)
+             └─ none ─ Sentry, PostHog, Stripe, Meta, Google, GitHub
+                       → "keep PHI out by design" is NOT met today: Sentry,
+                         PostHog, Stripe and Meta receive record ids, and Google
+                         receives deterministic per-link hashes (egress audit
+                         rows 2-4, 12-15, 17, 18, 20; G-26). Each must be
+                         remediated, or brought under an agreement with evidence.
+                         Verify at the wire (G-08)
 ```
 
 **Studio-to-Hone BAA (G-22).** Counsel drafts this. The packet does not.
@@ -410,7 +418,7 @@ Nothing here is authorized until Sam approves that row.
 | Twilio | The BAA needs Security or Enterprise Edition (public FAQ) | Account edition; products in use per subaccount; retention |
 | Resend | Cannot sign a BAA (public FAQ) | n/a: patient email must move or be shown PHI-free |
 | AWS (candidate) | SES is HIPAA-eligible (public list) | No account known; BAA, pricing, setup time |
-| Sentry, PostHog, Upstash | Public BAA or eligibility statements exist | Hone's plans; whether a BAA is needed if PHI stays out |
+| Sentry, PostHog, Upstash | Public BAA or eligibility statements exist | Hone's plans. Record ids reach all three today ([egress audit](./record-id-egress-audit.md)), so each needs either remediation or a BAA |
 
 **Engineering already under way, in this lane** (drafts, not merged or
 deployed; neither depends on a decision above):
