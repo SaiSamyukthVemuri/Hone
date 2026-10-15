@@ -3,6 +3,10 @@ import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { recordOpsAlert } from "@/lib/ops/alerts";
+import {
+  compareProviderMoney,
+  providerMoneyMismatchDetails,
+} from "@/lib/billing/provider-money-facts";
 
 // ---------------------------------------------------------------------------
 // PR #179. Stripe webhook reconciliation for payment_charge_attempts.
@@ -28,6 +32,9 @@ import { recordOpsAlert } from "@/lib/ops/alerts";
 //     ops_alert + no row mutation. Better to leave a row out of
 //     sync (visible via the dashboard) than to overwrite it with
 //     untrusted ids.
+//   * Amount / currency mismatch (PAY-CCY-01): the PaymentIntent or
+//     Charge must state exactly the row's prepared amount_cents and
+//     currency. Otherwise critical ops_alert + no row mutation.
 //   * Status transitions are conditional. A row that's already in a
 //     terminal local state (failed / cancelled / blocked /
 //     refund_status=succeeded) is NEVER silently flipped by a webhook;
@@ -71,6 +78,7 @@ type AttemptRow = {
   stripe_payment_intent_id: string | null;
   stripe_charge_id: string | null;
   amount_cents: number;
+  currency: string;
   charged_at: string | null;
   refund_status: string | null;
   refund_amount_cents: number | null;
@@ -79,7 +87,7 @@ type AttemptRow = {
 };
 
 const ATTEMPT_COLUMNS =
-  "id, studio_id, client_id, charge_reason, status, stripe_livemode, stripe_payment_intent_id, stripe_charge_id, amount_cents, charged_at, refund_status, refund_amount_cents, refunded_at, stripe_refund_id";
+  "id, studio_id, client_id, charge_reason, status, stripe_livemode, stripe_payment_intent_id, stripe_charge_id, amount_cents, currency, charged_at, refund_status, refund_amount_cents, refunded_at, stripe_refund_id";
 
 // ---------------------------------------------------------------------------
 // Sanitisers (mirror lib/billing/session-payment-charge.ts +
@@ -334,6 +342,47 @@ async function verifyMetadataAgainstRow(args: {
 }
 
 // ---------------------------------------------------------------------------
+// Money-consistency guard (PAY-CCY-01, #824). Metadata names WHICH attempt an
+// event is about; this asks whether it is about the SAME MONEY. A PaymentIntent
+// or Charge whose amount or currency differs from the prepared attempt is not
+// that attempt's charge as prepared, so nothing is reflected from it: critical
+// alert, no mutation, exactly the metadata-mismatch posture above.
+// ---------------------------------------------------------------------------
+async function verifyProviderMoneyAgainstRow(args: {
+  attempt: AttemptRow;
+  provider: { amount: unknown; currency: unknown };
+  stripeEventId: string;
+  targetEvent: string;
+  stripePaymentIntentId?: string | null;
+  stripeChargeId?: string | null;
+}): Promise<boolean> {
+  const prepared = {
+    amountCents: args.attempt.amount_cents,
+    currency: args.attempt.currency,
+  };
+  const money = compareProviderMoney(prepared, args.provider);
+  if (money.ok) return true;
+  await recordOpsAlert({
+    severity: "critical",
+    event: "stripe_webhook_money_mismatch",
+    message:
+      "Stripe webhook amount or currency does not equal the prepared payment_charge_attempts row. Row was NOT mutated.",
+    studioId: args.attempt.studio_id,
+    clientId: args.attempt.client_id,
+    stripeEventId: args.stripeEventId,
+    stripePaymentIntentId: args.stripePaymentIntentId ?? undefined,
+    route: ROUTE,
+    safeDetails: {
+      target_event: args.targetEvent,
+      attempt_id: args.attempt.id,
+      stripe_charge_id: args.stripeChargeId ?? null,
+      ...providerMoneyMismatchDetails(prepared, args.provider, money.mismatches),
+    },
+  });
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // payment_intent.succeeded
 // ---------------------------------------------------------------------------
 export async function handlePaymentIntentSucceeded(
@@ -419,6 +468,25 @@ export async function handlePaymentIntentSucceeded(
       eventType: event.type,
       attemptId: attempt.id,
       livemodeRowMismatch: true,
+    };
+  }
+
+  // PAY-CCY-01. Before ANY branch below, including the idempotent charge-id
+  // stamp: a PaymentIntent about different money must not lend this row its
+  // charge id either.
+  if (
+    !(await verifyProviderMoneyAgainstRow({
+      attempt,
+      provider: { amount: pi.amount, currency: pi.currency },
+      stripeEventId: event.id,
+      targetEvent: "payment_intent.succeeded",
+      stripePaymentIntentId: pi.id,
+    }))
+  ) {
+    return {
+      eventType: event.type,
+      attemptId: attempt.id,
+      moneyMismatch: true,
     };
   }
 
@@ -726,6 +794,25 @@ export async function handlePaymentIntentPaymentFailed(
     };
   }
 
+  // PAY-CCY-01. A failure report about different money is not this attempt's
+  // failure. Flipping the row to `failed` on its word would retire a prepared
+  // charge whose own PaymentIntent may still succeed.
+  if (
+    !(await verifyProviderMoneyAgainstRow({
+      attempt,
+      provider: { amount: pi.amount, currency: pi.currency },
+      stripeEventId: event.id,
+      targetEvent: "payment_intent.payment_failed",
+      stripePaymentIntentId: pi.id,
+    }))
+  ) {
+    return {
+      eventType: event.type,
+      attemptId: attempt.id,
+      moneyMismatch: true,
+    };
+  }
+
   if (attempt.status === "succeeded") {
     await recordOpsAlert({
       severity: "critical",
@@ -933,6 +1020,26 @@ export async function handleChargeRefunded(
       eventType: event.type,
       attemptId: attempt.id,
       livemodeRowMismatch: true,
+    };
+  }
+
+  // PAY-CCY-01. The charge Stripe refunded must be the prepared charge: the
+  // same captured amount, in the same currency. Checked before the partial /
+  // full decision below, which compares Stripe's two numbers with each other
+  // and so cannot see a charge that is wholly different money.
+  if (
+    !(await verifyProviderMoneyAgainstRow({
+      attempt,
+      provider: { amount: charge.amount, currency: charge.currency },
+      stripeEventId: event.id,
+      targetEvent: "charge.refunded",
+      stripeChargeId: charge.id,
+    }))
+  ) {
+    return {
+      eventType: event.type,
+      attemptId: attempt.id,
+      moneyMismatch: true,
     };
   }
 

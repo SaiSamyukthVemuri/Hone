@@ -48,6 +48,7 @@ import {
   sendBookingNotificationToPractitioner,
 } from "@/lib/email/send-appointment";
 import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
+import { stampPublicBookingConsent } from "@/lib/booking/public-consent-stamp";
 import { normalizePhoneForMatch } from "@/lib/sms/twilio";
 import { isBookableByNewClient } from "@/lib/booking/consultation";
 import {
@@ -1509,27 +1510,25 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
         submittedDigits.length > 0 &&
         submittedDigits === storedDigits
       ) {
-        const nowIso = new Date().toISOString();
-        const { error: consentErr } = await admin
-          .from("clients")
-          .update({
-            sms_consent_at: nowIso,
-            sms_consent_source: "public_booking",
-          })
-          .eq("id", resolvedClientId);
-        if (consentErr) {
+        // G3 / 0211: consent is write-once, so the stamp is a conditional
+        // FIRST write; an overlapping booking that got there first, or a STOP
+        // that landed meanwhile, is adopted from the row rather than lost
+        // (lib/booking/public-consent-stamp.ts).
+        const stamp = await stampPublicBookingConsent(admin, existingClient.id, new Date().toISOString());
+        if (stamp.result === "error") {
           // Soft fail. The booking and the email path must not break
           // because of a consent-stamp error; future bookings can
           // re-attempt. We log a sanitized error and proceed.
           // PR #261: sqlstate code + studioId + salted email
           // fingerprint; drop raw DB message.
           logInternalBookingError("public_booking_sms_consent_update_failed", {
-            code: consentErr.code,
+            code: stamp.code,
             studioId: studio.id,
             emailFingerprint: hashFingerprint(normalizedEmail),
           });
         } else {
-          clientSmsConsentAt = nowIso;
+          clientSmsConsentAt = stamp.smsConsentAt;
+          clientSmsOptedOutAt = stamp.smsOptedOutAt;
         }
       }
     }
