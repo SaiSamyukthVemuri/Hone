@@ -24,7 +24,7 @@ not a PR diary — per-capability evidence lives in
 
 | Field | Value |
 |---|---|
-| **Reconciliation date** | **2026-10-15 UTC source sync** (CANON-REFRESH-2026-10-16, five merges after the 2026-10-14 sync, **none** runtime-bearing). The 2026-10-14, 2026-10-13, 2026-10-12 and 2026-09-21 syncs are preserved below as history. Production-data counts elsewhere retain their own older measurement dates. |
+| **Reconciliation date** | **2026-10-16 UTC source sync** (CANON-REFRESH-2026-10-16, five merges after the 2026-10-14 sync, **none** runtime-bearing). The 2026-10-14, 2026-10-13, 2026-10-12 and 2026-09-21 syncs are preserved below as history. Production-data counts elsewhere retain their own older measurement dates. |
 | **Production branch** | `claude/build-hone-saas-hOex7` |
 | **Current Git branch HEAD at this sync** | **`1ae096e25127e54304207f44cf2157dde9b67566` — merge of #885.** Re-read GitHub before any production action; this is a dated sync value, not a perpetual pointer. |
 | **Last runtime-bearing application HEAD at this sync** | **`ce133c18b8458e07b86c05301a5a38b92c9cb0be` (#857), unchanged since the 2026-10-14 sync.** It is **not** the branch HEAD above. `git log --first-parent ce133c18..1ae096e2` returns **5** merges, and by **A3's composed deployed predicate** (unchanged; see the 2026-09-21 record) **none** is runtime-bearing: `b4316a4b` (#880) is documentation-only (3 files under `docs/production/`); `9f5344a5` (#883) is tests-only (3 files under `tests/eng/v2/verify/`); `3060a16a` (#881) is CI-only (`.github/workflows/ci.yml`, `.github/workflows/nightly.yml`, `scripts/ci/supabase-start-bind-retry.sh` and its test); `02916ab6` (#879) is test-harness-only (3 files under `e2e/helpers/` and one test); `1ae096e2` (#885) is test-harness and guide only (`vitest.db.config.ts`, one test, `CLAUDE.md`). **None** carries a migration. With this pin, A3's residue is **0** files. |
@@ -262,7 +262,7 @@ before any production action; this sentence is itself a dated observation.
 
 ### Open pull requests are not production
 
-**No open PR is described as shipped anywhere in this document.** At this reconciliation (every row re-read from GitHub on 2026-10-15; the four US/USD rows were added on 2026-10-13 because §7 cites them):
+**No open PR is described as shipped anywhere in this document.** At this reconciliation (every row re-read from GitHub on 2026-10-16; the four US/USD rows were added on 2026-10-13 because §7 cites them):
 
 | PR | State | Why it is not production |
 |---|---|---|
