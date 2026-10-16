@@ -34,10 +34,22 @@ export const ASSIGNED_ELSEWHERE_RAISED = "Appointment is assigned to a different
 export function sessionStartRefusalCopy(
   code: SessionStartRefusal,
   assignedName: string | null,
+  opts: { assigneeInactive?: boolean } = {},
 ): { title: string; body: string } {
   switch (code) {
     case "assigned_elsewhere": {
       const who = assignedName?.trim() ? assignedName.trim() : "another practitioner";
+      if (opts.assigneeInactive) {
+        // Team removal keeps a deactivated practitioner's appointments, but they
+        // can no longer sign in, so "ask them" is not a recovery. Starting a
+        // session WITHOUT linking this booking always is (the page links it).
+        return {
+          title: `This appointment is booked with ${who}, who no longer has access`,
+          body:
+            `${who} can no longer start this chart, and the booking cannot be linked to another ` +
+            "practitioner's chart. You can start a session for this client without linking this appointment.",
+        };
+      }
       // DELIBERATELY no promise of reassignment. Whether Move can reassign this
       // booking to this person depends on the appointment's status and time, the
       // studio's capacity and booking flags, and service eligibility - all owned

@@ -31,9 +31,17 @@ describe("session-start refusals (a booking assigned to a colleague is SAID, not
     // time, the studio's capacity/booking flags and service eligibility, which
     // only the calendar's Move flow knows. Promising it drifted three times.
     for (const code of SESSION_START_REFUSALS) {
-      const { title, body } = sessionStartRefusalCopy(code, "X");
-      expect(`${title} ${body}`).not.toMatch(/\bMove\b|reassign/i);
+      for (const assigneeInactive of [false, true]) {
+        const { title, body } = sessionStartRefusalCopy(code, "X", { assigneeInactive });
+        expect(`${title} ${body}`).not.toMatch(/\bMove\b|reassign/i);
+      }
     }
+    // A DEACTIVATED assignee can no longer chart: never "ask them"; name the
+    // recovery that exists (an unlinked session), which the page links.
+    const gone = sessionStartRefusalCopy("assigned_elsewhere", "SYNTH-FETT Electrologist 2", { assigneeInactive: true });
+    expect(gone.title).toMatch(/no longer has access/);
+    expect(gone.body).not.toMatch(/\bAsk\b/);
+    expect(gone.body).toMatch(/without linking this appointment/);
     expect(sessionStartRefusalCopy("assigned_elsewhere", "  ").title).toBe(
       "This appointment is booked with another practitioner",
     );
@@ -52,14 +60,24 @@ describe("session-start refusals (a booking assigned to a colleague is SAID, not
   it("the page never offers the modality picker while a refusal is shown", () => {
     expect(PAGE).toMatch(/\{!refusalCopy && <ModalityPicker clientId=\{id\} appointmentId=\{appointmentId\} \/>\}/);
     expect(PAGE).toMatch(/data-testid="session-start-refusal"/);
-    // The pre-check is studio-scoped and compares against the SIGNED-IN practitioner.
-    expect(PAGE).toMatch(/\.eq\("studio_id", studio\.id\)/);
+    // The pre-check reads the appointment as the ACTION does (membership-visible,
+    // not pre-filtered to the selected studio), checks the studio itself, and
+    // compares against the SIGNED-IN practitioner.
+    expect(PAGE).not.toMatch(/\.eq\("studio_id", studio\.id\)/);
+    expect(PAGE).toMatch(/\} else if \(appt\.studio_id !== studio\.id\) \{\s*refusal = "other_studio";/);
     expect(PAGE).toMatch(/appt\.practitioner_id !== practitioner\.id/);
+    // The refusal is derived from the CURRENT row, never from the URL's `refused` code.
+    expect(PAGE).not.toMatch(/parseSessionStartRefusal\(/);
+    expect(PAGE).not.toMatch(/sp\.refused/);
+    // An inactive assignee gets the unlinked-start recovery link.
+    expect(PAGE).toMatch(
+      /const offerUnlinkedStart =\s*refusal === "appointment_missing" \|\| \(refusal === "assigned_elsewhere" && assigneeInactive\);/,
+    );
     // The embed names the assignment FK (bare `practitioners(` is PGRST201 since 0174),
     // and a failed pre-check never falls through to offering the picker.
-    expect(PAGE).toMatch(/practitioners!appointments_practitioner_same_studio_fk\(display_name\)/);
+    expect(PAGE).toMatch(/practitioners!appointments_practitioner_same_studio_fk\(display_name, active\)/);
     expect(PAGE).not.toMatch(/[^!]practitioners\(display_name\)/);
-    expect(PAGE).toMatch(/if \(apptErr\) \{[\s\S]{0,400}refusal = refusal \?\? "appointment_missing"/);
+    expect(PAGE).toMatch(/if \(apptErr\) \{[\s\S]{0,400}refusal = "appointment_missing";/);
     // The page offers a link to the appointment (where Move appears only when
     // usable) and no predicate of its own about reassignment.
     expect(PAGE).toMatch(/href=\{`\/calendar\/\$\{appointmentId\}`\}/);
@@ -73,6 +91,6 @@ describe("session-start refusals (a booking assigned to a colleague is SAID, not
     );
     expect(PAGE).toMatch(/\{appointmentLinkable \? \(\s*<Link href=\{`\/calendar\/\$\{appointmentId\}`\}/);
     // The copy's "start a session without an appointment" recovery is a real link.
-    expect(PAGE).toMatch(/refusal === "appointment_missing" && \([\s\S]{0,300}href=\{`\/clients\/\$\{id\}\/sessions\/new`\}/);
+    expect(PAGE).toMatch(/offerUnlinkedStart && \([\s\S]{0,300}href=\{`\/clients\/\$\{id\}\/sessions\/new`\}/);
   });
 });

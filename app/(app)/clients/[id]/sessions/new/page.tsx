@@ -20,7 +20,7 @@ import {
 } from "@/components/last-session-summary";
 import { createClient } from "@/lib/supabase/server";
 import {
-  parseSessionStartRefusal,
+  type SessionStartRefusal,
   sessionStartRefusalCopy,
 } from "@/lib/sessions/session-start-refusal";
 import { ModalityPicker } from "./ModalityPicker";
@@ -55,14 +55,22 @@ export default async function NewSessionPage({
       ? sp.appointment_id
       : null;
 
-  // An expected refusal, either redirected back from startSessionAction or
-  // found here BEFORE the picker is offered. A booking assigned to a colleague
+  // An expected refusal, shown BEFORE the picker is offered (and again when
+  // startSessionAction redirects back here). A booking assigned to a colleague
   // is refused (PR #156 lineage, re-enforced by start_session), and that
   // refusal is now SAID on this page rather than reaching the generic error
   // boundary. This is presentation only: the action and the command still
   // refuse on their own, so the pre-check cannot widen anything.
-  let refusal = appointmentId ? parseSessionStartRefusal(sp.refused) : null;
+  // The refusal is DERIVED FROM THE APPOINTMENT AS IT IS NOW, never from the
+  // redirect's `refused` code: a revisited URL must not keep refusing after an
+  // owner reassigns the booking to this practitioner, and must not keep
+  // offering a chart the action would now refuse. The lookup is the same one
+  // the action makes (RLS-scoped to the practitioner's memberships, NOT
+  // pre-filtered to the selected studio), so an appointment in the person's
+  // OTHER studio reads as other_studio rather than as missing.
+  let refusal: SessionStartRefusal | null = null;
   let assignedName: string | null = null;
+  let assigneeInactive = false;
   if (appointmentId) {
     const supabase = await createClient();
     // The embed MUST name the assignment FK: since migration 0174 appointments
@@ -70,33 +78,45 @@ export default async function NewSessionPage({
     const { data: appt, error: apptErr } = await supabase
       .from("appointments")
       .select(
-        "client_id, practitioner_id, practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name)",
+        "studio_id, client_id, practitioner_id, practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name, active)",
       )
       .eq("id", appointmentId)
-      .eq("studio_id", studio.id)
       .maybeSingle();
     if (apptErr) {
       // Fail closed on the PRESENTATION: never offer the picker on an unknown
       // appointment. The action would still refuse on its own.
       console.error(JSON.stringify({ event: "session_new_appointment_precheck_failed", code: apptErr.code ?? null }));
-      refusal = refusal ?? "appointment_missing";
-    } else if (!appt) {
-      // Deleted, nonexistent, or outside this studio (RLS/studio scope hides it):
-      // the action would answer appointment_missing, so say it BEFORE the picker.
       refusal = "appointment_missing";
+    } else if (!appt) {
+      // Deleted, nonexistent, or not visible to this practitioner at all.
+      refusal = "appointment_missing";
+    } else if (appt.studio_id !== studio.id) {
+      refusal = "other_studio";
     } else if (appt.client_id !== id) {
       refusal = "other_client";
     } else if (appt.practitioner_id && appt.practitioner_id !== practitioner.id) {
       refusal = "assigned_elsewhere";
-      const joined = appt.practitioner as { display_name?: string | null } | { display_name?: string | null }[] | null;
-      assignedName = (Array.isArray(joined) ? joined[0]?.display_name : joined?.display_name) ?? null;
+      const joined = appt.practitioner as
+        | { display_name?: string | null; active?: boolean | null }
+        | { display_name?: string | null; active?: boolean | null }[]
+        | null;
+      const assignee = Array.isArray(joined) ? joined[0] : joined;
+      assignedName = assignee?.display_name ?? null;
+      // A deactivated practitioner keeps their appointments (team removal
+      // preserves them) but can no longer sign in to chart them.
+      assigneeInactive = assignee?.active === false;
     }
   }
   // Only a refusal about an appointment that EXISTS in this studio can link to
   // it; a missing or foreign one would 404 on /calendar/<id>.
   const appointmentLinkable =
     !!appointmentId && refusal !== "appointment_missing" && refusal !== "other_studio";
-  const refusalCopy = refusal ? sessionStartRefusalCopy(refusal, assignedName) : null;
+  const refusalCopy = refusal ? sessionStartRefusalCopy(refusal, assignedName, { assigneeInactive }) : null;
+  // Starting WITHOUT the appointment link is the recovery that always exists
+  // when the booking cannot be charted from here (it is gone, or its assignee
+  // can no longer sign in). No appointment_id is sent, so nothing is linked.
+  const offerUnlinkedStart =
+    refusal === "appointment_missing" || (refusal === "assigned_elsewhere" && assigneeInactive);
 
   // PR #190 (clinical memory). The most recent previous session + its
   // blocks, condensed into the context panel below. This is the
@@ -201,7 +221,7 @@ export default async function NewSessionPage({
                 Open the calendar
               </Link>
             )}
-            {refusal === "appointment_missing" && (
+            {offerUnlinkedStart && (
               // The copy offers starting WITHOUT the appointment; this is that path
               // (no appointment_id, so nothing is linked to a missing booking).
               <Link href={`/clients/${id}/sessions/new`} className="font-medium hover:underline">
