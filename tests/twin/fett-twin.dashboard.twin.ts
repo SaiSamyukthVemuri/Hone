@@ -56,6 +56,18 @@ it("enriches the owned twin dashboard without resetting existing work", { timeou
         where extract(isodow from d) between 1 and 5 order by d limit 1) as next_day`,
     [TWIN.timezone],
   )).rows[0] as { today: string; next_day: string };
+  const month = Number(dates.today.slice(5, 7));
+  const birthday = (await adminQuery(
+    `select exists (
+       select 1 from public.clients where studio_id = $1 and archived_at is null
+         and (extract(month from date_of_birth) = $2
+           or (date_of_birth is null and id = $3))
+     ) as ready`,
+    [IDS.studio, month, IDS.client(month)],
+  )).rows[0] as { ready: boolean };
+  if (!birthday.ready) {
+    throw new Error("No active client has or can receive this month's fixture birthday. Existing dates were preserved; no enrichment was written.");
+  }
   const visibleToday = async () => Number((await adminQuery(
     `select count(*)::int as n from public.appointments where studio_id = $1
        and (starts_at at time zone $2)::date = (now() at time zone $2)::date
