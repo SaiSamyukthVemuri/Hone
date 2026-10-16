@@ -1419,6 +1419,21 @@ begin
       end if;
 
       -- The value may not carry more precision than the machine can display.
+      --
+      -- AND THE APPLICATION NOW AGREES, which it did not when this was
+      -- written. `validate-reading.ts` treated excess precision as an ADVISORY
+      -- note whose message read "Stored exactly as entered", so the app
+      -- promised a value this check then refused: advisory precision could
+      -- never reach a row, and the practitioner was told otherwise
+      -- (Codex, #860 4289974660). The note is a refusal now, raised before the
+      -- save is sent.
+      --
+      -- THIS CHECK IS THE SIDE THAT WAS KEPT, because the row would otherwise
+      -- disagree with itself: `decimals` on every reading is the CONTRACT's,
+      -- derived server-side and never the caller's, so a 3-decimal value
+      -- stored against a 2-decimal contract renders as 1.23 and hides a digit.
+      -- Relaxing here would have moved the silent rewrite from save to render,
+      -- not removed it.
       if scale(v_value) > v_decimals then
         raise exception
           'Field "%" was given % decimal places; this machine displays %.',
@@ -2091,7 +2106,26 @@ comment on function public.sync_machine_profile_contract(text, integer, text, sm
 -- second lock, not the only one.
 create or replace function public.latest_setup_for_client(
   p_studio_id uuid,
-  p_client_id uuid
+  p_client_id uuid,
+  -- THE SESSION BEING CHARTED, EXCLUDED — and REQUIRED, with no default.
+  --
+  -- Without it this filtered on client and studio alone and took the newest
+  -- capture, so a setup recorded TODAY, in the very session on screen, was
+  -- returned as "Previous treatment" under copy that says it is not today's
+  -- entries (Codex, #860 4289974654). The practitioner then reads her own
+  -- last save back as history and may reproduce it believing it came from a
+  -- previous visit.
+  --
+  -- NO DEFAULT, deliberately. A `default null` would let a caller omit it and
+  -- silently get the defective behaviour back, which is exactly how this read
+  -- contract acquired its previous scoping bug: `latestRecordedSetup`'s own
+  -- docblock says the scoping lives in SQL "so a future caller cannot omit
+  -- it". A required parameter keeps that true.
+  --
+  -- EXCLUDED AT THE ANCHOR ONLY, which is sufficient: `newest_per_group`
+  -- joins back to the anchor's own block, so every group it returns belongs
+  -- to the session the anchor chose.
+  p_exclude_session_id uuid
 )
 returns jsonb
 language sql
@@ -2162,6 +2196,10 @@ as $$
        -- live-looking blocks, so its newest capture stayed eligible.
        and b.deleted_at is null
        and sn.deleted_at is null
+       -- NOT THE SESSION ON SCREEN. `is distinct from`, not `<>`, so a null
+       -- exclusion would not silently drop every row - though the parameter
+       -- is required, so a null here means a caller passed one deliberately.
+       and sn.id is distinct from p_exclude_session_id
        and public.is_studio_member(p_studio_id)
      order by c.recorded_at desc, c.revision desc
      limit 1
@@ -2217,7 +2255,7 @@ as $$
    where r.capture_id in (select id from newest_per_group);
 $$;
 
-comment on function public.latest_setup_for_client(uuid, uuid) is
+comment on function public.latest_setup_for_client(uuid, uuid, uuid) is
   '0223. EVERY SETTING GROUP of this client''s most recent recorded setup, each at its own highest revision, as a jsonb array for next-visit guidance. The setup is identified by (block, physical unit, profile version, mode) and must be in a NON-RETIRED block and session. Deliberately NOT the latest revision of each FIELD independently: that can assemble a setup that never existed, mixing fields from different capture times, modes, machines or profile versions. A field absent from a group is absent from the result and is never filled in from an older capture. Equally NOT one capture: a practitioner with probes at different settings records several groups, and returning only the newest silently omitted the others. TIMING IS PER GROUP - each row carries its own recorded_at and the groups are genuinely recorded at different instants, so no consumer may present them as observed together. This is LATEST-OBSERVED GROUPS of one setup identity, which is weaker than one submission (treatment_setup_captures.setup_submission_id): submissions did not exist for historical captures, so identity is what every row can be matched on. Scoped through session_blocks -> sessions.client_id so a studio-mate''s newer capture can never be shown as this client''s setup. SECURITY INVOKER: RLS stays in force and is_studio_member is a fail-closed second lock. value_numeric is emitted as TEXT so a recorded zero and the machine''s own precision survive JSON.';
 
 -- ---------------------------------------------------------------------------
@@ -2839,11 +2877,11 @@ revoke execute on function public.setup_capture_history_for_block(uuid) from aut
 revoke execute on function public.setup_capture_history_for_block(uuid) from service_role;
 grant execute on function public.setup_capture_history_for_block(uuid) to authenticated;
 
-revoke execute on function public.latest_setup_for_client(uuid, uuid) from public;
-revoke execute on function public.latest_setup_for_client(uuid, uuid) from anon;
-revoke execute on function public.latest_setup_for_client(uuid, uuid) from authenticated;
-revoke execute on function public.latest_setup_for_client(uuid, uuid) from service_role;
-grant execute on function public.latest_setup_for_client(uuid, uuid) to authenticated;
+revoke execute on function public.latest_setup_for_client(uuid, uuid, uuid) from public;
+revoke execute on function public.latest_setup_for_client(uuid, uuid, uuid) from anon;
+revoke execute on function public.latest_setup_for_client(uuid, uuid, uuid) from authenticated;
+revoke execute on function public.latest_setup_for_client(uuid, uuid, uuid) from service_role;
+grant execute on function public.latest_setup_for_client(uuid, uuid, uuid) to authenticated;
 
 revoke execute on function public.refuse_treatment_setup_reading_update() from public;
 revoke execute on function public.refuse_treatment_setup_reading_update() from anon;

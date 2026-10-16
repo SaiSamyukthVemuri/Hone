@@ -622,6 +622,34 @@ test("create mode: choose the machine, save the block, record one save, retrieve
     expect(after.has(firstSubmission!)).toBe(true);
   });
 
+  await test.step("7b: TODAY'S OWN CAPTURES ARE NOT OFFERED BACK AS HISTORY", async () => {
+    // THE DEFECT'S INVERSE, MOUNTED (Codex, #860 4289974654). Guidance filtered
+    // on client and studio and took the newest capture, so everything recorded
+    // in steps 3 to 7 - minutes ago, in THIS session, on THIS screen - came
+    // back as "Previous treatment" under copy that says it is reference only
+    // and not today's entries.
+    //
+    // THIS CLIENT HAS NO EARLIER VISIT. Every capture she has is in the
+    // session being charted, so the honest answer is NO guidance at all, and
+    // the panel renders none. Before the fix this showed her own 150.
+    //
+    // STEP 8 COULD NOT HAVE CAUGHT IT, which is why this is its own step: it
+    // opens a FRESH next-visit session, where the captures genuinely are in an
+    // earlier one, so it passed either way. The dangerous case is the session
+    // that holds the only captures, and nothing exercised it.
+    await expect(
+      page.getByTestId("machine-prior-setup"),
+      "today's own captures were offered back as Previous treatment",
+    ).toHaveCount(0, { timeout: T });
+
+    // AND THE CAPTURES REALLY EXIST, so the absence above is the exclusion and
+    // not an empty chart: the recorded-setups surface on this same screen
+    // still shows what was saved.
+    await expect(page.getByTestId("machine-recorded-setups")).toBeVisible({
+      timeout: T,
+    });
+  });
+
   await test.step("8: NEXT VISIT — guidance shows the groups, as PREVIOUS values", async () => {
     const nextSession = await seedNextVisit(seed.studioId, clientId);
     await page.goto(`/clients/${clientId}/sessions/${nextSession}`);

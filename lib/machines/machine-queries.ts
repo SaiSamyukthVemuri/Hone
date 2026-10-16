@@ -794,10 +794,26 @@ export async function latestRecordedSetup(
   db: MachineDb,
   studioId: string,
   clientId: string,
+  /**
+   * The session being charted, which this must NOT offer back as history.
+   *
+   * REQUIRED, and a positional parameter rather than an option, so the type
+   * checker refuses a caller that forgets it. Without the exclusion the
+   * lookup returned the client's newest capture full stop - including one
+   * recorded minutes earlier in the session on screen, presented under copy
+   * that says it is not today's entries (Codex, #860 4289974654).
+   *
+   * It is passed to SQL rather than filtered here, for the same reason the
+   * client scoping is: the paragraph above this function says the scoping
+   * lives in SQL "so a future caller cannot omit it", and a filter applied in
+   * this wrapper would be exactly the omission it warns about.
+   */
+  excludeSessionId: string,
 ): Promise<MachineOutcome<RecordedReading[]>> {
   const { data, error } = await db.rpc("latest_setup_for_client", {
     p_studio_id: studioId,
     p_client_id: clientId,
+    p_exclude_session_id: excludeSessionId,
   });
 
   if (error) {

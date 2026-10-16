@@ -934,9 +934,18 @@ describe("0223 · guidance returns every group of the latest save", () => {
     ]);
 
     const r = await asUser(studio.userId, (q) =>
-      q(`select public.latest_setup_for_client($1,$2) as r`, [
+      // THE THIRD ARGUMENT IS THE SESSION BEING CHARTED, EXCLUDED. This asks
+      // what a LATER visit sees, so it excludes a visit that recorded nothing
+      // — the capture under test is in this client's own earlier session
+      // (Codex, #860 4289974654).
+      //
+      // A RAW SQL CALL, so nothing type-checked it: the typed callers failed
+      // to compile the moment the parameter became required, and this one
+      // failed only when the database refused the call.
+      q(`select public.latest_setup_for_client($1,$2,$3) as r`, [
         studio.studioId,
         studio.clientId,
+        "00000000-0000-4000-8000-000000000001",
       ]),
     );
     const rows = r.rows[0].r as Array<Record<string, unknown>>;

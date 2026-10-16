@@ -410,15 +410,44 @@ describe("a recorded observation is never destroyed", () => {
     expect(r.notes.map((n) => n.code)).toContain("documentation_discrepancy");
   });
 
-  it("preserves precision finer than the contract instead of rounding it", () => {
+  it("REFUSES precision finer than the contract, rather than promising to keep it", () => {
+    // THIS ASSERTED THE OPPOSITE, and the old expectation is why the finding
+    // existed (Codex, #860 4289974660): the validator returned ok with a
+    // `precision_beyond_contract` NOTE whose message read "Stored exactly as
+    // entered". 0223's recording command refuses the same value
+    // (`scale(v_value) > v_decimals`), so that promise could never be kept -
+    // app and database disagreed and the app's half was the one talking to
+    // the practitioner.
+    //
+    // REFUSING IS THE SIDE THAT SURVIVES, for a reason one layer on from the
+    // disagreement: a reading row stores the CONTRACT's `decimals` beside the
+    // value, so persisting 1.234 against a 2-decimal contract would store a
+    // row that disagrees with itself, and a renderer formatting by `decimals`
+    // would show 1.23. Relaxing the database would not have preserved her
+    // reading - it would have hidden a digit later and more quietly.
     const r = validateReading(
       bench({ fieldKey: "secs", value: { kind: "value", value: 1.234 } }),
       { catalogue: FIXTURE_CATALOGUE },
     );
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.code).toBe("precision_beyond_contract");
+    // IT STILL DOES NOT ROUND, which was the true half of the original rule:
+    // it says what it saw and asks her to read the machine again.
+    expect(r.message).toContain("1.234");
+    expect(r.message).toMatch(/not rounded for you/i);
+  });
+
+  it("accepts a value AT the contract's precision, so the refusal is not a ban on decimals", () => {
+    // Without this the assertion above would pass for a validator that
+    // refused every fractional value.
+    const r = validateReading(
+      bench({ fieldKey: "secs", value: { kind: "value", value: 1.2 } }),
+      { catalogue: FIXTURE_CATALOGUE },
+    );
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.recorded).toEqual({ kind: "value", value: 1.234 });
-    expect(r.notes.map((n) => n.code)).toContain("precision_beyond_contract");
+    expect(r.recorded).toEqual({ kind: "value", value: 1.2 });
   });
 
   it("treats a recorded zero as a value, not an absence", () => {

@@ -265,7 +265,17 @@ export async function loadMachineSetupContext(input: {
     persistence = NO_PERSISTENCE;
   }
 
-  const prior = await latestRecordedSetup(db, scope.studioId, input.clientId);
+  // THE SESSION ON SCREEN IS EXCLUDED, and `input.sessionId` is safe to pass
+  // because `assertSessionForClient` above has already authorized it against
+  // this studio and client - this is the same value, not a second claim.
+  // Without it the guidance could be today's own capture (Codex, #860
+  // 4289974654).
+  const prior = await latestRecordedSetup(
+    db,
+    scope.studioId,
+    input.clientId,
+    input.sessionId,
+  );
   const priorSetup = prior.ok ? prior.value : [];
 
   // ONE LOOKUP, for the two things that need to see a RETIRED unit.

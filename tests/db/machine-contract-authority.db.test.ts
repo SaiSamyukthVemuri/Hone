@@ -233,6 +233,21 @@ afterAll(async () => {
 });
 
 // ---------------------------------------------------------------------------
+/**
+ * A session id holding none of the captures in this file.
+ *
+ * `latest_setup_for_client` REQUIRES the session being charted, so it can
+ * never return a capture recorded in that same session as "Previous
+ * treatment" (Codex, #860 4289974654). Every call below asks what a LATER
+ * visit sees, so each excludes a visit that recorded nothing.
+ *
+ * THESE CALL SITES WERE NOT CAUGHT BY THE TYPE CHECKER, because they go
+ * through a SQL string rather than the typed wrapper. The eight TypeScript
+ * callers failed to compile the moment the parameter became required; these
+ * eleven failed only when the database refused the call.
+ */
+const ANOTHER_VISIT = randomUUID();
+
 describe("0223 · publication is DEPLOYMENT authority, never a tenant's", () => {
   it("POSITIVE CONTROL: deployment authority can publish, and a unit then registers", async () => {
     const studio = await seedStudio("auth-pos");
@@ -561,9 +576,10 @@ describe("0223 · RETIREMENT of a parent session, not just a block", () => {
     ]);
 
     const guide = await asUser(studio.userId, (q) =>
-      q(`select public.latest_setup_for_client($1,$2) as r`, [
+      q(`select public.latest_setup_for_client($1,$2,$3) as r`, [
         studio.studioId,
         studio.clientId,
+        ANOTHER_VISIT,
       ]),
     );
     const rows = (guide.rows[0].r ?? []) as Array<{ value_numeric: string }>;
@@ -633,9 +649,10 @@ describe("0223 · an EMPTY capture cannot erase prior guidance", () => {
 
     // ...and the guidance still stands.
     const guide = await asUser(studio.userId, (q) =>
-      q(`select public.latest_setup_for_client($1,$2) as r`, [
+      q(`select public.latest_setup_for_client($1,$2,$3) as r`, [
         studio.studioId,
         studio.clientId,
+        ANOTHER_VISIT,
       ]),
     );
     const rows = (guide.rows[0].r ?? []) as Array<{ value_numeric: string }>;
@@ -1027,9 +1044,10 @@ describe("0223 · retrieval returns ONE coherent capture, never a composite", ()
     await recordAs(studio.userId, blockId, second, "g", [ok("current", "77")]);
 
     const guide = await asUser(studio.userId, (q) =>
-      q(`select public.latest_setup_for_client($1,$2) as r`, [
+      q(`select public.latest_setup_for_client($1,$2,$3) as r`, [
         studio.studioId,
         studio.clientId,
+        ANOTHER_VISIT,
       ]),
     );
     const rows = (guide.rows[0].r ?? []) as Array<{
@@ -1090,9 +1108,10 @@ describe("0223 · retrieval returns ONE coherent capture, never a composite", ()
     await recordAs(target.userId, blockId, machineId, "g", [ok("current", "100")]);
 
     const guide = await asUser(stranger.userId, (q) =>
-      q(`select public.latest_setup_for_client($1,$2) as r`, [
+      q(`select public.latest_setup_for_client($1,$2,$3) as r`, [
         target.studioId,
         target.clientId,
+        ANOTHER_VISIT,
       ]),
     );
     expect(guide.rows[0].r).toEqual([]);
@@ -2177,9 +2196,12 @@ describe("0223 - the latest setup includes every group, coherently", () => {
 
   const guidance = async (studio: SeededStudio): Promise<Row[]> => {
     const r = await asUser(studio.userId, (q) =>
-      q(`select public.latest_setup_for_client($1,$2) as g`, [
+      // Excludes a visit that recorded nothing, so every case below reads as
+      // "what a LATER visit sees" — see ANOTHER_VISIT's own comment.
+      q(`select public.latest_setup_for_client($1,$2,$3) as g`, [
         studio.studioId,
         studio.clientId,
+        ANOTHER_VISIT,
       ]),
     );
     return (r.rows[0].g as Row[]) ?? [];

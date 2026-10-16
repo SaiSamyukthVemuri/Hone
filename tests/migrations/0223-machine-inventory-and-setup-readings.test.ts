@@ -1073,6 +1073,65 @@ describe("0223's INITIAL SAVE forwards 0166's command faithfully", () => {
   });
 });
 
+describe("0223's guidance read excludes the session being charted", () => {
+  // Proved behaviourally against a real database in
+  // tests/db/machine-workflow-end-to-end. What a source contract adds is that
+  // the parameter cannot quietly become optional again: a `default null`
+  // would let any caller fall back to the defective behaviour, and the
+  // wrapper's own docblock says this scoping lives in SQL precisely "so a
+  // future caller cannot omit it".
+  function guidance(): string {
+    const at = CODE.indexOf(
+      "create or replace function public.latest_setup_for_client(",
+    );
+    expect(at, "the guidance read must exist").toBeGreaterThan(-1);
+    return CODE.slice(at).split("$$;")[0]!;
+  }
+
+  it("takes the session to exclude, and takes it REQUIRED", () => {
+    const fn = guidance();
+    expect(fn).toContain("p_exclude_session_id uuid");
+    expect(
+      fn,
+      "a default would let a caller silently restore the defect",
+    ).not.toMatch(/p_exclude_session_id uuid\s+default/i);
+  });
+
+  it("applies it to the anchor, which is what picks the setup", () => {
+    expect(guidance()).toContain("sn.id is distinct from p_exclude_session_id");
+  });
+
+  it("keeps the client and studio scoping it already had", () => {
+    // The earlier repair of this same function was for showing ANOTHER
+    // CLIENT's newer reading as guidance. A fix that swapped one scope for
+    // another would trade one defect for its predecessor.
+    const fn = guidance();
+    expect(fn).toContain("sn.client_id = p_client_id");
+    expect(fn).toContain("c.studio_id = p_studio_id");
+    expect(fn).toContain("public.is_studio_member(p_studio_id)");
+  });
+
+  it("carries the new signature through the grants", () => {
+    // A stale two-argument revoke would leave the OLD signature granted if it
+    // ever existed on a stack, and the new one ungranted.
+    for (const role of ["public", "anon", "authenticated", "service_role"]) {
+      expect(
+        CODE.includes(
+          `revoke execute on function public.latest_setup_for_client(uuid, uuid, uuid) from ${role}`,
+        ),
+        `the three-argument form is not revoked from ${role}`,
+      ).toBe(true);
+    }
+    expect(CODE).toContain(
+      "grant execute on function public.latest_setup_for_client(uuid, uuid, uuid) to authenticated",
+    );
+    expect(
+      CODE.includes("latest_setup_for_client(uuid, uuid)"),
+      "a two-argument signature reference survived the change",
+    ).toBe(false);
+  });
+});
+
 describe("0223's INITIAL SAVE is idempotent through a session-scoped claim", () => {
   // WHAT A SOURCE CONTRACT CAN AND CANNOT SAY HERE. It can hold the ORDER of
   // the steps and the presence of each one; it cannot prove the command

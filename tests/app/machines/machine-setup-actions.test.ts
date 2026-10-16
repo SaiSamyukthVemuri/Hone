@@ -1325,6 +1325,44 @@ describe("a RETIRED remembered machine is named as retired, not as missing", () 
 // round trip. A second call for the captures would reintroduce exactly that.
 // ===========================================================================
 
+describe("previous-treatment guidance excludes the session being charted", () => {
+  // THE DEFECT (Codex, #860 4289974654): `latest_setup_for_client` filtered on
+  // client and studio and returned the newest capture, so a setup recorded in
+  // the session ON SCREEN came back as "Previous treatment" - under copy that
+  // says it is reference only and not today's entries.
+  //
+  // ASSERTED ON THE RPC ARGUMENTS, because that is where the claim lives. The
+  // SQL exclusion is proved against a real database in
+  // tests/db/machine-workflow-end-to-end; what can only be checked HERE is
+  // that the action hands the authorized route session down rather than
+  // omitting it or inventing one.
+  it("passes the ROUTE's sessionId as the exclusion", async () => {
+    signIn("studio-fett", "pract-sabrina", "owner");
+    await actions.loadMachineSetupContext(ROUTE);
+
+    const call = DB.calls.find((c) => c.fn === "latest_setup_for_client");
+    expect(call, "the guidance lookup was not called at all").toBeTruthy();
+    expect(call!.args.p_exclude_session_id).toBe(ROUTE.sessionId);
+    // AND THE OTHER TWO SCOPES ARE STILL THERE. A fix that dropped the client
+    // scoping while adding the session one would re-open the defect this
+    // function was repaired for earlier: another client's newer reading shown
+    // as guidance.
+    expect(call!.args.p_client_id).toBe(ROUTE.clientId);
+    expect(call!.args.p_studio_id).toBe("studio-fett");
+  });
+
+  it("sends a REAL session id, not a placeholder", async () => {
+    // Guards the shape of the fix rather than its presence: passing null or
+    // an empty string would satisfy "a third argument exists" while excluding
+    // nothing, and `is distinct from null` excludes no row.
+    signIn("studio-fett", "pract-sabrina", "owner");
+    await actions.loadMachineSetupContext(ROUTE);
+    const call = DB.calls.find((c) => c.fn === "latest_setup_for_client");
+    expect(call!.args.p_exclude_session_id).toBeTruthy();
+    expect(typeof call!.args.p_exclude_session_id).toBe("string");
+  });
+});
+
 describe("loadMachineSetupContext reads the block's recorded captures", () => {
   const READING_ROW = {
     // THE KEYSET CURSOR. The complete read pages by `id`, so a row without one

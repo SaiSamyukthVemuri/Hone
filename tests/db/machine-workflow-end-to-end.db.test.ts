@@ -335,6 +335,18 @@ const READINGS = [
 
 // ---------------------------------------------------------------------------
 
+/**
+ * A session id that holds none of the captures in this file.
+ *
+ * `latestRecordedSetup` REQUIRES the session being charted, so it can never
+ * offer a capture recorded in that same session back as "Previous treatment"
+ * (Codex, #860 4289974654). Every case below asks what a LATER visit sees, so
+ * each excludes a visit that recorded nothing - and the type checker found all
+ * eight call sites the moment the parameter stopped being optional, which is
+ * the argument for requiring it rather than defaulting it.
+ */
+const ANOTHER_VISIT = randomUUID();
+
 describe("MPX-03 · the inventory reader reads real rows", () => {
   it("registers a machine and reads it back as a selectable device", async () => {
     const studio = await seedStudio("e2e-inv");
@@ -773,9 +785,11 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
       }),
     );
 
+    // (the cross-client case continues below; the same-client, same-session
+    // case is its own test further down)
     // Ana's chart must show ANA's 70, never Bea's newer 410.
     const forAna = await asDb(studio.userId, (db) =>
-      latestRecordedSetup(db, studio.studioId, studio.clientId),
+      latestRecordedSetup(db, studio.studioId, studio.clientId, ANOTHER_VISIT),
     );
     expect(forAna.ok).toBe(true);
     if (!forAna.ok) return;
@@ -794,7 +808,7 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
 
     // And Bea's chart shows Bea's.
     const forBea = await asDb(studio.userId, (db) =>
-      latestRecordedSetup(db, studio.studioId, beaClientId),
+      latestRecordedSetup(db, studio.studioId, beaClientId, ANOTHER_VISIT),
     );
     expect(forBea.ok).toBe(true);
     if (!forBea.ok) return;
@@ -864,7 +878,7 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
     );
 
     const prior = await asDb(studio.userId, (db) =>
-      latestRecordedSetup(db, studio.studioId, studio.clientId),
+      latestRecordedSetup(db, studio.studioId, studio.clientId, ANOTHER_VISIT),
     );
     expect(prior.ok).toBe(true);
     if (!prior.ok) return;
@@ -905,7 +919,7 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
     );
 
     const out = await asDb(mine.userId, (db) =>
-      latestRecordedSetup(db, mine.studioId, other.clientId),
+      latestRecordedSetup(db, mine.studioId, other.clientId, ANOTHER_VISIT),
     );
     expect(out.ok).toBe(true);
     if (!out.ok) return;
@@ -931,7 +945,7 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
     );
 
     const leaked = await asDb(stranger.userId, (db) =>
-      latestRecordedSetup(db, target.studioId, target.clientId),
+      latestRecordedSetup(db, target.studioId, target.clientId, ANOTHER_VISIT),
     );
     expect(leaked.ok).toBe(true);
     if (!leaked.ok) return;
@@ -978,7 +992,7 @@ describe("MPX-03 · NEXT-VISIT retrieval returns one coherent prior setup", () =
     );
 
     const prior = await asDb(studio.userId, (db) =>
-      latestRecordedSetup(db, studio.studioId, studio.clientId),
+      latestRecordedSetup(db, studio.studioId, studio.clientId, ANOTHER_VISIT),
     );
     expect(prior.ok).toBe(true);
     if (!prior.ok) return;
@@ -1020,7 +1034,7 @@ describe("MPX-03 · NEXT-VISIT retrieval returns one coherent prior setup", () =
     );
 
     const prior = await asDb(studio.userId, (db) =>
-      latestRecordedSetup(db, studio.studioId, studio.clientId),
+      latestRecordedSetup(db, studio.studioId, studio.clientId, ANOTHER_VISIT),
     );
     if (!prior.ok) throw new Error("expected a prior setup");
 
@@ -1070,7 +1084,7 @@ describe("MPX-03 · NEXT-VISIT retrieval returns one coherent prior setup", () =
   it("a studio with no history gets an empty prior setup, not an error", async () => {
     const studio = await seedStudio("e2e-next-none");
     const prior = await asDb(studio.userId, (db) =>
-      latestRecordedSetup(db, studio.studioId, studio.clientId),
+      latestRecordedSetup(db, studio.studioId, studio.clientId, ANOTHER_VISIT),
     );
     expect(prior.ok && prior.value).toEqual([]);
   });
@@ -1194,5 +1208,173 @@ describe("naming a RETIRED unit", () => {
     expect(named.ok).toBe(true);
     if (!named.ok) return;
     expect(named.value).toEqual([]);
+  });
+});
+
+describe("0223 · guidance never offers the session on screen back as history", () => {
+  // THE DEFECT (Codex, #860 4289974654). `latest_setup_for_client` filtered on
+  // client and studio and took the newest capture, so a setup recorded MINUTES
+  // AGO, in the session being charted, came back as "Previous treatment" -
+  // under copy that says it is reference only and not today's entries. She
+  // reads her own last save back as history and may reproduce it believing it
+  // came from a previous visit.
+  //
+  // THE FIX IS A REQUIRED PARAMETER, not a filter in the caller: the wrapper's
+  // own docblock says the scoping lives in SQL "so a future caller cannot omit
+  // it", and the type checker found all eight existing call sites the moment
+  // it stopped being optional.
+  it("returns the EARLIER visit's setup, not the one being charted", async () => {
+    const studio = await seedStudio("prior-excl");
+    const machineId = await asDb(studio.userId, (db) =>
+      registerStudioMachine(db, {
+        studioId: studio.studioId,
+        profileId: SYNTH.profileId,
+        profileVersion: SYNTH.version,
+        displayName: "Room 1",
+        installedOptions: [],
+      }),
+    ).then((r) => (r.ok ? r.value : ""));
+    expect(machineId).not.toBe("");
+
+    // VISIT ONE, the genuine previous treatment.
+    const first = await seedSession(studio);
+    await asDb(studio.userId, (db) =>
+      recordSetupGroup(db, {
+        blockId: first.blockId,
+        machineId,
+        modeKey: "galvanic",
+        groupKey: "g1",
+        channels: [],
+        readings: [
+          {
+            stageKey: null,
+            fieldKey: "current",
+            value: { kind: "value", value: 111 },
+            nativeUnit: "µA",
+            decimals: 0,
+            observationSource: "practitioner-entered",
+          },
+        ],
+      }),
+    );
+
+    // VISIT TWO, the session on screen, for the SAME client - recorded later,
+    // so it wins every ordering this function applies.
+    const todaySessionId = randomUUID();
+    const todayBlockId = randomUUID();
+    await adminQuery(
+      `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality)
+       values ($1, $2, $3, $4, 'electrolysis')`,
+      [todaySessionId, studio.studioId, studio.clientId, studio.practitionerId],
+    );
+    await adminQuery(
+      `insert into public.session_blocks (id, studio_id, session_id)
+       values ($1, $2, $3)`,
+      [todayBlockId, studio.studioId, todaySessionId],
+    );
+    await asDb(studio.userId, (db) =>
+      recordSetupGroup(db, {
+        blockId: todayBlockId,
+        machineId,
+        modeKey: "galvanic",
+        groupKey: "g1",
+        channels: [],
+        readings: [
+          {
+            stageKey: null,
+            fieldKey: "current",
+            value: { kind: "value", value: 222 },
+            nativeUnit: "µA",
+            decimals: 0,
+            observationSource: "practitioner-entered",
+          },
+        ],
+      }),
+    );
+
+    // CHARTING TODAY: the guidance is visit one's 111, never today's own 222.
+    const asSeenToday = await asDb(studio.userId, (db) =>
+      latestRecordedSetup(db, studio.studioId, studio.clientId, todaySessionId),
+    );
+    expect(asSeenToday.ok).toBe(true);
+    if (!asSeenToday.ok) return;
+    expect(
+      asSeenToday.value[0]?.value,
+      "today's own capture was offered back as Previous treatment",
+    ).toMatchObject({ kind: "value", value: 111 });
+    expect(asSeenToday.value[0]?.blockId).toBe(first.blockId);
+
+    // THE CONVERSE, so the assertion above cannot pass by the function simply
+    // preferring older rows: charting the EARLIER session sees today's 222.
+    const asSeenFromVisitOne = await asDb(studio.userId, (db) =>
+      latestRecordedSetup(db, studio.studioId, studio.clientId, first.sessionId),
+    );
+    expect(asSeenFromVisitOne.ok).toBe(true);
+    if (!asSeenFromVisitOne.ok) return;
+    expect(asSeenFromVisitOne.value[0]?.value).toMatchObject({
+      kind: "value",
+      value: 222,
+    });
+  });
+
+  it("returns NOTHING when the only capture is the one being charted", async () => {
+    // THE SHARPEST CASE, and the one the old behaviour got most wrong: a
+    // first-ever visit. There is no previous treatment, so the honest answer
+    // is an empty list and a panel that shows no guidance at all. Returning
+    // her own capture here is how "Previous treatment" came to describe
+    // something recorded ten minutes earlier on the same screen.
+    const studio = await seedStudio("prior-excl-only");
+    const machineId = await asDb(studio.userId, (db) =>
+      registerStudioMachine(db, {
+        studioId: studio.studioId,
+        profileId: SYNTH.profileId,
+        profileVersion: SYNTH.version,
+        displayName: "Room 1",
+        installedOptions: [],
+      }),
+    ).then((r) => (r.ok ? r.value : ""));
+
+    const only = await seedSession(studio);
+    await asDb(studio.userId, (db) =>
+      recordSetupGroup(db, {
+        blockId: only.blockId,
+        machineId,
+        modeKey: "galvanic",
+        groupKey: "g1",
+        channels: [],
+        readings: [
+          {
+            stageKey: null,
+            fieldKey: "current",
+            value: { kind: "value", value: 333 },
+            nativeUnit: "µA",
+            decimals: 0,
+            observationSource: "practitioner-entered",
+          },
+        ],
+      }),
+    );
+
+    const guidance = await asDb(studio.userId, (db) =>
+      latestRecordedSetup(db, studio.studioId, studio.clientId, only.sessionId),
+    );
+    expect(guidance.ok).toBe(true);
+    if (!guidance.ok) return;
+    expect(
+      guidance.value,
+      "a first visit was shown its own capture as Previous treatment",
+    ).toEqual([]);
+
+    // CONTROL: the capture really exists and is readable from another visit,
+    // so the empty answer above is the exclusion and not a failed write.
+    const fromElsewhere = await asDb(studio.userId, (db) =>
+      latestRecordedSetup(db, studio.studioId, studio.clientId, ANOTHER_VISIT),
+    );
+    expect(fromElsewhere.ok).toBe(true);
+    if (!fromElsewhere.ok) return;
+    expect(fromElsewhere.value[0]?.value).toMatchObject({
+      kind: "value",
+      value: 333,
+    });
   });
 });
