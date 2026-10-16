@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # LOCAL-ONLY synthetic Fett twin (#825): GUARDED isolated reset, then seed (or prove) the twin.
 #
-#   scripts/fett-twin/reset.sh <supabase-workdir> [--seed-only] [--cleanup-dry-run]
+#   scripts/fett-twin/reset.sh <supabase-workdir> [--seed-only|--cleanup-dry-run|--dashboard-only]
 #
 # <supabase-workdir> is the directory whose supabase/config.toml defines the twin's OWN isolated stack.
 # Refuses unless: its project_id is not the shared fleet id (Hone-0162); its db/api ports are not the
@@ -11,9 +11,14 @@
 #
 # --seed-only        skip the reset; seed if absent, prove if present, refuse if partial/unrelated
 # --cleanup-dry-run  only inventory what the twin owns (deletes nothing)
+# --dashboard-only   add representative dashboard data to a verified twin (no reset)
 set -euo pipefail
-WD="${1:?usage: reset.sh <supabase-workdir> [--seed-only|--cleanup-dry-run]}"
+WD="${1:?usage: reset.sh <supabase-workdir> [--seed-only|--cleanup-dry-run|--dashboard-only]}"
 MODE="${2:-}"
+case "$MODE" in
+  ""|--seed-only|--cleanup-dry-run|--dashboard-only) ;;
+  *) echo "REFUSED: unknown mode $MODE"; exit 4;;
+esac
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CFG="$WD/supabase/config.toml"
 CLI="npx --yes supabase@2.102.0"
@@ -42,6 +47,7 @@ fi
 
 FILE="tests/twin/fett-twin.seed.twin.ts"
 [ "$MODE" = "--cleanup-dry-run" ] && FILE="tests/twin/fett-twin.cleanup.twin.ts"
+[ "$MODE" = "--dashboard-only" ] && FILE="tests/twin/fett-twin.dashboard.twin.ts"
 cd "$ROOT"
 # #879's paired-target guard refuses a half-moved pair, so the API side names the SAME twin stack too.
 HONE_LOCAL_DB_URL="postgresql://postgres:postgres@127.0.0.1:${DB_PORT}/postgres" \
