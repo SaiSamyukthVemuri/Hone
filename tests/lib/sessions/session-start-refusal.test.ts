@@ -77,7 +77,13 @@ describe("session-start refusals (a booking assigned to a colleague is SAID, not
     // and a failed pre-check never falls through to offering the picker.
     expect(PAGE).toMatch(/practitioners!appointments_practitioner_same_studio_fk\(display_name, active\)/);
     expect(PAGE).not.toMatch(/[^!]practitioners\(display_name\)/);
-    expect(PAGE).toMatch(/if \(apptErr\) \{[\s\S]{0,400}refusal = "appointment_missing";/);
+    // A FAILED check is not a missing appointment: no unlinked-session offer, a retry instead.
+    expect(PAGE).toMatch(/if \(apptErr\) \{[\s\S]{0,600}refusal = "check_failed";/);
+    expect(PAGE).not.toMatch(/if \(apptErr\) \{[\s\S]{0,600}refusal = "appointment_missing";\s*\} else if \(!appt\)/);
+    expect(PAGE).toMatch(/refusal === "check_failed" && appointmentId && \([\s\S]{0,300}Try again/);
+    const failed = sessionStartRefusalCopy("check_failed", null);
+    expect(failed.body).toMatch(/Reload the page to try again/);
+    expect(failed.body).not.toMatch(/without/i);
     // The page offers a link to the appointment (where Move appears only when
     // usable) and no predicate of its own about reassignment.
     expect(PAGE).toMatch(/href=\{`\/calendar\/\$\{appointmentId\}`\}/);

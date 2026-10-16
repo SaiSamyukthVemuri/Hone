@@ -17,6 +17,10 @@ export const SESSION_START_REFUSALS = [
   "other_client",
   "other_studio",
   "appointment_missing",
+  // The PAGE's own lookup failed (transient DB/schema-cache error). Distinct
+  // from "missing": a real appointment must never be offered an UNLINKED
+  // session just because its check could not run.
+  "check_failed",
 ] as const;
 
 export type SessionStartRefusal = (typeof SESSION_START_REFUSALS)[number];
@@ -73,6 +77,11 @@ export function sessionStartRefusalCopy(
       return {
         title: "This appointment is not in your current studio",
         body: "Switch to the studio the appointment belongs to, then start the chart from there.",
+      };
+    case "check_failed":
+      return {
+        title: "This appointment could not be checked just now",
+        body: "Reload the page to try again. Nothing has been started or changed.",
       };
     case "appointment_missing":
       return {

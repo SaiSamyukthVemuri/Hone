@@ -84,9 +84,11 @@ export default async function NewSessionPage({
       .maybeSingle();
     if (apptErr) {
       // Fail closed on the PRESENTATION: never offer the picker on an unknown
-      // appointment. The action would still refuse on its own.
+      // appointment, and never treat a failed CHECK as a missing appointment:
+      // that would offer an unlinked session for a booking that may well exist.
+      // The action would still refuse or accept on its own.
       console.error(JSON.stringify({ event: "session_new_appointment_precheck_failed", code: apptErr.code ?? null }));
-      refusal = "appointment_missing";
+      refusal = "check_failed";
     } else if (!appt) {
       // Deleted, nonexistent, or not visible to this practitioner at all.
       refusal = "appointment_missing";
@@ -219,6 +221,14 @@ export default async function NewSessionPage({
             ) : (
               <Link href="/calendar" className="font-medium hover:underline">
                 Open the calendar
+              </Link>
+            )}
+            {refusal === "check_failed" && appointmentId && (
+              <Link
+                href={`/clients/${id}/sessions/new?appointment_id=${encodeURIComponent(appointmentId)}`}
+                className="font-medium hover:underline"
+              >
+                Try again
               </Link>
             )}
             {offerUnlinkedStart && (
