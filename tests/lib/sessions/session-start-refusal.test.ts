@@ -64,5 +64,15 @@ describe("session-start refusals (a booking assigned to a colleague is SAID, not
     // usable) and no predicate of its own about reassignment.
     expect(PAGE).toMatch(/href=\{`\/calendar\/\$\{appointmentId\}`\}/);
     expect(PAGE).not.toMatch(/canReassign/);
+    // EVERY lineage failure is shown before the picker, matching the action's refusals.
+    expect(PAGE).toMatch(/\} else if \(!appt\) \{[\s\S]{0,300}refusal = "appointment_missing";/);
+    expect(PAGE).toMatch(/\} else if \(appt\.client_id !== id\) \{\s*refusal = "other_client";/);
+    // A missing or foreign appointment never gets a dead /calendar/<id> link.
+    expect(PAGE).toMatch(
+      /const appointmentLinkable =\s*!!appointmentId && refusal !== "appointment_missing" && refusal !== "other_studio";/,
+    );
+    expect(PAGE).toMatch(/\{appointmentLinkable \? \(\s*<Link href=\{`\/calendar\/\$\{appointmentId\}`\}/);
+    // The copy's "start a session without an appointment" recovery is a real link.
+    expect(PAGE).toMatch(/refusal === "appointment_missing" && \([\s\S]{0,300}href=\{`\/clients\/\$\{id\}\/sessions\/new`\}/);
   });
 });

@@ -80,12 +80,22 @@ export default async function NewSessionPage({
       // appointment. The action would still refuse on its own.
       console.error(JSON.stringify({ event: "session_new_appointment_precheck_failed", code: apptErr.code ?? null }));
       refusal = refusal ?? "appointment_missing";
-    } else if (appt && appt.client_id === id && appt.practitioner_id && appt.practitioner_id !== practitioner.id) {
+    } else if (!appt) {
+      // Deleted, nonexistent, or outside this studio (RLS/studio scope hides it):
+      // the action would answer appointment_missing, so say it BEFORE the picker.
+      refusal = "appointment_missing";
+    } else if (appt.client_id !== id) {
+      refusal = "other_client";
+    } else if (appt.practitioner_id && appt.practitioner_id !== practitioner.id) {
       refusal = "assigned_elsewhere";
       const joined = appt.practitioner as { display_name?: string | null } | { display_name?: string | null }[] | null;
       assignedName = (Array.isArray(joined) ? joined[0]?.display_name : joined?.display_name) ?? null;
     }
   }
+  // Only a refusal about an appointment that EXISTS in this studio can link to
+  // it; a missing or foreign one would 404 on /calendar/<id>.
+  const appointmentLinkable =
+    !!appointmentId && refusal !== "appointment_missing" && refusal !== "other_studio";
   const refusalCopy = refusal ? sessionStartRefusalCopy(refusal, assignedName) : null;
 
   // PR #190 (clinical memory). The most recent previous session + its
@@ -182,9 +192,20 @@ export default async function NewSessionPage({
           <h2 className="font-semibold">{refusalCopy.title}</h2>
           <p>{refusalCopy.body}</p>
           <div className="flex flex-wrap gap-4 pt-1">
-            {appointmentId && (
+            {appointmentLinkable ? (
               <Link href={`/calendar/${appointmentId}`} className="font-medium hover:underline">
                 Open the appointment
+              </Link>
+            ) : (
+              <Link href="/calendar" className="font-medium hover:underline">
+                Open the calendar
+              </Link>
+            )}
+            {refusal === "appointment_missing" && (
+              // The copy offers starting WITHOUT the appointment; this is that path
+              // (no appointment_id, so nothing is linked to a missing booking).
+              <Link href={`/clients/${id}/sessions/new`} className="font-medium hover:underline">
+                Start a session without an appointment
               </Link>
             )}
             <Link href={`/clients/${id}`} className="font-medium hover:underline">
