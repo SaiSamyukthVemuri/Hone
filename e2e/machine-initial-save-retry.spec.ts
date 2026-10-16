@@ -222,6 +222,50 @@ test("a lost response on the initial save is retried, not duplicated @390px", as
     expect(t.claims, "the save left its receipt").toBe(1);
   });
 
+  await test.step("2b: while the outcome is unknown, the payload is FROZEN", async () => {
+    // THE MOUNTED HALF of Codex #860 4296029608. The retry key is held so
+    // that pressing Save again is safe, but
+    // `create_block_with_initial_setup` binds that key to a digest of the
+    // WHOLE payload. An edit before the retry therefore turns a committed
+    // first attempt's safe retry into a mismatch refusal - and the way out of
+    // a refusal looks like cancel-and-recreate, which duplicates the area.
+    //
+    // So the controls must be dead, and visibly so.
+    await expect(page.getByTestId("setting-draft-frozen")).toBeVisible({
+      timeout: T,
+    });
+    await expect(page.getByTestId("reading-current")).toBeDisabled();
+    await expect(page.getByTestId("setting-group-g1-channel-1")).toBeDisabled();
+
+    // AND A CONTROL REACHED ANYWAY CANNOT MOVE THE PAYLOAD. `fill` is refused
+    // by Playwright on a disabled input, so this drives React's own change
+    // path directly - which is what a stray control wired without `frozen`
+    // would do, and exactly what the handler guard exists to stop.
+    await page.getByTestId("reading-current").evaluate((el) => {
+      const input = el as HTMLInputElement;
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!;
+      setter.call(input, "999");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    // THE PROOF OF THAT IS IN STEP 4, NOT HERE, and the first spelling got
+    // this wrong. It asserted the input had snapped back to "120" — but the
+    // handler refusing means NO state change, so React never re-renders and
+    // never corrects the DOM node this just vandalised. The node reads 999
+    // while the payload holds 120. That is a true description of a React
+    // controlled input whose onChange declined, not a payload that moved, and
+    // it is unreachable without this escape hatch because the input is
+    // disabled.
+    //
+    // So the claim is made where it is observable: step 4 reads the stored
+    // readings back and requires 120 / 300.5 / 1.25 — the values entered
+    // BEFORE this forced edit. If the guard had let 999 through, the retry
+    // would have carried it and step 4 would fail.
+  });
+
   await test.step("3: pressing Save again is ABSORBED — one area, not two", async () => {
     // The interception is spent, so this attempt completes normally. It must
     // carry the SAME retry key, which is the only thing the application can
@@ -256,6 +300,10 @@ test("a lost response on the initial save is retried, not duplicated @390px", as
         order by r.field_key`,
       [sessionId],
     );
+    // AND THIS IS WHERE STEP 2b'S CLAIM LANDS. A forced edit to 999 was
+    // pushed through React's change path while the save was unresolved; if
+    // the handler guard had accepted it, the retry would have carried 999
+    // under the held key and this list would not read 120.
     expect(rows.map((r) => `${r.field_key}=${r.value_numeric}`)).toEqual([
       "current=120",
       "duration=300.5",
@@ -339,5 +387,67 @@ test("a lost response on the initial save is retried, not duplicated @390px", as
     const draft = page.getByTestId("machine-setting-draft");
     await expect(draft).toBeVisible({ timeout: T });
     await expect(draft.getByTestId("reading-current")).toHaveValue("");
+  });
+
+  await test.step("6: the REVISION save freezes the same way, and absorbs its retry", async () => {
+    // THE OTHER LIMB of one invariant (Codex, #860 4296029605). The initial
+    // save and a revision are different commands with different digests, but
+    // the rule is identical: while an outcome is unknown, the payload is
+    // frozen. Proving only the initial save would leave the revision path
+    // exactly as un-exercised as the reload path was before round 5.
+    //
+    // RUN LAST, deliberately. It appends a capture, and step 5's next-visit
+    // read asserts the values guidance offers — adding a revision before it
+    // would change that read and the step would fail on arithmetic rather
+    // than on behaviour, which is how three assertions in the sibling
+    // journey went stale.
+    await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
+    await page.getByTestId(/^edit-area-/).first().click({ timeout: T });
+    expect(await openMachinePanel(page)).toBe(true);
+    await expect(page.getByTestId("machine-reading-entry")).toBeVisible({
+      timeout: T,
+    });
+
+    const before = await totals(sessionId);
+
+    // A genuine mid-treatment change, then its answer is lost.
+    await page.getByTestId("reading-current").fill("140");
+    await page.getByTestId("reading-duration").fill("290.0");
+    await page.getByTestId("reading-energy_shown").fill("1.30");
+    lost.arm = true;
+    await page.getByTestId("machine-reading-save").click();
+
+    // IT COMMITTED. Same shape as step 2: without this the retry below would
+    // simply be the first successful save and would prove nothing.
+    await expect
+      .poll(async () => (await totals(sessionId)).submissions, {
+        timeout: T,
+        message: "the intercepted revision never reached the database",
+      })
+      .toBe(before.submissions + 1);
+
+    // FROZEN, on this path too.
+    await expect(page.getByTestId("setting-draft-frozen")).toBeVisible({
+      timeout: T,
+    });
+    await expect(page.getByTestId("reading-current")).toBeDisabled();
+    await expect(page.getByTestId("setting-group-add")).toBeDisabled();
+
+    // AND THE RETRY IS ABSORBED — exactly one new capture for the change she
+    // made once, which is the whole clinical point: a second capture is
+    // permanent and reads as another adjustment.
+    await page.getByTestId("machine-reading-save").click();
+    await expect(page.getByTestId("machine-reading-saved")).toBeVisible({
+      timeout: T,
+    });
+    const after = await totals(sessionId);
+    expect(
+      after.submissions,
+      "the retry minted a new save instead of being absorbed",
+    ).toBe(before.submissions + 1);
+    expect(
+      after.readings,
+      "the retry duplicated the readings",
+    ).toBe(before.readings + 3);
   });
 });

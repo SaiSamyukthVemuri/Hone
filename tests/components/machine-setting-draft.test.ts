@@ -283,6 +283,10 @@ describe("switching machine or mode clears the collected draft", () => {
   const DRAFT_SRC = "components/machines/machine-setting-draft.tsx";
   const PANEL_SRC = "components/machines/machine-first-setup-panel.tsx";
   const ENTRY_SRC = "components/machines/machine-reading-entry.tsx";
+  const FIELDS_SRC = "components/machines/setting-draft-fields.tsx";
+  const CONN_SRC = "components/machines/machine-first-setup-connected.tsx";
+  const FORM_SRC =
+    "app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx";
 
   it("the collector reports an EMPTY draft on mount", () => {
     const src = read(DRAFT_SRC);
@@ -382,6 +386,108 @@ describe("switching machine or mode clears the collected draft", () => {
     // nothing is a fresh g1 by another name.
     const src = read(PANEL_SRC);
     expect(src).toMatch(/recordedGroups=\{recordedSetup\}/);
+  });
+
+  it("the ENTRY form freezes the draft while a save is unresolved", () => {
+    // THE INVARIANT (Codex, #860 4296029605): while a save's outcome is
+    // unknown, its payload is frozen. `canEditDraft` encoded this rule from
+    // the day the state machine was written and was wired to NOTHING, so the
+    // controls stayed live through an unresolved save.
+    //
+    // What that cost: the retry key is preserved so pressing Save again is
+    // safe, but the command binds that key to a digest of the payload.
+    // Editing first makes the retry a DIFFERENT payload under the same key,
+    // so a first attempt that committed refuses it as a mismatch — and
+    // editing again mints a new key, appending a second capture of settings
+    // entered once.
+    const src = read(ENTRY_SRC);
+    expect(src).toMatch(/const frozen = !canEditDraft\(save\)/);
+    expect(src).toMatch(/frozen=\{frozen\}/);
+  });
+
+  it("and refuses the edit at the HANDLER, not only at the controls", () => {
+    // Belt and braces, because the failure mode is a duplicate clinical
+    // capture: a control added later without the `frozen` wiring still
+    // cannot move the payload.
+    const src = read(ENTRY_SRC);
+    expect(src).toMatch(/const editDraft = [^;]*\{\s*(\/\/[^\n]*\n\s*)*if \(frozen\) return;/);
+  });
+
+  it("every draft control in the shared fields takes the freeze", () => {
+    // Enumerated rather than spot-checked: these four are the complete set of
+    // controls that feed either digest, and the count is what makes "all of
+    // them" checkable rather than asserted.
+    const src = read(FIELDS_SRC);
+    const disabled = src.match(/disabled=\{frozen\}/g) ?? [];
+    expect(
+      disabled.length,
+      "a draft control was added without the freeze",
+    ).toBeGreaterThanOrEqual(3);
+    // The add-group button composes it with its own condition.
+    expect(src).toMatch(/disabled=\{frozen\}[\s\S]{0,80}data-testid="setting-group-add"/);
+    // And the reason is on screen, so a dead form is not a broken one.
+    expect(src).toMatch(/data-testid="setting-draft-frozen"/);
+  });
+
+  it("the CREATE-MODE collector refuses the edit at its own handler", () => {
+    // FOUND BY THE MOUNTED PROOF, not by review. The host froze its draft and
+    // these controls rendered disabled, so the screen was correct — but this
+    // collector keeps its OWN groups state and reports upward, and that path
+    // had no guard. Driving React's change event past a disabled input still
+    // moved the draft, the host carried the edited value into the retry under
+    // the held key, and the command refused it as a payload mismatch: the
+    // defect of #860 4296029608 reproduced by the test written to prove it
+    // fixed.
+    const src = read(DRAFT_SRC);
+    expect(src).toMatch(/const editDraft = [^;]*\{\s*(\/\/[^\n]*\n\s*)*if \(frozen\) return;/);
+  });
+
+  it("the INITIAL save freezes its payload at the setter", () => {
+    // THE SAME INVARIANT on the other save path (Codex, #860 4296029608).
+    // `create_block_with_initial_setup` digests all 27 parameters, so any
+    // field edited under a held key turns the promised safe retry into a
+    // mismatch refusal and pushes toward cancel-and-recreate: a duplicate
+    // area.
+    //
+    // FROZEN AT THE SETTER rather than control by control. This form has five
+    // user-driven writers and more fields than any one of them touches, so a
+    // per-control list goes stale the next time a field is added — and a
+    // missed one is a duplicated clinical record.
+    const src = read(FORM_SRC);
+    expect(src).toMatch(/const draftFrozen = saveUnresolved/);
+    expect(src).toMatch(
+      /const setDraft: typeof setDraftRaw = \(\.\.\.args\) => \{\s*if \(draftFrozen\) return;/,
+    );
+    // Nothing may reach the raw setter except the shadow itself.
+    const rawUses = (src.match(/setDraftRaw\(/g) ?? []).length;
+    expect(rawUses, "something bypasses the frozen setter").toBe(1);
+  });
+
+  it("and the machine settings freeze with it, being the same payload", () => {
+    // In create mode the panel's draft travels in THIS form's save, so the
+    // digest covers it too. One flag, not a second rule that could disagree.
+    const src = read(FORM_SRC);
+    expect(src).toMatch(/settingDraftFrozen=\{draftFrozen\}/);
+    expect(src).toMatch(/disabled=\{pending \|\| draftFrozen\}/);
+    const panel = read(PANEL_SRC);
+    expect(panel).toMatch(/frozen=\{settingDraftFrozen\}/);
+    const conn = read(CONN_SRC);
+    expect(conn).toMatch(/settingDraftFrozen=\{settingDraftFrozen\}/);
+  });
+
+  it("the machine opener keeps the 44px touch floor", () => {
+    // DESIGN.md LAW 6, and the third time this lane has hand-rolled a control
+    // under the floor (Codex, #860 4296029615, after ebc69ff6). This one is
+    // the SOLE entry to machine selection, so the one control she must hit on
+    // a phone was the one below it. Button's `sm` composes
+    // CONTROL_COMPACT_FINE_POINTER: 44px on every coarse pointer, 32px only
+    // behind the explicit pointer-fine gate.
+    const src = read(CONN_SRC);
+    expect(src).toMatch(/<Button[\s\S]{0,200}data-testid="machine-first-open"/);
+    expect(
+      src,
+      "a hand-rolled className is how the floor was lost the first two times",
+    ).not.toMatch(/text-xs[^"]*py-1\.5[^"]*"\s*\n\s*data-testid="machine-first-open"/);
   });
 
   it("the ENTRY form does NOT reset the monotonic group ordinal", () => {

@@ -46,6 +46,23 @@ export type SettingDraftFieldsProps = {
   onAdvanceOrdinal: () => void;
   setValue: (groupId: string, key: string, value: string) => void;
   flipChannel: (groupId: string, channel: number) => void;
+  /**
+   * THE PAYLOAD IS FROZEN because a save's outcome is unknown.
+   *
+   * Every control here feeds a digest the database binds to a retry key, so
+   * while an attempt is unresolved the thing being retried must not change.
+   * Editing under the preserved key makes a committed first attempt refuse
+   * the retry as a payload mismatch, and editing again mints a new key that
+   * appends a duplicate capture (Codex, #860 4296029605 and 4296029608).
+   *
+   * ONE FLAG FOR BOTH SAVE PATHS. This component is the shared surface for
+   * the initial save and for a revision, and both bind a digest, so the rule
+   * is enforced here once rather than twice at the hosts.
+   *
+   * Defaults to false: a host that does not bind a retry key has nothing to
+   * freeze.
+   */
+  frozen?: boolean;
 };
 
 export function SettingDraftFields({
@@ -57,6 +74,7 @@ export function SettingDraftFields({
   onAdvanceOrdinal,
   setValue,
   flipChannel,
+  frozen = false,
 }: SettingDraftFieldsProps) {
   const fieldGroups = nativeFieldGroups(profile, mode);
   const channels = channelChoices(profile);
@@ -100,6 +118,7 @@ export function SettingDraftFields({
                   onClick={() =>
                     editDraft((prev) => prev.filter((g) => g.id !== setting.id))
                   }
+                  disabled={frozen}
                   data-testid={`setting-group-remove-${setting.id}`}
                 >
                   Remove
@@ -135,6 +154,7 @@ export function SettingDraftFields({
                       size="sm"
                       aria-pressed={on}
                       onClick={() => flipChannel(setting.id, c)}
+                      disabled={frozen}
                       data-testid={`setting-group-${setting.id}-channel-${c}`}
                     >
                       {c}
@@ -206,6 +226,11 @@ export function SettingDraftFields({
                         // (Codex, 15cc6c99).
                         value={setting.values[k] ?? ""}
                         onChange={(e) => setValue(setting.id, k, e.target.value)}
+                        // FROZEN is a different reason from `editable: false`
+                        // above, and the comment there is why both exist:
+                        // that flag is about the MACHINE, this is about an
+                        // in-flight save whose payload must not move.
+                        disabled={frozen}
                         data-testid={
                           groups.length > 1
                             ? `reading-${setting.id}-${f.key}`
@@ -235,6 +260,25 @@ export function SettingDraftFields({
         group - carrying values over would assert that she ran the second set of
         probes at the first set's settings.
       */}
+      {/*
+        WHY EVERYTHING IS DEAD. A disabled form with no reason given reads as
+        a broken page, and the recovery she needs is one specific action -
+        press Save again, unchanged. The host's own alert says that; this
+        says why she cannot type meanwhile, next to the controls that stopped
+        responding.
+      */}
+      {frozen && (
+        <p
+          className="text-xs text-amber-700 dark:text-amber-500"
+          role="status"
+          data-testid="setting-draft-frozen"
+        >
+          These settings are held while the last save is confirmed. The values
+          cannot change until then, because the retry has to be the same save —
+          editing would make it a new one.
+        </p>
+      )}
+
       {canAdd && (
         <div>
           <Button
@@ -245,6 +289,7 @@ export function SettingDraftFields({
               editDraft((prev) => addGroup(prev, groupOrdinal + 1));
               onAdvanceOrdinal();
             }}
+            disabled={frozen}
             data-testid="setting-group-add"
           >
             Add setting group

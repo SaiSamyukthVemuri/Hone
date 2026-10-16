@@ -405,7 +405,7 @@ export function BlockSetupForm({
   onCancel,
 }: Props) {
   const isEdit = !!block;
-  const [draft, setDraft] = useState<Draft>(() =>
+  const [draft, setDraftRaw] = useState<Draft>(() =>
     initialDraft(block, firstEntry, defaultPrimaryArea, defaultMachineFrequency, initialAreas),
   );
   // A lot/batch belongs to ONE probe. Provenance is therefore tracked PER PROBE
@@ -444,6 +444,34 @@ export function BlockSetupForm({
    * puts the instruction on screen. See `INITIAL_SAVE_UNRESOLVED`.
    */
   const [saveUnresolved, setSaveUnresolved] = useState(false);
+
+  /**
+   * WHILE THE INITIAL SAVE'S OUTCOME IS UNKNOWN, ITS PAYLOAD IS FROZEN.
+   *
+   * `create_block_with_initial_setup` binds the retry key to a digest of the
+   * WHOLE payload - all 27 parameters - so the preserved key only makes the
+   * retry safe while the thing being retried is identical. Editing any field
+   * first turns a committed first attempt's safe retry into a mismatch
+   * refusal, which leaves her unable to recover the original result and
+   * pushes toward cancel-and-recreate: a duplicate area
+   * (Codex, #860 4296029608).
+   *
+   * FROZEN AT THE SETTER, not control by control. This form has five
+   * user-driven writers across 1,700 lines and more fields than any of them
+   * touches; disabling inputs one at a time is a list that goes stale the
+   * next time a field is added, and a missed one is a duplicated clinical
+   * record. Shadowing the setter makes the payload immutable no matter which
+   * control is wired, and the controls are disabled as well so the screen
+   * says what is happening rather than silently ignoring her.
+   *
+   * The SAVE button stays live: pressing it again, unchanged, is the whole
+   * recovery.
+   */
+  const draftFrozen = saveUnresolved;
+  const setDraft: typeof setDraftRaw = (...args) => {
+    if (draftFrozen) return;
+    setDraftRaw(...args);
+  };
   /**
    * The retry key of the save in progress, or null when none is open.
    *
@@ -1141,7 +1169,9 @@ export function BlockSetupForm({
           <button
             type="button"
             onClick={copySettings}
-            disabled={pending}
+            // Copying another area's settings REPLACES most of the payload,
+            // so it is the largest possible edit under a held retry key.
+            disabled={pending || draftFrozen}
             className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
           >
             Copy settings from another area in this session
@@ -1173,6 +1203,11 @@ export function BlockSetupForm({
         // in one transaction. On an EXISTING block the panel records directly
         // and this is not supplied, so the two paths never both run.
         onSettingDraft={block ? undefined : onSettingDraftChanged}
+        // THE MACHINE SETTINGS ARE PART OF THE SAME PAYLOAD. In create mode
+        // the panel's draft is carried into THIS form's save, so the digest
+        // covers it too and it has to freeze with everything else - the same
+        // flag, not a second rule that could disagree.
+        settingDraftFrozen={draftFrozen}
       />
 
       {copyMessage && (

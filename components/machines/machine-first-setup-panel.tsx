@@ -124,6 +124,8 @@ export type MachineFirstSetupPanelProps = {
    * discard it. With it, the host's own Save writes the area and these
    * settings in one transaction through `create_block_with_initial_setup`.
    */
+  /** The host form's save is unresolved, so the create-mode draft is frozen. */
+  settingDraftFrozen?: boolean;
   onSettingDraft?: (
     draft: {
       groups: GroupSubmission[];
@@ -241,6 +243,7 @@ export function MachineFirstSetupPanel({
   recordedSetup = [],
   recordedSetupUnavailable = false,
   onSettingDraft,
+  settingDraftFrozen = false,
   unavailableSelection = null,
   unitNames = {},
   onSelectMachine,
@@ -562,6 +565,8 @@ export function MachineFirstSetupPanel({
           */}
           {!blockId && onSettingDraft && mode ? (
             <MachineSettingDraft
+              // Same payload, same freeze — see block-setup-form.
+              frozen={settingDraftFrozen}
               // REMOUNTED WHEN THE IDENTITY CHANGES, for the same reason the
               // entry form is: the draft is keyed by group, stage and field
               // and NOT by mode, so two modes sharing a field identity would

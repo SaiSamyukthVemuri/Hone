@@ -20,6 +20,7 @@ import {
   afterDraftChanged,
   afterOutcome,
   afterRecordAnother,
+  canEditDraft,
   canSubmit,
   initialSaveState,
   keyForSave,
@@ -186,11 +187,31 @@ export function MachineReadingEntry({
     issues.length === 0 &&
     canSubmit(save);
 
+  // WHILE AN OUTCOME IS UNKNOWN, THE PAYLOAD IS FROZEN.
+  //
+  // `canEditDraft` has encoded this rule since the state machine was written
+  // and was wired to NOTHING, so the controls stayed live through an
+  // unresolved save (Codex, #860 4296029605). What that cost: the retry key
+  // is preserved precisely so pressing Save again is safe, but the command
+  // binds that key to a digest of the payload. Editing first makes the retry
+  // a DIFFERENT payload under the same key, so a first attempt that did
+  // commit refuses it as a mismatch - and a further edit then mints a new
+  // key, which appends a second capture of settings entered once. The
+  // promise "press Save again" is only honest while the thing being saved
+  // cannot change underneath it.
+  const frozen = !canEditDraft(save);
+
   // EVERY DRAFT CHANGE CLOSES THE OPEN SAVE, which is how the retry key keeps
   // meaning what it says: a changed draft is a DIFFERENT save and must mint a
   // new key. Without this, she could fix a refused value and have the database
   // absorb the corrected save as a retry of the one it refused.
   const editDraft = (f: (prev: SettingGroupDraft[]) => SettingGroupDraft[]) => {
+    // REFUSED AT THE HANDLER TOO, not only at the controls. Disabling the
+    // controls is what the practitioner sees; this is what makes the payload
+    // actually immutable, so a control that is ever added without the
+    // `frozen` wiring cannot corrupt a retry. Belt and braces is the right
+    // shape here because the failure is a duplicate clinical capture.
+    if (frozen) return;
     setGroups(f);
     setSave(afterDraftChanged);
   };
@@ -342,6 +363,11 @@ export function MachineReadingEntry({
         onAdvanceOrdinal={() => setGroupOrdinal((n) => n + 1)}
         setValue={setValue}
         flipChannel={flipChannel}
+        // THE REVISION PATH'S HALF OF THE FREEZE. `canEditDraft` is also
+        // false once a save is ACKNOWLEDGED, which is already correct here:
+        // after a recorded save she presses "record a setting change" to
+        // start a new capture rather than editing the one in the record.
+        frozen={frozen}
       />
 
       <div className="flex items-center gap-3">

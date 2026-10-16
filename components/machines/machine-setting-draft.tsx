@@ -37,6 +37,15 @@ import type { GroupSubmission } from "@/lib/machines/setting-groups";
 // box.
 
 export type MachineSettingDraftProps = {
+  /**
+   * The host's save is unresolved, so this draft is part of a frozen payload.
+   *
+   * In create mode these values travel in the host form's own save, and
+   * `create_block_with_initial_setup` digests the whole thing - so they are
+   * covered by the same retry key and must hold still with it
+   * (Codex, #860 4296029608).
+   */
+  frozen?: boolean;
   profile: MachineProfile;
   mode: MachineMode;
   /**
@@ -82,6 +91,7 @@ export function MachineSettingDraft({
   profile,
   mode,
   onDraftChange,
+  frozen = false,
 }: MachineSettingDraftProps) {
   const fieldGroups = nativeFieldGroups(profile, mode);
   const [groups, setGroups] = useState<SettingGroupDraft[]>(firstGroup);
@@ -132,12 +142,28 @@ export function MachineSettingDraft({
     });
   };
 
-  const editDraft = (f: (prev: SettingGroupDraft[]) => SettingGroupDraft[]) =>
+  const editDraft = (f: (prev: SettingGroupDraft[]) => SettingGroupDraft[]) => {
+    // REFUSED AT THE HANDLER, not only at the controls — and this collector
+    // needed saying separately, which the mounted proof is what caught.
+    //
+    // The host freezes its own draft and this component's controls render
+    // disabled, so the screen was right. But THIS component keeps its own
+    // groups state and reports changes upward, and that path had no guard:
+    // driving React's change event past a disabled input still moved the
+    // draft, the host carried 999 into the retry under the held key, and
+    // `create_block_with_initial_setup` refused it as a payload mismatch —
+    // the exact defect of #860 4296029608, reproduced by the test written to
+    // prove it fixed.
+    //
+    // Disabled controls are what she sees; this is what makes the payload
+    // immutable. Both halves, on both save paths.
+    if (frozen) return;
     setGroups((prev) => {
       const next = f(prev);
       report(next);
       return next;
     });
+  };
 
   const setValue = (groupId: string, k: string, v: string) =>
     editDraft((prev) =>
@@ -164,6 +190,7 @@ export function MachineSettingDraft({
       </p>
 
       <SettingDraftFields
+        frozen={frozen}
         profile={profile}
         mode={mode}
         groups={groups}

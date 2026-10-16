@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 
+import { Button } from "@/components/ui/button";
 import { SectionLabel } from "@/components/ui/section-label";
 import { MachineFirstSetupPanel } from "./machine-first-setup-panel";
 import { NO_PERSISTENCE } from "@/lib/machines/selection-store";
@@ -60,6 +61,8 @@ export type MachineFirstSetupConnectedProps = {
    * can actually carry them into its own Save - `block-setup-form.tsx` does,
    * through `initialSetup`.
    */
+  /** Forwarded to the panel: the host's save is unresolved. */
+  settingDraftFrozen?: boolean;
   onSettingDraft?: NonNullable<
     Parameters<typeof MachineFirstSetupPanel>[0]["onSettingDraft"]
   >;
@@ -82,6 +85,7 @@ export function MachineFirstSetupConnected({
   select,
   record,
   onSettingDraft,
+  settingDraftFrozen = false,
 }: MachineFirstSetupConnectedProps) {
   const [ctx, setCtx] = useState<MachineSetupContext | null>(null);
   const [state, setState] = useState<"idle" | "loading" | "failed">("idle");
@@ -118,15 +122,30 @@ export function MachineFirstSetupConnected({
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           Record which machine you are working on before entering its settings.
         </p>
-        <button
+        {/*
+          THE SHARED PRIMITIVE, for the third time in this lane and the same
+          reason each time. This was `text-xs py-1.5` with no minimum height -
+          about 30px on a touch device, under DESIGN.md LAW 6's 44px floor -
+          and it is the ONLY way into machine selection, so the one control a
+          practitioner must hit on a phone was the one below the floor
+          (Codex, #860 4296029615).
+          Button's `sm` composes CONTROL_COMPACT_FINE_POINTER: the full 44px on
+          every coarse pointer, relaxing to 32px only behind the repository's
+          explicit `pointer-fine` gate. The mode pills were repaired this way
+          after ebc69ff6 and the lesson is unchanged - the rule belongs in the
+          primitive, because a call site can forget it, and call sites do.
+        */}
+        <Button
           type="button"
+          variant="secondary"
+          size="sm"
+          className="self-start"
           onClick={open}
           disabled={state === "loading"}
-          className="self-start rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
           data-testid="machine-first-open"
         >
           {state === "loading" ? "Loading…" : "Choose machine"}
-        </button>
+        </Button>
         {state === "failed" && (
           <p className="text-xs text-neutral-600 dark:text-neutral-400" role="status">
             Your machines could not be loaded. The treatment fields below are
@@ -228,6 +247,7 @@ export function MachineFirstSetupConnected({
       // context field - so it is pinned by its own source assertion in
       // tests/components/machine-first-setup-panel.test.ts.
       onSettingDraft={onSettingDraft}
+      settingDraftFrozen={settingDraftFrozen}
       onSelectMachine={select ?? onSelectMachine}
       onRecord={onRecord}
     />
