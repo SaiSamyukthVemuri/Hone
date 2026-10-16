@@ -92,6 +92,7 @@ jobs:
       mobile: ${{ steps.classify.outputs.mobile }}
       ci_workflows: ${{ steps.classify.outputs.ci_workflows }}
       full_matrix_required: ${{ steps.classify.outputs.full_matrix_required }}
+      production_record: ${{ steps.record.outputs.production_record }}
       browser_run: ${{ steps.browser.outputs.browser_run }}
       browser_extended: ${{ steps.browser.outputs.browser_extended }}
       browser_specs: ${{ steps.browser.outputs.browser_specs }}
@@ -138,6 +139,18 @@ jobs:
             git show --name-only --pretty=format: "${{ github.sha }}" > changed.txt
           fi
           echo "--- changed files ---"; cat changed.txt
+
+      - name: Production-record change?
+        id: record
+        # #825 6215529089 (v)(b): canonical A3/A5 freshness BLOCKS on a change
+        # to the production record (docs/production/**), and on pushes and the
+        # nightly lane; an ordinary application PR measures it non-blocking.
+        run: |
+          if grep -q '^docs/production/' changed.txt; then
+            echo "production_record=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "production_record=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Classify
         id: classify
@@ -282,6 +295,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The canonical production-record checks need history and the
+          # production ref; a shallow clone made eight of them pass by
+          # asserting they could not run (#825 6204199888, 6215529089).
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -319,6 +336,10 @@ jobs:
 
       - name: Unit tests
         run: npm test
+        env:
+          # enforce: pushes to production and production-record changes;
+          # measure (non-blocking, annotated): ordinary application PRs.
+          CANONICAL_FRESHNESS: ${{ (github.event_name != 'pull_request' || needs.changes.outputs.production_record == 'true') && 'enforce' || 'measure' }}
 
       - name: Whitespace + conflict-marker check
         # Catches stray trailing whitespace + leftover merge-conflict
@@ -353,6 +374,36 @@ jobs:
   #     stack only. No project ref, no access token, no push.
   #   * Runs as a separate job so the fast unit/static lane above is
   #     untouched; a Docker hiccup here never blocks typecheck/lint.
+  canonical-record:
+    # validate is skipped for docs-only diffs, so a production-record PR never
+    # ran the canonical checks at all (#825 6215529089). This runs ONLY the
+    # docs tests, enforced, for a docs-only change to docs/production/**.
+    name: canonical production record (docs-only)
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only == 'true' && needs.changes.outputs.production_record == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Canonical production-record checks (enforced)
+        run: npx vitest run tests/docs
+        env:
+          CANONICAL_FRESHNESS: enforce
+
   db-integration:
     name: db integration (local supabase)
     needs: changes

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -95,6 +96,132 @@ function git(...args: string[]): string | null {
 const GIT_AVAILABLE = git("rev-parse", "--git-dir") !== null;
 const SHALLOW = git("rev-parse", "--is-shallow-repository") === "true";
 const GIT_USABLE = GIT_AVAILABLE && !SHALLOW;
+
+// ---------------------------------------------------------------------------
+// CANONICAL FRESHNESS POLICY (Sam, #825 6215529089).
+//
+// Eight checks below need history. In CI they used to "pass" by asserting that
+// they could not run, because validate's checkout was shallow. A check that
+// cannot run is now a FAILURE everywhere, never a skip.
+//
+// A3 and A5 are FRESHNESS facts about production, not about the branch under
+// test, so they are measured against the verified production ref, never PR
+// HEAD. Whether a stale result BLOCKS depends on CANONICAL_FRESHNESS:
+//   enforce (default, and in CI for production-record changes, pushes to
+//            production and the nightly unit lane): stale fails;
+//   measure (CI for ordinary application PRs only): stale is reported as a
+//            distinct non-blocking warning annotation, and the test title says
+//            MEASURED, so it can never read as a checked-clean result.
+// ---------------------------------------------------------------------------
+const FRESHNESS_RAW = process.env.CANONICAL_FRESHNESS ?? "enforce";
+const FRESHNESS: "enforce" | "measure" = FRESHNESS_RAW === "measure" ? "measure" : "enforce";
+const FRESHNESS_TAG = FRESHNESS === "measure" ? " [MEASURED, non-blocking]" : "";
+
+/** The history prerequisite as a pure decision: null when git is usable. */
+export function gitPrerequisiteError(rule: string, available: boolean, shallow: boolean): string | null {
+  if (available && !shallow) return null;
+  return (
+    `${rule} cannot run: ${available ? "this checkout is SHALLOW" : "git is not available"}. ` +
+    "A canonical check that cannot run is a failure, not a pass (#825 6215529089). " +
+    "Give the job full history (actions/checkout fetch-depth: 0)."
+  );
+}
+
+/** Unusable git FAILS; it is never a quiet skip. */
+function requireUsableGit(rule: string): void {
+  if (GIT_USABLE) return;
+  const err = gitPrerequisiteError(rule, GIT_AVAILABLE, SHALLOW);
+  if (err) throw new Error(err);
+}
+
+type Git = (...args: string[]) => string | null;
+
+/** The production branch is a recorded fact; read it from the document. */
+function productionBranch(): string | null {
+  return (
+    currentProse(CURRENT_STATE).match(/\|\s*\*{0,2}Production branch\*{0,2}\s*\|\s*`([^`]+)`/i)?.[1] ??
+    null
+  );
+}
+
+/**
+ * The verified production commit. The remote-tracking ref is preferred: on a
+ * PR branch only it describes production, and on the production branch it is
+ * the same commit. Missing or unresolvable is null, and callers FAIL on null.
+ */
+export function resolveProductionRef(g: Git, branch: string | null): string | null {
+  if (!branch) return null;
+  return (
+    g("rev-parse", "--verify", "-q", `refs/remotes/origin/${branch}^{commit}`) ??
+    g("rev-parse", "--verify", "-q", `refs/heads/${branch}^{commit}`)
+  );
+}
+
+const RECORD_ONLY = /^docs\/production\//;
+
+/**
+ * (iv): every first-parent production commit after the recorded HEAD must
+ * change ONLY docs/production/** against its first parent. Decided from the
+ * actual changed paths, never from a title or label. Anything that cannot be
+ * inspected is NOT record-only.
+ */
+export function recordOnlySince(
+  g: Git,
+  recorded: string,
+  target: string,
+): { ok: true; commits: number } | { ok: false; reason: string } {
+  if (recorded === target) return { ok: true, commits: 0 };
+  if (g("merge-base", "--is-ancestor", recorded, target) === null) {
+    return { ok: false, reason: `recorded HEAD ${recorded.slice(0, 8)} is not an ancestor of production ${target.slice(0, 8)}, or the ancestry cannot be inspected` };
+  }
+  const listed = g("rev-list", "--first-parent", `${recorded}..${target}`);
+  if (listed === null) return { ok: false, reason: "the first-parent history cannot be listed" };
+  const commits = listed.split("\n").filter(Boolean);
+  for (const c of commits) {
+    const parents = g("rev-list", "--parents", "-n", "1", c)?.split(" ") ?? [];
+    if (parents.length < 2) return { ok: false, reason: `${c.slice(0, 8)} has no inspectable first parent` };
+    const files = g("diff", "--name-only", parents[1], c);
+    if (files === null) return { ok: false, reason: `${c.slice(0, 8)}'s changed paths cannot be read` };
+    const other = files.split("\n").filter(Boolean).filter((f) => !RECORD_ONLY.test(f));
+    if (other.length) {
+      return { ok: false, reason: `${c.slice(0, 8)} changes ${other.length} non-record path(s), e.g. ${JSON.stringify(other.slice(0, 6))}` };
+    }
+  }
+  return { ok: true, commits: commits.length };
+}
+
+/** A3 over the production boundary: runtime-bearing paths changed pinned..target. */
+export async function runtimeChangedSince(g: Git, pinned: string, target: string): Promise<string[] | null> {
+  const out = g("diff", "--name-only", pinned, target);
+  if (out === null) return null;
+  const classify = await loadClassifier();
+  return out
+    .split("\n")
+    .filter(Boolean)
+    .filter((f) => nonShippingReason(f) === null && !classify([f]).docs_only);
+}
+
+/** A freshness verdict as a pure decision, so both modes are testable. */
+export function freshnessOutcome(
+  mode: "enforce" | "measure",
+  rule: string,
+  fresh: boolean,
+  detail: string,
+): { kind: "fresh" } | { kind: "warn"; line: string } | { kind: "fail"; message: string } {
+  if (fresh) return { kind: "fresh" };
+  if (mode === "measure") {
+    // Existing Actions reporting: a workflow-command annotation on stdout.
+    return { kind: "warn", line: `::warning title=Canonical record STALE (non-blocking, ${rule})::${detail.replace(/\s+/g, " ")}` };
+  }
+  return { kind: "fail", message: `${rule} (enforced): ${detail}` };
+}
+
+/** One verdict for a freshness fact: fresh passes; stale fails or warns by mode. */
+function freshnessVerdict(rule: string, fresh: boolean, detail: string): void {
+  const out = freshnessOutcome(FRESHNESS, rule, fresh, detail);
+  if (out.kind === "warn") console.log(out.line);
+  if (out.kind === "fail") expect.fail(out.message);
+}
 
 // ---------------------------------------------------------------------------
 // RUNTIME-BEARING CLASSIFICATION IS NOT DEFINED HERE.
@@ -1677,10 +1804,7 @@ describe("RULE A — current-state.md pins a real, current production SHA", () =
     // absent — including the production head the checkout is derived from.
     // "Not in this clone" and "not a commit" are different claims and only the
     // second is a defect.
-    if (!GIT_USABLE) {
-      expect(GIT_USABLE, "shallow clone or no git — A1 could not run").toBe(false);
-      return;
-    }
+    requireUsableGit("A1");
     const unreal = shasIn(CURRENT_STATE).filter((sha) => git("cat-file", "-t", sha) !== "commit");
     expect(
       unreal,
@@ -1719,10 +1843,7 @@ describe("RULE A — current-state.md pins a real, current production SHA", () =
   it("A2: the pinned runtime-bearing SHA exists and is an ancestor of HEAD", () => {
     const pinned = pinnedRuntimeSha();
     expect(pinned, "current-state.md must pin a runtime-bearing application HEAD").toBeTruthy();
-    if (!GIT_USABLE) {
-      expect(GIT_USABLE, "shallow clone or no git — A2 could not run").toBe(false);
-      return;
-    }
+    requireUsableGit("A2");
     expect(git("cat-file", "-t", pinned as string), `${pinned} is not a commit`).toBe("commit");
     expect(
       git("merge-base", "--is-ancestor", pinned as string, "HEAD"),
@@ -1731,29 +1852,31 @@ describe("RULE A — current-state.md pins a real, current production SHA", () =
     ).toBe("");
   });
 
-  it("A3: nothing newer than the pinned SHA changes the runtime — via the repo's own classifier", async () => {
+  it(`A3${FRESHNESS_TAG}: nothing SHIPPED to production after the pinned SHA changes the runtime — via the repo's own classifier`, async () => {
     const pinned = pinnedRuntimeSha();
-    if (!GIT_USABLE || !pinned) {
-      expect(GIT_USABLE && !!pinned, "shallow clone or no git — A3 could not run").toBe(false);
-      return;
+    expect(pinned, "current-state.md must pin a runtime-bearing application HEAD").toBeTruthy();
+    requireUsableGit("A3");
+    // The production boundary (#825 6215529089): pinned -> the verified
+    // production ref, NEVER this branch's HEAD. An unmerged application PR's
+    // own diff has not shipped, so it cannot make the production record stale.
+    const branch = productionBranch();
+    const target = resolveProductionRef(git, branch);
+    if (!target) {
+      throw new Error(`A3 cannot run: the production ref for ${branch ?? "(no branch recorded)"} is not present in this clone. Fetch it (fetch-depth: 0).`);
     }
-    const changed = (git("diff", "--name-only", pinned, "HEAD") ?? "")
-      .split("\n")
-      .filter(Boolean);
+    const deployed = await runtimeChangedSince(git, pinned as string, target);
+    if (deployed === null) throw new Error(`A3 cannot run: git cannot diff ${String(pinned).slice(0, 8)}..${target.slice(0, 8)}`);
 
-    const classify = await loadClassifier();
-    const deployed = changed.filter(
-      (f) => nonShippingReason(f) === null && !classify([f]).docs_only,
+    freshnessVerdict(
+      "A3",
+      deployed.length === 0,
+      `current-state.md pins ${String(pinned).slice(0, 8)} as the runtime-bearing baseline, but ` +
+        `${deployed.length} file(s) changed between it and production ${target.slice(0, 8)} are ` +
+        "classified as runtime-bearing by scripts/classify-changes.mjs, so the pin is stale: a " +
+        "runtime change shipped and the record has not caught up. This is the check the " +
+        'document\'s own "verified mechanically, not asserted" sentence describes. Changed: ' +
+        JSON.stringify(deployed.slice(0, 12)),
     );
-
-    expect(
-      deployed,
-      `current-state.md pins ${pinned.slice(0, 8)} as the runtime-bearing baseline, but ` +
-        `${deployed.length} file(s) changed since it are classified as runtime-bearing by ` +
-        "scripts/classify-changes.mjs. Either the pin is stale, or this branch carries runtime " +
-        'changes it should not. This is the check the document\'s own "verified mechanically, ' +
-        'not asserted" sentence describes. Changed: ' + JSON.stringify(deployed.slice(0, 12)),
-    ).toEqual([]);
   });
 
   it("A3's deployed decision: runtime paths ship, CI/test/tooling paths do not", async () => {
@@ -2500,10 +2623,7 @@ describe("RULE X — canonical documents agree with each other", () => {
       "the two documents count the same merges since the same baseline and must agree",
     ).toBe(csN);
 
-    if (!GIT_USABLE) {
-      expect(GIT_USABLE, "shallow clone or no git — X4's Git derivation could not run").toBe(false);
-      return;
-    }
+    requireUsableGit("X4's Git derivation");
     // ENDPOINT = the CURRENT PRODUCTION GIT HEAD. Two wrong endpoints were
     // tried before this one, and both produced a confidently wrong number:
     //
@@ -2537,7 +2657,7 @@ describe("RULE X — canonical documents agree with each other", () => {
     ).toBe(actual);
   });
 
-  it("A5: the recorded Current Git branch HEAD equals the real production ref", () => {
+  it(`A5${FRESHNESS_TAG}: the recorded Current Git branch HEAD is the production ref, or only record-only merges follow it`, () => {
     // READING THE VALUE FROM THE DOCUMENT IS NOT VERIFYING IT. X4 counts to the
     // recorded Git head, which closed one hole and left a subtler one: the
     // RECORDED VALUE can itself be stale. After a documentation-only production
@@ -2552,35 +2672,32 @@ describe("RULE X — canonical documents agree with each other", () => {
     // locally - no network. Where the ref is not present, as in a shallow CI
     // clone, this reports that it could not run rather than passing quietly,
     // the same contract A1/A2/A3 use.
+    //
+    // (iv), #825 6215529089: equality alone was unsatisfiable ON production -
+    // a record refresh records its own base, and its own merge is a newer HEAD.
+    // So later first-parent merges that change ONLY docs/production/** are
+    // record-only and do not make the recorded HEAD stale. Anything else - any
+    // other path, or ancestry that cannot be inspected - still does.
     const recorded = currentGitHeadSha();
     expect(recorded, "current-state must record a Current Git branch HEAD").toBeTruthy();
 
-    const branch = currentProse(CURRENT_STATE).match(
-      /\|\s*\*{0,2}Production branch\*{0,2}\s*\|\s*`([^`]+)`/i,
-    )?.[1];
+    const branch = productionBranch();
     expect(branch, "current-state must name the production branch for this rule to resolve it").toBeTruthy();
 
-    if (!GIT_USABLE) {
-      expect(GIT_USABLE, "shallow clone or no git — A5 could not run").toBe(false);
-      return;
-    }
-    // Prefer the remote-tracking ref: on the production branch itself the local
-    // ref is the same commit, and on a PR branch only the remote-tracking ref
-    // describes production at all.
-    const ref =
-      git("rev-parse", "--verify", "-q", `refs/remotes/origin/${branch}`) ??
-      git("rev-parse", "--verify", "-q", `refs/heads/${branch}`);
+    requireUsableGit("A5");
+    const ref = resolveProductionRef(git, branch);
     if (!ref) {
-      expect(ref, `neither origin/${branch} nor ${branch} is present in this clone — A5 could not run`).toBeNull();
-      return;
+      throw new Error(`A5 cannot run: neither origin/${branch} nor ${branch} is present in this clone. Fetch it (fetch-depth: 0).`);
     }
-    expect(
-      recorded,
+    const since = recordOnlySince(git, recorded as string, ref);
+    freshnessVerdict(
+      "A5",
+      since.ok,
       `current-state records the Current Git branch HEAD as ${(recorded as string).slice(0, 8)}, but ` +
-        `${branch} actually points at ${ref.slice(0, 8)}. A documentation-only production merge ` +
-        "advances the branch without moving the runtime pin, so A2 and A3 both stay green while " +
-        "this row and every count derived from it go stale.",
-    ).toBe(ref);
+        `${branch} points at ${ref.slice(0, 8)} and not everything after the recorded HEAD is ` +
+        `record-only: ${since.ok ? "" : since.reason}. A non-record production merge advances the ` +
+        "branch, so this row and every count derived from it are stale until the record is refreshed.",
+    );
   });
 
   it("X4's endpoint is the production GIT HEAD, not the runtime pin — they are different facts", () => {
@@ -2613,10 +2730,7 @@ describe("RULE X — canonical documents agree with each other", () => {
         "collapsing them is what makes a docs-only production merge invisible to the count",
     ).not.toBe(pinRow);
 
-    if (!GIT_USABLE) {
-      expect(GIT_USABLE, "shallow clone or no git — the endpoint check could not run").toBe(false);
-      return;
-    }
+    requireUsableGit("the endpoint check");
     // The head must be an ancestor-or-equal of nothing weaker than the pin:
     // production only ever moves forward, so the head can never be BEHIND the
     // runtime pin. If it ever is, one of the two rows is stale.
@@ -2698,10 +2812,7 @@ describe("RULE X — canonical documents agree with each other", () => {
     ).toBe(1);
     const upper = distinct[0];
 
-    if (!GIT_USABLE) {
-      expect(GIT_USABLE, "shallow clone or no git — X6's completeness check could not run").toBe(false);
-      return;
-    }
+    requireUsableGit("X6's completeness check");
     // THE DOCUMENT'S CLAIM MUST NEVER NARROW THE AUTHORITY. The previous
     // revision filtered the merged set to `pr <= upper`, so a production merge
     // BEYOND the stated bound was removed from the evidence before comparison:
@@ -2952,10 +3063,7 @@ describe("RULE F — open PRs are declared, and never described as shipped", () 
     // Decided from the Git graph, not from GitHub: a merge commit reachable
     // from HEAD whose subject names the PR is proof it landed. Skips on a
     // shallow clone for the same reason A2/A3 do.
-    if (!GIT_USABLE) {
-      expect(GIT_USABLE, "shallow clone or no git — the converse check could not run").toBe(false);
-      return;
-    }
+    requireUsableGit("the converse check");
     const merged = git("log", "--merges", "--format=%s", "HEAD") ?? "";
     // Both subject forms, for the same reason X6 reads both: a PR squash-merged
     // as "(#N)" would otherwise be invisible here, so it could sit in the
@@ -3466,5 +3574,175 @@ describe("NEGATIVE CONTROLS — rules A, F and G go red on the shapes they targe
       open.every((n) => /^\d{3,5}$/.test(n)),
       "every declared-open entry must be a PR number",
     ).toBe(true);
+  });
+});
+
+// ===========================================================================
+// FRESHNESS POLICY CONTROLS (#825 6215529089). Each required control runs on
+// a real throwaway Git repository - never asserted - plus the wiring that
+// makes the strict paths actually run in CI.
+// ===========================================================================
+describe("freshness policy controls (#825 6215529089)", () => {
+  function throwaway() {
+    const dir = mkdtempSync(path.join(tmpdir(), "canon-fresh-"));
+    const g: Git = (...args) => {
+      try {
+        return execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      } catch {
+        return null;
+      }
+    };
+    const run = (...args: string[]) =>
+      execFileSync("git", ["-c", "user.email=t@example.invalid", "-c", "user.name=t", ...args], { cwd: dir, stdio: "ignore" });
+    const write = (f: string, body: string) => {
+      mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
+      writeFileSync(path.join(dir, f), body);
+    };
+    const head = () => g("rev-parse", "HEAD") as string;
+    run("init", "-q", "-b", "prod");
+    write("app/page.tsx", "v1\n");
+    write("docs/production/current-state.md", "r1\n");
+    run("add", "-A");
+    run("commit", "-qm", "baseline");
+    let n = 0;
+    /** Merge a branch carrying `files` into prod with a real merge commit. */
+    const land = (files: Record<string, string>) => {
+      const br = `b${++n}`;
+      run("checkout", "-q", "-b", br, "prod");
+      for (const [f, body] of Object.entries(files)) write(f, body);
+      run("add", "-A");
+      run("commit", "-qm", br);
+      run("checkout", "-q", "prod");
+      run("merge", "-q", "--no-ff", br, "-m", `Merge pull request #${n} from x/${br}`);
+      return head();
+    };
+    return { dir, g, run, write, head, land };
+  }
+
+  it("1. an application PR's OWN diff does not violate A3 (production boundary, not PR HEAD)", async () => {
+    const r = throwaway();
+    const pinned = r.head();
+    const prod = r.land({ "docs/production/current-state.md": "r2\n" });
+    // The PR: an unmerged application change on top of production.
+    r.run("checkout", "-q", "-b", "pr", "prod");
+    r.write("app/page.tsx", "v2 (unmerged)\n");
+    r.run("add", "-A");
+    r.run("commit", "-qm", "pr");
+    expect(await runtimeChangedSince(r.g, pinned, prod)).toEqual([]);
+    // The old HEAD-based measure would have condemned every application PR.
+    expect(await runtimeChangedSince(r.g, pinned, r.head())).toEqual(["app/page.tsx"]);
+    // And the real A3 rule measures to the RESOLVED PRODUCTION REF, not HEAD:
+    // on a branch whose own diff is non-runtime the two agree, so only the call
+    // site can tell them apart.
+    const src = read("tests/docs/canonical-production-facts.test.ts");
+    const a3 = src.slice(src.indexOf("it(`A3${FRESHNESS_TAG}"), src.indexOf("it(\"A3's deployed decision"));
+    expect(a3).toMatch(/const target = resolveProductionRef\(git, branch\);/);
+    expect(a3).toMatch(/runtimeChangedSince\(git, pinned as string, target\)/);
+    expect(a3).not.toMatch(/"HEAD"/);
+  });
+
+  it("2. a runtime change SHIPPED after the pin IS caught by A3", async () => {
+    const r = throwaway();
+    const pinned = r.head();
+    const prod = r.land({ "app/page.tsx": "v2 shipped\n" });
+    expect(await runtimeChangedSince(r.g, pinned, prod)).toEqual(["app/page.tsx"]);
+  });
+
+  it("3. record-only merges after the recorded HEAD pass A5", () => {
+    const r = throwaway();
+    const recorded = r.head();
+    r.land({ "docs/production/current-state.md": "r2\n" });
+    const prod = r.land({ "docs/production/release-changelog.md": "c\n" });
+    expect(recordOnlySince(r.g, recorded, prod)).toEqual({ ok: true, commits: 2 });
+    expect(recordOnlySince(r.g, prod, prod)).toEqual({ ok: true, commits: 0 });
+  });
+
+  it("4. ANY non-record later change IS caught by A5 — application, guide, or mixed", () => {
+    for (const files of [
+      { "app/page.tsx": "v2\n" },
+      { "CLAUDE.md": "guide\n" },
+      { "docs/production/current-state.md": "r2\n", "lib/x.ts": "x\n" },
+      { "docs/marketing/x.md": "m\n" },
+    ]) {
+      const r = throwaway();
+      const recorded = r.head();
+      r.land({ "docs/production/release-changelog.md": "c\n" });
+      const prod = r.land(files);
+      const out = recordOnlySince(r.g, recorded, prod);
+      expect(out.ok, JSON.stringify(files)).toBe(false);
+    }
+  });
+
+  it("5. missing or unusable refs FAIL: no branch, unknown ref, non-ancestor, shallow history", () => {
+    const r = throwaway();
+    expect(resolveProductionRef(r.g, null)).toBeNull();
+    expect(resolveProductionRef(r.g, "no-such-branch")).toBeNull();
+    expect(resolveProductionRef(r.g, "prod")).toBe(r.head());
+    // A recorded HEAD that is not in production's history is not record-only.
+    r.run("checkout", "-q", "--orphan", "elsewhere");
+    r.write("x.md", "x\n");
+    r.run("add", "-A");
+    r.run("commit", "-qm", "unrelated");
+    const stranger = r.head();
+    r.run("checkout", "-q", "prod");
+    expect(recordOnlySince(r.g, stranger, r.head()).ok).toBe(false);
+    expect(recordOnlySince(r.g, "0".repeat(40), r.head()).ok).toBe(false);
+    // A shallow clone cannot inspect the ancestry: not record-only, never a pass.
+    const recorded = r.head();
+    const prod = r.land({ "docs/production/current-state.md": "r2\n" });
+    const shallowDir = mkdtempSync(path.join(tmpdir(), "canon-shallow-"));
+    execFileSync("git", ["clone", "-q", "--depth", "1", "--branch", "prod", `file://${r.dir}`, shallowDir], { stdio: "ignore" });
+    const sg: Git = (...args) => {
+      try {
+        return execFileSync("git", args, { cwd: shallowDir, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      } catch {
+        return null;
+      }
+    };
+    expect(sg("rev-parse", "--is-shallow-repository")).toBe("true");
+    expect(recordOnlySince(sg, recorded, prod).ok).toBe(false);
+    // And the prerequisite itself fails loudly for shallow or no-git.
+    expect(gitPrerequisiteError("A5", true, true)).toMatch(/SHALLOW.*failure, not a pass/);
+    expect(gitPrerequisiteError("A5", false, false)).toMatch(/git is not available/);
+    expect(gitPrerequisiteError("A5", true, false)).toBeNull();
+  });
+
+  it("measure mode WARNS distinctly and never reads as clean; enforce FAILS", () => {
+    expect(freshnessOutcome("measure", "A5", true, "x")).toEqual({ kind: "fresh" });
+    const warn = freshnessOutcome("measure", "A5", false, "stale\nrecord");
+    expect(warn).toEqual({ kind: "warn", line: "::warning title=Canonical record STALE (non-blocking, A5)::stale record" });
+    expect(freshnessOutcome("enforce", "A5", false, "stale")).toEqual({ kind: "fail", message: "A5 (enforced): stale" });
+  });
+
+  it("6. the strict paths really run: docs-PR job, push/record validate, nightly — all with full history", () => {
+    const ci = read(".github/workflows/ci.yml");
+    const nightly = read(".github/workflows/nightly.yml");
+    const job = (src: string, name: string) => {
+      const start = src.indexOf(`\n  ${name}:\n`);
+      expect(start, `${name} job must exist`).toBeGreaterThan(-1);
+      const rest = src.slice(start + 1);
+      const next = rest.slice(1).search(/\n {2}[a-z0-9_-]+:\n/);
+      return next === -1 ? rest : rest.slice(0, next + 1);
+    };
+    // changes publishes the production-record signal from its changed files.
+    const changes = job(ci, "changes");
+    expect(changes).toMatch(/production_record: \$\{\{ steps\.record\.outputs\.production_record \}\}/);
+    expect(changes).toMatch(/grep -q '\^docs\/production\/' changed\.txt/);
+    // validate: full history, and enforce on push or a record change.
+    const validate = job(ci, "validate");
+    expect(validate).toMatch(/fetch-depth: 0/);
+    expect(validate).toMatch(
+      /CANONICAL_FRESHNESS: \$\{\{ \(github\.event_name != 'pull_request' \|\| needs\.changes\.outputs\.production_record == 'true'\) && 'enforce' \|\| 'measure' \}\}/,
+    );
+    // docs-only record PRs (validate skipped) still run the docs tests, enforced.
+    const record = job(ci, "canonical-record");
+    expect(record).toMatch(/docs_only == 'true' && needs\.changes\.outputs\.production_record == 'true'/);
+    expect(record).toMatch(/fetch-depth: 0/);
+    expect(record).toMatch(/run: npx vitest run tests\/docs/);
+    expect(record).toMatch(/CANONICAL_FRESHNESS: enforce/);
+    expect(record).toMatch(/persist-credentials: false/);
+    // nightly: full history, enforced.
+    expect(nightly).toMatch(/persist-credentials: false\n(?:\s*#[^\n]*\n)*\s*fetch-depth: 0/);
+    expect(nightly).toMatch(/run: \$\{\{ matrix\.command \}\}\n\s*env:\n\s*#[^\n]*\n\s*CANONICAL_FRESHNESS: enforce/);
   });
 });
