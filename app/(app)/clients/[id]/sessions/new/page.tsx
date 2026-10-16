@@ -88,7 +88,14 @@ export default async function NewSessionPage({
       const joined = appt.practitioner as { display_name?: string | null } | { display_name?: string | null }[] | null;
       assignedName = (Array.isArray(joined) ? joined[0]?.display_name : joined?.display_name) ?? null;
       const startsAtMs = Date.parse(String(appt.starts_at ?? ""));
-      canReassign = appt.status === "confirmed" && Number.isFinite(startsAtMs) && startsAtMs > Date.now();
+      // Move REASSIGNS only in a capacity-on studio (loadMoveSlotsAction:
+      // owner && studio.practitioner_capacity_enabled === true); elsewhere it
+      // keeps the current assignee, so the copy must not promise it.
+      canReassign =
+        studio.practitioner_capacity_enabled === true &&
+        appt.status === "confirmed" &&
+        Number.isFinite(startsAtMs) &&
+        startsAtMs > Date.now();
     }
   }
   const refusalCopy = refusal ? sessionStartRefusalCopy(refusal, assignedName, { canReassign }) : null;

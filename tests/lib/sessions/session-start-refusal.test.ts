@@ -57,7 +57,16 @@ describe("session-start refusals (a booking assigned to a colleague is SAID, not
     expect(PAGE).toMatch(/practitioners!appointments_practitioner_same_studio_fk\(display_name\)/);
     expect(PAGE).not.toMatch(/[^!]practitioners\(display_name\)/);
     expect(PAGE).toMatch(/if \(apptErr\) \{[\s\S]{0,400}refusal = refusal \?\? "appointment_missing"/);
-    // Move is offered only under the calendar's confirmed-and-future gate.
-    expect(PAGE).toMatch(/canReassign = appt\.status === "confirmed" && Number\.isFinite\(startsAtMs\) && startsAtMs > Date\.now\(\)/);
+    // Move is offered only where it actually REASSIGNS: a capacity-on studio
+    // (the same predicate loadMoveSlotsAction uses) and a confirmed future booking.
+    expect(PAGE).toMatch(
+      /canReassign =\s*studio\.practitioner_capacity_enabled === true &&\s*appt\.status === "confirmed" &&\s*Number\.isFinite\(startsAtMs\) &&\s*startsAtMs > Date\.now\(\)/,
+    );
+    const MOVE = readFileSync(
+      path.resolve(__dirname, "../../../app/(app)/calendar/move-appointment-actions.ts"),
+      "utf8",
+    );
+    // If Move's own gate changes, this copy contract must be revisited.
+    expect(MOVE).toMatch(/practitioner\.role === "owner" && studio\.practitioner_capacity_enabled === true/);
   });
 });
