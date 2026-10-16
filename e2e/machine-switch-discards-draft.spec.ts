@@ -315,10 +315,10 @@ test("a machine or mode switch discards the draft, and an out-of-service unit re
     await expect(page.getByTestId("field-unit-duration")).toHaveText("(s)");
     // ONE MODE, so A offers no mode picker. Asserted so the picker's
     // appearance under B below means something.
-    expect(
-      await page.getByTestId("machine-mode-picker").count(),
+    await expect(
+      page.getByTestId("machine-mode-picker"),
       "a single-mode unit must not render a picker",
-    ).toBe(0);
+    ).toHaveCount(0, { timeout: T });
 
     await page.getByTestId("reading-current").fill("99");
     await page.getByTestId("reading-duration").fill("111.1");
@@ -351,14 +351,28 @@ test("a machine or mode switch discards the draft, and an out-of-service unit re
       timeout: T,
     });
     await expect(page.getByTestId("field-label-pulse_width")).toHaveText("Pulse width");
-    expect(
-      await page.getByTestId("field-unit-duration").count(),
+    // RETRYING, NOT A SNAPSHOT, and the first run of this spec on the synced
+    // tree is why. `count()` samples ONE instant; these assertions run inside
+    // the window where the server action that persists the selection replies
+    // and Next re-renders the route's server components, so for a moment the
+    // panel can show the PREVIOUSLY remembered unit before settling on the new
+    // one. The spec passed alone in 24.4s and failed in the four-spec batch at
+    // 7.6s - same code, different timing, which is the signature of sampling a
+    // transition rather than a defect.
+    //
+    // IT DOES NOT MASK THE DEFECT IT IS CHECKING FOR. `toHaveCount(0)` retries
+    // to the timeout and then fails, so a panel that genuinely reverts to A and
+    // STAYS there still reds this step. What it tolerates is the flicker, not
+    // the wrong end state - and the database was correct throughout: the owned
+    // stack recorded `Room 2 single-probe / blend` as the persisted default.
+    await expect(
+      page.getByTestId("field-unit-duration"),
       "A's `duration` must be gone, not relabelled",
-    ).toBe(0);
-    expect(
-      await page.getByTestId("field-label-energy_shown").count(),
+    ).toHaveCount(0, { timeout: T });
+    await expect(
+      page.getByTestId("field-label-energy_shown"),
       "A's `energy_shown` must be gone",
-    ).toBe(0);
+    ).toHaveCount(0, { timeout: T });
 
     // THE DEFECT THIS WHOLE FILE EXISTS FOR (Codex, db3373bc P1). `current`
     // is a key BOTH contracts declare, so a draft that survived the switch
@@ -429,10 +443,13 @@ test("a machine or mode switch discards the draft, and an out-of-service unit re
       timeout: T,
     });
     await expect(page.getByTestId("field-label-intensity")).toHaveText("Intensity");
-    expect(
-      await page.getByTestId("reading-pulse_width").count(),
+    // Retrying, for the same reason as step 3: a mode change also persists
+    // through a server action, so this reads the settled state rather than an
+    // instant inside the reply window.
+    await expect(
+      page.getByTestId("reading-pulse_width"),
       "blend's `pulse_width` must be gone under thermolysis",
-    ).toBe(0);
+    ).toHaveCount(0, { timeout: T });
     await expect(
       page.getByTestId("reading-current"),
       "a draft typed under another MODE survived the switch",
