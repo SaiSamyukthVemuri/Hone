@@ -18,6 +18,11 @@ import {
   AreaSummaries,
   FromLastVisitForToday,
 } from "@/components/last-session-summary";
+import { createClient } from "@/lib/supabase/server";
+import {
+  parseSessionStartRefusal,
+  sessionStartRefusalCopy,
+} from "@/lib/sessions/session-start-refusal";
 import { ModalityPicker } from "./ModalityPicker";
 import { SectionLabel } from "@/components/ui/section-label";
 
@@ -37,11 +42,11 @@ export default async function NewSessionPage({
   // appointment) and the appointment detail page forward ?appointment_id
   // here. Both surfaces compute the value server-side; the search-param
   // hop is just the carrier between server-rendered pages.
-  searchParams?: Promise<{ appointment_id?: string }>;
+  searchParams?: Promise<{ appointment_id?: string; refused?: string }>;
 }) {
   const { id } = await params;
   const sp = (await searchParams) ?? {};
-  const { studio } = await requirePractitionerWithStudio();
+  const { studio, practitioner } = await requirePractitionerWithStudio();
   const data = await getClientById(studio.id, id);
   if (!data) notFound();
 
@@ -49,6 +54,30 @@ export default async function NewSessionPage({
     typeof sp.appointment_id === "string" && UUID_RE.test(sp.appointment_id)
       ? sp.appointment_id
       : null;
+
+  // An expected refusal, either redirected back from startSessionAction or
+  // found here BEFORE the picker is offered. A booking assigned to a colleague
+  // is refused (PR #156 lineage, re-enforced by start_session), and that
+  // refusal is now SAID on this page rather than reaching the generic error
+  // boundary. This is presentation only: the action and the command still
+  // refuse on their own, so the pre-check cannot widen anything.
+  let refusal = appointmentId ? parseSessionStartRefusal(sp.refused) : null;
+  let assignedName: string | null = null;
+  if (appointmentId) {
+    const supabase = await createClient();
+    const { data: appt } = await supabase
+      .from("appointments")
+      .select("client_id, practitioner_id, practitioners(display_name)")
+      .eq("id", appointmentId)
+      .eq("studio_id", studio.id)
+      .maybeSingle();
+    if (appt && appt.client_id === id && appt.practitioner_id && appt.practitioner_id !== practitioner.id) {
+      refusal = "assigned_elsewhere";
+      const joined = appt.practitioners as { display_name?: string | null } | { display_name?: string | null }[] | null;
+      assignedName = (Array.isArray(joined) ? joined[0]?.display_name : joined?.display_name) ?? null;
+    }
+  }
+  const refusalCopy = refusal ? sessionStartRefusalCopy(refusal, assignedName) : null;
 
   // PR #190 (clinical memory). The most recent previous session + its
   // blocks, condensed into the context panel below. This is the
@@ -127,12 +156,34 @@ export default async function NewSessionPage({
         <p className="mt-1 text-sm text-neutral-500">
           Choose a modality to start charting.
         </p>
-        {appointmentId && (
+        {appointmentId && !refusalCopy && (
           <p className="mt-2 text-xs text-neutral-500">
             Linking this session to the selected appointment.
           </p>
         )}
       </div>
+
+      {refusalCopy && (
+        <section
+          role="status"
+          data-testid="session-start-refusal"
+          data-refusal={refusal ?? undefined}
+          className="flex flex-col gap-2 rounded-lg border border-amber-300 bg-amber-50 p-5 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100"
+        >
+          <h2 className="font-semibold">{refusalCopy.title}</h2>
+          <p>{refusalCopy.body}</p>
+          <div className="flex flex-wrap gap-4 pt-1">
+            {appointmentId && (
+              <Link href={`/calendar/${appointmentId}`} className="font-medium hover:underline">
+                Open the appointment
+              </Link>
+            )}
+            <Link href={`/clients/${id}`} className="font-medium hover:underline">
+              Back to {data.client.name}
+            </Link>
+          </div>
+        </section>
+      )}
 
       {previousSummary && previousMeta && (
         <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 bg-neutral-50 p-5 text-sm dark:border-neutral-800 dark:bg-neutral-900/50">
@@ -178,7 +229,8 @@ export default async function NewSessionPage({
         </section>
       )}
 
-      <ModalityPicker clientId={id} appointmentId={appointmentId} />
+      {/* Never offer the picker for a chart the action would refuse. */}
+      {!refusalCopy && <ModalityPicker clientId={id} appointmentId={appointmentId} />}
     </div>
   );
 }
