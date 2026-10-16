@@ -276,6 +276,9 @@ test("create mode: choose the machine, save the block, record one save, retrieve
   });
 
   let blockId = "";
+  // The second area, created in step 9 and CONTINUED in step 10 — the reload
+  // case needs a block that already holds two groups.
+  let secondBlock = "";
   let firstSubmission: string | null = null;
   // OBSERVED, NOT ASSUMED. Later steps compare against what was actually
   // recorded, because a hard-coded total has to be revisited every time an
@@ -584,13 +587,29 @@ test("create mode: choose the machine, save the block, record one save, retrieve
       timeout: T,
     });
 
-    // ONE group on a fresh mount, so the input testids are unsuffixed - and
-    // EMPTY, because nothing is ever pre-filled from what is stored.
-    await expect(page.getByTestId("reading-current")).toHaveValue("");
+    // BOTH GROUPS ARE RESTORED, so the inputs are suffixed by group.
+    //
+    // THIS STEP USED TO ASSERT THE DEFECT. It read "ONE group on a fresh
+    // mount, so the input testids are unsuffixed" and typed into
+    // `reading-current` - which was true, and was the bug: step 4 saved g1
+    // AND g2, so a reload offering one box meant the identities had been
+    // thrown away, and this step's own change went in as a g1 revision
+    // because g1 was the only thing on offer (Codex, #860 4294673722).
+    //
+    // The repair seeds the draft from the record, so the reload now shows
+    // both probes and this step has to SAY which one it is changing. That it
+    // reddened here, on its own long-standing setup, is the clearest evidence
+    // the seed is load-bearing: the spec could not keep its old shape.
+    await expect(page.getByTestId("setting-group-g1")).toBeVisible({ timeout: T });
+    await expect(page.getByTestId("setting-group-g2")).toBeVisible();
+    // EMPTY, because nothing is ever pre-filled from what is stored - the
+    // identity is restored, the observations are not.
+    await expect(page.getByTestId("reading-g1-current")).toHaveValue("");
+    await expect(page.getByTestId("reading-g2-current")).toHaveValue("");
     await page.getByTestId("setting-group-g1-channel-1").click();
-    await page.getByTestId("reading-current").fill("150");
-    await page.getByTestId("reading-duration").fill("280.0");
-    await page.getByTestId("reading-energy_shown").fill("1.40");
+    await page.getByTestId("reading-g1-current").fill("150");
+    await page.getByTestId("reading-g1-duration").fill("280.0");
+    await page.getByTestId("reading-g1-energy_shown").fill("1.40");
     await page.getByTestId("machine-reading-save").click();
     await expect(page.getByTestId("machine-reading-saved")).toBeVisible({
       timeout: T,
@@ -747,7 +766,7 @@ test("create mode: choose the machine, save the block, record one save, retrieve
     // been written at all. Step 9 then asserted against a block carrying four
     // earlier captures and read that as the defect it was looking for. A poll
     // whose exit condition is already true when it starts is not a wait.
-    let secondBlock = "";
+
     await expect
       .poll(
         async () => {
@@ -846,6 +865,157 @@ test("create mode: choose the machine, save the block, record one save, retrieve
       .map((r) => r.value_numeric)
       .sort();
     expect(g2Values).toEqual(["202", "250"]);
+    await noOverflow(page);
+  });
+
+  await test.step("10: a RELOAD restores both groups, and the change lands on g2", async () => {
+    // THE ROUND-5 P1 (Codex, #860 4294673722), and the one Codex asked to see
+    // proved MOUNTED: "save g1+g2, reload the page, change g2 only, then check
+    // the stored rows AND the next-visit guidance render".
+    //
+    // WHY STEP 9 COULD NOT CATCH IT. Step 9 never leaves the mount that saved,
+    // so `clearedForNextCapture` carries the identities across in memory. A
+    // reload throws that away: the initializer ran with no mount-local state
+    // and offered a single fresh g1 while the recorded setup rendered below
+    // it, so the screen showed two probes and accepted a change for one. The
+    // repair seeds the draft from the RECORD instead, scoped to this mount's
+    // device, version and mode.
+    //
+    // IT CONTINUES STEP 9'S AREA on purpose: that block already holds g1 at
+    // revision 1 and g2 at revision 2, so this is the realistic case - a
+    // practitioner returning to a treatment already part-recorded - rather
+    // than a fixture built to suit the assertion.
+    await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
+    await page.getByTestId(`edit-area-${secondBlock}`).click({ timeout: T });
+    expect(await openMachinePanel(page)).toBe(true);
+    await expect(page.getByTestId("machine-reading-entry")).toBeVisible({
+      timeout: T,
+    });
+
+    // BOTH GROUPS ARE THERE, FROM THE RECORD ALONE. Before the repair this
+    // was one box labelled g1, and typing in it revised the wrong probe.
+    await expect(page.getByTestId("setting-group-g1")).toBeVisible({ timeout: T });
+    await expect(page.getByTestId("setting-group-g2")).toBeVisible();
+    // AND EMPTY. Identity is restored; observations are not. A value she has
+    // not re-read off the machine must never be sitting in the box.
+    await expect(page.getByTestId("reading-g1-current")).toHaveValue("");
+    await expect(page.getByTestId("reading-g2-current")).toHaveValue("");
+
+    // CHANGE g2 ONLY, exactly as step 9 did — but across the reload.
+    await page.getByTestId("setting-group-g2-channel-2").click();
+    await page.getByTestId("reading-g2-current").fill("300");
+    await page.getByTestId("reading-g2-duration").fill("260.0");
+    await page.getByTestId("reading-g2-energy_shown").fill("1.55");
+    await page.getByTestId("machine-reading-save").click();
+    await expect(page.getByTestId("machine-reading-saved")).toBeVisible({
+      timeout: T,
+    });
+
+    // THE STORED ROWS. g2 gains a THIRD revision; g1 still has exactly one,
+    // the 101 it was given in step 9 and has never been touched since.
+    const caps = await capturesFor(secondBlock);
+    const byGroup = new Map<string, number[]>();
+    for (const c of caps) {
+      byGroup.set(c.group_key, [...(byGroup.get(c.group_key) ?? []), c.revision]);
+    }
+    expect(
+      byGroup.get("g1"),
+      "the untouched group gained a revision ACROSS A RELOAD — the identity was not restored",
+    ).toEqual([1]);
+    expect(byGroup.get("g2"), "the changed group did not gain a revision").toEqual([
+      1, 2, 3,
+    ]);
+  });
+
+  await test.step("10b: and the NEXT VISIT renders that revision, g2's not g1's", async () => {
+    // GAP 1, which this journey previously left open and my own comment
+    // misdescribed. Step 9 asserted the multi-group revision on stored rows
+    // and deferred the render claim to step 8 — but step 8 runs EARLIER, on a
+    // different block and single-group data, so the screen a practitioner
+    // actually reads was never checked for this case at all.
+    //
+    // It is the render that carries the harm. The P1's consequence was
+    // guidance combining a repurposed g1 with a stale g2: two settings for one
+    // probe, with the channel g1 described dropped from the record. That is a
+    // claim about this surface, so it is proved on this surface.
+    // THE VISIT IS CREATED THROUGH THE APP, not seeded — GAP 3, the last of
+    // the three I reported.
+    //
+    // `seedNextVisit` inserts straight into public.sessions, which bypasses
+    // `start_session` (0167) and everything it does: the studio and
+    // practitioner it resolves, the single-active-plan auto-attach, and the
+    // reuse rule. Sam's requirement names a real
+    // new-block -> record -> reload/retry -> mid-change -> same-client-next-visit
+    // chain and says not to satisfy it with seeded work, so the terminus of
+    // the chain goes through the route a practitioner actually uses.
+    //
+    // Step 8 still seeds, deliberately: it is an independent next-visit
+    // assertion rather than part of this chain, and converting a passing step
+    // to prove a point it does not make would only add a second way for it to
+    // fail.
+    // AGED FIRST, so "next visit" is what this asks for rather than what the
+    // fixture happens to allow. `start_session` (0167) reuses an open session
+    // for the same studio, client, practitioner and modality started within
+    // 90 minutes - correctly, so that pressing "new session" twice during one
+    // appointment cannot split a chart in two. Every session this spec has
+    // made carries `started_at = now()`, so without this the step depends on
+    // some other term of that predicate failing to match, which is exactly
+    // the kind of accident that makes a proof stop proving anything.
+    await sql(
+      `update public.sessions
+          set started_at = now() - interval '2 hours'
+        where client_id = $1`,
+      [clientId],
+    );
+
+    await page.goto(`/clients/${clientId}/sessions/new`);
+    await page.locator('[data-modality="electrolysis"]').click({ timeout: T });
+    // start_session redirects to the session it created. Waiting for the URL
+    // rather than polling the table keeps the assertion on what the APP did.
+    await page.waitForURL(/\/clients\/[^/]+\/sessions\/[0-9a-f-]{36}/, {
+      timeout: T,
+    });
+    const thirdVisit = page.url().split("/sessions/")[1]!.split(/[?#]/)[0]!;
+    expect(
+      thirdVisit,
+      "the app created a session distinct from the one just charted",
+    ).not.toBe(sessionId);
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+    await openMachinePanel(page);
+
+    const prior = page.getByTestId("machine-prior-setup");
+    await expect(prior).toBeVisible({ timeout: T });
+    // BOTH PROBES, each at its own latest: g1's untouched 101 and g2's 300.
+    await expect(prior).toContainText("Channels 1");
+    await expect(prior).toContainText("Channels 2");
+    await expect(prior, "g1's own value must survive a change made to g2").toContainText(
+      "101",
+    );
+    await expect(prior, "g2's newest value is what guidance offers").toContainText("300");
+    // AND THE SUPERSEDED ONES ARE GONE. 202 and 250 were g2's earlier
+    // revisions; offering either back would be the stale-g2 half of the
+    // defect. 101 must NOT have been replaced by 300 either - that is the
+    // misattribution half, and it would show as g1 reading 300.
+    //
+    // ASKED PER PROBE, not searched for in the panel's text. Two attempts at
+    // the latter failed on coincidences rather than on behaviour - "202"
+    // inside the rendered year 2026, then "300" inside g1's own "300.5"
+    // duration - and both would have been reported as the defect. A surface
+    // that prints dates, units and several numbers cannot be interrogated by
+    // substring; `prior-setup-<group>-<field>` was added so this claim can be
+    // made exactly.
+    const g1Current = page.getByTestId("prior-setup-g1-current");
+    const g2Current = page.getByTestId("prior-setup-g2-current");
+    await expect(g1Current, "g1 must still read its own 101").toContainText("101");
+    await expect(g2Current, "g2 must read the change just made").toContainText("300");
+    // THE MISATTRIBUTION, stated directly: the change must not appear on g1.
+    await expect(
+      g1Current,
+      "the change was attributed to g1 as well — the identity was lost",
+    ).not.toContainText("300");
+    // AND THE SUPERSEDED REVISIONS ARE NOT OFFERED BACK as current guidance.
+    await expect(g2Current).not.toContainText("202");
+    await expect(g2Current).not.toContainText("250");
     await noOverflow(page);
   });
 });

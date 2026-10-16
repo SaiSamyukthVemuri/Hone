@@ -8,10 +8,12 @@ import { SettingDraftFields } from "./setting-draft-fields";
 import {
   assembleGroupSubmissions,
   clearedForNextCapture,
-  firstGroup,
   groupIssues,
   groupReadiness,
+  groupsFromRecorded,
+  highestOrdinal,
   toggleChannel,
+  type RecordedGroupIdentity,
   type SettingGroupDraft,
 } from "@/lib/machines/setting-groups";
 import {
@@ -56,6 +58,18 @@ export type MachineReadingEntryProps = {
   blockId: string;
   deviceId: string;
   /**
+   * WHAT IS ALREADY RECORDED against this block, used for one thing only:
+   * recovering which setting groups exist so a change is attributed to the
+   * probe it was made on.
+   *
+   * Identities, never values. The form restores no number and no channel from
+   * this - see `groupsFromRecorded`. It is a required prop rather than an
+   * optional one because a caller that forgets it does not get a degraded
+   * form, it gets the misattribution defect back, silently; an empty array is
+   * the honest way to say "nothing recorded".
+   */
+  recordedGroups: readonly RecordedGroupIdentity[];
+  /**
    * Submits ONE SAVE - every settings group at once. Injected so the panel
    * owns the transport.
    *
@@ -96,17 +110,45 @@ export function MachineReadingEntry({
   mode,
   blockId,
   deviceId,
+  recordedGroups,
   onRecord,
   mintKey,
 }: MachineReadingEntryProps) {
   const fieldGroups = nativeFieldGroups(profile, mode);
   // SETTING GROUPS - probes sharing one set of values. One to begin with, which
   // is the entire surface for a model without channels.
-  const [groups, setGroups] = useState<SettingGroupDraft[]>(firstGroup);
-  // MONOTONIC, never derived from the list: a removed group's identity is
-  // retired for the life of the mount. See addGroup for why reuse would
-  // corrupt a group's revision history.
-  const [groupOrdinal, setGroupOrdinal] = useState(1);
+  // SEEDED FROM WHAT IS ALREADY RECORDED, in this mount's scope.
+  //
+  // The initializer used to be a bare `firstGroup`, and that was the last way
+  // into the identity defect: a reload of a block holding g1 and g2 offered
+  // one fresh g1, so a change to the former g2 appended as a revision of g1
+  // (Codex, #860 4294673722). `clearedForNextCapture` had already closed the
+  // within-mount path; a reload has no mount-local state to preserve, so it
+  // needs the identities to come from the RECORD.
+  //
+  // Lazy, so the scan runs once per mount rather than on every render - and
+  // the mount is keyed by exactly this scope, so a device or mode change
+  // remounts and re-seeds rather than carrying a stale layout across.
+  const [groups, setGroups] = useState<SettingGroupDraft[]>(() =>
+    groupsFromRecorded(recordedGroups, {
+      deviceId,
+      profileId: profile.profileId,
+      profileVersion: profile.version,
+      modeKey: mode.key,
+    }),
+  );
+  // MONOTONIC, never derived from the list AFTERWARDS: a removed group's
+  // identity is retired for the life of the mount. See addGroup for why reuse
+  // would corrupt a group's revision history.
+  //
+  // IT STARTS FROM THE SEED, THOUGH, and must. The counter's job is to never
+  // reissue an identity, and a restored draft begins with identities this
+  // mount did not issue - so starting at a flat 1 beside a seeded g1 and g2
+  // would mint a SECOND g2 on the next add, collapsing two probes into one
+  // revision history. That is the defect this whole path exists to prevent,
+  // arriving through its repair, which is why it is read from the seed once
+  // rather than tracked separately.
+  const [groupOrdinal, setGroupOrdinal] = useState(() => highestOrdinal(groups));
   // THE WHOLE SAVE, as one state machine.
   //
   // THIS REPLACED FIVE PIECES OF PER-GROUP BOOKKEEPING - a saved-group set, an

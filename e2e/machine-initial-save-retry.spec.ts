@@ -262,4 +262,82 @@ test("a lost response on the initial save is retried, not duplicated @390px", as
       "energy_shown=1.25",
     ]);
   });
+
+  await test.step("5: the NEXT VISIT reads that save ONCE, not twice", async () => {
+    // GAP 2, which this spec previously left open.
+    //
+    // It proved the retry was absorbed — one area, the values held once — and
+    // then stopped. But the harm an unabsorbed retry does is not visible in
+    // the block count: it is that the client's record acquires a second
+    // capture indistinguishable from a genuine mid-treatment change, and the
+    // NEXT VISIT then offers a "previous treatment" built from a duplicate.
+    // Sam's chain names reload/retry as one limb and ends at the same client's
+    // next visit, so the retry limb has to reach that read too.
+    //
+    // THE VISIT IS CREATED THROUGH THE APP, for the same reason as the
+    // journey's: `start_session` (0167) is what a practitioner's "new session"
+    // actually runs, and a seeded row bypasses it.
+    // A NEXT VISIT IS OUTSIDE THE COALESCE WINDOW, and that is why this
+    // ages the charted session rather than just asking for a new one.
+    //
+    // `start_session` (0167) REUSES an open session for the same studio,
+    // client, practitioner and modality started within 90 minutes - "the
+    // read-then-insert race that could produce two sessions for one visit".
+    // That is correct: pressing "new session" twice during one appointment
+    // must not split the chart in two. The first spelling of this step
+    // asserted the app had created a different session and failed on exactly
+    // that rule, which is the product working.
+    //
+    // So the fixture has to mean what the step says. Moving `started_at` back
+    // two hours makes the charted session a PAST visit, which is what "the
+    // next visit" presupposes; nothing about the recorded captures changes.
+    await sql(
+      `update public.sessions
+          set started_at = now() - interval '2 hours'
+        where id = $1`,
+      [sessionId],
+    );
+
+    await page.goto(`/clients/${clientId}/sessions/new`);
+    await page.locator('[data-modality="electrolysis"]').click({ timeout: T });
+    await page.waitForURL(/\/clients\/[^/]+\/sessions\/[0-9a-f-]{36}/, {
+      timeout: T,
+    });
+    const nextVisit = page.url().split("/sessions/")[1]!.split(/[?#]/)[0]!;
+    expect(
+      nextVisit,
+      "the app reused the charted session, so this is not a next visit",
+    ).not.toBe(sessionId);
+
+    // EXACTLY ONE CAPTURE EXISTS for the charted session. Asserted here rather
+    // than in step 3 because this is the claim that matters clinically: a
+    // second capture would be permanent, un-editable, and would read as a
+    // setting she changed.
+    const caps = await sql<{ n: string }>(
+      `select count(*)::text as n
+         from public.treatment_setup_captures c
+         join public.session_blocks b on b.id = c.session_block_id
+        where b.session_id = $1`,
+      [sessionId],
+    );
+    expect(
+      caps[0]!.n,
+      "the absorbed retry left a second capture after all",
+    ).toBe("1");
+
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+    expect(await openMachinePanel(page)).toBe(true);
+
+    const prior = page.getByTestId("machine-prior-setup");
+    await expect(prior).toBeVisible({ timeout: T });
+    // THE VALUES SHE ENTERED, offered back as reference — read per field
+    // rather than searched for in the panel's text, because that text also
+    // carries a date and units.
+    await expect(page.getByTestId("prior-setup-g1-current")).toContainText("120");
+    await expect(page.getByTestId("prior-setup-g1-duration")).toContainText("300.5");
+    // AND NOTHING IS PRE-FILLED from it, on this path as on every other.
+    const draft = page.getByTestId("machine-setting-draft");
+    await expect(draft).toBeVisible({ timeout: T });
+    await expect(draft.getByTestId("reading-current")).toHaveValue("");
+  });
 });

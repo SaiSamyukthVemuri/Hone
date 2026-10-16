@@ -322,6 +322,23 @@ export type ReadingSubmission = {
   observationSource: ReadingInputRow["observationSource"];
 };
 
+/**
+ * WHERE A NUMBER CAME FROM. One definition, because two lists drift and this
+ * one is checked on the way in and narrowed on the way out.
+ *
+ * It lives beside `ReadingInputRow` rather than beside the validator because
+ * the validator already imports its types from here; the reverse edge is
+ * type-only and erases, so there is no runtime cycle.
+ */
+export const OBSERVATION_SOURCES = [
+  "practitioner-entered",
+  "machine-displayed",
+  "device-computed",
+  "estimated",
+] as const;
+
+export type ObservationSource = (typeof OBSERVATION_SOURCES)[number];
+
 export type ReadingInputRow = {
   /** Null for a mode-level field. */
   stageKey: string | null;
@@ -329,11 +346,7 @@ export type ReadingInputRow = {
   value: ReadingValue;
   nativeUnit: string;
   decimals: number;
-  observationSource:
-    | "practitioner-entered"
-    | "machine-displayed"
-    | "device-computed"
-    | "estimated";
+  observationSource: ObservationSource;
 };
 
 /**
@@ -508,6 +521,25 @@ export type RecordedReading = {
   value: ReadingValue;
   nativeUnit: string;
   decimals: number;
+  /**
+   * WHERE THE NUMBER CAME FROM, as the capture recorded it.
+   *
+   * THE RECORDED FACT, NOT THE CONTRACT'S EXPECTATION. The two are allowed to
+   * differ: `validateReading` deliberately permits a mismatch and records what
+   * actually happened, so a field the profile says is machine-displayed can
+   * legitimately carry a practitioner-entered reading. Deriving this from
+   * today's profile instead of reading it back therefore does not recover it -
+   * it overwrites the exception with the rule, which is the one case where
+   * provenance matters.
+   *
+   * The write path stored it and the SQL emitted it; the column list, this
+   * type and `toReading` all dropped it, so both previous-treatment and
+   * recorded-history lost it permanently at the application boundary
+   * (Codex, #860 4294673727).
+   *
+   * Null only for a row recorded before the column existed.
+   */
+  observationSource: ObservationSource | null;
   recordedAt: string;
 };
 
@@ -527,6 +559,7 @@ type ReadingRow = {
   revision: number;
   capture_id: string | null;
   studio_machine_id: string;
+  observation_source: string | null;
   recorded_at: string;
 };
 
@@ -560,6 +593,15 @@ function toReading(r: ReadingRow): RecordedReading {
           },
     nativeUnit: r.native_unit,
     decimals: r.decimals,
+    // NARROWED AGAINST THE SAME LIST THE WRITE PATH VALIDATES, so an
+    // unrecognised value becomes null rather than being asserted into the
+    // union. A row written before the column existed is null too, and both
+    // mean the same thing to a reader: provenance unknown, not assumed.
+    observationSource: OBSERVATION_SOURCES.includes(
+      r.observation_source as ObservationSource,
+    )
+      ? (r.observation_source as ObservationSource)
+      : null,
     recordedAt: r.recorded_at,
   };
 }
@@ -567,7 +609,8 @@ function toReading(r: ReadingRow): RecordedReading {
 const READING_COLUMNS =
   "session_block_id, machine_profile_id, machine_profile_version, mode_key, " +
   "group_key, channels, stage_key, field_key, value_numeric, absence_reason, " +
-  "native_unit, decimals, revision, capture_id, studio_machine_id, recorded_at";
+  "native_unit, decimals, revision, capture_id, studio_machine_id, " +
+  "observation_source, recorded_at";
 
 /**
  * Is a contract PUBLISHED for this (profile, version)? Used to refuse

@@ -47,6 +47,7 @@ function reading(o: {
   modeKey?: string;
   profileVersion?: number;
   decimals?: number;
+  deviceId?: string;
 }): RecordedReading {
   return {
     ...base,
@@ -57,6 +58,7 @@ function reading(o: {
     fieldKey: o.fieldKey ?? "current",
     channels: o.channels ?? [],
     modeKey: o.modeKey ?? base.modeKey,
+    deviceId: o.deviceId ?? base.deviceId,
     profileVersion: o.profileVersion ?? base.profileVersion,
     decimals: o.decimals ?? base.decimals,
     value:
@@ -311,5 +313,90 @@ describe("what counts as a CHANGE of setting", () => {
       "2026-10-14T10:20:00Z",
       "2026-10-14T10:40:00Z",
     ]);
+  });
+});
+
+describe("a change series never crosses physical units", () => {
+  it("does NOT pair Room 1's value with Room 2's", () => {
+    // THE DEFECT (Codex, #860 4294673734). Two rooms holding the same model
+    // both mint `g1` from a freshly mounted collector, and the series key was
+    // group + mode + profile + version + stage + field — every term equal
+    // across the two units. A value read on Room 1 then one on Room 2 rendered
+    // under "Changed during this treatment" as one setting's before/after,
+    // asserting an adjustment that nobody made, about a machine the line does
+    // not even name.
+    const out = changesWithin(
+      chronology([
+        reading({
+          recordedAt: "2026-10-14T10:00:00Z",
+          value: 120,
+          deviceId: "dev-1",
+          captureId: "cap-1",
+        }),
+        reading({
+          recordedAt: "2026-10-14T10:30:00Z",
+          value: 150,
+          deviceId: "dev-2",
+          captureId: "cap-2",
+        }),
+      ]),
+    );
+    expect(out).toEqual([]);
+  });
+
+  it("CONTROL: the SAME unit still pairs, so the guard is not blanket", () => {
+    // Without this the test above passes on a changesWithin that returns
+    // nothing at all.
+    const out = changesWithin(
+      chronology([
+        reading({
+          recordedAt: "2026-10-14T10:00:00Z",
+          value: 120,
+          deviceId: "dev-1",
+          captureId: "cap-1",
+        }),
+        reading({
+          recordedAt: "2026-10-14T10:30:00Z",
+          value: 150,
+          deviceId: "dev-1",
+          captureId: "cap-2",
+        }),
+      ]),
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0]!.from.value).toEqual({ kind: "value", value: 120 });
+    expect(out[0]!.to.value).toEqual({ kind: "value", value: 150 });
+  });
+
+  it("each unit keeps its OWN series across a switch and back", () => {
+    // Room 1 → Room 2 → Room 1. One change, on Room 1, and the Room 2 reading
+    // in the middle must neither break that pair nor create one of its own.
+    const out = changesWithin(
+      chronology([
+        reading({
+          recordedAt: "2026-10-14T10:00:00Z",
+          value: 120,
+          deviceId: "dev-1",
+          captureId: "cap-1",
+        }),
+        reading({
+          recordedAt: "2026-10-14T10:15:00Z",
+          value: 90,
+          deviceId: "dev-2",
+          captureId: "cap-2",
+        }),
+        reading({
+          recordedAt: "2026-10-14T10:30:00Z",
+          value: 150,
+          deviceId: "dev-1",
+          captureId: "cap-3",
+        }),
+      ]),
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0]!.from.deviceId).toBe("dev-1");
+    expect(out[0]!.to.deviceId).toBe("dev-1");
+    expect(out[0]!.from.value).toEqual({ kind: "value", value: 120 });
+    expect(out[0]!.to.value).toEqual({ kind: "value", value: 150 });
   });
 });

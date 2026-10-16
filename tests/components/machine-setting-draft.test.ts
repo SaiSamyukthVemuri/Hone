@@ -346,6 +346,44 @@ describe("switching machine or mode clears the collected draft", () => {
     ).not.toMatch(/setGroups\(firstGroup\(\)\)/);
   });
 
+  it("the ENTRY form SEEDS its draft from what is already recorded", () => {
+    // THE ROUND-5 DEFECT (Codex, #860 4294673722), and the fourth way into
+    // one invariant: a group identity must survive every way this form can be
+    // mounted. Round 4 closed the within-mount path with
+    // `clearedForNextCapture`; a RELOAD has no mount-local state to preserve,
+    // so its initializer must take the identities from the RECORD.
+    //
+    // Both halves are asserted. A seed that is not scoped is the same defect
+    // pointed the other way - it would import another unit's probe layout.
+    const src = read(ENTRY_SRC);
+    expect(src).toMatch(/useState<SettingGroupDraft\[\]>\(\(\) =>\s*groupsFromRecorded\(/);
+    expect(src).toMatch(/groupsFromRecorded\(recordedGroups, \{/);
+    expect(
+      src,
+      "a bare firstGroup initializer is the reload defect",
+    ).not.toMatch(/useState<SettingGroupDraft\[\]>\(firstGroup\)/);
+  });
+
+  it("the entry form's ordinal STARTS from that seed", () => {
+    // A restored draft begins with identities this mount did not issue, so a
+    // counter starting at a flat 1 beside a seeded g1 and g2 mints a second
+    // g2 on the next add - the corruption the seed exists to prevent,
+    // arriving through the repair.
+    const src = read(ENTRY_SRC);
+    expect(src).toMatch(/useState\(\(\) => highestOrdinal\(groups\)\)/);
+    expect(src).not.toMatch(/const \[groupOrdinal, setGroupOrdinal\] = useState\(1\)/);
+  });
+
+  it("the PANEL actually forwards the recorded groups to it", () => {
+    // The forwarding half, which is where this family of defects keeps
+    // landing: the loader, the props and the panel were all correct three
+    // times while the feature was inert in the route because one line was
+    // missing (Codex, 2351742d, 15cc6c99, #860 4290452722). A seed wired to
+    // nothing is a fresh g1 by another name.
+    const src = read(PANEL_SRC);
+    expect(src).toMatch(/recordedGroups=\{recordedSetup\}/);
+  });
+
   it("the ENTRY form does NOT reset the monotonic group ordinal", () => {
     // Keeping g1 and g2 on screen while resetting the ordinal to 1 would mint
     // a SECOND g2 on the next "add group". The ordinal is monotonic precisely

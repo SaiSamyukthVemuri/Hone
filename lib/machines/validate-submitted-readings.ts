@@ -2,6 +2,7 @@ import { validateReading } from "@/lib/machines/validate-reading";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
 import type { StudioDevice } from "@/lib/machines/selection";
+import { OBSERVATION_SOURCES } from "@/lib/machines/machine-queries";
 import type {
   ReadingInputRow,
   ReadingSubmission,
@@ -35,12 +36,6 @@ import type {
  * are validated against the server's own catalogue before the write, so a
  * field the model does not have never reaches the table.
  */
-const OBSERVATION_SOURCES = [
-  "practitioner-entered",
-  "machine-displayed",
-  "device-computed",
-  "estimated",
-] as const;
 
 /**
  * Validate one group's readings against the DEVICE's registered contract, and

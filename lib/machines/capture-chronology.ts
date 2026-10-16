@@ -175,6 +175,16 @@ export function changesWithin(
   for (const e of entries) {
     for (const r of e.readings) {
       const key = [
+        // THE PHYSICAL UNIT FIRST, because a group key is only meaningful
+        // within one. Two rooms holding the same model both mint `g1` from a
+        // freshly mounted collector, so without this a value read on Room 1
+        // and the next on Room 2 paired as one setting's before/after - one
+        // probe's adjustment, asserted about two machines, with the change
+        // line naming neither (Codex, #860 4294673734).
+        //
+        // It is the same scoping rule as `groupsFromRecorded`: identity is
+        // (device, profile, version, mode) plus the key, never the key alone.
+        r.deviceId,
         r.groupKey,
         r.modeKey,
         r.profileId,

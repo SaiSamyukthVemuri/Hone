@@ -178,6 +178,14 @@ export function MachinePriorSetup({
                 <li
                   key={`${groupKey}:${r.stageKey ?? ""}:${r.fieldKey}`}
                   className="text-sm text-neutral-700 dark:text-neutral-300"
+                  // ADDRESSABLE PER GROUP AND FIELD, so a proof can ask what
+                  // THIS probe's current reads rather than searching the
+                  // panel's text. Two attempts at the latter failed on
+                  // coincidences - "202" inside the rendered year, then "300"
+                  // inside another field's "300.5" - and a substring search
+                  // over a surface that prints dates, units and several
+                  // numbers cannot tell a clinical value from any of them.
+                  data-testid={`prior-setup-${groupKey}-${r.fieldKey}`}
                 >
                   <span className="text-neutral-500">
                     {named?.label ?? r.fieldKey}

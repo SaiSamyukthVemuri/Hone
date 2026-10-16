@@ -605,6 +605,12 @@ export function MachineFirstSetupPanel({
               mode={mode}
               blockId={blockId}
               deviceId={chosen.device.deviceId}
+              // THE IDENTITIES THE BLOCK ALREADY HAS. The same list rendered
+              // below as history, handed to the form for the one thing the
+              // history cannot do: tell it which probes exist, so a change is
+              // attributed to the one it was made on. `groupsFromRecorded`
+              // scopes it to this mount's device, version and mode.
+              recordedGroups={recordedSetup}
               onRecord={recordAndCount!}
             />
           ) : (

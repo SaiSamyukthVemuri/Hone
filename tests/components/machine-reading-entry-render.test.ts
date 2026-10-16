@@ -95,6 +95,9 @@ const html = renderToStaticMarkup(
     mode: PROFILE.modes[0]!,
     blockId: "block-1",
     deviceId: "dev-1",
+    // Nothing recorded yet, which is this render's subject: the create case.
+    // The restore case has its own tests in machine-setting-draft.test.ts.
+    recordedGroups: [],
     onRecord: async () => ({ ok: true }),
     mintKey: () => "k1",
   }),

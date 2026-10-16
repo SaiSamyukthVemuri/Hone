@@ -195,6 +195,104 @@ export function clearedForNextCapture(
   return groups.map((g) => ({ id: g.id, channels: [], values: {} }));
 }
 
+/**
+ * The scope a group identity is meaningful in. A `group_key` says WHICH probe
+ * within one of these; across two of them the same `g1` is two different
+ * things, which is why every one of these fields is part of the mount key.
+ */
+export type SettingGroupScope = {
+  deviceId: string;
+  profileId: string;
+  profileVersion: number;
+  modeKey: string;
+};
+
+/** The minimum of a recorded reading needed to recover a group's identity. */
+export type RecordedGroupIdentity = SettingGroupScope & { groupKey: string };
+
+/**
+ * THE GROUPS A BLOCK ALREADY HAS, recovered from what was RECORDED.
+ *
+ * THE INVARIANT THIS SERVES, which five review rounds have now approached
+ * from four directions: a group identity must survive every way the entry
+ * form can be mounted. `clearedForNextCapture` preserves it across a save
+ * within one mount. This preserves it across a mount that has no prior
+ * state at all - a RELOAD, which is the path Codex found still broken
+ * (#860 4294673722). Together they are the only two ways the draft is ever
+ * seeded, so the identity now has one source in both.
+ *
+ * WHY A RELOAD WAS THE DANGEROUS ONE. After a reload of a block holding g1
+ * and g2 the form offered a single fresh g1 while the recorded setup rendered
+ * below it, so the screen showed two probes and accepted a change for one.
+ * A change to the former g2 appended as a revision of g1, and
+ * `latest_setup_for_client` then combined that revision with the stale g2 -
+ * the same corruption as the within-mount case, reached by closing the tab.
+ *
+ * SCOPED, AND THAT IS NOT A DETAIL. Identities are only comparable within one
+ * (device, profile, version, mode); the entry form is already keyed by exactly
+ * that tuple. Seeding from readings outside the scope would import another
+ * unit's probe layout - which is the same defect pointed the other way, and is
+ * why a machine switch must still start clean rather than inherit.
+ *
+ * CHANNELS AND VALUES ARE NOT RESTORED, matching `clearedForNextCapture`
+ * exactly: the identity is not an observation. Restoring a channel set would
+ * assert she ran the same probes before she has said so.
+ */
+export function groupsFromRecorded(
+  recorded: readonly RecordedGroupIdentity[],
+  scope: SettingGroupScope,
+): SettingGroupDraft[] {
+  const keys: string[] = [];
+  for (const r of recorded) {
+    if (
+      r.deviceId !== scope.deviceId ||
+      r.profileId !== scope.profileId ||
+      r.profileVersion !== scope.profileVersion ||
+      r.modeKey !== scope.modeKey
+    ) {
+      continue;
+    }
+    if (!keys.includes(r.groupKey)) keys.push(r.groupKey);
+  }
+  // NOTHING RECORDED IN THIS SCOPE is the ordinary create case, and a new
+  // machine's first capture reaches it too.
+  if (keys.length === 0) return firstGroup();
+  // ORDERED BY THE ORDINAL THE KEY CARRIES, not by the order rows arrived.
+  // A reader comparing the form to the history below it is comparing probe
+  // labels, so g1 above g2 is a correctness property of the screen, and row
+  // order is whatever the query's sort happened to be.
+  return [...keys]
+    .sort((a, b) => (ordinalOf(a) ?? 0) - (ordinalOf(b) ?? 0) || a.localeCompare(b))
+    .map((id) => ({ id, channels: [], values: {} }));
+}
+
+/** The number in a `g<n>` key, or null for a key not of that shape. */
+function ordinalOf(groupKey: string): number | null {
+  const m = /^g(\d+)$/.exec(groupKey);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * The highest ordinal already ISSUED in this draft, so the next group added
+ * cannot reuse one.
+ *
+ * Needed because the counter is monotonic per mount and a restored draft
+ * starts with identities the mount did not issue: seeding g1 and g2 while the
+ * counter sat at its initial 1 would mint a SECOND g2 on the next add, and the
+ * two would collapse into one revision history - the same corruption this
+ * whole path exists to prevent, arriving through the repair.
+ *
+ * A key that is not `g<n>` contributes nothing; it cannot collide with one.
+ */
+export function highestOrdinal(groups: readonly SettingGroupDraft[]): number {
+  let n = 1;
+  for (const g of groups) {
+    const o = ordinalOf(g.id);
+    if (o !== null && o > n) n = o;
+  }
+  return n;
+}
+
 /** Add or remove one channel from one group. Contract-declared ids only. */
 export function toggleChannel(
   group: SettingGroupDraft,

@@ -53,6 +53,7 @@ function row(id: string, o: Partial<Row> = {}): Row {
     revision: 1,
     capture_id: "cap-1",
     studio_machine_id: "dev-1",
+    observation_source: "machine-displayed",
     recorded_at: "2026-10-15T10:00:00Z",
     ...o,
   };
@@ -70,6 +71,11 @@ type FakeOptions = {
 
 function fakeDb(rows: Row[], opts: FakeOptions = {}) {
   const calls: Array<{ after: string | null; limit: number }> = [];
+  // THE COLUMNS THE READER ASKED FOR. Captured because one of the defects
+  // here was an omission from the SELECT list itself, which a mapping-only
+  // assertion passes straight over: the fake hands back whatever the fixture
+  // holds regardless of what was requested.
+  const selected: string[] = [];
   const page = (after: string | null) => (limit: number) => {
     calls.push({ after, limit });
     if (opts.error) return Promise.resolve({ data: null, error: opts.error });
@@ -90,7 +96,9 @@ function fakeDb(rows: Row[], opts: FakeOptions = {}) {
   const db = {
     rpc: async () => ({ data: null, error: null }),
     from: () => ({
-      select: () => ({
+      select: (columns: string) => {
+        selected.push(columns);
+        return {
         eq: () => ({
           is: () => ({ order: async () => ({ data: [], error: null }) }),
           order: () => ({ limit: page(null) }),
@@ -99,10 +107,11 @@ function fakeDb(rows: Row[], opts: FakeOptions = {}) {
           }),
           in: () => ({ limit: async () => ({ data: [], error: null }) }),
         }),
-      }),
+        };
+      },
     }),
   } as unknown as MachineDb;
-  return { db, calls };
+  return { db, calls, selected };
 }
 
 describe("readingsForBlock reads every page", () => {
@@ -276,5 +285,66 @@ describe("readingsForBlock fails CLOSED rather than returning part of a block", 
     if (!out.ok) return;
     expect(out.value).toEqual([]);
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe("retrieved readings keep their observation provenance", () => {
+  it("carries the RECORDED source back, not the contract's expectation", async () => {
+    // THE DEFECT (Codex, #860 4294673727). The write path stored
+    // `observation_source` and the SQL emitted it, but the shared column list
+    // omitted it and `toReading` dropped it, so previous-treatment and
+    // recorded-history both lost provenance permanently at the application
+    // boundary.
+    //
+    // DERIVING IT FROM THE PROFILE DOES NOT RECOVER IT. `validateReading`
+    // deliberately permits a mismatch and records what actually happened, so
+    // a field the contract calls machine-displayed can legitimately carry a
+    // practitioner-entered reading. That exception is the one case where
+    // provenance matters, and it is exactly the case derivation destroys.
+    const { db } = fakeDb([
+      row("r1", { observation_source: "practitioner-entered" }),
+      row("r2", { field_key: "duration", observation_source: "estimated" }),
+    ]);
+
+    const out = await readingsForBlock(db, "block-1");
+
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.value.map((r) => r.observationSource)).toEqual([
+      "practitioner-entered",
+      "estimated",
+    ]);
+  });
+
+  it("asks the database for the column at all", async () => {
+    // The omission was in the SELECT list, so a mapping test alone would have
+    // passed against a query that never requested it.
+    const { db, selected } = fakeDb([row("r1")]);
+
+    await readingsForBlock(db, "block-1");
+
+    expect(selected[0]).toContain("observation_source");
+  });
+
+  it("a row written before the column existed reads as UNKNOWN, not assumed", async () => {
+    const { db } = fakeDb([row("r1", { observation_source: null })]);
+
+    const out = await readingsForBlock(db, "block-1");
+
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.value[0]!.observationSource).toBeNull();
+  });
+
+  it("an unrecognised value is null rather than asserted into the union", async () => {
+    // Narrowed against the same list the write path validates, so a value
+    // outside it cannot be typed as one of the four by a cast.
+    const { db } = fakeDb([row("r1", { observation_source: "guessed" })]);
+
+    const out = await readingsForBlock(db, "block-1");
+
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.value[0]!.observationSource).toBeNull();
   });
 });
