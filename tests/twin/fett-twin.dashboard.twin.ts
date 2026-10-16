@@ -22,6 +22,16 @@ it("enriches the owned twin dashboard without resetting existing work", { timeou
     throw new Error("Dashboard enrichment needs the verified existing twin; seed it through the guarded runner first.");
   }
 
+  const ownedClientIds = Array.from({ length: TWIN.clientCount }, (_, i) => IDS.client(i + 1));
+  const activeRows = (await adminQuery(
+    `select id from public.clients where studio_id = $1 and id = any($2::uuid[])
+       and archived_at is null`,
+    [IDS.studio, ownedClientIds],
+  )).rows as Array<{ id: string }>;
+  const activeClientIds = new Set(activeRows.map((client) => client.id));
+  const clientPool = ownedClientIds.filter((id) => activeClientIds.has(id));
+  if (clientPool.length === 0) throw new Error("No active fixture clients remain. No enrichment was written.");
+
   const people = (await adminQuery(
     `select id, email from public.practitioners where studio_id = $1 and active
        and (email = $2 or email = any($3::text[]))`,
@@ -64,8 +74,10 @@ it("enriches the owned twin dashboard without resetting existing work", { timeou
   const skipped: string[] = [];
   for (const day of [dates.today, dates.next_day]) {
     for (const [personIndex, person] of roster.entries()) {
+      // An active client appears at most once at each simultaneous time slot.
+      if (personIndex >= clientPool.length) continue;
       for (const [slotIndex, time] of ["09:00", "10:30", "12:00", "13:30", "15:00", "16:00", "16:30"].entries()) {
-        const clientId = IDS.client(((personIndex * 2 + slotIndex) % TWIN.clientCount) + 1);
+        const clientId = clientPool[(personIndex + slotIndex) % clientPool.length]!;
         const instant = (await adminQuery(
           `select (($1::date + $2::time) at time zone $3) as starts_at,
              (($1::date + $2::time) at time zone $3) > now() as upcoming`,
@@ -118,6 +130,7 @@ it("enriches the owned twin dashboard without resetting existing work", { timeou
   ];
   for (const [index, text] of notes.entries()) {
     const clientId = IDS.client(index + 1);
+    if (!activeClientIds.has(clientId)) continue;
     await adminQuery(
       `insert into public.client_pinned_notes
          (id, studio_id, client_id, text, created_by_practitioner_id)
@@ -132,7 +145,7 @@ it("enriches the owned twin dashboard without resetting existing work", { timeou
   for (let index = 1; index <= TWIN.clientCount; index += 1) {
     await adminQuery(
       `update public.clients set date_of_birth = make_date(1900, $3, $4)
-       where id = $1 and studio_id = $2 and date_of_birth is null`,
+       where id = $1 and studio_id = $2 and date_of_birth is null and archived_at is null`,
       [IDS.client(index), IDS.studio, index, 9 + index],
     );
   }
@@ -141,6 +154,7 @@ it("enriches the owned twin dashboard without resetting existing work", { timeou
   // partial answers: no consent/acknowledgement, signature, review or send
   // is invented. The real review page must continue to expose missing answers.
   for (const [clientIndex, status] of [[3, "in_progress"], [4, "submitted"], [6, "in_progress"]] as const) {
+    if (!activeClientIds.has(IDS.client(clientIndex))) continue;
     await adminQuery(
       `insert into public.client_intake_forms
          (id, studio_id, client_id, status, responses, submitted_at)
@@ -181,12 +195,13 @@ it("enriches the owned twin dashboard without resetting existing work", { timeou
        (select count(*)::int from public.client_pinned_notes where studio_id = $1) as pinned_notes,
        (select count(*)::int from public.client_intake_forms where studio_id = $1 and deleted_at is null) as intakes,
        (select count(*)::int from public.clients where studio_id = $1
+          and archived_at is null
           and extract(month from date_of_birth) = extract(month from (now() at time zone $2))) as birthdays`,
     [IDS.studio, TWIN.timezone],
   )).rows[0] as { today: number; pinned_notes: number; intakes: number; birthdays: number };
   expect(facts.today, "The presenter dashboard still has no appointments today").toBeGreaterThan(0);
-  expect(facts.pinned_notes).toBeGreaterThanOrEqual(6);
-  expect(facts.intakes).toBeGreaterThanOrEqual(3);
+  expect(facts.pinned_notes).toBeGreaterThanOrEqual(notes.filter((_, i) => activeClientIds.has(IDS.client(i + 1))).length);
+  expect(facts.intakes).toBeGreaterThanOrEqual([3, 4, 6].filter((i) => activeClientIds.has(IDS.client(i))).length);
   expect(facts.birthdays).toBeGreaterThanOrEqual(1);
   expect((await validateTwin()).state).toBe("verified");
   // No emails, tokens or links in the receipt.
