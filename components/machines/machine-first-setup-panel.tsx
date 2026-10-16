@@ -334,6 +334,22 @@ export function MachineFirstSetupPanel({
       write = onSelectMachine
         ? await onSelectMachine({ deviceId: next, modeKey: nextMode })
         : null;
+    } catch (cause) {
+      // A REJECTION IS A FAILED WRITE, not an absence of one.
+      //
+      // `finally` cleared the pending flag but the throw skipped
+      // `selectionSettled` entirely, so the optimistic choice stayed on
+      // screen with NO failure note while the database still held the
+      // previous default — and a reload silently restored the old machine
+      // (Codex, #860 4299408386). An unreachable server is the ordinary
+      // case here, not an exotic one.
+      //
+      // Settled as `{ ok: false }` so it travels the SAME path a refusal
+      // does: one definition of "the write did not happen", not two.
+      write = {
+        ok: false,
+        error: cause instanceof Error ? cause.message : "That did not save.",
+      };
     } finally {
       // CLEARED EVEN ON A THROW, or one failed write leaves the picker dead
       // for the rest of the treatment.
@@ -364,6 +380,12 @@ export function MachineFirstSetupPanel({
       write = onSelectMachine
         ? await onSelectMachine({ deviceId, modeKey: key })
         : null;
+    } catch (cause) {
+      // Same rule as the device pick: a rejection is a failed write.
+      write = {
+        ok: false,
+        error: cause instanceof Error ? cause.message : "That did not save.",
+      };
     } finally {
       setSelectionPending(false);
     }
@@ -465,7 +487,24 @@ export function MachineFirstSetupPanel({
             className={fieldControlClass()}
             value={deviceId ?? ""}
             onChange={(e) => void chooseDevice(e.target.value || null)}
-            disabled={selectable.length === 0 || selectionPending}
+            // FROZEN BY THE HOST'S UNRESOLVED SAVE TOO, not only by a
+            // selection write in flight.
+            //
+            // Round 6 froze the reading collector and I reported the
+            // invariant closed; `settingDraftFrozen` was never applied to
+            // the IDENTITY controls (Codex, #860 4299408376). What that
+            // cost: clearing the machine replaces the host's draft with
+            // null while the retry key is held, so Save retries down the
+            // non-setup `create_block_with_entry` path and duplicates the
+            // area if the first request committed. Switching instead
+            // changes the payload and the digest refuses the retry.
+            //
+            // The machine and the mode are PART OF THE PAYLOAD the retry
+            // key is bound to. A freeze that covers the readings and not
+            // the identity is not a freeze.
+            disabled={
+              selectable.length === 0 || selectionPending || settingDraftFrozen
+            }
             data-testid="machine-select"
           >
             {/*
@@ -592,7 +631,9 @@ export function MachineFirstSetupPanel({
                     // mode change and a device change both write the same
                     // stored selection, so letting one start while the other
                     // is in flight is the same race by another route.
-                    disabled={selectionPending}
+                    // Same freeze as the machine picker: the mode is part
+                    // of the digest the held retry key is bound to.
+                    disabled={selectionPending || settingDraftFrozen}
                     aria-pressed={m.key === mode?.key}
                     data-testid={`machine-mode-${m.key}`}
                   >

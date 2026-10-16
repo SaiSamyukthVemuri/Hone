@@ -84,6 +84,8 @@ async function publish(
       decimals: number;
       quantity: string;
       stage_key?: string;
+      /** Omitted means REQUIRED, matching the column's default. */
+      optional?: boolean;
     }>;
   } = {},
 ): Promise<number> {
@@ -97,9 +99,9 @@ async function publish(
       opts.requiresOption ?? null,
       JSON.stringify(
         opts.fields ?? [
-          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
-          { field_key: "duration", native_unit: "s", decimals: 1, quantity: "duration" },
-          { field_key: "reps", native_unit: "count", decimals: 0, quantity: "count" },
+          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current", optional: true },
+          { field_key: "duration", native_unit: "s", decimals: 1, quantity: "duration", optional: true },
+          { field_key: "reps", native_unit: "count", decimals: 0, quantity: "count", optional: true },
         ],
       ),
     ],
@@ -292,7 +294,7 @@ describe("0223 · publication is DEPLOYMENT authority, never a tenant's", () => 
           4,
           null,
           JSON.stringify([
-            { field_key: "current", native_unit: "mA", decimals: 3, quantity: "current" },
+            { field_key: "current", native_unit: "mA", decimals: 3, quantity: "current", optional: true },
           ]),
         ]),
       ),
@@ -311,7 +313,7 @@ describe("0223 · publication is DEPLOYMENT authority, never a tenant's", () => 
           4,
           null,
           JSON.stringify([
-            { field_key: "current", native_unit: "mA", decimals: 3, quantity: "current" },
+            { field_key: "current", native_unit: "mA", decimals: 3, quantity: "current", optional: true },
           ]),
         ]),
       ),
@@ -334,7 +336,7 @@ describe("0223 · publication is DEPLOYMENT authority, never a tenant's", () => 
           99,
           null,
           JSON.stringify([
-            { field_key: "current", native_unit: "mA", decimals: 3, quantity: "current" },
+            { field_key: "current", native_unit: "mA", decimals: 3, quantity: "current", optional: true },
           ]),
         ]),
       ),
@@ -374,7 +376,7 @@ describe("0223 · a published version is IMMUTABLE", () => {
     await expect(
       publish(11, {
         fields: [
-          { field_key: "current", native_unit: "mA", decimals: 3, quantity: "current" },
+          { field_key: "current", native_unit: "mA", decimals: 3, quantity: "current", optional: true },
         ],
       }),
     ).rejects.toThrow(/already published with different fields/i);
@@ -394,7 +396,7 @@ describe("0223 · a published version is IMMUTABLE", () => {
     await expect(
       publish(13, {
         fields: [
-          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
+          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current", optional: true },
         ],
       }),
     ).rejects.toThrow(/already published with different fields/i);
@@ -405,7 +407,7 @@ describe("0223 · a published version is IMMUTABLE", () => {
     expect(
       await publish(15, {
         fields: [
-          { field_key: "current", native_unit: "mA", decimals: 3, quantity: "current" },
+          { field_key: "current", native_unit: "mA", decimals: 3, quantity: "current", optional: true },
         ],
       }),
     ).toBe(1);
@@ -730,15 +732,15 @@ describe("0223 · republish compares field IDENTITIES, not counts", () => {
     // no-op. Counting is not comparing.
     await publish(90, {
       fields: [
-        { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
-        { field_key: "duration", native_unit: "s", decimals: 1, quantity: "duration" },
+        { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current", optional: true },
+        { field_key: "duration", native_unit: "s", decimals: 1, quantity: "duration", optional: true },
       ],
     });
     await expect(
       publish(90, {
         fields: [
-          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
-          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
+          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current", optional: true },
+          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current", optional: true },
         ],
       }),
     ).rejects.toThrow(/listed more than once/i);
@@ -760,8 +762,8 @@ describe("0223 · republish compares field IDENTITIES, not counts", () => {
     await expect(
       publish(91, {
         fields: [
-          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
-          { field_key: "current", native_unit: "mA", decimals: 3, quantity: "current" },
+          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current", optional: true },
+          { field_key: "current", native_unit: "mA", decimals: 3, quantity: "current", optional: true },
         ],
       }),
     ).rejects.toThrow(/listed more than once/i);
@@ -775,14 +777,14 @@ describe("0223 · republish compares field IDENTITIES, not counts", () => {
   it("an ADDED field is still refused, and the set check is symmetric", async () => {
     await publish(92, {
       fields: [
-        { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
+        { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current", optional: true },
       ],
     });
     await expect(
       publish(92, {
         fields: [
-          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
-          { field_key: "duration", native_unit: "s", decimals: 1, quantity: "duration" },
+          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current", optional: true },
+          { field_key: "duration", native_unit: "s", decimals: 1, quantity: "duration", optional: true },
         ],
       }),
     ).rejects.toThrow(/already published with different fields/i);
@@ -1060,7 +1062,7 @@ describe("0223 · retrieval returns ONE coherent capture, never a composite", ()
 
     await publish(41, {
       fields: [
-        { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
+        { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current", optional: true },
       ],
     });
     const second = await register(studio, 41);

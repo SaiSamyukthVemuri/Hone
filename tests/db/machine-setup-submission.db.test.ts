@@ -87,8 +87,8 @@ async function publishContract(channelsMax: number | null = 4): Promise<void> {
       channelsMax,
       null,
       JSON.stringify([
-        { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
-        { field_key: "duration", native_unit: "s", decimals: 1, quantity: "duration" },
+        { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current", optional: true },
+        { field_key: "duration", native_unit: "s", decimals: 1, quantity: "duration", optional: true },
       ]),
     ],
   );

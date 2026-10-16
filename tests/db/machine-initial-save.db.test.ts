@@ -92,7 +92,7 @@ async function registerMachine(studio: SeededStudio): Promise<string> {
       4,
       null,
       JSON.stringify([
-        { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
+        { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current", optional: true },
       ]),
     ],
   );

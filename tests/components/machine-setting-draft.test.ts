@@ -287,6 +287,8 @@ describe("switching machine or mode clears the collected draft", () => {
   const CONN_SRC = "components/machines/machine-first-setup-connected.tsx";
   const PRIOR_SRC = "components/machines/machine-prior-setup.tsx";
   const QUERIES_SRC = "lib/machines/machine-queries.ts";
+  const MIGRATION_SRC =
+    "supabase/migrations/0223_machine_inventory_and_setup_readings.sql";
   const SYNTH_SRC = "lib/machines/synthetic-profile.ts";
   const LOCAL_ENV_SRC = "e2e/helpers/local-env.ts";
   const SETUP_ACTIONS_SRC =
@@ -615,8 +617,16 @@ describe("switching machine or mode clears the collected draft", () => {
     expect((src.match(/\} finally \{\s*(\/\/[^\n]*\n\s*)*setSelectionPending\(false\);/g) ?? []).length).toBe(2);
     // AND BOTH CONTROLS OBSERVE IT: a mode change and a device change write
     // the same stored selection.
-    expect(src).toMatch(/disabled=\{selectable\.length === 0 \|\| selectionPending\}/);
-    expect(src).toMatch(/disabled=\{selectionPending\}/);
+    // BOTH CONTROLS OBSERVE THE PENDING FLAG — asserted as a substring of
+    // the condition rather than the whole of it, because round 10 added
+    // `|| settingDraftFrozen` to both and an exact-match assertion would
+    // fail on a change that STRENGTHENS the rule it is guarding.
+    expect(src).toMatch(/disabled=\{[\s\S]{0,60}?selectionPending/);
+    expect(
+      (src.match(/selectionPending \|\| settingDraftFrozen|selectionPending\s*\n/g) ?? [])
+        .length,
+      "both the picker and the mode buttons must observe it",
+    ).toBeGreaterThanOrEqual(2);
   });
 
   it("the recorded-reading READ binds the block to the session in a query", () => {
@@ -682,6 +692,62 @@ describe("switching machine or mode clears the collected draft", () => {
       env,
       "local-env must not carry its own copy any more",
     ).not.toMatch(/export function isLoopbackUrl/);
+  });
+
+  it("the machine and mode controls freeze with the host's unresolved save", () => {
+    // Round 6 froze the reading collector and I reported the invariant
+    // closed; `settingDraftFrozen` was never applied to the IDENTITY
+    // controls (Codex, #860 4299408376). Clearing the machine under a held
+    // retry key sends the save down the non-setup path and duplicates the
+    // area; switching changes the payload and the digest refuses the retry.
+    // The machine and the mode are PART of what the key is bound to.
+    const src = read(PANEL_SRC);
+    expect(src).toMatch(
+      /disabled=\{\s*selectable\.length === 0 \|\| selectionPending \|\| settingDraftFrozen\s*\}/,
+    );
+    expect(src).toMatch(/disabled=\{selectionPending \|\| settingDraftFrozen\}/);
+  });
+
+  it("a rejected selection write is SETTLED as a failure, not dropped", () => {
+    // `finally` cleared the pending flag but a throw skipped
+    // `selectionSettled`, so the optimistic choice stayed on screen with no
+    // failure note while the database kept the previous default — and a
+    // reload silently restored the old machine (Codex, #860 4299408386).
+    const src = read(PANEL_SRC);
+    const catches = src.match(/\} catch \(cause\) \{[\s\S]{0,900}?write = \{\s*ok: false,/g) ?? [];
+    expect(
+      catches.length,
+      "both selection writers must settle a rejection as a failed write",
+    ).toBe(2);
+  });
+
+  it("the contract keeps requiredness, and the command enforces it", () => {
+    // The published contract did not retain the profile's `optional` flag,
+    // so the command validated only the readings it was GIVEN: a forged
+    // call naming one of several required fields committed an incomplete
+    // capture that guidance then presented as complete
+    // (Codex, #860 4299434251).
+    const sql = read(MIGRATION_SRC);
+    expect(sql).toMatch(/optional boolean not null default false/);
+    expect(sql).toMatch(/coalesce\(\(v_item->>'optional'\)::boolean, false\)/);
+    expect(sql).toMatch(/and not f\.optional/);
+    expect(sql).toMatch(/This capture is missing a required field for mode/);
+  });
+
+  it("the revision sequence is scoped to the whole setup identity", () => {
+    // Keyed on block + group alone, a machine or mode switch continued the
+    // previous unit's sequence and the history rendered Room 2's first
+    // capture as "capture 2" (Codex, #860 4299434260).
+    const sql = read(MIGRATION_SRC);
+    expect(sql).toMatch(
+      /select coalesce\(max\(c\.revision\), 0\) \+ 1[\s\S]{0,400}?and c\.studio_machine_id = p_studio_machine_id[\s\S]{0,200}?and c\.mode_key = v_mode;/,
+    );
+    // AND THE CONSTRAINT AGREES WITH THE ALLOCATION. Scoping one without
+    // the other made Room 2's revision 1 collide with Room 1's — the DB
+    // run caught a half-finished change that read as complete.
+    expect(sql).toMatch(
+      /constraint treatment_setup_captures_revision_uniq\s*\n\s*unique \(\s*\n\s*session_block_id, studio_machine_id, machine_profile_id,/,
+    );
   });
 
   it("the machine opener keeps the 44px touch floor", () => {

@@ -313,6 +313,16 @@ async function publishSyntheticContract(): Promise<void> {
             SYNTH.modes.find((m) => m.key === mode.key)!.stages.flatMap((st) => st.fields),
           )
           .find((ff) => ff.key === f.key)!.quantity,
+        // THE PROFILE'S OWN FLAG, not a blanket value. This fixture derives
+        // its contract from the real synthetic profile, so it can publish
+        // requiredness truthfully — and the recording command now refuses a
+        // capture missing a required field (Codex, #860 4299434251).
+        optional: SYNTH.modes
+          .find((m) => m.key === mode.key)!
+          .fields.concat(
+            SYNTH.modes.find((m) => m.key === mode.key)!.stages.flatMap((st) => st.fields),
+          )
+          .find((ff) => ff.key === f.key)!.optional,
       })),
     );
     if (fields.length === 0) continue;
@@ -637,6 +647,20 @@ describe("MPX-03 · readings SAVE and are RETRIEVED for the chart", () => {
             decimals: 0,
             observationSource: "practitioner-entered",
           },
+          {
+            // REQUIRED BY THE PROFILE'S GALVANIC MODE alongside `current`.
+            // This fixture derives its contract from the real synthetic
+            // profile, so the command now refuses a capture that omits a
+            // required field (Codex, #860 4299434251). Recording the field
+            // is the honest fix; declaring the profile's own fields
+            // optional would test a machine that does not exist.
+            stageKey: null,
+            fieldKey: "duration",
+            value: { kind: "value" as const, value: 300 },
+            nativeUnit: "s",
+            decimals: 1,
+            observationSource: "practitioner-entered" as const,
+          },
         ],
       }),
     );
@@ -666,11 +690,26 @@ describe("MPX-03 · readings SAVE and are RETRIEVED for the chart", () => {
             decimals: 0,
             observationSource: "practitioner-entered",
           },
+          {
+            // `current` is the OTHER required field of this mode. The
+            // subject here is the absence round-tripping, and a capture
+            // must still be complete to be recorded at all
+            // (Codex, #860 4299434251).
+            stageKey: null,
+            fieldKey: "current",
+            value: { kind: "value" as const, value: 120 },
+            nativeUnit: "µA",
+            decimals: 0,
+            observationSource: "practitioner-entered" as const,
+          },
         ],
       }),
     );
     const back = await asDb(studio.userId, (db) => readingsForBlock(db, blockId, sessionId));
-    expect(back.ok && back.value[0]!.value).toEqual({
+    // BY FIELD, not by position: the capture now carries two readings and
+    // the order is the query's, not the payload's.
+    const absent = (back.ok ? back.value : []).find((r) => r.fieldKey === "duration");
+    expect(absent?.value).toEqual({
       kind: "absent",
       reason: "not-legible",
     });
@@ -702,14 +741,36 @@ describe("MPX-03 · readings SAVE and are RETRIEVED for the chart", () => {
               decimals: 0,
               observationSource: "practitioner-entered",
             },
+            {
+              // REQUIRED BY THE PROFILE'S GALVANIC MODE alongside `current`.
+              // This fixture derives its contract from the real synthetic
+              // profile, so the command now refuses a capture that omits a
+              // required field (Codex, #860 4299434251). Recording the field
+              // is the honest fix; declaring the profile's own fields
+              // optional would test a machine that does not exist.
+              stageKey: null,
+              fieldKey: "duration",
+              value: { kind: "value" as const, value: 300 },
+              nativeUnit: "s",
+              decimals: 1,
+              observationSource: "practitioner-entered" as const,
+            },
           ],
         }),
       );
     }
     const back = await asDb(studio.userId, (db) => readingsForBlock(db, blockId, sessionId));
-    expect(back.ok && back.value).toHaveLength(2);
+    // TWO GROUPS, each now carrying BOTH required fields — four readings,
+    // not two. The count moved because the capture became complete
+    // (Codex, #860 4299434251); the claim is about the GROUPS, so it is
+    // asserted on them below rather than on a reading count that tracks
+    // the field list.
+    expect(back.ok && back.value).toHaveLength(4);
     if (back.ok) {
-      expect(back.value.map((r) => r.groupKey).sort()).toEqual(["g1", "g2"]);
+      expect([...new Set(back.value.map((r) => r.groupKey))].sort()).toEqual([
+      "g1",
+      "g2",
+    ]);
     }
   });
 
@@ -785,6 +846,20 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
             decimals: 0,
             observationSource: "practitioner-entered",
           },
+          {
+            // REQUIRED BY THE PROFILE'S GALVANIC MODE alongside `current`.
+            // This fixture derives its contract from the real synthetic
+            // profile, so the command now refuses a capture that omits a
+            // required field (Codex, #860 4299434251). Recording the field
+            // is the honest fix; declaring the profile's own fields
+            // optional would test a machine that does not exist.
+            stageKey: null,
+            fieldKey: "duration",
+            value: { kind: "value" as const, value: 300 },
+            nativeUnit: "s",
+            decimals: 1,
+            observationSource: "practitioner-entered" as const,
+          },
         ],
       }),
     );
@@ -826,6 +901,20 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
             decimals: 0,
             observationSource: "practitioner-entered",
           },
+          {
+            // REQUIRED BY THE PROFILE'S GALVANIC MODE alongside `current`.
+            // This fixture derives its contract from the real synthetic
+            // profile, so the command now refuses a capture that omits a
+            // required field (Codex, #860 4299434251). Recording the field
+            // is the honest fix; declaring the profile's own fields
+            // optional would test a machine that does not exist.
+            stageKey: null,
+            fieldKey: "duration",
+            value: { kind: "value" as const, value: 300 },
+            nativeUnit: "s",
+            decimals: 1,
+            observationSource: "practitioner-entered" as const,
+          },
         ],
       }),
     );
@@ -838,9 +927,15 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
     );
     expect(forAna.ok).toBe(true);
     if (!forAna.ok) return;
-    expect(forAna.value.map((r) => r.fieldKey)).toEqual(["current"]);
+    // BOTH required fields now, because the capture had to be complete to be
+    // recorded at all (Codex, #860 4299434251). The claim is WHOSE setup is
+    // returned, not how many fields it has.
+    expect(forAna.value.map((r) => r.fieldKey).sort()).toEqual([
+      "current",
+      "duration",
+    ]);
     expect(
-      forAna.value[0]!.value,
+      forAna.value.find((r) => r.fieldKey === "current")!.value,
       "Ana's panel showed another client's reading",
       // A NUMBER, not the text the SQL emits: toReading parses value_numeric
       // once and carries the machine's precision separately in `decimals`.
@@ -892,6 +987,20 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
             decimals: 0,
             observationSource: "practitioner-entered",
           },
+          {
+            // REQUIRED BY THE PROFILE'S GALVANIC MODE alongside `current`.
+            // This fixture derives its contract from the real synthetic
+            // profile, so the command now refuses a capture that omits a
+            // required field (Codex, #860 4299434251). Recording the field
+            // is the honest fix; declaring the profile's own fields
+            // optional would test a machine that does not exist.
+            stageKey: null,
+            fieldKey: "duration",
+            value: { kind: "value" as const, value: 300 },
+            nativeUnit: "s",
+            decimals: 1,
+            observationSource: "practitioner-entered" as const,
+          },
         ],
       }),
     );
@@ -916,6 +1025,20 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
             decimals: 0,
             observationSource: "practitioner-entered",
           },
+          {
+            // REQUIRED BY THE PROFILE'S GALVANIC MODE alongside `current`.
+            // This fixture derives its contract from the real synthetic
+            // profile, so the command now refuses a capture that omits a
+            // required field (Codex, #860 4299434251). Recording the field
+            // is the honest fix; declaring the profile's own fields
+            // optional would test a machine that does not exist.
+            stageKey: null,
+            fieldKey: "duration",
+            value: { kind: "value" as const, value: 300 },
+            nativeUnit: "s",
+            decimals: 1,
+            observationSource: "practitioner-entered" as const,
+          },
         ],
       }),
     );
@@ -937,7 +1060,9 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
       prior.value[0]?.blockId,
       "a retired block was offered as next-visit guidance",
     ).toBe(kept.blockId);
-    expect(prior.value[0]!.value).toMatchObject({ kind: "value", value: 60 });
+    expect(
+      prior.value.find((r) => r.fieldKey === "current")!.value,
+    ).toMatchObject({ kind: "value", value: 60 });
 
     // And the retired block's readings still EXIST - retiring an area does not
     // unwrite the observation, it only stops it being offered as guidance.
@@ -946,7 +1071,11 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
         where session_block_id = $1`,
       [removed.blockId],
     );
-    expect(survived.rows[0].n).toBe(1);
+    // TWO readings, because a capture must now carry every required field
+    // of its mode (Codex, #860 4299434251). The claim is that retiring an
+    // area does not UNWRITE the observation, so what matters is that the
+    // count is non-zero and unchanged by the retirement.
+    expect(survived.rows[0].n).toBe(2);
   });
 
   it("returns nothing for a client in ANOTHER studio, even to a member of both", async () => {
@@ -1029,6 +1158,20 @@ describe("MPX-03 · NEXT-VISIT retrieval returns one coherent prior setup", () =
             nativeUnit: "µA",
             decimals: 0,
             observationSource: "practitioner-entered",
+          },
+          {
+            // REQUIRED BY THE PROFILE'S GALVANIC MODE alongside `current`.
+            // This fixture derives its contract from the real synthetic
+            // profile, so the command now refuses a capture that omits a
+            // required field (Codex, #860 4299434251). Recording the field
+            // is the honest fix; declaring the profile's own fields
+            // optional would test a machine that does not exist.
+            stageKey: null,
+            fieldKey: "duration",
+            value: { kind: "value" as const, value: 300 },
+            nativeUnit: "s",
+            decimals: 1,
+            observationSource: "practitioner-entered" as const,
           },
         ],
       }),
@@ -1317,6 +1460,20 @@ describe("0223 · guidance never offers the session on screen back as history", 
             decimals: 0,
             observationSource: "practitioner-entered",
           },
+          {
+            // REQUIRED BY THE PROFILE'S GALVANIC MODE alongside `current`.
+            // This fixture derives its contract from the real synthetic
+            // profile, so the command now refuses a capture that omits a
+            // required field (Codex, #860 4299434251). Recording the field
+            // is the honest fix; declaring the profile's own fields
+            // optional would test a machine that does not exist.
+            stageKey: null,
+            fieldKey: "duration",
+            value: { kind: "value" as const, value: 300 },
+            nativeUnit: "s",
+            decimals: 1,
+            observationSource: "practitioner-entered" as const,
+          },
         ],
       }),
     );
@@ -1357,6 +1514,20 @@ describe("0223 · guidance never offers the session on screen back as history", 
             nativeUnit: "µA",
             decimals: 0,
             observationSource: "practitioner-entered",
+          },
+          {
+            // REQUIRED BY THE PROFILE'S GALVANIC MODE alongside `current`.
+            // This fixture derives its contract from the real synthetic
+            // profile, so the command now refuses a capture that omits a
+            // required field (Codex, #860 4299434251). Recording the field
+            // is the honest fix; declaring the profile's own fields
+            // optional would test a machine that does not exist.
+            stageKey: null,
+            fieldKey: "duration",
+            value: { kind: "value" as const, value: 300 },
+            nativeUnit: "s",
+            decimals: 1,
+            observationSource: "practitioner-entered" as const,
           },
         ],
       }),
@@ -1422,6 +1593,20 @@ describe("0223 · guidance never offers the session on screen back as history", 
             nativeUnit: "µA",
             decimals: 0,
             observationSource: "practitioner-entered",
+          },
+          {
+            // REQUIRED BY THE PROFILE'S GALVANIC MODE alongside `current`.
+            // This fixture derives its contract from the real synthetic
+            // profile, so the command now refuses a capture that omits a
+            // required field (Codex, #860 4299434251). Recording the field
+            // is the honest fix; declaring the profile's own fields
+            // optional would test a machine that does not exist.
+            stageKey: null,
+            fieldKey: "duration",
+            value: { kind: "value" as const, value: 300 },
+            nativeUnit: "s",
+            decimals: 1,
+            observationSource: "practitioner-entered" as const,
           },
         ],
       }),

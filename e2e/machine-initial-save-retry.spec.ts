@@ -62,6 +62,11 @@ async function registerMachine(studioId: string, displayName: string) {
           native_unit: "device-display",
           decimals: 2,
           quantity: "energy-display",
+          // OPTIONAL in the real synthetic profile, and the command now
+          // refuses a capture missing a REQUIRED field (Codex, #860
+          // 4299434251). A fixture contract must describe the product it
+          // stands in for, not a stricter machine.
+          optional: true,
         },
       ]),
     ],

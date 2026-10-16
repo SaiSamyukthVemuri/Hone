@@ -59,10 +59,10 @@ async function publishContract(
       // Every field these tests legitimately record. "invented" is
       // DELIBERATELY absent - the unknown-field refusal test needs it to be.
       JSON.stringify([
-        { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
-        { field_key: "duration", native_unit: "s", decimals: 1, quantity: "duration" },
-        { field_key: "repeat", native_unit: "count", decimals: 0, quantity: "count" },
-        { field_key: "nothing", native_unit: "µA", decimals: 0, quantity: "current" },
+        { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current", optional: true },
+        { field_key: "duration", native_unit: "s", decimals: 1, quantity: "duration", optional: true },
+        { field_key: "repeat", native_unit: "count", decimals: 0, quantity: "count", optional: true },
+        { field_key: "nothing", native_unit: "µA", decimals: 0, quantity: "current", optional: true },
       ]),
     ],
   );
@@ -850,7 +850,7 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
         q(`select public.sync_machine_profile_contract($1,$2,$3,$4,$5,$6::jsonb)`, [
           PROFILE, 4242, "galvanic", 4, null,
           JSON.stringify([
-            { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
+            { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current", optional: true },
           ]),
         ]),
       );
@@ -1393,5 +1393,335 @@ describe("0223 · setup writes are bound to the authorized route", () => {
         ),
       ),
     ).rejects.toThrow(/unknown treatment block/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0223 · A CAPTURE CARRIES EVERY REQUIRED FIELD OF ITS MODE
+//
+// The recording command validated the readings it was GIVEN, which is a
+// different claim from "this capture is complete". A forged action or RPC
+// call naming one of several required fields committed a capture that
+// next-visit guidance then presented as a complete setup
+// (Codex, #860 4299434251). Captures are immutable, so the incomplete one
+// stays and reads as what she actually used.
+//
+// The UI's `groupReadiness` already refuses a partial group — but a check in
+// the browser is a courtesy to the practitioner, not a property of the
+// record. The contract is the only place that knows which fields a mode
+// requires, which is why requiredness had to be published there first.
+// ---------------------------------------------------------------------------
+describe("0223 · a capture must carry every required field", () => {
+  const REQ = "fixture:required-fields";
+
+  async function publishRequired(version: number): Promise<void> {
+    await adminQuery(
+      `select public.sync_machine_profile_contract($1,$2,$3,$4,$5,$6::jsonb)`,
+      [
+        REQ,
+        version,
+        "galvanic",
+        4,
+        null,
+        // `current` and `duration` REQUIRED, `note` optional. The mix is the
+        // point: a rule that refused every partial capture would also refuse
+        // a legitimate one that omits an optional field.
+        JSON.stringify([
+          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
+          { field_key: "duration", native_unit: "s", decimals: 1, quantity: "duration" },
+          {
+            field_key: "note",
+            native_unit: "count",
+            decimals: 0,
+            quantity: "count",
+            optional: true,
+          },
+        ]),
+      ],
+    );
+  }
+
+  async function machineFor(studio: SeededStudio, version: number): Promise<string> {
+    await publishRequired(version);
+    const r = await adminQuery(
+      `insert into public.studio_machines
+         (studio_id, machine_profile_id, machine_profile_version, display_name)
+       values ($1,$2,$3,'Required-fields unit') returning id`,
+      [studio.studioId, REQ, version],
+    );
+    return (r.rows[0] as { id: string }).id;
+  }
+
+  const reading = (field: string, value: string, unit: string, dp: number) => ({
+    field_key: field,
+    value,
+    native_unit: unit,
+    decimals: dp,
+    observation_source: "practitioner-entered",
+  });
+
+  it("REFUSES a capture that omits a required field", async () => {
+    const studio = await seedStudio("req-omit");
+    const { blockId, sessionId } = await seedSession(studio);
+    const machineId = await machineFor(studio, 61);
+
+    await expect(
+      asUser(studio.userId, (q) =>
+        q(
+          `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid)`,
+          [
+            blockId,
+            machineId,
+            "galvanic",
+            "g1",
+            [],
+            JSON.stringify([reading("current", "120", "µA", 0)]),
+            sessionId,
+            studio.clientId,
+          ],
+        ),
+      ),
+    ).rejects.toThrow(/missing a required field/i);
+
+    // AND NOTHING WAS WRITTEN. The check runs after the inserts, inside the
+    // same transaction, so the raise has to roll the capture back with it.
+    const left = await adminQuery(
+      `select
+         (select count(*)::int from public.treatment_setup_captures
+           where session_block_id = $1) as caps,
+         (select count(*)::int from public.treatment_setup_readings
+           where session_block_id = $1) as reads`,
+      [blockId],
+    );
+    expect(left.rows[0]).toMatchObject({ caps: 0, reads: 0 });
+  });
+
+  it("ACCEPTS a capture that omits only an OPTIONAL field", async () => {
+    // Without this the rule above is satisfied by refusing everything.
+    const studio = await seedStudio("req-optional");
+    const { blockId, sessionId } = await seedSession(studio);
+    const machineId = await machineFor(studio, 62);
+
+    const wrote = await asUser(studio.userId, (q) =>
+      q(
+        `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid) as n`,
+        [
+          blockId,
+          machineId,
+          "galvanic",
+          "g1",
+          [],
+          JSON.stringify([
+            reading("current", "120", "µA", 0),
+            reading("duration", "300.5", "s", 1),
+          ]),
+          sessionId,
+          studio.clientId,
+        ],
+      ),
+    );
+    expect(Number((wrote.rows[0] as { n: number }).n)).toBe(2);
+  });
+
+  it("an ABSENCE satisfies the requirement — it IS an observation", async () => {
+    // "not legible" is a recorded fact about that field, which is the whole
+    // reason `absence_reason` exists. What the rule refuses is a field
+    // nobody addressed at all.
+    const studio = await seedStudio("req-absent");
+    const { blockId, sessionId } = await seedSession(studio);
+    const machineId = await machineFor(studio, 63);
+
+    const wrote = await asUser(studio.userId, (q) =>
+      q(
+        `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid) as n`,
+        [
+          blockId,
+          machineId,
+          "galvanic",
+          "g1",
+          [],
+          JSON.stringify([
+            reading("current", "120", "µA", 0),
+            {
+              field_key: "duration",
+              absence_reason: "not-legible",
+              native_unit: "s",
+              decimals: 1,
+              observation_source: "practitioner-entered",
+            },
+          ]),
+          sessionId,
+          studio.clientId,
+        ],
+      ),
+    );
+    expect(Number((wrote.rows[0] as { n: number }).n)).toBe(2);
+  });
+
+  it("the SUBMISSION command enforces it too, and rolls back every group", async () => {
+    // Atomicity and completeness together: one incomplete group must not
+    // leave the other groups of the same save behind.
+    const studio = await seedStudio("req-submission");
+    const { blockId, sessionId } = await seedSession(studio);
+    const machineId = await machineFor(studio, 64);
+
+    await expect(
+      asUser(studio.userId, (q) =>
+        q(
+          `select public.record_treatment_setup_submission($1,$2,$3,$4,$5::jsonb,$6::uuid,$7::uuid) as r`,
+          [
+            blockId,
+            machineId,
+            "galvanic",
+            "req-key-0001",
+            JSON.stringify([
+              {
+                group_key: "g1",
+                channels: [],
+                readings: [
+                  reading("current", "120", "µA", 0),
+                  reading("duration", "300.5", "s", 1),
+                ],
+              },
+              // INCOMPLETE, and second: the first group has already been
+              // written when this one is refused.
+              { group_key: "g2", channels: [], readings: [reading("current", "80", "µA", 0)] },
+            ]),
+            sessionId,
+            studio.clientId,
+          ],
+        ),
+      ),
+    ).rejects.toThrow(/missing a required field/i);
+
+    const left = await adminQuery(
+      `select count(*)::int as n from public.treatment_setup_captures
+        where session_block_id = $1`,
+      [blockId],
+    );
+    expect(
+      (left.rows[0] as { n: number }).n,
+      "the COMPLETE group survived a refusal of the incomplete one",
+    ).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0223 · THE REVISION SEQUENCE BELONGS TO A SETUP IDENTITY
+//
+// Keyed on block + group alone, a machine or mode switch continued the
+// previous unit's sequence: the newly mounted collector starts again at `g1`,
+// so Room 2's FIRST capture became revision 2 and the history rendered it as
+// "capture 2" — asserting an earlier capture in a setting history that has
+// none, and implying a mid-treatment change that was never made
+// (Codex, #860 4299434260).
+//
+// `groupsFromRecorded` restores identities within (device, profile, version,
+// mode) and `changesWithin` pairs readings within it. Revision allocation is
+// the third place that scope has to hold, and was the one still counting
+// across units.
+// ---------------------------------------------------------------------------
+describe("0223 · revisions are scoped to the setup identity", () => {
+  const SCOPED = "fixture:revision-scope";
+
+  async function unit(studio: SeededStudio, name: string): Promise<string> {
+    await adminQuery(
+      `select public.sync_machine_profile_contract($1,$2,$3,$4,$5,$6::jsonb)`,
+      [
+        SCOPED,
+        1,
+        "galvanic",
+        4,
+        null,
+        JSON.stringify([
+          {
+            field_key: "current",
+            native_unit: "µA",
+            decimals: 0,
+            quantity: "current",
+            optional: true,
+          },
+        ]),
+      ],
+    );
+    const r = await adminQuery(
+      `insert into public.studio_machines
+         (studio_id, machine_profile_id, machine_profile_version, display_name)
+       values ($1,$2,1,$3) returning id`,
+      [studio.studioId, SCOPED, name],
+    );
+    return (r.rows[0] as { id: string }).id;
+  }
+
+  const one = (value: string) =>
+    JSON.stringify([
+      {
+        field_key: "current",
+        value,
+        native_unit: "µA",
+        decimals: 0,
+        observation_source: "practitioner-entered",
+      },
+    ]);
+
+  it("a different MACHINE starts its own sequence at 1", async () => {
+    const studio = await seedStudio("rev-scope-machine");
+    const { blockId, sessionId } = await seedSession(studio);
+    const roomOne = await unit(studio, "Room 1");
+    const roomTwo = await unit(studio, "Room 2");
+
+    for (const [machineId, value] of [
+      [roomOne, "120"],
+      [roomTwo, "80"],
+    ] as const) {
+      await asUser(studio.userId, (q) =>
+        q(
+          `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid)`,
+          [blockId, machineId, "galvanic", "g1", [], one(value), sessionId, studio.clientId],
+        ),
+      );
+    }
+
+    const rows = await adminQuery(
+      `select studio_machine_id, revision
+         from public.treatment_setup_captures
+        where session_block_id = $1 order by recorded_at`,
+      [blockId],
+    );
+    const byUnit = new Map(
+      (rows.rows as Array<{ studio_machine_id: string; revision: number }>).map((r) => [
+        r.studio_machine_id,
+        r.revision,
+      ]),
+    );
+    expect(byUnit.get(roomOne), "Room 1's first capture").toBe(1);
+    expect(
+      byUnit.get(roomTwo),
+      "Room 2's FIRST capture was numbered as though it followed Room 1's",
+    ).toBe(1);
+  });
+
+  it("the same machine's second capture IS revision 2", async () => {
+    const studio = await seedStudio("rev-scope-same");
+    const { blockId, sessionId } = await seedSession(studio);
+    const roomOne = await unit(studio, "Room 1");
+
+    for (const value of ["120", "150"]) {
+      await asUser(studio.userId, (q) =>
+        q(
+          `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid)`,
+          [blockId, roomOne, "galvanic", "g1", [], one(value), sessionId, studio.clientId],
+        ),
+      );
+    }
+
+    const rows = await adminQuery(
+      `select revision from public.treatment_setup_captures
+        where session_block_id = $1 order by revision`,
+      [blockId],
+    );
+    expect((rows.rows as Array<{ revision: number }>).map((r) => r.revision)).toEqual([
+      1, 2,
+    ]);
   });
 });

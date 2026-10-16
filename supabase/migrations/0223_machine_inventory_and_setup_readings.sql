@@ -655,6 +655,22 @@ create table if not exists public.machine_profile_field_contract (
     'count', 'percentage', 'energy-display', 'preset-identifier'
   )),
 
+  -- IS THIS FIELD OPTIONAL? The published contract did not keep this, and
+  -- the recording command therefore validated only the readings it was
+  -- GIVEN: a forged call naming one of several required fields committed an
+  -- incomplete capture, which next-visit guidance then presented as a
+  -- complete setup (Codex, #860 4299434251).
+  --
+  -- The UI's `groupReadiness` already refuses a partial group, but a check
+  -- in the browser is a courtesy to the practitioner, not a property of the
+  -- record. The contract is the only place that knows which fields a mode
+  -- requires, so it is the only place the rule can live.
+  --
+  -- DEFAULT FALSE — required unless the contract says otherwise — so a
+  -- field published without the flag is treated as mandatory rather than
+  -- silently skippable.
+  optional boolean not null default false,
+
   published_at timestamptz not null default now(),
 
   constraint machine_profile_field_contract_pkey primary key
@@ -731,8 +747,24 @@ create table if not exists public.treatment_setup_captures (
   recorded_by_practitioner_id uuid,
   recorded_at timestamptz not null default now(),
 
+  -- ONE REVISION PER SETUP IDENTITY, matching how the revision is ALLOCATED.
+  --
+  -- This keyed on (block, group, revision) while allocation now scopes by
+  -- machine, profile, version and mode as well (Codex, #860 4299434260).
+  -- The two must agree: with allocation scoped and the constraint not, a
+  -- capture on Room 2 correctly computed revision 1 and then collided with
+  -- Room 1's revision 1 for the same group key — "duplicate key value
+  -- violates treatment_setup_captures_revision_uniq", which is the DB run
+  -- catching a half-finished change that reasoning had called complete.
+  --
+  -- The constraint is the one that makes the sequence a FACT rather than an
+  -- intention: the allocation reads a max under an advisory lock, and this
+  -- is what refuses the write if two ever compute the same number.
   constraint treatment_setup_captures_revision_uniq
-    unique (session_block_id, group_key, revision)
+    unique (
+      session_block_id, studio_machine_id, machine_profile_id,
+      machine_profile_version, mode_key, group_key, revision
+    )
 );
 
 comment on table public.treatment_setup_captures is
@@ -1356,15 +1388,43 @@ begin
   -- concurrent captures of the same group serialise here and get distinct
   -- consecutive revisions rather than colliding on the unique constraint or
   -- both reading the same max. It is released at commit or rollback.
+  --
+  -- IT IS DELIBERATELY BROADER THAN THE REVISION KEY BELOW, which also
+  -- scopes by machine, profile, version and mode (Codex, #860 4299434260).
+  -- A lock wider than the thing it protects over-serialises - two captures
+  -- on DIFFERENT units of the same group key wait for each other - and that
+  -- is the safe direction. Narrowing it to match would let those two run
+  -- concurrently, which is correct only if nothing else keys on (block,
+  -- group), and it would change the lock ordering that the submission
+  -- command's sorted group-key loop relies on to avoid deadlocks. Not worth
+  -- the concurrency on a surface where one practitioner saves at a time.
   perform pg_advisory_xact_lock(
     hashtextextended(p_block_id::text || ':' || v_group, 0)
   );
 
+  -- THE REVISION SEQUENCE BELONGS TO A SETUP IDENTITY, not to a group key.
+  --
+  -- Keyed on block + group alone, a machine or mode switch continued the
+  -- previous unit's sequence: the newly mounted collector starts again at
+  -- `g1`, so Room 2's FIRST capture became revision 2 and the history
+  -- rendered it as "capture 2" - asserting an earlier capture in a setting
+  -- history that has none, and implying a change that was never made
+  -- (Codex, #860 4299434260).
+  --
+  -- THE SAME SCOPE THE GROUP IDENTITIES USE. `groupsFromRecorded` restores
+  -- identities within (device, profile, version, mode) and
+  -- `changesWithin` pairs readings within it; revision allocation is the
+  -- third place that scope has to hold, and was the one still counting
+  -- across units.
   select coalesce(max(c.revision), 0) + 1
     into v_revision
     from public.treatment_setup_captures c
    where c.session_block_id = p_block_id
-     and c.group_key = v_group;
+     and c.group_key = v_group
+     and c.studio_machine_id = p_studio_machine_id
+     and c.machine_profile_id = p_profile_id
+     and c.machine_profile_version = p_profile_version
+     and c.mode_key = v_mode;
 
   insert into public.treatment_setup_captures (
     studio_id, session_block_id, studio_machine_id,
@@ -1515,6 +1575,44 @@ begin
     );
     v_count := v_count + 1;
   end loop;
+
+  -- EVERY REQUIRED FIELD OF THIS MODE IS PRESENT, or nothing is recorded.
+  --
+  -- The loop above validates the readings it was GIVEN. That is a different
+  -- claim from "this capture is complete", and the gap was reachable: a
+  -- forged call naming one of several required fields committed a capture
+  -- that next-visit guidance then presented as a complete setup
+  -- (Codex, #860 4299434251). A capture is immutable, so the incomplete one
+  -- stays and reads as what she actually used.
+  --
+  -- CHECKED AFTER THE INSERTS, INSIDE THE SAME TRANSACTION. Raising here
+  -- rolls back the capture and its readings together; checking first would
+  -- have meant walking the payload twice and keeping a second copy of the
+  -- stage/field normalisation that the loop already does.
+  --
+  -- ABSENCE COUNTS AS PRESENT. A reading recorded as "not legible" or "not
+  -- applicable" IS an observation of that field - that is the whole point
+  -- of `absence_reason` - so it satisfies the requirement. What this
+  -- refuses is a field nobody addressed at all.
+  perform 1
+     from public.machine_profile_field_contract f
+    where f.machine_profile_id = p_profile_id
+      and f.machine_profile_version = p_profile_version
+      and f.mode_key = v_mode
+      and not f.optional
+      and not exists (
+        select 1
+          from public.treatment_setup_readings r
+         where r.capture_id = v_capture
+           and coalesce(r.stage_key, '') = f.stage_key
+           and r.field_key = f.field_key
+      );
+  if found then
+    raise exception
+      'This capture is missing a required field for mode "%", so it cannot be recorded.',
+      v_mode
+      using errcode = 'check_violation';
+  end if;
 
   return v_count;
 end;
@@ -2118,7 +2216,7 @@ begin
   loop
     insert into public.machine_profile_field_contract (
       machine_profile_id, machine_profile_version, mode_key,
-      stage_key, field_key, native_unit, decimals, quantity
+      stage_key, field_key, native_unit, decimals, quantity, optional
     )
     values (
       v_profile,
@@ -2128,7 +2226,10 @@ begin
       btrim(v_item->>'field_key'),
       btrim(v_item->>'native_unit'),
       (v_item->>'decimals')::smallint,
-      btrim(v_item->>'quantity')
+      btrim(v_item->>'quantity'),
+      -- ABSENT MEANS REQUIRED. A publisher that omits the flag gets the
+      -- stricter reading, never the looser one.
+      coalesce((v_item->>'optional')::boolean, false)
     );
     v_count := v_count + 1;
   end loop;

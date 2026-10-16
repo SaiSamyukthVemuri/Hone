@@ -62,6 +62,11 @@ const MULTI = {
       native_unit: "device-display",
       decimals: 2,
       quantity: "energy-display",
+          // OPTIONAL in the real synthetic profile, and the command now
+          // refuses a capture missing a REQUIRED field (Codex, #860
+          // 4299434251). A fixture contract must describe the product it
+          // stands in for, not a stricter machine.
+          optional: true,
     },
   ],
 } as const;
@@ -528,8 +533,24 @@ test("a machine or mode switch discards the draft, and an out-of-service unit re
     expect(byMachine.get(unitA)!.machine_profile_id).toBe(MULTI.profileId);
     // TWO SAVES, so two submissions: they are separate acts minutes apart.
     expect(new Set(caps.map((c) => c.setup_submission_id)).size).toBe(2);
-    // APPEND-ONLY: the same group key, the next revision, nothing overwritten.
-    expect(caps.map((c) => c.revision).sort()).toEqual([1, 2]);
+    // EACH UNIT'S OWN SEQUENCE STARTS AT 1, and this assertion used to say
+    // the opposite.
+    //
+    // It read "APPEND-ONLY: the same group key, the next revision" and
+    // required [1, 2] — but these two captures are on DIFFERENT MACHINES,
+    // so they are not one setting history and the second is nobody's
+    // revision 2. Rendering it as "capture 2" asserted an earlier capture
+    // in a history that has none, and implied a mid-treatment change that
+    // never happened (Codex, #860 4299434260).
+    //
+    // Append-only is unaffected and still proved: two captures, two
+    // submissions, nothing overwritten. What changed is that the NUMBER
+    // belongs to the unit, not to the block.
+    expect(caps.map((c) => c.revision)).toEqual([1, 1]);
+    expect(
+      new Set(caps.map((c) => c.studio_machine_id)).size,
+      "the two captures must be on different units for this to mean anything",
+    ).toBe(2);
 
     const rows = await readingsFor(blockId);
     expect(rows, "2 thermolysis + 3 galvanic").toHaveLength(5);

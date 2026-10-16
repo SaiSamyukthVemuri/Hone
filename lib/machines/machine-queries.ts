@@ -730,6 +730,16 @@ export async function publishMachineContract(
       nativeUnit: string;
       decimals: number;
       quantity: string;
+      /**
+       * May a capture omit this field?
+       *
+       * Carried into the published contract because the RECORDING command
+       * now refuses a capture missing a required field, and the contract is
+       * the only place that knows which those are (Codex, #860 4299434251).
+       * Omitted means REQUIRED, matching the column's default: a publisher
+       * that forgets the flag gets the stricter reading.
+       */
+      optional?: boolean;
     }>;
   },
 ): Promise<MachineOutcome<number>> {
@@ -745,6 +755,7 @@ export async function publishMachineContract(
       native_unit: f.nativeUnit,
       decimals: f.decimals,
       quantity: f.quantity,
+      optional: f.optional ?? false,
     })),
   });
   if (error) {
