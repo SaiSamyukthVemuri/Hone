@@ -62,7 +62,7 @@ git add -A                     # 1. stage everything, including new files
 git diff --cached --check      # 2. whitespace / conflict markers
 git status --porcelain         # 3. confirm no untracked file was omitted
 git commit -m "..."            # 4. commit
-git status --porcelain         # 5. must be empty (bar the allowlist below)
+git status --porcelain         # 5. must be empty
 git diff HEAD --exit-code      # 6. must be empty — commit == tree
 npm run verify:prepush         # 7. all of the above, mechanically
 git push                       # 8. push
@@ -78,8 +78,12 @@ git push                       # 8. push
 
 It installs no Git hook and mutates nothing. Run it explicitly.
 
-**Documented local-only allowlist** (never commit these):
-`supabase/config.toml` — local E2E stack config, untracked by CLI convention.
+**`supabase/config.toml` is tracked** (on production since `b2f20466`, 2026-08-02)
+and is not a local-only file. Preserve the tracked production config; never edit
+it, or `e2e/helpers/local-env.ts` ports, for a test run. Local test-stack
+overrides belong in an owned separate workdir, with the run-scoped pair
+`E2E_SUPABASE_URL` + `HONE_LOCAL_DB_URL` (#879, #885; see §5 *Local test-stack
+isolation*).
 
 ---
 
