@@ -152,8 +152,10 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     //   * without HONE_SYNTHETIC_MACHINE_PROFILE=1 in webServer.env it runs
     //     steps 1-2 and the gate-closed branch - MEASURED 7.3s - and still
     //     asserts the claim that matters, that no real model is offered;
-    //   * with the flag set it runs all ten - MEASURED 37.1s.
-    // Both on an isolated local stack on 2026-10-15. THE ESTIMATES THIS
+    //   * with the flag set it runs all ten - MEASURED 34.9s.
+    // Both on an isolated local stack, re-measured 2026-10-16 on the tree
+    // synced with production (the 2026-10-15 figures were 7.3s and 37.1s on
+    // the pre-sync tree; a measurement names the tree it measured). THE ESTIMATES THIS
     // REPLACES WERE 15-20s AND 45-70s, so the one that matters for CI was
     // overstated by more than double - and CI only ever runs the CLOSED half,
     // because the flag is not in its webServer.env.
@@ -169,8 +171,9 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // RECORDED AS A DECISION, with the cost MEASURED. ONE test() at 390px
     // only, with eight steps, and its runtime depends on the SERVER's
     // environment exactly as the sibling's does:
-    //   * gate closed, step 1 and the gate-closed branch - MEASURED 9.5s;
-    //   * gate open, all eight steps - MEASURED 24.6s.
+    //   * gate closed, step 1 and the gate-closed branch - MEASURED 7.0s;
+    //   * gate open, all eight steps - MEASURED 20.6s.
+    // Re-measured 2026-10-16 on the synced tree; 9.5s and 24.6s pre-sync.
     // The estimate this replaces was 60-90s for the open half: nearly three
     // times the truth. Estimating browser cost upward feels prudent and is
     // not - it is how a lane acquires a budget nobody trusts.
@@ -190,9 +193,11 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     //
     // COST, MEASURED on an isolated local stack on 2026-10-15. ONE test() at
     // 390px with seven steps:
-    //   * gate closed - 6.8s, the cheapest of the four;
-    //   * gate open - 18.7s, with four navigations, one block save, three
-    //     reading saves, one refused save and about fifteen queries.
+    //   * gate closed - 6.0s;
+    //   * gate open - 21.2s, with four navigations, one block save, three
+    //     reading saves, one refused save and about fifteen queries, now
+    //     including the clear-to-none limb added for Codex's P1.
+    // Re-measured 2026-10-16 on the synced tree; 6.8s and 18.7s pre-sync.
     // The estimate said "should land near the journey's 22.3s", and it came in
     // under it.
     //
@@ -208,11 +213,12 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     //
     // COST, MEASURED on an isolated local stack on 2026-10-15. ONE test() at
     // 390px, four steps, two saves and about eight queries:
-    //   * gate closed - 8.2s;
-    //   * gate open - 13.0s, the lightest of the four, as predicted.
+    //   * gate closed - 6.2s;
+    //   * gate open - 9.7s, the lightest of the four, as predicted.
+    // Re-measured 2026-10-16 on the synced tree; 8.2s and 13.0s pre-sync.
     //
     // THE FOUR MACHINE SPECS TOGETHER, which is the number this pin exists to
-    // keep visible: 31.8s with the gate CLOSED and 93.4s with it open. CI runs
+    // keep visible: 25.2s with the gate CLOSED and 86.4s with it open. CI runs
     // the closed half, so the lane pays about half a minute for all four -
     // against a ~6 min target and a 15 min ceiling. The estimates these
     // measurements replace added up to roughly two and a half minutes for two
