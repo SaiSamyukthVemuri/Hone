@@ -42,6 +42,21 @@ import type { MachineProfile } from "@/lib/machines/profile-contract";
 export type MachineRecordedSetupsProps = {
   /** Everything recorded against the block being charted. */
   readings: RecordedReading[];
+  /**
+   * The read FAILED, which is not the same as nothing being recorded.
+   *
+   * A failed read used to arrive here as an empty list, so this surface
+   * rendered nothing at all - and "nothing recorded" is the one message that
+   * invites her to record again, appending a second immutable capture
+   * indistinguishable from a genuine mid-treatment change (Codex, #860
+   * 4290452722). That is precisely the outcome this component exists to
+   * prevent, reached through its own absence.
+   *
+   * The chart stays usable either way: a failed cosmetic read must not cost
+   * her the treatment. What changes is that she is told the surface could not
+   * answer, rather than told there is nothing to see.
+   */
+  unavailable?: boolean;
   catalogue: readonly MachineProfile[];
   /**
    * Recorded unit id -> the studio's own name for it.
@@ -158,7 +173,30 @@ export function MachineRecordedSetups({
   readings,
   catalogue,
   unitNames = {},
+  unavailable = false,
 }: MachineRecordedSetupsProps) {
+  // THE READ FAILED, AND THAT IS ITS OWN STATE. Checked BEFORE the empty case,
+  // because a failed read arrives with no readings and would otherwise be
+  // indistinguishable from a treatment with nothing recorded on it - which is
+  // the message that invites a duplicate capture.
+  if (unavailable) {
+    return (
+      <div
+        className="flex flex-col gap-2 border-t border-neutral-200 pt-3 dark:border-neutral-800"
+        data-testid="machine-recorded-setups-unavailable"
+      >
+        <SectionLabel size="caption">Recorded this treatment</SectionLabel>
+        <p className="text-xs text-amber-700 dark:text-amber-500" role="status">
+          What is already recorded on this treatment could not be read just
+          now. This is NOT the same as nothing being recorded - do not re-enter
+          settings on the assumption that they are missing, because a capture
+          cannot be edited and a second one appends. Reload before recording
+          anything you may already have saved.
+        </p>
+      </div>
+    );
+  }
+
   // NOTHING RECORDED IS NOT AN EMPTY SECTION. A heading over no content reads
   // as a surface that failed to load, which is the opposite of the
   // reassurance this exists to give.

@@ -141,6 +141,8 @@ export type MachineSetupContext = {
    * yet, by definition.
    */
   recordedSetup: RecordedReading[];
+  /** The recorded-captures read failed; empty here would be a lie. */
+  recordedSetupUnavailable: boolean;
   /**
    * Recorded unit id -> the studio's own name for it.
    *
@@ -169,6 +171,7 @@ const ANONYMOUS: MachineSetupContext = {
   canManageMachines: false,
   priorSetup: [],
   recordedSetup: [],
+  recordedSetupUnavailable: false,
   unitNames: {},
 };
 
@@ -298,13 +301,22 @@ export async function loadMachineSetupContext(input: {
   // SAME round trip. Empty without a block, which in create mode is simply
   // true: the block has no row, so nothing is recorded against it.
   //
-  // Degrades to empty on a failed read rather than throwing. This surface is
+  // A FAILED READ IS REPORTED, NOT FLATTENED TO EMPTY. This surface is
   // reassurance - "here is what you have already recorded" - and a failed
-  // cosmetic read must not cost her the chart.
+  // cosmetic read must not cost her the chart, so it still degrades rather
+  // than throwing. What changed is that it no longer degrades to a LIE:
+  // `[]` renders as "nothing recorded", which is the one message that invites
+  // her to record again and append a second immutable capture
+  // (Codex, #860 4290452722).
+  //
+  // NULL WHEN THERE IS NO BLOCK, which is a third state and genuinely empty:
+  // in create mode the block has no row, so nothing is recorded against it and
+  // nothing failed.
   const recorded = input.blockId
     ? await readingsForBlock(db, input.blockId)
     : null;
   const recordedSetup = recorded?.ok ? recorded.value : [];
+  const recordedSetupUnavailable = recorded !== null && !recorded.ok;
 
   const unitNames: Record<string, string> = {};
   const needNames = [
@@ -345,6 +357,7 @@ export async function loadMachineSetupContext(input: {
     canManageMachines: who?.practitioner.role === "owner",
     priorSetup,
     recordedSetup,
+    recordedSetupUnavailable,
     unitNames,
   };
 }

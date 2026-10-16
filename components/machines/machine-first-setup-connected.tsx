@@ -216,6 +216,12 @@ export function MachineFirstSetupConnected({
       // list from MachineSetupContext's own declaration, so this line is not
       // optional - omitting it fails that test.
       recordedSetup={ctx.recordedSetup}
+      // AND ITS FAILURE STATE, which is a separate field precisely so it
+      // cannot be inferred from an empty list. The guard above caught this
+      // line missing the moment the field joined MachineSetupContext - a
+      // third instance of the defect its comment describes, found by the test
+      // rather than in review (Codex, #860 4290452722).
+      recordedSetupUnavailable={ctx.recordedSetupUnavailable}
       blockId={blockId}
       // CREATE MODE. Forwarded rather than recreated here, and the
       // context-forwarding guard cannot see this one because it is not a

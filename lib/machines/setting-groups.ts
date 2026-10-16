@@ -158,6 +158,43 @@ export function firstGroup(): SettingGroupDraft[] {
   return [{ id: "g1", channels: [], values: {} }];
 }
 
+/**
+ * The draft for the NEXT capture on a treatment that already has one.
+ *
+ * KEEPS EVERY GROUP'S IDENTITY and clears everything else. The entry surface
+ * used to reset to `firstGroup()` here, which renumbered her groups: after a
+ * save of g1 and g2 the form offered a single fresh g1, so a change to what
+ * had been g2 was submitted as a revision of g1 (Codex, #860 4290452715).
+ *
+ * WHAT THAT DID TO THE RECORD, which is worse than the form being wrong.
+ * `latest_setup_for_client` returns the newest capture PER GROUP KEY, so it
+ * then combined the repurposed g1 with the stale g2 and offered them as one
+ * setup: two settings for one probe, and the channel g1 originally described
+ * dropped out of the guidance entirely. The field that carries this is
+ * documented as "STABLE for the life of the draft and never renumbered:
+ * the database allocates revisions per (block, group), so a key that shifted
+ * would append to the wrong group's history" - the rule was written down and
+ * the reset broke it.
+ *
+ * VALUES AND CHANNELS ARE STILL CLEARED, which is the part the old reset had
+ * right and this keeps: pre-filling either would invite her to submit settings
+ * she has not re-read off the machine, or to assert she ran the same probes.
+ * The identity is not an observation; the values and the channels are.
+ *
+ * AN EMPTY GROUP COSTS NOTHING AT SAVE. `assembleGroupSubmissions` drops any
+ * group with no readings, and `draftBlocking` only refuses a PARTIAL one, so
+ * a practitioner changing g2 alone leaves g1 untouched and saves exactly one
+ * group - which is what makes offering both safe rather than noisy.
+ */
+export function clearedForNextCapture(
+  groups: readonly SettingGroupDraft[],
+): SettingGroupDraft[] {
+  // A draft with no groups cannot happen through the UI, but a surface that
+  // returned an empty list here would have no box to type in at all.
+  if (groups.length === 0) return firstGroup();
+  return groups.map((g) => ({ id: g.id, channels: [], values: {} }));
+}
+
 /** Add or remove one channel from one group. Contract-declared ids only. */
 export function toggleChannel(
   group: SettingGroupDraft,

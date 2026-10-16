@@ -4,6 +4,7 @@ import type { FieldGroup } from "@/lib/machines/charting";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
 import {
   addGroup,
+  clearedForNextCapture,
   groupIssues,
   assembleGroupSubmissions,
   draftBlocking,
@@ -397,5 +398,80 @@ describe("draftBlocking", () => {
     const out = draftBlocking(MULTI, [FIELDS], [a, b]);
     expect(out).not.toMatch(/missing a required field/);
     expect(out).toBeTruthy();
+  });
+});
+
+describe("the next capture keeps the groups she actually has", () => {
+  // THE DEFECT (Codex, #860 4290452715). "Record a setting change" reset the
+  // draft to `firstGroup()`, so after a save of g1 AND g2 the form offered a
+  // single fresh g1. A practitioner changing what had been g2 then submitted
+  // it as a revision of g1 - and because `latest_setup_for_client` returns the
+  // newest capture PER GROUP KEY, guidance combined the repurposed g1 with the
+  // stale g2: two settings for one probe, and the channel g1 originally
+  // described dropped out entirely.
+  //
+  // The id's own docblock already said identities are "STABLE for the life of
+  // the draft and never renumbered". The rule was written; the reset broke it.
+
+  it("preserves every group id", () => {
+    const after = clearedForNextCapture([
+      { id: "g1", channels: [1], values: { "probe::::current": "120" } },
+      { id: "g2", channels: [2], values: { "probe::::current": "80" } },
+    ]);
+    expect(after.map((g) => g.id)).toEqual(["g1", "g2"]);
+  });
+
+  it("clears the values and the channels, which ARE observations", () => {
+    // The half the old reset had right: pre-filling either would invite her to
+    // submit settings she has not re-read, or to assert she ran the same
+    // probes. The identity is not an observation; these are.
+    const after = clearedForNextCapture([
+      { id: "g1", channels: [1, 2], values: { "probe::::current": "120" } },
+    ]);
+    expect(after[0]!.values).toEqual({});
+    expect(after[0]!.channels).toEqual([]);
+  });
+
+  it("keeps a THIRD group too, not just the first two", () => {
+    const after = clearedForNextCapture([
+      { id: "g1", channels: [], values: {} },
+      { id: "g2", channels: [], values: {} },
+      { id: "g3", channels: [], values: {} },
+    ]);
+    expect(after.map((g) => g.id)).toEqual(["g1", "g2", "g3"]);
+  });
+
+  it("keeps a RETIRED id's successor, so revision history cannot cross", () => {
+    // Ids are monotonic and a removed group's id is never reused. If she
+    // removed g2 and added g3, the next capture must still offer g1 and g3 -
+    // renumbering g3 to g2 would append to the removed group's history.
+    const after = clearedForNextCapture([
+      { id: "g1", channels: [], values: {} },
+      { id: "g3", channels: [], values: {} },
+    ]);
+    expect(after.map((g) => g.id)).toEqual(["g1", "g3"]);
+  });
+
+  it("falls back to one fresh group when there is nothing to keep", () => {
+    expect(clearedForNextCapture([])).toEqual([
+      { id: "g1", channels: [], values: {} },
+    ]);
+  });
+
+  it("CONTROL: an untouched group contributes NOTHING to the save", () => {
+    // This is what makes offering every prior group safe rather than noisy:
+    // she changes g2 alone, leaves g1 blank, and exactly one group is sent.
+    const cleared = clearedForNextCapture([
+      { id: "g1", channels: [1], values: { "probe::::current": "120" } },
+      { id: "g2", channels: [2], values: { "probe::::current": "80" } },
+    ]);
+    const changed = cleared.map((g) =>
+      g.id === "g2"
+        ? { ...g, channels: [2], values: { "probe::::current": "95" } }
+        : g,
+    );
+    const subs = assembleGroupSubmissions([FIELDS], changed);
+    expect(subs.map((o) => o.groupKey)).toEqual(["g2"]);
+    expect(subs[0]!.readings[0]!.value).toEqual({ kind: "value", value: 95 });
   });
 });

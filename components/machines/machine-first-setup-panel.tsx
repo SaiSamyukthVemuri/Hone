@@ -153,6 +153,12 @@ export type MachineFirstSetupPanelProps = {
    */
   recordedSetup?: RecordedReading[];
   /**
+   * The recorded-captures read FAILED. Forwarded rather than flattened: an
+   * empty list and an unreadable one must not look alike on this surface
+   * (Codex, #860 4290452722).
+   */
+  recordedSetupUnavailable?: boolean;
+  /**
    * Persists the chosen machine as this practitioner's default. Supplied by
    * the connected wrapper.
    *
@@ -233,6 +239,7 @@ export function MachineFirstSetupPanel({
   canManageMachines = false,
   priorSetup = [],
   recordedSetup = [],
+  recordedSetupUnavailable = false,
   onSettingDraft,
   unavailableSelection = null,
   unitNames = {},
@@ -698,6 +705,7 @@ export function MachineFirstSetupPanel({
         readings={recordedSetup}
         catalogue={catalogue}
         unitNames={unitNames}
+        unavailable={recordedSetupUnavailable}
       />
 
       <MachinePriorSetup

@@ -282,6 +282,7 @@ describe("switching machine or mode clears the collected draft", () => {
     );
   const DRAFT_SRC = "components/machines/machine-setting-draft.tsx";
   const PANEL_SRC = "components/machines/machine-first-setup-panel.tsx";
+  const ENTRY_SRC = "components/machines/machine-reading-entry.tsx";
 
   it("the collector reports an EMPTY draft on mount", () => {
     const src = read(DRAFT_SRC);
@@ -325,6 +326,32 @@ describe("switching machine or mode clears the collected draft", () => {
     const src = read(PANEL_SRC);
     expect(src).toMatch(/!blockId && onSettingDraft && !\(chosen && mode\) && \(/);
     expect(src).toMatch(/<MachineSettingDraftReset onSettingDraft=\{onSettingDraft\} \/>/);
+  });
+
+  it("the ENTRY form's next capture keeps the prior group identities", () => {
+    // THE DEFECT (Codex, #860 4290452715). "Record a setting change" reset to
+    // `firstGroup()`, so after a save of g1 AND g2 the form offered one fresh
+    // g1 - and a change to what had been g2 was submitted as a revision of g1.
+    // Guidance returns the newest capture PER GROUP KEY, so it then combined
+    // the repurposed g1 with the stale g2.
+    //
+    // PINNED ON SOURCE because it is an onClick handler, which this repo has
+    // no jsdom to exercise; the behaviour itself is proved by the pure
+    // function's tests and MOUNTED in the multi-group revision journey.
+    const src = read(ENTRY_SRC);
+    expect(src).toMatch(/setGroups\(clearedForNextCapture\)/);
+    expect(
+      src,
+      "resetting to firstGroup() is what renumbered her groups",
+    ).not.toMatch(/setGroups\(firstGroup\(\)\)/);
+  });
+
+  it("the ENTRY form does NOT reset the monotonic group ordinal", () => {
+    // Keeping g1 and g2 on screen while resetting the ordinal to 1 would mint
+    // a SECOND g2 on the next "add group". The ordinal is monotonic precisely
+    // so a removed group's id is never reused.
+    const src = read(ENTRY_SRC);
+    expect(src).not.toMatch(/setGroupOrdinal\(1\)/);
   });
 
   it("and the reset is REACHABLE when nothing is chosen, not nested in the chosen arm", () => {

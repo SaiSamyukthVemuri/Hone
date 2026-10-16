@@ -712,4 +712,140 @@ test("create mode: choose the machine, save the block, record one save, retrieve
     await expect(prior).toContainText("device-display");
     await noOverflow(page);
   });
+
+  await test.step("9: changing the SECOND group revises g2, not g1", async () => {
+    // SAM'S PROOF ITEM VIA CODEX (#860 4290452715), and the defect it closes
+    // is the worst kind this lane has found: a revision attributed to the
+    // WRONG PROBE.
+    //
+    // "Record a setting change" reset the draft to a single fresh g1. So after
+    // a save of g1 AND g2, a practitioner changing what had been g2 submitted
+    // it as a revision of g1. `latest_setup_for_client` returns the newest
+    // capture PER GROUP KEY, so guidance then combined the repurposed g1 with
+    // the stale g2: two settings for one probe, and the channel g1 originally
+    // described dropped out of the record she reads next visit.
+    //
+    // IT HAS TO BE ONE MOUNT. The reset is what renumbers, so a reload between
+    // the save and the change hides it - a fresh mount starts at one group
+    // anyway. Step 7 reloads first, which is exactly why it could not catch
+    // this.
+    //
+    // A FRESH AREA AT THE END, so no count in steps 5 to 8 moves. Those
+    // assertions went stale three times already in this file; adding a save in
+    // the middle would have been the fourth.
+    await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+    expect(await openMachinePanel(page)).toBe(true);
+    await page.getByTestId("machine-select").selectOption(machineId);
+    await page.getByTestId("save-treatment-area").click({ timeout: T });
+
+    // The SECOND area of this session, identified by EXCLUDING the first.
+    //
+    // NOT `order by sort_order desc limit 1`, which is what this did first and
+    // which cannot fail: steps 3-7's area already satisfies "a row exists", so
+    // the poll returned it on its first iteration, before the new area had
+    // been written at all. Step 9 then asserted against a block carrying four
+    // earlier captures and read that as the defect it was looking for. A poll
+    // whose exit condition is already true when it starts is not a wait.
+    let secondBlock = "";
+    await expect
+      .poll(
+        async () => {
+          const rows = await sql<{ id: string }>(
+            `select id from public.session_blocks
+              where session_id = $1 and deleted_at is null and id <> $2
+              order by sort_order desc limit 1`,
+            [sessionId, blockId],
+          );
+          secondBlock = rows[0]?.id ?? "";
+          return secondBlock;
+        },
+        { timeout: T, message: "the second treatment area was not created" },
+      )
+      .not.toBe("");
+
+    // AND OPEN THAT ONE BY ID. `.first()` is the same mistake in the DOM: it
+    // opens steps 3-7's area, so the save would have landed on the old block
+    // whatever the poll resolved.
+    await page.getByTestId(`edit-area-${secondBlock}`).click({ timeout: T });
+    expect(await openMachinePanel(page)).toBe(true);
+    await expect(page.getByTestId("machine-reading-entry")).toBeVisible({
+      timeout: T,
+    });
+
+    // TWO GROUPS, SAVED TOGETHER — the state the defect needs.
+    await page.getByTestId("setting-group-add").click({ timeout: T });
+    await expect(page.getByTestId("setting-group-g2")).toBeVisible({ timeout: T });
+    await page.getByTestId("setting-group-g1-channel-1").click();
+    await page.getByTestId("setting-group-g2-channel-2").click();
+    for (const [group, current] of [
+      ["g1", "101"],
+      ["g2", "202"],
+    ] as const) {
+      await page.getByTestId(`reading-${group}-current`).fill(current);
+      await page.getByTestId(`reading-${group}-duration`).fill("300.5");
+      await page.getByTestId(`reading-${group}-energy_shown`).fill("1.25");
+    }
+    await page.getByTestId("machine-reading-save").click();
+    await expect(page.getByTestId("machine-reading-saved")).toBeVisible({
+      timeout: T,
+    });
+
+    // NOW THE SETTING CHANGE, in the SAME mount.
+    await page.getByTestId("machine-reading-record-change").click({ timeout: T });
+
+    // BOTH GROUPS SURVIVE THE RESET. Before the fix there was one box here,
+    // labelled g1, and typing in it revised the wrong probe.
+    await expect(page.getByTestId("setting-group-g1")).toBeVisible({ timeout: T });
+    await expect(page.getByTestId("setting-group-g2")).toBeVisible();
+    // AND THEY ARE EMPTY: the identity is not an observation, the values are.
+    await expect(page.getByTestId("reading-g1-current")).toHaveValue("");
+    await expect(page.getByTestId("reading-g2-current")).toHaveValue("");
+
+    // CHANGE g2 ONLY, leaving g1 untouched.
+    await page.getByTestId("setting-group-g2-channel-2").click();
+    await page.getByTestId("reading-g2-current").fill("250");
+    await page.getByTestId("reading-g2-duration").fill("280.0");
+    await page.getByTestId("reading-g2-energy_shown").fill("1.40");
+    await page.getByTestId("machine-reading-save").click();
+    await expect(page.getByTestId("machine-reading-saved")).toBeVisible({
+      timeout: T,
+    });
+
+    // THE RECORD. g2 gains a revision; g1 keeps exactly one.
+    const caps = await capturesFor(secondBlock);
+    const byGroup = new Map<string, number[]>();
+    for (const c of caps) {
+      byGroup.set(c.group_key, [...(byGroup.get(c.group_key) ?? []), c.revision]);
+    }
+    expect(
+      byGroup.get("g1"),
+      "the untouched group gained a revision — the change was attributed to it",
+    ).toEqual([1]);
+    expect(byGroup.get("g2"), "the changed group did not gain a revision").toEqual([
+      1, 2,
+    ]);
+
+    // AND WHAT GUIDANCE WOULD SHOW: the newest capture per group key, which is
+    // g1's ORIGINAL and g2's NEW. Asserted on the stored rows because that is
+    // the contract `latest_setup_for_client` reads; the multi-group RENDER of
+    // it is proved in step 8.
+    const rows = await readingsFor(secondBlock);
+    const latest = new Map<string, string | null>();
+    for (const c of caps) {
+      if (c.revision !== Math.max(...(byGroup.get(c.group_key) ?? [1]))) continue;
+      const v = rows.find(
+        (r) => r.group_key === c.group_key && r.field_key === "current",
+      );
+      if (v) latest.set(c.group_key, v.value_numeric);
+    }
+    expect(latest.get("g1"), "g1 must still read its original value").toBe("101");
+    // g2 carries both revisions' rows; the newest is what guidance offers.
+    const g2Values = rows
+      .filter((r) => r.group_key === "g2" && r.field_key === "current")
+      .map((r) => r.value_numeric)
+      .sort();
+    expect(g2Values).toEqual(["202", "250"]);
+    await noOverflow(page);
+  });
 });

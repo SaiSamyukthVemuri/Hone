@@ -125,6 +125,8 @@ const render = (props: {
   readings: RecordedReading[];
   catalogue?: readonly MachineProfile[];
   unitNames?: Record<string, string>;
+  /** The read FAILED — rendered distinctly from an empty treatment. */
+  unavailable?: boolean;
 }) =>
   renderToStaticMarkup(
     createElement(MachineRecordedSetups, {
@@ -454,5 +456,47 @@ describe("the unit sentinels are never printed as if they were units", () => {
     // pass because nothing rendered at all.
     expect(html).toMatch(/110/);
     expect(html).toMatch(/140/);
+  });
+});
+
+describe("a failed read is not the same as nothing recorded", () => {
+  // THE DEFECT (Codex, #860 4290452722). A failed `readingsForBlock` became
+  // `[]` in the loader, so this surface rendered NOTHING - and nothing is the
+  // message "you have recorded nothing on this treatment". That invites her to
+  // record again, appending a second immutable capture indistinguishable from
+  // a genuine mid-treatment change: the exact outcome this component exists to
+  // prevent, reached through its own absence.
+
+  it("says the record could not be read, instead of rendering nothing", () => {
+    const html = render({ readings: [], unavailable: true });
+    expect(html).toContain('data-testid="machine-recorded-setups-unavailable"');
+    expect(html).toMatch(/could not be read/i);
+  });
+
+  it("warns against re-entering, which is the decision at stake", () => {
+    // The copy has one job: stop a duplicate capture. It must say that a
+    // failed read is NOT an empty one, and that a capture appends.
+    const html = render({ readings: [], unavailable: true });
+    expect(html).toMatch(/NOT the same as nothing being recorded/i);
+    expect(html).toMatch(/appends/i);
+  });
+
+  it("is DISTINGUISHABLE from the empty case, which still renders nothing", () => {
+    // The two states must not collapse into one another in either direction.
+    const empty = render({ readings: [] });
+    expect(empty).toBe("");
+    const failed = render({ readings: [], unavailable: true });
+    expect(failed).not.toBe("");
+  });
+
+  it("CONTROL: a successful read with captures is unaffected", () => {
+    // The unavailable branch is checked FIRST, so a bug there could swallow
+    // the ordinary case.
+    const html = render({
+      readings: [reading({ recordedAt: "2026-10-14T14:00:00Z", value: 120 })],
+    });
+    expect(html).toContain('data-testid="machine-recorded-setups"');
+    expect(html).not.toContain("machine-recorded-setups-unavailable");
+    expect(html).toMatch(/120/);
   });
 });

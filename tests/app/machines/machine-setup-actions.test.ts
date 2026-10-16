@@ -1325,6 +1325,57 @@ describe("a RETIRED remembered machine is named as retired, not as missing", () 
 // round trip. A second call for the captures would reintroduce exactly that.
 // ===========================================================================
 
+describe("a failed recorded-captures read is reported, not flattened", () => {
+  // THE DEFECT (Codex, #860 4290452722). `readingsForBlock` fails CLOSED - it
+  // returns ok:false rather than a partial list - and the loader turned that
+  // into `[]`, which is byte-identical to "this treatment has nothing
+  // recorded". The surface then rendered nothing, and nothing is an invitation
+  // to record again: a second immutable capture, indistinguishable in the
+  // record from a genuine mid-treatment change.
+  //
+  // THREE STATES, not two, and the third is the one that was missing:
+  // captures exist, no captures exist, and the question could not be answered.
+
+  it("reports unavailable when the read fails", async () => {
+    signIn("studio-fett", "pract-sabrina", "owner");
+    DB.errorFor.treatment_setup_readings = { message: "connection reset" };
+
+    const ctx = await actions.loadMachineSetupContext({
+      ...ROUTE,
+      blockId: "block-1",
+    });
+
+    expect(ctx.recordedSetupUnavailable).toBe(true);
+    // AND THE CHART STILL WORKS. A failed cosmetic read must not cost her the
+    // treatment - the degradation was never the defect, the LIE was.
+    expect(ctx.recordedSetup).toEqual([]);
+  });
+
+  it("does NOT report unavailable when the block simply has nothing", async () => {
+    // The ordinary empty case must stay empty, or every first capture would
+    // carry a warning about a failure that did not happen.
+    signIn("studio-fett", "pract-sabrina", "owner");
+    DB.rowsFor.treatment_setup_readings = [];
+
+    const ctx = await actions.loadMachineSetupContext({
+      ...ROUTE,
+      blockId: "block-1",
+    });
+
+    expect(ctx.recordedSetupUnavailable).toBe(false);
+    expect(ctx.recordedSetup).toEqual([]);
+  });
+
+  it("does NOT report unavailable in CREATE mode, where there is no block", async () => {
+    // A third state again: no block means nothing is recorded against it and
+    // nothing failed. Reporting a failure here would warn her on every new
+    // treatment area.
+    signIn("studio-fett", "pract-sabrina", "owner");
+    const ctx = await actions.loadMachineSetupContext(ROUTE);
+    expect(ctx.recordedSetupUnavailable).toBe(false);
+  });
+});
+
 describe("previous-treatment guidance excludes the session being charted", () => {
   // THE DEFECT (Codex, #860 4289974654): `latest_setup_for_client` filtered on
   // client and studio and returned the newest capture, so a setup recorded in

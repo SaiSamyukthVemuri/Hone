@@ -7,6 +7,7 @@ import { nativeFieldGroups } from "@/lib/machines/charting";
 import { SettingDraftFields } from "./setting-draft-fields";
 import {
   assembleGroupSubmissions,
+  clearedForNextCapture,
   firstGroup,
   groupIssues,
   groupReadiness,
@@ -248,14 +249,24 @@ export function MachineReadingEntry({
             variant="secondary"
             size="sm"
             onClick={() => {
-              // A NEW capture, not an edit of the last one. Everything is
-              // cleared deliberately - values AND channel associations.
-              // Pre-filling either from the previous capture would invite a
-              // practitioner to submit settings she has not re-read off the
-              // machine, or to assert she ran the same probes, which is the
-              // opposite of what a reading is.
-              setGroups(firstGroup());
-              setGroupOrdinal(1);
+              // A NEW capture, not an edit of the last one. Values AND channel
+              // associations are cleared deliberately: pre-filling either from
+              // the previous capture would invite a practitioner to submit
+              // settings she has not re-read off the machine, or to assert she
+              // ran the same probes, which is the opposite of what a reading
+              // is.
+              //
+              // THE GROUP IDENTITIES SURVIVE, and that is the repair. This
+              // reset to `firstGroup()`, so after a save of g1 and g2 the form
+              // offered one fresh g1 - and a change to what had been g2 was
+              // submitted as a revision of g1, which guidance then combined
+              // with the stale g2 (Codex, #860 4290452715). See
+              // `clearedForNextCapture`.
+              setGroups(clearedForNextCapture);
+              // THE ORDINAL IS NOT RESET, and must not be: it is monotonic so
+              // a removed group's id is never reused. Resetting it to 1 while
+              // g1 and g2 are still on screen would mint a SECOND g2 on the
+              // next "add group".
               // A NEW SAVE, WITH A NEW KEY. Inheriting the previous one would
               // make the database absorb this as a retry of the capture just
               // recorded - settings she has deliberately re-read off the
