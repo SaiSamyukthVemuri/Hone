@@ -46,11 +46,25 @@ it("enriches the owned twin dashboard without resetting existing work", { timeou
         where extract(isodow from d) between 1 and 5 order by d limit 1) as next_day`,
     [TWIN.timezone],
   )).rows[0] as { today: string; next_day: string };
+  const visibleToday = async () => Number((await adminQuery(
+    `select count(*)::int as n from public.appointments where studio_id = $1
+       and (starts_at at time zone $2)::date = (now() at time zone $2)::date
+       and status <> 'cancelled'`,
+    [IDS.studio, TWIN.timezone],
+  )).rows[0].n);
+  const clock = (await adminQuery(
+    `select extract(isodow from (now() at time zone $1))::int between 1 and 5
+       and (now() at time zone $1)::time < time '16:30' as can_book_today`,
+    [TWIN.timezone],
+  )).rows[0] as { can_book_today: boolean };
+  if (!(await visibleToday()) && !clock.can_book_today) {
+    throw new Error("No visible roster today and no remaining opening-hours slot. No enrichment was written.");
+  }
   const created: string[] = [];
   const skipped: string[] = [];
   for (const day of [dates.today, dates.next_day]) {
     for (const [personIndex, person] of roster.entries()) {
-      for (const [slotIndex, time] of ["09:00", "10:30", "12:00", "13:30", "15:00"].entries()) {
+      for (const [slotIndex, time] of ["09:00", "10:30", "12:00", "13:30", "15:00", "16:00", "16:30"].entries()) {
         const clientId = IDS.client(((personIndex * 2 + slotIndex) % TWIN.clientCount) + 1);
         const instant = (await adminQuery(
           `select (($1::date + $2::time) at time zone $3) as starts_at,
@@ -72,7 +86,7 @@ it("enriches the owned twin dashboard without resetting existing work", { timeou
             `select * from public.create_internal_appointment_v2(
               $1, $2, $3, $4, $5, $6, $7, $8, null, false)`,
             [IDS.studio, owner.id, person.id, clientId,
-              slotIndex === 0 ? IDS.consult : IDS.treatment, instant.starts_at, tokenHash, MARKER],
+              slotIndex === 0 || time === "16:30" ? IDS.consult : IDS.treatment, instant.starts_at, tokenHash, MARKER],
           )).rows[0] as { result: string; appointment_id: string | null };
           if (result.result === "created" && result.appointment_id) created.push(result.appointment_id);
           else skipped.push(`${day} ${time}: ${result.result}`);
@@ -83,6 +97,12 @@ it("enriches the owned twin dashboard without resetting existing work", { timeou
           skipped.push(`${day} ${time}: existing practitioner booking`);
         }
       }
+    }
+    // Prove today's visible roster before adding next-day bookings or other
+    // presentation data. Refused bookings and preserved cancellations cannot
+    // leave unrelated enrichment behind.
+    if (day === dates.today && !(await visibleToday())) {
+      throw new Error("No visible appointments could be created today. No next-day or dashboard enrichment was written.");
     }
   }
 
@@ -104,12 +124,16 @@ it("enriches the owned twin dashboard without resetting existing work", { timeou
        values ($1, $2, $3, $4, $5) on conflict (id) do nothing`,
       [twinId(`dashboard:pinned-note:${index + 1}`), IDS.studio, clientId, text, owner.id],
     );
-    // Month/day only uses the product's sentinel year; year is not a claimed age.
+  }
+
+  // One fixed month/day-only birthday in EVERY month. Dates do not roll with
+  // the clock, and a presenter's date is never replaced. 1900 is the product's
+  // canonical sentinel for an unknown birth year.
+  for (let index = 1; index <= TWIN.clientCount; index += 1) {
     await adminQuery(
-      `update public.clients set date_of_birth =
-         make_date(2000, extract(month from (now() at time zone $3))::int, $4)
+      `update public.clients set date_of_birth = make_date(1900, $3, $4)
        where id = $1 and studio_id = $2 and date_of_birth is null`,
-      [clientId, IDS.studio, TWIN.timezone, 10 + index],
+      [IDS.client(index), IDS.studio, index, 9 + index],
     );
   }
 
@@ -152,7 +176,8 @@ it("enriches the owned twin dashboard without resetting existing work", { timeou
   const facts = (await adminQuery(
     `select
        (select count(*)::int from public.appointments where studio_id = $1
-          and (starts_at at time zone $2)::date = (now() at time zone $2)::date) as today,
+          and (starts_at at time zone $2)::date = (now() at time zone $2)::date
+          and status <> 'cancelled') as today,
        (select count(*)::int from public.client_pinned_notes where studio_id = $1) as pinned_notes,
        (select count(*)::int from public.client_intake_forms where studio_id = $1 and deleted_at is null) as intakes,
        (select count(*)::int from public.clients where studio_id = $1
@@ -162,8 +187,9 @@ it("enriches the owned twin dashboard without resetting existing work", { timeou
   expect(facts.today, "The presenter dashboard still has no appointments today").toBeGreaterThan(0);
   expect(facts.pinned_notes).toBeGreaterThanOrEqual(6);
   expect(facts.intakes).toBeGreaterThanOrEqual(3);
-  expect(facts.birthdays).toBeGreaterThanOrEqual(6);
+  expect(facts.birthdays).toBeGreaterThanOrEqual(1);
   expect((await validateTwin()).state).toBe("verified");
   // No emails, tokens or links in the receipt.
   console.log(JSON.stringify({ event: "fett_dashboard_enriched", created: created.length, skipped, facts }));
 });
+
