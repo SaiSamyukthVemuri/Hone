@@ -315,23 +315,23 @@ prospects at every measured instant.
 
 ## 15. Capabilities added since the 2026-08-23 reconciliation
 
-**150** production merges landed between `b9e0003f` and the current branch head (2026-10-16 sync, `1ae096e2`; it was 145 at the 2026-10-14 sync through `ce133c18`; it was 140 at the 2026-10-13 sync through `6f7281bb`, 138 at the 2026-10-12 sync through `d5efa20a`, and eighty-one at the 2026-09-21 sync through `410e5039`). That is
+**152** production merges landed between `b9e0003f` and the current branch head (2026-10-16 sync, `0ae33bd3`; it was 150 at the 2026-10-16 sync through `1ae096e2`; it was 145 at the 2026-10-14 sync through `ce133c18`; it was 140 at the 2026-10-13 sync through `6f7281bb`, 138 at the 2026-10-12 sync through `d5efa20a`, and eighty-one at the 2026-09-21 sync through `410e5039`). That is
 the current ancestry count and nothing more — capability was **not** re-derived over it.
 
 Over the **twenty-nine** merges through `bf6f09c4`, derived on **2026-08-30**, **Ten**
-carry a capability that belongs in this register. The other 121 merges are recorded in
+carry a capability that belongs in this register. The other 123 merges are recorded in
 [release-changelog.md](./release-changelog.md) and are **not** enumerated for capability here.
 
 **THOSE TWO NUMBERS ARE DERIVED OVER DIFFERENT SPANS, AND SAYING SO IS THE POINT.** The
-**150** is the merge ancestry through the *current* branch head, `1ae096e2`. The **ten**
+**152** is the merge ancestry through the *current* branch head, `0ae33bd3`. The **ten**
 is **not** derived over it: it is the **2026-08-30** derivation over the twenty-nine merges
 through `bf6f09c4`, and it has not been re-run since.
 
 **This section is scoped to that dated derivation and must not be read as a current capability
-count.** The 121 merges between `bf6f09c4` and `1ae096e2` are recorded row by row in
+count.** The 123 merges between `bf6f09c4` and `0ae33bd3` are recorded row by row in
 [release-changelog.md](./release-changelog.md), and several of them plainly ship capability —
 `#702`'s automatic card receipts and `#745`'s next-setup-step checklist among them. This register
-has **not** re-enumerated them. Re-running the capability derivation across all 150 merges
+has **not** re-enumerated them. Re-running the capability derivation across all 152 merges
 is its own lane with its own evidence; raising the number here without doing that work would
 manufacture a figure nobody derived, which is the precise failure this document exists to
 prevent.
