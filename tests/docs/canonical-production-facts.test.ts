@@ -180,7 +180,9 @@ export function recordOnlySince(
   for (const c of commits) {
     const parents = g("rev-list", "--parents", "-n", "1", c)?.split(" ") ?? [];
     if (parents.length < 2) return { ok: false, reason: `${c.slice(0, 8)} has no inspectable first parent` };
-    const files = g("diff", "--name-only", parents[1], c);
+    // --no-renames: both endpoints, so moving app/x.ts into docs/production/
+    // is NOT record-only (Codex P1 4297335910).
+    const files = g("diff", "--name-only", "--no-renames", parents[1], c);
     if (files === null) return { ok: false, reason: `${c.slice(0, 8)}'s changed paths cannot be read` };
     const other = files.split("\n").filter(Boolean).filter((f) => !RECORD_ONLY.test(f));
     if (other.length) {
@@ -192,7 +194,9 @@ export function recordOnlySince(
 
 /** A3 over the production boundary: runtime-bearing paths changed pinned..target. */
 export async function runtimeChangedSince(g: Git, pinned: string, target: string): Promise<string[] | null> {
-  const out = g("diff", "--name-only", pinned, target);
+  // --no-renames: a runtime file MOVED into docs/ is a runtime deletion, and
+  // rename detection would report only the docs destination (Codex P1 4297335910).
+  const out = g("diff", "--name-only", "--no-renames", pinned, target);
   if (out === null) return null;
   const classify = await loadClassifier();
   return out
@@ -3777,6 +3781,104 @@ describe("freshness policy controls (#825 6215529089)", () => {
     expect(lines.some((l) => l.startsWith("::warning title=Canonical record STALE"))).toBe(true);
     expect(written.startsWith("\n")).toBe(true);
     expect(read("tests/docs/canonical-production-facts.test.ts")).not.toMatch(/console\.log\(out\.line\)/);
+  });
+
+  // ---- Renames (Codex P1 4297335910): a move lists BOTH endpoints ----------
+  /** Run ci.yml's REAL PR changed-files command in a repo, then its real record grep. */
+  function ciChangedFiles(dir: string, base: string, head: string) {
+    const ci = read(".github/workflows/ci.yml");
+    const diffLine = ci.split("\n").find((l) => /git diff --name-only[^\n]*> changed\.txt/.test(l));
+    expect(diffLine, "ci.yml's PR changed-files command").toBeTruthy();
+    execFileSync("bash", ["-c", (diffLine as string).trim()], {
+      cwd: dir,
+      env: { NODE_ENV: "test", PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "/tmp", MB: base, HEAD_SHA: head },
+      stdio: "ignore",
+    });
+    const changed = readFileSync(path.join(dir, "changed.txt"), "utf8").split("\n").filter(Boolean);
+    const recordStep = ci.slice(ci.indexOf("id: record"), ci.indexOf("- name: Classify"));
+    const grepBlock = recordStep.slice(recordStep.indexOf("run: |\n") + "run: |\n".length)
+      .split("\n").map((l) => l.replace(/^ {10}/, "")).join("\n");
+    const out = path.join(dir, "gh-output");
+    writeFileSync(out, "");
+    execFileSync("bash", ["-c", grepBlock], {
+      cwd: dir,
+      env: { NODE_ENV: "test", PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "/tmp", GITHUB_OUTPUT: out },
+      stdio: "ignore",
+    });
+    const productionRecord = /production_record=true/.test(readFileSync(out, "utf8"));
+    const classified = execFileSync("node", [path.join(ROOT, "scripts/classify-changes.mjs"), "--files-from", path.join(dir, "changed.txt")], {
+      encoding: "utf8",
+    });
+    const flag = (k: string) => new RegExp(`^${k}=true$`, "m").test(classified);
+    return { changed, productionRecord, docsOnly: flag("docs_only"), database: flag("database") };
+  }
+
+  it("R1. moving docs/production/x.md to docs/x.md is a production-record change; the record job runs", () => {
+    const r = throwaway();
+    r.write("docs/production/x.md", "l1\nl2\nl3\nl4\n");
+    r.run("add", "-A");
+    r.run("commit", "-qm", "x");
+    const base = r.head();
+    r.run("mv", "docs/production/x.md", "docs/x.md");
+    r.run("commit", "-qm", "move");
+    const ci = ciChangedFiles(r.dir, base, r.head());
+    expect(ci.changed).toEqual(expect.arrayContaining(["docs/production/x.md", "docs/x.md"]));
+    expect(ci.productionRecord).toBe(true);
+    // docs-only AND production_record: exactly the canonical-record job's condition.
+    expect(ci.docsOnly).toBe(true);
+  });
+
+  it("R2. moving a migration into docs/ is NOT docs-only: the database lane is selected", () => {
+    const r = throwaway();
+    r.write("supabase/migrations/0300_x.sql", "create table t();\n-- a\n-- b\n");
+    r.run("add", "-A");
+    r.run("commit", "-qm", "m");
+    const base = r.head();
+    r.run("mv", "supabase/migrations/0300_x.sql", "docs/0300_x.sql");
+    r.run("commit", "-qm", "move");
+    const ci = ciChangedFiles(r.dir, base, r.head());
+    expect(ci.changed).toContain("supabase/migrations/0300_x.sql");
+    expect(ci.docsOnly).toBe(false);
+    expect(ci.database).toBe(true);
+  });
+
+  it("R3. A5: moving an application file INTO docs/production/ is not record-only", () => {
+    const r = throwaway();
+    const recorded = r.head();
+    r.run("checkout", "-q", "-b", "mv", "prod");
+    r.run("mv", "app/page.tsx", "docs/production/page.md");
+    r.run("commit", "-qm", "move");
+    r.run("checkout", "-q", "prod");
+    r.run("merge", "-q", "--no-ff", "mv", "-m", "Merge mv");
+    expect(recordOnlySince(r.g, recorded, r.head()).ok).toBe(false);
+  });
+
+  it("R4. A3: moving a runtime file into docs/ is a shipped runtime change", async () => {
+    const r = throwaway();
+    const pinned = r.head();
+    r.run("checkout", "-q", "-b", "mv", "prod");
+    r.run("mv", "app/page.tsx", "docs/page.md");
+    r.run("commit", "-qm", "move");
+    r.run("checkout", "-q", "prod");
+    r.run("merge", "-q", "--no-ff", "mv", "-m", "Merge mv");
+    expect(await runtimeChangedSince(r.g, pinned, r.head())).toEqual(["app/page.tsx"]);
+  });
+
+  it("R5. EVERY changed-file producer sees both rename endpoints — grepped, not pinned", () => {
+    for (const wf of [".github/workflows/ci.yml", ".github/workflows/nightly.yml"]) {
+      const exec = read(wf).split("\n").filter((l) => !l.trim().startsWith("#"));
+      for (const l of exec.filter((x) => /--name-only/.test(x) && /\b(diff|show|log)\b/.test(x))) {
+        expect(l, `${wf}: a --name-only producer without --no-renames`).toMatch(/--no-renames/);
+      }
+    }
+    const ci = read(".github/workflows/ci.yml");
+    expect((ci.match(/> changed\.txt/g) ?? []).length, "changed.txt producers").toBe(2);
+    const plan = read("scripts/ci-plan.mjs");
+    expect(plan).toMatch(/"diff", "--name-only", "--no-renames"/);
+    expect(plan).not.toMatch(/"diff", "--name-only", base/);
+    const src = read("tests/docs/canonical-production-facts.test.ts");
+    expect(src).toMatch(/g\("diff", "--name-only", "--no-renames", pinned, target\)/);
+    expect(src).toMatch(/g\("diff", "--name-only", "--no-renames", parents\[1\], c\)/);
   });
 
   it("6. the strict paths really run: docs-PR job, push/record validate, nightly — all with full history", () => {

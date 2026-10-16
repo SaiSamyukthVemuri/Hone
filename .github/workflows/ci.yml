@@ -134,9 +134,13 @@ jobs:
             BASE="${{ github.event.pull_request.base.sha }}"
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
             MB="$(git merge-base "$BASE" "$HEAD_SHA" 2>/dev/null || echo "$BASE")"
-            git diff --name-only "$MB" "$HEAD_SHA" > changed.txt || true
+            # --no-renames: a rename lists BOTH endpoints. With rename detection
+            # only the destination appeared, so moving a migration or a
+            # docs/production/** file into docs/ read as docs-only and skipped
+            # every lane that file belongs to (Codex P1 4297335910).
+            git diff --name-only --no-renames "$MB" "$HEAD_SHA" > changed.txt || true
           else
-            git show --name-only --pretty=format: "${{ github.sha }}" > changed.txt
+            git show --name-only --no-renames --pretty=format: "${{ github.sha }}" > changed.txt
           fi
           echo "--- changed files ---"; cat changed.txt
 
