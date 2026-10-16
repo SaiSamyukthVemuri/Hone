@@ -761,3 +761,80 @@ describe("switching machine or mode clears the collected draft", () => {
     expect(html).toBe("");
   });
 });
+
+// ---------------------------------------------------------------------------
+// EVERY CONSUMER OF A BLOCK OR CAPTURE ID BINDS IT TO THE ROUTE
+//
+// THIS IS THE ENUMERATION, AS A TEST. Rounds 8 and 9 were the same defect
+// reached twice: an application lineage check authorizes the ROUTE, and only
+// a predicate in a query binds the RECORD to it. Round 8 fixed the writes and
+// I reported the read fixed when it was not; round 9's sweep of every action
+// taking a block id then found a third site the finding had not named —
+// `loadMachineSetupContext`, the panel's own load path, which runs on every
+// open (Codex, #860 4297032712 and 4298457378).
+//
+// A one-off script would not have survived the session. This DISCOVERS the
+// functions rather than listing them, so a new one that takes a block id and
+// forgets the binding fails here instead of in a later review round.
+// ---------------------------------------------------------------------------
+describe("every block/capture consumer is bound to the authorized route", () => {
+  const read = (rel: string) =>
+    readFileSync(nodePath.resolve(__dirname, "../..", rel), "utf8");
+
+  const MODULES = [
+    "app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts",
+    "lib/machines/machine-queries.ts",
+  ];
+
+  /** Exported functions, split out of a module's source by their own header. */
+  function exportedFunctions(src: string): Array<{ name: string; body: string }> {
+    const out: Array<{ name: string; body: string }> = [];
+    const parts = src.split(/\n(?=export (?:async )?function )/);
+    for (const part of parts) {
+      const m = /^export (?:async )?function (\w+)/.exec(part);
+      if (m) out.push({ name: m[1]!, body: part });
+    }
+    return out;
+  }
+
+  const TAKES_ID = /\b(blockId|captureId)\b/;
+
+  // What counts as binding the id to the route, in the QUERY rather than in a
+  // separate check: a session predicate, the route handed to a command that
+  // enforces it, or the id passed to a reader WITH its session.
+  const BINDS = [
+    /\.eq\("session_id", sessionId\)/,
+    /p_session_id/,
+    /sessionId:\s*input\.sessionId/,
+    /readingsForBlock\(db, input\.blockId, input\.sessionId\)/,
+  ];
+
+  it("discovers the consumers, so this test cannot be silently empty", () => {
+    // A guard that enumerates nothing passes forever. This pins that the
+    // discovery still finds the functions it is meant to police.
+    const found: string[] = [];
+    for (const rel of MODULES) {
+      for (const fn of exportedFunctions(read(rel))) {
+        if (TAKES_ID.test(fn.body)) found.push(fn.name);
+      }
+    }
+    expect(found).toContain("loadMachineSetupContext");
+    expect(found).toContain("readingsForBlockAction");
+    expect(found).toContain("readingsForBlock");
+    expect(found.length, "the discovery stopped finding consumers").toBeGreaterThanOrEqual(6);
+  });
+
+  it("and every one of them binds the id in a query", () => {
+    const unbound: string[] = [];
+    for (const rel of MODULES) {
+      for (const fn of exportedFunctions(read(rel))) {
+        if (!TAKES_ID.test(fn.body)) continue;
+        if (!BINDS.some((re) => re.test(fn.body))) unbound.push(`${rel}: ${fn.name}`);
+      }
+    }
+    expect(
+      unbound,
+      "a function takes a block or capture id without binding it to the route",
+    ).toEqual([]);
+  });
+});
