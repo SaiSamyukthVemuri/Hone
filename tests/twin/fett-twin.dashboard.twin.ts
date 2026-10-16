@@ -68,11 +68,18 @@ it("enriches the owned twin dashboard without resetting existing work", { timeou
   if (!birthday.ready) {
     throw new Error("No active client has or can receive this month's fixture birthday. Existing dates were preserved; no enrichment was written.");
   }
+  // The SAME predicate todayClients uses below: an active (unarchived) FIXTURE
+  // client's non-cancelled appointment today. A broader count (any client, an
+  // archived one) would let the pre-write checks pass, the next-day loop write,
+  // and only then the fixture-only roster refuse, leaving a partial enrichment.
   const visibleToday = async () => Number((await adminQuery(
-    `select count(*)::int as n from public.appointments where studio_id = $1
-       and (starts_at at time zone $2)::date = (now() at time zone $2)::date
-       and status <> 'cancelled'`,
-    [IDS.studio, TWIN.timezone],
+    `select count(*)::int as n from public.appointments a
+       join public.clients c on c.id = a.client_id and c.archived_at is null
+      where a.studio_id = $1
+        and (a.starts_at at time zone $2)::date = (now() at time zone $2)::date
+        and a.status <> 'cancelled'
+        and a.client_id = any($3::uuid[])`,
+    [IDS.studio, TWIN.timezone, clientPool],
   )).rows[0].n);
   const clock = (await adminQuery(
     `select extract(isodow from (now() at time zone $1))::int between 1 and 5
@@ -163,7 +170,8 @@ it("enriches the owned twin dashboard without resetting existing work", { timeou
   // One note per roster client, keyed BY CLIENT and only where that client has
   // no pinned note yet: a re-run later in the day reaches newly visible
   // clients, never duplicates one, and never overwrites a presenter's note.
-  for (const [index, clientId] of todayClients.slice(0, notes.length).entries()) {
+  const noteTargets = todayClients.slice(0, notes.length);
+  for (const [index, clientId] of noteTargets.entries()) {
     await adminQuery(
       `insert into public.client_pinned_notes
          (id, studio_id, client_id, text, created_by_practitioner_id)
@@ -211,22 +219,33 @@ it("enriches the owned twin dashboard without resetting existing work", { timeou
 
   // Fix the original fixture's misleading location-as-machine labels. Stable
   // physical IDs, retired units, reading snapshots and practitioner defaults
-  // are untouched. Exact old seed labels only; preserve any presenter rename.
-  await adminQuery(
-    `update public.studio_machines
-       set display_name = case display_name
-         when 'Room 1 demo' then 'SYNTH Galvanic 01'
-         when 'Room 3 single-probe demo' then 'SYNTH Blend 01' end
-     where studio_id = $1 and retired_at is null and machine_profile_id like 'synthetic:%'
-       and display_name in ('Room 1 demo', 'Room 3 single-probe demo')
-       and not exists (
-         select 1 from public.studio_machines other
-          where other.studio_id = $1 and other.id <> studio_machines.id
-            and lower(btrim(other.display_name)) = lower(case studio_machines.display_name
-              when 'Room 1 demo' then 'SYNTH Galvanic 01'
-              when 'Room 3 single-probe demo' then 'SYNTH Blend 01' end))`,
-    [IDS.studio],
-  );
+  // are untouched. The update is tied to the SEEDED UNIT'S IDENTITY, not to a
+  // label: the seed registers each of these units FIRST for its exact profile,
+  // so the target is the earliest-registered unit of that exact profile, and it
+  // is renamed only while it still carries its own legacy seed label. A
+  // presenter's later unit that reuses a freed legacy label, or a unit of a
+  // different synthetic model, can therefore never be renamed here, and a
+  // presenter's own rename of the seeded unit is preserved.
+  for (const [profileId, legacyLabel, name] of [
+    ["synthetic:demo-multineedle", "Room 1 demo", "SYNTH Galvanic 01"],
+    ["synthetic:demo-single-probe", "Room 3 single-probe demo", "SYNTH Blend 01"],
+  ] as const) {
+    await adminQuery(
+      `update public.studio_machines m
+          set display_name = $4
+        where m.id = (
+                select s.id from public.studio_machines s
+                 where s.studio_id = $1 and s.machine_profile_id = $2
+                 order by s.created_at, s.id limit 1)
+          and m.studio_id = $1 and m.retired_at is null
+          and m.machine_profile_id = $2 and m.display_name = $3
+          and not exists (
+            select 1 from public.studio_machines other
+             where other.studio_id = $1 and other.id <> m.id
+               and lower(btrim(other.display_name)) = lower($4))`,
+      [IDS.studio, profileId, legacyLabel, name],
+    );
+  }
 
   const facts = (await adminQuery(
     `select
@@ -235,19 +254,21 @@ it("enriches the owned twin dashboard without resetting existing work", { timeou
           and status <> 'cancelled') as today,
        -- Counted ONLY for today's roster: what the dashboard can actually show.
        (select count(distinct client_id)::int from public.client_pinned_notes
-         where studio_id = $1 and client_id = any($3::uuid[])) as pinned_notes,
+         where studio_id = $1 and client_id = any($4::uuid[])) as pinned_notes,
        (select count(distinct client_id)::int from public.client_intake_forms
          where studio_id = $1 and deleted_at is null and client_id = any($3::uuid[])) as intakes,
        (select count(*)::int from public.clients where studio_id = $1
           and archived_at is null
           and extract(month from date_of_birth) = extract(month from (now() at time zone $2))) as birthdays`,
-    [IDS.studio, TWIN.timezone, todayClients],
+    [IDS.studio, TWIN.timezone, todayClients, noteTargets],
   )).rows[0] as { today: number; pinned_notes: number; intakes: number; birthdays: number };
   expect(facts.today, "The presenter dashboard still has no appointments today").toBeGreaterThan(0);
   // Every roster client (up to the note count) carries a visible pinned note,
   // and the planned intakes sit on roster clients, so the receipt can no longer
   // pass on studio-wide rows the dashboard never shows.
-  expect(facts.pinned_notes, "pinned notes visible on today's cards").toBe(Math.min(todayClients.length, notes.length));
+  // Counted over the TARGETED subset only, so a presenter's own note on a
+  // roster client beyond the first six can neither inflate nor fail the proof.
+  expect(facts.pinned_notes, "pinned notes visible on today's targeted cards").toBe(noteTargets.length);
   expect(facts.intakes, "intakes visible on today's cards").toBeGreaterThanOrEqual(1);
   expect(facts.birthdays).toBeGreaterThanOrEqual(1);
   expect((await validateTwin()).state).toBe("verified");
