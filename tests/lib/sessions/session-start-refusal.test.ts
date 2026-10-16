@@ -22,15 +22,18 @@ describe("session-start refusals (a booking assigned to a colleague is SAID, not
     expect(parseSessionStartRefusal(["assigned_elsewhere"])).toBeNull();
   });
 
-  it("names the assigned practitioner and only a recovery that EXISTS for this appointment", () => {
-    const future = sessionStartRefusalCopy("assigned_elsewhere", "SYNTH-FETT Electrologist 2", { canReassign: true });
-    expect(future.title).toBe("This appointment is booked with SYNTH-FETT Electrologist 2");
-    expect(future.body).toMatch(/Only SYNTH-FETT Electrologist 2 can start the chart/);
-    expect(future.body).toMatch(/studio owner can first reassign it to you with Move/);
-    // Past / not-confirmed: Move is not rendered on the calendar page, so it is never offered.
-    const past = sessionStartRefusalCopy("assigned_elsewhere", "SYNTH-FETT Electrologist 2");
-    expect(past.body).not.toMatch(/Move/);
-    expect(past.body).toMatch(/Ask SYNTH-FETT Electrologist 2 to open it and start the chart/);
+  it("names the assigned practitioner and only the recovery that ALWAYS exists", () => {
+    const c = sessionStartRefusalCopy("assigned_elsewhere", "SYNTH-FETT Electrologist 2");
+    expect(c.title).toBe("This appointment is booked with SYNTH-FETT Electrologist 2");
+    expect(c.body).toMatch(/Only SYNTH-FETT Electrologist 2 can start the chart/);
+    expect(c.body).toMatch(/Ask SYNTH-FETT Electrologist 2 to open it and start the chart/);
+    // Never promises reassignment: whether Move can reassign depends on status,
+    // time, the studio's capacity/booking flags and service eligibility, which
+    // only the calendar's Move flow knows. Promising it drifted three times.
+    for (const code of SESSION_START_REFUSALS) {
+      const { title, body } = sessionStartRefusalCopy(code, "X");
+      expect(`${title} ${body}`).not.toMatch(/\bMove\b|reassign/i);
+    }
     expect(sessionStartRefusalCopy("assigned_elsewhere", "  ").title).toBe(
       "This appointment is booked with another practitioner",
     );
@@ -57,16 +60,9 @@ describe("session-start refusals (a booking assigned to a colleague is SAID, not
     expect(PAGE).toMatch(/practitioners!appointments_practitioner_same_studio_fk\(display_name\)/);
     expect(PAGE).not.toMatch(/[^!]practitioners\(display_name\)/);
     expect(PAGE).toMatch(/if \(apptErr\) \{[\s\S]{0,400}refusal = refusal \?\? "appointment_missing"/);
-    // Move is offered only where it actually REASSIGNS: a capacity-on studio
-    // (the same predicate loadMoveSlotsAction uses) and a confirmed future booking.
-    expect(PAGE).toMatch(
-      /canReassign =\s*studio\.practitioner_capacity_enabled === true &&\s*appt\.status === "confirmed" &&\s*Number\.isFinite\(startsAtMs\) &&\s*startsAtMs > Date\.now\(\)/,
-    );
-    const MOVE = readFileSync(
-      path.resolve(__dirname, "../../../app/(app)/calendar/move-appointment-actions.ts"),
-      "utf8",
-    );
-    // If Move's own gate changes, this copy contract must be revisited.
-    expect(MOVE).toMatch(/practitioner\.role === "owner" && studio\.practitioner_capacity_enabled === true/);
+    // The page offers a link to the appointment (where Move appears only when
+    // usable) and no predicate of its own about reassignment.
+    expect(PAGE).toMatch(/href=\{`\/calendar\/\$\{appointmentId\}`\}/);
+    expect(PAGE).not.toMatch(/canReassign/);
   });
 });

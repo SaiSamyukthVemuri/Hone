@@ -34,22 +34,22 @@ export const ASSIGNED_ELSEWHERE_RAISED = "Appointment is assigned to a different
 export function sessionStartRefusalCopy(
   code: SessionStartRefusal,
   assignedName: string | null,
-  opts: { canReassign?: boolean } = {},
 ): { title: string; body: string } {
   switch (code) {
     case "assigned_elsewhere": {
       const who = assignedName?.trim() ? assignedName.trim() : "another practitioner";
-      const base =
-        `Only ${who} can start the chart for this appointment, so the treatment record stays with ` +
-        "the person who performs it.";
-      // Move (owner reassignment) is offered ONLY for a confirmed future
-      // appointment; for a past or settled one it does not exist, so the copy
-      // names the recovery that does: the assigned practitioner charts it.
+      // DELIBERATELY no promise of reassignment. Whether Move can reassign this
+      // booking to this person depends on the appointment's status and time, the
+      // studio's capacity and booking flags, and service eligibility - all owned
+      // by the calendar's Move flow. Restating that predicate here drifted three
+      // times in review, so this page names only the recovery that ALWAYS exists
+      // (the assigned practitioner charts it) and links to the appointment, where
+      // Move shows itself when, and only when, it can actually be used.
       return {
         title: `This appointment is booked with ${who}`,
-        body: opts.canReassign
-          ? `${base} To chart it yourself, a studio owner can first reassign it to you with Move on the appointment's calendar page.`
-          : `${base} Ask ${who} to open it and start the chart.`,
+        body:
+          `Only ${who} can start the chart for this appointment, so the treatment record stays with ` +
+          `the person who performs it. Ask ${who} to open it and start the chart.`,
       };
     }
     case "other_client":
