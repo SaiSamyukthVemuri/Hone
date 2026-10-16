@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { afterAll, describe, expect, it } from "vitest";
 
 import {
@@ -387,13 +389,22 @@ describe("0223 · the remembered machine is per practitioner per studio", () => 
 describe("0223 · native readings persist, and cannot be rewritten", () => {
   it("PERSISTS a group with native units and precision intact", async () => {
     const studio = await seedStudio("mpx-read");
-    const { blockId } = await seedSession(studio);
+    const { blockId, sessionId } = await seedSession(studio);
     const machineId = await registerMachine(studio, "Room 1");
 
     const wrote = await asUser(studio.userId, (q) =>
       q(
-        `select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb) as n`,
-        [blockId, machineId, "galvanic", "g1", [1, 2], JSON.stringify(READINGS)],
+        `select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid) as n`,
+        [
+          blockId,
+          machineId,
+          "galvanic",
+          "g1",
+          [1, 2],
+          JSON.stringify(READINGS),
+          sessionId,
+          studio.clientId,
+        ],
       ),
     );
     expect(wrote.rows[0].n).toBe(2);
@@ -425,10 +436,10 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
 
   it("keeps a recorded ZERO as a value, and an absence as a reason", async () => {
     const studio = await seedStudio("mpx-zero");
-    const { blockId } = await seedSession(studio);
+    const { blockId, sessionId } = await seedSession(studio);
     const machineId = await registerMachine(studio, "Room 1");
     await asUser(studio.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
         blockId,
         machineId,
         "galvanic",
@@ -450,6 +461,8 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
             observation_source: "practitioner-entered",
           },
         ]),
+        sessionId,
+        studio.clientId,
       ]),
     );
     const back = await adminQuery(
@@ -469,11 +482,11 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
 
   it("refuses a row that is neither a value nor a reasoned absence", async () => {
     const studio = await seedStudio("mpx-xor");
-    const { blockId } = await seedSession(studio);
+    const { blockId, sessionId } = await seedSession(studio);
     const machineId = await registerMachine(studio, "Room 1");
     await expect(
       asUser(studio.userId, (q) =>
-        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
           blockId,
           machineId,
           "galvanic",
@@ -487,6 +500,8 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
               observation_source: "practitioner-entered",
             },
           ]),
+          sessionId,
+          studio.clientId,
         ]),
       ),
       // The command now refuses this itself, with a sentence naming the
@@ -498,14 +513,14 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
 
   it("preserves TWO settings groups when probes differ", async () => {
     const studio = await seedStudio("mpx-groups");
-    const { blockId } = await seedSession(studio);
+    const { blockId, sessionId } = await seedSession(studio);
     const machineId = await registerMachine(studio, "Room 1");
     for (const [group, channels, current] of [
       ["g1", [1, 2], "120"],
       ["g2", [3], "90"],
     ] as const) {
       await asUser(studio.userId, (q) =>
-        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
           blockId,
           machineId,
           "galvanic",
@@ -520,6 +535,8 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
               observation_source: "practitioner-entered",
             },
           ]),
+          sessionId,
+          studio.clientId,
         ]),
       );
     }
@@ -539,16 +556,18 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
 
   it("IS IMMUTABLE — an update is refused even with admin rights", async () => {
     const studio = await seedStudio("mpx-immutable");
-    const { blockId } = await seedSession(studio);
+    const { blockId, sessionId } = await seedSession(studio);
     const machineId = await registerMachine(studio, "Room 1");
     await asUser(studio.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
         blockId,
         machineId,
         "galvanic",
         "g1",
         [],
         JSON.stringify(READINGS),
+        sessionId,
+        studio.clientId,
       ]),
     );
     // Not an RLS refusal: the trigger protects the observation from EVERY
@@ -580,17 +599,19 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
     // operator approved append-only revisions. So the law is now: appending is
     // correct, and the earlier observation must survive.
     const studio = await seedStudio("mpx-rev");
-    const { blockId } = await seedSession(studio);
+    const { blockId, sessionId } = await seedSession(studio);
     const machineId = await registerMachine(studio, "Room 1");
     const record = (readings: unknown) =>
       asUser(studio.userId, (q) =>
-        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
           blockId,
           machineId,
           "galvanic",
           "g1",
           [],
           JSON.stringify(readings),
+          sessionId,
+          studio.clientId,
         ]),
       );
 
@@ -637,11 +658,13 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
     // cannot aim a write at an existing one. This index is the backstop against
     // a future caller trying, so it is worth proving it still bites.
     const studio = await seedStudio("mpx-dupfield");
-    const { blockId } = await seedSession(studio);
+    const { blockId, sessionId } = await seedSession(studio);
     const machineId = await registerMachine(studio, "Room 1");
     await asUser(studio.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
         blockId, machineId, "galvanic", "g1", [], JSON.stringify(READINGS),
+        sessionId,
+        studio.clientId,
       ]),
     );
 
@@ -673,11 +696,13 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
     // The coherence property the capture model exists for: a call records one
     // atomic capture, so its fields cannot drift apart.
     const studio = await seedStudio("mpx-coherent");
-    const { blockId } = await seedSession(studio);
+    const { blockId, sessionId } = await seedSession(studio);
     const machineId = await registerMachine(studio, "Room 1");
     await asUser(studio.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
         blockId, machineId, "galvanic", "g1", [], JSON.stringify(READINGS),
+        sessionId,
+        studio.clientId,
       ]),
     );
     const rows = await adminQuery(
@@ -693,7 +718,7 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
 
     // A SECOND call is a second capture, with its own identity.
     await asUser(studio.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
         blockId, machineId, "galvanic", "g1", [],
         JSON.stringify([
           {
@@ -702,6 +727,8 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
             observation_source: "practitioner-entered",
           },
         ]),
+        sessionId,
+        studio.clientId,
       ]),
     );
     const captures = await adminQuery(
@@ -727,7 +754,7 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
     // authenticated member calling the command directly cannot record against
     // a profile version nobody has published a contract for.
     const studio = await seedStudio("mpx-nocontract");
-    const { blockId } = await seedSession(studio);
+    const { blockId, sessionId } = await seedSession(studio);
 
     // TWO LAYERS NOW, and this test is about the SECOND one.
     //
@@ -746,8 +773,10 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
 
     await expect(
       asUser(studio.userId, (q) =>
-        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
           blockId, machineId, "galvanic", "g1", [], JSON.stringify(READINGS),
+          sessionId,
+          studio.clientId,
         ]),
       ),
     ).rejects.toThrow(/No field contract is published/i);
@@ -757,10 +786,10 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
     // The P1 this closes: the caller's metadata was cast straight into an
     // immutable clinical row. Now the contract decides.
     const studio = await seedStudio("mpx-derive");
-    const { blockId } = await seedSession(studio);
+    const { blockId, sessionId } = await seedSession(studio);
     const machineId = await registerMachine(studio, "Room 1");
     await asUser(studio.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
         blockId, machineId, "galvanic", "g1", [],
         JSON.stringify([
           {
@@ -772,6 +801,8 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
             observation_source: "practitioner-entered",
           },
         ]),
+        sessionId,
+        studio.clientId,
       ]),
     );
     const row = await adminQuery(
@@ -785,15 +816,17 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
 
   it("refuses a field the published contract does not contain", async () => {
     const studio = await seedStudio("mpx-unknownfield");
-    const { blockId } = await seedSession(studio);
+    const { blockId, sessionId } = await seedSession(studio);
     const machineId = await registerMachine(studio, "Room 1");
     await expect(
       asUser(studio.userId, (q) =>
-        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
           blockId, machineId, "galvanic", "g1", [],
           JSON.stringify([
             { field_key: "invented", value: "1", observation_source: "practitioner-entered" },
           ]),
+          sessionId,
+          studio.clientId,
         ]),
       ),
     ).rejects.toThrow(/has no field "invented"/i);
@@ -840,17 +873,19 @@ describe("0223 · cross-studio refusal on the reading path", () => {
   it("refuses a block belonging to another studio", async () => {
     const mine = await seedStudio("mpx-blk-a");
     const theirs = await seedStudio("mpx-blk-b");
-    const theirBlock = (await seedSession(theirs)).blockId;
+    const { blockId: theirBlock, sessionId: theirBlockSession } = await seedSession(theirs);
     const myMachine = await registerMachine(mine, "My room");
     await expect(
       asUser(mine.userId, (q) =>
-        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
           theirBlock,
           myMachine,
           "galvanic",
           "g1",
           [],
           JSON.stringify(READINGS),
+          theirBlockSession,
+          theirs.clientId,
         ]),
       ),
     ).rejects.toThrow(/not an active member of this studio/i);
@@ -859,17 +894,19 @@ describe("0223 · cross-studio refusal on the reading path", () => {
   it("refuses a machine belonging to another studio", async () => {
     const mine = await seedStudio("mpx-mach-a");
     const theirs = await seedStudio("mpx-mach-b");
-    const myBlock = (await seedSession(mine)).blockId;
+    const { blockId: myBlock, sessionId: myBlockSession } = await seedSession(mine);
     const theirMachine = await registerMachine(theirs, "Their room");
     await expect(
       asUser(mine.userId, (q) =>
-        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
           myBlock,
           theirMachine,
           "galvanic",
           "g1",
           [],
           JSON.stringify(READINGS),
+          myBlockSession,
+          mine.clientId,
         ]),
       ),
     ).rejects.toThrow(/belongs to another studio/i);
@@ -877,15 +914,17 @@ describe("0223 · cross-studio refusal on the reading path", () => {
 
   it("requires a machine: no machine, no reading", async () => {
     const studio = await seedStudio("mpx-nomach");
-    const { blockId } = await seedSession(studio);
+    const { blockId, sessionId } = await seedSession(studio);
     await expect(
       asUser(studio.userId, (q) =>
-        q(`select public.record_treatment_setup_group($1, null, $2, $3, $4, $5::jsonb)`, [
+        q(`select public.record_treatment_setup_group($1, null, $2, $3, $4, $5::jsonb,$6::uuid,$7::uuid)`, [
           blockId,
           "galvanic",
           "g1",
           [],
           JSON.stringify(READINGS),
+          sessionId,
+          studio.clientId,
         ]),
       ),
     ).rejects.toThrow(/choose the machine/i);
@@ -894,16 +933,18 @@ describe("0223 · cross-studio refusal on the reading path", () => {
   it("a member of another studio cannot READ these readings", async () => {
     const mine = await seedStudio("mpx-vis-r-a");
     const other = await seedStudio("mpx-vis-r-b");
-    const { blockId } = await seedSession(mine);
+    const { blockId, sessionId } = await seedSession(mine);
     const machineId = await registerMachine(mine, "Room 1");
     await asUser(mine.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
         blockId,
         machineId,
         "galvanic",
         "g1",
         [],
         JSON.stringify(READINGS),
+        sessionId,
+        mine.clientId,
       ]),
     );
     const seen = await asUser(other.userId, (q) =>
@@ -944,7 +985,7 @@ describe("0223 · next-visit retrieval returns the prior setup accurately", () =
     // Two visits. The earlier one is backdated so ordering is unambiguous.
     const first = await seedSession(studio);
     await asUser(studio.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
         first.blockId,
         machineId,
         "galvanic",
@@ -959,6 +1000,8 @@ describe("0223 · next-visit retrieval returns the prior setup accurately", () =
             observation_source: "practitioner-entered",
           },
         ]),
+        first.sessionId,
+        studio.clientId,
       ]),
     );
     // Backdating is IMPOSSIBLE by design, and trying to is a second proof of
@@ -976,7 +1019,7 @@ describe("0223 · next-visit retrieval returns the prior setup accurately", () =
 
     const second = await seedSession(studio);
     await asUser(studio.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
         second.blockId,
         machineId,
         "galvanic",
@@ -991,6 +1034,8 @@ describe("0223 · next-visit retrieval returns the prior setup accurately", () =
             observation_source: "practitioner-entered",
           },
         ]),
+        second.sessionId,
+        studio.clientId,
       ]),
     );
 
@@ -1022,7 +1067,7 @@ describe("0223 · next-visit retrieval returns the prior setup accurately", () =
     const machineId = await registerMachine(studio, "Room 1");
     const first = await seedSession(studio);
     await asUser(studio.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
         first.blockId,
         machineId,
         "galvanic",
@@ -1037,11 +1082,13 @@ describe("0223 · next-visit retrieval returns the prior setup accurately", () =
             observation_source: "practitioner-entered",
           },
         ]),
+        first.sessionId,
+        studio.clientId,
       ]),
     );
     const second = await seedSession(studio);
     await asUser(studio.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
         second.blockId,
         machineId,
         "galvanic",
@@ -1056,6 +1103,8 @@ describe("0223 · next-visit retrieval returns the prior setup accurately", () =
             observation_source: "practitioner-entered",
           },
         ]),
+        second.sessionId,
+        studio.clientId,
       ]),
     );
     const firstStill = await adminQuery(
@@ -1069,16 +1118,18 @@ describe("0223 · next-visit retrieval returns the prior setup accurately", () =
   it("a reading outlives the unit being retired", async () => {
     // Retiring a machine must not erase what it recorded.
     const studio = await seedStudio("mpx-outlive");
-    const { blockId } = await seedSession(studio);
+    const { blockId, sessionId } = await seedSession(studio);
     const machineId = await registerMachine(studio, "Room 1");
     await asUser(studio.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
         blockId,
         machineId,
         "galvanic",
         "g1",
         [],
         JSON.stringify(READINGS),
+        sessionId,
+        studio.clientId,
       ]),
     );
     await asUser(studio.userId, (q) =>
@@ -1103,7 +1154,7 @@ describe("0223 · next-visit retrieval returns the prior setup accurately", () =
 describe("0223 · existing historical values are untouched", () => {
   it("adds its columns as NULL and alters no existing block value", async () => {
     const studio = await seedStudio("mpx-legacy");
-    const { blockId } = await seedSession(studio);
+    const { blockId, sessionId } = await seedSession(studio);
     await adminQuery(
       `update public.session_blocks
           set apilus_modality = 'Multiplex', energy_level = 7.25,
@@ -1113,13 +1164,15 @@ describe("0223 · existing historical values are untouched", () => {
     );
     const machineId = await registerMachine(studio, "Room 1");
     await asUser(studio.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb)`, [
+      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
         blockId,
         machineId,
         "galvanic",
         "g1",
         [],
         JSON.stringify(READINGS),
+        sessionId,
+        studio.clientId,
       ]),
     );
     const block = await adminQuery(
@@ -1143,5 +1196,202 @@ describe("0223 · existing historical values are untouched", () => {
     );
     expect(row.rows[0].default_machine_id).toBeNull();
     expect(row.rows[0].default_machine_mode).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0223 · THE SETUP WRITE IS BOUND TO THE ROUTE
+//
+// Studio membership is not authorization to write to any chart in the studio.
+// `assert_setup_scope` derived the block's studio and checked membership, and
+// stopped there - so a practitioner sending ANOTHER CLIENT'S block id, with a
+// machine of their own studio, appended IMMUTABLE readings to the wrong
+// client's treatment (Codex, #860 4297032712).
+//
+// The readings cannot be amended or deleted by design, so this is not a
+// recoverable mistake: the wrong client's permanent record gains a setup that
+// was never used on them, and the right client's loses it.
+// ---------------------------------------------------------------------------
+describe("0223 · setup writes are bound to the authorized route", () => {
+  it("REFUSES another client's block in the same studio", async () => {
+    const studio = await seedStudio("route-bind");
+    const ana = await seedSession(studio);
+    const machineId = await registerMachine(studio, "Room 1");
+
+    // A SECOND client of the SAME studio. Membership is satisfied for both,
+    // which is exactly why membership could not catch this.
+    const beaClientId = randomUUID();
+    const beaSessionId = randomUUID();
+    const beaBlockId = randomUUID();
+    await adminQuery(
+      `insert into public.clients (id, studio_id, name) values ($1,$2,$3)`,
+      [beaClientId, studio.studioId, "Client Bea"],
+    );
+    await adminQuery(
+      `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality)
+       values ($1,$2,$3,$4,'electrolysis')`,
+      [beaSessionId, studio.studioId, beaClientId, studio.practitionerId],
+    );
+    await adminQuery(
+      `insert into public.session_blocks (id, studio_id, session_id) values ($1,$2,$3)`,
+      [beaBlockId, studio.studioId, beaSessionId],
+    );
+
+    // The practitioner is charting ANA, and sends BEA's block id.
+    await expect(
+      asUser(studio.userId, (q) =>
+        q(
+          `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid)`,
+          [
+            beaBlockId,
+            machineId,
+            "galvanic",
+            "g1",
+            [],
+            JSON.stringify(READINGS),
+            ana.sessionId,
+            studio.clientId,
+          ],
+        ),
+      ),
+    ).rejects.toThrow(/unknown treatment block/i);
+
+    // AND NOTHING WAS WRITTEN to either chart.
+    const wrote = await adminQuery(
+      `select count(*)::text as n from public.treatment_setup_readings
+        where session_block_id in ($1, $2)`,
+      [beaBlockId, ana.blockId],
+    );
+    expect((wrote.rows[0] as { n: string }).n).toBe("0");
+  });
+
+  it("REFUSES the right block under another client's id", async () => {
+    // The mirror image: the block is the one open on screen, but the client
+    // named does not own it. Both halves of the lineage are checked, so
+    // neither id alone is enough.
+    const studio = await seedStudio("route-bind-mirror");
+    const ana = await seedSession(studio);
+    const machineId = await registerMachine(studio, "Room 1");
+    const strangerClientId = randomUUID();
+    await adminQuery(
+      `insert into public.clients (id, studio_id, name) values ($1,$2,$3)`,
+      [strangerClientId, studio.studioId, "Client Stranger"],
+    );
+
+    await expect(
+      asUser(studio.userId, (q) =>
+        q(
+          `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid)`,
+          [
+            ana.blockId,
+            machineId,
+            "galvanic",
+            "g1",
+            [],
+            JSON.stringify(READINGS),
+            ana.sessionId,
+            strangerClientId,
+          ],
+        ),
+      ),
+    ).rejects.toThrow(/unknown treatment block/i);
+  });
+
+  it("REFUSES a block from another SESSION of the same client", async () => {
+    // Same person, wrong visit. Clinically this is still a misfiled capture:
+    // the settings land on a treatment that did not happen that day.
+    const studio = await seedStudio("route-bind-visit");
+    const first = await seedSession(studio);
+    const second = await seedSession(studio);
+    const machineId = await registerMachine(studio, "Room 1");
+
+    await expect(
+      asUser(studio.userId, (q) =>
+        q(
+          `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid)`,
+          [
+            first.blockId,
+            machineId,
+            "galvanic",
+            "g1",
+            [],
+            JSON.stringify(READINGS),
+            second.sessionId,
+            studio.clientId,
+          ],
+        ),
+      ),
+    ).rejects.toThrow(/unknown treatment block/i);
+  });
+
+  it("REFUSES a null route rather than treating it as unscoped", async () => {
+    // The parameters are required, so a caller that omits them is refused
+    // rather than silently getting the old behaviour back.
+    const studio = await seedStudio("route-bind-null");
+    const { blockId } = await seedSession(studio);
+    const machineId = await registerMachine(studio, "Room 1");
+
+    await expect(
+      asUser(studio.userId, (q) =>
+        q(
+          `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,null::uuid,null::uuid)`,
+          [blockId, machineId, "galvanic", "g1", [], JSON.stringify(READINGS)],
+        ),
+      ),
+    ).rejects.toThrow(/must name their session and client/i);
+  });
+
+  it("CONTROL: the correct route still records normally", async () => {
+    // Without this the four refusals above are satisfied by a command that
+    // refuses everything.
+    const studio = await seedStudio("route-bind-ok");
+    const { blockId, sessionId } = await seedSession(studio);
+    const machineId = await registerMachine(studio, "Room 1");
+
+    const wrote = await asUser(studio.userId, (q) =>
+      q(
+        `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid) as n`,
+        [
+          blockId,
+          machineId,
+          "galvanic",
+          "g1",
+          [],
+          JSON.stringify(READINGS),
+          sessionId,
+          studio.clientId,
+        ],
+      ),
+    );
+    expect(Number((wrote.rows[0] as { n: number }).n)).toBeGreaterThan(0);
+  });
+
+  it("the SUBMISSION command is bound the same way", async () => {
+    // Both write paths, because a binding on one of them is a binding on
+    // neither: the form uses the submission command, and the per-group
+    // command remains exported.
+    const studio = await seedStudio("route-bind-sub");
+    const ana = await seedSession(studio);
+    const other = await seedSession(studio);
+    const machineId = await registerMachine(studio, "Room 1");
+
+    await expect(
+      asUser(studio.userId, (q) =>
+        q(
+          `select public.record_treatment_setup_submission($1,$2,$3,$4,$5::jsonb,$6::uuid,$7::uuid) as r`,
+          [
+            ana.blockId,
+            machineId,
+            "galvanic",
+            "route-key-0001",
+            JSON.stringify([
+              { group_key: "g1", channels: [], readings: READINGS },
+            ]),
+            other.sessionId,
+            studio.clientId,
+          ],
+        ),
+      ),
+    ).rejects.toThrow(/unknown treatment block/i);
   });
 });

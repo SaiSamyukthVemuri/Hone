@@ -167,7 +167,16 @@ export function MachineFirstSetupConnected({
       // own - that is why a capture made through it carries no submission id -
       // but the treatment form saves every group the practitioner entered, and
       // that has to be one atomic fact with one retry key.
-      const out = await mod.recordSetupSubmissionAction(input);
+      // THE ROUTE'S OWN IDS, added here rather than taken from the panel.
+      // The panel knows which block it is charting; it does NOT get to say
+      // whose chart that is. These come from this wrapper's props, which the
+      // page supplied, and the server re-checks them against the studio it
+      // derives for itself (Codex, #860 4297032712).
+      const out = await mod.recordSetupSubmissionAction({
+        ...input,
+        clientId,
+        sessionId,
+      });
       return out.ok
         ? {
             ok: true,

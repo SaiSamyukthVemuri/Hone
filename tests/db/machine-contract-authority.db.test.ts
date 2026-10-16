@@ -10,6 +10,7 @@ import {
   closePool,
   resolveLocalDbUrl,
   seedMember,
+  routeFor,
   seedSession,
   seedStudio,
   type SeededStudio,
@@ -131,15 +132,27 @@ const recordAs = (
   readings: Reading[],
   channels: number[] = [],
 ) =>
-  asUser(userId, (q) =>
-    q(`select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb) as n`, [
+  // THE ROUTE IS RESOLVED BEFORE THE USER CONNECTION IS TAKEN. `routeFor` is
+  // an admin-pool query; awaiting it INSIDE the asUser callback holds one
+  // pool's connection while waiting for another, and the four-way concurrent
+  // capture test stalled for five seconds on exactly that. Nothing about the
+  // route needs the user's connection.
+  //
+  // The route itself comes from the block because these tests exercise the
+  // published field contract, not the binding (Codex, #860 4297032712).
+  routeFor(blockId).then((route) =>
+    asUser(userId, (q) =>
+      q(`select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid) as n`, [
       blockId,
       machineId,
       "galvanic",
       group,
       channels,
       JSON.stringify(readings),
-    ]),
+        route.sessionId,
+        route.clientId,
+      ]),
+    ),
   );
 
 const ok = (field: string, value: string): Reading => ({
@@ -165,10 +178,20 @@ async function party(userId: string): Promise<{ c: Client; pid: number }> {
   return { c, pid };
 }
 
-const recordOn = (c: Client, blockId: string, machineId: string, value: string) =>
+const recordOn = (
+  c: Client,
+  blockId: string,
+  machineId: string,
+  value: string,
+  // NAMED rather than derived: this one runs on a caller-held connection
+  // inside concurrency tests, where an extra admin round trip would change
+  // the interleaving the test exists to produce.
+  sessionId: string,
+  clientId: string,
+) =>
   c.query(
-    `select public.record_treatment_setup_group($1,$2,'galvanic','g','{}'::smallint[],$3::jsonb) as n`,
-    [blockId, machineId, JSON.stringify([ok("current", value)])],
+    `select public.record_treatment_setup_group($1,$2,'galvanic','g','{}'::smallint[],$3::jsonb,$4::uuid,$5::uuid) as n`,
+    [blockId, machineId, JSON.stringify([ok("current", value)]), sessionId, clientId],
   );
 
 type Settled =
@@ -1154,7 +1177,7 @@ describe("0223 - recording and RETIREMENT serialise, in both race orders", () =>
     const ret = await party(studio.userId);
     try {
       // Taken while both parents are live, and held UNCOMMITTED.
-      const n = await recordOn(rec.c, blockId, machineId, "120");
+      const n = await recordOn(rec.c, blockId, machineId, "120", sessionId, studio.clientId);
       expect(Number(n.rows[0].n)).toBe(1);
 
       // Retirement fires now. Its UPDATE needs FOR NO KEY UPDATE on the very
@@ -1207,7 +1230,7 @@ describe("0223 - recording and RETIREMENT serialise, in both race orders", () =>
       ]);
 
       // The capture reads the block, then parks acquiring the session lock.
-      const recording = settle(recordOn(rec.c, blockId, machineId, "130"));
+      const recording = settle(recordOn(rec.c, blockId, machineId, "130", sessionId, studio.clientId));
       const wait = await expectBlockedOn(
         rec.pid,
         "the capture must park acquiring the session lock the retirement holds",
@@ -1243,7 +1266,7 @@ describe("0223 - recording and RETIREMENT serialise, in both race orders", () =>
         studio.clientId,
         "race proof: this retirement is abandoned",
       ]);
-      const recording = settle(recordOn(rec.c, blockId, machineId, "140"));
+      const recording = settle(recordOn(rec.c, blockId, machineId, "140", sessionId, studio.clientId));
       await expectBlockedOn(rec.pid, "the capture must park on the held session lock");
 
       await ret.c.query("rollback"); // abandoned - the session was never retired
@@ -1274,7 +1297,7 @@ describe("0223 - recording and RETIREMENT serialise, in both race orders", () =>
         blockId,
         "race proof: retire the area before a capture arrives",
       ]);
-      const recording = settle(recordOn(rec.c, blockId, machineId, "150"));
+      const recording = settle(recordOn(rec.c, blockId, machineId, "150", sessionId, studio.clientId));
       const wait = await expectBlockedOn(
         rec.pid,
         "the capture must park acquiring the block lock the retirement holds",
@@ -1320,7 +1343,7 @@ describe("0223 - recording and RETIREMENT serialise, in both race orders", () =>
             ? [sessionId, studio.clientId, `code proof: ${label}`]
             : [sessionId, studio.clientId, `code proof: ${label}`, blockId],
         );
-        const recording = settle(recordOn(rec.c, blockId, machineId, "160"));
+        const recording = settle(recordOn(rec.c, blockId, machineId, "160", sessionId, studio.clientId));
         await expectBlockedOn(rec.pid, `${label}: the capture must park on a lock`);
         await ret.c.query("commit");
 
@@ -1373,7 +1396,7 @@ describe("0223 - recording and RETIREMENT serialise, in both race orders", () =>
           "order proof: child first",
         ]);
         // Y takes the PARENT (free), then parks wanting the child X holds.
-        const recording = settle(recordOn(y.c, blockId, machineId, "170"));
+        const recording = settle(recordOn(y.c, blockId, machineId, "170", sessionId, studio.clientId));
         await expectBlockedOn(y.pid, "the capture must park on the child lock");
         // X now wants the parent Y holds. Cycle.
         const retiringParent = settle(
@@ -1428,7 +1451,7 @@ describe("0223 - recording and RETIREMENT serialise, in both race orders", () =>
         // Y parks on the parent immediately, holding NOTHING. That is the
         // property the order buys: a waiter that holds nothing cannot be half
         // of a cycle.
-        const recording = settle(recordOn(y.c, blockId, machineId, "180"));
+        const recording = settle(recordOn(y.c, blockId, machineId, "180", sessionId, studio.clientId));
         await expectBlockedOn(y.pid, "the capture must park on the parent lock");
         // X proceeds to the child unobstructed - that is the claim.
         //
@@ -1492,7 +1515,10 @@ describe("0223 - recording and RETIREMENT serialise, in both race orders", () =>
 // ---------------------------------------------------------------------------
 describe("0223 - the MACHINE serialises with its own retirement", () => {
   it("RETIRE the machine, then record: the capture PARKS, then REFUSES", async () => {
-    const { studio, blockId, machineId } = await scene("race-machine-ret", 118);
+    const { studio, sessionId, blockId, machineId } = await scene(
+      "race-machine-ret",
+      118,
+    );
     const ret = await party(studio.userId);
     const rec = await party(studio.userId);
     try {
@@ -1500,7 +1526,7 @@ describe("0223 - the MACHINE serialises with its own retirement", () => {
       // recorder's first read.
       await ret.c.query(`select public.retire_studio_machine($1)`, [machineId]);
 
-      const recording = settle(recordOn(rec.c, blockId, machineId, "190"));
+      const recording = settle(recordOn(rec.c, blockId, machineId, "190", sessionId, studio.clientId));
       const wait = await expectBlockedOn(
         rec.pid,
         "the capture must park acquiring the machine lock the retirement holds",
@@ -1522,12 +1548,15 @@ describe("0223 - the MACHINE serialises with its own retirement", () => {
   });
 
   it("POSITIVE CONTROL: a retirement that ROLLS BACK does not refuse the capture", async () => {
-    const { studio, blockId, machineId } = await scene("race-machine-roll", 119);
+    const { studio, sessionId, blockId, machineId } = await scene(
+      "race-machine-roll",
+      119,
+    );
     const ret = await party(studio.userId);
     const rec = await party(studio.userId);
     try {
       await ret.c.query(`select public.retire_studio_machine($1)`, [machineId]);
-      const recording = settle(recordOn(rec.c, blockId, machineId, "200"));
+      const recording = settle(recordOn(rec.c, blockId, machineId, "200", sessionId, studio.clientId));
       await expectBlockedOn(rec.pid, "the capture must park on the machine lock");
       await ret.c.query("rollback");
       const out = await recording;
@@ -1980,15 +2009,24 @@ describe("0223 - two setting groups in one block stay distinct", () => {
     channels: number[],
     value: string,
   ) =>
-    asUser(userId, (q) =>
-      q(`select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb) as n`, [
-        blockId,
-        machineId,
-        "galvanic",
-        group,
-        channels,
-        JSON.stringify([ok("current", value)]),
-      ]),
+    // Route first, user connection second - see recordAs for why nesting the
+    // admin lookup inside asUser stalls a concurrent test.
+    routeFor(blockId).then((route) =>
+      asUser(userId, (q) =>
+        q(
+          `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid) as n`,
+          [
+          blockId,
+          machineId,
+          "galvanic",
+          group,
+          channels,
+          JSON.stringify([ok("current", value)]),
+            route.sessionId,
+            route.clientId,
+          ],
+        ),
+      ),
     );
 
   it("records two groups with DIFFERENT channels and values, and reads both back", async () => {
@@ -2098,15 +2136,24 @@ describe("0223 - invalid channel and group combinations are refused BY THE DATAB
     group: string,
     channels: number[],
   ) =>
-    asUser(userId, (q) =>
-      q(`select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb) as n`, [
-        blockId,
-        machineId,
-        "galvanic",
-        group,
-        channels,
-        JSON.stringify([ok("current", "120")]),
-      ]),
+    // Route first, user connection second - see recordAs for why nesting the
+    // admin lookup inside asUser stalls a concurrent test.
+    routeFor(blockId).then((route) =>
+      asUser(userId, (q) =>
+        q(
+          `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid) as n`,
+          [
+          blockId,
+          machineId,
+          "galvanic",
+          group,
+          channels,
+          JSON.stringify([ok("current", "120")]),
+            route.sessionId,
+            route.clientId,
+          ],
+        ),
+      ),
     );
 
   it("refuses a channel above the published maximum", async () => {
@@ -2175,15 +2222,24 @@ describe("0223 - the latest setup includes every group, coherently", () => {
     channels: number[],
     value: string,
   ) =>
-    asUser(userId, (q) =>
-      q(`select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb) as n`, [
-        blockId,
-        machineId,
-        "galvanic",
-        group,
-        channels,
-        JSON.stringify([ok("current", value)]),
-      ]),
+    // Route first, user connection second - see recordAs for why nesting the
+    // admin lookup inside asUser stalls a concurrent test.
+    routeFor(blockId).then((route) =>
+      asUser(userId, (q) =>
+        q(
+          `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid) as n`,
+          [
+          blockId,
+          machineId,
+          "galvanic",
+          group,
+          channels,
+          JSON.stringify([ok("current", value)]),
+            route.sessionId,
+            route.clientId,
+          ],
+        ),
+      ),
     );
 
   type Row = {

@@ -537,11 +537,33 @@ export async function recordReadingsAction(input: {
   groupKey: string;
   channels: number[];
   readings: ReadingSubmission[];
+  /**
+   * THE AUTHORIZED ROUTE, and the reason these are required.
+   *
+   * This action had no client or session context, so it could not apply the
+   * `assertSessionForClient` lineage check the other charting actions use,
+   * and `assert_setup_scope` derived only the block's studio. A practitioner
+   * is a member of the WHOLE studio, so a stale page or a tampered request
+   * carrying another client's block id appended IMMUTABLE readings to the
+   * wrong client's treatment (Codex, #860 4297032712).
+   *
+   * They are checked twice on purpose: here, against the server-derived
+   * studio, and again inside the command. The application check gives a
+   * clear refusal; the SQL check is what stops a future caller from
+   * omitting it.
+   */
+  clientId: string;
+  sessionId: string;
 }): Promise<ActionResult & { written?: number }> {
   const scope = await identity();
   if (!scope) {
     return { ok: false, code: "unauthenticated", error: "Sign in first." };
   }
+  // THE ROUTE IS AUTHORIZED BEFORE ANYTHING IS WRITTEN. `assertSessionForClient`
+  // resolves the session against the SERVER-DERIVED studio and this client,
+  // so a block id from another client's chart cannot be smuggled in by a
+  // stale page or a crafted call.
+  await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
   if (input.readings.length === 0) {
     return { ok: false, code: "rejected", error: "Nothing to save." };
   }
@@ -610,6 +632,8 @@ export async function recordReadingsAction(input: {
     machineId: input.machineId,
     modeKey: input.modeKey,
     groupKey: input.groupKey,
+    sessionId: input.sessionId,
+    clientId: input.clientId,
     channels: input.channels,
     readings: rows,
   });
@@ -649,6 +673,23 @@ export async function recordSetupSubmissionAction(input: {
     channels: number[];
     readings: ReadingSubmission[];
   }>;
+  /**
+   * THE AUTHORIZED ROUTE, and the reason these are required.
+   *
+   * This action had no client or session context, so it could not apply the
+   * `assertSessionForClient` lineage check the other charting actions use,
+   * and `assert_setup_scope` derived only the block's studio. A practitioner
+   * is a member of the WHOLE studio, so a stale page or a tampered request
+   * carrying another client's block id appended IMMUTABLE readings to the
+   * wrong client's treatment (Codex, #860 4297032712).
+   *
+   * They are checked twice on purpose: here, against the server-derived
+   * studio, and again inside the command. The application check gives a
+   * clear refusal; the SQL check is what stops a future caller from
+   * omitting it.
+   */
+  clientId: string;
+  sessionId: string;
 }): Promise<
   ActionResult & {
     submissionId?: string;
@@ -667,6 +708,11 @@ export async function recordSetupSubmissionAction(input: {
   if (input.groups.some((g) => g.readings.length === 0)) {
     return { ok: false, code: "rejected", error: "Nothing to save." };
   }
+  // THE ROUTE IS AUTHORIZED BEFORE ANYTHING IS WRITTEN. `assertSessionForClient`
+  // resolves the session against the SERVER-DERIVED studio and this client,
+  // so a block id from another client's chart cannot be smuggled in by a
+  // stale page or a crafted call.
+  await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
 
   const db = await machineDb();
   const inventory = await listStudioDevices(db, scope.studioId);
@@ -721,6 +767,8 @@ export async function recordSetupSubmissionAction(input: {
     machineId: input.machineId,
     modeKey: input.modeKey,
     idempotencyKey: input.idempotencyKey,
+    sessionId: input.sessionId,
+    clientId: input.clientId,
     groups,
   });
   if (!out.ok) {
@@ -736,13 +784,23 @@ export async function recordSetupSubmissionAction(input: {
 }
 
 /** Everything recorded against one block, for the chart being edited. */
-export async function readingsForBlockAction(
-  blockId: string,
-): Promise<RecordedReading[]> {
+export async function readingsForBlockAction(input: {
+  blockId: string;
+  clientId: string;
+  sessionId: string;
+}): Promise<RecordedReading[]> {
   const scope = await identity();
   if (!scope) return [];
+  // BEYOND THE REPORTED FINDING, and deliberately. Codex named the WRITE
+  // path (#860 4297032712), but this read took a bare block id with no
+  // lineage check either: the member-scoped SELECT policy admits any block
+  // in the studio, so another client's recorded settings were readable by
+  // id. That is the same hole pointed at a different verb, and leaving it
+  // for a later round would mean knowingly shipping a clinical read with no
+  // route binding.
+  await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
   const db = await machineDb();
-  const got = await readingsForBlock(db, blockId);
+  const got = await readingsForBlock(db, input.blockId);
   return got.ok ? got.value : [];
 }
 

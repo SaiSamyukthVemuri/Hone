@@ -369,6 +369,17 @@ export async function recordSetupGroup(
     groupKey: string;
     channels: number[];
     readings: ReadingInputRow[];
+  /**
+   * THE AUTHORIZED ROUTE, required. The command refuses a block that is not
+   * this session's and a session that is not this client's: studio
+   * membership alone let a stale or tampered request append immutable
+   * readings to another client's treatment (Codex, #860 4297032712).
+   *
+   * Required rather than optional so a caller cannot omit the binding and
+   * silently get the old, unscoped behaviour back.
+   */
+  sessionId: string;
+  clientId: string;
   },
 ): Promise<MachineOutcome<number>> {
   const payload = input.readings.map((r) => ({
@@ -389,6 +400,8 @@ export async function recordSetupGroup(
     p_group_key: input.groupKey,
     p_channels: input.channels,
     p_readings: payload,
+    p_session_id: input.sessionId,
+    p_client_id: input.clientId,
   });
   if (error) {
     return { ok: false, error: fail(error, "Could not save those settings.") };
@@ -441,6 +454,17 @@ export async function recordSetupSubmission(
     modeKey: string;
     idempotencyKey: string;
     groups: SetupSubmissionGroup[];
+  /**
+   * THE AUTHORIZED ROUTE, required. The command refuses a block that is not
+   * this session's and a session that is not this client's: studio
+   * membership alone let a stale or tampered request append immutable
+   * readings to another client's treatment (Codex, #860 4297032712).
+   *
+   * Required rather than optional so a caller cannot omit the binding and
+   * silently get the old, unscoped behaviour back.
+   */
+  sessionId: string;
+  clientId: string;
   },
 ): Promise<MachineOutcome<SetupSubmissionResult>> {
   const { data, error } = await db.rpc("record_treatment_setup_submission", {
@@ -462,6 +486,8 @@ export async function recordSetupSubmission(
         observation_source: r.observationSource,
       })),
     })),
+    p_session_id: input.sessionId,
+    p_client_id: input.clientId,
   });
   if (error) {
     return { ok: false, error: fail(error, "Could not save those settings.") };

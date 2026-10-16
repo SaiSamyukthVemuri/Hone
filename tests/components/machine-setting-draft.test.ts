@@ -286,6 +286,8 @@ describe("switching machine or mode clears the collected draft", () => {
   const FIELDS_SRC = "components/machines/setting-draft-fields.tsx";
   const CONN_SRC = "components/machines/machine-first-setup-connected.tsx";
   const PRIOR_SRC = "components/machines/machine-prior-setup.tsx";
+  const SETUP_ACTIONS_SRC =
+    "app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts";
   const ACTIONS_SRC =
     "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts";
   const FORM_SRC =
@@ -534,6 +536,84 @@ describe("switching machine or mode clears the collected draft", () => {
       src,
       "a bare nativeUnit render is how the sentinel leaked onto the screen",
     ).not.toMatch(/\{r\.nativeUnit\}\s*\n/);
+  });
+
+  it("the setup WRITE actions are bound to the authorized route", () => {
+    // THE P1 (Codex, #860 4297032712). These actions had no client or
+    // session context, so they could not apply the `assertSessionForClient`
+    // lineage check the other charting actions use, and `assert_setup_scope`
+    // derived only the block's studio. A practitioner is a member of the
+    // WHOLE studio, so a stale page or a tampered request carrying another
+    // client's block id appended IMMUTABLE readings to the wrong client's
+    // treatment.
+    // ASSERTED PER FUNCTION, not as a count over the file. The count version
+    // of this did not fail when one action's check was deleted: three
+    // remained and the threshold was three. A guard that cannot tell WHICH
+    // action lost its check is not guarding the actions, it is counting
+    // lines.
+    const src = read(SETUP_ACTIONS_SRC);
+    const bodyOf = (name: string) => {
+      const at = src.indexOf(`export async function ${name}(`);
+      expect(at, `${name} is not in the actions file`).toBeGreaterThan(-1);
+      const next = src.indexOf("\nexport async function ", at + 1);
+      return src.slice(at, next === -1 ? undefined : next);
+    };
+    for (const fn of [
+      "recordReadingsAction",
+      "recordSetupSubmissionAction",
+      "readingsForBlockAction",
+    ]) {
+      expect(
+        bodyOf(fn),
+        `${fn} takes a block id and must authorize the route`,
+      ).toMatch(
+        /await assertSessionForClient\(scope\.studioId, input\.clientId, input\.sessionId\)/,
+      );
+    }
+  });
+
+  it("and the READ is bound too, which the finding did not name", () => {
+    // `readingsForBlockAction` took a bare block id. The member-scoped
+    // SELECT policy admits any block in the studio, so another client's
+    // recorded settings were readable by id — the same hole pointed at a
+    // different verb. Fixed here rather than left for a later round.
+    const src = read(SETUP_ACTIONS_SRC);
+    expect(src).toMatch(
+      /export async function readingsForBlockAction\(input: \{[\s\S]{0,160}?clientId: string;[\s\S]{0,80}?sessionId: string;/,
+    );
+    expect(src).not.toMatch(
+      /export async function readingsForBlockAction\(\s*blockId: string,\s*\)/,
+    );
+    // Taking the ids is not checking them; the per-function assertion above
+    // is what proves the check runs on this path too.
+  });
+
+  it("the panel supplies the route, and the collector does not", () => {
+    // The panel knows which block it is charting; it does not get to say
+    // whose chart that is. The ids come from the page's props.
+    const conn = read(CONN_SRC);
+    expect(conn).toMatch(/recordSetupSubmissionAction\(\{\s*\.\.\.input,\s*clientId,\s*sessionId,\s*\}\)/);
+  });
+
+  it("selection writes are SERIALISED, not just de-duplicated on return", () => {
+    // THE SECOND ROUND ON ONE DEFECT (Codex, #860 4296709037 then
+    // 4297032722). The request token discards a stale ANSWER, but it runs
+    // after the write has already committed — so the older value still won
+    // in the database and came back on reload. Overlapping writes cannot be
+    // ordered from the client, so they are not allowed to overlap.
+    const src = read(PANEL_SRC);
+    expect(src).toMatch(/const \[selectionPending, setSelectionPending\] = useState\(false\)/);
+    const sets = src.match(/setSelectionPending\(true\)/g) ?? [];
+    expect(sets.length, "both writers must take the lock").toBe(2);
+    const clears = src.match(/setSelectionPending\(false\)/g) ?? [];
+    expect(clears.length, "both writers must release it").toBe(2);
+    // RELEASED IN `finally`, or one failed write kills the picker for the
+    // rest of the treatment.
+    expect((src.match(/\} finally \{\s*(\/\/[^\n]*\n\s*)*setSelectionPending\(false\);/g) ?? []).length).toBe(2);
+    // AND BOTH CONTROLS OBSERVE IT: a mode change and a device change write
+    // the same stored selection.
+    expect(src).toMatch(/disabled=\{selectable\.length === 0 \|\| selectionPending\}/);
+    expect(src).toMatch(/disabled=\{selectionPending\}/);
   });
 
   it("the machine opener keeps the 44px touch floor", () => {

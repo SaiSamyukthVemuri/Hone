@@ -461,6 +461,7 @@ describe("recordSetupSubmissionAction sends ONE call for the whole save", () => 
       reused: false,
     };
     const out = await actions.recordSetupSubmissionAction({
+      ...ROUTE,
       blockId: "block-1",
       machineId: "dev-1",
       modeKey: "galvanic",
@@ -503,6 +504,7 @@ describe("recordSetupSubmissionAction sends ONE call for the whole save", () => 
     synthDevice();
     DB.rpcResult = { submission_id: "sub-1", groups: 1, readings: 1, reused: false };
     await actions.recordSetupSubmissionAction({
+      ...ROUTE,
       blockId: "block-1",
       machineId: "dev-1",
       modeKey: "galvanic",
@@ -529,6 +531,7 @@ describe("recordSetupSubmissionAction sends ONE call for the whole save", () => 
     // told something this process already knew.
     synthDevice();
     const out = await actions.recordSetupSubmissionAction({
+      ...ROUTE,
       blockId: "block-1",
       machineId: "dev-1",
       modeKey: "galvanic",
@@ -569,6 +572,7 @@ describe("recordSetupSubmissionAction sends ONE call for the whole save", () => 
       reused: true,
     };
     const out = await actions.recordSetupSubmissionAction({
+      ...ROUTE,
       blockId: "block-1",
       machineId: "dev-1",
       modeKey: "galvanic",
@@ -590,6 +594,7 @@ describe("recordSetupSubmissionAction sends ONE call for the whole save", () => 
     synthDevice();
     DB.rpcResult = { nothing: true };
     const out = await actions.recordSetupSubmissionAction({
+      ...ROUTE,
       blockId: "block-1",
       machineId: "dev-1",
       modeKey: "galvanic",
@@ -605,6 +610,7 @@ describe("recordSetupSubmissionAction sends ONE call for the whole save", () => 
     expect(
       (
         await actions.recordSetupSubmissionAction({
+          ...ROUTE,
           blockId: "block-1",
           machineId: "dev-1",
           modeKey: "galvanic",
@@ -616,6 +622,7 @@ describe("recordSetupSubmissionAction sends ONE call for the whole save", () => 
     expect(
       (
         await actions.recordSetupSubmissionAction({
+          ...ROUTE,
           blockId: "block-1",
           machineId: "dev-1",
           modeKey: "galvanic",
@@ -629,6 +636,7 @@ describe("recordSetupSubmissionAction sends ONE call for the whole save", () => 
   it("requires a signed-in practitioner", async () => {
     SESSION.current = null;
     const out = await actions.recordSetupSubmissionAction({
+      ...ROUTE,
       blockId: "block-1",
       machineId: "dev-1",
       modeKey: "galvanic",
@@ -743,9 +751,27 @@ describe("the connected wrapper forwards the whole SAVE", () => {
   });
 
   it("passes the form's input through WHOLE, rather than rebuilding it", () => {
-    // Rebuilding is how a field gets dropped. Passing the object through means
-    // a new field cannot be forgotten here.
-    expect(CONNECTED).toMatch(/recordSetupSubmissionAction\(input\)/);
+    // Rebuilding is how a field gets dropped. Spreading the object means a
+    // new field cannot be forgotten here.
+    //
+    // IT USED TO REQUIRE THE BARE `(input)`, which stopped being true when
+    // the route ids were added: the wrapper now sends `{ ...input, clientId,
+    // sessionId }` because the panel knows which block it is charting but
+    // does not get to say whose chart that is (Codex, #860 4297032712). That
+    // is still a pass-through — it ADDS the two ids the page owns and
+    // enumerates nothing from the form — so the rule this test exists for is
+    // unchanged and only its spelling moved.
+    expect(CONNECTED).toMatch(
+      /recordSetupSubmissionAction\(\{\s*\.\.\.input,\s*clientId,\s*sessionId,\s*\}\)/,
+    );
+    // AND IT STILL DOES NOT REBUILD: naming any of the form's own fields here
+    // is how one of them gets dropped on the next change.
+    for (const field of ["blockId:", "machineId:", "modeKey:", "groups:"]) {
+      expect(
+        CONNECTED.includes(`recordSetupSubmissionAction({\n        ${field}`),
+        `${field} must not be enumerated at the call site`,
+      ).toBe(false);
+    }
   });
 
   it("returns the reuse flag and the counts to the form", () => {
@@ -819,6 +845,7 @@ describe("reading metadata is DERIVED from the profile, never accepted", () => {
       },
     ];
     const out = await actions.recordReadingsAction({
+      ...ROUTE,
       blockId: "block-1",
       machineId: "dev-1",
       modeKey: "galvanic",

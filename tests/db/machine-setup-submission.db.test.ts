@@ -7,6 +7,7 @@ import {
   asUser,
   closePool,
   resolveLocalDbUrl,
+  routeFor,
   seedSession,
   seedStudio,
   type SeededStudio,
@@ -140,10 +141,25 @@ async function save(
   key: string,
   groups: Group[],
 ): Promise<SaveResult> {
+  // THE ROUTE IS DERIVED FROM THE BLOCK, so every test here keeps saying what
+  // it was already saying. The command now requires the authorized session
+  // and client and refuses a block that is not that session's (Codex, #860
+  // 4297032712); these tests exercise validation, grants, idempotency and
+  // concurrency, not the binding, so restating it at every call would be
+  // noise that can also drift. The binding has its own tests.
+  const route = await routeFor(blockId);
   return asUser(userId, async (q) => {
     const r = await q(
-      `select public.record_treatment_setup_submission($1,$2,$3,$4,$5::jsonb) as r`,
-      [blockId, machineId, "galvanic", key, JSON.stringify(groups)],
+      `select public.record_treatment_setup_submission($1,$2,$3,$4,$5::jsonb,$6::uuid,$7::uuid) as r`,
+      [
+        blockId,
+        machineId,
+        "galvanic",
+        key,
+        JSON.stringify(groups),
+        route.sessionId,
+        route.clientId,
+      ],
     );
     return r.rows[0].r as SaveResult;
   });
@@ -275,13 +291,22 @@ describe("0223 · one Save records every group as one submission", () => {
     // such capture with a synthetic one-group submission and destroyed the
     // distinction.
     const studio = await seedStudio("sub-null");
-    const { blockId } = await seedSession(studio);
+    const { blockId, sessionId } = await seedSession(studio);
     const machineId = await registerMachine(studio);
 
     await asUser(studio.userId, (q) =>
       q(
-        `select public.record_treatment_setup_group($1,$2,$3,$4,$5::smallint[],$6::jsonb)`,
-        [blockId, machineId, "galvanic", "g1", [1], JSON.stringify([reading("current", "120")])],
+        `select public.record_treatment_setup_group($1,$2,$3,$4,$5::smallint[],$6::jsonb,$7::uuid,$8::uuid)`,
+        [
+          blockId,
+          machineId,
+          "galvanic",
+          "g1",
+          [1],
+          JSON.stringify([reading("current", "120")]),
+          sessionId,
+          studio.clientId,
+        ],
       ),
     );
 
@@ -516,7 +541,7 @@ describe("0223 · two concurrent saves of the same groups do not deadlock", () =
     // to a practitioner as a failed save with no cause she could act on.
     // The command writes groups in sorted key order, so both take g1 first.
     const studio = await seedStudio("sub-deadlock");
-    const { blockId } = await seedSession(studio);
+    const { blockId, sessionId } = await seedSession(studio);
     const machineId = await registerMachine(studio);
 
     // THIS TEST SELF-DEADLOCKED ON ITS FIRST EVER RUN, and the first shape is
@@ -539,20 +564,22 @@ describe("0223 · two concurrent saves of the same groups do not deadlock", () =
     try {
       // A runs to completion and holds its locks: its transaction is open.
       await a.query(
-        `select public.record_treatment_setup_submission($1,$2,$3,$4,$5::jsonb) as r`,
+        `select public.record_treatment_setup_submission($1,$2,$3,$4,$5::jsonb,$6::uuid,$7::uuid) as r`,
         [
           blockId,
           machineId,
           "galvanic",
           "save-key-concur-a",
           JSON.stringify([group("g1", [1], "120"), group("g2", [2], "80")]),
+          sessionId,
+          studio.clientId,
         ],
       );
 
       const bPid = (await b.query("select pg_backend_pid() as pid")).rows[0]
         .pid as number;
       const runB = b.query(
-        `select public.record_treatment_setup_submission($1,$2,$3,$4,$5::jsonb) as r`,
+        `select public.record_treatment_setup_submission($1,$2,$3,$4,$5::jsonb,$6::uuid,$7::uuid) as r`,
         [
           blockId,
           machineId,
@@ -560,6 +587,8 @@ describe("0223 · two concurrent saves of the same groups do not deadlock", () =
           "save-key-concur-b",
           // THE OPPOSITE ORDER, which is the whole point of the test.
           JSON.stringify([group("g2", [3], "90"), group("g1", [4], "70")]),
+          sessionId,
+          studio.clientId,
         ],
       );
 
@@ -664,7 +693,7 @@ describe("0223 · two concurrent retries of ONE save resolve to one submission",
     // together is what hung the suite last time - an advisory transaction lock
     // is held to the end of the transaction.
     const studio = await seedStudio("sub-concur-retry");
-    const { blockId } = await seedSession(studio);
+    const { blockId, sessionId } = await seedSession(studio);
     const machineId = await registerMachine(studio);
     const key = "save-key-concurrent-retry";
     const groups = JSON.stringify([group("g1", [1], "120"), group("g2", [2], "80")]);
@@ -673,8 +702,16 @@ describe("0223 · two concurrent retries of ONE save resolve to one submission",
     const b = await beginAsUser(studio.userId);
     try {
       const ra = await a.query(
-        `select public.record_treatment_setup_submission($1,$2,$3,$4,$5::jsonb) as r`,
-        [blockId, machineId, "galvanic", key, groups],
+        `select public.record_treatment_setup_submission($1,$2,$3,$4,$5::jsonb,$6::uuid,$7::uuid) as r`,
+        [
+          blockId,
+          machineId,
+          "galvanic",
+          key,
+          groups,
+          sessionId,
+          studio.clientId,
+        ],
       );
       const first = ra.rows[0].r as SaveResult;
       expect(first.reused, "the FIRST call cannot be a reuse").toBe(false);
@@ -684,8 +721,16 @@ describe("0223 · two concurrent retries of ONE save resolve to one submission",
       const runB = b.query(
         // IDENTICAL in every argument - the whole point. A different key would
         // make this the ordinary two-saves case, which is tested above.
-        `select public.record_treatment_setup_submission($1,$2,$3,$4,$5::jsonb) as r`,
-        [blockId, machineId, "galvanic", key, groups],
+        `select public.record_treatment_setup_submission($1,$2,$3,$4,$5::jsonb,$6::uuid,$7::uuid) as r`,
+        [
+          blockId,
+          machineId,
+          "galvanic",
+          key,
+          groups,
+          sessionId,
+          studio.clientId,
+        ],
       );
 
       // IT MUST BLOCK. If B sailed through, the two calls were never
@@ -772,13 +817,15 @@ describe("0223 · a session retired MID-SAVE records nothing", () => {
       const pid = (await saver.query("select pg_backend_pid() as pid")).rows[0]
         .pid as number;
       const run = saver.query(
-        `select public.record_treatment_setup_submission($1,$2,$3,$4,$5::jsonb) as r`,
+        `select public.record_treatment_setup_submission($1,$2,$3,$4,$5::jsonb,$6::uuid,$7::uuid) as r`,
         [
           blockId,
           machineId,
           "galvanic",
           "save-key-retired1",
           JSON.stringify([group("g1", [1], "120")]),
+          sessionId,
+          studio.clientId,
         ],
       );
 
@@ -850,9 +897,11 @@ describe("0223 · the shared internals cannot be called directly", () => {
     it(`refuses EXECUTE on assert_setup_scope to ${role}`, async () => {
       await expect(
         asRole(role, (q) =>
-          q(`select public.assert_setup_scope($1::uuid,$2::uuid)`, [
+          q(`select public.assert_setup_scope($1::uuid,$2::uuid,$3::uuid,$4::uuid)`, [
             "00000000-0000-0000-0000-000000000001",
             "00000000-0000-0000-0000-000000000002",
+            "00000000-0000-0000-0000-000000000003",
+            "00000000-0000-0000-0000-000000000004",
           ]),
         ),
       ).rejects.toThrow(/permission denied/i);

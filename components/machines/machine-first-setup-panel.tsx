@@ -267,6 +267,22 @@ export function MachineFirstSetupPanel({
    * the newer pick, and bumping it must not re-render.
    */
   const selectionRequestRef = useRef(0);
+  /**
+   * A SELECTION WRITE IS IN FLIGHT.
+   *
+   * THE TOKEN ALONE WAS NOT ENOUGH, and the second review said so plainly:
+   * it runs AFTER `onSelectMachine` has already committed, so discarding the
+   * stale answer only fixes the panel. The older write still reached
+   * `set_own_default_machine`, so the UI showed her latest choice until a
+   * reload brought the older one back (Codex, #860 4296709037, then
+   * 4297032722 on the half-fix).
+   *
+   * Overlapping writes cannot be ordered from here - the client does not
+   * control which request the database serves first - so they are not
+   * allowed to overlap. The picker is disabled for the duration, which is
+   * also the honest thing to show: the choice is not yet made.
+   */
+  const [selectionPending, setSelectionPending] = useState(false);
   const [selection, setSelection] = useState<SelectionState>(() =>
     // A stored machine that cannot be charted on is NOT a selection, but it is
     // still stored, and the reason has to be visible. `unusableSelection`
@@ -312,9 +328,17 @@ export function MachineFirstSetupPanel({
     // persisted, so the panel and the stored selection both disagreed with
     // what she last chose (Codex, #860 4296709037).
     const token = ++selectionRequestRef.current;
-    const write = onSelectMachine
-      ? await onSelectMachine({ deviceId: next, modeKey: nextMode })
-      : null;
+    setSelectionPending(true);
+    let write: Awaited<ReturnType<NonNullable<typeof onSelectMachine>>> | null = null;
+    try {
+      write = onSelectMachine
+        ? await onSelectMachine({ deviceId: next, modeKey: nextMode })
+        : null;
+    } finally {
+      // CLEARED EVEN ON A THROW, or one failed write leaves the picker dead
+      // for the rest of the treatment.
+      setSelectionPending(false);
+    }
     if (token !== selectionRequestRef.current) return;
     setSelection((prev) => selectionSettled(prev, next, write));
   };
@@ -334,9 +358,15 @@ export function MachineFirstSetupPanel({
     // completion must not land after a newer device pick either. Two counters
     // would let exactly that through.
     const token = ++selectionRequestRef.current;
-    const write = onSelectMachine
-      ? await onSelectMachine({ deviceId, modeKey: key })
-      : null;
+    setSelectionPending(true);
+    let write: Awaited<ReturnType<NonNullable<typeof onSelectMachine>>> | null = null;
+    try {
+      write = onSelectMachine
+        ? await onSelectMachine({ deviceId, modeKey: key })
+        : null;
+    } finally {
+      setSelectionPending(false);
+    }
     if (token !== selectionRequestRef.current) return;
     setSelection((prev) => selectionSettled(prev, deviceId, write));
   };
@@ -435,7 +465,7 @@ export function MachineFirstSetupPanel({
             className={fieldControlClass()}
             value={deviceId ?? ""}
             onChange={(e) => void chooseDevice(e.target.value || null)}
-            disabled={selectable.length === 0}
+            disabled={selectable.length === 0 || selectionPending}
             data-testid="machine-select"
           >
             {/*
@@ -558,6 +588,11 @@ export function MachineFirstSetupPanel({
                     variant={m.key === mode?.key ? "primary" : "secondary"}
                     size="sm"
                     onClick={() => void chooseMode(m.key)}
+                    // SERIALISED WITH THE DEVICE PICKER, from one flag: a
+                    // mode change and a device change both write the same
+                    // stored selection, so letting one start while the other
+                    // is in flight is the same race by another route.
+                    disabled={selectionPending}
                     aria-pressed={m.key === mode?.key}
                     data-testid={`machine-mode-${m.key}`}
                   >

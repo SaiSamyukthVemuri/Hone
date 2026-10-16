@@ -267,13 +267,28 @@ describe("the handoff feeds the EXISTING action with no new server code", () => 
     const out = decideHandoff(pending, "block-1", IDENTITY);
     expect(out.kind).toBe("record");
     if (out.kind !== "record") return;
+    // THE HANDOFF SUPPLIES THE PAYLOAD; THE HOST SUPPLIES THE ROUTE, and the
+    // split is the security property rather than an inconvenience. This
+    // object used to be exactly `out`, and that was only possible while the
+    // action took no client or session - which is what let a stale request
+    // write to another client's chart (Codex, #860 4297032712). The panel
+    // knows which block it is charting; it does not get to say whose chart
+    // that is, so those two ids come from the page's own props and are
+    // re-checked on the server.
     const input: ActionInput = {
       blockId: out.blockId,
       machineId: out.machineId,
       modeKey: out.modeKey,
       idempotencyKey: out.idempotencyKey,
       groups: out.groups,
+      clientId: "client-from-the-route",
+      sessionId: "session-from-the-route",
     };
+    // AND THE HANDOFF MUST NOT CARRY THEM, which is the half worth pinning:
+    // if it ever started producing a client id, the host would have a second
+    // source for one and they could disagree.
+    expect(out).not.toHaveProperty("clientId");
+    expect(out).not.toHaveProperty("sessionId");
     // Asserted at runtime too, so the test is not purely a compile-time
     // artefact that a `skip` could silently remove.
     expect(input.groups).toHaveLength(2);

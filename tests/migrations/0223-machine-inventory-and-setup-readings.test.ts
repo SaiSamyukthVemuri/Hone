@@ -46,10 +46,10 @@ const COMMANDS = [
   "public.register_studio_machine(uuid, text, integer, text, text[])",
   "public.retire_studio_machine(uuid)",
   "public.set_own_default_machine(uuid, uuid, text)",
-  "public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb)",
+  "public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb, uuid, uuid)",
   // ONE SAVE of every settings group, atomically. An ENTRY POINT - granted to
   // `authenticated` - so every posture rule below applies to it unchanged.
-  "public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb)",
+  "public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb, uuid, uuid)",
   // THE INITIAL SAVE: the treatment area AND its machine settings, in one
   // transaction. Also an entry point, and the long signature is the price of
   // DELEGATING the area to 0166's command instead of writing a second path to
@@ -69,7 +69,7 @@ const COMMANDS = [
 // They are listed separately because the posture rules for them are DIFFERENT,
 // not absent: all four roles revoked, and granted back to NOTHING.
 const INTERNALS = [
-  "public.assert_setup_scope(uuid, uuid)",
+  "public.assert_setup_scope(uuid, uuid, uuid, uuid)",
   "public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid)",
 ] as const;
 
@@ -653,9 +653,12 @@ describe("0223 enforces ownership in the database, not only in the server", () =
     ]) {
       const body = bodyOf(caller);
       expect(body, `${caller} must not accept a studio`).not.toMatch(/p_studio_id/);
-      // It reaches the derivation rather than reimplementing it.
+      // It reaches the derivation rather than reimplementing it, and hands
+      // it the ROUTE: the studio is still derived from the block, but the
+      // block must now be the route's own (Codex, #860 4297032712). The
+      // studio is derived; the route is supplied and checked.
       expect(body, `${caller} must derive its scope`).toMatch(
-        /public\.assert_setup_scope\(p_block_id, p_studio_machine_id\)/,
+        /public\.assert_setup_scope\(\s*\n?\s*p_block_id, p_studio_machine_id, p_session_id, p_client_id\)/,
       );
     }
 
@@ -1344,5 +1347,88 @@ describe("0223's INITIAL SAVE is idempotent through a session-scoped claim", () 
       CODE.slice(policyAt, policyAt + 400),
       "the read policy must be scoped to studio membership",
     ).toContain("is_studio_member(studio_id)");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0223 · THE SETUP WRITE IS BOUND TO THE AUTHORIZED ROUTE
+//
+// `assert_setup_scope` derived the block's studio and checked studio
+// membership, and stopped. A practitioner is a member of the WHOLE studio, so
+// another client's block id in the same studio passed every check and
+// appended IMMUTABLE readings to the wrong client's treatment
+// (Codex, #860 4297032712).
+//
+// Pinned on the SOURCE as well as proved against Postgres, because this is
+// the layer that stops a FUTURE caller from omitting the check. An
+// authorization that depends on every caller remembering to ask is not an
+// authorization.
+// ---------------------------------------------------------------------------
+describe("0223 binds every setup write to its route", () => {
+  it("assert_setup_scope REQUIRES the session and the client", () => {
+    expect(SQL).toMatch(
+      /create or replace function public\.assert_setup_scope\([\s\S]{0,2600}?p_session_id uuid,\s*\n\s*p_client_id uuid,/,
+    );
+  });
+
+  it("and verifies BOTH halves of the lineage", () => {
+    // Either half alone is insufficient: the session proves the visit, the
+    // client proves whose chart it is.
+    //
+    // SCOPED TO THIS FUNCTION'S BODY, because the file-wide version of this
+    // assertion did not fail when the client half was deleted - the same
+    // predicate appears in another routine, so the whole-file search found
+    // it there and reported a guard that was no longer guarding anything.
+    const scope = bodyOf("assert_setup_scope");
+    expect(scope).toMatch(/and b\.session_id = p_session_id/);
+    expect(scope).toMatch(/and sn\.client_id = p_client_id/);
+  });
+
+  it("refuses a null route rather than treating it as unscoped", () => {
+    expect(SQL).toMatch(
+      /if p_session_id is null or p_client_id is null then\s*\n\s*raise exception 'Setup writes must name their session and client\.'/,
+    );
+  });
+
+  it("both write commands take the route and pass it down", () => {
+    for (const fn of [
+      "record_treatment_setup_group",
+      "record_treatment_setup_submission",
+    ]) {
+      expect(SQL, `${fn} must take the route`).toMatch(
+        new RegExp(
+          `create or replace function public\\.${fn}\\([\\s\\S]{0,1400}?p_session_id uuid,\\s*\\n\\s*p_client_id uuid`,
+        ),
+      );
+    }
+    expect(
+      (
+        SQL.match(
+          /assert_setup_scope\(\s*\n?\s*p_block_id, p_studio_machine_id, p_session_id, p_client_id\)/g,
+        ) ?? []
+      ).length,
+      "every scope assertion must carry the route",
+    ).toBe(2);
+  });
+
+  it("the grant posture names the NEW signatures, not the old ones", () => {
+    // A signature change leaves the old function's revokes naming something
+    // that no longer exists, which silently stops revoking anything.
+    expect(SQL).not.toMatch(/public\.assert_setup_scope\(uuid, uuid\)/);
+    expect(SQL).not.toMatch(
+      /public\.record_treatment_setup_group\(uuid, uuid, text, text, smallint\[\], jsonb\)/,
+    );
+    expect(SQL).not.toMatch(
+      /public\.record_treatment_setup_submission\(uuid, uuid, text, text, jsonb\)/,
+    );
+  });
+
+  it("the initial-save command passes the route it already authorized", () => {
+    // It calls `assert_session_writable(p_session_id, p_client_id)` first, so
+    // these are the authorized ids rather than a re-derivation that could
+    // disagree with the authorization just performed.
+    expect(SQL).toMatch(
+      /v_setup := public\.record_treatment_setup_submission\([\s\S]{0,1200}?p_session_id,\s*\n\s*p_client_id\s*\n\s*\);/,
+    );
   });
 });

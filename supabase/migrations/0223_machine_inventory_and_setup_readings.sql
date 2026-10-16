@@ -1039,6 +1039,23 @@ comment on column public.treatment_setup_captures.setup_submission_id is
 create or replace function public.assert_setup_scope(
   p_block_id uuid,
   p_studio_machine_id uuid,
+  -- THE ROUTE'S OWN IDS, and the reason they are REQUIRED rather than
+  -- optional is the whole point of this parameter pair.
+  --
+  -- Everything below derives the studio FROM THE BLOCK and then checks that
+  -- the caller belongs to that studio. That is a real check and it is not
+  -- enough: a practitioner is a member of the whole studio, so a stale page
+  -- or a tampered request carrying ANOTHER CLIENT'S block id in the same
+  -- studio passed every test here and appended IMMUTABLE readings to the
+  -- wrong client's treatment (Codex, #860 4297032712).
+  --
+  -- The application does hold the authorized route ids and applies
+  -- `assertSessionForClient` on the load path; the write path simply never
+  -- received them. Binding them HERE as well is what stops the next caller
+  -- from omitting the check: a command whose authorization depends on a
+  -- caller remembering to ask is not authorized, it is trusted.
+  p_session_id uuid,
+  p_client_id uuid,
   out o_studio uuid,
   out o_practitioner uuid,
   out o_profile_id text,
@@ -1117,6 +1134,34 @@ begin
       using errcode = 'insufficient_privilege';
   end if;
 
+  -- THE BLOCK MUST BE THE ROUTE'S BLOCK.
+  --
+  -- AFTER the membership check, deliberately. A caller who is not a member
+  -- of the block's studio already learns that from the check above, and
+  -- that refusal is the more accurate description of what is wrong; moving
+  -- this ahead of it would relabel every cross-STUDIO attempt as an unknown
+  -- block and lose a distinction the existing tests rightly make. What is
+  -- new here is the cross-CLIENT case WITHIN one studio, which membership
+  -- cannot catch because the practitioner really is a member.
+  if p_session_id is null or p_client_id is null then
+    raise exception 'Setup writes must name their session and client.'
+      using errcode = 'check_violation';
+  end if;
+  perform 1
+     from public.session_blocks b
+     join public.sessions sn on sn.id = b.session_id
+    where b.id = p_block_id
+      and b.session_id = p_session_id
+      and sn.client_id = p_client_id;
+  if not found then
+    -- DELIBERATELY THE SAME MESSAGE AND CODE as an unknown block. A distinct
+    -- "wrong client" error would confirm that the block exists and belongs
+    -- to someone else in this studio, which is exactly the fact the check is
+    -- here to withhold.
+    raise exception 'Unknown treatment block.' using errcode = 'no_data_found';
+  end if;
+
+
   -- Machine first: a reading without a machine cannot be reproduced, so the
   -- unit is required and must belong to the block's own studio.
   if p_studio_machine_id is null then
@@ -1158,7 +1203,7 @@ begin
 end;
 $$;
 
-comment on function public.assert_setup_scope(uuid, uuid) is
+comment on function public.assert_setup_scope(uuid, uuid, uuid, uuid) is
   '0223. INTERNAL. Resolves and LOCKS the scope every machine-settings write shares: the block''s studio through its session (both must be live), the caller''s active membership of that studio, and the machine''s ownership, service state and profile version. Takes the migration''s row locks in their fixed order - sessions, session_blocks, studio_machines - so no caller can take them in a different sequence. Called ONCE per write, not once per group, so every group of one submission is written under one consistent locked scope. Not granted to any role: it is a building block of the commands, never an entry point.';
 
 -- ---------------------------------------------------------------------------
@@ -1496,7 +1541,14 @@ create or replace function public.record_treatment_setup_group(
   p_mode_key text,
   p_group_key text,
   p_channels smallint[],
-  p_readings jsonb
+  p_readings jsonb,
+  -- THE AUTHORIZED ROUTE. Required, and carried down to
+  -- `assert_setup_scope`, which refuses a block that is not this session's
+  -- and a session that is not this client's. Studio membership alone let a
+  -- stale or tampered request append immutable readings to ANOTHER CLIENT'S
+  -- treatment (Codex, #860 4297032712).
+  p_session_id uuid,
+  p_client_id uuid
 )
 returns integer
 language plpgsql
@@ -1521,7 +1573,8 @@ begin
   -- distinction `treatment_setup_captures.setup_submission_id` exists to
   -- record.
   select * into v_scope
-    from public.assert_setup_scope(p_block_id, p_studio_machine_id);
+    from public.assert_setup_scope(
+      p_block_id, p_studio_machine_id, p_session_id, p_client_id);
 
   return public.record_setup_group_in_scope(
     p_block_id,
@@ -1540,7 +1593,7 @@ begin
 end;
 $$;
 
-comment on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb) is
+comment on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb, uuid, uuid) is
   '0223. Records ONE settings group for one treatment block. The block determines the studio and the caller must be an active member of it, so a block or machine in another studio is refused. The machine is required and its profile identity is copied at record time. Readings are append-only; recording again for the same field raises a unique violation rather than overwriting.';
 
 -- ---------------------------------------------------------------------------
@@ -1581,7 +1634,14 @@ create or replace function public.record_treatment_setup_submission(
   p_studio_machine_id uuid,
   p_mode_key text,
   p_idempotency_key text,
-  p_groups jsonb
+  p_groups jsonb,
+  -- THE AUTHORIZED ROUTE. Required, and carried down to
+  -- `assert_setup_scope`, which refuses a block that is not this session's
+  -- and a session that is not this client's. Studio membership alone let a
+  -- stale or tampered request append immutable readings to ANOTHER CLIENT'S
+  -- treatment (Codex, #860 4297032712).
+  p_session_id uuid,
+  p_client_id uuid
 )
 returns jsonb
 language plpgsql
@@ -1644,7 +1704,8 @@ begin
   -- would tell a caller with no membership of this studio something about its
   -- records. Nothing is disclosed before the caller is known to belong here.
   select * into v_scope
-    from public.assert_setup_scope(p_block_id, p_studio_machine_id);
+    from public.assert_setup_scope(
+      p_block_id, p_studio_machine_id, p_session_id, p_client_id);
 
   -- WHAT THIS KEY IS BEING USED FOR: the payload AND the identity the readings
   -- would be recorded under, canonicalised and then hashed into one value.
@@ -1891,7 +1952,7 @@ begin
 end;
 $$;
 
-comment on function public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb) is
+comment on function public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb, uuid, uuid) is
   '0223. Records ONE SAVE of machine settings - every settings group the practitioner entered - as a single atomic unit. Adds the three invariants that several separate record_treatment_setup_group calls cannot have: ATOMICITY (one call, so a failure on a later group rolls back the submission and every group already written), CROSS-GROUP CHANNEL EXCLUSIVITY (a probe cannot be claimed by two groups of one save, enforced in the database rather than only in the UI), and IDEMPOTENCY (a caller-supplied retry key, so a save repeated after a LOST RESPONSE returns the original submission with reused=true instead of appending a second one). The key is BOUND TO ITS PAYLOAD by a stored md5 digest over the canonical groups, so a key reused with a different setup identity OR different groups, channels, fields or values is REFUSED rather than absorbed - returning the original would silently discard the values just entered. Shares every scope and per-group validation rule with record_treatment_setup_group through assert_setup_scope and record_setup_group_in_scope - there is one definition of each rule, not two. Groups are written in sorted group-key order so two concurrent saves cannot deadlock on the per-group revision locks. Returns {submission_id, groups, readings, reused}. Interprets nothing clinical: no pairing of groups to areas, no copying between groups, and no assertion that an unassigned group applies to every probe.';
 
 -- ---------------------------------------------------------------------------
@@ -2740,7 +2801,20 @@ begin
       p_studio_machine_id,
       p_setup_mode_key,
       p_setup_idempotency_key,
-      p_setup_groups
+      p_setup_groups,
+      -- THE ROUTE THIS COMMAND WAS ALREADY GIVEN. It created the block in
+      -- `p_session_id` a few statements ago, and the client is the session's
+      -- own, so the binding is satisfied by construction here rather than
+      -- taken on trust from a caller - this path never had the hole
+      -- (Codex, #860 4297032712). It is passed explicitly all the same,
+      -- because the callee requires it and a derived value that disagreed
+      -- with the block would be a bug worth failing on.
+      -- `assert_session_writable(p_session_id, p_client_id)` has already
+      -- validated this pair at the top of this command, so these are the
+      -- AUTHORIZED ids rather than a re-derivation that could disagree with
+      -- the authorization just performed.
+      p_session_id,
+      p_client_id
     );
   end if;
 
@@ -2814,11 +2888,11 @@ revoke execute on function public.set_own_default_machine(uuid, uuid, text) from
 revoke execute on function public.set_own_default_machine(uuid, uuid, text) from service_role;
 grant execute on function public.set_own_default_machine(uuid, uuid, text) to authenticated;
 
-revoke execute on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb) from public;
-revoke execute on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb) from anon;
-revoke execute on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb) from authenticated;
-revoke execute on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb) from service_role;
-grant execute on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb) to authenticated;
+revoke execute on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb, uuid, uuid) from public;
+revoke execute on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb, uuid, uuid) from anon;
+revoke execute on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb, uuid, uuid) from authenticated;
+revoke execute on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb, uuid, uuid) from service_role;
+grant execute on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb, uuid, uuid) to authenticated;
 
 -- THE TWO SHARED BUILDING BLOCKS ARE NOT ENTRY POINTS, and their revokes are
 -- the load-bearing half of that sentence.
@@ -2833,10 +2907,10 @@ grant execute on function public.record_treatment_setup_group(uuid, uuid, text, 
 -- PRIVILEGES hands EXECUTE to anon, authenticated AND service_role at
 -- function-create time, which is how 0129 missed `anon` and 0164 missed
 -- `service_role`. Neither function is granted back to anything.
-revoke execute on function public.assert_setup_scope(uuid, uuid) from public;
-revoke execute on function public.assert_setup_scope(uuid, uuid) from anon;
-revoke execute on function public.assert_setup_scope(uuid, uuid) from authenticated;
-revoke execute on function public.assert_setup_scope(uuid, uuid) from service_role;
+revoke execute on function public.assert_setup_scope(uuid, uuid, uuid, uuid) from public;
+revoke execute on function public.assert_setup_scope(uuid, uuid, uuid, uuid) from anon;
+revoke execute on function public.assert_setup_scope(uuid, uuid, uuid, uuid) from authenticated;
+revoke execute on function public.assert_setup_scope(uuid, uuid, uuid, uuid) from service_role;
 
 revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid) from public;
 revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid) from anon;
@@ -2845,11 +2919,11 @@ revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, 
 
 -- The whole-save command IS an entry point: it is what the treatment form
 -- calls.
-revoke execute on function public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb) from public;
-revoke execute on function public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb) from anon;
-revoke execute on function public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb) from authenticated;
-revoke execute on function public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb) from service_role;
-grant execute on function public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb) to authenticated;
+revoke execute on function public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb, uuid, uuid) from public;
+revoke execute on function public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb, uuid, uuid) from anon;
+revoke execute on function public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb, uuid, uuid) from authenticated;
+revoke execute on function public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb, uuid, uuid) from service_role;
+grant execute on function public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb, uuid, uuid) to authenticated;
 
 -- THE INITIAL SAVE. An entry point: it is what the create form calls.
 revoke execute on function public.create_block_with_initial_setup(uuid, uuid, jsonb, jsonb, jsonb, boolean, text, text[], text, uuid, text, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric, uuid, text, text, jsonb) from public;

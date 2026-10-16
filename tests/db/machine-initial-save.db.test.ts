@@ -895,26 +895,30 @@ describe("0223 · the initial save IS idempotent per (session, retry key)", () =
 
     const again = await asUser(studio.userId, async (q) => {
       const r = await q(
-        `select public.record_treatment_setup_submission($1,$2,$3,$4,$5::jsonb) as r`,
+        `select public.record_treatment_setup_submission($1,$2,$3,$4,$5::jsonb,$6::uuid,$7::uuid) as r`,
         [
           first.block_id,
           machineId,
           "galvanic",
           "edit-key-0001",
           JSON.stringify([group("g2", [2], "90")]),
+          sessionId,
+          studio.clientId,
         ],
       );
       return r.rows[0].r as { submission_id: string; reused: boolean };
     });
     const repeat = await asUser(studio.userId, async (q) => {
       const r = await q(
-        `select public.record_treatment_setup_submission($1,$2,$3,$4,$5::jsonb) as r`,
+        `select public.record_treatment_setup_submission($1,$2,$3,$4,$5::jsonb,$6::uuid,$7::uuid) as r`,
         [
           first.block_id,
           machineId,
           "galvanic",
           "edit-key-0001",
           JSON.stringify([group("g2", [2], "90")]),
+          sessionId,
+          studio.clientId,
         ],
       );
       return r.rows[0].r as { submission_id: string; reused: boolean };

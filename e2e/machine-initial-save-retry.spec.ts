@@ -451,3 +451,139 @@ test("a lost response on the initial save is retried, not duplicated @390px", as
     ).toBe(before.readings + 3);
   });
 });
+
+// ===========================================================================
+// THE ROUTE BINDING, MOUNTED — a refusal she can SEE.
+//
+// IT LIVES IN THIS FILE because it needs the same fixture as the test above:
+// a signed-in owner, a synthetic machine with a published contract, and a
+// draft session. Duplicating eighty lines of that into its own spec would be
+// a second thing to keep in step.
+//
+// WHAT THE DATABASE TESTS CANNOT SHOW. tests/db/machine-setup-storage proves
+// six ways that the command REFUSES a block that is not this route's
+// (Codex, #860 4297032712). None of them can show that the practitioner
+// learns it refused — and a clinical save that silently does nothing is its
+// own defect: she believes the settings are recorded, moves on, and the
+// record is simply missing.
+//
+// HOW THE MISMATCH IS PRODUCED, AND WHY NOT THE OBVIOUS WAY. The first
+// version of this test moved the block into another client's session and
+// reloaded. The database refused the FIXTURE: a trigger holds
+// `session_blocks.session_id` fixed once the row exists ("A treatment record
+// cannot be re-assigned ... soft-delete this record and chart it where it
+// belongs"). That guard is right, and it means a stale page cannot produce
+// this mismatch by data moving underneath it.
+//
+// So the test produces the case Codex actually named — a TAMPERED REQUEST.
+// The save's server-action payload is intercepted and the block id is
+// swapped for one belonging to another client of the same studio. Studio
+// membership is satisfied throughout, which is exactly why membership could
+// not catch this and the lineage check had to exist.
+// ===========================================================================
+test("a setup write that is not this route's is refused, and SAID @390px", async ({
+  page,
+}) => {
+  const seed = await seedE2eStudio();
+  await loginAsOwner(page, seed);
+  const machineId = await registerMachine(seed.studioId, "Room 1 demo");
+  const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(seed);
+
+  // ANOTHER CLIENT OF THE SAME STUDIO, with a treatment of their own. Created
+  // directly, which is allowed: the trigger forbids MOVING a block, not
+  // creating one.
+  const prac = await sql<{ id: string }>(
+    `select id from public.practitioners
+      where studio_id = $1 and role = 'owner' limit 1`,
+    [seed.studioId],
+  );
+  const victim = await sql<{ block_id: string }>(
+    `with c as (
+       insert into public.clients (studio_id, name)
+       values ($1, 'Route Binding Victim') returning id
+     ), s as (
+       insert into public.sessions (studio_id, client_id, practitioner_id, modality)
+       select $1, c.id, $2, 'electrolysis' from c returning id
+     ), b as (
+       insert into public.session_blocks (studio_id, session_id)
+       select $1, s.id from s returning id
+     )
+     select id as block_id from b`,
+    [seed.studioId, prac[0]!.id],
+  );
+  const victimBlockId = victim[0]!.block_id;
+
+  await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
+  await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+  const gateOpen = await openMachinePanel(page);
+  test.skip(!gateOpen, "the machine panel is gated off in this environment");
+
+  await page.getByTestId("machine-select").selectOption(machineId);
+  await page.getByTestId("save-treatment-area").click({ timeout: T });
+
+  let blockId = "";
+  await expect
+    .poll(
+      async () => {
+        const rows = await sql<{ id: string }>(
+          `select id from public.session_blocks
+            where session_id = $1 and deleted_at is null
+            order by sort_order desc limit 1`,
+          [sessionId],
+        );
+        blockId = rows[0]?.id ?? "";
+        return blockId;
+      },
+      { timeout: T, message: "the treatment area was not created" },
+    )
+    .not.toBe("");
+
+  await page.getByTestId(/^edit-area-/).first().click({ timeout: T });
+  expect(await openMachinePanel(page)).toBe(true);
+  await expect(page.getByTestId("machine-reading-entry")).toBeVisible({
+    timeout: T,
+  });
+
+  // THE TAMPER. Every POST to this route from here on carries the OTHER
+  // client's block id in place of this one. Nothing else is altered: the
+  // session and client the action sends are still this route's, which is the
+  // precise shape of the attack — a block that is not this session's.
+  const swapped = { count: 0 };
+  await page.route(`**/clients/${clientId}/sessions/${sessionId}**`, async (route) => {
+    const body = route.request().postData();
+    if (route.request().method() !== "POST" || !body || !body.includes(blockId)) {
+      await route.continue();
+      return;
+    }
+    swapped.count += 1;
+    await route.continue({ postData: body.split(blockId).join(victimBlockId) });
+  });
+
+  await page.getByTestId("reading-current").fill("120");
+  await page.getByTestId("reading-duration").fill("300.5");
+  await page.getByTestId("reading-energy_shown").fill("1.25");
+  await page.getByTestId("machine-reading-save").click();
+
+  // SHE IS TOLD. Not a spinner that stops, not a form that closes as though
+  // it saved.
+  const message = page.getByTestId("machine-reading-message");
+  await expect(message, "the refusal was silent").toBeVisible({ timeout: T });
+  expect((await message.innerText()).trim().length).toBeGreaterThan(0);
+
+  // AND IT IS NOT REPORTED AS SAVED, which is the half that would send her
+  // away believing the record is complete.
+  await expect(page.getByTestId("machine-reading-saved")).toHaveCount(0);
+
+  // THE TAMPER ACTUALLY HAPPENED. Without this the assertions above are
+  // satisfied by an interception that never fired and a save that failed for
+  // some other reason entirely.
+  expect(swapped.count, "the block id was never swapped").toBeGreaterThan(0);
+
+  // AND NOTHING REACHED THE OTHER CLIENT'S CHART, which is the whole point.
+  const rows = await sql<{ n: string }>(
+    `select count(*)::text as n from public.treatment_setup_readings
+      where session_block_id = $1`,
+    [victimBlockId],
+  );
+  expect(rows[0]!.n, "a reading reached another client's chart").toBe("0");
+});

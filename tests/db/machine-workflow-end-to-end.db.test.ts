@@ -569,11 +569,13 @@ describe("MPX-03 · the remembered selection SAVES and RELOADS through the store
 describe("MPX-03 · readings SAVE and are RETRIEVED for the chart", () => {
   it("saves a group and reads it back for the same block", async () => {
     const studio = await seedStudio("e2e-read");
-    const { blockId } = await seedSession(studio);
+    const { blockId, sessionId } = await seedSession(studio);
     const id = await registerSynthetic(studio, "Room 1");
 
     const wrote = await asDb(studio.userId, (db) =>
       recordSetupGroup(db, {
+        sessionId: sessionId,
+        clientId: studio.clientId,
         blockId,
         machineId: id,
         modeKey: "galvanic",
@@ -599,10 +601,12 @@ describe("MPX-03 · readings SAVE and are RETRIEVED for the chart", () => {
   it("a recorded ZERO round-trips as a value, not an absence", async () => {
     // The payload sends the number as a STRING precisely so a zero survives.
     const studio = await seedStudio("e2e-zero");
-    const { blockId } = await seedSession(studio);
+    const { blockId, sessionId } = await seedSession(studio);
     const id = await registerSynthetic(studio, "Room 1");
     await asDb(studio.userId, (db) =>
       recordSetupGroup(db, {
+        sessionId: sessionId,
+        clientId: studio.clientId,
         blockId,
         machineId: id,
         modeKey: "galvanic",
@@ -626,10 +630,12 @@ describe("MPX-03 · readings SAVE and are RETRIEVED for the chart", () => {
 
   it("an absence round-trips with its reason", async () => {
     const studio = await seedStudio("e2e-absent");
-    const { blockId } = await seedSession(studio);
+    const { blockId, sessionId } = await seedSession(studio);
     const id = await registerSynthetic(studio, "Room 1");
     await asDb(studio.userId, (db) =>
       recordSetupGroup(db, {
+        sessionId: sessionId,
+        clientId: studio.clientId,
         blockId,
         machineId: id,
         modeKey: "galvanic",
@@ -656,7 +662,7 @@ describe("MPX-03 · readings SAVE and are RETRIEVED for the chart", () => {
 
   it("two probe groups both persist", async () => {
     const studio = await seedStudio("e2e-groups");
-    const { blockId } = await seedSession(studio);
+    const { blockId, sessionId } = await seedSession(studio);
     const id = await registerSynthetic(studio, "Room 1");
     for (const [group, channels, current] of [
       ["g1", [1, 2], 120],
@@ -664,6 +670,8 @@ describe("MPX-03 · readings SAVE and are RETRIEVED for the chart", () => {
     ] as const) {
       await asDb(studio.userId, (db) =>
         recordSetupGroup(db, {
+          sessionId: sessionId,
+          clientId: studio.clientId,
           blockId,
           machineId: id,
           modeKey: "galvanic",
@@ -692,10 +700,12 @@ describe("MPX-03 · readings SAVE and are RETRIEVED for the chart", () => {
   it("another studio cannot read them", async () => {
     const mine = await seedStudio("e2e-read-a");
     const other = await seedStudio("e2e-read-b");
-    const { blockId } = await seedSession(mine);
+    const { blockId, sessionId } = await seedSession(mine);
     const id = await registerSynthetic(mine, "Room 1");
     await asDb(mine.userId, (db) =>
       recordSetupGroup(db, {
+        sessionId: sessionId,
+        clientId: mine.clientId,
         blockId,
         machineId: id,
         modeKey: "galvanic",
@@ -728,6 +738,8 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
     const ana = await seedSession(studio);
     await asDb(studio.userId, (db) =>
       recordSetupGroup(db, {
+        sessionId: ana.sessionId,
+        clientId: studio.clientId,
         blockId: ana.blockId,
         machineId,
         modeKey: "galvanic",
@@ -767,6 +779,8 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
     );
     await asDb(studio.userId, (db) =>
       recordSetupGroup(db, {
+        sessionId: beaSessionId,
+        clientId: beaClientId,
         blockId: beaBlockId,
         machineId,
         modeKey: "galvanic",
@@ -831,6 +845,8 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
     const kept = await seedSession(studio);
     await asDb(studio.userId, (db) =>
       recordSetupGroup(db, {
+        sessionId: kept.sessionId,
+        clientId: studio.clientId,
         blockId: kept.blockId,
         machineId,
         modeKey: "galvanic",
@@ -853,6 +869,8 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
     const removed = await seedSession(studio);
     await asDb(studio.userId, (db) =>
       recordSetupGroup(db, {
+        sessionId: removed.sessionId,
+        clientId: studio.clientId,
         blockId: removed.blockId,
         machineId,
         modeKey: "galvanic",
@@ -909,6 +927,8 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
     const block = await seedSession(mine);
     await asDb(mine.userId, (db) =>
       recordSetupGroup(db, {
+        sessionId: block.sessionId,
+        clientId: mine.clientId,
         blockId: block.blockId,
         machineId,
         modeKey: "galvanic",
@@ -935,6 +955,8 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
     const block = await seedSession(target);
     await asDb(target.userId, (db) =>
       recordSetupGroup(db, {
+        sessionId: block.sessionId,
+        clientId: target.clientId,
         blockId: block.blockId,
         machineId,
         modeKey: "galvanic",
@@ -961,6 +983,8 @@ describe("MPX-03 · NEXT-VISIT retrieval returns one coherent prior setup", () =
     const first = await seedSession(studio);
     await asDb(studio.userId, (db) =>
       recordSetupGroup(db, {
+        sessionId: first.sessionId,
+        clientId: studio.clientId,
         blockId: first.blockId,
         machineId: id,
         modeKey: "galvanic",
@@ -982,6 +1006,8 @@ describe("MPX-03 · NEXT-VISIT retrieval returns one coherent prior setup", () =
     const second = await seedSession(studio);
     await asDb(studio.userId, (db) =>
       recordSetupGroup(db, {
+        sessionId: second.sessionId,
+        clientId: studio.clientId,
         blockId: second.blockId,
         machineId: id,
         modeKey: "galvanic",
@@ -1021,9 +1047,11 @@ describe("MPX-03 · NEXT-VISIT retrieval returns one coherent prior setup", () =
     // renderer cannot use is not a retrieval.
     const studio = await seedStudio("e2e-next-view");
     const id = await registerSynthetic(studio, "Room 1");
-    const { blockId } = await seedSession(studio);
+    const { blockId, sessionId } = await seedSession(studio);
     await asDb(studio.userId, (db) =>
       recordSetupGroup(db, {
+        sessionId: sessionId,
+        clientId: studio.clientId,
         blockId,
         machineId: id,
         modeKey: "galvanic",
@@ -1095,9 +1123,11 @@ describe("MPX-03 · the adapter itself is not lying", () => {
     // If the adapter swallowed errors into `data: []`, half the refusal tests
     // above would pass for the wrong reason. A bad machine id must surface.
     const studio = await seedStudio("e2e-adapter");
-    const { blockId } = await seedSession(studio);
+    const { blockId, sessionId } = await seedSession(studio);
     const out = await asDb(studio.userId, (db) =>
       recordSetupGroup(db, {
+        sessionId: sessionId,
+        clientId: studio.clientId,
         blockId,
         machineId: "00000000-0000-0000-0000-000000000000",
         modeKey: "galvanic",
@@ -1240,6 +1270,8 @@ describe("0223 · guidance never offers the session on screen back as history", 
     const first = await seedSession(studio);
     await asDb(studio.userId, (db) =>
       recordSetupGroup(db, {
+        sessionId: first.sessionId,
+        clientId: studio.clientId,
         blockId: first.blockId,
         machineId,
         modeKey: "galvanic",
@@ -1274,6 +1306,13 @@ describe("0223 · guidance never offers the session on screen back as history", 
     );
     await asDb(studio.userId, (db) =>
       recordSetupGroup(db, {
+        // TODAY'S session, because today's block belongs to it. The sweep
+        // that added these bound this call to the nearest enclosing
+        // seedSession, which was the EARLIER visit - and the command
+        // correctly refused a block that is not that session's. The DB run
+        // is what reported it; nothing in TypeScript could.
+        sessionId: todaySessionId,
+        clientId: studio.clientId,
         blockId: todayBlockId,
         machineId,
         modeKey: "galvanic",
@@ -1337,6 +1376,8 @@ describe("0223 · guidance never offers the session on screen back as history", 
     const only = await seedSession(studio);
     await asDb(studio.userId, (db) =>
       recordSetupGroup(db, {
+        sessionId: only.sessionId,
+        clientId: studio.clientId,
         blockId: only.blockId,
         machineId,
         modeKey: "galvanic",
