@@ -736,7 +736,9 @@ jobs:
   # legitimately skipped, and fails if any shard failed or was cancelled.
   browser-e2e:
     name: browser e2e (local stack)
-    needs: [changes, browser-e2e-shard]
+    # canonical-record rides on this STABLE required check (#825 6215529089,
+    # Codex P1 4296967177): branch protection must never point at a new name.
+    needs: [changes, browser-e2e-shard, canonical-record]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -751,6 +753,9 @@ jobs:
           FULL_MATRIX: ${{ needs.changes.outputs.full_matrix_required }}
           EXTENDED: ${{ needs.changes.outputs.browser_extended }}
           SHARDS: ${{ needs.changes.outputs.browser_shards }}
+          RECORD_RESULT: ${{ needs.canonical-record.result }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          PRODUCTION_RECORD: ${{ needs.changes.outputs.production_record }}
         run: |
           set -euo pipefail
 
@@ -778,6 +783,21 @@ jobs:
           # a green required check.
           if [ "${CHANGES_RESULT:-}" != "success" ]; then
             echo "::error::changed-path detection did not succeed (result: ${CHANGES_RESULT:-<missing>}), browser coverage cannot be proven unnecessary, so this required check fails closed"
+            exit 1
+          fi
+
+          # Canonical production record (#825 6215529089). On a docs-only
+          # docs/production/** change validate is skipped, so canonical-record is
+          # the only check that can reject a stale record. Its result is carried
+          # HERE, failing closed, rather than relying on a new check name.
+          if [ "${DOCS_ONLY:-}" = "true" ] && [ "${PRODUCTION_RECORD:-}" = "true" ]; then
+            if [ "${RECORD_RESULT:-}" != "success" ]; then
+              echo "::error::canonical production record check did not succeed (result: ${RECORD_RESULT:-<missing>}) on a production-record change, so this required check fails closed"
+              exit 1
+            fi
+            echo "canonical record : success"
+          elif [ "${RECORD_RESULT:-}" = "failure" ] || [ "${RECORD_RESULT:-}" = "cancelled" ]; then
+            echo "::error::canonical production record check reported ${RECORD_RESULT}"
             exit 1
           fi
 

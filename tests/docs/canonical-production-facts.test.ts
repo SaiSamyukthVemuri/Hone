@@ -3658,12 +3658,13 @@ describe("freshness policy controls (#825 6215529089)", () => {
   });
 
   it("4. ANY non-record later change IS caught by A5 — application, guide, or mixed", () => {
-    for (const files of [
+    const nonRecord: Array<Record<string, string>> = [
       { "app/page.tsx": "v2\n" },
       { "CLAUDE.md": "guide\n" },
       { "docs/production/current-state.md": "r2\n", "lib/x.ts": "x\n" },
       { "docs/marketing/x.md": "m\n" },
-    ]) {
+    ];
+    for (const files of nonRecord) {
       const r = throwaway();
       const recorded = r.head();
       r.land({ "docs/production/release-changelog.md": "c\n" });
@@ -3705,6 +3706,49 @@ describe("freshness policy controls (#825 6215529089)", () => {
     expect(gitPrerequisiteError("A5", true, true)).toMatch(/SHALLOW.*failure, not a pass/);
     expect(gitPrerequisiteError("A5", false, false)).toMatch(/git is not available/);
     expect(gitPrerequisiteError("A5", true, false)).toBeNull();
+  });
+
+  it("the STABLE required aggregator carries the record check, failing closed (Codex P1 4296967177)", () => {
+    // Runs the aggregator's REAL shell block from ci.yml, not a paraphrase.
+    const ci = read(".github/workflows/ci.yml");
+    const agg = ci.slice(ci.indexOf("\n  browser-e2e:\n"), ci.indexOf("\n  payment-browser-e2e:"));
+    expect(agg).toMatch(/needs: \[changes, browser-e2e-shard, canonical-record\]/);
+    expect(agg).toMatch(/RECORD_RESULT: \$\{\{ needs\.canonical-record\.result \}\}/);
+    const body = agg.slice(agg.indexOf("run: |\n") + "run: |\n".length);
+    const script = body
+      .split("\n")
+      .map((l) => l.replace(/^ {10}/, ""))
+      .join("\n");
+    const exitOf = (env: Record<string, string>) => {
+      try {
+        execFileSync("bash", ["-c", script], {
+          env: {
+            NODE_ENV: "test",
+            PATH: process.env.PATH ?? "",
+            HOME: process.env.HOME ?? "/tmp",
+            CHANGES_RESULT: "success",
+            SHARD_RESULT: "",
+            BROWSER_RUN: "false",
+            FULL_MATRIX: "false",
+            EXTENDED: "false",
+            SHARDS: "[1]",
+            ...env,
+          },
+          stdio: "ignore",
+        });
+        return 0;
+      } catch (e) {
+        return (e as { status?: number }).status ?? -1;
+      }
+    };
+    const record = { DOCS_ONLY: "true", PRODUCTION_RECORD: "true" };
+    expect(exitOf({ ...record, RECORD_RESULT: "success" })).toBe(0);
+    for (const bad of ["failure", "cancelled", "skipped", ""]) {
+      expect(exitOf({ ...record, RECORD_RESULT: bad }), `record change, result "${bad}"`).toBe(1);
+    }
+    // Not a record change: a skipped record job is legitimate; a failed one is not.
+    expect(exitOf({ DOCS_ONLY: "false", PRODUCTION_RECORD: "false", RECORD_RESULT: "skipped" })).toBe(0);
+    expect(exitOf({ DOCS_ONLY: "false", PRODUCTION_RECORD: "true", RECORD_RESULT: "failure" })).toBe(1);
   });
 
   it("measure mode WARNS distinctly and never reads as clean; enforce FAILS", () => {

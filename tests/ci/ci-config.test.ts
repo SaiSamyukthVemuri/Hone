@@ -466,7 +466,7 @@ describe("PR CI — path-aware lane selection", () => {
   it("the required browser check is a STABLE aggregator, not a dynamic shard name", () => {
     // Branch protection must never depend on "browser shard 1 (extended)".
     expect(CI).toMatch(/ {2}browser-e2e:\n {4}name: browser e2e \(local stack\)/);
-    expect(CI).toMatch(/needs: \[changes, browser-e2e-shard\]/);
+    expect(CI).toMatch(/needs: \[changes, browser-e2e-shard, canonical-record\]/);
     expect(CI).toMatch(/if: always\(\)/);
   });
 
