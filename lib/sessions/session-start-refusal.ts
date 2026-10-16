@@ -34,16 +34,22 @@ export const ASSIGNED_ELSEWHERE_RAISED = "Appointment is assigned to a different
 export function sessionStartRefusalCopy(
   code: SessionStartRefusal,
   assignedName: string | null,
+  opts: { canReassign?: boolean } = {},
 ): { title: string; body: string } {
   switch (code) {
     case "assigned_elsewhere": {
       const who = assignedName?.trim() ? assignedName.trim() : "another practitioner";
+      const base =
+        `Only ${who} can start the chart for this appointment, so the treatment record stays with ` +
+        "the person who performs it.";
+      // Move (owner reassignment) is offered ONLY for a confirmed future
+      // appointment; for a past or settled one it does not exist, so the copy
+      // names the recovery that does: the assigned practitioner charts it.
       return {
         title: `This appointment is booked with ${who}`,
-        body:
-          `Only ${who} can start the chart for this appointment, so the treatment record stays with ` +
-          "the person who performs it. To chart it yourself, a studio owner can first reassign it to you " +
-          "with Move on the appointment's calendar page.",
+        body: opts.canReassign
+          ? `${base} To chart it yourself, a studio owner can first reassign it to you with Move on the appointment's calendar page.`
+          : `${base} Ask ${who} to open it and start the chart.`,
       };
     }
     case "other_client":

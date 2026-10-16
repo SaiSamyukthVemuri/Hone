@@ -63,21 +63,35 @@ export default async function NewSessionPage({
   // refuse on their own, so the pre-check cannot widen anything.
   let refusal = appointmentId ? parseSessionStartRefusal(sp.refused) : null;
   let assignedName: string | null = null;
+  // Move (owner reassignment) exists only for a confirmed FUTURE appointment,
+  // the calendar page's isCancelable gate; the copy must not offer it otherwise.
+  let canReassign = false;
   if (appointmentId) {
     const supabase = await createClient();
-    const { data: appt } = await supabase
+    // The embed MUST name the assignment FK: since migration 0174 appointments
+    // has several practitioner relationships, and an unqualified embed is PGRST201.
+    const { data: appt, error: apptErr } = await supabase
       .from("appointments")
-      .select("client_id, practitioner_id, practitioners(display_name)")
+      .select(
+        "client_id, practitioner_id, status, starts_at, practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name)",
+      )
       .eq("id", appointmentId)
       .eq("studio_id", studio.id)
       .maybeSingle();
-    if (appt && appt.client_id === id && appt.practitioner_id && appt.practitioner_id !== practitioner.id) {
+    if (apptErr) {
+      // Fail closed on the PRESENTATION: never offer the picker on an unknown
+      // appointment. The action would still refuse on its own.
+      console.error(JSON.stringify({ event: "session_new_appointment_precheck_failed", code: apptErr.code ?? null }));
+      refusal = refusal ?? "appointment_missing";
+    } else if (appt && appt.client_id === id && appt.practitioner_id && appt.practitioner_id !== practitioner.id) {
       refusal = "assigned_elsewhere";
-      const joined = appt.practitioners as { display_name?: string | null } | { display_name?: string | null }[] | null;
+      const joined = appt.practitioner as { display_name?: string | null } | { display_name?: string | null }[] | null;
       assignedName = (Array.isArray(joined) ? joined[0]?.display_name : joined?.display_name) ?? null;
+      const startsAtMs = Date.parse(String(appt.starts_at ?? ""));
+      canReassign = appt.status === "confirmed" && Number.isFinite(startsAtMs) && startsAtMs > Date.now();
     }
   }
-  const refusalCopy = refusal ? sessionStartRefusalCopy(refusal, assignedName) : null;
+  const refusalCopy = refusal ? sessionStartRefusalCopy(refusal, assignedName, { canReassign }) : null;
 
   // PR #190 (clinical memory). The most recent previous session + its
   // blocks, condensed into the context panel below. This is the

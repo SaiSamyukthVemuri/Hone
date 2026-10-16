@@ -22,11 +22,15 @@ describe("session-start refusals (a booking assigned to a colleague is SAID, not
     expect(parseSessionStartRefusal(["assigned_elsewhere"])).toBeNull();
   });
 
-  it("names the assigned practitioner and the real recovery (owner Move), never a raw error", () => {
-    const c = sessionStartRefusalCopy("assigned_elsewhere", "SYNTH-FETT Electrologist 2");
-    expect(c.title).toBe("This appointment is booked with SYNTH-FETT Electrologist 2");
-    expect(c.body).toMatch(/Only SYNTH-FETT Electrologist 2 can start the chart/);
-    expect(c.body).toMatch(/studio owner can first reassign it to you with Move/);
+  it("names the assigned practitioner and only a recovery that EXISTS for this appointment", () => {
+    const future = sessionStartRefusalCopy("assigned_elsewhere", "SYNTH-FETT Electrologist 2", { canReassign: true });
+    expect(future.title).toBe("This appointment is booked with SYNTH-FETT Electrologist 2");
+    expect(future.body).toMatch(/Only SYNTH-FETT Electrologist 2 can start the chart/);
+    expect(future.body).toMatch(/studio owner can first reassign it to you with Move/);
+    // Past / not-confirmed: Move is not rendered on the calendar page, so it is never offered.
+    const past = sessionStartRefusalCopy("assigned_elsewhere", "SYNTH-FETT Electrologist 2");
+    expect(past.body).not.toMatch(/Move/);
+    expect(past.body).toMatch(/Ask SYNTH-FETT Electrologist 2 to open it and start the chart/);
     expect(sessionStartRefusalCopy("assigned_elsewhere", "  ").title).toBe(
       "This appointment is booked with another practitioner",
     );
@@ -48,5 +52,12 @@ describe("session-start refusals (a booking assigned to a colleague is SAID, not
     // The pre-check is studio-scoped and compares against the SIGNED-IN practitioner.
     expect(PAGE).toMatch(/\.eq\("studio_id", studio\.id\)/);
     expect(PAGE).toMatch(/appt\.practitioner_id !== practitioner\.id/);
+    // The embed names the assignment FK (bare `practitioners(` is PGRST201 since 0174),
+    // and a failed pre-check never falls through to offering the picker.
+    expect(PAGE).toMatch(/practitioners!appointments_practitioner_same_studio_fk\(display_name\)/);
+    expect(PAGE).not.toMatch(/[^!]practitioners\(display_name\)/);
+    expect(PAGE).toMatch(/if \(apptErr\) \{[\s\S]{0,400}refusal = refusal \?\? "appointment_missing"/);
+    // Move is offered only under the calendar's confirmed-and-future gate.
+    expect(PAGE).toMatch(/canReassign = appt\.status === "confirmed" && Number\.isFinite\(startsAtMs\) && startsAtMs > Date\.now\(\)/);
   });
 });
