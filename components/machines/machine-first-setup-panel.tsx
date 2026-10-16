@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { FieldLabel, fieldControlClass } from "@/components/ui/field";
@@ -257,6 +257,16 @@ export function MachineFirstSetupPanel({
   // remember which was which. The rule now lives in lib/machines/selection-state,
   // where it has an exhaustive truth table, and this component only applies it.
   // That module's header records both failures.
+  /**
+   * THE LATEST SELECTION WRITE. Overlapping picks are ordinary - she taps one
+   * machine, changes her mind, taps another - and the two requests can finish
+   * in either order. Every completion used to be applied, so an earlier one
+   * finishing last restored the older device as selected AND persisted.
+   *
+   * A ref, not state: it must be readable by a handler that started before
+   * the newer pick, and bumping it must not re-render.
+   */
+  const selectionRequestRef = useRef(0);
   const [selection, setSelection] = useState<SelectionState>(() =>
     // A stored machine that cannot be charted on is NOT a selection, but it is
     // still stored, and the reason has to be visible. `unusableSelection`
@@ -295,9 +305,17 @@ export function MachineFirstSetupPanel({
     // Step 2: the acknowledged outcome. `null` means no persister is wired,
     // which is NOT the same as a successful write and must not be reported as
     // one - `selectionSettled` is what keeps those apart.
+    // Step 2: the acknowledged outcome, APPLIED ONLY IF THIS IS STILL THE
+    // LATEST REQUEST. Two picks in quick succession overlap, and the server
+    // answers in whatever order it finishes: without this, an earlier
+    // request completing last restored the OLDER device as both selected and
+    // persisted, so the panel and the stored selection both disagreed with
+    // what she last chose (Codex, #860 4296709037).
+    const token = ++selectionRequestRef.current;
     const write = onSelectMachine
       ? await onSelectMachine({ deviceId: next, modeKey: nextMode })
       : null;
+    if (token !== selectionRequestRef.current) return;
     setSelection((prev) => selectionSettled(prev, next, write));
   };
 
@@ -311,9 +329,15 @@ export function MachineFirstSetupPanel({
   const chooseMode = async (key: string) => {
     setModeKey(key);
     setSelection((prev) => selectionRequested(prev, deviceId));
+    // SAME TOKEN AS THE DEVICE PICK, deliberately: a mode change and a device
+    // change are both writes to one stored selection, so a stale mode
+    // completion must not land after a newer device pick either. Two counters
+    // would let exactly that through.
+    const token = ++selectionRequestRef.current;
     const write = onSelectMachine
       ? await onSelectMachine({ deviceId, modeKey: key })
       : null;
+    if (token !== selectionRequestRef.current) return;
     setSelection((prev) => selectionSettled(prev, deviceId, write));
   };
 

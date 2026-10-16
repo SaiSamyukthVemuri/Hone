@@ -1,4 +1,5 @@
 import { SectionLabel } from "@/components/ui/section-label";
+import { recordedUnitLabel } from "@/lib/machines/charting";
 import type { RecordedReading } from "@/lib/machines/machine-queries";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
 import { findMode, modeFields } from "@/lib/machines/profile-contract";
@@ -210,9 +211,19 @@ export function MachinePriorSetup({
                     catalogue is honest the two strings are identical and
                     nothing is lost (Codex, 87c88017).
                   */}
-                  {r.nativeUnit ? (
+                  {/*
+                    THROUGH THE SENTINEL RULE, which this printed straight
+                    past. `device-display` and `none` are not units: rendering
+                    them literally put "1.25 device-display" in PREVIOUS
+                    TREATMENT while the recorded-history surface beside it
+                    showed the same reading as plain "1.25" (Codex, #860
+                    4296709059, the same defect that was repaired there in
+                    4288424526 and not here). A real unit, including a
+                    historical one, still prints verbatim.
+                  */}
+                  {recordedUnitLabel(r.nativeUnit) ? (
                     <span className="ml-0.5 text-neutral-500">
-                      {r.nativeUnit}
+                      {recordedUnitLabel(r.nativeUnit)}
                     </span>
                   ) : null}
                 </li>

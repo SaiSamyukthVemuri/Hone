@@ -726,9 +726,29 @@ test("create mode: choose the machine, save the block, record one save, retrieve
       (await prior.innerText()).includes("120"),
       "a superseded value must not be offered back as guidance",
     ).toBe(false);
-    // PER-FIELD PROVENANCE survives the round trip: this field's contract says
-    // the machine displays it, and the record says so too.
-    await expect(prior).toContainText("device-display");
+    // PER-FIELD UNITS survive the round trip, AND THE SENTINELS DO NOT.
+    //
+    // THIS ASSERTION USED TO REQUIRE "device-display" ON SCREEN, which was
+    // pinning the defect rather than the behaviour: `device-display` and
+    // `none` are provenance markers, not units, and rendering one put
+    // "1.40 device-display" in front of a practitioner while the
+    // recorded-history panel beside it showed the same reading as plain
+    // "1.40" (Codex, #860 4296709059). The spec reddened here on its own
+    // long-standing claim the moment the sentinel was suppressed, which is
+    // the second time this lane has had a step encoding the bug it was
+    // written around - see step 7.
+    //
+    // What it meant to prove is that each reading carries ITS OWN recorded
+    // unit, so that is what it now proves: a real unit prints, a sentinel
+    // does not, and the two are asserted together so neither can drift.
+    await expect(prior, "a real recorded unit must still print").toContainText(
+      "150µA",
+    );
+    await expect(
+      prior,
+      "a provenance sentinel is not a unit and must never reach the screen",
+    ).not.toContainText("device-display");
+    await expect(prior).not.toContainText("none");
     await noOverflow(page);
   });
 

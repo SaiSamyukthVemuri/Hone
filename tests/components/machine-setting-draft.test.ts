@@ -285,6 +285,9 @@ describe("switching machine or mode clears the collected draft", () => {
   const ENTRY_SRC = "components/machines/machine-reading-entry.tsx";
   const FIELDS_SRC = "components/machines/setting-draft-fields.tsx";
   const CONN_SRC = "components/machines/machine-first-setup-connected.tsx";
+  const PRIOR_SRC = "components/machines/machine-prior-setup.tsx";
+  const ACTIONS_SRC =
+    "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts";
   const FORM_SRC =
     "app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx";
 
@@ -473,6 +476,64 @@ describe("switching machine or mode clears the collected draft", () => {
     expect(panel).toMatch(/frozen=\{settingDraftFrozen\}/);
     const conn = read(CONN_SRC);
     expect(conn).toMatch(/settingDraftFrozen=\{settingDraftFrozen\}/);
+  });
+
+  it("a stale selection write cannot overwrite a newer pick", () => {
+    // THE DEFECT (Codex, #860 4296709037). Two picks in quick succession
+    // overlap and the server answers in whatever order it finishes. Every
+    // completion was applied, so an earlier request finishing LAST restored
+    // the older device as both selected and persisted — the panel and the
+    // stored selection then both disagreed with what she last chose.
+    //
+    // ONE counter shared by the device and mode handlers, deliberately: both
+    // write the same stored selection, so a stale mode completion must not
+    // land after a newer device pick either. Two counters would allow it.
+    const src = read(PANEL_SRC);
+    expect(src).toMatch(/const selectionRequestRef = useRef\(0\)/);
+    const tokens = src.match(/const token = \+\+selectionRequestRef\.current;/g) ?? [];
+    expect(tokens.length, "both selection writers must take a token").toBe(2);
+    const guards = src.match(/if \(token !== selectionRequestRef\.current\) return;/g) ?? [];
+    expect(guards.length, "both writers must drop a stale completion").toBe(2);
+  });
+
+  it("a post-commit read failure is reported as UNRESOLVED, not as a failure", () => {
+    // THE DEFECT (Codex, #860 4296709051). The command commits, the
+    // read-back fails, and a plain {ok:false} told the form the save had
+    // FAILED — so it neither froze the payload nor kept the retry key. An
+    // edit-and-retry then meets the digest as a mismatch, and the way out of
+    // a mismatch looks like cancel-and-recreate: a duplicate area.
+    //
+    // Only on the withSetup path, because only that command binds a retry
+    // key; without one there is no safe retry to offer.
+    const src = read(ACTIONS_SRC);
+    expect(src).toMatch(
+      /if \(blockReadErr \|\| !blockRow\) \{[\s\S]{0,1400}?return withSetup\s*\?\s*\{[\s\S]{0,200}?unresolved: true as const,/,
+    );
+    expect(src).toMatch(/error: INITIAL_SAVE_UNRESOLVED,/);
+  });
+
+  it("and the form already freezes on exactly that signal", () => {
+    // The action's new outcome is only worth anything if the host acts on
+    // it. This is the same field the lost-response path sets, which is why
+    // the two cases now behave identically — they are indistinguishable to
+    // the practitioner and must be.
+    const src = read(FORM_SRC);
+    expect(src).toMatch(/if \("unresolved" in res && res\.unresolved\) setSaveUnresolved\(true\)/);
+    expect(src).toMatch(/const draftFrozen = saveUnresolved/);
+  });
+
+  it("previous-treatment units go through the sentinel rule", () => {
+    // THE DEFECT (Codex, #860 4296709059). `device-display` and `none` are
+    // not units. Rendering them literally put "1.25 device-display" in
+    // PREVIOUS TREATMENT while the recorded-history surface beside it showed
+    // the same reading as plain "1.25" — the same defect repaired there in
+    // 4288424526 and missed here.
+    const src = read(PRIOR_SRC);
+    expect(src).toMatch(/recordedUnitLabel\(r\.nativeUnit\)/);
+    expect(
+      src,
+      "a bare nativeUnit render is how the sentinel leaked onto the screen",
+    ).not.toMatch(/\{r\.nativeUnit\}\s*\n/);
   });
 
   it("the machine opener keeps the 44px touch floor", () => {

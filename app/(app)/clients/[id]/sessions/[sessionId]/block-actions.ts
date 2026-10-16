@@ -6,6 +6,7 @@ import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { assertSessionForClient } from "@/lib/sessions/session-lineage";
 import { findProbeOptionByKey } from "@/lib/probes";
 import { normalizeChips } from "@/lib/observation-chips";
+import { INITIAL_SAVE_UNRESOLVED } from "@/lib/machines/pending-setup";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import { listStudioDevices } from "@/lib/machines/studio-devices";
@@ -285,7 +286,21 @@ function resolveStructuredProbe(
 
 export type BlockResult =
   | { ok: true; block: SessionBlock }
-  | { ok: false; error: string };
+  /**
+   * `unresolved` means THE SAVE MAY HAVE COMMITTED, and the caller must treat
+   * it as a held retry rather than a failure: freeze the payload, keep the
+   * key, and offer Save again unchanged.
+   *
+   * It is set when the command returned a block id and a LATER step failed -
+   * a lost answer rather than a failed save. Without it the form reported an
+   * ordinary error, dropped the key and left the fields editable, so the
+   * retry met the digest as a mismatch and the way out looked like
+   * cancel-and-recreate: a duplicate area (Codex, #860 4296709051).
+   *
+   * Optional, because only the withSetup path binds a retry key; a create
+   * without settings has no safe retry to offer.
+   */
+  | { ok: false; error: string; unresolved?: boolean };
 
 export type CreateBlockInput = {
   clientId: string;
@@ -1388,7 +1403,32 @@ export async function createTreatmentAreaWithEntryAction(
     .eq("id", createdBlockId)
     .single();
   if (blockReadErr || !blockRow) {
-    return { ok: false, error: GENERIC_BLOCK_COMMAND_ERROR };
+    // THE COMMAND ALREADY COMMITTED, so this is a lost ANSWER, not a failed
+    // save - and it has to be reported as one (Codex, #860 4296709051).
+    //
+    // `createdBlockId` came back, so the area and its settings are in the
+    // database and only this read-back failed. Returning a plain {ok:false}
+    // told the form the save had FAILED, so it neither froze the payload nor
+    // kept the retry key. An edit-and-retry then meets
+    // `create_block_with_initial_setup`'s digest as a mismatch, and the way
+    // out of a mismatch looks like cancel-and-recreate: a duplicate area
+    // carrying a duplicate copy of the settings.
+    //
+    // The outcome returned here is the same one a genuinely lost response
+    // produces, which is the point - the two are indistinguishable to the
+    // practitioner and must be handled identically.
+    //
+    // ONLY ON THE withSetup PATH. That command binds a retry key, so
+    // pressing Save again unchanged is answered with the original result.
+    // `create_block_with_entry` binds none, so there is no safe retry to
+    // offer and it keeps the plain failure it had.
+    return withSetup
+      ? {
+          ok: false as const,
+          error: INITIAL_SAVE_UNRESOLVED,
+          unresolved: true as const,
+        }
+      : { ok: false, error: GENERIC_BLOCK_COMMAND_ERROR };
   }
   const block = blockRow as SessionBlock;
 
