@@ -101,6 +101,15 @@ vi.mock("@/lib/supabase/server", () => ({
       return {
         select: () => ({
           eq: () => ({
+            // THE ROUTE BINDING'S QUERY: `.eq(id).eq(session_id).limit(1)`,
+            // which the reader now issues before it reads any readings
+            // (Codex, #860 4298457378). Answered with one row, because the
+            // cases in this file supply a block that IS the route's; the
+            // refusal has its own tests, in the DB suite and in a mounted
+            // payload-swap case.
+            eq: () => ({
+              limit: async () => ({ data: [{ id: "block-1" }], error: null }),
+            }),
             is: () => ({ order: result }),
             order: () => ({ limit: result }),
             gt: (_column: string, value: string) => ({

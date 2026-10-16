@@ -203,6 +203,22 @@ function pgMachineDb(q: UserQuery): MachineDb {
                     },
                   };
                 },
+                // A SECOND `eq` is the route binding - "this block, in this
+                // session" - which the reader now issues before it reads
+                // anything (Codex, #860 4298457378). This adapter runs real
+                // SQL against the real database, so the binding is exercised
+                // here rather than mocked away: a block that is not the
+                // session's returns no row and the read refuses.
+                eq(secondCol, secondValue) {
+                  return {
+                    limit(n) {
+                      return run(
+                        `${base} and ${secondCol} = $2 limit ${n}`,
+                        [value, secondValue],
+                      );
+                    },
+                  };
+                },
                 // `gt` is the KEYSET predicate: the page after the last id
                 // seen. The cursor is a PARAMETER, not interpolated text, for
                 // the same reason `in`'s ids are - a fake that builds SQL by
@@ -586,7 +602,7 @@ describe("MPX-03 · readings SAVE and are RETRIEVED for the chart", () => {
     );
     expect(wrote.ok && wrote.value).toBe(2);
 
-    const back = await asDb(studio.userId, (db) => readingsForBlock(db, blockId));
+    const back = await asDb(studio.userId, (db) => readingsForBlock(db, blockId, sessionId));
     expect(back.ok).toBe(true);
     if (!back.ok) return;
     const byField = new Map(back.value.map((r) => [r.fieldKey, r]));
@@ -624,7 +640,7 @@ describe("MPX-03 · readings SAVE and are RETRIEVED for the chart", () => {
         ],
       }),
     );
-    const back = await asDb(studio.userId, (db) => readingsForBlock(db, blockId));
+    const back = await asDb(studio.userId, (db) => readingsForBlock(db, blockId, sessionId));
     expect(back.ok && back.value[0]!.value).toEqual({ kind: "value", value: 0 });
   });
 
@@ -653,7 +669,7 @@ describe("MPX-03 · readings SAVE and are RETRIEVED for the chart", () => {
         ],
       }),
     );
-    const back = await asDb(studio.userId, (db) => readingsForBlock(db, blockId));
+    const back = await asDb(studio.userId, (db) => readingsForBlock(db, blockId, sessionId));
     expect(back.ok && back.value[0]!.value).toEqual({
       kind: "absent",
       reason: "not-legible",
@@ -690,7 +706,7 @@ describe("MPX-03 · readings SAVE and are RETRIEVED for the chart", () => {
         }),
       );
     }
-    const back = await asDb(studio.userId, (db) => readingsForBlock(db, blockId));
+    const back = await asDb(studio.userId, (db) => readingsForBlock(db, blockId, sessionId));
     expect(back.ok && back.value).toHaveLength(2);
     if (back.ok) {
       expect(back.value.map((r) => r.groupKey).sort()).toEqual(["g1", "g2"]);
@@ -714,8 +730,23 @@ describe("MPX-03 · readings SAVE and are RETRIEVED for the chart", () => {
         readings: READINGS,
       }),
     );
-    const seen = await asDb(other.userId, (db) => readingsForBlock(db, blockId));
-    expect(seen.ok && seen.value).toEqual([]);
+    const seen = await asDb(other.userId, (db) => readingsForBlock(db, blockId, sessionId));
+    // REFUSED, NOT SILENTLY EMPTY — and that is a change for the better.
+    //
+    // This used to assert `ok: true` with an empty list, because RLS hid the
+    // readings and the reader had nothing to return. The route binding now
+    // runs FIRST (Codex, #860 4298457378) and the block itself is invisible
+    // to this studio, so the read refuses before it looks at any readings.
+    //
+    // The claim the test exists for is unchanged and now stronger: another
+    // studio gets NOTHING. What moved is that it is told so, rather than
+    // handed an empty list indistinguishable from "this treatment has no
+    // settings recorded" — the very conflation round 4 removed from the
+    // surface above it.
+    expect(seen.ok, "a foreign studio must be refused, not answered").toBe(false);
+    if (!seen.ok) {
+      expect(seen.error).toMatch(/could not read settings/i);
+    }
   });
 });
 

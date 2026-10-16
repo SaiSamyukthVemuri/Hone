@@ -100,6 +100,14 @@ function fakeDb(rows: Row[], opts: FakeOptions = {}) {
         selected.push(columns);
         return {
         eq: () => ({
+          // THE ROUTE BINDING'S OWN QUERY: `.eq(id).eq(session_id).limit(1)`.
+          // The fake answers it with one row, because every case in this file
+          // is about PAGINATION and assumes the block is the route's. The
+          // binding has its own tests; what matters here is that the fake
+          // models the call so these cases still exercise the reader.
+          eq: () => ({
+            limit: async () => ({ data: [{ id: "block-1" }], error: null }),
+          }),
           is: () => ({ order: async () => ({ data: [], error: null }) }),
           order: () => ({ limit: page(null) }),
           gt: (_c: string, after: string) => ({
@@ -123,7 +131,7 @@ describe("readingsForBlock reads every page", () => {
     );
     const { db, calls } = fakeDb(rows);
 
-    const out = await readingsForBlock(db, "block-1");
+    const out = await readingsForBlock(db, "block-1", "session-1");
 
     expect(out.ok).toBe(true);
     if (!out.ok) return;
@@ -146,7 +154,7 @@ describe("readingsForBlock reads every page", () => {
     );
     const { db, calls } = fakeDb(rows, { serverMaxRows: 400 });
 
-    const out = await readingsForBlock(db, "block-1");
+    const out = await readingsForBlock(db, "block-1", "session-1");
 
     expect(out.ok).toBe(true);
     if (!out.ok) return;
@@ -174,7 +182,7 @@ describe("readingsForBlock reads every page", () => {
     }
     const { db } = fakeDb(rows, { serverMaxRows: 400 });
 
-    const out = await readingsForBlock(db, "block-1");
+    const out = await readingsForBlock(db, "block-1", "session-1");
 
     expect(out.ok).toBe(true);
     if (!out.ok) return;
@@ -197,7 +205,7 @@ describe("readingsForBlock reads every page", () => {
       row("r-2", { field_key: "duration" }),
     ]);
 
-    const out = await readingsForBlock(db, "block-1");
+    const out = await readingsForBlock(db, "block-1", "session-1");
 
     expect(out.ok).toBe(true);
     if (!out.ok) return;
@@ -215,7 +223,7 @@ describe("readingsForBlock fails CLOSED rather than returning part of a block", 
     // until the ceiling and then return 50,000 duplicates.
     const { db, calls } = fakeDb([row("r-1"), row("r-2")], { stuck: true });
 
-    const out = await readingsForBlock(db, "block-1");
+    const out = await readingsForBlock(db, "block-1", "session-1");
 
     expect(out.ok).toBe(false);
     expect(calls.length, "it must notice on the SECOND page, not at the ceiling")
@@ -227,7 +235,7 @@ describe("readingsForBlock fails CLOSED rather than returning part of a block", 
     // and calling it done - is the defect being repaired, one layer down.
     const { db } = fakeDb([{ ...row("x"), id: undefined }]);
 
-    const out = await readingsForBlock(db, "block-1");
+    const out = await readingsForBlock(db, "block-1", "session-1");
 
     expect(out.ok).toBe(false);
   });
@@ -241,7 +249,7 @@ describe("readingsForBlock fails CLOSED rather than returning part of a block", 
     );
     const { db, calls } = fakeDb(rows);
 
-    const out = await readingsForBlock(db, "block-1");
+    const out = await readingsForBlock(db, "block-1", "session-1");
 
     expect(out.ok).toBe(false);
     expect(calls).toHaveLength(BLOCK_READING_MAX_PAGES);
@@ -252,7 +260,7 @@ describe("readingsForBlock fails CLOSED rather than returning part of a block", 
     // fallback. My first spelling here asserted `out.error.message` against
     // the fallback and was wrong twice over - the shape and the precedence.
     const { db } = fakeDb([row("r-1")], { error: { message: "boom" } });
-    const out = await readingsForBlock(db, "block-1");
+    const out = await readingsForBlock(db, "block-1", "session-1");
     expect(out.ok).toBe(false);
     if (out.ok) return;
     expect(out.error).toBe("boom");
@@ -262,7 +270,7 @@ describe("readingsForBlock fails CLOSED rather than returning part of a block", 
     // The keyset, ceiling and not-a-list refusals have no server error to
     // quote, so the caller still gets a sentence rather than an empty string.
     const { db } = fakeDb([row("r-1")], { notAnArray: true });
-    const out = await readingsForBlock(db, "block-1");
+    const out = await readingsForBlock(db, "block-1", "session-1");
     expect(out.ok).toBe(false);
     if (out.ok) return;
     expect(out.error).toMatch(/could not read settings/i);
@@ -270,7 +278,7 @@ describe("readingsForBlock fails CLOSED rather than returning part of a block", 
 
   it("refuses when the client hands back something that is not a list", async () => {
     const { db } = fakeDb([row("r-1")], { notAnArray: true });
-    const out = await readingsForBlock(db, "block-1");
+    const out = await readingsForBlock(db, "block-1", "session-1");
     expect(out.ok).toBe(false);
   });
 
@@ -279,7 +287,7 @@ describe("readingsForBlock fails CLOSED rather than returning part of a block", 
     // no machine settings recorded on it yet.
     const { db, calls } = fakeDb([]);
 
-    const out = await readingsForBlock(db, "block-1");
+    const out = await readingsForBlock(db, "block-1", "session-1");
 
     expect(out.ok).toBe(true);
     if (!out.ok) return;
@@ -306,7 +314,7 @@ describe("retrieved readings keep their observation provenance", () => {
       row("r2", { field_key: "duration", observation_source: "estimated" }),
     ]);
 
-    const out = await readingsForBlock(db, "block-1");
+    const out = await readingsForBlock(db, "block-1", "session-1");
 
     expect(out.ok).toBe(true);
     if (!out.ok) return;
@@ -321,15 +329,21 @@ describe("retrieved readings keep their observation provenance", () => {
     // passed against a query that never requested it.
     const { db, selected } = fakeDb([row("r1")]);
 
-    await readingsForBlock(db, "block-1");
+    await readingsForBlock(db, "block-1", "session-1");
 
-    expect(selected[0]).toContain("observation_source");
+    // ANY of the selects, not the first: the route binding now issues its
+    // own `select("id")` on session_blocks before the readings are read, so
+    // pinning index 0 asserted against the wrong query.
+    expect(
+      selected.some((cols) => cols.includes("observation_source")),
+      "no query asked for observation_source",
+    ).toBe(true);
   });
 
   it("a row written before the column existed reads as UNKNOWN, not assumed", async () => {
     const { db } = fakeDb([row("r1", { observation_source: null })]);
 
-    const out = await readingsForBlock(db, "block-1");
+    const out = await readingsForBlock(db, "block-1", "session-1");
 
     expect(out.ok).toBe(true);
     if (!out.ok) return;
@@ -341,7 +355,7 @@ describe("retrieved readings keep their observation provenance", () => {
     // outside it cannot be typed as one of the four by a cast.
     const { db } = fakeDb([row("r1", { observation_source: "guessed" })]);
 
-    const out = await readingsForBlock(db, "block-1");
+    const out = await readingsForBlock(db, "block-1", "session-1");
 
     expect(out.ok).toBe(true);
     if (!out.ok) return;

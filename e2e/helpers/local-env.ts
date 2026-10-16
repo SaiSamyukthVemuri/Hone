@@ -41,27 +41,20 @@ const LOCAL_SERVICE_ROLE_KEY =
 const BANNED_URL_PATTERNS =
   /supabase\.co|supabase\.com|supabase\.in|pooler\.|amazonaws\.com|rds\.|azure|neon\.tech/i;
 
-const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
-
 // Query parameters a PostgreSQL client gives PRECEDENCE over the URL authority
 // (pg-connection-string, libpq). With one present, the authority this guard
-// checks is not where the client connects: `postgresql://…@127.0.0.1:63322/
-// postgres?host=prod-db.internal` would pass a hostname check and seed SQL
-// off-machine, and `?port=54322` would pass the pair check while reaching the
-// shared stack (Codex P1 on #879). So any such override is refused outright.
-const CONNECTION_OVERRIDES = new Set(["host", "hostaddr", "port", "service"]);
 
-export function isLoopbackUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    for (const key of url.searchParams.keys()) {
-      if (CONNECTION_OVERRIDES.has(key.toLowerCase())) return false;
-    }
-    return LOOPBACK_HOSTS.has(url.hostname.toLowerCase());
-  } catch {
-    return false;
-  }
-}
+// RE-EXPORTED, NOT REIMPLEMENTED. The implementation moved to
+// `lib/net/loopback.ts` so production code can use it too: the synthetic
+// profile gate was asking the same question with a substring test
+// (Codex, #860 4298457391). Everything that imported it from here still
+// does, and there is one definition rather than two that can drift.
+// A RELATIVE PATH, NOT THE `@/` ALIAS. `vitest.db.config.ts` imports this
+// module to run #879's paired-target guard at CONFIG LOAD, which Node
+// resolves before any vite alias exists — `@/lib/net/loopback` fails there
+// with "Cannot find module" and takes the whole DB suite down at startup.
+export { isLoopbackUrl } from "../../lib/net/loopback";
+import { isLoopbackUrl } from "../../lib/net/loopback";
 
 /** Refuse a half-moved stack: the API and the database must leave the default together or not at all. */
 export function assertSameStackPair(supabaseUrl: string, dbUrl: string): void {

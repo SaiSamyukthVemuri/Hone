@@ -286,6 +286,9 @@ describe("switching machine or mode clears the collected draft", () => {
   const FIELDS_SRC = "components/machines/setting-draft-fields.tsx";
   const CONN_SRC = "components/machines/machine-first-setup-connected.tsx";
   const PRIOR_SRC = "components/machines/machine-prior-setup.tsx";
+  const QUERIES_SRC = "lib/machines/machine-queries.ts";
+  const SYNTH_SRC = "lib/machines/synthetic-profile.ts";
+  const LOCAL_ENV_SRC = "e2e/helpers/local-env.ts";
   const SETUP_ACTIONS_SRC =
     "app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts";
   const ACTIONS_SRC =
@@ -614,6 +617,71 @@ describe("switching machine or mode clears the collected draft", () => {
     // the same stored selection.
     expect(src).toMatch(/disabled=\{selectable\.length === 0 \|\| selectionPending\}/);
     expect(src).toMatch(/disabled=\{selectionPending\}/);
+  });
+
+  it("the recorded-reading READ binds the block to the session in a query", () => {
+    // THE P1, AND IT IS MY OWN ROUND-8 REPAIR REPEATED (Codex, #860
+    // 4298457378). That round added `assertSessionForClient` to the read
+    // action and I reported the hole closed. It was not: the check
+    // authorizes the ROUTE — that this session really is this client's —
+    // and says nothing about the BLOCK. The query still filtered on an
+    // unbound block id and the studio-member policy admitted it, so a
+    // crafted request returned another client's captures and the chart
+    // rendered them under "Recorded this treatment".
+    //
+    // An application lineage check authorizes the route. Only a predicate
+    // in a query binds the record to it.
+    const src = read(QUERIES_SRC);
+    expect(src).toMatch(
+      /export async function readingsForBlock\([\s\S]{0,2600}?sessionId: string,\s*\n\):/,
+    );
+    expect(src).toMatch(
+      /\.from\("session_blocks"\)[\s\S]{0,200}?\.eq\("id", blockId\)[\s\S]{0,80}?\.eq\("session_id", sessionId\)/,
+    );
+  });
+
+  it("every read call site passes the authorized session with the block", () => {
+    // ENUMERATED, not spot-checked. The finding named one action; the sweep
+    // of every action taking a block id found a second — the panel's own
+    // load path, which runs on every open and needs no crafted save at all.
+    const src = read(SETUP_ACTIONS_SRC);
+    const calls = src.match(/readingsForBlock\(db, [^)]*\)/g) ?? [];
+    expect(calls.length, "no reads found — the guard is looking at nothing").toBeGreaterThan(1);
+    for (const call of calls) {
+      expect(call, "a block id travelled without its session").toMatch(
+        /readingsForBlock\(db, input\.blockId, input\.sessionId\)/,
+      );
+    }
+  });
+
+  it("the synthetic-profile gate parses the hostname instead of searching it", () => {
+    // `/127\.0\.0\.1|localhost/.test(url)` is satisfied by
+    // https://localhost.example.com and https://localhost@db.example.com,
+    // which resolve elsewhere — so on a self-hosted deployment the fixture
+    // flag enabled synthetic profiles against real data
+    // (Codex, #860 4298457391).
+    const src = read(SYNTH_SRC);
+    expect(src).toMatch(/return isLoopbackUrl\(url\)/);
+    expect(
+      src,
+      "a substring test is how the hostname check was bypassed",
+    ).not.toMatch(/\/127\\\.0\\\.0\\\.1\|localhost\/\.test/);
+  });
+
+  it("and reuses the one loopback guard rather than a second spelling", () => {
+    // Two spellings of "is this local" is how one of them ends up wrong.
+    // The implementation lives in lib so production code can import it;
+    // the e2e helper re-exports it.
+    const env = read(LOCAL_ENV_SRC);
+    // A RELATIVE path, not the `@/` alias: `vitest.db.config.ts` imports
+    // this module at CONFIG LOAD to run #879's paired-target guard, and Node
+    // resolves that before any vite alias exists — the alias took the whole
+    // DB suite down with "Cannot find module" before a test ran.
+    expect(env).toMatch(/export \{ isLoopbackUrl \} from "\.\.\/\.\.\/lib\/net\/loopback"/);
+    expect(
+      env,
+      "local-env must not carry its own copy any more",
+    ).not.toMatch(/export function isLoopbackUrl/);
   });
 
   it("the machine opener keeps the 44px touch floor", () => {

@@ -312,8 +312,13 @@ export async function loadMachineSetupContext(input: {
   // NULL WHEN THERE IS NO BLOCK, which is a third state and genuinely empty:
   // in create mode the block has no row, so nothing is recorded against it and
   // nothing failed.
+  // BOUND TO THE ROUTE'S SESSION. This call site was NOT named in the
+  // finding - the enumeration of every action taking a block id found it -
+  // and it is the one the panel uses on every open, so an unbound read here
+  // renders another client's captures under "Recorded this treatment"
+  // without anyone crafting a save at all.
   const recorded = input.blockId
-    ? await readingsForBlock(db, input.blockId)
+    ? await readingsForBlock(db, input.blockId, input.sessionId)
     : null;
   const recordedSetup = recorded?.ok ? recorded.value : [];
   const recordedSetupUnavailable = recorded !== null && !recorded.ok;
@@ -798,9 +803,15 @@ export async function readingsForBlockAction(input: {
   // id. That is the same hole pointed at a different verb, and leaving it
   // for a later round would mean knowingly shipping a clinical read with no
   // route binding.
+  // TWO CHECKS, AND THEY ANSWER DIFFERENT QUESTIONS. This one authorizes the
+  // ROUTE: that this session really is this client's, in this studio. It says
+  // nothing about the block, which is exactly the mistake round 8 made here -
+  // the check was added, the hole was reported closed, and the read still
+  // filtered on an unbound block id (Codex, #860 4298457378).
   await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
   const db = await machineDb();
-  const got = await readingsForBlock(db, input.blockId);
+  // ...and this one binds the BLOCK to that session, in the query.
+  const got = await readingsForBlock(db, input.blockId, input.sessionId);
   return got.ok ? got.value : [];
 }
 

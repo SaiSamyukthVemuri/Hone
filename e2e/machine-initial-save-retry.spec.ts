@@ -587,3 +587,152 @@ test("a setup write that is not this route's is refused, and SAID @390px", async
   );
   expect(rows[0]!.n, "a reading reached another client's chart").toBe("0");
 });
+
+// ===========================================================================
+// THE READ IS BOUND TOO — another client's captures never render here.
+//
+// ROUND 8 CLAIMED THIS WAS FIXED AND IT WAS NOT. The read action gained
+// `assertSessionForClient` and I reported the hole closed; the QUERY still
+// filtered on the block id alone, and the studio-member SELECT policy
+// admitted it. A crafted request therefore returned another client's
+// captures and the chart rendered them under "Recorded this treatment"
+// (Codex, #860 4298457378).
+//
+// The lesson is the one I had already written for the write path, two
+// rounds earlier: an application lineage check authorizes the ROUTE. Only a
+// predicate in the query binds the RECORD to it.
+//
+// Same technique as the write-side case below it: the save's payload is not
+// what is swapped here — the LOAD's is, because the panel reads what is
+// already recorded every time it opens.
+// ===========================================================================
+test("another client's recorded captures never render on this chart @390px", async ({
+  page,
+}) => {
+  const seed = await seedE2eStudio();
+  await loginAsOwner(page, seed);
+  const machineId = await registerMachine(seed.studioId, "Room 1 demo");
+  const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(seed);
+
+  await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
+  await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+  const gateOpen = await openMachinePanel(page);
+  test.skip(!gateOpen, "the machine panel is gated off in this environment");
+
+  // SEEDED AFTER THE GATE CHECK. The gate-closed run proves the open one
+  // was not vacuous by leaving the machine tables untouched, and this
+  // fixture ran BEFORE the skip — so a skipped test still wrote one
+  // capture and one reading, and the closed run stopped measuring zero.
+  // ANOTHER CLIENT OF THE SAME STUDIO, with a capture of their own carrying a
+  // value this chart never records. If it ever appears on screen, it came
+  // from their record.
+  const prac = await sql<{ id: string }>(
+    `select id from public.practitioners
+      where studio_id = $1 and role = 'owner' limit 1`,
+    [seed.studioId],
+  );
+  const victim = await sql<{ block_id: string; session_id: string }>(
+    `with c as (
+       insert into public.clients (studio_id, name)
+       values ($1, 'Read Binding Victim') returning id
+     ), s as (
+       insert into public.sessions (studio_id, client_id, practitioner_id, modality)
+       select $1, c.id, $2, 'electrolysis' from c returning id
+     ), b as (
+       insert into public.session_blocks (studio_id, session_id)
+       select $1, s.id from s returning id, session_id
+     )
+     select id as block_id, session_id from b`,
+    [seed.studioId, prac[0]!.id],
+  );
+  const victimBlockId = victim[0]!.block_id;
+
+  // A CAPTURE ON THEIR CHART, inserted directly.
+  //
+  // NOT THROUGH THE COMMAND: `sql()` here connects as the admin role, so
+  // `own_practitioner_in_studio` finds nobody and the command refuses with
+  // "Not an active member of this studio" — correctly. What this test needs
+  // is merely that foreign data EXISTS to be leaked; how it got there is not
+  // the subject, and the command's own route binding has six DB cases of its
+  // own.
+  await sql(
+    `with cap as (
+       insert into public.treatment_setup_captures
+         (studio_id, session_block_id, studio_machine_id, machine_profile_id,
+          machine_profile_version, mode_key, group_key, channels, revision)
+       values ($1, $2, $3, 'synthetic:demo-multineedle', 2, 'galvanic',
+               'g1', '{}'::smallint[], 1)
+       returning id
+     )
+     insert into public.treatment_setup_readings
+       (studio_id, session_block_id, capture_id, studio_machine_id,
+        machine_profile_id,
+        machine_profile_version, mode_key, group_key, channels, stage_key,
+        field_key, value_numeric, native_unit, decimals, revision,
+        observation_source)
+     select $1, $2, cap.id, $3, 'synthetic:demo-multineedle', 2, 'galvanic',
+            'g1', '{}'::smallint[], null, 'current', 777, 'µA', 0, 1,
+            'practitioner-entered'
+       from cap`,
+    [seed.studioId, victimBlockId, machineId],
+  );
+
+  await page.getByTestId("machine-select").selectOption(machineId);
+  await page.getByTestId("save-treatment-area").click({ timeout: T });
+
+  let blockId = "";
+  await expect
+    .poll(
+      async () => {
+        const rows = await sql<{ id: string }>(
+          `select id from public.session_blocks
+            where session_id = $1 and deleted_at is null
+            order by sort_order desc limit 1`,
+          [sessionId],
+        );
+        blockId = rows[0]?.id ?? "";
+        return blockId;
+      },
+      { timeout: T, message: "the treatment area was not created" },
+    )
+    .not.toBe("");
+
+  // THE TAMPER. Every POST to this route now carries the OTHER client's block
+  // id. The session and client it sends are still this route's — which is
+  // precisely the shape the application check cannot catch.
+  const swapped = { count: 0 };
+  await page.route(`**/clients/${clientId}/sessions/${sessionId}**`, async (route) => {
+    const body = route.request().postData();
+    if (route.request().method() !== "POST" || !body || !body.includes(blockId)) {
+      await route.continue();
+      return;
+    }
+    swapped.count += 1;
+    await route.continue({ postData: body.split(blockId).join(victimBlockId) });
+  });
+
+  // Reopening the area makes the panel load what is "already recorded".
+  await page.getByTestId(/^edit-area-/).first().click({ timeout: T });
+  expect(await openMachinePanel(page)).toBe(true);
+  await expect(page.getByTestId("machine-reading-entry")).toBeVisible({
+    timeout: T,
+  });
+
+  expect(swapped.count, "the block id was never swapped").toBeGreaterThan(0);
+
+  // THEIR VALUE IS NOWHERE ON THIS CHART. Asserted on the whole panel rather
+  // than one testid, because the claim is that it does not render AT ALL.
+  const panel = page.getByTestId("machine-first-panel");
+  await expect(
+    panel,
+    "another client's recorded value rendered on this chart",
+  ).not.toContainText("777");
+
+  // AND THE SURFACE EITHER SHOWS NOTHING OR SAYS IT COULD NOT READ — never a
+  // confident, wrong "Recorded this treatment". Both are acceptable; a
+  // foreign capture is not.
+  const recorded = page.getByTestId("machine-recorded-setups");
+  if ((await recorded.count()) > 0) {
+    await expect(recorded).not.toContainText("777");
+  }
+});

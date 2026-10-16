@@ -71,6 +71,20 @@ export type MachineDb = {
             ) => Promise<{ data: unknown; error: MachineDbError }>;
           };
         };
+        // A SECOND `eq` IS THE ROUTE BINDING: "this block, in this session".
+        // Declared rather than cast around, for the same reason as the rest
+        // of this type - a shape it does not describe is a query this module
+        // has no business performing - and this one it must perform, because
+        // an application lineage check authorizes the route while only a
+        // predicate binds the record to it (Codex, #860 4298457378).
+        eq: (
+          column: string,
+          value: unknown,
+        ) => {
+          limit: (
+            n: number,
+          ) => Promise<{ data: unknown; error: MachineDbError }>;
+        };
         // `in` is how a lookup names SPECIFIC units by id. Declared here
         // because the slice is deliberately narrow: a query shape this type
         // does not describe is one this module has no business performing.
@@ -786,7 +800,53 @@ export const BLOCK_READING_MAX_PAGES = 50;
 export async function readingsForBlock(
   db: MachineDb,
   blockId: string,
+  /**
+   * THE AUTHORIZED SESSION. Required, and checked against the block IN A
+   * QUERY before anything is read.
+   *
+   * THE DEFECT THIS CLOSES, which is my own repair of the write path
+   * repeated on the read (Codex, #860 4298457378). Round 8 added
+   * `assertSessionForClient` to the read action and I reported the hole
+   * closed. It was not: that call validates the SUPPLIED session and
+   * client are a real pair for this studio — it says nothing about the
+   * BLOCK. The read then filtered on the block id alone and the
+   * studio-member SELECT policy admitted it, so a crafted request still
+   * returned another client's captures and the chart rendered them under
+   * "Recorded this treatment".
+   *
+   * An application lineage check authorizes the ROUTE. Only a predicate in
+   * a query binds the record to it. That is the same sentence as the write
+   * path's, and I wrote it there before making the opposite mistake here.
+   *
+   * WHY VERIFY-THEN-READ IS SOUND HERE and not a time-of-check race:
+   * `session_blocks.session_id` is IMMUTABLE. A trigger refuses to move a
+   * block between sessions ("A treatment record cannot be re-assigned"),
+   * which this lane confirmed the hard way when that trigger rejected a
+   * test fixture. The pair cannot change between the check and the read,
+   * so one bounded lookup settles it for the whole paginated read that
+   * follows.
+   */
+  sessionId: string,
 ): Promise<MachineOutcome<RecordedReading[]>> {
+  // THE BINDING, AS A QUERY. Two predicates: this block, in this session.
+  // RLS still scopes the row to the caller's studio, so a block outside it
+  // is invisible here regardless.
+  const bound = await db
+    .from("session_blocks")
+    .select("id")
+    .eq("id", blockId)
+    .eq("session_id", sessionId)
+    .limit(1);
+  if (bound.error) {
+    return { ok: false, error: fail(bound.error, "Could not read settings.") };
+  }
+  if (!Array.isArray(bound.data) || bound.data.length === 0) {
+    // DELIBERATELY THE SAME MESSAGE a missing block would give. Confirming
+    // that the block exists but belongs to someone else is the fact this
+    // check exists to withhold.
+    return { ok: false, error: "Could not read settings." };
+  }
+
   const rows: ReadingRow[] = [];
   let after: string | null = null;
 

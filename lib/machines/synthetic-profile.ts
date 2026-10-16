@@ -1,4 +1,5 @@
 import "server-only";
+import { isLoopbackUrl } from "@/lib/net/loopback";
 
 import type { MachineProfile } from "./profile-contract";
 import { MACHINE_CATALOGUE } from "./catalogue";
@@ -390,7 +391,20 @@ function talksToLocalSupabase(env: NodeJS.ProcessEnv): boolean {
   const url = env.NEXT_PUBLIC_SUPABASE_URL;
   if (!url) return false;
   if (HOSTED_SUPABASE_PATTERNS.test(url)) return false;
-  return /127\.0\.0\.1|localhost/.test(url);
+  // THE HOST MUST BE LOOPBACK, NOT MERELY MENTION IT.
+  //
+  // This was `/127\.0\.0\.1|localhost/.test(url)`, a substring test, and
+  // `https://localhost.example.com` and `https://localhost@db.example.com`
+  // both satisfy it while resolving somewhere else entirely. On a
+  // self-hosted deployment that none of the platform signals cover, setting
+  // the fixture flag with such a URL enabled SYNTHETIC MACHINE PROFILES
+  // against a real studio's data (Codex, #860 4298457391).
+  //
+  // `isLoopbackUrl` parses the URL and compares the hostname, and it is the
+  // guard #879 already uses for the e2e stack pair - shared from lib rather
+  // than written a second time here, because two spellings of "is this
+  // local" is how one of them ends up wrong.
+  return isLoopbackUrl(url);
 }
 
 export function syntheticProfileEnabled(
