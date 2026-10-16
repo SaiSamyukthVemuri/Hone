@@ -7,7 +7,7 @@ import path from "node:path";
 // second desk studio goes through the receptionist chooser, never a stale
 // selection.
 
-const ctx = vi.hoisted(() => ({ result: {} as Record<string, unknown>, cleared: 0 }));
+const ctx = vi.hoisted(() => ({ result: {} as Record<string, unknown>, cleared: 0, adminCleared: 0, fulfilled: 0 }));
 
 vi.mock("next/navigation", () => ({
   redirect: (to: string) => {
@@ -24,6 +24,13 @@ vi.mock("@/lib/supabase/selected-studio", () => ({
   clearSelectedStudioId: async () => {
     ctx.cleared += 1;
   },
+}));
+
+// This routing test has no Next request/cookie jar. Admin-return behavior has
+// its own tests; model its absent remembered target at this boundary.
+vi.mock("@/lib/auth/admin-return", () => ({
+  clearAdminReturn: async () => { ctx.adminCleared += 1; },
+  fulfilAdminReturn: async () => { ctx.fulfilled += 1; return null; },
 }));
 
 const { acceptInvitationAction } = await import("@/app/(auth)/accept-invitation/actions");
@@ -43,6 +50,8 @@ const destination = (result: Record<string, unknown>) => {
 
 beforeEach(() => {
   ctx.cleared = 0;
+  ctx.adminCleared = 0;
+  ctx.fulfilled = 0;
 });
 
 describe("acceptInvitationAction routes by the accepted role", () => {
@@ -58,10 +67,14 @@ describe("acceptInvitationAction routes by the accepted role", () => {
 
   it("a practitioner acceptance is unchanged: /dashboard", async () => {
     expect(await destination({ status: "linked", role: "practitioner", choose_studio: false })).toBe("/dashboard");
+    expect(ctx.fulfilled).toBe(1);
+    expect(ctx.adminCleared).toBe(0);
   });
 
   it("a conflict still goes to the conflict page", async () => {
     expect(await destination({ status: "conflict", choose_studio: false })).toBe("/no-access?reason=invite-conflict");
+    expect(ctx.adminCleared).toBe(1);
+    expect(ctx.fulfilled).toBe(0);
   });
 });
 
