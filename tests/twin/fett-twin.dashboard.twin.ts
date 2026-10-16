@@ -130,6 +130,26 @@ it("enriches the owned twin dashboard without resetting existing work", { timeou
     }
   }
 
+  // TARGET TODAY'S ACTUAL ROSTER. The dashboard loads pinned notes and intakes
+  // ONLY for the clients on today's visible appointments, so enrichment aimed at
+  // fixed clients 1-6 is invisible whenever the remaining slots seat other
+  // clients (after 16:00 LA only 16:30 is left, and rotation seats clients
+  // 7-12). Read the roster that now exists, earliest first, and enrich THOSE.
+  const todayClients = (await adminQuery(
+    `select a.client_id, min(a.starts_at) as first_at
+       from public.appointments a
+       join public.clients c on c.id = a.client_id and c.archived_at is null
+      where a.studio_id = $1 and a.status <> 'cancelled'
+        and (a.starts_at at time zone $2)::date = (now() at time zone $2)::date
+        and a.client_id = any($3::uuid[])
+      group by a.client_id
+      order by first_at, a.client_id`,
+    [IDS.studio, TWIN.timezone, clientPool],
+  )).rows.map((r) => r.client_id as string);
+  if (todayClients.length === 0) {
+    throw new Error("Today's visible roster has no active fixture client. No dashboard enrichment was written.");
+  }
+
   // Existing dashboard reads these real domain tables; no disconnected UI cards.
   // Only fill absent fixture fields/rows. Never replace a presenter's edits.
   const notes = [
@@ -140,14 +160,18 @@ it("enriches the owned twin dashboard without resetting existing work", { timeou
     "SYNTHETIC: check aftercare questions and agree the next booking.",
     "SYNTHETIC: allow extra time for the first consultation.",
   ];
-  for (const [index, text] of notes.entries()) {
-    const clientId = IDS.client(index + 1);
-    if (!activeClientIds.has(clientId)) continue;
+  // One note per roster client, keyed BY CLIENT and only where that client has
+  // no pinned note yet: a re-run later in the day reaches newly visible
+  // clients, never duplicates one, and never overwrites a presenter's note.
+  for (const [index, clientId] of todayClients.slice(0, notes.length).entries()) {
     await adminQuery(
       `insert into public.client_pinned_notes
          (id, studio_id, client_id, text, created_by_practitioner_id)
-       values ($1, $2, $3, $4, $5) on conflict (id) do nothing`,
-      [twinId(`dashboard:pinned-note:${index + 1}`), IDS.studio, clientId, text, owner.id],
+       select $1, $2, $3, $4, $5
+        where not exists (
+          select 1 from public.client_pinned_notes where studio_id = $2 and client_id = $3)
+       on conflict (id) do nothing`,
+      [twinId(`dashboard:pinned-note:client:${clientId}`), IDS.studio, clientId, notes[index], owner.id],
     );
   }
 
@@ -165,8 +189,13 @@ it("enriches the owned twin dashboard without resetting existing work", { timeou
   // Mirror the existing E2E intake fixture. These are explicitly synthetic,
   // partial answers: no consent/acknowledgement, signature, review or send
   // is invented. The real review page must continue to expose missing answers.
-  for (const [clientIndex, status] of [[3, "in_progress"], [4, "submitted"], [6, "in_progress"]] as const) {
-    if (!activeClientIds.has(IDS.client(clientIndex))) continue;
+  // On roster positions (not fixed clients), for the same visibility reason.
+  const intakePlan = ([[1, "in_progress"], [2, "submitted"], [3, "in_progress"]] as const)
+    .filter(([pos]) => pos < todayClients.length)
+    .map(([pos, status]) => [todayClients[pos]!, status] as const);
+  // A one-client roster still gets one visible intake.
+  if (intakePlan.length === 0) intakePlan.push([todayClients[0]!, "in_progress"]);
+  for (const [clientId, status] of intakePlan) {
     await adminQuery(
       `insert into public.client_intake_forms
          (id, studio_id, client_id, status, responses, submitted_at)
@@ -176,7 +205,7 @@ it("enriches the owned twin dashboard without resetting existing work", { timeou
          select 1 from public.client_intake_forms
           where studio_id = $2 and client_id = $3 and deleted_at is null)
        on conflict (id) do nothing`,
-      [twinId(`dashboard:intake:${clientIndex}`), IDS.studio, IDS.client(clientIndex), status],
+      [twinId(`dashboard:intake:client:${clientId}`), IDS.studio, clientId, status],
     );
   }
 
@@ -204,16 +233,22 @@ it("enriches the owned twin dashboard without resetting existing work", { timeou
        (select count(*)::int from public.appointments where studio_id = $1
           and (starts_at at time zone $2)::date = (now() at time zone $2)::date
           and status <> 'cancelled') as today,
-       (select count(*)::int from public.client_pinned_notes where studio_id = $1) as pinned_notes,
-       (select count(*)::int from public.client_intake_forms where studio_id = $1 and deleted_at is null) as intakes,
+       -- Counted ONLY for today's roster: what the dashboard can actually show.
+       (select count(distinct client_id)::int from public.client_pinned_notes
+         where studio_id = $1 and client_id = any($3::uuid[])) as pinned_notes,
+       (select count(distinct client_id)::int from public.client_intake_forms
+         where studio_id = $1 and deleted_at is null and client_id = any($3::uuid[])) as intakes,
        (select count(*)::int from public.clients where studio_id = $1
           and archived_at is null
           and extract(month from date_of_birth) = extract(month from (now() at time zone $2))) as birthdays`,
-    [IDS.studio, TWIN.timezone],
+    [IDS.studio, TWIN.timezone, todayClients],
   )).rows[0] as { today: number; pinned_notes: number; intakes: number; birthdays: number };
   expect(facts.today, "The presenter dashboard still has no appointments today").toBeGreaterThan(0);
-  expect(facts.pinned_notes).toBeGreaterThanOrEqual(notes.filter((_, i) => activeClientIds.has(IDS.client(i + 1))).length);
-  expect(facts.intakes).toBeGreaterThanOrEqual([3, 4, 6].filter((i) => activeClientIds.has(IDS.client(i))).length);
+  // Every roster client (up to the note count) carries a visible pinned note,
+  // and the planned intakes sit on roster clients, so the receipt can no longer
+  // pass on studio-wide rows the dashboard never shows.
+  expect(facts.pinned_notes, "pinned notes visible on today's cards").toBe(Math.min(todayClients.length, notes.length));
+  expect(facts.intakes, "intakes visible on today's cards").toBeGreaterThanOrEqual(1);
   expect(facts.birthdays).toBeGreaterThanOrEqual(1);
   expect((await validateTwin()).state).toBe("verified");
   // No emails, tokens or links in the receipt.
