@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -216,10 +216,22 @@ export function freshnessOutcome(
   return { kind: "fail", message: `${rule} (enforced): ${detail}` };
 }
 
+/**
+ * Emit a workflow command so GitHub Actions actually PARSES it. Actions only
+ * recognises "::warning" at the very START of a line, and vitest's console
+ * interception prefixes output with colour resets ("\e[22m\e[39m::warning"),
+ * so console.log silently produced no annotation: a stale record looked like a
+ * green job with nothing on the PR (#887). Written straight to fd 1, on its own
+ * line, it bypasses that interception.
+ */
+export function emitWorkflowCommand(line: string, write: (text: string) => void = (t) => writeSync(1, t)): void {
+  write(`\n${line}\n`);
+}
+
 /** One verdict for a freshness fact: fresh passes; stale fails or warns by mode. */
 function freshnessVerdict(rule: string, fresh: boolean, detail: string): void {
   const out = freshnessOutcome(FRESHNESS, rule, fresh, detail);
-  if (out.kind === "warn") console.log(out.line);
+  if (out.kind === "warn") emitWorkflowCommand(out.line);
   if (out.kind === "fail") expect.fail(out.message);
 }
 
@@ -3756,6 +3768,15 @@ describe("freshness policy controls (#825 6215529089)", () => {
     const warn = freshnessOutcome("measure", "A5", false, "stale\nrecord");
     expect(warn).toEqual({ kind: "warn", line: "::warning title=Canonical record STALE (non-blocking, A5)::stale record" });
     expect(freshnessOutcome("enforce", "A5", false, "stale")).toEqual({ kind: "fail", message: "A5 (enforced): stale" });
+    // The emitted bytes put the command at the START of its own line, with no
+    // prefix: Actions ignores a workflow command anywhere else (#887 run
+    // 38935982909 lost its annotation to vitest's colour prefix).
+    let written = "";
+    emitWorkflowCommand((warn as { line: string }).line, (t) => (written += t));
+    const lines = written.split("\n");
+    expect(lines.some((l) => l.startsWith("::warning title=Canonical record STALE"))).toBe(true);
+    expect(written.startsWith("\n")).toBe(true);
+    expect(read("tests/docs/canonical-production-facts.test.ts")).not.toMatch(/console\.log\(out\.line\)/);
   });
 
   it("6. the strict paths really run: docs-PR job, push/record validate, nightly — all with full history", () => {
