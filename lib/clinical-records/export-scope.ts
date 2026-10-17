@@ -198,7 +198,12 @@ export type ExportEntrySource = {
   thermolysis_duration_seconds: number | null;
   galvanic_ma: number | null;
   galvanic_duration_seconds: number | null;
-  galvanic_intensity_percent: number | null;
+  // NOT galvanic_intensity_percent: a RETIRED reading (Codex P1 4303753479).
+  // The live chart omits it from every clinical display so it can't be read
+  // as a current setting (components/entry-row.tsx, "Galvanic intensity % is
+  // a DEPRECATED reading"; Policy A in docs/runbooks/
+  // chloe-charting-unification-rollout.md). It stays only in the raw data
+  // export, so this printout never even selects it.
   units_of_lye: number | null;
   pulse_delay_seconds: number | null;
   minutes_performed: number | null;
@@ -311,7 +316,6 @@ function exportEntry(e: ExportEntrySource): ExportedEntry {
       ["Thermolysis duration", e.thermolysis_duration_seconds, "s"],
       ["Galvanic current", e.galvanic_ma, "mA"],
       ["Galvanic duration", e.galvanic_duration_seconds, "s"],
-      ["Galvanic intensity", e.galvanic_intensity_percent, "%"],
       ["Units of lye", e.units_of_lye],
       ["Pulse delay", e.pulse_delay_seconds, "s"],
       ["Intensity", e.intensity],

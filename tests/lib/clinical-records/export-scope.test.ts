@@ -224,7 +224,6 @@ describe("buildClinicalRecordsDocument is an allow-list", () => {
     thermolysis_duration_seconds: 4,
     galvanic_ma: 0.3,
     galvanic_duration_seconds: 6,
-    galvanic_intensity_percent: null,
     units_of_lye: null,
     pulse_delay_seconds: 1.5,
     minutes_performed: null,
@@ -376,6 +375,51 @@ describe("entries of a filtered-out (soft-deleted) block are omitted (Codex P1 4
   it("a true legacy entry (no block) still prints at session level, and a live block keeps its entry", () => {
     expect(s.entries.map((e) => e.id)).toEqual(["legacy"]);
     expect(s.blocks[0].entries.map((e) => e.id)).toEqual(["in-live"]);
+  });
+});
+
+describe("the RETIRED galvanic % never prints as a reading (Codex P1 4303753479)", () => {
+  it("a legacy entry's galvanic_intensity_percent is omitted, beside the active galvanic readings", () => {
+    const doc = buildClinicalRecordsDocument({
+      sessions: [
+        {
+          id: "s8",
+          started_at: "2026-10-01T15:00:00Z",
+          ended_at: null,
+          modality: "electrolysis",
+          session_notes: null,
+          performed_by_practitioner_id: null,
+          practitioner_id: null,
+          record_status: null,
+          finalized_at: null,
+          aftercare_and_risks_explained_at: null,
+        },
+      ],
+      entries: [
+        {
+          id: "e8",
+          session_id: "s8",
+          block_id: null,
+          area: "chin",
+          created_at: "2026-10-01T15:01:00Z",
+          galvanic_ma: 0.4,
+          galvanic_duration_seconds: 5,
+          // A row from before the reading was retired: the column is non-null.
+          galvanic_intensity_percent: 37,
+        } as unknown as ExportEntrySource,
+      ],
+      notes: [],
+      practitionerNameById: new Map(),
+    });
+    const readings = doc.sessions[0].entries[0].readings;
+    expect(readings).toEqual(
+      expect.arrayContaining([
+        { label: "Galvanic current", value: "0.4 mA" },
+        { label: "Galvanic duration", value: "5 s" },
+      ]),
+    );
+    expect(readings.map((r) => r.label)).not.toContain("Galvanic intensity");
+    expect(JSON.stringify(doc)).not.toContain("37");
   });
 });
 

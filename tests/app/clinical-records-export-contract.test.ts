@@ -125,6 +125,16 @@ describe("HON-46 export reads exclude private and payment data", () => {
     expect(page).toContain("superseded, not the current note");
   });
 
+  it("never selects the RETIRED galvanic % (Codex P1 4303753479; live chart: components/entry-row.tsx)", () => {
+    expect(code(FILES.queries)).not.toContain("galvanic_intensity_percent");
+    expect(code(FILES.scope)).not.toMatch(/\bgalvanic_intensity_percent:|e\.galvanic_intensity_percent/);
+    // The live chart's own rule, which this mirrors, is still in place.
+    // (Read raw: the rule is stated in a comment, which code() strips.)
+    expect(readFileSync(path.join(ROOT, "components/entry-row.tsx"), "utf8")).toContain(
+      "Galvanic intensity % is a DEPRECATED reading",
+    );
+  });
+
   it("selects the probe-lot confirmation (Codex P2 4302799069)", () => {
     expect(code(FILES.queries)).toMatch(/probe_lot_number, probe_lot_confirmed,/);
   });
