@@ -35,10 +35,14 @@ afterAll(async () => {
 
 /** A completed, CHARTED visit at a studio with no payment account and no card. */
 async function cardlessChartedVisit(): Promise<PaymentScenario & { entryId: string }> {
+  // The visit is BOOKED at PRICE, so 0187 snapshots that as the settlement's
+  // quoted amount: the proof is "the FULL visit price is outstanding", not
+  // "some amount can be marked outstanding" (Codex P2 4301066739).
   const s = await seedEligibleQuickCheckoutScenario({
     label: "hon45",
     connect: "missing_account",
     withCard: false,
+    bookedService: { name: "Electrolysis 60", priceCents: PRICE },
   });
   created.push(s.studioId);
   if (!s.sessionId) throw new Error("hon45: the seed did not create a session");
@@ -71,7 +75,7 @@ async function supersede(userId: string, studioId: string, targetId: string, met
 
 async function settlements(studioId: string) {
   const r = await adminQuery(
-    `select id, method, amount_cents, superseded_at, supersedes_id, supersede_reason
+    `select id, method, amount_cents, quoted_amount_cents, superseded_at, supersedes_id, supersede_reason
        from public.appointment_settlements where studio_id = $1 order by recorded_at`,
     [studioId],
   );
@@ -79,6 +83,7 @@ async function settlements(studioId: string) {
     id: string;
     method: string;
     amount_cents: number;
+    quoted_amount_cents: number | null;
     superseded_at: string | null;
     supersedes_id: string | null;
     supersede_reason: string | null;
@@ -151,8 +156,16 @@ describe("HON-45 — a cardless clinic completes a charted visit with the amount
 
     const rows = await settlements(s.studioId);
     expect(rows).toHaveLength(1);
-    // 0187: for still_owes the one amount column is the amount OUTSTANDING.
-    expect(rows[0]).toMatchObject({ method: "still_owes", amount_cents: PRICE, superseded_at: null });
+    // 0187: for still_owes the one amount column is the amount OUTSTANDING,
+    // and the server snapshots the visit's price as quoted_amount_cents. The
+    // outstanding amount IS the full visit price, not a partial one.
+    expect(rows[0]).toMatchObject({
+      method: "still_owes",
+      amount_cents: PRICE,
+      quoted_amount_cents: PRICE,
+      superseded_at: null,
+    });
+    expect(rows[0].amount_cents).toBe(rows[0].quoted_amount_cents);
 
     // No card money exists or was created, and the outstanding record does not
     // block a later payment (0187: still_owes is deliberately non-blocking).
