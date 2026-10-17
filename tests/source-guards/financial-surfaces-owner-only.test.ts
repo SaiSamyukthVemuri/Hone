@@ -131,6 +131,20 @@ function awaitedNames(region: string): string[] {
   );
 }
 
+/**
+ * The role literals inside a `check (role in (…))` list.
+ *
+ * BROAD BY CONSTRUCTION (Codex P2 4303373303). This was `/'([a-z_]+)'/g`, which
+ * silently DROPPED any role containing a capital, a digit or a hyphen — so
+ * adding `'studio-admin'` left the parsed domain equal to the expected pair and
+ * the tripwire passed WHILE THE ROLE EXISTED. That is this assertion failing at
+ * its one job, for an ordinary naming choice, and `'studio-admin'` is plausible
+ * precisely because the ruling was phrased "owner/admins".
+ */
+function roleLiteralsIn(list: string): string[] {
+  return [...list.matchAll(/'([^']+)'/g)].map((m) => m[1]).sort();
+}
+
 /** Every `page.tsx` under `rel`, recursively, as repo-relative paths. */
 function discoverPages(rel: string): string[] {
   const out: string[] = [];
@@ -335,6 +349,24 @@ describe("#824: financial surfaces refuse a non-owner before any read", () => {
     }
   });
 
+  it("CONTROL: a third role is seen whatever it is named", () => {
+    // PERMANENT, not a one-off mutant. The previous parser dropped exactly
+    // these shapes, so the tripwire above would have stayed green while a
+    // third role existed. Each name below must be PARSED, and must therefore
+    // make the domain differ from the expected pair.
+    for (const bad of ["studio-admin", "frontDesk", "admin2"]) {
+      const list = `'owner', 'practitioner', '${bad}'`;
+      const parsed = roleLiteralsIn(list);
+      expect(parsed, `${bad} must be parsed, not dropped`).toContain(bad);
+      expect(
+        parsed,
+        `${bad} must make the role domain differ from the expected pair`,
+      ).not.toEqual(["owner", "practitioner"]);
+    }
+    // And the parser still reads the ordinary case correctly.
+    expect(roleLiteralsIn("'owner', 'practitioner'")).toEqual(["owner", "practitioner"]);
+  });
+
   it("practitioners.role admits no third role, so owner-only is unambiguous", () => {
     // THE ONE GENUINELY NEW GUARANTEE IN THIS PR. "Owner/admins" resolves to
     // owner-only because there IS no admin studio role. The only "admin" in
@@ -356,7 +388,7 @@ describe("#824: financial surfaces refuse a non-owner before any read", () => {
       const columns = parenBody(sql, create.index + create[0].length - 1);
       const check = /check\s*\(\s*role\s+in\s*\(([^)]*)\)/i.exec(columns);
       if (check) {
-        found.push([...check[1].matchAll(/'([a-z_]+)'/g)].map((m) => m[1]).sort());
+        found.push(roleLiteralsIn(check[1]));
       }
     }
     // NON-VACUITY: the constraint must be FOUND on practitioners itself, so
