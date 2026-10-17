@@ -475,9 +475,22 @@ describe("SOURCE CONTRACT: the derivative introduces no public surface", () => {
     // downscaled image. This pins the modal action to row.storage_path.
     const src = readFileSync("app/(app)/clients/[id]/images/actions.ts", "utf8");
     expect(src).toMatch(/createSignedUrl\(\s*row\.storage_path/);
-    // and it must not derive a thumb key anywhere in that action's file region
-    const afterSigner = src.slice(src.indexOf("getTreatmentImageSignedUrlAction"));
-    expect(afterSigner).not.toMatch(/buildTreatmentImageThumbPath/);
+    // FETT thumbnail recovery added an opt-in `variant: "thumb"` for the GRID's
+    // re-mint. The thumb key may be derived ONLY inside that branch; the
+    // default (no variant) path signs the row's own path.
+    const signer = src.slice(
+      src.indexOf("export async function getTreatmentImageSignedUrlAction"),
+      src.indexOf("export async function updateTreatmentImageNoteAction"),
+    );
+    const thumbBranch = signer.slice(
+      signer.indexOf('if (input.variant === "thumb") {'),
+      signer.indexOf("return { ok: true, url: thumb.signedUrl };"),
+    );
+    expect(thumbBranch.length).toBeGreaterThan(0);
+    expect(signer.replace(thumbBranch, "")).not.toMatch(/buildTreatmentImageThumbPath/);
+    // ...and the modal itself never asks for a variant: it gets the ORIGINAL.
+    const mgr = readFileSync("app/(app)/clients/[id]/images/TreatmentImagesManager.tsx", "utf8");
+    expect(mgr).toMatch(/getTreatmentImageSignedUrlAction\(\{ imageId: img\.id \}\)/);
   });
 });
 

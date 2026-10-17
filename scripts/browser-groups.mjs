@@ -238,6 +238,12 @@ export const BROWSER_GROUPS = {
       // STUDIO-READY-03b (#824): the owner console's composition of the
       // delivery, SMS and payment-country authorities.
       "owner-console-overview.spec.ts",
+      // FETT photos (HON-43): Photos-tab grid thumbnails survive a reload and
+      // the 60 s signed-URL expiry. Here and not in `sessions` for UI-04's two
+      // reasons: /clients/** has no PATH_TO_GROUP pattern (a photo diff already
+      // runs extended) and `sessions` carries a cost pin. Needs REAL storage,
+      // so it SELF-SKIPS in CI (no storage-api); its evidence is a local run.
+      "fett-photos-thumbnail-recovery.spec.ts",
       // OWNER-CAP Slice 1: /dashboard/capacity. This group's stated scope is
       // already "owner/admin, onboarding, studio setup AND CAPACITY", and the
       // spec is exactly an owner-authority surface — an owner reaches the

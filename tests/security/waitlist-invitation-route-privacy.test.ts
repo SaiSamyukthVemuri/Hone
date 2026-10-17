@@ -69,6 +69,7 @@ const CLASSIFIED_NON_BEARER: ReadonlyArray<{ prefix: string; why: string }> = [
   { prefix: "/clients", why: "authenticated app route; the segment is a client row id" },
   { prefix: "/clients/[id]/sessions", why: "authenticated app route nested under a client; the segment is a session row id and the client id above it is equally not a credential" },
   { prefix: "/e2e-fault", why: "E2E fault-injection harness, not a production surface" },
+  { prefix: "/ingest", why: "same-origin PostHog proxy (app/ingest/[...path], #828 G-07/G-26); the catch-all segments are PostHog SDK endpoint paths (e, flags, static/<version>, array/<public project key>), allowlisted by prefix, never a Hone credential" },
 ];
 
 /** Next route-group segment: `(app)`, `(auth)` — on disk, absent from the URL. */
