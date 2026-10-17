@@ -221,6 +221,12 @@ export const BROWSER_GROUPS = {
     specs: [
       "invitation-reconciliation.spec.ts",
       "invite-only.spec.ts",
+      // FETT photos (HON-43): Photos-tab grid thumbnails survive a reload and
+      // the 60 s signed-URL expiry. Here and not in `sessions` for UI-04's two
+      // reasons: /clients/** has no PATH_TO_GROUP pattern (a photo diff already
+      // runs extended) and `sessions` carries a cost pin. Needs REAL storage,
+      // so it SELF-SKIPS in CI (no storage-api); its evidence is a local run.
+      "fett-photos-thumbnail-recovery.spec.ts",
       // OWNER-CAP Slice 1: /dashboard/capacity. This group's stated scope is
       // already "owner/admin, onboarding, studio setup AND CAPACITY", and the
       // spec is exactly an owner-authority surface — an owner reaches the
@@ -310,6 +316,10 @@ export const BROWSER_GROUPS = {
       "onboarding.spec.ts",
       "quick-import.spec.ts",
       "welcome-email-admin.spec.ts",
+      // SMS-SENDER-REG-01 (#844): the mounted no-lost-update proof of the
+      // operator's registration form on /admin/studios/[id] (two operators,
+      // stale submit refused, refresh, safe resubmit). Admin surface.
+      "sms-registration-stale-form.spec.ts",
       "practitioner-availability-compat.spec.ts",
       "practitioner-booking-studio-b.spec.ts",
       "practitioner-quick-book-studio-b.spec.ts",

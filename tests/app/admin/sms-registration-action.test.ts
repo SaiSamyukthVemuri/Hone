@@ -63,11 +63,26 @@ describe("recordSmsRegistrationFormAction", () => {
       p_status: "approved",
       p_missing: null,
       p_provider_reference: null,
+      p_expected_updated_at: null,
     });
+  });
+
+  it("passes back the version of the record the form showed, exactly as given (Codex P2 4266275222)", async () => {
+    rpc.mockResolvedValue({ data: [{ result: "recorded", registration_id: "r", kind: "us_10dlc" }], error: null });
+    const shown = "2026-10-14T03:12:45.123456+00:00";
+    await recordSmsRegistrationFormAction(STUDIO, null, form({ ...valid, expected_updated_at: shown }));
+    expect(rpc).toHaveBeenCalledWith("record_studio_sms_sender_registration", expect.objectContaining({ p_expected_updated_at: shown }));
+  });
+
+  it("a malformed version is refused before the command, and audited", async () => {
+    const out = await recordSmsRegistrationFormAction(STUDIO, null, form({ ...valid, expected_updated_at: "yesterday-ish" }));
+    expect(out).toMatchObject({ ok: false, result: "invalid_input" });
+    expect(rpc).not.toHaveBeenCalled();
   });
 
   it.each([
     ["sender_changed", /number changed after this page loaded/],
+    ["stale_record", /changed after this page loaded\. Nothing was recorded; reload/],
     ["sender_has_no_number", /no number yet/],
     ["no_live_sender", /no live SMS sender/],
   ])("the command's %s comes back as an error message, not a throw", async (result, message) => {
@@ -112,7 +127,7 @@ describe("recordSmsRegistrationFormAction", () => {
   it("a recorded write stays recorded even if refreshing the page cache throws", async () => {
     rpc.mockResolvedValue({ data: [{ result: "recorded", registration_id: "r", kind: "us_10dlc" }], error: null });
     cache.throws = true;
-    expect(await recordSmsRegistrationFormAction(STUDIO, null, form(valid))).toEqual({ ok: true, result: "recorded" });
+    expect(await recordSmsRegistrationFormAction(STUDIO, null, form(valid))).toEqual({ ok: true, result: "recorded", phoneNumber: "+12125550123" });
   });
 
   it("refuses before the command without a sender id or a supported number", async () => {
