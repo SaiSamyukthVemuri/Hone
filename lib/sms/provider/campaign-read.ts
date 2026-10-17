@@ -16,9 +16,13 @@ import type { ProviderResult } from "./types";
 // The observation is normalised by one pure function, so the Twilio adapter
 // and the fake cannot disagree about what a response means:
 //   * no campaign on the service              -> { campaignSid: null, status: "none" }
-//   * exactly one campaign, QE sid, known status -> that campaign
-//   * anything else (several campaigns, a malformed SID or an unknown status,
-//     a missing list)                          -> null: unreadable, NOTHING is recorded
+//   * exactly one campaign with a QE sid        -> that campaign; VERIFIED is the
+//     ONLY status that records as verified. SUSPENDED and any status Hone does
+//     not know yet are RECORDED as non-verified (suspended / unrecognized), so a
+//     campaign that leaves VERIFIED always replaces a verified record and can
+//     never be dropped as "unreadable" (Codex P1 4301691408)
+//   * anything else (several campaigns, a malformed SID or status, a missing
+//     list)                                    -> null: unreadable, NOTHING is recorded
 // ===========================================================================
 
 export type ObservedCampaign = { campaignSid: string | null; status: CampaignStatus };
@@ -30,11 +34,12 @@ export interface SmsCampaignReader {
 const QE_SID = /^QE[0-9a-fA-F]{32}$/;
 
 /** Twilio's campaign_status values, and the 0229 status each records as. */
-const STATUS: Readonly<Record<string, Exclude<CampaignStatus, "none">>> = {
+const STATUS: Readonly<Record<string, Exclude<CampaignStatus, "none" | "unrecognized">>> = {
   VERIFIED: "verified",
   PENDING: "pending",
   IN_PROGRESS: "in_progress",
   FAILED: "failed",
+  SUSPENDED: "suspended",
 };
 
 /**
@@ -52,8 +57,10 @@ export function normalizeUsA2pCampaigns(json: unknown): ObservedCampaign | null 
   const item = list[0] as { sid?: unknown; campaign_status?: unknown } | null;
   if (!item || typeof item !== "object") return null;
   if (typeof item.sid !== "string" || !QE_SID.test(item.sid)) return null;
-  if (typeof item.campaign_status !== "string") return null;
-  const status = STATUS[item.campaign_status];
-  if (!status) return null;
+  if (typeof item.campaign_status !== "string" || item.campaign_status.trim() === "") return null;
+  // Own keys only: a status such as "constructor" is unknown, not a lookup hit.
+  const status = Object.prototype.hasOwnProperty.call(STATUS, item.campaign_status)
+    ? STATUS[item.campaign_status]
+    : "unrecognized";
   return { campaignSid: item.sid, status };
 }

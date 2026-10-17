@@ -20,8 +20,15 @@ describe("normalizeUsA2pCampaigns", () => {
       ["PENDING", "pending"],
       ["IN_PROGRESS", "in_progress"],
       ["FAILED", "failed"],
+      ["SUSPENDED", "suspended"],
     ] as const) {
       expect(normalizeUsA2pCampaigns({ compliance: [{ sid: QE, campaign_status: raw }] })).toEqual({ campaignSid: QE, status });
+    }
+  });
+
+  it("a status that is not VERIFIED is RECORDED as non-verified, never dropped (Codex P1 4301691408)", () => {
+    for (const raw of ["verified", "APPROVED", "SOMETHING_NEW", "constructor", "__proto__"]) {
+      expect(normalizeUsA2pCampaigns({ compliance: [{ sid: QE, campaign_status: raw }] }), raw).toEqual({ campaignSid: QE, status: "unrecognized" });
     }
   });
 
@@ -34,8 +41,8 @@ describe("normalizeUsA2pCampaigns", () => {
       { compliance: [null] },
       { compliance: [{ sid: QE, campaign_status: "VERIFIED" }, { sid: QE, campaign_status: "VERIFIED" }] },
       { compliance: [{ sid: "QE123", campaign_status: "VERIFIED" }] },
-      { compliance: [{ sid: QE, campaign_status: "verified" }] },
-      { compliance: [{ sid: QE, campaign_status: "APPROVED" }] },
+      { compliance: [{ sid: QE, campaign_status: "" }] },
+      { compliance: [{ sid: QE, campaign_status: 7 }] },
       { compliance: [{ sid: QE }] },
     ]) {
       expect(normalizeUsA2pCampaigns(json), JSON.stringify(json)).toBeNull();
@@ -74,7 +81,9 @@ describe("twilioCampaignReader (stubbed fetch)", () => {
   });
 
   it("an unreadable body, an HTTP error or missing configuration is an error, never an observation", async () => {
-    stubFetch(200, { compliance: [{ sid: QE, campaign_status: "SOMETHING_NEW" }] });
+    stubFetch(200, { compliance: [{ sid: QE, campaign_status: "SUSPENDED" }] });
+    expect(await twilioCampaignReader.readUsA2pCampaign({ messagingServiceSid: MG })).toEqual({ ok: true, campaign: { campaignSid: QE, status: "suspended" } });
+    stubFetch(200, { compliance: [{ sid: "bad", campaign_status: "VERIFIED" }] });
     expect(await twilioCampaignReader.readUsA2pCampaign({ messagingServiceSid: MG })).toMatchObject({ ok: false, code: "provider_response_unparseable" });
     stubFetch(404, { message: "not found" });
     expect((await twilioCampaignReader.readUsA2pCampaign({ messagingServiceSid: MG })).ok).toBe(false);
