@@ -12,6 +12,7 @@
 // new-client-readiness applies).
 
 import type { NewClientReadiness } from "@/lib/booking/new-client-readiness";
+import { SUPPRESSED_WHEN_CLOSED } from "@/lib/booking/new-client-readiness";
 import type { SenderStatusView } from "@/lib/sms/sender-status";
 import type { ConnectCapability, RuntimeMode } from "@/lib/payments/payment-status-presenter";
 
@@ -42,7 +43,21 @@ export function bookingPanel(readiness: NewClientReadiness | null): ConsolePanel
   // reason). It is still stated, because clients cannot book online.
   const admission = readiness.blockers.filter((b) => ADMISSION_CHOICES.has(b.key));
   const setup = readiness.blockers.length - admission.length;
-  const partial = readiness.unavailable.length > 0;
+  // A CLOSED studio suppresses the structural authorities, so an unreadable
+  // `services` or `availability` cannot reveal another setup step and must not
+  // become "setup may still need steps" (Codex P2 4301288046 on #851). Only
+  // authorities that can STILL change this studio's answer make the count a
+  // lower bound. `treatment_consent` is not suppressed and still counts. The
+  // suppression set is imported, never restated, so this cannot drift from the
+  // module that owns the rule.
+  const closed = admission.some((b) => b.key === "admission_closed");
+  const consequential = readiness.unavailable.filter(
+    (a) => !(closed && SUPPRESSED_WHEN_CLOSED.has(a)),
+  );
+  const partial = consequential.length > 0;
+  // Something WAS unreadable even if it cannot change the answer; that is
+  // still stated, just never as possible extra setup.
+  const unreadableButMoot = closed && consequential.length === 0 && readiness.unavailable.length > 0;
   const chosen = admission.map((b) => b.label).join(" ");
   if (setup === 0 && admission.length > 0) {
     return {
@@ -51,7 +66,9 @@ export function bookingPanel(readiness: NewClientReadiness | null): ConsolePanel
       status: admission.some((b) => b.key === "admission_closed") ? "Not accepting new clients" : "Waitlist only",
       detail: partial
         ? `${chosen} This is a choice in your settings. Some checks could not run, so setup may still need steps.`
-        : `${chosen} This is a choice in your settings, not unfinished setup.`,
+        : unreadableButMoot
+          ? `${chosen} This is a choice in your settings, not unfinished setup. Some checks could not run, but while the studio is closed they cannot change this.`
+          : `${chosen} This is a choice in your settings, not unfinished setup.`,
     };
   }
   // A proven blocker is real, so the tone stays "attention". But when some

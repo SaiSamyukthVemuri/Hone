@@ -164,6 +164,40 @@ describe("the three-state rule", () => {
     expect(only([wait], ["consent"]).detail).toMatch(/may still need steps/);
   });
 
+  it("booking: a CLOSED studio does not invent setup uncertainty (Codex P2 4301288046)", () => {
+    const closed = { key: "admission_closed", label: "This studio is not accepting new clients." };
+    const wait = { key: "wait_admission", label: "New clients join the waitlist instead of booking directly." };
+    const panel = (blockers: unknown[], unavailable: unknown[] = []) =>
+      bookingPanel({ status: "not_ready", blockers: blockers as never, nextStep: null, unavailable: unavailable as never });
+
+    // computeNewClientReadiness suppresses the structural blockers for a closed
+    // studio (structuralApplies), so an unreadable services/availability CANNOT
+    // reveal another step. Claiming it might is invented uncertainty.
+    for (const moot of [["services"], ["availability"], ["services", "availability"]]) {
+      const p = panel([closed], moot);
+      expect(p.detail, `${moot}: must not claim setup may still need steps`).not.toMatch(
+        /may still need steps/,
+      );
+      // It is still honest that something could not be read.
+      expect(p.detail, `${moot}: the unread check is still stated`).toMatch(
+        /Some checks could not run/,
+      );
+      expect(p.detail).toMatch(/cannot change this/);
+    }
+
+    // NON-VACUITY, three ways — the filter must be narrow, not a blanket mute:
+    // 1. treatment_consent is NOT suppressed, so it still makes the count a
+    //    lower bound even when closed.
+    expect(panel([closed], ["treatment_consent"]).detail).toMatch(/may still need steps/);
+    // 2. the same unreadable authority on a WAITLIST studio still counts,
+    //    because only a closure suppresses the structural questions.
+    expect(panel([wait], ["services"]).detail).toMatch(/may still need steps/);
+    // 3. with nothing unreadable, neither caveat appears at all.
+    const clean = panel([closed]).detail;
+    expect(clean).not.toMatch(/may still need steps/);
+    expect(clean).not.toMatch(/Some checks could not run/);
+  });
+
   it("booking: a mixed state never promises booking that admission still blocks (Codex P2 4301111467)", () => {
     const wait = { key: "wait_admission", label: "New clients join the waitlist instead of booking directly." };
     const closed = { key: "admission_closed", label: "This studio is not accepting new clients." };

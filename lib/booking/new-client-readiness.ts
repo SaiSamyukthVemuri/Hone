@@ -83,6 +83,26 @@ export type ReadinessAuthority =
   | "treatment_consent"
   | "admission";
 
+/**
+ * Authorities whose blockers are SUPPRESSED while admission is `closed`
+ * (`structuralApplies` below). An unreadable one of these cannot reveal another
+ * setup step for a closed studio, so a caller must not turn it into "setup may
+ * still need steps" — that invents uncertainty the closure already settled
+ * (Codex P2 4301288046 on #851).
+ *
+ * `treatment_consent` is deliberately ABSENT: it is not suppressed, so an
+ * unreadable consent authority can still change a closed studio's answer.
+ * `admission` is absent too, and cannot arise here — an unreadable admission
+ * authority leaves the mode null, which is not `closed`.
+ *
+ * Exported so presentation does not re-derive the suppression rule and drift
+ * from it; this file stays the one owner of what a closure hides.
+ */
+export const SUPPRESSED_WHEN_CLOSED: ReadonlySet<ReadinessAuthority> = new Set([
+  "services",
+  "availability",
+] as const);
+
 export type NewClientBlockerKey =
   | "studio_name"
   | "booking_link"
