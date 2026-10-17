@@ -446,6 +446,16 @@ export function BlockSetupForm({
   const [saveUnresolved, setSaveUnresolved] = useState(false);
 
   /**
+   * A REVISION save inside the machine panel has an unknown outcome.
+   *
+   * SEPARATE FROM `saveUnresolved`, which is THIS form's own create-mode
+   * save. They are owned by different components and either can be true
+   * alone; merging them would make clearing one clear the other. They are
+   * combined only where a control has to be frozen.
+   */
+  const [revisionUnresolved, setRevisionUnresolved] = useState(false);
+
+  /**
    * WHILE THE INITIAL SAVE'S OUTCOME IS UNKNOWN, ITS PAYLOAD IS FROZEN.
    *
    * `create_block_with_initial_setup` binds the retry key to a digest of the
@@ -1208,6 +1218,9 @@ export function BlockSetupForm({
         // covers it too and it has to freeze with everything else - the same
         // flag, not a second rule that could disagree.
         settingDraftFrozen={draftFrozen}
+        // THE PANEL'S REVISION SAVE REACHES THIS FORM, so the Cancel button
+        // below can be frozen by it (Codex, #860 4302176844).
+        onRevisionUnresolved={setRevisionUnresolved}
       />
 
       {copyMessage && (
@@ -1690,7 +1703,12 @@ export function BlockSetupForm({
         <button
           type="button"
           onClick={onCancel}
-          disabled={pending || saveUnresolved}
+          // EITHER unresolved save freezes dismissal. Round 14 wired this
+          // to `saveUnresolved` alone — the CREATE-mode flag — so on an
+          // existing block, where the panel records directly, Cancel stayed
+          // live through an unresolved REVISION save and unmounting the
+          // entry discarded its retry key (Codex, #860 4302176844).
+          disabled={pending || saveUnresolved || revisionUnresolved}
           data-testid="cancel-treatment-area"
           className="rounded-md border border-neutral-300 px-5 py-3 text-sm hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
         >

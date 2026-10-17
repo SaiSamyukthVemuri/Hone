@@ -63,6 +63,8 @@ export type MachineFirstSetupConnectedProps = {
    */
   /** Forwarded to the panel: the host's save is unresolved. */
   settingDraftFrozen?: boolean;
+  /** Forwarded straight through: see the panel's own prop. */
+  onRevisionUnresolved?: (unresolved: boolean) => void;
   onSettingDraft?: NonNullable<
     Parameters<typeof MachineFirstSetupPanel>[0]["onSettingDraft"]
   >;
@@ -124,6 +126,7 @@ export function MachineFirstSetupConnected({
   record,
   onSettingDraft,
   settingDraftFrozen = false,
+  onRevisionUnresolved,
 }: MachineFirstSetupConnectedProps) {
   const [ctx, setCtx] = useState<MachineSetupContext | null>(null);
   const [state, setState] = useState<"idle" | "loading" | "failed">("idle");
@@ -379,6 +382,9 @@ export function MachineFirstSetupConnected({
       // context field - so it is pinned by its own source assertion in
       // tests/components/machine-first-setup-panel.test.ts.
       onSettingDraft={onSettingDraft}
+      // FORWARDED. Five values in this lane have been computed correctly and
+      // dropped at a hop exactly like this one.
+      onRevisionUnresolved={onRevisionUnresolved}
       settingDraftFrozen={settingDraftFrozen}
       onSelectMachine={select ?? onSelectMachine}
       onRecord={onRecord}

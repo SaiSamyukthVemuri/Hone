@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { FieldLabel, fieldControlClass } from "@/components/ui/field";
@@ -126,6 +126,15 @@ export type MachineFirstSetupPanelProps = {
    */
   /** The host form's save is unresolved, so the create-mode draft is frozen. */
   settingDraftFrozen?: boolean;
+  /**
+   * Report that a REVISION save's outcome is unknown, so the HOST can freeze
+   * its own controls.
+   *
+   * The panel freezes what it owns. It cannot freeze the host form's Cancel,
+   * and that is the control whose use destroys the retry key by unmounting
+   * the entry (Codex, #860 4302176844).
+   */
+  onRevisionUnresolved?: (unresolved: boolean) => void;
   onSettingDraft?: (
     draft: {
       groups: GroupSubmission[];
@@ -252,6 +261,7 @@ export function MachineFirstSetupPanel({
   recordedSetupUnavailable = false,
   onSettingDraft,
   settingDraftFrozen = false,
+  onRevisionUnresolved,
   unavailableSelection = null,
   unitNames = {},
   onSelectMachine,
@@ -304,6 +314,20 @@ export function MachineFirstSetupPanel({
    * and either can be true alone.
    */
   const [revisionUnresolved, setRevisionUnresolved] = useState(false);
+
+  // AND THE HOST IS TOLD (Codex, #860 4302176844).
+  //
+  // This state froze the panel's OWN identity controls from round 12, and
+  // stayed here. The host form's Cancel button is outside the panel, checks
+  // only the create-mode flag, and unmounting the entry is what destroys
+  // the retry key - so the one control that can lose the key never saw the
+  // state that should have frozen it.
+  const reportUnresolved = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (reportUnresolved.current === revisionUnresolved) return;
+    reportUnresolved.current = revisionUnresolved;
+    onRevisionUnresolved?.(revisionUnresolved);
+  }, [revisionUnresolved, onRevisionUnresolved]);
   // EITHER SAVE PATH FREEZES THE IDENTITY. The machine and the mode are
   // part of the payload both digests are bound to, and switching away can
   // unmount the component holding a retry key.

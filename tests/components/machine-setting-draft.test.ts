@@ -530,6 +530,112 @@ describe("switching machine or mode clears the collected draft", () => {
     expect(src).toMatch(/const draftFrozen = saveUnresolved/);
   });
 
+  it("the owners of \"a save is unresolved\" are ENUMERATED, so a fourth is loud", () => {
+    // WHY A CENSUS AND NOT A RULE. Four controls across four rounds have had
+    // to be wired to this fact, and each time the wiring was correct for the
+    // case in front of me and blind to its sibling (rounds 5, 12, 14, 20).
+    // The structural fix is ONE value with ONE owner that every save path
+    // writes and every dismiss/identity control reads — proposed for the
+    // next round rather than done mid-review.
+    //
+    // Until then this makes a new flag impossible to add quietly: adding a
+    // save path, or a second mirror of an existing one, fails here with the
+    // list in front of you. It pins WHAT the owners are, not how many, and
+    // it fails with the diff rather than a bare number.
+    const OWNERS: Array<[string, string]> = [
+      // The host form's own create-mode save.
+      [FORM_SRC, "saveUnresolved"],
+      // The panel's revision save, mirrored into the host so the host's
+      // Cancel can read it. THIS MIRROR is the duplication the refactor
+      // removes.
+      [FORM_SRC, "revisionUnresolved"],
+      [PANEL_SRC, "revisionUnresolved"],
+    ];
+
+    const found: string[] = [];
+    for (const src of [FORM_SRC, PANEL_SRC, CONN_SRC, ENTRY_SRC]) {
+      const text = read(src);
+      for (const m of text.matchAll(
+        /const \[(\w*[Uu]nresolved)\s*,\s*set\w+\]\s*=\s*useState/g,
+      )) {
+        found.push(`${src}:${m[1]}`);
+      }
+    }
+
+    expect(
+      found.sort(),
+      "the set of components owning unresolved-save state changed. A new owner must be read by EVERY dismiss and identity control, or it is the round-20 defect again — and if the single-owner refactor has landed, this census should be deleted rather than extended",
+    ).toEqual(OWNERS.map(([f, n]) => `${f}:${n}`).sort());
+
+    // NON-VACUITY: a regex that matched nothing would make the comparison
+    // above pass only when the expected list was also empty, but say so
+    // clearly rather than leaving it to be inferred.
+    expect(found.length, "no unresolved-state owners were found at all").toBe(3);
+  });
+
+  it("DISMISSAL freezes on a REVISION save too, not only the create save", () => {
+    // THE P2 (Codex, #860 4302176844), and the FOURTH control to join this
+    // one invariant: the draft setter (round 5), the machine and mode
+    // pickers (round 12), the host's Cancel (round 14), and now Cancel
+    // again — for the other kind of save.
+    //
+    // Round 14 wired Cancel to `saveUnresolved`, which is THIS form's
+    // create-mode save. Round 12's `revisionUnresolved` lived inside the
+    // panel and never left it. So on an EXISTING block, where the panel
+    // records directly, Cancel stayed live through an unresolved revision
+    // save — and unmounting the entry is what discards the retry key.
+    const form = read(FORM_SRC);
+    const cancel = form.match(/onClick=\{onCancel\}\s*\n(?:\s*\/\/[^\n]*\n)*\s*disabled=\{([^}]*)\}/);
+    expect(
+      cancel,
+      "the Cancel button's disabled expression was not found — this guard would be blind",
+    ).toBeTruthy();
+    expect(
+      cancel![1],
+      "Cancel must observe the create-mode save",
+    ).toMatch(/saveUnresolved/);
+    expect(
+      cancel![1],
+      "Cancel must observe the panel's REVISION save as well, or one click discards the retry key on an existing block",
+    ).toMatch(/revisionUnresolved/);
+
+    // THEY STAY SEPARATE pieces of state, combined only at the control.
+    // Different owners, either can be true alone, and merging them would
+    // make clearing one clear the other.
+    expect(form).toMatch(
+      /const \[revisionUnresolved, setRevisionUnresolved\] = useState\(false\)/,
+    );
+  });
+
+  it("and the panel's revision state REACHES the host, hop by hop", () => {
+    // ASSERTED AT EVERY HOP, because this is the lane's most repeated
+    // defect: a value that exists, is correct, and never arrives. Five
+    // instances so far, and this value crosses FOUR components.
+    const entry = read(ENTRY_SRC);
+    expect(entry, "1/4 the entry reports its unresolved save").toMatch(
+      /onUnresolvedChange\?\.\(save\.unresolved\)/,
+    );
+
+    const panel = read(PANEL_SRC);
+    expect(panel, "2/4 the panel subscribes to the entry").toMatch(
+      /onUnresolvedChange=\{setRevisionUnresolved\}/,
+    );
+    expect(
+      panel,
+      "2/4 the panel must report it upward, on both edges",
+    ).toMatch(/onRevisionUnresolved\?\.\(revisionUnresolved\)/);
+
+    const conn = read(CONN_SRC);
+    expect(conn, "3/4 the connector forwards it").toMatch(
+      /onRevisionUnresolved=\{onRevisionUnresolved\}/,
+    );
+
+    const form = read(FORM_SRC);
+    expect(form, "4/4 the host subscribes to it").toMatch(
+      /onRevisionUnresolved=\{setRevisionUnresolved\}/,
+    );
+  });
+
   it("EVERY relayed failure on the recorder path carries the outcome code", () => {
     // THE P2 (Codex, #860 4301771498), and the fifth time in this lane that
     // a value existed, was correct, and was never forwarded.
@@ -733,10 +839,16 @@ describe("switching machine or mode clears the collected draft", () => {
       /onClick=\{submit\}\s*\n\s*disabled=\{([^}]*)\}/,
     );
     expect(save, "the Save button's disabled expression was not found").toBeTruthy();
+    // ASSERTED AS THE RULE: Save observes NO unresolved or frozen state at
+    // all, whatever it is called. The first spelling named two flags —
+    // `saveUnresolved|draftFrozen` — and round 20 added a third, so
+    // freezing Save on `revisionUnresolved` slipped past a guard written
+    // for exactly that trap. Pressing Save again, unchanged, is the whole
+    // recovery; a freeze that includes it strands her with no way out.
     expect(
       save![1],
-      "Save must stay live while unresolved — it is the recovery",
-    ).not.toMatch(/saveUnresolved|draftFrozen/);
+      "Save must stay live through every unresolved state — it is the recovery",
+    ).not.toMatch(/[Uu]nresolved|[Ff]rozen/);
   });
 
   it("previous-treatment units go through the sentinel rule", () => {
