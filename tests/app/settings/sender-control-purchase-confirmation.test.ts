@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// The first case pays for a cold dynamic import of the action module and its
+// graph; under a loaded full-suite run that alone can exceed the default 5 s.
+vi.setConfig({ testTimeout: 30_000 });
+
 // HON-50 G3, proven at the SERVER ACTION: a direct call to the provisioning
 // action without the owner's confirmation for THAT number is refused before
 // any provider is constructed, and the fake provider records ZERO purchases.

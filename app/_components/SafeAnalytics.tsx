@@ -2,6 +2,7 @@
 
 import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
+import { redactVercelEvent } from "@/lib/analytics/vercel-url-redaction";
 
 // PR #142. Shared client wrapper that mounts both Vercel Analytics
 // and Vercel Speed Insights together. Used by route-tree layouts
@@ -31,8 +32,12 @@ import { SpeedInsights } from "@vercel/speed-insights/next";
 export function SafeAnalytics() {
   return (
     <>
-      <Analytics />
-      <SpeedInsights />
+      {/* HIPAA-READY-01 G-07: these trees include the authenticated app,
+          /admin and /book, whose URLs carry record ids and the studio a
+          patient is booking with. Every event's URL passes the redaction
+          boundary first (lib/analytics/vercel-url-redaction.ts). */}
+      <Analytics beforeSend={redactVercelEvent} />
+      <SpeedInsights beforeSend={redactVercelEvent} />
     </>
   );
 }
