@@ -119,6 +119,29 @@ export function redactString(input: string): string {
     .replace(PHONE_RE, REDACTED);
 }
 
+// HON-46 (Codex P1 4302852097). The clinical records export is a PHI surface
+// whose contract (#828) is that NOTHING about a visit to it reaches a third
+// party. Scrubbing cannot honour that: its URL carries the client's id and
+// appears in more fields than any list can name (request.url, the trace
+// context's url.full, span data, navigation and fetch breadcrumbs, the
+// transaction name), and the envelope's trace header is built from the root
+// span outside these hooks. So an event or breadcrumb that, AFTER scrubbing,
+// still mentions the route anywhere is DROPPED whole, in every runtime. Matched
+// on the route's own path segment, plain or percent-encoded. Fail closed: a
+// value that cannot be serialized to check is treated as a reference.
+const RECORDS_EXPORT_ROUTE_RE = /records(?:\/|%2f|%252f)export/i;
+
+/** True when any string anywhere in `value` names the records-export route. */
+export function referencesRecordsExport(value: unknown): boolean {
+  let text: string | undefined;
+  try {
+    text = JSON.stringify(value);
+  } catch {
+    return true;
+  }
+  return text !== undefined && RECORDS_EXPORT_ROUTE_RE.test(text);
+}
+
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
@@ -233,6 +256,8 @@ export function scrubBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb | null {
   // console.log of a client record). Drop them entirely; Sentry Logs are also
   // off, so console output never leaves the app.
   if (breadcrumb.category === "console") return null;
+  // A navigation, fetch or prefetch of the records export (HON-46).
+  if (referencesRecordsExport(breadcrumb)) return null;
 
   if (typeof breadcrumb.message === "string") {
     breadcrumb.message = redactString(breadcrumb.message);
@@ -330,16 +355,17 @@ function scrubEventCommon<T extends Event>(event: T): T {
   return event;
 }
 
-/** beforeSend: scrub an error event in place. */
-export function scrubErrorEvent(event: ErrorEvent): ErrorEvent {
-  return scrubEventCommon(event);
+/** beforeSend: scrub an error event in place; null drops it (HON-46). */
+export function scrubErrorEvent(event: ErrorEvent): ErrorEvent | null {
+  const out = scrubEventCommon(event);
+  return referencesRecordsExport(out) ? null : out;
 }
 
 /** beforeSendTransaction: scrub a performance/tracing event, including the
  *  descriptions and data of every span (DB/HTTP spans can carry query args).
  *  Generic over Event because @sentry/nextjs does not re-export the
  *  TransactionEvent type; the beforeSendTransaction slot instantiates T. */
-export function scrubTransactionEvent<T extends Event>(event: T): T {
+export function scrubTransactionEvent<T extends Event>(event: T): T | null {
   scrubEventCommon(event);
 
   if (Array.isArray(event.spans)) {
@@ -354,7 +380,7 @@ export function scrubTransactionEvent<T extends Event>(event: T): T {
     }
   }
 
-  return event;
+  return referencesRecordsExport(event) ? null : event;
 }
 
 /** Production traces at 0.1 (10%); development at 1.0 for full local

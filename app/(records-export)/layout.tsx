@@ -12,6 +12,12 @@
 // next/link navigation from an analytics-enabled page; a source guard
 // (tests/app/clinical-records-export-contract.test.ts) forbids such a Link.
 //
+// Sentry is NOT kept out by this tree: instrumentation-client.ts initializes it
+// globally. It is kept out by the shared scrubber instead, which DROPS every
+// event and breadcrumb, in every runtime, that names this route anywhere
+// (referencesRecordsExport in lib/observability/sentry-scrub.ts; Codex P1
+// 4302852097).
+//
 // No app chrome either: this is a print document. Authentication and studio
 // authority are the page's own (requirePractitionerWithStudio + owner gate).
 

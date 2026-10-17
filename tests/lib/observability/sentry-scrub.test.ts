@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Breadcrumb, ErrorEvent, Event } from "@sentry/nextjs";
 import {
   redactString,
+  referencesRecordsExport,
   scrubBreadcrumb,
   scrubErrorEvent,
   scrubTransactionEvent,
@@ -95,7 +96,7 @@ describe("scrubErrorEvent", () => {
   }
 
   it("redacts sensitive keys in extra (including nested) but keeps harmless values", () => {
-    const e = scrubErrorEvent(baseEvent());
+    const e = scrubErrorEvent(baseEvent())!;
     const extra = e.extra as Record<string, unknown>;
     expect(extra.client_name).toBe(REDACTED);
     expect(extra.treatment_note).toBe(REDACTED);
@@ -110,14 +111,14 @@ describe("scrubErrorEvent", () => {
   });
 
   it("scrubs tags by key and value pattern", () => {
-    const e = scrubErrorEvent(baseEvent());
+    const e = scrubErrorEvent(baseEvent())!;
     const tags = e.tags as Record<string, unknown>;
     expect(tags.user_email).toBe(REDACTED);
     expect(tags.studio).toBe("ok");
   });
 
   it("strips PII from the user object but keeps the opaque id", () => {
-    const e = scrubErrorEvent(baseEvent());
+    const e = scrubErrorEvent(baseEvent())!;
     const user = e.user as Record<string, unknown>;
     expect(user.email).toBeUndefined();
     expect(user.username).toBeUndefined();
@@ -126,7 +127,7 @@ describe("scrubErrorEvent", () => {
   });
 
   it("key-scrubs custom contexts, drops device.name, but preserves standard context fields", () => {
-    const e = scrubErrorEvent(baseEvent());
+    const e = scrubErrorEvent(baseEvent())!;
     const contexts = e.contexts as Record<string, Record<string, unknown>>;
     expect(contexts.os.name).toBe("macOS"); // standard context not key-redacted
     expect(contexts.device.name).toBeUndefined(); // owner name dropped
@@ -136,7 +137,7 @@ describe("scrubErrorEvent", () => {
   });
 
   it("removes cookies/headers/query_string and strips the request url query", () => {
-    const e = scrubErrorEvent(baseEvent());
+    const e = scrubErrorEvent(baseEvent())!;
     const req = e.request as Record<string, unknown>;
     expect(req.cookies).toBeUndefined();
     expect(req.headers).toBeUndefined();
@@ -149,7 +150,7 @@ describe("scrubErrorEvent", () => {
   });
 
   it("redacts secrets embedded in the exception message but keeps the error text", () => {
-    const e = scrubErrorEvent(baseEvent());
+    const e = scrubErrorEvent(baseEvent())!;
     const value = e.exception?.values?.[0]?.value ?? "";
     expect(value).toContain("Failed to save note for");
     expect(value).not.toContain("jane@example.com");
@@ -157,7 +158,7 @@ describe("scrubErrorEvent", () => {
   });
 
   it("drops console breadcrumbs and strips network breadcrumb query strings", () => {
-    const e = scrubErrorEvent(baseEvent());
+    const e = scrubErrorEvent(baseEvent())!;
     const crumbs = e.breadcrumbs ?? [];
     expect(crumbs).toHaveLength(1);
     expect(crumbs[0].category).toBe("fetch");
@@ -203,13 +204,77 @@ describe("scrubTransactionEvent", () => {
       ],
       request: { cookies: "sb-ref-auth-token=zzz", url: "https://h/x?q=1" },
     } as unknown as Event;
-    const out = scrubTransactionEvent(tx);
+    const out = scrubTransactionEvent(tx)!;
     const span = out.spans?.[0] as unknown as Record<string, unknown>;
     expect(span.description).not.toContain("jane@example.com");
     expect((span.data as Record<string, unknown>).access_token).toBe(REDACTED);
     const req = out.request as Record<string, unknown>;
     expect(req.cookies).toBeUndefined();
     expect(req.url).toBe("https://h/x");
+  });
+});
+
+describe("the clinical records export never reaches Sentry (HON-46, Codex P1 4302852097)", () => {
+  const CLIENT = "3f9c2a10-5b7e-4c1d-9a8f-0e1d2c3b4a59";
+  const EXPORT_URL = `https://hone.care/clients/${CLIENT}/records/export?scope=day&day=2026-09-15`;
+  const err = (over: Record<string, unknown>) =>
+    ({ type: undefined, message: "boom", ...over }) as unknown as ErrorEvent;
+
+  it("drops an error event raised on the export page (request.url)", () => {
+    expect(scrubErrorEvent(err({ request: { url: EXPORT_URL } }))).toBeNull();
+  });
+
+  it("drops it when the ONLY reference is the trace context's url.full", () => {
+    expect(
+      scrubErrorEvent(err({ contexts: { trace: { data: { "url.full": EXPORT_URL } } } })),
+    ).toBeNull();
+  });
+
+  it("drops a pageload transaction by name, by span data, or by span description", () => {
+    expect(scrubTransactionEvent({ transaction: "/clients/[id]/records/export" } as Event)).toBeNull();
+    expect(
+      scrubTransactionEvent({
+        transaction: "/clients/[id]",
+        spans: [{ description: "prefetch", data: { "url.full": EXPORT_URL } }],
+      } as unknown as Event),
+    ).toBeNull();
+    expect(
+      scrubTransactionEvent({
+        transaction: "/clients/[id]",
+        spans: [{ description: `GET /clients/${CLIENT}/records/export?_rsc=1` }],
+      } as unknown as Event),
+    ).toBeNull();
+  });
+
+  it("drops navigation and fetch breadcrumbs that name the route, plain or percent-encoded", () => {
+    expect(
+      scrubBreadcrumb({
+        category: "navigation",
+        data: { from: `/clients/${CLIENT}/records/export`, to: `/clients/${CLIENT}` },
+      }),
+    ).toBeNull();
+    expect(
+      scrubBreadcrumb({ category: "fetch", data: { url: `/x?next=%2Fclients%2F${CLIENT}%2Frecords%2Fexport` } }),
+    ).toBeNull();
+  });
+
+  it("keeps an ordinary event, and removes only the export breadcrumb from it", () => {
+    const out = scrubErrorEvent(
+      err({
+        request: { url: `https://hone.care/clients/${CLIENT}` },
+        breadcrumbs: [
+          { category: "navigation", data: { from: `/clients/${CLIENT}/records/export`, to: `/clients/${CLIENT}` } },
+          { category: "ui.click", message: "button.save" },
+        ],
+      }),
+    );
+    expect(out).not.toBeNull();
+    expect(out!.breadcrumbs?.map((b) => b.category)).toEqual(["ui.click"]);
+  });
+
+  it("fails closed: a value it cannot serialize counts as a reference", () => {
+    expect(referencesRecordsExport({ n: BigInt(1) })).toBe(true);
+    expect(referencesRecordsExport({ url: "/clients/x/records" })).toBe(false);
   });
 });
 

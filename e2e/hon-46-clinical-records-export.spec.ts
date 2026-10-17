@@ -254,23 +254,34 @@ test("owner: the day's records appear; every excluded sentinel is absent from pa
   }
   await page.emulateMedia({ media: "screen" });
 
-  // SENTRY NEGATIVE CONTROL (#828 item 6), made NON-VACUOUS: a synthetic
-  // canary error is thrown on the export page, and the check only counts once
-  // the egress guard has captured it. Then no captured envelope may carry the
-  // client's id, name, email or any sentinel. Scope, stated honestly: the guard
-  // records a SUMMARY of each envelope (transaction, message, exception
-  // values), not the full payload, so this proves those fields only. Full
-  // Sentry redaction is #891's (a merge prerequisite of this PR).
-  const canary = `HON46-CANARY-${fx.seed.runId}`;
-  await page.evaluate((msg) => {
-    setTimeout(() => {
-      throw new Error(msg);
-    }, 0);
-  }, canary);
+  // SENTRY (#828 item 6; Codex P1 4302852097): NOTHING about the export page
+  // reaches Sentry. An error thrown ON the export page is DROPPED by the shared
+  // scrubber, so it must never be captured. NON-VACUOUS by a positive control
+  // in the SAME browser context: a soft navigation away (the page's own "Back
+  // to client" link, so the SDK and its transport carry over) and a second
+  // error there IS captured. The egress path demonstrably works, and the
+  // export-page error, raised first, would have arrived before the control.
+  // Scope, stated honestly: the guard records a SUMMARY of each envelope
+  // (transaction, message, exception values), not the full payload; the drop
+  // itself is proven field by field in tests/lib/observability.
+  const droppedCanary = `HON46-CANARY-EXPORT-${fx.seed.runId}`;
+  const controlCanary = `HON46-CANARY-CONTROL-${fx.seed.runId}`;
+  const throwSoon = (msg: string) =>
+    page.evaluate((m) => {
+      setTimeout(() => {
+        throw new Error(m);
+      }, 0);
+    }, msg);
+  await throwSoon(droppedCanary);
+  await page.getByRole("link", { name: "Back to client" }).click();
+  await page.waitForURL((url) => url.pathname === `/clients/${fx.clientId}`);
+  await throwSoon(controlCanary);
   await expect
-    .poll(() => JSON.stringify(readSentryEgress(egressMark)).includes(canary), { timeout: 20_000 })
+    .poll(() => JSON.stringify(readSentryEgress(egressMark)).includes(controlCanary), { timeout: 20_000 })
     .toBe(true);
   const egress = JSON.stringify(readSentryEgress(egressMark));
+  expect(egress, "an error raised on the export page reached Sentry").not.toContain(droppedCanary);
+  expect(egress, "an envelope named the records export route").not.toMatch(/records(?:\/|%2f)export/i);
   for (const s of [fx.clientId, fx.seed.clientName, fx.seed.clientEmail, fx.sentinel.session, ...excluded]) {
     expect(egress, `a Sentry envelope carried ${s}`).not.toContain(s);
   }
