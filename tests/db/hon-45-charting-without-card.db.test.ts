@@ -46,6 +46,11 @@ async function cardlessChartedVisit(): Promise<PaymentScenario & { entryId: stri
   });
   created.push(s.studioId);
   if (!s.sessionId) throw new Error("hon45: the seed did not create a session");
+  // The shared seed stamps the session's price_paid_cents (what the client
+  // PAID, read by the client lifetime total and the session price display).
+  // An unpaid visit must carry no payment fact at all (Codex P2 4301124978);
+  // chartIntact() asserts it stays null throughout.
+  await adminQuery(`update public.sessions set price_paid_cents = null where id = $1`, [s.sessionId]);
   const entry = await adminQuery(
     `insert into public.electrolysis_entries (session_id, area) values ($1, 'upper lip') returning id`,
     [s.sessionId],
@@ -131,17 +136,26 @@ async function chartIntact(s: PaymentScenario & { entryId: string }) {
     `select
        (select count(*)::int from public.sessions where id = $1) as sessions,
        (select count(*)::int from public.electrolysis_entries where id = $2 and session_id = $1) as entries,
-       (select status from public.appointments where id = $3) as appointment_status`,
+       (select status from public.appointments where id = $3) as appointment_status,
+       (select price_paid_cents from public.sessions where id = $1) as price_paid_cents`,
     [s.sessionId, s.entryId, s.appointmentId],
   );
-  return r.rows[0] as { sessions: number; entries: number; appointment_status: string };
+  return r.rows[0] as {
+    sessions: number;
+    entries: number;
+    appointment_status: string;
+    price_paid_cents: number | null;
+  };
 }
+
+/** The chart is intact AND carries no payment fact: an unpaid visit. */
+const INTACT_UNPAID = { sessions: 1, entries: 1, appointment_status: "completed", price_paid_cents: null };
 
 describe("HON-45 — a cardless clinic completes a charted visit with the amount left outstanding", () => {
   it("the visit is completed and charted with no payment account, no card and no charge attempt", async () => {
     const s = await cardlessChartedVisit();
     expect(await cardFacts(s.studioId)).toEqual({ attempts: 0, accounts: 0, cards: 0 });
-    expect(await chartIntact(s)).toEqual({ sessions: 1, entries: 1, appointment_status: "completed" });
+    expect(await chartIntact(s)).toEqual(INTACT_UNPAID);
   });
 
   it("a non-owner practitioner records the visit as STILL OWED; nothing reads as money received", async () => {
@@ -188,7 +202,7 @@ describe("HON-45 — a cardless clinic completes a charted visit with the amount
     expect(await ownerView(other.practitionerUserId, s.studioId, s.appointmentId)).toEqual([]);
 
     // Recording the outstanding amount changed nothing in the chart.
-    expect(await chartIntact(s)).toEqual({ sessions: 1, entries: 1, appointment_status: "completed" });
+    expect(await chartIntact(s)).toEqual(INTACT_UNPAID);
   });
 
   // TODAY'S MECHANISM, NOT A DECISION. Whether a practitioner should be able to
@@ -241,6 +255,6 @@ describe("HON-45 — a cardless clinic completes a charted visit with the amount
 
     // Still no card fact anywhere, and the chart is untouched.
     expect(await cardFacts(s.studioId)).toEqual({ attempts: 0, accounts: 0, cards: 0 });
-    expect(await chartIntact(s)).toEqual({ sessions: 1, entries: 1, appointment_status: "completed" });
+    expect(await chartIntact(s)).toEqual(INTACT_UNPAID);
   });
 });
