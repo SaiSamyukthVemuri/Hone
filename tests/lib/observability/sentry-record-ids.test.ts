@@ -261,6 +261,23 @@ describe("G-25: the final whole-event sweep (backstop for fields no pass lists)"
     expect(out.event_id).toBe(EVENT_ID);
   });
 
+  it("keeps sdkProcessingMetadata verbatim: internal, never sent (Codex P2 4301513265)", () => {
+    class FakeScope {
+      tag = `scope-${CLIENT}`;
+    }
+    const scope = new FakeScope();
+    const meta = { capturedSpanScope: scope, normalizedRequest: { url: `/clients/${CLIENT}` } };
+    const out = scrubTransactionEvent({
+      type: "transaction",
+      transaction: `GET /clients/${CLIENT}`,
+      sdkProcessingMetadata: meta,
+    } as unknown as Event);
+    expect(out.sdkProcessingMetadata).toBe(meta);
+    expect((out.sdkProcessingMetadata as unknown as typeof meta).capturedSpanScope).toBe(scope);
+    const wire = { ...out, sdkProcessingMetadata: undefined };
+    expectNoRecordId(wire, "wire payload beside sdkProcessingMetadata");
+  });
+
   it("keeps a deep but legitimate transaction structure intact", () => {
     const out = scrubTransactionEvent({
       type: "transaction",

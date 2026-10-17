@@ -220,7 +220,17 @@ const SWEEP_MAX_DEPTH = 24;
  *  exception frames, threads). This sweep replaces a record id wherever it
  *  survives, in any string or key, and touches nothing else. */
 function sweepRecordIds<T>(value: T): T {
-  return withoutRecordIds(value, new WeakSet(), 0, SWEEP_MAX_DEPTH) as T;
+  // `sdkProcessingMetadata` is the SDK's internal processing state (captured
+  // Scope objects, request metadata), never transmitted. It is kept verbatim
+  // (Codex P2 4301513265): walking it would copy whole Scope/client graphs on
+  // every event and replace live class instances with plain objects.
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return withoutRecordIds(value, new WeakSet(), 0, SWEEP_MAX_DEPTH) as T;
+  }
+  const { sdkProcessingMetadata, ...wire } = value as Record<string, unknown>;
+  const swept = withoutRecordIds(wire, new WeakSet(), 0, SWEEP_MAX_DEPTH) as Record<string, unknown>;
+  if (sdkProcessingMetadata !== undefined) swept.sdkProcessingMetadata = sdkProcessingMetadata;
+  return swept as T;
 }
 
 function deepScrub(

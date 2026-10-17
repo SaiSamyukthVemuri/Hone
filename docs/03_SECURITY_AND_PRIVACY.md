@@ -145,10 +145,17 @@ This change affects telemetry emitted **from now on**. No historical Sentry even
 
 Clients, sessions, appointments, intake forms and studios are addressed by UUID, and a UUID beside appointment or clinical context is a linkable record id. Until this change, the scrubber kept them: `/clients/<uuid>` reached Sentry in `request.url`, the transaction name (the grouping key), exception messages, breadcrumbs, and span descriptions and attributes.
 
-- `redactString` in `lib/observability/sentry-scrub.ts` now replaces every dashed UUID with `[id]`, **after** token-route canonicalization. A UUID inside a compound identifier, such as `hone_booking_<uuid>` or `client_<uuid>`, is matched too, because the boundary is "not a hex digit", not `\b`. **Object keys** are scrubbed as well as values, so `{ [clientId]: "failed" }` becomes `{ "[id]": "failed" }`, and colliding keys get `#2`, `#3`, so no value is silently dropped. Token routes still read `[Redacted]`, and `/clients/<uuid>` becomes `/clients/[id]`, Next's own route-template form, so events still group by route.
-- Every string surface funnels through `redactString`, so one replacement covers all of them: request URLs, transaction names, messages, exception values, breadcrumb messages and data, span descriptions and data, `extra`, `tags`, custom contexts and `user`.
-- **Kept on purpose:** Sentry's own `event_id`, `trace_id` and `span_id`. They are dashless hex and carry no record identity.
-- Pinned by `tests/lib/observability/sentry-record-ids.test.ts`, a canary sweep over every surface with synthetic ids. **Negative controls:** without the replacement, 4 of the original 6 cases fail. With keys copied raw, 3 key cases fail. With `\b` boundaries, the compound-identifier case fails.
+- **The guarantee is a final whole-event sweep.** After every other pass, `sweepRecordIds` in `lib/observability/sentry-scrub.ts` walks the entire error event, transaction event or breadcrumb. In every string and every key, at any depth Sentry serializes, it replaces each dashed UUID with `[id]`.
+  - It does not depend on a field list, so a field nobody enumerated is covered too, including one Sentry adds later.
+  - It touches only record ids. Stack-frame chunk file names keep their digits, so source maps still resolve. Sentry's own `event_id`, `trace_id` and `span_id` are dashless hex and stay.
+  - Anything deeper than its depth bound is replaced with `[Redacted]`, never sent unscrubbed.
+  - `sdkProcessingMetadata` is kept verbatim. It is the SDK's internal processing state (captured scopes, request metadata), and it is never transmitted.
+- **Defense in depth, not the guarantee:** the per-field passes. `redactString` also replaces UUIDs in each field it scrubs, **after** token-route canonicalization, so token routes still read `[Redacted]` and `/clients/<uuid>` becomes `/clients/[id]`, Next's route-template form, so events still group by route. Those passes also:
+  - match compound identifiers (`hone_booking_<uuid>`; the boundary is "not a hex digit", not `\b`) and `%2D`-encoded hyphens;
+  - scrub object keys, so `{ [clientId]: "failed" }` becomes `{ "[id]": "failed" }`, with `#2` and `#3` on collisions so no value is dropped (own keys only);
+  - deep-scrub `logentry` and custom `fingerprint` strings;
+  - apply an id-only scrub to structured exception payloads and threads.
+- Pinned by `tests/lib/observability/sentry-record-ids.test.ts`, a canary sweep with synthetic ids. **Negative controls:** each review round's case fails on the head before its fix, and with only the final sweep disabled, the any-field case fails.
 
 **Scope.** This covers what Hone sends to Sentry from now on. It is not a Sentry BAA. Other record-id channels (Vercel logs, Stripe, Meta, Twilio callbacks, Upstash keys, email tokens) remain #828 G-26 work. No historical Sentry event was deleted.
 
