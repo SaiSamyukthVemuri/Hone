@@ -7,6 +7,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
+import { assertStudioOwner } from "@/lib/auth/require-studio-owner";
 import { refreshAccountStatusFromStripe } from "@/lib/stripe/account";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
@@ -15,6 +16,7 @@ export const dynamic = "force-dynamic";
 
 export default async function StripeOnboardingReturnPage() {
   const { practitioner, studio } = await requirePractitionerWithStudio();
+  assertStudioOwner(practitioner);
   if (practitioner.role !== "owner") {
     redirect("/settings/payments");
   }

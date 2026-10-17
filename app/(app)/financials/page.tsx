@@ -4,6 +4,7 @@ import {
 } from "@/lib/booking/reporting-period";
 import { loadFinancialsView } from "@/lib/finance/financial-briefing";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
+import { assertStudioOwner } from "@/lib/auth/require-studio-owner";
 
 import { FinancialSpine } from "./financial-spine";
 
@@ -40,6 +41,7 @@ export default async function FinancialsPage({
   searchParams: Promise<{ period?: string | string[] }>;
 }) {
   const { practitioner, studio } = await requirePractitionerWithStudio();
+  assertStudioOwner(practitioner);
 
   const sp = await searchParams;
   const requested = Array.isArray(sp.period) ? sp.period[0] : sp.period;
