@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { loginByMagicLink } from "./helpers/flows";
+import { markSentryEgress, readSentryEgress } from "./helpers/sentry-egress";
 import {
   getOwnerPractitionerId,
   getStudioTimezone,
@@ -107,6 +108,7 @@ test.beforeAll(async () => {
 });
 
 test("owner: the day's records appear; every excluded sentinel is absent from page and raw HTML", async ({ page }) => {
+  const egressMark = markSentryEgress();
   await loginByMagicLink(page, fx.seed.ownerEmail);
   const url = `/clients/${fx.clientId}/records/export?scope=day&day=${DAY}`;
 
@@ -138,6 +140,22 @@ test("owner: the day's records appear; every excluded sentinel is absent from pa
     expect(raw, `server HTML leaked ${s}`).not.toContain(s);
   }
   expect(raw).not.toContain("12345"); // the seeded price paid
+
+  // THE PRINT VIEW: what printing would put on paper (print stylesheet, app
+  // chrome hidden) has the record and none of the excluded sentinels.
+  await page.emulateMedia({ media: "print" });
+  const printed = await page.locator("body").innerText();
+  expect(printed).toContain(fx.sentinel.session);
+  expect(printed).toContain(fx.sentinel.clinicalNote);
+  for (const s of excluded) expect(printed, `print view leaked ${s}`).not.toContain(s);
+  await page.emulateMedia({ media: "screen" });
+
+  // SENTRY NEGATIVE CONTROL (#828 item 6): no envelope the guard intercepted
+  // during this export carries the client's id, name, email or any sentinel.
+  const egress = JSON.stringify(readSentryEgress(egressMark));
+  for (const s of [fx.clientId, fx.seed.clientName, fx.seed.clientEmail, fx.sentinel.session, ...excluded]) {
+    expect(egress, `a Sentry envelope carried ${s}`).not.toContain(s);
+  }
 
   // Two previews (goto + request.get) -> two audit rows, owner as actor, no PHI.
   const ownerId = await getOwnerPractitionerId(fx.seed.studioId);
