@@ -329,6 +329,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "isAuthorizedCronRequest",
   },
   {
+    path: "app/api/resend/webhook/route.ts",
+    purpose: "DELIVERY-EVENTS-01 Resend delivery-event webhook.",
+    why: "No user session; authenticated by the Svix signature (verifyResendWebhookSignature over svix-id, svix-timestamp and the raw body, with a five-minute replay window). The admin client is built only after the signature verifies, and drives ONLY the service-role-only record_email_provider_event / claim_email_provider_events / process_email_provider_event commands. Attribution is re-derived inside the database from the ledger row the event matched, never from the payload.",
+    scopeGuard: "verifyResendWebhookSignature",
+  },
+  {
     path: "app/api/stripe/webhook/route.ts",
     purpose: "Stripe webhook handler.",
     why: "No user session; authenticated by Stripe signature verification (constructEvent). Rows are resolved by the verified event's ids.",
