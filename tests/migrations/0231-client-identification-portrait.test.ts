@@ -22,7 +22,7 @@ const TOP_LEVEL = EXECUTABLE.replace(/\$\$[\s\S]*?\$\$/g, " <body> ");
 
 const COMMAND = "set_client_portrait";
 const COMMAND_ARGS = "uuid, uuid";
-const TRIGGER_FNS = ["clients_portrait_integrity", "clear_archived_client_portrait"];
+const TRIGGER_FNS = ["clients_portrait_integrity"];
 
 describe("0231 sits correctly in the migration sequence", () => {
   it("is present exactly once, above the photo table and actor it builds on", () => {
@@ -70,9 +70,9 @@ describe("0231's transaction and shape", () => {
     expect(TOP_LEVEL).toMatch(
       /before insert or update of portrait_image_id on public\.clients\s+for each row execute function public\.clients_portrait_integrity\(\);/,
     );
-    expect(TOP_LEVEL).toMatch(
-      /after update of deleted_at on public\.treatment_images\s+for each row\s+when \(old\.deleted_at is null and new\.deleted_at is not null\)/,
-    );
+    // NO trigger on treatment_images: its trigger set is pinned by the 0093,
+    // 0168 and 0169 guards (CI db lane), so this migration adds none there.
+    expect(TOP_LEVEL).not.toMatch(/on public\.treatment_images/);
   });
 
   it("resolves the actor per studio through treatment_image_actor, non-disclosingly", () => {

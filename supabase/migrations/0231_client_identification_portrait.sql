@@ -14,7 +14,10 @@
 -- Integrity is enforced in the database, not the UI:
 --   * the image must be the SAME client and studio, client-scoped (no session,
 --     no treatment area) and not archived (BEFORE trigger on clients);
---   * archiving the image clears the pointer (AFTER trigger on the image);
+--   * an ARCHIVED photo can never be set, and every reader filters
+--     deleted_at, so an archived portrait is never shown. Deliberately NO
+--     trigger on treatment_images: its trigger set is pinned by the 0093/0168
+--     and 0169 guards, and the read-side filter already makes it unreachable;
 --   * the one write command resolves the actor per studio through
 --     treatment_image_actor(studio) — an ACTIVE practitioner of that studio,
 --     so a receptionist, a deactivated practitioner or another studio is
@@ -68,31 +71,6 @@ drop trigger if exists clients_portrait_integrity on public.clients;
 create trigger clients_portrait_integrity
   before insert or update of portrait_image_id on public.clients
   for each row execute function public.clients_portrait_integrity();
-
--- ---------------------------------------------------------------------------
--- Archiving the portrait image clears the pointer, so a client never shows an
--- archived photo as their identification.
--- ---------------------------------------------------------------------------
-create or replace function public.clear_archived_client_portrait()
-returns trigger
-language plpgsql
-security definer
-set search_path = ''
-as $$
-begin
-  update public.clients c
-     set portrait_image_id = null
-   where c.portrait_image_id = new.id;
-  return new;
-end;
-$$;
-
-drop trigger if exists clear_archived_client_portrait on public.treatment_images;
-create trigger clear_archived_client_portrait
-  after update of deleted_at on public.treatment_images
-  for each row
-  when (old.deleted_at is null and new.deleted_at is not null)
-  execute function public.clear_archived_client_portrait();
 
 -- ---------------------------------------------------------------------------
 -- COMMAND — set (p_image_id) or clear (null) a client's portrait.
@@ -156,9 +134,5 @@ revoke execute on function public.clients_portrait_integrity() from anon;
 revoke execute on function public.clients_portrait_integrity() from authenticated;
 revoke execute on function public.clients_portrait_integrity() from service_role;
 
-revoke execute on function public.clear_archived_client_portrait() from public;
-revoke execute on function public.clear_archived_client_portrait() from anon;
-revoke execute on function public.clear_archived_client_portrait() from authenticated;
-revoke execute on function public.clear_archived_client_portrait() from service_role;
 
 commit;

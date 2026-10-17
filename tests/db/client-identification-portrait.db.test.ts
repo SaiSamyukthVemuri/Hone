@@ -10,7 +10,8 @@
 //   * the command refuses every wrong actor non-disclosingly: a practitioner
 //     of another studio, a DEACTIVATED practitioner, a RECEPTIONIST of the
 //     same studio, and anon (EXECUTE revoked);
-//   * archiving the portrait photo clears the pointer.
+//   * an archived portrait photo cannot be set again, and is never shown
+//     (readers filter deleted_at; no trigger is added to treatment_images).
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -199,12 +200,26 @@ describe("0231: the command refuses every wrong actor, non-disclosingly", () => 
   });
 });
 
-describe("0231: archiving the portrait photo clears it", () => {
-  it("the pointer goes back to null when its photo is archived", async () => {
+describe("0231: an archived portrait photo is never shown or re-set", () => {
+  it("archiving leaves no live portrait: the integrity rule refuses it, readers skip it", async () => {
     const img = await image(A, A.clientId);
     await userQuery(A.userId, SET, [A.clientId, img]);
     expect(await portraitOf(A.clientId)).toBe(img);
     await userQuery(A.userId, ARCHIVE, [img, A.clientId]);
+    // The readers' own filter (profile header / Photos tab) finds nothing.
+    const live = await userQuery(
+      A.userId,
+      `select t.id from public.clients c join public.treatment_images t
+         on t.id = c.portrait_image_id and t.deleted_at is null
+       where c.id = $1`,
+      [A.clientId],
+    );
+    expect(live.rowCount).toBe(0);
+    // And it can never be set again while archived.
+    const r = await refusal(userQuery(A.userId, SET, [A.clientId, img]));
+    expect(r.code).toBe(CHECK_VIOLATION);
+    // Clearing still works.
+    await userQuery(A.userId, SET, [A.clientId, null]);
     expect(await portraitOf(A.clientId)).toBeNull();
   });
 });
