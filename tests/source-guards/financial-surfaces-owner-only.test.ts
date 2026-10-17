@@ -28,6 +28,43 @@ import { describe, expect, it } from "vitest";
 // "Owner", "OWNER", "" and "superuser". A second copy would be two places to
 // keep true, one of which would rot.
 
+// ---------------------------------------------------------------------------
+// WHAT THIS FILE IS NOT. A SOURCE GUARD IS NOT A PROOF.
+//
+// The real protection is elsewhere and this file does not replace it:
+//   * tests/lib/finance/financial-briefing.test.ts RUNS loadFinancialsView with
+//     a recording stub and asserts `access === "refused"` AND `tables === []`
+//     across "practitioner", "admin", "Owner", "OWNER", "" and "superuser";
+//   * the in-page refusals themselves.
+// This file only notices if someone DELETES or REORDERS those.
+//
+// STATED LIMITATIONS, deliberately left rather than chased. Each needs a
+// contrived edit, and chasing them with text matching trades real clarity for
+// imagined coverage:
+//
+//   1. CONTROL FLOW INSIDE THE BRANCH. The halt check is a text match over the
+//      refusal branch's body, so a nested callback's `return`, or a string
+//      containing "redirect(", satisfies it while the outer branch falls
+//      through. The REALISTIC failure — a branch with no return and no
+//      redirect at all — is caught. (Codex P2 4303336567, accepted as a
+//      limitation rather than fixed.)
+//   2. REACHABILITY. Measured: inserting `return null;` immediately after a
+//      guard leaves later code textually present, so no text guard here can
+//      tell reachable from dead.
+//   3. DELIBERATE OBFUSCATION. The await scan is TOTAL over `await` tokens, so
+//      an await cannot vanish — but a loader invoked without `await`, or
+//      aliased to a name this file allow-lists, is not classified correctly.
+//   4. SOURCE, NOT EFFECTIVE SCHEMA. The role domain is read from 0001's
+//      CREATE TABLE and bounded by a tripwire that fails if any later
+//      migration touches that constraint. It is not a pg_constraint query; the
+//      tripwire's message says to move it to a DB suite when that stops being
+//      enough.
+//   5. SAME-LINE PLACEMENT. The pre-guard scan ends at the start of the
+//      guard's LINE, so a loader placed on that same line is outside it.
+//   6. PRACTITIONER_PAGES is a NAMED SAMPLE, not a discovered set — it proves
+//      the refusal is not universal and claims nothing more.
+// ---------------------------------------------------------------------------
+
 const ROOT = path.join(__dirname, "..", "..");
 const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 
@@ -75,6 +112,24 @@ const REQUEST_PRIMITIVES = new Set([
   "headers",
   "draftMode",
 ]);
+
+
+/**
+ * Every awaited expression in `region`, as the identifier it starts with, or
+ * the literal "<unrecognised>" when the await is not followed by a plain
+ * identifier — e.g. `await (loadStudioData())`.
+ *
+ * TOTAL BY CONSTRUCTION (Codex P2 4303336564). The previous matcher required an
+ * identifier immediately after `await`, so a pre-guard load written with
+ * parentheses recorded NOTHING and slipped through. Counting every `await`
+ * token and accounting for each one means an await this test cannot classify
+ * FAILS rather than disappears.
+ */
+function awaitedNames(region: string): string[] {
+  return [...region.matchAll(/\bawait\b\s*([A-Za-z_$][\w$]*)?/g)].map(
+    (m) => m[1] ?? "<unrecognised>",
+  );
+}
 
 /** Every `page.tsx` under `rel`, recursively, as repo-relative paths. */
 function discoverPages(rel: string): string[] {
@@ -146,9 +201,11 @@ describe("#824: financial surfaces refuse a non-owner before any read", () => {
       // must be exactly one of them.
       const fnAt = src.search(/export default async function/);
       expect(fnAt, "the page must export an async component").toBeGreaterThan(-1);
-      const awaitsBefore = [
-        ...src.slice(fnAt, refuseAt).matchAll(/await\s+([A-Za-z_$][\w$]*)/g),
-      ].map((m) => m[1]);
+      // The region ends at the START OF THE GUARD'S LINE. Slicing to the guard
+      // itself left its own `await ` inside the region, which the total scan
+      // then reported as "<unrecognised>" — a boundary artifact of this test,
+      // not a pre-guard load. Verified by printing the matches.
+      const awaitsBefore = awaitedNames(src.slice(fnAt, src.lastIndexOf("\n", refuseAt)));
       expect(
         awaitsBefore,
         "the identity resolver must be awaited before the owner refusal",
@@ -202,9 +259,9 @@ describe("#824: financial surfaces refuse a non-owner before any read", () => {
       const guardAt = refuseAt > -1 ? Math.min(...[refuseAt, delegateAt].filter((n) => n > -1)) : delegateAt;
       const fnAt = src.search(/export default async function/);
       expect(fnAt, "the page must export an async component").toBeGreaterThan(-1);
-      const awaitsBefore = [
-        ...src.slice(fnAt, guardAt).matchAll(/await\s+([A-Za-z_$][\w$]*)/g),
-      ].map((m) => m[1]);
+      // Region ends at the start of the guard's LINE, for the reason the
+      // payments loop above records.
+      const awaitsBefore = awaitedNames(src.slice(fnAt, src.lastIndexOf("\n", guardAt)));
       expect(
         awaitsBefore,
         "the identity resolver must be awaited before the financial guard",
@@ -253,12 +310,19 @@ describe("#824: financial surfaces refuse a non-owner before any read", () => {
     }
     expect(closeParen, "could not scope loadFinancialsView's parameter list").toBeGreaterThan(-1);
     const body = blockBody(helper, helper.indexOf("{", closeParen));
-    const firstStatement = body.slice(0, body.indexOf(";") + 1).trim();
+    // ANCHORED AT THE BODY START, not sliced to the first semicolon (Codex P2
+    // 4303336569). Semicolon slicing could span two ASI-separated statements,
+    // so an inserted `await preloadFinancialData()` without a trailing
+    // semicolon would have left the refusal inside the slice and the check
+    // green. Anchoring means ANY inserted statement breaks the match.
     expect(
-      firstStatement,
+      body.trimStart(),
       "the role refusal must be the FIRST executable statement of loadFinancialsView",
-    ).toMatch(/practitioner\.role\s*!==\s*"owner"/);
-    expect(firstStatement, "and it must return the refusal").toMatch(/access:\s*"refused"/);
+    ).toMatch(/^if\s*\(\s*practitioner\.role\s*!==\s*"owner"\s*\)/);
+    expect(
+      body.trimStart().slice(0, 200),
+      "and it must return the refusal",
+    ).toMatch(/access:\s*"refused"/);
   });
 
   it("NON-VACUITY: ordinary practitioner surfaces carry NO owner refusal", () => {
