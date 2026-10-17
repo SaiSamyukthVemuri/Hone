@@ -150,8 +150,22 @@ test("owner: the day's records appear; every excluded sentinel is absent from pa
   for (const s of excluded) expect(printed, `print view leaked ${s}`).not.toContain(s);
   await page.emulateMedia({ media: "screen" });
 
-  // SENTRY NEGATIVE CONTROL (#828 item 6): no envelope the guard intercepted
-  // during this export carries the client's id, name, email or any sentinel.
+  // SENTRY NEGATIVE CONTROL (#828 item 6), made NON-VACUOUS: a synthetic
+  // canary error is thrown on the export page, and the check only counts once
+  // the egress guard has captured it. Then no captured envelope may carry the
+  // client's id, name, email or any sentinel. Scope, stated honestly: the guard
+  // records a SUMMARY of each envelope (transaction, message, exception
+  // values), not the full payload, so this proves those fields only. Full
+  // Sentry redaction is #891's (a merge prerequisite of this PR).
+  const canary = `HON46-CANARY-${fx.seed.runId}`;
+  await page.evaluate((msg) => {
+    setTimeout(() => {
+      throw new Error(msg);
+    }, 0);
+  }, canary);
+  await expect
+    .poll(() => JSON.stringify(readSentryEgress(egressMark)).includes(canary), { timeout: 20_000 })
+    .toBe(true);
   const egress = JSON.stringify(readSentryEgress(egressMark));
   for (const s of [fx.clientId, fx.seed.clientName, fx.seed.clientEmail, fx.sentinel.session, ...excluded]) {
     expect(egress, `a Sentry envelope carried ${s}`).not.toContain(s);
