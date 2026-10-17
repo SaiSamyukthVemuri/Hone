@@ -31,6 +31,12 @@ import {
 
 const DAY = "2026-09-15";
 const OUTSIDE_DAY = "2026-09-20";
+// The HON-46 journey (Sam, 2026-10-17): one client, ONE treatment date with
+// several treatments, its neighbouring date, and a date with none. All outside
+// the DAY..OUTSIDE_DAY range the other tests count sessions in.
+const JOURNEY_DAY = "2026-09-24";
+const JOURNEY_PREV_DAY = "2026-09-23";
+const EMPTY_DAY = "2026-09-25";
 
 type Fixture = {
   seed: E2eSeed;
@@ -47,7 +53,10 @@ type Fixture = {
     | "personalNote"
     | "planning"
     | "deleted"
-    | "outside",
+    | "outside"
+    | "journeyMorning"
+    | "journeyAfternoon"
+    | "journeyPrevDay",
     string
   >;
 };
@@ -94,6 +103,9 @@ test.beforeAll(async () => {
     planning: `PLANNING-NOTE-${run}`,
     deleted: `DELETED-SESSION-${run}`,
     outside: `OUTSIDE-RANGE-${run}`,
+    journeyMorning: `JOURNEY-MORNING-${run}`,
+    journeyAfternoon: `JOURNEY-AFTERNOON-${run}`,
+    journeyPrevDay: `JOURNEY-PREV-DAY-${run}`,
   };
   const at = (day: string, time: string) =>
     sql<{ t: string }>(`select (($1::date + $2::time) at time zone $3)::text as t`, [day, time, tz]).then((r) => r[0].t);
@@ -143,6 +155,23 @@ test.beforeAll(async () => {
     `insert into public.sessions (studio_id, client_id, practitioner_id, modality, started_at, session_notes)
      values ($1, $2, $3, 'electrolysis', $4, $5)`,
     [seed.studioId, client.id, ownerId, await at(OUTSIDE_DAY, "10:00"), sentinel.outside],
+  );
+  // The journey date: TWO treatments the same day, and one the day before.
+  await sql(
+    `insert into public.sessions (studio_id, client_id, practitioner_id, modality, started_at, session_notes)
+     values ($1, $2, $3, 'electrolysis', $4, $5), ($1, $2, $3, 'electrolysis', $6, $7),
+            ($1, $2, $3, 'electrolysis', $8, $9)`,
+    [
+      seed.studioId,
+      client.id,
+      ownerId,
+      await at(JOURNEY_DAY, "09:00"),
+      sentinel.journeyMorning,
+      await at(JOURNEY_DAY, "16:30"),
+      sentinel.journeyAfternoon,
+      await at(JOURNEY_PREV_DAY, "16:30"),
+      sentinel.journeyPrevDay,
+    ],
   );
   // Clinical notes are stored the way the date input stores them: MIDNIGHT
   // UTC of the civil date. One on DAY (in scope) and one on the next day (out).
@@ -375,6 +404,88 @@ test("owner: printing is audited first, and the dialog opens only after", async 
   for (const s of [fx.sentinel.privateWarning, fx.sentinel.personalNote, fx.sentinel.planning, fx.sentinel.deleted, fx.sentinel.outside]) {
     expect(printed, `print view leaked ${s}`).not.toContain(s);
   }
+});
+
+test("HON-46 journey: client record -> choose a date -> preview -> print, including an empty date", async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as unknown as { __printed: number }).__printed = 0;
+    window.print = () => {
+      (window as unknown as { __printed: number }).__printed += 1;
+    };
+  });
+  await loginByMagicLink(page, fx.seed.ownerEmail);
+  const before = (await auditRows(fx.clientId)).length;
+
+  // 1. The client record, where analytics IS live (positive control).
+  await page.goto(`/clients/${fx.clientId}`);
+  await expect
+    .poll(() => page.evaluate(() => typeof (window as unknown as { va?: unknown }).va), { timeout: 15_000 })
+    .not.toBe("undefined");
+
+  // 2. Its visible entry opens the export by a FULL document load.
+  const entry = page.getByTestId("client-print-records");
+  await expect(entry).toBeVisible();
+  await expect(entry).toHaveText("Print treatment records");
+  const loaded = page.waitForEvent("load");
+  await entry.click();
+  await loaded;
+  await page.waitForURL((u) => u.pathname === `/clients/${fx.clientId}/records/export`);
+  expect(await page.evaluate(() => typeof (window as unknown as { va?: unknown }).va), "analytics carried into the export").toBe("undefined");
+
+  // 3. "One day" is the default; nothing is read or audited before Preview.
+  await expect(page.getByRole("combobox", { name: "Scope" })).toHaveValue("day");
+  await expect(page.getByRole("textbox", { name: "Treatment date" })).toHaveValue(/^\d{4}-\d{2}-\d{2}$/);
+  await expect(page.getByTestId("export-session")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Print" })).toHaveCount(0);
+  expect((await auditRows(fx.clientId)).length).toBe(before);
+
+  // 4. Choose the treatment date and preview: BOTH treatments that day, nothing
+  //    from any other date, no private warning or personal note.
+  await page.getByRole("textbox", { name: "Treatment date" }).fill(JOURNEY_DAY);
+  await page.getByRole("button", { name: "Preview" }).click();
+  await page.waitForURL((u) => u.searchParams.get("scope") === "day" && u.searchParams.get("day") === JOURNEY_DAY);
+  await expect(page.getByTestId("export-session")).toHaveCount(2);
+  await expect(page.getByTestId("export-session").nth(0)).toContainText(fx.sentinel.journeyMorning);
+  await expect(page.getByTestId("export-session").nth(1)).toContainText(fx.sentinel.journeyAfternoon);
+  const html = await page.content();
+  for (const s of [
+    fx.sentinel.journeyPrevDay,
+    fx.sentinel.session,
+    fx.sentinel.outside,
+    fx.sentinel.clinicalNote,
+    fx.sentinel.privateWarning,
+    fx.sentinel.personalNote,
+    fx.sentinel.planning,
+  ]) {
+    expect(html, `the ${JOURNEY_DAY} preview carried ${s}`).not.toContain(s);
+  }
+
+  // 5. Print: audited first, then the dialog; the print view is that day only.
+  await page.getByRole("button", { name: "Print" }).click();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __printed: number }).__printed)).toBe(1);
+  await page.emulateMedia({ media: "print" });
+  const printed = await page.locator("body").innerText();
+  expect(printed).toContain(fx.sentinel.journeyMorning);
+  expect(printed).toContain(fx.sentinel.journeyAfternoon);
+  expect(printed).not.toContain(fx.sentinel.journeyPrevDay);
+  expect(printed).not.toContain(fx.sentinel.privateWarning);
+  await page.emulateMedia({ media: "screen" });
+
+  // 6. An EMPTY date says so, and offers nothing to print.
+  await page.getByRole("textbox", { name: "Treatment date" }).fill(EMPTY_DAY);
+  await page.getByRole("button", { name: "Preview" }).click();
+  await page.waitForURL((u) => u.searchParams.get("day") === EMPTY_DAY);
+  await expect(page.getByTestId("export-empty")).toContainText("No treatments were recorded on");
+  await expect(page.getByTestId("export-session")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Print" })).toHaveCount(0);
+
+  // The audit trail of the whole journey: preview, print, preview (empty).
+  const rows = (await auditRows(fx.clientId)).slice(before);
+  expect(rows.map((r) => [r.action, r.metadata])).toEqual([
+    ["clinical_records_previewed", { scope: "day", day: JOURNEY_DAY }],
+    ["clinical_records_printed", { scope: "day", day: JOURNEY_DAY }],
+    ["clinical_records_previewed", { scope: "day", day: EMPTY_DAY }],
+  ]);
 });
 
 test("owner: one session is reachable from the audited range view and exports alone", async ({ page }) => {

@@ -315,6 +315,46 @@ describe("HON-46 is structurally outside third-party telemetry (Codex P1 4301165
     expect(code(FILES.page)).toMatch(/<a href=\{`\/clients\/\$\{client\.id\}`\}/);
   });
 
+  it("the client record's entry is a visible, owner-only, PLAIN anchor (HON-46 journey)", () => {
+    const src = code("app/(app)/clients/[id]/page.tsx");
+    const at = src.indexOf('data-testid="client-print-records"');
+    expect(at).toBeGreaterThan(-1);
+    const open = src.lastIndexOf("<", at);
+    expect(src.slice(open, open + 3)).toBe("<a\n");
+    expect(src.slice(open - 120, open)).toContain('practitioner.role === "owner" && (');
+    expect(src.slice(open, at)).toContain("href={`/clients/${client.id}/records/export`}");
+  });
+
+  it("One day is the default scope, prefilled with the studio's today; an empty date offers no print", () => {
+    const page = code(FILES.page);
+    expect(page).toContain('defaultValue={rawScope.scope ?? "day"}');
+    expect(page).toContain("rawScope.day ?? todayInTz(tz)");
+    expect(page).toContain("outcome?.ok && !emptyDay && <AuditedPrintButton");
+  });
+
+  it("NO element anywhere that links to the export is a client-side link, even across lines", () => {
+    const files = execSync("git ls-files 'app/*.tsx' 'components/*.tsx' 'app/**/*.tsx' 'components/**/*.tsx'", {
+      cwd: ROOT,
+      encoding: "utf8",
+    })
+      .split("\n")
+      .filter(Boolean);
+    const offenders: string[] = [];
+    for (const f of files) {
+      const src = code(f);
+      let i = src.indexOf("records/export");
+      while (i !== -1) {
+        // The JSX element this href belongs to: the nearest tag opener before it.
+        const open = src.lastIndexOf("<", i);
+        const tag = /^<([A-Za-z.]+)/.exec(src.slice(open))?.[1];
+        if (tag && tag !== "a" && /href=/.test(src.slice(open, i))) offenders.push(`${f}: <${tag}>`);
+        if (/router\.(push|replace)\([^)]*$/.test(src.slice(Math.max(0, i - 200), i))) offenders.push(`${f}: router`);
+        i = src.indexOf("records/export", i + 1);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
   it("nothing soft-navigates into the export (no next/link to records/export)", () => {
     const files = execSync("git ls-files 'app/*.tsx' 'components/*.tsx' 'app/**/*.tsx' 'components/**/*.tsx'", {
       cwd: ROOT,

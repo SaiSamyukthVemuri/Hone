@@ -39,6 +39,7 @@ import {
 type LoadedRecords = Extract<ClinicalRecordsLoad, { ok: true }>["value"];
 import { AuditedPrintButton } from "./print-button";
 import { formatClinicalDate } from "@/lib/clinical-notes/clinical-date";
+import { todayInTz } from "@/lib/booking/tz";
 import {
   EXPORT_DOCUMENT_ID,
   PRINT_GATE_CSS,
@@ -171,6 +172,15 @@ export default async function ClinicalRecordsExportPage({
   }
 
   const tz = studio.timezone;
+  // HON-46 (Sam, 2026-10-17): the journey is ONE CLIENT, ONE TREATMENT DATE.
+  // "One day" is the default scope, and its date starts at the studio's today;
+  // nothing is read or audited until the owner presses Preview.
+  const dayDefault = rawScope.day ?? todayInTz(tz);
+  const emptyDay =
+    outcome?.ok === true &&
+    outcome.scopeKind === "day" &&
+    outcome.document.sessions.length === 0 &&
+    outcome.document.clinicalNotes.length === 0;
   return (
     <>
     {/* PRINT GATE (Codex P1 4301153310). The browser's own print (Ctrl/Cmd+P,
@@ -197,20 +207,21 @@ export default async function ClinicalRecordsExportPage({
             Back to client
           </a>
         </div>
-        {outcome?.ok && <AuditedPrintButton clientId={client.id} rawScope={rawScope} />}
+        {/* Nothing to print on an empty date. */}
+        {outcome?.ok && !emptyDay && <AuditedPrintButton clientId={client.id} rawScope={rawScope} />}
       </header>
 
       <form method="get" className="flex flex-wrap items-end gap-3 text-sm print:hidden" aria-label="Export scope">
         <label className="flex flex-col gap-1">
           <span className="text-xs text-neutral-600">Scope</span>
-          <select name="scope" defaultValue={rawScope.scope ?? "range"} className="min-h-[44px] rounded-md border px-2">
+          <select name="scope" defaultValue={rawScope.scope ?? "day"} className="min-h-[44px] rounded-md border px-2">
             <option value="day">One day</option>
             <option value="range">Date range</option>
           </select>
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-xs text-neutral-600">Day</span>
-          <input type="date" name="day" defaultValue={rawScope.day} className="min-h-[44px] rounded-md border px-2" />
+          <span className="text-xs text-neutral-600">Treatment date</span>
+          <input type="date" name="day" defaultValue={dayDefault} className="min-h-[44px] rounded-md border px-2" />
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-xs text-neutral-600">From</span>
@@ -260,7 +271,11 @@ export default async function ClinicalRecordsExportPage({
           <section className="flex flex-col gap-3" aria-label="Sessions">
             <h2 className="text-sm font-semibold uppercase tracking-wider">Treatment sessions</h2>
             {outcome.document.sessions.length === 0 ? (
-              <p className="text-sm text-neutral-500">No sessions in this scope.</p>
+              <p className="text-sm text-neutral-500" data-testid="export-empty">
+                {outcome.scopeKind === "day"
+                  ? `No treatments were recorded on ${formatClinicalDate(`${rawScope.day}T00:00:00+00:00`)}.`
+                  : "No sessions in this scope."}
+              </p>
             ) : (
               <ul className="flex flex-col gap-4">
                 {outcome.document.sessions.map((s) => (
