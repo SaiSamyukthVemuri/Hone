@@ -21,6 +21,12 @@
 --      sender, refuses one that is released, another studio's, or no longer
 --      holding the number the caller saw, validates the observation, and
 --      upserts. verified_at is set only for a verified campaign.
+--      COMPARE-AND-SET (Codex P1 4301502260): the provider check runs BEFORE
+--      the write, so two overlapping checks could land out of order and a
+--      delayed `verified` overwrite a newer `failed`. The caller passes the
+--      checked_at it read before its provider call (null = it saw no row), and
+--      the write is refused (`binding_changed`) if the row has moved since.
+--      Only the database clock is compared, so app/database skew cannot matter.
 --   3. get_live_studio_sms_sender_registration_state(uuid): the 0217 snapshot
 --      plus `provisioned_at` per sender and a `campaign_bindings` array (the
 --      bindings of the listed senders). Every 0217 key is unchanged.
@@ -86,7 +92,8 @@ create or replace function public.record_studio_sms_campaign_binding(
   p_messaging_service_sid text,
   p_campaign_sid          text,
   p_campaign_status       text,
-  p_context               text
+  p_context               text,
+  p_expected_checked_at   timestamptz
 ) returns table (result text, binding_id uuid)
 language plpgsql
 security definer
@@ -94,8 +101,9 @@ set search_path = pg_catalog, pg_temp
 set lock_timeout = '5s'
 as $$
 declare
-  v_sender public.studio_sms_senders%rowtype;
-  v_id     uuid;
+  v_sender  public.studio_sms_senders%rowtype;
+  v_current timestamptz;
+  v_id      uuid;
 begin
   if p_studio_id is null or p_expected_sender_id is null
      or p_expected_phone is null or p_expected_phone !~ '^\+1[2-9][0-9]{2}[2-9][0-9]{6}$'
@@ -122,6 +130,16 @@ begin
   end if;
   if v_sender.phone_number is distinct from p_expected_phone then
     return query select 'sender_changed'::text, null::uuid;
+    return;
+  end if;
+
+  -- The sender row lock above serialises every writer for this sender, so
+  -- this read and the upsert below see the same current row.
+  select b.checked_at into v_current
+    from public.studio_sms_sender_campaign_bindings b
+   where b.sender_id = p_expected_sender_id;
+  if v_current is distinct from p_expected_checked_at then
+    return query select 'binding_changed'::text, null::uuid;
     return;
   end if;
 
@@ -207,11 +225,11 @@ revoke all on table public.studio_sms_sender_campaign_bindings from anon;
 revoke all on table public.studio_sms_sender_campaign_bindings from authenticated;
 revoke all on table public.studio_sms_sender_campaign_bindings from service_role;
 
-revoke execute on function public.record_studio_sms_campaign_binding(uuid, uuid, text, text, text, text, text) from public;
-revoke execute on function public.record_studio_sms_campaign_binding(uuid, uuid, text, text, text, text, text) from anon;
-revoke execute on function public.record_studio_sms_campaign_binding(uuid, uuid, text, text, text, text, text) from authenticated;
-revoke execute on function public.record_studio_sms_campaign_binding(uuid, uuid, text, text, text, text, text) from service_role;
-grant execute on function public.record_studio_sms_campaign_binding(uuid, uuid, text, text, text, text, text) to service_role;
+revoke execute on function public.record_studio_sms_campaign_binding(uuid, uuid, text, text, text, text, text, timestamptz) from public;
+revoke execute on function public.record_studio_sms_campaign_binding(uuid, uuid, text, text, text, text, text, timestamptz) from anon;
+revoke execute on function public.record_studio_sms_campaign_binding(uuid, uuid, text, text, text, text, text, timestamptz) from authenticated;
+revoke execute on function public.record_studio_sms_campaign_binding(uuid, uuid, text, text, text, text, text, timestamptz) from service_role;
+grant execute on function public.record_studio_sms_campaign_binding(uuid, uuid, text, text, text, text, text, timestamptz) to service_role;
 
 -- CREATE OR REPLACE keeps the 0217 grants, but they are restated so this
 -- migration alone determines who may call the snapshot.
@@ -223,7 +241,7 @@ grant execute on function public.get_live_studio_sms_sender_registration_state(u
 
 comment on table public.studio_sms_sender_campaign_bindings is
   'SMS-CAMPAIGN-BINDING-01 (0229, HON-50 G4a): what a provider check observed about a sender''s Messaging Service and its US A2P campaign, one current row per sender. Evidence only; written only by record_studio_sms_campaign_binding; read only through get_live_studio_sms_sender_registration_state.';
-comment on function public.record_studio_sms_campaign_binding(uuid, uuid, text, text, text, text, text) is
-  'SMS-CAMPAIGN-BINDING-01 (0229): record a campaign-binding observation for the live sender the caller saw (refused if released, another studio''s, or no longer holding that number). service_role only.';
+comment on function public.record_studio_sms_campaign_binding(uuid, uuid, text, text, text, text, text, timestamptz) is
+  'SMS-CAMPAIGN-BINDING-01 (0229): record a campaign-binding observation for the live sender the caller saw (refused if released, another studio''s, or no longer holding that number), compare-and-set on the checked_at the caller read before its provider check (binding_changed otherwise). service_role only.';
 
 commit;

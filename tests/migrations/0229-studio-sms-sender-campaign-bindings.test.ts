@@ -12,7 +12,7 @@ const read = (f: string) => readFileSync(path.join(MIGRATIONS, f), "utf8");
 const SQL = read("0229_studio_sms_sender_campaign_bindings.sql");
 const CODE = SQL.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*--.*$/gm, " ").replace(/\s+--.*$/gm, " ");
 const TOP_LEVEL = CODE.replace(/\$\$[\s\S]*?\$\$/g, " ");
-const RECORD = "public.record_studio_sms_campaign_binding(uuid, uuid, text, text, text, text, text)";
+const RECORD = "public.record_studio_sms_campaign_binding(uuid, uuid, text, text, text, text, text, timestamptz)";
 const SNAPSHOT = "public.get_live_studio_sms_sender_registration_state(uuid)";
 
 describe("0229 in the sequence", () => {

@@ -50,6 +50,14 @@ async function adopt(s: SeededStudio, number: string, service: string) {
   );
 }
 
+/** The binding's checked_at as the snapshot gives it (the CAS token), or null. */
+const currentCheckedAt = async (senderId: string): Promise<string | null> =>
+  ((await adminQuery(
+    "select to_jsonb(checked_at) #>> '{}' as t from public.studio_sms_sender_campaign_bindings where sender_id = $1",
+    [senderId],
+  )).rows[0]?.t as string | undefined) ?? null;
+
+/** Record, by default against the row as it is NOW (a fresh read before the provider call). */
 const record = async (
   studioId: string,
   senderId: string,
@@ -58,9 +66,11 @@ const record = async (
   campaign: string | null,
   status: string,
   context = "evidence",
+  expectedCheckedAt?: string | null,
 ) =>
-  (await adminQuery("select * from public.record_studio_sms_campaign_binding($1, $2, $3, $4, $5, $6, $7)", [
+  (await adminQuery("select * from public.record_studio_sms_campaign_binding($1, $2, $3, $4, $5, $6, $7, $8)", [
     studioId, senderId, phone, service, campaign, status, context,
+    expectedCheckedAt === undefined ? await currentCheckedAt(senderId) : expectedCheckedAt,
   ])).rows[0] as { result: string; binding_id: string | null };
 
 const snapshot = async (studioId: string) =>
@@ -167,6 +177,32 @@ describe("adoption, the recorded binding, and the verdict", () => {
   });
 });
 
+describe("compare-and-set: overlapping checks cannot land out of order (Codex P1 4301502260)", () => {
+  it("a delayed `verified` read before a newer `failed` was recorded is refused; the newer result stands", async () => {
+    const s = await seedStudio("cb-race");
+    const number = await freshNumber("416");
+    const service = mg();
+    await adopt(s, number, service);
+    const sender = await liveSender(s.studioId);
+
+    // Both checks read the row BEFORE their provider calls: no row yet.
+    const seenBySlow = await currentCheckedAt(sender.id);
+    const seenByFast = await currentCheckedAt(sender.id);
+    expect(seenBySlow).toBeNull();
+    // The faster check lands first with `failed`...
+    expect(await record(s.studioId, sender.id, number, service, qe(), "failed", "cutover", seenByFast)).toMatchObject({ result: "recorded" });
+    // ...and the delayed `verified` is refused rather than overwriting it.
+    expect(await record(s.studioId, sender.id, number, service, qe(), "verified", "cutover", seenBySlow)).toEqual({ result: "binding_changed", binding_id: null });
+    expect(await verdictFor(s.studioId)).toEqual({ ok: false, reason: "unverified" });
+
+    // A check that read the CURRENT row may replace it.
+    expect(await record(s.studioId, sender.id, number, service, qe(), "verified")).toMatchObject({ result: "recorded" });
+    expect(await verdictFor(s.studioId)).toEqual({ ok: true });
+    // And a token from before that write is now stale too.
+    expect(await record(s.studioId, sender.id, number, service, qe(), "failed", "cutover", seenByFast)).toEqual({ result: "binding_changed", binding_id: null });
+  });
+});
+
 describe("record_studio_sms_campaign_binding refusals", () => {
   let s: SeededStudio;
   let sender: { id: string; phone_number: string; messaging_service_sid: string };
@@ -206,7 +242,7 @@ describe("privileges", () => {
     for (const role of ["anon", "authenticated"] as const) {
       await expect(asRole(role, (q) => q("select 1 from public.studio_sms_sender_campaign_bindings limit 1"))).rejects.toThrow(/permission denied/);
       await expect(
-        asRole(role, (q) => q(`select public.record_studio_sms_campaign_binding(gen_random_uuid(), gen_random_uuid(), '+12125550101', '${mg()}', null, 'none', 'evidence')`)),
+        asRole(role, (q) => q(`select public.record_studio_sms_campaign_binding(gen_random_uuid(), gen_random_uuid(), '+12125550101', '${mg()}', null, 'none', 'evidence', null)`)),
       ).rejects.toThrow(/permission denied/);
       await expect(asRole(role, (q) => q("select public.get_live_studio_sms_sender_registration_state(gen_random_uuid())"))).rejects.toThrow(/permission denied/);
     }
