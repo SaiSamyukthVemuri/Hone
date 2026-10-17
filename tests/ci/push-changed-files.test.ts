@@ -112,18 +112,26 @@ function classify(dir: string): Record<string, string> {
 const SHIPPED = ["app/ingest/route.ts", "docs/03_SECURITY_AND_PRIVACY.md"];
 
 describe("push: a production merge lists what it SHIPPED", () => {
-  it("CONTROL: the old command (git show --name-only on the merge) lists only the shared doc", () => {
+  it("CONTROL: the old command lists only the shared doc, which the classifier calls DOCS-ONLY (lanes skipped)", () => {
     const { dir, sha } = repoWithMerge();
+    // A real two-parent merge: both sides touched the doc, only one shipped app code.
+    expect(git(dir, "rev-list", "--parents", "-n", "1", sha).split(" ")).toHaveLength(3);
     const combined = git(dir, "show", "--name-only", "--no-renames", "--pretty=format:", sha)
       .split("\n")
       .filter(Boolean);
     expect(combined).toEqual(["docs/03_SECURITY_AND_PRIVACY.md"]);
+    writeFileSync(path.join(dir, "changed.txt"), combined.join("\n") + "\n");
+    const c = classify(dir);
+    expect(c.docs_only).toBe("true");
+    expect(c.full_matrix_required).toBe("false");
   });
 
   it("with `before` = the previous production tip: the merge's full first-parent diff, classified as application", () => {
     const { dir, before, sha } = repoWithMerge();
     expect(runStep(dir, { event: "push", sha, before })).toEqual(SHIPPED);
     const c = classify(dir);
+    // application=true runs validate (typecheck/lint/build/unit) and the
+    // application browser lanes; docs-only would have skipped them all.
     expect(c.docs_only).toBe("false");
     expect(c.application).toBe("true");
   });
@@ -149,6 +157,71 @@ describe("push: a production merge lists what it SHIPPED", () => {
     const sha = git(dir, "rev-parse", "HEAD");
     expect(runStep(dir, { event: "push", sha, before: "" })).toEqual([]);
     expect(classify(dir).full_matrix_required).toBe("true");
+  });
+
+  // (b) PRODUCTION'S REAL HISTORY. #912's merge 6acea261 shipped 5 app files
+  // and shared docs/03 with #913; its push run 39064516027 skipped validate.
+  // validate checks out with fetch-depth: 0, so these commits are reachable in
+  // CI; a shallow local clone skips, and says so.
+  const REAL_MERGES = [
+    // #912 also touched next.config.ts (shared infra), so it is FULL matrix;
+    // #891 is application-only, which still runs validate.
+    { sha: "6acea261a8840b4b7ae026f4f181f31b6dc976e6", pr: "#912", shipping: "app/monitoring/route.ts", full: "true" },
+    { sha: "62ff27b286ea335605342e57067b0c6a05a1a8e5", pr: "#891", shipping: "lib/observability/sentry-scrub.ts", full: "false" },
+  ];
+  for (const m of REAL_MERGES) {
+    const reachable = (() => {
+      try {
+        execFileSync("git", ["cat-file", "-e", `${m.sha}^{commit}`], { cwd: ROOT, stdio: "ignore" });
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+    it.skipIf(!reachable)(`REAL production merge ${m.pr} (${m.sha.slice(0, 8)}): old = docs-only, new = application (validate runs)`, () => {
+      const dir = mkdtempSync(path.join(tmpdir(), "hone-push-diff-real-"));
+      dirs.push(dir);
+      const gitDir = execFileSync("git", ["rev-parse", "--absolute-git-dir"], { cwd: ROOT, encoding: "utf8" }).trim();
+      const before = execFileSync("git", ["rev-parse", `${m.sha}^1`], { cwd: ROOT, encoding: "utf8" }).trim();
+      // OLD: the combined diff, as the push step used to compute it.
+      const old = execFileSync("git", ["--git-dir", gitDir, "show", "--name-only", "--no-renames", "--pretty=format:", m.sha], { encoding: "utf8" })
+        .split("\n")
+        .filter(Boolean);
+      expect(old).toEqual(["docs/03_SECURITY_AND_PRIVACY.md"]);
+      writeFileSync(path.join(dir, "changed.txt"), old.join("\n") + "\n");
+      expect(classify(dir).docs_only).toBe("true");
+      // NEW: the real step body, against the real repository's objects.
+      const script = stepScript("Collect changed files")
+        .split("${{ github.event_name }}").join("push")
+        .split("${{ github.sha }}").join(m.sha)
+        .split("${{ github.event.before }}").join(before)
+        .split("${{ github.event.pull_request.base.sha }}").join("")
+        .split("${{ github.event.pull_request.head.sha }}").join("");
+      execFileSync("bash", ["-c", script], { cwd: dir, stdio: "pipe", env: { ...process.env, GIT_DIR: gitDir } });
+      const shipped = readFileSync(path.join(dir, "changed.txt"), "utf8").split("\n").filter(Boolean);
+      expect(shipped).toContain(m.shipping);
+      expect(shipped).toContain("docs/03_SECURITY_AND_PRIVACY.md");
+      const c = classify(dir);
+      expect(c.docs_only).toBe("false");
+      expect(c.application).toBe("true");
+      expect(c.full_matrix_required).toBe(m.full);
+    });
+  }
+
+  it("(d) required checks are preserved: every job id and stable name is still present", () => {
+    for (const [id, name] of [
+      ["changes", "changed-path detection"],
+      ["validate", "typecheck / lint / build / test / safety gates"],
+      ["canonical-record", "canonical production record (docs-only)"],
+      ["db-integration", "db integration (local supabase)"],
+      ["browser-e2e", "browser e2e (local stack)"],
+      ["payment-browser-e2e", "payment browser e2e (fake stripe)"],
+      ["mobile-completion-e2e", "mobile completion e2e (chromium iphone-profile)"],
+      ["google-browser-e2e", "google browser e2e (fake google)"],
+    ]) {
+      expect(CI_YML, `job ${id}`).toMatch(new RegExp(`\\n  ${id}:\\n`));
+      expect(CI_YML, `name ${name}`).toContain(`    name: ${name}\n`);
+    }
   });
 
   it("the pull_request branch is unchanged (merge-base..head), and no executable line uses git show", () => {
