@@ -6,6 +6,7 @@ import {
   catalogueIntegrity,
   openEvidenceChecklist,
   profileById,
+  profileAtVersion,
 } from "@/lib/machines/catalogue";
 import {
   activeModes,
@@ -837,5 +838,420 @@ describe("the two new gate limbs bite", () => {
     p.modes[0]!.verification = "pending-evidence";
     const problems = catalogueIntegrity([p]).map((v) => v.problem).join(" ");
     expect(problems).toContain("its own identity is pending-evidence");
+  });
+});
+
+// ===========================================================================
+// MPX-01 — the five findings from the f4dface3 review
+// ===========================================================================
+
+describe("a reading validates against the version it was CAPTURED under", () => {
+  // THE P1 (Codex, #855 4304921305). The lookup resolved by profileId alone
+  // and then refused the reading for not matching whatever version the
+  // catalogue currently held — with a message promising the opposite:
+  // "a historical reading keeps rendering against the version it was
+  // captured under". The duplicate-profileId rule also made holding v1 beside
+  // v2 impossible, so there was no arrangement in which the promise held.
+  const V1: MachineProfile = {
+    profileId: "fixture:versioned",
+    version: 1,
+    family: "Synthetic/Demo",
+    manufacturer: "Fixture",
+    model: "Versioned",
+    availability: "active",
+    verification: "device-confirmed",
+    frequency: { kind: "not-applicable" },
+    evidence: [
+      {
+        id: "fx",
+        kind: "studio-device-photo",
+        consultedOn: "2026-10-17",
+        establishes: "Nothing about a real machine; it carries two versions.",
+      },
+    ],
+    openQuestions: [],
+    modes: [
+      {
+        key: "m",
+        nativeLabel: "M",
+        family: "thermolysis",
+        availability: "active",
+        verification: "device-confirmed",
+        evidence: ["fx"],
+        stages: [],
+        fields: [
+          {
+            key: "current",
+            nativeLabel: "Current",
+            quantity: "current",
+            unit: "mA",
+            decimals: 1,
+            optional: false,
+            expectedSource: "practitioner-entered",
+            editable: true,
+            verification: "device-confirmed",
+            evidence: ["fx"],
+          },
+        ],
+      },
+    ],
+  } as MachineProfile;
+
+  // SAME id, LATER version, DIFFERENT precision — which is why a v1 reading
+  // must not be validated against it.
+  const V2: MachineProfile = {
+    ...V1,
+    version: 2,
+    modes: [
+      {
+        ...V1.modes[0]!,
+        fields: [{ ...V1.modes[0]!.fields[0]!, decimals: 2 }],
+      },
+    ],
+  } as MachineProfile;
+
+  const BOTH = [V1, V2];
+
+  const read = (version: number, value: number) =>
+    validateReading(
+      {
+        profileId: "fixture:versioned",
+        version,
+        modeKey: "m",
+        fieldKey: "current",
+        source: "practitioner-entered",
+        value: { kind: "value", value },
+      },
+      { catalogue: BOTH },
+    );
+
+  it("accepts a v1 reading while the catalogue also carries v2", () => {
+    // Before the fix this returned `stale_profile_version`, making every
+    // historical reading invalid the moment a contract was republished.
+    const out = read(1, 1.2);
+    expect(out.ok, "a v1 reading was refused against a catalogue holding v1").toBe(
+      true,
+    );
+  });
+
+  it("validates it against v1's precision, not v2's", () => {
+    // The point of resolving the captured version: v1 allows 1 decimal and
+    // v2 allows 2. A v1 reading of 1.25 carries more precision than its own
+    // contract and must be noted as such, not silently accepted as v2.
+    const out = read(1, 1.25);
+    if (out.ok) {
+      expect(
+        out.notes.map((n) => n.code),
+        "v1's 1-decimal contract was not the one applied",
+      ).toContain("precision_beyond_contract");
+    }
+    // And the same value under v2 is exactly within contract.
+    const v2 = read(2, 1.25);
+    expect(v2.ok).toBe(true);
+    if (v2.ok) {
+      expect(v2.notes.map((n) => n.code)).not.toContain(
+        "precision_beyond_contract",
+      );
+    }
+  });
+
+  it("two versions of one id are NOT an integrity duplicate", () => {
+    expect(
+      catalogueIntegrity(BOTH).filter((v) => v.problem.includes("duplicate")),
+      "keeping v1 beside v2 was reported as a duplicate, which is what forced the replacement",
+    ).toEqual([]);
+  });
+
+  it("but two entries at the SAME version still are", () => {
+    expect(
+      catalogueIntegrity([V1, { ...V1 }]).map((v) => v.problem),
+    ).toContain("duplicate profileId at version 1");
+  });
+
+  it("a version the catalogue does not carry is refused, and says which it has", () => {
+    const out = read(99, 1.2);
+    expect(out.ok).toBe(false);
+    if (!out.ok) {
+      expect(out.code).toBe("stale_profile_version");
+      expect(out.message).toMatch(/no contract for version 99/i);
+    }
+  });
+
+  it("an unknown model is still a different refusal from an unknown version", () => {
+    const out = validateReading(
+      {
+        profileId: "fixture:nope",
+        version: 1,
+        modeKey: "m",
+        fieldKey: "current",
+        source: "practitioner-entered",
+        value: { kind: "value", value: 1 },
+      },
+      { catalogue: BOTH },
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.code).toBe("unknown_profile");
+  });
+
+  it("profileById resolves the CURRENT version, explicitly", () => {
+    // Not array order: with several versions present "the profile for this
+    // id" can only mean the current one, and new capture resolves here.
+    expect(profileById("fixture:versioned", BOTH)!.version).toBe(2);
+    expect(profileById("fixture:versioned", [V2, V1])!.version).toBe(2);
+    expect(profileAtVersion("fixture:versioned", 1, BOTH)!.version).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The other four findings from the f4dface3 review. Each fixture is local:
+// these are rules about the contract, and borrowing the real catalogue would
+// make the test depend on a profile someone may legitimately change.
+// ---------------------------------------------------------------------------
+const FX_EVIDENCE = [
+  {
+    id: "fx",
+    kind: "studio-device-photo" as const,
+    consultedOn: "2026-10-17",
+    establishes: "Nothing about a real machine.",
+  },
+];
+
+function fxField(over: Record<string, unknown> = {}) {
+  return {
+    key: "current",
+    nativeLabel: "Current",
+    quantity: "current" as const,
+    unit: "mA" as const,
+    decimals: 1,
+    optional: false,
+    expectedSource: "practitioner-entered" as const,
+    editable: true,
+    verification: "device-confirmed" as const,
+    evidence: ["fx"],
+    ...over,
+  };
+}
+
+function fxProfile(over: Record<string, unknown> = {}): MachineProfile {
+  return {
+    profileId: "fixture:rules",
+    version: 1,
+    family: "Synthetic/Demo",
+    manufacturer: "Fixture",
+    model: "Rules",
+    availability: "active",
+    verification: "device-confirmed",
+    frequency: { kind: "not-applicable" },
+    evidence: FX_EVIDENCE,
+    openQuestions: [],
+    modes: [
+      {
+        key: "m",
+        nativeLabel: "M",
+        family: "thermolysis",
+        availability: "active",
+        verification: "device-confirmed",
+        evidence: ["fx"],
+        stages: [],
+        fields: [fxField()],
+      },
+    ],
+    ...over,
+  } as MachineProfile;
+}
+
+const fxRead = (profile: MachineProfile, over: Record<string, unknown> = {}) =>
+  validateReading(
+    {
+      profileId: profile.profileId,
+      version: profile.version,
+      modeKey: "m",
+      fieldKey: "current",
+      source: "practitioner-entered",
+      value: { kind: "value", value: 1.2 },
+      ...over,
+    } as never,
+    { catalogue: [profile] },
+  );
+
+describe("a BLOCKED mode is not offered for new capture", () => {
+  // Codex #855 4304921312. `activeModes` hid it from the picker; validation
+  // checked only the PROFILE's availability, so a stale client or a direct
+  // action call could record against a mode the catalogue says is not ready.
+  const blockedMode = fxProfile({
+    modes: [
+      {
+        key: "m",
+        nativeLabel: "M",
+        family: "thermolysis",
+        availability: "blocked",
+        availabilityReason: "units unconfirmed",
+        verification: "device-confirmed",
+        evidence: ["fx"],
+        stages: [],
+        fields: [fxField()],
+      },
+    ],
+  });
+
+  it("is refused", () => {
+    const out = fxRead(blockedMode);
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.code).toBe("mode_not_offered");
+  });
+
+  it("but a HISTORICAL reading against it still renders", () => {
+    // `allowNonOffered` is the caller saying this is not new capture. A mode
+    // blocked after the fact must not invalidate what was already recorded.
+    const out = validateReading(
+      {
+        profileId: "fixture:rules",
+        version: 1,
+        modeKey: "m",
+        fieldKey: "current",
+        source: "practitioner-entered",
+        value: { kind: "value", value: 1.2 },
+      },
+      { catalogue: [blockedMode], allowNonOffered: true },
+    );
+    expect(out.ok, "a historical reading was invalidated by a later block").toBe(
+      true,
+    );
+  });
+});
+
+describe("a MANDATORY channel association cannot be omitted", () => {
+  // Codex #855 4304921322. Every channel check sat inside
+  // `input.channel != null`, so a contract declaring the association
+  // mandatory accepted a reading that named no channel at all.
+  const needsChannel = fxProfile({
+    channels: {
+      count: 4,
+      nativeLabel: "Channel",
+      associationRequired: true,
+      supportsDistinctSettingGroups: true,
+      verification: "device-confirmed",
+      evidence: ["fx"],
+    },
+  });
+
+  it("is refused when no channel is given", () => {
+    const out = fxRead(needsChannel);
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.code).toBe("channel_required");
+  });
+
+  it("is accepted when one is", () => {
+    expect(fxRead(needsChannel, { channel: 2 }).ok).toBe(true);
+  });
+
+  it("CONTROL: a profile that does NOT require it is unaffected", () => {
+    const optional = fxProfile({
+      channels: {
+        count: 4,
+        nativeLabel: "Channel",
+        associationRequired: false,
+        supportsDistinctSettingGroups: true,
+        verification: "device-confirmed",
+        evidence: ["fx"],
+      },
+    });
+    expect(fxRead(optional).ok).toBe(true);
+  });
+
+  it("CONTROL: an ABSENT reading is not forced to name a channel", () => {
+    // "Not recorded" is a fact about a field, not a setting on a probe.
+    // Demanding a channel for it would make absence unrecordable.
+    const out = fxRead(needsChannel, {
+      value: { kind: "absent", reason: "not-recorded" },
+    });
+    expect(out.ok).toBe(true);
+  });
+});
+
+describe('the "@frequency" blocker holds activation', () => {
+  // Codex #855 4304921316. The profile-level gate tested only "*", so a
+  // profile whose frequency contract is explicitly held could be activated
+  // once its fields and mode identity were documented. `ProfileLevelBlock`
+  // declares this value; honouring it is what makes the declaration mean
+  // anything. Two live open questions use it.
+  const heldFrequency = fxProfile({
+    frequency: { kind: "unverified", note: "sources conflict" },
+    openQuestions: [
+      {
+        id: "freq",
+        question: "Which RF frequency applies to this unit?",
+        resolvedBy: "A settings-screen photograph.",
+        blocks: ["@frequency"],
+      },
+    ],
+  });
+
+  it("an ACTIVE profile with a held frequency is an integrity violation", () => {
+    expect(
+      catalogueIntegrity([heldFrequency]).map((v) => v.problem),
+    ).toContain(
+      "profile is active while an open question holds its frequency contract",
+    );
+  });
+
+  it("CONTROL: the same question on a BLOCKED profile is fine", () => {
+    const blocked = fxProfile({
+      availability: "blocked",
+      availabilityReason: "frequency unresolved",
+      frequency: { kind: "unverified", note: "sources conflict" },
+      openQuestions: heldFrequency.openQuestions,
+      modes: [
+        {
+          ...fxProfile().modes[0]!,
+          availability: "blocked",
+          availabilityReason: "frequency unresolved",
+        },
+      ],
+    });
+    expect(
+      catalogueIntegrity([blocked]).map((v) => v.problem),
+    ).not.toContain(
+      "profile is active while an open question holds its frequency contract",
+    );
+  });
+
+  it("CONTROL: an active profile with no blockers is still clean", () => {
+    expect(catalogueIntegrity([fxProfile()])).toEqual([]);
+  });
+});
+
+describe("carry-forward verifies the target against the catalogue", () => {
+  // Codex #855 4304921325. The checks compared the two INPUTS with each
+  // other, so a pair agreeing on a version and mode that do not exist
+  // authorised carrying readings into a contract nobody has. Agreement
+  // between two untrusted inputs is not verification.
+  const target = fxProfile();
+  const at = (version: number, modeKey: string) => ({
+    profileId: "fixture:rules",
+    version,
+    modeKey,
+  });
+
+  it("refuses a version the catalogue has never heard of", () => {
+    const r = carryForwardCompatibility(at(99, "m"), at(99, "m"), [target]);
+    expect(r.carry).toBe(false);
+    if (!r.carry) expect(r.reason).toBe("version");
+  });
+
+  it("refuses a mode that does not exist on the model", () => {
+    const r = carryForwardCompatibility(
+      at(1, "missing"),
+      at(1, "missing"),
+      [target],
+    );
+    expect(r.carry).toBe(false);
+    if (!r.carry) expect(r.reason).toBe("mode");
+  });
+
+  it("CONTROL: a real, matching target still carries", () => {
+    expect(carryForwardCompatibility(at(1, "m"), at(1, "m"), [target]).carry).toBe(
+      true,
+    );
   });
 });

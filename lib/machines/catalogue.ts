@@ -897,10 +897,20 @@ export function catalogueIntegrity(
   const seen = new Set<string>();
 
   for (const p of profiles) {
-    if (seen.has(p.profileId)) {
-      out.push({ profileId: p.profileId, problem: "duplicate profileId" });
+    // IDENTITY IS (profileId, VERSION), not profileId (Codex, #855
+    // 4304921305). Keyed on the id alone, this rule made it impossible to
+    // keep v1 beside v2 — so a republished contract had to REPLACE its
+    // predecessor, and every reading captured under the old version stopped
+    // validating. Two entries for one id at one version are still a
+    // duplicate; two versions of one id are the point.
+    const identity = `${p.profileId}@${p.version}`;
+    if (seen.has(identity)) {
+      out.push({
+        profileId: p.profileId,
+        problem: `duplicate profileId at version ${p.version}`,
+      });
     }
-    seen.add(p.profileId);
+    seen.add(identity);
 
     const evidenceIds = new Set(p.evidence.map((e) => e.id));
     const blockedKeys = new Set(p.openQuestions.flatMap((q) => q.blocks));
@@ -1008,6 +1018,21 @@ export function catalogueIntegrity(
         problem: "profile is active while an open question blocks everything",
       });
     }
+
+    // "@frequency" HOLDS ACTIVATION TOO (Codex, #855 4304921316). The gate
+    // above tested only "*", so a profile whose FREQUENCY contract is
+    // explicitly held could be activated the moment its fields and mode
+    // identity were documented — the Senior 3G frequency conflict is exactly
+    // such a question, and it is one of two live uses of this sentinel.
+    // `ProfileLevelBlock` declares the value; honouring it is what makes the
+    // declaration mean anything.
+    if (p.availability === "active" && blockedKeys.has("@frequency")) {
+      out.push({
+        profileId: p.profileId,
+        problem:
+          "profile is active while an open question holds its frequency contract",
+      });
+    }
   }
 
   return out;
@@ -1036,11 +1061,55 @@ export function activationReadiness(
 }
 
 /** Profiles by id, for render-time lookup of a historical reading's profile. */
+/**
+ * The CURRENT contract for a model — its highest catalogue version.
+ *
+ * WHY "HIGHEST" AND NOT "FIRST" (Codex, #855 4304921305). A profile's
+ * identity is (profileId, VERSION): a republished contract is a new version
+ * and the old one must survive, because a reading captured under v1 has to
+ * keep rendering and validating against v1 for as long as the record exists.
+ * With several versions present, "the profile for this id" can only
+ * sensibly mean the current one, so this is explicit rather than incidental
+ * on array order.
+ *
+ * NEW capture resolves through here, so it always gets the current contract.
+ * A HISTORICAL reading must use `profileAtVersion` with the version it was
+ * captured under.
+ */
 export function profileById(
   profileId: string,
   profiles: readonly MachineProfile[] = MACHINE_CATALOGUE,
 ): MachineProfile | undefined {
-  return profiles.find((p) => p.profileId === profileId);
+  let best: MachineProfile | undefined;
+  for (const p of profiles) {
+    if (p.profileId !== profileId) continue;
+    if (!best || p.version > best.version) best = p;
+  }
+  return best;
+}
+
+/**
+ * The EXACT contract a reading was captured under.
+ *
+ * THE GUARANTEE THIS EXISTS FOR, which the version-blind lookup broke
+ * (Codex, #855 4304921305). `validateReading` refused a v1 reading once the
+ * catalogue advanced to v2 — with a message that itself promised "a
+ * historical reading keeps rendering against the version it was captured
+ * under". The message asserted the guarantee the code contradicted, and the
+ * duplicate-profileId integrity rule made holding both versions impossible,
+ * so there was no arrangement in which the promise could have been kept.
+ *
+ * Returns undefined when that version is not in the catalogue at all, which
+ * is a different fact from "the model is unknown" and is reported as such.
+ */
+export function profileAtVersion(
+  profileId: string,
+  version: number,
+  profiles: readonly MachineProfile[] = MACHINE_CATALOGUE,
+): MachineProfile | undefined {
+  return profiles.find(
+    (p) => p.profileId === profileId && p.version === version,
+  );
 }
 
 /** Every unresolved question across the catalogue, for the evidence checklist. */
