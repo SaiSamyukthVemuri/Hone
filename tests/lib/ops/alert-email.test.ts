@@ -217,6 +217,12 @@ describe("#828 G-24: the alert email carries no record identifiers", () => {
     expect(mail.text).toContain("pay [stripe-id] dispute [stripe-id] and [stripe-id]");
   });
 
+  it("astral characters before an id: offsets are UTF-16, the email still goes out scrubbed (Codex P2 4301959252)", async () => {
+    const ASTRAL = `💥%20${"6f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5"}%20x 😀${"0a1b2c3d-4e5f-4061-8273-8495a6b7c8d9"}%20y 🎉%20dp%5F1TestDispute9Ab`;
+    const mail = await send(ASTRAL);
+    expect(mail.text).toContain("💥%20[id]%20x 😀[id]%20y 🎉%20[stripe-id]");
+  });
+
   it("keeps what the operator needs to triage: event slug, time, environment and the admin link", async () => {
     const mail = await send("Benign message");
     expect(mail.subject).toBe("[Hone CRITICAL] session_payment_succeeded_write_zero_rows");

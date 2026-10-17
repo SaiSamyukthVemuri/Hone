@@ -110,7 +110,10 @@ function decodeRound(units: Unit[]): Unit[] | null {
  *  original range. `undefined` means the token is still changing after the
  *  bound and must be dropped. */
 function replaceDecodedMatches(token: string, detectors: readonly Detector[]): string | undefined {
-  let units: Unit[] = [...token].map((ch, i) => ({ ch, start: i, end: i + 1 }));
+  // UTF-16 code units, not code points (Codex P2 4301959849 / 4301959252):
+  // regex indexes and String.slice count code units, so an astral character
+  // (an emoji is two units) must be two units here too.
+  let units: Unit[] = Array.from({ length: token.length }, (_v, i) => ({ ch: token[i]!, start: i, end: i + 1 }));
   for (let round = 0; ; round += 1) {
     const next = decodeRound(units);
     if (next === null) break;
@@ -174,11 +177,18 @@ function withoutRecordIds(text: string): string {
   // UUIDs and Stripe ids are detected on the DECODED form of an encoded token
   // (Codex P1 4301902572: "pi%5F3..." hid its "_"), and only their original
   // ranges are replaced.
-  return replaceEncodedAware(text, [
-    { re: RECORD_ID_RE, placeholder: "[id]" },
-    { re: STRIPE_ID_RE, placeholder: "[stripe-id]" },
-    { re: GENERIC_STRIPE_ID_RE, placeholder: "[stripe-id]" },
-  ]);
+  // If the scrubber itself fails, the message is withheld rather than sent
+  // raw, and the alert email still goes out (the slug, time and admin link
+  // are what the operator acts on).
+  try {
+    return replaceEncodedAware(text, [
+      { re: RECORD_ID_RE, placeholder: "[id]" },
+      { re: STRIPE_ID_RE, placeholder: "[stripe-id]" },
+      { re: GENERIC_STRIPE_ID_RE, placeholder: "[stripe-id]" },
+    ]);
+  } catch {
+    return "[message withheld: see the alert]";
+  }
 }
 
 let missingEnvWarned = false;
