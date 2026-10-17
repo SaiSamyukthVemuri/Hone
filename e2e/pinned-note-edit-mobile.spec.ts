@@ -4,6 +4,8 @@ import {
   seedE2eClient,
   seedPinnedNote,
   getPinnedNoteById,
+  seedConfirmedAppointment,
+  getOwnerPractitionerId,
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
@@ -61,6 +63,92 @@ test("owner edits a pinned note in place on an iPhone viewport", async ({ browse
     const row = await getPinnedNoteById(noteId);
     expect(row?.id).toBe(noteId);
     expect(row?.text).toBe("Allergy: latex + penicillin");
+  } finally {
+    await ctx.close();
+  }
+});
+
+// HON-9: the FULL pinned note is readable in place. A 200-character note used
+// to scroll sideways inside a single-line input while being edited; the field
+// now wraps and grows to show all of it. Keyboard behaviour is unchanged:
+// Enter saves, and a pasted line break becomes a space (no stored newlines).
+const LONG_NOTE =
+  "Allergic to lidocaine and latex. Prefers the right side first. Numbs easily on the upper lip; " +
+  "stop at 40 minutes. Bring the 3-step probe set. Rebook in four weeks, Tuesday mornings only.";
+
+test("a full 200-character pinned note is readable while editing, and Enter still saves", async ({ browser }) => {
+  expect(LONG_NOTE.length).toBeLessThanOrEqual(200);
+  const seed = await seedE2eStudio();
+  const { clientId } = await seedE2eClient(seed);
+  const noteId = await seedPinnedNote(seed.studioId, clientId, LONG_NOTE);
+
+  const ctx = await iphone(browser);
+  try {
+    const page = await ctx.newPage();
+    await loginAsOwner(page, seed);
+    await page.goto(`/clients/${clientId}`);
+    await expect(page.getByText(LONG_NOTE)).toBeVisible({ timeout: 20_000 });
+
+    await page.getByRole("button", { name: "Edit pinned note" }).click();
+    const editor = page.getByRole("textbox", { name: "Edit pinned note" });
+    await expect(editor).toHaveValue(LONG_NOTE);
+
+    // The whole note is on screen: no inner scroll either way, and the field
+    // grew beyond one line to hold it.
+    const box = await editor.evaluate((el) => {
+      const t = el as HTMLTextAreaElement;
+      const lineHeight = parseFloat(getComputedStyle(t).lineHeight) || 20;
+      return {
+        tag: t.tagName,
+        scrollH: t.scrollHeight,
+        clientH: t.clientHeight,
+        scrollW: t.scrollWidth,
+        clientW: t.clientWidth,
+        lines: t.clientHeight / lineHeight,
+      };
+    });
+    expect(box.tag).toBe("TEXTAREA");
+    expect(box.scrollH, "no vertical scroll inside the editor").toBeLessThanOrEqual(box.clientH + 1);
+    expect(box.scrollW, "no horizontal scroll inside the editor").toBeLessThanOrEqual(box.clientW + 1);
+    expect(box.lines, "the editor grew to several lines for a long note").toBeGreaterThan(2);
+    await expectNoHorizontalOverflow(page, "client profile @390 (editing a long note)");
+    await expect(page.getByText(`${LONG_NOTE.length}/200`)).toBeVisible();
+
+    // A pasted line break is flattened, and Enter saves (no newline stored).
+    await editor.fill("");
+    await editor.evaluate((el, v) => {
+      const t = el as HTMLTextAreaElement;
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(t, v);
+      t.dispatchEvent(new Event("input", { bubbles: true }));
+    }, "Line one\nLine two");
+    await expect(editor).toHaveValue("Line one Line two");
+    await editor.press("Enter");
+    await expect(page.getByText("Line one Line two")).toBeVisible({ timeout: 20_000 });
+    const row = await getPinnedNoteById(noteId);
+    expect(row?.text).toBe("Line one Line two");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("a long unbroken pinned note wraps on the appointment page instead of pushing it sideways", async ({ browser }) => {
+  const seed = await seedE2eStudio();
+  const { clientId } = await seedE2eClient(seed);
+  const unbroken = "x".repeat(200);
+  await seedPinnedNote(seed.studioId, clientId, unbroken);
+  const practitionerId = await getOwnerPractitionerId(seed.studioId);
+  const start = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  const appointmentId = await seedConfirmedAppointment(seed.studioId, practitionerId, clientId, start.toISOString(), end.toISOString());
+
+  const ctx = await iphone(browser);
+  try {
+    const page = await ctx.newPage();
+    await loginAsOwner(page, seed);
+    await page.goto(`/calendar/${appointmentId}`);
+    await expect(page.getByText(unbroken)).toBeVisible({ timeout: 20_000 });
+    await expectNoHorizontalOverflow(page, "appointment page @390 (long unbroken pinned note)");
   } finally {
     await ctx.close();
   }
