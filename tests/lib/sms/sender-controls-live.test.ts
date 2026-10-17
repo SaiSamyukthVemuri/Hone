@@ -155,6 +155,14 @@ describe("ships closed, and one path to the real adapter (source guards)", () =>
     expect(actions.match(/liveSenderControlsProvider\(/g)).toHaveLength(1);
   });
 
+  it("every caller asks the gate about a studio: the live branch is per studio (Codex P1 4301418258)", () => {
+    const callers = gitGrep(["-n", "-E", "senderControlsGate\\(", "--", "app"]);
+    expect(callers.length).toBeGreaterThanOrEqual(3);
+    for (const hit of callers) {
+      expect(hit, hit).toMatch(/senderControlsGate\(process\.env, undefined, (studio\.id|studioId)\)/);
+    }
+  });
+
   it("the live section never runs the demo-inventory read", () => {
     const section = strip(readFileSync("app/(app)/settings/integrations/SmsSenderControlsSection.tsx", "utf8"));
     const live = section.indexOf('gate.mode === "live"');

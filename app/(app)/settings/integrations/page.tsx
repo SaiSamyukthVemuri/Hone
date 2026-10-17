@@ -111,10 +111,12 @@ export default async function IntegrationsSettingsPage() {
           recorded (none means "Requires information"). */}
       <SmsSenderReadinessPanel rows={studioSenderReadiness(smsRead, usRegistration)} />
 
-      {/* SMS-SENDER-CONTROL-01: owner controls, FAKE PROVIDER ONLY. The gate
-          is shut in production, on hosted previews and whenever live provisioning is armed, so
-          nothing renders there; each action re-checks it. */}
-      {senderControlsGate().open ? (
+      {/* SMS-SENDER-CONTROL-01: owner controls. The FAKE mode is shut in
+          production, on hosted previews and whenever live provisioning is
+          armed. The LIVE mode (HON-50) is decided per studio, so the gate is
+          asked about THIS studio (Codex P1 4301418258); the section and each
+          action re-check it. */}
+      {senderControlsGate(process.env, undefined, studio.id).open ? (
         <SmsSenderControlsSection
           studioId={studio.id}
           recovery={senderRecoveryFor(sender?.status, sender?.last_error_code)}
