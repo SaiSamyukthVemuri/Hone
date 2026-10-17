@@ -118,7 +118,20 @@ New spec `e2e/receptionist-role-matrix.spec.ts`, on my own isolated stack,
 paired guard on, `Hone-0162` untouched:
 
 7. **Rendered denial.** Signed in as the receptionist, navigating to
-   `/clients/<id>/images` lands on `/no-access` — the user-visible half of §2.
+   `/clients/<id>/images` lands on `/no-access` — the user-visible half of §2 —
+   with no clinical heading, no `img` for the seeded id, and a visible link to
+   `/front-desk`, so it is a **role** redirect and not a dead end.
+
+   **The trap, verified by reading the chain rather than assuming it:** there is
+   **no receptionist logic in `middleware.ts`**. The denial is
+   `requirePractitionerWithStudio()` → `redirect("/no-access")`, and
+   `/no-access` then *renders* a front-desk link (it only auto-redirects a
+   **practitioner**, to `/dashboard`). Separately, **login** lands a
+   receptionist on `/front-desk` because `auth/callback` routes them there. So
+   `/front-desk` is the right assertion for the login flow and the **wrong** one
+   for a direct navigation — asserting it here would pass while the gate did
+   nothing. `e2e/front-desk-booking.spec.ts` asserts `/front-desk` correctly,
+   for the login flow; do not copy that expectation into this one.
 8. **Rendered clinical denial.** The same for a clinical record route.
 9. **Owner sees it (non-vacuity, in the browser).** The owner reaches the same
    URLs and sees the seeded content, so the receptionist result is a denial and
