@@ -47,9 +47,11 @@ const ADMIN_ALERTS_URL = "https://hone.care/admin/ops-alerts";
 // UUIDs, Stripe object ids and the route stay on the durable ops_alerts row
 // and the /admin/ops-alerts page. The (already PII-redacted) message is
 // scrubbed of any UUID or Stripe object id it embeds; the event slug stays in
-// the subject because it names a failure class, not a record.
+// the subject because it names a failure class, not a record. The UUID
+// pattern has no boundary (an id glued to letters is still removed, Codex P1
+// 4301586679 on #903) and accepts a %2D-encoded hyphen.
 const RECORD_ID_RE =
-  /(?<![0-9a-f])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9a-f])/gi;
+  /[0-9a-f]{8}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{12}/gi;
 // Every Stripe prefix lib/ops/redact.ts preserves as a "safe" id, plus pm_
 // (PaymentMethod), which redact.ts does not list. Bounded by "not a letter or
 // digit", so an id joined by "_" ("refund_re_...") is still removed.

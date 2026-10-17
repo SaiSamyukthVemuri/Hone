@@ -162,6 +162,14 @@ describe("#828 G-24: the alert email carries no record identifiers", () => {
     expect(mail.text).toContain("refund_[stripe-id]");
   });
 
+  it("removes an id glued to hex letters or with %2D hyphens (Codex P1 4301586679, on #903)", async () => {
+    const mail = await send(`ref abc${APPT}fed at /clients/${CLIENT.replace(/-/g, "%2D")}`);
+    const whole = mail.text.toLowerCase();
+    expect(whole).not.toContain(APPT.toLowerCase());
+    expect(whole).not.toContain(CLIENT.replace(/-/g, "%2D").toLowerCase());
+    expect(mail.text).toContain("ref abc[id]fed at /clients/[id]");
+  });
+
   it("keeps what the operator needs to triage: event slug, time, environment and the admin link", async () => {
     const mail = await send("Benign message");
     expect(mail.subject).toBe("[Hone CRITICAL] session_payment_succeeded_write_zero_rows");
