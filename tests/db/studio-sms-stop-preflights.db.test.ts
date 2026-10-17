@@ -7,6 +7,7 @@ import { FakeSmsProvisioningProvider } from "@/lib/sms/provider/fake-provider";
 import { stopPreflightVerdict } from "@/lib/sms/stop-preflight-record";
 import { bindingSenderFrom, parseLiveRegistrationState, stopPreflightFor } from "@/lib/sms/sender-registration";
 import { decideStudioRoute } from "@/lib/sms/send-time-route";
+import { STOP_PREFLIGHT_CHECKLIST } from "@/lib/sms/inbound-stop-preflight";
 
 // 0230 (SMS-STOP-PREFLIGHT-RECORD-01, HON-50 G6) against a real database: the
 // one writer, its refusals, constraints and compare-and-set, the privileges,
@@ -23,11 +24,10 @@ const BASE = "https://hone.care";
 const ENV = { TWILIO_WEBHOOK_BASE_URL: BASE };
 const hex = (n: number) => randomBytes(n).toString("hex");
 const mg = () => `MG${hex(16)}`;
-const PASS = [
-  { id: "one_base", status: "pass" },
-  { id: "inbound_reaches", status: "pass" },
-  { id: "signature_account", status: "pass" },
-];
+// The COMPLETE version-1 STOP checklist, every check passing (Codex P1 4304864063).
+const PASS = STOP_PREFLIGHT_CHECKLIST.map((id) => ({ id, status: "pass" }));
+const withStatus = (id: string, status: string) => PASS.map((c) => (c.id === id ? { id, status } : c));
+const without = (id: string) => PASS.filter((c) => c.id !== id);
 const saved = { url: process.env.NEXT_PUBLIC_SUPABASE_URL, key: process.env.SUPABASE_SERVICE_ROLE_KEY };
 let controls: typeof import("@/lib/sms/sender-controls");
 let admin: SupabaseClient;
@@ -68,12 +68,13 @@ const record = async (
   phone: string,
   service: string,
   checks: unknown,
-  opts: { base?: string; epoch?: string | null; context?: string; expected?: string | null } = {},
+  opts: { base?: string; epoch?: string | null; context?: string; expected?: string | null; version?: number | null } = {},
 ) =>
   (await adminQuery(
-    "select * from public.record_studio_sms_stop_preflight($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10)",
+    "select * from public.record_studio_sms_stop_preflight($1, $2, $3, $4, $5::jsonb, $6::smallint, $7, $8, $9, $10, $11)",
     [
-      studioId, senderId, phone, service, JSON.stringify(checks), opts.base ?? BASE, opts.epoch ?? null, null,
+      studioId, senderId, phone, service, JSON.stringify(checks), opts.version === undefined ? 1 : opts.version,
+      opts.base ?? BASE, opts.epoch ?? null, null,
       opts.context ?? "evidence",
       opts.expected === undefined ? await currentCheckedAt(senderId) : opts.expected,
     ],
@@ -122,13 +123,13 @@ describe("the recorded STOP preflight, the snapshot, and the verdict", () => {
 
     // ready is DERIVED by the writer: one failing check makes the row not ready.
     expect(
-      await record(s.studioId, sender.id, number, service, [...PASS.slice(0, 2), { id: "signature_account", status: "fail" }], { context: "cutover" }),
+      await record(s.studioId, sender.id, number, service, withStatus("signing_account", "fail"), { context: "cutover" }),
     ).toMatchObject({ result: "recorded" });
     expect(await verdictFor(s.studioId)).toEqual({ ok: false, reason: "not_ready" });
     const rows = (await adminQuery("select ready, context from public.studio_sms_sender_stop_preflights where sender_id = $1", [sender.id])).rows;
     expect(rows).toEqual([{ ready: false, context: "cutover" }]);
-    // An empty check list is recorded as NOT ready.
-    expect(await record(s.studioId, sender.id, number, service, [])).toMatchObject({ result: "recorded" });
+    // An empty check list is not the checklist: refused, nothing changes.
+    expect(await record(s.studioId, sender.id, number, service, [])).toEqual({ result: "invalid_input", preflight_id: null });
     expect((await adminQuery("select ready from public.studio_sms_sender_stop_preflights where sender_id = $1", [sender.id])).rows[0].ready).toBe(false);
   });
 
@@ -222,7 +223,7 @@ describe("compare-and-set: overlapping preflights cannot land out of order", () 
     const seenBySlow = await currentCheckedAt(sender.id);
     const seenByFast = await currentCheckedAt(sender.id);
     expect(seenBySlow).toBeNull();
-    expect(await record(s.studioId, sender.id, number, service, [{ id: "inbound_reaches", status: "fail" }], { expected: seenByFast })).toMatchObject({ result: "recorded" });
+    expect(await record(s.studioId, sender.id, number, service, withStatus("inbound_reaches", "fail"), { expected: seenByFast })).toMatchObject({ result: "recorded" });
     expect(await record(s.studioId, sender.id, number, service, PASS, { expected: seenBySlow })).toEqual({ result: "preflight_changed", preflight_id: null });
     expect(await verdictFor(s.studioId)).toEqual({ ok: false, reason: "not_ready" });
   });
@@ -250,7 +251,7 @@ describe("record_studio_sms_stop_preflight refusals", () => {
       ["a check with detail text (could carry a URL)", [{ id: "one_base", status: "pass", detail: "https://x/?token=1" }], {}],
       ["an unknown status", [{ id: "one_base", status: "ok" }], {}],
       ["a non-object check", ["pass"], {}],
-      ["a bad check id", [{ id: "One Base", status: "pass" }], {}],
+      ["a bad check id", [...without("one_base"), { id: "One Base", status: "pass" }], {}],
       ["duplicate check ids", [{ id: "a", status: "pass" }, { id: "a", status: "pass" }], {}],
       ["checks not an array", { one_base: "pass" }, {}],
       ["an http base", PASS, { base: "http://hone.care" }],
@@ -269,9 +270,72 @@ describe("record_studio_sms_stop_preflight refusals", () => {
   });
 });
 
+// Codex P1 4304864063 at the WRITER: only the complete version-1 checklist can
+// be recorded at all, so no row can claim readiness on a partial list.
+describe("the writer accepts ONLY the complete versioned STOP checklist", () => {
+  let s: SeededStudio;
+  let sender: { id: string; phone_number: string; messaging_service_sid: string };
+  beforeAll(async () => {
+    s = await seedStudio("sp-checklist");
+    await adopt(s, await freshNumber("416"), mg());
+    sender = await liveSender(s.studioId);
+  });
+  const rec = (checks: unknown, opts: { version?: number | null } = {}) =>
+    record(s.studioId, sender.id, sender.phone_number, sender.messaging_service_sid, checks, { ...opts, expected: null });
+  const rows = async () =>
+    (await adminQuery("select count(*)::int as n from public.studio_sms_sender_stop_preflights where sender_id = $1", [sender.id])).rows[0].n as number;
+
+  it("the old exploit, a single arbitrary passing check: refused", async () => {
+    expect(await rec([{ id: "anything", status: "pass" }])).toEqual({ result: "invalid_input", preflight_id: null });
+  });
+
+  it("(a) incomplete: each required id missing in turn is refused", async () => {
+    for (const id of STOP_PREFLIGHT_CHECKLIST) {
+      expect(await rec(without(id)), id).toEqual({ result: "invalid_input", preflight_id: null });
+    }
+  });
+
+  it("(b) an unknown id, swapped in or added: refused", async () => {
+    expect(await rec([...without("stop_forwarded"), { id: "stop_forwarded_v2", status: "pass" }])).toEqual({ result: "invalid_input", preflight_id: null });
+    expect(await rec([...PASS, { id: "extra", status: "pass" }])).toEqual({ result: "invalid_input", preflight_id: null });
+  });
+
+  it("(c) a duplicate id padding the count: refused", async () => {
+    expect(await rec([...without("one_base"), { id: "base_url", status: "pass" }])).toEqual({ result: "invalid_input", preflight_id: null });
+  });
+
+  it("(e) a wrong or missing checklist version: refused", async () => {
+    for (const version of [0, 2, null]) {
+      expect(await rec(PASS, { version }), String(version)).toEqual({ result: "invalid_input", preflight_id: null });
+    }
+    expect(await rows()).toBe(0);
+  });
+
+  it("(d) the complete list with a failed or unknown check is recorded NOT ready; (control) all passing is ready", async () => {
+    expect(await rec(withStatus("stop_redelivery", "fail"))).toMatchObject({ result: "recorded" });
+    let row = (await adminQuery("select ready, checklist_version from public.studio_sms_sender_stop_preflights where sender_id = $1", [sender.id])).rows[0];
+    expect(row).toEqual({ ready: false, checklist_version: 1 });
+    expect(await verdictFor(s.studioId)).toEqual({ ok: false, reason: "not_ready" });
+
+    expect(await record(s.studioId, sender.id, sender.phone_number, sender.messaging_service_sid, withStatus("sender_pool", "unknown"))).toMatchObject({ result: "recorded" });
+    expect(await verdictFor(s.studioId)).toEqual({ ok: false, reason: "not_ready" });
+
+    expect(await record(s.studioId, sender.id, sender.phone_number, sender.messaging_service_sid, PASS)).toMatchObject({ result: "recorded" });
+    row = (await adminQuery("select ready, checklist_version from public.studio_sms_sender_stop_preflights where sender_id = $1", [sender.id])).rows[0];
+    expect(row).toEqual({ ready: true, checklist_version: 1 });
+    expect(await verdictFor(s.studioId)).toEqual({ ok: true });
+  });
+
+  it("the table refuses another version even from a direct write", async () => {
+    await expect(
+      adminQuery("update public.studio_sms_sender_stop_preflights set checklist_version = 2 where sender_id = $1", [sender.id]),
+    ).rejects.toThrow(/checklist_version/);
+  });
+});
+
 describe("privileges", () => {
   it("no client role reads the table or calls the writer; service_role calls the functions but cannot read the table", async () => {
-    const call = `select public.record_studio_sms_stop_preflight(gen_random_uuid(), gen_random_uuid(), '+14165550101', '${mg()}', '[]'::jsonb, 'https://hone.care', null, null, 'evidence', null)`;
+    const call = `select public.record_studio_sms_stop_preflight(gen_random_uuid(), gen_random_uuid(), '+14165550101', '${mg()}', '[]'::jsonb, 1::smallint, 'https://hone.care', null, null, 'evidence', null)`;
     for (const role of ["anon", "authenticated"] as const) {
       await expect(asRole(role, (q) => q("select 1 from public.studio_sms_sender_stop_preflights limit 1"))).rejects.toThrow(/permission denied/);
       await expect(asRole(role, (q) => q(call))).rejects.toThrow(/permission denied/);

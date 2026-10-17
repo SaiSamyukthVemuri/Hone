@@ -19,10 +19,21 @@
 -- WHAT THIS MIGRATION DOES
 --   1. studio_sms_sender_stop_preflights: ONE current row per sender. It stores
 --      check ids and pass/fail/unknown ONLY (never a detail string, which can
---      carry a URL), the webhook base it was evaluated against (a non-secret
---      URL, no query or userinfo), and an optional non-secret credentials
---      epoch. `ready` is DERIVED by the writer (every check passed), never
---      taken from the caller. No secret and no token fingerprint is stored.
+--      carry a URL), the checklist version they were evaluated under, the
+--      webhook base it was evaluated against (a non-secret URL, no query or
+--      userinfo), and an optional non-secret credentials epoch. `ready` is
+--      DERIVED by the writer, never taken from the caller. No secret and no
+--      token fingerprint is stored.
+--
+--      THE COMPLETE CHECKLIST (Codex P1 4304864063). A record is accepted only
+--      when it carries EXACTLY the version-1 STOP checklist: every id
+--      lib/sms/inbound-stop-preflight.ts STOP_PREFLIGHT_CHECKLIST defines, each
+--      once, nothing else, under checklist_version 1. An incomplete list, an
+--      unknown or duplicate id, or another version is refused (invalid_input),
+--      so `[{"id":"anything","status":"pass"}]` can never mark a sender ready.
+--      ready = every one of those checks passed. The SQL list and the TS list
+--      are pinned together by tests/lib/sms/stop-preflight-checklist-contract.
+--      A new checklist is a new version, in both places.
 --   2. record_studio_sms_stop_preflight(...): the only writer, the 0229
 --      pattern exactly: locks the sender, refuses one that is released,
 --      another studio's, or no longer holding the number the caller saw, and
@@ -54,7 +65,9 @@ create table public.studio_sms_sender_stop_preflights (
   messaging_service_sid    text        not null,
   -- [{ "id": "<check id>", "status": "pass" | "fail" | "unknown" }, ...]
   checks                   jsonb       not null,
-  -- Derived by the writer: at least one check, and every check passed.
+  -- The STOP checklist version the checks were evaluated under (only 1 exists).
+  checklist_version        smallint    not null,
+  -- Derived by the writer: the complete checklist, every check passed.
   ready                    boolean     not null,
   -- TWILIO_WEBHOOK_BASE_URL as evaluated, without trailing slash.
   webhook_base             text        not null,
@@ -72,6 +85,8 @@ create table public.studio_sms_sender_stop_preflights (
     check (messaging_service_sid ~ '^MG[0-9a-fA-F]{32}$'),
   constraint studio_sms_sender_stop_preflights_checks_array
     check (jsonb_typeof(checks) = 'array'),
+  constraint studio_sms_sender_stop_preflights_checklist_version
+    check (checklist_version = 1),
   constraint studio_sms_sender_stop_preflights_webhook_base
     check (webhook_base ~ '^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~/-]*[A-Za-z0-9._~-])?$'),
   constraint studio_sms_sender_stop_preflights_epoch
@@ -94,6 +109,7 @@ create or replace function public.record_studio_sms_stop_preflight(
   p_expected_phone           text,
   p_messaging_service_sid    text,
   p_checks                   jsonb,
+  p_checklist_version        smallint,
   p_webhook_base             text,
   p_credentials_epoch        text,
   p_credentials_active_since timestamptz,
@@ -106,6 +122,14 @@ set search_path = pg_catalog, pg_temp
 set lock_timeout = '5s'
 as $$
 declare
+  -- STOP_PREFLIGHT_CHECKLIST version 1 (lib/sms/inbound-stop-preflight.ts).
+  -- Pinned to the TS list by tests/lib/sms/stop-preflight-checklist-contract.
+  v_checklist_v1 constant text[] := array[
+    'base_url', 'auth_token', 'signing_proven', 'endpoint_reachable',
+    'inbound_reaches', 'webhook_rules', 'webhook_zones', 'webhook_propagation',
+    'stop_redelivery', 'sender_pool', 'signing_account', 'studio_mapping',
+    'stop_forwarded', 'one_base'
+  ];
   v_sender  public.studio_sms_senders%rowtype;
   v_current timestamptz;
   v_ready   boolean;
@@ -115,6 +139,7 @@ begin
      or p_expected_phone is null or p_expected_phone !~ '^\+1[2-9][0-9]{2}[2-9][0-9]{6}$'
      or p_messaging_service_sid is null or p_messaging_service_sid !~ '^MG[0-9a-fA-F]{32}$'
      or p_checks is null or jsonb_typeof(p_checks) <> 'array'
+     or p_checklist_version is null or p_checklist_version <> 1
      or p_webhook_base is null
      or p_webhook_base !~ '^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~/-]*[A-Za-z0-9._~-])?$'
      or (p_credentials_epoch is not null and p_credentials_epoch !~ '^[A-Za-z0-9._-]{1,64}$')
@@ -144,8 +169,18 @@ begin
     return;
   end if;
 
-  v_ready := jsonb_array_length(p_checks) > 0
-             and not exists (
+  -- EXACTLY the version-1 checklist: same size, and every listed id present
+  -- (with ids unique, checked above, that also rules out unknown ids).
+  if jsonb_array_length(p_checks) <> cardinality(v_checklist_v1)
+     or exists (
+       select 1 from unnest(v_checklist_v1) req
+        where not exists (select 1 from jsonb_array_elements(p_checks) c where (c ->> 'id') = req)
+     ) then
+    return query select 'invalid_input'::text, null::uuid;
+    return;
+  end if;
+
+  v_ready := not exists (
                select 1 from jsonb_array_elements(p_checks) c where (c ->> 'status') <> 'pass');
 
   -- The sender the caller saw, locked so the number cannot move under us.
@@ -173,16 +208,17 @@ begin
   end if;
 
   insert into public.studio_sms_sender_stop_preflights as p
-    (studio_id, sender_id, phone_number, messaging_service_sid, checks, ready,
+    (studio_id, sender_id, phone_number, messaging_service_sid, checks, checklist_version, ready,
      webhook_base, credentials_epoch, credentials_active_since, context, checked_at)
   values
     (p_studio_id, p_expected_sender_id, p_expected_phone, p_messaging_service_sid,
-     p_checks, v_ready, p_webhook_base, p_credentials_epoch, p_credentials_active_since,
+     p_checks, p_checklist_version, v_ready, p_webhook_base, p_credentials_epoch, p_credentials_active_since,
      p_context, now())
   on conflict (sender_id) do update
      set phone_number             = excluded.phone_number,
          messaging_service_sid    = excluded.messaging_service_sid,
          checks                   = excluded.checks,
+         checklist_version        = excluded.checklist_version,
          ready                    = excluded.ready,
          webhook_base             = excluded.webhook_base,
          credentials_epoch        = excluded.credentials_epoch,
@@ -254,6 +290,7 @@ as $$
                'phone_number', p.phone_number,
                'messaging_service_sid', p.messaging_service_sid,
                'ready', p.ready, 'checks', p.checks,
+               'checklist_version', p.checklist_version,
                'webhook_base', p.webhook_base,
                'credentials_epoch', p.credentials_epoch,
                'checked_at', p.checked_at)
@@ -272,11 +309,11 @@ revoke all on table public.studio_sms_sender_stop_preflights from anon;
 revoke all on table public.studio_sms_sender_stop_preflights from authenticated;
 revoke all on table public.studio_sms_sender_stop_preflights from service_role;
 
-revoke execute on function public.record_studio_sms_stop_preflight(uuid, uuid, text, text, jsonb, text, text, timestamptz, text, timestamptz) from public;
-revoke execute on function public.record_studio_sms_stop_preflight(uuid, uuid, text, text, jsonb, text, text, timestamptz, text, timestamptz) from anon;
-revoke execute on function public.record_studio_sms_stop_preflight(uuid, uuid, text, text, jsonb, text, text, timestamptz, text, timestamptz) from authenticated;
-revoke execute on function public.record_studio_sms_stop_preflight(uuid, uuid, text, text, jsonb, text, text, timestamptz, text, timestamptz) from service_role;
-grant execute on function public.record_studio_sms_stop_preflight(uuid, uuid, text, text, jsonb, text, text, timestamptz, text, timestamptz) to service_role;
+revoke execute on function public.record_studio_sms_stop_preflight(uuid, uuid, text, text, jsonb, smallint, text, text, timestamptz, text, timestamptz) from public;
+revoke execute on function public.record_studio_sms_stop_preflight(uuid, uuid, text, text, jsonb, smallint, text, text, timestamptz, text, timestamptz) from anon;
+revoke execute on function public.record_studio_sms_stop_preflight(uuid, uuid, text, text, jsonb, smallint, text, text, timestamptz, text, timestamptz) from authenticated;
+revoke execute on function public.record_studio_sms_stop_preflight(uuid, uuid, text, text, jsonb, smallint, text, text, timestamptz, text, timestamptz) from service_role;
+grant execute on function public.record_studio_sms_stop_preflight(uuid, uuid, text, text, jsonb, smallint, text, text, timestamptz, text, timestamptz) to service_role;
 
 -- CREATE OR REPLACE keeps the earlier grants, but they are restated so this
 -- migration alone determines who may call the snapshot.
@@ -288,7 +325,7 @@ grant execute on function public.get_live_studio_sms_sender_registration_state(u
 
 comment on table public.studio_sms_sender_stop_preflights is
   'SMS-STOP-PREFLIGHT-RECORD-01 (0230, HON-50 G6): the recorded inbound STOP preflight of a sender, one current row per sender. Check ids and statuses only, no secrets; ready is derived. Written only by record_studio_sms_stop_preflight; read only through get_live_studio_sms_sender_registration_state.';
-comment on function public.record_studio_sms_stop_preflight(uuid, uuid, text, text, jsonb, text, text, timestamptz, text, timestamptz) is
+comment on function public.record_studio_sms_stop_preflight(uuid, uuid, text, text, jsonb, smallint, text, text, timestamptz, text, timestamptz) is
   'SMS-STOP-PREFLIGHT-RECORD-01 (0230): record the STOP preflight for the live sender the caller saw (refused if released, another studio''s, or no longer holding that number), compare-and-set on the checked_at the caller read first (preflight_changed otherwise). service_role only.';
 
 commit;

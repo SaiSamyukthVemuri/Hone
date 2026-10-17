@@ -6,6 +6,9 @@ import {
 } from "@/lib/sms/stop-preflight-record";
 import { parseLiveRegistrationState, stopPreflightFor } from "@/lib/sms/sender-registration";
 import type { BindingSender } from "@/lib/sms/campaign-binding";
+import { STOP_PREFLIGHT_CHECKLIST, STOP_PREFLIGHT_CHECKLIST_VERSION } from "@/lib/sms/inbound-stop-preflight";
+
+const FULL = STOP_PREFLIGHT_CHECKLIST.map((id) => ({ id, status: "pass" as const }));
 
 // HON-50 G6: the pure verdict over a recorded STOP preflight (0230), and the
 // snapshot parser that feeds it, as strict as campaignBindingsFromSnapshot.
@@ -31,10 +34,8 @@ const record = (over: Partial<RecordedStopPreflight> = {}): RecordedStopPrefligh
   phoneNumber: NUMBER,
   messagingServiceSid: MSID,
   ready: true,
-  checks: [
-    { id: "one_base", status: "pass" },
-    { id: "inbound_reaches", status: "pass" },
-  ],
+  checklistVersion: STOP_PREFLIGHT_CHECKLIST_VERSION,
+  checks: FULL.map((c) => ({ ...c })),
   webhookBase: BASE,
   credentialsEpoch: null,
   checkedAt: "2026-10-02T10:00:00.000Z",
@@ -61,8 +62,6 @@ describe("stopPreflightVerdict", () => {
     ["checked for another service", record({ messagingServiceSid: `MG${"b".repeat(32)}` }), sender, ENV, "mismatch"],
     ["the sender has no service", record(), { ...sender, messagingServiceSid: null }, ENV, "mismatch"],
     ["ready false", record({ ready: false }), sender, ENV, "not_ready"],
-    ["ready true but a check failed (re-derived, not trusted)", record({ checks: [{ id: "one_base", status: "fail" }] }), sender, ENV, "not_ready"],
-    ["ready true but a check unknown", record({ checks: [{ id: "one_base", status: "unknown" }] }), sender, ENV, "not_ready"],
     ["ready true with no checks", record({ checks: [] }), sender, ENV, "not_ready"],
     ["checked BEFORE the sender was provisioned", record({ checkedAt: "2026-09-30T10:00:00.000Z" }), sender, ENV, "stale"],
     ["the sender's provisioning time unknown", record(), { ...sender, provisionedAt: null }, ENV, "stale"],
@@ -73,10 +72,58 @@ describe("stopPreflightVerdict", () => {
     expect(stopPreflightVerdict(rec, s, env)).toEqual({ ok: false, reason });
   });
 
+  it("there is no wall-clock expiry: (control) the complete all-pass checklist is ready", () => {
+    expect(STOP_PREFLIGHT_CHECKLIST.length).toBe(14);
+    expect(stopPreflightVerdict(record(), sender, ENV)).toEqual({ ok: true });
+  });
+
   it("there is no wall-clock expiry: a record a year old still passes", () => {
     expect(stopPreflightVerdict(record({ checkedAt: "2025-10-02T10:00:00.000Z" }), { ...sender, provisionedAt: "2025-10-01T10:00:00.000Z" }, ENV)).toEqual({
       ok: true,
     });
+  });
+});
+
+// Codex P1 4304864063: ANY nonempty all-pass list used to be ready, even
+// [{"id":"anything","status":"pass"}]. Only the COMPLETE checklist is.
+describe("stopPreflightVerdict requires the COMPLETE versioned STOP checklist", () => {
+  const without = (id: string) => FULL.filter((c) => c.id !== id);
+  it.each(STOP_PREFLIGHT_CHECKLIST.map((id) => [id]))("(a) incomplete: missing %s → not_ready", (id) => {
+    expect(stopPreflightVerdict(record({ checks: without(id) }), sender, ENV)).toEqual({ ok: false, reason: "not_ready" });
+  });
+
+  it("(a) the old exploit: a single arbitrary passing check → not_ready", () => {
+    expect(stopPreflightVerdict(record({ checks: [{ id: "anything", status: "pass" }] }), sender, ENV)).toEqual({ ok: false, reason: "not_ready" });
+  });
+
+  it("(b) an unknown id, in place of a required one or in addition to the full set → not_ready", () => {
+    const swapped = [...without("stop_forwarded"), { id: "stop_forwarded_v2", status: "pass" as const }];
+    expect(stopPreflightVerdict(record({ checks: swapped }), sender, ENV)).toEqual({ ok: false, reason: "not_ready" });
+    expect(stopPreflightVerdict(record({ checks: [...FULL, { id: "extra", status: "pass" }] }), sender, ENV)).toEqual({ ok: false, reason: "not_ready" });
+  });
+
+  it("(c) a duplicate id (padding the count) → not_ready", () => {
+    const dup = [...without("one_base"), { id: "base_url", status: "pass" as const }];
+    expect(dup).toHaveLength(STOP_PREFLIGHT_CHECKLIST.length);
+    expect(stopPreflightVerdict(record({ checks: dup }), sender, ENV)).toEqual({ ok: false, reason: "not_ready" });
+  });
+
+  it.each(STOP_PREFLIGHT_CHECKLIST.flatMap((id) => [[id, "fail"], [id, "unknown"]]))(
+    "(d) %s is %s → not_ready (re-derived, never trusted from ready)",
+    (id, status) => {
+      const checks = FULL.map((c) => (c.id === id ? { id, status: status as "fail" | "unknown" } : c));
+      expect(stopPreflightVerdict(record({ checks, ready: true }), sender, ENV)).toEqual({ ok: false, reason: "not_ready" });
+    },
+  );
+
+  it.each([[0], [2], [Number.NaN]])("(e) checklist version %s → not_ready", (v) => {
+    expect(stopPreflightVerdict(record({ checklistVersion: v }), sender, ENV)).toEqual({ ok: false, reason: "not_ready" });
+  });
+
+  it("(e) a snapshot row with no checklist_version is unreadable, never ready", () => {
+    const noVersion: Record<string, unknown> = { ...raw() };
+    delete noVersion.checklist_version;
+    expect(stopPreflightsFromSnapshot({ stop_preflights: [noVersion] }, A, listed)).toBeNull();
   });
 });
 
@@ -86,7 +133,8 @@ const raw = (over: Record<string, unknown> = {}) => ({
   phone_number: NUMBER,
   messaging_service_sid: MSID,
   ready: true,
-  checks: [{ id: "one_base", status: "pass" }],
+  checklist_version: 1,
+  checks: FULL,
   webhook_base: BASE,
   credentials_epoch: null,
   checked_at: "2026-10-02T10:00:00.000Z",
@@ -107,7 +155,8 @@ describe("stopPreflightsFromSnapshot: strict, like campaignBindingsFromSnapshot"
         phoneNumber: NUMBER,
         messagingServiceSid: MSID,
         ready: true,
-        checks: [{ id: "one_base", status: "pass" }],
+        checklistVersion: 1,
+        checks: FULL,
         webhookBase: BASE,
         credentialsEpoch: null,
         checkedAt: "2026-10-02T10:00:00.000Z",

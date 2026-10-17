@@ -280,9 +280,11 @@ describe("evaluateInboundStopPreflight", () => {
       expect(evaluateInboundStopPreflight(f).checks.find((c) => c.id === "sender_pool")?.status).toBe("unknown");
     });
 
-    it("with the override OFF, the service URL serves every number: no pool check", () => {
+    it("with the override OFF, the service URL serves every number: the pool check passes as not applicable (HON-50 G6: always emitted)", () => {
       const f = allProven();
-      expect(evaluateInboundStopPreflight(f).checks.find((c) => c.id === "sender_pool")).toBeUndefined();
+      const c = evaluateInboundStopPreflight(f).checks.find((x) => x.id === "sender_pool");
+      expect(c?.status).toBe("pass");
+      expect(c?.detail).toMatch(/^not applicable/);
     });
   });
 
@@ -673,10 +675,14 @@ describe("evaluateInboundStopPreflight", () => {
         expect(prop(f)?.status).toBe("unknown");
       });
 
-      it("Rules unread: propagation is not reported separately (webhook_rules already blocks)", () => {
+      it("Rules unread: propagation is unknown but not a separate blocker (webhook_rules already blocks)", () => {
         const f = allProven();
         f.webhookRules = undefined;
-        expect(prop(f)).toBeUndefined();
+        expect(prop(f)?.status).toBe("unknown");
+        const r = evaluateInboundStopPreflight(f);
+        expect(r.blockers).toContain("webhook_rules");
+        expect(r.blockers).not.toContain("webhook_propagation");
+        expect(r.ready).toBe(false);
       });
     });
 
@@ -762,7 +768,11 @@ describe("evaluateInboundStopPreflight", () => {
     it("a wrong URL is reported once, by inbound_reaches, not again here", () => {
       const f = allProven();
       f.service!.inboundRequestUrl = "https://www.hone.example/api/twilio/inbound-sms";
-      expect(redelivery(f)).toBeUndefined();
+      // Always emitted (HON-50 G6), never passing, but not a second blocker.
+      expect(redelivery(f)?.status).toBe("unknown");
+      const r = evaluateInboundStopPreflight(f);
+      expect(r.blockers).toContain("inbound_reaches");
+      expect(r.blockers).not.toContain("stop_redelivery");
     });
 
     it("every pool number must redeliver too, when the pool is what proves reach", () => {
@@ -1145,14 +1155,16 @@ describe("a live Setting's edge zones must not drop a STOP on one zone's outage 
     expect(evaluateInboundStopPreflight(widened).blockers).toEqual(["webhook_propagation"]);
   });
 
-  it("no Rule matches: no Settings, so no zone check (the URL's own e= override is not a Setting)", () => {
-    expect(checkOf(allProven(), "webhook_zones")).toBeUndefined();
+  it("no Rule matches: no Settings, so the zone check passes as not applicable (the URL's own e= override is not a Setting)", () => {
+    expect(checkOf(allProven(), "webhook_zones")?.status).toBe("pass");
+    expect(checkOf(allProven(), "webhook_zones")?.detail).toMatch(/^not applicable/);
   });
 
-  it("Rules unread: no separate zone check (webhook_rules already blocks)", () => {
+  it("Rules unread: the zone check is unknown but not a separate blocker (webhook_rules already blocks)", () => {
     const f = allProven();
     f.webhookRules = undefined;
-    expect(checkOf(f, "webhook_zones")).toBeUndefined();
+    expect(checkOf(f, "webhook_zones")?.status).toBe("unknown");
+    expect(evaluateInboundStopPreflight(f).blockers).not.toContain("webhook_zones");
   });
 });
 

@@ -14,7 +14,14 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-12, post-0211 apply; hosted `0211` per production's record; `0217` and `0226` AUTHORED AND PENDING on the SMS-SENDER-CONTROL-01 branch)
+## Current state (verified 2026-10-12, post-0211 apply; hosted `0211` per production's record; `0217`, `0226`, `0229` and `0230` AUTHORED AND PENDING on the SMS stack, this tree on #916)
+
+> **0230 IS AUTHORED AND PENDING, on `wip/hon-50-g6g7` (#916) only**, stacked on #902 (`0229`). Reserved for HON-50 G6 by the migration coordinator.
+> `0230_studio_sms_sender_stop_preflights.sql` adds one table (`studio_sms_sender_stop_preflights`), one service_role-only writer (`record_studio_sms_stop_preflight`), and REPLACES `0229`'s body of `get_live_studio_sms_sender_registration_state` (0229's body verbatim plus `stop_preflights`).
+> - **What it records:** a sender's inbound STOP preflight, accepted only as the COMPLETE version-1 STOP checklist (check ids and pass/fail/unknown only; no secrets, no free text). It calls no provider, activates nothing and sends nothing.
+> - **Order:** after `0229`, migration-first.
+>
+> **0229 IS AUTHORED AND PENDING** on #901 (HON-50 G4a): `studio_sms_sender_campaign_bindings`, its writer, and an additive redefinition of `0217`'s snapshot.
 
 > **0226 IS AUTHORED AND PENDING, on `feat/sms-sender-control-01` (#863) only**, which is stacked on #844 (`0217`).
 > `0226_studio_sms_sender_unpurchased_release.sql` adds three service_role-only definer functions and ONE unique index, and nothing else: no table, no ALTER, no row written.
@@ -36,10 +43,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0211** (`0211_client_sms_permission_guard.sql`), per production's record (below). |
-| **Repo migration max** | **0226** — `0226_studio_sms_sender_unpurchased_release.sql`, authored on `feat/sms-sender-control-01`. No data; no existing object altered. |
+| **Repo migration max** | **0230** — `0230_studio_sms_sender_stop_preflights.sql`, authored on `wip/hon-50-g6g7` (#916). No data written; it replaces `0229`'s snapshot function body additively. |
 | **Remote-only migrations** | **none recorded in this tree.** |
-| **Pending migrations** | **`0217`** and **`0226`** on this branch, **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING, with `0212`-`0216` and `0218`-`0225` absent from this tree. |
-| **Next free migration** | Next free number is **0227**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** here (the census assigns `0227` to the Sentry lane, #876). |
+| **Pending migrations** | **`0217`**, **`0226`**, **`0229`** and **`0230`** on this branch, **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING, with `0212`-`0216`, `0218`-`0225` and `0227`-`0228` absent from this tree. |
+| **Next free migration** | Next free number is **0231**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** here (numbers are allocated only by the migration coordinator's census). |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. |
 
 ## Previous state (verified 2026-10-12, post-0211 apply; `0211` APPLIED, repo == hosted on the production branch)

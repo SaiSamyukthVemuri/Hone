@@ -1,6 +1,7 @@
 import { classifyNanpNumber } from "./nanp";
 import type { BindingSender } from "./campaign-binding";
 import { configuredTwilioWebhookBase } from "./webhook-base";
+import { STOP_PREFLIGHT_CHECKLIST, STOP_PREFLIGHT_CHECKLIST_VERSION } from "./inbound-stop-preflight";
 
 // ===========================================================================
 // SMS-STOP-PREFLIGHT-RECORD-01 (HON-50 G6): was the inbound STOP path of THIS
@@ -18,8 +19,11 @@ import { configuredTwilioWebhookBase } from "./webhook-base";
 //                 for another number or Messaging Service than the sender
 //                 holds now (numbers as canonical E.164; unparseable never
 //                 matches)
-//   not_ready     the preflight did not pass: `ready` false, no checks, or any
-//                 check not `pass` (re-derived here, never trusted alone)
+//   not_ready     the preflight did not pass the COMPLETE STOP checklist
+//                 (Codex P1 4304864063): `ready` false; a checklist version
+//                 other than the current one; any checklist id missing; any
+//                 unknown or duplicate id; or any check not `pass`. Re-derived
+//                 here, never trusted from `ready` alone
 //   stale         the sender was provisioned or adopted AFTER the preflight,
 //                 its provisioning time is unknown, or a timestamp does not
 //                 parse
@@ -41,6 +45,8 @@ export type RecordedStopPreflight = {
   phoneNumber: string;
   messagingServiceSid: string;
   ready: boolean;
+  /** The STOP checklist version the checks were evaluated under (0230). */
+  checklistVersion: number;
   checks: Array<{ id: string; status: PreflightCheckStatus }>;
   webhookBase: string;
   credentialsEpoch: string | null;
@@ -83,13 +89,7 @@ export function stopPreflightVerdict(
     return { ok: false, reason: "mismatch" };
   }
 
-  if (
-    recorded.ready !== true ||
-    recorded.checks.length === 0 ||
-    recorded.checks.some((c) => c.status !== "pass")
-  ) {
-    return { ok: false, reason: "not_ready" };
-  }
+  if (!isCompleteAllPass(recorded)) return { ok: false, reason: "not_ready" };
 
   const checked = instant(recorded.checkedAt);
   const provisioned = instant(sender.provisionedAt);
@@ -104,6 +104,17 @@ export function stopPreflightVerdict(
   return { ok: true };
 }
 
+const REQUIRED: ReadonlySet<string> = new Set(STOP_PREFLIGHT_CHECKLIST);
+
+/** Exactly the current checklist, each id once, nothing else, every one passing. */
+function isCompleteAllPass(recorded: RecordedStopPreflight): boolean {
+  if (recorded.ready !== true || recorded.checklistVersion !== STOP_PREFLIGHT_CHECKLIST_VERSION) return false;
+  const ids = recorded.checks.map((c) => c.id);
+  if (ids.length !== REQUIRED.size || new Set(ids).size !== ids.length) return false;
+  if (ids.some((id) => !REQUIRED.has(id))) return false;
+  return recorded.checks.every((c) => c.status === "pass");
+}
+
 type RawPreflight = {
   sender_id?: unknown;
   studio_id?: unknown;
@@ -111,6 +122,7 @@ type RawPreflight = {
   messaging_service_sid?: unknown;
   ready?: unknown;
   checks?: unknown;
+  checklist_version?: unknown;
   webhook_base?: unknown;
   credentials_epoch?: unknown;
   checked_at?: unknown;
@@ -153,7 +165,7 @@ export function stopPreflightsFromSnapshot(
   const seen = new Set<string>();
   for (const item of raw as RawPreflight[]) {
     if (!item || typeof item !== "object") return null;
-    const { sender_id, studio_id, phone_number, messaging_service_sid, ready, webhook_base, credentials_epoch, checked_at } =
+    const { sender_id, studio_id, phone_number, messaging_service_sid, ready, checklist_version, webhook_base, credentials_epoch, checked_at } =
       item;
     const checks = parseChecks(item.checks);
     if (
@@ -164,6 +176,7 @@ export function stopPreflightsFromSnapshot(
       !isString(phone_number) ||
       !isString(messaging_service_sid) ||
       typeof ready !== "boolean" ||
+      !Number.isInteger(checklist_version) ||
       checks === null ||
       !isString(webhook_base) ||
       !(credentials_epoch === null || isString(credentials_epoch)) ||
@@ -178,6 +191,7 @@ export function stopPreflightsFromSnapshot(
       phoneNumber: phone_number,
       messagingServiceSid: messaging_service_sid,
       ready,
+      checklistVersion: checklist_version as number,
       checks,
       webhookBase: webhook_base,
       credentialsEpoch: credentials_epoch,

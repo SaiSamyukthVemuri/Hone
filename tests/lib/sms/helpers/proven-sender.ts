@@ -2,6 +2,10 @@ import { afterEach, beforeEach } from "vitest";
 import { classifyNanpNumber } from "@/lib/sms/nanp";
 import type { RecordedCampaignBinding } from "@/lib/sms/campaign-binding";
 import type { RecordedStopPreflight } from "@/lib/sms/stop-preflight-record";
+import { STOP_PREFLIGHT_CHECKLIST, STOP_PREFLIGHT_CHECKLIST_VERSION } from "@/lib/sms/inbound-stop-preflight";
+
+/** The COMPLETE current STOP checklist, every check passing (Codex P1 4304864063). */
+export const PASSING_CHECKLIST = STOP_PREFLIGHT_CHECKLIST.map((id) => ({ id, status: "pass" as const }));
 
 // ===========================================================================
 // HON-50 G6/G7 test fixture: a READY studio sender is now one whose STOP path
@@ -58,11 +62,8 @@ export function provenStopPreflight(s: { id: string; studio_id: string; phone_nu
     phoneNumber: s.phone_number,
     messagingServiceSid: s.messaging_service_sid,
     ready: true,
-    checks: [
-      { id: "one_base", status: "pass" },
-      { id: "inbound_reaches", status: "pass" },
-      { id: "signature_account", status: "pass" },
-    ],
+    checklistVersion: STOP_PREFLIGHT_CHECKLIST_VERSION,
+    checks: PASSING_CHECKLIST.map((c) => ({ ...c })),
     webhookBase: TEST_WEBHOOK_BASE,
     credentialsEpoch: null,
     checkedAt: CHECKED_AT,
@@ -118,6 +119,7 @@ export function provenSnapshot<T>(answer: T): T {
       phone_number: p.phoneNumber,
       messaging_service_sid: p.messagingServiceSid,
       ready: p.ready,
+      checklist_version: p.checklistVersion,
       checks: p.checks,
       webhook_base: p.webhookBase,
       credentials_epoch: p.credentialsEpoch,

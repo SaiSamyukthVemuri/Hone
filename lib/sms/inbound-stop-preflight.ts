@@ -478,8 +478,39 @@ export type PreflightResult = { ready: boolean; checks: PreflightCheck[]; blocke
 
 const check = (id: string, status: CheckStatus, detail: string): PreflightCheck => ({ id, status, detail });
 
+/**
+ * HON-50 G6 (Codex P1 4304864063): THE STOP checklist, versioned. The evaluator
+ * emits EXACTLY these ids, every time (a check that does not apply passes as
+ * "not applicable" only when the facts prove it, else it is unknown), so a
+ * recorded preflight is ready only when it carries this complete set, all
+ * passing, under this version. 0230 holds the same list and version in SQL;
+ * tests/lib/sms/stop-preflight-checklist-contract.test.ts pins the two
+ * together. Changing the list means a new version, in both places.
+ */
+export const STOP_PREFLIGHT_CHECKLIST_VERSION = 1;
+export const STOP_PREFLIGHT_CHECKLIST = [
+  "base_url",
+  "auth_token",
+  "signing_proven",
+  "endpoint_reachable",
+  "inbound_reaches",
+  "webhook_rules",
+  "webhook_zones",
+  "webhook_propagation",
+  "stop_redelivery",
+  "sender_pool",
+  "signing_account",
+  "studio_mapping",
+  "stop_forwarded",
+  "one_base",
+] as const;
+
 export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResult {
   const checks: PreflightCheck[] = [];
+  // HON-50 G6: a check emitted only because the checklist is complete, whose
+  // prerequisite did not pass, names that prerequisite here. It still blocks
+  // readiness, but the blocker list reports the root cause, not its echo.
+  const dependentOn = new Map<string, string>();
   const expected = expectedInboundWebhookUrl(f.env);
 
   checks.push(
@@ -679,6 +710,15 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
             )
           : check("webhook_zones", "pass", "every live Setting may use every zone, falls back to any zone, or lists at least two available zones"),
     );
+  } else {
+    // HON-50 G6: EVERY checklist id is always emitted, so a recorded preflight
+    // can be held to the complete checklist (STOP_PREFLIGHT_CHECKLIST).
+    checks.push(
+      rules === undefined
+        ? (dependentOn.set("webhook_zones", "webhook_rules"),
+          check("webhook_zones", "unknown", "account Webhook Rules not read: whether a Rule's edge zones apply is undetermined"))
+        : check("webhook_zones", "pass", "not applicable: no Webhook Rule matches the inbound URL, so no Setting's edge zones apply"),
+    );
   }
 
   // PROPAGATION: only meaningful once the Rules are read (unread Rules already
@@ -709,6 +749,9 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
                   "Webhooks configuration still propagating (an Operation is PENDING or RUNNING, or less than 90 s since the last change): wait, then re-read",
                 ),
     );
+  } else {
+    dependentOn.set("webhook_propagation", "webhook_rules");
+    checks.push(check("webhook_propagation", "unknown", "account Webhook Rules not read: propagation cannot be judged"));
   }
 
   // Do the account Rules' retries recover every delivery failure (Codex P1
@@ -813,6 +856,9 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
                 `a STOP whose delivery fails (connect/TLS, read timeout, a transient 4xx or 5xx) may never be redelivered: the retries do not cover all four within their budget, and ${fallbackName} does not recover its own failures. Needed: rp=all or rp=4xx,5xx,ct,rt (a Setting: retryOn ALL, or HTTP_4XX, HTTP_5XX, CONNECTION_TIMEOUT and READ_TIMEOUT); rc>=1; tt>=2*(ct+rt). Retries are bounded by rc (at most 5): a signature failure (403) is fixed through the signing checks, never by retrying`,
               ),
     );
+  } else {
+    dependentOn.set("stop_redelivery", "inbound_reaches");
+    checks.push(check("stop_redelivery", "unknown", "inbound not proven to reach the route (or the service not read): redelivery cannot be judged"));
   }
 
   // ONE NUMBER OR ALL OF THEM. With the number-level override on, each pool
@@ -870,6 +916,13 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
           : poolVerdict === "no"
             ? check("sender_pool", "fail", "a pool number's own webhook does not reach the expected URL by POST")
             : check("sender_pool", "unknown", "outbound not pinned to the checked number and the sender pool not fully read"),
+    );
+  } else {
+    checks.push(
+      svc?.useInboundWebhookOnNumber === false
+        ? check("sender_pool", "pass", "not applicable: inbound uses the service's URL, so a reply to any pool number reaches the same route")
+        : (dependentOn.set("sender_pool", "inbound_reaches"),
+          check("sender_pool", "unknown", "whether inbound uses each number's own webhook is not reported: the sender pool cannot be judged")),
     );
   }
 
@@ -940,6 +993,11 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
         : check("one_base", "fail", "the URL the sender controls would configure differs from the URL the route verifies"),
   );
 
-  const blockers = checks.filter((c) => c.status !== "pass").map((c) => c.id);
-  return { ready: blockers.length === 0, checks, blockers };
+  const notPassing = new Set(checks.filter((c) => c.status !== "pass").map((c) => c.id));
+  const blockers = [...notPassing].filter((id) => {
+    const prerequisite = dependentOn.get(id);
+    return !(prerequisite && notPassing.has(prerequisite));
+  });
+  // Ready means EVERY check passed; the blocker list only drops echoes.
+  return { ready: notPassing.size === 0, checks, blockers };
 }

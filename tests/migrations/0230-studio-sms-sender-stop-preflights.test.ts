@@ -16,7 +16,7 @@ const SQL = read("0230_studio_sms_sender_stop_preflights.sql");
 const CODE = SQL.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*--.*$/gm, " ").replace(/\s+--.*$/gm, " ");
 const TOP_LEVEL = CODE.replace(/\$\$[\s\S]*?\$\$/g, " ");
 const RECORD =
-  "public.record_studio_sms_stop_preflight(uuid, uuid, text, text, jsonb, text, text, timestamptz, text, timestamptz)";
+  "public.record_studio_sms_stop_preflight(uuid, uuid, text, text, jsonb, smallint, text, text, timestamptz, text, timestamptz)";
 const SNAPSHOT = "public.get_live_studio_sms_sender_registration_state(uuid)";
 
 const snapshotBody = (src: string) => {
@@ -80,6 +80,7 @@ describe("0230 keeps the 0229 snapshot's contract (it replaces 0229's function b
     expect(before.has("provisioned_at")).toBe(true);
     expect(before.has("campaign_bindings")).toBe(true);
     expect([...after].filter((k) => !before.has(k)).sort()).toEqual([
+      "checklist_version",
       "checks",
       "credentials_epoch",
       "ready",
@@ -99,7 +100,15 @@ describe("0230 stores no secret and no free text", () => {
     expect(CODE).toMatch(/\(select count\(\*\) from jsonb_object_keys\(c\)\) <> 2/);
     expect(CODE).toMatch(/\(c ->> 'status'\) not in \('pass', 'fail', 'unknown'\)/);
     expect(RECORD).not.toMatch(/boolean/);
-    expect(CODE).toMatch(/v_ready := jsonb_array_length\(p_checks\) > 0/);
+    expect(CODE).toMatch(/v_ready := not exists \(/);
+  });
+
+  it("only the COMPLETE version-1 checklist is accepted (Codex P1 4304864063); the list itself is pinned to TS in stop-preflight-checklist-contract", () => {
+    expect(CODE).toMatch(/p_checklist_version is null or p_checklist_version <> 1/);
+    expect(CODE).toMatch(/jsonb_array_length\(p_checks\) <> cardinality\(v_checklist_v1\)/);
+    expect(CODE).toMatch(/select 1 from unnest\(v_checklist_v1\) req/);
+    expect(CODE).toMatch(/count\(distinct c ->> 'id'\)/);
+    expect(TOP_LEVEL).toMatch(/check \(checklist_version = 1\)/);
   });
 
   it("the webhook base is an https URL with no query, fragment or userinfo", () => {

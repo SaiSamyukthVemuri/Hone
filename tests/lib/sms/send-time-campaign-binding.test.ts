@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { RecordedCampaignBinding } from "@/lib/sms/campaign-binding";
-import { TEST_WEBHOOK_BASE, provenStopPreflight, withProvenSenderEnv } from "./helpers/proven-sender";
+import { PASSING_CHECKLIST, TEST_WEBHOOK_BASE, provenStopPreflight, withProvenSenderEnv } from "./helpers/proven-sender";
 
 // ===========================================================================
 // HON-50 G7: a US recipient from a 10DLC long code is served only when the
@@ -155,7 +155,8 @@ describe("G7 reads the binding from the SAME snapshot as the sender", () => {
         phone_number: US_LONG_CODE,
         messaging_service_sid: MSID,
         ready: true,
-        checks: [{ id: "one_base", status: "pass" }],
+        checklist_version: 1,
+        checks: PASSING_CHECKLIST,
         webhook_base: TEST_WEBHOOK_BASE,
         credentials_epoch: null,
         checked_at: "2026-10-02T10:00:00.000Z",
