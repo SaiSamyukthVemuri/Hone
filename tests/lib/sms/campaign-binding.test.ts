@@ -64,7 +64,7 @@ describe("campaignBindingVerdict", () => {
   });
 
   it("unverified for every non-verified status, or a verified row missing its campaign or time", () => {
-    for (const campaignStatus of ["pending", "in_progress", "failed", "none"] as const) {
+    for (const campaignStatus of ["pending", "in_progress", "failed", "suspended", "unrecognized", "none"] as const) {
       expect(campaignBindingVerdict({ ...verified, campaignStatus, verifiedAt: null }, sender), campaignStatus).toEqual({ ok: false, reason: "unverified" });
     }
     expect(campaignBindingVerdict({ ...verified, campaignSid: null }, sender)).toEqual({ ok: false, reason: "unverified" });

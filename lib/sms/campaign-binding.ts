@@ -24,7 +24,12 @@ import { classifyNanpNumber } from "./nanp";
 // and at cutover instead.
 // ===========================================================================
 
-export type CampaignStatus = "verified" | "pending" | "in_progress" | "failed" | "none";
+/**
+ * The recorded campaign status. `suspended` and `unrecognized` (a provider
+ * status Hone does not know yet) are recorded as non-verified, never dropped,
+ * so a campaign that stops being verified replaces a verified record.
+ */
+export type CampaignStatus = "verified" | "pending" | "in_progress" | "failed" | "suspended" | "unrecognized" | "none";
 
 export type RecordedCampaignBinding = {
   senderId: string;
@@ -54,6 +59,8 @@ const CAMPAIGN_STATUSES: ReadonlySet<string> = new Set<CampaignStatus>([
   "pending",
   "in_progress",
   "failed",
+  "suspended",
+  "unrecognized",
   "none",
 ]);
 
