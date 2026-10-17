@@ -247,6 +247,7 @@ currently dormant.** Do not describe it as active, syncing, or enabled.
 |---|---|---|---|---|---|---|---|---|---|
 | Photos | Private `treatment-images` bucket, service-role signed URLs, EXIF stripping (0092/0093) | Merged | ✅ applied | Deployed | Enabled | ✅ **3 `treatment_images`** all-tenant *(2026-08-23)* — 1 Willow, 2 controlled test, **0 synthetic** | ✅ | production row count | Objects are **service-role only**; no public URLs |
 | Photos | Multi-file upload + per-file validation | Merged | no migration | Deployed | Enabled | ✅ | ✅ | PR #368 | — |
+| Photos | Grid thumbnail recovery after the 60 s signed-URL expiry (FETT, HON-43, PR #913, merge `4ae19a41`, deployed 2026-10-17) | Merged | no migration | Deployed | Enabled | ⚠️ **not measured** | — | `GridPhoto.tsx` + `lib/images/grid-photo-recovery.ts`: a lazy grid cell whose signed URL expired re-mints it **once per variant** (derivative, then original) through `getTreatmentImageSignedUrlAction`, then shows "Image not available". The `variant: "thumb"` path uses the original's row read and path validation and signs the original first. TTL unchanged. | The e2e proof self-skips in CI (no storage-api); its evidence is a local run with storage. Not yet applied to the profile ID photo or session photos |
 | Photos | Finalized-record photo **content** immutability | Never built | — | — | — | — | — | 0119 header | **RETIRED with finalization — see §3.** Not a later phase |
 | Exports | Per-client procedure record pull with filtered print | Merged | — | Deployed | Enabled | ⚠️ not instrumented | ✅ | PR #223 | — |
 
@@ -259,7 +260,10 @@ currently dormant.** Do not describe it as active, syncing, or enabled.
 | Ops | `scripts/verify-production.mjs` read-only health check | Merged | — | n/a | n/a | ✅ | ✅ | derives expected migration max from the repo — no hardcoded literal | Reports INCOMPLETE for the Upstash heartbeat when local creds are absent |
 | Ops | `scripts/check-stripe-gates.mjs` | Merged | — | n/a | n/a | ✅ | ✅ | — | A gate suite, **not** proof of security |
 | Ops | Sentry error monitoring | Merged | no migration | Deployed | Enabled | ⚠️ | — | `sendDefaultPii` off, deny-by-default scrubbers, Replay/Logs OFF | Console contents **not verifiable** from code/CLI alone |
+| Ops | `/ingest` and `/monitoring` proxies forward only allowlisted headers (#828 G-07/G-26, PR #912, merge `6acea261`, deployed 2026-10-17) | Merged | no migration | Deployed | Enabled | ⚠️ **not measured** | — | `lib/observability/egress-proxy.ts` backs two route handlers that replace the bare rewrites: request headers forwarded are only `content-type`, `content-encoding`, `accept` (no Referer, Origin, Cookie, Authorization, client IP or User-Agent); response headers returned are only `content-type`, `cache-control`, `x-sentry-rate-limits`, `retry-after` (never Set-Cookie); methods, paths and body size are allowlisted or capped. | Not a BAA. Whether production requests arrive stripped was not measured |
+| Ops | Sentry record-id scrubbing (#828 G-25, PR #891, merge `62ff27b2`, deployed 2026-10-17) | Merged | no migration | Deployed | Enabled | ⚠️ **not measured** | — | `lib/observability/sentry-scrub.ts`: after the existing per-field scrubbers, a final id-only sweep walks the whole error event, transaction event and breadcrumb (every string and key) and replaces each dashed 8-4-4-4-12 UUID with `[id]`, so `/clients/<uuid>` becomes `/clients/[id]`. Guarantee as coded: no string or key, after ASCII percent-decoding to a fixed point, contains a UUID; a token still changing after 4 decode rounds becomes `[Redacted]`. Dashless hex (trace, span and event ids) is not matched. `sdkProcessingMetadata` is not walked except its dynamic sampling context (which becomes the envelope trace header); `debug_meta.images[].debug_id` (source-map link) is kept. Pinned by `tests/lib/observability/sentry-record-ids.test.ts` | **Not a BAA.** Whether production events actually arrive redacted was **not measured**. Non-URL encodings (HTML entities, `\u` escapes, base64) are out of scope. Historical Sentry events were not deleted |
 | Ops | PostHog analytics | Merged | no migration | Deployed | ⚠️ **unknown** | ⚠️ | — | recording/autocapture/exception OFF, opaque-id identify | Whether `NEXT_PUBLIC_POSTHOG_*` is set in Vercel is **unknown pending verification** |
+| Ops | Vercel Web Analytics + Speed Insights URL redaction (#828 G-07, PR #842, merge `25956e5c`, deployed 2026-10-17) | Merged | no migration | Deployed | Enabled where `SafeAnalytics` is mounted | ⚠️ **not measured** | — | `app/_components/SafeAnalytics.tsx` passes `beforeSend={redactVercelEvent}` to both components; `lib/analytics/vercel-url-redaction.ts` **drops** (null) any canonical token route (`lib/security/token-routes.ts`) and any unparseable URL, turns UUID and all-digit path segments into `[id]` and long opaque segments into `[token]`, turns `/book/<slug>` into `/book/[studio]`, and drops the query string and fragment. Canonical marketing pages keep only the attribution parameters the existing marketing sanitizer allows | **Not a BAA.** Whether production events actually arrive redacted was **not measured**. Applies only to these two Vercel components, not to Vercel platform request or runtime logs |
 | Ops | Rate limiting (Upstash) | Merged | — | Deployed | Optional | ⚠️ | — | — | **Fails OPEN** — if Upstash is down or unset, portal + booking rate limits bypass |
 | Ops | Cron routes with `CRON_SECRET` | Merged | — | Deployed | **3 daily crons in `vercel.json`** — `materialize-recurring-breaks` 08:00 (not a calendar cron) plus the **two** calendar crons at 09:00 and 09:30; worker off | ⚠️ they run daily; the calendar pair finds no work | — | `vercel.json` | — |
 
@@ -315,23 +319,23 @@ prospects at every measured instant.
 
 ## 15. Capabilities added since the 2026-08-23 reconciliation
 
-**140** production merges landed between `b9e0003f` and the current branch head (2026-10-13 sync, `6f7281bb`; it was 138 at the 2026-10-12 sync through `d5efa20a`, and eighty-one at the 2026-09-21 sync through `410e5039`). That is
+**160** production merges landed between `b9e0003f` and the current branch head (2026-10-17 sync, `6acea261`; it was 157 at the 2026-10-17 sync through `62ff27b2`; it was 154 at the 2026-10-17 sync through `b08845ce`; it was 152 at the 2026-10-16 sync through `0ae33bd3`; it was 150 at the 2026-10-16 sync through `1ae096e2`; it was 145 at the 2026-10-14 sync through `ce133c18`; it was 140 at the 2026-10-13 sync through `6f7281bb`, 138 at the 2026-10-12 sync through `d5efa20a`, and eighty-one at the 2026-09-21 sync through `410e5039`). That is
 the current ancestry count and nothing more — capability was **not** re-derived over it.
 
 Over the **twenty-nine** merges through `bf6f09c4`, derived on **2026-08-30**, **Ten**
-carry a capability that belongs in this register. The other 111 merges are recorded in
+carry a capability that belongs in this register. The other 131 merges are recorded in
 [release-changelog.md](./release-changelog.md) and are **not** enumerated for capability here.
 
 **THOSE TWO NUMBERS ARE DERIVED OVER DIFFERENT SPANS, AND SAYING SO IS THE POINT.** The
-**140** is the merge ancestry through the *current* branch head, `6f7281bb`. The **ten**
+**160** is the merge ancestry through the *current* branch head, `6acea261`. The **ten**
 is **not** derived over it: it is the **2026-08-30** derivation over the twenty-nine merges
 through `bf6f09c4`, and it has not been re-run since.
 
 **This section is scoped to that dated derivation and must not be read as a current capability
-count.** The 111 merges between `bf6f09c4` and `6f7281bb` are recorded row by row in
+count.** The 131 merges between `bf6f09c4` and `6acea261` are recorded row by row in
 [release-changelog.md](./release-changelog.md), and several of them plainly ship capability —
 `#702`'s automatic card receipts and `#745`'s next-setup-step checklist among them. This register
-has **not** re-enumerated them. Re-running the capability derivation across all 140 merges
+has **not** re-enumerated them. Re-running the capability derivation across all 160 merges
 is its own lane with its own evidence; raising the number here without doing that work would
 manufacture a figure nobody derived, which is the precise failure this document exists to
 prevent.

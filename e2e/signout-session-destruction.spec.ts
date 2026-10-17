@@ -133,8 +133,9 @@ type SignOutTraffic = {
 // And the suppressed messages are PRINTED in the observation line either way,
 // so nothing this filter drops can hide from the evidence.
 // `/monitoring` is Sentry's SAME-ORIGIN TUNNEL, not a product route:
-// `next.config.ts` sets `tunnelRoute: "/monitoring"`, so browser telemetry is
-// rewritten through this app's own origin and its failures are attributed to
+// `instrumentation-client.ts` sets `tunnel: "/monitoring"` and
+// `app/monitoring/route.ts` forwards the envelope (#828 G-07/G-26), so browser
+// telemetry goes through this app's own origin and its failures are attributed to
 // localhost like application traffic. Locally the tunnel answers 429 once the
 // lane has emitted enough events, which is the SDK being rate-limited, not the
 // application faulting.
@@ -143,7 +144,7 @@ type SignOutTraffic = {
 // network before the press gives the tunnel time to emit one more event, so a
 // pre-existing lane artefact started landing inside the teardown phase.
 //
-// PINNED against `next.config.ts` below, because this is only sound while
+// PINNED against the client config and the route below, because this is only sound while
 // `/monitoring` really is the tunnel — if the route moves, or the app ever
 // serves something real there, the pin fails rather than this quietly
 // suppressing it.
@@ -1772,15 +1773,15 @@ test.describe("SIGNOUT-01 · the telemetry exception names a real tunnel", () =>
   test("the Sentry tunnel route this spec forgives is the one the app configures", () => {
     // The `/monitoring` suppression above is sound ONLY because that path is
     // Sentry's tunnel rather than a product route. Derived from the config
-    // rather than assumed: if `tunnelRoute` moves, this fails loudly instead
-    // of leaving the spec forgiving a path the application has taken back.
-    const config = readFileSync(
-      join(process.cwd(), "next.config.ts"),
-      "utf8",
-    );
+    // rather than assumed: if the SDK's tunnel moves, or the route stops being
+    // the tunnel handler, this fails loudly instead of leaving the spec
+    // forgiving a path the application has taken back.
+    const client = readFileSync(join(process.cwd(), "instrumentation-client.ts"), "utf8");
     expect(
-      config,
-      `next.config.ts no longer routes Sentry through ${SENTRY_TUNNEL_ROUTE}, so forgiving that path is no longer justified`,
-    ).toContain(`tunnelRoute: "${SENTRY_TUNNEL_ROUTE}"`);
+      client,
+      `instrumentation-client.ts no longer routes Sentry through ${SENTRY_TUNNEL_ROUTE}, so forgiving that path is no longer justified`,
+    ).toContain(`tunnel: "${SENTRY_TUNNEL_ROUTE}"`);
+    const route = readFileSync(join(process.cwd(), `app${SENTRY_TUNNEL_ROUTE}/route.ts`), "utf8");
+    expect(route, `app${SENTRY_TUNNEL_ROUTE}/route.ts is no longer the Sentry tunnel`).toContain("sentryEnvelopeUpstreamUrl");
   });
 });
