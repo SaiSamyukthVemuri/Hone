@@ -245,6 +245,13 @@ describe("G-25: ids inside compound identifiers (Codex P2 4301012678)", () => {
     expect(out.message).toBe("abc[id] [id]fed deadbeef[id]cafe");
   });
 
+  it("removes a UUID whose hex digits are percent-encoded (Codex P2 4301707490)", () => {
+    const ENCODED = `/clients/%36f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e%35 and %30a1b2c3d%2D4e5f-4061-8273-8495a6b7c8d%39`;
+    const out = scrubErrorEvent(errorEvent({ message: ENCODED, request: { url: `https://hone.care${ENCODED.split(" ")[0]}` } }));
+    expect(out.message).toBe("/clients/[id] and [id]");
+    expect(out.request?.url).toBe("https://hone.care/clients/[id]");
+  });
+
   it("does not touch a longer hex run that is not a UUID", () => {
     const notUuid = `a${CLIENT.replace(/-/g, "")}ff`; // dashless hex, like Sentry's own ids
     const out = scrubErrorEvent(errorEvent({ message: `trace ${notUuid}` }));
