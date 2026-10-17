@@ -66,10 +66,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0211** (`0211_client_sms_permission_guard.sql`), applied 2026-10-12 from #827's reviewed head. |
-| **Repo migration max** | **0211** on this branch, so repo and hosted are equal here: the PARITY shape. A branch stacked above it carries its own pending suffix. |
+| **Repo migration max** | **0233** on the HON-46 branch (#896): `0233_clinical_records_audit_command.sql`, **PENDING, NOT APPLIED**. It needs Sam's own per-change production-apply authorization. Hosted is 0211, so this branch's pending suffix is `0233` alone, with a HOLE at 0212–0232 that other lanes hold. The contiguity guard reports that hole on this branch and is NOT weakened; it closes when the lanes compose. |
 | **Remote-only migrations** | **none**: no migration exists on production that this branch lacks. |
 | **Pending migrations** | **none** on this branch. |
-| **Next free migration** | Next free number is **0212**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. The coordination record already holds it for #832. |
+| **Next free migration** | Next free number is **0234**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
 | **Project ref** | `alhhybgqdmcdyzpybykj`, the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
 | **Reviewed release head** | `481e60c60ae8c873a2e1b6e2a0ccc5b9dc0b8c11` (PR #827): CI green (run `38164242975`), 0 review threads, migration bytes reviewed byte-identical inside #831. The shepherd was UNKNOWN (`read_failed`), and that was accepted by the operator for this migration-only apply. |
 | **Production application SHA at apply time** | `6c5eac80` (the #821 merge). **No application behaviour was deployed by this apply.** |

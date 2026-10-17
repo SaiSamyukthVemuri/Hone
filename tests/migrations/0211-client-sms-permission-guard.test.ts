@@ -35,11 +35,20 @@ const BODY = (CODE.match(/as \$\$([\s\S]*?)\$\$/) ?? ["", ""])[1];
 const FN = "clients_sms_permission_guard";
 
 describe("0211 sits correctly in the migration sequence", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    // Only the CURRENT maximum migration's own test may assert this — see
-    // CLAUDE.md §2. It reached this file from 0210's test.
-    expect(isRepoMax(VERSION), "0211 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION), "something was added above 0211").toEqual([]);
+  it("is no longer the repository maximum", () => {
+    // HANDED OFF, per CLAUDE.md §2: only the CURRENT max may assert
+    // `isRepoMax`. It reached this file from 0210's test and left for 0233's
+    // own test (tests/migrations/0233-clinical-records-audit-command.test.ts)
+    // on the HON-46 branch.
+    expect(isRepoMax(VERSION)).toBe(false);
+    // DERIVED, NOT PINNED: something sits above it, and everything above it is
+    // greater.
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above this older migration").toBeGreaterThan(0);
+    expect(
+      above.every((v) => Number(v) > Number(VERSION)),
+      "versionsAbove returned a version at or below its own",
+    ).toBe(true);
   });
 
   it("is allocated exactly once", () => {

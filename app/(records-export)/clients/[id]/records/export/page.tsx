@@ -152,8 +152,6 @@ export default async function ClinicalRecordsExportPage({
       () =>
         recordClinicalRecordsAudit({
           id: previewAuditId,
-          studioId: studio.id,
-          actorId: practitioner.id,
           clientId: client.id,
           action: "clinical_records_previewed",
           metadata: scopeAuditMetadata(scope),

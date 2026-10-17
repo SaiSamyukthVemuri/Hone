@@ -27,8 +27,6 @@ export async function recordClinicalRecordsPrintAction(token: string): Promise<{
   const client = await loadExportClientIdentity(studio.id, clientId);
   if (!client) return { ok: false };
   return recordClinicalRecordsAudit({
-    studioId: studio.id,
-    actorId: practitioner.id,
     clientId: client.id,
     action: "clinical_records_printed",
     metadata: { ...scopeAuditMetadata(scope), preview_audit_id: previewAuditId },

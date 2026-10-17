@@ -327,24 +327,24 @@ export async function loadClinicalRecordsForExport(args: {
  * failure so the caller can refuse (fail closed). Metadata carries the scope,
  * never a client name or a note.
  */
+// ACTOR-BOUND (migration 0233, Codex P1 4304545551). Written ONLY through
+// record_clinical_records_audit: the database derives the studio from the
+// client and the actor from auth.uid() (the studio's active owner), and
+// allow-lists the action and metadata. A direct insert of these actions is
+// refused by the audit_logs policy, so no caller can name another actor.
 export async function recordClinicalRecordsAudit(args: {
   /** Set by the caller when the row must be referenced (the print binding). */
   id?: string;
-  studioId: string;
-  actorId: string;
   clientId: string;
   action: "clinical_records_previewed" | "clinical_records_printed";
-  metadata: Record<string, string | number>;
+  metadata: Record<string, string>;
 }): Promise<{ ok: boolean }> {
   const supabase = await createClient();
-  const { error } = await supabase.from("audit_logs").insert({
-    ...(args.id ? { id: args.id } : {}),
-    studio_id: args.studioId,
-    actor_id: args.actorId,
-    action: args.action,
-    entity_type: "client",
-    entity_id: args.clientId,
-    metadata: args.metadata,
+  const { error } = await supabase.rpc("record_clinical_records_audit", {
+    p_client_id: args.clientId,
+    p_action: args.action,
+    p_metadata: args.metadata,
+    p_id: args.id ?? null,
   });
   return { ok: !error };
 }
