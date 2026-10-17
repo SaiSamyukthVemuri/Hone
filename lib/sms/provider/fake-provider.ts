@@ -1,4 +1,5 @@
 import "server-only";
+import { normalizeUsA2pCampaigns, type ObservedCampaign } from "./campaign-read";
 import crypto from "node:crypto";
 import { classifyAssociation } from "./association";
 import { asMessagingServiceSid } from "./types";
@@ -110,7 +111,14 @@ export type FakeProviderScript = {
     useInboundWebhookOnNumber?: boolean | null;
     /** `inbound_method`. Defaults to "POST"; null models "not reported". */
     inboundMethod?: string | null;
+    /**
+     * HON-50 G4b. The raw Usa2p list the service reports (`{ compliance: [...] }`),
+     * normalised exactly as the real adapter does. Absent models "no campaign".
+     */
+    usA2pList?: unknown;
   } | null>;
+  /** HON-50 G4b: make readUsA2pCampaign fail with this code. */
+  usA2pReadFails?: ProviderErrorCode;
   /** Page size for the service list walk. Small values force multiple pages. */
   servicePageSize?: number;
   /**
@@ -183,6 +191,7 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
     inboundWebhook: 0,
     statusCallback: 0,
     testSend: 0,
+    campaignRead: 0,
   };
 
   script: FakeProviderScript = {};
@@ -382,6 +391,17 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
         association: classifyAssociation(holders, input.expectedMessagingServiceSid),
       },
     };
+  }
+
+  /** HON-50 G4b. Read-only: the service's US A2P campaign, normalised like the real adapter. */
+  async readUsA2pCampaign(input: { messagingServiceSid: string }): Promise<ProviderResult<{ campaign: ObservedCampaign }>> {
+    this.calls.campaignRead += 1;
+    if (this.script.usA2pReadFails) return this.fail(this.script.usA2pReadFails);
+    const svc = (this.script.accountServices ?? []).find((x) => x?.sid === input.messagingServiceSid);
+    if (!svc) return this.fail("provider_resource_mismatch");
+    const campaign = normalizeUsA2pCampaigns(svc.usA2pList === undefined ? { compliance: [] } : svc.usA2pList);
+    if (!campaign) return this.fail("provider_response_unparseable");
+    return { ok: true, campaign };
   }
 
   /** WILLOW ADOPTION. Read-only: the service's current webhook configuration. */
