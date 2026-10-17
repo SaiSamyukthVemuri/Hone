@@ -94,6 +94,15 @@ const JWT_RE = /\beyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g;
 const BEARER_RE = /\bBearer\s+[a-zA-Z0-9._~+/=-]+/gi;
 const SUPABASE_TOKEN_RE =
   /\bsb[-_][a-z0-9-]+-auth-token\b|\bsbp_[a-z0-9]+\b|\bservice_role\b/gi;
+// #828 G-25 / G-26: a record identifier. Hone's clients, sessions,
+// appointments, intake forms and studios are all addressed by UUID, and a
+// UUID beside appointment or clinical context is a linkable record id, so it
+// never leaves for Sentry. Matches the dashed 8-4-4-4-12 form only: Sentry's
+// own trace_id, span_id and event_id are dashless hex and stay intact for
+// correlation. "[id]" mirrors Next's route-template syntax, so
+// "/clients/<uuid>" becomes "/clients/[id]" and events still group by route.
+const RECORD_ID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+const RECORD_ID_PLACEHOLDER = "[id]";
 // Loose phone matcher: a run of 9+ digits with optional +, spaces, (), ., -.
 // Bounded so it doesn't swallow adjacent digits of an unrelated token.
 const PHONE_RE = /(?<!\d)\+?\d[\d\s().-]{7,}\d(?!\d)/g;
@@ -107,11 +116,17 @@ const PHONE_RE = /(?<!\d)\+?\d[\d\s().-]{7,}\d(?!\d)/g;
  *  to every one of them. Canonicalization keys off the ROUTE instead, so the
  *  credential is removed no matter what it looks like.
  *
+ *  Record ids (#828 G-25) are replaced next, AFTER canonicalization, so a token
+ *  route still reads "[Redacted]", while "/clients/<uuid>" in a URL, a
+ *  transaction name, an exception message or a span description becomes
+ *  "/clients/[id]".
+ *
  *  Because every recursive string surface (extra, contexts, tags, span data,
  *  breadcrumb messages, exception values) funnels through here, they all
  *  inherit the protection rather than each needing its own call. */
 export function redactString(input: string): string {
   return canonicalizeTokenPaths(input)
+    .replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER)
     .replace(EMAIL_RE, REDACTED)
     .replace(JWT_RE, REDACTED)
     .replace(BEARER_RE, REDACTED)

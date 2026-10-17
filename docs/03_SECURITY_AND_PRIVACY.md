@@ -141,6 +141,17 @@ Six protected families: `/portal/verify`, `/cancel`, `/reschedule`, `/manage`, `
 
 This change affects telemetry emitted **from now on**. No historical Sentry event was deleted, no provider-side deletion was performed, and no live token was rotated or revoked. Pinned by `tests/lib/observability/sentry-token-paths.test.ts` (138 cases incl. a deterministic 120-credential generated matrix) and `tests/lib/security/token-route-parity.test.ts`.
 
+### Record ids are removed before Sentry transmission (#828 G-25)
+
+Clients, sessions, appointments, intake forms and studios are addressed by UUID, and a UUID beside appointment or clinical context is a linkable record id. Until this change, the scrubber kept them: `/clients/<uuid>` reached Sentry in `request.url`, the transaction name (the grouping key), exception messages, breadcrumbs, and span descriptions and attributes.
+
+- `redactString` in `lib/observability/sentry-scrub.ts` now replaces every dashed UUID with `[id]`, **after** token-route canonicalization. Token routes still read `[Redacted]`, and `/clients/<uuid>` becomes `/clients/[id]`, Next's own route-template form, so events still group by route.
+- Every string surface funnels through `redactString`, so one replacement covers all of them: request URLs, transaction names, messages, exception values, breadcrumb messages and data, span descriptions and data, `extra`, `tags`, custom contexts and `user`.
+- **Kept on purpose:** Sentry's own `event_id`, `trace_id` and `span_id`. They are dashless hex and carry no record identity.
+- Pinned by `tests/lib/observability/sentry-record-ids.test.ts`, a canary sweep over every surface with synthetic ids. **Negative control:** without the replacement, 4 of its 6 cases fail.
+
+**Scope.** This covers what Hone sends to Sentry from now on. It is not a Sentry BAA. Other record-id channels (Vercel logs, Stripe, Meta, Twilio callbacks, Upstash keys, email tokens) remain #828 G-26 work. No historical Sentry event was deleted.
+
 ### Ops alert observability (PR #153)
 
 A new `ops_alerts` table (migration 0067) records durable, append-only rows for operator-facing silent-failure states: manual fee charge needs_manual_review, Stripe webhook processing failures, card-on-file setup failures, email/SMS give-up, cron route failures. The `lib/ops/alerts.ts:recordOpsAlert` helper is the single entry point.
