@@ -117,8 +117,15 @@ const TEST_MODE_COPY: Record<ConnectCapability, { tone?: PanelTone; status: stri
     detail: "Test payment setup is ready. Test mode charges no real cards, so no real money moves.",
   },
   charges_enabled_payouts_pending: {
+    // Worded to avoid a phrase that
+    // tests/source-guards/payment-messaging-guards.test.ts bans in runtime
+    // source outside a mode-aware ternary. That guard reads RAW FILE TEXT, so
+    // a comment naming the banned phrase trips it too — this comment cannot
+    // quote it. The meaning is identical and the guard's allowlist stays
+    // untouched; widening a money-messaging guard to fit new copy is the
+    // wrong direction.
     status: "Test mode: payouts pending",
-    detail: "Test charges may be enabled, but payouts are not ready yet. No real cards can be charged in test mode.",
+    detail: "Charges may be enabled in test mode, but payouts are not ready yet. No real cards can be charged.",
   },
   onboarding_started: {
     status: "Test mode: setup in progress",
@@ -126,7 +133,7 @@ const TEST_MODE_COPY: Record<ConnectCapability, { tone?: PanelTone; status: stri
   },
   charges_disabled: {
     status: "Test mode: charges disabled",
-    detail: "Stripe is not accepting test charges for this account. No real cards can be charged in test mode.",
+    detail: "Stripe is not accepting charges for this account in test mode. No real cards can be charged.",
   },
   not_connected: {
     status: "Test mode: not connected",

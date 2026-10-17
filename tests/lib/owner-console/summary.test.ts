@@ -111,13 +111,21 @@ describe("the three-state rule", () => {
       expect(p.detail, `${c}: must not claim LIVE card payments`).not.toMatch(
         /Live card payments/,
       );
+      // The literal "test charge" is BANNED in runtime source outside a
+      // mode-aware ternary by tests/source-guards/payment-messaging-guards.
+      // Asserted here too, so the phrase cannot creep back into this copy and
+      // red the whole validate lane from a source guard this file never runs.
+      expect(p.detail, `${c}: must not use the banned "test charge" wording`).not.toMatch(
+        /test charge/i,
+      );
     }
   });
 
   it("payments: the regression itself — payouts-pending in test mode (Codex P2 4301040473)", () => {
     const test = paymentsPanel("charges_enabled_payouts_pending", "test");
     expect(test.status).toBe("Test mode: payouts pending");
-    expect(test.detail).toMatch(/No real cards can be charged in test mode/);
+    expect(test.detail).toMatch(/in test mode/);
+    expect(test.detail).toMatch(/No real cards can be charged/);
     // NON-VACUITY: the live panel for the same capability must DIFFER, or this
     // suite would pass just as well against a mode-blind implementation.
     const live = paymentsPanel("charges_enabled_payouts_pending", "live");
