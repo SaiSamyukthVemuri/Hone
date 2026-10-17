@@ -21,12 +21,14 @@
 // this module's job.
 //
 // The id pattern matches lib/observability/sentry-scrub.ts (#891): a dashed
-// 8-4-4-4-12 UUID, a hyphen possibly percent-encoded as %2D, bounded by "not
-// a hex digit" so an id joined to letters or "_" is still matched. To be
+// 8-4-4-4-12 UUID, a hyphen possibly percent-encoded as %2D, with NO boundary
+// at all (Codex P1 4301586679): an id glued to hex letters ("abc<uuid>") is
+// still a full id and is still removed. The dashes are what make it a UUID,
+// so dashless hex (Sentry trace and span ids, hashes) is never matched. To be
 // consolidated into one shared definition once #891 merges.
 
 const RECORD_ID_RE =
-  /(?<![0-9a-f])[0-9a-f]{8}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{12}(?![0-9a-f])/gi;
+  /[0-9a-f]{8}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{12}/gi;
 const RECORD_ID_PLACEHOLDER = "[id]";
 const REDACTED = "[Redacted]";
 const MAX_DEPTH = 8;

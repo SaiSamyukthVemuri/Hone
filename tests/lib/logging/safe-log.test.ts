@@ -38,6 +38,12 @@ describe("safeLog removes record ids from every argument shape", () => {
     expect(out[1]).toBe("client=[id] hone_booking_[id]");
   });
 
+  it("an id glued to hex letters on either side (Codex P1 4301586679)", () => {
+    const out = withoutRecordIds([`abc${CLIENT}`, `${SESSION}fed`, `deadbeef${APPT}cafe`]);
+    expectNoRecordId(out, "hex-adjacent");
+    expect(out).toEqual(["abc[id]", "[id]fed", "deadbeef[id]cafe"]);
+  });
+
   it("objects and arrays: values and keys, at depth", () => {
     const out = withoutRecordIds([
       { clientId: CLIENT, nested: { list: [SESSION, { appt: APPT }] }, [STUDIO]: "key" },
