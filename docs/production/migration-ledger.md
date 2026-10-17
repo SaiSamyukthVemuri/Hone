@@ -14,90 +14,81 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-12, post-0210 apply; `0210` APPLIED, `0216`, `0218` and `0220` AUTHORED AND PENDING on the STUDIO-READY-02a/02b/02c branches)
+## Current state (verified 2026-10-12, post-0211 apply; `0211` APPLIED, repo == hosted on this branch)
 
-> **`0220` IS AUTHORED AND PENDING, stacked on `0218`.** STUDIO-READY-02c (#824)
-> authors `0220_receptionist_scheduling.sql`: receptionist scheduling over the
-> shared core.
-> - `create_internal_appointment_v2`, `move_or_reassign_appointment` and
->   `practitioner_cancel_appointment` keep their signatures and grants, and become
->   wrappers over one internal core each (`create_`/`move_`/`cancel_appointment_core`).
->   Each core is the `0174` body with a server-resolved actor kind. The existing
->   suites pin the practitioner behaviour.
-> - Three new `authenticated`-only receptionist commands, plus one booking-form
->   projection, derive the actor from `receptionist_actor_id`.
-> - `appointments` gains two **nullable, no-default** receptionist attribution
->   columns, so `create_public_appointment`'s explicit INSERT is unaffected.
->   `cancelled_by` and `appointment_audit.actor_type` widen to admit `receptionist`,
->   and the audit trigger derives `actor_receptionist_id`.
-> - `revert_appointment_outcome` (B4) is re-emitted from its live body with only
->   two assignments added: a revert clears both canceller attribution columns.
-> - No public path is re-emitted. No data.
+> **0211 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #827 HEAD, BEFORE ANY MERGE.**
+> `0211_client_sms_permission_guard.sql` was applied to production on
+> 2026-10-12 under explicit per-change owner authorization (D1 / DEC-1), from
+> `481e60c60ae8c873a2e1b6e2a0ccc5b9dc0b8c11`. **#827 was NOT merged and no
+> application code was deployed.**
 >
-> **NOT APPLIED, NOT MERGED.** `0219` is DB/WAIT's queue position (G1, #824), so
-> this branch carries a hole there by construction. The block below records `0218`.
-
-> **`0218` IS AUTHORED AND PENDING, stacked on `0216`.** STUDIO-READY-02b (#824)
-> authors `0218_receptionist_invitations.sql`. It adds four agreement-evidence
-> columns to `studio_receptionists`, widens `pending_invitations.role` to admit
-> `receptionist`, and re-emits `link_invited_membership` with a receptionist branch.
-> The practitioner path is byte-identical to `0141`, and privileges are restated as
-> `service_role` only. Neither acceptance caller is re-emitted. No data.
-> **NOT APPLIED, NOT MERGED.** The block below records `0216`.
-
-> **AUTHORED, NOT APPLIED — MIGRATION-FIRST PENDING.** STUDIO-READY-02a (#824)
-> authors `0216_receptionist_membership_foundation.sql` on
-> `feat/receptionist-foundation-824`. It is **not** applied to production, no
-> production write was performed, and `docs/production/migration-state.json` is
-> **untouched** — `hosted_migration_max` stays **0210**. The repository therefore
-> sits legitimately ABOVE hosted, which is the second of the two legal shapes the
-> parity guard admits.
+> **THE RULES ADOPTED WITH THE APPROVAL** (#827 "Remaining decisions" 1 and 2, as recommended):
+> - a member may record a client's withdrawal by a direct write, with source `practitioner`, stamped by the database clock;
+> - trusted roles also obey write-once consent and terminal opt-out, so any future START or re-subscribe flow needs its own migration.
 >
-> **WHAT IT ADDS.** A receptionist membership that is deliberately **not** a
-> `practitioners` row: the table `studio_receptionists`; three bounded read
-> projections for a signed-in receptionist (`receptionist_calendar`,
-> `receptionist_calendar_closures`, `receptionist_client_contacts`); and two
-> `service_role`-only owner lifecycle commands (`add_studio_receptionist`,
-> `set_studio_receptionist_active`). Every existing policy and command resolves
-> membership from `practitioners`, so a receptionist is refused by all of them by
-> construction. No existing policy, membership helper, role check or command is
-> redefined, and `pending_invitations.role` is unchanged, so no receptionist
-> invitation can exist yet.
+> **THE GATES, EACH REQUIRED TO PASS BEFORE THE PUSH.**
+> - The file's sha256 `33232496322727b2db67e33f15a38bd6281898d112d4d6b4d3b25534766578c3` matched the authorized value.
+> - The linked project read `alhhybgqdmcdyzpybykj`, named **Hone**, in the link file, `linked-project.json` and `supabase projects list`.
+> - A **fresh detached throwaway** worktree at the reviewed head, with a clean tree, never a shared checkout.
+> - `supabase migration list --linked` showed remote max `0210` with `0211` as the **only** local-only row and **no** remote-only row, across 210 rows.
+> - The **dry run listed exactly `0211_client_sms_permission_guard.sql`**.
+> - The read-only preflight found **no** trigger on `public.clients`, and recorded 136 clients, 54 consents (54 with a source) and 0 opt-outs.
+> - The head carried green CI (run `38164242975`). The operator **accepted a missing shepherd receipt** for this migration-only apply: the shepherd returned `UNKNOWN` (`read_failed`) because `HONE_ENG_READ_TOKEN` was not set in the applying session. **It is recorded as UNKNOWN, never green.**
 >
-> **COMPLETE STATEMENT INVENTORY — fifty-eight statements**, inside the file's own
-> `begin;` / `set local lock_timeout = '5s';` / `commit;`:
-> - **one `create table`** (`studio_receptionists`), its **`comment on table`**, and **one partial `create index`** (`user_id` where active);
-> - **nine `create or replace function`**, all new names: two internal helpers, two trigger guards, three projections, two lifecycle commands;
-> - **two `create trigger`**, each preceded by `drop trigger if exists`: the dual-membership guard on the new table, and **one BEFORE trigger on the existing `practitioners` table**, which can only refuse (23514) a practitioner becoming active while already an active receptionist in the same studio, and never writes;
-> - **row-level security enabled** and **one `create policy`** (preceded by `drop policy if exists`): a receptionist selects their own row, the studio owner selects the studio's rows;
-> - table privileges: **`revoke all` from `anon`**, **`revoke insert, update, delete, truncate` from `authenticated`**, **`grant select` to `authenticated`**;
-> - **thirty-one `revoke execute`** — every function by name, one statement per role — **three `grant execute … to authenticated`** (the projections only) and **two `grant execute … to service_role`** (the lifecycle commands only).
+> **THE APPLY.** One `supabase db push --linked` (CLI 2.102.0), **without `--include-all`**, run once,
+> **exit code 0**. The only output beyond progress was the expected NOTICE from the file's own
+> `drop trigger if exists`. The client-side window, from the final gate assertions to the push
+> returning, was `2026-10-12T19:40:01.830Z`-`19:41:21.758Z`. It bounds the push from outside and is
+> **not** a server apply time, so `hosted_applied_at` stays null. Server bracket: `19:39:21.592596Z`
+> (0210, 209 rows) to `19:41:53.41194Z` (0211, 210 rows).
 >
-> NO existing table altered, NO column added to an existing table, NO existing
-> function or policy redefined, and **zero** migration-level DML. `0209` and `0210`
-> stay byte-identical.
+> **WHAT IT ADDED, AND ONLY THAT:**
+> - one `SECURITY INVOKER` function, `public.clients_sms_permission_guard()`: `prosecdef` false, `search_path` pinned to `pg_catalog, pg_temp`, execute revoked from `public`, `anon`, `authenticated` and `service_role`;
+> - one trigger, `clients_sms_permission_guard`, `BEFORE INSERT OR UPDATE OF sms_consent_at, sms_consent_source, sms_opted_out_at, sms_opt_out_source`, enabled (`O`).
 >
-> **PROVED LOCALLY, ON AN ISOLATED STACK ONLY** (pinned CLI 2.102.0; never the
-> shared stack, never production). Under its first number, `0211`, with identical
-> SQL: one fresh `db reset` and the full DB suite. As `0216`: applied on the
-> stack at `0210`, then the behavioural suite
-> `tests/db/receptionist-foundation.db.test.ts` and the source contract
-> `tests/migrations/0216-receptionist-membership-foundation.test.ts`.
+> **WHAT IT DID NOT CHANGE:**
+> - no table, column, constraint, policy, index or grant; `authenticated` still holds INSERT and UPDATE on `clients`;
+> - **zero rows written**: 136 clients, 54 consents (54 sources) and 0 opt-outs after the apply, identical to the preflight.
 >
-> **NOT APPLIED, NOT MERGED.** Apply `0216` migration-first from the reviewed head
-> of its own PR, under its own per-change approval, before any application that
-> calls it deploys.
+> **POST-APPLY VERIFICATION, all read-only.**
+> - `supabase migration list --linked`: 210 rows, no mismatch. `0211` present exactly once, `0210` exactly once and not re-applied, nothing above `0211`.
+> - `verify-production.mjs`: **10 PASS, 1 FAIL, 1 INCOMPLETE**, with "Remote migration max: = 0211". The FAIL is the two accepted historical payment alerts (`session_payment_succeeded_write_zero_rows`, 2026-09-17 and 2026-09-27), unchanged. The INCOMPLETE is the scheduler heartbeat, with no Upstash env on the apply host.
+> - `check-stripe-gates.mjs`: **15 PASS, 0 FAIL**.
+> - **0** critical-or-error `ops_alerts` in the preceding hour, and 0 since 19:40Z.
+>
+> **`0212` (#832) WAS NOT APPLIED.** Its approval (DEC-2) is conditional on clean exact-head Codex
+> review evidence for `ba8fc5057c1ab3c331caec4be64801f5e8d901b0`, which was requested and was not
+> available at the time of this record.
+>
+> `0211` is now **FROZEN**. Any correction is a new forward migration; there is no
+> manual down-migration.
 
 | Field | Value |
 |---|---|
-| **Hosted (production) migration max** | **0210** (`0210_sms_waitlist_join_acknowledgement.sql`) — unchanged by this branch; no apply was performed or claimed. |
-| **Repo migration max** | **0220**: `0220_receptionist_scheduling.sql` (STUDIO-READY-02c), stacked on `0218_receptionist_invitations.sql` (STUDIO-READY-02b) and `0216_receptionist_membership_foundation.sql` (STUDIO-READY-02a, #824). `0217` is held by #844 (SMS sender registrations) and `0219` by DB/WAIT (G1); neither is on this branch. No data. |
-| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **`0216`**, **`0218`** and **`0220`** on this branch, **NOT applied**. They follow a pending sequence held by other lanes: `0211` (#827), `0212` (#832), `0213` (#831), `0214` (#833), `0215` (#843), `0217` (#844) and `0219` (DB/WAIT, G1). This branch does not carry those files, so the parity guard reports a hole **by construction** until it integrates after them, in order `0211` → … → `0220`. It renumbers if that order changes. `repo > hosted` is the MIGRATION-FIRST PENDING shape: `0216`, `0218` and `0220` are pending, not applied. |
-| **Next free migration** | Next free number is **0221**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
-| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. No Supabase command was run against it for this change. |
+| **Hosted (production) migration max** | **0211** (`0211_client_sms_permission_guard.sql`), applied 2026-10-12 from #827's reviewed head. |
+| **Repo migration max** | **0211** on this branch, so repo and hosted are equal here: the PARITY shape. A branch stacked above it carries its own pending suffix. |
+| **Remote-only migrations** | **none**: no migration exists on production that this branch lacks. |
+| **Pending migrations** | **none** on this branch. |
+| **Next free migration** | Next free number is **0212**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. The coordination record already holds it for #832. |
+| **Project ref** | `alhhybgqdmcdyzpybykj`, the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
+| **Reviewed release head** | `481e60c60ae8c873a2e1b6e2a0ccc5b9dc0b8c11` (PR #827): CI green (run `38164242975`), 0 review threads, migration bytes reviewed byte-identical inside #831. The shepherd was UNKNOWN (`read_failed`), and that was accepted by the operator for this migration-only apply. |
+| **Production application SHA at apply time** | `6c5eac80` (the #821 merge). **No application behaviour was deployed by this apply.** |
 
-## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, repo == hosted)
+## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, `0211` AUTHORED AND PENDING on the G3 branch)
+
+> **0211 IS AUTHORED AND PENDING (added after the 0210 apply), on the draft G3 branch `fix/g3-client-sms-field-guard` only.**
+> `0211_client_sms_permission_guard.sql` closes finding G3: studio members could rewrite a client's SMS consent and opt-out through the database API. It adds ONE `SECURITY INVOKER` trigger function and ONE trigger on `public.clients`, nothing else:
+> - a member (`anon` / `authenticated`) can never add, change or remove SMS consent;
+> - recorded consent evidence is write-once, and an opt-out is terminal, for every role;
+> - a member may still record a withdrawal (source `practitioner`, on the database clock).
+>
+> No table, column, constraint, policy, index or grant changes, and no row is written. The census of every writer of the four fields, which the trigger must keep working, is in the migration header: the 0204 new-client booking command, the public booking action and the inbound STOP route.
+>
+> **NUMBERING, from a fresh census at authoring time (2026-10-11 ~18:00Z):** hosted max `0210` (read-only query), repository max `0210`, and no remote branch, open PR (#823 and #825 included) or worktree on this host carrying a migration above `0210`. `0211` was free and is used here. **It is not reserved beyond this draft:** issue #824 and WAIT v4 allocate their own numbers at write time, and the pending suffix must stay contiguous, so a lane that needs a migration before this one merges re-censuses, and stacks or renumbers. `0209` and `0210` stay frozen and byte-identical (pinned by `tests/migrations/0211-client-sms-permission-guard.test.ts`).
+>
+> **NOT APPLIED, NOT MERGED.** Apply it migration-first, under separate approval, from the exact reviewed head. No application change depends on it: either order is safe for the application, and the guard binds only raw member writes that no screen makes.
+>
+> **THE BLOCK BELOW IS THE 0210 APPLY RECORD.** Its hosted row is still current. Its repo-max, pending and next-free rows have been updated for `0211` while it is pending.
 
 > **0210 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #822 HEAD, BEFORE ANY MERGE.**
 > `0210_sms_waitlist_join_acknowledgement.sql` was applied to production on
@@ -157,10 +148,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0210** (`0210_sms_waitlist_join_acknowledgement.sql`), applied 2026-10-11 from #822's reviewed head. |
-| **Repo migration max** | **0210** — repo and hosted are equal, so this is the PARITY shape with **nothing pending**. |
+| **Repo migration max** | **0211** — `0211_client_sms_permission_guard.sql`, authored on the draft G3 branch: one `SECURITY INVOKER` trigger function and one trigger on `public.clients`. `0209` and `0210` are byte-identical. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **none.** |
-| **Next free migration** | Next free number is **0211**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
+| **Pending migrations** | **`0211`** — `0211_client_sms_permission_guard.sql`, **NOT applied**, so `repo > hosted` by exactly one: the MIGRATION-FIRST PENDING shape. Apply it migration-first, under separate approval, before or with the merge of its branch. |
+| **Next free migration** | Next free number is **0212**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. A lane that needs it must stack on `0211` or wait for it, because the pending suffix must be contiguous. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
 | **Reviewed release head** | `3096e1f41dd00291e14885c16b8061e078b4b05d` (PR #822) — CI green (run 38107988921), explicit exact-head review clean ("Reviewed commit `3096e1f41d`"), 3 of 3 review threads resolved, operator shepherd `CANDIDATE_READY_FOR_HUMAN_REVIEW` (2026-10-11T08:08:55Z). |
 | **Production application SHA at apply time** | `0e16257ed7332d512cc4d500377a790d7c66b9b5` (the #820 merge). **No application behaviour was deployed by this apply.** |

@@ -94,6 +94,7 @@ import {
   createTreatmentAreaWithEntryAction,
   updateTreatmentAreaWithEntryAction,
 } from "./block-actions";
+import { SectionLabel } from "@/components/ui/section-label";
 
 const PRIMARY_AREA_MAX = 60;
 const CUSTOM_AREA_DETAIL_MAX = 60;
@@ -816,9 +817,9 @@ export function BlockSetupForm({
     modeSections.showThermo ? (
       <div className="flex flex-col gap-3">
         {mode === "blend" && (
-          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          <SectionLabel>
             Thermolysis
-          </span>
+          </SectionLabel>
         )}
         <div className="grid gap-4 md:grid-cols-2">
           {!isOmniblend && (
@@ -921,9 +922,9 @@ export function BlockSetupForm({
     modeSections.showGalv ? (
       <div className="flex flex-col gap-3">
         {mode === "blend" && (
-          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          <SectionLabel>
             Galvanic
-          </span>
+          </SectionLabel>
         )}
         {/* MACHINE ORDER (Chloe): units of lye, then galvanic duration, then mA
             the order the Apilus shows them, so she can read straight down.
@@ -1296,9 +1297,9 @@ export function BlockSetupForm({
             390px; vertically resizable. */}
         {draft.numbingStatus === "used" && (
           <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            <SectionLabel>
               Numbing notes (optional)
-            </span>
+            </SectionLabel>
             <textarea
               rows={3}
               value={draft.numbingNotes}
@@ -1408,9 +1409,9 @@ export function BlockSetupForm({
             chip list. ~8 rows, >=12rem, full-width + vertically resizable, safe at
             390px; multiline preserved verbatim. */}
         <label className="flex flex-col gap-1">
-          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          <SectionLabel>
             {ADDITIONAL_NOTES_HEADING}
-          </span>
+          </SectionLabel>
           <textarea
             rows={8}
             value={draft.comments}

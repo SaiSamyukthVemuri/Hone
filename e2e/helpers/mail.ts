@@ -1,7 +1,7 @@
 import { E2E_MAILPIT_URL } from "./local-env";
 
 // Mailpit helper (PR #227): the local Supabase stack routes ALL
-// GoTrue auth email to Mailpit (http://127.0.0.1:54324), so the E2E
+// GoTrue auth email to the selected stack's Mailpit (default http://127.0.0.1:54324), so the E2E
 // login drives the REAL magic-link path end to end with zero auth
 // bypass. App emails (Resend) never reach Mailpit: they fail
 // gracefully against the dummy key, exactly like the fast CI lane.
