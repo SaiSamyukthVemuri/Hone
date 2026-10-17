@@ -10,6 +10,7 @@ import {
   normalizePhoneForSms,
   outboundSmsFence,
   sendSmsSafely,
+  smsProviderConfigured,
   type SendSmsResult,
 } from "./twilio";
 import {
@@ -19,6 +20,12 @@ import {
   smsStatusCallbackUrl,
   type AppointmentSmsPurpose,
 } from "./delivery-ledger";
+import {
+  liveSendTimeRouteReader,
+  resolveSendTimeRoute,
+  type SendTimeRoute,
+  type SendTimeRouteReader,
+} from "./send-time-route";
 
 // SMS send helpers used by the booking, reschedule, and reminder cron
 // paths. Each top-level function follows the strict claim-then-send-
@@ -288,6 +295,8 @@ type SendConfirmationInput = {
   // pre-date the PR 0025 token backfill); in that case the SMS omits
   // the manage line entirely.
   manageUrl: string | null;
+  /** WILLOW-ROUTING-CANDIDATE-01: the send-time route reader (tests inject one). */
+  routeReader?: SendTimeRouteReader;
 };
 
 export async function sendBookingConfirmationSmsToClient(
@@ -299,6 +308,7 @@ export async function sendBookingConfirmationSmsToClient(
     smsType: "confirmation",
     studio: input.studio,
     client: input.client,
+    routeReader: input.routeReader,
     // Body builder does not depend on the phone; the callback API is
     // shared with the reminder helpers below to keep sendOne uniform.
     buildBody: () =>
@@ -309,6 +319,55 @@ export async function sendBookingConfirmationSmsToClient(
         intakeUrl: input.intakeUrl,
         manageUrl: input.manageUrl,
       }),
+    to: (normalizedPhone) => normalizedPhone,
+  });
+}
+
+/**
+ * D5: a confirmation the booking request owed but could not send (see
+ * lib/sms/confirmation-recovery.ts). The same gate, fence, route, claim and
+ * provider as the booking confirmation, plus a re-read of the appointment
+ * BEFORE the claim (a refusal or an unreadable row spends nothing, so it stays
+ * owed) and AGAIN AFTER it (it must still be confirmed and still start after
+ * the recovery horizon). The message and its manage link are built from the
+ * post-claim start.
+ */
+export type SendRecoveredConfirmationInput = Omit<SendConfirmationInput, "startsAt" | "manageUrl" | "intakeUrl"> & {
+  /** Re-reads status and start after the claim. */
+  revalidate: () => Promise<{ ok: true; startsAt: Date } | { ok: false; reason: string }>;
+  manageUrlFor: (startsAt: Date) => string | null;
+  /** The intake link the original confirmation would carry, read live; null for none. */
+  intakeUrlFor?: () => string | null;
+};
+
+export async function sendRecoveredConfirmationSmsToClient(
+  input: SendRecoveredConfirmationInput,
+): Promise<SmsSendResult> {
+  return sendOne({
+    admin: input.admin,
+    appointmentId: input.appointmentId,
+    smsType: "confirmation",
+    studio: input.studio,
+    client: input.client,
+    routeReader: input.routeReader,
+    // The confirmation's own re-reads of an unreadable route (3 looks): a row
+    // in its last eligible slot has no later run. The recovery pass remembers
+    // a studio-wide refusal for the run, so this costs one studio, not a row.
+    // A request that could never be made (no credentials) must not spend the
+    // attempt that ends recovery: refuse before the claim, still owed.
+    beforeClaim: async () =>
+      smsProviderConfigured() ? input.revalidate() : { ok: false, reason: "twilio_not_configured" },
+    afterClaim: input.revalidate,
+    buildBody: (_phone, startsAt) => {
+      if (!startsAt) throw new Error("recovered confirmation without a re-read start");
+      return buildBookingConfirmationSms({
+        studioName: input.studio.name,
+        startsAt,
+        timezone: input.timezone,
+        intakeUrl: input.intakeUrlFor?.() ?? null,
+        manageUrl: input.manageUrlFor(startsAt),
+      });
+    },
     to: (normalizedPhone) => normalizedPhone,
   });
 }
@@ -355,6 +414,8 @@ export type SendReminderInput = {
    * the booking confirmation's are.
    */
   ledgerBudget?: LedgerBudget;
+  /** WILLOW-ROUTING-CANDIDATE-01: the send-time route reader (tests inject one). */
+  routeReader?: SendTimeRouteReader;
 };
 
 export async function send24hReminderSmsToClient(
@@ -484,6 +545,13 @@ async function sendReminder(
     return { ok: false, skipped: true, reason: fence.reason };
   }
 
+  // (0) WHICH SENDER, before the claim: a refusal spends no attempt and
+  // reaches no provider, so the next fire reconsiders the row intact.
+  const route = await sendTimeRouteFor(args.admin, args.studio.id, gate.normalizedPhone, args.appointmentId, smsType, args.routeReader);
+  if (!route.ok) {
+    return { ok: false, skipped: true, reason: `sms_route_${route.reason}` };
+  }
+
   // (1) Validate and claim in ONE transaction. A refusal spends no attempt;
   // an unreachable command spends none either (it rolled back), and is
   // retried on a later fire.
@@ -525,6 +593,7 @@ async function sendReminder(
       to: gate.normalizedPhone,
       body,
       budget: args.ledgerBudget,
+      route,
     });
   } catch {
     // sendSmsSafely and the ledger never throw, so an exception here came from
@@ -693,6 +762,8 @@ async function sendWithLedgerRow(args: {
   to: string;
   body: string;
   budget?: LedgerBudget;
+  /** The send-time route; studio mode names the only sender this may use. */
+  route: SendTimeRoute & { ok: true };
 }): Promise<LedgeredAttempt> {
   const messageId = await boundedLedgerStep(
     "begin",
@@ -709,6 +780,11 @@ async function sendWithLedgerRow(args: {
     to: args.to,
     body: args.body,
     statusCallbackUrl: messageId ? smsStatusCallbackUrl(messageId) : null,
+    // Platform mode passes no sender, so the environment chooses exactly as
+    // before; studio mode passes the studio's own and nothing else.
+    ...(args.route.mode === "studio"
+      ? { messagingServiceSid: args.route.messagingServiceSid, fromNumber: args.route.fromNumber }
+      : {}),
   });
   return { result, messageId };
 }
@@ -745,9 +821,83 @@ type SendOneArgs = {
   smsType: SmsType;
   studio: ConsentGateInput["studio"];
   client: ConsentGateInput["client"];
-  buildBody: (normalizedPhone: string) => string;
+  /** `startsAt` is the start re-read after the claim, when `afterClaim` ran. */
+  buildBody: (normalizedPhone: string, startsAt?: Date) => string;
   to: (normalizedPhone: string) => string;
+  routeReader?: SendTimeRouteReader;
+  /**
+   * D5 (a recovered confirmation only): re-validate the appointment AFTER the
+   * claim and before the provider. A refusal releases the claim with no
+   * provider call; the attempt it spent keeps recovery from ever retrying it.
+   */
+  afterClaim?: () => Promise<{ ok: true; startsAt: Date } | { ok: false; reason: string }>;
+  /**
+   * D5: the same re-validation BEFORE the claim, so a refusal or an unreadable
+   * appointment spends no attempt and the confirmation stays owed.
+   */
+  beforeClaim?: () => Promise<{ ok: true; startsAt: Date } | { ok: false; reason: string }>;
+  /** Route looks on an unreadable answer; defaults per sms type. */
+  routeLooks?: number;
 };
+
+/**
+ * WILLOW-ROUTING-CANDIDATE-01: the send-time route, after the consent gate and
+ * the fence and BEFORE any claim. Every studio is on the platform sender until
+ * listed in SMS_STUDIO_ROUTING_STUDIO_IDS (lib/sms/send-time-route.ts); a
+ * listed studio sends only from its own ready sender, or not at all. A refusal
+ * claims nothing and calls no provider, so it is logged here and nowhere else.
+ */
+/**
+ * A confirmation is ONE-SHOT: booking and calendar callers send it once and
+ * nothing rescans unclaimed confirmations, so an UNREADABLE route is looked at
+ * again, briefly, before giving up. Free: it runs before the claim, spends no
+ * attempt and calls no provider. Only `sender_read_failed` is retried; every
+ * other refusal is a configuration fact that a second look cannot change, and
+ * a studio is listed for routing only once it is ready (the cutover gate).
+ * Reminders look once: the cron's next pass is their retry.
+ */
+const ROUTE_READ_ATTEMPTS: Record<SmsType, number> = {
+  confirmation: 3,
+  reminder_24h: 1,
+  reminder_2h: 1,
+};
+const ROUTE_READ_BACKOFF_MS = [60, 180] as const;
+
+async function sendTimeRouteFor(
+  admin: SupabaseClient,
+  studioId: string,
+  recipientE164: string,
+  appointmentId: string,
+  smsType: SmsType,
+  reader: SendTimeRouteReader | undefined,
+  maxLooks: number = ROUTE_READ_ATTEMPTS[smsType],
+): Promise<SendTimeRoute> {
+  const read = reader ?? liveSendTimeRouteReader(admin);
+  let looks = 0;
+  let route: SendTimeRoute;
+  for (;;) {
+    looks += 1;
+    route = await resolveSendTimeRoute({ studioId, recipientE164, reader: read });
+    if (route.ok || route.reason !== "sender_read_failed" || looks >= maxLooks) break;
+    await new Promise((r) => setTimeout(r, ROUTE_READ_BACKOFF_MS[looks - 1] ?? 0));
+  }
+  if (!route.ok) {
+    console.error(
+      JSON.stringify({
+        event: "sms_route_refused",
+        appointmentId,
+        smsType,
+        reason: route.reason,
+        readiness: route.readiness ?? null,
+        looks,
+        attemptClaimed: false,
+        providerCalled: false,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+  return route;
+}
 
 /**
  * The confirmation send path (the reminders use sendReminder, which adds
@@ -781,9 +931,67 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
     return { ok: false, skipped: true, reason: fence.reason };
   }
 
+  const to = args.to(gate.normalizedPhone);
+
+  // D5 pre-claim revalidation FIRST (Codex P1 4254248449): it can take several
+  // reads (appointment, client, intake), and a route resolved before them could
+  // be stale by the claim. Refusal here spends nothing; the row stays owed.
+  if (args.beforeClaim) {
+    let pre: { ok: true; startsAt: Date } | { ok: false; reason: string };
+    try {
+      pre = await args.beforeClaim();
+    } catch {
+      pre = { ok: false, reason: "revalidate_failed" };
+    }
+    if (!pre.ok) return { ok: false, skipped: true, reason: pre.reason };
+  }
+
+  // Then the sender and readiness, IMMEDIATELY before the claim: a sender
+  // suspended, released or replaced while the reads above ran is seen here,
+  // and nothing is claimed or sent on the stale route.
+  const route = await sendTimeRouteFor(
+    args.admin,
+    args.studio.id,
+    to,
+    args.appointmentId,
+    args.smsType,
+    args.routeReader,
+    args.routeLooks,
+  );
+  if (!route.ok) {
+    return { ok: false, skipped: true, reason: `sms_route_${route.reason}` };
+  }
+
+  // A STUDIO-ROUTED confirmation whose provider request could never be made
+  // (no credentials) refuses BEFORE the claim (Codex P2 4264231238): claimed,
+  // it would end with attempts = 1 and no request, and recovery admits only
+  // rows with zero attempts, so it could never be recovered. Refused here it
+  // spends nothing and stays owed. The platform path keeps today's order (it
+  // claims, then sendSmsSafely refuses). sendOne carries confirmations only;
+  // reminders (sendReminder) keep their order: the cron's next pass is their
+  // retry.
+  if (route.mode === "studio" && !smsProviderConfigured()) {
+    return { ok: false, skipped: true, reason: "twilio_not_configured" };
+  }
+
   const claimed = await claimSmsSend(args.admin, args.appointmentId, args.smsType);
   if (!claimed) {
     return { ok: false, skipped: true, reason: "not_claimed" };
+  }
+
+  let revalidatedStart: Date | undefined;
+  if (args.afterClaim) {
+    let check: { ok: true; startsAt: Date } | { ok: false; reason: string };
+    try {
+      check = await args.afterClaim();
+    } catch {
+      check = { ok: false, reason: "revalidate_failed" };
+    }
+    if (!check.ok) {
+      await recordSmsResult(args.admin, args.appointmentId, args.smsType, false);
+      return { ok: false, skipped: true, reason: check.reason };
+    }
+    revalidatedStart = check.startsAt;
   }
 
   let success = false;
@@ -795,8 +1003,7 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
   let attempt: LedgeredAttempt | null = null;
 
   try {
-    const body = args.buildBody(gate.normalizedPhone);
-    const to = args.to(gate.normalizedPhone);
+    const body = args.buildBody(gate.normalizedPhone, revalidatedStart);
     attempt = await sendWithLedgerRow({
       admin: args.admin,
       studioId: args.studio.id,
@@ -804,6 +1011,7 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
       smsType: args.smsType,
       to,
       body,
+      route,
     });
     const result = attempt.result;
     success = result.ok;
