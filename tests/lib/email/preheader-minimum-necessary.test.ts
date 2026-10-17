@@ -250,6 +250,35 @@ const cases: Case[] = [
   ],
 ];
 
+// A client that DROPS the invisible filler (normalizes it away, as
+// simulatedPreview does) shows the neutral line followed directly by the start
+// of the body. The preheader does NOT protect those clients (Codex P2
+// 4301045743): for the templates below, the start of the body carries these
+// forbidden facts. Pinned EXACTLY, so any new leak, or any leak in a template
+// not listed here, fails. Removing them needs the body openings rewritten,
+// which is a copy and design decision (queued via #828), not this test.
+const KNOWN_FILLER_STRIPPING_LEAKS: Record<string, string[]> = {
+  "client confirmation": ["/Zephyrine/"],
+  "cancellation, client-facing": ["/Zephyrine/", "/\\b(today|tomorrow|tonight|missed|aftercare|treatment|cancel)/i"],
+  "cancellation, studio-facing": ["/Zephyrine/", "/\\b(today|tomorrow|tonight|missed|aftercare|treatment|cancel)/i"],
+  "24h reminder": ["/Zephyrine/", "/\\b(today|tomorrow|tonight|missed|aftercare|treatment|cancel)/i"],
+  "2h reminder": ["/Zephyrine/"],
+  "no-show follow-up": ["/Zephyrine/", "/\\b(today|tomorrow|tonight|missed|aftercare|treatment|cancel)/i"],
+  postcare: [
+    "/Zephyrine/",
+    "/\\b\\d{1,2}:\\d{2}\\b/",
+    "/\\b(AM|PM)\\b/",
+    "/\\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\\b/i",
+    "/\\b(January|February|March|April|May|June|July|August|September|October|November|December)\\b/i",
+    "/\\b2031\\b/",
+  ],
+  "intake reminder (no studio name, per the intake rule)": [
+    "/\\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\\b/i",
+    "/\\b(January|February|March|April|May|June|July|August|September|October|November|December)\\b/i",
+    "/\\b2031\\b/",
+  ],
+};
+
 describe("every preheader-bearing template: the preview is the neutral preheader only", () => {
   it.each(cases)("%s", (_label, build, expected) => {
     const { html } = build();
@@ -257,8 +286,16 @@ describe("every preheader-bearing template: the preview is the neutral preheader
     const afterBody = html.slice(html.search(/<body\b[^>]*>/i)).replace(/^<body\b[^>]*>/i, "");
     expect(afterBody.startsWith("<div data-hone-preheader")).toBe(true);
     expect(html.match(/data-hone-preheader/g)).toHaveLength(1);
-    // 2. The simulated preview starts with exactly the neutral preheader...
-    expect(simulatedPreview(html).startsWith(expected)).toBe(true);
+    // 2. The simulated (filler-stripped) preview starts with exactly the
+    //    neutral preheader, and what follows it in that same preview window
+    //    leaks EXACTLY the pinned facts for this template, nothing more.
+    const normalized = simulatedPreview(html);
+    expect(normalized.startsWith(expected)).toBe(true);
+    const rest = normalized.slice(expected.length);
+    const leaked = FORBIDDEN.filter((re) => re.test(rest)).map(String).sort();
+    expect(leaked, `filler-stripping preview of ${_label}`).toEqual(
+      [...(KNOWN_FILLER_STRIPPING_LEAKS[_label] ?? [])].sort(),
+    );
     // 3. ...and the client's preview window holds nothing but it and filler.
     const window = previewWindow(html);
     expect(window.startsWith(expected)).toBe(true);

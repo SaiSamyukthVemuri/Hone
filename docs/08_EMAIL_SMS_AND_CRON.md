@@ -65,8 +65,18 @@ starts its body with a hidden **neutral preheader** (`lib/email/preheader.ts`):
 - studio-facing: `New activity at <studio> in Hone. …`;
 - intake templates: generic, with no studio name.
 
-Invisible filler follows the preheader, so the preview cannot run on into
-the body. It follows the same content rule as subjects.
+Invisible filler follows the preheader, so in a client that renders the
+filler, the preview cannot run on into the body. The preheader follows the
+same content rule as subjects.
+
+**Limit (Codex P2 4301045743):** a client that drops the filler shows the
+neutral line followed directly by the start of the body. For 8 of the 13
+templates, that start carries the client's name and, for some, a date, time
+or a word like "cancel", "missed" or "today". The postcare and intake-reminder
+bodies open with the date. `tests/lib/email/preheader-minimum-necessary.test.ts`
+pins exactly which facts leak per template, so any new leak fails.
+**Rewriting the body openings to be neutral is a copy and design decision
+queued on #828**, so for those clients this does not yet minimize the preview.
 
 **Excluded:**
 - the waitlist family, whose Resend idempotency payload must stay byte-stable;
