@@ -79,7 +79,14 @@ vi.mock("@/lib/stripe/session-payment-stripe", () => ({
         opts: Record<string, unknown>,
       ) => {
         db.stripeRefunds.push({ params, opts });
-        return { id: "re_1", status: "succeeded" };
+        // A real Refund states its amount and its charge's currency, and the
+        // helper now refuses one that does not match the row (PAY-CCY-01).
+        return {
+          id: "re_1",
+          status: "succeeded",
+          amount: params.amount,
+          currency: "cad",
+        };
       },
     },
   }),
