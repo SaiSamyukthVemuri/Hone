@@ -400,7 +400,7 @@ export function TreatmentImagesManager({
                 ).map(([value, label]) => (
                   <label
                     key={value}
-                    className="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-200"
+                    className="flex min-h-[44px] items-center gap-2 text-sm text-neutral-700 dark:text-neutral-200"
                   >
                     <input
                       type="radio"
@@ -426,7 +426,7 @@ export function TreatmentImagesManager({
                       setCtxSessionId(e.target.value);
                       setCtxBlockId("");
                     }}
-                    className="w-full rounded-md border border-neutral-300 px-2 py-2 text-sm text-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
+                    className="min-h-[44px] w-full rounded-md border border-neutral-300 px-2 py-2 text-sm text-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
                   >
                     <option value="">Select a session…</option>
                     {sessionOptions.map((s) => (
@@ -446,7 +446,7 @@ export function TreatmentImagesManager({
                     <select
                       value={ctxBlockId}
                       onChange={(e) => setCtxBlockId(e.target.value)}
-                      className="w-full rounded-md border border-neutral-300 px-2 py-2 text-sm text-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
+                      className="min-h-[44px] w-full rounded-md border border-neutral-300 px-2 py-2 text-sm text-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
                     >
                       <option value="">Select a treatment area…</option>
                       {ctxBlocks.map((b) => (
@@ -481,7 +481,7 @@ export function TreatmentImagesManager({
           )}
 
           <div className="flex flex-wrap items-center gap-3">
-          <label className="cursor-pointer rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-100 dark:hover:bg-neutral-900">
+          <label className="inline-flex min-h-[44px] cursor-pointer items-center rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-100 dark:hover:bg-neutral-900">
             Choose images
             <input
               type="file"

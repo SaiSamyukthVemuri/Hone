@@ -119,3 +119,34 @@ describe("UI-01J: no new primitive", () => {
     expect(prim).toMatch(/aria-busy=\{pending \|\| undefined\}/);
   });
 });
+
+// The non-Button controls on the same surface (FETT photos gap 1, #892): the
+// file picker, the attach-as radios and the session / treatment-area selects.
+// MEASURED before by class only: picker ~36px, radio rows ~20px, selects ~38px.
+// A min-height does nothing on an inline box, so the picker needs inline-flex.
+describe("FETT photos: the remaining photo controls reach the floor", () => {
+  it("the 'Choose images' file picker is a 44px inline-flex target", () => {
+    const src = read();
+    const picker = src.match(/<label className="([^"]*)">\s*Choose images/);
+    expect(picker, "the picker label").toBeTruthy();
+    const cls = (picker as RegExpMatchArray)[1];
+    expect(cls).toContain("min-h-[44px]");
+    expect(cls).toContain("inline-flex");
+    expect(cls).toContain("items-center");
+  });
+
+  it("each attach-as radio row is a 44px flex target", () => {
+    const src = read();
+    const row = src.match(/<label\s+key=\{value\}\s+className="([^"]*)"/);
+    expect(row, "the radio row label").toBeTruthy();
+    const cls = (row as RegExpMatchArray)[1];
+    expect(cls).toContain("min-h-[44px]");
+    expect(cls).toMatch(/(^|\s)flex(\s|$)/);
+  });
+
+  it("both the session and the treatment-area selects carry the floor", () => {
+    const selects = [...read().matchAll(/<select[\s\S]*?className="([^"]*)"/g)].map((m) => m[1]);
+    expect(selects).toHaveLength(2);
+    for (const cls of selects) expect(cls).toContain("min-h-[44px]");
+  });
+});
