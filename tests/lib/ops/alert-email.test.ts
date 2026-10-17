@@ -190,6 +190,19 @@ describe("#828 G-24: the alert email carries no record identifiers", () => {
     expect(mail.text).toContain("at /clients/[id] and [id]");
   });
 
+  it("decoding never injects a control character into the email (Codex P2 4301838851, on #903)", async () => {
+    const FORGE = `{"clientId":"${"6f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5"}","message":"bad%0Aforged%1B[31m%20x"}`;
+    const mail = await send(FORGE);
+    expect(mail.text).toContain(`{"clientId":"[id]","message":"bad%0Aforged%1B[31m%20x"}`);
+  });
+
+  it("removes a Stripe id whose suffix has no digit, if it has an upper-case letter (Codex P1 4301841195)", async () => {
+    const mail = await send("dispute dp_AbCdEfGhIjKlMn and src_ABCDEFGHIJKL in session_payment_succeeded_write_zero_rows");
+    expect(mail.text).not.toContain("dp_AbCdEfGhIjKlMn");
+    expect(mail.text).not.toContain("src_ABCDEFGHIJKL");
+    expect(mail.text).toContain("in session_payment_succeeded_write_zero_rows");
+  });
+
   it("keeps what the operator needs to triage: event slug, time, environment and the admin link", async () => {
     const mail = await send("Benign message");
     expect(mail.subject).toBe("[Hone CRITICAL] session_payment_succeeded_write_zero_rows");

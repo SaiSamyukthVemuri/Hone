@@ -72,6 +72,10 @@ const RECORD_ID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 const HAS_RECORD_ID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const MAX_DECODE_ROUNDS = 4;
 
+function reescapeControls(text: string): string {
+  return text.replace(/[\x00-\x20\x7f]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`);
+}
+
 function decodeAsciiEscapes(text: string): string {
   return text.replace(/%([0-7][0-9a-f])/gi, (_m, hex: string) => String.fromCharCode(parseInt(hex, 16)));
 }
@@ -90,7 +94,11 @@ function replaceRecordIds(text: string): string {
       }
       if (decodeAsciiEscapes(decoded) !== decoded) return RECORD_ID_REDACTED;
       if (decoded !== token && HAS_RECORD_ID.test(decoded)) {
-        return decoded.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER);
+        // Decoding must not INJECT characters (Codex P2 4301838851): a
+        // control character or whitespace that was escaped in the input
+        // (%0A, %1B, %20) is escaped again on the way out, so a decoded
+        // token can never forge a log line or a terminal sequence.
+        return reescapeControls(decoded.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER));
       }
       return token.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER);
     })
@@ -108,10 +116,13 @@ const STRIPE_ID_RE = new RegExp(
 );
 // ANY Stripe-shaped object id, whatever its prefix (Codex P1 4301706583:
 // dp_, src_, card_, ... are outside the list above). Stripe ids are a short
-// lowercase prefix, "_", then a long run that mixes digits and letters. Event
-// slugs and ordinary snake_case words carry no digit after the "_", so they
-// are left alone.
-const GENERIC_STRIPE_ID_RE = /[a-z]{2,12}_(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{10,}/g;
+// lowercase prefix, "_", then 10+ base62 characters. The suffix must contain
+// a digit OR an upper-case letter (Codex P1 4301841195: a digit alone missed
+// "dp_AbCdEf..."); that is what separates an id from a snake_case event slug,
+// which is all lower case. KNOWN LIMIT: a suffix of 10+ lower-case letters
+// only cannot be told apart from an English word, and stays. For a random
+// 14-character base62 suffix the chance of that is about 5 in a million.
+const GENERIC_STRIPE_ID_RE = /[a-z]{2,12}_(?=[A-Za-z0-9]*[A-Z0-9])[A-Za-z0-9]{10,}/g;
 
 function withoutRecordIds(text: string): string {
   return replaceRecordIds(text)
