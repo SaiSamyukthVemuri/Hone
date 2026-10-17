@@ -158,7 +158,13 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   try {
     for (const s of [success, failed, ambiguous, nonOwner]) {
-      if (s) await cleanupPaymentScenario(s.studioId);
+      if (!s) continue;
+      // The refused and ambiguous journeys each raise a critical receipt
+      // alert. ops_alerts keeps its row on studio delete (ON DELETE SET NULL),
+      // so remove THIS scenario's alerts first, or every green run leaves
+      // orphaned critical alerts behind (Codex P2 4301505448).
+      await adminQuery(`delete from public.ops_alerts where studio_id = $1`, [s.studioId]);
+      await cleanupPaymentScenario(s.studioId);
     }
   } finally {
     cleanupFakeStripeLedger();
