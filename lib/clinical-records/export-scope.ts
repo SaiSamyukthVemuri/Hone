@@ -98,6 +98,17 @@ export function localDayBounds(
   };
 }
 
+/**
+ * Bounds for CALENDAR-DATE columns (Codex P1 4302644059). A clinical note's
+ * occurred_at comes from <input type="date"> and is stored as MIDNIGHT UTC of
+ * that civil date (see lib/clinical-notes/clinical-date.ts), so it must be
+ * filtered by its YYYY-MM-DD, never through studio-local instant bounds, which
+ * shift it a day in every negative UTC offset.
+ */
+export function civilDayBounds(from: string, to: string): { fromUtc: string; toUtcExclusive: string } {
+  return { fromUtc: `${from}T00:00:00.000Z`, toUtcExclusive: `${addDays(to, 1)}T00:00:00.000Z` };
+}
+
 /** Audit metadata for a scope: what was looked at, never a name or a note. */
 export function scopeAuditMetadata(scope: ExportScope): Record<string, string> {
   if (scope.kind === "session") return { scope: "session", session_id: scope.sessionId };
@@ -159,6 +170,7 @@ export type ExportBlockSource = {
   reaction_type: string | null;
   reaction_notes: string | null;
   caution_note: string | null;
+  caution_for_next_session: boolean | null;
   block_notes: string | null;
   started_at: string | null;
   ended_at: string | null;
@@ -408,7 +420,9 @@ export function buildClinicalRecordsDocument(input: {
           notes: readings([
             ["Numbing notes", b.numbing_notes],
             ["Reaction notes", b.reaction_notes],
-            ["Caution", b.caution_note],
+            // The flag stands on its own (Codex P2 4302644062): a legacy block may
+            // carry the caution with no note, and the chart still shows it.
+            ["Caution for next session", present(b.caution_note) ? b.caution_note : b.caution_for_next_session ? "Yes" : null],
             ["Notes", b.block_notes],
           ]),
           entries: [...(entriesByBlock.get(b.id) ?? [])].sort(byCreated).map(exportEntry),

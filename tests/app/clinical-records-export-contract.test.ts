@@ -81,6 +81,20 @@ describe("HON-46 export reads exclude private and payment data", () => {
     expect(src).toMatch(/readAllPages|readAllForSessions/);
   });
 
+  it("filters clinical notes by CIVIL day, sessions by the studio-local window (Codex P1 4302644059)", () => {
+    const src = code(FILES.queries);
+    expect(src).toMatch(/noteBounds = civilDayBounds\(from, to\)/);
+    expect(src).toMatch(/noteBounds = civilDayBounds\(localDay, localDay\)/);
+    expect(src).not.toMatch(/noteBounds = localDayBounds\(/);
+    const page = code(FILES.page);
+    expect(page).toContain("formatClinicalDate(n.occurredAt)");
+    expect(page).not.toContain("formatInstant(n.occurredAt");
+  });
+
+  it("reads the caution flag on its own (Codex P2 4302644062)", () => {
+    expect(code(FILES.queries)).toContain("caution_for_next_session");
+  });
+
   it("loads the authoritative multi-area rows through the shared loader (Codex P1 4301307238)", () => {
     expect(code(FILES.queries)).toContain("getSessionBlockAreasByBlockIds(");
     expect(code(FILES.scope)).toContain("blockAreasLabel(");

@@ -2,10 +2,12 @@ import { randomUUID } from "node:crypto";
 import { test, expect } from "@playwright/test";
 import { loginByMagicLink } from "./helpers/flows";
 import { markSentryEgress, readSentryEgress } from "./helpers/sentry-egress";
+import { formatClinicalDate } from "../lib/clinical-notes/clinical-date";
 import {
   getOwnerPractitionerId,
   getStudioTimezone,
   seedE2eMember,
+  setStudioTimezone,
   seedE2eStudio,
   sql,
   type E2eSeed,
@@ -38,6 +40,7 @@ type Fixture = {
     | "entry"
     | "block"
     | "probeLot"
+    | "nextDayNote"
     | "laser"
     | "clinicalNote"
     | "privateWarning"
@@ -74,12 +77,16 @@ test.beforeAll(async () => {
     seed.clientEmail,
   ]);
   const ownerId = await getOwnerPractitionerId(seed.studioId);
+  // A NEGATIVE UTC offset, so a clinical note's midnight-UTC civil date and
+  // the studio-local day disagree: the case Codex P1 4302644059 is about.
+  await setStudioTimezone(seed.studioId, "America/Los_Angeles");
   const tz = await getStudioTimezone(seed.studioId);
   const sentinel = {
     session: `SESSION-NOTE-${run}`,
     entry: `ENTRY-COMMENT-${run}`,
     block: `BLOCK-NOTE-${run}`,
     probeLot: `LOT-${run}`,
+    nextDayNote: `NEXT-DAY-NOTE-${run}`,
     laser: `LASER-NOTE-${run}`,
     clinicalNote: `CLINICAL-NOTE-${run}`,
     privateWarning: `PRIVATE-WARNING-${run}`,
@@ -103,8 +110,8 @@ test.beforeAll(async () => {
   const [block] = await sql<{ id: string }>(
     `insert into public.session_blocks
        (studio_id, session_id, sort_order, primary_area, side, mode, probe_label, probe_lot_number,
-        reaction_type, tolerance_rating, block_notes)
-     values ($1, $2, 0, 'upper lip', 'left', 'blend', 'Ballet F3', $3, 'mild_redness', 4, $4) returning id`,
+        reaction_type, tolerance_rating, block_notes, caution_for_next_session)
+     values ($1, $2, 0, 'upper lip', 'left', 'blend', 'Ballet F3', $3, 'mild_redness', 4, $4, true) returning id`,
     [seed.studioId, inScope.id, sentinel.probeLot, sentinel.block],
   );
   // Multi-area charting: session_block_areas is authoritative; primary_area
@@ -137,10 +144,12 @@ test.beforeAll(async () => {
      values ($1, $2, $3, 'electrolysis', $4, $5)`,
     [seed.studioId, client.id, ownerId, await at(OUTSIDE_DAY, "10:00"), sentinel.outside],
   );
+  // Clinical notes are stored the way the date input stores them: MIDNIGHT
+  // UTC of the civil date. One on DAY (in scope) and one on the next day (out).
   await sql(
     `insert into public.client_clinical_notes (studio_id, client_id, practitioner_id, kind, body, occurred_at)
-     values ($1, $2, $3, 'consultation', $4, $5)`,
-    [seed.studioId, client.id, ownerId, sentinel.clinicalNote, await at(DAY, "09:30")],
+     values ($1, $2, $3, 'consultation', $4, $5::date), ($1, $2, $3, 'consultation', $6, ($5::date + 1))`,
+    [seed.studioId, client.id, ownerId, sentinel.clinicalNote, DAY, sentinel.nextDayNote],
   );
   await sql(
     `insert into public.client_personal_notes (studio_id, client_id, personal_notes, private_warnings)
@@ -192,6 +201,13 @@ test("owner: the day's records appear; every excluded sentinel is absent from pa
   await expect(blockEl).toContainText("Thermolysis intensity: 22 %");
   await expect(blockEl).toContainText("Pulse delay: 1.5 s");
   await expect(blockEl).toContainText("Observed: good release");
+  // A flag-only caution is exported (Codex P2 4302644062).
+  await expect(blockEl).toContainText("Caution for next session: Yes");
+  // The day's clinical note is in, dated as its CIVIL date; the next day's is
+  // out (Codex P1 4302644059, Los Angeles studio).
+  await expect(page.getByTestId("export-note")).toHaveCount(1);
+  await expect(page.getByTestId("export-note")).toContainText(formatClinicalDate(`${DAY}T00:00:00+00:00`));
+  await expect(page.getByText(fx.sentinel.nextDayNote)).toHaveCount(0);
   const laserEl = page.getByTestId("export-laser");
   await expect(laserEl).toContainText("Laser · Underarm");
   await expect(laserEl).toContainText("fluence j cm2: 18");

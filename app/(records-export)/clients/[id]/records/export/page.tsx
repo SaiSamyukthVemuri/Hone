@@ -39,6 +39,7 @@ import {
 
 type LoadedRecords = Extract<ClinicalRecordsLoad, { ok: true }>["value"];
 import { AuditedPrintButton } from "./print-button";
+import { formatClinicalDate } from "@/lib/clinical-notes/clinical-date";
 import {
   EXPORT_DOCUMENT_ID,
   PRINT_GATE_CSS,
@@ -311,7 +312,8 @@ export default async function ClinicalRecordsExportPage({
                 {outcome.document.clinicalNotes.map((n) => (
                   <li key={n.id} className="break-inside-avoid border-b border-neutral-100 pb-3" data-testid="export-note">
                     <p className="text-sm font-medium">
-                      {NOTE_KIND_LABEL[n.kind] ?? n.kind} · {formatInstant(n.occurredAt, tz)}
+                      {/* A calendar date, never an instant (Codex P1 4302644059). */}
+                      {NOTE_KIND_LABEL[n.kind] ?? n.kind} · {formatClinicalDate(n.occurredAt)}
                     </p>
                     <p className="text-[11px] text-neutral-600">
                       {n.practitioner ?? "Unknown practitioner"}

@@ -4,6 +4,7 @@ import {
   MAX_RANGE_DAYS,
   auditThenLoad,
   buildClinicalRecordsDocument,
+  civilDayBounds,
   localDayBounds,
   parseExportScope,
   scopeAuditMetadata,
@@ -73,6 +74,69 @@ describe("localDayBounds", () => {
       fromUtc: "2026-07-01T07:00:00.000Z",
       toUtcExclusive: "2026-07-03T07:00:00.000Z",
     });
+  });
+});
+
+describe("civilDayBounds: clinical-note dates are CALENDAR dates (Codex P1 4302644059)", () => {
+  it("bounds the stored midnight-UTC civil dates, independent of any studio timezone", () => {
+    expect(civilDayBounds("2026-09-15", "2026-09-15")).toEqual({
+      fromUtc: "2026-09-15T00:00:00.000Z",
+      toUtcExclusive: "2026-09-16T00:00:00.000Z",
+    });
+    // A note dated the 15th (stored 2026-09-15T00:00Z) is in; the 16th is out,
+    // where the studio-local window for Los Angeles would do the reverse.
+    const b = civilDayBounds("2026-09-15", "2026-09-15");
+    expect("2026-09-15T00:00:00.000Z" >= b.fromUtc && "2026-09-15T00:00:00.000Z" < b.toUtcExclusive).toBe(true);
+    expect("2026-09-16T00:00:00.000Z" < b.toUtcExclusive).toBe(false);
+    const local = localDayBounds("2026-09-15", "2026-09-15", "America/Los_Angeles");
+    expect("2026-09-15T00:00:00.000Z" >= local.fromUtc).toBe(false); // the old filter dropped it
+  });
+});
+
+describe("caution flag without a note (Codex P2 4302644062)", () => {
+  const session = {
+    id: "s5",
+    started_at: "2026-10-01T15:00:00Z",
+    ended_at: null,
+    modality: "electrolysis",
+    session_notes: null,
+    performed_by_practitioner_id: null,
+    practitioner_id: null,
+    record_status: null,
+    finalized_at: null,
+    aftercare_and_risks_explained_at: null,
+  };
+  const blockWith = (over: Record<string, unknown>) =>
+    ({
+      id: "b5",
+      session_id: "s5",
+      sort_order: 0,
+      primary_area: "chin",
+      side: null,
+      created_at: "2026-10-01T15:01:00Z",
+      caution_note: null,
+      caution_for_next_session: null,
+      ...over,
+    }) as unknown as ExportBlockSource;
+  const notesOf = (b: ExportBlockSource) =>
+    buildClinicalRecordsDocument({
+      sessions: [session],
+      blocks: [b],
+      entries: [],
+      notes: [],
+      practitionerNameById: new Map(),
+    }).sessions[0].blocks[0].notes;
+
+  it("a flag-only caution is exported", () => {
+    expect(notesOf(blockWith({ caution_for_next_session: true }))).toEqual([
+      { label: "Caution for next session", value: "Yes" },
+    ]);
+  });
+  it("the note is shown when present, and nothing when neither is set", () => {
+    expect(notesOf(blockWith({ caution_for_next_session: true, caution_note: "Thin skin" }))).toEqual([
+      { label: "Caution for next session", value: "Thin skin" },
+    ]);
+    expect(notesOf(blockWith({}))).toEqual([]);
   });
 });
 
