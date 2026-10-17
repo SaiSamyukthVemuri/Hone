@@ -134,7 +134,10 @@ describe("ships closed, and one path to the real adapter (source guards)", () =>
   it("no studio is allowlisted, and live mode is enabled nowhere, in any tracked file", () => {
     expect(gitGrep(["-l", "-e", SENDER_CONTROLS_LIVE_STUDIOS_ENV, "--", ".", ":!tests/**", ":!docs/**"])).toEqual(["lib/sms/sender-controls-live.ts"]);
     expect(
-      gitGrep(["-n", "-I", "-E", "HONE_SMS_SENDER_CONTROLS\\s*[=:]\\s*['\"]?live", "--", ".", ":!tests/**", ":!docs/**", ":!lib/sms/sender-controls-live.ts"]),
+      // Comments may NAME the mode; no code, config or seed may SET it.
+      gitGrep(["-n", "-I", "-E", "HONE_SMS_SENDER_CONTROLS\\s*[=:]\\s*['\"]?live", "--", ".", ":!tests/**", ":!docs/**", ":!lib/sms/sender-controls-live.ts"]).filter(
+        (hit) => !/^[^:]+:\d+:\s*(\/\/|\*|#)/.test(hit),
+      ),
     ).toEqual([]);
   });
 
