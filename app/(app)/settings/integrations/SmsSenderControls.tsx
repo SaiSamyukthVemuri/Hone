@@ -11,19 +11,24 @@ import {
 import type { DemoAdoptionInventory } from "@/lib/sms/sender-controls-demo";
 import type { SearchResult, SenderRecovery } from "@/lib/sms/sender-controls";
 
-// SMS-SENDER-CONTROL-01 (#824): rendered only when the page's gate is open,
-// which is never in production and never with live provisioning armed. Every
-// action re-checks the same gate on the server. FAKE PROVIDER: nothing here
-// buys a number, registers anything or sends a real text.
+// SMS-SENDER-CONTROL-01 (#824): rendered only when the page's gate is open.
+// FAKE mode (never in production, never with live provisioning armed): nothing
+// here buys a number, registers anything or sends a real text. LIVE mode
+// (HON-50; production only, operator-allowlisted studio, ships closed): the
+// owner confirms each purchase and names the phone for the one test text.
+// Every action re-checks the gate and the confirmation on the server; these
+// fields are the owner's words, not the authority.
 
 const field = "rounded border px-2 py-1";
 
 export function SmsSenderControls({
+  mode,
   inventory,
   recovery,
 }: {
-  /** This studio's own fake account inventory (lib/sms/sender-controls-demo.ts). */
-  inventory: DemoAdoptionInventory;
+  mode: "fake" | "live";
+  /** Fake mode only: this studio's own fake account inventory (lib/sms/sender-controls-demo.ts). */
+  inventory: DemoAdoptionInventory | null;
   /**
    * What an errored setup offers (senderRecoveryFor): release ("choose a
    * different number"), support (no self-service action can be honest without
@@ -40,9 +45,15 @@ export function SmsSenderControls({
   return (
     <div data-testid="sms-sender-controls" className="rounded-lg border border-dashed border-amber-400 p-5">
       <h3 className="text-sm font-semibold">Set up a studio number</h3>
-      <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">
-        Fake provider: this is a demonstration of the setup flow. No number is bought and no text is sent.
-      </p>
+      {mode === "fake" ? (
+        <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">
+          Fake provider: this is a demonstration of the setup flow. No number is bought and no text is sent.
+        </p>
+      ) : (
+        <p className="mt-1 text-xs text-neutral-700 dark:text-neutral-300" data-testid="sms-sender-live-notice">
+          Choosing a number buys it on the studio&apos;s Twilio account, which bills a monthly fee for each number. Setup ends with one test text to a phone you name.
+        </p>
+      )}
 
       <form action={searchAction} className="mt-3 flex flex-wrap items-end gap-2 text-sm">
         <label className="flex flex-col">
@@ -71,6 +82,13 @@ export function SmsSenderControls({
                 <input type="hidden" name="phone_number" value={c.phoneNumber} />
                 {/* The searched area code travels with the choice (Codex P2 4253781002). */}
                 {search.areaCode ? <input type="hidden" name="area_code" value={search.areaCode} /> : null}
+                {/* G3: the confirmation names THIS number; the server refuses any other. */}
+                <input type="hidden" name="confirm_number" value={c.phoneNumber} />
+                <label className="inline-flex items-center gap-1 text-xs">
+                  <input type="checkbox" name="confirm_cost" value="yes" required />
+                  {mode === "live" ? "Buy this number (monthly fee on the studio's Twilio account)" : "Set up this number (fake provider: nothing is bought)"}
+                </label>
+                {mode === "live" ? <LiveTestTextFields /> : null}
                 <button type="submit" disabled={provisioning} className="rounded-md border px-2 py-0.5 text-xs">Use this number</button>
               </form>
             </li>
@@ -99,11 +117,13 @@ export function SmsSenderControls({
 
       <details className="mt-4 text-sm">
         <summary>Use a number the studio already has (support-assisted)</summary>
-        <p className="mt-2 text-xs text-amber-800 dark:text-amber-300" data-testid="sms-sender-demo-inventory">
-          Fake provider: the demo account owns {inventory.numbers.CA.phoneNumber} (Canada) and{" "}
-          {inventory.numbers.US.phoneNumber} (United States), both in messaging service{" "}
-          {inventory.messagingServiceSid}. The number must match the country chosen.
-        </p>
+        {inventory ? (
+          <p className="mt-2 text-xs text-amber-800 dark:text-amber-300" data-testid="sms-sender-demo-inventory">
+            Fake provider: the demo account owns {inventory.numbers.CA.phoneNumber} (Canada) and{" "}
+            {inventory.numbers.US.phoneNumber} (United States), both in messaging service{" "}
+            {inventory.messagingServiceSid}. The number must match the country chosen.
+          </p>
+        ) : null}
         <form action={adoptAction} className="mt-2 flex flex-wrap items-end gap-2">
           <label className="flex flex-col">
             Country
@@ -120,10 +140,27 @@ export function SmsSenderControls({
             Messaging service (from Hone support)
             <input name="messaging_service_sid" placeholder="MG…" className={field} />
           </label>
+          {mode === "live" ? <LiveTestTextFields /> : null}
           <button type="submit" disabled={adopting} className="rounded-md border px-3 py-1">Adopt</button>
         </form>
         {adopt && <p role="status" className={`mt-2 ${adopt.ok ? "text-emerald-800" : "text-red-700"}`}>{adopt.message}</p>}
       </details>
     </div>
+  );
+}
+
+/** Live mode: the owner's own phone for the one test text, and their agreement to it. */
+function LiveTestTextFields() {
+  return (
+    <>
+      <label className="flex flex-col text-xs">
+        Your mobile, for one test text
+        <input name="test_destination" inputMode="tel" placeholder="+1…" className={field} required />
+      </label>
+      <label className="inline-flex items-center gap-1 text-xs">
+        <input type="checkbox" name="confirm_test_text" value="yes" required />
+        Send one test text to this number
+      </label>
+    </>
   );
 }

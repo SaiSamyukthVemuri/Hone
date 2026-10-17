@@ -20,7 +20,11 @@ export async function SmsSenderControlsSection({
   studioId: string;
   recovery: SenderRecovery;
 }) {
-  if (!senderControlsGate().open) return null;
+  const gate = senderControlsGate(process.env, undefined, studioId);
+  if (!gate.open) return null;
+  // LIVE (HON-50): no demo inventory, and no service-role read at all; the
+  // owner adopts a number they name. The demo read stays fake-mode only.
+  if (gate.mode === "live") return <SmsSenderControls mode="live" inventory={null} recovery={recovery} />;
   const inventory = await resolveDemoInventory(createAdminClient(), studioId);
-  return <SmsSenderControls inventory={inventory} recovery={recovery} />;
+  return <SmsSenderControls mode="fake" inventory={inventory} recovery={recovery} />;
 }
