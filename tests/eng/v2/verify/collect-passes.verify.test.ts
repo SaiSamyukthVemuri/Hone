@@ -1,6 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- the collector's results and the fake's answers are untyped on purpose */
 import { describe, expect, it } from "vitest";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
@@ -17,10 +20,12 @@ import { classify } from "../../../../scripts/classify-changes.mjs";
 import {
   BLOB_CI,
   BLOB_CLASSIFY,
+  PROD_BLOBS,
   goldenC,
   fakeTransport,
   jobRunIds,
   keyOf,
+  historicalLocal,
   localFrom,
   malformFor,
   normalizeKinds,
@@ -44,7 +49,9 @@ import { budgetGuard } from "./support/budgets";
 
 const ROOT = path.resolve(__dirname, "..", "..", "..", "..");
 const NOW = "2026-10-07T21:00:00Z";
-const LOCAL = () => localFrom(ROOT, classify);
+// The recorded golden world's own local definition (see historicalLocal); the
+// checkout-hashing helper localFrom keeps its own control below.
+const LOCAL = () => historicalLocal(classify);
 
 interface Run {
   r: any;
@@ -712,6 +719,38 @@ describe("collector: readers for another production ref cannot be built (§5.1, 
     const built = !made.threw && readers && typeof readers === "object" && typeof readers.readActivity === "function";
     expect(built).toBe(false);
     expect(fake.log.length).toBe(0);
+  });
+});
+
+// The golden world's local definition is historical (historicalLocal), so these
+// rows prove localFrom - the helper that DOES read the checkout - is not vacuous.
+describe("localFrom hashes actual file bytes; historicalLocal is the recorded pair", () => {
+  it("equals git's own blob id for this checkout's ci.yml and classifier", () => {
+    const local = localFrom(ROOT, classify).blobs as Record<string, string>;
+    for (const p of [BLOB_CI, BLOB_CLASSIFY]) {
+      const git = spawnSync("git", ["hash-object", path.join(ROOT, p)], { encoding: "utf8" });
+      expect(git.status, git.stderr).toBe(0);
+      expect(local[p], p).toBe(git.stdout.trim());
+    }
+  });
+
+  it("follows the bytes: known content gives the known blob id, and one changed byte changes it", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "eng-localfrom-"));
+    for (const p of [BLOB_CI, BLOB_CLASSIFY]) {
+      mkdirSync(path.dirname(path.join(root, p)), { recursive: true });
+      writeFileSync(path.join(root, p), "hello");
+    }
+    const a = localFrom(root, classify).blobs as Record<string, string>;
+    expect(a[BLOB_CI]).toBe("b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0"); // git hash-object of "hello"
+    writeFileSync(path.join(root, BLOB_CI), "hellp");
+    const b = localFrom(root, classify).blobs as Record<string, string>;
+    expect(b[BLOB_CI]).not.toBe(a[BLOB_CI]);
+    expect(b[BLOB_CLASSIFY]).toBe(a[BLOB_CLASSIFY]);
+  });
+
+  it("historicalLocal carries the independently recorded 6cdd830b production blobs, never this checkout", () => {
+    expect(historicalLocal(classify).blobs).toEqual(PROD_BLOBS);
+    expect(PROD_BLOBS[BLOB_CI]).toMatch(/^e69cefa9/);
   });
 });
 

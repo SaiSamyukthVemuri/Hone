@@ -4,6 +4,11 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { getSessionPaymentStripe } from "@/lib/stripe/session-payment-stripe";
 import { recordOpsAlert } from "@/lib/ops/alerts";
+import { isDefinitiveStripeRefusal } from "@/lib/billing/stripe-error-outcome";
+import {
+  compareProviderMoney,
+  providerMoneyMismatchDetails,
+} from "@/lib/billing/provider-money-facts";
 
 // ---------------------------------------------------------------------------
 // PR #178. refundPaymentChargeAttempt.
@@ -185,6 +190,7 @@ type AttemptRow = {
   stripe_payment_intent_id: string | null;
   stripe_charge_id: string | null;
   amount_cents: number;
+  currency: string;
   charged_at: string | null;
   refund_status: string | null;
   refund_amount_cents: number | null;
@@ -218,7 +224,7 @@ export async function refundPaymentChargeAttempt(args: {
   const { data: rawRow, error: loadErr } = await admin
     .from("payment_charge_attempts")
     .select(
-      "id, studio_id, client_id, charge_reason, status, stripe_livemode, stripe_account_id, stripe_payment_intent_id, stripe_charge_id, amount_cents, charged_at, refund_status, refund_amount_cents, refunded_at, stripe_refund_id",
+      "id, studio_id, client_id, charge_reason, status, stripe_livemode, stripe_account_id, stripe_payment_intent_id, stripe_charge_id, amount_cents, currency, charged_at, refund_status, refund_amount_cents, refunded_at, stripe_refund_id",
     )
     .eq("id", args.attemptId)
     .maybeSingle();
@@ -480,7 +486,13 @@ export async function refundPaymentChargeAttempt(args: {
     // can be classified; network errors leave the row pending so
     // a manual reconciliation can re-query Stripe with the
     // deterministic idempotency key.
-    if (err instanceof Stripe.errors.StripeError) {
+    // HON-11: only a DEFINITIVE refusal is terminal. A connection or API
+    // error may mean Stripe processed the request, so it falls through to
+    // the unknown-outcome path below (row stays pending_stripe).
+    if (
+      err instanceof Stripe.errors.StripeError &&
+      isDefinitiveStripeRefusal(err)
+    ) {
       const code = sanitizeFailureCode(err.code ?? err.type);
       const safeMessage =
         sanitizeFailureMessage(err.message) ??
@@ -615,6 +627,51 @@ export async function refundPaymentChargeAttempt(args: {
       message:
         "We did not get a clear response from Stripe. Refresh in a few minutes.",
     };
+  }
+
+  // PAY-CCY-01. The refund Stripe made must be the refund Hone asked for: the
+  // claimed amount, in the attempt's own prepared currency. Stripe derives a
+  // refund's currency from the charge, so a different currency means the
+  // charge id on this row is not the prepared charge. Recording `succeeded`
+  // would then say this payment was returned when different money was. The
+  // row stays `pending_stripe`, the same unresolved state an unclear Stripe
+  // answer leaves above, and the operator reconciles it.
+  {
+    const prepared = {
+      amountCents: refundAmountCents,
+      currency: attempt.currency,
+    };
+    const provider = { amount: refund.amount, currency: refund.currency };
+    const money = compareProviderMoney(prepared, provider);
+    if (!money.ok) {
+      logInternal("payment_refund_provider_money_mismatch", {
+        attemptId: attempt.id,
+        stripeRefundId: refund.id,
+        mismatches: money.mismatches,
+      });
+      await recordOpsAlert({
+        severity: "critical",
+        event: "payment_refund_provider_money_mismatch",
+        message:
+          "Stripe returned a refund whose amount or currency does not equal the claimed refund of the prepared attempt. Hone did NOT record it as succeeded; the row stays refund_status='pending_stripe'. Manual reconciliation required.",
+        studioId: attempt.studio_id,
+        clientId: attempt.client_id,
+        route: ROUTE,
+        safeDetails: {
+          attempt_id: attempt.id,
+          charge_reason: attempt.charge_reason,
+          stripe_charge_id: attempt.stripe_charge_id,
+          stripe_refund_id: refund.id,
+          ...providerMoneyMismatchDetails(prepared, provider, money.mismatches),
+        },
+      });
+      return {
+        ok: false,
+        outcome: "needs_manual_review",
+        message:
+          "Stripe's refund does not match this payment, so Hone did not record it. The studio operator will reconcile this.",
+      };
+    }
   }
 
   const refundedAtIso = new Date().toISOString();
