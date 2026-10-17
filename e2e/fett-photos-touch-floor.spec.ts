@@ -1,25 +1,30 @@
 import { test, expect, type Page } from "@playwright/test";
-import sharp from "sharp";
+import { randomUUID } from "node:crypto";
 import {
   seedE2eStudio,
   seedE2eMember,
   seedE2eClientWithPreviousAreas,
+  getOwnerPractitionerId,
   setPractitionerActive,
   sql,
+  type E2eSeed,
 } from "./helpers/seed";
 import { loginAsOwner, loginByMagicLink } from "./helpers/flows";
 
-// FETT photos (#892, HON-43). Two mounted proofs on the treatment-photo
-// surface, with SYNTHETIC images only:
+// FETT photos (#892, HON-43). Mounted proofs on the treatment-photo surface,
+// with SYNTHETIC rows only.
+//
+// STORAGE-FREE BY DESIGN. CI's browser jobs start Supabase without
+// storage-api, so nothing here uploads: the photo is seeded as a metadata row,
+// which is all the tiles and the preview need to render their controls. The
+// signed-URL and upload DENIALS are proved where they have a definitive
+// outcome — tests/db/treatment-image-deactivated-practitioner.db.test.ts — not
+// by watching a browser for something NOT to appear.
 //
 //  1. At phone width with touch emulation, every control on the photo surface
 //     measures at least 44px tall: upload panel (picker, attach-as radios,
 //     session / treatment-area selects, attach), tile actions, preview close.
-//     The source-level floor test cannot see layout; this measures it.
-//  2. A practitioner DEACTIVATED in the same studio loses the surface at every
-//     layer the page touches: the signed URL is refused (RLS hides the row),
-//     an upload is refused (the action's practitioner guard), and a reload is
-//     redirected off the page (requirePractitionerWithStudio).
+//  2. A practitioner DEACTIVATED in the same studio is redirected off the page.
 //
 // Production has no receptionist role yet (it lives on the unmerged
 // STUDIO-READY-02 stack, #838); that denial is proved there, not here.
@@ -27,20 +32,18 @@ import { loginAsOwner, loginByMagicLink } from "./helpers/flows";
 const T = 20_000;
 const FLOOR = 44;
 
-async function syntheticPng(shade: string): Promise<Buffer> {
-  return sharp({ create: { width: 64, height: 64, channels: 3, background: shade } })
-    .png()
-    .toBuffer();
-}
-
-async function uploadOne(page: Page, name: string, shade: string) {
-  await page.locator('input[type="file"][name="file"]').setInputFiles({
-    name,
-    mimeType: "image/png",
-    buffer: await syntheticPng(shade),
-  });
-  await page.getByRole("button", { name: /attach/i }).click();
-  await expect(page.getByText("✓ Uploaded").first()).toBeVisible({ timeout: T });
+/** A synthetic photo ROW (no object in storage): the tile and preview render from it. */
+async function seedPhotoRow(seed: E2eSeed, clientId: string): Promise<string> {
+  const id = randomUUID();
+  const owner = await getOwnerPractitionerId(seed.studioId);
+  await sql(
+    `insert into public.treatment_images
+       (id, studio_id, client_id, storage_bucket, storage_path, original_filename,
+        content_type, size_bytes, uploaded_by)
+     values ($1, $2, $3, 'treatment-images', $4, 'synthetic.png', 'image/png', 1024, $5)`,
+    [id, seed.studioId, clientId, `${seed.studioId}/${clientId}/${id}.png`, owner],
+  );
+  return id;
 }
 
 /** Height of every visible control on the photo surface, labelled for the report. */
@@ -72,6 +75,7 @@ test.describe("FETT photos: touch floor, mounted at phone width", () => {
   test("every photo control measures at least 44px, upload panel through preview", async ({ page }) => {
     const seed = await seedE2eStudio();
     const { clientId, previousSessionId } = await seedE2eClientWithPreviousAreas(seed);
+    await seedPhotoRow(seed, clientId);
     await loginAsOwner(page, seed);
     await page.goto(`/clients/${clientId}/images`);
     await expect(page.getByText("Choose images")).toBeVisible({ timeout: T });
@@ -82,12 +86,9 @@ test.describe("FETT photos: touch floor, mounted at phone width", () => {
     await expect(page.locator("main select")).toHaveCount(2, { timeout: T });
     // Measure while BOTH selects are shown: switching scope hides them.
     const areaPanel = await controlHeights(page);
-    // Back to a client photo for the upload, so it never depends on the area list.
     await page.getByLabel("Client photo").check();
     const panel = await controlHeights(page);
 
-    await uploadOne(page, "synthetic-before.png", "#6b6b6b");
-    await page.reload();
     const tile = page.getByRole("button", { name: "View larger treatment photo" }).first();
     await expect(tile).toBeVisible({ timeout: T });
     const tiles = await controlHeights(page);
@@ -107,51 +108,20 @@ test.describe("FETT photos: touch floor, mounted at phone width", () => {
   });
 });
 
-test.describe("FETT photos: a deactivated practitioner loses the photo surface", () => {
-  test("signed URL refused, upload refused, page redirected", async ({ page }) => {
+test.describe("FETT photos: a deactivated practitioner loses the photo page", () => {
+  test("a fresh load is redirected off the photo surface", async ({ page }) => {
     const seed = await seedE2eStudio();
     const { clientId } = await seedE2eClientWithPreviousAreas(seed);
+    await seedPhotoRow(seed, clientId);
     const member = await seedE2eMember(seed);
 
-    // While ACTIVE, the member uploads and sees the photo.
+    // Control: while ACTIVE the member reaches the page.
     await loginByMagicLink(page, member.email);
     await page.goto(`/clients/${clientId}/images`);
-    await uploadOne(page, "synthetic-member.png", "#8a8a8a");
-    await page.reload();
-    await expect(page.getByRole("button", { name: "View larger treatment photo" }).first()).toBeVisible({ timeout: T });
-    const rows = await sql<{ n: string }>(
-      "select count(*)::text as n from public.treatment_images where studio_id = $1 and client_id = $2 and deleted_at is null",
-      [seed.studioId, clientId],
-    );
-    expect(rows[0].n).toBe("1");
+    await expect(page.getByText("Choose images")).toBeVisible({ timeout: T });
 
-    // Deactivate, then use the page already loaded in the browser.
     await setPractitionerActive(member.practitionerId, false);
 
-    // 1. Signed URL: RLS no longer shows the row, so the preview has no image.
-    await page.getByRole("button", { name: "View larger treatment photo" }).first().click();
-    const preview = page.getByRole("dialog", { name: "Treatment photo preview" }).or(
-      page.locator('[aria-label="Treatment photo preview"]'),
-    );
-    await expect(preview).toBeVisible({ timeout: T });
-    await expect(preview.locator("img")).toHaveCount(0, { timeout: T });
-    await page.getByRole("button", { name: "Close preview" }).click();
-
-    // 2. Upload: the action's practitioner guard refuses; nothing new is stored.
-    await page.locator('input[type="file"][name="file"]').setInputFiles({
-      name: "synthetic-after-deactivation.png",
-      mimeType: "image/png",
-      buffer: await syntheticPng("#9a9a9a"),
-    });
-    await page.getByRole("button", { name: /attach/i }).click();
-    await expect(page.getByText("✓ Uploaded")).toHaveCount(0, { timeout: T });
-    const after = await sql<{ n: string }>(
-      "select count(*)::text as n from public.treatment_images where studio_id = $1 and client_id = $2",
-      [seed.studioId, clientId],
-    );
-    expect(after[0].n, "no image stored after deactivation").toBe("1");
-
-    // 3. Page: a fresh load is redirected off the photo surface.
     await page.goto(`/clients/${clientId}/images`);
     await expect(page).not.toHaveURL(new RegExp(`/clients/${clientId}/images`), { timeout: T });
     await expect(page.getByText("Choose images")).toHaveCount(0);
