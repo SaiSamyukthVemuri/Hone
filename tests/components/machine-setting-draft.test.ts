@@ -529,6 +529,45 @@ describe("switching machine or mode clears the collected draft", () => {
     expect(src).toMatch(/const draftFrozen = saveUnresolved/);
   });
 
+  it("DISMISSAL is frozen too, not just the payload", () => {
+    // THE P2 (Codex, #860 4301633049). Cancel was `disabled={pending}`, so
+    // the instant the lost response cleared `pending` it was live again —
+    // and it is the one control that destroys the retry KEY rather than
+    // changing the payload. `onCancel` closes the form, `saveUnresolved` and
+    // `pendingSaveKey` go with it, and the next save mints a new key: if the
+    // first attempt committed, that is a SECOND immutable treatment area for
+    // one treatment.
+    //
+    // THIRD CONTROL, SAME INVARIANT: the draft setter (round 5), the machine
+    // and mode pickers (round 12), and now the dismissal. Asserted as the
+    // rule — the dismissal observes the unresolved flag — rather than as the
+    // current expression, which is the mistake that made four of my earlier
+    // guards fail on changes that strengthened them.
+    const src = read(FORM_SRC);
+    const cancel = src.match(
+      /onClick=\{onCancel\}\s*\n\s*disabled=\{([^}]*)\}/,
+    );
+    expect(
+      cancel,
+      "the Cancel button's disabled expression was not found — this guard would be blind",
+    ).toBeTruthy();
+    expect(
+      cancel![1],
+      "Cancel must observe the unresolved save, or one click discards the retry key",
+    ).toMatch(/saveUnresolved/);
+
+    // AND SAVE MUST NOT BE, or the freeze is a trap with no way out: pressing
+    // Save again unchanged is the whole recovery.
+    const save = src.match(
+      /onClick=\{submit\}\s*\n\s*disabled=\{([^}]*)\}/,
+    );
+    expect(save, "the Save button's disabled expression was not found").toBeTruthy();
+    expect(
+      save![1],
+      "Save must stay live while unresolved — it is the recovery",
+    ).not.toMatch(/saveUnresolved|draftFrozen/);
+  });
+
   it("previous-treatment units go through the sentinel rule", () => {
     // THE DEFECT (Codex, #860 4296709059). `device-display` and `none` are
     // not units. Rendering them literally put "1.25 device-display" in

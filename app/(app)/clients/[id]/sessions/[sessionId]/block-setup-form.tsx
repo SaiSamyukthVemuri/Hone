@@ -1667,10 +1667,31 @@ export function BlockSetupForm({
         >
           {pending ? "Saving…" : "Save settings block"}
         </button>
+        {/*
+          CANCEL IS FROZEN WHILE THE SAVE'S OUTCOME IS UNKNOWN
+          (Codex, #860 4301633049).
+          It was disabled only on `pending`, so the moment the lost response
+          cleared `pending` this button was live again - and it is the one
+          control that destroys the retry key rather than changing the
+          payload. `onCancel` closes the form, `saveUnresolved` and
+          `pendingSaveKey` go with it, and the next save mints a NEW key: if
+          the first attempt had committed, that is a second immutable
+          treatment area for one treatment.
+
+          THIRD CONTROL, SAME INVARIANT. The draft setter was frozen in round
+          5, the machine and mode pickers in round 12, and this is the
+          dismissal. A control that can discard the key belongs inside the
+          freeze the key depends on, whether it edits the payload or not.
+
+          THE SAVE BUTTON STAYS LIVE, which is what keeps this from being a
+          trap: pressing Save again, unchanged, is the recovery, and the
+          message above says so.
+        */}
         <button
           type="button"
           onClick={onCancel}
-          disabled={pending}
+          disabled={pending || saveUnresolved}
+          data-testid="cancel-treatment-area"
           className="rounded-md border border-neutral-300 px-5 py-3 text-sm hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
         >
           Cancel
