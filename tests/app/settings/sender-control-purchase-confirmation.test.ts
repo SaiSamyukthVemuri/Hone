@@ -118,7 +118,8 @@ describe("live mode (allowlisted, armed by injection): owner's phone required", 
 
   it("cost confirmed but no test-text agreement or phone: refused before the orchestration", async () => {
     const { provisionSenderNumberAction } = await import("@/app/(app)/settings/integrations/sender-control-actions");
-    for (const extra of [{}, { confirm_test_text: "yes" }, { test_destination: "+14165550123" }, { confirm_test_text: "yes", test_destination: "+18885550123" }]) {
+    const extras: Record<string, string>[] = [{}, { confirm_test_text: "yes" }, { test_destination: "+14165550123" }, { confirm_test_text: "yes", test_destination: "+18885550123" }];
+    for (const extra of extras) {
       const r = await provisionSenderNumberAction(null, form({ ...confirmed, ...extra }));
       expect(r.ok, JSON.stringify(extra)).toBe(false);
     }
