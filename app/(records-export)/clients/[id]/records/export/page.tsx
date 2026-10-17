@@ -176,6 +176,26 @@ export default async function ClinicalRecordsExportPage({
   // "One day" is the default scope, and its date starts at the studio's today;
   // nothing is read or audited until the owner presses Preview.
   const dayDefault = rawScope.day ?? todayInTz(tz);
+  // WHAT WILL PRINT (Sam, 2026-10-17: "make the preview clear about what will
+  // print"). The selected date or range, as studio-local CIVIL dates, named in
+  // the printed header and in the "This print includes" summary.
+  const civil = (d: string) => formatClinicalDate(`${d}T00:00:00+00:00`);
+  const scopeLabel = !parsed.ok
+    ? null
+    : parsed.scope.kind === "day"
+      ? civil(parsed.scope.day)
+      : parsed.scope.kind === "range"
+        ? `${civil(parsed.scope.from)} to ${civil(parsed.scope.to)}`
+        : outcome?.ok && outcome.document.sessions[0]
+          ? `${formatInstant(outcome.document.sessions[0].startedAt, tz)} (one treatment session)`
+          : "One treatment session";
+  const includesLine = !parsed.ok
+    ? null
+    : parsed.scope.kind === "session"
+      ? "This one treatment session. Clinical notes are not linked to a session, so they are not included."
+      : parsed.scope.kind === "day"
+        ? `Treatment sessions and clinical notes recorded on ${scopeLabel}.`
+        : `Treatment sessions and clinical notes recorded from ${scopeLabel}.`;
   const emptyDay =
     outcome?.ok === true &&
     outcome.scopeKind === "day" &&
@@ -199,6 +219,12 @@ export default async function ClinicalRecordsExportPage({
           <p className="text-xs text-neutral-600 dark:text-neutral-400">
             {studio.name} · Generated {formatInstant(new Date().toISOString(), tz)}
           </p>
+          {/* Printed with the document: which date(s) this record covers. */}
+          {outcome?.ok && scopeLabel && (
+            <p className="text-sm font-medium" data-testid="export-scope-label">
+              {parsed.ok && parsed.scope.kind === "range" ? "Treatment dates" : "Treatment date"}: {scopeLabel}
+            </p>
+          )}
           {/* EVERY exit is a FULL document load (Codex P1 4302941126). A
               client-side navigation into app/(app) would load analytics in this
               same document, and Back would then re-enter the export with it
@@ -254,6 +280,23 @@ export default async function ClinicalRecordsExportPage({
 
       {outcome?.ok && (
         <>
+          {!emptyDay && (
+            <section
+              aria-label="This print includes"
+              data-testid="export-includes"
+              className="rounded-md border border-neutral-900 p-3 text-sm dark:border-neutral-100"
+            >
+              <p className="font-medium">This print includes:</p>
+              <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+                <dt className="text-neutral-600">Client</dt>
+                <dd>{client.name}</dd>
+                <dt className="text-neutral-600">{parsed.ok && parsed.scope.kind === "range" ? "Treatment dates" : "Treatment date"}</dt>
+                <dd>{scopeLabel}</dd>
+              </dl>
+              <p className="mt-1">{includesLine}</p>
+            </section>
+          )}
+
           <section aria-label="Not included" className="rounded-md border border-neutral-300 p-3 text-xs">
             <p className="font-medium">This document does not include:</p>
             <ul className="mt-1 list-disc pl-5">

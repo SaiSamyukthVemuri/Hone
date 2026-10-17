@@ -325,6 +325,21 @@ describe("HON-46 is structurally outside third-party telemetry (Codex P1 4301165
     expect(src.slice(open, at)).toContain("href={`/clients/${client.id}/records/export`}");
   });
 
+  it("the preview says what will print: client, selected date, both included kinds, and the header carries the date (Sam, HON-46)", () => {
+    const page = code(FILES.page);
+    expect(page).toContain('aria-label="This print includes"');
+    expect(page).toContain("`Treatment sessions and clinical notes recorded on ${scopeLabel}.`");
+    expect(page).toContain('data-testid="export-scope-label"');
+    // The summary and the dated header are inside the print-gated document, so
+    // they print; neither is print:hidden.
+    const doc = page.slice(page.indexOf("data-export-document"));
+    for (const id of ['data-testid="export-includes"', 'data-testid="export-scope-label"']) {
+      const at = doc.indexOf(id);
+      expect(at, id).toBeGreaterThan(-1);
+      expect(doc.slice(doc.lastIndexOf("<", at), at), id).not.toContain("print:hidden");
+    }
+  });
+
   it("One day is the default scope, prefilled with the studio's today; an empty date offers no print", () => {
     const page = code(FILES.page);
     expect(page).toContain('defaultValue={rawScope.scope ?? "day"}');

@@ -56,7 +56,8 @@ type Fixture = {
     | "outside"
     | "journeyMorning"
     | "journeyAfternoon"
-    | "journeyPrevDay",
+    | "journeyPrevDay"
+    | "journeyNote",
     string
   >;
 };
@@ -106,6 +107,7 @@ test.beforeAll(async () => {
     journeyMorning: `JOURNEY-MORNING-${run}`,
     journeyAfternoon: `JOURNEY-AFTERNOON-${run}`,
     journeyPrevDay: `JOURNEY-PREV-DAY-${run}`,
+    journeyNote: `JOURNEY-NOTE-${run}`,
   };
   const at = (day: string, time: string) =>
     sql<{ t: string }>(`select (($1::date + $2::time) at time zone $3)::text as t`, [day, time, tz]).then((r) => r[0].t);
@@ -172,6 +174,12 @@ test.beforeAll(async () => {
       await at(JOURNEY_PREV_DAY, "16:30"),
       sentinel.journeyPrevDay,
     ],
+  );
+  // A clinical note ON the journey date: kept, per Sam's decision.
+  await sql(
+    `insert into public.client_clinical_notes (studio_id, client_id, practitioner_id, kind, body, occurred_at)
+     values ($1, $2, $3, 'skin_hair_analysis', $4, $5::date)`,
+    [seed.studioId, client.id, ownerId, sentinel.journeyNote, JOURNEY_DAY],
   );
   // Clinical notes are stored the way the date input stores them: MIDNIGHT
   // UTC of the civil date. One on DAY (in scope) and one on the next day (out).
@@ -447,6 +455,16 @@ test("HON-46 journey: client record -> choose a date -> preview -> print, includ
   await expect(page.getByTestId("export-session")).toHaveCount(2);
   await expect(page.getByTestId("export-session").nth(0)).toContainText(fx.sentinel.journeyMorning);
   await expect(page.getByTestId("export-session").nth(1)).toContainText(fx.sentinel.journeyAfternoon);
+  // The day's clinical note is kept (Sam's decision).
+  await expect(page.getByTestId("export-note")).toHaveCount(1);
+  await expect(page.getByTestId("export-note")).toContainText(fx.sentinel.journeyNote);
+  // The preview SAYS what will print: client, the selected date, both kinds.
+  const journeyDate = formatClinicalDate(`${JOURNEY_DAY}T00:00:00+00:00`);
+  const includes = page.getByTestId("export-includes");
+  await expect(includes).toContainText("This print includes");
+  await expect(includes).toContainText(fx.seed.clientName);
+  await expect(includes).toContainText(`Treatment sessions and clinical notes recorded on ${journeyDate}.`);
+  await expect(page.getByTestId("export-scope-label")).toHaveText(`Treatment date: ${journeyDate}`);
   const html = await page.content();
   for (const s of [
     fx.sentinel.journeyPrevDay,
@@ -467,6 +485,12 @@ test("HON-46 journey: client record -> choose a date -> preview -> print, includ
   const printed = await page.locator("body").innerText();
   expect(printed).toContain(fx.sentinel.journeyMorning);
   expect(printed).toContain(fx.sentinel.journeyAfternoon);
+  expect(printed).toContain(fx.sentinel.journeyNote);
+  // The PRINTED page names the date and what it includes.
+  expect(printed).toContain(`Treatment date: ${journeyDate}`);
+  expect(printed).toContain("This print includes");
+  expect(printed).toContain(`Treatment sessions and clinical notes recorded on ${journeyDate}.`);
+  expect(printed).not.toContain(formatClinicalDate(`${JOURNEY_PREV_DAY}T00:00:00+00:00`));
   expect(printed).not.toContain(fx.sentinel.journeyPrevDay);
   expect(printed).not.toContain(fx.sentinel.privateWarning);
   await page.emulateMedia({ media: "screen" });
@@ -476,6 +500,7 @@ test("HON-46 journey: client record -> choose a date -> preview -> print, includ
   await page.getByRole("button", { name: "Preview" }).click();
   await page.waitForURL((u) => u.searchParams.get("day") === EMPTY_DAY);
   await expect(page.getByTestId("export-empty")).toContainText("No treatments were recorded on");
+  await expect(page.getByTestId("export-includes")).toHaveCount(0);
   await expect(page.getByTestId("export-session")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Print" })).toHaveCount(0);
 
