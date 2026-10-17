@@ -200,3 +200,72 @@ describe("#828 G-24: the alert email carries no record identifiers", () => {
     expect(mail.text).toContain("Record and payment details are on the alert itself, not in this email.");
   });
 });
+
+// ---------------------------------------------------------------------------
+// THE GUARANTEE for encodings: no string or key, after ASCII percent-decoding
+// to a fixed point, contains a UUID. The oracle below decodes the OUTPUT fully
+// and searches it; inputs are fuzzed per character (raw, %XX, %25XX, either
+// case), glued to letters, with a fixed seed so a failure reproduces.
+// ---------------------------------------------------------------------------
+function oracleDecode(text: string): string {
+  let cur = text;
+  for (let i = 0; i < 16; i += 1) {
+    const next = cur.replace(/%([0-7][0-9a-f])/gi, (_m, h: string) => String.fromCharCode(parseInt(h, 16)));
+    if (next === cur) break;
+    cur = next;
+  }
+  return cur;
+}
+const UUID_ANYWHERE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+function mulberry32(seed: number): () => number {
+  let a = seed;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function encodeFuzzed(id: string, rnd: () => number): string {
+  return [...id]
+    .map((ch) => {
+      const hex = ch.charCodeAt(0).toString(16);
+      const r = rnd();
+      const esc = rnd() < 0.5 ? hex : hex.toUpperCase();
+      if (r < 0.4) return ch;
+      if (r < 0.75) return `%${esc}`;
+      if (r < 0.95) return `%25${esc}`;
+      return `%2525${esc}`;
+    })
+    .join("");
+}
+
+const FUZZ_IDS = ["6f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5", "11111111-2222-4333-8444-555555555555", "ABCDEF12-3456-4789-8ABC-DEF012345678"];
+const FUZZ_CASES = Array.from({ length: 400 }, (_v, i) => {
+  const rnd = mulberry32(828 + i);
+  const id = FUZZ_IDS[i % FUZZ_IDS.length]!;
+  const glue = ["", "abc", "x_", "9"][Math.floor(rnd() * 4)]!;
+  return `/clients/${glue}${encodeFuzzed(id, rnd)}${glue ? "fed" : ""}/sessions?tab=1`;
+});
+
+describe("THE GUARANTEE for encodings (ASCII percent-decoding to a fixed point)", () => {
+  beforeEach(() => {
+    sent.length = 0;
+    process.env.OPS_ALERT_EMAILS = "ops@example.test";
+  });
+  afterEach(() => {
+    delete process.env.OPS_ALERT_EMAILS;
+  });
+
+  it("400 fuzzed encodings: no UUID survives in the fully decoded email", async () => {
+    const { notifyCriticalOpsAlert } = await import("@/lib/ops/alert-email");
+    for (const input of FUZZ_CASES) {
+      sent.length = 0;
+      await notifyCriticalOpsAlert({ event: "x_failed", message: `at ${input}`, createdAtIso: "2026-10-17T06:00:00.000Z" });
+      const mail = sent[0]!;
+      expect(UUID_ANYWHERE.test(oracleDecode(`${mail.subject}\n${mail.text}`)), `${input} -> ${mail.text}`).toBe(false);
+    }
+  });
+});
