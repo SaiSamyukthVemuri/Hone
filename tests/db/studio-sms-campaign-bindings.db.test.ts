@@ -123,6 +123,21 @@ describe("adoption, the recorded binding, and the verdict", () => {
     expect(rows).toEqual([{ campaign_status: "pending", verified_at: null, context: "cutover" }]);
   });
 
+  it("a verified campaign later observed SUSPENDED (or in an unknown status) replaces the verified record (Codex P1 4301691408)", async () => {
+    const s = await seedStudio("cb-suspend");
+    const number = await freshNumber("416");
+    const service = mg();
+    await adopt(s, number, service);
+    const sender = await liveSender(s.studioId);
+    const campaign = qe();
+    await record(s.studioId, sender.id, number, service, campaign, "verified");
+    expect(await verdictFor(s.studioId)).toEqual({ ok: true });
+    for (const status of ["suspended", "unrecognized"]) {
+      expect(await record(s.studioId, sender.id, number, service, campaign, status, "cutover"), status).toMatchObject({ result: "recorded" });
+      expect(await verdictFor(s.studioId), status).toEqual({ ok: false, reason: "unverified" });
+    }
+  });
+
   it("a binding checked BEFORE the sender's provisioning is stale", async () => {
     // provisioned_at is write-once (0191), so the fixture INSERTS a sender
     // whose provisioning time is after the check that is about to run.

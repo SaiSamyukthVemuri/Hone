@@ -66,7 +66,10 @@ create table public.studio_sms_sender_campaign_bindings (
   constraint studio_sms_sender_campaign_bindings_campaign_sid
     check (campaign_sid is null or campaign_sid ~ '^QE[0-9a-fA-F]{32}$'),
   constraint studio_sms_sender_campaign_bindings_status
-    check (campaign_status in ('verified', 'pending', 'in_progress', 'failed', 'none')),
+    check (campaign_status in ('verified', 'pending', 'in_progress', 'failed', 'suspended', 'unrecognized', 'none')),
+  -- `suspended` and `unrecognized` (a status Twilio reports that Hone does
+  -- not know yet) are RECORDED as non-verified, so a campaign that stops
+  -- being verified always replaces a verified record (Codex P1 4301691408).
   -- A service with no campaign is `none`, and only `none` has no campaign.
   constraint studio_sms_sender_campaign_bindings_none_iff_no_campaign
     check ((campaign_status = 'none') = (campaign_sid is null)),
@@ -109,7 +112,7 @@ begin
      or p_expected_phone is null or p_expected_phone !~ '^\+1[2-9][0-9]{2}[2-9][0-9]{6}$'
      or p_messaging_service_sid is null or p_messaging_service_sid !~ '^MG[0-9a-fA-F]{32}$'
      or p_campaign_status is null
-     or p_campaign_status not in ('verified', 'pending', 'in_progress', 'failed', 'none')
+     or p_campaign_status not in ('verified', 'pending', 'in_progress', 'failed', 'suspended', 'unrecognized', 'none')
      or (p_campaign_status = 'none') <> (p_campaign_sid is null)
      or (p_campaign_sid is not null and p_campaign_sid !~ '^QE[0-9a-fA-F]{32}$')
      or p_context is null or p_context not in ('evidence', 'cutover') then
