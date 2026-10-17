@@ -343,9 +343,19 @@ test("ACCEPTANCE: pick A, pick B, reschedule one, and the owner's calendar attri
   // slot labels against the seeded window, never against that summary row.
   const newLabel = rescheduleLabels.find((l) => l !== aBooking.slotLabel);
   expect(newLabel, "the reschedule grid must offer an alternative time").toBeTruthy();
+  // BOTH EDGES, like the initial grids above. Codex caught this asserting only
+  // the UPPER bound: a reschedule grid that offered 03:00 — before A's seeded
+  // 06:00 opening — would have stayed green, and because `newLabel` is taken
+  // from this same list the test could have rescheduled INTO that invalid time
+  // and still passed. A one-sided bound is not "inside the window".
   for (const label of rescheduleLabels) {
+    const mins = labelToMinutes(label);
     expect(
-      labelToMinutes(label),
+      mins,
+      `reschedule offered ${label}, BEFORE A's window opens (${A_WINDOW.start})`,
+    ).toBeGreaterThanOrEqual(windowToMinutes(A_WINDOW.start));
+    expect(
+      mins,
       `reschedule offered ${label}, outside A's window — the successor would not be A's`,
     ).toBeLessThan(windowToMinutes(A_WINDOW.end));
   }
