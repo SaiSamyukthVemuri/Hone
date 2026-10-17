@@ -141,6 +141,26 @@ Six protected families: `/portal/verify`, `/cancel`, `/reschedule`, `/manage`, `
 
 This change affects telemetry emitted **from now on**. No historical Sentry event was deleted, no provider-side deletion was performed, and no live token was rotated or revoked. Pinned by `tests/lib/observability/sentry-token-paths.test.ts` (138 cases incl. a deterministic 120-credential generated matrix) and `tests/lib/security/token-route-parity.test.ts`.
 
+### Record ids are removed before Sentry transmission (#828 G-25)
+
+Clients, sessions, appointments, intake forms and studios are addressed by UUID, and a UUID beside appointment or clinical context is a linkable record id. Until this change, the scrubber kept them: `/clients/<uuid>` reached Sentry in `request.url`, the transaction name (the grouping key), exception messages, breadcrumbs, and span descriptions and attributes.
+
+- **The guarantee is a final whole-event sweep.** After every other pass, `sweepRecordIds` in `lib/observability/sentry-scrub.ts` walks the entire error event, transaction event or breadcrumb. In every string and every key, at any depth Sentry serializes, it replaces each dashed UUID with `[id]`.
+  - It does not depend on a field list, so a field nobody enumerated is covered too, including one Sentry adds later.
+  - It touches only record ids. Stack-frame chunk file names keep their digits, so source maps still resolve. Sentry's own `event_id`, `trace_id` and `span_id` are dashless hex and stay.
+  - Anything deeper than its depth bound is replaced with `[Redacted]`, never sent unscrubbed.
+  - `debug_meta.images[].debug_id` is restored after the sweep. It is the SDK's source-map link, a build-artifact id rather than a record, and without it production stack traces lose symbolication.
+  - **Encoding guarantee:** no string or key, after ASCII percent-decoding to a fixed point, contains a UUID. A token is decoded at most 4 rounds; one still changing after that is replaced with `[Redacted]`. Out of scope: non-URL encodings (HTML entities, `\u` escapes, base64).
+  - `sdkProcessingMetadata`, the SDK's internal processing state, is not walked; captured scopes and request metadata are kept by reference. The one part of it that IS transmitted, the dynamic sampling context (copied into the envelope's `trace` header), is swept.
+- **Defense in depth, not the guarantee:** the per-field passes. `redactString` also replaces UUIDs in each field it scrubs, **after** token-route canonicalization, so token routes still read `[Redacted]` and `/clients/<uuid>` becomes `/clients/[id]`, Next's route-template form, so events still group by route. Those passes also:
+  - match compound identifiers (`hone_booking_<uuid>`, or glued to hex letters as in `abc<uuid>`: the pattern has no boundary, and its dashes are what make it a UUID) and percent-encoded forms (decoded, per the encoding guarantee above);
+  - scrub object keys, so `{ [clientId]: "failed" }` becomes `{ "[id]": "failed" }`, with `#2` and `#3` on collisions so no value is dropped (own keys only);
+  - deep-scrub `logentry` and custom `fingerprint` strings;
+  - apply an id-only scrub to structured exception payloads and threads.
+- Pinned by `tests/lib/observability/sentry-record-ids.test.ts`, a canary sweep with synthetic ids. **Negative controls:** each review round's case fails on the head before its fix, and with only the final sweep disabled, the any-field case fails.
+
+**Scope.** This covers what Hone sends to Sentry from now on. It is not a Sentry BAA. Other record-id channels (Vercel logs, Stripe, Meta, Twilio callbacks, Upstash keys, email tokens) remain #828 G-26 work. No historical Sentry event was deleted.
+
 ### Ops alert observability (PR #153)
 
 A new `ops_alerts` table (migration 0067) records durable, append-only rows for operator-facing silent-failure states: manual fee charge needs_manual_review, Stripe webhook processing failures, card-on-file setup failures, email/SMS give-up, cron route failures. The `lib/ops/alerts.ts:recordOpsAlert` helper is the single entry point.
