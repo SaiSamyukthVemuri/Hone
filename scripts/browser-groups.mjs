@@ -225,6 +225,20 @@ export const BROWSER_GROUPS = {
     specs: [
       "invitation-reconciliation.spec.ts",
       "invite-only.spec.ts",
+      // #824 role matrix: a receptionist is refused the clinical record and
+      // the photo route, and the OWNER reaches the same route. Exactly this
+      // group's established shape — owner-practice-capacity.spec.ts is here
+      // for the same reason ("an owner reaches the briefing, an ordinary
+      // practitioner is refused it"), and the shell/auth-gate family already
+      // lives here.
+      //
+      // NOT a targeted-lane cost decision: the targeted selection is
+      // calendar + sessions + smoke (pinned at 39 in
+      // tests/ci/browser-selection.test.ts), so owner_admin does not change
+      // that literal. It is mapped so it runs in extended and sharded runs,
+      // and a middleware diff forces extended anyway — which is the change
+      // most likely to break it.
+      "receptionist-role-matrix.spec.ts",
       // OWNER-CAP Slice 1: /dashboard/capacity. This group's stated scope is
       // already "owner/admin, onboarding, studio setup AND CAPACITY", and the
       // spec is exactly an owner-authority surface — an owner reaches the
