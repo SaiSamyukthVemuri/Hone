@@ -11,6 +11,10 @@
     {
       "path": "/api/cron/calendar-sync",
       "schedule": "30 9 * * *"
+    },
+    {
+      "path": "/api/cron/lead-alerts",
+      "schedule": "0 13 * * *"
     }
   ]
 }

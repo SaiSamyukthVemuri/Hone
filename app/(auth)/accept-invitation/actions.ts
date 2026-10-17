@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { clearSelectedStudioId } from "@/lib/supabase/selected-studio";
+import { clearAdminReturn, fulfilAdminReturn } from "@/lib/auth/admin-return";
 
 export type AcceptState = { error: string } | null;
 
@@ -48,13 +49,22 @@ export async function acceptInvitationAction(
     choose_studio?: boolean;
   };
 
+  // A refused invitation: an operator's remembered /admin target is
+  // forgotten with it (lib/auth/admin-return.ts).
+  if (res.status === "conflict" || res.status === "ambiguous" || res.status === "no_invitation") {
+    await clearAdminReturn();
+  }
   if (res.status === "conflict") redirect("/no-access?reason=invite-conflict");
   if (res.status === "ambiguous") redirect("/no-access?reason=invite-ambiguous");
   if (res.status === "no_invitation") redirect("/no-access");
 
-  // linked / already_linked. Force the chooser for a newly multi-studio user.
+  // linked / already_linked. Force the chooser for a newly multi-studio user:
+  // choosing a studio is still required, so any remembered target waits for
+  // the chooser (switchStudioAction) to complete.
   if (res.choose_studio === true) {
     await clearSelectedStudioId();
+    redirect("/dashboard");
   }
-  redirect("/dashboard");
+  // Acceptance COMPLETE: an operator returns to the lead they opened.
+  redirect((await fulfilAdminReturn(user.email)) ?? "/dashboard");
 }

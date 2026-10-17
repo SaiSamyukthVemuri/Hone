@@ -251,6 +251,13 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "isAdmin",
   },
   {
+    path: "app/admin/leads/[kind]/[id]/page.tsx",
+    purpose:
+      "LEAD-ALERT-01 (#826) operator-only page for ONE platform lead (a demo request or early-access signup) and its alert status, which the operator alert email links to.",
+    why: "No practitioner session; gated by the ADMIN_EMAILS/isAdmin operator check before any read. demo_requests, waitlist and platform_lead_alerts grant nothing to authenticated, so service-role is required. Reads only those three tables (pinned by tests/app/admin/lead-detail-page.test.ts).",
+    scopeGuard: "isAdmin",
+  },
+  {
     path: "app/admin/ops-alerts/page.tsx",
     purpose: "Operator-only admin console surface.",
     why: "No practitioner session; gated by the ADMIN_EMAILS/isAdmin operator check. Cross-studio access is intentional for support/ops, so service-role is required.",
@@ -329,6 +336,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "isAuthorizedCronRequest",
   },
   {
+    path: "app/api/resend/webhook/route.ts",
+    purpose: "DELIVERY-EVENTS-01 Resend delivery-event webhook.",
+    why: "No user session; authenticated by the Svix signature (verifyResendWebhookSignature over svix-id, svix-timestamp and the raw body, with a five-minute replay window). The admin client is built only after the signature verifies, and drives ONLY the service-role-only record_email_provider_event / claim_email_provider_events / process_email_provider_event commands. Attribution is re-derived inside the database from the ledger row the event matched, never from the payload.",
+    scopeGuard: "verifyResendWebhookSignature",
+  },
+  {
     path: "app/api/stripe/webhook/route.ts",
     purpose: "Stripe webhook handler.",
     why: "No user session; authenticated by Stripe signature verification (constructEvent). Rows are resolved by the verified event's ids.",
@@ -351,6 +364,27 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     purpose: "Public, unauthenticated token-scoped route/query.",
     why: "No session; the bearer signed/hashed token is verified (verifyCancellationToken) and resolves the exact appointment/intake/portal row. Scope comes from the verified token, so service-role is required.",
     scopeGuard: "verifyCancellationToken",
+  },
+  {
+    path: "app/actions/demo.ts",
+    purpose:
+      "LEAD-ALERT-01 (#826) public /demo request: the sole caller of record_platform_demo_request (0213), which saves the demo request and its operator alert intent in one transaction; then schedules deliverPlatformLeadAlert after the response.",
+    why: "Unauthenticated public surface with no session. The command is service_role-only (EXECUTE revoked from public/anon/authenticated) so that a client cannot create alert intents directly and bypass the form's rate limit. The action validates name and email, runs the shared limiter BEFORE the call, and passes exactly the columns the form always saved; the browser supplies only those bounded fields and never a recipient, status or id.",
+    scopeGuard: "record_platform_demo_request",
+  },
+  {
+    path: "app/actions/waitlist.ts",
+    purpose:
+      "LEAD-ALERT-01 (#826) public early-access signup: the sole caller of record_platform_early_access_signup (0213), which saves the address and its operator alert intent together, or reports a duplicate and creates nothing; then schedules deliverPlatformLeadAlert after the response.",
+    why: "Unauthenticated public surface with no session. The command is service_role-only so a client cannot create alert intents directly; the action normalizes and validates the address and rate-limits BEFORE the call. A duplicate still reads as success, so the answer is no membership oracle. The browser supplies one address and nothing else.",
+    scopeGuard: "record_platform_early_access_signup",
+  },
+  {
+    path: "lib/platform-leads/alert-delivery.ts",
+    purpose:
+      "LEAD-ALERT-01 (#826) operator lead-alert worker: claims, settles, expires, records configuration blockers on and requeues platform_lead_alerts through the 0213 service_role-only commands, after the saving action's response and from the CRON_SECRET-gated sweep.",
+    why: "platform_lead_alerts grants nothing to anon/authenticated and only SELECT to service_role; every write is a 0213 definer command granted to service_role alone. The worker runs with no user session (after() and cron), never writes a lead, takes the recipient only from server env allowlisted against ADMIN_EMAILS, and logs ids and codes only.",
+    scopeGuard: "claim_platform_lead_alert",
   },
   {
     path: "app/book/[slug]/waitlist-actions.ts",

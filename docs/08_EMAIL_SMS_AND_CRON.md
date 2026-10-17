@@ -84,6 +84,71 @@ Pinned by `tests/migrations/0186-intake-reminder-24h-2h.test.ts`, `tests/app/api
 
 The double-send gap is closed. The reminder cron now claims each row via `claim_email_send(appointment_id, email_type)` BEFORE calling Resend: one conditional UPDATE that increments the attempts counter and stamps the matching `*_claimed_at`, gated on sent-is-null, attempts under the 3-strike cap, and no fresh claim (claims older than 5 minutes are stale and reclaimable, so a crashed sender never permanently blocks a row). Two overlapping cron runs can no longer both send; the loser counts the row as `skipped` in the response stats. Outcomes are recorded via `record_email_result` (stamps `*_sent_at` on success, clears the claim, never increments). Both RPCs are SECURITY DEFINER with locked search_path, `revoke from public/anon/authenticated`, execute granted to `service_role` only. This mirrors the SMS `claim_sms_send` / `record_sms_result` pair from migration 0049. The unclaimed one-shot paths (booking confirmation, reschedule notices, no-show cron, postcare) keep using `record_email_attempt` (0028); they run inside a single user request and do not race a scheduler.
 
+### Email delivery events (DELIVERY-EVENTS-01, migration 0212)
+
+> **THE RECEIVING HALF ONLY, AND INERT.** This adds the signed Resend webhook, the receipts and an email delivery ledger. It does **not** wire any send path into the ledger, raise any alert or show anything to a studio. Until a producer slice wires a send path in, every event is unattributed and stays platform-only. Until `RESEND_WEBHOOK_SECRET` is set and the endpoint is configured in Resend (a separately authorized activation), nothing arrives at all.
+
+**Route: `POST /api/resend/webhook`** (`app/api/resend/webhook/route.ts`, exact-path middleware exemption). It reads the raw body, then verifies the Svix signature (`svix-id`, `svix-timestamp`, `svix-signature`) with `RESEND_WEBHOOK_SECRET` in `lib/email/resend-webhook.ts`. The check is hand-rolled on `node:crypto`, like the Twilio check, and is held to the official Resend SDK verifier on the same fixtures. Refusals:
+- missing secret: 500, nothing written;
+- missing or invalid signature, or a timestamp more than **five minutes** from the server clock: 403 and zero database work;
+- a body over 256 KB: 413. A declared `Content-Length` over the limit is refused before any read, and an undeclared body is counted as it streams and cancelled once it passes the limit, so the limit bounds memory and read work on this public endpoint.
+
+A captured request therefore cannot be replayed later. A replay inside the window carries the same `svix-id` and is deduplicated below.
+
+**Durable before acknowledged.** `record_email_provider_event` writes one receipt per delivery, unique on `(provider, svix-id)`. Resend keeps that id across every retry of an event.
+- If the receipt cannot be written, the route answers **500** and Resend retries on its own schedule (roughly 27 hours, after which it may disable the endpoint).
+- If the receipt is written but is **still pending after this request**, the answer is also **500**, so Resend's retry recovers it (Codex P2 4244387538, 4244798597). That covers this request's own processing failing, and a claim (a failed attempt's, not yet expired) keeping it from trying. A retry that lands inside the two-minute claim answers 500 again, so the provider keeps retrying until one lands after it expires. The recovery does not depend on another webhook or a scheduled sweep. Attempts are bounded in the database: after five the receipt is quarantined and the retry that follows gets **200**, so a poison event cannot keep the provider retrying until it disables the endpoint.
+- Every other outcome is acknowledged with **200**: applied, stale, unmatched, ignored or quarantined.
+- A retried delivery whose receipt is still **pending** is processed again; one already processed is acknowledged as-is.
+
+**Exactly-once processing and crash recovery.**
+- `process_email_provider_event` applies one receipt in one transaction. It locks the receipt, refuses one that is no longer pending (`already_processed`), locks the ledger row, moves the status and records the outcome. Any error rolls back all of it.
+- `claim_email_provider_events` counts every attempt in its own committed statement, **before** the attempt. A claim is held for two minutes. The route claims and processes the receipt it just recorded and answers the provider. Only **after** the response (Next `after()`, Codex P2 4266147060) does it sweep up to five receipts that are at least a minute old, which covers a request that died mid-processing. A slow or failing sweep never delays or changes the delivery's answer; a failed sweep is logged as `resend_webhook_sweep_failed`.
+- A receipt that has spent **five** attempts is quarantined as `processing_exhausted` instead of being retried forever.
+- The sweep runs only as a side effect of the next delivery. A scheduled sweep and its heartbeat belong to the alerting slice.
+
+**Order.** Statuses only move forward: `claimed`/`unknown` < `accepted` < `sent` < `delivery_delayed` < `delivered` < `bounced` | `failed` | `suppressed`.
+- Every arrival order of the same events ends in the same state. A late, repeated or lower event is recorded `stale` and changes nothing.
+- A bounce reported after `delivered` supersedes it: the recipient's server rejected the message after all.
+- `email.complained` records `complained_at` once and implies `delivered`.
+- `email.opened` and `email.clicked` are `ignored`: they are not delivery facts, and the activation subscribes to neither.
+
+**Truthful display.** `lib/delivery/status.ts` maps a ledger row to one channel-agnostic vocabulary:
+- queued, not sent, provider accepted, delayed, delivered, bounced, failed, suppressed;
+- **unknown** (an ambiguous answer, or a claim its sender never settled);
+- **stale** (accepted, but nothing reported within 24 hours, or delayed beyond 72 hours).
+
+Accepted is never shown as delivered. *Delivered* means the recipient's mail server accepted the message, never the inbox or a read. Unknown and stale are never success.
+
+**Attribution: Hone's own row, never the payload.** A ledgered send carries the Resend tag `hone_m = <email_outbound_messages.id>`. Resend reports tags inside the signed payload, so an event addresses the row Hone created before the call, even when the send's own answer was lost. Without a tag, the provider email id is the key. A receipt links to a ledger row, and through it to a studio, only when it was **applied** or **stale**. These cases keep `email_message_id` NULL and are attributable to no studio:
+- an unknown tag (`unmatched_tag`: another deployment sharing the Resend account) or an unknown email id (`unmatched_email_id`);
+- a tag and email id that disagree (`email_id_mismatch`);
+- an id already held by another attempt (`email_id_conflict`);
+- an event for an attempt Hone recorded as never sent (`not_sent`);
+- an unknown type (`unknown_event_type`) or a missing email id (`missing_email_id`).
+
+**Minimum metadata.** A receipt keeps:
+- the delivery id, the event type and time;
+- the provider email id and the reported tag;
+- reason **slugs**: bounce type and subtype, failure reason, suppression type.
+
+Addresses, subject, headers, other tags and every free-text provider message are dropped before anything is stored or logged. A reason that is not a plain identifier becomes `other`, so free text cannot leak through in slug form. Neither table has a policy or a grant: the five commands are `service_role` only.
+
+**Joining a send path (the producer contract).** The intent owner (for example LEAD-ALERT-01's notification row) stays the retry authority. For each provider attempt it:
+1. calls the purpose's begin command (`begin_appointment_email_message` today);
+2. sends through the ONE Resend path with tag `hone_m` set to the row id, plus its own idempotency key;
+3. calls `settle_email_message`: `accepted` with the email id, `refused`, `unknown` or `skipped`.
+
+A retry under the **same** idempotency key may settle an `unknown` row `accepted`. The ledger never resends. A resend after the provider's 24-hour idempotency window must first reconcile the earlier attempt.
+
+**Activation packet (each step separately authorized; none taken here).**
+1. Hosted migration `0212`, migration-first, after the lane holding `0211`.
+2. `RESEND_WEBHOOK_SECRET` in Vercel production.
+3. A Resend endpoint for `https://hone.care/api/resend/webhook`, subscribed to exactly `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.failed`, `email.suppressed` and `email.complained`.
+4. A dashboard test event, verified as one receipt with the expected outcome.
+
+Pinned by `tests/db/email-delivery-events.db.test.ts` (replay, order permutations, exactly-once under concurrency, crash recovery, tenant isolation, provider failure, privileges), `tests/migrations/0212-email-delivery-events.test.ts`, `tests/lib/email/resend-webhook.test.ts`, `tests/app/api/resend-webhook.test.ts` and `tests/lib/delivery/status.test.ts`.
+
 ## SMS (Twilio)
 
 ### Posture
@@ -244,6 +309,87 @@ A new waitlist invitation is **also texted** to an eligible prospect, beside its
   - a refused or lost text raises one `sms_send_failed` warning (purpose `waitlist_join_acknowledgement`), before the best-effort settle.
 - **The ledger.** Purpose `waitlist_join_acknowledgement`, subject `waitlist_entry_id`. The subject is tied to the studio by a composite key, there is at most one row per entry (unique index), and it is write-once.
 
+### Operator lead alerts (LEAD-ALERT-01, #826, migration 0213)
+
+When a Hone **demo request** (`/demo`) or **early-access signup** (`public.waitlist`, not a
+studio's new-client waitlist) is saved, the platform operator gets one email. Nothing is sent
+to the prospect.
+
+- **Saved together.** `record_platform_demo_request` / `record_platform_early_access_signup`
+  (service_role only) write the lead and its `platform_lead_alerts` row in one transaction,
+  after the action's validation and rate limit. A refused submission saves nothing and alerts
+  nobody. An early-access address already on the list is a duplicate: no lead, no alert.
+  Every accepted demo request is its own lead with its own single alert (lead capture is
+  unchanged; the rate limit bounds repeats).
+- **Sent after the response**, through the existing keyed Resend attempt
+  (`sendOnceWithIdempotencyKey`), under the alert's `idempotency_key`
+  (`lead-alert/<alert id>/<generation>`), identical on every retry of that generation.
+- **One key, one request.** The first attempt of a generation freezes the message it sends
+  (From, subject, HTML, text) and the SHA-256 of its recipient on the alert row
+  (`freeze_platform_lead_alert_message`, first writer wins under the current claim). Every
+  automatic retry sends those exact bytes, whatever changed in the renderer, origin or sender
+  since. If `LEAD_ALERT_EMAIL` changed mid-generation, the retry is not sent and the alert fails
+  as `recipient_changed`. The operator's **Retry** renders afresh under a new key. The frozen
+  message is cleared when the generation ends.
+- **Claim → send → settle.** One worker leases an alert (`FOR UPDATE SKIP LOCKED`, 120 s
+  lease); only the current claim token may settle it. At most five attempts, backing off
+  2 min, 10 min, 1 h, 6 h. A provider refusal the same request would meet again fails at
+  once. An abandoned lease is re-claimed under the same key. **Replay window:** automatic
+  attempts end 20 hours after the first one (the provider keeps an idempotency key about
+  24 hours), whatever the sweep cadence; alerts unsent by then, or 72 hours after the lead,
+  become a visible `failed: expired`, and only the operator's Retry (a new key) sends again.
+- **When retries run.** The first attempt is sent right after the lead is saved. Retries run
+  on the existing **15-minute appointment-reminders trigger**, after its reminder passes and
+  heartbeat, and also after a failed reminders run's `cron_route_failed` alert (the route still
+  answers 500), so an unrelated reminders failure does not stop lead retries: a bounded sweep
+  through the same worker, sized by time: up to 25 alerts within
+  an 8-second budget. **The deadline is enforced by cancellation, on every call**: the provider
+  request is aborted 1.5 s before the deadline (settled as a same-key retry), and the claim,
+  freeze, settle, expiry and ops-alert writes are aborted at the deadline itself, so nothing the
+  sweep started keeps running. A database call cut off this way has an **unknown** outcome: it is
+  counted as `unknown` (never as sent or failed), the run reports `timed_out` and `ok: false`, and
+  the lease, the same key and the frozen message recover the alert on a later run, the provider
+  replaying rather than resending. The `lead_alert_recovery_failed` report is itself cut off after
+  1 s, so the recovery adds at most 9 s to a reminders invocation whatever the database or
+  provider does (proved with a fake clock and fake database and provider transports in
+  `tests/lib/platform-leads/recovery-deadline.test.ts`).
+  Alerts are claimed earliest-due first, so a backlog cannot starve later alerts. The response
+  reports `drained`; `false` means it stopped at its cap or budget. It is gated before any database or provider call until lead alerts are configured,
+  and a failure there is an ops alert (`lead_alert_recovery_failed`) and a response field,
+  never a failed reminders run. The daily `/api/cron/lead-alerts` stays as a backstop. With
+  this trigger every arrival minute of the day reaches all five attempts inside the 20-hour
+  cutoff (proved in `tests/lib/platform-leads/retry-schedule.test.ts`, at 15- and 60-minute
+  cadence). **The daily cron alone cannot**: no arrival reaches five attempts. **Capacity is
+  finite**: `tests/lib/platform-leads/retry-capacity.test.ts` shows 300- and 1,000-alert outage
+  cohorts all delivered with a healthy provider, and that with a slow provider and a large backlog
+  some alerts expire. They become a visible `failed: expired` (ops alert
+  `platform_lead_alerts_expired`); the lead is kept and the operator's Retry sends again.
+- **States are honest.** `accepted` means the provider accepted the message. It is not a
+  delivery receipt.
+- **Recipient.** `LEAD_ALERT_EMAIL`, exactly one address that is also on `ADMIN_EMAILS`.
+  Missing or refused configuration, a missing `RESEND_API_KEY` or a missing
+  `NEXT_PUBLIC_APP_ORIGIN` sends nothing and spends no attempt. The alert records the
+  blocker and `/admin` shows **Lead alerts: Not sending**. A send abandoned by a worker
+  that died (its lease expired) is not left looking active: in the same statement it
+  returns to pending with the blocker, keeping its attempts, key and frozen message, and
+  the old worker's late settle is refused. A live lease is never touched, and one past
+  its attempts or replay window is left for expiry to fail.
+- **Content.** Name, email, practice, city, practice type, practitioner count, current tool
+  when given, event and time, and a sign-in-required link to the lead's own page,
+  `/admin/leads/<demo-request|early-access>/<id>`. The page is admin-only (404 for anyone else)
+  and reads only that lead and its alert status, so it works for any lead, however old, and shows
+  a demo request's notes. If the operator is signed out, the middleware remembers the validated
+  `/admin` path in a 15-minute httpOnly cookie, and the sign-in callback returns there in the
+  same browser. Only a same-origin path is ever a return target. Submitted text
+  is flattened (no control, invisible or bidi characters, capped at 200 characters) and
+  HTML-escaped. Notes are never included; the email says only that there are some. The
+  subject carries no submitted text.
+- **Visibility.** `/admin` has a **Lead alerts** card (configuration, counts by state,
+  failed alerts with **Retry**) and an Alert column on both lead tables. A final failure
+  raises a `warning` ops alert carrying ids and codes only.
+- **No catch-up.** Leads saved before 0213, or written any other way, have no alert and
+  never generate email.
+
 ### SMS RPC grants hardened (PR #141 / migration 0062)
 
 `claim_sms_send` and related SMS RPCs are `revoke from public, anon, authenticated; grant to service_role only`. The action layer always invokes via `createAdminClient()`. Audit grep on every caller is part of the PR template's security checklist.
@@ -256,10 +402,11 @@ A new waitlist invitation is **also texted** to an eligible prospect, beside its
 
 | Route | How it is scheduled |
 |---|---|
-| `/api/cron/appointment-reminders` | **External scheduler (cron-job.org), `GET` every 15 min** with `Authorization: Bearer $CRON_SECRET`. (NOT in `vercel.json` — `*/15` exceeds the current plan's once-per-day cron cap. If the project moves to Vercel Pro, add `{ "path": "/api/cron/appointment-reminders", "schedule": "*/15 * * * *" }` to `vercel.json` and drop the external job — that schedule string is `APPOINTMENT_REMINDER_CRON_SCHEDULE`.) |
+| `/api/cron/appointment-reminders` | **External scheduler (cron-job.org), `GET` every 15 min** with `Authorization: Bearer $CRON_SECRET`. After its reminder passes it also runs bounded operator lead-alert recovery (LEAD-ALERT-01), gated until lead alerts are configured. (NOT in `vercel.json` — `*/15` exceeds the current plan's once-per-day cron cap. If the project moves to Vercel Pro, add `{ "path": "/api/cron/appointment-reminders", "schedule": "*/15 * * * *" }` to `vercel.json` and drop the external job — that schedule string is `APPOINTMENT_REMINDER_CRON_SCHEDULE`.) |
 | `/api/cron/materialize-recurring-breaks` | **Vercel Cron, `vercel.json`, `0 8 * * *`** (daily, 08:00 UTC — allowed on every plan). Also runs the reminder-scheduler health check in a `finally` (PR OPS-01). |
 | `/api/cron/calendar-reconcile` | **Vercel Cron, `vercel.json`, `0 9 * * *`** (daily, B2.3-c3 — daily because the plan caps cron at once/day). **DORMANT:** the reconciliation sweep finds zero intent-eligible studios while every studio outbound flag is OFF. Schedule pinned in `lib/cron/calendar-cron-schedule.ts`. |
 | `/api/cron/calendar-sync` | **Vercel Cron, `vercel.json`, `30 9 * * *`** (daily, B2.3-c3, after reconciliation). **DORMANT:** `worker_enabled=false` → the claim RPC returns zero rows and mutates nothing → no-work. The **first scheduled run doubles as the B2.3-c2 no-work production validation** (Vercel Cron auto-supplies the production `CRON_SECRET`). Schedule pinned in `lib/cron/calendar-cron-schedule.ts`. |
+| `/api/cron/lead-alerts` | **Vercel Cron, `vercel.json`, `0 13 * * *`** (daily, LEAD-ALERT-01). Recovery sweep for operator lead alerts: expires alerts past 72 h, then sends due or abandoned ones, one claim at a time (≤ 20 per run). Each alert is normally sent right after its lead is saved. Retries run on the 15-minute appointment-reminders trigger (bounded, gated until configured); this daily run is the backstop. |
 | `/api/cron/no-show-check` | **intentionally NOT scheduled** (disabled, non-mutating stub). |
 
 ### Reminder scheduler: RUNTIME OPERATION PROVEN 2026-08-12 · HUMAN OWNERSHIP still OPEN
