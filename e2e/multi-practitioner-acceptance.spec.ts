@@ -325,10 +325,22 @@ test("ACCEPTANCE: pick A, pick B, reschedule one, and the owner's calendar attri
   expect(token, "the booking must carry a reschedule token").toBeTruthy();
 
   await page.goto(`/reschedule/${token}`);
+  // THE RESCHEDULE PAGE OPENS ON TODAY, not on the appointment's date, so its
+  // date must be set exactly as the booking form's is. Without this the grid
+  // below is TODAY'S and the wait for the target date never resolves.
+  await page.getByLabel("Pick a new date").fill(bookDate);
   await waitForGrid(page, bookDate);
   const rescheduleLabels = await offeredSlotLabels(page);
   // A DIFFERENT time, still inside A's window: the successor must stay bookable
   // for A, so a slot from B's afternoon would be testing the wrong thing.
+  //
+  // TWO CLOCKS ON THIS PAGE, measured during the first run of this spec and
+  // recorded because it will mislead the next person to assert here. The SLOT
+  // GRID is studio-local, but the "Currently" summary row renders through
+  // FormattedDateTime, which calls toLocaleString([]) -- the VIEWER's
+  // timezone. On this fixture (studio Etc/GMT+10, browser UTC) the same
+  // appointment reads 06:00 in the grid and "4:00 PM" in the summary. Compare
+  // slot labels against the seeded window, never against that summary row.
   const newLabel = rescheduleLabels.find((l) => l !== aBooking.slotLabel);
   expect(newLabel, "the reschedule grid must offer an alternative time").toBeTruthy();
   for (const label of rescheduleLabels) {
@@ -339,8 +351,20 @@ test("ACCEPTANCE: pick A, pick B, reschedule one, and the owner's calendar attri
   }
 
   await page.getByRole("button", { name: newLabel!, exact: true }).click();
-  await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: /confirm new time/i }).click();
+
+  // THE POLICY ACKNOWLEDGEMENT IS CONDITIONAL, and this is not defensive
+  // padding. RescheduleForm renders the checkbox only when
+  // `requiresAcknowledgement` holds, which needs the studio to have policy
+  // TEXT (PR #133 omits the block entirely otherwise). This fixture seeds no
+  // policies, so there is no checkbox; e2e/public-reschedule-v2.spec.ts seeds
+  // them and therefore ticks one. Asserting the button is enabled first means
+  // a FUTURE fixture that does seed policies fails loudly here instead of
+  // silently clicking a disabled button.
+  const ack = page.getByRole("checkbox");
+  if ((await ack.count()) > 0) await ack.check();
+  const confirm = page.getByRole("button", { name: /confirm new time/i });
+  await expect(confirm, "the reschedule submit must be enabled once a time is picked").toBeEnabled();
+  await confirm.click();
   await expect(page.getByText(/You.re rescheduled\./i)).toBeVisible({ timeout: 20_000 });
 
   // 0171 writes a SUCCESSOR row rather than mutating the original, so "the
@@ -400,7 +424,12 @@ test("ACCEPTANCE: pick A, pick B, reschedule one, and the owner's calendar attri
     [bRows[0].id, B.displayName, "B's booking"],
   ] as const) {
     await page.goto(`/calendar/${id}`);
-    const header = page.locator("header").first();
+    // `main header`, NOT `header`. The app shell renders its own top-level
+    // <header> (the primary-navigation banner), so locator("header").first()
+    // matches the NAV and never sees the attribution — measured: the first run
+    // of this assertion failed while the page was correct, showing A's name in
+    // main. StatusHeader is the only <header> inside <main>.
+    const header = page.locator("main header").first();
     await expect(
       header.getByText(expectedName, { exact: false }),
       `${label} must be attributed to ${expectedName} on the owner's calendar`,
@@ -447,11 +476,21 @@ test("LEGACY capacity-OFF, BY DESIGN: one booking blocks the instant for everyon
   const Q = await seedE2eMember(legacy);
   await seedServiceEligibility(legacy.studioId, service, P.practitionerId);
   await seedServiceEligibility(legacy.studioId, service, Q.practitionerId);
+  // STUDIO-WIDE ONLY, and the reason is the third limb of the legacy contract,
+  // found by this spec's first run rather than assumed. Seeding
+  // practitioner-scoped availability here is REFUSED BY THE DATABASE:
+  //   "per-practitioner availability requires practitioner capacity to be
+  //    enabled for this studio"
+  // so a legacy studio cannot even express per-practitioner hours. That is
+  // asserted below rather than worked around silently.
   for (let d = 0; d <= 6; d++) {
     await seedStudioWideDefault(legacy.studioId, d, true, "06:00", "22:00");
-    await seedPractitionerDefault(legacy.studioId, P.practitionerId, d, true, "06:00", "22:00");
-    await seedPractitionerDefault(legacy.studioId, Q.practitionerId, d, true, "06:00", "22:00");
   }
+
+  await expect(
+    seedPractitionerDefault(legacy.studioId, P.practitionerId, 6, true, "06:00", "12:00"),
+    "a capacity-OFF studio must REFUSE per-practitioner availability outright",
+  ).rejects.toThrow(/per-practitioner availability requires practitioner capacity/i);
 
   // DEFAULTS LEFT ALONE deliberately: `practitioner_capacity_enabled` defaults
   // FALSE (0134:55). Asserting that rather than assuming it, because the whole
