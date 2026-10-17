@@ -1038,15 +1038,17 @@ enforceability. Hone's documentation does not claim signatures are legally bindi
   stays unresolved for manual review and an operational alert is raised. Matching CAD
   payments behave as before. **No production mismatch has been observed or measured at this
   sync.**
-- **An ambiguous Stripe error is never recorded as failed** (PR #898, HON-11 #1, merge
-  `b08845ce`, deployed 2026-10-17, no migration). A session charge or a refund now takes its
-  terminal "failed" branch only for an allow-listed **definitive** Stripe refusal (card,
-  invalid-request, authentication, permission or rate-limit errors). Any other Stripe error
-  (connection, API, idempotency, unrecognised) falls through to the existing unknown-outcome
-  path: a charge stays `pending_stripe` with a critical `session_payment_needs_manual_review`
-  alert; a refund keeps `refund_status = 'pending_stripe'` with a critical
-  `payment_refund_stripe_unknown_outcome` alert. **No production occurrence has been observed
-  or measured at this sync.**
+- **An ambiguous THROWN Stripe error is never recorded as failed** (PR #898, HON-11 #1, merge
+  `b08845ce`, deployed 2026-10-17, no migration). When the Stripe call for a session charge or
+  a refund **throws**, the attempt is now recorded failed only for an allow-listed
+  **definitive** Stripe refusal (card, invalid-request, authentication, permission or
+  rate-limit errors). Any other thrown Stripe error (connection, API, idempotency,
+  unrecognised) falls through to the existing unknown-outcome path: a charge stays
+  `pending_stripe` with a critical `session_payment_needs_manual_review` alert; a refund keeps
+  `refund_status = 'pending_stripe'` with a critical `payment_refund_stripe_unknown_outcome`
+  alert. **Non-error Stripe outcomes are unchanged by #898:** for example, a PaymentIntent
+  cancelled after `requires_action` is still recorded failed. **No production occurrence has
+  been observed or measured at this sync.**
 - **US/USD remains PENDING.** Per-studio payment jurisdiction, USD Stripe accounts and USD
   activation are **not merged and not active**: #833, #836, #839 and #847 are drafts. Their
   migration chain (0214 onward) is unmerged and **not applied**. #834 changes no studio's
