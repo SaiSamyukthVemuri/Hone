@@ -23,10 +23,18 @@ there would be proving the absence of a feature.
 | A — receptionist is denied clinical records | DECIDED | yes |
 | B — receptionist is denied the client photo surface | DECIDED | yes |
 | C — owner sees all (non-vacuity for A and B) | DECIDED | yes |
-| D — a practitioner sees **only their own** schedule and charts | **UNDECIDED** | **no — see §5** |
+| D — practitioners **share** client clinical notes across providers | DECIDED (HON-44) | yes — see §5 |
 
-**Limb D is UNPROVEN BECAUSE UNDECIDED, not because a test was skipped.** It is
-with Sam. §5 states the current law exactly.
+**Limb D is DECIDED and PROVEN.** It was recorded here as
+UNPROVEN-BECAUSE-UNDECIDED while the question was open. **HON-44 requires
+practitioners to share client clinical notes across providers**, so the
+`is_studio_member` read policy is the INTENDED law, not a gap — and the outcome
+statement's "own schedule and charts" does **not** extend to notes. §5 cites the
+proofs.
+
+**The financial and receptionist restrictions are unchanged by this.** A
+receptionist still reads no clinical row, and the owner-only financial surfaces
+are untouched; HON-44 settles practitioner-to-practitioner note visibility only.
 
 ---
 
@@ -201,24 +209,42 @@ whether a URL could be minted. §3 carries that claim.
 
 ---
 
-## 5. Limb D — the open decision, stated exactly
+## 5. Limb D — DECIDED by HON-44, and already proven
 
-Current law, read at `de68b7c7`:
+**The product requirement (HON-44): practitioners share client clinical notes
+across providers.** So the law below is intended, and a
+practitioner-to-practitioner boundary is explicitly NOT wanted:
 
-```
+```sql
 create policy "client_clinical_notes_member_select"
+  on public.client_clinical_notes for select to authenticated
   using (public.is_studio_member(studio_id));
 ```
 
-**Any studio member may read every clinical note in the studio.** Only INSERT is
-author-scoped (`client_clinical_notes_author_insert`). So today a practitioner
-*does* read another practitioner's notes, by design of this policy.
+(`0126_client_clinical_notes.sql:146-149`. Only INSERT is author-scoped, via
+`client_clinical_notes_author_insert`, so authorship is still attributed even
+though reading is shared.)
 
-Therefore "a practitioner sees only their own charts" is **not a missing test —
-it is a different product law.** Restricting it would change behaviour for every
-existing multi-practitioner studio. The decision is Sam's; this proof neither
-implements nor assumes it, and **must not be read as evidence that a
-practitioner-to-practitioner boundary exists.**
+**NO NEW TEST WAS WRITTEN, because all three claims are already proven** — and a
+second copy would add no evidence while creating another place to keep true.
+Each is cited by file and test name so a reviewer can verify in seconds:
+
+| Claim | Proof |
+|---|---|
+| A practitioner reads **another** practitioner's note in the same studio | `tests/db/client-clinical-notes.db.test.ts:43` — *"an active practitioner records a consultation note; studio member reads it"*. The author is `a`; the reader is `aMember`, a **second** member of the same studio. Asserts `rowCount` 1 and the note's kind. |
+| **Another studio's** practitioner cannot | same file, `:185` — *"studio B cannot READ studio A's notes (member SELECT is studio-scoped)"*. Asserts `rowCount` 0, with the test's own note that this is RLS filtering rather than a broken query. |
+| A **receptionist** still cannot | `tests/db/receptionist-foundation.db.test.ts:172` — *"reads ZERO rows of S from EVERY public table that carries a studio_id"*. Generic over `information_schema` and asserting the table set exceeds 40, so `client_clinical_notes` is covered **by construction** rather than by being listed. |
+
+**Non-vacuity is structural here, not bolted on.** The first row IS the positive
+case that makes the second row's zero-rows meaningful — same table, same policy,
+same suite. The receptionist row carries its own control at
+`receptionist-foundation.db.test.ts:196`, *"the denial is not vacuous: the OWNER
+sees the seeded clinical rows"*.
+
+**Observed on this branch**: #904's `db integration (local supabase)` lane
+passed green at `91166815`, and that lane applies the full migration chain from
+scratch and runs both cited files. So these are not inherited claims read from
+another tree — they executed here.
 
 ---
 
