@@ -57,8 +57,17 @@ afterAll(async () => {
   await closePool();
 });
 
-/** A completed, CHARTED visit at a studio with no payment account and no card. */
-async function cardlessChartedVisit(): Promise<PaymentScenario & { entryId: string }> {
+/**
+ * A completed, CHARTED visit at a studio with no payment account and no card,
+ * charted THROUGH THE PRACTITIONER'S OWN PATH (Codex P2 4301054610): the seed
+ * leaves a CONFIRMED appointment with NO session; the practitioner then starts
+ * the session (start_session) and charts a treatment pass
+ * (add_electrolysis_pass) as themselves, under the commands' own authority and
+ * RLS, and the appointment is completed by mark_appointment_complete, the same
+ * command the app's finish action calls. If any of those refused a studio with
+ * no payment account or card, this fixture, and every test below, would fail.
+ */
+async function cardlessChartedVisit(): Promise<PaymentScenario & { sessionId: string; entryId: string }> {
   // The visit is BOOKED at PRICE, so 0187 snapshots that as the settlement's
   // quoted amount: the proof is "the FULL visit price is outstanding", not
   // "some amount can be marked outstanding" (Codex P2 4301066739).
@@ -67,19 +76,48 @@ async function cardlessChartedVisit(): Promise<PaymentScenario & { entryId: stri
     connect: "missing_account",
     withCard: false,
     bookedService: { name: "Electrolysis 60", priceCents: PRICE },
+    appointmentStatus: "confirmed",
+    withSession: false,
   });
   created.push(s.studioId);
-  if (!s.sessionId) throw new Error("hon45: the seed did not create a session");
-  // The shared seed stamps the session's price_paid_cents (what the client
-  // PAID, read by the client lifetime total and the session price display).
-  // An unpaid visit must carry no payment fact at all (Codex P2 4301124978);
-  // chartIntact() asserts it stays null throughout.
-  await adminQuery(`update public.sessions set price_paid_cents = null where id = $1`, [s.sessionId]);
-  const entry = await adminQuery(
-    `insert into public.electrolysis_entries (session_id, area) values ($1, 'upper lip') returning id`,
-    [s.sessionId],
+
+  const started = await asUser(s.practitionerUserId, (q) =>
+    q(`select session_id from public.start_session($1, $2, $3, $4, $5)`, [
+      s.clientId,
+      "electrolysis",
+      s.appointmentId,
+      0,
+      s.studioId,
+    ]),
   );
-  return { ...s, entryId: entry.rows[0].id as string };
+  const sessionId = started.rows[0]?.session_id as string | undefined;
+  if (!sessionId) throw new Error("hon45: start_session returned no session for a cardless studio");
+
+  const pass = await asUser(s.practitionerUserId, (q) =>
+    q(
+      `select entry_id from public.add_electrolysis_pass(
+         p_session_id => $1, p_client_id => $2, p_block_id => null, p_block_defaults => '{}'::jsonb,
+         p_area => 'upper lip', p_areas_list => null, p_probe_size => null, p_probe_lot_id => null,
+         p_mode => null, p_intensity => null, p_duration_seconds => null, p_pulse_count => 3,
+         p_pulse_delay_seconds => null, p_comments => 'cardless chart', p_observation_chips => null,
+         p_apilus_modality => null, p_energy_level => null, p_minutes_performed => 15, p_probe_type => null,
+         p_machine_frequency => null, p_hairs_treated => null, p_galvanic_ma => null,
+         p_galvanic_duration_seconds => null, p_thermolysis_intensity_percent => null,
+         p_thermolysis_duration_seconds => null, p_units_of_lye => null)`,
+      [sessionId, s.clientId],
+    ),
+  );
+  const entryId = pass.rows[0]?.entry_id as string | undefined;
+  if (!entryId) throw new Error("hon45: add_electrolysis_pass charted nothing for a cardless studio");
+
+  // Completion: the command the app's finish action calls (with the server's
+  // client, after its own practitioner check).
+  await adminQuery(`select public.mark_appointment_complete($1, $2, $3)`, [
+    s.appointmentId,
+    s.studioId,
+    s.practitionerId,
+  ]);
+  return { ...s, sessionId, entryId };
 }
 
 async function record(userId: string, studioId: string, appointmentId: string, method: string, cents: number) {
@@ -201,7 +239,7 @@ async function cardFacts(studioId: string) {
   return r.rows[0] as { attempts: number; accounts: number; cards: number };
 }
 
-async function chartIntact(s: PaymentScenario & { entryId: string }) {
+async function chartIntact(s: PaymentScenario & { sessionId: string; entryId: string }) {
   const r = await adminQuery(
     `select
        (select count(*)::int from public.sessions where id = $1) as sessions,
