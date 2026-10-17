@@ -5,7 +5,10 @@ import {
   type ChronologyEntry,
   type SettingChange,
 } from "@/lib/machines/capture-chronology";
-import { recordedUnitLabel } from "@/lib/machines/charting";
+import {
+  observationSourceLabel,
+  recordedUnitLabel,
+} from "@/lib/machines/charting";
 import type { RecordedReading } from "@/lib/machines/machine-queries";
 import { findMode, modeFields } from "@/lib/machines/profile-contract";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
@@ -282,6 +285,22 @@ export function MachineRecordedSetups({
                     {recordedUnitLabel(r.nativeUnit) ? (
                       <span className="ml-0.5 text-neutral-500">
                         {recordedUnitLabel(r.nativeUnit)}
+                      </span>
+                    ) : null}
+                    {/*
+                      AND HOW IT WAS OBTAINED (Codex, #860 4301669064). The
+                      source was stored, emitted and preserved, then rendered
+                      nowhere — so an ESTIMATED value looked exactly like one
+                      transcribed off the machine's display. Those are
+                      different clinical facts about the same number, and the
+                      one that matters more is the one the chart was hiding.
+                    */}
+                    {observationSourceLabel(r.observationSource) ? (
+                      <span
+                        className="ml-1 text-xs text-neutral-500"
+                        data-testid={`recorded-source-${r.fieldKey}`}
+                      >
+                        ({observationSourceLabel(r.observationSource)})
                       </span>
                     ) : null}
                   </li>

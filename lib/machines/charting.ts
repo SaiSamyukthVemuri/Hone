@@ -86,6 +86,47 @@ export function recordedUnitLabel(unit: string | null | undefined): string {
   return UNWRITTEN_UNITS.has(unit) ? "" : unit;
 }
 
+/**
+ * How a recorded reading was obtained, in words, for the clinical record.
+ *
+ * THE PROVENANCE WAS STORED AND NEVER SHOWN (Codex, #860 4301669064). The
+ * write path records `observation_source`, the SQL emits it and the query
+ * preserves it, but neither the recorded-history row nor the
+ * previous-treatment renderer consumed it - so an ESTIMATED value and a
+ * value transcribed off the machine's own display rendered identically on
+ * the chart. Those are different clinical facts about the same number.
+ *
+ * RENDERED FOR EVERY SOURCE, NOT ONLY A MISMATCH, and that is deliberate.
+ * Showing it only when it disagrees with the expectation would mean reading
+ * the expectation off TODAY'S contract, which is exactly what the finding
+ * says not to do: a contract may be republished at a new version, and a
+ * historical row's provenance must not change meaning because the model's
+ * current description did. The stored value is the only thing that is
+ * still true about how that reading was obtained.
+ *
+ * Null for a row written before the column existed; those render nothing
+ * rather than being backfilled with a guess.
+ */
+export function observationSourceLabel(
+  source: string | null | undefined,
+): string {
+  switch (source) {
+    case "machine-displayed":
+      return "from the machine display";
+    case "device-computed":
+      return "computed by the machine";
+    case "practitioner-entered":
+      return "entered by hand";
+    case "estimated":
+      return "estimated";
+    default:
+      // An unknown value is NOT invented into a label. A row from before the
+      // column existed, or one carrying a source this build does not know,
+      // says nothing rather than something wrong.
+      return "";
+  }
+}
+
 export type FieldDescriptor = {
   key: string;
   stageKey: string | null;

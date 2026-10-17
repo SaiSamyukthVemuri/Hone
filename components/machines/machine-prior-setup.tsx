@@ -1,5 +1,8 @@
 import { SectionLabel } from "@/components/ui/section-label";
-import { recordedUnitLabel } from "@/lib/machines/charting";
+import {
+  observationSourceLabel,
+  recordedUnitLabel,
+} from "@/lib/machines/charting";
 import type { RecordedReading } from "@/lib/machines/machine-queries";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
 import { findMode, modeFields } from "@/lib/machines/profile-contract";
@@ -262,6 +265,21 @@ export function MachinePriorSetup({
                   {recordedUnitLabel(r.nativeUnit) ? (
                     <span className="ml-0.5 text-neutral-500">
                       {recordedUnitLabel(r.nativeUnit)}
+                    </span>
+                  ) : null}
+                  {/*
+                    SAME RULE, THE OTHER SURFACE. Codex named the recorded
+                    history; this renderer dropped the source too, and here
+                    it is guidance she may reproduce — reproducing an
+                    ESTIMATE as though it were a machine reading is the
+                    error worth preventing.
+                  */}
+                  {observationSourceLabel(r.observationSource) ? (
+                    <span
+                      className="ml-1 text-xs text-neutral-500"
+                      data-testid={`prior-source-${r.fieldKey}`}
+                    >
+                      ({observationSourceLabel(r.observationSource)})
                     </span>
                   ) : null}
                 </li>

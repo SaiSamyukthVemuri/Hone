@@ -548,3 +548,70 @@ describe("MachinePriorSetup · the guidance read failed", () => {
     expect(html).not.toContain("machine-prior-setup-unavailable");
   });
 });
+
+// ---------------------------------------------------------------------------
+// MPX-03 · HOW THE READING WAS OBTAINED IS PART OF THE RECORD
+//
+// Codex #860 4301669064: `observation_source` was written, emitted by the SQL
+// and preserved by the query, and then consumed by NEITHER clinical surface.
+// So a value the practitioner ESTIMATED and a value transcribed off the
+// machine's own display rendered identically. They are different clinical
+// facts about the same number, and the weaker one is the one that was hidden.
+//
+// SHOWN FOR EVERY SOURCE, not only when it disagrees with the contract.
+// Deciding "disagrees" would mean reading the expectation off TODAY'S
+// contract, which is what the finding says not to do — a contract can be
+// republished at a new version, and a historical row's provenance must not
+// change meaning because the model's current description did.
+// ---------------------------------------------------------------------------
+describe("the recorded source is shown, not inferred", () => {
+  const sourced = (source: string | null): RecordedReading[] => [
+    {
+      ...reading({ recordedAt: "2026-10-16T10:00:00Z" }),
+      observationSource: source,
+    } as RecordedReading,
+  ];
+
+  it("an ESTIMATED value says so", () => {
+    const html = render({ readings: sourced("estimated") });
+    expect(html).toContain('data-testid="recorded-source-current"');
+    expect(html).toMatch(/estimated/i);
+  });
+
+  it("and is DISTINGUISHABLE from one read off the machine", () => {
+    // The whole finding in one assertion: before this, these two produced
+    // identical markup.
+    const estimated = render({ readings: sourced("estimated") });
+    const displayed = render({ readings: sourced("machine-displayed") });
+    expect(estimated).not.toBe(displayed);
+    expect(displayed).toMatch(/from the machine display/i);
+  });
+
+  it("a row from before the column existed invents nothing", () => {
+    // Null means "not known", and a backfilled guess in a clinical record is
+    // worse than a blank.
+    expect(render({ readings: sourced(null) })).not.toContain(
+      "recorded-source-current",
+    );
+  });
+
+  it("an UNKNOWN source renders nothing rather than something wrong", () => {
+    expect(render({ readings: sourced("telepathy") })).not.toContain(
+      "recorded-source-current",
+    );
+  });
+
+  it("PREVIOUS TREATMENT carries the same rule", () => {
+    // Codex named the recorded history. The guidance surface dropped it too,
+    // and there the stakes are reproduction: reproducing an ESTIMATE as
+    // though it were a machine reading is the error worth preventing.
+    const html = renderToStaticMarkup(
+      createElement(MachinePriorSetup, {
+        catalogue: CAT,
+        readings: sourced("estimated"),
+      }),
+    );
+    expect(html).toContain('data-testid="prior-source-current"');
+    expect(html).toMatch(/estimated/i);
+  });
+});

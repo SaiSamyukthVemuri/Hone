@@ -238,6 +238,24 @@ export function MachineFirstSetupConnected({
                   ...prev,
                   recordedSetup: fresh.readings,
                   recordedSetupUnavailable: false,
+                  // THE NAMES COME WITH THEM (Codex, #860 4301669061).
+                  //
+                  // Refreshing the captures and leaving the name map at its
+                  // pre-save snapshot left a capture saved on a unit the
+                  // loader had not already seen with NO physical machine
+                  // against it until a reload - and in a studio running two
+                  // units of one model, that attribution is the entry's
+                  // whole purpose.
+                  //
+                  // MERGED, NOT REPLACED, and that is not a detail: the
+                  // refresh re-reads only this BLOCK, while the loader's map
+                  // also names the next-visit guidance and an unusable
+                  // stored selection. Assigning `fresh.unitNames` would name
+                  // the new capture and silently un-name the prior setup
+                  // beside it - fixing one surface by breaking its
+                  // neighbour, which is how two of this lane's earlier
+                  // repairs went.
+                  unitNames: { ...prev.unitNames, ...fresh.unitNames },
                 }
               : { ...prev, recordedSetupUnavailable: true }
             : prev,

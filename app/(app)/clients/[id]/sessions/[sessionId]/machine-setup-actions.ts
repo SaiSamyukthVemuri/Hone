@@ -851,7 +851,33 @@ export async function readingsForBlockAction(input: {
   //
   // The caller decides what to do with a failure; this one's job is to stop
   // pretending there was none.
-  return got.ok ? { ok: true, readings: got.value } : { ok: false };
+  if (!got.ok) return { ok: false };
+
+  // AND THE UNIT NAMES FOR WHAT CAME BACK (Codex, #860 4301669061).
+  //
+  // The refresh used to return readings alone, so a capture saved against a
+  // unit that was not already in the loader's map arrived NAMELESS: the
+  // history showed a new entry with no physical machine against it until a
+  // reload. In a studio running two units of the same model that is the one
+  // thing the entry is there to tell her, and after switching units and
+  // saving again she has two unattributed captures.
+  //
+  // RESOLVED SERVER-SIDE for the same reason the loader does it: a RETIRED
+  // unit is excluded from `listStudioMachines` in SQL, so nothing on the
+  // client can name one, and a treatment recorded on a unit since taken out
+  // of service is exactly the case that must still name it.
+  const unitNames: Record<string, string> = {};
+  const ids = got.value
+    .map((r) => r.deviceId)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+  if (ids.length > 0) {
+    const named = await machinesByIds(db, scope.studioId, ids);
+    // A FAILED NAME LOOKUP IS NOT A FAILED READ. Losing the history is far
+    // worse than an unnamed unit, so the readings are returned either way
+    // and the caller MERGES, keeping whatever names it already had.
+    if (named.ok) for (const m of named.value) unitNames[m.deviceId] = m.displayName;
+  }
+  return { ok: true, readings: got.value, unitNames };
 }
 
 /**
@@ -863,7 +889,19 @@ export async function readingsForBlockAction(input: {
  * must never render as the first.
  */
 export type ReadingsRead =
-  | { ok: true; readings: RecordedReading[] }
+  | {
+      ok: true;
+      readings: RecordedReading[];
+      /**
+       * Recorded unit id -> the studio's own name, for the readings above.
+       *
+       * PARTIAL BY DESIGN, and the caller must MERGE rather than replace:
+       * this covers only the refreshed block, while the loader's map also
+       * names the next-visit guidance and an unusable stored selection.
+       * Replacing would name the new capture and un-name the prior setup.
+       */
+      unitNames: Record<string, string>;
+    }
   | { ok: false };
 
 /** The profiles a practitioner may pick in this studio right now. */

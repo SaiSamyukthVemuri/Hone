@@ -529,6 +529,45 @@ describe("switching machine or mode clears the collected draft", () => {
     expect(src).toMatch(/const draftFrozen = saveUnresolved/);
   });
 
+  it("the post-save refresh brings the UNIT NAMES with it", () => {
+    // THE P2 (Codex, #860 4301669061). The refresh replaced `recordedSetup`
+    // and left `unitNames` at its pre-save snapshot, so a capture saved
+    // against a unit the loader had not already seen arrived with NO
+    // physical machine against it until a reload. In a studio running two
+    // units of one model that attribution is the entry's whole purpose, and
+    // after switching units and saving again she has two unattributed
+    // captures.
+    const actions = read(SETUP_ACTIONS_SRC);
+    expect(
+      actions,
+      "the refresh action must resolve names server-side — only the server can see a RETIRED unit",
+    ).toMatch(/return \{ ok: true, readings: got\.value, unitNames \};/);
+    expect(actions).toMatch(/await machinesByIds\(db, scope\.studioId, ids\)/);
+    // A FAILED NAME LOOKUP IS NOT A FAILED READ: losing the history is far
+    // worse than an unnamed unit.
+    expect(
+      actions,
+      "a failed name lookup must not turn the whole read into a failure",
+    ).toMatch(/if \(named\.ok\) for \(const m of named\.value\)/);
+  });
+
+  it("and MERGES them, because the refresh only re-reads this block", () => {
+    // ASSERTED SEPARATELY AND ON PURPOSE. A plain assignment would satisfy
+    // "the refresh updates unitNames" while introducing a second defect:
+    // the loader's map also names the next-visit guidance and an unusable
+    // stored selection, neither of which the refresh re-reads, so replacing
+    // would name the new capture and silently UN-NAME the prior setup
+    // beside it.
+    const conn = read(CONN_SRC);
+    expect(conn).toMatch(
+      /unitNames: \{ \.\.\.prev\.unitNames, \.\.\.fresh\.unitNames \}/,
+    );
+    expect(
+      conn,
+      "a bare assignment would drop the names the refresh never re-reads",
+    ).not.toMatch(/unitNames: fresh\.unitNames\b/);
+  });
+
   it("DISMISSAL is frozen too, not just the payload", () => {
     // THE P2 (Codex, #860 4301633049). Cancel was `disabled={pending}`, so
     // the instant the lost response cleared `pending` it was live again —
@@ -914,9 +953,40 @@ describe("switching machine or mode clears the collected draft", () => {
     // installed an empty history over the real one and left the surface
     // marked available — the list that exists to prevent a second capture
     // simply vanished after a save.
+    // ASSERTED AS THE RULE, not as the type's current text. The first
+    // spelling of this pinned the whole union literally, so round 15 adding
+    // `unitNames` — a strictly RICHER success arm — reds a guard whose claim
+    // is untouched. That is the fifth time in this lane that a guard of mine
+    // has failed on a change that strengthened the thing it guards.
+    //
+    // What must be true: the result is DISCRIMINATED, the failure arm carries
+    // no readings, and every failure path returns it.
     const src = read(SETUP_ACTIONS_SRC);
-    expect(src).toMatch(/export type ReadingsRead =\s*\n\s*\| \{ ok: true; readings: RecordedReading\[\] \}\s*\n\s*\| \{ ok: false \};/);
-    expect(src).toMatch(/return got\.ok \? \{ ok: true, readings: got\.value \} : \{ ok: false \};/);
+    // EXTRACTED TO THE FAILURE ARM, which is the declaration's last line.
+    //
+    // Two wrong anchors before this one, both failing for reasons unrelated
+    // to the claim: `;` stopped inside the success arm once it gained a
+    // second field, and a blank-line anchor stopped at the JSDoc — because
+    // `read()` replaces comment lines with a space, so a documented type has
+    // "blank" lines in the middle of it. A guard's extraction is as capable
+    // of being wrong as the code it guards.
+    const union = src.match(
+      /export type ReadingsRead =([\s\S]*?\|\s*\{ ok: false \};)/,
+    );
+    expect(
+      union,
+      "no discriminated ReadingsRead with an `{ ok: false }` arm was found — either it is gone, or this guard is blind",
+    ).toBeTruthy();
+    expect(union![1], "the success arm must carry the readings").toMatch(
+      /ok: true;[\s\S]*readings: RecordedReading\[\]/,
+    );
+    expect(
+      union![1],
+      "the failure arm must not carry readings — that is the conflation itself",
+    ).not.toMatch(/ok: false;[^}]*readings/);
+
+    // AND EVERY FAILURE PATH USES IT: the query's, and not-signed-in.
+    expect(src).toMatch(/if \(!got\.ok\) return \{ ok: false \};/);
     // NOT SIGNED IN is a failure too, not an empty treatment.
     expect(src).toMatch(/if \(!scope\) return \{ ok: false \};/);
   });
