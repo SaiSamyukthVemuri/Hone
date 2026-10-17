@@ -72,12 +72,35 @@ describe("0231 portrait in the profile header: the Photos-tab trust boundary", (
     expect(helper).toMatch(/TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS/);
   });
 
+  it("signs the bounded derivative only AFTER the original, from the validated path (Codex P2 4302682032)", () => {
+    const original = helper.indexOf("storage.createSignedUrl(row.storage_path");
+    const derive = helper.indexOf("buildTreatmentImageThumbPath(row.storage_path)");
+    const thumb = helper.indexOf("storage.createSignedUrl(thumbPath");
+    expect(original).toBeGreaterThan(helper.indexOf("validateTreatmentImagePath({"));
+    expect(derive).toBeGreaterThan(original);
+    expect(thumb).toBeGreaterThan(derive);
+    expect(helper).toMatch(/return \{ url: data\.signedUrl, thumbUrl \};/);
+  });
+
   it("the profile header renders the portrait only when one was signed", () => {
     const page = readFileSync(join(ROOT, "app/(app)/clients/[id]/page.tsx"), "utf8");
     // Inside the page's one parallel read wave, never a serial await of its own.
     expect(page).toMatch(/portraitUrl,\n\s*\] = await Promise\.all\(\[/);
     expect(page).not.toMatch(/await signedClientPortraitUrl/);
     expect(page).toMatch(/\{portraitUrl && \(/);
-    expect(page).toMatch(/alt=\{`ID photo of \$\{client\.name\}`\}/);
+    expect(page).toMatch(
+      /<ClientPortrait url=\{portraitUrl\.url\} thumbUrl=\{portraitUrl\.thumbUrl\} clientName=\{client\.name\} \/>/,
+    );
+    expect(page).not.toMatch(/src=\{portraitUrl\}/);
+  });
+
+  it("the header avatar loads the derivative first and demotes to the original, never a broken image", () => {
+    const comp = readFileSync(join(ROOT, "app/(app)/clients/[id]/ClientPortrait.tsx"), "utf8");
+    expect(comp).toMatch(/^"use client";/);
+    expect(comp).toMatch(/const useThumb = Boolean\(thumbUrl\) && !thumbFailed;/);
+    expect(comp).toMatch(/src=\{\(useThumb \? thumbUrl : url\) \?\? url\}/);
+    expect(comp).toMatch(/if \(useThumb\) setThumbFailed\(true\);\s+else setBroken\(true\);/);
+    expect(comp).toMatch(/if \(broken\) return null;/);
+    expect(comp).toMatch(/alt=\{`ID photo of \$\{clientName\}`\}/);
   });
 });

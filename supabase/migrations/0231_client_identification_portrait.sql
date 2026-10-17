@@ -159,10 +159,15 @@ as $$
 declare
   v_studio uuid;
   v_pract  uuid;
+  v_id     uuid;
 begin
+  -- FOR UPDATE (Codex P2 4302682030): the studio the actor is authorized
+  -- against cannot change under us. A concurrent move waits for this
+  -- transaction, or this waits for it and then authorizes the NEW studio.
   select c.studio_id into v_studio
     from public.clients c
-   where c.id = p_client_id;
+   where c.id = p_client_id
+     for update;
 
   if v_studio is not null then
     select a.practitioner_id into v_pract
@@ -177,7 +182,14 @@ begin
   update public.clients c
      set portrait_image_id = p_image_id
    where c.id = p_client_id
-     and c.studio_id = v_studio;
+     and c.studio_id = v_studio
+  returning c.id into v_id;
+
+  -- Never report success for a write that did not happen.
+  if v_id is null then
+    raise exception 'That client is not available.'
+      using errcode = 'check_violation';
+  end if;
 
   return p_image_id;
 end;
