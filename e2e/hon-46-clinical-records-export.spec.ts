@@ -518,6 +518,57 @@ test("HON-46 journey: client record -> choose a date -> preview -> print, includ
   ]);
 });
 
+test("the export document makes no telemetry or third-party request, and none carries its URL (Codex P1 4303921817)", async ({
+  page,
+}) => {
+  await loginByMagicLink(page, fx.seed.ownerEmail);
+  type Seen = { url: string; referer: string | undefined };
+  const record = (into: Seen[]) => (r: import("@playwright/test").Request) =>
+    into.push({ url: r.url(), referer: r.headers()["referer"] });
+
+  // POSITIVE CONTROL: on an ordinary app page the recorder DOES see
+  // same-origin requests carrying the page URL as Referer, so the absence
+  // asserted below is observed, not assumed.
+  const control: Seen[] = [];
+  page.on("request", record(control));
+  await page.goto(`/clients/${fx.clientId}`);
+  await page.waitForLoadState("networkidle");
+  expect(
+    control.some((c) => c.referer?.includes(`/clients/${fx.clientId}`)),
+    "the recorder saw no Referer at all, so the check below would be vacuous",
+  ).toBe(true);
+
+  // The export, in a FRESH tab (same signed-in context) so no request from the
+  // previous document (unload beacons) can be attributed to it.
+  const tab = await page.context().newPage();
+  const seen: Seen[] = [];
+  tab.on("request", record(seen));
+  const exportPath = `/clients/${fx.clientId}/records/export`;
+  const res = await tab.goto(`${exportPath}?scope=day&day=${JOURNEY_DAY}`);
+  expect(res?.headers()["referrer-policy"]).toBe("no-referrer");
+  await expect(tab.getByTestId("export-session")).toHaveCount(2);
+  await tab.waitForLoadState("networkidle");
+  // SDK inits fire after hydration; give any of them time to show up.
+  await tab.waitForTimeout(3_000);
+
+  const origin = new URL(tab.url()).origin;
+  const web = seen.filter((r) => /^https?:/.test(r.url));
+  expect(web.length, "the inventory recorded nothing").toBeGreaterThan(0);
+  expect(
+    web.filter((r) => new URL(r.url).origin !== origin).map((r) => r.url),
+    "a third-party request from the export",
+  ).toEqual([]);
+  expect(
+    web.filter((r) => /^\/(ingest|monitoring|_vercel)(\/|$)/.test(new URL(r.url).pathname)).map((r) => r.url),
+    "a telemetry request from the export",
+  ).toEqual([]);
+  expect(
+    web.filter((r) => r.referer?.includes("/records/export")).map((r) => `${r.url} <- ${r.referer}`),
+    "a request from the export carried its URL as Referer",
+  ).toEqual([]);
+  await tab.close();
+});
+
 test("owner: one session is reachable from the audited range view and exports alone", async ({ page }) => {
   await loginByMagicLink(page, fx.seed.ownerEmail);
   await page.goto(`/clients/${fx.clientId}/records/export?scope=range&from=${DAY}&to=${OUTSIDE_DAY}`);

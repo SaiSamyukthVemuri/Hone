@@ -3,6 +3,7 @@ import type { NextConfig } from "next";
 import { buildGlobalSecurityHeaders, buildTokenRoutePrivacyHeaders,  } from "./lib/security/headers";
 import { TOKEN_ROUTE_PATTERNS } from "./lib/security/token-routes";
 import { localE2eBuildSentryOverrides } from "./lib/observability/e2e-build-sentry-overrides";
+import { RECORDS_EXPORT_HEADER_SOURCE } from "./lib/clinical-records/route";
 
 // PR #142. Token route privacy header prefixes. Listed once here
 // because two header blocks in next.config.ts reference the same
@@ -101,6 +102,16 @@ const nextConfig: NextConfig = {
         source,
         headers: TOKEN_ROUTE_PRIVACY_HEADERS,
       })),
+      // HON-46 (Codex P1 4303921817). The clinical-records export URL carries a
+      // client id and the selected dates; with the global
+      // strict-origin-when-cross-origin policy every SAME-ORIGIN request from
+      // that page (assets, /ingest, /monitoring) would carry it as Referer.
+      // Same privacy headers as the token routes: no-referrer, noindex.
+      // Declared after the global block so it overrides it.
+      {
+        source: RECORDS_EXPORT_HEADER_SOURCE,
+        headers: TOKEN_ROUTE_PRIVACY_HEADERS,
+      },
     ];
   },
 };

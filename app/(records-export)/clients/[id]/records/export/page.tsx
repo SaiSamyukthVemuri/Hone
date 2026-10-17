@@ -49,7 +49,9 @@ import {
 } from "@/lib/clinical-records/print-gate";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "Clinical records export" };
+// referrer: defence in depth beside the route's Referrer-Policy header
+// (next.config.ts): no request from this document carries its URL.
+export const metadata: Metadata = { title: "Clinical records export", referrer: "no-referrer" };
 
 type RawScope = { scope?: string; session?: string; day?: string; from?: string; to?: string };
 

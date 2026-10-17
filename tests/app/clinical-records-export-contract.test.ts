@@ -434,8 +434,29 @@ describe("HON-46 leaks nothing to logs or file names (#828)", () => {
 
   it("the printable title is fixed and carries no client name", () => {
     const src = code(FILES.page);
-    expect(src).toContain('export const metadata: Metadata = { title: "Clinical records export" };');
+    expect(src).toContain(
+      'export const metadata: Metadata = { title: "Clinical records export", referrer: "no-referrer" };',
+    );
     expect(src).not.toMatch(/generateMetadata/);
+  });
+
+  it("no client telemetry starts on the export, and nothing it requests carries its URL (Codex P1 4303921817)", () => {
+    // 1. Both SDK inits are skipped on the export document, via the CANONICAL
+    //    route predicate, never a hand-copied path.
+    const inst = code("instrumentation-client.ts");
+    expect(inst).toContain('import { isRecordsExportPath } from "@/lib/clinical-records/route";');
+    expect(inst).toMatch(/const TELEMETRY_OFF =\s*typeof window !== "undefined" && isRecordsExportPath\(window\.location\.pathname\);/);
+    expect(inst).toContain("if (!TELEMETRY_OFF) Sentry.init({");
+    expect(inst).toContain("if (!TELEMETRY_OFF) posthog.init(");
+    expect(inst.match(/\bSentry\.init\(/g) ?? []).toHaveLength(1);
+    expect(inst.match(/\bposthog\.init\(/g) ?? []).toHaveLength(1);
+    expect(inst).not.toContain("records/export");
+    // 2. The route's Referrer-Policy is no-referrer, from the same constant.
+    const config = code("next.config.ts");
+    expect(config).toContain('import { RECORDS_EXPORT_HEADER_SOURCE } from "./lib/clinical-records/route";');
+    expect(config).toMatch(/source: RECORDS_EXPORT_HEADER_SOURCE,\s*headers: TOKEN_ROUTE_PRIVACY_HEADERS,/);
+    // It is declared AFTER the global block, so it overrides it.
+    expect(config.indexOf("source: RECORDS_EXPORT_HEADER_SOURCE")).toBeGreaterThan(config.indexOf('source: "/:path*"'));
   });
 
   it("the page is dynamic, so it is never cached", () => {
