@@ -6,6 +6,7 @@ import Link from "next/link";
 import { PendingLink } from "@/components/pending-link";
 import { publishableKeyOk } from "@/lib/payments/payment-status-presenter";
 import { notFound } from "next/navigation";
+import { signedClientPortraitUrl } from "@/lib/images/client-portrait";
 import { createClient } from "@/lib/supabase/server";
 import {
   buildLastSessionSummary,
@@ -324,6 +325,7 @@ export default async function ClientCheatSheetPage({
     activeCard,
     importedMemory,
     portalAccessEvents,
+    portraitUrl,
   ] = await Promise.all([
     // PR #157: full appointment history joined to the linked session via the
     // PR #156 appointment_id FK. Rendered only by <ClientAppointmentTimeline>
@@ -407,6 +409,14 @@ export default async function ClientCheatSheetPage({
     isOverview
       ? getRecentPortalAccessEvents(studio.id, client.id, 5)
       : Promise.resolve([] as Awaited<ReturnType<typeof getRecentPortalAccessEvents>>),
+    // 0231: the identification portrait in the header (every tab), signed for
+    // 60 s; null when none is set or it cannot be signed. Depends only on
+    // (studio.id, client), so it belongs in this wave, not after it.
+    signedClientPortraitUrl({
+      studioId: studio.id,
+      clientId: client.id,
+      portraitImageId: client.portrait_image_id,
+    }),
   ]);
 
   const selfReportedFitzpatrick = submittedIntake
@@ -879,6 +889,17 @@ export default async function ClientCheatSheetPage({
         <div className="mt-2 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
+              {portraitUrl && (
+                // eslint-disable-next-line @next/next/no-img-element -- short-lived signed URL; next/image would re-host it
+                <img
+                  src={portraitUrl}
+                  alt={`ID photo of ${client.name}`}
+                  width={56}
+                  height={56}
+                  className="h-14 w-14 shrink-0 rounded-full object-cover ring-1 ring-neutral-200 dark:ring-neutral-700"
+                  data-testid="client-portrait"
+                />
+              )}
               <h1 className="break-words text-2xl font-semibold tracking-tight md:text-3xl">
                 {client.name}
               </h1>

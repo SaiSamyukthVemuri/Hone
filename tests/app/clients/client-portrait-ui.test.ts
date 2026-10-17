@@ -44,3 +44,40 @@ describe("0231 portrait UI", () => {
     expect(fn).toMatch(/"Could not update the ID photo\."/);
   });
 });
+
+describe("0231 portrait in the profile header: the Photos-tab trust boundary", () => {
+  const helper = readFileSync(join(ROOT, "lib/images/client-portrait.ts"), "utf8");
+
+  it("reads the row under RLS, scoped to studio + client + client-scope + unarchived", () => {
+    expect(helper).toMatch(/import "server-only";/);
+    expect(helper).toMatch(/const supabase = await createClient\(\);/);
+    for (const f of [
+      /\.eq\("id", input\.portraitImageId\)/,
+      /\.eq\("studio_id", input\.studioId\)/,
+      /\.eq\("client_id", input\.clientId\)/,
+      /\.is\("session_id", null\)/,
+      /\.is\("session_block_id", null\)/,
+      /\.is\("deleted_at", null\)/,
+    ]) {
+      expect(helper).toMatch(f);
+    }
+  });
+
+  it("validates the path BEFORE the admin client signs, with the shared 60 s TTL", () => {
+    const validate = helper.indexOf("validateTreatmentImagePath({");
+    const sign = helper.indexOf("createSignedUrl(");
+    expect(validate).toBeGreaterThan(-1);
+    expect(sign).toBeGreaterThan(validate);
+    expect(helper).toMatch(/if \(!ok\) return null;/);
+    expect(helper).toMatch(/TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS/);
+  });
+
+  it("the profile header renders the portrait only when one was signed", () => {
+    const page = readFileSync(join(ROOT, "app/(app)/clients/[id]/page.tsx"), "utf8");
+    // Inside the page's one parallel read wave, never a serial await of its own.
+    expect(page).toMatch(/portraitUrl,\n\s*\] = await Promise\.all\(\[/);
+    expect(page).not.toMatch(/await signedClientPortraitUrl/);
+    expect(page).toMatch(/\{portraitUrl && \(/);
+    expect(page).toMatch(/alt=\{`ID photo of \$\{client\.name\}`\}/);
+  });
+});
