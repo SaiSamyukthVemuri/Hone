@@ -456,15 +456,17 @@ describe("PR CI — path-aware lane selection", () => {
     ]) {
       expect(jobs, `${job} must still exist`).toContain(job);
     }
-    // Six gated lanes declare `needs: changes` + an `if:` on classifier output.
-    expect((CI.match(/^ {4}needs: changes$/gm) ?? []).length).toBe(6);
-    expect((CI.match(/^ {4}if: \$\{\{ needs\.changes\.outputs\./gm) ?? []).length).toBe(6);
+    // Seven gated lanes declare `needs: changes` + an `if:` on classifier output
+    // (the seventh is canonical-record, the docs-only production-record lane,
+    // #825 6215529089).
+    expect((CI.match(/^ {4}needs: changes$/gm) ?? []).length).toBe(7);
+    expect((CI.match(/^ {4}if: \$\{\{ needs\.changes\.outputs\./gm) ?? []).length).toBe(7);
   });
 
   it("the required browser check is a STABLE aggregator, not a dynamic shard name", () => {
     // Branch protection must never depend on "browser shard 1 (extended)".
     expect(CI).toMatch(/ {2}browser-e2e:\n {4}name: browser e2e \(local stack\)/);
-    expect(CI).toMatch(/needs: \[changes, browser-e2e-shard\]/);
+    expect(CI).toMatch(/needs: \[changes, browser-e2e-shard, canonical-record\]/);
     expect(CI).toMatch(/if: always\(\)/);
   });
 
@@ -1308,8 +1310,8 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   it("the checkout count across the workflow directory is the reviewed one", () => {
     expect(
       checkoutCount(WORKFLOWS),
-      "7 in ci.yml (the aggregator has none) + 1 in nightly.yml",
-    ).toBe(8);
+      "8 in ci.yml (the aggregator has none; canonical-record added by #825 6215529089) + 1 in nightly.yml",
+    ).toBe(9);
   });
 
   // -------------------------------------------------------------------------

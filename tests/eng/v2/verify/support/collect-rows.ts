@@ -4,7 +4,6 @@
 // same rows the real collector satisfies. Each check returns null when the row holds,
 // else a short reason. Expected outcomes come from §5.3/§5.4 alone.
 
-import path from "node:path";
 
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
@@ -12,7 +11,7 @@ import { POLICY } from "../../../../../scripts/eng/v2/adapter/internal/github/in
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
 import { classify } from "../../../../../scripts/classify-changes.mjs";
-import { BLOB_CI, BLOB_CLASSIFY, fakeTransport, goldenC, localFrom, malformFor, normalizeKinds, passKinds, type CWorld, type FakeOptions, type KeyVals } from "./collector";
+import { BLOB_CI, BLOB_CLASSIFY, fakeTransport, goldenC, historicalLocal, malformFor, normalizeKinds, passKinds, type CWorld, type FakeOptions, type KeyVals } from "./collector";
 import { clone, noThrow } from "./deep";
 import { PRODUCTION_REF, RUN_810, allGreenJobs, ownRun, sha40 } from "./world";
 
@@ -21,9 +20,9 @@ export interface CollectSut {
   createReaders: (opts: any) => any;
 }
 
-const ROOT = path.resolve(__dirname, "..", "..", "..", "..", "..");
 export const NOW = "2026-10-07T21:00:00Z";
-export const LOCAL = () => localFrom(ROOT, classify);
+// The recorded golden world's own local definition (see historicalLocal).
+export const LOCAL = () => historicalLocal(classify);
 
 export async function runWith(sut: CollectSut, w: CWorld, opts: FakeOptions = {}, extra: { now?: () => any; local?: any } = {}) {
   const fake = fakeTransport(w, opts);

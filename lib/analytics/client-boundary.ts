@@ -30,6 +30,7 @@
 // Pure module (no posthog-js import); unit-tested against event-shaped payloads.
 
 import { MARKETING_PAGES } from "@/lib/marketing/content";
+import { TOKEN_ROUTE_PREFIXES } from "@/lib/security/token-routes";
 
 // The exact canonical marketing surfaces, derived from the single registry the
 // sitemap and metadata also read. Analytics cannot drift from the site map.
@@ -38,15 +39,12 @@ export const MARKETING_ROUTES: ReadonlySet<string> = new Set(
 );
 
 // Token-bearing route prefixes. Any event on these is dropped; the token is
-// also redacted wherever it appears (defence in depth).
-export const TOKEN_PATH_PREFIXES = [
-  "/portal/verify/",
-  "/cancel/",
-  "/reschedule/",
-  "/manage/",
-  "/intake/",
-  "/calendar-feed/",
-];
+// also redacted wherever it appears (defence in depth). DERIVED from the
+// canonical registry (lib/security/token-routes.ts) so it cannot drift: the
+// hand-written copy here lacked /invitation (HIPAA-READY-01, #828).
+export const TOKEN_PATH_PREFIXES: readonly string[] = TOKEN_ROUTE_PREFIXES.map(
+  (prefix) => `${prefix}/`,
+);
 
 // Reviewed attribution query params retained on marketing URLs. Every other
 // query parameter is stripped.
