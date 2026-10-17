@@ -179,6 +179,14 @@ describe("THE GUARANTEE for encodings (ASCII percent-decoding to a fixed point)"
     expect(out).toBe(`{"clientId":"[id]","message":"bad%0Aforged%1B[31m%20x"}`);
   });
 
+  it("only the id span is replaced; every other escape is written back unchanged (Codex P2 4301902163)", () => {
+    const forged = `bad%22,%22event%22:%22success%22,%22id%22:%22${CLIENT}%22`;
+    const [out] = withoutRecordIds([forged]) as [string];
+    expect(out).toBe("bad%22,%22event%22:%22success%22,%22id%22:%22[id]%22");
+    const mixed = `/c/foo%40example.test/%36f1c2d3e%252D4a5b-4c6d-8e7f-90a1b2c3d4e5%3Fx`;
+    expect(withoutRecordIds([mixed])).toEqual(["/c/foo%40example.test/[id]%3Fx"]);
+  });
+
   it("tokens with % but no id keep their original encoding", () => {
     expect(withoutRecordIds(["100% done", "q=a%20b&r=%2Fx", "bad %zz escape"])).toEqual(["100% done", "q=a%20b&r=%2Fx", "bad %zz escape"]);
   });

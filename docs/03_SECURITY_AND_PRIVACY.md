@@ -113,7 +113,7 @@ Each React-tree token page also exports `metadata.robots = { index: false, follo
 ### Server logs carry no record ids (#828 G-26, slice 1)
 
 Server console output goes to Vercel runtime logs, a third party. `safeLog.error / warn / info` (`lib/logging/safe-log.ts`) replace every record id (a dashed UUID, including ids joined to letters or `_` and percent-encoded forms) with `[id]`. It covers strings, `Error` messages and stacks, and object keys and values. Nothing else changes, so event slugs and Postgres error codes stay greppable.
-- **Encoding guarantee:** no string or key, after ASCII percent-decoding to a fixed point, contains a UUID. A token is decoded at most 4 rounds; one still changing after that is replaced with `[Redacted]`. Out of scope: non-URL encodings (HTML entities, `\u` escapes, base64).
+- **Encoding guarantee:** no string or key, after ASCII percent-decoding to a fixed point, contains a UUID. A token is decoded at most 4 rounds; one still changing after that is replaced with `[Redacted]`. Decoding is for detection only: each match replaces its original range, and all other text, including other escapes, is written back unchanged. Out of scope: non-URL encodings (HTML entities, `\u` escapes, base64).
 - **Converted in slice 1:** the client, intake, session, clinical-note, portal-message, booking and manual-fee actions under `app/(app)`.
 - **Guard:** `tests/lib/logging/safe-log-call-sites.test.ts` fails if any converted file regains a raw `console` call, including bracket access or an alias.
 - **Still open:** the remaining directories, which later slices convert one at a time.
