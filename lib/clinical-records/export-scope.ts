@@ -112,7 +112,8 @@ export const EXPORT_EXCLUSIONS: readonly string[] = [
   "Consent forms",
   "Photos and treatment images",
   "Next-session planning notes",
-  "Deleted sessions and entries",
+  "Deleted sessions, settings blocks and entries",
+  "Laser treatment entries",
 ];
 
 // ---- Sources: exactly what the server query selects ------------------------
@@ -130,19 +131,67 @@ export type ExportSessionSource = {
   aftercare_and_risks_explained_at: string | null;
 };
 
+/**
+ * A settings block: where the current, area-first charting flow records the
+ * area, the machine settings, the structured probe and the per-area clinical
+ * observations (Codex P1 4301165385). Entries hang off a block by block_id.
+ */
+export type ExportBlockSource = {
+  id: string;
+  session_id: string;
+  sort_order: number | null;
+  block_name: string | null;
+  primary_area: string | null;
+  side: string | null;
+  custom_area_detail: string | null;
+  mode: string | null;
+  apilus_modality: string | null;
+  energy_level: string | number | null;
+  minutes_performed: number | null;
+  machine_frequency: string | null;
+  probe_label: string | null;
+  probe_type: string | null;
+  probe_size: string | null;
+  probe_lot_number: string | null;
+  numbing_status: string | null;
+  numbing_notes: string | null;
+  tolerance_rating: number | null;
+  reaction_type: string | null;
+  reaction_notes: string | null;
+  caution_note: string | null;
+  block_notes: string | null;
+  started_at: string | null;
+  ended_at: string | null;
+  created_at: string;
+};
+
 export type ExportEntrySource = {
   id: string;
   session_id: string;
+  block_id: string | null;
   area: string | null;
   areas: string[] | null;
   probe_type: string | null;
   probe_size: string | null;
   mode: string | null;
+  apilus_modality: string | null;
+  // Legacy generic readings (older charting).
   intensity: string | number | null;
   duration_seconds: number | null;
+  // Current readings.
+  energy_level: string | number | null;
+  machine_frequency: string | null;
+  thermolysis_intensity_percent: number | null;
+  thermolysis_duration_seconds: number | null;
+  galvanic_ma: number | null;
+  galvanic_duration_seconds: number | null;
+  galvanic_intensity_percent: number | null;
+  units_of_lye: number | null;
+  pulse_delay_seconds: number | null;
   minutes_performed: number | null;
   pulse_count: number | null;
   hairs_treated: number | null;
+  observation_chips: string[] | null;
   comments: string | null;
   created_at: string;
 };
@@ -159,6 +208,25 @@ export type ExportNoteSource = {
 
 // ---- The document -----------------------------------------------------------
 
+/** One labelled value, already formatted. Only present values are emitted. */
+export type Reading = { label: string; value: string };
+
+export type ExportedEntry = {
+  id: string;
+  areas: string[];
+  readings: Reading[];
+  observations: string[];
+  comments: string | null;
+};
+
+export type ExportedBlock = {
+  id: string;
+  title: string;
+  readings: Reading[];
+  notes: Reading[];
+  entries: ExportedEntry[];
+};
+
 export type ClinicalRecordsDocument = {
   sessions: Array<{
     id: string;
@@ -170,18 +238,10 @@ export type ClinicalRecordsDocument = {
     recordStatus: string | null;
     finalizedAt: string | null;
     aftercareExplainedAt: string | null;
-    entries: Array<{
-      id: string;
-      areas: string[];
-      probe: string | null;
-      mode: string | null;
-      intensity: string | null;
-      durationSeconds: number | null;
-      minutesPerformed: number | null;
-      pulseCount: number | null;
-      hairsTreated: number | null;
-      comments: string | null;
-    }>;
+    /** Settings blocks (current charting), each with the entries charted in it. */
+    blocks: ExportedBlock[];
+    /** Entries not attached to a block (older charting). */
+    entries: ExportedEntry[];
   }>;
   clinicalNotes: Array<{
     id: string;
@@ -194,19 +254,78 @@ export type ClinicalRecordsDocument = {
   }>;
 };
 
+function present(v: unknown): v is string | number {
+  return (typeof v === "string" && v.trim().length > 0) || (typeof v === "number" && Number.isFinite(v));
+}
+
+/** Allow-listed label/value pairs: a label is emitted only when its value exists. */
+function readings(pairs: Array<[string, unknown, string?]>): Reading[] {
+  const out: Reading[] = [];
+  for (const [label, value, unit] of pairs) {
+    if (present(value)) out.push({ label, value: unit ? `${value} ${unit}` : String(value) });
+  }
+  return out;
+}
+
+function exportEntry(e: ExportEntrySource): ExportedEntry {
+  return {
+    id: e.id,
+    areas: e.areas && e.areas.length > 0 ? [...e.areas] : e.area ? [e.area] : [],
+    readings: readings([
+      ["Mode", e.mode],
+      ["Apilus modality", e.apilus_modality],
+      ["Probe", [e.probe_type, e.probe_size].filter(Boolean).join(" ")],
+      ["Energy level", e.energy_level],
+      ["Machine frequency", e.machine_frequency],
+      ["Thermolysis intensity", e.thermolysis_intensity_percent, "%"],
+      ["Thermolysis duration", e.thermolysis_duration_seconds, "s"],
+      ["Galvanic current", e.galvanic_ma, "mA"],
+      ["Galvanic duration", e.galvanic_duration_seconds, "s"],
+      ["Galvanic intensity", e.galvanic_intensity_percent, "%"],
+      ["Units of lye", e.units_of_lye],
+      ["Pulse delay", e.pulse_delay_seconds, "s"],
+      ["Intensity", e.intensity],
+      ["Duration", e.duration_seconds, "s"],
+      ["Minutes performed", e.minutes_performed, "min"],
+      ["Pulses", e.pulse_count],
+      ["Hairs treated", e.hairs_treated],
+    ]),
+    observations: Array.isArray(e.observation_chips)
+      ? (e.observation_chips as unknown[]).filter((c): c is string => typeof c === "string" && c.trim().length > 0)
+      : [],
+    comments: e.comments,
+  };
+}
+
+function blockTitle(b: ExportBlockSource): string {
+  const area = [b.primary_area, b.side, b.custom_area_detail].filter((x) => present(x)).join(" · ");
+  return area || b.block_name || "Area not recorded";
+}
+
 export function buildClinicalRecordsDocument(input: {
   sessions: ReadonlyArray<ExportSessionSource>;
+  blocks?: ReadonlyArray<ExportBlockSource>;
   entries: ReadonlyArray<ExportEntrySource>;
   notes: ReadonlyArray<ExportNoteSource>;
   practitionerNameById: ReadonlyMap<string, string>;
 }): ClinicalRecordsDocument {
   const name = (id: string | null) => (id ? (input.practitionerNameById.get(id) ?? null) : null);
-  const entriesBySession = new Map<string, ExportEntrySource[]>();
+  const blocks = input.blocks ?? [];
+  const blockIds = new Set(blocks.map((b) => b.id));
+  const byCreated = <T extends { created_at: string }>(a: T, b: T) => a.created_at.localeCompare(b.created_at);
+
+  const entriesByBlock = new Map<string, ExportEntrySource[]>();
+  const looseBySession = new Map<string, ExportEntrySource[]>();
   for (const e of input.entries) {
-    const list = entriesBySession.get(e.session_id) ?? [];
-    list.push(e);
-    entriesBySession.set(e.session_id, list);
+    if (e.block_id && blockIds.has(e.block_id)) {
+      entriesByBlock.set(e.block_id, [...(entriesByBlock.get(e.block_id) ?? []), e]);
+    } else {
+      looseBySession.set(e.session_id, [...(looseBySession.get(e.session_id) ?? []), e]);
+    }
   }
+  const blocksBySession = new Map<string, ExportBlockSource[]>();
+  for (const b of blocks) blocksBySession.set(b.session_id, [...(blocksBySession.get(b.session_id) ?? []), b]);
+
   const sessions = [...input.sessions]
     .sort((a, b) => a.started_at.localeCompare(b.started_at))
     .map((s) => ({
@@ -219,20 +338,32 @@ export function buildClinicalRecordsDocument(input: {
       recordStatus: s.record_status,
       finalizedAt: s.finalized_at,
       aftercareExplainedAt: s.aftercare_and_risks_explained_at,
-      entries: (entriesBySession.get(s.id) ?? [])
-        .sort((a, b) => a.created_at.localeCompare(b.created_at))
-        .map((e) => ({
-          id: e.id,
-          areas: e.areas && e.areas.length > 0 ? [...e.areas] : e.area ? [e.area] : [],
-          probe: [e.probe_type, e.probe_size].filter(Boolean).join(" ") || null,
-          mode: e.mode,
-          intensity: e.intensity === null || e.intensity === undefined ? null : String(e.intensity),
-          durationSeconds: e.duration_seconds,
-          minutesPerformed: e.minutes_performed,
-          pulseCount: e.pulse_count,
-          hairsTreated: e.hairs_treated,
-          comments: e.comments,
+      blocks: [...(blocksBySession.get(s.id) ?? [])]
+        .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.created_at.localeCompare(b.created_at))
+        .map((b) => ({
+          id: b.id,
+          title: blockTitle(b),
+          readings: readings([
+            ["Mode", b.mode],
+            ["Apilus modality", b.apilus_modality],
+            ["Energy level", b.energy_level],
+            ["Machine frequency", b.machine_frequency],
+            ["Minutes performed", b.minutes_performed, "min"],
+            ["Probe", b.probe_label || [b.probe_type, b.probe_size].filter(Boolean).join(" ")],
+            ["Probe lot", b.probe_lot_number],
+            ["Numbing", b.numbing_status],
+            ["Tolerance", b.tolerance_rating],
+            ["Reaction", b.reaction_type],
+          ]),
+          notes: readings([
+            ["Numbing notes", b.numbing_notes],
+            ["Reaction notes", b.reaction_notes],
+            ["Caution", b.caution_note],
+            ["Notes", b.block_notes],
+          ]),
+          entries: [...(entriesByBlock.get(b.id) ?? [])].sort(byCreated).map(exportEntry),
         })),
+      entries: [...(looseBySession.get(s.id) ?? [])].sort(byCreated).map(exportEntry),
     }));
   const clinicalNotes = [...input.notes]
     .sort((a, b) => a.occurred_at.localeCompare(b.occurred_at))

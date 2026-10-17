@@ -26,6 +26,8 @@ import {
   parseExportScope,
   scopeAuditMetadata,
   type ClinicalRecordsDocument,
+  type ExportedEntry,
+  type Reading,
 } from "@/lib/clinical-records/export-scope";
 import {
   loadClinicalRecordsForExport,
@@ -64,6 +66,31 @@ const NOTE_KIND_LABEL: Record<string, string> = {
   consultation: "Consultation note",
   skin_hair_analysis: "Skin & hair analysis",
 };
+
+function ReadingList({ readings }: { readings: Reading[] }) {
+  if (readings.length === 0) return null;
+  return (
+    <p className="mt-1">
+      {readings.map((r) => `${r.label}: ${r.value}`).join(" · ")}
+    </p>
+  );
+}
+
+function EntryList({ entries }: { entries: ExportedEntry[] }) {
+  if (entries.length === 0) return null;
+  return (
+    <ul className="mt-1 flex flex-col gap-1 text-xs">
+      {entries.map((e) => (
+        <li key={e.id} data-testid="export-entry">
+          <span className="font-medium">{e.areas.join(", ") || "Area not recorded"}</span>
+          {e.readings.length > 0 ? ` · ${e.readings.map((r) => `${r.label}: ${r.value}`).join(" · ")}` : ""}
+          {e.observations.length > 0 ? ` · Observed: ${e.observations.join(", ")}` : ""}
+          {e.comments ? ` — ${e.comments}` : ""}
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 export default async function ClinicalRecordsExportPage({
   params,
@@ -226,26 +253,15 @@ export default async function ClinicalRecordsExportPage({
                     {s.aftercareExplainedAt && (
                       <p className="mt-1 text-[11px]">Risks explained and aftercare provided: {formatInstant(s.aftercareExplainedAt, tz)}</p>
                     )}
-                    {s.entries.length > 0 && (
-                      <ul className="mt-2 flex flex-col gap-1 text-xs">
-                        {s.entries.map((e) => (
-                          <li key={e.id} data-testid="export-entry">
-                            {[
-                              e.areas.join(", ") || "Area not recorded",
-                              e.probe,
-                              e.mode,
-                              e.intensity ? `intensity ${e.intensity}` : null,
-                              e.minutesPerformed != null ? `${e.minutesPerformed} min` : null,
-                              e.pulseCount != null ? `${e.pulseCount} pulses` : null,
-                              e.hairsTreated != null ? `${e.hairsTreated} hairs` : null,
-                            ]
-                              .filter(Boolean)
-                              .join(" · ")}
-                            {e.comments ? ` — ${e.comments}` : ""}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
+                    {s.blocks.map((b) => (
+                      <div key={b.id} className="mt-2 rounded border border-neutral-200 p-2 text-xs" data-testid="export-block">
+                        <p className="font-medium">{b.title}</p>
+                        <ReadingList readings={b.readings} />
+                        <ReadingList readings={b.notes} />
+                        <EntryList entries={b.entries} />
+                      </div>
+                    ))}
+                    <EntryList entries={s.entries} />
                   </li>
                 ))}
               </ul>

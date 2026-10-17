@@ -2,6 +2,7 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import {
   localDayBounds,
+  type ExportBlockSource,
   type ExportEntrySource,
   type ExportNoteSource,
   type ExportScope,
@@ -14,15 +15,20 @@ import {
 // the client profile guards this too; the page adds the owner-only gate on top.
 // Each select NAMES its columns: the export reads only what it shows. It never
 // reads client_personal_notes (private warnings, personal notes), never a
-// payment column, and never a deleted session or entry.
+// payment column, and never a deleted session, settings block or entry.
 //
 // Errors are reported as `{ ok: false }` with no message: a database error can
 // quote row data, and nothing here may reach a log or an error tracker.
 
 const SESSION_COLUMNS =
   "id, started_at, ended_at, modality, session_notes, performed_by_practitioner_id, practitioner_id, record_status, finalized_at, aftercare_and_risks_explained_at";
+// Current charting fields AND the legacy ones (Codex P1 4301165385): the
+// area-first flow records settings on session_blocks and readings on the newer
+// electrolysis_entries columns, while older charts used the generic ones.
+const BLOCK_COLUMNS =
+  "id, session_id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, machine_frequency, probe_label, probe_type, probe_size, probe_lot_number, numbing_status, numbing_notes, tolerance_rating, reaction_type, reaction_notes, caution_note, block_notes, started_at, ended_at, created_at";
 const ENTRY_COLUMNS =
-  "id, session_id, area, areas, probe_type, probe_size, mode, intensity, duration_seconds, minutes_performed, pulse_count, hairs_treated, comments, created_at";
+  "id, session_id, block_id, area, areas, probe_type, probe_size, mode, apilus_modality, intensity, duration_seconds, energy_level, machine_frequency, thermolysis_intensity_percent, thermolysis_duration_seconds, galvanic_ma, galvanic_duration_seconds, galvanic_intensity_percent, units_of_lye, pulse_delay_seconds, minutes_performed, pulse_count, hairs_treated, observation_chips, comments, created_at";
 const NOTE_COLUMNS = "id, kind, body, areas, occurred_at, practitioner_id, supersedes_note_id";
 
 /** Cap on sessions in one export; a range is already bounded to a year. */
@@ -33,6 +39,7 @@ export type ClinicalRecordsLoad =
       ok: true;
       value: {
         sessions: ExportSessionSource[];
+        blocks: ExportBlockSource[];
         entries: ExportEntrySource[];
         notes: ExportNoteSource[];
         practitionerNameById: Map<string, string>;
@@ -85,7 +92,7 @@ export async function loadClinicalRecordsForExport(args: {
     if (!only) {
       return {
         ok: true,
-        value: { sessions: [], entries: [], notes: [], practitionerNameById: new Map(), truncated: false },
+        value: { sessions: [], blocks: [], entries: [], notes: [], practitionerNameById: new Map(), truncated: false },
       };
     }
     const localDay = new Intl.DateTimeFormat("en-CA", {
@@ -98,7 +105,15 @@ export async function loadClinicalRecordsForExport(args: {
   }
 
   const sessionIds = sessions.map((s) => s.id);
-  const [entriesRes, notesRes, practitionersRes] = await Promise.all([
+  const [blocksRes, entriesRes, notesRes, practitionersRes] = await Promise.all([
+    sessionIds.length === 0
+      ? Promise.resolve({ data: [] as ExportBlockSource[], error: null })
+      : supabase
+          .from("session_blocks")
+          .select(BLOCK_COLUMNS)
+          .eq("studio_id", studioId)
+          .in("session_id", sessionIds)
+          .is("deleted_at", null),
     sessionIds.length === 0
       ? Promise.resolve({ data: [] as ExportEntrySource[], error: null })
       : supabase
@@ -116,7 +131,7 @@ export async function loadClinicalRecordsForExport(args: {
       .order("occurred_at", { ascending: true }),
     supabase.from("practitioners").select("id, display_name").eq("studio_id", studioId),
   ]);
-  if (entriesRes.error || notesRes.error || practitionersRes.error) return { ok: false };
+  if (blocksRes.error || entriesRes.error || notesRes.error || practitionersRes.error) return { ok: false };
 
   const practitionerNameById = new Map<string, string>();
   for (const p of (practitionersRes.data ?? []) as Array<{ id: string; display_name: string }>) {
@@ -126,6 +141,7 @@ export async function loadClinicalRecordsForExport(args: {
     ok: true,
     value: {
       sessions,
+      blocks: (blocksRes.data ?? []) as ExportBlockSource[],
       entries: (entriesRes.data ?? []) as ExportEntrySource[],
       notes: (notesRes.data ?? []) as ExportNoteSource[],
       practitionerNameById,

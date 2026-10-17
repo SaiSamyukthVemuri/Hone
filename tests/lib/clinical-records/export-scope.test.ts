@@ -7,6 +7,7 @@ import {
   localDayBounds,
   parseExportScope,
   scopeAuditMetadata,
+  type ExportBlockSource,
   type ExportEntrySource,
   type ExportNoteSource,
   type ExportSessionSource,
@@ -107,23 +108,82 @@ describe("buildClinicalRecordsDocument is an allow-list", () => {
     next_session_note: "SENTINEL-PLANNING",
     delete_reason: "SENTINEL-DELETE",
   } as unknown as ExportSessionSource;
+  // Current charting: a settings block with its structured probe and
+  // observations, and an entry charted in it with the newer readings.
+  const block = {
+    id: "b1",
+    session_id: "s1",
+    sort_order: 0,
+    block_name: null,
+    primary_area: "upper lip",
+    side: "left",
+    custom_area_detail: null,
+    mode: "blend",
+    apilus_modality: null,
+    energy_level: null,
+    minutes_performed: 15,
+    machine_frequency: "13.56",
+    probe_label: "Ballet F3 gold",
+    probe_type: "F",
+    probe_size: "3",
+    probe_lot_number: "LOT-7",
+    numbing_status: "none",
+    numbing_notes: null,
+    tolerance_rating: 4,
+    reaction_type: "mild erythema",
+    reaction_notes: "Settled in 10 min.",
+    caution_note: null,
+    block_notes: "Block note.",
+    started_at: null,
+    ended_at: null,
+    created_at: "2026-10-01T15:05:00Z",
+    delete_reason: "SENTINEL-DELETE",
+    private_warnings: PRIVATE,
+  } as unknown as ExportBlockSource;
   const entry = {
     id: "e1",
     session_id: "s1",
+    block_id: "b1",
     area: "upper lip",
     areas: null,
-    probe_type: "F",
-    probe_size: "3",
+    probe_type: null,
+    probe_size: null,
     mode: "blend",
-    intensity: 40,
+    apilus_modality: null,
+    intensity: null,
     duration_seconds: null,
-    minutes_performed: 15,
+    energy_level: null,
+    machine_frequency: null,
+    thermolysis_intensity_percent: 22,
+    thermolysis_duration_seconds: 4,
+    galvanic_ma: 0.3,
+    galvanic_duration_seconds: 6,
+    galvanic_intensity_percent: null,
+    units_of_lye: null,
+    pulse_delay_seconds: 1.5,
+    minutes_performed: null,
     pulse_count: 120,
     hairs_treated: 60,
+    observation_chips: ["good release", "minimal heat"],
     comments: "Good response.",
     created_at: "2026-10-01T15:10:00Z",
     private_warnings: PRIVATE,
     delete_reason: "SENTINEL-DELETE",
+  } as unknown as ExportEntrySource;
+  // Older charting: an entry with no block and only the legacy readings.
+  const legacy = {
+    id: "e0",
+    session_id: "s1",
+    block_id: null,
+    area: "chin",
+    areas: null,
+    probe_type: "F",
+    probe_size: "2",
+    mode: "thermolysis",
+    intensity: 40,
+    duration_seconds: 3,
+    comments: null,
+    created_at: "2026-10-01T15:01:00Z",
   } as unknown as ExportEntrySource;
   const note = {
     id: "n1",
@@ -138,21 +198,66 @@ describe("buildClinicalRecordsDocument is an allow-list", () => {
 
   const doc = buildClinicalRecordsDocument({
     sessions: [session],
-    entries: [entry],
+    blocks: [block],
+    entries: [entry, legacy],
     notes: [note],
     practitionerNameById: new Map([["p1", "Practitioner One"]]),
   });
 
-  it("keeps the clinical record", () => {
+  it("keeps the clinical record: current blocks and readings, and legacy entries", () => {
     expect(doc.sessions).toHaveLength(1);
-    expect(doc.sessions[0]).toMatchObject({ notes: "Clinical session note.", practitioner: "Practitioner One" });
-    expect(doc.sessions[0].entries[0]).toMatchObject({
-      areas: ["upper lip"],
-      probe: "F 3",
-      intensity: "40",
-      minutesPerformed: 15,
-      comments: "Good response.",
-    });
+    const s = doc.sessions[0];
+    expect(s).toMatchObject({ notes: "Clinical session note.", practitioner: "Practitioner One" });
+
+    // The settings block, with its structured probe, lot and observations.
+    expect(s.blocks).toHaveLength(1);
+    expect(s.blocks[0].title).toBe("upper lip · left");
+    expect(s.blocks[0].readings).toEqual(
+      expect.arrayContaining([
+        { label: "Mode", value: "blend" },
+        { label: "Machine frequency", value: "13.56" },
+        { label: "Minutes performed", value: "15 min" },
+        { label: "Probe", value: "Ballet F3 gold" },
+        { label: "Probe lot", value: "LOT-7" },
+        { label: "Tolerance", value: "4" },
+        { label: "Reaction", value: "mild erythema" },
+      ]),
+    );
+    expect(s.blocks[0].notes).toEqual([
+      { label: "Reaction notes", value: "Settled in 10 min." },
+      { label: "Notes", value: "Block note." },
+    ]);
+
+    // The entry charted in that block, with the CURRENT readings.
+    expect(s.blocks[0].entries).toHaveLength(1);
+    const e = s.blocks[0].entries[0];
+    expect(e.readings).toEqual(
+      expect.arrayContaining([
+        { label: "Thermolysis intensity", value: "22 %" },
+        { label: "Thermolysis duration", value: "4 s" },
+        { label: "Galvanic current", value: "0.3 mA" },
+        { label: "Galvanic duration", value: "6 s" },
+        { label: "Pulse delay", value: "1.5 s" },
+        { label: "Pulses", value: "120" },
+        { label: "Hairs treated", value: "60" },
+      ]),
+    );
+    expect(e.observations).toEqual(["good release", "minimal heat"]);
+    expect(e.comments).toBe("Good response.");
+    // Absent values are not emitted as empty labels.
+    expect(e.readings.map((r) => r.label)).not.toContain("Units of lye");
+
+    // The legacy entry (no block) keeps its generic readings, at session level.
+    expect(s.entries).toHaveLength(1);
+    expect(s.entries[0].areas).toEqual(["chin"]);
+    expect(s.entries[0].readings).toEqual(
+      expect.arrayContaining([
+        { label: "Probe", value: "F 2" },
+        { label: "Intensity", value: "40" },
+        { label: "Duration", value: "3 s" },
+      ]),
+    );
+
     expect(doc.clinicalNotes[0]).toMatchObject({ body: "Consultation body.", areas: ["chin"], isRevision: false });
   });
 
@@ -204,7 +309,7 @@ describe("auditThenLoad — audited before anything is read, fail closed", () =>
 describe("what the page says it leaves out (#828 F18/G-21)", () => {
   it("names private notes, payments, intake, consents and photos as excluded", () => {
     const text = EXPORT_EXCLUSIONS.join(" | ").toLowerCase();
-    for (const term of ["private warnings", "personal notes", "payment", "intake", "consent", "photos"]) {
+    for (const term of ["private warnings", "personal notes", "payment", "intake", "consent", "photos", "laser"]) {
       expect(text).toContain(term);
     }
   });

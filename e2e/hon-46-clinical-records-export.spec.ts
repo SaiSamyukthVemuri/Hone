@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { test, expect } from "@playwright/test";
 import { loginByMagicLink } from "./helpers/flows";
 import { markSentryEgress, readSentryEgress } from "./helpers/sentry-egress";
@@ -33,7 +34,16 @@ type Fixture = {
   seed: E2eSeed;
   clientId: string;
   sentinel: Record<
-    "session" | "entry" | "clinicalNote" | "privateWarning" | "personalNote" | "planning" | "deleted" | "outside",
+    | "session"
+    | "entry"
+    | "block"
+    | "probeLot"
+    | "clinicalNote"
+    | "privateWarning"
+    | "personalNote"
+    | "planning"
+    | "deleted"
+    | "outside",
     string
   >;
 };
@@ -53,15 +63,22 @@ test.describe.configure({ mode: "serial" });
 test.beforeAll(async () => {
   const seed = await seedE2eStudio();
   const run = seed.runId;
-  const [client] = await sql<{ id: string }>(
-    `select id from public.clients where studio_id = $1 and email = $2`,
-    [seed.studioId, seed.clientEmail],
-  );
+  // seedE2eStudio creates no client row (other specs create one by booking),
+  // so this spec inserts its own synthetic client.
+  const client = { id: randomUUID() };
+  await sql(`insert into public.clients (id, studio_id, name, email) values ($1, $2, $3, $4)`, [
+    client.id,
+    seed.studioId,
+    seed.clientName,
+    seed.clientEmail,
+  ]);
   const ownerId = await getOwnerPractitionerId(seed.studioId);
   const tz = await getStudioTimezone(seed.studioId);
   const sentinel = {
     session: `SESSION-NOTE-${run}`,
     entry: `ENTRY-COMMENT-${run}`,
+    block: `BLOCK-NOTE-${run}`,
+    probeLot: `LOT-${run}`,
     clinicalNote: `CLINICAL-NOTE-${run}`,
     privateWarning: `PRIVATE-WARNING-${run}`,
     personalNote: `PERSONAL-NOTE-${run}`,
@@ -79,9 +96,20 @@ test.beforeAll(async () => {
      values ($1, $2, $3, $3, 'electrolysis', $4, $5, $6, 12345) returning id`,
     [seed.studioId, client.id, ownerId, await at(DAY, "10:00"), sentinel.session, sentinel.planning],
   );
+  // CURRENT charting: a settings block with structured probe, lot and
+  // reaction, and an entry charted in it with the newer readings.
+  const [block] = await sql<{ id: string }>(
+    `insert into public.session_blocks
+       (studio_id, session_id, sort_order, primary_area, side, mode, probe_label, probe_lot_number,
+        reaction_type, tolerance_rating, block_notes)
+     values ($1, $2, 0, 'upper lip', 'left', 'blend', 'Ballet F3', $3, 'mild_redness', 4, $4) returning id`,
+    [seed.studioId, inScope.id, sentinel.probeLot, sentinel.block],
+  );
   await sql(
-    `insert into public.electrolysis_entries (session_id, area, comments) values ($1, 'upper lip', $2)`,
-    [inScope.id, sentinel.entry],
+    `insert into public.electrolysis_entries
+       (session_id, block_id, area, thermolysis_intensity_percent, pulse_delay_seconds, observation_chips, comments)
+     values ($1, $2, 'upper lip', 22, 1.5, '["good release"]'::jsonb, $3)`,
+    [inScope.id, block.id, sentinel.entry],
   );
   await sql(
     `insert into public.sessions
@@ -112,6 +140,17 @@ test("owner: the day's records appear; every excluded sentinel is absent from pa
   await loginByMagicLink(page, fx.seed.ownerEmail);
   const url = `/clients/${fx.clientId}/records/export?scope=day&day=${DAY}`;
 
+  // VERCEL TELEMETRY (Codex P1 4301165382, #828 G-26). Positive control first:
+  // an ordinary app page DOES load the Vercel scripts, so the check below can
+  // fail. Then the export document, entered by a full load, loads none.
+  const vercel: string[] = [];
+  page.on("request", (r) => {
+    if (r.url().includes("/_vercel/")) vercel.push(r.url());
+  });
+  await page.goto(`/clients/${fx.clientId}`);
+  await expect.poll(() => vercel.length, { timeout: 15_000 }).toBeGreaterThan(0);
+  vercel.length = 0;
+
   const res = await page.goto(url);
   expect(res?.status()).toBe(200);
   expect(res?.headers()["cache-control"] ?? "").toContain("no-store");
@@ -119,6 +158,22 @@ test("owner: the day's records appear; every excluded sentinel is absent from pa
   await expect(page.getByTestId("export-session")).toHaveCount(1);
   await expect(page.getByText(fx.sentinel.session)).toBeVisible();
   await expect(page.getByTestId("export-entry")).toContainText(fx.sentinel.entry);
+  // The CURRENT charting fields reach the document (Codex P1 4301165385).
+  const blockEl = page.getByTestId("export-block");
+  await expect(blockEl).toContainText("upper lip · left");
+  await expect(blockEl).toContainText("Probe: Ballet F3");
+  await expect(blockEl).toContainText(`Probe lot: ${fx.sentinel.probeLot}`);
+  await expect(blockEl).toContainText("Reaction: mild_redness");
+  await expect(blockEl).toContainText(fx.sentinel.block);
+  await expect(blockEl).toContainText("Thermolysis intensity: 22 %");
+  await expect(blockEl).toContainText("Pulse delay: 1.5 s");
+  await expect(blockEl).toContainText("Observed: good release");
+
+  // No Vercel script or beacon on the export document.
+  await page.waitForLoadState("networkidle");
+  expect(vercel, "the export loaded Vercel telemetry").toEqual([]);
+  expect(await page.evaluate(() => typeof (window as unknown as { va?: unknown }).va)).toBe("undefined");
+  expect(await page.evaluate(() => typeof (window as unknown as { si?: unknown }).si)).toBe("undefined");
   await expect(page.getByTestId("export-note")).toContainText(fx.sentinel.clinicalNote);
   await expect(page.getByRole("region", { name: "Not included" })).toContainText("Private warnings and personal notes");
 
