@@ -122,9 +122,12 @@ describe("ships closed, and one path to the real adapter (source guards)", () =>
   const strip = (s: string) => s.split("\n").filter((l) => !/^\s*(\/\/|\*)/.test(l)).join("\n");
 
   // git grep searches TRACKED files and exits 1 on no match; only that is "none".
+  // ALWAYS -a: lib/ops/redact.ts carries a deliberate NUL sentinel, so git
+  // treats it as binary, and -I (or a binary short-circuit) would silently
+  // skip it. A guard that cannot see a file is not a guard.
   function gitGrep(args: string[]): string[] {
     try {
-      return execFileSync("git", ["grep", ...args], { encoding: "utf8" }).split("\n").filter(Boolean);
+      return execFileSync("git", ["grep", "-a", ...args], { encoding: "utf8" }).split("\n").filter(Boolean);
     } catch (e) {
       if ((e as { status?: number }).status === 1) return [];
       throw e;
@@ -135,7 +138,7 @@ describe("ships closed, and one path to the real adapter (source guards)", () =>
     expect(gitGrep(["-l", "-e", SENDER_CONTROLS_LIVE_STUDIOS_ENV, "--", ".", ":!tests/**", ":!docs/**"])).toEqual(["lib/sms/sender-controls-live.ts"]);
     expect(
       // Comments may NAME the mode; no code, config or seed may SET it.
-      gitGrep(["-n", "-I", "-E", "HONE_SMS_SENDER_CONTROLS\\s*[=:]\\s*['\"]?live", "--", ".", ":!tests/**", ":!docs/**", ":!lib/sms/sender-controls-live.ts"]).filter(
+      gitGrep(["-n", "-E", "HONE_SMS_SENDER_CONTROLS\\s*[=:]\\s*['\"]?live", "--", ".", ":!tests/**", ":!docs/**", ":!lib/sms/sender-controls-live.ts"]).filter(
         (hit) => !/^[^:]+:\d+:\s*(\/\/|\*|#)/.test(hit),
       ),
     ).toEqual([]);
@@ -153,6 +156,13 @@ describe("ships closed, and one path to the real adapter (source guards)", () =>
     expect(actions.match(/providerFor\(ctx\)/g)).toHaveLength(4);
     expect(actions.match(/senderControlsFakeProvider\(/g)).toHaveLength(1);
     expect(actions.match(/liveSenderControlsProvider\(/g)).toHaveLength(1);
+  });
+
+  it("the grep sees binary-detected text files: lib/ops/redact.ts is scanned, not skipped", () => {
+    // If -a were dropped, git would skip this NUL-bearing file and every
+    // "nowhere in the repo" assertion above would be blind to it.
+    expect(gitGrep(["-l", "-e", "", "--", "lib/ops/redact.ts"])).toEqual(["lib/ops/redact.ts"]);
+    expect(gitGrep(["-c", "-e", "export", "--", "lib/ops/redact.ts"])[0]).toMatch(/^lib\/ops\/redact\.ts:[1-9]/);
   });
 
   it("every caller asks the gate about a studio: the live branch is per studio (Codex P1 4301418258)", () => {
