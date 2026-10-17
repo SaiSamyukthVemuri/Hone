@@ -1,6 +1,7 @@
 import { addDays, utcInstantFromLocal } from "@/lib/booking/tz";
 import { blockAreasLabel, type BlockArea } from "@/lib/sessions/block-areas";
 import { legacyBlockReactionLabel } from "@/lib/sessions/reaction-unified";
+import { hasStructuredReadings } from "@/lib/sessions/structured-readings";
 
 // ===========================================================================
 // HON-46 — what a per-client clinical-records export contains, as pure code.
@@ -304,6 +305,11 @@ function readings(pairs: Array<[string, unknown, string?]>): Reading[] {
 }
 
 function exportEntry(e: ExportEntrySource): ExportedEntry {
+  // STRUCTURED readings make the legacy generic intensity/duration stale: a
+  // legacy row edited through structured charting keeps the old pair beside
+  // the new fields. Suppressed by the SAME rule as the saved-record view
+  // (lib/sessions/structured-readings.ts; Codex P1 4304983088).
+  const legacyPair = !hasStructuredReadings(e);
   return {
     id: e.id,
     areas: e.areas && e.areas.length > 0 ? [...e.areas] : e.area ? [e.area] : [],
@@ -319,8 +325,8 @@ function exportEntry(e: ExportEntrySource): ExportedEntry {
       ["Galvanic duration", e.galvanic_duration_seconds, "s"],
       ["Units of lye", e.units_of_lye],
       ["Pulse delay", e.pulse_delay_seconds, "s"],
-      ["Intensity", e.intensity],
-      ["Duration", e.duration_seconds, "s"],
+      ["Intensity", legacyPair ? e.intensity : null],
+      ["Duration", legacyPair ? e.duration_seconds : null, "s"],
       ["Minutes performed", e.minutes_performed, "min"],
       ["Pulses", e.pulse_count],
       ["Hairs treated", e.hairs_treated],

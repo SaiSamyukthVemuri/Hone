@@ -84,6 +84,7 @@ declare
   v_key text;
   v_value jsonb;
   v_text text;
+  v_meta jsonb;
   v_id uuid;
 begin
   if v_uid is null then
@@ -151,6 +152,19 @@ begin
     raise exception 'a print must reference the preview it printed' using errcode = '22023';
   end if;
 
+  -- NORMALIZED SCOPE (Codex P1 4304947291). One canonical form is what is
+  -- stored AND what a print is compared against: ids lowercased (the UUID
+  -- check above accepts either case), dates already strict YYYY-MM-DD real
+  -- dates, and jsonb equality ignores key order. So an equivalent scope
+  -- matches and a different day, range or session never does.
+  v_meta := p_metadata;
+  if v_meta ? 'session_id' then
+    v_meta := jsonb_set(v_meta, '{session_id}', to_jsonb(lower(v_meta ->> 'session_id')));
+  end if;
+  if v_meta ? 'preview_audit_id' then
+    v_meta := jsonb_set(v_meta, '{preview_audit_id}', to_jsonb(lower(v_meta ->> 'preview_audit_id')));
+  end if;
+
   -- The studio is the CLIENT's; the actor is the caller's own active OWNER
   -- row in that studio. Nothing about either is taken from the arguments.
   select c.studio_id into v_studio from public.clients c where c.id = p_client_id;
@@ -174,12 +188,12 @@ begin
   -- PRINT_TOKEN_TTL_MS; HIPAA note N1).
   if p_action = 'clinical_records_printed' and not exists (
     select 1 from public.audit_logs a
-     where a.id = (p_metadata ->> 'preview_audit_id')::uuid
+     where a.id = (v_meta ->> 'preview_audit_id')::uuid
        and a.action = 'clinical_records_previewed'
        and a.entity_id = p_client_id
        and a.actor_id = v_actor
        and a.studio_id = v_studio
-       and a.metadata = (p_metadata - 'preview_audit_id')
+       and a.metadata = (v_meta - 'preview_audit_id')
        and a.created_at >= now() - interval '30 minutes'
        and a.created_at <= now()
   ) then
@@ -187,7 +201,7 @@ begin
   end if;
 
   insert into public.audit_logs (id, studio_id, actor_id, action, entity_type, entity_id, metadata)
-  values (coalesce(p_id, gen_random_uuid()), v_studio, v_actor, p_action, 'client', p_client_id, p_metadata)
+  values (coalesce(p_id, gen_random_uuid()), v_studio, v_actor, p_action, 'client', p_client_id, v_meta)
   returning id into v_id;
   return v_id;
 end;

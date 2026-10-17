@@ -485,6 +485,88 @@ describe("the RETIRED galvanic % never prints as a reading (Codex P1 4303753479)
   });
 });
 
+describe("structured readings suppress the stale legacy pair, by the saved view's rule (Codex P1 4304983088)", () => {
+  const entry = (id: string, over: Record<string, unknown>) =>
+    ({
+      id,
+      session_id: "s3",
+      block_id: null,
+      area: "chin",
+      areas: null,
+      mode: null,
+      intensity: null,
+      duration_seconds: null,
+      thermolysis_intensity_percent: null,
+      thermolysis_duration_seconds: null,
+      galvanic_ma: null,
+      galvanic_duration_seconds: null,
+      units_of_lye: null,
+      pulse_count: null,
+      created_at: `2026-10-01T15:0${id.length % 10}:00Z`,
+      ...over,
+    }) as unknown as ExportEntrySource;
+  // ONE session holding all three kinds.
+  const doc = buildClinicalRecordsDocument({
+    sessions: [
+      {
+        id: "s3",
+        started_at: "2026-10-01T15:00:00Z",
+        ended_at: null,
+        modality: "electrolysis",
+        session_notes: null,
+        performed_by_practitioner_id: null,
+        practitioner_id: null,
+        record_status: null,
+        finalized_at: null,
+        aftercare_and_risks_explained_at: null,
+      },
+    ],
+    entries: [
+      // A legacy entry: the generic pair only.
+      entry("a-legacy", { intensity: 40, duration_seconds: 3 }),
+      // A legacy entry LATER edited through structured charting: the old pair
+      // is still stored beside the new fields (update_block_with_entry, 0166).
+      entry("b-edited", { intensity: 40, duration_seconds: 3, thermolysis_intensity_percent: 22, thermolysis_duration_seconds: 4 }),
+      // A structured-only entry.
+      entry("c-structured", { galvanic_ma: 0.3, galvanic_duration_seconds: 6 }),
+    ],
+    notes: [],
+    practitionerNameById: new Map(),
+  });
+  const byId = new Map(doc.sessions[0].entries.map((e) => [e.id, e.readings]));
+  const labels = (id: string) => (byId.get(id) ?? []).map((r) => r.label);
+
+  it("a legacy-only entry still prints intensity and duration", () => {
+    expect(byId.get("a-legacy")).toEqual(
+      expect.arrayContaining([
+        { label: "Intensity", value: "40" },
+        { label: "Duration", value: "3 s" },
+      ]),
+    );
+  });
+  it("a legacy entry later edited with structured readings prints ONLY the structured set", () => {
+    expect(labels("b-edited")).toEqual(expect.arrayContaining(["Thermolysis intensity", "Thermolysis duration"]));
+    expect(labels("b-edited")).not.toContain("Intensity");
+    expect(labels("b-edited")).not.toContain("Duration");
+  });
+  it("a structured-only entry is unchanged", () => {
+    expect(byId.get("c-structured")).toEqual([
+      { label: "Galvanic current", value: "0.3 mA" },
+      { label: "Galvanic duration", value: "6 s" },
+    ]);
+  });
+  it("the export and the saved view use the SAME rule (one shared function)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const scope = readFileSync("lib/clinical-records/export-scope.ts", "utf8");
+    const view = readFileSync("components/entry-row.tsx", "utf8");
+    for (const src of [scope, view]) {
+      expect(src).toContain('import { hasStructuredReadings } from "@/lib/sessions/structured-readings";');
+    }
+    expect(view).toContain("const hasStructured = hasStructuredReadings(entry);");
+    expect(scope).toContain("const legacyPair = !hasStructuredReadings(e);");
+  });
+});
+
 describe("probe-lot confirmation is exported (Codex P2 4302799069)", () => {
   const lotOf = (over: Record<string, unknown>) =>
     buildClinicalRecordsDocument({

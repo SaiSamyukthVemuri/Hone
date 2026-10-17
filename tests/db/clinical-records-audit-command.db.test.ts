@@ -22,6 +22,52 @@ async function rowsFor(clientId: string) {
   ).rows;
 }
 
+describe("0233: a print's scope must EQUAL its preview's, compared NORMALIZED (Codex P1 4304947291)", () => {
+  it("mismatched scopes are refused; an equivalent scope (key order, id case) is accepted", async () => {
+    const s = await seedStudio("aud0233n");
+    const SESSION = randomUUID();
+    const preview = (m: unknown) =>
+      asUser(s.userId, (q) =>
+        q(`select public.record_clinical_records_audit($1, 'clinical_records_previewed', $2) as id`, [s.clientId, m]),
+      ).then((r) => r.rows[0].id as string);
+    const print = (m: unknown) =>
+      asUser(s.userId, (q) => q(`select public.record_clinical_records_audit($1, 'clinical_records_printed', $2) as id`, [s.clientId, m]));
+
+    const dayPreview = await preview({ scope: "day", day: "2026-09-15" });
+    const rangePreview = await preview({ scope: "range", from: "2026-09-01", to: "2026-09-30" });
+    const sessionPreview = await preview({ scope: "session", session_id: SESSION });
+
+    // REFUSED: day vs range, a different day, a different range, a different session.
+    for (const [why, m] of [
+      ["day print citing a range preview", { scope: "day", day: "2026-09-15", preview_audit_id: rangePreview }],
+      ["range print citing a day preview", { scope: "range", from: "2026-09-15", to: "2026-09-15", preview_audit_id: dayPreview }],
+      ["a different day", { scope: "day", day: "2026-09-16", preview_audit_id: dayPreview }],
+      ["a different range", { scope: "range", from: "2026-09-01", to: "2026-09-29", preview_audit_id: rangePreview }],
+      ["a different session", { scope: "session", session_id: randomUUID(), preview_audit_id: sessionPreview }],
+    ] as const) {
+      await expect(print(m), why).rejects.toSatisfy((e) => refused(e) === "22023");
+    }
+
+    // ACCEPTED: the same scope in an equivalent form.
+    //   * keys in a different order (jsonb equality is order-insensitive);
+    //   * the session id and the cited preview id in UPPER case (normalized).
+    await print({ preview_audit_id: dayPreview, day: "2026-09-15", scope: "day" });
+    await print({ to: "2026-09-30", preview_audit_id: rangePreview.toUpperCase(), from: "2026-09-01", scope: "range" });
+    await print({ scope: "session", session_id: SESSION.toUpperCase(), preview_audit_id: sessionPreview.toUpperCase() });
+
+    // What was STORED is the normalized form, so later comparisons are like for like.
+    const printed = await adminQuery(
+      `select metadata from public.audit_logs where entity_id = $1 and action = 'clinical_records_printed' order by created_at`,
+      [s.clientId],
+    );
+    expect(printed.rows.map((r) => r.metadata)).toEqual([
+      { scope: "day", day: "2026-09-15", preview_audit_id: dayPreview },
+      { scope: "range", from: "2026-09-01", to: "2026-09-30", preview_audit_id: rangePreview },
+      { scope: "session", session_id: SESSION, preview_audit_id: sessionPreview },
+    ]);
+  });
+});
+
 describe("0233: clinical-records audit rows are actor-bound", () => {
   it("a member's FORGED direct insert is refused: a clinical_records_* action, or another actor's id", async () => {
     const s = await seedStudio("aud0233a");

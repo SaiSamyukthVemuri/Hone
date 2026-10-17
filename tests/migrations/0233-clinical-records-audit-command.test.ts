@@ -79,7 +79,11 @@ describe("0233: value shapes, scope key sets and the print's preview reference (
   });
 
   it("the cited preview is of the same scope and within the token's 30 minutes (N1)", () => {
-    expect(CODE).toContain("and a.metadata = (p_metadata - 'preview_audit_id')");
+    expect(CODE).toContain("and a.metadata = (v_meta - 'preview_audit_id')");
+    // ...where v_meta is the NORMALIZED scope (Codex P1 4304947291), which is
+    // also what is stored, so preview and print compare like for like.
+    expect(CODE).toContain("v_meta := jsonb_set(v_meta, '{session_id}', to_jsonb(lower(v_meta ->> 'session_id')));");
+    expect(CODE).toContain("p_action, 'client', p_client_id, v_meta)");
     expect(CODE).toContain("and a.created_at >= now() - interval '30 minutes'");
   });
 
