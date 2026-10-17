@@ -7,6 +7,7 @@ import { assertSessionForClient } from "@/lib/sessions/session-lineage";
 import { findProbeOptionByKey } from "@/lib/probes";
 import { normalizeChips } from "@/lib/observation-chips";
 import { INITIAL_SAVE_UNRESOLVED } from "@/lib/machines/pending-setup";
+import { isDefinitiveDatabaseAnswer } from "@/lib/machines/save-attempt";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import { listStudioDevices } from "@/lib/machines/studio-devices";
@@ -1382,7 +1383,30 @@ export async function createTreatmentAreaWithEntryAction(
         })),
       })
     : await supabase.rpc("create_block_with_entry", blockArgs);
-  if (cmdErr) return { ok: false, error: mapBlockCommandError(cmdErr) };
+  if (cmdErr) {
+    // A TRANSPORT FAILURE HERE IS A LOST ANSWER TOO (Codex, #860 4301722740).
+    //
+    // If the connection to PostgREST drops after
+    // `create_block_with_initial_setup` commits, supabase-js can return the
+    // failure in `cmdErr` rather than throw. Treating it as definitive told
+    // the form the save had FAILED, so it neither froze the payload nor kept
+    // the retry key - and the area may exist. That is the same hole the
+    // post-commit READ failure below already closes, reached one statement
+    // earlier.
+    //
+    // ONLY ON THE withSetup PATH, for the same reason as below: that command
+    // binds a retry key, so pressing Save again unchanged is answered with
+    // the original result. `create_block_with_entry` binds none, so there is
+    // no safe retry to offer.
+    if (withSetup && !isDefinitiveDatabaseAnswer(cmdErr)) {
+      return {
+        ok: false as const,
+        error: INITIAL_SAVE_UNRESOLVED,
+        unresolved: true as const,
+      };
+    }
+    return { ok: false, error: mapBlockCommandError(cmdErr) };
+  }
 
   // THE TWO COMMANDS RETURN DIFFERENT SHAPES, and both are read rather than
   // one being assumed: `create_block_with_entry` returns a table, so PostgREST

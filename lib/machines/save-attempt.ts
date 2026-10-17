@@ -198,3 +198,45 @@ export function afterDraftChanged(state: SaveState): SaveState {
 export function afterRecordAnother(state: SaveState): SaveState {
   return { ...initialSaveState(), captures: state.captures };
 }
+
+/**
+ * Did the DATABASE answer, or did we never hear back?
+ *
+ * THE DEFECT THIS EXISTS FOR (Codex, #860 4301722737, 4301722740). A lost
+ * response is not always a thrown exception: when the connection to PostgREST
+ * drops AFTER the command commits, supabase-js can report the transport
+ * failure in the returned `error` field instead of rejecting the promise -
+ * `lib/booking/queries.ts` already records that it surfaces as
+ * "TypeError: fetch failed". Both machine save paths treated every `error` as
+ * a definitive refusal, which unfreezes the draft and releases the retry key.
+ * An edit then mints a new key, and if the first attempt had committed, the
+ * next save appends a DUPLICATE IMMUTABLE capture - the exact outcome the
+ * whole retry-key mechanism exists to prevent, reached through the one error
+ * shape nobody was classifying.
+ *
+ * THE RULE: an error is a definitive answer only if it demonstrably came FROM
+ * the database or from PostgREST. A Postgres error carries a five-character
+ * SQLSTATE (`23505`, `P0001`, `42501`); PostgREST's own errors carry a
+ * `PGRST...` code. Anything else - an empty code, a missing one, a bare
+ * `TypeError` - means the request's fate is UNKNOWN.
+ *
+ * IT FAILS IN THE SAFE DIRECTION, and that asymmetry is deliberate.
+ *   * A genuine refusal misread as unknown costs one redundant retry: the
+ *     retry is answered with the same refusal, which carries a SQLSTATE, and
+ *     the state machine then unfreezes normally. It self-corrects.
+ *   * An unknown outcome misread as a refusal costs a DUPLICATE CLINICAL
+ *     RECORD, which is immutable and indistinguishable from a real
+ *     mid-treatment change.
+ * So anything not provably from the database is treated as unknown.
+ */
+export function isDefinitiveDatabaseAnswer(
+  error: { code?: string | null } | null | undefined,
+): boolean {
+  const code = error?.code?.trim() ?? "";
+  if (code === "") return false;
+  // SQLSTATE: exactly five characters, digits and uppercase letters.
+  if (/^[0-9A-Z]{5}$/.test(code)) return true;
+  // PostgREST's own error codes mean the request reached PostgREST and was
+  // answered by it, which is equally definitive.
+  return code.startsWith("PGRST");
+}

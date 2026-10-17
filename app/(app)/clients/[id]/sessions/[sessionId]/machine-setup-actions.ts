@@ -392,7 +392,7 @@ export type ActionResult =
   | { ok: true }
   | {
       ok: false;
-      code: "unauthenticated" | "rejected" | "not_persisted";
+      code: "unauthenticated" | "rejected" | "unknown" | "not_persisted";
       error: string;
     };
 
@@ -798,7 +798,13 @@ export async function recordSetupSubmissionAction(input: {
     groups,
   });
   if (!out.ok) {
-    return { ok: false, code: "rejected", error: out.error };
+    // UNKNOWN IS NOT REJECTED. Collapsing the two here would discard the
+    // distinction the query just preserved, one layer above it.
+    return {
+      ok: false,
+      code: out.unresolved ? "unknown" : "rejected",
+      error: out.error,
+    };
   }
   return {
     ok: true,

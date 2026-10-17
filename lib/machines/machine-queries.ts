@@ -1,3 +1,4 @@
+import { isDefinitiveDatabaseAnswer } from "./save-attempt";
 import type { ReadingValue } from "./profile-contract";
 import type { StudioDevice } from "./selection";
 
@@ -22,7 +23,19 @@ import type { StudioDevice } from "./selection";
  * database re-checks, never a claim this layer is making.
  */
 
-export type MachineDbError = { message: string } | null;
+export type MachineDbError = {
+  message: string;
+  /**
+   * The SQLSTATE or PostgREST code, when the request reached one of them.
+   *
+   * Carried so a caller can tell a DEFINITIVE database answer from a
+   * transport failure that supabase-js reported in `error` rather than by
+   * rejecting (Codex, #860 4301722737). Optional because a transport
+   * failure is exactly the case that has none - see
+   * `isDefinitiveDatabaseAnswer`.
+   */
+  code?: string | null;
+} | null;
 
 export type MachineDb = {
   rpc: (
@@ -103,7 +116,19 @@ export type MachineDb = {
 
 export type MachineOutcome<T> =
   | { ok: true; value: T }
-  | { ok: false; error: string };
+  | {
+      ok: false;
+      error: string;
+      /**
+       * The request's fate is UNKNOWN - it may have committed.
+       *
+       * Set only where the distinction is load-bearing (a write carrying a
+       * retry key). Absent means the caller has no reason to treat the
+       * failure as anything but final; it is never a claim that the outcome
+       * WAS definitive.
+       */
+      unresolved?: boolean;
+    };
 
 function fail(error: MachineDbError, fallback: string): string {
   return error?.message?.trim() || fallback;
@@ -504,7 +529,19 @@ export async function recordSetupSubmission(
     p_client_id: input.clientId,
   });
   if (error) {
-    return { ok: false, error: fail(error, "Could not save those settings.") };
+    // A TRANSPORT FAILURE IS NOT A REFUSAL (Codex, #860 4301722737).
+    //
+    // When the connection drops AFTER the command commits, supabase-js can
+    // report it here in `error` rather than rejecting the promise. Returning
+    // a plain failure told the entry the save was REFUSED, which unfreezes
+    // the draft and releases the retry key; the next save mints a new key
+    // and appends a DUPLICATE immutable capture. The throw path was already
+    // handled - this is the same lost response wearing the other shape.
+    return {
+      ok: false,
+      error: fail(error, "Could not save those settings."),
+      unresolved: !isDefinitiveDatabaseAnswer(error),
+    };
   }
   // SHAPE-CHECKED RATHER THAN CAST. The command returns a jsonb object; a
   // deployment where the migration has not been applied, or an older function

@@ -289,8 +289,22 @@ export function MachinePriorSetup({
         </div>
       ))}
 
+      {/*
+        ONE DATE, ONE TIMEZONE (Codex, #860 4301722743).
+
+        This footer formatted the instant with `toISOString()` while the
+        heading above used `toLocaleDateString()`. For a capture near
+        midnight UTC a practitioner in a negative offset read "Oct 16, 2026"
+        in the heading and "Recorded 2026-10-17" directly beneath it, for ONE
+        setup — which reads as two visits.
+
+        It reuses the heading's own derived value rather than formatting a
+        second time, so the two cannot drift apart again. That also removes a
+        latent throw: `new Date(invalid).toISOString()` raises a RangeError,
+        where the shared value is simply null.
+      */}
       <p className="text-xs text-neutral-500">
-        Recorded {new Date(first.recordedAt).toISOString().slice(0, 10)}
+        {recordedOn ? `Recorded ${recordedOn}` : "Recorded earlier"}
         {historical
           ? ". The field contract has changed since, so the recorded keys are shown rather than today's labels."
           : "."}

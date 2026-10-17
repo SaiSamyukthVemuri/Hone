@@ -529,6 +529,57 @@ describe("switching machine or mode clears the collected draft", () => {
     expect(src).toMatch(/const draftFrozen = saveUnresolved/);
   });
 
+  it("a TRANSPORT failure on the settings save is unknown, not refused", () => {
+    // THE P2 (Codex, #860 4301722737). A dropped connection after the
+    // command commits can arrive in PostgREST's `error` rather than as a
+    // throw. The throw path was already handled; this is the same lost
+    // response wearing the other shape, and it was being converted into an
+    // ordinary refusal — which unfreezes the draft, releases the retry key,
+    // and lets the next save append a duplicate immutable capture.
+    //
+    // THREE LINKS, ASSERTED SEPARATELY, because the classifier is worthless
+    // if any one of them drops the distinction. That is not hypothetical:
+    // four defects in this lane were a value that existed, was correct, and
+    // was never forwarded.
+    const q = read(QUERIES_SRC);
+    expect(
+      q,
+      "the query must mark a non-definitive error as unresolved",
+    ).toMatch(/unresolved: !isDefinitiveDatabaseAnswer\(error\)/);
+
+    const actions = read(SETUP_ACTIONS_SRC);
+    expect(
+      actions,
+      "the action must forward it rather than collapsing it to `rejected`",
+    ).toMatch(/code: out\.unresolved \? "unknown" : "rejected"/);
+
+    const entry = read(ENTRY_SRC);
+    expect(
+      entry,
+      "the entry must route the unknown code to the same outcome a throw produces",
+    ).toMatch(/out\.code === "unknown"/);
+    expect(entry).toMatch(/\{ kind: "unknown" \}/);
+  });
+
+  it("and so is a transport failure on the INITIAL save", () => {
+    // The same rule one command over (Codex, #860 4301722740), and the same
+    // unresolved result the post-commit READ failure already returns — the
+    // two are indistinguishable to the practitioner and must behave alike.
+    const src = read(ACTIONS_SRC);
+    expect(src).toMatch(
+      /if \(withSetup && !isDefinitiveDatabaseAnswer\(cmdErr\)\) \{/,
+    );
+    // WITHSETUP ONLY, and that condition is load-bearing rather than
+    // defensive: `create_block_with_entry` binds no retry key, so there is
+    // no safe retry to offer and freezing would strand her.
+    expect(
+      src,
+      "the unresolved path must stay behind withSetup",
+    ).toMatch(
+      /if \(withSetup && !isDefinitiveDatabaseAnswer\(cmdErr\)\) \{[\s\S]{0,400}?unresolved: true as const/,
+    );
+  });
+
   it("the post-save refresh brings the UNIT NAMES with it", () => {
     // THE P2 (Codex, #860 4301669061). The refresh replaced `recordedSetup`
     // and left `unitNames` at its pre-save snapshot, so a capture saved

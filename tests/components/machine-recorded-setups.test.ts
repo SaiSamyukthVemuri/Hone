@@ -615,3 +615,58 @@ describe("the recorded source is shown, not inferred", () => {
     expect(html).toMatch(/estimated/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// MPX-03 · THE SAME SETUP IS NOT TWO DIFFERENT DAYS
+//
+// Codex #860 4301722743: the heading formatted `recordedAt` with
+// `toLocaleDateString` and the footer with `toISOString()`. For a capture
+// near midnight UTC a practitioner in a negative offset saw "Oct 16, 2026"
+// above and "Recorded 2026-10-17" beneath it, for ONE setup — which reads as
+// two visits on a clinical record.
+// ---------------------------------------------------------------------------
+describe("the prior-setup date agrees with itself", () => {
+  const nearMidnightUtc = "2026-10-17T02:30:00Z";
+
+  const renderAt = (recordedAt: string) =>
+    renderToStaticMarkup(
+      createElement(MachinePriorSetup, {
+        catalogue: CAT,
+        readings: [
+          { ...reading({ recordedAt }), observationSource: null } as RecordedReading,
+        ],
+      }),
+    );
+
+  it("shows the heading's date in the footer, not a second formatting of it", () => {
+    // ASSERTED AS AGREEMENT, not as a literal date. The test process's
+    // timezone decides what the correct string IS, so pinning one would
+    // either encode this machine's offset or silently pass everywhere. What
+    // must hold in every timezone is that the two agree.
+    const html = renderAt(nearMidnightUtc);
+    const heading = html.match(
+      /data-testid="prior-setup-when"[^>]*>([^<]+)</,
+    );
+    expect(heading, "the heading date was not rendered").toBeTruthy();
+    const shown = heading![1]!.trim();
+    expect(shown.length).toBeGreaterThan(0);
+    expect(
+      html,
+      `the footer must repeat the heading's date (${shown}), not format the instant again`,
+    ).toContain(`Recorded ${shown}`);
+  });
+
+  it("and the footer no longer prints a raw ISO date", () => {
+    // The specific shape the defect produced. Kept as its own assertion so a
+    // regression names itself rather than failing the agreement test with a
+    // confusing diff.
+    expect(renderAt(nearMidnightUtc)).not.toMatch(/Recorded \d{4}-\d{2}-\d{2}/);
+  });
+
+  it("an unreadable timestamp renders a phrase, not a crash", () => {
+    // `new Date(invalid).toISOString()` throws a RangeError; the shared
+    // value is simply null. This is latent-throw cover, not cosmetics.
+    expect(() => renderAt("not-a-date")).not.toThrow();
+    expect(renderAt("not-a-date")).toContain("Recorded earlier");
+  });
+});

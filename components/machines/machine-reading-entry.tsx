@@ -96,6 +96,16 @@ export type MachineReadingEntryProps = {
   }) => Promise<{
     ok: boolean;
     error?: string;
+    /**
+     * WHY it failed, where the distinction changes what happens next.
+     *
+     * `"unknown"` means the write MAY have committed - a transport failure
+     * that arrived in PostgREST's `error` rather than as a throw. It must
+     * reach the same outcome a throw does, or the draft unfreezes, the
+     * retry key is released, and the next save appends a duplicate
+     * immutable capture (Codex, #860 4301722737).
+     */
+    code?: string;
     /** Captures the submission holds, as the database counted them. */
     captures?: number;
     written?: number;
@@ -290,7 +300,13 @@ export function MachineReadingEntry({
             readings: out.written ?? 0,
             reused: out.reused === true,
           }
-        : { kind: "refused", error: out.error };
+        : out.code === "unknown"
+          ? // THE SAME OUTCOME AS A THROW, because it is the same event: the
+            // write may have committed and only the answer was lost. This
+            // keeps the key and freezes the draft, which is what makes
+            // pressing Save again safe (Codex, #860 4301722737).
+            { kind: "unknown" }
+          : { kind: "refused", error: out.error };
     } catch {
       // THE TRANSPORT FAILED, SO THE ANSWER IS UNKNOWN - not failed. The write
       // may well have committed. This used to end in "reload the chart to see
