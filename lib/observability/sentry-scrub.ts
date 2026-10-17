@@ -101,13 +101,15 @@ const SUPABASE_TOKEN_RE =
 // own trace_id, span_id and event_id are dashless hex and stay intact for
 // correlation. "[id]" mirrors Next's route-template syntax, so
 // "/clients/<uuid>" becomes "/clients/[id]" and events still group by route.
-// Bounded by "not a hex digit" rather than \b (Codex P2 4301012678): \b treats
-// "_", letters and digits as word characters, so a UUID inside a compound
-// identifier ("hone_booking_<uuid>", "client_<uuid>") would slip through.
+// NO boundary at all. \b (Codex P2 4301012678) let a UUID inside a compound
+// identifier ("hone_booking_<uuid>") slip through, and a "not a hex digit"
+// boundary (Codex P1 4301586679, on #903) still let one glued to hex letters
+// ("abc<uuid>") through. The dashes make it a UUID, so dashless hex (Sentry's
+// own ids, hashes) is never matched.
 // A separator may be percent-encoded ("%2D", Codex P2 4301149388): browsers
 // keep "%2D" in a serialized URL, and it decodes straight back to the id.
 const RECORD_ID_RE =
-  /(?<![0-9a-f])[0-9a-f]{8}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{12}(?![0-9a-f])/gi;
+  /[0-9a-f]{8}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{12}/gi;
 const RECORD_ID_PLACEHOLDER = "[id]";
 // Loose phone matcher: a run of 9+ digits with optional +, spaces, (), ., -.
 // Bounded so it doesn't swallow adjacent digits of an unrelated token.

@@ -151,7 +151,7 @@ Clients, sessions, appointments, intake forms and studios are addressed by UUID,
   - Anything deeper than its depth bound is replaced with `[Redacted]`, never sent unscrubbed.
   - `sdkProcessingMetadata`, the SDK's internal processing state, is not walked; captured scopes and request metadata are kept by reference. The one part of it that IS transmitted, the dynamic sampling context (copied into the envelope's `trace` header), is swept.
 - **Defense in depth, not the guarantee:** the per-field passes. `redactString` also replaces UUIDs in each field it scrubs, **after** token-route canonicalization, so token routes still read `[Redacted]` and `/clients/<uuid>` becomes `/clients/[id]`, Next's route-template form, so events still group by route. Those passes also:
-  - match compound identifiers (`hone_booking_<uuid>`; the boundary is "not a hex digit", not `\b`) and `%2D`-encoded hyphens;
+  - match compound identifiers (`hone_booking_<uuid>`, or glued to hex letters as in `abc<uuid>`: the pattern has no boundary, and its dashes are what make it a UUID) and `%2D`-encoded hyphens;
   - scrub object keys, so `{ [clientId]: "failed" }` becomes `{ "[id]": "failed" }`, with `#2` and `#3` on collisions so no value is dropped (own keys only);
   - deep-scrub `logentry` and custom `fingerprint` strings;
   - apply an id-only scrub to structured exception payloads and threads.

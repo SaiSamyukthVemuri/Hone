@@ -239,6 +239,12 @@ describe("G-25: ids inside compound identifiers (Codex P2 4301012678)", () => {
     expect(out.message).toBe("load [id] failed");
   });
 
+  it("removes a UUID glued to hex letters on either side (Codex P1 4301586679, on #903)", () => {
+    const out = scrubErrorEvent(errorEvent({ message: `abc${CLIENT} ${SESSION}fed deadbeef${APPT}cafe` }));
+    expectNoRecordId(out, "hex-adjacent");
+    expect(out.message).toBe("abc[id] [id]fed deadbeef[id]cafe");
+  });
+
   it("does not touch a longer hex run that is not a UUID", () => {
     const notUuid = `a${CLIENT.replace(/-/g, "")}ff`; // dashless hex, like Sentry's own ids
     const out = scrubErrorEvent(errorEvent({ message: `trace ${notUuid}` }));
