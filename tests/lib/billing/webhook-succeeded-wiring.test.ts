@@ -99,6 +99,7 @@ function baseAttempt(status: string): Record<string, unknown> {
     stripe_payment_intent_id: "pi_test_1",
     stripe_charge_id: "ch_test_1",
     amount_cents: 4500,
+    currency: "cad",
     charged_at: null,
     refund_status: null,
     refund_amount_cents: null,
@@ -114,6 +115,10 @@ const EVENT = {
   data: {
     object: {
       id: "pi_test_1",
+      // A real PaymentIntent states its money; the handler now requires it to
+      // equal the row's (PAY-CCY-01).
+      amount: 4500,
+      currency: "cad",
       latest_charge: "ch_test_1",
       metadata: { hone_payment_charge_attempt_id: ATTEMPT_ID },
     },
