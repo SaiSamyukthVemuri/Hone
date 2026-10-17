@@ -219,7 +219,9 @@ describe("HON-46 authorization and audit ordering", () => {
     const src = code(FILES.action);
     expect(src).toContain('practitioner.role !== "owner"');
     expect(src).toContain("loadExportClientIdentity(");
-    expect(src).toContain("parseExportScope(");
+    // The scope is re-validated INSIDE the token verifier (Codex P1 4303617257),
+    // never parsed from browser-supplied arguments.
+    expect(src).toContain("verifyPrintToken(");
     expect(src).toContain('"clinical_records_printed"');
   });
 
@@ -340,11 +342,39 @@ describe("HON-46 is structurally outside third-party telemetry (Codex P1 4301165
     }
   });
 
+  it("the print audit is bound to the rendered preview: the action takes ONLY a server-minted token (Codex P1 4303617257)", () => {
+    const action = code(FILES.action);
+    expect(action).toMatch(/export async function recordClinicalRecordsPrintAction\(token: string\)/);
+    expect(action).toContain("verifyPrintToken(token, { studioId: studio.id, actorId: practitioner.id })");
+    // Client and scope come from the verified claims, never from arguments.
+    expect(action).toContain("const { clientId, scope, previewAuditId } = check.claims;");
+    expect(action).not.toContain("parseExportScope");
+    expect(action).not.toMatch(/rawScope/);
+    // The button sends only the token.
+    const button = code(FILES.button);
+    expect(button).toContain("recordClinicalRecordsPrintAction(printToken)");
+    expect(button).not.toMatch(/clientId|rawScope/);
+    // The page mints it only after the preview's own audit row was written.
+    const page = code(FILES.page);
+    expect(page).toContain("id: previewAuditId,");
+    expect(page).toMatch(/const printToken =\s*outcome\?\.ok && parsed\.ok && !emptyDay/);
+  });
+
+  it("without a signing key, Print fails closed VISIBLY: an explicit 'unavailable' alert, never a dead button", () => {
+    const page = code(FILES.page);
+    const at = page.indexOf("!printToken && (");
+    expect(at).toBeGreaterThan(-1);
+    const block = page.slice(at, at + 400);
+    expect(block).toContain('role="alert"');
+    expect(block).toContain('data-testid="export-print-unavailable"');
+    expect(block).toContain("Printing is unavailable");
+  });
+
   it("One day is the default scope, prefilled with the studio's today; an empty date offers no print", () => {
     const page = code(FILES.page);
     expect(page).toContain('defaultValue={rawScope.scope ?? "day"}');
     expect(page).toContain("rawScope.day ?? todayInTz(tz)");
-    expect(page).toContain("outcome?.ok && !emptyDay && <AuditedPrintButton");
+    expect(page).toContain("outcome?.ok && !emptyDay && printToken && <AuditedPrintButton");
   });
 
   it("NO element anywhere that links to the export is a client-side link, even across lines", () => {

@@ -40,6 +40,8 @@ type LoadedRecords = Extract<ClinicalRecordsLoad, { ok: true }>["value"];
 import { AuditedPrintButton } from "./print-button";
 import { formatClinicalDate } from "@/lib/clinical-notes/clinical-date";
 import { todayInTz } from "@/lib/booking/tz";
+import { randomUUID } from "node:crypto";
+import { mintPrintToken } from "@/lib/clinical-records/print-token";
 import {
   EXPORT_DOCUMENT_ID,
   PRINT_GATE_CSS,
@@ -140,11 +142,14 @@ export default async function ClinicalRecordsExportPage({
     | { ok: true; document: ClinicalRecordsDocument; truncated: boolean; scopeKind: "session" | "day" | "range" }
     | { ok: false; reason: "audit_failed" | "load_failed" }
     | null = null;
+  // The preview's own audit row id, so the print can be bound to THIS preview.
+  const previewAuditId = randomUUID();
   if (parsed.ok) {
     const scope = parsed.scope;
     const result = await auditThenLoad<LoadedRecords>(
       () =>
         recordClinicalRecordsAudit({
+          id: previewAuditId,
           studioId: studio.id,
           actorId: practitioner.id,
           clientId: client.id,
@@ -201,6 +206,16 @@ export default async function ClinicalRecordsExportPage({
     outcome.scopeKind === "day" &&
     outcome.document.sessions.length === 0 &&
     outcome.document.clinicalNotes.length === 0;
+  const printToken =
+    outcome?.ok && parsed.ok && !emptyDay
+      ? mintPrintToken({
+          studioId: studio.id,
+          clientId: client.id,
+          actorId: practitioner.id,
+          previewAuditId,
+          scope: parsed.scope,
+        })
+      : null;
   return (
     <>
     {/* PRINT GATE (Codex P1 4301153310). The browser's own print (Ctrl/Cmd+P,
@@ -233,8 +248,16 @@ export default async function ClinicalRecordsExportPage({
             Back to client
           </a>
         </div>
-        {/* Nothing to print on an empty date. */}
-        {outcome?.ok && !emptyDay && <AuditedPrintButton clientId={client.id} rawScope={rawScope} />}
+        {/* Nothing to print on an empty date. The token binds the print audit
+            to THIS rendered preview (Codex P1 4303617257); it is minted only
+            after the preview's audit row was written. */}
+        {outcome?.ok && !emptyDay && printToken && <AuditedPrintButton printToken={printToken} />}
+        {outcome?.ok && !emptyDay && !printToken && (
+          <p role="alert" data-testid="export-print-unavailable" className="text-xs text-red-700 print:hidden">
+            Printing is unavailable: this server cannot sign print requests, so nothing can be printed or
+            audited. The preview above is still correct.
+          </p>
+        )}
       </header>
 
       <form method="get" className="flex flex-wrap items-end gap-3 text-sm print:hidden" aria-label="Export scope">

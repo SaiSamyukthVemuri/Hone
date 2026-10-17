@@ -4,6 +4,8 @@ import { createServerClient } from "@supabase/ssr";
 import { adminQuery, closePool, seedStudio } from "./helpers/harness";
 import { EXPORT_PAGE_SIZE, loadClinicalRecordsForExport } from "@/lib/clinical-records/export-queries";
 import { buildClinicalRecordsDocument } from "@/lib/clinical-records/export-scope";
+import { mintPrintToken, PRINT_TOKEN_TTL_MS } from "@/lib/clinical-records/print-token";
+import { recordClinicalRecordsPrintAction } from "@/app/(records-export)/clients/[id]/records/export/actions";
 import {
   E2E_SERVICE_ROLE_KEY,
   E2E_SUPABASE_URL,
@@ -198,6 +200,63 @@ describe("HON-46 export reads every author and every note to completion", () => 
     expect(exported.blocks.map((b) => b.id)).toEqual([liveBlock]);
     expect(exported.blocks[0].entries.map((e) => e.id)).toEqual([idOf("chin")]);
     expect(exported.entries.map((e) => e.id)).toEqual([idOf("jaw")]);
+  }, 60_000);
+
+  it("the PRINT audit is bound to the rendered preview: forged, foreign and expired tokens audit nothing (Codex P1 4303617257)", async () => {
+    process.env.APPOINTMENT_SIGNING_SECRET ||= "db-test-signing-secret";
+    const s = await seedStudio("hon46print");
+    const other = await seedStudio("hon46print-other");
+    studios.push(s.studioId, other.studioId);
+    // A second client in the SAME studio: the forgery target.
+    const victim = await adminQuery(`insert into public.clients (studio_id, name) values ($1, 'Victim') returning id`, [s.studioId]);
+    const victimId = victim.rows[0].id as string;
+    await signInOwner(s.practitionerId);
+    const printRows = async (clientId: string) =>
+      (
+        await adminQuery(
+          `select metadata from public.audit_logs where entity_id = $1 and action = 'clinical_records_printed' order by created_at`,
+          [clientId],
+        )
+      ).rows.map((r) => r.metadata as Record<string, string>);
+    const base = {
+      studioId: s.studioId,
+      clientId: s.clientId,
+      actorId: s.practitionerId,
+      previewAuditId: "77777777-7777-4777-8777-777777777777",
+      scope: { kind: "day" as const, day: DAY },
+    };
+    const forge = (token: string, change: (p: Record<string, unknown>) => void) => {
+      const [payload, sig] = token.split(".");
+      const obj = JSON.parse(Buffer.from(payload.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"));
+      change(obj);
+      return `${Buffer.from(JSON.stringify(obj)).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "")}.${sig}`;
+    };
+    const honest = mintPrintToken(base)!;
+
+    // Forged client and forged scope: refused, NO audit row anywhere.
+    expect(await recordClinicalRecordsPrintAction(forge(honest, (p) => (p.clientId = victimId)))).toEqual({ ok: false });
+    expect(
+      await recordClinicalRecordsPrintAction(forge(honest, (p) => (p.scope = { kind: "range", from: "2026-01-01", to: "2026-12-31" }))),
+    ).toEqual({ ok: false });
+    // A genuine token from ANOTHER studio, and an expired one: refused.
+    expect(await recordClinicalRecordsPrintAction(mintPrintToken({ ...base, studioId: other.studioId })!)).toEqual({ ok: false });
+    expect(await recordClinicalRecordsPrintAction(mintPrintToken(base, Date.now() - PRINT_TOKEN_TTL_MS - 60_000)!)).toEqual({
+      ok: false,
+    });
+    expect(await printRows(victimId)).toEqual([]);
+    expect(await printRows(s.clientId)).toEqual([]);
+
+    // The honest path still audits: exactly the minted client and scope,
+    // linked to the preview it was bound to. (Retried only for the brief
+    // PGRST303 window of a freshly minted session JWT.)
+    let r = await recordClinicalRecordsPrintAction(honest);
+    for (let attempt = 0; !r.ok && attempt < 20; attempt += 1) {
+      await new Promise((res) => setTimeout(res, 250));
+      r = await recordClinicalRecordsPrintAction(honest);
+    }
+    expect(r).toEqual({ ok: true });
+    expect(await printRows(s.clientId)).toEqual([{ scope: "day", day: DAY, preview_audit_id: base.previewAuditId }]);
+    expect(await printRows(victimId)).toEqual([]);
   }, 60_000);
 
   it("labels a note superseded by a revision dated OUTSIDE the range (Codex P1 4302740025)", async () => {

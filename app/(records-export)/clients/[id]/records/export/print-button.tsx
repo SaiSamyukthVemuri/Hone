@@ -19,13 +19,9 @@ function printArmed(): void {
 
 // HON-46. Prints only after the print has been audited. If the audit cannot be
 // recorded, the dialog does not open and the owner is told why.
-export function AuditedPrintButton({
-  clientId,
-  rawScope,
-}: {
-  clientId: string;
-  rawScope: { scope?: string; session?: string; day?: string; from?: string; to?: string };
-}) {
+// The ONLY thing sent is the server-minted token for the preview on screen
+// (Codex P1 4303617257); the client and scope are never sent.
+export function AuditedPrintButton({ printToken }: { printToken: string }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   return (
@@ -36,7 +32,7 @@ export function AuditedPrintButton({
         onClick={() => {
           setError(null);
           startTransition(async () => {
-            const r = await recordClinicalRecordsPrintAction(clientId, rawScope).catch(() => ({ ok: false }));
+            const r = await recordClinicalRecordsPrintAction(printToken).catch(() => ({ ok: false }));
             if (r.ok) printArmed();
             else setError("Could not record this print in the audit log, so it was not printed. Try again.");
           });

@@ -65,8 +65,8 @@ type Fixture = {
 let fx: Fixture;
 
 async function auditRows(clientId: string) {
-  return sql<{ action: string; actor_id: string; metadata: Record<string, string> }>(
-    `select action, actor_id, metadata from public.audit_logs
+  return sql<{ id: string; action: string; actor_id: string; metadata: Record<string, string> }>(
+    `select id, action, actor_id, metadata from public.audit_logs
       where entity_id = $1 and action like 'clinical_records_%' order by created_at`,
     [clientId],
   );
@@ -399,7 +399,11 @@ test("owner: printing is audited first, and the dialog opens only after", async 
   // the click adds exactly one print row.
   const rows = await auditRows(fx.clientId);
   expect(rows.slice(before).map((r) => r.action)).toEqual(["clinical_records_printed"]);
-  expect(rows[rows.length - 1].metadata).toEqual({ scope: "range", from: DAY, to: DAY });
+  // Bound to THIS preview (Codex P1 4303617257): the print names the preview
+  // row the page was rendered with, and audits that preview's own scope.
+  const preview = rows[before - 1];
+  expect(preview.action).toBe("clinical_records_previewed");
+  expect(rows[rows.length - 1].metadata).toEqual({ scope: "range", from: DAY, to: DAY, preview_audit_id: preview.id });
 
   // The audited print ARMED the gate: the print view now carries the record,
   // still without any excluded sentinel. (window.print is stubbed, so no
@@ -508,7 +512,8 @@ test("HON-46 journey: client record -> choose a date -> preview -> print, includ
   const rows = (await auditRows(fx.clientId)).slice(before);
   expect(rows.map((r) => [r.action, r.metadata])).toEqual([
     ["clinical_records_previewed", { scope: "day", day: JOURNEY_DAY }],
-    ["clinical_records_printed", { scope: "day", day: JOURNEY_DAY }],
+    // Bound to the preview on screen (Codex P1 4303617257).
+    ["clinical_records_printed", { scope: "day", day: JOURNEY_DAY, preview_audit_id: rows[0].id }],
     ["clinical_records_previewed", { scope: "day", day: EMPTY_DAY }],
   ]);
 });

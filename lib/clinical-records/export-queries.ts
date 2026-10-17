@@ -328,6 +328,8 @@ export async function loadClinicalRecordsForExport(args: {
  * never a client name or a note.
  */
 export async function recordClinicalRecordsAudit(args: {
+  /** Set by the caller when the row must be referenced (the print binding). */
+  id?: string;
   studioId: string;
   actorId: string;
   clientId: string;
@@ -336,6 +338,7 @@ export async function recordClinicalRecordsAudit(args: {
 }): Promise<{ ok: boolean }> {
   const supabase = await createClient();
   const { error } = await supabase.from("audit_logs").insert({
+    ...(args.id ? { id: args.id } : {}),
     studio_id: args.studioId,
     actor_id: args.actorId,
     action: args.action,
