@@ -14,7 +14,15 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-12, post-0211 apply; hosted `0211` per production's record; `0217` AUTHORED AND PENDING on the SMS-SENDER-REG-01 branch)
+## Current state (verified 2026-10-12, post-0211 apply; hosted `0211` per production's record; `0217` and `0226` AUTHORED AND PENDING on the SMS-SENDER-CONTROL-01 branch)
+
+> **0226 IS AUTHORED AND PENDING, on `feat/sms-sender-control-01` (#863) only**, which is stacked on #844 (`0217`).
+> `0226_studio_sms_sender_unpurchased_release.sql` adds three service_role-only definer functions and ONE unique index, and nothing else: no table, no ALTER, no row written.
+> - **The index:** `studio_sms_senders_live_claimed_number_unique` on `claimed_phone_number` for live rows. It is the atomic reservation, so two studios cannot hold live claims on one number. Production has no sender rows, so it builds on an empty table.
+> - **The functions:** `get_releasable_studio_sms_claim`, `release_unpurchased_studio_sms_claim` and `studio_sms_resource_recorded`.
+> - **What they allow:** an owner can release an `error` claim that recorded no provider resource and failed definitively before purchase (`number_no_longer_available`, `provider_resource_mismatch` or `finalize_conflict`), after the provider confirms nothing exists under its claim key. The release goes error -> releasing -> released through 0191's own guard.
+> - **Allocation:** allocated after a fresh census (nothing at or above `0226` on any ref, worktree or this ledger); recorded in `/home/sam/hone-migration-coordination.md`. It applies after `0225`.
+> - **Holes on this branch:** the pending suffix has holes at `0212`-`0216` and `0218`-`0225` (`0211` is applied and carried from production). The contiguity guard reports them and is not weakened.
 
 > **0217 IS AUTHORED AND PENDING, on `feat/sms-sender-reg-01` only** (stacked on #841, which has no migration).
 > `0217_studio_sms_sender_registrations.sql` adds one table (`studio_sms_sender_registrations`), one service_role-only command and one service_role-only snapshot read.
@@ -28,10 +36,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0211** (`0211_client_sms_permission_guard.sql`), per production's record (below). |
-| **Repo migration max** | **0217** — `0217_studio_sms_sender_registrations.sql`, authored on `feat/sms-sender-reg-01`. No data; no existing object altered. |
+| **Repo migration max** | **0226** — `0226_studio_sms_sender_unpurchased_release.sql`, authored on `feat/sms-sender-control-01`. No data; no existing object altered. |
 | **Remote-only migrations** | **none recorded in this tree.** |
-| **Pending migrations** | **`0217`** on this branch, **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING, with `0212`-`0216` absent from this tree. |
-| **Next free migration** | Next free number is **0218**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated**. |
+| **Pending migrations** | **`0217`** and **`0226`** on this branch, **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING, with `0212`-`0216` and `0218`-`0225` absent from this tree. |
+| **Next free migration** | Next free number is **0227**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** here (the census assigns `0227` to the Sentry lane, #876). |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. |
 
 ## Previous state (verified 2026-10-12, post-0211 apply; `0211` APPLIED, repo == hosted on the production branch)

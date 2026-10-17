@@ -1,0 +1,133 @@
+// SMS-SENDER-CONTROL-01 (#824): the FAKE provider account the studio number
+// controls demonstrate. Pure data, safe for the client panel to show: synthetic
+// 555-01xx numbers and synthetic SIDs. Nothing here is a real account.
+//
+// PER STUDIO (Codex P2 4251747847). One shared demo service across studios
+// meant the second studio to adopt passed every check and then hit 0191's
+// uniqueness on the finalize, parked behind a write-once claim. Each studio
+// gets its own Messaging Service per candidate, derived from its id.
+//
+// AND NUMBERS NO OTHER STUDIO HOLDS (Codex P2 4274756044). Hashing every studio
+// into one 50-slot line range meant two studios could share BOTH numbers, and
+// once either adopted, the other's demo could never succeed. Now each studio
+// has DEMO_CANDIDATES deterministic candidate pairs, spread over 20 Canadian
+// and 20 US area codes and the line range 555-0150..0199 (which the fake's
+// search, 555-0100..0149, never offers for purchase). The studio's fake
+// account owns ALL of them, and the page advertises the first pair that no
+// other studio records (resolveDemoInventory in sender-controls.ts, through
+// 0226's studio_sms_resource_recorded), so a collision moves this studio to
+// its next candidate instead of wedging its demo.
+
+import { createHash } from "node:crypto";
+
+/** FNV-1a, 32-bit: a small deterministic spread, not a security property. */
+function fnv1a(input: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i += 1) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+/**
+ * A 128-bit synthetic SID body from a SHA-256 digest (Codex P2 4275196090).
+ * Chunking one 32-bit FNV state gave every SID only 32 bits of collision
+ * resistance: two studio ids colliding in that state shared the WHOLE
+ * Messaging Service SID, and after one adopted, every candidate of the other
+ * was refused on the service. FNV stays only for spreading numbers over
+ * candidate slots, where a collision is resolved by the next candidate.
+ */
+function hex32(seed: string): string {
+  return createHash("sha256").update(seed, "utf8").digest("hex").slice(0, 32);
+}
+
+export type DemoAdoptionInventory = {
+  messagingServiceSid: string;
+  numbers: {
+    CA: { phoneNumber: string; phoneNumberSid: string };
+    US: { phoneNumber: string; phoneNumberSid: string };
+  };
+};
+
+/** How many candidate pairs a studio's fake account owns. */
+export const DEMO_CANDIDATES = 16;
+
+const DEMO_CA_AREAS = ["416", "647", "437", "905", "289", "365", "613", "343", "514", "438", "604", "778", "403", "587", "780", "825", "204", "431", "306", "639"] as const;
+const DEMO_US_AREAS = ["212", "646", "332", "718", "347", "917", "929", "310", "213", "323", "312", "773", "415", "628", "206", "617", "202", "305", "713", "512"] as const;
+
+function demoNumber(areas: readonly string[], seed: string): string {
+  const h = fnv1a(seed);
+  const line = String(150 + ((h >>> 8) % 50)).padStart(4, "0");
+  return `+1${areas[h % areas.length]}555${line}`;
+}
+
+/**
+ * A studio's candidate numbers, generated TOGETHER so that no number repeats
+ * within the studio (Codex P2 4276086876): two candidates sharing a number put
+ * it in two services, and the fake account then reports its association as
+ * ambiguous. Candidate i takes the first draw (i, 0), (i, 1), ... that no
+ * earlier candidate of the same country holds. Deterministic per studio; the
+ * 1,000-number space per country makes a long search impossible in practice,
+ * and the bound is defensive.
+ */
+function demoNumbersFor(studioId: string): Array<{ CA: string; US: string }> {
+  const used = { CA: new Set<string>(), US: new Set<string>() };
+  const draw = (country: "CA" | "US", i: number): string => {
+    const areas = country === "CA" ? DEMO_CA_AREAS : DEMO_US_AREAS;
+    const tag = country === "CA" ? "ca" : "us";
+    for (let j = 0; j < 1000; j += 1) {
+      const n = demoNumber(areas, j === 0 ? `${tag}#${i}:${studioId}` : `${tag}#${i}.${j}:${studioId}`);
+      if (!used[country].has(n)) {
+        used[country].add(n);
+        return n;
+      }
+    }
+    throw new Error("demo number space exhausted");
+  };
+  const out: Array<{ CA: string; US: string }> = [];
+  for (let i = 0; i < DEMO_CANDIDATES; i += 1) out.push({ CA: draw("CA", i), US: draw("US", i) });
+  return out;
+}
+
+/**
+ * The studio's candidate `index` (0 .. DEMO_CANDIDATES-1). Candidate 0 is the
+ * default; resolveDemoInventory picks the first one whose numbers and service
+ * nothing else records.
+ */
+export function demoAdoptionInventory(studioId: string, index = 0): DemoAdoptionInventory {
+  const i = Math.max(0, Math.min(DEMO_CANDIDATES - 1, Math.trunc(index)));
+  const numbers = demoNumbersFor(studioId)[i];
+  return {
+    // PER CANDIDATE (Codex P2 4275860500): a released adoption keeps its
+    // service SID in history under 0191's global uniqueness, so a studio that
+    // released its demo sender must be offered a candidate whose SERVICE is
+    // also unrecorded, not only its numbers.
+    messagingServiceSid: `MG${hex32(`mg#${i}:${studioId}`)}`,
+    numbers: {
+      CA: { phoneNumber: numbers.CA, phoneNumberSid: `PN${hex32(`ca#${i}:${studioId}`)}` },
+      US: { phoneNumber: numbers.US, phoneNumberSid: `PN${hex32(`us#${i}:${studioId}`)}` },
+    },
+  };
+}
+
+/** Every candidate's Messaging Service, with the two numbers in its sender pool. */
+export function demoOwnedServices(studioId: string): Array<{ sid: string; numbers: string[] }> {
+  const out: Array<{ sid: string; numbers: string[] }> = [];
+  for (let i = 0; i < DEMO_CANDIDATES; i += 1) {
+    const inv = demoAdoptionInventory(studioId, i);
+    out.push({ sid: inv.messagingServiceSid, numbers: [inv.numbers.CA.phoneNumber, inv.numbers.US.phoneNumber] });
+  }
+  return out;
+}
+
+/** Every number the studio's fake account owns, with its SID. */
+export function demoOwnedNumbers(studioId: string): Record<string, string> {
+  const owned: Record<string, string> = {};
+  for (let i = 0; i < DEMO_CANDIDATES; i += 1) {
+    const { CA, US } = demoAdoptionInventory(studioId, i).numbers;
+    owned[CA.phoneNumber] ??= CA.phoneNumberSid;
+    owned[US.phoneNumber] ??= US.phoneNumberSid;
+  }
+  return owned;
+}
