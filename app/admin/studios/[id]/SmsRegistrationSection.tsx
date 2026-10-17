@@ -1,5 +1,13 @@
-import { registrationKindFor, type LiveRegistrationState, type RegistrationKind } from "@/lib/sms/sender-registration";
-import { recordSmsRegistrationFormAction } from "./actions";
+import {
+  bindingSenderFrom,
+  campaignBindingFor,
+  registrationKindFor,
+  type LiveRegistrationState,
+  type RegistrationKind,
+} from "@/lib/sms/sender-registration";
+import { campaignBindingVerdict } from "@/lib/sms/campaign-binding";
+import { checkSmsCampaignFormAction, recordSmsRegistrationFormAction } from "./actions";
+import { SmsCampaignCheckForm } from "./SmsCampaignCheckForm";
 import type React from "react";
 import { SmsRegistrationPanel, type RegistrationTarget } from "./SmsRegistrationForm";
 
@@ -93,6 +101,21 @@ export function SmsRegistrationSection({
       ? { senderId: sender.id, phoneNumber: sender.phone_number, kindLabel: KIND_LABEL[kind], current }
       : null;
   const dataState = !sender.phone_number ? "no-number" : kind ? "ready" : "unsupported-number";
+  // HON-50 G4b: the US A2P campaign binding, for a 10DLC (long-code) number
+  // only; toll-free numbers are verified, not linked to a campaign.
+  const verdict = campaignBindingVerdict(campaignBindingFor(state, sender.id), bindingSenderFrom(sender));
+  const campaign =
+    sender.phone_number && kind === "us_10dlc" ? (
+      <SmsCampaignCheckForm
+        // Keyed by sender and number: a result never outlives the sender it
+        // was for, even across the server refresh (Codex P2 4301615737).
+        key={`${sender.id}:${sender.phone_number}`}
+        action={checkSmsCampaignFormAction.bind(null, studioId)}
+        senderId={sender.id}
+        phoneNumber={sender.phone_number}
+        verdict={verdict.ok ? "ok" : verdict.reason}
+      />
+    ) : null;
   return panel(
     dataState,
     <>
@@ -115,6 +138,7 @@ export function SmsRegistrationSection({
           ))}
         </ul>
       )}
+      {campaign}
       {target ? null : (
         <p className="mt-3 text-sm text-neutral-500" data-testid="admin-sms-registration-unavailable">
           {sender.phone_number

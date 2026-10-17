@@ -9,6 +9,7 @@ import { deliverWelcomeEmail } from "@/lib/email/send-welcome";
 // (welcome email is one truthful invitation; no account-variant)
 import { logAdminAction } from "@/lib/audit/admin-actions";
 import { registrationKindFor } from "@/lib/sms/sender-registration";
+import { campaignReaderFor, runCampaignCheck } from "@/lib/sms/campaign-check";
 
 import type { WelcomeEmailResult } from "@/lib/email/send-welcome";
 import { auditOutcomeFor } from "./audit-outcome";
@@ -251,4 +252,102 @@ export async function recordSmsRegistrationAction(
     unsupported_number: "The studio's number is not a Canadian, US or toll-free number, so Hone records no registration for it.",
   };
   return { ok: false, result, error: message[result] ?? OUTCOME_UNKNOWN.error };
+}
+
+// SMS-CAMPAIGN-CHECK-01 (HON-50 G4b): Hone support checks the studio sender's
+// US A2P campaign with the provider (GET only) and records what it observed
+// through 0229. Bound to the sender and number support saw; the Messaging
+// Service is the one the snapshot says the sender holds now. Not available
+// unless live provisioning is armed (or, locally, the fake controls are open).
+export type CheckSmsCampaignResult = { ok: boolean; result: string; message: string };
+
+const CAMPAIGN_WORDS: Record<string, string> = {
+  not_available: "Campaign checks are not available here: live provisioning is not armed. Nothing was read or recorded.",
+  unreadable: "The studio's sender could not be read. Nothing was recorded; reload and try again.",
+  sender_changed: "The studio's sender or number changed after this page loaded. Nothing was recorded; reload.",
+  binding_changed: "Another campaign check was recorded while this one ran. Nothing was recorded; reload and check again.",
+  no_service: "The sender has no Messaging Service, so there is no campaign to check. Nothing was recorded.",
+  outcome_unknown: "Hone could not confirm whether the check was recorded. Reload the page and look at the current record.",
+};
+
+export async function checkSmsCampaignFormAction(
+  studioId: string,
+  _previous: CheckSmsCampaignResult | null,
+  formData: FormData,
+): Promise<CheckSmsCampaignResult> {
+  const progress = { dispatched: false };
+  try {
+    return await checkSmsCampaignAction(studioId, formData, progress);
+  } catch {
+    return progress.dispatched
+      ? { ok: false, result: "outcome_unknown", message: CAMPAIGN_WORDS.outcome_unknown }
+      : { ok: false, result: "error", message: "The campaign check could not run. Nothing was recorded; try again." };
+  }
+}
+
+export async function checkSmsCampaignAction(
+  studioId: string,
+  formData: FormData,
+  progress: { dispatched: boolean } = { dispatched: false },
+): Promise<CheckSmsCampaignResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const audit = (outcome: "blocked" | "failed" | "succeeded", metadata: Record<string, string | null>) =>
+    logAdminAction({
+      actorUserId: user?.id ?? null,
+      actorEmail: user?.email ?? null,
+      action: "sms_campaign_checked",
+      targetType: "studio",
+      targetId: studioId,
+      studioId,
+      outcome,
+      metadata,
+    });
+
+  if (!user || !isAdmin(user.email)) {
+    await audit("blocked", { result: "not_authorized" });
+    return { ok: false, result: "not_authorized", message: "Not authorized." };
+  }
+  const expectedSenderId = String(formData.get("expected_sender_id") ?? "");
+  const expectedPhone = String(formData.get("expected_phone_number") ?? "");
+  const context = String(formData.get("context") ?? "");
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(expectedSenderId) ||
+    !/^\+1[2-9][0-9]{2}[2-9][0-9]{6}$/.test(expectedPhone) ||
+    (context !== "evidence" && context !== "cutover")
+  ) {
+    await audit("failed", { result: "invalid_input", sender_id: null });
+    return { ok: false, result: "invalid_input", message: "Reload the page: the sender to check could not be confirmed." };
+  }
+
+  const out = await runCampaignCheck(
+    { admin: createAdminClient(), reader: campaignReaderFor(studioId, getRequiredAppOrigin()) },
+    { studioId, expectedSenderId, expectedPhone, context },
+    progress,
+  );
+  // Codes and ids only: never a number or a campaign SID in the audit.
+  await audit(out.result === "recorded" ? "succeeded" : "failed", {
+    result: out.result,
+    sender_id: expectedSenderId,
+    context,
+    campaign_status: out.result === "recorded" ? out.status : null,
+    code: "code" in out ? out.code : null,
+  });
+  try {
+    revalidatePath(`/admin/studios/${studioId}`);
+  } catch {
+    // A stale page is reloaded by the operator; it never changes the answer.
+  }
+  if (out.result === "recorded") {
+    return { ok: true, result: "recorded", message: `Recorded: the campaign is ${out.status.replace("_", " ")}.` };
+  }
+  if (out.result === "provider_error") {
+    return { ok: false, result: out.result, message: `The provider could not be read (${out.code}). Nothing was recorded.` };
+  }
+  if (out.result === "record_refused") {
+    return { ok: false, result: out.code, message: CAMPAIGN_WORDS[out.code] ?? `Not recorded (${out.code}). Reload and check the sender.` };
+  }
+  return { ok: false, result: out.result, message: CAMPAIGN_WORDS[out.result] };
 }

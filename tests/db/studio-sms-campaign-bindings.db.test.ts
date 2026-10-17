@@ -6,6 +6,7 @@ import { E2E_SUPABASE_URL, E2E_SERVICE_ROLE_KEY } from "@/e2e/helpers/local-env"
 import { FakeSmsProvisioningProvider } from "@/lib/sms/provider/fake-provider";
 import { campaignBindingVerdict } from "@/lib/sms/campaign-binding";
 import { bindingSenderFrom, campaignBindingFor, parseLiveRegistrationState } from "@/lib/sms/sender-registration";
+import { runCampaignCheck } from "@/lib/sms/campaign-check";
 
 // 0229 (SMS-CAMPAIGN-BINDING-01, HON-50 G4a) against a real database: the one
 // writer, its refusals and constraints, the privileges, and the snapshot the
@@ -264,5 +265,41 @@ describe("privileges", () => {
     // service_role calls the functions but cannot read the table directly.
     await expect(asRole("service_role", (q) => q("select 1 from public.studio_sms_sender_campaign_bindings limit 1"))).rejects.toThrow(/permission denied/);
     await expect(asRole("service_role", (q) => q("select public.get_live_studio_sms_sender_registration_state(gen_random_uuid())"))).resolves.toBeDefined();
+  });
+});
+
+describe("G4b: support's campaign check records through 0229, end to end", () => {
+  it("the fake reports the service's verified campaign; the check records it; the send-path verdict is ok", async () => {
+    const s = await seedStudio("cb-check");
+    const number = await freshNumber("416");
+    const service = mg();
+    const campaign = qe();
+    const provider = new FakeSmsProvisioningProvider({
+      preOwnedNumbers: { [number]: `PN${hex(16)}` },
+      accountServices: [
+        {
+          sid: service,
+          numbers: [number],
+          inboundUrl: `${ORIGIN}/api/twilio/inbound-sms`,
+          statusUrl: `${ORIGIN}/api/twilio/message-status`,
+          usA2pList: { compliance: [{ sid: campaign, campaign_status: "VERIFIED" }] },
+        },
+      ],
+    });
+    expect(
+      await controls.runSenderAdoption(
+        { admin, provider, appOrigin: ORIGIN, testDestination: "+14165553199" },
+        { studioId: s.studioId, actorUserId: s.userId, country: "CA", phoneNumber: number, messagingServiceSid: service },
+      ),
+    ).toMatchObject({ ok: true, result: "adopted" });
+    const sender = await liveSender(s.studioId);
+    expect(await verdictFor(s.studioId)).toEqual({ ok: false, reason: "missing" });
+
+    expect(
+      await runCampaignCheck({ admin, reader: provider }, { studioId: s.studioId, expectedSenderId: sender.id, expectedPhone: number, context: "cutover" }),
+    ).toEqual({ result: "recorded", status: "verified", campaignSid: campaign });
+    expect(await verdictFor(s.studioId)).toEqual({ ok: true });
+    expect(provider.calls.campaignRead).toBe(1);
+    expect(provider.calls.purchase).toBe(0);
   });
 });
