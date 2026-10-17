@@ -39,7 +39,7 @@ import {
   type ObservationSource,
   type ReadingValue,
 } from "./profile-contract";
-import { profileById, MACHINE_CATALOGUE } from "./catalogue";
+import { profileById, profileAtVersion, MACHINE_CATALOGUE } from "./catalogue";
 
 // ---------------------------------------------------------------------------
 
@@ -61,10 +61,16 @@ export type RefusalCode =
   | "unknown_profile"
   | "profile_not_offered"
   | "unknown_mode"
+  // A mode the catalogue is not ready to record against, as distinct from a
+  // mode the model does not have (Codex, #855 4304921312).
+  | "mode_not_offered"
   | "unknown_field"
   | "stale_profile_version"
   | "mode_requires_installed_option"
   | "malformed_value"
+  // The contract declares the association mandatory and none was given
+  // (Codex, #855 4304921322). Distinct from an out-of-range channel.
+  | "channel_required"
   | "channel_not_supported"
   | "channel_out_of_range"
   | "outside_hardware_limit"
@@ -202,13 +208,28 @@ export function validateReading(
   options: ValidateOptions = {},
 ): ValidationOutcome {
   const catalogue = options.catalogue ?? MACHINE_CATALOGUE;
-  const profile = profileById(input.profileId, catalogue);
+  // THE EXACT VERSION THIS READING WAS CAPTURED UNDER (Codex, #855
+  // 4304921305). Resolving by id alone returned whatever version the
+  // catalogue currently holds and then refused the reading for not matching
+  // it — so a v1 reading became invalid the moment v2 was published, which
+  // is the opposite of the guarantee the refusal message states.
+  const profile = profileAtVersion(input.profileId, input.version, catalogue);
 
   if (!profile) {
+    // TWO DIFFERENT FACTS, REPORTED DIFFERENTLY. An unknown model is not the
+    // same as a model whose contract at that version is not carried.
+    const anyVersion = profileById(input.profileId, catalogue);
+    if (!anyVersion) {
+      return {
+        ok: false,
+        code: "unknown_profile",
+        message: `No catalogue profile '${input.profileId}'. An unsupported device is never offered as a verified named profile.`,
+      };
+    }
     return {
       ok: false,
-      code: "unknown_profile",
-      message: `No catalogue profile '${input.profileId}'. An unsupported device is never offered as a verified named profile.`,
+      code: "stale_profile_version",
+      message: `Reading was captured against contract version ${input.version}; the catalogue carries ${anyVersion.profileId} at version ${anyVersion.version} and no contract for version ${input.version}. A historical reading can only render against the version it was captured under, so that version must stay in the catalogue.`,
     };
   }
 
@@ -225,13 +246,6 @@ export function validateReading(
     };
   }
 
-  if (input.version !== profile.version) {
-    return {
-      ok: false,
-      code: "stale_profile_version",
-      message: `Reading was captured against contract version ${input.version}; the catalogue is at ${profile.version}. Re-read the field contract before writing — a historical reading keeps rendering against the version it was captured under.`,
-    };
-  }
 
   const mode = findMode(profile, input.modeKey);
   if (!mode) {
@@ -239,6 +253,23 @@ export function validateReading(
       ok: false,
       code: "unknown_mode",
       message: `Profile '${profile.profileId}' has no mode '${input.modeKey}'. Modes are per exact model and are never inherited from the family.`,
+    };
+  }
+
+  // A BLOCKED MODE IS NOT OFFERED, and `activeModes` filtering the picker is
+  // not the same thing (Codex, #855 4304921312). Only the PROFILE's
+  // availability was checked here, so a caller submitting a blocked mode's
+  // key directly — a stale client, a direct action call — was validated
+  // against a contract the catalogue says is not ready to record against.
+  //
+  // THE HISTORICAL PATH IS UNAFFECTED: `allowNonOffered` is exactly the
+  // caller saying "this is not new capture", which is why re-rendering a
+  // reading whose mode was blocked later still works.
+  if (!options.allowNonOffered && mode.availability !== "active") {
+    return {
+      ok: false,
+      code: "mode_not_offered",
+      message: `Mode '${mode.key}' of '${profile.profileId}' is ${mode.availability} and is not offered for new capture.`,
     };
   }
 
@@ -272,6 +303,24 @@ export function validateReading(
 
   // Channels: only where the model genuinely has independently controlled
   // outputs. A probe-holder outlet is not a channel.
+  // A MANDATORY ASSOCIATION CANNOT BE OMITTED (Codex, #855 4304921322).
+  // Every channel check below sits inside `input.channel != null`, so a
+  // profile declaring `associationRequired: true` accepted a reading with no
+  // channel at all — stored ambiguously, against a contract that says which
+  // independently controlled output it belongs to is mandatory. Checked
+  // BEFORE the range checks, because the missing case is not a range case.
+  if (
+    input.channel == null &&
+    profile.channels?.associationRequired === true &&
+    input.value.kind === "value"
+  ) {
+    return {
+      ok: false,
+      code: "channel_required",
+      message: `'${profile.profileId}' has independently controlled channels and requires each reading to name one.`,
+    };
+  }
+
   if (input.channel != null) {
     if (!profile.channels) {
       return {
@@ -442,5 +491,35 @@ export function carryForwardCompatibility(
         "A different mode exposes different fields; carrying the previous mode's readings over would misattribute them.",
     };
   }
+
+  // AND THE TARGET MUST BE A CONTRACT THE CATALOGUE ACTUALLY HOLDS (Codex,
+  // #855 4304921325). The checks here compared the two INPUTS with each
+  // other, so a pair agreeing on a version and mode that do not exist —
+  // `version: 99`, `mode: "missing"` — authorised carrying readings forward
+  // into a contract nobody has. Agreement between two untrusted inputs is
+  // not verification.
+  //
+  // CHECKED AFTER the comparisons above, deliberately: a genuine version
+  // or mode CHANGE has its own, more useful explanation, and it would be a
+  // worse answer to tell her the target is not current when what actually
+  // happened is that the contract moved. The tampered case has from and to
+  // AGREEING on a version nobody has, so it falls through to here.
+  if (to.version !== profile.version) {
+    return {
+      carry: false,
+      reason: "version",
+      message:
+        "The target is not the current field contract for this model, so carrying values into it would attribute them to a contract that is not in use.",
+    };
+  }
+  if (!findMode(profile, to.modeKey)) {
+    return {
+      carry: false,
+      reason: "mode",
+      message:
+        "The target mode does not exist on this model. Modes are per exact model and are never inherited from the family.",
+    };
+  }
+
   return { carry: true };
 }
