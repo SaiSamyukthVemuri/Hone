@@ -110,6 +110,14 @@ Vercel Analytics + Speed Insights are removed from the root layout. Safe trees o
 
 Each React-tree token page also exports `metadata.robots = { index: false, follow: false }` as a redundant meta-tag signal. The route handler `/calendar-feed/[token]/route.ts` relies on the header alone (no HTML head).
 
+### Server logs carry no record ids (#828 G-26, slice 1)
+
+Server console output goes to Vercel runtime logs, a third party. `safeLog.error / warn / info` (`lib/logging/safe-log.ts`) replace every record id (a dashed UUID, including `%2D`-encoded hyphens and ids joined to letters or `_`) with `[id]`. It covers strings, `Error` messages and stacks, and object keys and values. Nothing else changes, so event slugs and Postgres error codes stay greppable.
+- **Converted in slice 1:** the client, intake, session, clinical-note, portal-message, booking and manual-fee actions under `app/(app)`.
+- **Guard:** `tests/lib/logging/safe-log-call-sites.test.ts` fails if any converted file regains a raw `console` call, including bracket access or an alias.
+- **Still open:** the remaining directories, which later slices convert one at a time.
+- **Not a Vercel BAA (G-04).**
+
 ### Token paths are canonicalized before Sentry transmission (F-PRIV-001)
 
 **Status: IMPLEMENTED — PENDING MERGE AND PRODUCTION VERIFICATION.**
