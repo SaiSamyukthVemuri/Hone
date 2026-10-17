@@ -272,6 +272,26 @@ test("receipt ambiguous: an unknown delivery is held, never retried, and never c
   await setClientEmail(ambiguous, "throw");
   const attemptId = await chargeOnce(page, ambiguous);
   await settledReceiptStatus(ambiguous.sessionId, "sending");
+  // 'sending' is ALSO the in-flight claim, so it alone does not prove the
+  // ambiguous branch ran (Codex P2 4301419880). Wait for that branch's own
+  // durable record: the critical "claim held" ops alert for THIS attempt.
+  await expect
+    .poll(
+      async () =>
+        (
+          await adminQuery(
+            `select count(*)::int as n from public.ops_alerts
+              where event = 'payment_receipt_send_ambiguous_claim_held'
+                and severity = 'critical'
+                and safe_details->>'attempt_id' = $1
+                and (safe_details->>'delivery_unknown')::boolean
+                and not (safe_details->>'claim_released')::boolean`,
+            [attemptId],
+          )
+        ).rows[0].n as number,
+      { timeout: 20_000 },
+    )
+    .toBe(1);
 
   // Delivery cannot be ruled out, so the claim is held at 'sending'.
   const [row] = await receiptRow(ambiguous.sessionId);
