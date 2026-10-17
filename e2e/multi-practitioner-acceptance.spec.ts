@@ -342,8 +342,18 @@ test("ACCEPTANCE: pick A, pick B, reschedule one, and the owner's calendar attri
   // So: let the initial grid settle, then arm a wait for the slot request the
   // date change triggers, and only read slots after it has answered.
   await expect(page.getByText(/loading slots/i)).toHaveCount(0, { timeout: 20_000 });
+  // MATCHED ON THE DATE, not merely "a server action answered". The date change
+  // triggers fetchRescheduleSlotsAction({ token, date }), so the request that
+  // carries `bookDate` in its body IS that date's slot request. Waiting for any
+  // next-action POST would also be satisfied by an unrelated action and put us
+  // back in front of a stale grid. Deliberately strict: if the encoding ever
+  // stops carrying the date literally this TIMES OUT loudly rather than
+  // silently reading stale buttons again.
   const slotFetch = page.waitForResponse(
-    (r) => r.request().method() === "POST" && Boolean(r.request().headers()["next-action"]),
+    (r) =>
+      r.request().method() === "POST" &&
+      Boolean(r.request().headers()["next-action"]) &&
+      (r.request().postData() ?? "").includes(bookDate),
     { timeout: 20_000 },
   );
   await page.getByLabel("Pick a new date").fill(bookDate);
@@ -459,22 +469,45 @@ test("ACCEPTANCE: pick A, pick B, reschedule one, and the owner's calendar attri
   // date, and DayColumn labels each entry "<client> · <service> · <time> · <n>m",
   // so the client names are what identify the two bookings there. Scoped to
   // main so the navigation chrome cannot satisfy it.
-  await page.goto(`/calendar?week=${bookDate}`);
-  const grid = page.locator("main");
-  await expect(
-    grid.getByText(clientA.name, { exact: false }).first(),
-    "the owner's calendar grid must show A's booking",
-  ).toBeVisible({ timeout: 20_000 });
-  await expect(
-    grid.getByText(clientB.name, { exact: false }).first(),
-    "the owner's calendar grid must show B's booking",
-  ).toBeVisible({ timeout: 20_000 });
-
-  for (const [id, expectedName, label] of [
-    [successorId, A.displayName, "A's rescheduled booking"],
-    [bRows[0].id, B.displayName, "B's booking"],
+  // REACHED THROUGH THE RENDERED ENTRIES, never by pasting an id into the URL.
+  // Asserting the grid shows a name and THEN navigating to /calendar/<id> from
+  // SQL still proves nothing about the entry: the two could be different
+  // bookings and every assertion would hold. So the walk is the real one a
+  // practitioner performs — click the card in the week grid, which opens the
+  // in-context preview dialog, then follow its "Open full details" link — and
+  // the id from the database is used ONLY to verify where that link landed.
+  // That makes the grid entry and the row provably the same appointment.
+  for (const [expectedId, clientName, expectedName, label] of [
+    [successorId, clientA.name, A.displayName, "A's rescheduled booking"],
+    [bRows[0].id, clientB.name, B.displayName, "B's booking"],
   ] as const) {
-    await page.goto(`/calendar/${id}`);
+    await page.goto(`/calendar?week=${bookDate}`);
+    const entry = page.locator("main").getByRole("button").filter({ hasText: clientName });
+    // EXACTLY ONE, and the count is load-bearing twice over. A's client has TWO
+    // appointment rows on this date — the cancelled original and the successor
+    // — but calendar/page.tsx drops cancelled rows before the grid
+    // ("Only cancelled appointments are hidden (their slot is freed)"), so a
+    // count of 1 also proves the released booking is GONE from what the owner
+    // sees. A count of 2 would mean a cancelled booking still occupies the
+    // grid, which is the UI half of the slot-release claim asserted in the
+    // database above.
+    await expect(
+      entry,
+      `${label} must appear as exactly one entry in the owner's calendar grid`,
+    ).toHaveCount(1);
+    await entry.click();
+
+    const drawer = page.getByRole("dialog", { name: /appointment preview/i });
+    await expect(drawer, "clicking the grid entry must open its preview").toBeVisible({
+      timeout: 20_000,
+    });
+    await drawer.getByRole("link", { name: /open full details/i }).click();
+
+    // WHERE THE RENDERED ENTRY LED. The id is the assertion, not the route.
+    await expect(
+      page,
+      `${label}'s grid entry must lead to its own detail page`,
+    ).toHaveURL(new RegExp(`/calendar/${expectedId}(\\?|$)`));
     // `main header`, NOT `header`. The app shell renders its own top-level
     // <header> (the primary-navigation banner), so locator("header").first()
     // matches the NAV and never sees the attribution — measured: the first run
