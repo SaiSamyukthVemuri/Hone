@@ -131,14 +131,27 @@ test.describe("a receptionist is denied the clinical surfaces, in the browser", 
 
     const target = `/clients/${clientId}/images`;
     const response = await page.goto(target);
-    // The middleware refused and sent them to their own surface. Walk the
-    // REDIRECT CHAIN back to its origin rather than reading
-    // response.request().url(), which is the FINAL request after redirects and
-    // would read /front-desk — an assertion that passes whether or not the
-    // page ever moved.
-    let first = response?.request();
-    while (first?.redirectedFrom()) first = first.redirectedFrom()!;
-    expect(first?.url(), "the redirect chain must START at the photo route").toContain(target);
+    // THE FIRST HOP IS THE CLAIM (Codex P2 4301986276). Checking only the
+    // chain's origin and its final page is too weak: if the middleware ever
+    // admitted this route, the page's own requirePractitionerWithStudio()
+    // would redirect to /no-access and the middleware would then send that to
+    // /front-desk — so /images -> /no-access -> /front-desk would pass
+    // IDENTICALLY to the intended direct refusal, even though the route WAS
+    // entered. The hop count and the first target are what distinguish them.
+    const chain: string[] = [];
+    for (let r = response?.request(); r; r = r.redirectedFrom() ?? undefined) {
+      chain.unshift(r.url());
+    }
+    expect(chain[0], "the chain must START at the photo route").toContain(target);
+    expect(
+      chain.map((u) => new URL(u).pathname),
+      "EXACTLY ONE hop: the middleware refused directly, so the route was never entered",
+    ).toHaveLength(2);
+    expect(chain[1], "and that one hop goes to the front desk").toContain("/front-desk");
+    expect(
+      chain.some((u) => u.includes("/no-access")),
+      "/no-access anywhere in the chain means the PAGE refused, not the middleware",
+    ).toBe(false);
     await page.waitForURL(/\/front-desk/, { timeout: 30_000 });
     expect(new URL(page.url()).pathname).not.toContain("/images");
 

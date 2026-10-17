@@ -56,19 +56,31 @@ describe("#824: treatment-image signatures are minted in exactly two places", ()
     expect(/createSignedUrl/.test(code(read(ACTIONS))), `${ACTIONS} must still sign`).toBe(true);
   });
 
-  it("the images page gates on the REDIRECTING practitioner guard", () => {
-    // requirePractitionerWithStudio redirects a non-practitioner to /no-access.
-    // The throwing backstop must not be used for a page: a surrounding
-    // try/catch can swallow it, and a layout's redirect does not stop a page
-    // (layouts and pages render in parallel).
+  it("the images page gates on the REDIRECTING guard, and it precedes every signature", () => {
+    // NAMES THE REAL HELPERS (Codex P2 4301986282). The previous version banned
+    // `getCurrentPractitionerWithStudioOrThrow`, WHICH DOES NOT EXIST IN THIS
+    // REPOSITORY — so the negative assertion could never match and was
+    // vacuous. The two real helpers in lib/supabase/queries.ts are:
+    //   * requirePractitionerWithStudio()   :251  REDIRECTS  -> correct for a page
+    //   * getCurrentPractitionerWithStudio() :202  THROWS     -> for server actions
+    // A page must use the redirecting one: a surrounding try/catch can swallow
+    // a throw, and a layout's redirect does not stop a page (layouts and pages
+    // render in parallel).
     const src = code(read(PAGE));
-    expect(src, "the page must call requirePractitionerWithStudio()").toMatch(
-      /requirePractitionerWithStudio\s*\(/,
-    );
+    const guardAt = src.search(/requirePractitionerWithStudio\s*\(/);
+    expect(guardAt, "the page must call requirePractitionerWithStudio()").toBeGreaterThan(-1);
     expect(
       src,
-      "the page must not rely on the throwing backstop to gate itself",
-    ).not.toMatch(/getCurrentPractitionerWithStudioOrThrow\s*\(/);
+      "the page must not use the THROWING helper — a try/catch can swallow it",
+    ).not.toMatch(/getCurrentPractitionerWithStudio\s*\(/);
+    // ORDER, not merely presence: banning the throwing helper does not stop the
+    // redirecting one being called AFTER a read or a signature, which would
+    // leak before it gated. Both call sites must follow the guard.
+    const signAt = src.indexOf("createSignedUrl");
+    expect(signAt, "the page must sign").toBeGreaterThan(-1);
+    expect(guardAt, "the guard must precede every createSignedUrl").toBeLessThan(signAt);
+    const lastSign = src.lastIndexOf("createSignedUrl");
+    expect(guardAt, "including the LAST signing site, not just the first").toBeLessThan(lastSign);
   });
 
   it("the signing action resolves identity with the THROWING variant, before anything else", () => {
