@@ -30,23 +30,85 @@ const PAGE = "app/(app)/clients/[id]/images/page.tsx";
 const ACTIONS = "app/(app)/clients/[id]/images/actions.ts";
 
 describe("#824: treatment-image signatures are minted in exactly two places", () => {
-  it("only the images page and its actions call createSignedUrl for treatment images", () => {
-    const offenders: string[] = [];
-    const files = globSync("{app,lib,components}/**/*.{ts,tsx}", { cwd: ROOT, nodir: true });
-    for (const rel of files) {
-      if (rel === PAGE || rel === ACTIONS) continue;
-      const src = code(read(rel));
-      if (!/createSignedUrl/.test(src)) continue;
-      // Another surface may legitimately sign a DIFFERENT bucket; only
-      // treatment images are in scope for the role-matrix proof.
-      if (/treatment-images|TREATMENT_IMAGE/.test(src)) offenders.push(rel);
+  // EVERY FILE THAT TOUCHES THE BUCKET OR PATH IS CLASSIFIED (Codex P2
+  // 4303573209). Sweeping for `createSignedUrl` alone was not enough: a new
+  // photo surface that hands its bucket and path to a GENERIC signing helper
+  // contains the treatment-image reference but no `createSignedUrl`, so it was
+  // invisible — while the DB proof's whole structure rests on there being
+  // exactly TWO minting sites.
+  //
+  // So the SET of referencing files is pinned, not just the signing ones. A new
+  // file that mentions the bucket or path FAILS until it is classified here,
+  // which is what makes the generic-helper case impossible to add silently.
+  const GUARDED_SIGNING_SITES = [PAGE, ACTIONS] as const;
+
+  /** Calls one of the guarded server actions; mints nothing itself. */
+  const GUARDED_ACTION_CALLERS = [
+    "app/(app)/clients/[id]/images/TreatmentImagesManager.tsx",
+  ] as const;
+
+  /**
+   * Reference the bucket or path in CODE but perform NO signing: the export
+   * registry, sanitising, the storage-path helpers, and the log redactor.
+   *
+   * `lib/types/database.ts` is deliberately ABSENT: its only mention is inside
+   * a comment, and the sweep strips comments, so the classification is of CODE
+   * references. `lib/ops/redact.ts` is present and was nearly MISSED — see the
+   * note on the sweep below.
+   */
+  const NON_SIGNING_REFERENCES = [
+    "lib/export/resource-registry.ts",
+    "lib/images/treatment-image-sanitize.ts",
+    "lib/images/treatment-images.ts",
+    "lib/ops/redact.ts",
+  ] as const;
+
+  // THE SWEEP READS FILES DIRECTLY, AND THAT IS LOAD-BEARING. An audit of this
+  // same question with `grep` MISSED lib/ops/redact.ts entirely: that file
+  // contains a deliberate raw NUL byte as a redaction sentinel
+  // (`\u0000U${i}\u0000`), so grep classifies it as BINARY and skips it
+  // silently — `grep -c` reports 0 while `grep -ac` reports 2. Node's
+  // readFileSync has no such behaviour, so this sweep sees it. Measured, not
+  // assumed.
+  function referencingFiles(): string[] {
+    const out: string[] = [];
+    for (const rel of globSync("{app,lib,components}/**/*.{ts,tsx}", {
+      cwd: ROOT,
+      nodir: true,
+    })) {
+      if (/treatment-images|TREATMENT_IMAGE/.test(code(read(rel)))) out.push(rel);
     }
+    return out.sort();
+  }
+
+  it("every file touching the treatment-image bucket or path is classified", () => {
+    const expected = [
+      ...GUARDED_SIGNING_SITES,
+      ...GUARDED_ACTION_CALLERS,
+      ...NON_SIGNING_REFERENCES,
+    ].sort();
     expect(
-      offenders,
-      "a new treatment-image signing site bypasses the receptionist denial proof " +
-        "in tests/db/receptionist-photo-denial.db.test.ts — add it to that proof, " +
-        "then to this list: " + offenders.join(", "),
-    ).toEqual([]);
+      referencingFiles(),
+      "a file references the treatment-image bucket or path without being " +
+        "classified — if it signs, add it to the DB proof in " +
+        "tests/db/receptionist-photo-denial.db.test.ts first, then here",
+    ).toEqual(expected);
+  });
+
+  it("only the two guarded sites mint a signature", () => {
+    const signers = referencingFiles().filter((rel) =>
+      /createSignedUrl/.test(code(read(rel))),
+    );
+    expect(signers.sort(), "a third minting site appeared").toEqual(
+      [...GUARDED_SIGNING_SITES].sort(),
+    );
+    // NON-VACUITY: the classified non-signers really do not sign, so the
+    // comparison above is not passing because the sweep found nothing.
+    for (const rel of [...GUARDED_ACTION_CALLERS, ...NON_SIGNING_REFERENCES]) {
+      expect(code(read(rel)), `${rel} must not mint a signature`).not.toMatch(
+        /createSignedUrl/,
+      );
+    }
   });
 
   it("both known signing sites still exist (this guard is not passing by absence)", () => {
