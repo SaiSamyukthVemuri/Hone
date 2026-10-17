@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { liveProvisioningArmed, FakeSmsProvisioningProvider } from "./provider";
 import { classifyNanpNumber } from "./nanp";
-import { demoAdoptionInventory } from "./sender-controls-demo";
+import { DEMO_CANDIDATES, demoAdoptionInventory, demoOwnedNumbers, demoOwnedServices, type DemoAdoptionInventory } from "./sender-controls-demo";
 
 export { demoAdoptionInventory };
 import type { SmsProvisioningProvider, AvailableNumberCandidate } from "./provider/types";
@@ -27,9 +27,9 @@ import { inboundReaches } from "./inbound-routing";
 // below opens ONLY for an explicit fake mode:
 //
 //   HONE_SMS_SENDER_CONTROLS = "fake"   set deliberately, in a test or a
-//                                       local/preview demo; unset everywhere else
+//                                       local demo; unset everywhere else
 //
-// and it stays shut, whatever that variable says, when either is true:
+// and it stays shut, whatever that variable says, when any of these is true:
 //
 //   * live provisioning is ARMED (HONE_SMS_PROVISIONING_LIVE + credentials):
 //     the resolver would hand back the real provider, so a click could buy a
@@ -39,6 +39,11 @@ import { inboundReaches } from "./inbound-routing";
 //     write a fake "active" sender into the production database. Refused.
 //   * the deployment is ANY OTHER HOSTED Vercel environment (preview): previews
 //     use the production database. Refused (Codex P1 4251747841).
+//   * the run is not explicitly LOCAL (Codex P2 4266736587): a deployed
+//     platform's markers (VERCEL=1, AWS_*), or a database URL that is not the
+//     loopback stack. A self-hosted `next start` in production, or a `next dev`
+//     pointed at the hosted project, is refused; NODE_ENV is not the
+//     authority, the database the fake would write to is.
 //
 // The provider the operations use is therefore always the fake, and it is
 // passed in explicitly rather than resolved, so nothing here can reach the
@@ -56,7 +61,34 @@ type Env = Readonly<Record<string, string | undefined>>;
 
 export type SenderControlsGate =
   | { open: true; mode: "fake" }
-  | { open: false; reason: "not_enabled" | "live_provisioning_armed" | "production" | "hosted_deployment" };
+  | {
+      open: false;
+      reason:
+        | "not_enabled"
+        | "live_provisioning_armed"
+        | "production"
+        | "hosted_deployment"
+        | "deployed_runtime"
+        | "not_local_database";
+    };
+
+/**
+ * Is this the LOCAL stack? The controls write fake senders through the
+ * service-role client to whatever database NEXT_PUBLIC_SUPABASE_URL names, so
+ * that URL is the authority on whether a fake record could land anywhere real.
+ * Loopback only; anything else (a hosted project, a LAN host, a missing or
+ * malformed URL) is not local.
+ */
+function isLoopbackDatabase(raw: string | undefined): boolean {
+  if (!raw) return false;
+  let host: string;
+  try {
+    host = new URL(raw).hostname;
+  } catch {
+    return false;
+  }
+  return host === "127.0.0.1" || host === "localhost" || host === "[::1]" || host === "::1";
+}
 
 export function senderControlsGate(
   env: Env = process.env,
@@ -68,6 +100,14 @@ export function senderControlsGate(
   // fake "active" production record. Only an unhosted run (no VERCEL_ENV) or
   // Vercel's local development environment may open these controls.
   if (env.VERCEL_ENV && env.VERCEL_ENV !== "development") return { open: false, reason: "hosted_deployment" };
+  // NOT ONLY VERCEL (Codex P2 4266736587): a self-hosted production runtime
+  // (`next start` with NODE_ENV=production and no VERCEL_ENV), or a deployed
+  // platform's own markers, must not open these either. The run must be
+  // explicitly LOCAL: no deployed-runtime marker, and the database it would
+  // write to is the loopback stack. This also shuts a `next dev` pointed at a
+  // hosted project, whatever NODE_ENV says.
+  if (env.VERCEL === "1" || env.AWS_REGION || env.AWS_EXECUTION_ENV) return { open: false, reason: "deployed_runtime" };
+  if (!isLoopbackDatabase(env.NEXT_PUBLIC_SUPABASE_URL)) return { open: false, reason: "not_local_database" };
   if (liveArmed()) return { open: false, reason: "live_provisioning_armed" };
   if (env[SENDER_CONTROLS_ENV] !== "fake") return { open: false, reason: "not_enabled" };
   return { open: true, mode: "fake" };
@@ -157,22 +197,42 @@ export function senderControlsFakeProvider(
   const key = `${studioId}|${u.inbound}|${u.status}`;
   let fake = controlsFakes.get(key);
   if (!fake) {
-    const inv = demoAdoptionInventory(studioId);
-    const { CA, US } = inv.numbers;
+    // The account owns EVERY candidate pair (Codex P2 4274756044), so whichever
+    // one resolveDemoInventory advertises can be adopted.
+    // ...and one Messaging Service per candidate, holding that candidate's
+    // two numbers (Codex P2 4275860500).
     fake = new FakeSmsProvisioningProvider({
-      preOwnedNumbers: { [CA.phoneNumber]: CA.phoneNumberSid, [US.phoneNumber]: US.phoneNumberSid },
-      accountServices: [
-        {
-          sid: inv.messagingServiceSid,
-          numbers: [CA.phoneNumber, US.phoneNumber],
-          inboundUrl: u.inbound,
-          statusUrl: u.status,
-        },
-      ],
+      preOwnedNumbers: demoOwnedNumbers(studioId),
+      accountServices: demoOwnedServices(studioId).map((svc) => ({
+        sid: svc.sid,
+        numbers: svc.numbers,
+        inboundUrl: u.inbound,
+        statusUrl: u.status,
+      })),
     });
     controlsFakes.set(key, fake);
   }
   return fake;
+}
+
+/**
+ * The demo pair this studio's page should advertise: its first candidate whose
+ * numbers AND service no row records outside this studio's live attempt (0226
+ * studio_sms_resource_recorded, which counts released history too, including
+ * this studio's own; Codex P2 4274756044, 4275860500). A read only; if it cannot answer,
+ * candidate 0 is shown and the adoption's own pre-claim check still refuses a
+ * number another studio holds.
+ */
+export async function resolveDemoInventory(admin: SupabaseClient, studioId: string): Promise<DemoAdoptionInventory> {
+  for (let i = 0; i < DEMO_CANDIDATES; i += 1) {
+    const inv = demoAdoptionInventory(studioId, i);
+    const ca = await resourceRecorded(admin, studioId, inv.numbers.CA.phoneNumber, null);
+    const us = await resourceRecorded(admin, studioId, inv.numbers.US.phoneNumber, null);
+    const svc = await resourceRecorded(admin, studioId, null, inv.messagingServiceSid);
+    if (ca === null || us === null || svc === null) return demoAdoptionInventory(studioId, 0);
+    if (!ca && !us && !svc) return inv;
+  }
+  return demoAdoptionInventory(studioId, 0);
 }
 
 export type SenderControlsDeps = {
@@ -254,7 +314,7 @@ const WEBHOOK_BASE_UNUSABLE: WebhookBaseRefusal = { ok: false, result: "refused"
 async function resourceRecorded(
   admin: SupabaseClient,
   studioId: string,
-  phoneNumber: string,
+  phoneNumber: string | null,
   messagingServiceSid: string | null,
 ): Promise<boolean | null> {
   try {
@@ -411,6 +471,37 @@ export async function runSenderAdoption(
 // what exists under the claim key. Anything found, or no complete answer,
 // refuses: only a retry, which reconciles first, may continue that claim.
 
+// ---------------------------------------------------------------------------
+// WHICH RECOVERY AN ERRORED SETUP OFFERS (Codex P2 4271461595, 4271749292,
+// 4272070468)
+// ---------------------------------------------------------------------------
+// The full routing table, every stored code against every origin and stage,
+// is /srv/hone/handoffs/SMS_863_RECOVERY_ROUTING_TABLE_2026-10-14.md. Its
+// finding: a setup's ORIGIN (provisioned by Hone, or adopted from the studio's
+// own account) is not stored, and every retry-routed code can come from either
+// origin, before or after identifiers are recorded. A provisioning retry of an
+// adopted setup cannot find its untagged resources, and an adoption retry of a
+// provisioned one is not proven. So no retry is honest without the origin, and
+// this slice offers exactly:
+//   * release -- 0226's definitive pre-purchase codes: give the claim up and
+//     choose again (the release still asks the provider first);
+//   * support -- any other code while in error: a truthful line that the
+//     setup cannot be continued from this screen;
+//   * none    -- not in error.
+// An origin-aware retry (persist the origin, then retry through provisioning
+// or adoption accordingly) is a follow-up feature, not this slice.
+
+/** Exactly 0226's release_unpurchased_studio_sms_claim codes (pinned to the SQL by test). */
+export const RELEASABLE_ERROR_CODES = ["number_no_longer_available", "provider_resource_mismatch", "finalize_conflict"] as const;
+
+export type SenderRecovery = "release" | "support" | "none";
+
+export function senderRecoveryFor(status: string | null | undefined, lastErrorCode: string | null | undefined): SenderRecovery {
+  if (status !== "error") return "none";
+  if (lastErrorCode && (RELEASABLE_ERROR_CODES as readonly string[]).includes(lastErrorCode)) return "release";
+  return "support";
+}
+
 export type ReleaseOutcome =
   | { ok: true; result: "released"; senderId: string }
   | {
@@ -441,7 +532,7 @@ export async function runSenderRelease(
   });
 
   // 1. Is the studio's live claim releasable, and what is its key?
-  let row: { result?: string; sender_id?: string | null; claim_key?: string | null } | null = null;
+  let row: { result?: string; sender_id?: string | null; claim_key?: string | null; lease_generation?: number | null } | null = null;
   try {
     const { data, error } = await deps.admin.rpc("get_releasable_studio_sms_claim", {
       p_studio_id: input.studioId,
@@ -453,7 +544,7 @@ export async function runSenderRelease(
     return refuse("store_unavailable", true);
   }
   if (!row?.result) return refuse("store_unavailable", true);
-  if (row.result !== "releasable" || !row.sender_id || !row.claim_key) {
+  if (row.result !== "releasable" || !row.sender_id || !row.claim_key || typeof row.lease_generation !== "number") {
     const known = ["invalid_input", "not_a_member", "not_owner", "no_live_sender", "not_releasable"] as const;
     return refuse((known as readonly string[]).includes(row.result) ? (row.result as (typeof known)[number]) : "not_releasable");
   }
@@ -464,13 +555,17 @@ export async function runSenderRelease(
   const f = found.found;
   if (f.phoneNumberSid || f.phoneNumber || f.messagingServiceSid) return refuse("resources_found");
 
-  // 3. Release: compare-and-set on the sender and key, re-checked under lock.
+  // 3. Release: compare-and-set on the sender, key AND lease generation the
+  // provider was asked about, re-checked under lock. A retry in between takes
+  // the generation forward, so its purchases cannot be released by this
+  // answer (Codex P2 4266274277).
   try {
     const { data, error } = await deps.admin.rpc("release_unpurchased_studio_sms_claim", {
       p_studio_id: input.studioId,
       p_actor_user_id: input.actorUserId,
       p_expected_sender_id: row.sender_id,
       p_claim_key: row.claim_key,
+      p_lease_generation: row.lease_generation,
     });
     if (error) return refuse("store_unavailable", true);
     if (data === "released") return { ok: true, result: "released", senderId: row.sender_id };

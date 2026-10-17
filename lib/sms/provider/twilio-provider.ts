@@ -66,6 +66,20 @@ const NUMBER_UNAVAILABLE_CODES = new Set<number>([21421, 21422, 21452]);
 
 type Credentials = { accountSid: string; authToken: string };
 
+/**
+ * A routing field from a Twilio record, three ways and no fourth: absent ->
+ * undefined (not reported); null or "" -> null (none); a non-empty string ->
+ * the string; ANY other type -> undefined (unknown). Unknown blocks routing
+ * decisions (lib/sms/inbound-routing.ts); "none" licenses them, so a malformed
+ * value must never become null.
+ */
+export function reportedString(rec: Record<string, unknown> | null, key: string): string | null | undefined {
+  if (!rec || !(key in rec)) return undefined;
+  const v = rec[key];
+  if (v === null || v === "") return null;
+  return typeof v === "string" ? v : undefined;
+}
+
 function readCredentials(): Credentials | null {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -295,13 +309,14 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
     if (num !== input.phoneNumber) return providerError("provider_resource_mismatch", false);
     // The number's own inbound webhook, from the SAME record: it is what Twilio
     // calls when the service routes inbound to the number. A missing field is
-    // "not reported" (undefined), an empty one is "none" (null).
-    const numberSmsUrl: string | null | undefined =
-      rec && "sms_url" in rec ? asString(rec.sms_url) : undefined;
-    const numberSmsMethod: string | null | undefined =
-      rec && "sms_method" in rec ? asString(rec.sms_method) : undefined;
-    const numberSmsApplicationSid: string | null | undefined =
-      rec && "sms_application_sid" in rec ? asString(rec.sms_application_sid) : undefined;
+    // "not reported" (undefined), an explicit null or empty one is "none"
+    // (null), and a MALFORMED one (a number, object, boolean...) is unknown
+    // (undefined), never "none" (Codex P2 4275604617): a garbled
+    // sms_application_sid read as "no application override" could license an
+    // adoption whose inbound STOP never reaches Hone.
+    const numberSmsUrl = reportedString(rec, "sms_url");
+    const numberSmsMethod = reportedString(rec, "sms_method");
+    const numberSmsApplicationSid = reportedString(rec, "sms_application_sid");
 
     // 2. THE CENSUS. Every service, every page, then one membership probe each.
     const services: string[] = [];

@@ -9,7 +9,7 @@ import {
   type SenderControlResult,
 } from "./sender-control-actions";
 import type { DemoAdoptionInventory } from "@/lib/sms/sender-controls-demo";
-import type { SearchResult } from "@/lib/sms/sender-controls";
+import type { SearchResult, SenderRecovery } from "@/lib/sms/sender-controls";
 
 // SMS-SENDER-CONTROL-01 (#824): rendered only when the page's gate is open,
 // which is never in production and never with live provisioning armed. Every
@@ -20,12 +20,17 @@ const field = "rounded border px-2 py-1";
 
 export function SmsSenderControls({
   inventory,
-  canRelease,
+  recovery,
 }: {
   /** This studio's own fake account inventory (lib/sms/sender-controls-demo.ts). */
   inventory: DemoAdoptionInventory;
-  /** The studio's sender is in `error`: offer "choose a different number". The server decides. */
-  canRelease: boolean;
+  /**
+   * What an errored setup offers (senderRecoveryFor): release ("choose a
+   * different number"), support (no self-service action can be honest without
+   * the setup's origin), or none (not in error). The release action re-checks
+   * everything on the server.
+   */
+  recovery: SenderRecovery;
 }) {
   const [search, searchAction, searching] = useActionState<SearchResult | null, FormData>(searchSenderNumbersAction, null);
   const [provision, provisionAction, provisioning] = useActionState<SenderControlResult | null, FormData>(provisionSenderNumberAction, null);
@@ -74,7 +79,13 @@ export function SmsSenderControls({
       )}
       {provision && <p role="status" className={`mt-2 text-sm ${provision.ok ? "text-emerald-800" : "text-red-700"}`}>{provision.message}</p>}
 
-      {canRelease && (
+      {recovery === "support" && (
+        <p className="mt-4 text-sm text-neutral-600 dark:text-neutral-400" data-testid="sms-sender-support">
+          The last setup attempt did not finish and cannot be continued from this screen. Contact Hone support to finish or undo it.
+        </p>
+      )}
+
+      {recovery === "release" && (
         <form action={releaseAction} className="mt-4 text-sm" data-testid="sms-sender-release">
           <p className="text-neutral-600 dark:text-neutral-400">
             The last setup attempt did not finish. If it failed before a number was bought, you can release it and choose a different number.

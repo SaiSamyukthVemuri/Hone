@@ -129,9 +129,77 @@ describe("approved means COMPLETE for this number (Codex P2 4253281361)", () => 
 describe("a replacement sender gets a fresh form (Codex P2 4253596170)", () => {
   // The repo's unit tests run without a DOM; React's documented key semantics
   // (a changed key remounts) do the reset, and this pins that the key exists.
-  it("the form is keyed by the sender and its number, so stale field values cannot carry over", async () => {
+  it("ONE unkeyed stateful panel in every state; only the <form> is keyed, by sender, number and record version (Codex P2 4270957975)", async () => {
     const { readFileSync } = await import("node:fs");
-    const src = readFileSync("app/admin/studios/[id]/SmsRegistrationSection.tsx", "utf8");
-    expect(src).toMatch(/<SmsRegistrationForm\s+(\/\/[^\n]*\n\s*)*key=\{`\$\{sender\.id\}:\$\{sender\.phone_number\}`\}/);
+    const strip = (src: string) => src.split("\n").filter((l) => !/^\s*(\/\/|\*|\{\/\*)/.test(l)).join("\n");
+    const section = strip(readFileSync("app/admin/studios/[id]/SmsRegistrationSection.tsx", "utf8"));
+    const form = strip(readFileSync("app/admin/studios/[id]/SmsRegistrationForm.tsx", "utf8"));
+    // Every return of the section is the same panel; none renders its own <section>.
+    const returns = [...section.matchAll(/^\s*return\s+([A-Za-z]+)/gm)].map((m) => m[1]);
+    expect(returns).toEqual(["panel", "panel", "panel", "panel"]);
+    expect(section).not.toMatch(/<section/);
+    // The panel itself is never keyed.
+    expect(section).toMatch(/<SmsRegistrationPanel\s+action=/);
+    expect(section).not.toMatch(/<SmsRegistrationPanel[^>]*\bkey=/);
+    // The state and the result live in the panel; the keyed element is the form.
+    const panelAt = form.indexOf("export function SmsRegistrationPanel(");
+    const fieldsAt = form.indexOf("function RegistrationForm(");
+    expect(form.indexOf("useActionState<")).toBeGreaterThan(panelAt);
+    expect(form.indexOf("useActionState<")).toBeLessThan(fieldsAt);
+    expect(form.indexOf('data-testid="admin-sms-registration-result"')).toBeGreaterThan(panelAt);
+    expect(form.indexOf('data-testid="admin-sms-registration-result"')).toBeLessThan(fieldsAt);
+    expect(form).toMatch(/<RegistrationForm key=\{formKey\(target\)\}/);
+    expect(form.slice(fieldsAt)).not.toMatch(/useActionState/);
+  });
+
+  it("the form key changes with the sender, the number and the record version, and only with them", async () => {
+    const { formKey } = await import("@/app/admin/studios/[id]/SmsRegistrationForm");
+    const base = { senderId: "s1", phoneNumber: "+12125550123", kindLabel: "k", current: null };
+    const rec = { status: "approved", missing_information: null, provider_reference: null, updated_at: "2026-10-14T03:12:45.123456+00:00" };
+    const keys = new Set([
+      formKey(base),
+      formKey({ ...base, senderId: "s2" }),
+      formKey({ ...base, phoneNumber: "+12125550124" }),
+      formKey({ ...base, current: rec }),
+      formKey({ ...base, current: { ...rec, updated_at: "2026-10-14T03:12:45.123457+00:00" } }),
+    ]);
+    expect(keys.size).toBe(5);
+    expect(formKey({ ...base, kindLabel: "other" })).toBe(formKey(base));
+    expect(formKey({ ...base, current: { ...rec, status: "suspended" } })).toBe(formKey({ ...base, current: rec }));
+  });
+
+
+});
+
+// Codex P2 4274699533: the kept result must never read as the replacement
+// sender's approval.
+describe("success names the number it recorded for", () => {
+  it("says which number, and says plainly when the studio's number has since changed", async () => {
+    const { successText } = await import("@/app/admin/studios/[id]/SmsRegistrationForm");
+    expect(successText("+12125550123", "+12125550123")).toBe("Recorded for +12125550123.");
+    const moved = successText("+12125550123", "+12125550199");
+    expect(moved).toMatch(/^Recorded for \+12125550123\. That is no longer this studio's number; nothing is recorded for the number shown now\.$/);
+    expect(moved).not.toContain("+12125550199");
+    // The sender released (no live sender, a definite answer).
+    expect(successText("+12125550123", null, "no-live-sender")).toMatch(/no longer this studio's number/);
+  });
+
+  it("an UNREADABLE or AMBIGUOUS refresh claims nothing about the current number (Codex P2 4275179860)", async () => {
+    const { successText } = await import("@/app/admin/studios/[id]/SmsRegistrationForm");
+    for (const state of ["unreadable", "ambiguous"]) {
+      const text = successText("+12125550123", null, state);
+      expect(text, state).toBe("Recorded for +12125550123. The studio's current number could not be confirmed just now; reload to check it.");
+      expect(text, state).not.toMatch(/no longer|nothing is recorded/);
+    }
+    // A definite read still gets the definite answer.
+    expect(successText("+12125550123", "+12125550199", "ready")).toMatch(/no longer this studio's number/);
+    expect(successText("+12125550123", "+12125550123", "ready")).toBe("Recorded for +12125550123.");
+  });
+
+  it("the panel renders success through successText with the number shown now", async () => {
+    const { readFileSync } = await import("node:fs");
+    const form = readFileSync("app/admin/studios/[id]/SmsRegistrationForm.tsx", "utf8");
+    expect(form).toMatch(/state\.ok \? successText\(state\.phoneNumber, target\?\.phoneNumber \?\? null, dataState\)/);
+    expect(form).not.toMatch(/state\.ok \? "Recorded\."/);
   });
 });

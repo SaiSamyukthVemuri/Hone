@@ -51,19 +51,30 @@ export type StripeCustomerResolution =
 // currently provisioning the same tuple). The portal action treats
 // that as a retryable error and surfaces "Please try again." to
 // the visitor without crashing.
+// Payload version of the customers.create request, appended to the RPC's
+// idempotency key. Stripe rejects a reused key whose parameters differ, and
+// the stale-claim path replays the attempt's ORIGINAL key. An attempt that
+// reached Stripe before G-09 shipped sent the client name, so replaying its
+// bare key with the opaque-id payload would fail and block that client's card
+// setup. A new version gives the new payload its own key space: a pre-G-09
+// attempt that already created a customer leaves that customer unmapped on
+// the connected account instead of blocking. Bump it whenever the
+// customers.create parameters change.
+export const CUSTOMER_CREATE_PAYLOAD_VERSION = "opaque_ids_v2";
+
+export function customerCreateIdempotencyKey(attemptKey: string): string {
+  return `${attemptKey}:${CUSTOMER_CREATE_PAYLOAD_VERSION}`;
+}
+
 export async function getOrCreateStripeCustomerForCardOnFile(params: {
   admin: SupabaseClient;
   studioId: string;
   clientId: string;
   stripeAccountId: string;
   stripeLivemode: boolean;
-  // Client-facing description fields. Passed to Stripe via the
-  // metadata + name fields so the connected-account customer is
-  // identifiable. We deliberately do NOT pass email here for new
-  // customers; the RPC requires normalized_email on the clients
-  // row, but reusing it on the Stripe customer is a privacy /
-  // duplicate-customer call we defer until needed.
-  clientName: string;
+  // No client name, email or phone goes to Stripe (HIPAA-READY-01 G-09,
+  // #828). The connected-account customer is identified by opaque Hone ids
+  // only; reconciliation resolves the client through Hone's own rows.
 }): Promise<StripeCustomerResolution> {
   const { admin, studioId, clientId, stripeAccountId, stripeLivemode } = params;
 
@@ -117,9 +128,9 @@ export async function getOrCreateStripeCustomerForCardOnFile(params: {
   }
 
   // Step 2: Stripe Customer create on the connected account, keyed
-  // by the RPC's idempotency key. Description / metadata help an
-  // operator triage the connected-account dashboard; no card-touching
-  // information is sent.
+  // by the RPC's idempotency key. Description / metadata carry opaque
+  // ids only, enough to triage the connected-account dashboard against
+  // Hone. No card-touching information and no client name are sent.
   const stripe = getStripe();
   let stripeCustomerId: string;
   try {
@@ -129,13 +140,14 @@ export async function getOrCreateStripeCustomerForCardOnFile(params: {
         metadata: {
           hone_studio_id: studioId,
           hone_client_id: clientId,
-          hone_client_name: params.clientName.slice(0, 200),
           hone_source: "portal_card_on_file",
         },
       },
       {
         stripeAccount: stripeAccountId,
-        idempotencyKey: claim.out_idempotency_key as string,
+        idempotencyKey: customerCreateIdempotencyKey(
+          claim.out_idempotency_key as string,
+        ),
       },
     );
     stripeCustomerId = customer.id;
