@@ -55,6 +55,38 @@ The intake templates already followed a stricter rule (no studio name).
 - See the #828 decision packet §3.1.
 - Pinned by `tests/lib/email/subject-minimum-necessary.test.ts`.
 
+### Hidden preheader (HIPAA-READY-01, #828)
+
+Inbox and lock-screen previews come from the first text in the HTML body.
+Every template listed in
+[the provider-visible inventory](./security/email-provider-visible-inventory.md)
+starts its body with a hidden **neutral preheader** (`lib/email/preheader.ts`):
+- client-facing: `A message from <studio>. Open it to see the details.`;
+- studio-facing: `New activity at <studio> in Hone. …`;
+- intake templates: generic, with no studio name.
+
+Invisible filler follows the preheader, so in a client that renders the
+filler, the preview cannot run on into the body. The preheader follows the
+same content rule as subjects.
+
+**Limit (Codex P2 4301045743):** a client that drops the filler shows the
+neutral line followed directly by the start of the body. For 8 of the 13
+templates, that start carries the client's name and, for some, a date, time
+or a word like "cancel", "missed" or "today". The postcare and intake-reminder
+bodies open with the date. `tests/lib/email/preheader-minimum-necessary.test.ts`
+pins exactly which facts leak per template, so any new leak fails.
+**Rewriting the body openings to be neutral is a copy and design decision
+queued on #828**, so for those clients this does not yet minimize the preview.
+
+**Excluded:**
+- the waitlist family, whose Resend idempotency payload must stay byte-stable;
+- payment receipts, which belong to the Audit lane.
+
+**Not affected:** plain-text parts and attachments. This minimizes the
+preview only. Email is **not** PHI-free.
+
+Pinned by `tests/lib/email/preheader-minimum-necessary.test.ts`.
+
 ### Pre-appointment instructions (PR #160)
 
 Booking confirmation + 24h + 2h reminder emails render a per-service `Before your appointment` block sourced from `services.pre_care_instructions` (nullable text, migration 0025). The studio edits it from `Settings → Services` per service; the same field also feeds the portal Care instructions section (PR #159), so a single edit reaches both surfaces.

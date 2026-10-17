@@ -1,4 +1,5 @@
 import { localTimeString12h } from "@/lib/booking/tz";
+import { clientPreheader, studioPreheader, withPreheader } from "@/lib/email/preheader";
 
 function escapeHtml(s: string): string {
   return s
@@ -185,7 +186,7 @@ Hone. Charting software for electrolysis and laser practitioners.
 hone.care
 `;
 
-  return { subject, html, text };
+  return { subject, html: withPreheader(html, clientPreheader(p.studioName)), text };
 }
 
 type NotifyPractitioner = {
@@ -266,7 +267,7 @@ ${p.referralSourceLabel ? `How they heard about us: ${p.referralSourceLabel}\n` 
 Open in Hone: ${p.appointmentUrl}
 `;
 
-  return { subject, html, text };
+  return { subject, html: withPreheader(html, studioPreheader(p.studioName)), text };
 }
 
 // Who performed the cancellation. Server-derived from the authoritative
@@ -384,7 +385,7 @@ ${p.rebookUrl ? `\nBook another: ${p.rebookUrl}` : ""}
     return {
       // SUBJECT RULE (#828): no client name, service, date or time in a subject.
       subject: `Appointment cancelled · ${p.studioName}`,
-      html: htmlShell(bodyRowsHtml, ctaHtml),
+      html: withPreheader(htmlShell(bodyRowsHtml, ctaHtml), clientPreheader(p.studioName)),
       text,
     };
   }
@@ -431,5 +432,9 @@ ${p.rebookUrl ? `\nBook another: ${p.rebookUrl}` : ""}
 ${rows.map(([label, value]) => `${label}: ${value}`).join("\n")}
 `;
 
-  return { subject, html: htmlShell(bodyRowsHtml, ""), text };
+  return {
+    subject,
+    html: withPreheader(htmlShell(bodyRowsHtml, ""), studioPreheader(p.studioName)),
+    text,
+  };
 }

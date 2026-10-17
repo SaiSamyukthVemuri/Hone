@@ -4,6 +4,7 @@ import { sendEmailSafely } from "./send-appointment";
 import { resolveReplyTo, studioClientContactEmail } from "@/lib/email/studio-identity";
 import { generateCancellationToken } from "@/lib/booking/tokens";
 import { localLongDate, formatTimeForStudio } from "@/lib/booking/tz";
+import { clientPreheader, withPreheader } from "@/lib/email/preheader";
 
 // Practitioner Move appointment: the NARROW client "appointment updated" notification.
 //
@@ -147,6 +148,7 @@ export async function notifyAppointmentMoved(
     </table>
   </td></tr></table>
 </body></html>`;
+    const htmlWithPreheader = withPreheader(html, clientPreheader(studioName));
     const text = `Hi ${clientName},\n\n${bodyText}\n\nManage or reschedule: ${manageUrl}\n`;
 
     const res = await sendEmailSafely({
@@ -161,7 +163,7 @@ export async function notifyAppointmentMoved(
       },
       to: email,
       subject,
-      html,
+      html: htmlWithPreheader,
       text,
     });
     if (res.ok) return "sent";

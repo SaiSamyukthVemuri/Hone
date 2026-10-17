@@ -1,3 +1,4 @@
+import { clientPreheader, withPreheader } from "@/lib/email/preheader";
 // Practitioner-triggered intake reissue email (PR: intake reissue +
 // history). Sent when the practitioner clicks "Request intake update"
 // from the client profile. Distinct from the booking-confirmation
@@ -64,7 +65,7 @@ export function buildIntakeRequestEmail(p: {
   </body>
 </html>`.trim();
 
-  return { subject, html, text };
+  return { subject, html: withPreheader(html, clientPreheader(null)), text };
 }
 
 function escapeHtml(s: string): string {
