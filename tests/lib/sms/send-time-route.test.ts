@@ -9,6 +9,7 @@ import {
   type SendTimeRouteRead,
   type SendTimeSender,
 } from "@/lib/sms/send-time-route";
+import type { RecordedCampaignBinding } from "@/lib/sms/campaign-binding";
 
 // ===========================================================================
 // WILLOW-ROUTING-CANDIDATE-01 (#824): the send-time route decision, alone.
@@ -58,6 +59,23 @@ const read = (senders: SendTimeSender[], registrations: SendTimeRegistration[] =
   senders,
   registrations,
 });
+
+// HON-50 G7: a US recipient from a 10DLC long code also needs the sender's
+// recorded campaign binding (0229), checked after it was provisioned.
+const PROVISIONED_AT = "2026-10-01T10:00:00.000Z";
+const binding = (phoneNumber: string, over: Partial<RecordedCampaignBinding> = {}): RecordedCampaignBinding => ({
+  senderId: "sender-a-1",
+  studioId: A,
+  phoneNumber,
+  messagingServiceSid: MSID_A,
+  campaignSid: `CM${"c".repeat(32)}`,
+  campaignStatus: "verified",
+  checkedAt: "2026-10-02T10:00:00.000Z",
+  verifiedAt: "2026-10-02T10:00:00.000Z",
+  ...over,
+});
+const withBinding = (r: SendTimeRouteRead, b: RecordedCampaignBinding): SendTimeRouteRead =>
+  r.ok ? { ...r, campaignBindings: [b] } : r;
 
 const decide = (r: SendTimeRouteRead, recipientE164 = CA_RECIPIENT, studioId = A) =>
   decideStudioRoute({ studioId, recipientE164, read: r });
@@ -186,13 +204,19 @@ describe("THE CANADIAN RULE (#841 fe89a006): a long code is never an A2P route t
   });
 
   it("even with approved 10DLC for that exact long code, Canada is refused; the US is served", () => {
-    const r = read([sender({ phone_number: CA_SENDER_NUMBER })], [tenDlc(CA_SENDER_NUMBER)]);
+    const r = withBinding(
+      read([sender({ phone_number: CA_SENDER_NUMBER, provisioned_at: PROVISIONED_AT })], [tenDlc(CA_SENDER_NUMBER)]),
+      binding(CA_SENDER_NUMBER),
+    );
     expect(decide(r, CA_RECIPIENT)).toEqual({ ok: false, reason: "destination_not_ready", readiness: "requires_information" });
     expect(decide(r, US_RECIPIENT)).toMatchObject({ ok: true, mode: "studio", fromNumber: CA_SENDER_NUMBER, destination: "US" });
   });
 
   it("a US long code with approved 10DLC serves US recipients only", () => {
-    const r = read([sender({ phone_number: US_LONG_CODE })], [tenDlc(US_LONG_CODE)]);
+    const r = withBinding(
+      read([sender({ phone_number: US_LONG_CODE, provisioned_at: PROVISIONED_AT })], [tenDlc(US_LONG_CODE)]),
+      binding(US_LONG_CODE),
+    );
     expect(decide(r, US_RECIPIENT)).toMatchObject({ ok: true, fromNumber: US_LONG_CODE, destination: "US" });
     expect(decide(r, CA_RECIPIENT)).toEqual({ ok: false, reason: "destination_not_ready", readiness: "requires_information" });
   });

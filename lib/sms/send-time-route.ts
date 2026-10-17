@@ -3,10 +3,13 @@ import { destinationReadiness, type DestinationCountry, type ReadinessState } fr
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { readLiveRegistrationState } from "./sender-registration-admin";
 import {
+  bindingSenderFrom,
   registrationEvidenceFor,
+  registrationKindFor,
   type LiveRegistrationSnapshot,
   type SenderRegistrationRow,
 } from "./sender-registration";
+import { campaignBindingVerdict, type RecordedCampaignBinding } from "./campaign-binding";
 import type { SenderStatus, StudioSmsSenderState } from "./sender-status";
 
 // ===========================================================================
@@ -44,7 +47,14 @@ import type { SenderStatus, StudioSmsSenderState } from "./sender-status";
 //     recorded for THIS sender of THIS studio, for the number it holds NOW
 //     (registrationEvidenceFor matches the number). Evidence for a released or
 //     replaced sender, or for a number the sender used to hold, is stale and
-//     is ignored, never inherited.
+//     is ignored, never inherited;
+//   * HON-50 G7: for a US recipient from a 10DLC long code, the RECORDED
+//     campaign binding (0229) of this sender proving its messaging service is
+//     the one linked to the verified US A2P campaign (campaignBindingVerdict).
+//     Recorded at evidence and cutover time, never fetched here: the send path
+//     makes no provider call. A toll-free sender is held to toll-free
+//     verification instead (readiness above), and a CA recipient needs no
+//     10DLC campaign, so neither consults it.
 //
 // NOT DECIDED HERE: whether the provider relationship covers health
 // information (BAA, #828; the SMS lane's NOT_HIPAA_COVERAGE). "Active" readiness never implies it; it is a
@@ -78,6 +88,8 @@ export type SendTimeSender = {
   status: SenderStatus;
   phone_number: string | null;
   messaging_service_sid: string | null;
+  /** 0229. Absent before 0229; read as unknown, so a binding reads stale. */
+  provisioned_at?: string | null;
 };
 
 export type SendTimeRegistration = Pick<
@@ -87,7 +99,17 @@ export type SendTimeRegistration = Pick<
 
 /** A read that did not answer is never "no sender". */
 export type SendTimeRouteRead =
-  | { ok: true; senders: SendTimeSender[]; registrations: SendTimeRegistration[] }
+  | {
+      ok: true;
+      senders: SendTimeSender[];
+      registrations: SendTimeRegistration[];
+      /**
+       * 0229, from the SAME snapshot. Absent is [] (no binding recorded, so a
+       * US 10DLC send refuses as missing); present but not an array is an
+       * answer this file does not understand, and refuses as unreadable.
+       */
+      campaignBindings?: RecordedCampaignBinding[];
+    }
   | { ok: false };
 
 export type SendTimeRouteReader = (studioId: string) => Promise<SendTimeRouteRead>;
@@ -109,6 +131,7 @@ export function liveSendTimeRouteReader(admin: SupabaseClient): SendTimeRouteRea
       // An unknown status string is never "active", so it can never be chosen.
       senders: state.senders.map((s) => ({ ...s, status: s.status as SenderStatus })),
       registrations: state.registrations,
+      campaignBindings: state.campaignBindings,
     };
   };
 }
@@ -120,7 +143,11 @@ export type SendTimeRefusal =
   | "sender_wrong_studio"
   | "sender_identity_missing"
   | "recipient_unroutable"
-  | "destination_not_ready";
+  | "destination_not_ready"
+  | "campaign_binding_missing"
+  | "campaign_binding_mismatch"
+  | "campaign_binding_unverified"
+  | "campaign_binding_stale";
 
 export type SendTimeRoute =
   | { ok: true; mode: "platform" }
@@ -165,7 +192,12 @@ export function decideStudioRoute(input: {
   read: SendTimeRouteRead;
 }): SendTimeRoute {
   const { studioId, recipientE164, read } = input;
-  if (!read.ok || !Array.isArray(read.senders) || !Array.isArray(read.registrations)) {
+  if (
+    !read.ok ||
+    !Array.isArray(read.senders) ||
+    !Array.isArray(read.registrations) ||
+    (read.campaignBindings !== undefined && !Array.isArray(read.campaignBindings))
+  ) {
     return { ok: false, reason: "sender_read_failed" };
   }
   // A row that is not an object is an answer this file does not understand:
@@ -212,6 +244,16 @@ export function decideStudioRoute(input: {
   // Readiness "active" already required a classifiable number; checked again
   // here so the From the provider receives is the canonical E.164.
   if (!senderNumber.ok) return { ok: false, reason: "destination_not_ready", readiness: "failed" };
+  // HON-50 G7. US traffic from a 10DLC long code also needs the recorded
+  // campaign binding of THIS sender, checked against this snapshot's sender.
+  if (destination === "US" && registrationKindFor(sender.phone_number) === "us_10dlc") {
+    const binding = (read.campaignBindings ?? []).find((b) => b?.senderId === sender.id) ?? null;
+    const verdict = campaignBindingVerdict(
+      binding,
+      bindingSenderFrom({ ...sender, provisioned_at: sender.provisioned_at ?? null }),
+    );
+    if (!verdict.ok) return { ok: false, reason: `campaign_binding_${verdict.reason}` };
+  }
   return {
     ok: true,
     mode: "studio",
