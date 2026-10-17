@@ -56,13 +56,17 @@ test("owner edits a pinned note in place on an iPhone viewport", async ({ browse
     await editor.fill("Allergy: latex + penicillin");
     await page.getByRole("button", { name: /^Save$/ }).click();
 
+    // HON-9: the editor is a <textarea>, whose text content React mirrors from
+    // its value, so getByText would match the open editor itself before the
+    // save lands. Wait for the editor to close, then for the saved row.
+    await expect(editor).toBeHidden({ timeout: 20_000 });
     await expect(page.getByText("Allergy: latex + penicillin")).toBeVisible({ timeout: 20_000 });
     await expectNoHorizontalOverflow(page, "client profile @390 (after save)");
 
     // Same note id, text changed → edited in place, not deleted + recreated.
+    await expect.poll(async () => (await getPinnedNoteById(noteId))?.text, { timeout: 20_000 }).toBe("Allergy: latex + penicillin");
     const row = await getPinnedNoteById(noteId);
     expect(row?.id).toBe(noteId);
-    expect(row?.text).toBe("Allergy: latex + penicillin");
   } finally {
     await ctx.close();
   }
@@ -124,9 +128,9 @@ test("a full 200-character pinned note is readable while editing, and Enter stil
     }, "Line one\nLine two");
     await expect(editor).toHaveValue("Line one Line two");
     await editor.press("Enter");
+    await expect(editor).toBeHidden({ timeout: 20_000 }); // Enter saved and closed the editor
     await expect(page.getByText("Line one Line two")).toBeVisible({ timeout: 20_000 });
-    const row = await getPinnedNoteById(noteId);
-    expect(row?.text).toBe("Line one Line two");
+    await expect.poll(async () => (await getPinnedNoteById(noteId))?.text, { timeout: 20_000 }).toBe("Line one Line two");
   } finally {
     await ctx.close();
   }

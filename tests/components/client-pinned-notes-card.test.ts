@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
@@ -95,5 +97,24 @@ describe("PinnedNotesReadonly: a long unbroken note wraps instead of pushing the
 
   it("renders nothing when there are no notes (unchanged)", () => {
     expect(renderToStaticMarkup(createElement(PinnedNotesReadonly, { notes: [] }))).toBe("");
+  });
+});
+
+describe("auto-height fits the whole note (source pins; layout is proved in e2e)", () => {
+  // The unit lane cannot measure layout, so the two sizing rules are pinned in
+  // the source; e2e/pinned-note-edit-mobile measures scrollHeight vs clientHeight.
+  const src = readFileSync(path.resolve(__dirname, "../../components/client-pinned-notes-card.tsx"), "utf8");
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, "").split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n");
+
+  it("adds the top and bottom borders to scrollHeight (border-box), so the last line is not clipped (Codex P2 4301103594)", () => {
+    expect(code).toMatch(/borderTopWidth/);
+    expect(code).toMatch(/borderBottomWidth/);
+    expect(code).toMatch(/el\.scrollHeight \+ borders/);
+  });
+
+  it("re-fits when the field's WIDTH changes, not only when the text does (Codex P2 4301103599)", () => {
+    expect(code).toMatch(/new ResizeObserver\(/);
+    expect(code).toMatch(/ro\.observe\(el\)/);
+    expect(code).toMatch(/ro\.disconnect\(\)/);
   });
 });

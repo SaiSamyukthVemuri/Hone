@@ -43,11 +43,31 @@ export function PinnedNoteField({
   className = "",
 }: FieldProps) {
   const ref = useRef<HTMLTextAreaElement>(null);
+  // Fit the box to its text. With Tailwind's border-box sizing the assigned
+  // height includes the borders, which scrollHeight does not, so they are
+  // added back; otherwise the last line is clipped by about 2px (Codex P2
+  // 4301103594). Re-fit whenever the text changes AND whenever the field's
+  // width changes (rotation, split view, layout), since a narrower box wraps
+  // onto more lines without any change in value (Codex P2 4301103599).
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
+    const fit = () => {
+      const cs = getComputedStyle(el);
+      const borders = (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
+      el.style.height = "auto";
+      el.style.height = `${el.scrollHeight + borders}px`;
+    };
+    fit();
+    if (typeof ResizeObserver === "undefined") return;
+    let lastWidth = el.clientWidth;
+    const ro = new ResizeObserver(() => {
+      if (el.clientWidth === lastWidth) return; // our own height change: ignore
+      lastWidth = el.clientWidth;
+      fit();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
   }, [value]);
   return (
     <div className={`flex min-w-0 flex-col gap-1 ${className}`}>
