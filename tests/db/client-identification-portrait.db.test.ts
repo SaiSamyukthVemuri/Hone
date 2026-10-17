@@ -10,14 +10,16 @@
 //   * the command refuses every wrong actor non-disclosingly: a practitioner
 //     of another studio, a DEACTIVATED practitioner, a RECEPTIONIST of the
 //     same studio, and anon (EXECUTE revoked);
-//   * an archived portrait photo cannot be set again, and is never shown
-//     (readers filter deleted_at; no trigger is added to treatment_images).
+//   * archiving the portrait photo clears the pointer atomically (in the
+//     archive command; no trigger is added to treatment_images), and an
+//     archived photo can never be set again.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import {
   adminQuery,
   asRole,
+  asUser,
   closePool,
   seedMember,
   seedSession,
@@ -200,26 +202,69 @@ describe("0231: the command refuses every wrong actor, non-disclosingly", () => 
   });
 });
 
-describe("0231: an archived portrait photo is never shown or re-set", () => {
-  it("archiving leaves no live portrait: the integrity rule refuses it, readers skip it", async () => {
+describe("0231: archiving the portrait photo clears it, atomically", () => {
+  it("the archive command clears the pointer in the same transaction", async () => {
     const img = await image(A, A.clientId);
     await userQuery(A.userId, SET, [A.clientId, img]);
     expect(await portraitOf(A.clientId)).toBe(img);
-    await userQuery(A.userId, ARCHIVE, [img, A.clientId]);
-    // The readers' own filter (profile header / Photos tab) finds nothing.
-    const live = await userQuery(
-      A.userId,
-      `select t.id from public.clients c join public.treatment_images t
-         on t.id = c.portrait_image_id and t.deleted_at is null
-       where c.id = $1`,
-      [A.clientId],
-    );
-    expect(live.rowCount).toBe(0);
+    const archived = await userQuery(A.userId, ARCHIVE, [img, A.clientId]);
+    expect(archived.rows[0].id).toBe(img);
+    expect(await portraitOf(A.clientId), "no pointer to an archived photo").toBeNull();
     // And it can never be set again while archived.
     const r = await refusal(userQuery(A.userId, SET, [A.clientId, img]));
     expect(r.code).toBe(CHECK_VIOLATION);
-    // Clearing still works.
+  });
+
+  it("archiving a DIFFERENT photo leaves the portrait alone", async () => {
+    const portrait = await image(A, A.clientId);
+    const other = await image(A, A.clientId);
+    await userQuery(A.userId, SET, [A.clientId, portrait]);
+    await userQuery(A.userId, ARCHIVE, [other, A.clientId]);
+    expect(await portraitOf(A.clientId)).toBe(portrait);
     await userQuery(A.userId, SET, [A.clientId, null]);
-    expect(await portraitOf(A.clientId)).toBeNull();
+  });
+});
+
+describe("0231: a concurrent archive WAITS for the setter, then clears the pointer", () => {
+  it("B's archive blocks on A's FOR SHARE (asserted on the real lock), then clears it", async () => {
+    // Without the lock, B's archive would commit first, A would then commit a
+    // pointer to an already-archived photo, and the invariant would break.
+    const img = await image(A, A.clientId);
+    let releaseA!: () => void;
+    const aMayCommit = new Promise<void>((r) => (releaseA = r));
+    let aHolds!: () => void;
+    const aHolding = new Promise<void>((r) => (aHolds = r));
+
+    // Connection A: set the portrait and HOLD the transaction open.
+    const a = asUser(A.userId, async (q) => {
+      await q(SET, [A.clientId, img]);
+      aHolds();
+      await aMayCommit;
+    });
+    await aHolding;
+
+    // Connection B: archive the same photo while A is still open.
+    const b = asUser(A.userId, (q) => q(ARCHIVE, [img, A.clientId]));
+    let bResult: unknown;
+    try {
+      // Prove B is waiting on a LOCK, not merely slow: bounded poll of
+      // pg_stat_activity for a backend running the archive in a Lock wait.
+      let blocked = false;
+      for (let i = 0; i < 100 && !blocked; i++) {
+        const r = await adminQuery(
+          `select count(*)::int n from pg_stat_activity
+            where wait_event_type = 'Lock' and query like '%archive_treatment_image%'`,
+        );
+        blocked = (r.rows[0].n as number) > 0;
+        if (!blocked) await new Promise((r) => setImmediate(r));
+      }
+      expect(blocked, "B must be blocked on A's row lock").toBe(true);
+    } finally {
+      releaseA();
+      await a;
+      bResult = await b;
+    }
+    expect((bResult as { rows: { id: string }[] }).rows[0].id).toBe(img);
+    expect(await portraitOf(A.clientId), "B cleared the pointer A committed").toBeNull();
   });
 });

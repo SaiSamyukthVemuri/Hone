@@ -75,6 +75,21 @@ describe("0231's transaction and shape", () => {
     expect(TOP_LEVEL).not.toMatch(/on public\.treatment_images/);
   });
 
+  it("archive clears the portrait ATOMICALLY in the archive command (Codex P2 4302494067)", () => {
+    const body = sql.slice(sql.indexOf("create or replace function public.archive_treatment_image"));
+    expect(body).toMatch(/security definer\s+set search_path = ''/);
+    expect(body).toMatch(
+      /update public\.clients c\s+set portrait_image_id = null\s+where c\.id = p_client_id\s+and c\.studio_id = v_studio\s+and c\.portrait_image_id = v_id;/,
+    );
+    // The 0168 guards: no row or storage deletion in any image command.
+    expect(EXECUTABLE).not.toMatch(/delete from/i);
+    expect(EXECUTABLE).not.toMatch(/storage\./);
+    // And the setter locks the photo row so a concurrent archive waits.
+    const integrity = sql.slice(sql.indexOf("function public.clients_portrait_integrity"));
+    expect(integrity).toMatch(/for share;/);
+    expect(TOP_LEVEL).toMatch(/create index if not exists clients_portrait_image_id_idx/);
+  });
+
   it("resolves the actor per studio through treatment_image_actor, non-disclosingly", () => {
     const body = sql.slice(sql.indexOf("function public.set_client_portrait"));
     expect(body).toMatch(/from public\.treatment_image_actor\(v_studio\) a;/);
@@ -94,6 +109,11 @@ describe("0231's grant posture (CLAUDE.md §5; clinical-rpc-grant-guard)", () =>
       expect(revokedRoles(EXECUTABLE, fn, ""), fn).toEqual(REQUIRED_REVOKES);
       expect(grantedRoles(EXECUTABLE, fn, ""), fn).toEqual([]);
     }
+  });
+
+  it("the redefined archive command keeps its grant posture: revoked from all four, authenticated only", () => {
+    expect(revokedRoles(EXECUTABLE, "archive_treatment_image", "uuid, uuid")).toEqual(REQUIRED_REVOKES);
+    expect(grantedRoles(EXECUTABLE, "archive_treatment_image", "uuid, uuid")).toEqual(["authenticated"]);
   });
 
   it("carries no blanket function grant", () => {
