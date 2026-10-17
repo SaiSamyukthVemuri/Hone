@@ -39,6 +39,11 @@ const codeOnly = (source: string) =>
 const SURFACES = [
   { name: "sender-status lib", rel: STATUS_LIB },
   { name: "status card", rel: CARD },
+  // SMS-SENDER-READY-01: the per-country readiness view is held to the same
+  // read-only boundary as the card it sits under.
+  { name: "NANP classifier", rel: "lib/sms/nanp.ts" },
+  { name: "sender readiness lib", rel: "lib/sms/sender-readiness.ts" },
+  { name: "readiness panel", rel: "app/(app)/settings/integrations/SmsSenderReadinessPanel.tsx" },
 ] as const;
 
 describe("the comment stripper itself", () => {
