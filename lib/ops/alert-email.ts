@@ -22,8 +22,9 @@ import { resend, FROM_ADDRESS } from "@/lib/email/client";
 //   * Sends only when OPS_ALERT_EMAILS is configured (comma-
 //     separated). Missing/empty env logs a once-per-instance warning
 //     and returns; the caller's DB write is unaffected.
-//   * Content carries only what the alert row already carries (the
-//     caller passes the ALREADY-REDACTED message + safe ids): no
+//   * Content carries only the event slug, the ALREADY-REDACTED message
+//     (with any record UUID or Stripe object id replaced), the time, the
+//     environment and the admin link: no record ids (#828 G-24), no
 //     secrets, no card data, no clinical content, no raw payloads.
 
 export type CriticalAlertEmailInput = {
@@ -39,6 +40,21 @@ export type CriticalAlertEmailInput = {
 };
 
 const ADMIN_ALERTS_URL = "https://hone.care/admin/ops-alerts";
+
+// #828 G-24: the email leaves Hone through Resend, which cannot sign a BAA,
+// so it carries NO record identifiers. The studio, appointment and client
+// UUIDs, Stripe object ids and the route stay on the durable ops_alerts row
+// and the /admin/ops-alerts page. The (already PII-redacted) message is
+// scrubbed of any UUID or Stripe object id it embeds; the event slug stays in
+// the subject because it names a failure class, not a record.
+const RECORD_ID_RE =
+  /(?<![0-9a-f])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9a-f])/gi;
+const STRIPE_ID_RE =
+  /\b(?:acct|ch|cs|cus|evt|in|pi|pm|po|py|re|seti|si|sub|tr|txn)_[A-Za-z0-9]{6,}\b/g;
+
+function withoutRecordIds(text: string): string {
+  return text.replace(RECORD_ID_RE, "[id]").replace(STRIPE_ID_RE, "[stripe-id]");
+}
 
 let missingEnvWarned = false;
 
@@ -83,26 +99,18 @@ export async function notifyCriticalOpsAlert(
       return;
     }
 
-    const idLines = [
-      input.studioId ? `Studio: ${input.studioId}` : null,
-      input.appointmentId ? `Appointment: ${input.appointmentId}` : null,
-      input.clientId ? `Client id: ${input.clientId}` : null,
-      input.stripeEventId ? `Stripe event: ${input.stripeEventId}` : null,
-      input.stripePaymentIntentId
-        ? `PaymentIntent: ${input.stripePaymentIntentId}`
-        : null,
-      input.route ? `Route: ${input.route}` : null,
-    ].filter((l): l is string => l !== null);
-
+    // No id lines (#828 G-24): studioId, appointmentId, clientId, the Stripe
+    // ids and the route are deliberately NOT rendered. They remain on the
+    // ops_alerts row, which the link below opens.
     const text = [
       `CRITICAL ops alert: ${input.event}`,
       "",
-      input.message,
+      withoutRecordIds(input.message),
       "",
       `Created: ${input.createdAtIso}`,
       `Environment: ${environmentLabel()}`,
-      ...idLines,
       "",
+      "Record and payment details are on the alert itself, not in this email.",
       `Review and resolve: ${ADMIN_ALERTS_URL}`,
     ].join("\n");
 
