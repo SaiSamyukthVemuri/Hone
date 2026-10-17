@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getSessionBlockAreasByBlockIds } from "@/lib/supabase/queries";
 import {
+  buildTreatmentImageThumbPath,
   TREATMENT_IMAGES_BUCKET,
   TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS,
   validateTreatmentImagePath,
@@ -23,7 +24,10 @@ import { treatmentPhotoAreaLabel, type SessionBlockAreaInput } from "../../image
 
 export type SessionPhoto = {
   id: string;
+  /** The signed ORIGINAL: the clinical record and the guaranteed fallback. */
   url: string;
+  /** PERF-IMG-03 grid derivative, signed only after the original; null when none. */
+  thumbUrl: string | null;
   areaLabel: string | null;
   note: string | null;
 };
@@ -67,6 +71,21 @@ export async function signedSessionPhotos(input: {
             .from(TREATMENT_IMAGES_BUCKET)
             .createSignedUrl(r.storage_path, TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS);
           if (!data?.signedUrl) return null;
+          // The derivative is signed SECOND and only because the original was
+          // (Photos tab rule, PERF-IMG-03): its authorization never exceeds the
+          // original's. A missing derivative simply leaves thumbUrl null.
+          let thumbUrl: string | null = null;
+          const thumbPath = buildTreatmentImageThumbPath(r.storage_path);
+          if (thumbPath) {
+            try {
+              const t = await admin.storage
+                .from(TREATMENT_IMAGES_BUCKET)
+                .createSignedUrl(thumbPath, TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS);
+              thumbUrl = t.data?.signedUrl ?? null;
+            } catch {
+              thumbUrl = null;
+            }
+          }
           const rawBlock = Array.isArray(r.session_blocks)
             ? (r.session_blocks[0] ?? null)
             : (r.session_blocks ?? null);
@@ -83,6 +102,7 @@ export async function signedSessionPhotos(input: {
           return {
             id: r.id,
             url: data.signedUrl,
+            thumbUrl,
             areaLabel: treatmentPhotoAreaLabel(r.session_block_id, block),
             note: r.practitioner_note ?? null,
           };

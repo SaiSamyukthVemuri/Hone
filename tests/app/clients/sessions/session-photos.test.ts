@@ -53,8 +53,8 @@ describe("session photos on the chart page", () => {
     expect(page).not.toMatch(/await signedSessionPhotos/);
   });
 
-  it("is read-only: no server action, no form, links to the Photos tab", () => {
-    expect(section).not.toMatch(/"use client"|use server|<form|onClick/);
+  it("is read-only: no server action, no form, no click handler, links to the Photos tab", () => {
+    expect(section).not.toMatch(/use server|<form|onClick|from "\.\/actions"|from "\.\.\/\.\.\/images\/actions"/);
     expect(section).toMatch(/href=\{`\/clients\/\$\{clientId\}\/images`\}/);
     expect(section).toMatch(/if \(photos\.length === 0\) return null;/);
     expect(page).toMatch(/<SessionPhotos clientId=\{id\} photos=\{sessionPhotos\} \/>/);
@@ -62,5 +62,30 @@ describe("session photos on the chart page", () => {
 
   it("the link back to Photos is on the 44px touch floor", () => {
     expect(section).toMatch(/className="inline-flex min-h-\[44px\] items-center/);
+  });
+});
+
+describe("session photos: Codex P1 4301862700 / P2 4301862702", () => {
+  const helper = read("session-photos.ts");
+  const section = read("SessionPhotos.tsx");
+
+  it("loads EAGERLY: no lazy request that could outlive the 60 s URL", () => {
+    expect(section).not.toMatch(/loading="lazy"/);
+    // An original that still fails shows a reload note, never a broken image.
+    expect(section).toMatch(/Photo unavailable — reload to view/);
+  });
+
+  it("signs the grid derivative only AFTER the original, and falls back to it", () => {
+    const original = helper.indexOf("createSignedUrl(r.storage_path");
+    const derivative = helper.indexOf("createSignedUrl(thumbPath");
+    expect(original).toBeGreaterThan(-1);
+    expect(derivative).toBeGreaterThan(original);
+    expect(helper).toMatch(/if \(!data\?\.signedUrl\) return null;/);
+    expect(helper).toMatch(/buildTreatmentImageThumbPath\(r\.storage_path\)/);
+    // Grid uses the derivative; a derivative that will not load demotes to the
+    // original; only the original failing marks the cell unavailable.
+    expect(section).toMatch(/const useThumb = Boolean\(p\.thumbUrl\) && !thumbFailed\[p\.id\];/);
+    expect(section).toMatch(/if \(useThumb\) setThumbFailed/);
+    expect(section).toMatch(/else setBroken/);
   });
 });
