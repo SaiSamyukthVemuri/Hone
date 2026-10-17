@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 
+import { Button } from "@/components/ui/button";
 import { SectionLabel } from "@/components/ui/section-label";
 import { MachineFirstSetupPanel } from "./machine-first-setup-panel";
 import { NO_PERSISTENCE } from "@/lib/machines/selection-store";
@@ -53,6 +54,20 @@ export type MachineFirstSetupConnectedProps = {
   load?: () => Promise<MachineSetupContext>;
   /** Injected by tests; production uses the server action. */
   record?: MachineFirstSetupPanelRecord;
+  /**
+   * Collect settings in CREATE mode and hand them to the host form's save.
+   *
+   * Passed straight through to the panel. The host supplies it only when it
+   * can actually carry them into its own Save - `block-setup-form.tsx` does,
+   * through `initialSetup`.
+   */
+  /** Forwarded to the panel: the host's save is unresolved. */
+  settingDraftFrozen?: boolean;
+  /** Forwarded straight through: see the panel's own prop. */
+  onRevisionUnresolved?: (unresolved: boolean) => void;
+  onSettingDraft?: NonNullable<
+    Parameters<typeof MachineFirstSetupPanel>[0]["onSettingDraft"]
+  >;
   /** Injected by tests; production uses the server action. */
   select?: (choice: {
     deviceId: string | null;
@@ -64,6 +79,44 @@ type MachineFirstSetupPanelRecord = NonNullable<
   Parameters<typeof MachineFirstSetupPanel>[0]["onRecord"]
 >;
 
+/**
+ * One recorder result, relayed to the entry.
+ *
+ * EXPORTED AND PURE so the chain can be driven by a test. It was an inline
+ * ternary inside the component's `onRecord` closure, which nothing could
+ * call — this repository has no jsdom — so the only evidence that the
+ * outcome code survived this hop was a source scan. It did not survive it
+ * (Codex, #860 4301771498), and the scan said it did.
+ *
+ * THE WHOLE JOB IS NOT LOSING ANYTHING. That sounds too small to name until
+ * you count: five values in this lane have been computed correctly and
+ * dropped at a hop exactly like this one.
+ */
+export function relayRecordResult(out: {
+  ok: boolean;
+  code?: string;
+  error?: string;
+  captures?: number;
+  written?: number;
+  reused?: boolean;
+}): {
+  ok: boolean;
+  code?: string;
+  error?: string;
+  captures?: number;
+  written?: number;
+  reused?: boolean;
+} {
+  return out.ok
+    ? {
+        ok: true,
+        captures: out.captures,
+        written: out.written,
+        reused: out.reused,
+      }
+    : { ok: false, code: out.code, error: out.error };
+}
+
 export function MachineFirstSetupConnected({
   blockId = null,
   clientId,
@@ -71,6 +124,9 @@ export function MachineFirstSetupConnected({
   load,
   select,
   record,
+  onSettingDraft,
+  settingDraftFrozen = false,
+  onRevisionUnresolved,
 }: MachineFirstSetupConnectedProps) {
   const [ctx, setCtx] = useState<MachineSetupContext | null>(null);
   const [state, setState] = useState<"idle" | "loading" | "failed">("idle");
@@ -84,7 +140,7 @@ export function MachineFirstSetupConnected({
           const mod = await import(
             "@/app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions"
           );
-          return mod.loadMachineSetupContext({ clientId, sessionId });
+          return mod.loadMachineSetupContext({ clientId, sessionId, blockId });
         });
       setCtx(await loader());
       setState("idle");
@@ -93,7 +149,7 @@ export function MachineFirstSetupConnected({
       // reported in place rather than escalated.
       setState("failed");
     }
-  }, [load, clientId, sessionId]);
+  }, [load, clientId, sessionId, blockId]);
 
   if (!ctx) {
     return (
@@ -107,15 +163,30 @@ export function MachineFirstSetupConnected({
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           Record which machine you are working on before entering its settings.
         </p>
-        <button
+        {/*
+          THE SHARED PRIMITIVE, for the third time in this lane and the same
+          reason each time. This was `text-xs py-1.5` with no minimum height -
+          about 30px on a touch device, under DESIGN.md LAW 6's 44px floor -
+          and it is the ONLY way into machine selection, so the one control a
+          practitioner must hit on a phone was the one below the floor
+          (Codex, #860 4296029615).
+          Button's `sm` composes CONTROL_COMPACT_FINE_POINTER: the full 44px on
+          every coarse pointer, relaxing to 32px only behind the repository's
+          explicit `pointer-fine` gate. The mode pills were repaired this way
+          after ebc69ff6 and the lesson is unchanged - the rule belongs in the
+          primitive, because a call site can forget it, and call sites do.
+        */}
+        <Button
           type="button"
+          variant="secondary"
+          size="sm"
+          className="self-start"
           onClick={open}
           disabled={state === "loading"}
-          className="self-start rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
           data-testid="machine-first-open"
         >
           {state === "loading" ? "Loading…" : "Choose machine"}
-        </button>
+        </Button>
         {state === "failed" && (
           <p className="text-xs text-neutral-600 dark:text-neutral-400" role="status">
             Your machines could not be loaded. The treatment fields below are
@@ -132,8 +203,106 @@ export function MachineFirstSetupConnected({
       const mod = await import(
         "@/app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions"
       );
-      const out = await mod.recordReadingsAction(input);
-      return out.ok ? { ok: true } : { ok: false, error: out.error };
+      // THE WHOLE-SAVE COMMAND, not one call per group. The per-group action
+      // is still exported and still correct for a single group recorded on its
+      // own - that is why a capture made through it carries no submission id -
+      // but the treatment form saves every group the practitioner entered, and
+      // that has to be one atomic fact with one retry key.
+      // THE ROUTE'S OWN IDS, added here rather than taken from the panel.
+      // The panel knows which block it is charting; it does NOT get to say
+      // whose chart that is. These come from this wrapper's props, which the
+      // page supplied, and the server re-checks them against the studio it
+      // derives for itself (Codex, #860 4297032712).
+      const out = await mod.recordSetupSubmissionAction({
+        ...input,
+        clientId,
+        sessionId,
+      });
+      // WHAT IS RECORDED HAS CHANGED, SO RE-READ IT.
+      //
+      // `recordedSetup` was loaded once when this panel opened and never
+      // refreshed, which cost two things (Codex, #860 4300386011):
+      //
+      //   1. THE SEED. The entry form restores its group identities from
+      //      this snapshot on every mount. Save g1 and g2, switch machine
+      //      or mode, switch back — the remount seeds from a snapshot that
+      //      predates those captures, finds nothing, and falls back to a
+      //      fresh g1. A change meant for g2 is then recorded as a g1
+      //      revision: the identity defect again, on the save-then-switch-
+      //      back path.
+      //   2. THE SURFACE BELOW IT. "Recorded this treatment" also renders
+      //      from this snapshot, so a capture she had just made was absent
+      //      from the list that exists to stop her recording it twice.
+      //
+      // Both are the same staleness, so both are fixed by re-reading the
+      // truth rather than by patching the seed. The SERVER is asked, not a
+      // local tally: a client-side map of "what I just saved" would be a
+      // second account of the record that can disagree with it, and an
+      // absorbed retry (`reused`) writes nothing while still meaning those
+      // groups exist.
+      if (out.ok) {
+        // A FAILED REFRESH KEEPS THE OLD SNAPSHOT AND SAYS SO.
+        //
+        // The first version of this installed whatever came back and
+        // wrapped the call in a `catch`. The catch could not fire —
+        // `readingsForBlockAction` returned `[]` on failure rather than
+        // throwing — so a transient read failure REPLACED the history with
+        // an empty list while `recordedSetupUnavailable` stayed false. The
+        // list she relies on to avoid recording twice simply vanished,
+        // right after a save (Codex, #860 4300759932).
+        //
+        // That is round 4's conflation one layer down: I fixed "a failed
+        // read must not render as nothing recorded" in the component and
+        // then rebuilt it in the data path feeding that component. The
+        // action now reports failure explicitly, and this keeps the
+        // PREVIOUS readings — which are still true, just one capture out of
+        // date — and marks the surface unavailable so the copy says it
+        // could not be refreshed.
+        //
+        // The save itself is untouched either way: it already committed,
+        // and reporting it as failed here would manufacture the
+        // lost-response defect.
+        let fresh: Awaited<ReturnType<typeof mod.readingsForBlockAction>>;
+        try {
+          fresh = await mod.readingsForBlockAction({
+            blockId: input.blockId,
+            clientId,
+            sessionId,
+          });
+        } catch {
+          fresh = { ok: false };
+        }
+        setCtx((prev) =>
+          prev
+            ? fresh.ok
+              ? {
+                  ...prev,
+                  recordedSetup: fresh.readings,
+                  recordedSetupUnavailable: false,
+                  // THE NAMES COME WITH THEM (Codex, #860 4301669061).
+                  //
+                  // Refreshing the captures and leaving the name map at its
+                  // pre-save snapshot left a capture saved on a unit the
+                  // loader had not already seen with NO physical machine
+                  // against it until a reload - and in a studio running two
+                  // units of one model, that attribution is the entry's
+                  // whole purpose.
+                  //
+                  // MERGED, NOT REPLACED, and that is not a detail: the
+                  // refresh re-reads only this BLOCK, while the loader's map
+                  // also names the next-visit guidance and an unusable
+                  // stored selection. Assigning `fresh.unitNames` would name
+                  // the new capture and silently un-name the prior setup
+                  // beside it - fixing one surface by breaking its
+                  // neighbour, which is how two of this lane's earlier
+                  // repairs went.
+                  unitNames: { ...prev.unitNames, ...fresh.unitNames },
+                }
+              : { ...prev, recordedSetupUnavailable: true }
+            : prev,
+        );
+      }
+      return relayRecordResult(out);
     });
 
   // The selection action the panel calls on every pick and on "Change
@@ -182,8 +351,41 @@ export function MachineFirstSetupConnected({
       // inert in production while the direct-render tests passed - they supply
       // the prop themselves and so cannot see a wiring gap
       // (Codex, 2351742d).
-      priorUnitNames={ctx.priorUnitNames}
+      unitNames={ctx.unitNames}
+      // WHAT IS ALREADY RECORDED against this block. Forwarded here, which is
+      // the step that was missing for `priorUnitNames` and the remembered
+      // mode: both existed in the loader, the props and the panel's own
+      // forwarding, and died HERE, so the feature was inert in production
+      // while every direct-render test passed (Codex, 2351742d and 15cc6c99).
+      // The context-forwarding guard in
+      // tests/components/machine-first-setup-panel.test.ts derives the field
+      // list from MachineSetupContext's own declaration, so this line is not
+      // optional - omitting it fails that test.
+      recordedSetup={ctx.recordedSetup}
+      // AND ITS FAILURE STATE, which is a separate field precisely so it
+      // cannot be inferred from an empty list. The guard above caught this
+      // line missing the moment the field joined MachineSetupContext - a
+      // third instance of the defect its comment describes, found by the test
+      // rather than in review (Codex, #860 4290452722).
+      // THE GUARD CAUGHT THIS ONE TOO. `priorSetupUnavailable` joined
+      // MachineSetupContext and was not forwarded — the fourth time the
+      // context-forwarding test has found a field that existed in the
+      // loader, the type and the panel's props and died on this line,
+      // leaving the feature inert in the real route while every
+      // direct-render test passed (Codex, 2351742d, 15cc6c99, #860
+      // 4290452722).
+      priorSetupUnavailable={ctx.priorSetupUnavailable}
+      recordedSetupUnavailable={ctx.recordedSetupUnavailable}
       blockId={blockId}
+      // CREATE MODE. Forwarded rather than recreated here, and the
+      // context-forwarding guard cannot see this one because it is not a
+      // context field - so it is pinned by its own source assertion in
+      // tests/components/machine-first-setup-panel.test.ts.
+      onSettingDraft={onSettingDraft}
+      // FORWARDED. Five values in this lane have been computed correctly and
+      // dropped at a hop exactly like this one.
+      onRevisionUnresolved={onRevisionUnresolved}
+      settingDraftFrozen={settingDraftFrozen}
       onSelectMachine={select ?? onSelectMachine}
       onRecord={onRecord}
     />

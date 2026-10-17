@@ -1149,6 +1149,20 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Introduced by migration 0223 (MPX-03, #829) when per-field revisions were replaced by atomic captures. One row per act of recording a settings group against a treatment block: which unit, which catalogue profile version, which mode, which channels, by whom, when, and which revision of that group it is. It is CLINICAL and studio-owned - the readings in treatment_setup_readings hang off it, and exporting readings without their captures would leave each reading unable to say what it was recorded under or in what order. Its disposition should therefore follow whatever treatment_setup_readings is given, and this lane was not asked to make that product decision. Note it carries recorded_by_practitioner_id, so it names a practitioner but no client directly.",
   },
+  treatment_area_create_claims: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "Introduced by migration 0223 (MPX-03, #829) to make the INITIAL save of a treatment area repeatable. One row per (session, caller-supplied retry key), recording a digest of the whole initial payload together with the block, entry and submission that key produced - so a retry after a lost response returns the original area instead of creating a second one carrying a second copy of the settings. TIER 2 RATHER THAN 1 because nothing in it is clinical content: it is a RECEIPT for a transport, and the three ids in it point at rows that each carry their own disposition in this registry. THE OBVIOUS ANSWER IS AN EXCLUSION on the same footing as studio_calendar_reservations - but `derived` would be an OVERCLAIM, and saying so is the point of leaving this pending. Two of its columns exist nowhere else: `idempotency_key`, which is opaque and minted by the caller's browser, and `payload_digest`, an md5 over the save's arguments. Neither is derivable from the rows it points at, and neither would mean anything to a client reading an archive - which is an argument for excluding it, not for calling it derived. It is studio-scoped and member-read like everything else here, because a key names a session and a session names a client.",
+  },
+  treatment_setup_submissions: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    reason:
+      "Introduced by migration 0223 (MPX-03, #829) when a Save of machine settings became ONE atomic fact rather than several independent calls. One row per press of Save, recording the setup identity it was made under - which physical unit, which catalogue profile version, which mode - plus a caller-supplied retry key and a digest of the payload, so a repeat after a lost response returns the original instead of appending a second capture. It is CLINICAL and studio-owned: the captures in treatment_setup_captures carry its id, and a submission without them says only that a save happened, while captures without it lose which groups were entered together in one act. Its disposition must therefore follow whatever treatment_setup_captures and treatment_setup_readings are given, and this lane was not asked to make that product decision. PROVENANCE: it carries recorded_by_practitioner_id, so it names a practitioner but no client directly - the client is reachable only through session_blocks -> sessions. The retry key is caller-supplied and opaque, and payload_digest is an md5 over the settings payload, not the readings themselves, so neither carries clinical values of its own; both are nonetheless studio-scoped operational metadata rather than anything a client would recognise, which is a reason to think an exported archive wants the captures and readings and not these two columns.",
+  },
   machine_profile_field_contract: {
     kind: "pending",
     ticket: "TRUTH-01B",

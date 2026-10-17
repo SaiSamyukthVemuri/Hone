@@ -67,13 +67,38 @@ export type RefusalCode =
   | "malformed_value"
   | "channel_not_supported"
   | "channel_out_of_range"
-  | "outside_hardware_limit";
+  | "outside_hardware_limit"
+  /**
+   * MORE DECIMAL PLACES THAN THE CONTRACT DOCUMENTS — a REFUSAL since #860
+   * 4289974660, and it was a note until then.
+   *
+   * The note said "Stored exactly as entered", and that was a promise this
+   * system could not keep: 0223's recording command refuses the same value
+   * (`scale(v_value) > v_decimals`), so an advisory precision could never
+   * reach a row. App and database disagreed, and the app's half was the one
+   * making a claim to the practitioner.
+   *
+   * REFUSING IS THE SIDE THAT SURVIVES SCRUTINY, and the reason is one layer
+   * further on than the disagreement. A reading row carries `value_numeric`
+   * AND `decimals`, where decimals is the CONTRACT's, never the caller's
+   * (`validate-submitted-readings` derives it). Persisting 1.234 against a
+   * 2-decimal contract would store a row that disagrees with itself, and any
+   * renderer formatting by `decimals` then shows 1.23 — the silent rewrite
+   * both sides were written to prevent, reappearing at render time instead of
+   * at save. So relaxing the database would not have preserved her reading; it
+   * would have hidden a digit later and more quietly.
+   *
+   * IF THE DOCUMENTED PRECISION IS WRONG, the remedy is the catalogue's own:
+   * `unverified: ["decimals"]` exists precisely because an inferred precision
+   * is a known hazard, and the fix is an evidence review that republishes the
+   * contract — not a row the record cannot render faithfully.
+   */
+  | "precision_beyond_contract";
 
 export type NoteCode =
   | "outside_published_specification"
   | "recommended_protocol_only"
   | "documentation_discrepancy"
-  | "precision_beyond_contract"
   | "provenance_mismatch"
   | "absence_reason_contradicts_contract"
   | "field_evidence_pending";
@@ -108,8 +133,32 @@ export type ValidateOptions = {
 
 // ---------------------------------------------------------------------------
 
-/** Quantities for which a negative number is malformed, not merely unusual. */
-const NON_NEGATIVE = new Set(["duration", "current", "count", "percentage", "frequency"]);
+/**
+ * Quantities for which a negative number is malformed, not merely unusual.
+ *
+ * `intensity` and `energy-display` JOINED THIS SET to end a disagreement
+ * between the layers, not because a new rule was decided (Codex, #860
+ * 4301531160). 0223's `record_treatment_setup_submission` already refuses a
+ * negative value for all seven quantities as definitional; this set listed
+ * only five. So a negative intensity passed `validateReading`, passed the
+ * server action, and was refused at PERSISTENCE - she gets a failed save
+ * instead of the field telling her, which is the worse of the two places to
+ * learn it, and on this path the refusal aborts an atomic create.
+ *
+ * The SQL rule is the authority here and the application is being brought
+ * into line with it; this is not a judgement about what a device can
+ * display. Same defect class as the advisory-precision disagreement
+ * (4289974660): one contract, two layers, different answers.
+ */
+const NON_NEGATIVE = new Set([
+  "duration",
+  "current",
+  "count",
+  "percentage",
+  "frequency",
+  "intensity",
+  "energy-display",
+]);
 
 function decimalsOf(n: number): number {
   if (Number.isInteger(n)) return 0;
@@ -322,16 +371,25 @@ export function validateReading(
     if (n) notes.push(n);
   }
 
-  // Precision: recorded as submitted, flagged if finer than the contract.
-  // Rounding here is exactly the silent rewrite the contract forbids.
+  // PRECISION FINER THAN THE CONTRACT IS REFUSED, not noted. See the code's
+  // own comment above for why this stopped being advisory: the note promised
+  // "Stored exactly as entered" while 0223's command refused the same value,
+  // so the promise could never be kept, and persisting it would have produced
+  // a row whose value and `decimals` disagree.
+  //
+  // ROUNDING HERE WOULD STILL BE WRONG, and that half of the original comment
+  // stands: this does not round, it refuses and says what it saw. The
+  // practitioner reads the machine again, or the contract's precision is
+  // wrong and wants an evidence review.
   const given = decimalsOf(value);
   if (given > field.decimals) {
-    notes.push({
+    return {
+      ok: false,
       code: "precision_beyond_contract",
       message: `Field '${field.key}' is documented to ${field.decimals} decimal place(s); ${value} carries ${
         given === Infinity ? "exponential" : given
-      }. Stored exactly as entered — the contract's precision is not a rounding instruction.`,
-    });
+      }. Enter it as the machine displays it — this is not rounded for you, because a precision the record cannot render faithfully is not the reading you took.`,
+    };
   }
 
   return { ok: true, recorded: input.value, field, notes };
