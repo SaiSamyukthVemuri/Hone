@@ -10,6 +10,7 @@ import {
   type SenderRegistrationRow,
 } from "./sender-registration";
 import { campaignBindingVerdict, type RecordedCampaignBinding } from "./campaign-binding";
+import { stopPreflightVerdict, type RecordedStopPreflight } from "./stop-preflight-record";
 import type { SenderStatus, StudioSmsSenderState } from "./sender-status";
 
 // ===========================================================================
@@ -54,7 +55,13 @@ import type { SenderStatus, StudioSmsSenderState } from "./sender-status";
 //     Recorded at evidence and cutover time, never fetched here: the send path
 //     makes no provider call. A toll-free sender is held to toll-free
 //     verification instead (readiness above), and a CA recipient needs no
-//     10DLC campaign, so neither consults it.
+//     10DLC campaign, so neither consults it;
+//   * HON-50 G6, for EVERY destination (STOP is phone-wide): the RECORDED
+//     inbound STOP preflight (0230) of this sender, passing, current, matching
+//     this sender, number and service, and evaluated against the webhook base
+//     the routes verify signatures against now (stopPreflightVerdict). A
+//     studio whose STOP path was never proven sends nothing from its number.
+//     Per the pending product decision this REFUSES; it never falls back.
 //
 // NOT DECIDED HERE: whether the provider relationship covers health
 // information (BAA, #828; the SMS lane's NOT_HIPAA_COVERAGE). "Active" readiness never implies it; it is a
@@ -109,6 +116,8 @@ export type SendTimeRouteRead =
        * answer this file does not understand, and refuses as unreadable.
        */
       campaignBindings?: RecordedCampaignBinding[];
+      /** 0230, from the SAME snapshot, with the same absent/malformed rule. */
+      stopPreflights?: RecordedStopPreflight[];
     }
   | { ok: false };
 
@@ -132,6 +141,7 @@ export function liveSendTimeRouteReader(admin: SupabaseClient): SendTimeRouteRea
       senders: state.senders.map((s) => ({ ...s, status: s.status as SenderStatus })),
       registrations: state.registrations,
       campaignBindings: state.campaignBindings,
+      stopPreflights: state.stopPreflights,
     };
   };
 }
@@ -147,7 +157,12 @@ export type SendTimeRefusal =
   | "campaign_binding_missing"
   | "campaign_binding_mismatch"
   | "campaign_binding_unverified"
-  | "campaign_binding_stale";
+  | "campaign_binding_stale"
+  | "stop_preflight_missing"
+  | "stop_preflight_mismatch"
+  | "stop_preflight_not_ready"
+  | "stop_preflight_stale"
+  | "stop_preflight_base_changed";
 
 export type SendTimeRoute =
   | { ok: true; mode: "platform" }
@@ -190,13 +205,17 @@ export function decideStudioRoute(input: {
   studioId: string;
   recipientE164: string;
   read: SendTimeRouteRead;
+  /** The env the STOP preflight's webhook base is compared against. */
+  env?: Readonly<Record<string, string | undefined>>;
 }): SendTimeRoute {
   const { studioId, recipientE164, read } = input;
+  const env = input.env ?? process.env;
   if (
     !read.ok ||
     !Array.isArray(read.senders) ||
     !Array.isArray(read.registrations) ||
-    (read.campaignBindings !== undefined && !Array.isArray(read.campaignBindings))
+    (read.campaignBindings !== undefined && !Array.isArray(read.campaignBindings)) ||
+    (read.stopPreflights !== undefined && !Array.isArray(read.stopPreflights))
   ) {
     return { ok: false, reason: "sender_read_failed" };
   }
@@ -244,6 +263,15 @@ export function decideStudioRoute(input: {
   // Readiness "active" already required a classifiable number; checked again
   // here so the From the provider receives is the canonical E.164.
   if (!senderNumber.ok) return { ok: false, reason: "destination_not_ready", readiness: "failed" };
+  // HON-50 G6. Every studio-routed message needs this sender's recorded, passing
+  // STOP preflight, whatever the destination.
+  const preflight = (read.stopPreflights ?? []).find((p) => p?.senderId === sender.id) ?? null;
+  const stop = stopPreflightVerdict(
+    preflight,
+    bindingSenderFrom({ ...sender, provisioned_at: sender.provisioned_at ?? null }),
+    env,
+  );
+  if (!stop.ok) return { ok: false, reason: `stop_preflight_${stop.reason}` };
   // HON-50 G7. US traffic from a 10DLC long code also needs the recorded
   // campaign binding of THIS sender, checked against this snapshot's sender.
   if (destination === "US" && registrationKindFor(sender.phone_number) === "us_10dlc") {
@@ -280,7 +308,7 @@ export async function resolveSendTimeRoute(input: {
   }
   try {
     const read = await (input.reader ?? unavailableSendTimeRouteReader)(input.studioId);
-    return decideStudioRoute({ studioId: input.studioId, recipientE164: input.recipientE164, read });
+    return decideStudioRoute({ studioId: input.studioId, recipientE164: input.recipientE164, read, env: input.env });
   } catch {
     return { ok: false, reason: "sender_read_failed" };
   }

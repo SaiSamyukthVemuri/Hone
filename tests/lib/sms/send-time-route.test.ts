@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { provenRead, withProvenSenderEnv } from "./helpers/proven-sender";
 import {
   STUDIO_ROUTING_ENV,
   decideStudioRoute,
@@ -54,11 +55,11 @@ const registration = (over: Partial<SendTimeRegistration> = {}): SendTimeRegistr
   ...over,
 });
 
-const read = (senders: SendTimeSender[], registrations: SendTimeRegistration[] = [registration()]): SendTimeRouteRead => ({
-  ok: true,
-  senders,
-  registrations,
-});
+const read = (senders: SendTimeSender[], registrations: SendTimeRegistration[] = [registration()]): SendTimeRouteRead =>
+  // HON-50 G6/G7: a ready sender's STOP path and (10DLC) campaign are proven.
+  provenRead({ ok: true, senders, registrations });
+
+withProvenSenderEnv();
 
 // HON-50 G7: a US recipient from a 10DLC long code also needs the sender's
 // recorded campaign binding (0229), checked after it was provisioned.

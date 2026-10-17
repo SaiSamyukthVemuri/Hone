@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { RecordedCampaignBinding } from "@/lib/sms/campaign-binding";
+import { TEST_WEBHOOK_BASE, provenStopPreflight, withProvenSenderEnv } from "./helpers/proven-sender";
 
 // ===========================================================================
 // HON-50 G7: a US recipient from a 10DLC long code is served only when the
@@ -76,8 +77,13 @@ const longCodeRead = (bindings?: unknown, senderOver: Record<string, unknown> = 
     ok: true,
     senders: [sender(senderOver)],
     registrations: [evidence(US_LONG_CODE, "us_10dlc")],
+    stopPreflights: stopFor(senderOver),
     ...(bindings === undefined ? {} : { campaignBindings: bindings }),
   }) as Read;
+
+// G6 runs first and is not under test here: every sender's STOP path is proven.
+withProvenSenderEnv();
+const stopFor = (over: Record<string, unknown> = {}) => [provenStopPreflight({ ...sender(), ...over } as never)];
 
 const decide = (read: Read, recipientE164 = US_RECIPIENT) => decideStudioRoute({ studioId: A, recipientE164, read });
 
@@ -103,7 +109,9 @@ describe("G7: US traffic from a 10DLC long code requires a verified, current, ma
     ["a pending campaign", longCodeRead([binding({ campaignStatus: "pending", verifiedAt: null })]), "campaign_binding_unverified"],
     ["a service with no campaign", longCodeRead([binding({ campaignStatus: "none", campaignSid: null, verifiedAt: null })]), "campaign_binding_unverified"],
     ["checked BEFORE the sender was provisioned", longCodeRead([binding({ checkedAt: "2026-09-30T10:00:00.000Z" })]), "campaign_binding_stale"],
-    ["the sender's provisioned_at unknown (absent before 0229)", longCodeRead([binding()], { provisioned_at: undefined }), "campaign_binding_stale"],
+    // Unknown provisioning makes the G6 STOP preflight stale first (G6 runs
+    // before G7); campaignBindingVerdict's own stale rule is pinned in #901.
+    ["the sender's provisioned_at unknown (absent before 0229)", longCodeRead([binding()], { provisioned_at: undefined }), "stop_preflight_stale"],
   ])("%s: refused before the claim (%s)", (_name, read, reason) => {
     expect(decide(read)).toEqual({ ok: false, reason });
   });
@@ -119,6 +127,7 @@ describe("G7 leaves the other routes exactly as they were", () => {
       ok: true,
       senders: [sender({ phone_number: TOLL_FREE })],
       registrations: [evidence(TOLL_FREE, "toll_free_verification")],
+      stopPreflights: stopFor({ phone_number: TOLL_FREE }),
     } as Read;
     expect(decide(read, US_RECIPIENT)).toMatchObject({ ok: true, fromNumber: TOLL_FREE, destination: "US" });
     expect(decide(read, CA_RECIPIENT)).toMatchObject({ ok: true, fromNumber: TOLL_FREE, destination: "CA" });
@@ -139,6 +148,19 @@ describe("G7 reads the binding from the SAME snapshot as the sender", () => {
     senders: [sender()],
     registrations: [{ ...evidence(US_LONG_CODE, "us_10dlc"), provider_reference: null, updated_at: PROVISIONED_AT }],
     ...(campaign_bindings ? { campaign_bindings } : {}),
+    stop_preflights: [
+      {
+        sender_id: "sender-a-1",
+        studio_id: A,
+        phone_number: US_LONG_CODE,
+        messaging_service_sid: MSID,
+        ready: true,
+        checks: [{ id: "one_base", status: "pass" }],
+        webhook_base: TEST_WEBHOOK_BASE,
+        credentials_epoch: null,
+        checked_at: "2026-10-02T10:00:00.000Z",
+      },
+    ],
   });
   const rawBinding = {
     sender_id: "sender-a-1",

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { provenSnapshot, withProvenSenderEnv } from "./helpers/proven-sender";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   CONFIRMATION_RECOVERY_ENV,
@@ -234,7 +235,7 @@ function admin(): SupabaseClient {
     rpc(fn: string, args: Record<string, unknown> = {}) {
       events.push(fn);
       if (fn === SNAPSHOT_RPC) {
-        return Promise.resolve(typeof snapshot === "function" ? snapshot(String(args.p_studio_id)) : snapshot);
+        return Promise.resolve(provenSnapshot(typeof snapshot === "function" ? snapshot(String(args.p_studio_id)) : snapshot));
       }
       const row = db.find((r) => r.id === args.p_appointment_id);
       if (fn === "claim_sms_send") {
@@ -299,6 +300,8 @@ const run = (env: Record<string, string> = ENABLED, pageSize?: number) =>
       return manageLinkFails ? null : `https://app.example/manage/${id}`;
     },
   });
+
+withProvenSenderEnv();
 
 const ENV_KEYS = ["VERCEL_ENV", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER", STUDIO_ROUTING_ENV] as const;
 const saved: Partial<Record<string, string | undefined>> = {};

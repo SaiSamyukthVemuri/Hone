@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { provenRead, provenSnapshot, withProvenSenderEnv } from "./helpers/proven-sender";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   send24hReminderSmsToClient,
@@ -57,7 +58,7 @@ function admin(): SupabaseClient {
   return {
     rpc(fn: string) {
       events.push(fn);
-      if (fn === SNAPSHOT_RPC) return Promise.resolve(snapshot);
+      if (fn === SNAPSHOT_RPC) return Promise.resolve(provenSnapshot(snapshot));
       if (fn === "claim_sms_send") return Promise.resolve({ data: true, error: null });
       if (fn === "claim_reminder_sms_send") {
         return Promise.resolve({ data: [{ result: "claimed", starts_at: "2026-10-13T15:00:00Z" }], error: null });
@@ -83,7 +84,7 @@ const sender = (over: Partial<SendTimeSender> = {}): SendTimeSender => ({
 function reader(answer: SendTimeRouteRead | (() => SendTimeRouteRead)): SendTimeRouteReader {
   return async () => {
     events.push("route_read");
-    return typeof answer === "function" ? answer() : answer;
+    return provenRead(typeof answer === "function" ? answer() : answer);
   };
 }
 
@@ -137,6 +138,8 @@ const PATHS = [
   ["confirmation", confirmation, "claim_sms_send"],
   ["24h reminder", reminder, "claim_reminder_sms_send"],
 ] as const;
+
+withProvenSenderEnv();
 
 const ENV_KEYS = [
   "VERCEL_ENV",
