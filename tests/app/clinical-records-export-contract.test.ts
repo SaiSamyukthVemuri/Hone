@@ -147,6 +147,12 @@ describe("HON-46 export reads exclude private and payment data", () => {
     expect(code(FILES.queries)).toMatch(/probe_lot_number, probe_lot_confirmed,/);
   });
 
+  it("renders the recorded finalization time, studio-local, beside the status (Codex P2 4304674125)", () => {
+    const page = code(FILES.page);
+    expect(page).toContain("formatInstant(s.finalizedAt, tz)");
+    expect(page).toContain('data-testid="export-session-finalized"');
+  });
+
   it("renders the recorded session end time (Codex P2 4302799074)", () => {
     const page = code(FILES.page);
     expect(page).toContain("formatInstant(s.endedAt, tz)");

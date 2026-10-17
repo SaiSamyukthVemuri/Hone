@@ -356,6 +356,14 @@ export default async function ClinicalRecordsExportPage({
                     <p className="text-[11px] text-neutral-600">
                       {[s.modality, s.practitioner ?? "Unknown practitioner", s.recordStatus].filter(Boolean).join(" · ")}
                     </p>
+                    {/* When the record was finalized, beside its status (Codex P2
+                        4304674125), in the same studio-local format as every
+                        other time on this page. */}
+                    {s.finalizedAt && (
+                      <p className="text-[11px] text-neutral-600" data-testid="export-session-finalized">
+                        Finalized {formatInstant(s.finalizedAt, tz)}
+                      </p>
+                    )}
                     {s.notes && <p className="mt-1 whitespace-pre-wrap break-words text-sm">{s.notes}</p>}
                     {s.aftercareExplainedAt && (
                       <p className="mt-1 text-[11px]">Risks explained and aftercare provided: {formatInstant(s.aftercareExplainedAt, tz)}</p>

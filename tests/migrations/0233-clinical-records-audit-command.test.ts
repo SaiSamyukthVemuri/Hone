@@ -25,6 +25,18 @@ describe("0233 sits correctly in the migration sequence", () => {
   });
 });
 
+describe("0233 is recorded as PENDING, consistently (Codex P2 4304674129)", () => {
+  it("the ledger's current block lists 0233 under Pending migrations, never 'none'", () => {
+    const ledger = readFileSync(path.join(process.cwd(), "docs/production/migration-ledger.md"), "utf8");
+    const current = ledger.slice(ledger.indexOf("## Current state"));
+    const row = current.match(/\|\s*\*\*Pending migrations\*\*\s*\|([^\n]*)\|/);
+    expect(row, "the current block has no Pending migrations row").toBeTruthy();
+    expect(row?.[1]).toContain("`0233`");
+    expect(row?.[1]).toMatch(/PENDING, NOT APPLIED/);
+    expect(row?.[1]).not.toMatch(/\*\*none\*\*/);
+  });
+});
+
 describe("0233 is one bounded transaction", () => {
   it("opens its own transaction and arms lock_timeout INSIDE it", () => {
     expect(CODE).toMatch(/^\s*begin;/m);
