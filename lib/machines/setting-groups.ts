@@ -158,6 +158,141 @@ export function firstGroup(): SettingGroupDraft[] {
   return [{ id: "g1", channels: [], values: {} }];
 }
 
+/**
+ * The draft for the NEXT capture on a treatment that already has one.
+ *
+ * KEEPS EVERY GROUP'S IDENTITY and clears everything else. The entry surface
+ * used to reset to `firstGroup()` here, which renumbered her groups: after a
+ * save of g1 and g2 the form offered a single fresh g1, so a change to what
+ * had been g2 was submitted as a revision of g1 (Codex, #860 4290452715).
+ *
+ * WHAT THAT DID TO THE RECORD, which is worse than the form being wrong.
+ * `latest_setup_for_client` returns the newest capture PER GROUP KEY, so it
+ * then combined the repurposed g1 with the stale g2 and offered them as one
+ * setup: two settings for one probe, and the channel g1 originally described
+ * dropped out of the guidance entirely. The field that carries this is
+ * documented as "STABLE for the life of the draft and never renumbered:
+ * the database allocates revisions per (block, group), so a key that shifted
+ * would append to the wrong group's history" - the rule was written down and
+ * the reset broke it.
+ *
+ * VALUES AND CHANNELS ARE STILL CLEARED, which is the part the old reset had
+ * right and this keeps: pre-filling either would invite her to submit settings
+ * she has not re-read off the machine, or to assert she ran the same probes.
+ * The identity is not an observation; the values and the channels are.
+ *
+ * AN EMPTY GROUP COSTS NOTHING AT SAVE. `assembleGroupSubmissions` drops any
+ * group with no readings, and `draftBlocking` only refuses a PARTIAL one, so
+ * a practitioner changing g2 alone leaves g1 untouched and saves exactly one
+ * group - which is what makes offering both safe rather than noisy.
+ */
+export function clearedForNextCapture(
+  groups: readonly SettingGroupDraft[],
+): SettingGroupDraft[] {
+  // A draft with no groups cannot happen through the UI, but a surface that
+  // returned an empty list here would have no box to type in at all.
+  if (groups.length === 0) return firstGroup();
+  return groups.map((g) => ({ id: g.id, channels: [], values: {} }));
+}
+
+/**
+ * The scope a group identity is meaningful in. A `group_key` says WHICH probe
+ * within one of these; across two of them the same `g1` is two different
+ * things, which is why every one of these fields is part of the mount key.
+ */
+export type SettingGroupScope = {
+  deviceId: string;
+  profileId: string;
+  profileVersion: number;
+  modeKey: string;
+};
+
+/** The minimum of a recorded reading needed to recover a group's identity. */
+export type RecordedGroupIdentity = SettingGroupScope & { groupKey: string };
+
+/**
+ * THE GROUPS A BLOCK ALREADY HAS, recovered from what was RECORDED.
+ *
+ * THE INVARIANT THIS SERVES, which five review rounds have now approached
+ * from four directions: a group identity must survive every way the entry
+ * form can be mounted. `clearedForNextCapture` preserves it across a save
+ * within one mount. This preserves it across a mount that has no prior
+ * state at all - a RELOAD, which is the path Codex found still broken
+ * (#860 4294673722). Together they are the only two ways the draft is ever
+ * seeded, so the identity now has one source in both.
+ *
+ * WHY A RELOAD WAS THE DANGEROUS ONE. After a reload of a block holding g1
+ * and g2 the form offered a single fresh g1 while the recorded setup rendered
+ * below it, so the screen showed two probes and accepted a change for one.
+ * A change to the former g2 appended as a revision of g1, and
+ * `latest_setup_for_client` then combined that revision with the stale g2 -
+ * the same corruption as the within-mount case, reached by closing the tab.
+ *
+ * SCOPED, AND THAT IS NOT A DETAIL. Identities are only comparable within one
+ * (device, profile, version, mode); the entry form is already keyed by exactly
+ * that tuple. Seeding from readings outside the scope would import another
+ * unit's probe layout - which is the same defect pointed the other way, and is
+ * why a machine switch must still start clean rather than inherit.
+ *
+ * CHANNELS AND VALUES ARE NOT RESTORED, matching `clearedForNextCapture`
+ * exactly: the identity is not an observation. Restoring a channel set would
+ * assert she ran the same probes before she has said so.
+ */
+export function groupsFromRecorded(
+  recorded: readonly RecordedGroupIdentity[],
+  scope: SettingGroupScope,
+): SettingGroupDraft[] {
+  const keys: string[] = [];
+  for (const r of recorded) {
+    if (
+      r.deviceId !== scope.deviceId ||
+      r.profileId !== scope.profileId ||
+      r.profileVersion !== scope.profileVersion ||
+      r.modeKey !== scope.modeKey
+    ) {
+      continue;
+    }
+    if (!keys.includes(r.groupKey)) keys.push(r.groupKey);
+  }
+  // NOTHING RECORDED IN THIS SCOPE is the ordinary create case, and a new
+  // machine's first capture reaches it too.
+  if (keys.length === 0) return firstGroup();
+  // ORDERED BY THE ORDINAL THE KEY CARRIES, not by the order rows arrived.
+  // A reader comparing the form to the history below it is comparing probe
+  // labels, so g1 above g2 is a correctness property of the screen, and row
+  // order is whatever the query's sort happened to be.
+  return [...keys]
+    .sort((a, b) => (ordinalOf(a) ?? 0) - (ordinalOf(b) ?? 0) || a.localeCompare(b))
+    .map((id) => ({ id, channels: [], values: {} }));
+}
+
+/** The number in a `g<n>` key, or null for a key not of that shape. */
+function ordinalOf(groupKey: string): number | null {
+  const m = /^g(\d+)$/.exec(groupKey);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * The highest ordinal already ISSUED in this draft, so the next group added
+ * cannot reuse one.
+ *
+ * Needed because the counter is monotonic per mount and a restored draft
+ * starts with identities the mount did not issue: seeding g1 and g2 while the
+ * counter sat at its initial 1 would mint a SECOND g2 on the next add, and the
+ * two would collapse into one revision history - the same corruption this
+ * whole path exists to prevent, arriving through the repair.
+ *
+ * A key that is not `g<n>` contributes nothing; it cannot collide with one.
+ */
+export function highestOrdinal(groups: readonly SettingGroupDraft[]): number {
+  let n = 1;
+  for (const g of groups) {
+    const o = ordinalOf(g.id);
+    if (o !== null && o > n) n = o;
+  }
+  return n;
+}
+
 /** Add or remove one channel from one group. Contract-declared ids only. */
 export function toggleChannel(
   group: SettingGroupDraft,
@@ -225,6 +360,48 @@ export function groupReadiness(
   return requiredComplete ? "complete" : "partial";
 }
 
+/**
+ * Why this draft must not be saved yet, or null.
+ *
+ * EXTRACTED FROM THE CREATE-MODE COLLECTOR because a negative control caught
+ * it: the collector computed this inline, so "a half-finished draft is
+ * reported as ready" could be mutated in and every test stayed green. What
+ * decides whether a clinical save proceeds does not belong where only a
+ * mounted browser can reach it.
+ *
+ * TWO REASONS, in priority order:
+ *   1. A CROSS-GROUP CONFLICT - two groups claiming the same probe. The
+ *      command refuses it too; naming it here means she sees it before a
+ *      round trip rather than after one.
+ *   2. A PARTIALLY FILLED GROUP - some values and a missing required field.
+ *      Neither ready nor empty: skipping it would silently discard numbers
+ *      she typed, and submitting it would be refused.
+ *
+ * The conflict wins because it is the one she cannot fix by typing more.
+ */
+export function draftBlocking(
+  profile: MachineProfile,
+  fieldGroups: readonly FieldGroup[],
+  groups: readonly SettingGroupDraft[],
+): string | null {
+  const issues = settingGroupIssues(
+    profile,
+    groups.map((g) => ({ groupId: g.id, channels: g.channels, readings: {} })),
+  );
+  if (issues.length > 0) return issues[0]!.problem;
+
+  const partial = groups.filter(
+    (g) => groupReadiness(fieldGroups, g) === "partial",
+  );
+  if (partial.length === 0) return null;
+  const numbers = partial.map(
+    (g) => groups.findIndex((x) => x.id === g.id) + 1,
+  );
+  return `Setting group${partial.length > 1 ? "s" : ""} ${numbers.join(", ")} ${
+    partial.length > 1 ? "are" : "is"
+  } missing a required field.`;
+}
+
 export type GroupSubmission = {
   groupKey: string;
   channels: number[];
@@ -232,35 +409,37 @@ export type GroupSubmission = {
 };
 
 /**
- * The submissions to send, one per group that has something to record.
+ * Every group that has something to record, as one SAVE.
  *
- * ONE CALL PER GROUP, deliberately. `record_treatment_setup_group` is one
- * atomic capture of one group, and that boundary is the design: two groups are
- * two facts, each with its own revision sequence within the block. They are
- * NOT batched into one call, because that would require the command to mean
- * something it does not.
+ * IT USED TO MEAN ONE CALL PER GROUP, and said so: `record_treatment_setup_group`
+ * was one atomic capture of one group, two groups were two facts, and batching
+ * would have required the command to mean something it did not. That is no
+ * longer true. `record_treatment_setup_submission` means exactly that - one
+ * Save, every group, one transaction - so this returns the groups OF one save
+ * rather than a list of calls to make.
  *
- * The consequence the caller must handle: with two groups, the first can
- * succeed and the second fail. That is a representable state, not an incoherent
- * one - but it must be REPORTED, not rounded to "saved" or "failed".
+ * THE `alreadySaved` PARAMETER IS GONE, and the state it guarded is now
+ * unreachable rather than merely unhandled. It existed because the first group
+ * could commit and the second fail, so a retry had to send only the untold
+ * remainder - resubmitting a committed group would have appended a second
+ * immutable revision of settings entered once, indistinguishable in the record
+ * from a genuine mid-treatment change (Codex, f175e732).
+ *
+ * Two things replaced it, and both are stronger than a set in component
+ * memory, which died on reload:
+ *
+ *   * a save either commits entirely or not at all, so "already recorded" is
+ *     never true of SOME groups;
+ *   * a retry of an unresolved save carries the same idempotency key, so the
+ *     DATABASE recognises it and returns the original submission. Deduplication
+ *     moved from the client's memory to the record itself.
  */
 export function assembleGroupSubmissions(
   fieldGroups: readonly FieldGroup[],
   groups: readonly SettingGroupDraft[],
-  /**
-   * Groups already recorded, which must NOT be sent again.
-   *
-   * With several groups the first can succeed and a later one fail. Retrying
-   * after fixing the failure used to resubmit the successful group too, and
-   * because captures are append-only that created an extra immutable revision
-   * - a second capture of settings she entered once, indistinguishable in the
-   * record from a genuine mid-treatment change (Codex, f175e732).
-   */
-  alreadySaved: ReadonlySet<string> = new Set(),
 ): GroupSubmission[] {
   const out: GroupSubmission[] = [];
   for (const g of groups) {
-    if (alreadySaved.has(g.id)) continue;
     const readings = assembleReadings(fieldGroups, g.values);
     if (readings.length === 0) continue;
     out.push({ groupKey: g.id, channels: g.channels, readings });

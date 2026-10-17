@@ -3,19 +3,21 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { activeModes, type MachineProfile } from "@/lib/machines/profile-contract";
-import { validateReading } from "@/lib/machines/validate-reading";
+import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import {
   latestRecordedSetup,
   publishedModesFor,
   readingsForBlock,
   recordSetupGroup,
+  recordSetupSubmission,
   registerStudioMachine,
   retireStudioMachine,
   type MachineDb,
   type ReadingInputRow,
   type ReadingSubmission,
   type RecordedReading,
+  type SetupSubmissionGroup,
 } from "@/lib/machines/machine-queries";
 import {
   resolveSelection,
@@ -125,6 +127,29 @@ export type MachineSetupContext = {
   /** The most recent recorded setup in this studio, for next-visit prep. */
   priorSetup: RecordedReading[];
   /**
+   * What is ALREADY RECORDED against the block being charted.
+   *
+   * THE DEFECT THIS CLOSES: a recorded capture was permanent and INVISIBLE.
+   * `setup_capture_history_for_block` and `readingsForBlockAction` were both
+   * built, granted and proved against Postgres, and neither reached a screen,
+   * so after a page load the practitioner saw nothing and could only
+   * re-record - appending a second immutable capture indistinguishable from a
+   * genuine mid-treatment change - or guess.
+   *
+   * EMPTY WITHOUT A BLOCK ID, which is not a special case to apologise for: in
+   * create mode the block has no row, so there is nothing recorded against it
+   * yet, by definition.
+   */
+  recordedSetup: RecordedReading[];
+  /** The recorded-captures read failed; empty here would be a lie. */
+  /**
+   * The next-visit guidance read FAILED, as distinct from this client
+   * having no previous treatment. See `recordedSetupUnavailable`; same
+   * rule, different surface.
+   */
+  priorSetupUnavailable: boolean;
+  recordedSetupUnavailable: boolean;
+  /**
    * Recorded unit id -> the studio's own name for it.
    *
    * Resolved here rather than in the component because only the server can see
@@ -132,8 +157,13 @@ export type MachineSetupContext = {
    * reach a picker, which also meant nothing could NAME one. A studio with two
    * units of the same model needs the name most once one is out of service
    * (Codex, 27061e88).
+   *
+   * RENAMED from `priorUnitNames` when the recorded-setup surface landed. It
+   * now names the units of BOTH reads plus the unusable stored selection, from
+   * one lookup, so a name tied to the prior setup alone was misleading - and a
+   * misleading field name on a clinical surface is worth a mechanical rename.
    */
-  priorUnitNames: Record<string, string>;
+  unitNames: Record<string, string>;
 };
 
 const ANONYMOUS: MachineSetupContext = {
@@ -146,7 +176,10 @@ const ANONYMOUS: MachineSetupContext = {
   catalogue: [],
   canManageMachines: false,
   priorSetup: [],
-  priorUnitNames: {},
+  recordedSetup: [],
+  priorSetupUnavailable: false,
+  recordedSetupUnavailable: false,
+  unitNames: {},
 };
 
 /** Everything the panel needs, derived entirely on the server. */
@@ -154,6 +187,17 @@ export async function loadMachineSetupContext(input: {
   /** Route values. Authorized below against the server-derived studio. */
   clientId: string;
   sessionId: string;
+  /**
+   * The settings block being charted, when one exists.
+   *
+   * FOLDED INTO THIS LOAD RATHER THAN A SECOND ACTION CALL, deliberately. The
+   * panel loads on demand precisely because an extra server-action POST to
+   * this route broke two browser specs - repeat-client-fast-charting
+   * classifies any POST without an idempotencyKey as a source re-read, and
+   * conditional-numbing-notes lost its save to a racing round trip. Reading
+   * the block's captures in a SECOND call would reintroduce exactly that.
+   */
+  blockId?: string | null;
 }): Promise<MachineSetupContext> {
   const scope = await identity();
   if (!scope) return ANONYMOUS;
@@ -231,8 +275,31 @@ export async function loadMachineSetupContext(input: {
     persistence = NO_PERSISTENCE;
   }
 
-  const prior = await latestRecordedSetup(db, scope.studioId, input.clientId);
+  // THE SESSION ON SCREEN IS EXCLUDED, and `input.sessionId` is safe to pass
+  // because `assertSessionForClient` above has already authorized it against
+  // this studio and client - this is the same value, not a second claim.
+  // Without it the guidance could be today's own capture (Codex, #860
+  // 4289974654).
+  const prior = await latestRecordedSetup(
+    db,
+    scope.studioId,
+    input.clientId,
+    input.sessionId,
+  );
   const priorSetup = prior.ok ? prior.value : [];
+  // AND WHETHER THAT READ FAILED, which an empty list cannot say.
+  //
+  // BEYOND THE REPORTED FINDING, and named as such. Codex found the
+  // conflation on the recorded-history read (#860 4300759932); the
+  // enumeration of every failure-to-empty conversion found this one, on
+  // next-visit GUIDANCE. The harm is different and still real: a failed
+  // read tells her this client has no previous treatment, so she charts
+  // without reference to settings that exist and that she would otherwise
+  // have worked from.
+  //
+  // Same shape as `recordedSetupUnavailable`, deliberately: one way of
+  // saying "the surface could not answer" rather than two.
+  const priorSetupUnavailable = !prior.ok;
 
   // ONE LOOKUP, for the two things that need to see a RETIRED unit.
   //
@@ -250,16 +317,46 @@ export async function loadMachineSetupContext(input: {
   // Degrades silently: if this read fails, names are simply absent and the
   // wording stays as resolved. A failed cosmetic lookup must not cost the
   // practitioner the setup itself.
-  const priorUnitNames: Record<string, string> = {};
+  // WHAT IS ALREADY RECORDED against the block being charted, read in the
+  // SAME round trip. Empty without a block, which in create mode is simply
+  // true: the block has no row, so nothing is recorded against it.
+  //
+  // A FAILED READ IS REPORTED, NOT FLATTENED TO EMPTY. This surface is
+  // reassurance - "here is what you have already recorded" - and a failed
+  // cosmetic read must not cost her the chart, so it still degrades rather
+  // than throwing. What changed is that it no longer degrades to a LIE:
+  // `[]` renders as "nothing recorded", which is the one message that invites
+  // her to record again and append a second immutable capture
+  // (Codex, #860 4290452722).
+  //
+  // NULL WHEN THERE IS NO BLOCK, which is a third state and genuinely empty:
+  // in create mode the block has no row, so nothing is recorded against it and
+  // nothing failed.
+  // BOUND TO THE ROUTE'S SESSION. This call site was NOT named in the
+  // finding - the enumeration of every action taking a block id found it -
+  // and it is the one the panel uses on every open, so an unbound read here
+  // renders another client's captures under "Recorded this treatment"
+  // without anyone crafting a save at all.
+  const recorded = input.blockId
+    ? await readingsForBlock(db, input.blockId, input.sessionId)
+    : null;
+  const recordedSetup = recorded?.ok ? recorded.value : [];
+  const recordedSetupUnavailable = recorded !== null && !recorded.ok;
+
+  const unitNames: Record<string, string> = {};
   const needNames = [
     ...priorSetup.map((r) => r.deviceId),
+    // THE RECORDED BLOCK'S UNITS TOO, in the same lookup. A treatment recorded
+    // on a unit that has since been retired is exactly the case that must
+    // still name it, and only the server can see one.
+    ...recordedSetup.map((r) => r.deviceId),
     ...(rememberedUnavailable ? [rememberedUnavailable.deviceId] : []),
   ].filter((id): id is string => typeof id === "string" && id.length > 0);
 
   if (needNames.length > 0) {
     const named = await machinesByIds(db, scope.studioId, needNames);
     if (named.ok) {
-      for (const m of named.value) priorUnitNames[m.deviceId] = m.displayName;
+      for (const m of named.value) unitNames[m.deviceId] = m.displayName;
       if (rememberedUnavailable) {
         const stored = named.value.find(
           (m) => m.deviceId === rememberedUnavailable!.deviceId,
@@ -284,7 +381,10 @@ export async function loadMachineSetupContext(input: {
     catalogue,
     canManageMachines: who?.practitioner.role === "owner",
     priorSetup,
-    priorUnitNames,
+    recordedSetup,
+    priorSetupUnavailable,
+    recordedSetupUnavailable,
+    unitNames,
   };
 }
 
@@ -292,7 +392,7 @@ export type ActionResult =
   | { ok: true }
   | {
       ok: false;
-      code: "unauthenticated" | "rejected" | "not_persisted";
+      code: "unauthenticated" | "rejected" | "unknown" | "not_persisted";
       error: string;
     };
 
@@ -455,20 +555,6 @@ export async function retireMachineAction(
   return { ok: true };
 }
 
-/**
- * Record one settings group against a treatment block.
- *
- * No studio is sent: the block determines it in the database, and a block in
- * another studio is refused there. The machine is required, and the readings
- * are validated against the server's own catalogue before the write, so a
- * field the model does not have never reaches the table.
- */
-const OBSERVATION_SOURCES = [
-  "practitioner-entered",
-  "machine-displayed",
-  "device-computed",
-  "estimated",
-] as const;
 
 export async function recordReadingsAction(input: {
   blockId: string;
@@ -477,11 +563,33 @@ export async function recordReadingsAction(input: {
   groupKey: string;
   channels: number[];
   readings: ReadingSubmission[];
+  /**
+   * THE AUTHORIZED ROUTE, and the reason these are required.
+   *
+   * This action had no client or session context, so it could not apply the
+   * `assertSessionForClient` lineage check the other charting actions use,
+   * and `assert_setup_scope` derived only the block's studio. A practitioner
+   * is a member of the WHOLE studio, so a stale page or a tampered request
+   * carrying another client's block id appended IMMUTABLE readings to the
+   * wrong client's treatment (Codex, #860 4297032712).
+   *
+   * They are checked twice on purpose: here, against the server-derived
+   * studio, and again inside the command. The application check gives a
+   * clear refusal; the SQL check is what stops a future caller from
+   * omitting it.
+   */
+  clientId: string;
+  sessionId: string;
 }): Promise<ActionResult & { written?: number }> {
   const scope = await identity();
   if (!scope) {
     return { ok: false, code: "unauthenticated", error: "Sign in first." };
   }
+  // THE ROUTE IS AUTHORIZED BEFORE ANYTHING IS WRITTEN. `assertSessionForClient`
+  // resolves the session against the SERVER-DERIVED studio and this client,
+  // so a block id from another client's chart cannot be smuggled in by a
+  // stale page or a crafted call.
+  await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
   if (input.readings.length === 0) {
     return { ok: false, code: "rejected", error: "Nothing to save." };
   }
@@ -534,52 +642,24 @@ export async function recordReadingsAction(input: {
   // Both gaps found by Codex at a66f5ec9. The lesson is the same one twice:
   // reach for the validator that exists rather than re-deriving a weaker
   // version of it at the call site.
-  const rows: ReadingInputRow[] = [];
-  for (const r of input.readings) {
-    if (!OBSERVATION_SOURCES.includes(r.observationSource)) {
-      return {
-        ok: false,
-        code: "rejected",
-        error: "That is not a recognised way of observing a reading.",
-      };
-    }
-    const checked = validateReading(
-      {
-        profileId: profile.profileId,
-        // The DEVICE's registered version, so a stale registration is refused
-        // here rather than silently captured under today's contract.
-        version: device.profileVersion,
-        modeKey: input.modeKey,
-        stageKey: r.stageKey,
-        fieldKey: r.fieldKey,
-        value: r.value,
-        source: r.observationSource,
-      },
-      {
-        installedOptions: device.installedOptions,
-        catalogue: catalogueForRuntime(),
-      },
-    );
-    if (!checked.ok) {
-      return { ok: false, code: "rejected", error: checked.message };
-    }
-    rows.push({
-      stageKey: r.stageKey,
-      fieldKey: r.fieldKey,
-      // The machine's own unit and precision, off the field the VALIDATOR
-      // resolved. Never the caller's opinion of them.
-      nativeUnit: checked.field.unit ?? "none",
-      decimals: checked.field.decimals,
-      observationSource: r.observationSource,
-      value: checked.recorded,
-    });
+  const checkedRows = validateSubmittedReadings(
+    device,
+    profile,
+    input.modeKey,
+    input.readings,
+  );
+  if ("error" in checkedRows) {
+    return { ok: false, code: "rejected", error: checkedRows.error };
   }
+  const rows = checkedRows.rows;
 
   const written = await recordSetupGroup(db, {
     blockId: input.blockId,
     machineId: input.machineId,
     modeKey: input.modeKey,
     groupKey: input.groupKey,
+    sessionId: input.sessionId,
+    clientId: input.clientId,
     channels: input.channels,
     readings: rows,
   });
@@ -589,16 +669,246 @@ export async function recordReadingsAction(input: {
   return { ok: true, written: written.value };
 }
 
-/** Everything recorded against one block, for the chart being edited. */
-export async function readingsForBlockAction(
-  blockId: string,
-): Promise<RecordedReading[]> {
+/**
+ * Record ONE SAVE - every settings group the practitioner entered - atomically.
+ *
+ * WHY THIS EXISTS BESIDE `recordReadingsAction`. Several separate calls, one
+ * per group, cannot have three properties that a save needs (Codex, #860
+ * 6157725545): a failure on the third group cannot roll back the first two;
+ * two groups claiming the same probe are two individually valid calls the
+ * database cannot see as related; and a lost response is indistinguishable
+ * from a deliberate second capture, so retrying was unsafe. One command, one
+ * transaction, one retry key.
+ *
+ * `recordReadingsAction` is KEPT, and is not a special case of this. A group
+ * recorded through it was recorded on its own, which is a true fact about it
+ * and is why the capture's submission id is null there.
+ *
+ * EVERY GROUP IS VALIDATED BEFORE ANY IS SENT. A group that fails validation
+ * must not be discovered after the request is in flight: the command would
+ * refuse the whole save, which is correct, but the practitioner would have
+ * waited for a round trip to be told something this process already knew.
+ */
+export async function recordSetupSubmissionAction(input: {
+  blockId: string;
+  machineId: string;
+  modeKey: string;
+  idempotencyKey: string;
+  groups: Array<{
+    groupKey: string;
+    channels: number[];
+    readings: ReadingSubmission[];
+  }>;
+  /**
+   * THE AUTHORIZED ROUTE, and the reason these are required.
+   *
+   * This action had no client or session context, so it could not apply the
+   * `assertSessionForClient` lineage check the other charting actions use,
+   * and `assert_setup_scope` derived only the block's studio. A practitioner
+   * is a member of the WHOLE studio, so a stale page or a tampered request
+   * carrying another client's block id appended IMMUTABLE readings to the
+   * wrong client's treatment (Codex, #860 4297032712).
+   *
+   * They are checked twice on purpose: here, against the server-derived
+   * studio, and again inside the command. The application check gives a
+   * clear refusal; the SQL check is what stops a future caller from
+   * omitting it.
+   */
+  clientId: string;
+  sessionId: string;
+}): Promise<
+  ActionResult & {
+    submissionId?: string;
+    captures?: number;
+    written?: number;
+    reused?: boolean;
+  }
+> {
   const scope = await identity();
-  if (!scope) return [];
+  if (!scope) {
+    return { ok: false, code: "unauthenticated", error: "Sign in first." };
+  }
+  if (input.groups.length === 0) {
+    return { ok: false, code: "rejected", error: "Nothing to save." };
+  }
+  if (input.groups.some((g) => g.readings.length === 0)) {
+    return { ok: false, code: "rejected", error: "Nothing to save." };
+  }
+  // THE ROUTE IS AUTHORIZED BEFORE ANYTHING IS WRITTEN. `assertSessionForClient`
+  // resolves the session against the SERVER-DERIVED studio and this client,
+  // so a block id from another client's chart cannot be smuggled in by a
+  // stale page or a crafted call.
+  await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
+
   const db = await machineDb();
-  const got = await readingsForBlock(db, blockId);
-  return got.ok ? got.value : [];
+  const inventory = await listStudioDevices(db, scope.studioId);
+  const device = inventory.devices.find((d) => d.deviceId === input.machineId);
+  if (!device) {
+    return {
+      ok: false,
+      code: "rejected",
+      error: "That machine is not registered to this studio.",
+    };
+  }
+
+  const profile = catalogueForRuntime().find(
+    (p) => p.profileId === device.profileId,
+  );
+  const mode = profile
+    ? activeModes(profile).find((m) => m.key === input.modeKey)
+    : undefined;
+  if (!profile || !mode) {
+    return {
+      ok: false,
+      code: "rejected",
+      error: "That machine does not offer that mode.",
+    };
+  }
+
+  const groups: SetupSubmissionGroup[] = [];
+  for (const g of input.groups) {
+    const checked = validateSubmittedReadings(
+      device,
+      profile,
+      input.modeKey,
+      g.readings,
+    );
+    if ("error" in checked) {
+      return { ok: false, code: "rejected", error: checked.error };
+    }
+    groups.push({
+      groupKey: g.groupKey,
+      channels: g.channels,
+      readings: checked.rows,
+    });
+  }
+
+  // CROSS-GROUP CHANNEL EXCLUSIVITY IS NOT RE-IMPLEMENTED HERE. The command
+  // enforces it, which is the point of having moved it there - a check in this
+  // process is bypassed by anything calling the RPC directly, and a check in
+  // both is two definitions of one rule. The form warns before the round trip
+  // through `settingGroupIssues`; this relies on the database.
+  const out = await recordSetupSubmission(db, {
+    blockId: input.blockId,
+    machineId: input.machineId,
+    modeKey: input.modeKey,
+    idempotencyKey: input.idempotencyKey,
+    sessionId: input.sessionId,
+    clientId: input.clientId,
+    groups,
+  });
+  if (!out.ok) {
+    // UNKNOWN IS NOT REJECTED. Collapsing the two here would discard the
+    // distinction the query just preserved, one layer above it.
+    return {
+      ok: false,
+      code: out.unresolved ? "unknown" : "rejected",
+      error: out.error,
+    };
+  }
+  return {
+    ok: true,
+    submissionId: out.value.submissionId,
+    captures: out.value.groups,
+    written: out.value.readings,
+    reused: out.value.reused,
+  };
 }
+
+/** Everything recorded against one block, for the chart being edited. */
+export async function readingsForBlockAction(input: {
+  blockId: string;
+  clientId: string;
+  sessionId: string;
+}): Promise<ReadingsRead> {
+  const scope = await identity();
+  // NOT SIGNED IN is a FAILURE, not an empty treatment. It reaches the same
+  // surface as a failed query and must not read as "nothing recorded".
+  if (!scope) return { ok: false };
+  // BEYOND THE REPORTED FINDING, and deliberately. Codex named the WRITE
+  // path (#860 4297032712), but this read took a bare block id with no
+  // lineage check either: the member-scoped SELECT policy admits any block
+  // in the studio, so another client's recorded settings were readable by
+  // id. That is the same hole pointed at a different verb, and leaving it
+  // for a later round would mean knowingly shipping a clinical read with no
+  // route binding.
+  // TWO CHECKS, AND THEY ANSWER DIFFERENT QUESTIONS. This one authorizes the
+  // ROUTE: that this session really is this client's, in this studio. It says
+  // nothing about the block, which is exactly the mistake round 8 made here -
+  // the check was added, the hole was reported closed, and the read still
+  // filtered on an unbound block id (Codex, #860 4298457378).
+  await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
+  const db = await machineDb();
+  // ...and this one binds the BLOCK to that session, in the query.
+  const got = await readingsForBlock(db, input.blockId, input.sessionId);
+  // A FAILED READ IS REPORTED AS ONE.
+  //
+  // This returned `[]` on failure, and round 11's post-save refresh then
+  // installed that empty list over the real history while leaving
+  // `recordedSetupUnavailable` false — so a transient read failure made the
+  // "Recorded this treatment" list VANISH right after a save, which is the
+  // one message that invites a second immutable capture
+  // (Codex, #860 4300759932).
+  //
+  // THAT IS ROUND 4'S CONFLATION, ONE LAYER DOWN. I fixed "a failed read
+  // must not render as nothing recorded" in the component and then
+  // reintroduced it in the action feeding the component. The `catch` I
+  // wrote around the refresh could never fire, because this never threw.
+  //
+  // The caller decides what to do with a failure; this one's job is to stop
+  // pretending there was none.
+  if (!got.ok) return { ok: false };
+
+  // AND THE UNIT NAMES FOR WHAT CAME BACK (Codex, #860 4301669061).
+  //
+  // The refresh used to return readings alone, so a capture saved against a
+  // unit that was not already in the loader's map arrived NAMELESS: the
+  // history showed a new entry with no physical machine against it until a
+  // reload. In a studio running two units of the same model that is the one
+  // thing the entry is there to tell her, and after switching units and
+  // saving again she has two unattributed captures.
+  //
+  // RESOLVED SERVER-SIDE for the same reason the loader does it: a RETIRED
+  // unit is excluded from `listStudioMachines` in SQL, so nothing on the
+  // client can name one, and a treatment recorded on a unit since taken out
+  // of service is exactly the case that must still name it.
+  const unitNames: Record<string, string> = {};
+  const ids = got.value
+    .map((r) => r.deviceId)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+  if (ids.length > 0) {
+    const named = await machinesByIds(db, scope.studioId, ids);
+    // A FAILED NAME LOOKUP IS NOT A FAILED READ. Losing the history is far
+    // worse than an unnamed unit, so the readings are returned either way
+    // and the caller MERGES, keeping whatever names it already had.
+    if (named.ok) for (const m of named.value) unitNames[m.deviceId] = m.displayName;
+  }
+  return { ok: true, readings: got.value, unitNames };
+}
+
+/**
+ * The outcome of reading what is recorded against a block.
+ *
+ * A DISCRIMINATED RESULT rather than an array, because the two cases that
+ * an array conflates are exactly the two that matter clinically: "nothing
+ * is recorded on this treatment" and "I could not find out". The second
+ * must never render as the first.
+ */
+export type ReadingsRead =
+  | {
+      ok: true;
+      readings: RecordedReading[];
+      /**
+       * Recorded unit id -> the studio's own name, for the readings above.
+       *
+       * PARTIAL BY DESIGN, and the caller must MERGE rather than replace:
+       * this covers only the refreshed block, while the loader's map also
+       * names the next-visit guidance and an unusable stored selection.
+       * Replacing would name the new capture and un-name the prior setup.
+       */
+      unitNames: Record<string, string>;
+    }
+  | { ok: false };
 
 /** The profiles a practitioner may pick in this studio right now. */
 export async function listSelectableForCaller(): Promise<

@@ -10,6 +10,7 @@ import {
   closePool,
   resolveLocalDbUrl,
   seedMember,
+  routeFor,
   seedSession,
   seedStudio,
   type SeededStudio,
@@ -83,6 +84,8 @@ async function publish(
       decimals: number;
       quantity: string;
       stage_key?: string;
+      /** Omitted means REQUIRED, matching the column's default. */
+      optional?: boolean;
     }>;
   } = {},
 ): Promise<number> {
@@ -96,9 +99,9 @@ async function publish(
       opts.requiresOption ?? null,
       JSON.stringify(
         opts.fields ?? [
-          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
-          { field_key: "duration", native_unit: "s", decimals: 1, quantity: "duration" },
-          { field_key: "reps", native_unit: "count", decimals: 0, quantity: "count" },
+          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current", optional: true },
+          { field_key: "duration", native_unit: "s", decimals: 1, quantity: "duration", optional: true },
+          { field_key: "reps", native_unit: "count", decimals: 0, quantity: "count", optional: true },
         ],
       ),
     ],
@@ -131,15 +134,27 @@ const recordAs = (
   readings: Reading[],
   channels: number[] = [],
 ) =>
-  asUser(userId, (q) =>
-    q(`select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb) as n`, [
+  // THE ROUTE IS RESOLVED BEFORE THE USER CONNECTION IS TAKEN. `routeFor` is
+  // an admin-pool query; awaiting it INSIDE the asUser callback holds one
+  // pool's connection while waiting for another, and the four-way concurrent
+  // capture test stalled for five seconds on exactly that. Nothing about the
+  // route needs the user's connection.
+  //
+  // The route itself comes from the block because these tests exercise the
+  // published field contract, not the binding (Codex, #860 4297032712).
+  routeFor(blockId).then((route) =>
+    asUser(userId, (q) =>
+      q(`select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid) as n`, [
       blockId,
       machineId,
       "galvanic",
       group,
       channels,
       JSON.stringify(readings),
-    ]),
+        route.sessionId,
+        route.clientId,
+      ]),
+    ),
   );
 
 const ok = (field: string, value: string): Reading => ({
@@ -165,10 +180,20 @@ async function party(userId: string): Promise<{ c: Client; pid: number }> {
   return { c, pid };
 }
 
-const recordOn = (c: Client, blockId: string, machineId: string, value: string) =>
+const recordOn = (
+  c: Client,
+  blockId: string,
+  machineId: string,
+  value: string,
+  // NAMED rather than derived: this one runs on a caller-held connection
+  // inside concurrency tests, where an extra admin round trip would change
+  // the interleaving the test exists to produce.
+  sessionId: string,
+  clientId: string,
+) =>
   c.query(
-    `select public.record_treatment_setup_group($1,$2,'galvanic','g','{}'::smallint[],$3::jsonb) as n`,
-    [blockId, machineId, JSON.stringify([ok("current", value)])],
+    `select public.record_treatment_setup_group($1,$2,'galvanic','g','{}'::smallint[],$3::jsonb,$4::uuid,$5::uuid) as n`,
+    [blockId, machineId, JSON.stringify([ok("current", value)]), sessionId, clientId],
   );
 
 type Settled =
@@ -233,6 +258,21 @@ afterAll(async () => {
 });
 
 // ---------------------------------------------------------------------------
+/**
+ * A session id holding none of the captures in this file.
+ *
+ * `latest_setup_for_client` REQUIRES the session being charted, so it can
+ * never return a capture recorded in that same session as "Previous
+ * treatment" (Codex, #860 4289974654). Every call below asks what a LATER
+ * visit sees, so each excludes a visit that recorded nothing.
+ *
+ * THESE CALL SITES WERE NOT CAUGHT BY THE TYPE CHECKER, because they go
+ * through a SQL string rather than the typed wrapper. The eight TypeScript
+ * callers failed to compile the moment the parameter became required; these
+ * eleven failed only when the database refused the call.
+ */
+const ANOTHER_VISIT = randomUUID();
+
 describe("0223 · publication is DEPLOYMENT authority, never a tenant's", () => {
   it("POSITIVE CONTROL: deployment authority can publish, and a unit then registers", async () => {
     const studio = await seedStudio("auth-pos");
@@ -254,7 +294,7 @@ describe("0223 · publication is DEPLOYMENT authority, never a tenant's", () => 
           4,
           null,
           JSON.stringify([
-            { field_key: "current", native_unit: "mA", decimals: 3, quantity: "current" },
+            { field_key: "current", native_unit: "mA", decimals: 3, quantity: "current", optional: true },
           ]),
         ]),
       ),
@@ -273,7 +313,7 @@ describe("0223 · publication is DEPLOYMENT authority, never a tenant's", () => 
           4,
           null,
           JSON.stringify([
-            { field_key: "current", native_unit: "mA", decimals: 3, quantity: "current" },
+            { field_key: "current", native_unit: "mA", decimals: 3, quantity: "current", optional: true },
           ]),
         ]),
       ),
@@ -296,7 +336,7 @@ describe("0223 · publication is DEPLOYMENT authority, never a tenant's", () => 
           99,
           null,
           JSON.stringify([
-            { field_key: "current", native_unit: "mA", decimals: 3, quantity: "current" },
+            { field_key: "current", native_unit: "mA", decimals: 3, quantity: "current", optional: true },
           ]),
         ]),
       ),
@@ -331,12 +371,47 @@ describe("0223 · a published version is IMMUTABLE", () => {
     expect(await publish(10)).toBe(0);
   });
 
+  it("the SAME fields with OPTIONALITY flipped are refused", async () => {
+    // THE DEFECT (Codex, #860 4300386015). `optional` joined the contract
+    // and its enforcement in the previous round, and both
+    // symmetric-difference projections were left without it — so
+    // republishing a version with only requiredness changed returned the
+    // idempotent no-op and the stored flag silently diverged from the
+    // catalogue.
+    //
+    // WHAT THAT COSTS EITHER WAY: flipping a field toward optional lets a
+    // direct recording call omit it, while flipping it toward required
+    // makes ordinary UI captures fail as incomplete — against a contract
+    // that still reads as published and agreed.
+    // VERSION 150: every number below 143 is already claimed in this file,
+    // and 21/22 in particular belong to the channel and installed-option
+    // tests. Reusing one republishes a version with different MODE facts
+    // and fails on a rule that has nothing to do with this test.
+    await publish(150);
+    await expect(
+      publish(150, {
+        fields: [
+          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
+          { field_key: "duration", native_unit: "s", decimals: 1, quantity: "duration", optional: true },
+          { field_key: "reps", native_unit: "count", decimals: 0, quantity: "count", optional: true },
+        ],
+      }),
+    ).rejects.toThrow(/already published with different fields/i);
+  });
+
+  it("CONTROL: an identical republish is still the idempotent no-op", async () => {
+    // Without this the refusal above is satisfied by a function that
+    // refuses every republish, which would break deployment.
+    await publish(151);
+    await expect(publish(151)).resolves.toBeGreaterThanOrEqual(0);
+  });
+
   it("different FIELDS for a published version are refused", async () => {
     await publish(11);
     await expect(
       publish(11, {
         fields: [
-          { field_key: "current", native_unit: "mA", decimals: 3, quantity: "current" },
+          { field_key: "current", native_unit: "mA", decimals: 3, quantity: "current", optional: true },
         ],
       }),
     ).rejects.toThrow(/already published with different fields/i);
@@ -356,7 +431,7 @@ describe("0223 · a published version is IMMUTABLE", () => {
     await expect(
       publish(13, {
         fields: [
-          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
+          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current", optional: true },
         ],
       }),
     ).rejects.toThrow(/already published with different fields/i);
@@ -367,7 +442,7 @@ describe("0223 · a published version is IMMUTABLE", () => {
     expect(
       await publish(15, {
         fields: [
-          { field_key: "current", native_unit: "mA", decimals: 3, quantity: "current" },
+          { field_key: "current", native_unit: "mA", decimals: 3, quantity: "current", optional: true },
         ],
       }),
     ).toBe(1);
@@ -561,9 +636,10 @@ describe("0223 · RETIREMENT of a parent session, not just a block", () => {
     ]);
 
     const guide = await asUser(studio.userId, (q) =>
-      q(`select public.latest_setup_for_client($1,$2) as r`, [
+      q(`select public.latest_setup_for_client($1,$2,$3) as r`, [
         studio.studioId,
         studio.clientId,
+        ANOTHER_VISIT,
       ]),
     );
     const rows = (guide.rows[0].r ?? []) as Array<{ value_numeric: string }>;
@@ -633,9 +709,10 @@ describe("0223 · an EMPTY capture cannot erase prior guidance", () => {
 
     // ...and the guidance still stands.
     const guide = await asUser(studio.userId, (q) =>
-      q(`select public.latest_setup_for_client($1,$2) as r`, [
+      q(`select public.latest_setup_for_client($1,$2,$3) as r`, [
         studio.studioId,
         studio.clientId,
+        ANOTHER_VISIT,
       ]),
     );
     const rows = (guide.rows[0].r ?? []) as Array<{ value_numeric: string }>;
@@ -690,15 +767,15 @@ describe("0223 · republish compares field IDENTITIES, not counts", () => {
     // no-op. Counting is not comparing.
     await publish(90, {
       fields: [
-        { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
-        { field_key: "duration", native_unit: "s", decimals: 1, quantity: "duration" },
+        { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current", optional: true },
+        { field_key: "duration", native_unit: "s", decimals: 1, quantity: "duration", optional: true },
       ],
     });
     await expect(
       publish(90, {
         fields: [
-          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
-          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
+          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current", optional: true },
+          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current", optional: true },
         ],
       }),
     ).rejects.toThrow(/listed more than once/i);
@@ -720,8 +797,8 @@ describe("0223 · republish compares field IDENTITIES, not counts", () => {
     await expect(
       publish(91, {
         fields: [
-          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
-          { field_key: "current", native_unit: "mA", decimals: 3, quantity: "current" },
+          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current", optional: true },
+          { field_key: "current", native_unit: "mA", decimals: 3, quantity: "current", optional: true },
         ],
       }),
     ).rejects.toThrow(/listed more than once/i);
@@ -735,14 +812,14 @@ describe("0223 · republish compares field IDENTITIES, not counts", () => {
   it("an ADDED field is still refused, and the set check is symmetric", async () => {
     await publish(92, {
       fields: [
-        { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
+        { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current", optional: true },
       ],
     });
     await expect(
       publish(92, {
         fields: [
-          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
-          { field_key: "duration", native_unit: "s", decimals: 1, quantity: "duration" },
+          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current", optional: true },
+          { field_key: "duration", native_unit: "s", decimals: 1, quantity: "duration", optional: true },
         ],
       }),
     ).rejects.toThrow(/already published with different fields/i);
@@ -1020,16 +1097,17 @@ describe("0223 · retrieval returns ONE coherent capture, never a composite", ()
 
     await publish(41, {
       fields: [
-        { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
+        { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current", optional: true },
       ],
     });
     const second = await register(studio, 41);
     await recordAs(studio.userId, blockId, second, "g", [ok("current", "77")]);
 
     const guide = await asUser(studio.userId, (q) =>
-      q(`select public.latest_setup_for_client($1,$2) as r`, [
+      q(`select public.latest_setup_for_client($1,$2,$3) as r`, [
         studio.studioId,
         studio.clientId,
+        ANOTHER_VISIT,
       ]),
     );
     const rows = (guide.rows[0].r ?? []) as Array<{
@@ -1090,9 +1168,10 @@ describe("0223 · retrieval returns ONE coherent capture, never a composite", ()
     await recordAs(target.userId, blockId, machineId, "g", [ok("current", "100")]);
 
     const guide = await asUser(stranger.userId, (q) =>
-      q(`select public.latest_setup_for_client($1,$2) as r`, [
+      q(`select public.latest_setup_for_client($1,$2,$3) as r`, [
         target.studioId,
         target.clientId,
+        ANOTHER_VISIT,
       ]),
     );
     expect(guide.rows[0].r).toEqual([]);
@@ -1135,7 +1214,7 @@ describe("0223 - recording and RETIREMENT serialise, in both race orders", () =>
     const ret = await party(studio.userId);
     try {
       // Taken while both parents are live, and held UNCOMMITTED.
-      const n = await recordOn(rec.c, blockId, machineId, "120");
+      const n = await recordOn(rec.c, blockId, machineId, "120", sessionId, studio.clientId);
       expect(Number(n.rows[0].n)).toBe(1);
 
       // Retirement fires now. Its UPDATE needs FOR NO KEY UPDATE on the very
@@ -1188,7 +1267,7 @@ describe("0223 - recording and RETIREMENT serialise, in both race orders", () =>
       ]);
 
       // The capture reads the block, then parks acquiring the session lock.
-      const recording = settle(recordOn(rec.c, blockId, machineId, "130"));
+      const recording = settle(recordOn(rec.c, blockId, machineId, "130", sessionId, studio.clientId));
       const wait = await expectBlockedOn(
         rec.pid,
         "the capture must park acquiring the session lock the retirement holds",
@@ -1224,7 +1303,7 @@ describe("0223 - recording and RETIREMENT serialise, in both race orders", () =>
         studio.clientId,
         "race proof: this retirement is abandoned",
       ]);
-      const recording = settle(recordOn(rec.c, blockId, machineId, "140"));
+      const recording = settle(recordOn(rec.c, blockId, machineId, "140", sessionId, studio.clientId));
       await expectBlockedOn(rec.pid, "the capture must park on the held session lock");
 
       await ret.c.query("rollback"); // abandoned - the session was never retired
@@ -1255,7 +1334,7 @@ describe("0223 - recording and RETIREMENT serialise, in both race orders", () =>
         blockId,
         "race proof: retire the area before a capture arrives",
       ]);
-      const recording = settle(recordOn(rec.c, blockId, machineId, "150"));
+      const recording = settle(recordOn(rec.c, blockId, machineId, "150", sessionId, studio.clientId));
       const wait = await expectBlockedOn(
         rec.pid,
         "the capture must park acquiring the block lock the retirement holds",
@@ -1301,7 +1380,7 @@ describe("0223 - recording and RETIREMENT serialise, in both race orders", () =>
             ? [sessionId, studio.clientId, `code proof: ${label}`]
             : [sessionId, studio.clientId, `code proof: ${label}`, blockId],
         );
-        const recording = settle(recordOn(rec.c, blockId, machineId, "160"));
+        const recording = settle(recordOn(rec.c, blockId, machineId, "160", sessionId, studio.clientId));
         await expectBlockedOn(rec.pid, `${label}: the capture must park on a lock`);
         await ret.c.query("commit");
 
@@ -1354,7 +1433,7 @@ describe("0223 - recording and RETIREMENT serialise, in both race orders", () =>
           "order proof: child first",
         ]);
         // Y takes the PARENT (free), then parks wanting the child X holds.
-        const recording = settle(recordOn(y.c, blockId, machineId, "170"));
+        const recording = settle(recordOn(y.c, blockId, machineId, "170", sessionId, studio.clientId));
         await expectBlockedOn(y.pid, "the capture must park on the child lock");
         // X now wants the parent Y holds. Cycle.
         const retiringParent = settle(
@@ -1409,7 +1488,7 @@ describe("0223 - recording and RETIREMENT serialise, in both race orders", () =>
         // Y parks on the parent immediately, holding NOTHING. That is the
         // property the order buys: a waiter that holds nothing cannot be half
         // of a cycle.
-        const recording = settle(recordOn(y.c, blockId, machineId, "180"));
+        const recording = settle(recordOn(y.c, blockId, machineId, "180", sessionId, studio.clientId));
         await expectBlockedOn(y.pid, "the capture must park on the parent lock");
         // X proceeds to the child unobstructed - that is the claim.
         //
@@ -1473,7 +1552,10 @@ describe("0223 - recording and RETIREMENT serialise, in both race orders", () =>
 // ---------------------------------------------------------------------------
 describe("0223 - the MACHINE serialises with its own retirement", () => {
   it("RETIRE the machine, then record: the capture PARKS, then REFUSES", async () => {
-    const { studio, blockId, machineId } = await scene("race-machine-ret", 118);
+    const { studio, sessionId, blockId, machineId } = await scene(
+      "race-machine-ret",
+      118,
+    );
     const ret = await party(studio.userId);
     const rec = await party(studio.userId);
     try {
@@ -1481,7 +1563,7 @@ describe("0223 - the MACHINE serialises with its own retirement", () => {
       // recorder's first read.
       await ret.c.query(`select public.retire_studio_machine($1)`, [machineId]);
 
-      const recording = settle(recordOn(rec.c, blockId, machineId, "190"));
+      const recording = settle(recordOn(rec.c, blockId, machineId, "190", sessionId, studio.clientId));
       const wait = await expectBlockedOn(
         rec.pid,
         "the capture must park acquiring the machine lock the retirement holds",
@@ -1503,12 +1585,15 @@ describe("0223 - the MACHINE serialises with its own retirement", () => {
   });
 
   it("POSITIVE CONTROL: a retirement that ROLLS BACK does not refuse the capture", async () => {
-    const { studio, blockId, machineId } = await scene("race-machine-roll", 119);
+    const { studio, sessionId, blockId, machineId } = await scene(
+      "race-machine-roll",
+      119,
+    );
     const ret = await party(studio.userId);
     const rec = await party(studio.userId);
     try {
       await ret.c.query(`select public.retire_studio_machine($1)`, [machineId]);
-      const recording = settle(recordOn(rec.c, blockId, machineId, "200"));
+      const recording = settle(recordOn(rec.c, blockId, machineId, "200", sessionId, studio.clientId));
       await expectBlockedOn(rec.pid, "the capture must park on the machine lock");
       await ret.c.query("rollback");
       const out = await recording;
@@ -1961,15 +2046,24 @@ describe("0223 - two setting groups in one block stay distinct", () => {
     channels: number[],
     value: string,
   ) =>
-    asUser(userId, (q) =>
-      q(`select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb) as n`, [
-        blockId,
-        machineId,
-        "galvanic",
-        group,
-        channels,
-        JSON.stringify([ok("current", value)]),
-      ]),
+    // Route first, user connection second - see recordAs for why nesting the
+    // admin lookup inside asUser stalls a concurrent test.
+    routeFor(blockId).then((route) =>
+      asUser(userId, (q) =>
+        q(
+          `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid) as n`,
+          [
+          blockId,
+          machineId,
+          "galvanic",
+          group,
+          channels,
+          JSON.stringify([ok("current", value)]),
+            route.sessionId,
+            route.clientId,
+          ],
+        ),
+      ),
     );
 
   it("records two groups with DIFFERENT channels and values, and reads both back", async () => {
@@ -2079,15 +2173,24 @@ describe("0223 - invalid channel and group combinations are refused BY THE DATAB
     group: string,
     channels: number[],
   ) =>
-    asUser(userId, (q) =>
-      q(`select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb) as n`, [
-        blockId,
-        machineId,
-        "galvanic",
-        group,
-        channels,
-        JSON.stringify([ok("current", "120")]),
-      ]),
+    // Route first, user connection second - see recordAs for why nesting the
+    // admin lookup inside asUser stalls a concurrent test.
+    routeFor(blockId).then((route) =>
+      asUser(userId, (q) =>
+        q(
+          `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid) as n`,
+          [
+          blockId,
+          machineId,
+          "galvanic",
+          group,
+          channels,
+          JSON.stringify([ok("current", "120")]),
+            route.sessionId,
+            route.clientId,
+          ],
+        ),
+      ),
     );
 
   it("refuses a channel above the published maximum", async () => {
@@ -2156,15 +2259,24 @@ describe("0223 - the latest setup includes every group, coherently", () => {
     channels: number[],
     value: string,
   ) =>
-    asUser(userId, (q) =>
-      q(`select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb) as n`, [
-        blockId,
-        machineId,
-        "galvanic",
-        group,
-        channels,
-        JSON.stringify([ok("current", value)]),
-      ]),
+    // Route first, user connection second - see recordAs for why nesting the
+    // admin lookup inside asUser stalls a concurrent test.
+    routeFor(blockId).then((route) =>
+      asUser(userId, (q) =>
+        q(
+          `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid) as n`,
+          [
+          blockId,
+          machineId,
+          "galvanic",
+          group,
+          channels,
+          JSON.stringify([ok("current", value)]),
+            route.sessionId,
+            route.clientId,
+          ],
+        ),
+      ),
     );
 
   type Row = {
@@ -2177,9 +2289,12 @@ describe("0223 - the latest setup includes every group, coherently", () => {
 
   const guidance = async (studio: SeededStudio): Promise<Row[]> => {
     const r = await asUser(studio.userId, (q) =>
-      q(`select public.latest_setup_for_client($1,$2) as g`, [
+      // Excludes a visit that recorded nothing, so every case below reads as
+      // "what a LATER visit sees" — see ANOTHER_VISIT's own comment.
+      q(`select public.latest_setup_for_client($1,$2,$3) as g`, [
         studio.studioId,
         studio.clientId,
+        ANOTHER_VISIT,
       ]),
     );
     return (r.rows[0].g as Row[]) ?? [];

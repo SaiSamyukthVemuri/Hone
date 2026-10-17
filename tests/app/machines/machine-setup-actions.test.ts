@@ -79,11 +79,42 @@ vi.mock("@/lib/supabase/server", () => ({
       const error = DB.errorFor[table] ?? DB.selectError;
       const rows = DB.rowsFor[table] ?? DB.rows;
       const result = async () => ({ data: error ? null : rows, error });
+      /**
+       * A KEYSET PAGE, MODELLED RATHER THAN IGNORED.
+       *
+       * `readingsForBlock` reads a block's readings COMPLETELY now - pages by
+       * `id`, each after the last one seen, until a page comes back EMPTY -
+       * because `.limit(500)` silently truncated and could cut a capture in
+       * half (Codex, #860 4288424513). A fake that answered every page with
+       * the same rows would loop or look complete when it was not, so it
+       * filters here exactly as the database does. The rows it serves need an
+       * `id` for the same reason.
+       */
+      const pageAfter = (cursor: string) => async () => ({
+        data: error
+          ? null
+          : (rows as Array<{ id?: unknown }>).filter(
+              (r) => typeof r.id === "string" && r.id > cursor,
+            ),
+        error,
+      });
       return {
         select: () => ({
           eq: () => ({
+            // THE ROUTE BINDING'S QUERY: `.eq(id).eq(session_id).limit(1)`,
+            // which the reader now issues before it reads any readings
+            // (Codex, #860 4298457378). Answered with one row, because the
+            // cases in this file supply a block that IS the route's; the
+            // refusal has its own tests, in the DB suite and in a mounted
+            // payload-swap case.
+            eq: () => ({
+              limit: async () => ({ data: [{ id: "block-1" }], error: null }),
+            }),
             is: () => ({ order: result }),
             order: () => ({ limit: result }),
+            gt: (_column: string, value: string) => ({
+              order: () => ({ limit: pageAfter(value) }),
+            }),
             in: () => ({ limit: result }),
             maybeSingle: result,
             limit: result,
@@ -387,6 +418,414 @@ describe("the prior-setup read is scoped to the ROUTE CLIENT, not the studio", (
   });
 });
 
+// ===========================================================================
+// THE WHOLE-SAVE PATH — one Save, one call, one retry key.
+//
+// Several separate record_treatment_setup_group calls could not be atomic,
+// could not see a channel claimed by two groups, and could not be retried
+// after a lost response (Codex, #860 6157725545).
+// `record_treatment_setup_submission` is the command; these are the claims
+// about the SERVER SURFACE in front of it.
+//
+// THE RETRY KEY IS THE THING MOST WORTH GUARDING. If it is dropped anywhere
+// between the form and the RPC the feature is silently inert: every retry
+// becomes a new save and a lost response duplicates an immutable capture.
+// This lane has already shipped one field the wrapper never forwarded
+// (`priorUnitNames`, Codex 2351742d), so the forwarding is asserted, not
+// assumed.
+// ===========================================================================
+
+/** A studio, a signed-in owner and one registered synthetic device. */
+function synthDevice() {
+  vi.stubEnv("HONE_SYNTHETIC_MACHINE_PROFILE", "1");
+  vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "http://127.0.0.1:54321");
+  signIn("studio-fett", "pract-sabrina", "owner");
+  DB.rows = [
+    {
+      id: "dev-1",
+      studio_id: "studio-fett",
+      machine_profile_id: "synthetic:demo-multineedle",
+      machine_profile_version: 2,
+      display_name: "Room 1",
+      installed_options: [],
+      retired_at: null,
+    },
+  ];
+}
+
+const READING = (value: number) => ({
+  stageKey: null,
+  fieldKey: "current",
+  value: { kind: "value" as const, value },
+  observationSource: "practitioner-entered" as const,
+});
+
+describe("recordSetupSubmissionAction sends ONE call for the whole save", () => {
+  it("sends every group, with its own channels, in one RPC", async () => {
+    synthDevice();
+    DB.rpcResult = {
+      submission_id: "sub-1",
+      groups: 2,
+      readings: 2,
+      reused: false,
+    };
+    const out = await actions.recordSetupSubmissionAction({
+      ...ROUTE,
+      blockId: "block-1",
+      machineId: "dev-1",
+      modeKey: "galvanic",
+      idempotencyKey: "save-key-0001",
+      groups: [
+        { groupKey: "g1", channels: [1, 2], readings: [READING(120)] },
+        { groupKey: "g2", channels: [3], readings: [READING(80)] },
+      ],
+    });
+    expect(out.ok, out.ok ? "" : out.error).toBe(true);
+
+    const calls = DB.calls.filter(
+      (c) => c.fn === "record_treatment_setup_submission",
+    );
+    // ONE CALL. Two would mean the atomicity this exists for was never
+    // obtained, whatever the command does.
+    expect(calls).toHaveLength(1);
+    // And NOT through the per-group command.
+    expect(
+      DB.calls.filter((c) => c.fn === "record_treatment_setup_group"),
+    ).toHaveLength(0);
+
+    const args = calls[0]!.args as Record<string, unknown>;
+    expect(args.p_block_id).toBe("block-1");
+    expect(args.p_studio_machine_id).toBe("dev-1");
+    expect(args.p_mode_key).toBe("galvanic");
+    // THE KEY REACHES THE DATABASE. Dropped anywhere along the way, every
+    // retry becomes a new save.
+    expect(args.p_idempotency_key).toBe("save-key-0001");
+
+    const groups = args.p_groups as Array<Record<string, unknown>>;
+    expect(groups).toHaveLength(2);
+    expect(groups[0]!.group_key).toBe("g1");
+    expect(groups[0]!.channels).toEqual([1, 2]);
+    expect(groups[1]!.group_key).toBe("g2");
+    expect(groups[1]!.channels).toEqual([3]);
+  });
+
+  it("DERIVES unit and precision for every group, never taking the caller's", async () => {
+    synthDevice();
+    DB.rpcResult = { submission_id: "sub-1", groups: 1, readings: 1, reused: false };
+    await actions.recordSetupSubmissionAction({
+      ...ROUTE,
+      blockId: "block-1",
+      machineId: "dev-1",
+      modeKey: "galvanic",
+      idempotencyKey: "save-key-0002",
+      groups: [{ groupKey: "g1", channels: [1], readings: [READING(120)] }],
+    });
+    const args = DB.calls.find(
+      (c) => c.fn === "record_treatment_setup_submission",
+    )!.args as Record<string, unknown>;
+    const readings = (args.p_groups as Array<Record<string, unknown>>)[0]!
+      .readings as Array<Record<string, unknown>>;
+    // The machine's own unit, from the contract the DEVICE is registered
+    // against - not from the payload, which has no field for it.
+    expect(readings[0]!.native_unit).toBeTruthy();
+    expect(typeof readings[0]!.decimals).toBe("number");
+    // Sent as a STRING so a recorded zero and the machine's precision survive
+    // JSON, exactly as the per-group command does it.
+    expect(readings[0]!.value).toBe("120");
+  });
+
+  it("refuses the WHOLE save when any group has an impossible field", async () => {
+    // Validated before anything is sent: the command would refuse the save
+    // too, which is correct, but she should not wait for a round trip to be
+    // told something this process already knew.
+    synthDevice();
+    const out = await actions.recordSetupSubmissionAction({
+      ...ROUTE,
+      blockId: "block-1",
+      machineId: "dev-1",
+      modeKey: "galvanic",
+      idempotencyKey: "save-key-0003",
+      groups: [
+        { groupKey: "g1", channels: [1], readings: [READING(120)] },
+        {
+          groupKey: "g2",
+          channels: [2],
+          readings: [
+            {
+              stageKey: null,
+              fieldKey: "not_a_real_field",
+              value: { kind: "value" as const, value: 3 },
+              observationSource: "practitioner-entered" as const,
+            },
+          ],
+        },
+      ],
+    });
+    expect(out.ok).toBe(false);
+    expect(out.ok ? "" : out.error).toMatch(/not_a_real_field/);
+    // NOTHING WAS SENT. A refusal that had already issued the call would have
+    // recorded the first group.
+    expect(
+      DB.calls.filter((c) => c.fn === "record_treatment_setup_submission"),
+    ).toHaveLength(0);
+  });
+
+  it("reports a REUSED submission as reused, not as a fresh save", async () => {
+    // The caller cannot otherwise tell a retry that was absorbed from a save
+    // that wrote, and the two are different facts about the record.
+    synthDevice();
+    DB.rpcResult = {
+      submission_id: "sub-1",
+      groups: 2,
+      readings: 5,
+      reused: true,
+    };
+    const out = await actions.recordSetupSubmissionAction({
+      ...ROUTE,
+      blockId: "block-1",
+      machineId: "dev-1",
+      modeKey: "galvanic",
+      idempotencyKey: "save-key-0004",
+      groups: [{ groupKey: "g1", channels: [1], readings: [READING(120)] }],
+    });
+    expect(out.ok).toBe(true);
+    expect(out.reused).toBe(true);
+    // THE DATABASE'S OWN TALLY, not the one group that was sent: a reused
+    // submission reports what the ORIGINAL save recorded.
+    expect(out.captures).toBe(2);
+    expect(out.written).toBe(5);
+  });
+
+  it("refuses a save that reports no submission id", async () => {
+    // A deployment where the migration has not been applied, or an older
+    // function still resolving, returns something else entirely. Casting it
+    // would report a successful save with an undefined capture.
+    synthDevice();
+    DB.rpcResult = { nothing: true };
+    const out = await actions.recordSetupSubmissionAction({
+      ...ROUTE,
+      blockId: "block-1",
+      machineId: "dev-1",
+      modeKey: "galvanic",
+      idempotencyKey: "save-key-0005",
+      groups: [{ groupKey: "g1", channels: [1], readings: [READING(120)] }],
+    });
+    expect(out.ok).toBe(false);
+    expect(out.ok ? "" : out.error).toMatch(/cannot be confirmed/i);
+  });
+
+  it("refuses an empty save, and a group with no readings", async () => {
+    synthDevice();
+    expect(
+      (
+        await actions.recordSetupSubmissionAction({
+          ...ROUTE,
+          blockId: "block-1",
+          machineId: "dev-1",
+          modeKey: "galvanic",
+          idempotencyKey: "save-key-0006",
+          groups: [],
+        })
+      ).ok,
+    ).toBe(false);
+    expect(
+      (
+        await actions.recordSetupSubmissionAction({
+          ...ROUTE,
+          blockId: "block-1",
+          machineId: "dev-1",
+          modeKey: "galvanic",
+          idempotencyKey: "save-key-0007",
+          groups: [{ groupKey: "g1", channels: [], readings: [] }],
+        })
+      ).ok,
+    ).toBe(false);
+  });
+
+  it("requires a signed-in practitioner", async () => {
+    SESSION.current = null;
+    const out = await actions.recordSetupSubmissionAction({
+      ...ROUTE,
+      blockId: "block-1",
+      machineId: "dev-1",
+      modeKey: "galvanic",
+      idempotencyKey: "save-key-0008",
+      groups: [{ groupKey: "g1", channels: [], readings: [READING(1)] }],
+    });
+    expect(out.ok).toBe(false);
+    expect(out.ok ? "" : out.code).toBe("unauthenticated");
+  });
+
+  it("takes no studio, so none can be forged", () => {
+    const src = readFileSync(
+      path.resolve(
+        __dirname,
+        "../../../app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts",
+      ),
+      "utf8",
+    );
+    const body = src
+      .slice(src.indexOf("export async function recordSetupSubmissionAction"))
+      .split("\n}\n")[0]!;
+    expect(body).not.toMatch(/studioId:\s*input\./);
+    expect(body).not.toMatch(/p_studio_id/);
+  });
+});
+
+describe("THE VALIDATION IS SHARED, not copied", () => {
+  // A second implementation of a clinical validation rule is a second place
+  // for it to drift, and this feature has corrected that exact defect three
+  // times. THREE server paths now record machine settings: the per-group
+  // command, the whole-save command, and the INITIAL save that creates the
+  // treatment area and its settings in one transaction - and the third lives
+  // in a DIFFERENT module, which is why the validator moved to lib/.
+  const read = (rel: string) =>
+    readFileSync(path.resolve(__dirname, "../../..", rel), "utf8").replace(
+      /^\s*(\/\/|\*|\/\*).*$/gm,
+      " ",
+    );
+
+  const SETUP_ACTIONS =
+    "app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts";
+  const BLOCK_ACTIONS =
+    "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts";
+  const VALIDATOR = "lib/machines/validate-submitted-readings.ts";
+
+  it("has exactly ONE call site for the reading validator, and it is in lib/", () => {
+    // Counted ACROSS the three files rather than within one, which is the
+    // claim that actually matters now that the paths span two modules. The
+    // previous version of this test counted inside machine-setup-actions only
+    // and would have been satisfied by a second copy in block-actions.
+    const perFile = [SETUP_ACTIONS, BLOCK_ACTIONS, VALIDATOR].map((f) => ({
+      f,
+      hits: (read(f).match(/validateReading\(/g) ?? []).length,
+    }));
+    expect(
+      perFile.find((p) => p.f === VALIDATOR)!.hits,
+      "the shared validator must call it exactly once",
+    ).toBe(1);
+    for (const p of perFile.filter((x) => x.f !== VALIDATOR)) {
+      expect(
+        p.hits,
+        `${p.f} must not call validateReading itself`,
+      ).toBe(0);
+    }
+  });
+
+  it("is reached by ALL THREE recording paths", () => {
+    const setup = read(SETUP_ACTIONS);
+    for (const fn of ["recordReadingsAction", "recordSetupSubmissionAction"]) {
+      const body = setup.slice(setup.indexOf(`export async function ${fn}`)).split(
+        "\n}\n",
+      )[0]!;
+      expect(
+        body,
+        `${fn} must validate through the shared helper`,
+      ).toMatch(/validateSubmittedReadings\(/);
+    }
+    // The INITIAL save, in the other module. It had NO validator at all until
+    // the type checker exposed its input shape - and the database would not
+    // have covered the gap, because `stale_profile_version` compares the
+    // DEVICE's registered contract version against the catalogue's and the
+    // command only ever sees the device's.
+    const block = read(BLOCK_ACTIONS);
+    const create = block.slice(
+      block.indexOf("export async function createTreatmentAreaWithEntryAction"),
+      block.indexOf("export type UpdateAreaWithEntryInput"),
+    );
+    expect(create).toMatch(/validateSubmittedReadings\(/);
+  });
+
+  it("DERIVES unit and precision there, and nowhere else", () => {
+    expect(read(VALIDATOR)).toMatch(/nativeUnit: checked\.field\.unit/);
+    expect(read(VALIDATOR)).toMatch(/decimals: checked\.field\.decimals/);
+  });
+});
+
+describe("the connected wrapper forwards the whole SAVE", () => {
+  // The same failure class as the context-forwarding guard above, on the path
+  // that matters most: a dropped `idempotencyKey` makes idempotency silently
+  // inert, and nothing fails until a lost response duplicates a capture.
+  const CONNECTED = readFileSync(
+    path.resolve(
+      __dirname,
+      "../../../components/machines/machine-first-setup-connected.tsx",
+    ),
+    "utf8",
+  ).replace(/^\s*(\/\/|\*|\/\*).*$/gm, " ");
+
+  it("calls the SAVE action, not the per-group one", () => {
+    expect(CONNECTED).toMatch(/recordSetupSubmissionAction\(/);
+    expect(CONNECTED).not.toMatch(/recordReadingsAction\(/);
+  });
+
+  it("passes the form's input through WHOLE, rather than rebuilding it", () => {
+    // Rebuilding is how a field gets dropped. Spreading the object means a
+    // new field cannot be forgotten here.
+    //
+    // IT USED TO REQUIRE THE BARE `(input)`, which stopped being true when
+    // the route ids were added: the wrapper now sends `{ ...input, clientId,
+    // sessionId }` because the panel knows which block it is charting but
+    // does not get to say whose chart that is (Codex, #860 4297032712). That
+    // is still a pass-through — it ADDS the two ids the page owns and
+    // enumerates nothing from the form — so the rule this test exists for is
+    // unchanged and only its spelling moved.
+    expect(CONNECTED).toMatch(
+      /recordSetupSubmissionAction\(\{\s*\.\.\.input,\s*clientId,\s*sessionId,\s*\}\)/,
+    );
+    // AND IT STILL DOES NOT REBUILD: naming any of the form's own fields here
+    // is how one of them gets dropped on the next change.
+    for (const field of ["blockId:", "machineId:", "modeKey:", "groups:"]) {
+      expect(
+        CONNECTED.includes(`recordSetupSubmissionAction({\n        ${field}`),
+        `${field} must not be enumerated at the call site`,
+      ).toBe(false);
+    }
+  });
+
+  it("returns the reuse flag and the counts to the form", () => {
+    // Without these the form cannot distinguish "saved" from "already saved",
+    // and would report a fresh capture for an absorbed retry.
+    for (const field of ["reused", "captures", "written"]) {
+      expect(CONNECTED, `${field} must reach the form`).toContain(field);
+    }
+  });
+});
+
+describe("the entry form holds the key across retries", () => {
+  const ENTRY = readFileSync(
+    path.resolve(
+      __dirname,
+      "../../../components/machines/machine-reading-entry.tsx",
+    ),
+    "utf8",
+  ).replace(/^\s*(\/\/|\*|\/\*).*$/gm, " ");
+
+  it("takes the key from the state machine, never minting one inline", () => {
+    // `crypto.randomUUID()` called directly at the call site would mint a new
+    // key per attempt, which is exactly the defect that makes a retry a
+    // duplicate. It may only be the MINTER passed to keyForSave.
+    expect(ENTRY).toMatch(/keyForSave\(save,/);
+    const direct = ENTRY.match(/crypto\.randomUUID\(\)/g) ?? [];
+    expect(direct.length, "the key must come from keyForSave").toBe(1);
+    expect(ENTRY).toMatch(/keyForSave\(save, mintKey \?\? \(\(\) => crypto\.randomUUID\(\)\)\)/);
+  });
+
+  it("sends it as the save's idempotency key", () => {
+    expect(ENTRY).toMatch(/idempotencyKey: key/);
+  });
+
+  it("sends ONE call, not one per group", () => {
+    // The loop is gone. A `for` over the submissions here would reintroduce
+    // every state the atomic command removed.
+    const submit = ENTRY.slice(ENTRY.indexOf("async function submit()")).split(
+      "\n  }\n",
+    )[0]!;
+    expect(submit).not.toMatch(/for\s*\(/);
+    expect((submit.match(/await onRecord\(/g) ?? []).length).toBe(1);
+  });
+});
+
 describe("reading metadata is DERIVED from the profile, never accepted", () => {
   // The caller may say which field and what it read. The field's native unit
   // and precision are machine facts, so an earlier shape that accepted them
@@ -415,6 +854,7 @@ describe("reading metadata is DERIVED from the profile, never accepted", () => {
       },
     ];
     const out = await actions.recordReadingsAction({
+      ...ROUTE,
       blockId: "block-1",
       machineId: "dev-1",
       modeKey: "galvanic",
@@ -442,6 +882,11 @@ describe("reading metadata is DERIVED from the profile, never accepted", () => {
     // The submission type has no nativeUnit/decimals at all, so this is a
     // compile-time guarantee as well as a runtime one. Pinned on the source so
     // a future widening is a visible decision.
+    //
+    // THE DERIVATION MOVED to lib/machines/validate-submitted-readings.ts
+    // when a third recording path in another module needed it; the assertion
+    // that it HAPPENS lives with it, in the suite above. What stays here is
+    // the type-level half, which is where this test's name points.
     const src = readFileSync(
       path.resolve(__dirname, "../../../lib/machines/machine-queries.ts"),
       "utf8",
@@ -451,23 +896,23 @@ describe("reading metadata is DERIVED from the profile, never accepted", () => {
     expect(sub![0]).not.toMatch(/nativeUnit/);
     expect(sub![0]).not.toMatch(/decimals/);
 
-    const action = readFileSync(
-      path.resolve(
-        __dirname,
-        "../../../app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts",
-      ),
+    // THE DERIVATION NOW LIVES IN lib/, because a THIRD recording path - the
+    // initial save, in block-actions.ts - needed the same validator and a
+    // rule reachable from one module only is a rule that holds on some paths
+    // and not others. These assertions followed it rather than being dropped.
+    const validator = readFileSync(
+      path.resolve(__dirname, "../../../lib/machines/validate-submitted-readings.ts"),
       "utf8",
     );
     // The unit and precision come off the field the VALIDATOR resolved, not
     // off anything the caller sent and not off a descriptor re-derived at the
     // call site. `checked` is validateReading's successful outcome.
-    expect(action).toMatch(/nativeUnit: checked\.field\.unit/);
-    expect(action).toMatch(/decimals: checked\.field\.decimals/);
-    // And that the capture goes through the shared validator at all.
-    expect(action).toMatch(/validateReading\(/);
+    expect(validator).toMatch(/nativeUnit: checked\.field\.unit/);
+    expect(validator).toMatch(/decimals: checked\.field\.decimals/);
+    expect(validator).toMatch(/validateReading\(/);
     // Validated against the DEVICE's registered version, so a stale
     // registration is refused rather than captured under today's contract.
-    expect(action).toMatch(/version: device\.profileVersion/);
+    expect(validator).toMatch(/version: device\.profileVersion/);
   });
 });
 
@@ -687,6 +1132,57 @@ describe("the synthetic demo profile cannot reach production", () => {
     expect(single.modes[0]!.key).not.toBe(multi.modes[0]!.key);
   });
 
+  it("the second model's TWO MODES disagree, so a mode switch is falsifiable", () => {
+    // THE SAME ARGUMENT AS THE TEST ABOVE, one level down. That one makes a
+    // change of UNIT falsifiable; this one makes a change of MODE falsifiable,
+    // and they are different paths: a mode switch keeps the device, the
+    // profile and the version fixed and moves only the field contract.
+    //
+    // IT ALSO GUARDS A BRANCH THAT WOULD OTHERWISE BE UNREACHABLE. The panel
+    // renders its mode picker only when a unit offers more than one mode, so
+    // while every profile carried exactly one, `machine-mode-picker` could not
+    // appear in any browser run. If someone later trims this profile back to a
+    // single mode, that branch silently stops being exercised and the e2e
+    // mode-switch step starts passing for the wrong reason - so the count is
+    // asserted here rather than assumed by the spec.
+    const single = synthetic.SYNTHETIC_SINGLE_PROBE;
+    expect(single.modes.length, "the mode picker needs a choice to render").toBeGreaterThan(1);
+
+    const byKey = new Map(single.modes.map((m) => [m.key, m]));
+    const blend = byKey.get("blend")!;
+    const therm = byKey.get("thermolysis")!;
+    expect(blend, "blend must stay - existing tests read modes[0]").toBeDefined();
+    expect(therm).toBeDefined();
+    expect(single.modes[0]!.key, "blend stays first").toBe("blend");
+
+    const f = (m: typeof blend) => new Map(m.fields.map((x) => [x.key, x]));
+    const a = f(blend);
+    const b = f(therm);
+
+    // 1. A SHARED KEY, so a value typed under one mode would be VISIBLE in the
+    //    other's box if anything failed to discard it.
+    expect([...a.keys()]).toContain("current");
+    expect([...b.keys()]).toContain("current");
+    // 2. ...at a different unit AND precision, so a stale label is detectable
+    //    and the recording command's scale rule can actually bite.
+    expect(b.get("current")!.unit).not.toBe(a.get("current")!.unit);
+    expect(b.get("current")!.decimals).not.toBe(a.get("current")!.decimals);
+    // 3. A key unique to EACH mode, so "gone" and "relabelled" are different
+    //    observations in both directions.
+    expect([...a.keys()]).toContain("pulse_width");
+    expect([...b.keys()]).not.toContain("pulse_width");
+    expect([...b.keys()]).toContain("intensity");
+    expect([...a.keys()]).not.toContain("intensity");
+
+    // NEITHER MODE IS GATED ON AN INSTALLED OPTION, or `supportedModes` would
+    // filter it out on a unit seeded with none and the picker would not render
+    // however many modes the profile declares.
+    for (const m of single.modes) {
+      expect(m.requiresInstalledOption, `${m.key} must need no option`).toBeUndefined();
+      expect(m.availability, `${m.key} must be active to be offered`).toBe("active");
+    }
+  });
+
   it("the second model is also explicitly synthetic, never a borrowed family", () => {
     // `family` is the field a reader trusts to say what a profile IS. Both
     // demo profiles previously declared `Permanence/GEMM-16` because the
@@ -851,5 +1347,249 @@ describe("a RETIRED remembered machine is named as retired, not as missing", () 
     expect(ctx.rememberedUnavailable?.reason).toContain("Room 9");
     // THE DEFECT: it must not claim the unit is gone from the studio.
     expect(ctx.rememberedUnavailable?.reason).not.toMatch(/no longer registered/i);
+  });
+});
+
+// ===========================================================================
+// THE LOADER READS WHAT IS ALREADY RECORDED — in the SAME round trip.
+//
+// Folded into `loadMachineSetupContext` rather than a second action call, and
+// that is not a micro-optimisation: the panel loads on demand precisely
+// because an extra server-action POST to this route broke two browser specs.
+// repeat-client-fast-charting classifies any POST without an idempotencyKey as
+// a source re-read, and conditional-numbing-notes lost its save to a racing
+// round trip. A second call for the captures would reintroduce exactly that.
+// ===========================================================================
+
+describe("a failed recorded-captures read is reported, not flattened", () => {
+  // THE DEFECT (Codex, #860 4290452722). `readingsForBlock` fails CLOSED - it
+  // returns ok:false rather than a partial list - and the loader turned that
+  // into `[]`, which is byte-identical to "this treatment has nothing
+  // recorded". The surface then rendered nothing, and nothing is an invitation
+  // to record again: a second immutable capture, indistinguishable in the
+  // record from a genuine mid-treatment change.
+  //
+  // THREE STATES, not two, and the third is the one that was missing:
+  // captures exist, no captures exist, and the question could not be answered.
+
+  it("reports unavailable when the read fails", async () => {
+    signIn("studio-fett", "pract-sabrina", "owner");
+    DB.errorFor.treatment_setup_readings = { message: "connection reset" };
+
+    const ctx = await actions.loadMachineSetupContext({
+      ...ROUTE,
+      blockId: "block-1",
+    });
+
+    expect(ctx.recordedSetupUnavailable).toBe(true);
+    // AND THE CHART STILL WORKS. A failed cosmetic read must not cost her the
+    // treatment - the degradation was never the defect, the LIE was.
+    expect(ctx.recordedSetup).toEqual([]);
+  });
+
+  it("does NOT report unavailable when the block simply has nothing", async () => {
+    // The ordinary empty case must stay empty, or every first capture would
+    // carry a warning about a failure that did not happen.
+    signIn("studio-fett", "pract-sabrina", "owner");
+    DB.rowsFor.treatment_setup_readings = [];
+
+    const ctx = await actions.loadMachineSetupContext({
+      ...ROUTE,
+      blockId: "block-1",
+    });
+
+    expect(ctx.recordedSetupUnavailable).toBe(false);
+    expect(ctx.recordedSetup).toEqual([]);
+  });
+
+  it("does NOT report unavailable in CREATE mode, where there is no block", async () => {
+    // A third state again: no block means nothing is recorded against it and
+    // nothing failed. Reporting a failure here would warn her on every new
+    // treatment area.
+    signIn("studio-fett", "pract-sabrina", "owner");
+    const ctx = await actions.loadMachineSetupContext(ROUTE);
+    expect(ctx.recordedSetupUnavailable).toBe(false);
+  });
+});
+
+describe("previous-treatment guidance excludes the session being charted", () => {
+  // THE DEFECT (Codex, #860 4289974654): `latest_setup_for_client` filtered on
+  // client and studio and returned the newest capture, so a setup recorded in
+  // the session ON SCREEN came back as "Previous treatment" - under copy that
+  // says it is reference only and not today's entries.
+  //
+  // ASSERTED ON THE RPC ARGUMENTS, because that is where the claim lives. The
+  // SQL exclusion is proved against a real database in
+  // tests/db/machine-workflow-end-to-end; what can only be checked HERE is
+  // that the action hands the authorized route session down rather than
+  // omitting it or inventing one.
+  it("passes the ROUTE's sessionId as the exclusion", async () => {
+    signIn("studio-fett", "pract-sabrina", "owner");
+    await actions.loadMachineSetupContext(ROUTE);
+
+    const call = DB.calls.find((c) => c.fn === "latest_setup_for_client");
+    expect(call, "the guidance lookup was not called at all").toBeTruthy();
+    expect(call!.args.p_exclude_session_id).toBe(ROUTE.sessionId);
+    // AND THE OTHER TWO SCOPES ARE STILL THERE. A fix that dropped the client
+    // scoping while adding the session one would re-open the defect this
+    // function was repaired for earlier: another client's newer reading shown
+    // as guidance.
+    expect(call!.args.p_client_id).toBe(ROUTE.clientId);
+    expect(call!.args.p_studio_id).toBe("studio-fett");
+  });
+
+  it("sends a REAL session id, not a placeholder", async () => {
+    // Guards the shape of the fix rather than its presence: passing null or
+    // an empty string would satisfy "a third argument exists" while excluding
+    // nothing, and `is distinct from null` excludes no row.
+    signIn("studio-fett", "pract-sabrina", "owner");
+    await actions.loadMachineSetupContext(ROUTE);
+    const call = DB.calls.find((c) => c.fn === "latest_setup_for_client");
+    expect(call!.args.p_exclude_session_id).toBeTruthy();
+    expect(typeof call!.args.p_exclude_session_id).toBe("string");
+  });
+});
+
+describe("loadMachineSetupContext reads the block's recorded captures", () => {
+  const READING_ROW = {
+    // THE KEYSET CURSOR. The complete read pages by `id`, so a row without one
+    // cannot be paged past and the read fails closed rather than guessing -
+    // which is the behaviour, not an inconvenience of the fixture.
+    id: "rd-0001",
+    session_block_id: "block-1",
+    capture_id: "cap-1",
+    revision: 1,
+    studio_machine_id: "dev-1",
+    machine_profile_id: "synthetic:demo-multineedle",
+    machine_profile_version: 2,
+    mode_key: "galvanic",
+    group_key: "g1",
+    channels: [],
+    stage_key: null,
+    field_key: "current",
+    value_numeric: "120",
+    absence_reason: null,
+    native_unit: "µA",
+    decimals: 0,
+    observation_source: "practitioner-entered",
+    recorded_at: "2026-10-14T14:00:00Z",
+    recorded_by_practitioner_id: "pract-sabrina",
+  };
+
+  it("returns them when a block is being charted", async () => {
+    signIn("studio-fett", "pract-sabrina", "owner");
+    DB.rowsFor = { treatment_setup_readings: [READING_ROW] };
+    const ctx = await actions.loadMachineSetupContext({
+      clientId: "client-1",
+      sessionId: "session-1",
+      blockId: "block-1",
+    });
+    expect(ctx.recordedSetup).toHaveLength(1);
+    expect(ctx.recordedSetup[0]!.fieldKey).toBe("current");
+    expect(ctx.recordedSetup[0]!.captureId).toBe("cap-1");
+  });
+
+  it("returns NONE without a block, which in create mode is simply true", async () => {
+    // The block has no row yet, so nothing is recorded against it. The read
+    // must not happen at all rather than returning something arbitrary.
+    signIn("studio-fett", "pract-sabrina", "owner");
+    DB.rowsFor = { treatment_setup_readings: [READING_ROW] };
+    const ctx = await actions.loadMachineSetupContext({
+      clientId: "client-1",
+      sessionId: "session-1",
+    });
+    expect(ctx.recordedSetup).toEqual([]);
+  });
+
+  it("degrades to EMPTY when the read fails, rather than losing the chart", async () => {
+    // This surface is reassurance. A failed cosmetic read must not cost her
+    // the machine panel, so it must not throw.
+    signIn("studio-fett", "pract-sabrina", "owner");
+    DB.errorFor = { treatment_setup_readings: { message: "boom" } };
+    const ctx = await actions.loadMachineSetupContext({
+      clientId: "client-1",
+      sessionId: "session-1",
+      blockId: "block-1",
+    });
+    expect(ctx.recordedSetup).toEqual([]);
+    // And the rest of the context still resolved.
+    expect(ctx.scope).not.toBeNull();
+  });
+
+  it("asks for the recorded unit's NAME too, in ONE lookup", async () => {
+    // A treatment recorded on a unit that has since been retired is exactly
+    // the case that must still name it, and only the server can see one.
+    // `machinesByIds` has no retired filter; the device list does.
+    signIn("studio-fett", "pract-sabrina", "owner");
+    DB.rowsFor = {
+      treatment_setup_readings: [READING_ROW],
+      studio_machines: [
+        {
+          id: "dev-1",
+          studio_id: "studio-fett",
+          machine_profile_id: "synthetic:demo-multineedle",
+          machine_profile_version: 2,
+          display_name: "Room 9 unit",
+          installed_options: [],
+          retired_at: "2026-10-01T00:00:00Z",
+        },
+      ],
+    };
+    const ctx = await actions.loadMachineSetupContext({
+      clientId: "client-1",
+      sessionId: "session-1",
+      blockId: "block-1",
+    });
+    expect(ctx.unitNames["dev-1"]).toBe("Room 9 unit");
+  });
+
+  it("reads the captures through ONE round trip, with no second action", () => {
+    // Source-pinned, because the cost this avoids is invisible in a unit test:
+    // the fix is that `loadMachineSetupContext` takes the block id, so there
+    // is no separate call to make.
+    const src = readFileSync(
+      path.resolve(
+        __dirname,
+        "../../../components/machines/machine-first-setup-connected.tsx",
+      ),
+      "utf8",
+    ).replace(/^\s*(\/\/|\*|\/\*).*$/gm, " ");
+    expect(src).toMatch(
+      /loadMachineSetupContext\(\{\s*clientId,\s*sessionId,\s*blockId\s*\}\)/,
+    );
+    // AND OPENING THE PANEL COSTS ONE ROUND TRIP, which is the claim —
+    // not that the identifier never appears.
+    //
+    // The wrapper now DOES call `readingsForBlockAction`, but after a
+    // successful SAVE, to refresh what is recorded (Codex, #860
+    // 4300386011): the entry form seeds its group identities from that
+    // snapshot, and a stale one made a change meant for g2 land as a g1
+    // revision after a switch away and back. That is a different moment
+    // from opening, and the original assertion — a bare "this identifier
+    // must not appear" — would have forbidden the fix rather than the
+    // defect it was written against.
+    //
+    // So the claim is scoped to the OPEN path: the loader's own callback
+    // must not make a second read.
+    const openBody = src.slice(
+      src.indexOf("const open = useCallback("),
+      src.indexOf("if (!ctx) {"),
+    );
+    expect(openBody.length, "the open callback was not found").toBeGreaterThan(0);
+    expect(
+      openBody,
+      "opening the panel must cost ONE round trip",
+    ).not.toMatch(/readingsForBlockAction/);
+    // The post-save refresh is the only other call, and it lives in the
+    // record closure.
+    // COUNTED AS CALLS, not as occurrences of the name. Raising the count
+    // to 2 would have passed on a file containing one call and one TYPE
+    // reference (`Awaited<ReturnType<typeof mod.readingsForBlockAction>>`),
+    // which is exactly what this file now has — a looser claim than the one
+    // intended.
+    expect(
+      (src.match(/mod\.readingsForBlockAction\(/g) ?? []).length,
+      "exactly one read outside the loader: the post-save refresh",
+    ).toBe(1);
   });
 });

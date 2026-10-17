@@ -4,8 +4,12 @@ import type { FieldGroup } from "@/lib/machines/charting";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
 import {
   addGroup,
+  clearedForNextCapture,
   groupIssues,
+  groupsFromRecorded,
+  highestOrdinal,
   assembleGroupSubmissions,
+  draftBlocking,
   channelChoices,
   draftKey,
   firstGroup,
@@ -306,30 +310,292 @@ describe("one channel cannot belong to TWO groups", () => {
   });
 });
 
-describe("a group already recorded is never resubmitted", () => {
-  // Captures are append-only, so resubmitting a group that succeeded would
-  // create a SECOND immutable revision of settings entered once -
-  // indistinguishable in the record from a genuine mid-treatment change
-  // (Codex, f175e732).
+describe("a save sends every group that has something to record", () => {
+  // THESE TWO SUITES REPLACE FOUR THAT PROVED AN `alreadySaved` PARAMETER, and
+  // the parameter is gone because the state it guarded is now unreachable, not
+  // because the risk stopped mattering.
+  //
+  // It existed because a Save was several independent calls: the first group
+  // could commit and the second fail, so a retry had to send only the untold
+  // remainder. Resubmitting a committed group would have appended a second
+  // immutable revision of settings entered once - indistinguishable in the
+  // record from a genuine mid-treatment change (Codex, f175e732) - and an
+  // UNKNOWN outcome had to be excluded the same way, while never being
+  // REPORTED as recorded (Codex, ef45a4b0).
+  //
+  // `record_treatment_setup_submission` is one transaction, so no group can be
+  // recorded while its neighbour is not, and a retry carries the save's
+  // idempotency key, so the DATABASE returns the original submission instead
+  // of appending to it. Both replacements are stronger than the set they
+  // replace, which lived in component memory and died on reload. The
+  // lifecycle of that key is proved in tests/lib/machines/save-attempt.test.ts.
   const two = [
     withValues("g1", { current: "120" }, [1]),
     withValues("g2", { current: "80" }, [2]),
   ];
 
-  it("excludes it from the submissions on a retry", () => {
-    const retry = assembleGroupSubmissions([FIELDS], two, new Set(["g1"]));
-    expect(retry.map((s) => s.groupKey)).toEqual(["g2"]);
-  });
-
-  it("CONTROL: with nothing recorded yet, both are submitted", () => {
+  it("sends both groups of a two-group save, in order", () => {
     expect(
       assembleGroupSubmissions([FIELDS], two).map((s) => s.groupKey),
     ).toEqual(["g1", "g2"]);
   });
 
-  it("submits nothing when every group has already been recorded", () => {
+  it("sends nothing at all when no group has a value", () => {
     expect(
-      assembleGroupSubmissions([FIELDS], two, new Set(["g1", "g2"])),
+      assembleGroupSubmissions([FIELDS], [withValues("g1", {}, [1])]),
     ).toEqual([]);
+  });
+
+  it("keeps each group's own channels with its own readings", () => {
+    const subs = assembleGroupSubmissions([FIELDS], two);
+    expect(subs[0]!.channels).toEqual([1]);
+    expect(subs[1]!.channels).toEqual([2]);
+    expect(subs[0]!.readings).not.toEqual(subs[1]!.readings);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WHY A DRAFT MUST NOT BE SAVED YET.
+//
+// EXTRACTED FROM THE CREATE-MODE COLLECTOR BECAUSE A NEGATIVE CONTROL CAUGHT
+// IT. The collector computed this inline, so the mutation "a half-finished
+// draft is reported as ready" left every test green: a static render cannot
+// type into a field, and this repository has no jsdom. What decides whether a
+// clinical save proceeds does not belong where only a mounted browser can
+// reach it.
+// ---------------------------------------------------------------------------
+describe("draftBlocking", () => {
+  const complete = withValues("g1", { current: "120" }, [1]);
+  const empty = withValues("g2", {}, [2]);
+
+  it("allows a complete draft", () => {
+    expect(draftBlocking(MULTI, [FIELDS], [complete])).toBeNull();
+  });
+
+  it("allows an EMPTY group beside a complete one", () => {
+    // An empty group is how she adds one and changes her mind. Blocking on it
+    // would make the form unusable.
+    expect(draftBlocking(MULTI, [FIELDS], [complete, empty])).toBeNull();
+  });
+
+  it("names a PARTIAL group, by its position", () => {
+    // Neither ready nor empty: skipping it would discard numbers she typed,
+    // and submitting it would be refused by the command.
+    const partial = withValues("g2", { duration: "30" }, [2]);
+    const out = draftBlocking(MULTI, [FIELDS], [complete, partial]);
+    expect(out).toMatch(/Setting group 2 is missing a required field/);
+  });
+
+  it("names SEVERAL partial groups together, in plural", () => {
+    const a = withValues("g1", { duration: "30" }, [1]);
+    const b = withValues("g2", { duration: "30" }, [2]);
+    const out = draftBlocking(MULTI, [FIELDS], [a, b]);
+    expect(out).toMatch(/Setting groups 1, 2 are missing a required field/);
+  });
+
+  it("reports a CROSS-GROUP CONFLICT ahead of a partial group", () => {
+    // The conflict wins because it is the one she cannot fix by typing more.
+    const a = withValues("g1", { current: "120" }, [1]);
+    const b = withValues("g2", { duration: "30" }, [1]);
+    const out = draftBlocking(MULTI, [FIELDS], [a, b]);
+    expect(out).not.toMatch(/missing a required field/);
+    expect(out).toBeTruthy();
+  });
+});
+
+describe("the next capture keeps the groups she actually has", () => {
+  // THE DEFECT (Codex, #860 4290452715). "Record a setting change" reset the
+  // draft to `firstGroup()`, so after a save of g1 AND g2 the form offered a
+  // single fresh g1. A practitioner changing what had been g2 then submitted
+  // it as a revision of g1 - and because `latest_setup_for_client` returns the
+  // newest capture PER GROUP KEY, guidance combined the repurposed g1 with the
+  // stale g2: two settings for one probe, and the channel g1 originally
+  // described dropped out entirely.
+  //
+  // The id's own docblock already said identities are "STABLE for the life of
+  // the draft and never renumbered". The rule was written; the reset broke it.
+
+  it("preserves every group id", () => {
+    const after = clearedForNextCapture([
+      { id: "g1", channels: [1], values: { "probe::::current": "120" } },
+      { id: "g2", channels: [2], values: { "probe::::current": "80" } },
+    ]);
+    expect(after.map((g) => g.id)).toEqual(["g1", "g2"]);
+  });
+
+  it("clears the values and the channels, which ARE observations", () => {
+    // The half the old reset had right: pre-filling either would invite her to
+    // submit settings she has not re-read, or to assert she ran the same
+    // probes. The identity is not an observation; these are.
+    const after = clearedForNextCapture([
+      { id: "g1", channels: [1, 2], values: { "probe::::current": "120" } },
+    ]);
+    expect(after[0]!.values).toEqual({});
+    expect(after[0]!.channels).toEqual([]);
+  });
+
+  it("keeps a THIRD group too, not just the first two", () => {
+    const after = clearedForNextCapture([
+      { id: "g1", channels: [], values: {} },
+      { id: "g2", channels: [], values: {} },
+      { id: "g3", channels: [], values: {} },
+    ]);
+    expect(after.map((g) => g.id)).toEqual(["g1", "g2", "g3"]);
+  });
+
+  it("keeps a RETIRED id's successor, so revision history cannot cross", () => {
+    // Ids are monotonic and a removed group's id is never reused. If she
+    // removed g2 and added g3, the next capture must still offer g1 and g3 -
+    // renumbering g3 to g2 would append to the removed group's history.
+    const after = clearedForNextCapture([
+      { id: "g1", channels: [], values: {} },
+      { id: "g3", channels: [], values: {} },
+    ]);
+    expect(after.map((g) => g.id)).toEqual(["g1", "g3"]);
+  });
+
+  it("falls back to one fresh group when there is nothing to keep", () => {
+    expect(clearedForNextCapture([])).toEqual([
+      { id: "g1", channels: [], values: {} },
+    ]);
+  });
+
+  it("CONTROL: an untouched group contributes NOTHING to the save", () => {
+    // This is what makes offering every prior group safe rather than noisy:
+    // she changes g2 alone, leaves g1 blank, and exactly one group is sent.
+    const cleared = clearedForNextCapture([
+      { id: "g1", channels: [1], values: { "probe::::current": "120" } },
+      { id: "g2", channels: [2], values: { "probe::::current": "80" } },
+    ]);
+    const changed = cleared.map((g) =>
+      g.id === "g2"
+        ? { ...g, channels: [2], values: { "probe::::current": "95" } }
+        : g,
+    );
+    const subs = assembleGroupSubmissions([FIELDS], changed);
+    expect(subs.map((o) => o.groupKey)).toEqual(["g2"]);
+    expect(subs[0]!.readings[0]!.value).toEqual({ kind: "value", value: 95 });
+  });
+});
+
+describe("groupsFromRecorded — identity survives a RELOAD", () => {
+  const SCOPE = {
+    deviceId: "dev-1",
+    profileId: "prof-1",
+    profileVersion: 3,
+    modeKey: "galvanic",
+  };
+  const rec = (over: Partial<typeof SCOPE> & { groupKey: string }) => ({
+    ...SCOPE,
+    ...over,
+  });
+
+  it("restores EVERY group the block already has", () => {
+    // The P1: a reload of a block holding g1 and g2 offered one fresh g1, so a
+    // change to the former g2 appended as a revision of g1
+    // (Codex, #860 4294673722).
+    const groups = groupsFromRecorded(
+      [rec({ groupKey: "g1" }), rec({ groupKey: "g2" }), rec({ groupKey: "g1" })],
+      SCOPE,
+    );
+    expect(groups.map((g) => g.id)).toEqual(["g1", "g2"]);
+  });
+
+  it("restores IDENTITY ONLY — no value and no channel", () => {
+    // Same rule as clearedForNextCapture, and for the same reason: a value she
+    // has not re-read off the machine is not a reading, and a restored channel
+    // set would assert she ran the same probes.
+    const groups = groupsFromRecorded([rec({ groupKey: "g1" })], SCOPE);
+    expect(groups).toEqual([{ id: "g1", channels: [], values: {} }]);
+  });
+
+  it("orders by the ordinal the key carries, not by row arrival", () => {
+    const groups = groupsFromRecorded(
+      [rec({ groupKey: "g10" }), rec({ groupKey: "g2" }), rec({ groupKey: "g1" })],
+      SCOPE,
+    );
+    expect(groups.map((g) => g.id)).toEqual(["g1", "g2", "g10"]);
+  });
+
+  it("IGNORES another physical unit's groups", () => {
+    // The scoping half of the same invariant: identity is meaningful within
+    // one (device, profile, version, mode). Seeding across units would import
+    // another room's probe layout — the same defect pointed the other way.
+    const groups = groupsFromRecorded(
+      [rec({ groupKey: "g1" }), rec({ groupKey: "g2", deviceId: "dev-2" })],
+      SCOPE,
+    );
+    expect(groups.map((g) => g.id)).toEqual(["g1"]);
+  });
+
+  it("ignores another mode's and another profile VERSION's groups", () => {
+    const groups = groupsFromRecorded(
+      [
+        rec({ groupKey: "g2", modeKey: "adjunct" }),
+        rec({ groupKey: "g3", profileVersion: 2 }),
+        rec({ groupKey: "g4", profileId: "prof-2" }),
+      ],
+      SCOPE,
+    );
+    expect(groups.map((g) => g.id)).toEqual(["g1"]);
+  });
+
+  it("falls back to one fresh group when this scope has nothing", () => {
+    expect(groupsFromRecorded([], SCOPE)).toEqual([
+      { id: "g1", channels: [], values: {} },
+    ]);
+  });
+
+  it("CONTROL: a restored draft still sends only the group she changed", () => {
+    // The end-to-end consequence, on the restored path rather than the
+    // within-mount one: g1 restored and left blank contributes nothing.
+    const restored = groupsFromRecorded(
+      [rec({ groupKey: "g1" }), rec({ groupKey: "g2" })],
+      SCOPE,
+    );
+    const changed = restored.map((g) =>
+      g.id === "g2"
+        ? { ...g, channels: [2], values: { "probe::::current": "95" } }
+        : g,
+    );
+    const subs = assembleGroupSubmissions([FIELDS], changed);
+    expect(subs.map((o) => o.groupKey)).toEqual(["g2"]);
+  });
+});
+
+describe("highestOrdinal — a restored draft cannot reissue an identity", () => {
+  it("reads the highest ordinal the seed already carries", () => {
+    expect(
+      highestOrdinal([
+        { id: "g1", channels: [], values: {} },
+        { id: "g2", channels: [], values: {} },
+      ]),
+    ).toBe(2);
+  });
+
+  it("the NEXT group added after a restore is g3, never a second g2", () => {
+    // Starting the monotonic counter at a flat 1 beside a seeded g1 and g2
+    // would mint a second g2, collapsing two probes into one revision history
+    // — the defect this path exists to prevent, arriving through its repair.
+    const restored: SettingGroupDraft[] = [
+      { id: "g1", channels: [], values: {} },
+      { id: "g2", channels: [], values: {} },
+    ];
+    const added = addGroup(restored, highestOrdinal(restored) + 1);
+    expect(added.map((g) => g.id)).toEqual(["g1", "g2", "g3"]);
+  });
+
+  it("never returns below 1, so a fresh draft still mints g2 next", () => {
+    expect(highestOrdinal(firstGroup())).toBe(1);
+    expect(highestOrdinal([])).toBe(1);
+  });
+
+  it("a key that is not g<n> contributes nothing — it cannot collide", () => {
+    expect(
+      highestOrdinal([
+        { id: "probe-left", channels: [], values: {} },
+        { id: "g4", channels: [], values: {} },
+      ]),
+    ).toBe(4);
   });
 });

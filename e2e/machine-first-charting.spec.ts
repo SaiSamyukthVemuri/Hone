@@ -111,6 +111,11 @@ async function registerMachine(studioId: string, displayName: string) {
           native_unit: "device-display",
           decimals: 2,
           quantity: "energy-display",
+          // OPTIONAL in the real synthetic profile, and the command now
+          // refuses a capture missing a REQUIRED field (Codex, #860
+          // 4299434251). A fixture contract must describe the product it
+          // stands in for, not a stricter machine.
+          optional: true,
         },
       ]),
     ],
@@ -220,9 +225,22 @@ async function openMachinePanel(page: Page): Promise<boolean> {
   // mount showed the chosen machine and this read it as a failure. The ops01
   // lane's gate-open run found exactly that at step 6, on the edit form of the
   // block just saved. A consequence of fixing persistence, not of the panel.
-  const picker = page.getByText(/Choose the machine you are working on/i);
+  // THE DROPDOWN IS THE GATE SIGNAL NOW. The pill row this used to look for
+  // is gone: a labelled, always-visible <select> replaced it (Sam, 19:16).
+  //
+  // The three states it has to tell apart are unchanged in meaning:
+  //   no dropdown at all            -> CLOSED (nothing selectable, or no scope)
+  //   a dropdown with real options  -> OPEN
+  //   a dropdown plus machine-chosen -> OPEN, already selected
+  //
+  // Counting OPTIONS rather than the select's presence matters: the control
+  // also renders disabled with only the empty option when the studio has
+  // nothing usable, and that is the gate-CLOSED case wearing the same testid.
+  const select = page.getByTestId("machine-select");
   const chosen = page.getByTestId("machine-chosen");
-  return (await picker.count()) > 0 || (await chosen.count()) > 0;
+  if ((await select.count()) === 0) return (await chosen.count()) > 0;
+  const options = await select.locator("option").count();
+  return options > 1 || (await chosen.count()) > 0;
 }
 
 test("machine-first: no real model is ever offered, and the synthetic workflow records and retrieves @390px", async ({
@@ -241,26 +259,59 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
     await noOverflow(page);
   });
 
-  await test.step("2: every REAL model is listed as not selectable, with a reason", async () => {
-    // True in BOTH halves, and the single most important claim in this file:
-    // evidence-gating is visible to the practitioner rather than silent.
-    await expect(page.getByText("Not yet selectable")).toBeVisible({ timeout: T });
-    for (const name of [
-      "Silhouet-Tone Evolution ST 350",
-      "Silhouet-Tone ST 250",
-      "Permanence GEMM-16 (US)",
-      "Dectro Junior 3G",
-    ]) {
-      await expect(
-        page.getByText(name, { exact: false }).first(),
-        `${name} must be shown as withheld, not silently omitted`,
-      ).toBeVisible({ timeout: T });
+  await test.step("2: no REAL model is offered, and no procurement wall is shown", async () => {
+    // THIS STEP ASSERTED THE OPPOSITE CLAIM UNTIL 5667205d, AND I BROKE IT.
+    //
+    // It required the charting form to DISPLAY every unverified model with its
+    // evidence reason - "Not yet selectable", eleven entries deep. That was
+    // the right claim while the catalogue lived here. Then Sam's screenshot
+    // ("this looks weird ... is this all prepopulated") and #860 6156583955
+    // moved the catalogue OUT of the treatment form: mid-treatment, a wall of
+    // procurement detail sat between the practitioner and the fields she was
+    // filling in. I removed the render and inverted the seven unit
+    // assertions, and did not come back to this file - so the browser proof
+    // was left asserting a surface that no longer exists. Codex found it at
+    // #860 6158881104. The string "Not yet selectable" is now in no component
+    // in the repository; this step could only fail.
+    //
+    // WHAT IS STILL TRUE HERE is the claim that actually protects a client,
+    // and it holds in BOTH halves: no real manufacturer's model can be
+    // selected, or named, on a charting form. Where the withheld models are
+    // listed WITH their reasons is a readiness question for whoever registers
+    // equipment, and `withheld(catalogue)` is proved to still compute it in
+    // tests/components/machine-first-setup-panel.test.ts. That is the right
+    // home for it; it is not this spec's claim any more.
+    const optionText = (
+      await page.getByTestId("machine-select").locator("option").allTextContents()
+    ).join(" | ");
+
+    // EVERY option must be a machine this studio registered. Not one may name
+    // a real manufacturer - the synthetic fixture is "Synthetic", which is the
+    // whole point of its name.
+    for (const real of ["Silhouet-Tone", "Permanence", "Dectro", "Apilus"]) {
+      expect(
+        optionText,
+        `${real} was OFFERED as selectable while its evidence is incomplete`,
+      ).not.toContain(real);
     }
-    // And none of them is a choice.
-    expect(
-      await page.locator('[data-testid^="machine-pick-"]').count(),
-      "a real model was offered as selectable",
-    ).toBeLessThanOrEqual(1);
+
+    // And the wall is gone from the form, which is the part Sam corrected.
+    // Asserted on the panel, not the page: the page also carries chrome this
+    // step has no opinion about.
+    const panel = await page.getByTestId("machine-first-panel").innerText();
+    for (const gone of [
+      "Not yet selectable",
+      "Silhouet-Tone",
+      "Permanence",
+      "Dectro",
+      "firmware",
+      "operating-screen",
+    ]) {
+      expect(
+        panel,
+        `${gone} is procurement detail; it does not belong on a charting form`,
+      ).not.toContain(gone);
+    }
   });
 
   if (!gateOpen) {
@@ -272,7 +323,15 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
       await expect(
         page.getByText(/No verified machine is available to select yet/i),
       ).toBeVisible({ timeout: T });
-      expect(await page.locator('[data-testid^="machine-pick-"]').count()).toBe(0);
+      // Either no dropdown at all, or one carrying ONLY the empty option -
+      // both mean nothing real is offered. Asserting "no options" alone would
+      // miss the disabled-with-placeholder rendering.
+      const sel = page.getByTestId("machine-select");
+      const real =
+        (await sel.count()) === 0
+          ? 0
+          : (await sel.locator("option").count()) - 1;
+      expect(real, "no real machine may be offered with the gate closed").toBe(0);
       // Nothing was recorded, because nothing could be.
       //
       // THIS ASSERTION WAS VACUOUS until Codex found it at 9c6fbbe5: it called
@@ -300,17 +359,17 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
   let blockId = "";
 
   await test.step("3: the synthetic machine is selectable, and names its model", async () => {
-    await expect(page.getByTestId(`machine-pick-${machineId}`)).toBeVisible({
+    await expect(page.getByTestId("machine-select")).toBeVisible({
       timeout: T,
     });
     // Scoped to the BUTTON and then to the CHOSEN block. Page-wide text
     // locators are what broke step 4 (3 matches, the field's advisory notes
     // contain its name), and the same shape would bite here as soon as a
     // prior-setup card renders the model too.
-    await expect(page.getByTestId(`machine-pick-${machineId}`)).toContainText(
+    await expect(page.getByTestId("machine-select")).toContainText(
       "Synthetic Demo Multineedle",
     );
-    await page.getByTestId(`machine-pick-${machineId}`).click();
+    await page.getByTestId("machine-select").selectOption(machineId);
     await expect(page.getByTestId("machine-chosen")).toContainText("Room 1 demo", {
       timeout: T,
     });
@@ -370,9 +429,9 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
     );
 
     // The remembered machine is already chosen - step 8 asserts that properly.
-    if ((await page.getByTestId(`machine-pick-${machineId}`).count()) > 0) {
-      await page.getByTestId(`machine-pick-${machineId}`).click();
-    }
+    // The dropdown is always present, so selecting is unconditional now -
+    // it is a no-op when the remembered machine is already chosen.
+    await page.getByTestId("machine-select").selectOption(machineId);
 
     await page.getByTestId("reading-current").fill("135");
     await page.getByTestId("reading-duration").fill("300.5");
@@ -572,7 +631,14 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
     // here, so the chosen-machine block names the same model and a page-wide
     // locator is a 2-match strict-mode violation. Found by auditing the rest of
     // the file after step 4 failed, rather than waiting for the next run.
-    await expect(prior).toContainText("Last recorded setup");
+    // "PREVIOUS TREATMENT", not "Last recorded setup". I renamed this label at
+    // 9a656146 on Sam's instruction - the old one described the row's
+    // provenance rather than its relationship to today - inverted the unit
+    // assertions, and missed this one. The gate-open run caught it: the panel
+    // rendered correctly and the SPEC was wrong. Second assertion of this
+    // class in this file; the first was the evidence wall at step 2.
+    await expect(prior).toContainText("Previous treatment");
+    await expect(prior).toContainText(/reference only/i);
     await expect(prior).toContainText("Synthetic Demo Multineedle");
 
     // THE PHYSICAL UNIT'S NAME, and this is the only assertion in the suite
@@ -687,9 +753,9 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
       .not.toBe("");
     await page.getByTestId(/^edit-area-/).first().click({ timeout: T });
     await openMachinePanel(page);
-    if ((await page.getByTestId(`machine-pick-${machineId}`).count()) > 0) {
-      await page.getByTestId(`machine-pick-${machineId}`).click();
-    }
+    // The dropdown is always present, so selecting is unconditional now -
+    // it is a no-op when the remembered machine is already chosen.
+    await page.getByTestId("machine-select").selectOption(machineId);
 
     // GROUP 1: probes 1 and 2 at one current.
     await page.getByTestId("setting-group-g1-channel-1").click();
@@ -785,10 +851,10 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
 
     // POSITIVE CONTROL: the clear path genuinely works, so the refusal proved
     // below is the retirement and not a broken selection path.
-    await page.getByTestId("machine-change").click({ timeout: T });
-    await expect(page.getByTestId(`machine-pick-${machineId}`)).toBeVisible({
-      timeout: T,
-    });
+    // CLEARING IS THE EMPTY OPTION now; the "Change machine" link is gone
+    // because the dropdown never disappears.
+    await page.getByTestId("machine-select").selectOption("");
+    await expect(page.getByTestId("machine-select")).toBeVisible({ timeout: T });
     await expect(page.getByTestId("machine-first-status")).toContainText(
       "nothing yet",
       { timeout: T },
@@ -805,8 +871,9 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
       machineId,
     ]);
 
-    // The stale button is still there, and clicking it is an ordinary action.
-    await page.getByTestId(`machine-pick-${machineId}`).click({ timeout: T });
+    // The stale OPTION is still in the dropdown - the page was rendered
+    // before the retirement - and selecting it is an ordinary action.
+    await page.getByTestId("machine-select").selectOption(machineId);
 
     // THE NOTE MUST BE VISIBLE. It used to render only inside the
     // chosen-machine block, so the message a practitioner most needed could be
@@ -860,7 +927,11 @@ test("machine-first: no real model is ever offered, and the synthetic workflow r
 
     // AND IT IS NOT OFFERED. The SQL guard that hid it from the picker is
     // still doing its job; naming it did not re-expose it.
-    await expect(page.getByTestId(`machine-pick-${machineId}`)).toHaveCount(0);
+    // Not offered any more: the retired unit must be absent from the
+    // dropdown's options, which is where `selectableDevices` filters it.
+    await expect(
+      page.getByTestId("machine-select").locator(`option[value="${machineId}"]`),
+    ).toHaveCount(0);
 
     const stillRetired = await sql<{ retired: boolean }>(
       `select retired_at is not null as retired from public.studio_machines where id = $1`,
