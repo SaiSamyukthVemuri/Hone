@@ -154,6 +154,14 @@ describe("#828 G-24: the alert email carries no record identifiers", () => {
     expect(mail.text).toContain("Payment [stripe-id] for appointment [id] (evt [stripe-id]) wrote zero rows at /clients/[id]/sessions/[id]");
   });
 
+  it("removes every Stripe id prefix redact.ts preserves, plus pm_, even joined by _ (Codex P1 4301147665)", async () => {
+    const { SAFE_STRIPE_ID_PREFIXES } = await import("@/lib/ops/redact");
+    const ids = [...SAFE_STRIPE_ID_PREFIXES, "pm"].map((p) => `${p}_1TestObject${p.toUpperCase()}x`);
+    const mail = await send(`objects ${ids.join(" ")} and refund_re_1TestJoinedRefund`);
+    for (const id of [...ids, "re_1TestJoinedRefund"]) expect(mail.text, `email still carries ${id}`).not.toContain(id);
+    expect(mail.text).toContain("refund_[stripe-id]");
+  });
+
   it("keeps what the operator needs to triage: event slug, time, environment and the admin link", async () => {
     const mail = await send("Benign message");
     expect(mail.subject).toBe("[Hone CRITICAL] session_payment_succeeded_write_zero_rows");

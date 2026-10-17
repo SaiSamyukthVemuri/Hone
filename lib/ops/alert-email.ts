@@ -1,5 +1,6 @@
 import "server-only";
 import { resend, FROM_ADDRESS } from "@/lib/email/client";
+import { SAFE_STRIPE_ID_PREFIXES } from "@/lib/ops/redact";
 
 // ===========================================================================
 // notifyCriticalOpsAlert (PR #193)
@@ -9,8 +10,8 @@ import { resend, FROM_ADDRESS } from "@/lib/email/client";
 // "future PR" the PR #153 design reserved OPS_ALERT_EMAILS for.
 //
 // Dependency-cycle posture: this module imports ONLY the bare Resend
-// client (lib/email/client.ts, which imports nothing from Hone) and
-// is imported ONLY by lib/ops/alerts.ts. It never imports
+// client (lib/email/client.ts, which imports nothing from Hone) and the
+// pure, dependency-free lib/ops/redact.ts, and is imported ONLY by lib/ops/alerts.ts. It never imports
 // lib/email/send-appointment.ts (the appointment email subsystem that
 // recordOpsAlert observes), and it NEVER calls recordOpsAlert: a
 // failure here logs to stderr and stops, so alert email failures can
@@ -49,8 +50,13 @@ const ADMIN_ALERTS_URL = "https://hone.care/admin/ops-alerts";
 // the subject because it names a failure class, not a record.
 const RECORD_ID_RE =
   /(?<![0-9a-f])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9a-f])/gi;
-const STRIPE_ID_RE =
-  /\b(?:acct|ch|cs|cus|evt|in|pi|pm|po|py|re|seti|si|sub|tr|txn)_[A-Za-z0-9]{6,}\b/g;
+// Every Stripe prefix lib/ops/redact.ts preserves as a "safe" id, plus pm_
+// (PaymentMethod), which redact.ts does not list. Bounded by "not a letter or
+// digit", so an id joined by "_" ("refund_re_...") is still removed.
+const STRIPE_ID_RE = new RegExp(
+  `(?<![A-Za-z0-9])(?:${[...new Set([...SAFE_STRIPE_ID_PREFIXES, "pm"])].join("|")})_[A-Za-z0-9]{6,}(?![A-Za-z0-9])`,
+  "g",
+);
 
 function withoutRecordIds(text: string): string {
   return text.replace(RECORD_ID_RE, "[id]").replace(STRIPE_ID_RE, "[stripe-id]");
