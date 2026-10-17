@@ -170,6 +170,13 @@ describe("#828 G-24: the alert email carries no record identifiers", () => {
     expect(mail.text).toContain("ref abc[id]fed at /clients/[id]");
   });
 
+  it("removes a Stripe id glued to preceding text (Codex P1 4301636814)", async () => {
+    const mail = await send(`ref${PI} and x${EVT}`);
+    expect(mail.text).not.toContain(PI);
+    expect(mail.text).not.toContain(EVT);
+    expect(mail.text).toContain("ref[stripe-id] and x[stripe-id]");
+  });
+
   it("keeps what the operator needs to triage: event slug, time, environment and the admin link", async () => {
     const mail = await send("Benign message");
     expect(mail.subject).toBe("[Hone CRITICAL] session_payment_succeeded_write_zero_rows");

@@ -53,10 +53,13 @@ const ADMIN_ALERTS_URL = "https://hone.care/admin/ops-alerts";
 const RECORD_ID_RE =
   /[0-9a-f]{8}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{12}/gi;
 // Every Stripe prefix lib/ops/redact.ts preserves as a "safe" id, plus pm_
-// (PaymentMethod), which redact.ts does not list. Bounded by "not a letter or
-// digit", so an id joined by "_" ("refund_re_...") is still removed.
+// (PaymentMethod), which redact.ts does not list. NO leading boundary (Codex
+// P1 4301636814): an id glued to preceding text ("refpi_3...", "refund_re_...")
+// is still removed. That can over-redact an ordinary word ending in a prefix
+// ("api_..." loses its "pi_..." tail); in an email that only points at the
+// alert, over-redaction is the safe side.
 const STRIPE_ID_RE = new RegExp(
-  `(?<![A-Za-z0-9])(?:${[...new Set([...SAFE_STRIPE_ID_PREFIXES, "pm"])].join("|")})_[A-Za-z0-9]{6,}(?![A-Za-z0-9])`,
+  `(?:${[...new Set([...SAFE_STRIPE_ID_PREFIXES, "pm"])].join("|")})_[A-Za-z0-9]{6,}`,
   "g",
 );
 
