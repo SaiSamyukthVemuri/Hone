@@ -48,6 +48,9 @@ comment on column public.clients.portrait_image_id is
 -- lookup runs under that user's RLS, so a photo they cannot see can never be
 -- referenced. Through set_client_portrait() it runs as the command's owner,
 -- after the command has already resolved the actor.
+-- It also fires on a studio_id change (Codex P2 4301792066): moving a client
+-- WITH a portrait to another studio is refused, because the photo stays in the
+-- old studio. A client with no portrait moves freely (early return below).
 -- ---------------------------------------------------------------------------
 create or replace function public.clients_portrait_integrity()
 returns trigger
@@ -79,7 +82,7 @@ $$;
 
 drop trigger if exists clients_portrait_integrity on public.clients;
 create trigger clients_portrait_integrity
-  before insert or update of portrait_image_id on public.clients
+  before insert or update of portrait_image_id, studio_id on public.clients
   for each row execute function public.clients_portrait_integrity();
 
 -- ---------------------------------------------------------------------------

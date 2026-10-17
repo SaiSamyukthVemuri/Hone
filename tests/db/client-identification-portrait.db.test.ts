@@ -225,6 +225,57 @@ describe("0231: archiving the portrait photo clears it, atomically", () => {
   });
 });
 
+describe("0231: moving a client across studios (Codex P2 4301792066)", () => {
+  async function freshClient(s: SeededStudio, label: string): Promise<string> {
+    const id = randomUUID();
+    await adminQuery(`insert into public.clients (id, studio_id, name) values ($1, $2, $3)`, [
+      id,
+      s.studioId,
+      `Client ${label}`,
+    ]);
+    return id;
+  }
+  const studioOf = async (clientId: string) =>
+    (await adminQuery(`select studio_id from public.clients where id = $1`, [clientId])).rows[0]
+      .studio_id as string;
+  const MOVE = `update public.clients set studio_id = $2 where id = $1`;
+
+  it("a client WITH a portrait is refused, even on a direct admin update", async () => {
+    const c = await freshClient(A, "move-with");
+    const img = await image(A, c);
+    await userQuery(A.userId, SET, [c, img]);
+    const r = await refusal(adminQuery(MOVE, [c, B.studioId]));
+    expect(r.code).toBe(CHECK_VIOLATION);
+    expect(r.message).toMatch(/current client photo of the same client/);
+    expect(await studioOf(c)).toBe(A.studioId);
+    expect(await portraitOf(c)).toBe(img);
+  });
+
+  it("a member of BOTH studios cannot move it through the members-update path either", async () => {
+    const c = await freshClient(A, "move-member");
+    const img = await image(A, c);
+    await userQuery(A.userId, SET, [c, img]);
+    const both = await seedMember(B, "portrait-both");
+    // Also an active practitioner of A, so is_studio_member holds for BOTH
+    // studios and RLS alone would let the move through.
+    await adminQuery(
+      `insert into public.practitioners (studio_id, user_id, display_name, email, role, active)
+       select $2, user_id, display_name, email, 'practitioner', true from public.practitioners where id = $1`,
+      [both.practitionerId, A.studioId],
+    );
+    // Either the trigger refuses it or the role has no UPDATE (0169): never a write.
+    const r = await refusal(userQuery(both.userId, MOVE, [c, B.studioId]));
+    expect([CHECK_VIOLATION, INSUFFICIENT_PRIVILEGE]).toContain(r.code);
+    expect(await studioOf(c)).toBe(A.studioId);
+  });
+
+  it("a client with NO portrait still moves (the early return)", async () => {
+    const c = await freshClient(A, "move-without");
+    await adminQuery(MOVE, [c, B.studioId]);
+    expect(await studioOf(c)).toBe(B.studioId);
+  });
+});
+
 describe("0231: a concurrent archive WAITS for the setter, then clears the pointer", () => {
   it("B's archive blocks on A's FOR SHARE (asserted on the real lock), then clears it", async () => {
     // Without the lock, B's archive would commit first, A would then commit a

@@ -68,7 +68,7 @@ describe("0231's transaction and shape", () => {
       expect(body, clause).toContain(clause);
     }
     expect(TOP_LEVEL).toMatch(
-      /before insert or update of portrait_image_id on public\.clients\s+for each row execute function public\.clients_portrait_integrity\(\);/,
+      /before insert or update of portrait_image_id, studio_id on public\.clients\s+for each row execute function public\.clients_portrait_integrity\(\);/,
     );
     // NO trigger on treatment_images: its trigger set is pinned by the 0093,
     // 0168 and 0169 guards (CI db lane), so this migration adds none there.
