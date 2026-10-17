@@ -263,6 +263,12 @@ export default async function ClinicalRecordsExportPage({
                 {outcome.document.sessions.map((s) => (
                   <li key={s.id} className="break-inside-avoid border-b border-neutral-100 pb-3" data-testid="export-session">
                     <p className="text-sm font-medium">{formatInstant(s.startedAt, tz)}</p>
+                    {/* The recorded end, when there is one (Codex P2 4302799074). */}
+                    {s.endedAt && (
+                      <p className="text-[11px] text-neutral-600" data-testid="export-session-ended">
+                        Ended {formatInstant(s.endedAt, tz)}
+                      </p>
+                    )}
                     <p className="text-[11px] text-neutral-600">
                       {[s.modality, s.practitioner ?? "Unknown practitioner", s.recordStatus].filter(Boolean).join(" · ")}
                     </p>

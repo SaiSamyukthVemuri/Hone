@@ -30,7 +30,7 @@ const SESSION_COLUMNS =
 // area-first flow records settings on session_blocks and readings on the newer
 // electrolysis_entries columns, while older charts used the generic ones.
 const BLOCK_COLUMNS =
-  "id, session_id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, machine_frequency, probe_label, probe_type, probe_size, probe_lot_number, numbing_status, numbing_notes, tolerance_rating, reaction_type, reaction_notes, caution_note, caution_for_next_session, block_notes, started_at, ended_at, created_at";
+  "id, session_id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, machine_frequency, probe_label, probe_type, probe_size, probe_lot_number, probe_lot_confirmed, numbing_status, numbing_notes, tolerance_rating, reaction_type, reaction_notes, caution_note, caution_for_next_session, block_notes, started_at, ended_at, created_at";
 const ENTRY_COLUMNS =
   "id, session_id, block_id, area, areas, probe_type, probe_size, mode, apilus_modality, intensity, duration_seconds, energy_level, machine_frequency, thermolysis_intensity_percent, thermolysis_duration_seconds, galvanic_ma, galvanic_duration_seconds, galvanic_intensity_percent, units_of_lye, pulse_delay_seconds, minutes_performed, pulse_count, hairs_treated, observation_chips, comments, created_at";
 const LASER_COLUMNS =

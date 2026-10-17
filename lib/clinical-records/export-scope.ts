@@ -164,6 +164,7 @@ export type ExportBlockSource = {
   probe_type: string | null;
   probe_size: string | null;
   probe_lot_number: string | null;
+  probe_lot_confirmed: boolean | null;
   numbing_status: string | null;
   numbing_notes: string | null;
   tolerance_rating: number | null;
@@ -420,7 +421,9 @@ export function buildClinicalRecordsDocument(input: {
             ["Machine frequency", b.machine_frequency],
             ["Minutes performed", b.minutes_performed, "min"],
             ["Probe", b.probe_label || [b.probe_type, b.probe_size].filter(Boolean).join(" ")],
-            ["Probe lot", b.probe_lot_number],
+            // The confirmation travels with the lot (Codex P2 4302799069), worded
+            // as the live chart words it (session-blocks-view.tsx).
+            ["Probe lot", present(b.probe_lot_number) ? `${b.probe_lot_number.trim()}${b.probe_lot_confirmed ? " (confirmed)" : ""}` : null],
             ["Numbing", b.numbing_status],
             ["Tolerance", b.tolerance_rating],
             ["Reaction", b.reaction_type],

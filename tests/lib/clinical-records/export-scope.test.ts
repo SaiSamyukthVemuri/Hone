@@ -337,6 +337,48 @@ describe("buildClinicalRecordsDocument is an allow-list", () => {
   });
 });
 
+describe("probe-lot confirmation is exported (Codex P2 4302799069)", () => {
+  const lotOf = (over: Record<string, unknown>) =>
+    buildClinicalRecordsDocument({
+      sessions: [
+        {
+          id: "s9",
+          started_at: "2026-10-01T15:00:00Z",
+          ended_at: null,
+          modality: "electrolysis",
+          session_notes: null,
+          performed_by_practitioner_id: null,
+          practitioner_id: null,
+          record_status: null,
+          finalized_at: null,
+          aftercare_and_risks_explained_at: null,
+        },
+      ],
+      blocks: [
+        {
+          id: "b9",
+          session_id: "s9",
+          sort_order: 0,
+          primary_area: "chin",
+          side: null,
+          created_at: "2026-10-01T15:01:00Z",
+          ...over,
+        } as unknown as ExportBlockSource,
+      ],
+      entries: [],
+      notes: [],
+      practitionerNameById: new Map(),
+    }).sessions[0].blocks[0].readings.find((r) => r.label === "Probe lot")?.value;
+
+  it("a confirmed lot says so, as the live chart does", () => {
+    expect(lotOf({ probe_lot_number: " LOT-9 ", probe_lot_confirmed: true })).toBe("LOT-9 (confirmed)");
+  });
+  it("an unconfirmed lot reads as the bare lot, and no lot emits nothing", () => {
+    expect(lotOf({ probe_lot_number: "LOT-9", probe_lot_confirmed: false })).toBe("LOT-9");
+    expect(lotOf({ probe_lot_number: null, probe_lot_confirmed: true })).toBeUndefined();
+  });
+});
+
 describe("superseded clinical-note versions are labelled (Codex P1 4302740025)", () => {
   const v = (id: string, createdAt: string, supersedes: string | null): ExportNoteSource => ({
     id,

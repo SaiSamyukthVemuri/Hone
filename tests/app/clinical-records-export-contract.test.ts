@@ -125,6 +125,16 @@ describe("HON-46 export reads exclude private and payment data", () => {
     expect(page).toContain("superseded, not the current note");
   });
 
+  it("selects the probe-lot confirmation (Codex P2 4302799069)", () => {
+    expect(code(FILES.queries)).toMatch(/probe_lot_number, probe_lot_confirmed,/);
+  });
+
+  it("renders the recorded session end time (Codex P2 4302799074)", () => {
+    const page = code(FILES.page);
+    expect(page).toContain("formatInstant(s.endedAt, tz)");
+    expect(page).toContain('data-testid="export-session-ended"');
+  });
+
   it("reads the caution flag on its own (Codex P2 4302644062)", () => {
     expect(code(FILES.queries)).toContain("caution_for_next_session");
   });
