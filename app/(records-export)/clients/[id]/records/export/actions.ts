@@ -1,8 +1,8 @@
 "use server";
 
-import { requirePractitionerWithStudio, getClientById } from "@/lib/supabase/queries";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { parseExportScope, scopeAuditMetadata } from "@/lib/clinical-records/export-scope";
-import { recordClinicalRecordsAudit } from "@/lib/clinical-records/export-queries";
+import { loadExportClientIdentity, recordClinicalRecordsAudit } from "@/lib/clinical-records/export-queries";
 
 // HON-46. Records the PRINT of a clinical-records export before the browser
 // print dialog opens (#828 G-13: every download is audited, fail closed). The
@@ -20,7 +20,8 @@ export async function recordClinicalRecordsPrintAction(
   if (practitioner.role !== "owner" || !practitioner.active) return { ok: false };
   const parsed = parseExportScope(rawScope);
   if (!parsed.ok) return { ok: false };
-  const client = await getClientById(studio.id, clientId);
+  // Identity only (Codex P1 4301153305): never the broad profile loader.
+  const client = await loadExportClientIdentity(studio.id, clientId);
   if (!client) return { ok: false };
   return recordClinicalRecordsAudit({
     studioId: studio.id,

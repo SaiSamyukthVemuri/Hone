@@ -55,13 +55,23 @@ describe("HON-46 export reads exclude private and payment data", () => {
     expect(code(FILES.queries)).not.toMatch(/\.select\(\s*["'`]\*["'`]\s*\)/);
   });
 
-  it("filters out deleted sessions, settings blocks and entries", () => {
-    expect(code(FILES.queries).match(/\.is\("deleted_at", null\)/g) ?? []).toHaveLength(3);
+  it("filters out deleted sessions, settings blocks, entries and laser passes", () => {
+    expect(code(FILES.queries).match(/\.is\("deleted_at", null\)/g) ?? []).toHaveLength(4);
+  });
+
+  it("exports laser treatment passes, paged like every child read (Codex P1 4301153312)", () => {
+    const src = code(FILES.queries);
+    const at = src.indexOf('.from("laser_entries")');
+    expect(at).toBeGreaterThan(-1);
+    const chain = src.slice(at, src.indexOf(".returns<", at));
+    expect(chain).toContain(".range(from, to)");
+    expect(chain).toContain('.order("id"');
+    expect(code(FILES.scope)).not.toMatch(/"Laser treatment entries"/);
   });
 
   it("pages every child read to exhaustion (Codex P1 4301307242)", () => {
     const src = code(FILES.queries);
-    for (const table of ["session_blocks", "electrolysis_entries", "client_clinical_notes"]) {
+    for (const table of ["session_blocks", "electrolysis_entries", "laser_entries", "client_clinical_notes"]) {
       const at = src.indexOf(`.from("${table}")`);
       expect(at, table).toBeGreaterThan(-1);
       const chain = src.slice(at, src.indexOf(".returns<", at));
@@ -106,7 +116,7 @@ describe("HON-46 authenticates in the PAGE, not the layout", () => {
     const fn = src.slice(src.indexOf("export default async function ClinicalRecordsExportPage"));
     const auth = fn.indexOf("await requirePractitionerWithStudio()");
     expect(auth).toBeGreaterThan(-1);
-    for (const read of ["getClientById(", "loadClinicalRecordsForExport(", "recordClinicalRecordsAudit("]) {
+    for (const read of ["loadExportClientIdentity(", "loadClinicalRecordsForExport(", "recordClinicalRecordsAudit("]) {
       expect(auth, read).toBeLessThan(fn.indexOf(read));
     }
   });
@@ -114,7 +124,7 @@ describe("HON-46 authenticates in the PAGE, not the layout", () => {
   it("the print action resolves identity first too", () => {
     const src = code(FILES.action);
     expect(src.indexOf("await requirePractitionerWithStudio()")).toBeGreaterThan(-1);
-    expect(src.indexOf("await requirePractitionerWithStudio()")).toBeLessThan(src.indexOf("getClientById("));
+    expect(src.indexOf("await requirePractitionerWithStudio()")).toBeLessThan(src.indexOf("loadExportClientIdentity("));
   });
 
   it("the layout performs no auth of its own to rely on (the page does it)", () => {
@@ -137,7 +147,7 @@ describe("HON-46 authorization and audit ordering", () => {
     const src = code(FILES.page);
     const ownerGate = src.indexOf('practitioner.role !== "owner"');
     expect(ownerGate).toBeGreaterThan(-1);
-    expect(ownerGate).toBeLessThan(src.indexOf("getClientById("));
+    expect(ownerGate).toBeLessThan(src.indexOf("loadExportClientIdentity("));
   });
 
   it("the page loads records only through auditThenLoad, with the preview audit first", () => {
@@ -150,13 +160,58 @@ describe("HON-46 authorization and audit ordering", () => {
   it("the print action re-derives owner, client and scope, and audits the print", () => {
     const src = code(FILES.action);
     expect(src).toContain('practitioner.role !== "owner"');
-    expect(src).toContain("getClientById(");
+    expect(src).toContain("loadExportClientIdentity(");
     expect(src).toContain("parseExportScope(");
     expect(src).toContain('"clinical_records_printed"');
   });
 
-  it("the button prints only after the audit succeeded", () => {
-    expect(code(FILES.button)).toMatch(/if \(r\.ok\) window\.print\(\);/);
+  it("the button prints only after the audit succeeded, through the armed gate", () => {
+    const src = code(FILES.button);
+    expect(src).toMatch(/if \(r\.ok\) printArmed\(\);/);
+    // The only window.print() is inside printArmed, after the gate is armed.
+    expect(src.match(/window\.print\(\)/g) ?? []).toHaveLength(1);
+    expect(src.indexOf("setAttribute(PRINT_ARMED_ATTRIBUTE")).toBeLessThan(src.indexOf("window.print()"));
+    expect(src).toContain('addEventListener("afterprint"');
+  });
+});
+
+describe("HON-46 reads only identity before the audit (Codex P1 4301153305)", () => {
+  it("neither the page nor the print action calls the broad profile loader", () => {
+    for (const rel of [FILES.page, FILES.action]) {
+      expect(code(rel), rel).not.toContain("getClientById(");
+    }
+  });
+
+  it("the identity read selects id and name only, studio-scoped", () => {
+    const src = code(FILES.queries);
+    const fn = src.slice(src.indexOf("export async function loadExportClientIdentity"));
+    const body = fn.slice(0, fn.indexOf("\n}\n") + 3);
+    expect(body).toContain('.from("clients")');
+    expect(body).toContain('.select("id, name")');
+    expect(body).toContain('.eq("studio_id", studioId)');
+  });
+});
+
+describe("HON-46 native print is gated (Codex P1 4301153310)", () => {
+  it("the page wraps the document in the gate and renders the unarmed notice", () => {
+    const src = code(FILES.page);
+    expect(src).toContain("<style>{PRINT_GATE_CSS}</style>");
+    expect(src).toContain("id={EXPORT_DOCUMENT_ID}");
+    expect(src).toContain('data-export-document=""');
+    expect(src).toContain('data-print-unarmed-notice=""');
+  });
+});
+
+describe("HON-46 single-session scope is reachable (Codex P2 4301153316)", () => {
+  it("each session in a day/range view links to its own single-session export with a plain anchor", () => {
+    const src = code(FILES.page);
+    expect(src).toMatch(/<a\s[^>]*href=\{`\/clients\/\$\{client\.id\}\/records\/export\?scope=session&session=\$\{s\.id\}`\}/);
+  });
+
+  it("the form no longer offers a session option it cannot fill", () => {
+    const src = code(FILES.page);
+    expect(src).not.toContain('<option value="session">');
+    expect(src).not.toContain('name="session"');
   });
 });
 

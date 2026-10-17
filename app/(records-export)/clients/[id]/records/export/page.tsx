@@ -17,7 +17,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { requirePractitionerWithStudio, getClientById } from "@/lib/supabase/queries";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import {
   EXPORT_EXCLUSIONS,
   MAX_RANGE_DAYS,
@@ -31,6 +31,7 @@ import {
 } from "@/lib/clinical-records/export-scope";
 import {
   loadClinicalRecordsForExport,
+  loadExportClientIdentity,
   recordClinicalRecordsAudit,
   EXPORT_SESSION_LIMIT,
   type ClinicalRecordsLoad,
@@ -38,6 +39,11 @@ import {
 
 type LoadedRecords = Extract<ClinicalRecordsLoad, { ok: true }>["value"];
 import { AuditedPrintButton } from "./print-button";
+import {
+  EXPORT_DOCUMENT_ID,
+  PRINT_GATE_CSS,
+  PRINT_UNARMED_NOTICE,
+} from "@/lib/clinical-records/print-gate";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Clinical records export" };
@@ -115,9 +121,10 @@ export default async function ClinicalRecordsExportPage({
     );
   }
 
-  const data = await getClientById(studio.id, id);
-  if (!data) notFound();
-  const { client } = data;
+  // Identity ONLY before the audit (Codex P1 4301153305): id and name, never
+  // the broad profile loader, which also reads pricing, sessions and entries.
+  const client = await loadExportClientIdentity(studio.id, id);
+  if (!client) notFound();
 
   const rawScope: RawScope = {
     scope: one(sp.scope),
@@ -129,7 +136,7 @@ export default async function ClinicalRecordsExportPage({
   const parsed = parseExportScope(rawScope);
 
   let outcome:
-    | { ok: true; document: ClinicalRecordsDocument; truncated: boolean }
+    | { ok: true; document: ClinicalRecordsDocument; truncated: boolean; scopeKind: "session" | "day" | "range" }
     | { ok: false; reason: "audit_failed" | "load_failed" }
     | null = null;
   if (parsed.ok) {
@@ -158,13 +165,24 @@ export default async function ClinicalRecordsExportPage({
           ok: true,
           document: buildClinicalRecordsDocument(result.document),
           truncated: result.document.truncated,
+          scopeKind: scope.kind,
         }
       : result;
   }
 
   const tz = studio.timezone;
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6 print:px-0 print:py-0">
+    <>
+    {/* PRINT GATE (Codex P1 4301153310). The browser's own print (Ctrl/Cmd+P,
+        Save as PDF) never runs the audited Print button, so in print media the
+        document is HIDDEN unless that button armed it after the print audit
+        was recorded; an unarmed print shows only the notice below. */}
+    <style>{PRINT_GATE_CSS}</style>
+    <div
+      id={EXPORT_DOCUMENT_ID}
+      data-export-document=""
+      className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6 print:px-0 print:py-0"
+    >
       <header className="flex items-start justify-between gap-4 border-b border-neutral-300 pb-4 print:border-black">
         <div className="flex flex-col gap-1">
           <h1 className="text-lg font-semibold">Clinical records: {client.name}</h1>
@@ -184,7 +202,6 @@ export default async function ClinicalRecordsExportPage({
           <select name="scope" defaultValue={rawScope.scope ?? "range"} className="min-h-[44px] rounded-md border px-2">
             <option value="day">One day</option>
             <option value="range">Date range</option>
-            <option value="session">One session</option>
           </select>
         </label>
         <label className="flex flex-col gap-1">
@@ -199,7 +216,6 @@ export default async function ClinicalRecordsExportPage({
           <span className="text-xs text-neutral-600">To</span>
           <input type="date" name="to" defaultValue={rawScope.to} className="min-h-[44px] rounded-md border px-2" />
         </label>
-        <input type="hidden" name="session" defaultValue={rawScope.session} />
         <button type="submit" className="min-h-[44px] rounded-md border px-4">
           Preview
         </button>
@@ -209,7 +225,7 @@ export default async function ClinicalRecordsExportPage({
         <p role="alert" className="text-sm text-red-700 dark:text-red-400">
           {parsed.reason === "range_too_long"
             ? `Choose a range of at most ${MAX_RANGE_DAYS} days.`
-            : "That scope is not valid. Choose a day, a date range, or a session."}
+            : "That scope is not valid. Choose a day or a date range; a single session is printed from its own link in a day or range view."}
         </p>
       )}
 
@@ -262,6 +278,24 @@ export default async function ClinicalRecordsExportPage({
                       </div>
                     ))}
                     <EntryList entries={s.entries} />
+                    {s.laserEntries.map((l) => (
+                      <div key={l.id} className="mt-2 rounded border border-neutral-200 p-2 text-xs" data-testid="export-laser">
+                        <p className="font-medium">Laser · {l.zone}</p>
+                        <ReadingList readings={l.readings} />
+                        <ReadingList readings={l.notes} />
+                      </div>
+                    ))}
+                    {/* SINGLE-SESSION SCOPE (Codex P2 4301153316): reachable from this
+                        audited view; a plain anchor, so it is a full document load. */}
+                    {outcome.scopeKind !== "session" && (
+                      <a
+                        href={`/clients/${client.id}/records/export?scope=session&session=${s.id}`}
+                        className="mt-1 inline-block text-xs underline print:hidden"
+                        data-testid="export-session-link"
+                      >
+                        Print only this session
+                      </a>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -293,5 +327,9 @@ export default async function ClinicalRecordsExportPage({
         </>
       )}
     </div>
+    <p data-print-unarmed-notice="" className="px-4 py-6 text-sm">
+      {PRINT_UNARMED_NOTICE}
+    </p>
+    </>
   );
 }

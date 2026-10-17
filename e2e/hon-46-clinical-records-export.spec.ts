@@ -38,6 +38,7 @@ type Fixture = {
     | "entry"
     | "block"
     | "probeLot"
+    | "laser"
     | "clinicalNote"
     | "privateWarning"
     | "personalNote"
@@ -79,6 +80,7 @@ test.beforeAll(async () => {
     entry: `ENTRY-COMMENT-${run}`,
     block: `BLOCK-NOTE-${run}`,
     probeLot: `LOT-${run}`,
+    laser: `LASER-NOTE-${run}`,
     clinicalNote: `CLINICAL-NOTE-${run}`,
     privateWarning: `PRIVATE-WARNING-${run}`,
     personalNote: `PERSONAL-NOTE-${run}`,
@@ -117,6 +119,12 @@ test.beforeAll(async () => {
        (session_id, block_id, area, thermolysis_intensity_percent, pulse_delay_seconds, observation_chips, comments)
      values ($1, $2, 'upper lip', 22, 1.5, '["good release"]'::jsonb, $3)`,
     [inScope.id, block.id, sentinel.entry],
+  );
+  // A laser treatment pass on the same session (Codex P1 4301153312).
+  await sql(
+    `insert into public.laser_entries (session_id, zone, session_number, equipment_params, observation_notes)
+     values ($1, 'Underarm', 3, '{"fluence_j_cm2": 18}'::jsonb, $2)`,
+    [inScope.id, sentinel.laser],
   );
   await sql(
     `insert into public.sessions
@@ -184,6 +192,10 @@ test("owner: the day's records appear; every excluded sentinel is absent from pa
   await expect(blockEl).toContainText("Thermolysis intensity: 22 %");
   await expect(blockEl).toContainText("Pulse delay: 1.5 s");
   await expect(blockEl).toContainText("Observed: good release");
+  const laserEl = page.getByTestId("export-laser");
+  await expect(laserEl).toContainText("Laser · Underarm");
+  await expect(laserEl).toContainText("fluence j cm2: 18");
+  await expect(laserEl).toContainText(fx.sentinel.laser);
 
   // No Vercel script or beacon on the export document.
   await page.waitForLoadState("networkidle");
@@ -215,13 +227,15 @@ test("owner: the day's records appear; every excluded sentinel is absent from pa
   }
   expect(raw).not.toContain("12345"); // the seeded price paid
 
-  // THE PRINT VIEW: what printing would put on paper (print stylesheet, app
-  // chrome hidden) has the record and none of the excluded sentinels.
+  // NATIVE PRINT IS GATED (Codex P1 4301153310): Ctrl/Cmd+P never runs the
+  // audited button, so what the browser would print here is ONLY the notice,
+  // with no record content and no client name.
   await page.emulateMedia({ media: "print" });
-  const printed = await page.locator("body").innerText();
-  expect(printed).toContain(fx.sentinel.session);
-  expect(printed).toContain(fx.sentinel.clinicalNote);
-  for (const s of excluded) expect(printed, `print view leaked ${s}`).not.toContain(s);
+  const nativePrint = await page.locator("body").innerText();
+  expect(nativePrint).toContain("can only be printed with the Print button");
+  for (const s of [fx.sentinel.session, fx.sentinel.clinicalNote, fx.sentinel.entry, fx.seed.clientName, ...excluded]) {
+    expect(nativePrint, `an unaudited print would contain ${s}`).not.toContain(s);
+  }
   await page.emulateMedia({ media: "screen" });
 
   // SENTRY NEGATIVE CONTROL (#828 item 6), made NON-VACUOUS: a synthetic
@@ -274,6 +288,38 @@ test("owner: printing is audited first, and the dialog opens only after", async 
   const rows = await auditRows(fx.clientId);
   expect(rows.slice(before).map((r) => r.action)).toEqual(["clinical_records_printed"]);
   expect(rows[rows.length - 1].metadata).toEqual({ scope: "range", from: DAY, to: DAY });
+
+  // The audited print ARMED the gate: the print view now carries the record,
+  // still without any excluded sentinel. (window.print is stubbed, so no
+  // afterprint fires and the gate stays armed for this check.)
+  await page.emulateMedia({ media: "print" });
+  const printed = await page.locator("body").innerText();
+  expect(printed).toContain(fx.sentinel.session);
+  expect(printed).toContain(fx.sentinel.clinicalNote);
+  expect(printed).not.toContain("can only be printed with the Print button");
+  for (const s of [fx.sentinel.privateWarning, fx.sentinel.personalNote, fx.sentinel.planning, fx.sentinel.deleted, fx.sentinel.outside]) {
+    expect(printed, `print view leaked ${s}`).not.toContain(s);
+  }
+});
+
+test("owner: one session is reachable from the audited range view and exports alone", async ({ page }) => {
+  await loginByMagicLink(page, fx.seed.ownerEmail);
+  await page.goto(`/clients/${fx.clientId}/records/export?scope=range&from=${DAY}&to=${OUTSIDE_DAY}`);
+  // Two live sessions in this range (the in-scope day and the later one).
+  await expect(page.getByTestId("export-session")).toHaveCount(2);
+  const before = (await auditRows(fx.clientId)).length;
+
+  await page.getByTestId("export-session-link").first().click();
+  await expect(page).toHaveURL(/scope=session&session=/);
+  await expect(page.getByTestId("export-session")).toHaveCount(1);
+  await expect(page.getByText(fx.sentinel.session)).toBeVisible();
+  await expect(page.getByText(fx.sentinel.outside)).toHaveCount(0);
+  // A single-session view offers no further session link.
+  await expect(page.getByTestId("export-session-link")).toHaveCount(0);
+
+  const rows = await auditRows(fx.clientId);
+  expect(rows.slice(before).map((r) => r.action)).toEqual(["clinical_records_previewed"]);
+  expect(rows[rows.length - 1].metadata.scope).toBe("session");
 });
 
 test("a signed-out request is sent to login, gets no record data, and writes no audit row", async ({ browser }) => {

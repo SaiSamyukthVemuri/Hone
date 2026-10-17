@@ -6,6 +6,7 @@ import {
   localDayBounds,
   type ExportBlockSource,
   type ExportEntrySource,
+  type ExportLaserSource,
   type ExportNoteSource,
   type ExportScope,
   type ExportSessionSource,
@@ -17,7 +18,7 @@ import {
 // the client profile guards this too; the page adds the owner-only gate on top.
 // Each select NAMES its columns: the export reads only what it shows. It never
 // reads client_personal_notes (private warnings, personal notes), never a
-// payment column, and never a deleted session, settings block or entry.
+// payment column, and never a deleted session, settings block, entry or laser pass.
 //
 // Errors are reported as `{ ok: false }` with no message: a database error can
 // quote row data, and nothing here may reach a log or an error tracker.
@@ -31,7 +32,31 @@ const BLOCK_COLUMNS =
   "id, session_id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, machine_frequency, probe_label, probe_type, probe_size, probe_lot_number, numbing_status, numbing_notes, tolerance_rating, reaction_type, reaction_notes, caution_note, block_notes, started_at, ended_at, created_at";
 const ENTRY_COLUMNS =
   "id, session_id, block_id, area, areas, probe_type, probe_size, mode, apilus_modality, intensity, duration_seconds, energy_level, machine_frequency, thermolysis_intensity_percent, thermolysis_duration_seconds, galvanic_ma, galvanic_duration_seconds, galvanic_intensity_percent, units_of_lye, pulse_delay_seconds, minutes_performed, pulse_count, hairs_treated, observation_chips, comments, created_at";
+const LASER_COLUMNS =
+  "id, session_id, zone, session_number, equipment_params, observation_notes, ejection_results, created_at";
 const NOTE_COLUMNS = "id, kind, body, areas, occurred_at, practitioner_id, supersedes_note_id";
+
+/**
+ * The ONLY client read allowed before the audit (Codex P1 4301153305): the
+ * client's id and display name, studio-scoped, nothing else. The broad
+ * profile loader (getClientById) also reads pricing, every session and every
+ * entry, which would be an unaudited, unscoped read of the record; it must not
+ * be used on this route. Null when the client is not this studio's.
+ */
+export async function loadExportClientIdentity(
+  studioId: string,
+  clientId: string,
+): Promise<{ id: string; name: string } | null> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("clients")
+    .select("id, name")
+    .eq("studio_id", studioId)
+    .eq("id", clientId)
+    .maybeSingle();
+  if (error || !data) return null;
+  return data as { id: string; name: string };
+}
 
 /** Cap on sessions in one export; a range is already bounded to a year. */
 export const EXPORT_SESSION_LIMIT = 500;
@@ -89,6 +114,7 @@ export type ClinicalRecordsLoad =
         blocks: ExportBlockSource[];
         blockAreasById: Map<string, BlockArea[]>;
         entries: ExportEntrySource[];
+        laserEntries: ExportLaserSource[];
         notes: ExportNoteSource[];
         practitionerNameById: Map<string, string>;
         truncated: boolean;
@@ -145,6 +171,7 @@ export async function loadClinicalRecordsForExport(args: {
           blocks: [],
           blockAreasById: new Map(),
           entries: [],
+          laserEntries: [],
           notes: [],
           practitionerNameById: new Map(),
           truncated: false,
@@ -162,7 +189,7 @@ export async function loadClinicalRecordsForExport(args: {
 
   const sessionIds = sessions.map((s) => s.id);
   const bounds = noteBounds!;
-  const [blocks, entries, notes, practitionersRes] = await Promise.all([
+  const [blocks, entries, laserEntries, notes, practitionersRes] = await Promise.all([
     readAllForSessions<ExportBlockSource>(sessionIds, (ids, from, to) =>
       supabase
         .from("session_blocks")
@@ -184,6 +211,16 @@ export async function loadClinicalRecordsForExport(args: {
         .range(from, to)
         .returns<ExportEntrySource[]>(),
     ),
+    readAllForSessions<ExportLaserSource>(sessionIds, (ids, from, to) =>
+      supabase
+        .from("laser_entries")
+        .select(LASER_COLUMNS)
+        .in("session_id", ids)
+        .is("deleted_at", null)
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<ExportLaserSource[]>(),
+    ),
     readAllPages<ExportNoteSource>((from, to) =>
       supabase
         .from("client_clinical_notes")
@@ -198,7 +235,9 @@ export async function loadClinicalRecordsForExport(args: {
     ),
     supabase.from("practitioners").select("id, display_name").eq("studio_id", studioId),
   ]);
-  if (blocks === null || entries === null || notes === null || practitionersRes.error) return { ok: false };
+  if (blocks === null || entries === null || laserEntries === null || notes === null || practitionersRes.error) {
+    return { ok: false };
+  }
 
   // The treated areas of each block (Codex P1 4301307238): for blocks charted
   // through the multi-area flow, session_block_areas is authoritative and
@@ -224,7 +263,7 @@ export async function loadClinicalRecordsForExport(args: {
   }
   return {
     ok: true,
-    value: { sessions, blocks, blockAreasById, entries, notes, practitionerNameById, truncated },
+    value: { sessions, blocks, blockAreasById, entries, laserEntries, notes, practitionerNameById, truncated },
   };
 }
 

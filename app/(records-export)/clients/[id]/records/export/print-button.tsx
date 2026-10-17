@@ -2,6 +2,20 @@
 
 import { useState, useTransition } from "react";
 import { recordClinicalRecordsPrintAction } from "./actions";
+import { EXPORT_DOCUMENT_ID, PRINT_ARMED_ATTRIBUTE } from "@/lib/clinical-records/print-gate";
+
+/**
+ * Arm the print gate for exactly one print, then disarm it after the dialog
+ * closes, so a later native Ctrl/Cmd+P (unaudited) is gated again.
+ */
+function printArmed(): void {
+  const doc = document.getElementById(EXPORT_DOCUMENT_ID);
+  if (!doc) return;
+  doc.setAttribute(PRINT_ARMED_ATTRIBUTE, "");
+  const disarm = () => doc.removeAttribute(PRINT_ARMED_ATTRIBUTE);
+  window.addEventListener("afterprint", disarm, { once: true });
+  window.print();
+}
 
 // HON-46. Prints only after the print has been audited. If the audit cannot be
 // recorded, the dialog does not open and the owner is told why.
@@ -23,7 +37,7 @@ export function AuditedPrintButton({
           setError(null);
           startTransition(async () => {
             const r = await recordClinicalRecordsPrintAction(clientId, rawScope).catch(() => ({ ok: false }));
-            if (r.ok) window.print();
+            if (r.ok) printArmed();
             else setError("Could not record this print in the audit log, so it was not printed. Try again.");
           });
         }}

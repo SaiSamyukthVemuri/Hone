@@ -14,6 +14,7 @@ import {
 } from "@/lib/clinical-records/export-scope";
 import { guardBrowserEvent } from "@/lib/analytics/client-boundary";
 import { EXPORT_MAX_PAGES, EXPORT_PAGE_SIZE, readAllPages } from "@/lib/clinical-records/export-queries";
+import { PRINT_GATE_CSS } from "@/lib/clinical-records/print-gate";
 
 // HON-46 — the pure half of the per-client clinical-records export: which
 // scopes parse, how a local day becomes UTC bounds, that the document is an
@@ -316,6 +317,61 @@ describe("multi-area blocks use the authoritative area rows (Codex P1 4301307238
   });
 });
 
+describe("laser treatment passes are exported (Codex P1 4301153312)", () => {
+  it("zone, session number, plain equipment params, observations and results", () => {
+    const doc = buildClinicalRecordsDocument({
+      sessions: [
+        {
+          id: "s7",
+          started_at: "2026-10-01T15:00:00Z",
+          ended_at: null,
+          modality: "laser",
+          session_notes: null,
+          performed_by_practitioner_id: null,
+          practitioner_id: null,
+          record_status: null,
+          finalized_at: null,
+          aftercare_and_risks_explained_at: null,
+        },
+      ],
+      entries: [],
+      laserEntries: [
+        {
+          id: "l1",
+          session_id: "s7",
+          zone: "Underarm",
+          session_number: 3,
+          equipment_params: { fluence_j_cm2: 18, spot_size_mm: 12, nested: { x: 1 }, note_private: null },
+          observation_notes: "Even erythema.",
+          ejection_results: "Good",
+          created_at: "2026-10-01T15:10:00Z",
+        },
+      ],
+      notes: [],
+      practitionerNameById: new Map(),
+    });
+    const l = doc.sessions[0].laserEntries[0];
+    expect(l.zone).toBe("Underarm");
+    expect(l.readings).toEqual([
+      { label: "Session number", value: "3" },
+      { label: "fluence j cm2", value: "18" },
+      { label: "spot size mm", value: "12" },
+    ]);
+    expect(l.notes).toEqual([
+      { label: "Observations", value: "Even erythema." },
+      { label: "Results", value: "Good" },
+    ]);
+  });
+});
+
+describe("print gate CSS (Codex P1 4301153310)", () => {
+  it("hides the unarmed document in print media and shows the notice instead", () => {
+    expect(PRINT_GATE_CSS).toMatch(/@media print[\s\S]*\[data-export-document\]:not\(\[data-print-armed\]\)\s*\{\s*display: none !important;/);
+    expect(PRINT_GATE_CSS).toMatch(/\[data-print-unarmed-notice\] \{ display: none; \}/);
+    expect(PRINT_GATE_CSS).toContain("~ [data-print-unarmed-notice] { display: block !important; }");
+  });
+});
+
 describe("readAllPages — complete or nothing (Codex P1 4301307242)", () => {
   const page = (n: number) => Array.from({ length: n }, (_, i) => i);
 
@@ -403,7 +459,7 @@ describe("auditThenLoad — audited before anything is read, fail closed", () =>
 describe("what the page says it leaves out (#828 F18/G-21)", () => {
   it("names private notes, payments, intake, consents and photos as excluded", () => {
     const text = EXPORT_EXCLUSIONS.join(" | ").toLowerCase();
-    for (const term of ["private warnings", "personal notes", "payment", "intake", "consent", "photos", "laser"]) {
+    for (const term of ["private warnings", "personal notes", "payment", "intake", "consent", "photos"]) {
       expect(text).toContain(term);
     }
   });

@@ -114,7 +114,6 @@ export const EXPORT_EXCLUSIONS: readonly string[] = [
   "Photos and treatment images",
   "Next-session planning notes",
   "Deleted sessions, settings blocks and entries",
-  "Laser treatment entries",
 ];
 
 // ---- Sources: exactly what the server query selects ------------------------
@@ -197,6 +196,18 @@ export type ExportEntrySource = {
   created_at: string;
 };
 
+/** A laser treatment pass (laser_entries; Codex P1 4301153312). */
+export type ExportLaserSource = {
+  id: string;
+  session_id: string;
+  zone: string;
+  session_number: number | null;
+  equipment_params: Record<string, unknown> | null;
+  observation_notes: string | null;
+  ejection_results: string | null;
+  created_at: string;
+};
+
 export type ExportNoteSource = {
   id: string;
   kind: string;
@@ -243,6 +254,8 @@ export type ClinicalRecordsDocument = {
     blocks: ExportedBlock[];
     /** Entries not attached to a block (older charting). */
     entries: ExportedEntry[];
+    /** Laser treatment passes. */
+    laserEntries: Array<{ id: string; zone: string; readings: Reading[]; notes: Reading[] }>;
   }>;
   clinicalNotes: Array<{
     id: string;
@@ -303,6 +316,28 @@ function exportEntry(e: ExportEntrySource): ExportedEntry {
  * surface uses (Codex P1 4301307238): structured session_block_areas rows win,
  * otherwise the legacy primary_area + side. Custom detail is appended.
  */
+/** Equipment parameters are free-form: only plain string/number values are shown. */
+function equipmentReadings(params: Record<string, unknown> | null): Reading[] {
+  if (!params || typeof params !== "object" || Array.isArray(params)) return [];
+  return readings(
+    Object.entries(params)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, value]) => [key.replace(/_/g, " "), value] as [string, unknown]),
+  );
+}
+
+function exportLaser(l: ExportLaserSource) {
+  return {
+    id: l.id,
+    zone: l.zone,
+    readings: [...readings([["Session number", l.session_number]]), ...equipmentReadings(l.equipment_params)],
+    notes: readings([
+      ["Observations", l.observation_notes],
+      ["Results", l.ejection_results],
+    ]),
+  };
+}
+
 function blockTitle(b: ExportBlockSource, structured: ReadonlyArray<BlockArea> | undefined): string {
   const areas = blockAreasLabel(structured ?? null, { primary_area: b.primary_area, side: b.side });
   const base = areas ?? (present(b.block_name) ? b.block_name : null);
@@ -316,6 +351,7 @@ export function buildClinicalRecordsDocument(input: {
   /** Structured treated areas per block id (session_block_areas). */
   blockAreasById?: ReadonlyMap<string, ReadonlyArray<BlockArea>>;
   entries: ReadonlyArray<ExportEntrySource>;
+  laserEntries?: ReadonlyArray<ExportLaserSource>;
   notes: ReadonlyArray<ExportNoteSource>;
   practitionerNameById: ReadonlyMap<string, string>;
 }): ClinicalRecordsDocument {
@@ -332,6 +368,10 @@ export function buildClinicalRecordsDocument(input: {
     } else {
       looseBySession.set(e.session_id, [...(looseBySession.get(e.session_id) ?? []), e]);
     }
+  }
+  const laserBySession = new Map<string, ExportLaserSource[]>();
+  for (const l of input.laserEntries ?? []) {
+    laserBySession.set(l.session_id, [...(laserBySession.get(l.session_id) ?? []), l]);
   }
   const blocksBySession = new Map<string, ExportBlockSource[]>();
   for (const b of blocks) blocksBySession.set(b.session_id, [...(blocksBySession.get(b.session_id) ?? []), b]);
@@ -374,6 +414,7 @@ export function buildClinicalRecordsDocument(input: {
           entries: [...(entriesByBlock.get(b.id) ?? [])].sort(byCreated).map(exportEntry),
         })),
       entries: [...(looseBySession.get(s.id) ?? [])].sort(byCreated).map(exportEntry),
+      laserEntries: [...(laserBySession.get(s.id) ?? [])].sort(byCreated).map(exportLaser),
     }));
   const clinicalNotes = [...input.notes]
     .sort((a, b) => a.occurred_at.localeCompare(b.occurred_at))
