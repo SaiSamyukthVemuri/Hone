@@ -16,8 +16,14 @@
 --      way these two events are written. SECURITY DEFINER; the studio is the
 --      client's, and the actor is derived from auth.uid() as that studio's
 --      ACTIVE OWNER (the export is owner-only). The action and the metadata
---      keys/values are allow-listed. Execute: authenticated only, revoked from
---      public, anon AND service_role by name (the 0129/0164 lesson).
+--      keys/values are allow-listed. Values are SHAPED (HIPAA review F2):
+--      day/from/to are YYYY-MM-DD, session_id/preview_audit_id are UUIDs, and
+--      the key set matches the scope (day: day; range: from+to; session:
+--      session_id). A PRINT must cite, as preview_audit_id, an existing
+--      clinical_records_previewed row for the SAME client, actor and studio
+--      (F3). Every violation raises 22023. Execute: authenticated only,
+--      revoked from public, anon AND service_role by name (the 0129/0164
+--      lesson).
 --   2. audit_actor_is_caller(actor, studio) -- a SECURITY DEFINER predicate
 --      for the narrowed policy (it reads practitioners regardless of the
 --      caller's own visibility of that table, exactly like is_studio_member).
@@ -100,8 +106,38 @@ begin
   if not (p_metadata ? 'scope') or (p_metadata ->> 'scope') not in ('session', 'day', 'range') then
     raise exception 'metadata.scope must be session, day or range' using errcode = '22023';
   end if;
+  -- VALUE SHAPES (HIPAA review F2): dates are YYYY-MM-DD, ids are UUIDs.
+  if exists (
+    select 1 from jsonb_each_text(p_metadata) e
+     where e.key in ('day', 'from', 'to') and e.value !~ '^\d{4}-\d{2}-\d{2}$'
+  ) then
+    raise exception 'metadata dates must be YYYY-MM-DD' using errcode = '22023';
+  end if;
+  if exists (
+    select 1 from jsonb_each_text(p_metadata) e
+     where e.key in ('session_id', 'preview_audit_id')
+       and e.value !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  ) then
+    raise exception 'metadata ids must be UUIDs' using errcode = '22023';
+  end if;
+  -- THE KEY SET MATCHES THE SCOPE (F2): exactly the keys that scope uses.
+  if (p_metadata ->> 'scope') = 'day'
+     and (not (p_metadata ? 'day') or p_metadata ?| array['from', 'to', 'session_id']) then
+    raise exception 'scope day requires day and nothing else' using errcode = '22023';
+  end if;
+  if (p_metadata ->> 'scope') = 'range'
+     and (not (p_metadata ?& array['from', 'to']) or p_metadata ?| array['day', 'session_id']) then
+    raise exception 'scope range requires from and to and nothing else' using errcode = '22023';
+  end if;
+  if (p_metadata ->> 'scope') = 'session'
+     and (not (p_metadata ? 'session_id') or p_metadata ?| array['day', 'from', 'to']) then
+    raise exception 'scope session requires session_id and nothing else' using errcode = '22023';
+  end if;
   if p_action = 'clinical_records_previewed' and p_metadata ? 'preview_audit_id' then
     raise exception 'a preview does not reference a preview' using errcode = '22023';
+  end if;
+  if p_action = 'clinical_records_printed' and not (p_metadata ? 'preview_audit_id') then
+    raise exception 'a print must reference the preview it printed' using errcode = '22023';
   end if;
 
   -- The studio is the CLIENT's; the actor is the caller's own active OWNER
@@ -118,6 +154,18 @@ begin
      and p.role = 'owner';
   if v_actor is null then
     raise exception 'only the studio owner can record a clinical-records export' using errcode = '42501';
+  end if;
+  -- A PRINT CITES A REAL PREVIEW (HIPAA review F3): an existing
+  -- clinical_records_previewed row for the SAME client, actor and studio.
+  if p_action = 'clinical_records_printed' and not exists (
+    select 1 from public.audit_logs a
+     where a.id = (p_metadata ->> 'preview_audit_id')::uuid
+       and a.action = 'clinical_records_previewed'
+       and a.entity_id = p_client_id
+       and a.actor_id = v_actor
+       and a.studio_id = v_studio
+  ) then
+    raise exception 'the cited preview is not this owner''s preview of this client' using errcode = '22023';
   end if;
 
   insert into public.audit_logs (id, studio_id, actor_id, action, entity_type, entity_id, metadata)

@@ -222,11 +222,30 @@ describe("HON-46 export reads every author and every note to completion", () => 
           [clientId],
         )
       ).rows.map((r) => r.metadata as Record<string, string>);
+    // The token cites a REAL preview row (0233 F3: a print must reference this
+    // owner's own preview of this client).
+    const previewAuditId = randomUUID();
+    let pre = await recordClinicalRecordsAudit({
+      id: previewAuditId,
+      clientId: s.clientId,
+      action: "clinical_records_previewed",
+      metadata: { scope: "day", day: DAY },
+    });
+    for (let attempt = 0; !pre.ok && attempt < 20; attempt += 1) {
+      await new Promise((res) => setTimeout(res, 250));
+      pre = await recordClinicalRecordsAudit({
+        id: previewAuditId,
+        clientId: s.clientId,
+        action: "clinical_records_previewed",
+        metadata: { scope: "day", day: DAY },
+      });
+    }
+    expect(pre).toEqual({ ok: true });
     const base = {
       studioId: s.studioId,
       clientId: s.clientId,
       actorId: s.practitionerId,
-      previewAuditId: "77777777-7777-4777-8777-777777777777",
+      previewAuditId,
       scope: { kind: "day" as const, day: DAY },
     };
     const forge = (token: string, change: (p: Record<string, unknown>) => void) => {

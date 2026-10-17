@@ -160,12 +160,14 @@ describe("0233: clinical-records audit rows are actor-bound", () => {
     const call = (userId: string, clientId: string, action: string, m: unknown) =>
       asUser(userId, (q) => q(`select public.record_clinical_records_audit($1, $2, $3)`, [clientId, action, m]));
 
-    await expect(call(member.userId, s.clientId, "clinical_records_printed", meta)).rejects.toSatisfy(
+    // (Authorization is shown with well-formed PREVIEW payloads, so the
+    // refusal is the caller's role or studio, never the metadata shape.)
+    await expect(call(member.userId, s.clientId, "clinical_records_previewed", meta)).rejects.toSatisfy(
       (e) => refused(e) === "42501",
     );
     // Cross-studio, both directions: studio A's owner with studio B's client,
     // and studio B's owner with studio A's client.
-    await expect(call(s.userId, other.clientId, "clinical_records_printed", meta)).rejects.toSatisfy(
+    await expect(call(s.userId, other.clientId, "clinical_records_previewed", meta)).rejects.toSatisfy(
       (e) => refused(e) === "42501",
     );
     await expect(call(other.userId, s.clientId, "clinical_records_previewed", meta)).rejects.toSatisfy(
@@ -173,10 +175,81 @@ describe("0233: clinical-records audit rows are actor-bound", () => {
     );
     await expect(call(s.userId, s.clientId, "client_archived", meta)).rejects.toSatisfy((e) => refused(e) === "22023");
     await expect(
-      call(s.userId, s.clientId, "clinical_records_printed", { ...meta, client_name: "Jane" }),
+      call(s.userId, s.clientId, "clinical_records_previewed", { ...meta, client_name: "Jane" }),
     ).rejects.toSatisfy((e) => refused(e) === "22023");
     expect(await rowsFor(s.clientId)).toEqual([]);
     expect(await rowsFor(other.clientId)).toEqual([]);
+  });
+
+  it("value SHAPES and the scope's KEY SET are enforced, each refused 22023 (HIPAA review F2)", async () => {
+    const s = await seedStudio("aud0233f");
+    const call = (m: unknown) =>
+      asUser(s.userId, (q) => q(`select public.record_clinical_records_audit($1, 'clinical_records_previewed', $2)`, [s.clientId, m]));
+    for (const [why, m] of [
+      ["day not YYYY-MM-DD", { scope: "day", day: "15/09/2026" }],
+      ["from not YYYY-MM-DD", { scope: "range", from: "2026-9-1", to: "2026-09-30" }],
+      ["to carries free text", { scope: "range", from: "2026-09-01", to: "Jane Doe" }],
+      ["session_id not a UUID", { scope: "session", session_id: "not-a-uuid" }],
+      ["day scope missing day", { scope: "day" }],
+      ["day scope with from/to", { scope: "day", day: "2026-09-15", from: "2026-09-01" }],
+      ["range scope missing to", { scope: "range", from: "2026-09-01" }],
+      ["range scope with day", { scope: "range", from: "2026-09-01", to: "2026-09-30", day: "2026-09-15" }],
+      ["session scope missing session_id", { scope: "session" }],
+      ["session scope with a day", { scope: "session", session_id: randomUUID(), day: "2026-09-15" }],
+    ] as const) {
+      await expect(call(m), why).rejects.toSatisfy((e) => refused(e) === "22023");
+    }
+    // The well-formed shape of each scope is accepted.
+    for (const m of [
+      { scope: "day", day: "2026-09-15" },
+      { scope: "range", from: "2026-09-01", to: "2026-09-30" },
+      { scope: "session", session_id: randomUUID() },
+    ]) {
+      await asUser(s.userId, (q) =>
+        q(`select public.record_clinical_records_audit($1, 'clinical_records_previewed', $2)`, [s.clientId, m]),
+      );
+    }
+    expect((await rowsFor(s.clientId)).length).toBe(3);
+  });
+
+  it("a PRINT must cite this owner's own preview of this client (HIPAA review F3)", async () => {
+    const s = await seedStudio("aud0233g");
+    const other = await seedStudio("aud0233g-o");
+    const secondClient = await adminQuery(`insert into public.clients (studio_id, name) values ($1, 'Second') returning id`, [
+      s.studioId,
+    ]);
+    const secondClientId = secondClient.rows[0].id as string;
+    const preview = (userId: string, clientId: string) =>
+      asUser(userId, (q) =>
+        q(`select public.record_clinical_records_audit($1, 'clinical_records_previewed', $2) as id`, [clientId, meta]),
+      ).then((r) => r.rows[0].id as string);
+    const print = (userId: string, clientId: string, previewId: string | null) =>
+      asUser(userId, (q) =>
+        q(`select public.record_clinical_records_audit($1, 'clinical_records_printed', $2) as id`, [
+          clientId,
+          previewId === null ? meta : { ...meta, preview_audit_id: previewId },
+        ]),
+      );
+
+    const ownPreview = await preview(s.userId, s.clientId);
+    const otherClientPreview = await preview(s.userId, secondClientId);
+    const otherActorPreview = await preview(other.userId, other.clientId);
+
+    // Refused: no preview cited; another client's preview; another owner's
+    // preview; an id that names no row.
+    for (const [why, previewId] of [
+      ["no preview cited", null],
+      ["another client's preview", otherClientPreview],
+      ["another actor's (another studio's owner) preview", otherActorPreview],
+      ["a nonexistent preview id", randomUUID()],
+    ] as const) {
+      await expect(print(s.userId, s.clientId, previewId), why).rejects.toSatisfy((e) => refused(e) === "22023");
+    }
+    // A print row cannot be cited as a preview either.
+    const ok = await print(s.userId, s.clientId, ownPreview);
+    await expect(print(s.userId, s.clientId, ok.rows[0].id as string)).rejects.toSatisfy((e) => refused(e) === "22023");
+    // Exactly: the owner's preview, then the one honest print.
+    expect((await rowsFor(s.clientId)).map((r) => r.action)).toEqual(["clinical_records_previewed", "clinical_records_printed"]);
   });
 
   it("EXECUTE: authenticated only; revoked from anon and service_role by name", async () => {

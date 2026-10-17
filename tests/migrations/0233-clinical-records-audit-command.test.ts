@@ -63,6 +63,39 @@ describe("0233: the command derives studio and actor, and allow-lists what it wr
   });
 });
 
+describe("0233: value shapes, scope key sets and the print's preview reference (HIPAA review F2/F3)", () => {
+  it("dates are YYYY-MM-DD and ids are UUIDs", () => {
+    expect(CODE).toContain("e.key in ('day', 'from', 'to') and e.value !~ '^\\d{4}-\\d{2}-\\d{2}$'");
+    expect(CODE).toContain("e.key in ('session_id', 'preview_audit_id')");
+    expect(CODE).toContain("!~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'");
+  });
+  it("each scope requires exactly its own keys", () => {
+    expect(CODE).toMatch(/= 'day'\s+and \(not \(p_metadata \? 'day'\) or p_metadata \?\| array\['from', 'to', 'session_id'\]\)/);
+    expect(CODE).toMatch(/= 'range'\s+and \(not \(p_metadata \?& array\['from', 'to'\]\) or p_metadata \?\| array\['day', 'session_id'\]\)/);
+    expect(CODE).toMatch(/= 'session'\s+and \(not \(p_metadata \? 'session_id'\) or p_metadata \?\| array\['day', 'from', 'to'\]\)/);
+  });
+  it("a print must cite an existing preview for the SAME client, actor and studio", () => {
+    expect(CODE).toContain("p_action = 'clinical_records_printed' and not (p_metadata ? 'preview_audit_id')");
+    expect(CODE).toMatch(
+      /a\.action = 'clinical_records_previewed'\s+and a\.entity_id = p_client_id\s+and a\.actor_id = v_actor\s+and a\.studio_id = v_studio/,
+    );
+  });
+});
+
+describe("the print-audit claim is worded precisely (HIPAA review F1)", () => {
+  it("docs/03 and the print action never say every print is audited", () => {
+    const docs = readFileSync(path.join(process.cwd(), "docs/03_SECURITY_AND_PRIVACY.md"), "utf8");
+    const action = readFileSync(
+      path.join(process.cwd(), "app/(records-export)/clients/[id]/records/export/actions.ts"),
+      "utf8",
+    );
+    expect(docs).toContain("A preview is always audited before any record is read.");
+    expect(docs).toContain("The Print button's print is audited.");
+    expect(docs).toContain("The browser's own print (Ctrl/Cmd+P) is gated, not audited.");
+    expect(action).not.toMatch(/every download is audited/i);
+  });
+});
+
 describe("0233: direct member inserts are narrowed", () => {
   it("replaces the 0001 policy: own actor only, never clinical_records_*", () => {
     expect(CODE).toContain('drop policy if exists "audit_logs: members insert" on public.audit_logs;');

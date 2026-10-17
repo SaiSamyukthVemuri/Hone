@@ -6,9 +6,12 @@ import { loadExportClientIdentity, recordClinicalRecordsAudit } from "@/lib/clin
 import { verifyPrintToken } from "@/lib/clinical-records/print-token";
 
 // HON-46. Records the PRINT of a clinical-records export before the browser
-// print dialog opens (#828 G-13: every download is audited, fail closed). The
-// button calls this and prints only on ok:true, so a print the audit trail
-// cannot see does not happen through this control.
+// print dialog opens (#828 G-13, fail closed). The Print button calls this and
+// prints only on ok:true. Stated precisely: a preview is always audited before
+// any record is read; the Print button's print is audited; the browser's own
+// print (Ctrl/Cmd+P) is GATED client-side (the document is hidden in print
+// media unless this audited button armed it), not audited. It is never "every
+// print is audited".
 //
 // BOUND TO THE RENDERED PREVIEW (Codex P1 4303617257). The ONLY input is the
 // token the server minted when it rendered the preview. The client and scope
