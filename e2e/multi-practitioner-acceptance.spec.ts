@@ -71,6 +71,9 @@ let live: E2eSeed;
 let liveService: string;
 let bookDate: string;
 let ownerPractitionerId: string;
+/** The booked service's length. "Inside the window" is a claim about the whole
+ *  appointment, so the duration is part of every window assertion below. */
+let serviceMinutes: number;
 let A: { email: string; displayName: string; practitionerId: string };
 let B: { email: string; displayName: string; practitionerId: string };
 
@@ -135,8 +138,91 @@ test.beforeAll(async () => {
     await seedPractitionerDefault(live.studioId, B.practitionerId, d, true, B_WINDOW.start, B_WINDOW.end);
   }
 
+  serviceMinutes = (
+    await sql<{ m: number }>(
+      `select default_duration_minutes::int as m from public.services where id = $1`,
+      [liveService],
+    )
+  )[0].m;
+  expect(serviceMinutes, "the fixture service must have a real duration").toBeGreaterThan(0);
+
   bookDate = await oneWeekOutLocalDate(live.studioId);
 });
+
+/** THE WHOLE APPOINTMENT, start THROUGH end.
+ *
+ *  A start-only bound is the adjacent property, not the one that matters: a
+ *  30-minute booking starting at 11:45 begins inside a 06:00-12:00 window and
+ *  ENDS outside it. Every offered slot is checked for both edges including the
+ *  service duration, so an overrunning slot fails here instead of committing. */
+function expectSlotFitsWindow(
+  label: string,
+  w: { start: string; end: string },
+  context: string,
+): void {
+  const start = labelToMinutes(label);
+  expect(
+    start,
+    `${context}: ${label} starts before the window opens (${w.start})`,
+  ).toBeGreaterThanOrEqual(windowToMinutes(w.start));
+  expect(
+    start + serviceMinutes,
+    `${context}: ${label} + ${serviceMinutes}m overruns the window close (${w.end})`,
+  ).toBeLessThanOrEqual(windowToMinutes(w.end));
+}
+
+/** The COMMITTED row's own bounds, in studio-local minutes. The slot labels are
+ *  what the page offered; this is what the database actually stored, which is
+ *  the thing the window claim is ultimately about. */
+async function committedBounds(
+  appointmentId: string,
+): Promise<{ startMin: number; endMin: number }> {
+  const rows = await sql<{ s: string; e: string }>(
+    `select to_char((a.starts_at at time zone st.timezone), 'HH24:MI') as s,
+            to_char((a.ends_at   at time zone st.timezone), 'HH24:MI') as e
+       from public.appointments a
+       join public.studios st on st.id = a.studio_id
+      where a.id = $1`,
+    [appointmentId],
+  );
+  return { startMin: windowToMinutes(rows[0].s), endMin: windowToMinutes(rows[0].e) };
+}
+
+async function expectCommittedWithinWindow(
+  appointmentId: string,
+  w: { start: string; end: string },
+  context: string,
+): Promise<void> {
+  const { startMin, endMin } = await committedBounds(appointmentId);
+  expect(startMin, `${context}: committed start is before ${w.start}`).toBeGreaterThanOrEqual(
+    windowToMinutes(w.start),
+  );
+  expect(endMin, `${context}: committed END ${endMin} overruns ${w.end}`).toBeLessThanOrEqual(
+    windowToMinutes(w.end),
+  );
+}
+
+/** Wait for THE SELECTED PRACTITIONER'S slot response, not merely "a fetch
+ *  answered".
+ *
+ *  Choosing a practitioner does NOT change the date, so the heading is already
+ *  correct and `waitForGrid` is satisfied the instant the select fires while
+ *  `slots` still holds the PREVIOUS practitioner's grid. A date-matched wait
+ *  cannot help here either, for the same reason. The booking form calls
+ *  `fetchPublicSlotsAction({ slug, serviceId, date, practitionerId, ... })`, so
+ *  the request that carries BOTH that practitioner's id and the date is that
+ *  practitioner's scoped fetch and nothing else. */
+function awaitScopedSlots(page: Page, practitionerId: string) {
+  return page.waitForResponse(
+    (r) => {
+      if (r.request().method() !== "POST") return false;
+      if (!r.request().headers()["next-action"]) return false;
+      const body = r.request().postData() ?? "";
+      return body.includes(practitionerId) && body.includes(bookDate);
+    },
+    { timeout: 20_000 },
+  );
+}
 
 async function waitForGrid(page: Page, localDate: string): Promise<void> {
   const [y, m, d] = localDate.split("-").map((n) => Number(n));
@@ -182,16 +268,24 @@ async function offeredSlotLabels(page: Page): Promise<string[]> {
 async function bookWithPractitioner(
   page: Page,
   client: { name: string; email: string },
-  practitionerName: string,
+  member: { displayName: string; practitionerId: string },
+  window: { start: string; end: string },
 ): Promise<{ slotLabel: string }> {
   await openNewClientForm(page, live.slug, liveService, bookDate);
 
   const picker = page.getByTestId("practitioner-picker");
   await expect(picker).toBeVisible();
-  await picker.selectOption({ label: practitionerName });
+  const scoped = awaitScopedSlots(page, member.practitionerId);
+  await picker.selectOption({ label: member.displayName });
+  await scoped;
 
   await waitForGrid(page, bookDate);
   const labels = await offeredSlotLabels(page);
+  // The slot about to be CLICKED must fit whole, or the booking commits an
+  // appointment that overruns the practitioner's hours.
+  for (const label of labels) {
+    expectSlotFitsWindow(label, window, `${member.displayName}'s grid`);
+  }
   const slotLabel = labels[0];
 
   await page.getByRole("button", { name: slotLabel, exact: true }).click();
@@ -262,31 +356,21 @@ test("ACCEPTANCE: pick A, pick B, reschedule one, and the owner's calendar attri
   const picker = page.getByTestId("practitioner-picker");
   await expect(picker).toBeVisible();
 
+  const scopedA = awaitScopedSlots(page, A.practitionerId);
   await picker.selectOption({ label: A.displayName });
+  await scopedA;
   await waitForGrid(page, bookDate);
   const aLabels = await offeredSlotLabels(page);
   expect(aLabels.length, "A must be offered at least one slot").toBeGreaterThan(0);
-  for (const label of aLabels) {
-    const mins = labelToMinutes(label);
-    expect(
-      mins,
-      `slot ${label} is outside A's seeded window ${A_WINDOW.start}-${A_WINDOW.end}`,
-    ).toBeGreaterThanOrEqual(windowToMinutes(A_WINDOW.start));
-    expect(mins).toBeLessThan(windowToMinutes(A_WINDOW.end));
-  }
+  for (const label of aLabels) expectSlotFitsWindow(label, A_WINDOW, "A's grid");
 
+  const scopedB = awaitScopedSlots(page, B.practitionerId);
   await picker.selectOption({ label: B.displayName });
+  await scopedB;
   await waitForGrid(page, bookDate);
   const bLabels = await offeredSlotLabels(page);
   expect(bLabels.length, "B must be offered at least one slot").toBeGreaterThan(0);
-  for (const label of bLabels) {
-    const mins = labelToMinutes(label);
-    expect(
-      mins,
-      `slot ${label} is outside B's seeded window ${B_WINDOW.start}-${B_WINDOW.end}`,
-    ).toBeGreaterThanOrEqual(windowToMinutes(B_WINDOW.start));
-    expect(mins).toBeLessThan(windowToMinutes(B_WINDOW.end));
-  }
+  for (const label of bLabels) expectSlotFitsWindow(label, B_WINDOW, "B's grid");
 
   // NON-VACUITY FOR THE WINDOWS: the two grids are genuinely different. If the
   // scoped rows were being ignored (capacity rolled back, say) both grids would
@@ -298,11 +382,11 @@ test("ACCEPTANCE: pick A, pick B, reschedule one, and the owner's calendar attri
   ).toEqual([]);
 
   // --- (2b) the booking is ASSIGNED to the chosen practitioner -------------
-  const aBooking = await bookWithPractitioner(page, clientA, A.displayName);
+  const aBooking = await bookWithPractitioner(page, clientA, A, A_WINDOW);
   const aRows = await waitForClientAppointments(live.studioId, clientA.email, 1, page);
   expect(aRows[0].practitioner_id, "booking must be assigned to A").toBe(A.practitionerId);
 
-  const bBooking = await bookWithPractitioner(page, clientB, B.displayName);
+  const bBooking = await bookWithPractitioner(page, clientB, B, B_WINDOW);
   const bRows = await waitForClientAppointments(live.studioId, clientB.email, 1, page);
   expect(bRows[0].practitioner_id, "booking must be assigned to B").toBe(B.practitionerId);
 
@@ -310,6 +394,12 @@ test("ACCEPTANCE: pick A, pick B, reschedule one, and the owner's calendar attri
   // every appointment to the studio's active OWNER, so a test that only checked
   // "two appointments exist, each with a practitioner" would have passed on the
   // old behaviour. Neither booking may be the owner's, and they must differ.
+  // THE COMMITTED ROWS, start THROUGH end. The grids above are what the page
+  // OFFERED; these are what the database stored, which is what "inside the
+  // practitioner's hours" ultimately means.
+  await expectCommittedWithinWindow(aRows[0].id, A_WINDOW, "A's booking");
+  await expectCommittedWithinWindow(bRows[0].id, B_WINDOW, "B's booking");
+
   expect(aRows[0].practitioner_id).not.toBe(ownerPractitionerId);
   expect(bRows[0].practitioner_id).not.toBe(ownerPractitionerId);
   expect(aRows[0].practitioner_id).not.toBe(bRows[0].practitioner_id);
@@ -377,16 +467,11 @@ test("ACCEPTANCE: pick A, pick B, reschedule one, and the owner's calendar attri
   // 06:00 opening — would have stayed green, and because `newLabel` is taken
   // from this same list the test could have rescheduled INTO that invalid time
   // and still passed. A one-sided bound is not "inside the window".
+  // ...and the WHOLE duration, not just the start. A 30-minute slot offered at
+  // 11:45 starts inside 06:00-12:00 and ends outside it, so a start-only bound
+  // would let the reschedule commit an appointment that overruns A's hours.
   for (const label of rescheduleLabels) {
-    const mins = labelToMinutes(label);
-    expect(
-      mins,
-      `reschedule offered ${label}, BEFORE A's window opens (${A_WINDOW.start})`,
-    ).toBeGreaterThanOrEqual(windowToMinutes(A_WINDOW.start));
-    expect(
-      mins,
-      `reschedule offered ${label}, outside A's window — the successor would not be A's`,
-    ).toBeLessThan(windowToMinutes(A_WINDOW.end));
+    expectSlotFitsWindow(label, A_WINDOW, "the reschedule grid");
   }
 
   await page.getByRole("button", { name: newLabel!, exact: true }).click();
@@ -424,6 +509,9 @@ test("ACCEPTANCE: pick A, pick B, reschedule one, and the owner's calendar attri
     "the reschedule must PRESERVE A's assignment, not re-attribute to the owner",
   ).toBe(A.practitionerId);
   expect(successors[0].starts_at, "the successor must be at a NEW time").not.toBe(originalStart);
+  // The RESCHEDULED appointment must also fit whole — this is the second half
+  // of "both the initial booking and the reschedule".
+  await expectCommittedWithinWindow(successors[0].id, A_WINDOW, "A's rescheduled booking");
 
   // ...and the OLD slot is released. 0171 cancels the original as
   // `rescheduled`; its reservation must not keep holding the instant, or the
