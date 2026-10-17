@@ -129,10 +129,15 @@ async function chargeOnce(page: Page, seed: PaymentSeed): Promise<string> {
 }
 
 // The session-detail payment card: the surface that carries the receipt
-// sub-panel and its retry.
-async function openSessionPayment(page: Page, seed: PaymentSeed) {
+// sub-panel and its retry. `kind` is the summary the card must show: a paid
+// charge whose receipt failed is its own kind, still headed "Paid".
+async function openSessionPayment(
+  page: Page,
+  seed: PaymentSeed,
+  kind: "paid" | "paid_receipt_failed" = "paid",
+) {
   await page.goto(`/clients/${seed.clientId}/sessions/${seed.sessionId}`);
-  const paidLine = page.getByTestId("payment-summary-paid");
+  const paidLine = page.getByTestId(`payment-summary-${kind}`);
   await expect(paidLine).toBeVisible();
   await expect(paidLine).toContainText(AMOUNT_LABEL);
   return page;
@@ -171,9 +176,11 @@ test("receipt success: the charge sends one receipt automatically, and exactly o
   expect(row.receipt_email_to).toBe(email);
 
   const view = await openSessionPayment(page, success);
-  await expect(view.getByText(/^Receipt sent to /)).toBeVisible();
-  // The full address never appears on the practitioner card.
-  await expect(view.getByText(email)).toHaveCount(0);
+  const sentLine = view.getByText(/^Receipt sent to /);
+  await expect(sentLine).toBeVisible();
+  // The practitioner's receipt line is masked; the full address is only in the
+  // owner-only technical details.
+  await expect(sentLine).not.toContainText(email);
   // Sent is final: there is no button to send it again.
   await expect(view.getByRole("button", { name: /^send receipt$/i })).toHaveCount(0);
 
@@ -196,7 +203,7 @@ test("receipt failure then retry: Paid stays Paid, the retry sends the receipt, 
   expectExactlyOneCharge(failed, attemptId);
   const callsAfterCharge = callsForAccount(failed.connectedAccountId).length;
 
-  const view = await openSessionPayment(page, failed);
+  const view = await openSessionPayment(page, failed, "paid_receipt_failed");
   await expect(view.getByText("Receipt send failed.")).toBeVisible();
   // No charge control is offered on a paid session whose receipt failed.
   await expect(view.getByRole("button", { name: /run charge/i })).toHaveCount(0);
