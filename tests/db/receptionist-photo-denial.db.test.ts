@@ -164,30 +164,35 @@ describe("#824: the receptionist cannot reach a client photo", () => {
     expect(code, "create_treatment_image_metadata must refuse a receptionist").toBeDefined();
   });
 
-  it("cannot SET A NOTE on an existing image", async () => {
-    let code: string | undefined;
-    try {
-      await asReceptionist((q) => q(NOTE, [imageId, S.clientId, "front desk note"]));
-    } catch (e) {
-      code = errCode(e);
-    }
-    expect(code, "set_treatment_image_note must refuse a receptionist").toBeDefined();
+  // MEASURED, and it corrected my own assumption. I first asserted that these
+  // commands RAISE for a receptionist. They do not: they return NULL and write
+  // nothing, because the UPDATE is RLS-scoped and matches zero rows, so
+  // `returning id into v_id` yields NULL. create_treatment_image_metadata DOES
+  // raise (above), so the three commands REFUSE IN TWO DIFFERENT SHAPES and a
+  // caller has to handle both.
+  //
+  // BOTH HALVES ARE ASSERTED DELIBERATELY. A null return alone would be
+  // satisfied by a command that wrote the row and merely failed to report an
+  // id; an untouched row alone would be satisfied by a command that reported
+  // success. Neither is a denial on its own.
+  it("SET A NOTE is a silent no-op: returns NULL and writes nothing", async () => {
+    const r = await asReceptionist((q) => q(NOTE, [imageId, S.clientId, "front desk note"]));
+    expect(r.rows[0].set_treatment_image_note, "must not return an id").toBeNull();
+    const row = await adminQuery(
+      `select practitioner_note from public.treatment_images where id = $1`,
+      [imageId],
+    );
+    expect(row.rows[0].practitioner_note, "the note must be untouched").toBeNull();
   });
 
-  it("cannot ARCHIVE an existing image", async () => {
-    let code: string | undefined;
-    try {
-      await asReceptionist((q) => q(ARCHIVE, [imageId, S.clientId]));
-    } catch (e) {
-      code = errCode(e);
-    }
-    expect(code, "archive_treatment_image must refuse a receptionist").toBeDefined();
-    // And the row is untouched.
+  it("ARCHIVE is a silent no-op: returns NULL and the image stays live", async () => {
+    const r = await asReceptionist((q) => q(ARCHIVE, [imageId, S.clientId]));
+    expect(r.rows[0].archive_treatment_image, "must not return an id").toBeNull();
     const still = await adminQuery(
       `select deleted_at from public.treatment_images where id = $1`,
       [imageId],
     );
-    expect(still.rows[0].deleted_at).toBeNull();
+    expect(still.rows[0].deleted_at, "the image must still be live").toBeNull();
   });
 
   // =========================================================================
