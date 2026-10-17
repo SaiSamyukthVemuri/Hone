@@ -1,5 +1,10 @@
 import { defineConfig } from "vitest/config";
 import path from "node:path";
+// Validate the API/SQL pair before Vitest collects any DB test file. Some
+// fixtures create GoTrue users through raw fetch while others use pg directly;
+// checking only the helper a particular file imports leaves a split target.
+// Reuse #879's guard instead of maintaining another URL/stack validator.
+import "./e2e/helpers/local-env";
 
 // DB/RLS integration lane (PR #220). Runs ONLY tests/db/**, against
 // the LOCAL Supabase Postgres started by `supabase db start` and

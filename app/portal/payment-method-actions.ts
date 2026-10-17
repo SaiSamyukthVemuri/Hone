@@ -85,7 +85,7 @@ export async function createCardSetupIntentAction(): Promise<CreateCardSetupInte
   //    archived client cannot start a SetupIntent.
   const { data: client, error: clientErr } = await admin
     .from("clients")
-    .select("id, name, archived_at")
+    .select("id, archived_at")
     .eq("id", session.clientId)
     .eq("studio_id", session.studioId)
     .maybeSingle();
@@ -213,7 +213,6 @@ export async function createCardSetupIntentAction(): Promise<CreateCardSetupInte
     clientId: session.clientId,
     stripeAccountId: settings.stripe_account_id as string,
     stripeLivemode: settings.stripe_livemode as boolean,
-    clientName: (client.name as string) ?? "Client",
   });
   if (!customer.ok) {
     console.error(

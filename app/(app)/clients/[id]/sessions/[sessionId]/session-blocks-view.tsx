@@ -30,6 +30,7 @@ import { RemovePassButton } from "@/components/remove-pass-button";
 import { RemoveAreaButton } from "@/components/remove-area-button";
 import { deleteElectrolysisEntryAction } from "./actions";
 import { removeSessionAreaAction } from "./block-actions";
+import { SectionLabel } from "@/components/ui/section-label";
 
 // Area-first view of an electrolysis session (Session Logging Phase A).
 // Each session_blocks row renders as a "treatment area" section; the word
@@ -348,9 +349,9 @@ function BlockSection({
                 an explicit "Area not recorded" eyebrow for legacy blocks that
                 have no structured area. */}
             <div className="flex flex-col gap-0.5">
-              <span className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
+              <SectionLabel size="caption">
                 {title.placeholder ? "Area not recorded" : "Recorded area"}
-              </span>
+              </SectionLabel>
               <h3
                 className={
                   title.placeholder
