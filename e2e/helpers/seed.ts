@@ -9,7 +9,8 @@ import {
 import { timezoneWithLocalMorning } from "./timezone";
 
 // Seed helpers for the browser E2E lane (PR #227). Direct SQL against
-// the LOCAL database only (E2E_DB_URL is hardcoded localhost), plus
+// the LOCAL database only (E2E_DB_URL is loopback-only: the default stack, or an
+// isolated one chosen together with E2E_SUPABASE_URL -- see local-env), plus
 // the local GoTrue admin API for the auth user, so the practitioner
 // account is a REAL auth user created through the invite path
 // (pending_invitations -> handle_new_user trigger -> owner

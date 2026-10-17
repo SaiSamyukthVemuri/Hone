@@ -14,7 +14,16 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-12, post-0210 apply; `0210` APPLIED, `0216`, `0218` and `0220` AUTHORED AND PENDING on the STUDIO-READY-02a/02b/02c branches)
+## Current state (verified 2026-10-12, post-0211 apply; `0211` APPLIED, `0216`, `0218` and `0220` AUTHORED AND PENDING on the STUDIO-READY-02a/02b/02c branches)
+
+> **WHY THIS BLOCK SAYS 0211 WHERE THE STUDIO-READY-02 LANE WROTE 0210.** This
+> proof branch merged production in to obtain the #885 paired-target guard,
+> which brought `0211`'s apply record and its `migration-state.json` with it.
+> Only the HOSTED figure moved, and it moved because of #832's migration-first
+> apply — not because anything here was applied. `0216`, `0218` and `0220` are
+> still authored-and-pending exactly as the lane wrote them, and no apply was
+> performed or claimed on this branch. The `0210` apply record below is
+> historical and is not rewritten.
 
 > **`0220` IS AUTHORED AND PENDING, stacked on `0218`.** STUDIO-READY-02c (#824)
 > authors `0220_receptionist_scheduling.sql`: receptionist scheduling over the
@@ -49,9 +58,11 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 > authors `0216_receptionist_membership_foundation.sql` on
 > `feat/receptionist-foundation-824`. It is **not** applied to production, no
 > production write was performed, and `docs/production/migration-state.json` is
-> **untouched** — `hosted_migration_max` stays **0210**. The repository therefore
-> sits legitimately ABOVE hosted, which is the second of the two legal shapes the
-> parity guard admits.
+> **untouched by `0216`** — its `hosted_migration_max` reads **0211**, advanced by
+> #832's migration-first apply and brought onto this proof branch by the
+> production merge, never by this branch and never by `0216`. The repository
+> therefore sits legitimately ABOVE hosted, which is the second of the two legal
+> shapes the parity guard admits.
 >
 > **WHAT IT ADDS.** A receptionist membership that is deliberately **not** a
 > `practitioners` row: the table `studio_receptionists`; three bounded read
@@ -90,7 +101,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 
 | Field | Value |
 |---|---|
-| **Hosted (production) migration max** | **0210** (`0210_sms_waitlist_join_acknowledgement.sql`) — unchanged by this branch; no apply was performed or claimed. |
+| **Hosted (production) migration max** | **0211** (`0211_client_sms_permission_guard.sql`) — restated when production was merged into this PROOF branch for the #885 paired-target guard. `0211` was applied migration-first from the reviewed #827 head; its apply record is preserved below, unrewritten. Unchanged BY THIS BRANCH: no apply was performed or claimed here. |
 | **Repo migration max** | **0220**: `0220_receptionist_scheduling.sql` (STUDIO-READY-02c), stacked on `0218_receptionist_invitations.sql` (STUDIO-READY-02b) and `0216_receptionist_membership_foundation.sql` (STUDIO-READY-02a, #824). `0217` is held by #844 (SMS sender registrations) and `0219` by DB/WAIT (G1); neither is on this branch. No data. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
 | **Pending migrations** | **`0216`**, **`0218`** and **`0220`** on this branch, **NOT applied**. They follow a pending sequence held by other lanes: `0211` (#827), `0212` (#832), `0213` (#831), `0214` (#833), `0215` (#843), `0217` (#844) and `0219` (DB/WAIT, G1). This branch does not carry those files, so the parity guard reports a hole **by construction** until it integrates after them, in order `0211` → … → `0220`. It renumbers if that order changes. `repo > hosted` is the MIGRATION-FIRST PENDING shape: `0216`, `0218` and `0220` are pending, not applied. |
