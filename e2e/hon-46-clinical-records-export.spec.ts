@@ -545,7 +545,9 @@ test("the export document makes no telemetry or third-party request, and none ca
   tab.on("request", record(seen));
   const exportPath = `/clients/${fx.clientId}/records/export`;
   const res = await tab.goto(`${exportPath}?scope=day&day=${JOURNEY_DAY}`);
-  expect(res?.headers()["referrer-policy"]).toBe("no-referrer");
+  // Asserted LAST, so that with the fix reverted the request inventory itself
+  // (the observable leak) is what fails first.
+  const referrerPolicy = res?.headers()["referrer-policy"];
   await expect(tab.getByTestId("export-session")).toHaveCount(2);
   await tab.waitForLoadState("networkidle");
   // SDK inits fire after hydration; give any of them time to show up.
@@ -566,6 +568,7 @@ test("the export document makes no telemetry or third-party request, and none ca
     web.filter((r) => r.referer?.includes("/records/export")).map((r) => `${r.url} <- ${r.referer}`),
     "a request from the export carried its URL as Referer",
   ).toEqual([]);
+  expect(referrerPolicy, "the export's Referrer-Policy header").toBe("no-referrer");
   await tab.close();
 });
 
