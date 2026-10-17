@@ -272,6 +272,35 @@ describe("the clinical records export never reaches Sentry (HON-46, Codex P1 430
     expect(out!.breadcrumbs?.map((b) => b.category)).toEqual(["ui.click"]);
   });
 
+  it("checks only the wire payload: live SDK state is never serialized (HIPAA review)", () => {
+    // An ordinary event whose sdkProcessingMetadata holds a CIRCULAR graph (the
+    // SDK's captured Scope objects) must NOT be dropped: failing closed on it
+    // would silence Sentry on every route.
+    const scope: Record<string, unknown> = { name: "captured scope" };
+    scope.self = scope;
+    const ordinary = err({
+      request: { url: `https://hone.care/clients/${CLIENT}` },
+      sdkProcessingMetadata: { capturedSpanScope: scope },
+    });
+    expect(scrubErrorEvent(ordinary)).not.toBeNull();
+    // ...but the dynamic sampling context IS transmitted (the envelope's trace
+    // header), so a route named only there drops the event.
+    const viaDsc = err({
+      request: { url: `https://hone.care/clients/${CLIENT}` },
+      sdkProcessingMetadata: {
+        capturedSpanScope: scope,
+        dynamicSamplingContext: { transaction: `/clients/${CLIENT}/records/export` },
+      },
+    });
+    expect(scrubErrorEvent(viaDsc)).toBeNull();
+  });
+
+  it("detects any percent-encoding by decoding, not by a list (%72ecords, %252F)", () => {
+    expect(scrubBreadcrumb({ category: "fetch", data: { url: "/x?n=%2Fclients%2Fa%2F%72ecords%2Fexport" } })).toBeNull();
+    expect(scrubBreadcrumb({ category: "fetch", data: { url: "/x?n=records%25252Fexport" } })).toBeNull();
+    expect(scrubBreadcrumb({ category: "fetch", data: { url: "/x?n=%2Fclients%2Fa%2Frecords" } })).not.toBeNull();
+  });
+
   it("fails closed: a value it cannot serialize counts as a reference", () => {
     expect(referencesRecordsExport({ n: BigInt(1) })).toBe(true);
     expect(referencesRecordsExport({ url: "/clients/x/records" })).toBe(false);
