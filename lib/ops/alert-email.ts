@@ -50,8 +50,15 @@ const ADMIN_ALERTS_URL = "https://hone.care/admin/ops-alerts";
 // the subject because it names a failure class, not a record. The UUID
 // pattern has no boundary (an id glued to letters is still removed, Codex P1
 // 4301586679 on #903) and accepts a %2D-encoded hyphen.
-const RECORD_ID_RE =
-  /[0-9a-f]{8}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{12}/gi;
+const RECORD_ID_RE = new RegExp(
+  // A hex digit may itself be percent-encoded (%30-%39, %41-%46, %61-%66):
+  // URL serialization keeps the escape, and routing decodes it straight back
+  // to the id (Codex P2 4301707490). Same for the hyphen (%2D).
+  ["{8}", "{4}", "{4}", "{4}", "{12}"]
+    .map((n) => `(?:[0-9a-f]|%3[0-9]|%4[1-6]|%6[1-6])${n}`)
+    .join("(?:-|%2d)"),
+  "gi",
+);
 // Every Stripe prefix lib/ops/redact.ts preserves as a "safe" id, plus pm_
 // (PaymentMethod), which redact.ts does not list. NO leading boundary (Codex
 // P1 4301636814): an id glued to preceding text ("refpi_3...", "refund_re_...")
@@ -62,9 +69,18 @@ const STRIPE_ID_RE = new RegExp(
   `(?:${[...new Set([...SAFE_STRIPE_ID_PREFIXES, "pm"])].join("|")})_[A-Za-z0-9]{6,}`,
   "g",
 );
+// ANY Stripe-shaped object id, whatever its prefix (Codex P1 4301706583:
+// dp_, src_, card_, ... are outside the list above). Stripe ids are a short
+// lowercase prefix, "_", then a long run that mixes digits and letters. Event
+// slugs and ordinary snake_case words carry no digit after the "_", so they
+// are left alone.
+const GENERIC_STRIPE_ID_RE = /[a-z]{2,12}_(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{10,}/g;
 
 function withoutRecordIds(text: string): string {
-  return text.replace(RECORD_ID_RE, "[id]").replace(STRIPE_ID_RE, "[stripe-id]");
+  return text
+    .replace(RECORD_ID_RE, "[id]")
+    .replace(STRIPE_ID_RE, "[stripe-id]")
+    .replace(GENERIC_STRIPE_ID_RE, "[stripe-id]");
 }
 
 let missingEnvWarned = false;

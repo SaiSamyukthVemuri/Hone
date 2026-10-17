@@ -73,7 +73,7 @@ describe("env gating and failure behavior", () => {
 });
 
 describe("email content safety", () => {
-  it("sends only safe ids and the already-sanitized message", () => {
+  it("takes ids + message only as input (no safe_details, card fields or tokens); the G-24 cases below prove no id is rendered", () => {
     // The input type carries ids + message only: no safe_details
     // blob, no card fields, no tokens.
     expect(SOURCE).toMatch(/event: string;\s*\n\s*message: string;/);
@@ -175,6 +175,19 @@ describe("#828 G-24: the alert email carries no record identifiers", () => {
     expect(mail.text).not.toContain(PI);
     expect(mail.text).not.toContain(EVT);
     expect(mail.text).toContain("ref[stripe-id] and x[stripe-id]");
+  });
+
+  it("removes Stripe ids outside the safe list (dp_, src_, card_, ...) but leaves snake_case slugs (Codex P1 4301706583)", async () => {
+    const others = ["dp_1TestDispute9Ab", "src_1TestSource7Cd", "card_1TestCard4Ef", "ba_1TestBank2Gh", "acctx_9TestOther1"];
+    const mail = await send(`dispute ${others.join(" ")} in session_payment_succeeded_write_zero_rows`);
+    for (const id of others) expect(mail.text, `email still carries ${id}`).not.toContain(id);
+    expect(mail.text).toContain("in session_payment_succeeded_write_zero_rows");
+  });
+
+  it("removes a UUID whose hex digits are percent-encoded (Codex P2 4301707490, on #891)", async () => {
+    const ENCODED = `/clients/%36f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e%35 and %30a1b2c3d%2D4e5f-4061-8273-8495a6b7c8d%39`;
+    const mail = await send(`at ${ENCODED}`);
+    expect(mail.text).toContain("at /clients/[id] and [id]");
   });
 
   it("keeps what the operator needs to triage: event slug, time, environment and the admin link", async () => {
