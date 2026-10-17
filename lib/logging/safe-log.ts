@@ -27,8 +27,15 @@
 // so dashless hex (Sentry trace and span ids, hashes) is never matched. To be
 // consolidated into one shared definition once #891 merges.
 
-const RECORD_ID_RE =
-  /[0-9a-f]{8}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{12}/gi;
+const RECORD_ID_RE = new RegExp(
+  // A hex digit may itself be percent-encoded (%30-%39, %41-%46, %61-%66):
+  // URL serialization keeps the escape, and routing decodes it straight back
+  // to the id (Codex P2 4301707490). Same for the hyphen (%2D).
+  ["{8}", "{4}", "{4}", "{4}", "{12}"]
+    .map((n) => `(?:[0-9a-f]|%3[0-9]|%4[1-6]|%6[1-6])${n}`)
+    .join("(?:-|%2d)"),
+  "gi",
+);
 const RECORD_ID_PLACEHOLDER = "[id]";
 const REDACTED = "[Redacted]";
 const MAX_DEPTH = 8;

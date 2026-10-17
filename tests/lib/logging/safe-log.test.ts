@@ -44,6 +44,11 @@ describe("safeLog removes record ids from every argument shape", () => {
     expect(out).toEqual(["abc[id]", "[id]fed", "deadbeef[id]cafe"]);
   });
 
+  it("a UUID whose hex digits are percent-encoded (Codex P2 4301707490, on #891)", () => {
+    const ENCODED = `/clients/%36f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e%35 and %30a1b2c3d%2D4e5f-4061-8273-8495a6b7c8d%39`;
+    expect(withoutRecordIds([ENCODED])).toEqual(["/clients/[id] and [id]"]);
+  });
+
   it("objects and arrays: values and keys, at depth", () => {
     const out = withoutRecordIds([
       { clientId: CLIENT, nested: { list: [SESSION, { appt: APPT }] }, [STUDIO]: "key" },
