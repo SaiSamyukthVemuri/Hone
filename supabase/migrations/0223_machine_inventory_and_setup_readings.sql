@@ -1983,6 +1983,64 @@ begin
       using errcode = 'check_violation';
   end if;
 
+  -- AND AGAINST THE GROUPS THIS SAVE DOES NOT TOUCH (Codex, #860 4301851852).
+  --
+  -- THE CHECK ABOVE ONLY SEES THIS SUBMISSION, and a revision is allowed to
+  -- carry a subset: `assembleGroupSubmissions` omits groups she did not
+  -- change. Their channel assignments survive, because
+  -- `latest_setup_for_client` composes the latest revision of EVERY group.
+  --
+  -- So: save g1 on channel 1 and g2 on channel 2, then record a change for
+  -- g2 alone moving it to channel 1. Every group in that save is distinct,
+  -- the check above passes, and the retrieved setup then shows TWO settings
+  -- for channel 1 — one probe with two different settings, which is exactly
+  -- the invariant this command exists to hold. Nothing downstream can repair
+  -- it afterwards: captures are immutable.
+  --
+  -- SCOPED TO THE SETUP IDENTITY, not to the block alone: a capture on
+  -- another machine, profile version or mode is a different setup and its
+  -- channel numbers mean something else. That is the same scope the revision
+  -- allocation and its unique constraint use.
+  --
+  -- IT CANNOT REFUSE A RETRY: an absorbed retry returns above, before this
+  -- runs, and a retry submits the same group keys anyway — which this
+  -- excludes by construction.
+  with submitted as (
+    select distinct (ch.value)::text::smallint as ch
+      from jsonb_array_elements(p_groups) g
+      cross join lateral
+        jsonb_array_elements(
+          case when jsonb_typeof(g.value->'channels') = 'array'
+               then g.value->'channels' else '[]'::jsonb end
+        ) ch
+  ),
+  untouched as (
+    select distinct on (k.group_key) k.group_key, k.channels
+      from public.treatment_setup_captures k
+     where k.session_block_id = p_block_id
+       and k.studio_machine_id = p_studio_machine_id
+       and k.machine_profile_id = v_scope.o_profile_id
+       and k.machine_profile_version = v_scope.o_profile_version
+       and k.mode_key = v_mode
+       and btrim(k.group_key) not in (
+         select btrim(coalesce(g2.value->>'group_key', ''))
+           from jsonb_array_elements(p_groups) g2
+       )
+     order by k.group_key, k.revision desc
+  )
+  select u.group_key, s.ch
+    into v_dup_group, v_dup_channel
+    from submitted s
+    join untouched u on s.ch = any(u.channels)
+   limit 1;
+
+  if v_dup_channel is not null then
+    raise exception
+      'Channel % is still assigned to settings group "%" on this treatment. Record the change for that group too, or move it off the channel first - a probe can only be on one setting at a time.',
+      v_dup_channel, v_dup_group
+      using errcode = 'check_violation';
+  end if;
+
   -- THE SAVE ITSELF. Its machine, profile version and mode are recorded, so a
   -- Save made under a different one is necessarily a different submission and
   -- a stale group cannot rejoin this one.

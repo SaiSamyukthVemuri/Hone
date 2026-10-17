@@ -63,6 +63,35 @@ function formatValue(r: RecordedReading): string {
   return r.value.value.toFixed(Math.max(r.decimals, own));
 }
 
+/**
+ * A field's identity WITHIN A MODE, which is the stage and the key together.
+ *
+ * Keying a label map on the field key alone silently merges two stages that
+ * reuse one key - MultiPlex repeats "Duration" and "Intensity" under "Slow
+ * thermolysis" and "Snap" - so the second stage's label was shown for both
+ * (Codex, #860 4301851853).
+ */
+function fieldIdentity(stageKey: string | null | undefined, fieldKey: string) {
+  return `${stageKey ?? ""}::${fieldKey}`;
+}
+
+/**
+ * One group's rows, split into the machine's own stages, in first-seen order.
+ *
+ * An UNSTAGED profile yields exactly one bucket keyed `null`, which renders
+ * with no heading - identical to the flat list this replaced.
+ */
+function byStage(
+  rows: readonly RecordedReading[],
+): Map<string | null, RecordedReading[]> {
+  const out = new Map<string | null, RecordedReading[]>();
+  for (const r of rows) {
+    const key = r.stageKey ?? null;
+    out.set(key, [...(out.get(key) ?? []), r]);
+  }
+  return out;
+}
+
 export function MachinePriorSetup({
   readings,
   catalogue,
@@ -109,9 +138,18 @@ export function MachinePriorSetup({
   // the component cannot print today's unit because it never holds it.
   const labels = new Map<string, { label: string }>();
   if (mode && !historical) {
-    for (const { field } of modeFields(mode)) {
-      labels.set(field.key, { label: field.nativeLabel });
+    // KEYED BY STAGE AND FIELD. `{ field }` alone merged two stages that
+    // reuse a key (Codex, #860 4301851853).
+    for (const { field, stageKey } of modeFields(mode)) {
+      labels.set(fieldIdentity(stageKey, field.key), { label: field.nativeLabel });
     }
+  }
+
+  // THE MACHINE'S OWN NAME for each stage, so the grouping below can be
+  // labelled the way the practitioner sees it on the unit.
+  const stageLabels = new Map<string, string>();
+  if (mode && !historical) {
+    for (const stage of mode.stages) stageLabels.set(stage.key, stage.nativeLabel);
   }
 
   // Group the readings the way they were recorded, so two probe groups stay two.
@@ -213,9 +251,30 @@ export function MachinePriorSetup({
               Channels {rows[0]!.channels.join(", ")}
             </span>
           )}
+          {/*
+            GROUPED BY STAGE, because the machine groups them that way
+            (Codex, #860 4301851853). A staged profile repeats native labels
+            across its components - MultiPlex has "Duration" under both
+            "Slow thermolysis" and "Snap" - so one flat list cannot say
+            which value belongs to which, and guidance that cannot be
+            attributed cannot be reproduced.
+
+            An UNSTAGED profile has exactly one bucket with a null key and
+            renders exactly as before, with no heading.
+          */}
+          {[...byStage(rows).entries()].map(([stageKey, stageRows]) => (
+          <div key={stageKey ?? ""} className="flex flex-col gap-0.5">
+          {stageKey !== null && (
+            <span
+              className="text-xs font-medium text-neutral-500"
+              data-testid={`prior-setup-stage-${stageKey}`}
+            >
+              {stageLabels.get(stageKey) ?? stageKey}
+            </span>
+          )}
           <ul className="flex flex-wrap gap-x-4 gap-y-1">
-            {rows.map((r) => {
-              const named = labels.get(r.fieldKey);
+            {stageRows.map((r) => {
+              const named = labels.get(fieldIdentity(r.stageKey, r.fieldKey));
               return (
                 <li
                   key={`${groupKey}:${r.stageKey ?? ""}:${r.fieldKey}`}
@@ -227,7 +286,17 @@ export function MachinePriorSetup({
                   // inside another field's "300.5" - and a substring search
                   // over a surface that prints dates, units and several
                   // numbers cannot tell a clinical value from any of them.
-                  data-testid={`prior-setup-${groupKey}-${r.fieldKey}`}
+                  // THE STAGE IS PART OF THE ID when there is one: two
+                  // stages sharing a field key would otherwise render two
+                  // elements with the SAME testid, and a proof asking for
+                  // one of them would silently get whichever came first.
+                  // An unstaged profile keeps the original id, so the
+                  // existing browser proofs are untouched.
+                  data-testid={
+                    r.stageKey
+                      ? `prior-setup-${groupKey}-${r.stageKey}-${r.fieldKey}`
+                      : `prior-setup-${groupKey}-${r.fieldKey}`
+                  }
                 >
                   <span className="text-neutral-500">
                     {named?.label ?? r.fieldKey}
@@ -286,6 +355,8 @@ export function MachinePriorSetup({
               );
             })}
           </ul>
+          </div>
+          ))}
         </div>
       ))}
 

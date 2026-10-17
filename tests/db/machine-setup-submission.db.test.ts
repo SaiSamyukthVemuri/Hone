@@ -1202,3 +1202,111 @@ describe("0223 · a retry key cannot absorb a DIFFERENT payload", () => {
     ).rejects.toThrow(/different settings/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// ONE PROBE, ONE SETTING — ACROSS REVISIONS, NOT JUST WITHIN ONE SAVE
+//
+// THE DEFECT (Codex, #860 4301851852). The cross-group channel check scanned
+// only the groups in THIS submission. A revision is allowed to carry a
+// subset — `assembleGroupSubmissions` omits groups she did not change — and
+// the omitted groups keep their channel assignments, because
+// `latest_setup_for_client` composes the latest revision of EVERY group.
+//
+// So the sequence below was accepted: g1 on channel 1 and g2 on channel 2,
+// then a change to g2 alone moving it onto channel 1. Every group in that
+// second save is distinct, so the old check passed — and the retrieved setup
+// then showed TWO settings for channel 1. One probe cannot be on two
+// settings, and captures are immutable, so nothing downstream can repair it.
+//
+// A DB TEST BECAUSE IT IS A DB RULE: the command is reachable by a direct
+// authenticated RPC caller, and the application's own assembly is exactly
+// what omits the untouched group.
+// ---------------------------------------------------------------------------
+describe("0223 · a channel freed by nobody cannot be claimed by a revision", () => {
+  it("refuses a revision that moves a group onto a channel another group still holds", async () => {
+    const studio = await seedStudio("chan-cross");
+    const { blockId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+
+    const first = await save(studio.userId, blockId, machineId, "cross-key-0001", [
+      group("g1", [1], "120"),
+      group("g2", [2], "80"),
+    ]);
+    expect(first.groups).toBe(2);
+
+    // THE REVISION, carrying only the group she changed — which is what the
+    // application sends.
+    await expect(
+      save(studio.userId, blockId, machineId, "cross-key-0002", [
+        group("g2", [1], "90"),
+      ]),
+    ).rejects.toThrow(/still assigned to settings group/i);
+
+    // AND NOTHING WAS WRITTEN. A refusal that still appended a capture would
+    // leave the record in the state the refusal exists to prevent.
+    const caps = await capturesOf(blockId);
+    expect(caps).toHaveLength(2);
+    expect(caps.map((c) => c.revision)).toEqual([1, 1]);
+  });
+
+  it("ALLOWS the same move when the other group is revised in the same save", async () => {
+    // THE ESCAPE HATCH, and the reason the refusal is not a trap: she can
+    // move both at once. If this failed, the rule would make a legitimate
+    // channel swap impossible and would be worse than the defect.
+    const studio = await seedStudio("chan-swap");
+    const { blockId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+
+    await save(studio.userId, blockId, machineId, "swap-key-0001", [
+      group("g1", [1], "120"),
+      group("g2", [2], "80"),
+    ]);
+
+    const swapped = await save(studio.userId, blockId, machineId, "swap-key-0002", [
+      group("g1", [2], "121"),
+      group("g2", [1], "81"),
+    ]);
+    expect(swapped.groups).toBe(2);
+  });
+
+  it("ALLOWS a revision that keeps the group on its own channel", async () => {
+    // The ordinary case: changing a VALUE on the same channel must not be
+    // refused by a rule about channels. A check that forbade this would be
+    // caught here rather than by a practitioner.
+    const studio = await seedStudio("chan-same");
+    const { blockId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+
+    await save(studio.userId, blockId, machineId, "same-key-0001", [
+      group("g1", [1], "120"),
+      group("g2", [2], "80"),
+    ]);
+    const again = await save(studio.userId, blockId, machineId, "same-key-0002", [
+      group("g2", [2], "85"),
+    ]);
+    expect(again.groups).toBe(1);
+  });
+
+  it("and an absorbed RETRY of the subset save is still absorbed", async () => {
+    // The refusal runs after the idempotency return, so a retry of a save
+    // that already committed must still be answered with the original
+    // result rather than refused by the new rule. Without this, the fix
+    // would break the retry path it shares a function with.
+    const studio = await seedStudio("chan-retry");
+    const { blockId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+
+    await save(studio.userId, blockId, machineId, "retry-key-0001", [
+      group("g1", [1], "120"),
+      group("g2", [2], "80"),
+    ]);
+    const rev = await save(studio.userId, blockId, machineId, "retry-key-0002", [
+      group("g2", [2], "85"),
+    ]);
+    const again = await save(studio.userId, blockId, machineId, "retry-key-0002", [
+      group("g2", [2], "85"),
+    ]);
+    expect(again.reused).toBe(true);
+    expect(again.submission_id).toBe(rev.submission_id);
+  });
+});

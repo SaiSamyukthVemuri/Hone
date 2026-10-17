@@ -99,20 +99,50 @@ function clockTime(iso: string): string | null {
  * lying, and the unit is never taken from today's catalogue at all - see the
  * `nativeUnit` rule in machine-prior-setup.
  */
+/**
+ * One capture's readings, split into the machine's own stages, in first-seen
+ * order. An UNSTAGED profile yields exactly one bucket keyed `null`.
+ */
+function byStage(
+  rows: readonly RecordedReading[],
+): Map<string | null, RecordedReading[]> {
+  const out = new Map<string | null, RecordedReading[]>();
+  for (const r of rows) {
+    const key = r.stageKey ?? null;
+    out.set(key, [...(out.get(key) ?? []), r]);
+  }
+  return out;
+}
+
 function labelsFor(
   entry: ChronologyEntry,
   catalogue: readonly MachineProfile[],
-): { labels: Map<string, string>; historical: boolean } {
+): {
+  labels: Map<string, string>;
+  stageLabels: Map<string, string>;
+  historical: boolean;
+} {
   const profile = catalogue.find((p) => p.profileId === entry.profileId);
   const historical = profile ? entry.profileVersion !== profile.version : true;
   const labels = new Map<string, string>();
   const mode = profile ? findMode(profile, entry.modeKey) : undefined;
   if (mode && !historical) {
-    for (const { field } of modeFields(mode)) {
-      labels.set(field.key, field.nativeLabel);
+    // KEYED BY STAGE AND FIELD (Codex, #860 4301851853, reported against the
+    // guidance surface; the same collision is here). `{ field }` alone
+    // merges two stages that reuse a key — MultiPlex repeats "Duration" and
+    // "Intensity" under "Slow thermolysis" and "Snap" — so the second
+    // stage's label was shown for both.
+    for (const { field, stageKey } of modeFields(mode)) {
+      labels.set(`${stageKey ?? ""}::${field.key}`, field.nativeLabel);
     }
   }
-  return { labels, historical };
+  // THE MACHINE'S OWN NAME for each stage, so the grouping below can be
+  // labelled the way she sees it on the unit.
+  const stageLabels = new Map<string, string>();
+  if (mode && !historical) {
+    for (const stage of mode.stages) stageLabels.set(stage.key, stage.nativeLabel);
+  }
+  return { labels, stageLabels, historical };
 }
 
 function ChangeLine({
@@ -134,8 +164,15 @@ function ChangeLine({
   const mode = profile ? findMode(profile, change.to.modeKey) : undefined;
   let label = change.to.fieldKey;
   if (mode && !historical) {
-    for (const { field } of modeFields(mode)) {
-      if (field.key === change.to.fieldKey) label = field.nativeLabel;
+    // MATCHED ON STAGE TOO, for the same reason: a change line naming the
+    // wrong stage's label is a change line about the wrong component.
+    for (const { field, stageKey } of modeFields(mode)) {
+      if (
+        field.key === change.to.fieldKey &&
+        (stageKey ?? null) === (change.to.stageKey ?? null)
+      ) {
+        label = field.nativeLabel;
+      }
     }
   }
   const at = clockTime(change.to.recordedAt);
@@ -233,7 +270,7 @@ export function MachineRecordedSetups({
 
       <ol className="flex flex-col gap-2">
         {entries.map((entry) => {
-          const { labels, historical } = labelsFor(entry, catalogue);
+          const { labels, stageLabels, historical } = labelsFor(entry, catalogue);
           const at = clockTime(entry.recordedAt);
           const unitName = unitNames[entry.deviceId] ?? null;
           return (
@@ -263,14 +300,36 @@ export function MachineRecordedSetups({
                 )}
                 {unitName && <span className="ml-2">{unitName}</span>}
               </p>
+              {/*
+                GROUPED BY STAGE, as the machine groups them. Codex named
+                this on the guidance surface (#860 4301851853); the defect
+                was here too. A staged profile repeats native labels across
+                its components, so one flat list cannot say which value
+                belongs to which — and this is the surface she checks before
+                deciding whether a setting already got recorded.
+
+                An UNSTAGED profile has exactly one bucket with a null key
+                and renders with no heading, identical to before.
+              */}
+              {[...byStage(entry.readings).entries()].map(([stageKey, stageRows]) => (
+              <div key={stageKey ?? ""} className="flex flex-col gap-0.5">
+              {stageKey !== null && (
+                <span
+                  className="text-xs font-medium text-neutral-500"
+                  data-testid={`recorded-stage-${entry.groupKey}-${stageKey}`}
+                >
+                  {stageLabels.get(stageKey) ?? stageKey}
+                </span>
+              )}
               <ul className="flex flex-wrap gap-x-4 gap-y-1">
-                {entry.readings.map((r) => (
+                {stageRows.map((r) => (
                   <li
                     key={`${r.stageKey ?? ""}:${r.fieldKey}`}
                     className="text-sm text-neutral-700 dark:text-neutral-300"
                   >
                     <span className="text-neutral-500">
-                      {labels.get(r.fieldKey) ?? r.fieldKey}
+                      {labels.get(`${r.stageKey ?? ""}::${r.fieldKey}`) ??
+                        r.fieldKey}
                     </span>{" "}
                     <span className="font-medium">{formatValue(r)}</span>
                     {/*
@@ -298,7 +357,11 @@ export function MachineRecordedSetups({
                     {observationSourceLabel(r.observationSource) ? (
                       <span
                         className="ml-1 text-xs text-neutral-500"
-                        data-testid={`recorded-source-${r.fieldKey}`}
+                        data-testid={
+                          r.stageKey
+                            ? `recorded-source-${r.stageKey}-${r.fieldKey}`
+                            : `recorded-source-${r.fieldKey}`
+                        }
                       >
                         ({observationSourceLabel(r.observationSource)})
                       </span>
@@ -306,6 +369,8 @@ export function MachineRecordedSetups({
                   </li>
                 ))}
               </ul>
+              </div>
+              ))}
               {historical && (
                 <span className="text-xs text-neutral-500">
                   The field contract has changed since this was recorded, so the

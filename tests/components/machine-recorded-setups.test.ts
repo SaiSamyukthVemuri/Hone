@@ -670,3 +670,212 @@ describe("the prior-setup date agrees with itself", () => {
     expect(renderAt("not-a-date")).toContain("Recorded earlier");
   });
 });
+
+// ---------------------------------------------------------------------------
+// MPX-03 · GUIDANCE THAT CANNOT BE ATTRIBUTED CANNOT BE REPRODUCED
+//
+// Codex #860 4301851853. `modeFields` tags every field with the stage it came
+// from, and says in its own comment that this exists "so a caller can render
+// the machine's own grouping rather than one flat list". The guidance surface
+// rendered one flat list.
+//
+// A staged profile deliberately repeats native labels across its components —
+// MultiPlex has "Duration" and "Intensity" under both "Slow thermolysis" and
+// "Snap" — so the previous treatment showed two values called "Duration" with
+// nothing saying which belonged to which component. She cannot reproduce a
+// setting she cannot attribute.
+//
+// AND A SECOND DEFECT in the same line: keying the label map on the field key
+// alone let the second stage's label overwrite the first's, so both rows
+// could be labelled from the wrong component.
+// ---------------------------------------------------------------------------
+describe("previous treatment keeps the machine's own stages", () => {
+
+  const stagedReading = (stageKey: string, value: number): RecordedReading =>
+    ({
+      ...reading({ recordedAt: "2026-10-16T10:00:00Z" }),
+      profileId: "fixture:staged",
+      profileVersion: 1,
+      modeKey: "galvanic",
+      stageKey,
+      fieldKey: "duration",
+      observationSource: null,
+      value: { kind: "value", value },
+    }) as RecordedReading;
+
+  const html = () =>
+    renderToStaticMarkup(
+      createElement(MachinePriorSetup, {
+        catalogue: [STAGED],
+        readings: [stagedReading("slow", 3), stagedReading("snap", 40)],
+      }),
+    );
+
+  it("names each stage the way the machine does", () => {
+    const out = html();
+    expect(out).toContain('data-testid="prior-setup-stage-slow"');
+    expect(out).toContain('data-testid="prior-setup-stage-snap"');
+    expect(out).toMatch(/Slow thermolysis/);
+    expect(out).toMatch(/Snap/);
+  });
+
+  it("gives the two same-named fields DISTINCT ids", () => {
+    // Before this, both rows rendered `prior-setup-g1-duration`. A proof
+    // asking for one of them would silently have got whichever came first,
+    // and a practitioner had nothing at all to tell them apart.
+    const out = html();
+    expect(out).toContain('data-testid="prior-setup-g1-slow-duration"');
+    expect(out).toContain('data-testid="prior-setup-g1-snap-duration"');
+  });
+
+  it("CONTROL: an UNSTAGED profile renders exactly as before", () => {
+    // The flat path must be untouched: no stage heading, and the original
+    // testid, which the browser proofs already depend on.
+    const out = renderToStaticMarkup(
+      createElement(MachinePriorSetup, {
+        catalogue: CAT,
+        readings: [
+          { ...reading({ recordedAt: "2026-10-16T10:00:00Z" }), observationSource: null } as RecordedReading,
+        ],
+      }),
+    );
+    expect(out).toContain('data-testid="prior-setup-g1-current"');
+    expect(out).not.toMatch(/prior-setup-stage-/);
+  });
+});
+
+const STAGED: MachineProfile = {
+  profileId: "fixture:staged",
+  version: 1,
+  family: "Synthetic/Demo",
+  manufacturer: "Fixture",
+  model: "Staged",
+  availability: "active",
+  verification: "device-confirmed",
+  frequency: { kind: "not-applicable" },
+  evidence: [
+    {
+      id: "fx",
+      kind: "studio-device-photo",
+      consultedOn: "2026-10-17",
+      establishes: "Nothing about any real machine; it carries two stages that reuse a field key.",
+    },
+  ],
+  openQuestions: [],
+  modes: [
+    {
+      key: "galvanic",
+      nativeLabel: "Blend",
+      family: "blend",
+      availability: "active",
+      verification: "device-confirmed",
+      evidence: ["fx"],
+      fields: [],
+      stages: [
+        {
+          key: "slow",
+          nativeLabel: "Slow thermolysis",
+          fields: [
+            {
+              key: "duration",
+              nativeLabel: "Duration",
+              quantity: "duration",
+              unit: "s",
+              decimals: 1,
+              optional: false,
+              expectedSource: "practitioner-entered",
+              editable: true,
+              verification: "device-confirmed",
+              evidence: ["fx"],
+            },
+          ],
+        },
+        {
+          key: "snap",
+          nativeLabel: "Snap",
+          fields: [
+            {
+              // THE SAME KEY under a different stage, which is the whole
+              // point of the fixture.
+              key: "duration",
+              nativeLabel: "Duration",
+              quantity: "duration",
+              unit: "ms",
+              decimals: 0,
+              optional: false,
+              expectedSource: "practitioner-entered",
+              editable: true,
+              verification: "device-confirmed",
+              evidence: ["fx"],
+            },
+          ],
+        },
+      ],
+    },
+  ],
+} as MachineProfile;
+
+
+// ---------------------------------------------------------------------------
+// MPX-03 · THE RECORDED HISTORY KEEPS THE MACHINE'S STAGES TOO
+//
+// ADDED SCOPE. Codex reported the flattening on the GUIDANCE surface (#860
+// 4301851853). This surface had it as well, and it is the one she checks
+// before deciding whether a setting has already been recorded — so an
+// unattributable row here invites a second immutable capture, which is the
+// harm this whole panel exists to prevent.
+//
+// THE UNSTAGED CONTROL IS THE REAL REGRESSION PROOF: every shipped profile
+// today is stageless, so the flat path is the only path in production. It
+// must come out exactly as it did before the restructure.
+// ---------------------------------------------------------------------------
+describe("recorded history keeps the machine's stages", () => {
+  const stagedRecorded = (stageKey: string, value: number): RecordedReading =>
+    ({
+      ...reading({ recordedAt: "2026-10-16T10:00:00Z" }),
+      profileId: "fixture:staged",
+      profileVersion: 1,
+      modeKey: "galvanic",
+      stageKey,
+      fieldKey: "duration",
+      observationSource: null,
+      value: { kind: "value", value },
+    }) as RecordedReading;
+
+  // NAMED FOR WHAT IT ASSERTS. The first title also claimed it checked
+  // distinct SOURCE ids, which it does not: this fixture's readings carry a
+  // null observation source, so no source element renders at all. A test
+  // whose name overstates its assertions is the same failure as a guard
+  // pinning the wrong thing — it reports coverage that is not there.
+  it("names each stage the way the machine does", () => {
+    const html = renderToStaticMarkup(
+      createElement(MachineRecordedSetups, {
+        catalogue: [STAGED],
+        readings: [stagedRecorded("slow", 3), stagedRecorded("snap", 40)],
+      }),
+    );
+    expect(html).toContain('data-testid="recorded-stage-g1-slow"');
+    expect(html).toContain('data-testid="recorded-stage-g1-snap"');
+    expect(html).toMatch(/Slow thermolysis/);
+    expect(html).toMatch(/Snap/);
+  });
+
+  it("CONTROL: an UNSTAGED capture renders exactly as it did before", () => {
+    // The whole shipped surface is this path — no active profile has
+    // stages. If the restructure changed it at all, that is a regression
+    // affecting every studio, in exchange for a case none of them can
+    // reach yet.
+    const html = renderToStaticMarkup(
+      createElement(MachineRecordedSetups, {
+        catalogue: CAT,
+        readings: [
+          { ...reading({ recordedAt: "2026-10-16T10:00:00Z" }), observationSource: null } as RecordedReading,
+        ],
+      }),
+    );
+    expect(html).toContain('data-testid="recorded-capture-g1-1"');
+    expect(html).not.toMatch(/recorded-stage-/);
+    // And the source id keeps its original, unprefixed shape.
+    expect(html).not.toMatch(/recorded-source-[a-z]+-/);
+  });
+});
