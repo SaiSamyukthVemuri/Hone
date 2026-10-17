@@ -85,7 +85,10 @@ function decodeRound(units: Unit[]): Unit[] | null {
  *  original range. `undefined` means the token is still changing after the
  *  bound and must be dropped. */
 function replaceDecodedMatches(token: string, detectors: readonly Detector[]): string | undefined {
-  let units: Unit[] = [...token].map((ch, i) => ({ ch, start: i, end: i + 1 }));
+  // UTF-16 code units, not code points (Codex P2 4301959849 / 4301959252):
+  // regex indexes and String.slice count code units, so an astral character
+  // (an emoji is two units) must be two units here too.
+  let units: Unit[] = Array.from({ length: token.length }, (_v, i) => ({ ch: token[i]!, start: i, end: i + 1 }));
   for (let round = 0; ; round += 1) {
     const next = decodeRound(units);
     if (next === null) break;
@@ -170,7 +173,15 @@ function scrubValue(value: unknown, seen: WeakSet<object>, depth: number): unkno
 /** The arguments as they will be logged: every record id replaced. */
 export function withoutRecordIds(args: readonly unknown[]): unknown[] {
   const seen = new WeakSet<object>();
-  return args.map((a) => scrubValue(a, seen, 0));
+  // Logging must never throw from an error path: an argument the scrubber
+  // cannot process is withheld, never logged raw.
+  return args.map((a) => {
+    try {
+      return scrubValue(a, seen, 0);
+    } catch {
+      return REDACTED;
+    }
+  });
 }
 
 export const safeLog = {

@@ -187,6 +187,14 @@ describe("THE GUARANTEE for encodings (ASCII percent-decoding to a fixed point)"
     expect(withoutRecordIds([mixed])).toEqual(["/c/foo%40example.test/[id]%3Fx"]);
   });
 
+  it("astral characters before an id: offsets are UTF-16, nothing corrupted, nothing thrown (Codex P2 4301959849)", () => {
+    const ASTRAL = `💥%20${"6f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5"}%20x 😀${"0a1b2c3d-4e5f-4061-8273-8495a6b7c8d9"}%20y 🎉%20dp%5F1TestDispute9Ab`;
+    expect(withoutRecordIds([ASTRAL])).toEqual(["💥%20[id]%20x 😀[id]%20y 🎉%20dp%5F1TestDispute9Ab"]);
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(() => safeLog.error(`😀${CLIENT}%`)).not.toThrow();
+    expect(spy.mock.calls[0]).toEqual(["😀[id]%"]);
+  });
+
   it("tokens with % but no id keep their original encoding", () => {
     expect(withoutRecordIds(["100% done", "q=a%20b&r=%2Fx", "bad %zz escape"])).toEqual(["100% done", "q=a%20b&r=%2Fx", "bad %zz escape"]);
   });
