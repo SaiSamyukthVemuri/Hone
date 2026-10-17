@@ -2171,10 +2171,21 @@ begin
                 btrim(coalesce(f->>'field_key', '')) as field_key,
                 btrim(coalesce(f->>'native_unit', '')) as native_unit,
                 (f->>'decimals')::smallint as decimals,
-                btrim(coalesce(f->>'quantity', '')) as quantity
+                btrim(coalesce(f->>'quantity', '')) as quantity,
+                -- REQUIREDNESS IS PART OF THE CONTRACT, so it is part of
+                -- equality. I added the column and the enforcement in the
+                -- previous round and left BOTH projections without it, so
+                -- republishing a version with only `optional` flipped was
+                -- accepted as an idempotent no-op and the stored
+                -- requiredness silently diverged from the catalogue
+                -- (Codex, #860 4300386015). Flipping toward optional then
+                -- makes ordinary UI captures fail as incomplete; flipping
+                -- toward required lets a direct call omit the field.
+                coalesce((f->>'optional')::boolean, false) as optional
            from jsonb_array_elements(p_fields) as f)
         except
-        (select c.stage_key, c.field_key, c.native_unit, c.decimals, c.quantity
+        (select c.stage_key, c.field_key, c.native_unit, c.decimals,
+                c.quantity, c.optional
            from public.machine_profile_field_contract c
           where c.machine_profile_id = v_profile
             and c.machine_profile_version = p_machine_profile_version
@@ -2183,7 +2194,8 @@ begin
 
     select v_diff + count(*) into v_diff
       from (
-        (select c.stage_key, c.field_key, c.native_unit, c.decimals, c.quantity
+        (select c.stage_key, c.field_key, c.native_unit, c.decimals,
+                c.quantity, c.optional
            from public.machine_profile_field_contract c
           where c.machine_profile_id = v_profile
             and c.machine_profile_version = p_machine_profile_version
@@ -2193,7 +2205,17 @@ begin
                 btrim(coalesce(f->>'field_key', '')) as field_key,
                 btrim(coalesce(f->>'native_unit', '')) as native_unit,
                 (f->>'decimals')::smallint as decimals,
-                btrim(coalesce(f->>'quantity', '')) as quantity
+                btrim(coalesce(f->>'quantity', '')) as quantity,
+                -- REQUIREDNESS IS PART OF THE CONTRACT, so it is part of
+                -- equality. I added the column and the enforcement in the
+                -- previous round and left BOTH projections without it, so
+                -- republishing a version with only `optional` flipped was
+                -- accepted as an idempotent no-op and the stored
+                -- requiredness silently diverged from the catalogue
+                -- (Codex, #860 4300386015). Flipping toward optional then
+                -- makes ordinary UI captures fail as incomplete; flipping
+                -- toward required lets a direct call omit the field.
+                coalesce((f->>'optional')::boolean, false) as optional
            from jsonb_array_elements(p_fields) as f)
       ) only_published;
 

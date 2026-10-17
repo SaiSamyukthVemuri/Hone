@@ -750,6 +750,73 @@ describe("switching machine or mode clears the collected draft", () => {
     );
   });
 
+  it("what is recorded is RE-READ after a save, so the seed is never stale", () => {
+    // THE P1 (Codex, #860 4300386011), and the fifth way into one
+    // invariant: a group identity must survive every remount.
+    //
+    // The entry form seeds its identities from `recordedSetup`, which was
+    // loaded once when the panel opened and never refreshed. Save g1 and
+    // g2, switch machine or mode, switch back — the remount seeds from a
+    // snapshot that predates those captures, finds nothing, falls back to a
+    // fresh g1, and a change meant for g2 lands as a g1 revision.
+    //
+    // THE SAME STALENESS ALSO HID THE CAPTURE FROM THE LIST BELOW, which
+    // exists to stop her recording it twice. One root, two harms, one fix.
+    const src = read(CONN_SRC);
+    expect(src).toMatch(
+      /if \(out\.ok\) \{[\s\S]{0,1400}?await mod\.readingsForBlockAction\(\{[\s\S]{0,200}?blockId: input\.blockId,/,
+    );
+    expect(src).toMatch(/setCtx\(\(prev\) => \(prev \? \{ \.\.\.prev, recordedSetup: fresh \} : prev\)\)/);
+  });
+
+  it("and a failed refresh does not fail the save that already committed", () => {
+    // Reporting a committed save as failed is the lost-response defect,
+    // manufactured. The refresh is best-effort; the next open reads truth.
+    const src = read(CONN_SRC);
+    expect(src).toMatch(
+      /const fresh = await mod\.readingsForBlockAction\([\s\S]{0,300}?\} catch \{/,
+    );
+  });
+
+  it("the SEED SOURCES are enumerated, and every one is current", () => {
+    // ops01 asked for this path to join the enumeration. The draft's
+    // identities can come from exactly two places, and both must be
+    // current at the moment they are read:
+    //
+    //   1. WITHIN a mount, from the previous capture — `clearedForNextCapture`,
+    //      which keeps identities and clears observations;
+    //   2. ACROSS a mount, from the record — `groupsFromRecorded`, scoped to
+    //      the mount's (device, profile, version, mode).
+    //
+    // Source 2 is only as good as `recordedSetup`, which is why the refresh
+    // above is part of the invariant rather than a nicety.
+    const entry = read(ENTRY_SRC);
+    expect(entry).toMatch(/setGroups\(clearedForNextCapture\)/);
+    expect(entry).toMatch(/groupsFromRecorded\(recordedGroups, \{/);
+    // No THIRD source may appear without this guard being updated: a seed
+    // that came from anywhere else would not be covered by either rule.
+    const seeds = entry.match(/useState<SettingGroupDraft\[\]>\(/g) ?? [];
+    expect(seeds.length, "the draft has exactly one initializer").toBe(1);
+  });
+
+  it("contract equality includes requiredness", () => {
+    // I added `optional` to the contract and its enforcement last round and
+    // left BOTH symmetric-difference projections without it, so
+    // republishing a version with only optionality flipped was accepted as
+    // an idempotent no-op and the stored requiredness silently diverged
+    // from the catalogue (Codex, #860 4300386015).
+    const sql = read(MIGRATION_SRC);
+    expect(
+      (sql.match(/coalesce\(\(f->>'optional'\)::boolean, false\) as optional/g) ?? [])
+        .length,
+      "both incoming projections must carry optional",
+    ).toBe(2);
+    expect(
+      (sql.match(/c\.quantity, c\.optional/g) ?? []).length,
+      "both published projections must carry optional",
+    ).toBe(2);
+  });
+
   it("the machine opener keeps the 44px touch floor", () => {
     // DESIGN.md LAW 6, and the third time this lane has hand-rolled a control
     // under the floor (Codex, #860 4296029615, after ebc69ff6). This one is

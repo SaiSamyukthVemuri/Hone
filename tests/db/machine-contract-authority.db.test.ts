@@ -371,6 +371,41 @@ describe("0223 · a published version is IMMUTABLE", () => {
     expect(await publish(10)).toBe(0);
   });
 
+  it("the SAME fields with OPTIONALITY flipped are refused", async () => {
+    // THE DEFECT (Codex, #860 4300386015). `optional` joined the contract
+    // and its enforcement in the previous round, and both
+    // symmetric-difference projections were left without it — so
+    // republishing a version with only requiredness changed returned the
+    // idempotent no-op and the stored flag silently diverged from the
+    // catalogue.
+    //
+    // WHAT THAT COSTS EITHER WAY: flipping a field toward optional lets a
+    // direct recording call omit it, while flipping it toward required
+    // makes ordinary UI captures fail as incomplete — against a contract
+    // that still reads as published and agreed.
+    // VERSION 150: every number below 143 is already claimed in this file,
+    // and 21/22 in particular belong to the channel and installed-option
+    // tests. Reusing one republishes a version with different MODE facts
+    // and fails on a rule that has nothing to do with this test.
+    await publish(150);
+    await expect(
+      publish(150, {
+        fields: [
+          { field_key: "current", native_unit: "µA", decimals: 0, quantity: "current" },
+          { field_key: "duration", native_unit: "s", decimals: 1, quantity: "duration", optional: true },
+          { field_key: "reps", native_unit: "count", decimals: 0, quantity: "count", optional: true },
+        ],
+      }),
+    ).rejects.toThrow(/already published with different fields/i);
+  });
+
+  it("CONTROL: an identical republish is still the idempotent no-op", async () => {
+    // Without this the refusal above is satisfied by a function that
+    // refuses every republish, which would break deployment.
+    await publish(151);
+    await expect(publish(151)).resolves.toBeGreaterThanOrEqual(0);
+  });
+
   it("different FIELDS for a published version are refused", async () => {
     await publish(11);
     await expect(

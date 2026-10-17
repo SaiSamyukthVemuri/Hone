@@ -177,6 +177,43 @@ export function MachineFirstSetupConnected({
         clientId,
         sessionId,
       });
+      // WHAT IS RECORDED HAS CHANGED, SO RE-READ IT.
+      //
+      // `recordedSetup` was loaded once when this panel opened and never
+      // refreshed, which cost two things (Codex, #860 4300386011):
+      //
+      //   1. THE SEED. The entry form restores its group identities from
+      //      this snapshot on every mount. Save g1 and g2, switch machine
+      //      or mode, switch back — the remount seeds from a snapshot that
+      //      predates those captures, finds nothing, and falls back to a
+      //      fresh g1. A change meant for g2 is then recorded as a g1
+      //      revision: the identity defect again, on the save-then-switch-
+      //      back path.
+      //   2. THE SURFACE BELOW IT. "Recorded this treatment" also renders
+      //      from this snapshot, so a capture she had just made was absent
+      //      from the list that exists to stop her recording it twice.
+      //
+      // Both are the same staleness, so both are fixed by re-reading the
+      // truth rather than by patching the seed. The SERVER is asked, not a
+      // local tally: a client-side map of "what I just saved" would be a
+      // second account of the record that can disagree with it, and an
+      // absorbed retry (`reused`) writes nothing while still meaning those
+      // groups exist.
+      if (out.ok) {
+        try {
+          const fresh = await mod.readingsForBlockAction({
+            blockId: input.blockId,
+            clientId,
+            sessionId,
+          });
+          setCtx((prev) => (prev ? { ...prev, recordedSetup: fresh } : prev));
+        } catch {
+          // A FAILED REFRESH MUST NOT FAIL THE SAVE, which already
+          // committed. The panel keeps the older snapshot and the next
+          // open reads the truth; reporting the save as failed here would
+          // be the lost-response defect, manufactured.
+        }
+      }
       return out.ok
         ? {
             ok: true,

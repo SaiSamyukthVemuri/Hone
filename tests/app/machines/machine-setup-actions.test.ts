@@ -1557,7 +1557,34 @@ describe("loadMachineSetupContext reads the block's recorded captures", () => {
     expect(src).toMatch(
       /loadMachineSetupContext\(\{\s*clientId,\s*sessionId,\s*blockId\s*\}\)/,
     );
-    // And the wrapper does NOT call the per-block read separately.
-    expect(src).not.toMatch(/readingsForBlockAction/);
+    // AND OPENING THE PANEL COSTS ONE ROUND TRIP, which is the claim —
+    // not that the identifier never appears.
+    //
+    // The wrapper now DOES call `readingsForBlockAction`, but after a
+    // successful SAVE, to refresh what is recorded (Codex, #860
+    // 4300386011): the entry form seeds its group identities from that
+    // snapshot, and a stale one made a change meant for g2 land as a g1
+    // revision after a switch away and back. That is a different moment
+    // from opening, and the original assertion — a bare "this identifier
+    // must not appear" — would have forbidden the fix rather than the
+    // defect it was written against.
+    //
+    // So the claim is scoped to the OPEN path: the loader's own callback
+    // must not make a second read.
+    const openBody = src.slice(
+      src.indexOf("const open = useCallback("),
+      src.indexOf("if (!ctx) {"),
+    );
+    expect(openBody.length, "the open callback was not found").toBeGreaterThan(0);
+    expect(
+      openBody,
+      "opening the panel must cost ONE round trip",
+    ).not.toMatch(/readingsForBlockAction/);
+    // The post-save refresh is the only other call, and it lives in the
+    // record closure.
+    expect(
+      (src.match(/readingsForBlockAction/g) ?? []).length,
+      "exactly one read outside the loader",
+    ).toBe(1);
   });
 });

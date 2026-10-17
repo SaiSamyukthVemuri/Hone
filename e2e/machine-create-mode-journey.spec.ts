@@ -1043,4 +1043,146 @@ test("create mode: choose the machine, save the block, record one save, retrieve
     await expect(g2Current).not.toContainText("250");
     await noOverflow(page);
   });
+
+  await test.step("11: SAVE TWO GROUPS, SWITCH AWAY, SWITCH BACK — g2 survives", async () => {
+    // THE ROUND-11 P1 (Codex, #860 4300386011), and the fifth way into one
+    // invariant: a group identity must survive every remount.
+    //
+    // The entry form seeds its identities from `recordedSetup`, which the
+    // panel loaded once when it opened. Save g1 and g2, switch machine or
+    // mode, switch back — the remount seeds from a snapshot that PREDATES
+    // those captures, finds nothing for this scope, and falls back to a
+    // fresh g1. A change meant for g2 is then recorded as a g1 revision,
+    // and guidance combines the repurposed g1 with the stale g2.
+    //
+    // WHY THE EARLIER STEPS COULD NOT CATCH IT. Step 9 never leaves the
+    // mount, so `clearedForNextCapture` carries the identities in memory.
+    // Step 10 reloads the PAGE, which re-reads the context from the server
+    // and so happens to be current. Only switching away and back remounts
+    // the form while the panel keeps its original snapshot — the one path
+    // where the seed source is stale rather than absent.
+    //
+    // A FRESH AREA, so no count in steps 5 to 10 moves.
+    await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+    expect(await openMachinePanel(page)).toBe(true);
+    await page.getByTestId("machine-select").selectOption(machineId);
+    await page.getByTestId("save-treatment-area").click({ timeout: T });
+
+    let thirdBlock = "";
+    await expect
+      .poll(
+        async () => {
+          const rows = await sql<{ id: string }>(
+            `select id from public.session_blocks
+              where session_id = $1 and deleted_at is null
+                and id <> $2 and id <> $3
+              order by sort_order desc limit 1`,
+            [sessionId, blockId, secondBlock],
+          );
+          thirdBlock = rows[0]?.id ?? "";
+          return thirdBlock;
+        },
+        { timeout: T, message: "the third treatment area was not created" },
+      )
+      .not.toBe("");
+
+    await page.getByTestId(`edit-area-${thirdBlock}`).click({ timeout: T });
+    expect(await openMachinePanel(page)).toBe(true);
+    await expect(page.getByTestId("machine-reading-entry")).toBeVisible({
+      timeout: T,
+    });
+
+    // TWO GROUPS, SAVED TOGETHER.
+    await page.getByTestId("setting-group-add").click({ timeout: T });
+    await expect(page.getByTestId("setting-group-g2")).toBeVisible({ timeout: T });
+    await page.getByTestId("setting-group-g1-channel-1").click();
+    await page.getByTestId("setting-group-g2-channel-2").click();
+    for (const [group, current] of [
+      ["g1", "111"],
+      ["g2", "222"],
+    ] as const) {
+      await page.getByTestId(`reading-${group}-current`).fill(current);
+      await page.getByTestId(`reading-${group}-duration`).fill("300.5");
+      await page.getByTestId(`reading-${group}-energy_shown`).fill("1.25");
+    }
+    await page.getByTestId("machine-reading-save").click();
+    await expect(page.getByTestId("machine-reading-saved")).toBeVisible({
+      timeout: T,
+    });
+
+    // SWITCH AWAY AND BACK. Clearing the machine unmounts the entry form;
+    // choosing it again mounts a new one, which is where the seed is read.
+    await page.getByTestId("machine-select").selectOption("");
+    await expect(page.getByTestId("machine-reading-entry")).toHaveCount(0, {
+      timeout: T,
+    });
+    await page.getByTestId("machine-select").selectOption(machineId);
+    await expect(page.getByTestId("machine-reading-entry")).toBeVisible({
+      timeout: T,
+    });
+
+    // BOTH GROUPS ARE BACK. Before the fix there was one box labelled g1.
+    await expect(page.getByTestId("setting-group-g1")).toBeVisible({ timeout: T });
+    await expect(page.getByTestId("setting-group-g2")).toBeVisible();
+    await expect(page.getByTestId("reading-g1-current")).toHaveValue("");
+    await expect(page.getByTestId("reading-g2-current")).toHaveValue("");
+
+    // CHANGE g2 ONLY.
+    await page.getByTestId("setting-group-g2-channel-2").click();
+    await page.getByTestId("reading-g2-current").fill("250");
+    await page.getByTestId("reading-g2-duration").fill("280.0");
+    await page.getByTestId("reading-g2-energy_shown").fill("1.40");
+    await page.getByTestId("machine-reading-save").click();
+    await expect(page.getByTestId("machine-reading-saved")).toBeVisible({
+      timeout: T,
+    });
+
+    // THE STORED ROWS: g2 gains a revision, g1 keeps exactly one.
+    const caps = await capturesFor(thirdBlock);
+    const byGroup = new Map<string, number[]>();
+    for (const c of caps) {
+      byGroup.set(c.group_key, [...(byGroup.get(c.group_key) ?? []), c.revision]);
+    }
+    expect(
+      byGroup.get("g1"),
+      "the untouched group gained a revision across a machine switch",
+    ).toEqual([1]);
+    expect(byGroup.get("g2"), "the changed group did not gain a revision").toEqual([
+      1, 2,
+    ]);
+  });
+
+  await test.step("11b: and the NEXT VISIT renders g2's change, not g1's", async () => {
+    // The render half, on this path too: the harm the P1 does is what
+    // guidance shows her next time.
+    await sql(
+      `update public.sessions set started_at = now() - interval '2 hours'
+        where client_id = $1`,
+      [clientId],
+    );
+    await page.goto(`/clients/${clientId}/sessions/new`);
+    await page.locator('[data-modality="electrolysis"]').click({ timeout: T });
+    await page.waitForURL(/\/clients\/[^/]+\/sessions\/[0-9a-f-]{36}/, {
+      timeout: T,
+    });
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+    await openMachinePanel(page);
+
+    const prior = page.getByTestId("machine-prior-setup");
+    await expect(prior).toBeVisible({ timeout: T });
+    await expect(
+      page.getByTestId("prior-setup-g1-current"),
+      "g1 must still read its own 111",
+    ).toContainText("111");
+    await expect(
+      page.getByTestId("prior-setup-g2-current"),
+      "g2 must read the change made after the switch",
+    ).toContainText("250");
+    await expect(
+      page.getByTestId("prior-setup-g1-current"),
+      "the change was attributed to g1 as well",
+    ).not.toContainText("250");
+    await noOverflow(page);
+  });
 });
