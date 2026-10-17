@@ -375,10 +375,26 @@ export async function getAppointmentPaymentStates(
     if (
       transactionOnly === "paid" ||
       transactionOnly === "refunded" ||
-      transactionOnly === "refunded_full" ||
       transactionOnly === "processing"
     ) {
       out.set(apptId, transactionOnly);
+      continue;
+    }
+    // HON-11. A FULL refund means Hone holds no card money for this visit, so
+    // an outcome recorded afterwards (the client then paid cash, or the fee
+    // was waived) is the current fact, exactly as the payment card reads it
+    // (`cardMoneyHeld`). Returning `refunded_full` before the settlement was
+    // consulted left the row on "Refunded" + "Record outcome" forever, over a
+    // visit already settled. A failed settlement read keeps `refunded_full`:
+    // the refund is a known fact and the route back stays open.
+    if (transactionOnly === "refunded_full") {
+      const settlement = settlementLoad.ok
+        ? settlementLoad.byAppointmentId.get(apptId)
+        : undefined;
+      out.set(
+        apptId,
+        settlement ? SETTLEMENT_STATE_BY_METHOD[settlement.method] : "refunded_full",
+      );
       continue;
     }
     // Stage 2b: no Hone-verified money, so a practitioner attestation is the
