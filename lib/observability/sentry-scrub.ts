@@ -101,7 +101,11 @@ const SUPABASE_TOKEN_RE =
 // own trace_id, span_id and event_id are dashless hex and stay intact for
 // correlation. "[id]" mirrors Next's route-template syntax, so
 // "/clients/<uuid>" becomes "/clients/[id]" and events still group by route.
-const RECORD_ID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+// Bounded by "not a hex digit" rather than \b (Codex P2 4301012678): \b treats
+// "_", letters and digits as word characters, so a UUID inside a compound
+// identifier ("hone_booking_<uuid>", "client_<uuid>") would slip through.
+const RECORD_ID_RE =
+  /(?<![0-9a-f])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9a-f])/gi;
 const RECORD_ID_PLACEHOLDER = "[id]";
 // Loose phone matcher: a run of 9+ digits with optional +, spaces, (), ., -.
 // Bounded so it doesn't swallow adjacent digits of an unrelated token.
@@ -161,6 +165,18 @@ const STANDARD_CONTEXT_KEYS = new Set([
 
 type ScrubOpts = { redactKeys: boolean };
 
+/** An object KEY can be a record id too, e.g. `{ [clientId]: "failed" }`
+ *  (Codex P2 4301012675): replace UUIDs in property names as well as values.
+ *  Two keys that collapse to the same name get a numeric suffix, so neither
+ *  value is silently dropped. */
+function scrubKey(key: string, taken: Record<string, unknown>): string {
+  const base = key.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER);
+  if (base === key || !(base in taken)) return base;
+  let n = 2;
+  while (`${base}#${n}` in taken) n += 1;
+  return `${base}#${n}`;
+}
+
 function deepScrub(
   value: unknown,
   opts: ScrubOpts,
@@ -179,10 +195,11 @@ function deepScrub(
 
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    const key = scrubKey(k, out);
     if (opts.redactKeys && SENSITIVE_KEY_RE.test(k)) {
-      out[k] = REDACTED;
+      out[key] = REDACTED;
     } else {
-      out[k] = deepScrub(v, opts, seen, depth + 1);
+      out[key] = deepScrub(v, opts, seen, depth + 1);
     }
   }
   return out;
@@ -193,7 +210,8 @@ function scrubContexts(
   seen: WeakSet<object>,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const [key, ctx] of Object.entries(contexts)) {
+  for (const [rawKey, ctx] of Object.entries(contexts)) {
+    const key = scrubKey(rawKey, out);
     if (STANDARD_CONTEXT_KEYS.has(key)) {
       const scrubbed = deepScrub(ctx, { redactKeys: false }, seen, 0);
       if (key === "device" && isRecord(scrubbed) && "name" in scrubbed) {

@@ -145,10 +145,10 @@ This change affects telemetry emitted **from now on**. No historical Sentry even
 
 Clients, sessions, appointments, intake forms and studios are addressed by UUID, and a UUID beside appointment or clinical context is a linkable record id. Until this change, the scrubber kept them: `/clients/<uuid>` reached Sentry in `request.url`, the transaction name (the grouping key), exception messages, breadcrumbs, and span descriptions and attributes.
 
-- `redactString` in `lib/observability/sentry-scrub.ts` now replaces every dashed UUID with `[id]`, **after** token-route canonicalization. Token routes still read `[Redacted]`, and `/clients/<uuid>` becomes `/clients/[id]`, Next's own route-template form, so events still group by route.
+- `redactString` in `lib/observability/sentry-scrub.ts` now replaces every dashed UUID with `[id]`, **after** token-route canonicalization. A UUID inside a compound identifier, such as `hone_booking_<uuid>` or `client_<uuid>`, is matched too, because the boundary is "not a hex digit", not `\b`. **Object keys** are scrubbed as well as values, so `{ [clientId]: "failed" }` becomes `{ "[id]": "failed" }`, and colliding keys get `#2`, `#3`, so no value is silently dropped. Token routes still read `[Redacted]`, and `/clients/<uuid>` becomes `/clients/[id]`, Next's own route-template form, so events still group by route.
 - Every string surface funnels through `redactString`, so one replacement covers all of them: request URLs, transaction names, messages, exception values, breadcrumb messages and data, span descriptions and data, `extra`, `tags`, custom contexts and `user`.
 - **Kept on purpose:** Sentry's own `event_id`, `trace_id` and `span_id`. They are dashless hex and carry no record identity.
-- Pinned by `tests/lib/observability/sentry-record-ids.test.ts`, a canary sweep over every surface with synthetic ids. **Negative control:** without the replacement, 4 of its 6 cases fail.
+- Pinned by `tests/lib/observability/sentry-record-ids.test.ts`, a canary sweep over every surface with synthetic ids. **Negative controls:** without the replacement, 4 of the original 6 cases fail. With keys copied raw, 3 key cases fail. With `\b` boundaries, the compound-identifier case fails.
 
 **Scope.** This covers what Hone sends to Sentry from now on. It is not a Sentry BAA. Other record-id channels (Vercel logs, Stripe, Meta, Twilio callbacks, Upstash keys, email tokens) remain #828 G-26 work. No historical Sentry event was deleted.
 

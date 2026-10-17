@@ -118,3 +118,53 @@ describe("G-25: breadcrumbs and spans", () => {
     expect((out.contexts?.trace as Record<string, unknown>).trace_id).toBe(TRACE_ID);
   });
 });
+
+describe("G-25: record ids as object KEYS (Codex P2 4301012675)", () => {
+  it("removes ids used as property names at any depth, in every scrubbed map", () => {
+    const out = scrubErrorEvent(
+      errorEvent({
+        extra: { [CLIENT]: "failed", nested: { [SESSION]: { [APPT]: 1 } } },
+        tags: { [STUDIO]: "x" },
+        contexts: { [CLIENT]: { state: "stale" }, custom: { [SESSION]: true } },
+        request: { url: "https://hone.care/dashboard", data: { [APPT]: "body" } },
+        user: { [STUDIO]: "member" } as unknown as ErrorEvent["user"],
+      }),
+    );
+    expectNoRecordId(out, "keys in extra/tags/contexts/request/user");
+    expect((out.extra as Record<string, unknown>)["[id]"]).toBe("failed");
+  });
+
+  it("keeps both values when two id keys collapse to the same name", () => {
+    const out = scrubErrorEvent(errorEvent({ extra: { [CLIENT]: "a", [SESSION]: "b" } }));
+    expect(out.extra).toEqual({ "[id]": "a", "[id]#2": "b" });
+  });
+
+  it("removes id keys in breadcrumb data and span data", () => {
+    const crumb = scrubBreadcrumb({ category: "app", data: { [CLIENT]: { [SESSION]: "x" } } } as Breadcrumb);
+    const tx = scrubTransactionEvent({
+      type: "transaction",
+      spans: [{ description: "load", data: { [APPT]: "row" } }] as unknown as Event["spans"],
+    } as Event);
+    expectNoRecordId(crumb, "breadcrumb data keys");
+    expectNoRecordId(tx, "span data keys");
+  });
+});
+
+describe("G-25: ids inside compound identifiers (Codex P2 4301012678)", () => {
+  it("removes a UUID joined to letters, digits or underscores", () => {
+    const out = scrubErrorEvent(
+      errorEvent({
+        message: `event hone_booking_${APPT} for client_${CLIENT}_x and z${SESSION}q`,
+        tags: { key: `studio${STUDIO}` },
+      }),
+    );
+    expectNoRecordId(out, "compound identifiers");
+    expect(out.message).toBe("event hone_booking_[id] for client_[id]_x and z[id]q");
+  });
+
+  it("does not touch a longer hex run that is not a UUID", () => {
+    const notUuid = `a${CLIENT.replace(/-/g, "")}ff`; // dashless hex, like Sentry's own ids
+    const out = scrubErrorEvent(errorEvent({ message: `trace ${notUuid}` }));
+    expect(out.message).toBe(`trace ${notUuid}`);
+  });
+});
