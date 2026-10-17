@@ -33,12 +33,13 @@ This section previously carried a "(through 2026-07-27)" heading while containin
 
 **Coverage gap, stated rather than hidden:** this table covers PRs **#357–#479**, **#601**,
 **#629**, **#630**, and — added by the 2026-08-26 reconciliation and kept current through each
-production refresh since — **every** first-parent merge in `b9e0003f..0ae33bd3`, all
-**152** PR merges among them (**#632–#887**, plus **#631**, whose number sits below that floor but
+production refresh since — **every** first-parent merge in `b9e0003f..b08845ce`, all
+**154** PR merges among them (**#632–#898**, plus **#631**, whose number sits below that floor but
 whose merge does not — see below). ⚠️ **EXTENDED 2026-10-12 by CANON-REFRESH-2026-10-12:**
 the range previously ended at `410e5039` (81 merges, the 2026-09-21 extension described next);
 **56** rows were backfilled from the first-parent graph and each merge's own diff, and the
-pre-existing `#773` row was moved, unchanged, to its first-parent position. ⚠️ **EXTENDED 2026-10-16 by CANON-REFRESH-2026-10-16b:** 2 rows added, `#886`, `#887`,
+pre-existing `#773` row was moved, unchanged, to its first-parent position. ⚠️ **EXTENDED 2026-10-17 by CANON-REFRESH-2026-10-17:** 2 rows added, `#889`, `#898`,
+taking the range through `b08845ce` (154 merges); `#898` is runtime-bearing. ⚠️ **EXTENDED 2026-10-16 by CANON-REFRESH-2026-10-16b:** 2 rows added, `#886`, `#887`,
 taking the range through `0ae33bd3` (152 merges); none is runtime-bearing. ⚠️ **EXTENDED 2026-10-16 by CANON-REFRESH-2026-10-16:** five rows added, `#880`, `#883`, `#881`, `#879` and `#885`,
 taking the range through `1ae096e2` (150 merges); none is runtime-bearing. ⚠️ **EXTENDED 2026-10-14 by CANON-REFRESH-2026-10-14:** five rows added, `#877`, `#869`, `#769`, `#776` and `#857`,
 taking the range through `ce133c18` (145 merges). ⚠️ **EXTENDED 2026-10-13 by CANON-REFRESH-2026-10-13:** two rows added, `#834` and `#875`,
@@ -65,7 +66,7 @@ historical completeness. Do not read a missing row as "not shipped".
 
 **The block is complete, not sampled — and completeness is over the GIT RANGE, not over a
 span of PR numbers.** It was enumerated mechanically
-(`git log --merges --first-parent b9e0003f..0ae33bd3`, 152 merges; 150 through `1ae096e2`; 145 through `ce133c18` on 2026-10-14; 140 through `6f7281bb` on 2026-10-13; 138 through `d5efa20a` on 2026-10-12; it was `b9e0003f..410e5039`, 81 merges, at the 2026-09-21 extension) rather than recalled, so the
+(`git log --merges --first-parent b9e0003f..b08845ce`, 154 merges; 152 through `0ae33bd3`; 150 through `1ae096e2`; 145 through `ce133c18` on 2026-10-14; 140 through `6f7281bb` on 2026-10-13; 138 through `d5efa20a` on 2026-10-12; it was `b9e0003f..410e5039`, 81 merges, at the 2026-09-21 extension) rather than recalled, so the
 current state can be reconstructed from shipped history without a gap. Each row records whether
 the merge was **runtime-bearing**, decided by changed-path analysis rather than by the PR title.
 
@@ -78,6 +79,8 @@ enumeration of `b9e0003f..bf6f09c4` while omitting `#631` entirely.
 
 | PR | Migration | Status | What shipped | Notes |
 |---|---|---|---|---|
+| **#898** | none | **Runtime-bearing** | HON-11 #1: a Stripe error that may have moved money is never recorded as failed | Merged `b08845ce69` on `2026-10-17T13:55:40Z` from head `a91cc92e`. 5 files: `lib/billing/payment-refund.ts`, `lib/billing/session-payment-charge.ts`, `lib/billing/stripe-error-outcome.ts` (new) and 2 tests under `tests/lib/billing/`; no migration. When the Stripe charge or refund call **throws**, the attempt is recorded failed only for an allow-listed definitive Stripe refusal; any other thrown Stripe error stays on the unknown-outcome path (`pending_stripe` plus a critical alert). Non-error Stripe outcomes (e.g. a PaymentIntent cancelled after `requires_action`) are unchanged and still record failed. Vercel deployment `dpl_Foa9eAuKKat269AuTrLeCKeoB2Mv` READY `2026-10-17T13:57:43Z`, production, aliased to `hone.care`. |
+| **#889** | none | **Documentation only — NOT runtime-bearing** | docs(production): record #886 and #887 at 0ae33bd3 (record-only, CANON-REFRESH-2026-10-16b) | Merged `b308187da8`. 3 files: `docs/production/capability-register.md`, `docs/production/current-state.md`, `docs/production/release-changelog.md`; no migration. Vercel deployment `8BrGckP4yACXeVqshD1KvU8Ajd9X` success `2026-10-16T23:09:04Z`, with no runtime change. |
 | **#887** | none | **CI / tests / tooling only — NOT runtime-bearing** | ci(canonical): record checks run with history, fail loudly, and enforce freshness by policy (#825 6215529089) | Merged `0ae33bd376`. 5 files: `.github/workflows/ci.yml`, `.github/workflows/nightly.yml`, `scripts/ci-plan.mjs`, `tests/ci/ci-config.test.ts`, `tests/docs/canonical-production-facts.test.ts`; no migration. Vercel deployment `7rEebdzGbS3igPRBXBoNYLd4PTev` success `2026-10-16T21:59:46Z`, with no runtime change. |
 | **#886** | none | **Documentation / guide only — NOT runtime-bearing** | docs: correct tracked test-config guidance and refresh production records | Merged `862c1fee8c`. 4 files: `CLAUDE.md`, `docs/production/capability-register.md`, `docs/production/current-state.md`, `docs/production/release-changelog.md`; no migration. Vercel deployment `89JUZ7mQvbpN2d4pVru4ngCnVDae` success `2026-10-16T15:56:36Z`, with no runtime change. |
 | **#885** | none | **Test harness and guide only — NOT runtime-bearing** | fix(test): validate the API/SQL pair before DB test collection | Merged `1ae096e251`. `vitest.db.config.ts`, one test and `CLAUDE.md`, no migration. Vercel deployment `A3WRvXE2tfJa5UxwouRAgidbaKxG` success `2026-10-15T22:00:33Z`, with no runtime change. |
