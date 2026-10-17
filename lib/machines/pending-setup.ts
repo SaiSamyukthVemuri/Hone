@@ -131,6 +131,23 @@ export const IDENTITY_CHANGED =
  * attempt never arrived) or is refused as a used key (if it did). Neither is
  * harmful, and both are confusing, so the plain instruction is to retry as-is.
  */
+/**
+ * The initial save was answered from an EARLIER save of the same payload.
+ *
+ * DRAFT, PENDING SAM'S DECISION (0234). Shown when the retry key was lost —
+ * a reload, a tab close, browser Back — and the command recognised the
+ * payload instead. Modelled on the revision path's REUSED_NOTE so the two
+ * absorbed-save messages read alike, because they are the same fact about
+ * the record.
+ *
+ * IT DOES NOT APOLOGISE OR INSTRUCT. Nothing went wrong and there is
+ * nothing for her to do; the only thing she needs to know is that the
+ * record has one area rather than two.
+ */
+export const INITIAL_SAVE_REUSED =
+  "These settings were already recorded for this visit - an earlier save " +
+  "did commit and its answer was lost. Nothing was recorded twice.";
+
 export const INITIAL_SAVE_UNRESOLVED =
   "The connection failed, so whether this treatment area was saved is not " +
   "known — it may have been. Press Save again without changing anything: " +

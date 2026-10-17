@@ -530,6 +530,70 @@ describe("switching machine or mode clears the collected draft", () => {
     expect(src).toMatch(/const draftFrozen = saveUnresolved/);
   });
 
+  it("an ABSORBED initial save reaches the practitioner, hop by hop", () => {
+    // 0234, DRAFT PENDING SAM. The command answers a lost-key save with the
+    // original ids and `reused: true`. That is only worth anything if she is
+    // TOLD: option 3's premise is that the decision stays with her, and a
+    // silent absorption means the duplicate she was about to make simply
+    // never appears, with no explanation.
+    //
+    // ASSERTED PER HOP, because this is the lane's most repeated defect — a
+    // value computed correctly and dropped one hop short. Six instances so
+    // far.
+    const mig = read(
+      "supabase/migrations/0234_initial_save_matched_claim.sql",
+    );
+    // ANCHORED ON THE RETURN, not on proximity to `into v_matched`.
+    //
+    // The hunk contains `'reused', true` TWICE — once in the setup summary
+    // and once in the command's return — and a lazy match from
+    // `into v_matched` found the nearer one, so this guard was asserting the
+    // wrong flag. Its own negative control caught that: deleting the
+    // RETURN's flag left it green.
+    expect(mig, "1/4 the command answers with reused").toMatch(
+      /return jsonb_build_object\([\s\S]{0,200}?'block_id', v_matched\.block_id[\s\S]{0,200}?'reused', true/,
+    );
+
+    const actions = read(ACTIONS_SRC);
+    expect(actions, "2/4 the action reads it off the command").toMatch(
+      /const createReused =[\s\S]{0,300}?\.reused === true/,
+    );
+    expect(actions, "2/4 and returns it").toMatch(/reused: createReused,/);
+
+    const form = read(FORM_SRC);
+    expect(form, "3/4 the form acts on it").toMatch(
+      /"reused" in res && res\.reused/,
+    );
+    expect(form, "4/4 and says so, in the shared string").toMatch(
+      /setCopyMessage\(INITIAL_SAVE_REUSED\)/,
+    );
+
+    // AND IT DOES NOT CLOSE SILENTLY. The early return is what keeps the
+    // message on screen; without it the form closes and the absorption is
+    // invisible.
+    expect(
+      form,
+      "the form must not fall through to onCancel() on an absorbed save",
+    ).toMatch(/setCopyMessage\(INITIAL_SAVE_REUSED\);\s*\n\s*return;/);
+  });
+
+  it("the absorbed-save copy does not apologise or instruct", () => {
+    // Nothing went wrong and there is nothing for her to do. The only fact
+    // she needs is that the record holds one area rather than two — the
+    // same shape as the revision path's REUSED_NOTE, which this is modelled
+    // on deliberately so the two read alike.
+    const copy = read("lib/machines/pending-setup.ts");
+    const m = copy.match(/INITIAL_SAVE_REUSED =\s*([\s\S]*?);/);
+    expect(m, "INITIAL_SAVE_REUSED was not found").toBeTruthy();
+    const text = m![1]!;
+    expect(text).toMatch(/Nothing was recorded twice/i);
+    expect(text, "it must not apologise").not.toMatch(/sorry|apolog/i);
+    expect(
+      text,
+      "it must not instruct her to do anything — there is nothing to do",
+    ).not.toMatch(/please|you (should|must|need)|try again|reload/i);
+  });
+
   it("a PRE-WRITE lineage refusal is rejected, not unresolved", () => {
     // THE P2 (Codex, #860 4304930968). `assertSessionForClient` throws
     // before anything is written, and the entry maps a throw to the
