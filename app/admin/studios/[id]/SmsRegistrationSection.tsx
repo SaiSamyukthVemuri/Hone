@@ -107,6 +107,9 @@ export function SmsRegistrationSection({
   const campaign =
     sender.phone_number && kind === "us_10dlc" ? (
       <SmsCampaignCheckForm
+        // Keyed by sender and number: a result never outlives the sender it
+        // was for, even across the server refresh (Codex P2 4301615737).
+        key={`${sender.id}:${sender.phone_number}`}
         action={checkSmsCampaignFormAction.bind(null, studioId)}
         senderId={sender.id}
         phoneNumber={sender.phone_number}

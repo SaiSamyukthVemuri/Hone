@@ -108,6 +108,17 @@ describe("the fake reads through the same normaliser", () => {
     expect(fake.calls.campaignRead).toBe(4);
   });
 
+  it("a service the fake CREATED through provisioning is recognised, with no campaign (Codex P2 4301615740)", async () => {
+    const fake = new FakeSmsProvisioningProvider();
+    const created = await fake.createMessagingService({ claimKey: "hone-sms-test-claim", serviceLabel: "Studio" });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    expect(await fake.readUsA2pCampaign({ messagingServiceSid: created.messagingServiceSid })).toEqual({
+      ok: true,
+      campaign: { campaignSid: null, status: "none" },
+    });
+  });
+
   it("the campaign read is not a member of the fenced provisioning port", () => {
     const fenced = readFileSync("lib/sms/provider/fenced.ts", "utf8");
     const types = readFileSync("lib/sms/provider/types.ts", "utf8");

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
+import { readFileSync } from "node:fs";
 
 // SMS-SENDER-REG-01: the operator's form exists only over a readable snapshot
 // with exactly one live sender, shows that sender's number before any record,
@@ -216,5 +217,8 @@ describe("HON-50 G4b: the US campaign block", () => {
     expect(tollFree).not.toContain('data-testid="admin-sms-campaign"');
     // The form never carries a Messaging Service: the server reads it from the snapshot.
     expect(html).not.toContain('name="messaging_service_sid"');
+    // Keyed by sender and number, so a replacement sender gets a fresh form.
+    const src = readFileSync("app/admin/studios/[id]/SmsRegistrationSection.tsx", "utf8");
+    expect(src).toMatch(/<SmsCampaignCheckForm\s[\s\S]*?key=\{`\$\{sender\.id\}:\$\{sender\.phone_number\}`\}/);
   });
 });

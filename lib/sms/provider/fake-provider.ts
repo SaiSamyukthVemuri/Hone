@@ -398,8 +398,12 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
     this.calls.campaignRead += 1;
     if (this.script.usA2pReadFails) return this.fail(this.script.usA2pReadFails);
     const svc = (this.script.accountServices ?? []).find((x) => x?.sid === input.messagingServiceSid);
-    if (!svc) return this.fail("provider_resource_mismatch");
-    const campaign = normalizeUsA2pCampaigns(svc.usA2pList === undefined ? { compliance: [] } : svc.usA2pList);
+    // A service this fake CREATED through provisioning (its claim store) is
+    // the account's too, with no campaign linked (Codex P2 4301615740).
+    const created = [...this.store.values()].some((r) => r.messagingServiceSid === input.messagingServiceSid);
+    if (!svc && !created) return this.fail("provider_resource_mismatch");
+    const list = svc?.usA2pList;
+    const campaign = normalizeUsA2pCampaigns(list === undefined ? { compliance: [] } : list);
     if (!campaign) return this.fail("provider_response_unparseable");
     return { ok: true, campaign };
   }
