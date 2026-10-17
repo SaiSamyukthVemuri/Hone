@@ -265,6 +265,7 @@ const CAMPAIGN_WORDS: Record<string, string> = {
   not_available: "Campaign checks are not available here: live provisioning is not armed. Nothing was read or recorded.",
   unreadable: "The studio's sender could not be read. Nothing was recorded; reload and try again.",
   sender_changed: "The studio's sender or number changed after this page loaded. Nothing was recorded; reload.",
+  binding_changed: "Another campaign check was recorded while this one ran. Nothing was recorded; reload and check again.",
   no_service: "The sender has no Messaging Service, so there is no campaign to check. Nothing was recorded.",
   outcome_unknown: "Hone could not confirm whether the check was recorded. Reload the page and look at the current record.",
 };
@@ -346,7 +347,7 @@ export async function checkSmsCampaignAction(
     return { ok: false, result: out.result, message: `The provider could not be read (${out.code}). Nothing was recorded.` };
   }
   if (out.result === "record_refused") {
-    return { ok: false, result: out.result, message: `Not recorded (${out.code}). Reload and check the sender.` };
+    return { ok: false, result: out.code, message: CAMPAIGN_WORDS[out.code] ?? `Not recorded (${out.code}). Reload and check the sender.` };
   }
   return { ok: false, result: out.result, message: CAMPAIGN_WORDS[out.result] };
 }

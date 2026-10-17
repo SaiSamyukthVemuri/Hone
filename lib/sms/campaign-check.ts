@@ -5,6 +5,7 @@ import { twilioCampaignReader } from "./provider/twilio-provider";
 import type { SmsCampaignReader } from "./provider/campaign-read";
 import { senderControlsFakeProvider, senderControlsGate } from "./sender-controls";
 import { readLiveRegistrationState } from "./sender-registration-admin";
+import { campaignBindingFor } from "./sender-registration";
 
 // ===========================================================================
 // SMS-CAMPAIGN-CHECK-01 (HON-50 G4b): support checks a studio sender's US A2P
@@ -56,6 +57,10 @@ export async function runCampaignCheck(
   const sender = state.senders.find((s) => s.id === input.expectedSenderId);
   if (!sender || sender.phone_number !== input.expectedPhone) return { result: "sender_changed" };
   if (!sender.messaging_service_sid) return { result: "no_service" };
+  // The compare-and-set token, read BEFORE the provider call: the record is
+  // refused (binding_changed) if another check landed in between, so an
+  // older observation can never overwrite a newer one (Codex P1 4301502260).
+  const expectedCheckedAt = campaignBindingFor(state, sender.id)?.checkedAt ?? null;
 
   const read = await deps.reader.readUsA2pCampaign({ messagingServiceSid: sender.messaging_service_sid });
   if (!read.ok) return { result: "provider_error", code: read.code };
@@ -72,6 +77,7 @@ export async function runCampaignCheck(
       p_campaign_sid: read.campaign.campaignSid,
       p_campaign_status: read.campaign.status,
       p_context: input.context,
+      p_expected_checked_at: expectedCheckedAt,
     }));
   } catch {
     return { result: "outcome_unknown" };

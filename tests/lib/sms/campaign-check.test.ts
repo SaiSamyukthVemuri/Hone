@@ -54,7 +54,22 @@ describe("runCampaignCheck", () => {
       p_campaign_sid: QE,
       p_campaign_status: "verified",
       p_context: "evidence",
+      p_expected_checked_at: null,
     });
+  });
+
+  it("passes the binding's checked_at, read BEFORE the provider call, as the compare-and-set token", async () => {
+    const snap = {
+      ...snapshot(),
+      campaign_bindings: [
+        { sender_id: SENDER, studio_id: STUDIO, phone_number: PHONE, messaging_service_sid: MG, campaign_sid: QE, campaign_status: "failed", checked_at: "2026-10-17T05:00:00.123456+00:00", verified_at: null },
+      ],
+    };
+    const a = admin(snap, { data: [{ result: "binding_changed" }] });
+    const r = reader({ ok: true, campaign: { campaignSid: QE, status: "verified" } });
+    expect(await runCampaignCheck({ admin: a.client, reader: r.reader }, input)).toEqual({ result: "record_refused", code: "binding_changed" });
+    const recordCall = a.rpc.mock.calls.find(([fn]) => fn === "record_studio_sms_campaign_binding");
+    expect(recordCall?.[1]).toMatchObject({ p_expected_checked_at: "2026-10-17T05:00:00.123456+00:00" });
   });
 
   it("no reader, an unreadable snapshot, a changed sender or no service: nothing read, nothing recorded", async () => {
