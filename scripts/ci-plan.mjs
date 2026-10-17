@@ -24,7 +24,7 @@ export function changedFiles() {
     const base = execFileSync("git", ["merge-base", "HEAD", `origin/${BASE_BRANCH}`], {
       encoding: "utf8",
     }).trim();
-    const committed = execFileSync("git", ["diff", "--name-only", base, "HEAD"], { encoding: "utf8" });
+    const committed = execFileSync("git", ["diff", "--name-only", "--no-renames", base, "HEAD"], { encoding: "utf8" });
     const working = execFileSync("git", ["status", "--porcelain"], { encoding: "utf8" })
       .split("\n")
       .filter(Boolean)
