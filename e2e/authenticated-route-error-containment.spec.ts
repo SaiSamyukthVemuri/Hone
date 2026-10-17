@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { test, expect, type Page } from "@playwright/test";
 import { seedE2eStudio } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
@@ -39,9 +40,17 @@ const REACT_ELISION = "The specific message is omitted in production builds";
 // the two equal). It carries no part of the canary.
 const UNMARKED = "Failed to load fault fixture: unmarked harness failure";
 
-// The same-origin tunnel the browser SDK posts to, with the query the SDK
-// derives from the production DSN (org, project, region).
-const SENTRY_TUNNEL = "/monitoring?o=4511758551941120&p=4511758557839360&r=us";
+// The same-origin tunnel the browser SDK posts to (Sentry.init({ tunnel:
+// "/monitoring" }), app/monitoring/route.ts). It forwards only the envelope
+// body, and only for the DSN the app is configured with (#828 G-07/G-26), so
+// the probe carries that DSN, read from the client config rather than copied.
+const SENTRY_TUNNEL = "/monitoring";
+const CLIENT_DSN = (() => {
+  const src = readFileSync(join(process.cwd(), "instrumentation-client.ts"), "utf8");
+  const m = src.match(/dsn:\s*"([^"]+)"/);
+  if (!m) throw new Error("instrumentation-client.ts declares no Sentry dsn");
+  return m[1];
+})();
 
 // THE PREFLIGHT, AND WHY IT GATES THE WHOLE FILE. Every test here raises a
 // deliberate fault, and a fault raised while the egress guard is NOT armed goes
@@ -53,20 +62,29 @@ const SENTRY_TUNNEL = "/monitoring?o=4511758551941120&p=4511758557839360&r=us";
 test.beforeAll(async ({ playwright }) => {
   const api = await playwright.request.newContext({ baseURL: E2E_APP_ORIGIN });
   try {
-    const probe = randomUUID();
     const since = markSentryEgress();
     const envelope = [
-      JSON.stringify({ sent_at: new Date().toISOString() }),
+      JSON.stringify({ sent_at: new Date().toISOString(), dsn: CLIENT_DSN }),
       JSON.stringify({ type: "client_report" }),
       JSON.stringify({ timestamp: Date.now() / 1000, discarded_events: [] }),
     ].join("\n");
-    const res = await api.post(`${SENTRY_TUNNEL}&hone_probe=${probe}`, {
+    const res = await api.post(SENTRY_TUNNEL, {
       data: envelope,
       headers: { "content-type": "text/plain;charset=UTF-8" },
     });
     expect(res.status(), "the /monitoring tunnel must answer").toBe(200);
     await waitForSentryEgress(
-      (records) => records.find((r) => r.kind === "envelope" && r.path?.includes(probe)),
+      // Attributed by what the tunnel actually forwards: the body. The handler
+      // posts with fetch (the server SDK uses https.request), and this
+      // envelope's only item is the empty client report.
+      (records) =>
+        records.find(
+          (r) =>
+            r.kind === "envelope" &&
+            r.via === "fetch" &&
+            r.items?.length === 1 &&
+            r.items[0]?.type === "client_report",
+        ),
       { since, timeoutMs: 15_000 },
     );
   } finally {
