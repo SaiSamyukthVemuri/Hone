@@ -538,3 +538,43 @@ async function bookableStudio(): Promise<{ studioId: string; serviceId: string; 
   day.setUTCHours(11, 0, 0, 0);
   return { studioId, serviceId, slot: day.toISOString() };
 }
+
+// ---------------------------------------------------------------------------
+// Follow-up (Codex P2 on #827): two overlapping public bookings for one
+// unconsented client. The booking's stamp is now CONDITIONAL
+// (lib/booking/public-consent-stamp.ts); this pins, against the real guard,
+// why that is safe and why the old unconditional write was not.
+// ---------------------------------------------------------------------------
+describe("the public booking's conditional consent stamp under 0211", () => {
+  const stampSql = `update public.clients
+       set sms_consent_at = $2::timestamptz, sms_consent_source = 'public_booking'
+     where id = $1 and sms_consent_at is null and sms_opted_out_at is null
+     returning sms_consent_at`;
+
+  it("the first conditional stamp writes; the overlapping second matches no row and raises nothing", async () => {
+    const id = await client();
+    const first = await asService(stampSql, [id, "2026-10-12T10:00:00.000Z"]);
+    expect(first.rowCount).toBe(1);
+    const second = await asService(stampSql, [id, "2026-10-12T10:00:00.400Z"]);
+    expect(second.rowCount).toBe(0);
+    expect((await sms(id)).sms_consent_at).toBe("2026-10-12T10:00:00.000Z");
+  });
+
+  it("WHY: the old unconditional second write is refused by the guard (23514), which the booking used to swallow", async () => {
+    const id = await client();
+    await asService(stampSql, [id, "2026-10-12T10:00:00.000Z"]);
+    await expect(
+      asService(
+        `update public.clients set sms_consent_at = $2::timestamptz, sms_consent_source = 'public_booking' where id = $1`,
+        [id, "2026-10-12T10:00:00.400Z"],
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
+  });
+
+  it("a client who sent STOP is never stamped", async () => {
+    const id = await client({ sms_opted_out_at: STOPPED_AT, sms_opt_out_source: "twilio_stop" });
+    const r = await asService(stampSql, [id, "2026-10-12T10:00:00.000Z"]);
+    expect(r.rowCount).toBe(0);
+    expect((await sms(id)).sms_consent_at).toBeNull();
+  });
+});

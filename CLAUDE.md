@@ -62,7 +62,7 @@ git add -A                     # 1. stage everything, including new files
 git diff --cached --check      # 2. whitespace / conflict markers
 git status --porcelain         # 3. confirm no untracked file was omitted
 git commit -m "..."            # 4. commit
-git status --porcelain         # 5. must be empty (bar the allowlist below)
+git status --porcelain         # 5. must be empty
 git diff HEAD --exit-code      # 6. must be empty — commit == tree
 npm run verify:prepush         # 7. all of the above, mechanically
 git push                       # 8. push
@@ -78,8 +78,12 @@ git push                       # 8. push
 
 It installs no Git hook and mutates nothing. Run it explicitly.
 
-**Documented local-only allowlist** (never commit these):
-`supabase/config.toml` — local E2E stack config, untracked by CLI convention.
+**`supabase/config.toml` is tracked** (on production since `b2f20466`, 2026-08-02)
+and is not a local-only file. Preserve the tracked production config; never edit
+it, or `e2e/helpers/local-env.ts` ports, for a test run. Local test-stack
+overrides belong in an owned separate workdir, with the run-scoped pair
+`E2E_SUPABASE_URL` + `HONE_LOCAL_DB_URL` (#879, #885; see §5 *Local test-stack
+isolation*).
 
 ---
 
@@ -311,6 +315,27 @@ before assuming the diff broke something.**
 ---
 
 ## 5. Production safety
+
+### Local test-stack isolation
+
+Before mutating DB/browser tests, verify one run-scoped target: source SHA,
+Supabase project/container, API and SQL endpoints, and the existing app/mail
+and outbound guards. Read back the CLI/container mapping; adjacent port numbers
+alone do not establish that two services belong to the same stack.
+
+Use the current paired-target guard in `e2e/helpers/local-env.ts` (#879).
+`vitest.db.config.ts` imports it before test collection, including for SQL-only
+suites. Set `E2E_SUPABASE_URL` and `HONE_LOCAL_DB_URL` together for an owned
+isolated stack. Do not rewrite tracked helper ports, skip the guard, or use a
+stale branch that lacks it. Raw GoTrue admin `fetch` calls are writes too.
+
+The config guard checks startup endpoints; it does not sandbox arbitrary test
+code or prove physical container identity. For a containment repair, prove
+API-only/SQL-only/cross-stack refusal and a valid owned pair, then compare the
+frozen shared stack before/after the affected run and require zero delta.
+One named owner controls resets. Shared-stack cleanup uses a verified exact-ID
+manifest, preserved evidence, rollback dry run and measured execution receipt;
+never a blanket reset or email-domain deletion.
 
 - No production write or migration without explicit, per-change authorization.
 - Read-only production SQL is `supabase db query --linked`. Never `db execute`.
