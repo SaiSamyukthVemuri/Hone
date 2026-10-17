@@ -317,9 +317,9 @@ it("seeds (or proves) the persistent synthetic Fett twin", { timeout: 600_000 },
   const older = await pastVisit(studioId, e1.practitionerId, c(1), IDS.treatment, 28);
   const recent = await pastVisit(studioId, e1.practitionerId, c(1), IDS.treatment, 7);
   if (unit.ok && oldUnit.ok) {
-    const h = await asDb(e1.userId, (db) => recordSetupGroup(db, { blockId: older.blockId, machineId: oldUnit.value, modeKey: mode, groupKey: "g1", channels: [], readings: READING(110) }));
-    const r1 = await asDb(e1.userId, (db) => recordSetupGroup(db, { blockId: recent.blockId, machineId: unit.value, modeKey: mode, groupKey: "g1", channels: [], readings: READING(135) }));
-    const r2 = await asDb(e1.userId, (db) => recordSetupGroup(db, { blockId: recent.blockId, machineId: unit.value, modeKey: mode, groupKey: "g1", channels: [], readings: READING(180) }));
+    const h = await asDb(e1.userId, (db) => recordSetupGroup(db, { blockId: older.blockId, sessionId: older.sessionId, clientId: c(1), machineId: oldUnit.value, modeKey: mode, groupKey: "g1", channels: [], readings: READING(110) }));
+    const r1 = await asDb(e1.userId, (db) => recordSetupGroup(db, { blockId: recent.blockId, sessionId: recent.sessionId, clientId: c(1), machineId: unit.value, modeKey: mode, groupKey: "g1", channels: [], readings: READING(135) }));
+    const r2 = await asDb(e1.userId, (db) => recordSetupGroup(db, { blockId: recent.blockId, sessionId: recent.sessionId, clientId: c(1), machineId: unit.value, modeKey: mode, groupKey: "g1", channels: [], readings: READING(180) }));
     note("E3 captures: older visit on Room 2; recent visit revisions 1 (135 µA) then 2 (180 µA)", h.ok && r1.ok && r2.ok, [h, r1, r2].map((x) => (x.ok ? "ok" : x.error)).join(" | "));
     const retired = await asDb(owner.userId, (db) => retireStudioMachine(db, oldUnit.value));
     note("E4 'Room 2 (retired)' retired; its history stays named", retired.ok, retired.ok ? "" : retired.error);
