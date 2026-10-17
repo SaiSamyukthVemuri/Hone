@@ -25,15 +25,10 @@ import {
   sanitizeMarketingUrl,
 } from "@/lib/analytics/client-boundary";
 import { TOKEN_ROUTE_PREFIXES } from "@/lib/security/token-routes";
+import { redactIdSegment as redactSegment } from "@/lib/analytics/path-ids";
 
-const UUID_SEGMENT =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const DIGIT_SEGMENT = /^\d+$/;
-// Opaque, credential- or id-shaped: long and URL-safe, and either containing a
-// digit (20+ chars) or very long (32+ chars, which catches an all-letter token).
-// Ordinary route words ("charting-records", "getting-started") are shorter and
-// have no digit.
-const OPAQUE_SEGMENT = /^(?:(?=.*\d)[A-Za-z0-9_-]{20,}|[A-Za-z0-9_-]{32,})$/;
+// UUID / digit / opaque segment rules: lib/analytics/path-ids.ts, shared with
+// the PostHog boundary (#828 G-07/G-26).
 
 /** True for any path under a bearer-token route family in the canonical
  *  registry (lib/security/token-routes.ts), including the bare prefix. */
@@ -43,11 +38,6 @@ function isTokenRoute(pathname: string): boolean {
   );
 }
 
-function redactSegment(segment: string): string {
-  if (UUID_SEGMENT.test(segment) || DIGIT_SEGMENT.test(segment)) return "[id]";
-  if (OPAQUE_SEGMENT.test(segment)) return "[token]";
-  return segment;
-}
 
 /**
  * The URL Vercel may receive for this page, or null to drop the event.
