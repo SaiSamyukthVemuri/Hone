@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { getSessionPaymentStripe } from "@/lib/stripe/session-payment-stripe";
 import { recordOpsAlert } from "@/lib/ops/alerts";
+import { isDefinitiveStripeRefusal } from "@/lib/billing/stripe-error-outcome";
 import { getChargeReadyCardAuthorizationStatus } from "@/lib/consent/current-card-authorization";
 import { buildChargeDescription } from "@/lib/billing/charge-description";
 import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
@@ -1597,7 +1598,13 @@ export async function runSessionPaymentCharge(args: {
       },
     );
   } catch (err) {
-    if (err instanceof Stripe.errors.StripeError) {
+    // HON-11: only a DEFINITIVE refusal is terminal. A connection or API
+    // error may mean Stripe processed the request, so it falls through to
+    // the unknown-outcome path below (row stays pending_stripe).
+    if (
+      err instanceof Stripe.errors.StripeError &&
+      isDefinitiveStripeRefusal(err)
+    ) {
       const decline = err as unknown as {
         code?: string;
         type?: string;

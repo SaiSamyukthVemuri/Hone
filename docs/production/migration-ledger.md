@@ -102,6 +102,37 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 > `0211` is now **FROZEN**. Any correction is a new forward migration; there is no
 > manual down-migration.
 
+<!-- integration: incoming lane's ledger prose, preserved verbatim -->
+<!-- integration: incoming lane's ledger prose, preserved verbatim -->
+
+<!-- integration: incoming lane's ledger prose, preserved verbatim -->
+
+
+> **0221 IS AUTHORED AND PENDING, on the DELIVERY-VISIBILITY-04 branch `feat/delivery-visibility-04` only.**
+> `0221_delivery_concerns_and_purposes.sql`:
+> - widens the email ledger by two purposes (`appointment_cancellation`, `appointment_postcare`): 0212's purpose check and `begin_appointment_email_message` are replaced whole;
+> - adds `delivery_concerns`, the owner-reported "client says they did not receive it", with `report_delivery_concern` and `owner_delivery_concerns` (authenticated, owner of that studio only) and `support_delivery_concerns` and `close_delivery_concern` (`service_role` only).
+>
+> It writes no data.
+>
+> **NUMBERING:** `0221` was allocated by the DB/WAIT lane from a full census (2026-10-12), **provisionally**: it is valid once `0220` (receptionist lane, then uncommitted) is on a ref, and **renumbers DOWN to `0220`** if that lane drops it. Integrated apply order: 0211 → 0212 → 0213 → 0214 → 0215 → 0216 → 0217 → 0218 → 0219 → 0220 → 0221. On this branch the pending suffix has holes at `0213`-`0214` and `0216`-`0220`, so the contiguity rule in `tests/docs/canonical-production-facts.test.ts` is red here by construction until integration. The guard is not weakened.
+>
+> **NOT APPLIED, NOT MERGED.**
+
+> **0217 IS AUTHORED AND PENDING, on `feat/sms-sender-reg-01` only** (stacked on #841, which has no migration).
+> `0217_studio_sms_sender_registrations.sql` adds one table (`studio_sms_sender_registrations`) and one service_role-only command.
+> - **The table:** support-recorded US registration evidence (10DLC or toll-free verification) for a studio's live sender. The owner reads it without the provider reference.
+> - **The command:** `record_studio_sms_sender_registration`, which resolves the studio's live sender itself.
+> - **Out of scope:** no provider call, no activation, no existing object altered, no row written.
+>
+> **NUMBERING.** A fresh census on 2026-10-12 (recorded in `/home/sam/hone-migration-coordination.md`) found:
+> - `0211` #827, `0212` #832 and `0213` #831, all pending;
+> - `0214` in the PAY-CCY branches, `0215` held by DELIVERY-VISIBILITY-01, and `0216` the receptionist foundation.
+>
+> On this branch alone the pending suffix therefore has a **hole at `0211`-`0216`**. The canonical-facts contiguity guard reports that correctly, and it is not weakened. `0217` applies only after `0211`-`0216`, or after an agreed renumber.
+>
+> **`0209` and `0210` are APPLIED AND FROZEN**, carried byte-identical.
+
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0211** (`0211_client_sms_permission_guard.sql`), applied 2026-10-12 from #827's reviewed head. |
