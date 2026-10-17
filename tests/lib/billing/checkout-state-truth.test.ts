@@ -122,9 +122,14 @@ describe("HON-11 #2: after a FULL refund, a recorded outcome is the row's curren
     expect(await state()).toBe("settled_waived");
   });
 
-  it("full refund + still_owes → settled_owing (the debt stays collectable)", async () => {
+  it("full refund + still_owes → refunded_full, NOT settled_owing: its Checkout would promise a card charge the succeeded attempt still blocks (Codex P1 4301816524)", async () => {
     scenario({ refundCents: CHARGED, settlement: "still_owes" });
-    expect(await state()).toBe("settled_owing");
+    expect(await state()).toBe("refunded_full");
+  });
+
+  it("full refund + paid_e_transfer → settled_e_transfer", async () => {
+    scenario({ refundCents: CHARGED, settlement: "paid_e_transfer" });
+    expect(await state()).toBe("settled_e_transfer");
   });
 
   it("full refund, nothing recorded yet → refunded_full (the route back, unchanged)", async () => {

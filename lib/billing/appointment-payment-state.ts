@@ -387,13 +387,20 @@ export async function getAppointmentPaymentStates(
     // consulted left the row on "Refunded" + "Record outcome" forever, over a
     // visit already settled. A failed settlement read keeps `refunded_full`:
     // the refund is a known fact and the route back stays open.
+    //
+    // `still_owes` is the exception (Codex P1 4301816524): `settled_owing`
+    // offers Checkout, which promises a card charge, but the refunded
+    // attempt is still `succeeded`, so eligibility blocks a replacement
+    // charge and Checkout would open onto nothing. It keeps `refunded_full`.
     if (transactionOnly === "refunded_full") {
       const settlement = settlementLoad.ok
         ? settlementLoad.byAppointmentId.get(apptId)
         : undefined;
       out.set(
         apptId,
-        settlement ? SETTLEMENT_STATE_BY_METHOD[settlement.method] : "refunded_full",
+        settlement && settlement.method !== "still_owes"
+          ? SETTLEMENT_STATE_BY_METHOD[settlement.method]
+          : "refunded_full",
       );
       continue;
     }
