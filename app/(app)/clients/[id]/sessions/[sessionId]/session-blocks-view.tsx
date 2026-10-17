@@ -15,13 +15,8 @@ import type {
   TreatmentParams,
 } from "@/lib/supabase/queries";
 import { ELECTROLYSIS_MODES, apilusModalityLabel } from "@/lib/constants";
-import {
-  isReactionType,
-  numbingDisplay,
-  reactionTypeLabel,
-  toleranceLabel,
-} from "@/lib/sessions/clinical-response";
-import { reactionLabelsFromChips } from "@/lib/sessions/reaction-unified";
+import { numbingDisplay, toleranceLabel } from "@/lib/sessions/clinical-response";
+import { legacyBlockReactionLabel } from "@/lib/sessions/reaction-unified";
 import { sessionBlockSideLabel } from "@/lib/sessions/side-labels";
 import { ElectrolysisEntryRow } from "@/components/entry-row";
 import { BlockSetupForm } from "./block-setup-form";
@@ -431,18 +426,13 @@ function BlockSection({
             </p>
           )}
           {(() => {
-            const chipReactionLabels = new Set(
-              block.electrolysis_entries
-                .flatMap((e) => reactionLabelsFromChips(e.observation_chips))
-                .map((l) => l.toLowerCase()),
+            // ONE shared rule with the clinical-records printout (HON-46,
+            // Codex P1 4304382927): a chip-backed reaction_type is not shown
+            // twice, and a stale "none" never sits beside a real response.
+            const legacyReaction = legacyBlockReactionLabel(
+              block.reaction_type,
+              block.electrolysis_entries.map((e) => e.observation_chips),
             );
-            const legacyReaction =
-              isReactionType(block.reaction_type) &&
-              !chipReactionLabels.has(
-                reactionTypeLabel(block.reaction_type).toLowerCase(),
-              )
-                ? reactionTypeLabel(block.reaction_type)
-                : null;
             if (!legacyReaction && !block.reaction_notes) return null;
             return (
               <p className="text-sm text-neutral-500">

@@ -233,7 +233,10 @@ test("owner: the day's records appear; every excluded sentinel is absent from pa
   await expect(blockEl).toContainText("Left Cheeks · Right Sideburns");
   await expect(blockEl).toContainText("Probe: Ballet F3");
   await expect(blockEl).toContainText(`Probe lot: ${fx.sentinel.probeLot}`);
-  await expect(blockEl).toContainText("Reaction: mild_redness");
+  // Un-migrated block reaction: printed as LEGACY, by its label, through the
+  // saved-record view's rule (Codex P1 4304382927).
+  await expect(blockEl).toContainText("Legacy skin response: Mild redness");
+  await expect(blockEl).not.toContainText("Reaction: mild_redness");
   await expect(blockEl).toContainText(fx.sentinel.block);
   await expect(blockEl).toContainText("Thermolysis intensity: 22 %");
   await expect(blockEl).toContainText("Pulse delay: 1.5 s");

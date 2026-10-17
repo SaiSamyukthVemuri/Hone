@@ -1,5 +1,6 @@
 import { addDays, utcInstantFromLocal } from "@/lib/booking/tz";
 import { blockAreasLabel, type BlockArea } from "@/lib/sessions/block-areas";
+import { legacyBlockReactionLabel } from "@/lib/sessions/reaction-unified";
 
 // ===========================================================================
 // HON-46 — what a per-client clinical-records export contains, as pure code.
@@ -435,11 +436,23 @@ export function buildClinicalRecordsDocument(input: {
             ["Probe lot", present(b.probe_lot_number) ? `${b.probe_lot_number.trim()}${b.probe_lot_confirmed ? " (confirmed)" : ""}` : null],
             ["Numbing", b.numbing_status],
             ["Tolerance", b.tolerance_rating],
-            ["Reaction", b.reaction_type],
           ]),
           notes: readings([
             ["Numbing notes", b.numbing_notes],
-            ["Reaction notes", b.reaction_notes],
+            // REACTIONS through the SAME rule as the saved-record view
+            // (legacyBlockReactionLabel; Codex P1 4304382927). Current
+            // responses print as the entries' chips ("Observed: ..."); a
+            // block's reaction_type prints only when it is un-migrated history,
+            // and then LABELLED legacy, never as an active finding, never
+            // twice, and never "none" beside a real response.
+            [
+              "Legacy skin response",
+              legacyBlockReactionLabel(
+                b.reaction_type,
+                (entriesByBlock.get(b.id) ?? []).map((e) => e.observation_chips),
+              ),
+            ],
+            ["Legacy response note", b.reaction_notes],
             // The flag stands on its own (Codex P2 4302644062): a legacy block may
             // carry the caution with no note, and the chart still shows it.
             ["Caution for next session", present(b.caution_note) ? b.caution_note : b.caution_for_next_session ? "Yes" : null],

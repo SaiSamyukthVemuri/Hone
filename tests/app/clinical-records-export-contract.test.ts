@@ -135,6 +135,14 @@ describe("HON-46 export reads exclude private and payment data", () => {
     );
   });
 
+  it("reactions go through the SAME shared rule as the saved-record view (Codex P1 4304382927)", () => {
+    const scope = code(FILES.scope);
+    expect(scope).toContain('import { legacyBlockReactionLabel } from "@/lib/sessions/reaction-unified";');
+    expect(scope).not.toMatch(/\["Reaction", b\.reaction_type\]/);
+    const view = code("app/(app)/clients/[id]/sessions/[sessionId]/session-blocks-view.tsx");
+    expect(view).toContain("legacyBlockReactionLabel(");
+  });
+
   it("selects the probe-lot confirmation (Codex P2 4302799069)", () => {
     expect(code(FILES.queries)).toMatch(/probe_lot_number, probe_lot_confirmed,/);
   });

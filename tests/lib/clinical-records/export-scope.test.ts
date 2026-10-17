@@ -196,7 +196,7 @@ describe("buildClinicalRecordsDocument is an allow-list", () => {
     numbing_status: "none",
     numbing_notes: null,
     tolerance_rating: 4,
-    reaction_type: "mild erythema",
+    reaction_type: "mild_redness",
     reaction_notes: "Settled in 10 min.",
     caution_note: null,
     block_notes: "Block note.",
@@ -287,11 +287,12 @@ describe("buildClinicalRecordsDocument is an allow-list", () => {
         { label: "Probe", value: "Ballet F3 gold" },
         { label: "Probe lot", value: "LOT-7" },
         { label: "Tolerance", value: "4" },
-        { label: "Reaction", value: "mild erythema" },
       ]),
     );
+    expect(s.blocks[0].readings.map((r) => r.label)).not.toContain("Reaction");
     expect(s.blocks[0].notes).toEqual([
-      { label: "Reaction notes", value: "Settled in 10 min." },
+      { label: "Legacy skin response", value: "Mild redness" },
+      { label: "Legacy response note", value: "Settled in 10 min." },
       { label: "Notes", value: "Block note." },
     ]);
 
@@ -375,6 +376,67 @@ describe("entries of a filtered-out (soft-deleted) block are omitted (Codex P1 4
   it("a true legacy entry (no block) still prints at session level, and a live block keeps its entry", () => {
     expect(s.entries.map((e) => e.id)).toEqual(["legacy"]);
     expect(s.blocks[0].entries.map((e) => e.id)).toEqual(["in-live"]);
+  });
+});
+
+describe("reactions print through the saved-record view's rule (Codex P1 4304382927)", () => {
+  const notesFor = (reactionType: string | null, chips: unknown[]) =>
+    buildClinicalRecordsDocument({
+      sessions: [
+        {
+          id: "s6",
+          started_at: "2026-10-01T15:00:00Z",
+          ended_at: null,
+          modality: "electrolysis",
+          session_notes: null,
+          performed_by_practitioner_id: null,
+          practitioner_id: null,
+          record_status: null,
+          finalized_at: null,
+          aftercare_and_risks_explained_at: null,
+        },
+      ],
+      blocks: [
+        {
+          id: "b6",
+          session_id: "s6",
+          sort_order: 0,
+          primary_area: "chin",
+          side: null,
+          created_at: "2026-10-01T15:01:00Z",
+          reaction_type: reactionType,
+        } as unknown as ExportBlockSource,
+      ],
+      entries: chips.map(
+        (c, i) =>
+          ({
+            id: `e6-${i}`,
+            session_id: "s6",
+            block_id: "b6",
+            area: "chin",
+            observation_chips: c,
+            created_at: `2026-10-01T15:0${i + 2}:00Z`,
+          }) as unknown as ExportEntrySource,
+      ),
+      notes: [],
+      practitionerNameById: new Map(),
+    }).sessions[0].blocks[0];
+
+  it("a chip-backed legacy value prints ONCE (as the chip), not again as a reading", () => {
+    const b = notesFor("mild_redness", [["Mild redness"]]);
+    expect(b.notes.map((n) => n.label)).not.toContain("Legacy skin response");
+    expect(b.readings.map((r) => r.label)).not.toContain("Reaction");
+    expect(JSON.stringify(b).match(/Mild redness/g) ?? []).toHaveLength(1);
+  });
+
+  it("an unmatched legacy value is labelled LEGACY", () => {
+    const b = notesFor("swelling", [["good release"]]);
+    expect(b.notes).toContainEqual({ label: "Legacy skin response", value: "Swelling" });
+  });
+
+  it('reaction_type "none" beside a real response chip prints no "none"', () => {
+    const b = notesFor("none", [["Mild redness"]]);
+    expect(JSON.stringify(b)).not.toMatch(/No visible reaction|"none"/);
   });
 });
 
