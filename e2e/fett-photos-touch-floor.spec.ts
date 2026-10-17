@@ -89,7 +89,9 @@ test.describe("FETT photos: touch floor, mounted at phone width", () => {
     await page.getByLabel("Client photo").check();
     const panel = await controlHeights(page);
 
-    const tile = page.getByRole("button", { name: "View larger treatment photo" }).first();
+    // Without storage there is no signed thumbnail, so the image button is not
+    // drawn; the tile's own "View larger" action is, and opens the same preview.
+    const tile = page.getByRole("button", { name: "View larger", exact: true }).first();
     await expect(tile).toBeVisible({ timeout: T });
     const tiles = await controlHeights(page);
 
@@ -100,7 +102,7 @@ test.describe("FETT photos: touch floor, mounted at phone width", () => {
     const all = [...areaPanel, ...panel, ...tiles, ...preview];
     const under = all.filter((c) => c.height < FLOOR);
     // The surfaces the check claims to cover must actually be in the sample.
-    for (const must of [/Choose images/, /Client photo/, /Treatment area photo/, /Attach/, /Archive/, /Close preview/]) {
+    for (const must of [/Choose images/, /Client photo/, /Treatment area photo/, /Attach/, /View larger/, /Archive/, /Close preview/]) {
       expect(all.some((c) => must.test(c.what)), `measured ${must}`).toBe(true);
     }
     expect(all.filter((c) => c.what.startsWith("select")).length, "both selects measured").toBeGreaterThanOrEqual(2);
