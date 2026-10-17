@@ -2,7 +2,11 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createServerClient } from "@supabase/ssr";
 import { adminQuery, closePool, seedStudio } from "./helpers/harness";
-import { EXPORT_PAGE_SIZE, loadClinicalRecordsForExport } from "@/lib/clinical-records/export-queries";
+import {
+  EXPORT_PAGE_SIZE,
+  loadClinicalRecordsForExport,
+  recordClinicalRecordsAudit,
+} from "@/lib/clinical-records/export-queries";
 import { buildClinicalRecordsDocument } from "@/lib/clinical-records/export-scope";
 import { mintPrintToken, PRINT_TOKEN_TTL_MS } from "@/lib/clinical-records/print-token";
 import { recordClinicalRecordsPrintAction } from "@/app/(records-export)/clients/[id]/records/export/actions";
@@ -257,6 +261,51 @@ describe("HON-46 export reads every author and every note to completion", () => 
     expect(r).toEqual({ ok: true });
     expect(await printRows(s.clientId)).toEqual([{ scope: "day", day: DAY, preview_audit_id: base.previewAuditId }]);
     expect(await printRows(victimId)).toEqual([]);
+  }, 60_000);
+
+  it("the REAL export path records the owner's preview AND print through the actor-bound command (0233)", async () => {
+    process.env.APPOINTMENT_SIGNING_SECRET ||= "db-test-signing-secret";
+    const s = await seedStudio("hon46rpc");
+    studios.push(s.studioId);
+    await signInOwner(s.practitionerId);
+    const previewId = randomUUID();
+    // Preview: exactly the call the page makes.
+    let r = await recordClinicalRecordsAudit({
+      id: previewId,
+      clientId: s.clientId,
+      action: "clinical_records_previewed",
+      metadata: { scope: "day", day: DAY },
+    });
+    for (let attempt = 0; !r.ok && attempt < 20; attempt += 1) {
+      await new Promise((res) => setTimeout(res, 250));
+      r = await recordClinicalRecordsAudit({
+        id: previewId,
+        clientId: s.clientId,
+        action: "clinical_records_previewed",
+        metadata: { scope: "day", day: DAY },
+      });
+    }
+    expect(r).toEqual({ ok: true });
+    // Print: through the print action, bound to that preview.
+    const token = mintPrintToken({
+      studioId: s.studioId,
+      clientId: s.clientId,
+      actorId: s.practitionerId,
+      previewAuditId: previewId,
+      scope: { kind: "day", day: DAY },
+    })!;
+    expect(await recordClinicalRecordsPrintAction(token)).toEqual({ ok: true });
+    const rows = await adminQuery(
+      `select id, action, actor_id, studio_id, metadata from public.audit_logs
+        where entity_id = $1 and action like 'clinical_records_%' order by created_at`,
+      [s.clientId],
+    );
+    expect(rows.rows.map((x) => [x.action, x.actor_id, x.studio_id])).toEqual([
+      ["clinical_records_previewed", s.practitionerId, s.studioId],
+      ["clinical_records_printed", s.practitionerId, s.studioId],
+    ]);
+    expect(rows.rows[0].id).toBe(previewId);
+    expect(rows.rows[1].metadata).toEqual({ scope: "day", day: DAY, preview_audit_id: previewId });
   }, 60_000);
 
   it("labels a note superseded by a revision dated OUTSIDE the range (Codex P1 4302740025)", async () => {

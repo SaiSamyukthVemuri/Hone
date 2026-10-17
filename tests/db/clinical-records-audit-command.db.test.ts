@@ -57,6 +57,27 @@ describe("0233: clinical-records audit rows are actor-bound", () => {
         ),
       ),
     ).rejects.toSatisfy((e) => refused(e) === "42501");
+    // A member naming ANOTHER (non-owner) member as actor, on a print: refused.
+    const member2 = await seedMember(s, "aud0233a-m2");
+    await expect(
+      asUser(member.userId, (q) =>
+        q(
+          `insert into public.audit_logs (studio_id, actor_id, action, entity_type, entity_id, metadata)
+           values ($1, $2, 'clinical_records_printed', 'client', $3, $4)`,
+          [s.studioId, member2.practitionerId, s.clientId, meta],
+        ),
+      ),
+    ).rejects.toSatisfy((e) => refused(e) === "42501");
+    // anon cannot insert at all.
+    await expect(
+      asRole("anon", (q) =>
+        q(
+          `insert into public.audit_logs (studio_id, actor_id, action, entity_type, entity_id, metadata)
+           values ($1, $2, 'clinical_records_printed', 'client', $3, $4)`,
+          [s.studioId, s.practitionerId, s.clientId, meta],
+        ),
+      ),
+    ).rejects.toSatisfy((e) => refused(e) === "42501");
     // Any other action naming ANOTHER practitioner as actor is refused too.
     await expect(
       asUser(member.userId, (q) =>
@@ -95,6 +116,22 @@ describe("0233: clinical-records audit rows are actor-bound", () => {
     ]);
   });
 
+  it("the service-role sms_opt_out writer (Twilio inbound, actor null) is unaffected", async () => {
+    const s = await seedStudio("aud0233e");
+    // app/api/twilio/inbound-sms/route.ts writes through createAdminClient.
+    // asRole runs in a rolled-back transaction, so the row is read back inside it.
+    const n = await asRole("service_role", async (q) => {
+      await q(
+        `insert into public.audit_logs (studio_id, actor_id, action, entity_type, entity_id, metadata)
+         values ($1, null, 'sms_opt_out', 'client', $2, '{"source":"twilio_stop"}'::jsonb)`,
+        [s.studioId, s.clientId],
+      );
+      return (await q(`select count(*)::int as n from public.audit_logs where entity_id = $1 and action = 'sms_opt_out'`, [s.clientId]))
+        .rows[0].n as number;
+    });
+    expect(n).toBe(1);
+  });
+
   it("the command records auth.uid()'s own owner row, the client's studio, and the bound id", async () => {
     const s = await seedStudio("aud0233c");
     const id = randomUUID();
@@ -126,7 +163,12 @@ describe("0233: clinical-records audit rows are actor-bound", () => {
     await expect(call(member.userId, s.clientId, "clinical_records_printed", meta)).rejects.toSatisfy(
       (e) => refused(e) === "42501",
     );
+    // Cross-studio, both directions: studio A's owner with studio B's client,
+    // and studio B's owner with studio A's client.
     await expect(call(s.userId, other.clientId, "clinical_records_printed", meta)).rejects.toSatisfy(
+      (e) => refused(e) === "42501",
+    );
+    await expect(call(other.userId, s.clientId, "clinical_records_previewed", meta)).rejects.toSatisfy(
       (e) => refused(e) === "42501",
     );
     await expect(call(s.userId, s.clientId, "client_archived", meta)).rejects.toSatisfy((e) => refused(e) === "22023");
