@@ -530,6 +530,41 @@ describe("switching machine or mode clears the collected draft", () => {
     expect(src).toMatch(/const draftFrozen = saveUnresolved/);
   });
 
+  it("a PRE-WRITE lineage refusal is rejected, not unresolved", () => {
+    // THE P2 (Codex, #860 4304930968). `assertSessionForClient` throws
+    // before anything is written, and the entry maps a throw to the
+    // UNRESOLVED state — which keeps the retry key and freezes the draft,
+    // the machine and mode pickers, and the host's Cancel button. Nothing
+    // had been written, so there was nothing ambiguous to protect: she was
+    // left with a form she could neither save nor dismiss, where every
+    // retry repeated the same refusal and the state could never settle.
+    //
+    // A DEADLOCK CREATED BY ROUNDS 14 AND 20. Each control was frozen
+    // correctly for a genuinely unresolved save; nothing distinguished that
+    // from a refusal that merely arrived the same way.
+    const src = read(SETUP_ACTIONS_SRC);
+    expect(
+      src,
+      "the recorder must catch the lineage refusal rather than let it reach the entry's catch",
+    ).toMatch(/catch \(e\) \{[\s\S]{0,400}?e instanceof SessionLineageError/);
+    expect(
+      src,
+      "and report it as a definite non-write",
+    ).toMatch(/e instanceof SessionLineageError[\s\S]{0,300}?code: "rejected"/);
+
+    // CAUGHT BY TYPE, NOT BLANKET. Reporting a genuinely ambiguous write as
+    // rejected unfreezes the draft and releases the key — the opposite
+    // error, and the one that costs a duplicate clinical record.
+    // ANCHORED ON THE CODE, not the comment beside it: `read()` replaces
+    // every comment line with a space, so a regex pinned to prose can never
+    // match. That is the third time tonight — it is a property of the
+    // helper, not an accident.
+    expect(
+      src,
+      "an unrecognised failure must keep its throw, so it still reaches the unknown path",
+    ).toMatch(/catch \(e\) \{[\s\S]{0,700}?throw e;\s*\}/);
+  });
+
   it("the owners of \"a save is unresolved\" are ENUMERATED, so a fourth is loud", () => {
     // WHY A CENSUS AND NOT A RULE. Four controls across four rounds have had
     // to be wired to this fact, and each time the wiring was correct for the

@@ -40,7 +40,10 @@ import {
   listStudioDevices,
 } from "@/lib/machines/studio-devices";
 import { machinesByIds } from "@/lib/machines/machine-queries";
-import { assertSessionForClient } from "@/lib/sessions/session-lineage";
+import {
+  assertSessionForClient,
+  SessionLineageError,
+} from "@/lib/sessions/session-lineage";
 
 // MPX-03 — the machine workflow's server surface.
 //
@@ -738,7 +741,39 @@ export async function recordSetupSubmissionAction(input: {
   // resolves the session against the SERVER-DERIVED studio and this client,
   // so a block id from another client's chart cannot be smuggled in by a
   // stale page or a crafted call.
-  await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
+  //
+  // AND A REFUSAL HERE IS A REFUSAL, NOT AN UNKNOWN OUTCOME (Codex, #860
+  // 4304930968). This throws, and the entry's `catch` maps a throw to the
+  // unresolved state — which keeps the retry key and freezes the draft, the
+  // machine and mode pickers, and the host's Cancel button. Nothing has been
+  // written at this point, so there is nothing ambiguous to protect: she was
+  // left with a form she could neither save nor dismiss, in which every
+  // retry repeats the same lineage refusal and the state can never settle.
+  //
+  // That deadlock is a consequence of rounds 14 and 20 freezing each control
+  // correctly for a genuinely unresolved save, with nothing distinguishing
+  // that from a refusal that merely arrived the same way.
+  //
+  // CAUGHT BY TYPE, not with a blanket try/catch. Reporting a genuinely
+  // ambiguous write as `rejected` is the opposite error, and it unfreezes
+  // the draft and releases the key — the duplicate-capture defect rounds 16
+  // and 17 closed.
+  try {
+    await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
+  } catch (e) {
+    if (e instanceof SessionLineageError) {
+      return {
+        ok: false,
+        code: "rejected",
+        error:
+          "This treatment could not be confirmed as this client's. Reload the chart before saving again — nothing was recorded.",
+      };
+    }
+    // ANYTHING ELSE KEEPS ITS THROW. An unrecognised failure here has not
+    // been shown to be a non-write, and guessing in the unfreezing direction
+    // is the direction that costs a duplicate clinical record.
+    throw e;
+  }
 
   const db = await machineDb();
   const inventory = await listStudioDevices(db, scope.studioId);
