@@ -300,6 +300,18 @@ describe("G-25: the final whole-event sweep (backstop for fields no pass lists)"
     expect(JSON.stringify(out.sdkProcessingMetadata)).not.toContain(SESSION);
   });
 
+  it("keeps the SDK's source-map debug_id (a build artifact id), sweeps the rest of debug_meta (Codex P1 4301635965)", () => {
+    const DEBUG_ID = "c0ffee00-1234-4abc-8def-0123456789ab";
+    const out = scrubErrorEvent(
+      errorEvent({
+        debug_meta: { images: [{ type: "sourcemap", debug_id: DEBUG_ID, code_file: `app:///clients/${CLIENT}/page.js` }] },
+      } as unknown as Partial<ErrorEvent>),
+    );
+    const image = (out.debug_meta?.images?.[0] ?? {}) as Record<string, unknown>;
+    expect(image.debug_id).toBe(DEBUG_ID);
+    expect(image.code_file).toBe("app:///clients/[id]/page.js");
+  });
+
   it("keeps a deep but legitimate transaction structure intact", () => {
     const out = scrubTransactionEvent({
       type: "transaction",

@@ -246,7 +246,25 @@ function sweepRecordIds<T>(value: T): T {
   } else if (sdkProcessingMetadata !== undefined) {
     swept.sdkProcessingMetadata = sdkProcessingMetadata;
   }
+  restoreDebugIds(wire.debug_meta, swept.debug_meta);
   return swept as T;
+}
+
+/** `debug_meta.images[].debug_id` is a dashed UUID that the SDK attaches to
+ *  link stack frames to the uploaded source maps (Codex P1 4301635965). It
+ *  identifies a BUILD ARTIFACT, never a record, so the sweep restores it.
+ *  Every other value in debug_meta (code_file paths and so on) stays swept. */
+function restoreDebugIds(original: unknown, swept: unknown): void {
+  if (!isRecord(original) || !isRecord(swept)) return;
+  const from = original.images;
+  const to = swept.images;
+  if (!Array.isArray(from) || !Array.isArray(to)) return;
+  from.forEach((image, i) => {
+    const target = to[i];
+    if (isRecord(image) && isRecord(target) && typeof image.debug_id === "string") {
+      target.debug_id = image.debug_id;
+    }
+  });
 }
 
 function deepScrub(
