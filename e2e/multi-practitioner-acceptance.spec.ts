@@ -380,22 +380,48 @@ test("ACCEPTANCE: pick A, pick B, reschedule one, and the owner's calendar attri
   const successorId = successors[0].id;
 
   // The grid is studio-wide (`getAppointmentsForRange(studio.id, ...)`), so the
-  // owner must see BOTH practitioners' bookings. Attribution itself is rendered
-  // on the appointment detail page, which is where the practitioner join lives.
+  // owner must see BOTH practitioners' bookings. Attribution itself renders in
+  // the detail page's HEADER, via PractitionerLine — which prints the
+  // practitioner's display_name, or "Unassigned" when the row has none.
+  //
+  // SCOPED TO THE HEADER DELIBERATELY. A page-wide getByText would also match
+  // the client briefing card, the notes and any other mention, so it would be
+  // asserting "this name appears somewhere" rather than "this appointment is
+  // attributed to them" — the adjacent-property mistake.
+  const ownerName = (
+    await sql<{ display_name: string }>(
+      `select display_name from public.practitioners where id = $1`,
+      [ownerPractitionerId],
+    )
+  )[0].display_name;
+
   for (const [id, expectedName, label] of [
     [successorId, A.displayName, "A's rescheduled booking"],
     [bRows[0].id, B.displayName, "B's booking"],
   ] as const) {
     await page.goto(`/calendar/${id}`);
+    const header = page.locator("header").first();
     await expect(
-      page.getByText(expectedName, { exact: false }).first(),
+      header.getByText(expectedName, { exact: false }),
       `${label} must be attributed to ${expectedName} on the owner's calendar`,
     ).toBeVisible({ timeout: 20_000 });
+    // Pre-G1 this header would have shown the OWNER for every public booking.
+    // That is the regression this whole journey exists to catch, so it is
+    // asserted rather than left implied by the positive match above.
+    await expect(
+      header.getByText(ownerName, { exact: false }),
+      `${label} must NOT be attributed to the owner (${ownerName})`,
+    ).toHaveCount(0);
+    // And it is not the null case reading as a pass: PractitionerLine prints
+    // "Unassigned" when the row carries no practitioner.
+    await expect(header.getByText(/unassigned/i)).toHaveCount(0);
   }
 
   // NON-VACUITY: the two detail pages must not both be showing the same name,
   // which is exactly what the pre-G1 owner-attribution behaviour would render.
   expect(A.displayName).not.toBe(B.displayName);
+  expect(ownerName).not.toBe(A.displayName);
+  expect(ownerName).not.toBe(B.displayName);
 });
 
 // ---------------------------------------------------------------------------
