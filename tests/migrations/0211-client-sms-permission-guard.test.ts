@@ -35,11 +35,29 @@ const BODY = (CODE.match(/as \$\$([\s\S]*?)\$\$/) ?? ["", ""])[1];
 const FN = "clients_sms_permission_guard";
 
 describe("0211 sits correctly in the migration sequence", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    // Only the CURRENT maximum migration's own test may assert this — see
-    // CLAUDE.md §2. It reached this file from 0210's test.
-    expect(isRepoMax(VERSION), "0211 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION), "something was added above 0211").toEqual([]);
+  it("is no longer the repository maximum", () => {
+    // HANDED OFF, per CLAUDE.md §2: only the CURRENT max may assert
+    // `isRepoMax`, and that claim now lives in the current max's own test —
+    // tests/migrations/0220-receptionist-scheduling.test.ts.
+    //
+    // It reached this file from 0210's test, and left when production
+    // (carrying `0211`) was merged into this branch, which already carried
+    // `0216`, `0218` and `0220`. The same event moved the claim from 0209 to
+    // 0210 when production was merged into the SMS-04 branch; 0210's test
+    // records that hand-off in the same words.
+    //
+    // Before this, TWO tests asserted isRepoMax === true on one tree — 0211's
+    // and 0220's — which is exactly what §2 forbids, and the older one is
+    // always the wrong holder (Codex P1 4301672377 on #904).
+    expect(isRepoMax(VERSION)).toBe(false);
+    // DERIVED, NOT PINNED: something sits above it, and everything above it is
+    // greater. A literal list would be the forbidden pin in other clothes.
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above this older migration").toBeGreaterThan(0);
+    expect(
+      above.every((v) => Number(v) > Number(VERSION)),
+      "versionsAbove returned a version at or below its own",
+    ).toBe(true);
   });
 
   it("is allocated exactly once", () => {
