@@ -61,5 +61,11 @@ export async function GET(req: Request) {
     },
   });
   console.log(JSON.stringify({ event: "sms_confirmation_recovery_run", ...run, timestamp: new Date().toISOString() }));
+  // A run that could read NO studio did nothing and proved nothing: report it
+  // as a failure so the scheduler and monitoring see it (Codex P2 4304958887).
+  // Intentional no-ops (disabled, no routed studios) stay 200.
+  if (!run.ran && run.reason === "read_failed") {
+    return NextResponse.json({ ok: false, ...run }, { status: 503 });
+  }
   return NextResponse.json({ ok: true, ...run });
 }

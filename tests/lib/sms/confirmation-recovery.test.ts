@@ -653,6 +653,66 @@ describe("FAIRNESS: rows that keep refusing never starve the rest", () => {
     expect(db.filter((x) => x.studio_id === A).every((x) => x.sms_confirmation_send_attempts === 0)).toBe(true);
   });
 
+  // Codex P2 4304958892: G6/G7 refusals are remembered like the other route
+  // refusals, so a backlog behind one costs ONE snapshot read, and the run's
+  // budget still reaches the studios after it.
+  it("a missing STOP preflight is remembered per STUDIO: a 60-row backlog costs one snapshot read, and the next studio still sends", async () => {
+    const B2 = "studio-b2";
+    db = [
+      ...Array.from({ length: 60 }, (_, i) => appt({ id: `a-${i}`, created_at: minutesAgo(600 - i) })),
+      appt({ id: "b-1", studio_id: B2, created_at: minutesAgo(30) }),
+    ];
+    const reads: Record<string, number> = {};
+    snapshot = (studioId) => {
+      reads[studioId] = (reads[studioId] ?? 0) + 1;
+      // A is ready in every way EXCEPT its STOP preflight: the key is present
+      // and empty, so the proven-sender fixture leaves it unproven.
+      return studioId === A
+        ? { data: { ...readySnap(A, "sender-a-1").data, stop_preflights: [] }, error: null }
+        : readySnap(B2, "sender-b2");
+    };
+    process.env[STUDIO_ROUTING_ENV] = `${A},${B2}`;
+    const r = await run({ [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: `${A},${B2}` }, 50);
+    expect(r).toMatchObject({ ran: true, sent: 1, skipped: { sms_route_stop_preflight_missing: 60 } });
+    expect(reads[A]).toBe(1);
+    expect(reads[B2]).toBe(1);
+    expect(db.find((x) => x.id === "b-1")!.sms_confirmation_sent_at).not.toBeNull();
+    expect(db.filter((x) => x.studio_id === A).every((x) => x.sms_confirmation_send_attempts === 0)).toBe(true);
+  });
+
+  it("a missing US campaign binding is remembered per STUDIO+DESTINATION: a 40-row US backlog costs one read, and the next studio still sends", async () => {
+    const B2 = "studio-b2";
+    const US_LONG_CODE = "+12065550100";
+    db = [
+      ...Array.from({ length: 40 }, (_, i) =>
+        appt({ id: `us-${i}`, client_phone: `+1212555${String(1000 + i)}`, created_at: minutesAgo(600 - i) }),
+      ),
+      appt({ id: "b-1", studio_id: B2, created_at: minutesAgo(30) }),
+    ];
+    const reads: Record<string, number> = {};
+    snapshot = (studioId) => {
+      reads[studioId] = (reads[studioId] ?? 0) + 1;
+      // A: a US long code with approved 10DLC and a proven STOP path, but NO
+      // recorded campaign binding (the key present and empty).
+      return studioId === A
+        ? {
+            data: {
+              senders: [{ id: "sender-a-1", studio_id: A, status: "active", phone_number: US_LONG_CODE, messaging_service_sid: MSID_A }],
+              registrations: [approval(A, "sender-a-1", US_LONG_CODE, "us_10dlc")],
+              campaign_bindings: [],
+            },
+            error: null,
+          }
+        : readySnap(B2, "sender-b2");
+    };
+    process.env[STUDIO_ROUTING_ENV] = `${A},${B2}`;
+    const r = await run({ [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: `${A},${B2}` }, 50);
+    expect(r).toMatchObject({ ran: true, sent: 1, skipped: { sms_route_campaign_binding_missing: 40 } });
+    expect(reads[A]).toBe(1);
+    expect(db.find((x) => x.id === "b-1")!.sms_confirmation_sent_at).not.toBeNull();
+    expect(db.filter((x) => x.studio_id === A).every((x) => x.sms_confirmation_send_attempts === 0)).toBe(true);
+  });
+
   it("an unreadable snapshot costs one row's looks per run (3), not looks per row", async () => {
     db = Array.from({ length: 5 }, (_, i) => appt({ id: `r-${i}`, created_at: iso(NOW - (60 + i) * 60_000) }));
     snapshot = { data: null, error: { code: "PGRST202" } };

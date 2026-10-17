@@ -3,7 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // D5 (#824): the recovery route is inert unless switched on, and is on no
 // scheduler. Disabled, it must answer without creating a database client.
 
-const h = { adminCreated: 0, runs: 0 };
+const h: { adminCreated: number; runs: number; result: Record<string, unknown> } = {
+  adminCreated: 0,
+  runs: 0,
+  result: { ran: true, considered: 0, sent: 0, failed: 0, skipped: {} },
+};
 
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => {
@@ -17,7 +21,7 @@ vi.mock("@/lib/sms/confirmation-recovery", async (importOriginal) => {
     ...real,
     recoverOwedConfirmations: async () => {
       h.runs += 1;
-      return { ran: true, considered: 0, sent: 0, failed: 0, skipped: {} };
+      return h.result;
     },
   };
 });
@@ -38,6 +42,7 @@ beforeEach(() => {
   delete process.env.SMS_CONFIRMATION_RECOVERY;
   h.adminCreated = 0;
   h.runs = 0;
+  h.result = { ran: true, considered: 0, sent: 0, failed: 0, skipped: {} };
   vi.spyOn(console, "log").mockImplementation(() => undefined);
 });
 afterEach(() => {
@@ -80,6 +85,28 @@ describe("sms-confirmation-recovery route", () => {
     const res = await GET(req("Bearer s3cret"));
     expect(res.status).toBe(200);
     expect(h.runs).toBe(1);
+  });
+
+  // Codex P2 4304958887: a run that could read no studio did nothing and proved
+  // nothing. It must not look like success to the scheduler or monitoring.
+  it("a run that read NO studio (read_failed) answers ok:false with a non-2xx status", async () => {
+    process.env.SMS_CONFIRMATION_RECOVERY = "on";
+    process.env.NEXT_PUBLIC_APP_ORIGIN = "https://app.example";
+    process.env.APPOINTMENT_SIGNING_SECRET = "x".repeat(48);
+    h.result = { ran: false, reason: "read_failed" };
+    const res = await GET(req("Bearer s3cret"));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ ok: false, ran: false, reason: "read_failed" });
+  });
+
+  it("an intentional no-op (no routed studios) stays 200 / ok:true", async () => {
+    process.env.SMS_CONFIRMATION_RECOVERY = "on";
+    process.env.NEXT_PUBLIC_APP_ORIGIN = "https://app.example";
+    process.env.APPOINTMENT_SIGNING_SECRET = "x".repeat(48);
+    h.result = { ran: false, reason: "no_routed_studios" };
+    const res = await GET(req("Bearer s3cret"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, ran: false, reason: "no_routed_studios" });
   });
 
   it("is on no Vercel schedule (activation is a separate, approved scheduler step)", () => {

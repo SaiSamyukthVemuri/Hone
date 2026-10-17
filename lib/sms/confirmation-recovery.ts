@@ -173,6 +173,25 @@ const STUDIO_WIDE_REFUSALS: ReadonlySet<string> = new Set([
   "sms_route_ambiguous_active_sender",
   "sms_route_sender_wrong_studio",
   "sms_route_sender_identity_missing",
+  // HON-50 G6 (Codex P2 4304958892): the STOP preflight belongs to the sender,
+  // so it refuses every destination alike. Without these, every owed row of a
+  // studio whose preflight is missing re-ran the snapshot read, and a backlog
+  // could spend the run's budget before later studios were visited.
+  "sms_route_stop_preflight_missing",
+  "sms_route_stop_preflight_mismatch",
+  "sms_route_stop_preflight_not_ready",
+  "sms_route_stop_preflight_stale",
+  "sms_route_stop_preflight_base_changed",
+]);
+
+// Refusals that hold for one studio AND one destination country: readiness
+// and (HON-50 G7) the US campaign binding, which only US-bound rows consult.
+const DESTINATION_REFUSALS: ReadonlySet<string> = new Set([
+  "sms_route_destination_not_ready",
+  "sms_route_campaign_binding_missing",
+  "sms_route_campaign_binding_mismatch",
+  "sms_route_campaign_binding_unverified",
+  "sms_route_campaign_binding_stale",
 ]);
 
 /**
@@ -348,7 +367,7 @@ export async function recoverOwedConfirmations(opts: {
           else if (result.skipped) {
             skip(result.reason);
             if (STUDIO_WIDE_REFUSALS.has(result.reason)) studioRefusal.set(studioId, result.reason);
-            else if (result.reason === "sms_route_destination_not_ready" && destKey) {
+            else if (DESTINATION_REFUSALS.has(result.reason) && destKey) {
               destinationRefusal.set(destKey, result.reason);
             }
           } else run.failed += 1;
