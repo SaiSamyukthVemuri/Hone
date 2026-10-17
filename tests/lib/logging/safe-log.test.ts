@@ -172,6 +172,13 @@ describe("THE GUARANTEE for encodings (ASCII percent-decoding to a fixed point)"
     expect(withoutRecordIds([deep])).toEqual(["[Redacted]"]);
   });
 
+  it("decoding never injects a control character or whitespace (Codex P2 4301838851)", () => {
+    const FORGE = `{"clientId":"${"6f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5"}","message":"bad%0Aforged%1B[31m%20x"}`;
+    const [out] = withoutRecordIds([FORGE]) as [string];
+    expect(out).not.toMatch(/[\x00-\x20\x7f]/);
+    expect(out).toBe(`{"clientId":"[id]","message":"bad%0Aforged%1B[31m%20x"}`);
+  });
+
   it("tokens with % but no id keep their original encoding", () => {
     expect(withoutRecordIds(["100% done", "q=a%20b&r=%2Fx", "bad %zz escape"])).toEqual(["100% done", "q=a%20b&r=%2Fx", "bad %zz escape"]);
   });

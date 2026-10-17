@@ -47,6 +47,10 @@ const RECORD_ID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 const HAS_RECORD_ID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const MAX_DECODE_ROUNDS = 4;
 
+function reescapeControls(text: string): string {
+  return text.replace(/[\x00-\x20\x7f]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`);
+}
+
 function decodeAsciiEscapes(text: string): string {
   return text.replace(/%([0-7][0-9a-f])/gi, (_m, hex: string) => String.fromCharCode(parseInt(hex, 16)));
 }
@@ -65,7 +69,11 @@ function replaceRecordIds(text: string): string {
       }
       if (decodeAsciiEscapes(decoded) !== decoded) return REDACTED;
       if (decoded !== token && HAS_RECORD_ID.test(decoded)) {
-        return decoded.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER);
+        // Decoding must not INJECT characters (Codex P2 4301838851): a
+        // control character or whitespace that was escaped in the input
+        // (%0A, %1B, %20) is escaped again on the way out, so a decoded
+        // token can never forge a log line or a terminal sequence.
+        return reescapeControls(decoded.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER));
       }
       return token.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER);
     })
