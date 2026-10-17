@@ -216,6 +216,9 @@ function seedLineage(currency: "cad" | "usd") {
     studio_payment_settings: { stripe_account_id: "acct_test", stripe_livemode: false },
     client_stripe_customers: { stripe_customer_id: "cus_test" },
     practitioners: { role: "owner" },
+    // PAY-CCY-02's pre-charge country check (step 4, inside
+    // loadCardAndVerifyLineage) reads studio_payment_jurisdictions.
+    studio_payment_jurisdictions: { payment_country: "CA", payment_currency: "cad" },
   };
 }
 
