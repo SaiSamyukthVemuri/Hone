@@ -96,6 +96,13 @@ describe("0231's transaction and shape", () => {
     expect(body).toMatch(/'That client is not available\.'/);
     expect(body).toMatch(/security definer\s+set search_path = ''/);
   });
+
+  it("locks the client while authorizing, and never reports a write that did not happen (Codex P2 4302682030)", () => {
+    const body = sql.slice(sql.indexOf("function public.set_client_portrait"));
+    expect(body).toMatch(/from public\.clients c\s+where c\.id = p_client_id\s+for update;/);
+    expect(body).toMatch(/and c\.studio_id = v_studio\s+returning c\.id into v_id;/);
+    expect(body).toMatch(/if v_id is null then\s+raise exception 'That client is not available\.'/);
+  });
 });
 
 describe("0231's grant posture (CLAUDE.md §5; clinical-rpc-grant-guard)", () => {

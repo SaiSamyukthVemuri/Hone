@@ -18,6 +18,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import {
   adminQuery,
+  adminTx,
   asRole,
   asUser,
   closePool,
@@ -317,5 +318,61 @@ describe("0231: a concurrent archive WAITS for the setter, then clears the point
     }
     expect((bResult as { rows: { id: string }[] }).rows[0].id).toBe(img);
     expect(await portraitOf(A.clientId), "B cleared the pointer A committed").toBeNull();
+  });
+});
+
+describe("0231: a concurrent studio move WAITS for the setter's client lock (Codex P2 4302682030)", () => {
+  it("set_client_portrait blocks on the moving client, then refuses; never a false success", async () => {
+    // A portrait-less client may move studios. Without the lock, the setter
+    // authorized against the OLD studio, its UPDATE then matched no row once
+    // the move committed, and it still returned the image id: success with
+    // nothing written.
+    const c = randomUUID();
+    await adminQuery(`insert into public.clients (id, studio_id, name) values ($1, $2, 'Client race-move')`, [
+      c,
+      A.studioId,
+    ]);
+    const img = await image(A, c);
+
+    let releaseMove!: () => void;
+    const moveMayCommit = new Promise<void>((r) => (releaseMove = r));
+    let moveHolds!: () => void;
+    const moveHolding = new Promise<void>((r) => (moveHolds = r));
+
+    // Connection M: move the client to B and HOLD the transaction open.
+    const move = adminTx(async (q) => {
+      await q(`update public.clients set studio_id = $2 where id = $1`, [c, B.studioId]);
+      moveHolds();
+      await moveMayCommit;
+    });
+    await moveHolding;
+
+    // Connection S: A's owner sets the portrait while the move is open.
+    const set = userQuery(A.userId, SET, [c, img]).then(
+      () => ({ ok: true as const }),
+      (e: { code?: string; message: string }) => ({ ok: false as const, code: e.code, message: e.message }),
+    );
+    try {
+      let blocked = false;
+      for (let i = 0; i < 100 && !blocked; i++) {
+        const r = await adminQuery(
+          `select count(*)::int n from pg_stat_activity
+            where wait_event_type = 'Lock' and query like '%set_client_portrait%'`,
+        );
+        blocked = (r.rows[0].n as number) > 0;
+        if (!blocked) await new Promise((r) => setImmediate(r));
+      }
+      expect(blocked, "the setter must be blocked on the moving client's row lock").toBe(true);
+    } finally {
+      releaseMove();
+      await move;
+    }
+    const outcome = await set;
+    expect(outcome, "never a success for a write that did not happen").toMatchObject({
+      ok: false,
+      code: CHECK_VIOLATION,
+    });
+    expect((outcome as { message: string }).message).toMatch(/That client is not available\./);
+    expect(await portraitOf(c)).toBeNull();
   });
 });

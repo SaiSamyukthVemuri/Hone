@@ -7,6 +7,7 @@ import { PendingLink } from "@/components/pending-link";
 import { publishableKeyOk } from "@/lib/payments/payment-status-presenter";
 import { notFound } from "next/navigation";
 import { signedClientPortraitUrl } from "@/lib/images/client-portrait";
+import { ClientPortrait } from "./ClientPortrait";
 import { createClient } from "@/lib/supabase/server";
 import {
   buildLastSessionSummary,
@@ -890,15 +891,7 @@ export default async function ClientCheatSheetPage({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               {portraitUrl && (
-                // eslint-disable-next-line @next/next/no-img-element -- short-lived signed URL; next/image would re-host it
-                <img
-                  src={portraitUrl}
-                  alt={`ID photo of ${client.name}`}
-                  width={56}
-                  height={56}
-                  className="h-14 w-14 shrink-0 rounded-full object-cover ring-1 ring-neutral-200 dark:ring-neutral-700"
-                  data-testid="client-portrait"
-                />
+                <ClientPortrait url={portraitUrl.url} thumbUrl={portraitUrl.thumbUrl} clientName={client.name} />
               )}
               <h1 className="break-words text-2xl font-semibold tracking-tight md:text-3xl">
                 {client.name}

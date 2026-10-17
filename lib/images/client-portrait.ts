@@ -4,10 +4,11 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
   TREATMENT_IMAGES_BUCKET,
   TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS,
+  buildTreatmentImageThumbPath,
   validateTreatmentImagePath,
 } from "@/lib/images/treatment-images";
 
-// FETT photos (HON-43), 0231: a short-lived signed URL for a client's
+// FETT photos (HON-43), 0231: short-lived signed URLs for a client's
 // identification portrait, or null.
 //
 // The SAME trust boundary as the Photos tab (PR #273/#276):
@@ -17,11 +18,19 @@ import {
 //   2. the path must bind to this studio + client (validateTreatmentImagePath);
 //   3. only then does the admin client sign it, with the same 60 s TTL.
 // Any failure is null: the header simply shows no portrait.
+//
+// The header renders a 56 px avatar, so it requests the bounded 1024 px
+// derivative first (Codex P2 4302682032) and falls back to the original only
+// if the derivative will not load (legacy photo, missing thumb). The
+// derivative is signed only AFTER the original passed the same checks, from a
+// path derived from that validated original (PERF-IMG-03, as on the Photos tab).
+export type ClientPortraitUrls = { url: string; thumbUrl: string | null };
+
 export async function signedClientPortraitUrl(input: {
   studioId: string;
   clientId: string;
   portraitImageId: string | null | undefined;
-}): Promise<string | null> {
+}): Promise<ClientPortraitUrls | null> {
   if (!input.portraitImageId) return null;
   try {
     const supabase = await createClient();
@@ -44,10 +53,20 @@ export async function signedClientPortraitUrl(input: {
       storagePath: row.storage_path,
     }).ok;
     if (!ok) return null;
-    const { data } = await createAdminClient()
-      .storage.from(TREATMENT_IMAGES_BUCKET)
-      .createSignedUrl(row.storage_path, TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS);
-    return data?.signedUrl ?? null;
+    const storage = createAdminClient().storage.from(TREATMENT_IMAGES_BUCKET);
+    const { data } = await storage.createSignedUrl(row.storage_path, TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS);
+    if (!data?.signedUrl) return null;
+    let thumbUrl: string | null = null;
+    const thumbPath = buildTreatmentImageThumbPath(row.storage_path);
+    if (thumbPath) {
+      try {
+        const t = await storage.createSignedUrl(thumbPath, TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS);
+        thumbUrl = t.data?.signedUrl ?? null;
+      } catch {
+        thumbUrl = null;
+      }
+    }
+    return { url: data.signedUrl, thumbUrl };
   } catch {
     return null;
   }
