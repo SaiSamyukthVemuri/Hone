@@ -1,0 +1,41 @@
+"use client";
+
+import { useState, useTransition } from "react";
+import { recordClinicalRecordsPrintAction } from "./actions";
+
+// HON-46. Prints only after the print has been audited. If the audit cannot be
+// recorded, the dialog does not open and the owner is told why.
+export function AuditedPrintButton({
+  clientId,
+  rawScope,
+}: {
+  clientId: string;
+  rawScope: { scope?: string; session?: string; day?: string; from?: string; to?: string };
+}) {
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="flex flex-col items-end gap-1 print:hidden">
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() => {
+          setError(null);
+          startTransition(async () => {
+            const r = await recordClinicalRecordsPrintAction(clientId, rawScope).catch(() => ({ ok: false }));
+            if (r.ok) window.print();
+            else setError("Could not record this print in the audit log, so it was not printed. Try again.");
+          });
+        }}
+        className="min-h-[44px] rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+      >
+        {pending ? "Recording…" : "Print"}
+      </button>
+      {error && (
+        <p role="alert" className="text-xs text-red-700 dark:text-red-400">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
