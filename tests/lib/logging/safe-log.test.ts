@@ -100,3 +100,79 @@ describe("safeLog.error / warn / info hand scrubbed arguments to console", () =>
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// THE GUARANTEE for encodings: no string or key, after ASCII percent-decoding
+// to a fixed point, contains a UUID. The oracle below decodes the OUTPUT fully
+// and searches it; inputs are fuzzed per character (raw, %XX, %25XX, either
+// case), glued to letters, with a fixed seed so a failure reproduces.
+// ---------------------------------------------------------------------------
+function oracleDecode(text: string): string {
+  let cur = text;
+  for (let i = 0; i < 16; i += 1) {
+    const next = cur.replace(/%([0-7][0-9a-f])/gi, (_m, h: string) => String.fromCharCode(parseInt(h, 16)));
+    if (next === cur) break;
+    cur = next;
+  }
+  return cur;
+}
+const UUID_ANYWHERE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+function mulberry32(seed: number): () => number {
+  let a = seed;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function encodeFuzzed(id: string, rnd: () => number): string {
+  return [...id]
+    .map((ch) => {
+      const hex = ch.charCodeAt(0).toString(16);
+      const r = rnd();
+      const esc = rnd() < 0.5 ? hex : hex.toUpperCase();
+      if (r < 0.4) return ch;
+      if (r < 0.75) return `%${esc}`;
+      if (r < 0.95) return `%25${esc}`;
+      return `%2525${esc}`;
+    })
+    .join("");
+}
+
+const FUZZ_IDS = [CLIENT, SESSION, APPT, STUDIO];
+const FUZZ_CASES = Array.from({ length: 400 }, (_v, i) => {
+  const rnd = mulberry32(828 + i);
+  const id = FUZZ_IDS[i % FUZZ_IDS.length]!;
+  const glue = ["", "abc", "x_", "9"][Math.floor(rnd() * 4)]!;
+  return `/clients/${glue}${encodeFuzzed(id, rnd)}${glue ? "fed" : ""}/sessions?tab=1`;
+});
+
+describe("THE GUARANTEE for encodings (ASCII percent-decoding to a fixed point)", () => {
+  it("400 fuzzed encodings: no UUID survives in the fully decoded output", () => {
+    for (const input of FUZZ_CASES) {
+      const [out] = withoutRecordIds([input]) as [string];
+      expect(UUID_ANYWHERE.test(oracleDecode(out)), `${input} -> ${out}`).toBe(false);
+    }
+  });
+
+  it("keys get the same guarantee", () => {
+    const [out] = withoutRecordIds([Object.fromEntries(FUZZ_CASES.slice(0, 50).map((k, i) => [k, i]))]);
+    for (const key of Object.keys(out as object)) expect(UUID_ANYWHERE.test(oracleDecode(key)), key).toBe(false);
+  });
+
+  it("an id-bearing token is written decoded, keeping the route shape", () => {
+    expect(withoutRecordIds([`/clients/%36f1c2d3e%252D4a5b-4c6d-8e7f-90a1b2c3d4e5/sessions`])).toEqual(["/clients/[id]/sessions"]);
+  });
+
+  it("a token still changing after the decode bound is dropped, never sent undecoded", () => {
+    const deep = `/clients/%2525252536f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5`;
+    expect(withoutRecordIds([deep])).toEqual(["[Redacted]"]);
+  });
+
+  it("tokens with % but no id keep their original encoding", () => {
+    expect(withoutRecordIds(["100% done", "q=a%20b&r=%2Fx", "bad %zz escape"])).toEqual(["100% done", "q=a%20b&r=%2Fx", "bad %zz escape"]);
+  });
+});

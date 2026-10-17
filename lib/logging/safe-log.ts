@@ -20,28 +20,60 @@
 // keeps its shape, so logs stay greppable. Emails, phones and tokens are not
 // this module's job.
 //
-// The id pattern matches lib/observability/sentry-scrub.ts (#891): a dashed
-// 8-4-4-4-12 UUID, a hyphen possibly percent-encoded as %2D, with NO boundary
-// at all (Codex P1 4301586679): an id glued to hex letters ("abc<uuid>") is
-// still a full id and is still removed. The dashes are what make it a UUID,
-// so dashless hex (Sentry trace and span ids, hashes) is never matched. To be
+// The id handling matches lib/observability/sentry-scrub.ts (#891). To be
 // consolidated into one shared definition once #891 merges.
 
-const RECORD_ID_RE = new RegExp(
-  // A hex digit may itself be percent-encoded (%30-%39, %41-%46, %61-%66):
-  // URL serialization keeps the escape, and routing decodes it straight back
-  // to the id (Codex P2 4301707490). Same for the hyphen (%2D).
-  ["{8}", "{4}", "{4}", "{4}", "{12}"]
-    .map((n) => `(?:[0-9a-f]|%3[0-9]|%4[1-6]|%6[1-6])${n}`)
-    .join("(?:-|%2d)"),
-  "gi",
-);
 const RECORD_ID_PLACEHOLDER = "[id]";
 const REDACTED = "[Redacted]";
 const MAX_DEPTH = 8;
 
+// THE GUARANTEE for encodings: no string or key, after ASCII percent-decoding
+// to a fixed point, contains a UUID.
+//
+// The regex is the plain dashed 8-4-4-4-12 form with no boundary (an id glued
+// to letters, "_" or digits is still a full id). Its dashes are what make it a
+// UUID, so dashless hex (Sentry trace and span ids, hashes) is never matched.
+// Encodings are NOT enumerated in it (%2D, %36, %252D, ... were found one at a
+// time in review). Instead, each whitespace-delimited token that contains "%"
+// is decoded (ASCII %XX only, so a malformed escape never throws and
+// multibyte text is untouched), repeatedly until stable, at most
+// MAX_DECODE_ROUNDS times. If the decoded token contains a UUID, the DECODED
+// token is written with the ids replaced ("/clients/%36f1…" becomes
+// "/clients/[id]", keeping the route shape). A token still changing after the
+// bound is replaced with "[Redacted]": fail closed, never sent undecoded.
+// Out of scope: non-URL encodings (HTML entities, \u escapes, base64), which
+// URL serialization does not produce.
+const RECORD_ID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+const HAS_RECORD_ID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+const MAX_DECODE_ROUNDS = 4;
+
+function decodeAsciiEscapes(text: string): string {
+  return text.replace(/%([0-7][0-9a-f])/gi, (_m, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+}
+
+function replaceRecordIds(text: string): string {
+  if (!text.includes("%")) return text.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER);
+  return text
+    .split(/(\s+)/)
+    .map((token) => {
+      if (!token.includes("%")) return token.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER);
+      let decoded = token;
+      for (let round = 0; round < MAX_DECODE_ROUNDS; round += 1) {
+        const next = decodeAsciiEscapes(decoded);
+        if (next === decoded) break;
+        decoded = next;
+      }
+      if (decodeAsciiEscapes(decoded) !== decoded) return REDACTED;
+      if (decoded !== token && HAS_RECORD_ID.test(decoded)) {
+        return decoded.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER);
+      }
+      return token.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER);
+    })
+    .join("");
+}
+
 function scrubText(text: string): string {
-  return text.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER);
+  return replaceRecordIds(text);
 }
 
 function scrubKey(key: string, taken: Record<string, unknown>): string {
