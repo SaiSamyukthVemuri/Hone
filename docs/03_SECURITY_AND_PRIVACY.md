@@ -209,6 +209,20 @@ What this baseline is **not**:
 - Not a report-only path. A future PR may add `Content-Security-Policy-Report-Only` with a report endpoint before tightening further.
 - **CSP + Sentry (updated 2026-07-27):** Sentry HAS since shipped, so "they will be added in the Sentry-install PR if that ships" is superseded. Sentry is configured to use the same-origin `/monitoring` **tunnel** specifically so no third-party Sentry ingest domain needs to be added to the CSP. **Verify the deployed CSP against the tunnel configuration before assuming either way** — this was not re-verified in the 2026-07-27 documentation reconciliation.
 
+### Analytics and error-tracking proxies forward only allowlisted headers (#828 G-07/G-26)
+
+`/ingest` (PostHog) and `/monitoring` (Sentry's tunnel) stay same-origin, so `connect-src 'self'` still covers them. They used to be bare rewrites (`next.config.ts` rewrites and `withSentryConfig`'s `tunnelRoute`), and a rewrite to an external origin forwards every browser header. That included the page URL as `Referer` (same-origin requests carry the full path and query, so `/clients/<uuid>…`), `Origin`, the Supabase auth `Cookie`, `Authorization` and the client IP. PostHog's proxy guide states the default: "the proxy forwards all headers including cookies to PostHog".
+
+They are now route handlers (`app/ingest/[...path]/route.ts`, `app/monitoring/route.ts`) built on `lib/observability/egress-proxy.ts`:
+- **Request headers:** only `content-type`, `content-encoding` and `accept` are forwarded. No `Referer`, `Origin`, `Cookie`, `Authorization`, `X-Forwarded-For`/`X-Real-IP`, `User-Agent` or `sec-fetch-*`.
+- **Response headers:** only `content-type`, `cache-control` and Sentry's back-off headers (`x-sentry-rate-limits`, `retry-after`, which the SDK reads to stop sending) come back. Never `Set-Cookie`.
+- **PostHog paths:** only the SDK's own prefixes are proxied (`e`, `i`, `flags`, `decide`, `static`, `array`); anything else is a 404, so the route is not a general proxy. Methods are GET, HEAD and POST.
+- **Sentry:** forwards only the envelope body, and only when the envelope's DSN names Hone's own host and project (Sentry's documented tunnel pattern). The browser SDK uses `tunnel: "/monitoring"`.
+- **Limits:** 1 MB body cap, 10 s upstream timeout, and bare 4xx/502 answers with no detail.
+- **Minimization:** dropping the client IP removes PostHog GeoIP, and the upstreams see the server's IP instead.
+- **Tests:** pinned by `tests/lib/observability/egress-proxy.test.ts`. A real capture server records what reaches the upstream from `/clients/<uuid>` and `/calendar/<uuid>`. Its negative control sends the same request through Next's rewrite proxy, which forwards `Referer`, `Cookie` and `X-Forwarded-For`.
+- **Not covered:** Vercel's own platform request logs. Not a BAA.
+
 ## 3. Portal session model
 
 | Step | What happens |
