@@ -62,6 +62,20 @@ function parenBody(src: string, parenAt: number): string {
   throw new Error("unbalanced parens while scoping the practitioners table");
 }
 
+/**
+ * Next's own request-scoped promises. Awaiting one of these is NOT a studio
+ * read — `searchParams` in particular MUST be awaited before /financials can
+ * compute the period it hands to the guard — so they are permitted before the
+ * financial guard while any other awaited call is not.
+ */
+const REQUEST_PRIMITIVES = new Set([
+  "searchParams",
+  "params",
+  "cookies",
+  "headers",
+  "draftMode",
+]);
+
 /** Every `page.tsx` under `rel`, recursively, as repo-relative paths. */
 function discoverPages(rel: string): string[] {
   const out: string[] = [];
@@ -137,8 +151,14 @@ describe("#824: financial surfaces refuse a non-owner before any read", () => {
       ].map((m) => m[1]);
       expect(
         awaitsBefore,
-        "the ONLY await before the owner refusal may be the identity resolver",
-      ).toEqual(["requirePractitionerWithStudio"]);
+        "the identity resolver must be awaited before the owner refusal",
+      ).toContain("requirePractitionerWithStudio");
+      expect(
+        awaitsBefore.filter(
+          (n) => n !== "requirePractitionerWithStudio" && !REQUEST_PRIMITIVES.has(n),
+        ),
+        "no DATA LOADER may be awaited before the owner refusal",
+      ).toEqual([]);
       // AND THE BRANCH ITSELF MUST HALT. Scoped to the branch BODY by
       // brace-matching, not to a character window (Codex P2 4303218405): a
       // 400-character window around the condition swept up the OWNER's later
@@ -166,28 +186,79 @@ describe("#824: financial surfaces refuse a non-owner before any read", () => {
       // future financials route could instead refuse in-page. What is NOT
       // acceptable is neither.
       const src = code(read(rel));
-      const delegates = /loadFinancialsView\s*\(\s*practitioner/.test(src);
+      const delegateAt = src.search(/loadFinancialsView\s*\(\s*practitioner/);
       const refuseAt = src.search(/practitioner\.role\s*!==\s*"owner"/);
       expect(
-        delegates || refuseAt > -1,
+        delegateAt > -1 || refuseAt > -1,
         `${rel} must either refuse in-page or hand the practitioner to loadFinancialsView`,
       ).toBe(true);
-      if (!delegates) {
+
+      // NOTHING MAY LOAD BEFORE WHICHEVER GUARD THIS PAGE USES (Codex P2
+      // 4303288171). Delegating is not enough on its own: the helper can only
+      // refuse reads performed INSIDE itself, so a page that runs a
+      // studio-wide query and THEN delegates satisfied the old check while
+      // breaking the guarantee. The boundary is the guard this page actually
+      // has, and every await before it must be the identity resolver's.
+      const guardAt = refuseAt > -1 ? Math.min(...[refuseAt, delegateAt].filter((n) => n > -1)) : delegateAt;
+      const fnAt = src.search(/export default async function/);
+      expect(fnAt, "the page must export an async component").toBeGreaterThan(-1);
+      const awaitsBefore = [
+        ...src.slice(fnAt, guardAt).matchAll(/await\s+([A-Za-z_$][\w$]*)/g),
+      ].map((m) => m[1]);
+      expect(
+        awaitsBefore,
+        "the identity resolver must be awaited before the financial guard",
+      ).toContain("requirePractitionerWithStudio");
+      expect(
+        awaitsBefore.filter(
+          (n) => n !== "requirePractitionerWithStudio" && !REQUEST_PRIMITIVES.has(n),
+        ),
+        "no DATA LOADER may be awaited before the financial guard",
+      ).toEqual([]);
+
+      if (refuseAt > -1) {
         const body = blockBody(src, src.indexOf("{", refuseAt));
         expect(body, "an in-page refusal must halt").toMatch(/\breturn\b|\bredirect\s*\(/);
       }
     });
   }
 
-  it("loadFinancialsView refuses before every read", () => {
+  it("loadFinancialsView's refusal is its FIRST executable statement", () => {
+    // MECHANISM-INDEPENDENT (Codex P2 4303288175). The old form compared the
+    // refusal's position against the first `.from(` only, so an awaited RPC or
+    // any other loader added BEFORE the refusal would have left the tripwire
+    // green while the claim "refuses before every read" became false. Rather
+    // than enumerate every read mechanism — a list that rots — assert what the
+    // helper's own comment already demands: "FIRST STATEMENT, and it must stay
+    // first."
     const helper = code(read("lib/finance/financial-briefing.ts"));
-    const refuseAt = helper.search(/practitioner\.role\s*!==\s*"owner"/);
-    expect(refuseAt, "the helper must refuse on the role").toBeGreaterThan(-1);
-    const firstRead = helper.search(/\.from\(/);
-    // NON-VACUITY: the helper really does read, so the ordering below compares
-    // against something rather than passing because nothing was found.
-    expect(firstRead, "the helper must actually read a table").toBeGreaterThan(-1);
-    expect(refuseAt, "the refusal must precede every table read").toBeLessThan(firstRead);
+    const sig = /export async function loadFinancialsView\s*\(/.exec(helper);
+    expect(sig, "loadFinancialsView must exist").toBeTruthy();
+    // Paren-match the PARAMETER LIST first: the params contain a type literal
+    // `{ readonly role: string }`, so the next `{` after the signature is that
+    // TYPE's brace, not the function body's. Scoping to it returned an empty
+    // first statement and failed on correct code.
+    const parenAt = sig!.index + sig![0].length - 1;
+    let depth = 0;
+    let closeParen = -1;
+    for (let i = parenAt; i < helper.length; i += 1) {
+      if (helper[i] === "(") depth += 1;
+      else if (helper[i] === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          closeParen = i;
+          break;
+        }
+      }
+    }
+    expect(closeParen, "could not scope loadFinancialsView's parameter list").toBeGreaterThan(-1);
+    const body = blockBody(helper, helper.indexOf("{", closeParen));
+    const firstStatement = body.slice(0, body.indexOf(";") + 1).trim();
+    expect(
+      firstStatement,
+      "the role refusal must be the FIRST executable statement of loadFinancialsView",
+    ).toMatch(/practitioner\.role\s*!==\s*"owner"/);
+    expect(firstStatement, "and it must return the refusal").toMatch(/access:\s*"refused"/);
   });
 
   it("NON-VACUITY: ordinary practitioner surfaces carry NO owner refusal", () => {
