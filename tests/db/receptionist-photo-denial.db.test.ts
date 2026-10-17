@@ -107,6 +107,14 @@ afterAll(async () => {
   if (S) {
     // treatment_images and sessions reference the practitioner with RESTRICT,
     // so they go before the studio cascade.
+    // The seeded storage.objects row is NOT deleted, and cannot be: Supabase's
+    // own guard raises "Direct deletion from storage tables is not allowed. Use
+    // the Storage API instead." That API is excluded from every CI lane
+    // (-x ...,storage-api), so there is no permitted cleanup path here, and the
+    // insert has to be committed for the receptionist's own session to see it,
+    // so a rollback is not available either. The row is inert, confined to this
+    // test's synthetic studio folder, and every stack this suite runs on is
+    // disposable per run.
     await adminQuery(`delete from public.treatment_images where studio_id = $1`, [S.studioId]);
     await adminQuery(`delete from public.sessions where studio_id = $1`, [S.studioId]);
     await dropSynthStudio(S);
@@ -223,14 +231,58 @@ describe("#824: the receptionist cannot reach a client photo", () => {
     expect(row.rows[0].practitioner_note).toBe("owner note");
   });
 
-  it("the bucket has no authenticated policy, so objects are reachable only by server signing", async () => {
-    // If an authenticated policy existed, a receptionist's JWT could read the
-    // object directly and every assertion above would be beside the point.
-    const pol = await adminQuery(
+  it("storage RLS: a receptionist reads NO treatment-images object", async () => {
+    // BEHAVIOUR, NOT A POLICY-ROLE COUNT (Codex P2 4301919095). This assertion
+    // used to be "no authenticated policy exists on storage.objects", which was
+    // wrong in BOTH directions: a leaking policy declared `TO public` has
+    // roles = {public} and would have PASSED it, while 0092's own SAFE policy
+    // ("treatment_images_objects: members select" ... to authenticated using
+    // bucket_id = 'treatment-images' and is_studio_member(folder[1]),
+    // 0092_treatment_images.sql:113-119) would make it FAIL wherever the
+    // migration role can install it. It passed on my stack only because that
+    // creation was skipped there. Predicates decide access; role names do not.
+    const objectName = `${S.studioId}/${S.clientId}/${imageId}.jpg`;
+    await adminQuery(
+      `insert into storage.objects (bucket_id, name, owner)
+       values ('treatment-images', $1, null)
+       on conflict do nothing`,
+      [objectName],
+    );
+
+    const desk = await asReceptionist((q) =>
+      q(
+        `select name from storage.objects
+          where bucket_id = 'treatment-images' and name = $1`,
+        [objectName],
+      ),
+    );
+    expect(desk.rows, "a receptionist must read no treatment-images object").toEqual([]);
+
+    // NON-VACUITY, available only where 0092's CONDITIONAL policy installed.
+    // The receptionist's denial holds either way — is_studio_member is false
+    // for a non-practitioner, and with no authenticated policy nothing is
+    // readable at all — but only an installed policy makes the denial
+    // DISTINGUISHING. The test states which case it is in rather than claiming
+    // a guarantee the stack may not provide.
+    const installed = await adminQuery(
       `select count(*)::int n from pg_policies
         where schemaname = 'storage' and tablename = 'objects'
-          and 'authenticated' = any(roles)`,
+          and policyname = 'treatment_images_objects: members select'`,
     );
-    expect(pol.rows[0].n, "no authenticated policy may exist on storage.objects").toBe(0);
+    const owner = await asOwner((q) =>
+      q(`select name from storage.objects where name = $1`, [objectName]),
+    );
+    if (installed.rows[0].n === 1) {
+      expect(
+        owner.rows.length,
+        "0092's policy IS installed, so the OWNER must read the object the receptionist could not",
+      ).toBe(1);
+    } else {
+      expect(
+        owner.rows,
+        "0092's policy is NOT installed on this stack, so no authenticated role reads it — " +
+          "the receptionist denial is real but not distinguishing here",
+      ).toEqual([]);
+    }
   });
 });

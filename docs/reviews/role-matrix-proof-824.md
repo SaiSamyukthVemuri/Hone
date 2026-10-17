@@ -38,12 +38,17 @@ row and **no `practitioners` row** (`tests/db/receptionist-foundation.db.test.ts
 *"has a membership row and NO practitioners row"*). Everything else follows from
 that, through two independent planes:
 
-**App plane.** `app/(app)/clients/[id]/images/page.tsx:40` calls
-`requirePractitionerWithStudio()`. In `lib/supabase/queries.ts:251-278` that
-resolves an **active practitioner** membership and, when there is none,
-`redirect("/no-access")` — the invite-only gate. A receptionist therefore never
-reaches the page body, so **no signed URL is minted**: the redirect precedes
-every storage call.
+**App plane.** For a page request the **middleware refuses first**:
+`lib/supabase/middleware.ts:225-248` sends a receptionist's every non-front-desk
+path to `/front-desk` (`NextResponse.redirect`). The route is never entered, so
+**no signed URL is minted** — nothing in the page runs.
+
+Behind it, `app/(app)/clients/[id]/images/page.tsx:40` calls
+`requirePractitionerWithStudio()`, which resolves an **active practitioner**
+membership and otherwise `redirect("/no-access")`
+(`lib/supabase/queries.ts:251-278`). That is a real second barrier, and it is
+the one that catches a request the middleware does not see — but for an ordinary
+navigation it never runs. Measured, not assumed: see §4.7.
 
 **Data plane.** The image actions in `app/(app)/clients/[id]/images/actions.ts`
 are the plane a direct server-action POST hits, which is why the proof cannot
@@ -94,11 +99,50 @@ New file `tests/db/receptionist-photo-denial.db.test.ts`:
    indistinguishable from "there was nothing to see" — the control that
    `receptionist-foundation.db.test.ts` already gets right with *"the denial is
    not vacuous: the OWNER sees the seeded clinical rows"*.
-4. **Storage plane.** No `authenticated` policy exists on the
-   `treatment-images` bucket, so objects are reachable only by server signing
-   (already asserted in `receptionist-foundation.db.test.ts`; re-asserted here
-   against this stack so the photo claim does not depend on a different file's
-   fixture).
+4. **Storage plane — RLS BEHAVIOUR, not a policy-role count.** As the
+   receptionist, select a seeded `storage.objects` row in the studio's folder:
+   zero rows.
+
+   **An earlier version counted policy roles instead** (`no authenticated
+   policy may exist on storage.objects`) and that assertion was wrong in both
+   directions, per Codex P2 4301919095: a leaking policy declared `TO public`
+   has `roles = {public}` and would have **passed** it, while `0092`'s *safe*
+   policy — `"treatment_images_objects: members select" … to authenticated
+   using (bucket_id = 'treatment-images' and is_studio_member(folder[1]))`,
+   created conditionally at `0092_treatment_images.sql:113-119` — would make it
+   **fail** on any stack where the migration role can install it. It passed on
+   my stack only because that creation was skipped there. Predicates decide
+   access; role names do not.
+
+   The receptionist's denial holds either way (`is_studio_member` is false for a
+   non-practitioner, and with no authenticated policy nothing is readable). The
+   **owner's** read is asserted only where that conditional policy actually
+   installed, and the test says so rather than claiming a guarantee the stack
+   may not provide.
+
+   **MEASURED, under CI's exact conditions** (`supabase start -x studio,imgproxy,
+   realtime,edge-runtime,logflare,vector,storage-api`):
+
+   * `storage.objects` and `storage.buckets` **do exist**, and the
+     `treatment-images` bucket is present — the storage *schema* comes from the
+     database image, so excluding `storage-api` does not remove it. This is what
+     makes the behavioural test runnable in a lane with no storage service.
+   * **`0092`'s conditional policy did NOT install** — zero policies on
+     `storage.objects`. So on this stack, and in CI, the owner case takes the
+     **honestly-skipped** branch: it asserts that the owner reads nothing either,
+     and states that the receptionist's denial is real but **not
+     distinguishing** there.
+   * Therefore the storage limb's non-vacuity is **NOT established in CI**. It
+     is established only on a stack whose migration role can install that
+     policy. The suite reports which case it is in; it never claims the stronger
+     one.
+
+   **Negative control, measured:** with a leaking `create policy … for select to
+   public using (true)` on `storage.objects`, the receptionist's read returns the
+   object and this test **fails**. The assertion it replaced — counting policies
+   whose roles include `authenticated` — saw **0** under that same leak and would
+   have **passed**. That is the defect Codex named, demonstrated rather than
+   argued.
 
 Source-contract test `tests/source-guards/photo-signing-sites.test.ts`:
 
@@ -118,20 +162,30 @@ New spec `e2e/receptionist-role-matrix.spec.ts`, on my own isolated stack,
 paired guard on, `Hone-0162` untouched:
 
 7. **Rendered denial.** Signed in as the receptionist, navigating to
-   `/clients/<id>/images` lands on `/no-access` — the user-visible half of §2 —
-   with no clinical heading, no `img` for the seeded id, and a visible link to
-   `/front-desk`, so it is a **role** redirect and not a dead end.
+   `/clients/<id>/images` is redirected to **`/front-desk`**, with no clinical
+   heading rendered on the way past. The assertion walks the redirect chain back
+   to its origin, so it cannot pass by the page simply never having moved.
 
-   **The trap, verified by reading the chain rather than assuming it:** there is
-   **no receptionist logic in `middleware.ts`**. The denial is
-   `requirePractitionerWithStudio()` → `redirect("/no-access")`, and
-   `/no-access` then *renders* a front-desk link (it only auto-redirects a
-   **practitioner**, to `/dashboard`). Separately, **login** lands a
-   receptionist on `/front-desk` because `auth/callback` routes them there. So
-   `/front-desk` is the right assertion for the login flow and the **wrong** one
-   for a direct navigation — asserting it here would pass while the gate did
-   nothing. `e2e/front-desk-booking.spec.ts` asserts `/front-desk` correctly,
-   for the login flow; do not copy that expectation into this one.
+   **The enforcing layer is the MIDDLEWARE, not the page guard.**
+   `lib/supabase/middleware.ts:225-248`: *"a receptionist has NO practitioners
+   row, so they arrive here with zero memberships. They may reach `/front-desk`
+   and nothing else: every other path is sent to `/front-desk`"* —
+   `NextResponse.redirect(deskUrl)`. Note that `middleware.ts` itself only
+   **delegates** there; the receptionist branch is not in that file, which is
+   why grepping it alone is misleading.
+
+   So `requirePractitionerWithStudio()` → `/no-access` is a **second barrier
+   that never runs for this request**, and that makes the denial *stronger* than
+   a page-level refusal: the route is never entered, so nothing in it can mint a
+   signed URL. `e2e/front-desk-booking.spec.ts` asserts `/front-desk` too, and
+   **that expectation is correct** — for direct navigation as well as for login.
+
+   **An earlier draft of this document claimed the opposite** (that `/no-access`
+   was correct and `/front-desk` would be a false pass). That was wrong, it was
+   corrected by running the spec, and it is recorded here because a proof
+   document that misidentifies the enforcing layer teaches the next author to
+   write the wrong assertion.
+
 8. **Rendered clinical denial.** The same for a clinical record route.
 9. **Owner sees it (non-vacuity, in the browser).** The owner reaches the same
    URLs and sees the seeded content, so the receptionist result is a denial and
