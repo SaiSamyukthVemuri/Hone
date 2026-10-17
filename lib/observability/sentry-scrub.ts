@@ -167,11 +167,14 @@ type ScrubOpts = { redactKeys: boolean };
 
 /** An object KEY can be a record id too, e.g. `{ [clientId]: "failed" }`
  *  (Codex P2 4301012675): replace UUIDs in property names as well as values.
- *  Two keys that collapse to the same name get a numeric suffix, so neither
- *  value is silently dropped. */
+ *  Any key whose name is already taken in the output -- whether it was
+ *  scrubbed or arrived literally -- gets a numeric suffix, so no value is
+ *  silently dropped, whatever the key order. */
 function scrubKey(key: string, taken: Record<string, unknown>): string {
   const base = key.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER);
-  if (base === key || !(base in taken)) return base;
+  // Check EVERY key, changed or not (Codex P2 4301073939): an unchanged
+  // literal "[id]" arriving after a scrubbed UUID key must not overwrite it.
+  if (!(base in taken)) return base;
   let n = 2;
   while (`${base}#${n}` in taken) n += 1;
   return `${base}#${n}`;

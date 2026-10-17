@@ -139,6 +139,14 @@ describe("G-25: record ids as object KEYS (Codex P2 4301012675)", () => {
     expect(out.extra).toEqual({ "[id]": "a", "[id]#2": "b" });
   });
 
+  it("keeps every value when a literal placeholder key follows a scrubbed one, in either order (Codex P2 4301073939)", () => {
+    const after = scrubErrorEvent(errorEvent({ extra: { [CLIENT]: "a", "[id]": "b", "[id]#2": "c" } }));
+    expect(Object.values(after.extra as Record<string, unknown>).sort()).toEqual(["a", "b", "c"]);
+    const before = scrubErrorEvent(errorEvent({ extra: { "[id]": "b", [CLIENT]: "a" } }));
+    expect(Object.values(before.extra as Record<string, unknown>).sort()).toEqual(["a", "b"]);
+    expectNoRecordId(after, "collision keys");
+  });
+
   it("removes id keys in breadcrumb data and span data", () => {
     const crumb = scrubBreadcrumb({ category: "app", data: { [CLIENT]: { [SESSION]: "x" } } } as Breadcrumb);
     const tx = scrubTransactionEvent({
