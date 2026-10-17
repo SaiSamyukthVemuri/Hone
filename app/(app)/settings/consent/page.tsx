@@ -1,4 +1,4 @@
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { getConsentTemplatesForStudio } from "@/lib/consent/queries";
 import { ConsentTemplatesEditor } from "./ConsentTemplatesEditor";
 import {
@@ -14,7 +14,7 @@ import {
 // sees the same gate. Server-resolved studio scope.
 
 export default async function ConsentSettingsPage() {
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await requirePractitionerWithStudio();
   if (practitioner.role !== "owner") {
     return (
       <section className="px-5 py-6 text-sm text-neutral-600 dark:text-neutral-400">

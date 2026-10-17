@@ -1,7 +1,9 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { useDialogKeyboard } from "@/components/use-dialog-keyboard";
 import { markdownLiteToHtml } from "@/lib/email/markdown-lite";
+import { studioClientContactEmail } from "@/lib/email/studio-identity";
 
 // Toolbar helpers and preview modal for the postcare editor. Both are
 // co-located here so PostcareSettingsForm.tsx stays focused on field
@@ -271,14 +273,15 @@ function PostcarePreviewModal({
   reviewPromptText,
   onClose,
 }: PostcarePreviewInputs & { onClose: () => void }) {
-  // Resolve the Contact address the same way send-time logic does:
-  // postcare_contact_email -> owner_email -> null.
-  const resolvedContact =
-    contactEmail && contactEmail.trim().length > 0
-      ? contactEmail.trim()
-      : ownerFallbackEmail.trim().length > 0
-        ? ownerFallbackEmail.trim()
-        : null;
+  // ONE authority, not a second copy. This previously re-implemented
+  // "first non-blank" while send-time resolved "first VALID", so a studio whose
+  // postcare address was malformed saw a Contact address here that its clients
+  // never received. The preview calls the same helper the transport calls, so
+  // the two cannot drift again.
+  const resolvedContact = studioClientContactEmail({
+    postcare_contact_email: contactEmail,
+    owner_email: ownerFallbackEmail,
+  });
 
   const aftercareHtml = markdownLiteToHtml(aftercareText);
   const warningHtml = markdownLiteToHtml(warningSignsText);
@@ -300,6 +303,18 @@ function PostcarePreviewModal({
       })()
     : "";
 
+  // UX-01 QW4. Same repair as the send dialog on the calendar: this declared
+  // `role="dialog" aria-modal="true"` while moving focus nowhere, restoring
+  // nothing and ignoring Escape.
+  //
+  // `busy` is deliberately omitted rather than wired to something. This modal
+  // is a PREVIEW — its own trigger says "Nothing is sent" — so there is no
+  // in-flight request for Escape to abandon and no reason to gate it.
+  const { panelRef } = useDialogKeyboard<HTMLDivElement>({
+    open: true,
+    onClose,
+  });
+
   return (
     <div
       role="dialog"
@@ -307,7 +322,14 @@ function PostcarePreviewModal({
       aria-label="Postcare email preview"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
     >
-      <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-xl dark:border-neutral-800 dark:bg-neutral-950">
+      {/* `tabIndex={-1}`: a programmatic focus target that stays out of the Tab
+          order, so focus lands on the panel and the preview is announced from
+          its heading. */}
+      <div
+        ref={panelRef}
+        tabIndex={-1}
+        className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-xl outline-none dark:border-neutral-800 dark:bg-neutral-950"
+      >
         <header className="flex items-baseline justify-between gap-3 border-b border-neutral-200 px-5 py-3 dark:border-neutral-800">
           <div className="flex flex-col">
             <h2 className="text-sm font-medium">Postcare email preview</h2>

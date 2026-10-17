@@ -15,6 +15,7 @@ import {
   upsertDayDefaultAction,
   upsertOverrideAction,
 } from "./actions";
+import { SectionLabel } from "@/components/ui/section-label";
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const DAY_NAMES_LONG = [
@@ -463,9 +464,9 @@ export function AvailabilityClient({
         />
 
         <div className="flex flex-col gap-3 rounded-md border border-neutral-200 bg-neutral-50 p-4 dark:border-neutral-800 dark:bg-neutral-900">
-          <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          <SectionLabel as="p">
             Quick set
-          </p>
+          </SectionLabel>
           <div className="flex flex-wrap gap-2">
             {PRESETS.map((p) => (
               <button
@@ -681,23 +682,23 @@ function DayEditor({
       {draft.is_open ? (
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            <SectionLabel>
               Opens
-            </span>
+            </SectionLabel>
             <TimePicker value={draft.open_time} onChange={onChangeOpen} />
           </div>
           <span className="pb-2 text-neutral-400">to</span>
           <div className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            <SectionLabel>
               Closes
-            </span>
+            </SectionLabel>
             <TimePicker value={draft.close_time} onChange={onChangeClose} />
           </div>
           {openDaysForCopy.length > 0 && (
             <div className="flex flex-col gap-1.5">
-              <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+              <SectionLabel>
                 Copy from
-              </span>
+              </SectionLabel>
               <select
                 defaultValue=""
                 onChange={(e) => {
@@ -949,9 +950,9 @@ function AddOverrideForm({ onDone }: { onDone: () => void }) {
     >
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          <SectionLabel>
             Date
-          </span>
+          </SectionLabel>
           <input
             type="date"
             value={date}
@@ -971,15 +972,15 @@ function AddOverrideForm({ onDone }: { onDone: () => void }) {
         {isOpenToggle && (
           <>
             <div className="flex flex-col gap-1.5">
-              <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+              <SectionLabel>
                 Opens
-              </span>
+              </SectionLabel>
               <TimePicker value={openTime} onChange={setOpenTime} />
             </div>
             <div className="flex flex-col gap-1.5">
-              <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+              <SectionLabel>
                 Closes
-              </span>
+              </SectionLabel>
               <TimePicker value={closeTime} onChange={setCloseTime} />
             </div>
           </>
@@ -1124,9 +1125,9 @@ function AddBlockoutForm({ onDone }: { onDone: () => void }) {
     >
       <div className="grid gap-3 md:grid-cols-[10rem_10rem_minmax(0,1fr)]">
         <label className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          <SectionLabel>
             Starts
-          </span>
+          </SectionLabel>
           <input
             type="date"
             value={starts}
@@ -1136,9 +1137,9 @@ function AddBlockoutForm({ onDone }: { onDone: () => void }) {
           />
         </label>
         <label className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          <SectionLabel>
             Ends
-          </span>
+          </SectionLabel>
           <input
             type="date"
             value={ends}
@@ -1148,9 +1149,9 @@ function AddBlockoutForm({ onDone }: { onDone: () => void }) {
           />
         </label>
         <label className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          <SectionLabel>
             Reason
-          </span>
+          </SectionLabel>
           <input
             value={reason}
             onChange={(e) => setReason(e.target.value)}

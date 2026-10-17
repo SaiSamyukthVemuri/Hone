@@ -725,7 +725,7 @@ export function QuickBookDrawer({
                   role="tab"
                   aria-selected={clientMode === "search"}
                   onClick={() => setClientMode("search")}
-                  className={`flex-1 rounded-[5px] px-3 py-1.5 transition ${
+                  className={`flex-1 rounded-md px-3 py-1.5 transition ${
                     clientMode === "search"
                       ? "bg-white font-medium text-neutral-900 shadow-sm dark:bg-neutral-950 dark:text-neutral-100"
                       : "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
@@ -738,7 +738,7 @@ export function QuickBookDrawer({
                   role="tab"
                   aria-selected={clientMode === "new"}
                   onClick={() => setClientMode("new")}
-                  className={`flex-1 rounded-[5px] px-3 py-1.5 transition ${
+                  className={`flex-1 rounded-md px-3 py-1.5 transition ${
                     clientMode === "new"
                       ? "bg-white font-medium text-neutral-900 shadow-sm dark:bg-neutral-950 dark:text-neutral-100"
                       : "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"

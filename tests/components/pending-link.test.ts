@@ -1,6 +1,8 @@
 import { COMPOSED_DASHBOARD } from "../app/dashboard/helpers/composed-dashboard";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+
+import { spinnerClasses } from "@/components/ui/spinner";
 import path from "node:path";
 
 // UI-01 supporting guards for PendingLink.
@@ -53,6 +55,11 @@ const codeOnly = (source: string) =>
     .join("\n");
 const code = codeOnly(src);
 
+const spinnerSource = readFileSync(
+  path.join(process.cwd(), "components/ui/spinner.tsx"),
+  "utf8",
+);
+
 describe("UI-01 ships exactly one client boundary, in the right place", () => {
   it("declares 'use client' — useLinkStatus leaves no choice", () => {
     expect(src).toMatch(/^"use client";/);
@@ -69,10 +76,17 @@ describe("UI-01 ships exactly one client boundary, in the right place", () => {
     expect(PENDING_LINK.startsWith("components/ui/")).toBe(false);
   });
 
-  it("stays a leaf island — next/link and one class helper, nothing else", () => {
+  it("stays a leaf island — next/link and two class helpers, nothing else", () => {
+    // UI-R01 added exactly one import: @/components/ui/spinner, which is the
+    // same CHARACTER as ./ui/control-base — a server-compatible, dependency-free
+    // class helper with no state, no effect and no browser API. The budget this
+    // guard protects is "does importing PendingLink drag anything heavy into the
+    // client bundle", and a class-string module does not.
+    //
+    // The set is still EXHAUSTIVE: anything beyond these three fails here.
     const imports = [...code.matchAll(/from "([^"]+)"/g)].map((m) => m[1]);
     expect(new Set(imports)).toEqual(
-      new Set(["next/link", "react", "./ui/control-base"]),
+      new Set(["next/link", "react", "./ui/control-base", "@/components/ui/spinner"]),
     );
   });
 
@@ -104,12 +118,20 @@ describe("PendingLink avoids the two traps a screenshot cannot show", () => {
   });
 
   it("keeps the pending mark under prefers-reduced-motion, dropping only the spin", () => {
-    expect(code).toContain("animate-spin");
-    expect(code).toContain("motion-reduce:animate-none");
+    // UI-R01 lifted the mark into components/ui/spinner.tsx so navigation
+    // pending and control pending cannot drift into two different-looking
+    // states. The PROPERTY this guard exists for is unchanged and is asserted
+    // where it now lives — against the actual string PendingLink renders, via
+    // spinnerClasses(), not against a copy of it.
+    const mark = spinnerClasses("sm");
+    expect(mark).toContain("animate-spin");
+    expect(mark).toContain("motion-reduce:animate-none");
     // The mark survives; only its rotation stops. A pending state that
     // disappeared entirely under reduced motion would leave the control
     // looking untapped for exactly the users least able to tolerate it.
-    expect(code).toContain("motion-reduce:border-t-current");
+    expect(mark).toContain("motion-reduce:border-t-current");
+    // And PendingLink genuinely uses it rather than re-spelling it.
+    expect(code).toContain("spinnerClasses");
   });
 
   it("cannot change the control's size, so a segmented control never reflows", () => {
@@ -272,7 +294,15 @@ describe("UI-01C: two forms, one mechanism", () => {
 
   it("spells the acknowledgement vocabulary ONCE and shares it", () => {
     // A second mechanism starts life as a second copy of these three things.
-    expect(code.match(/animate-spin/g) ?? []).toHaveLength(1);
+    //
+    // UI-R01 strengthened the first line rather than weakening it: the mark is
+    // no longer spelled in this file AT ALL, so the count here is zero and the
+    // single spelling lives in components/ui/spinner.tsx, shared with Button.
+    // Asserting "exactly one literal in this file" would now be asserting that
+    // the de-duplication had NOT happened.
+    expect(code.match(/animate-spin/g) ?? []).toHaveLength(0);
+    expect(code.match(/spinnerClasses/g) ?? []).toHaveLength(2); // import + use
+    expect(spinnerSource.match(/animate-spin/g) ?? []).toHaveLength(1);
     expect(code.match(/role="status"/g) ?? []).toHaveLength(1);
     // The hook every proof — unit and browser — locates. Once per form, on the
     // element that form paints, and nowhere else.

@@ -2,6 +2,7 @@ import { withSentryConfig } from "@sentry/nextjs";
 import type { NextConfig } from "next";
 import { buildGlobalSecurityHeaders, buildTokenRoutePrivacyHeaders,  } from "./lib/security/headers";
 import { TOKEN_ROUTE_PATTERNS } from "./lib/security/token-routes";
+import { localE2eBuildSentryOverrides } from "./lib/observability/e2e-build-sentry-overrides";
 
 // PR #142. Token route privacy header prefixes. Listed once here
 // because two header blocks in next.config.ts reference the same
@@ -45,6 +46,15 @@ const GLOBAL_SECURITY_HEADERS = buildGlobalSecurityHeaders({
 const TOKEN_ROUTE_PRIVACY_HEADERS = buildTokenRoutePrivacyHeaders();
 
 const nextConfig: NextConfig = {
+  // PAY-RECEIPT-PDF: the receipt PDF is drawn with four bundled, licensed
+  // DejaVu faces read from disk at render time (lib/billing/receipt-fonts.ts).
+  // Next.js traces server dependencies statically and CANNOT see a
+  // `readFileSync(join(process.cwd(), ...))` path, so without this the fonts
+  // are absent from the serverless bundle and every receipt fails preparation
+  // in production while passing locally. The licence file ships with them.
+  outputFileTracingIncludes: {
+    "/**": ["./lib/billing/fonts/**"],
+  },
   // PR #271: treatment image uploads (a server action) can be up to 15 MB
   // (TREATMENT_IMAGE_MAX_BYTES in lib/images/treatment-images.ts). The Next.js
   // default server-action body limit (~1 MB) would reject typical phone photos,
@@ -116,6 +126,13 @@ export default withSentryConfig(nextConfig, {
   sourcemaps: {
     deleteSourcemapsAfterUpload: true,
   },
+
+  // SENTRY-E2E-NOISE-02: inside a local browser lane's build ONLY, an empty
+  // auth token, so that build creates no release and uploads no source map to
+  // the operational project. Nothing in a deployed build: the override exists
+  // only where the lane's egress guard armed, which it refuses to do in any
+  // deployed runtime. See lib/observability/e2e-build-sentry-overrides.ts.
+  ...localE2eBuildSentryOverrides(),
 
   // Route browser -> Sentry traffic through a same-origin rewrite (/monitoring)
   // instead of hitting *.ingest.sentry.io directly. This keeps the strict CSP

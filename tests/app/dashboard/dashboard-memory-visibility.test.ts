@@ -94,9 +94,15 @@ describe("Today appointment card shows the memory lines in full", () => {
 });
 
 describe("nothing else on the dashboard changed", () => {
-  it("the page-local truncate helper survives for the Pinned-note line", () => {
-    expect(PAGE).toMatch(/function truncate\(text: string, max: number\): string/);
-    expect(PAGE).toMatch(/\{truncate\(pinnedNoteText, 50\)\}/);
+  it("pinned notes are rendered WHOLE and in full — never truncated to one line", () => {
+    // THIS TEST PREVIOUSLY PINNED THE DEFECT. It asserted
+    // `{truncate(pinnedNoteText, 50)}`, which is exactly the behaviour Chloe
+    // reported: multiple pinned notes collapsed to one 50-character line. The
+    // roster now renders every note, wrapping instead of slicing.
+    expect(PAGE).not.toMatch(/truncate\(pinnedNote/);
+    expect(PAGE).toMatch(/pinnedNotes\.map\(/);
+    expect(PAGE).toMatch(/whitespace-pre-wrap/);
+    expect(PAGE).not.toMatch(/line-clamp[^\s"']*[^\s"']*/);
   });
 
   it("the combined workflow model carries the memory notes uncapped", () => {

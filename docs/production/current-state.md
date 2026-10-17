@@ -13,9 +13,10 @@ not a PR diary — per-capability evidence lives in
 > *dormant*, *held*, *deferred*, *retired* are distinct, and a capability normally holds several
 > at once. **Retired is terminal** — not a later phase, not a gate someone can grant.
 
-> **This document pins the last runtime-bearing baseline, not its own documentation commit.**
-> Later documentation-only commits may move the branch HEAD **above** the SHA below without
-> changing anything Hone *does*.
+> **This document records a dated source/runtime baseline, not live telemetry.**
+> Documentation-only commits may move the branch HEAD above a runtime-bearing SHA without changing
+> product behavior; runtime-bearing merges move the baseline. Every production count/health/provider
+> observation keeps its own measurement date and is not refreshed merely because source advanced.
 
 ---
 
@@ -23,23 +24,201 @@ not a PR diary — per-capability evidence lives in
 
 | Field | Value |
 |---|---|
-| **Reconciliation date** | 2026-08-30 |
+| **Reconciliation date** | **2026-10-16 UTC source sync** (CANON-REFRESH-2026-10-16b, 2 merges after the `1ae096e2` record, **none** runtime-bearing). Earlier syncs are preserved below as history. Production-data counts elsewhere retain their own older measurement dates. |
 | **Production branch** | `claude/build-hone-saas-hOex7` |
-| **Current Git branch HEAD** | `bf6f09c4a987e0e251f414bdf5dfc520c5d02d42` — the PR #660 merge (CI-HARDEN-01B: every action pinned to a vetted SHA, `contents: read`, checkout token no longer persisted). Query GitHub for the live value; documentation-only commits may have advanced it since. |
-| **Last runtime-bearing application HEAD** | **`0f07dae68efe06d493421af715cb0b7234153de9` — the PR #659 merge, and DELIBERATELY NOT the branch head above.** Derived mechanically, not asserted: the **nine** merges from the previous baseline `4fee652f` through `#659` (`#651`, `#653`, `#652`, `#654`, `#655`, `#656`, `#657`, `#658`, `#659`) change **21** deployed files across `app/`, `components/` and `lib/` — classified by `scripts/classify-changes.mjs`, the same map CI uses. Every one of those nine is runtime-bearing. The **two** merges since (`#631` canonical docs reconciliation, `#660` CI-HARDEN-01B) change **13** files — documentation, CI workflows and tests — and **not one deployed file**, so the branch advanced while the runtime baseline did not. **This is the baseline for every behavioural claim in this document.** |
-| **Current Vercel Production deployment** | ⚠️ **NO DEPLOYMENT ID READ.** The Vercel commit status for `0f07dae6` reports **success**, and that status is the whole of the evidence that a production deployment for this head succeeded — no deployment id, alias or runtime probe was read, and none is asserted. |
+| **Current Git branch HEAD at this sync** | **`0ae33bd376720310ec28ba9e896bc7936630a24c` — merge of #887.** Re-read GitHub before any production action; this is a dated sync value, not a perpetual pointer. |
+| **Last runtime-bearing application HEAD at this sync** | **`ce133c18b8458e07b86c05301a5a38b92c9cb0be` (#857), unchanged.** It is **not** the branch HEAD above. `git log --first-parent ce133c18..0ae33bd3` returns **7** merges, and by **A3's composed deployed predicate** (unchanged; see the 2026-09-21 record) **none** is runtime-bearing. The 2 merges since the previous record: `862c1fee` (#886, `CLAUDE.md`, `docs` only), `0ae33bd3` (#887, `.github`, `scripts`, `tests` only). **None** carries a migration. With this pin, A3's residue is **0** files. |
+| **Current Vercel Production deployment evidence** | **Source and runtime recorded separately.** Source: the branch HEAD above (`0ae33bd3`). Runtime: the application code last changed at `ce133c18` (#857); see the history below for its deployment. Vercel built and deployed each merge since the previous record, all **success**, none carrying a runtime change: `862c1fee` (#886) at `2026-10-16T15:56:36Z` (`89JUZ7mQvbpN2d4pVru4ngCnVDae`); `0ae33bd3` (#887) at `2026-10-16T21:59:46Z` (`7rEebdzGbS3igPRBXBoNYLd4PTev`), all read 2026-10-16. No alias or current health measurement is inferred from those statuses. |
 | **Migration state** | **This document deliberately states no migration number.** Hosted max is declared once, machine-readably, in [`migration-state.json`](./migration-state.json). Repository max, total applied and the next free number are **derived** — run `npm run migration:state`. The current reconciled position, with checksums and apply evidence, is [migration-ledger.md](./migration-ledger.md) under *Current state*. A number copied into this table is a number that goes stale on the next apply; that is how the `0160`/`0163`/`0165` divergence happened. |
 | **Database vs. application skew** | **This document asserts no parity, pending or remote-only claim of its own.** It previously declared the two states equal and the pending set empty, and went stale the moment a reviewed migration was authored above hosted — the same second-copy failure this table already avoids for migration NUMBERS. Derive the relationship with `npm run migration:state`; hosted state is declared once in [`migration-state.json`](./migration-state.json); the reconciled position with apply evidence is [migration-ledger.md](./migration-ledger.md) under *Current state*. **A repository maximum ABOVE hosted is the normal state of an authorized migration-first apply** — reviewed migration authored, production not yet advanced — and is not by itself skew. What would be skew is a **remote-only** migration (hosted above repo), which the derivation reports and the canonical guard forbids. |
 | **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
-| **Health** | ⚠️ **NOT RE-PROBED AT THIS RECONCILIATION.** The last probe was **2026-08-23**: `hone.care` **200** · `/login` **200** · `/dashboard` **307** (auth redirect) · `/api/health` **307**, all non-5xx, `ops_alerts` unresolved **4** (§13). Those readings describe a runtime **twenty-seven merges old** and are retained as dated evidence, not as current health. |
+| **Health** | **Status-code probe, 2026-10-16T22:09Z** (unauthenticated GET, redirects not followed): `hone.care` **200** · `/login` **200** · `/dashboard`, `/clients`, `/calendar` and `/api/health` **307 → /login**, all non-5xx. This is a reachability reading only. ⚠️ `ops_alerts` was **not** re-read at this sync. Earlier probes are preserved below as dated readings. These are dated observations, not current health. |
 | **Tenant posture** | **Six studios in three classes — one real-customer, one controlled test, one synthetic, three empty.** Real-customer activity is **Willow Electrolysis only**. See **§0**, which is the canonical tenant register; do not restate its counts elsewhere. ⚠️ **Every tenant count in §0 was measured 2026-08-23 and was NOT re-measured on 2026-08-26** — see *What this reconciliation did and did not measure* below. |
 | **Next operational gate** | The **deep production / security / code audit** (still not performed against this baseline). **Chloe's human acceptance testing** remains outstanding and is **independent** — see §15. |
 
-### Immediately preceding runtime baseline
+### Re-derived at this reconciliation
 
-`4fee652fe67f9fdc06b7d5e719cdb73d5e6d294b` — the PR #649 merge (UI-01D, Client Profile tab
-acknowledgement), the baseline this document carried before the 2026-08-30 refresh. Its code
-remains live because the nine merges above were built on top of it.
+**Re-derived on 2026-10-16 (CANON-REFRESH-2026-10-16b), from the repository at `0ae33bd3`:**
+
+- the production branch head and the full merge ancestry back to `b9e0003f` (152 merges),
+  from `git rev-list --first-parent --merges --count b9e0003f..0ae33bd3`;
+- the **2 merges** since the previous record `1ae096e2`: `862c1fee` (#886, `CLAUDE.md`, `docs` only), `0ae33bd3` (#887, `.github`, `scripts`, `tests` only). **None** is
+  runtime-bearing and none carries a migration, so the runtime-bearing HEAD stays `ce133c18`;
+- repository and hosted migration state: **derived** with `npm run migration:state`
+  (unchanged by these merges) and **declared** in
+  [`migration-state.json`](./migration-state.json). This document states no number;
+- Vercel commit status and deployment id for each of these merges, and a status-code probe
+  of six public or protected routes (header row *Health*);
+- the open-PR table below, every row re-read from GitHub on 2026-10-16.
+
+**Not re-measured at this sync:** tenant counts (§0), `ops_alerts`, provider state, payment
+row counts (§7), and any capability's production exercise. Their own measurement dates stand.
+
+### Historical preceding baseline from the 2026-10-16 `1ae096e2` reconciliation
+
+<!-- canonical-facts:ignore-start reason=preserves-the-1ae096e2-CANON-REFRESH-derivation-and-header-rows-as-dated-evidence -->
+**Re-derived on 2026-10-16 (CANON-REFRESH-2026-10-16), from the repository at `1ae096e2`:**
+
+- the production branch head and the full merge ancestry back to `b9e0003f` (150 merges),
+  from `git rev-list --first-parent --merges --count b9e0003f..1ae096e2`;
+- the **5** merges since the 2026-10-14 pin `ce133c18`: `b4316a4b` (#880, documentation-only),
+  `9f5344a5` (#883, tests-only), `3060a16a` (#881, CI-only), `02916ab6` (#879,
+  test-harness-only) and `1ae096e2` (#885, test harness and guide). **None** is runtime-bearing and none carries a migration, so the
+  runtime-bearing HEAD stays `ce133c18`;
+- repository and hosted migration state: **derived** with `npm run migration:state`
+  (unchanged by these five merges) and **declared** in
+  [`migration-state.json`](./migration-state.json). This document states no number;
+- Vercel commit status and deployment id for each of the five merges, and a status-code probe
+  of six public or protected routes (header row *Health*);
+- the open-PR table below, every row re-read from GitHub on 2026-10-16.
+
+**Not re-measured at this sync:** tenant counts (§0), `ops_alerts`, provider state, payment
+row counts (§7), and any capability's production exercise. Their own measurement dates stand.
+
+The `1ae096e2` header rows, preserved verbatim as dated evidence (superseded by the header above):
+
+| Field | Value at the `1ae096e2` sync |
+|---|---|
+| **Reconciliation date** | **2026-10-16 UTC source sync** (CANON-REFRESH-2026-10-16, five merges after the 2026-10-14 sync, **none** runtime-bearing). The 2026-10-14, 2026-10-13, 2026-10-12 and 2026-09-21 syncs are preserved below as history. Production-data counts elsewhere retain their own older measurement dates. |
+| **Current Git branch HEAD at this sync** | **`1ae096e25127e54304207f44cf2157dde9b67566` — merge of #885.** Re-read GitHub before any production action; this is a dated sync value, not a perpetual pointer. |
+| **Last runtime-bearing application HEAD at this sync** | **`ce133c18b8458e07b86c05301a5a38b92c9cb0be` (#857), unchanged since the 2026-10-14 sync.** It is **not** the branch HEAD above. `git log --first-parent ce133c18..1ae096e2` returns **5** merges, and by **A3's composed deployed predicate** (unchanged; see the 2026-09-21 record) **none** is runtime-bearing: `b4316a4b` (#880) is documentation-only (3 files under `docs/production/`); `9f5344a5` (#883) is tests-only (3 files under `tests/eng/v2/verify/`); `3060a16a` (#881) is CI-only (`.github/workflows/ci.yml`, `.github/workflows/nightly.yml`, `scripts/ci/supabase-start-bind-retry.sh` and its test); `02916ab6` (#879) is test-harness-only (3 files under `e2e/helpers/` and one test); `1ae096e2` (#885) is test-harness and guide only (`vitest.db.config.ts`, one test, `CLAUDE.md`). **None** carries a migration. With this pin, A3's residue is **0** files. |
+| **Current Vercel Production deployment evidence** | **Source and runtime recorded separately.** Source: the branch HEAD above (`1ae096e2`). Runtime: the application code last changed at `ce133c18` (#857), whose Vercel commit status is **success** (`2026-10-14T03:31:02Z`, deployment `Ch9W23Q5LEpQj2QTt89TuiXGbEWC`). Vercel also built and deployed each of the five later merges, all **success**, none carrying a runtime change: `b4316a4b` (#880) at `2026-10-14T15:47:24Z` (`5GputXRPo2U8EyXyvRcSRVhcusJQ`), `9f5344a5` (#883) at `2026-10-14T15:48:22Z` (`H2P5mgaEN7g4zYm9b8dVAvSrqLnn`), `3060a16a` (#881) at `2026-10-14T17:57:46Z` (`8s4BiB5G7uxPpjCqKVLJUWZAhp8c`) `02916ab6` (#879) at `2026-10-15T04:55:55Z` (`AChX29bvy7EjFE36wB3pfNqjZScn`) and `1ae096e2` (#885) at `2026-10-15T22:00:33Z` (`A3WRvXE2tfJa5UxwouRAgidbaKxG`), all read 2026-10-16. No alias or current health measurement is inferred from those statuses. |
+| **Health** | **Status-code probe, 2026-10-16T12:24Z** (unauthenticated GET, redirects not followed): `hone.care` **200** · `/login` **200** · `/dashboard`, `/clients`, `/calendar` and `/api/health` **307 → /login**, all non-5xx. This is a reachability reading only. ⚠️ `ops_alerts` was **not** re-read at this sync. The **2026-10-15T15:52Z** (at `02916ab6`), **2026-10-14T12:23Z**, **2026-10-14T02:40Z**, **2026-10-13T16:20Z**, **2026-10-12T23:07Z** and **2026-08-23** probes are preserved as earlier dated readings. These are dated observations, not current health. |
+<!-- canonical-facts:ignore-end -->
+
+### Historical preceding baseline from the 2026-10-14 reconciliation
+
+<!-- canonical-facts:ignore-start reason=preserves-the-2026-10-14-CANON-REFRESH-derivation-and-header-rows-as-dated-evidence -->
+**Re-derived on 2026-10-14 (CANON-REFRESH-2026-10-14), from the repository at `ce133c18`:**
+
+- the production branch head and the full merge ancestry back to `b9e0003f` (145 merges),
+  from `git rev-list --first-parent --merges --count b9e0003f..ce133c18`;
+- the **5** merges since the 2026-10-13 pin `6f7281bb`: `f5c87f93` (#877, documentation-only),
+  `d0118f75` (#869), `82a0e520` (#769), `338014f4` (#776) and `ce133c18` (#857), the last four
+  runtime-bearing; none carries a migration;
+- repository and hosted migration state: **derived** with `npm run migration:state`
+  (unchanged by these five merges) and **declared** in
+  [`migration-state.json`](./migration-state.json). This document states no number;
+- Vercel commit status and deployment id for each runtime merge, and a status-code probe of six
+  public or protected routes (header row *Health*);
+- the open-PR table below, every row re-read from GitHub on 2026-10-14.
+
+**Not re-measured at this sync:** tenant counts (§0), `ops_alerts`, provider state, payment
+row counts (§7), and any capability's production exercise. Their own measurement dates stand.
+
+The 2026-10-14 header rows, preserved verbatim as dated evidence (superseded by the header above):
+
+| Field | Value at the 2026-10-14 sync |
+|---|---|
+| **Reconciliation date** | **2026-10-14 UTC source sync** (CANON-REFRESH-2026-10-14, five merges after the 2026-10-13 sync, four of them runtime-bearing). The 2026-10-13, 2026-10-12 and 2026-09-21 syncs are preserved below as history. Production-data counts elsewhere retain their own older measurement dates. |
+| **Current Git branch HEAD at this sync** | **`ce133c18b8458e07b86c05301a5a38b92c9cb0be` — merge of #857.** Re-read GitHub before any production action; this is a dated sync value, not a perpetual pointer. |
+| **Last runtime-bearing application HEAD at this sync** | **`ce133c18b8458e07b86c05301a5a38b92c9cb0be` (#857).** This is also the branch HEAD above. `git log --first-parent 6f7281bb..ce133c18` returns **5** merges, classified by **A3's composed deployed predicate** (unchanged; see the 2026-09-21 record): `f5c87f93` (#877) is documentation-only (3 files, 0 application files) and does not move the runtime baseline; `d0118f75` (#869) changes **1** application file (`lib/analytics/client-boundary.ts`); `82a0e520` (#769) changes **5** application files under `app/(app)/settings/`; `338014f4` (#776) changes **5** application files under `app/(app)/clients/[id]/sessions/`; `ce133c18` (#857) changes **2** application files (`lib/stripe/setup-intent.ts`, `app/portal/payment-method-actions.ts`). **None** of the five carries a migration. With this pin, A3's residue is **0** files. |
+| **Current Vercel Production deployment evidence** | **Source and runtime recorded separately.** Source: the branch HEAD above. Runtime: Vercel commit status for `ce133c18…` is **success** ("Deployment has completed", `2026-10-14T03:31:02Z`, deployment `Ch9W23Q5LEpQj2QTt89TuiXGbEWC`, read 2026-10-14). The three intermediate runtime merges also report **success**: `338014f4` (#776) at `2026-10-14T02:14:53Z` (`GRRSxjM8rK6zqxCJSkuz2UHWbCip`), `82a0e520` (#769) at `2026-10-14T01:48:48Z` (`EGXdJYey4ajRcEP1D46w2iM8jjzG`) and `d0118f75` (#869) at `2026-10-14T01:31:31Z` (`At3JpQw6RFLFR7SPa64ZZ62SVvSa`). No alias or current health measurement is inferred from those statuses. |
+| **Health** | **Status-code probe, 2026-10-14T12:23Z** (unauthenticated GET, redirects not followed): `hone.care` **200** · `/login` **200** · `/dashboard`, `/clients`, `/calendar` and `/api/health` **307 → /login**, all non-5xx. This is a reachability reading only. ⚠️ `ops_alerts` was **not** re-read at this sync. The **2026-10-14T02:40Z** (at `338014f4`), **2026-10-13T16:20Z**, **2026-10-12T23:07Z** and **2026-08-23** probes are preserved as earlier dated readings. These are dated observations, not current health. |
+<!-- canonical-facts:ignore-end -->
+
+### Historical preceding baseline from the 2026-10-13 reconciliation
+
+<!-- canonical-facts:ignore-start reason=preserves-the-2026-10-13-CANON-REFRESH-derivation-and-header-rows-as-dated-evidence -->
+**Re-derived on 2026-10-13 (CANON-REFRESH-2026-10-13), from the repository at `6f7281bb`:**
+
+- the production branch head and the full merge ancestry back to `b9e0003f` (140 merges),
+  from `git rev-list --first-parent --merges --count b9e0003f..6f7281bb`;
+- the **2** merges since the 2026-10-12 pin `d5efa20a`: `f91cdf03` (#875, documentation-only)
+  and `6f7281bb` (#834, runtime-bearing, no migration);
+- repository and hosted migration state: **derived** with `npm run migration:state`
+  (unchanged by these two merges; neither carries a migration) and **declared** in
+  [`migration-state.json`](./migration-state.json). This document states no number;
+- Vercel commit status and deployment id for `6f7281bb`, and a status-code probe of six
+  public or protected routes (header row *Health*).
+
+**Not re-measured at this sync:** tenant counts (§0), `ops_alerts`, provider state, payment
+row counts (§7), and any capability's production exercise. Their own measurement dates stand.
+
+The 2026-10-13 header rows, preserved verbatim as dated evidence (superseded by the header above):
+
+| Field | Value at the 2026-10-13 sync |
+|---|---|
+| **Reconciliation date** | **2026-10-13 UTC source sync** (CANON-REFRESH-2026-10-13, one runtime merge after the 2026-10-12 sync). The 2026-10-12 and 2026-09-21 syncs are preserved below as history. Production-data counts elsewhere retain their own older measurement dates. |
+| **Current Git branch HEAD at this sync** | **`6f7281bb1b90e5a1911166495a249f7ac2770189` — merge of #834.** Re-read GitHub before any production action; this is a dated sync value, not a perpetual pointer. |
+| **Last runtime-bearing application HEAD at this sync** | **`6f7281bb1b90e5a1911166495a249f7ac2770189` (#834).** This is also the branch HEAD above. `git log --first-parent d5efa20a..6f7281bb` returns **2** merges, classified by **A3's composed deployed predicate** (unchanged; see the 2026-09-21 record): `f91cdf03` (#875) is documentation-only (3 files, 0 application files, no migration) and does not move the runtime baseline; `6f7281bb` (#834) changes **5** application files in `lib/billing/` and `lib/stripe/`, with **no migration**. With this pin, A3's residue is **0** files. |
+| **Current Vercel Production deployment evidence** | Vercel commit status for `6f7281bb…` is **success** ("Deployment has completed", `2026-10-13T14:18:38Z`, deployment `2Q9aZM1QYN7WMn76MSxTBrFEaex5`, read 2026-10-13). No alias or current health measurement is inferred from that status. |
+| **Health** | **Status-code probe, 2026-10-13T16:20Z** (unauthenticated GET, redirects not followed): `hone.care` **200** · `/login` **200** · `/dashboard`, `/clients`, `/calendar` and `/api/health` **307 → /login**, all non-5xx. This is a reachability reading only. ⚠️ `ops_alerts` was **not** re-read at this sync. The **2026-10-12T23:07Z** and **2026-08-23** probes are preserved as earlier dated readings. These are dated observations, not current health. |
+<!-- canonical-facts:ignore-end -->
+
+### Historical preceding baseline from the 2026-10-12 reconciliation
+
+<!-- canonical-facts:ignore-start reason=preserves-the-2026-10-12-CANON-REFRESH-derivation-and-header-rows-as-dated-evidence -->
+**Re-derived on 2026-10-12 (CANON-REFRESH-2026-10-12), from the repository at `d5efa20a`:**
+
+- the production branch head and the full merge ancestry back to `b9e0003f` (138 merges),
+  from `git rev-list --first-parent --merges --count b9e0003f..d5efa20a`;
+- the **57** merges since the previous sync's pin `410e5039`, each classified by **A3's
+  composed deployed predicate** (unchanged from the previous sync, described there): **40**
+  runtime-bearing, **17** not, **8** carrying a migration. The latest runtime-bearing merge is
+  `d5efa20a` (#827). Documentation-only or non-shipping merges in that span include #756, #755,
+  #783, #782, #787, #792, #794, #797, and the ENG-LOOP and CAP lane merges #802 to #811;
+- repository and hosted migration state: **derived** with `npm run migration:state`, and
+  **declared** in [`migration-state.json`](./migration-state.json). The reconciled position is
+  [migration-ledger.md](./migration-ledger.md) under *Current state*. This document still
+  states no number;
+- Vercel commit status for `d5efa20a` (success) and a status-code probe of four public routes
+  (header row *Health*).
+
+**Not re-measured at this sync:** tenant counts (§0), `ops_alerts`, provider state, and any
+capability's production exercise. Their own measurement dates stand.
+
+The 2026-10-12 header rows, preserved verbatim as dated evidence (superseded by the header above):
+
+| Field | Value at the 2026-10-12 sync |
+|---|---|
+| **Reconciliation date** | **2026-10-12 UTC source sync** (CANON-REFRESH-2026-10-12). The previous sync was 2026-09-20 / 2026-09-21; its derivations are preserved below as history. Production-data counts elsewhere retain their own older measurement dates. |
+| **Current Git branch HEAD at this sync** | **`d5efa20ade0af7cdb8624185b2520cd507fa2713` — merge of #827.** Re-read GitHub before any production action; this is a dated sync value, not a perpetual pointer. |
+| **Last runtime-bearing application HEAD at this sync** | **`d5efa20ade0af7cdb8624185b2520cd507fa2713` (#827).** This is also the branch HEAD above. `git log --first-parent 410e5039..d5efa20a` returns **57** merges. **40** are runtime-bearing and **17** are not, by **A3's composed deployed predicate**: *not documentation* (asked of `scripts/classify-changes.mjs`) **and** *not in a non-shipping root* (`tests/`, `e2e/`, `.github/`, `scripts/` except `PRODUCTION_BUILD_SCRIPTS`, test-runner and linter configs, `openwiki/`). **8** of the 57 carry a migration. #827 is the latest runtime-bearing head because it merged last and changes 3 shipping files; with this pin, A3's residue is **0** files. The per-merge derivation is in *Re-derived at this reconciliation* below. |
+| **Current Vercel Production deployment evidence** | Vercel commit status for `d5efa20a…` is **success** ("Deployment has completed", `2026-10-12T22:04:08Z`, read 2026-10-12). No deployment id, alias or current health measurement is inferred from that status. |
+| **Health** | **Status-code probe, 2026-10-12T23:07Z** (unauthenticated GET, redirects not followed): `hone.care` **200** · `/login` **200** · `/dashboard` **307 → /login** · `/api/health` **307 → /login**, all non-5xx. This is a reachability reading only, not an `ops_alerts` or provider-health measurement. ⚠️ `ops_alerts` was **not** re-read at this sync. The **2026-08-23** probe (same four routes, same codes, `ops_alerts` unresolved **4**, §13) is preserved as the previous dated reading. These are dated observations, not current health. |
+<!-- canonical-facts:ignore-end -->
+
+### Historical preceding baseline from the 2026-09-21 reconciliation
+
+<!-- canonical-facts:ignore-start reason=preserves-the-2026-09-21-PROD-TRUTH-01-derivation-and-header-rows-as-dated-evidence -->
+**Re-derived on 2026-09-21 (PROD-TRUTH-01), from the repository at `410e5039`:**
+
+- the production branch head and the full merge ancestry back to `b9e0003f` (eighty-one merges);
+- which of those merges are runtime-bearing, by **A3's composed deployed predicate** rather than
+  by PR title or intuition — *not documentation* (asked of `scripts/classify-changes.mjs`) **and**
+  *not in a non-shipping root*, where `scripts/` is **not** blanket-exempt: A3 subtracts the
+  scripts `package.json`'s `build` executes (today `scripts/check-production-env-gates.mjs`),
+  because a script the production build runs can change what the deployment does. The classifier
+  answers "is this documentation", which is a different question from "does this ship": it
+  returns `docs_only=false` for `.github/workflows` and `e2e/` alike, neither of which Vercel
+  serves;
+- repository migration max, total, next free number and pending set (`npm run migration:state`);
+- hosted migration max as **declared** in [`migration-state.json`](./migration-state.json).
+
+These are derivations from the repository and the Git graph. The **2026-08-30** measurement
+boundary recorded below is unchanged: the figures derived there from `bf6f09c4` remain dated
+evidence of that reconciliation and are not restated as facts about today. That is why the
+ancestry count appears twice — **twenty-nine** through `bf6f09c4` on 2026-08-30, **eighty-one**
+through `410e5039` on 2026-09-21 — and why neither number is edited into the other's block.
+
+The 2026-09-21 header rows, preserved verbatim as dated evidence (superseded by the header above):
+
+| Field | Value at the 2026-09-21 sync |
+|---|---|
+| **Reconciliation date** | **2026-09-20 / 2026-09-21 UTC source sync**; production-data counts elsewhere retain their own older measurement dates. |
+| **Current Git branch HEAD at this sync** | **`410e5039d1b11b32c19e752ae2ae278c4b288b8f` — merge of #745.** Re-read GitHub before any production action; this is a dated sync value, not a perpetual pointer. |
+| **Last runtime-bearing application HEAD at this sync** | **`410e5039d1b11b32c19e752ae2ae278c4b288b8f` (#745).** This is also the branch HEAD above. `git log --first-parent --merges c6bc5949..410e5039` returns **three** merges, not two: `27a4c960` (#751), which carried **0** application files (`app/`, `lib/`, `components/`) and is documentation-only by the classifier; `c00bcfed` (#753), which carried **0** application files but is **database-bearing** — the classifier returns `docs_only=false`, `database=true`, because it carries migration `0202`, and A3's non-shipping exclusions do not exempt `supabase/migrations/`; and `410e5039` (#745), which carried **2** (`app/(app)/getting-started/page.tsx`, `lib/onboarding/getting-started.ts`). #745 is the latest runtime-bearing head because it merged last, not because #753 carried nothing. #751 is documentation-only and does not move the runtime baseline, but omitting it made the derivation incomplete. The verdict is **A3's composed deployed predicate** — *not documentation* (asked of `scripts/classify-changes.mjs`) **and** *not in a non-shipping root* (`tests/`, `e2e/`, `.github/`, `scripts/`, test-runner and linter configs) — not judgement, and not the classifier alone: it has no "ships" output to borrow. **`scripts/` is not blanket-exempt:** A3 subtracts `PRODUCTION_BUILD_SCRIPTS` — the scripts `package.json`'s `build` actually executes, today `scripts/check-production-env-gates.mjs` — because a script the production build runs can change what the deployment does. |
+| **Current Vercel Production deployment evidence** | Vercel commit status for `410e5039…` is **success**. No deployment id, alias/runtime probe or current health measurement is inferred from that status. |
+| **Health** | ⚠️ **NOT RE-PROBED AT THIS SOURCE SYNC.** The last probe remains the **2026-08-23** reading: `hone.care` **200** · `/login` **200** · `/dashboard` **307** (auth redirect) · `/api/health` **307**, all non-5xx, `ops_alerts` unresolved **4** (§13). Production has moved substantially since then; this document deliberately does **not** restate a merge-age count. These are dated observations, not current health. |
+<!-- canonical-facts:ignore-end -->
+
+### Historical preceding baseline from the 2026-08-30 reconciliation
+
+`4fee652fe67f9fdc06b7d5e719cdb73d5e6d294b` — the PR #649 merge — is preserved here only as the
+baseline that preceded the **2026-08-30** reconciliation. It is **not** the predecessor of the
+current #745 runtime baseline and must not be used as a current release boundary. The current
+production ancestry must be re-read from GitHub at action time.
 
 ### What this reconciliation did and did not measure
 
@@ -78,14 +257,87 @@ stamps rather than restated as current:**
 A figure with a 2026-08-23 stamp is **evidence of what was true on 2026-08-23**. It is not a
 claim about today, and a later reader must re-measure before treating it as one.
 
+### NEW-CLIENT-MODE-01 release — what actually happened on 2026-10-01
+
+**These are operational facts, not a re-pin.** The reconciliation header above is
+still the **2026-09-21** sync and still pins `410e5039`; this subsection deliberately
+does **not** move it. Re-pinning re-derives every count derived from the pin across
+this document, [release-changelog.md](./release-changelog.md) and
+[capability-register.md](./capability-register.md) — it is a PROD-TRUTH-class re-sync
+and belongs in its own change, as `#756` was. Recording a release while silently
+re-pinning would hide one of those jobs inside the other.
+
+**Production has advanced past this document's pin, and that is stated rather than
+papered over.** Production has advanced TWICE since the release recorded below — `afb2b509` (**#778**,
+waitlist email branding) and then `ce3091e9` (**#777**, waitlist invitation identity).
+That is not an aside: it is why re-pinning is its own change rather than a line edit
+here, since each advance re-derives every count derived from the pin. Re-read GitHub
+before any production action; this sentence is itself a dated observation.
+
+| Fact | Value |
+|---|---|
+| **Migration `0204` applied** | **2026-10-01.** `supabase db push --linked`, no `--include-all`, pinned CLI `2.102.0`, exit code 0, from the reviewed **#773** head `d8617859`. Hosted max is declared in [`migration-state.json`](./migration-state.json) — **this document still states no migration number.** Full record: [migration-ledger.md](./migration-ledger.md). |
+| **#773 merged and deployed** | Merge commit **`d7e712ef`** at `2026-10-01T20:25:16Z`; production deployment `dpl_AQrWznf5fKqLKPZiH4RNCgDFwxsZ`, `READY`, holding `hone.care`, ready `2026-10-01T20:27:33.821Z`. **The migration was applied BEFORE this deploy**, because the new application calls `create_public_appointment_for_new_client` and that function does not exist until `0204` lands. |
+| **Willow persisted as WAITLIST** | Stored `new_client_admission_mode` = **`waitlist`**, `set_at` **`2026-10-01T21:35:33.139540Z`** (server-generated). Written by **Willow's own owner** through Settings → Booking, which calls `set_new_client_admission_mode`; `set_by` resolves to a `practitioners` row of that studio with `role = 'owner'`. |
+| **Willow's authority source is PERSISTED** | Because the row is stamped, the reader returns `source: "persisted"` before the env bridge is consulted. The legacy list no longer moves Willow. Its effective **admission mode** did not change — measured WAITLIST on the public surface both before and after. ⚠️ **Scope that narrowly:** whether the **commit point** changed at that instant is **UNKNOWN**, because step E never read `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS`, and historical waitlist rows cannot establish contemporaneous membership of it. Proven: authority moved. Not proven, and not claimed: that nothing else about the join behaviour moved with it. |
+| **Step G passed — a real public durable join** | Entry `ff942ef2-a272-4549-a3b9-c5d000b05b69`, `joined_at` `2026-10-01T22:25:36.347700Z`, `status` `waiting`, `source` `public_booking`, `joined_at_provenance` `form`. Willow entries **48 → 49**, globally **51 → 52** — exactly one row created anywhere. **The row, not the email, was the check.** |
+| **Legacy email-only path NOT used** | Proven by the row existing: the email-only path writes no row — **and that proof is about THIS stamped studio's request.** ⚠️ **AN EARLIER REVISION OVERSTATED IT** as *"the deployed submit path contains no call to `isNewClientWaitlistDurableEnabled`, so there is no second commit point left to take"*, and that is **withdrawn**. The env-gate test pins only that `waitlist-actions.ts` makes no **direct** call; the call is **transitive** — `waitlist-actions.ts` → `newClientWaitlistCommitIsDurable` → `isNewClientWaitlistDurableEnabled` — and that branch is still reached for any **unstamped** studio. So **the second commit point is still live for unstamped studios**, which is also what the "both bridges intact" row says. With step-F completeness UNKNOWN, do not read this as licence to retire the bridge. |
+| **No appointment, no client record** | Willow appointments **330 → 330**; Willow clients **78 → 78**. Three pre-existing client rows happen to share the synthetic test address (newest created 2026-09-19, none since), and the join did **not** attach or convert to any of them — `converted_at` and `converted_client_id` are NULL. |
+| **No Twilio / SMS / provider mutation** | `sms_consent_at`, `sms_consent_source`, `mobile_verified_at` all NULL. The waitlist surface carries no SMS field and the join path contains zero Twilio references. The only provider traffic was the two emails the join itself sends — a studio notification (provider-**accepted**) and a client acknowledgement (no failure logged). |
+| **Both legacy bridges still intact** | `envForcesWaitlist` in `lib/booking/new-client-admission.ts` and `lib/booking/new-client-waitlist-durability-bridge.ts` are both present in the deployed tree. **No environment variable was deleted.** Activation step H is **NOT STARTED**. ⚠️ **Its ELIGIBILITY is UNKNOWN, not negative.** H is gated on every studio in `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` being stamped and verified; one studio was, and because step E never read that list it is unknown whether that was all of it — **if it was, H is already eligible.** An earlier revision said "not yet eligible" and derived it from one stamped row; that is **withdrawn**. |
+| **ONE studio written; step-F completeness UNKNOWN** | Willow was stamped and verified. The other **six** studios were read as stored `'open'` and **unstamped** on 2026-10-01 and **were therefore governed by the env bridge at that reading**. ⚠️ **Whether they still are is UNKNOWN** — if any of those six owners has since written a mode, the persisted row has already taken authority over from the bridge for that studio. **Re-read the rows before asserting any studio's current authority source.** ⚠️ **There is no denominator, and none may be invented.** Earlier revisions of this row said "1 of 7" and then "of an unknown total"; both still implied the remaining six are step-F work. Step F applies only to studios in `NEW_CLIENT_WAITLIST_STUDIO_SLUGS`, **step E never read that list**, and **unstamped means neither listed nor unlisted**. **STEP_F_COMPLETENESS = UNKNOWN** — if Willow was the list's only member, F is already COMPLETE. Until a studio is stamped its owner **cannot** choose OPEN or CLOSED: the command answers `legacy_waitlist_cutover_required`, and writing `waitlist` is the way out. |
+| **Activation step E was NEVER performed** | The live `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` / `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` values were **not read**, so **no slug set is recorded and none may be inferred** — not from which studios are stamped, not from which hold waitlist rows. |
+| **Outstanding migration debt** | `public.studios_admission_mode_guard()` received no explicit `REVOKE`, so `anon`/`authenticated`/`service_role`/`PUBLIC` hold `EXECUTE`. **Not exploitable** — return type `trigger`, which PostgreSQL refuses to invoke outside a trigger context — but inconsistent with the discipline `0204` applies to its own five other functions. `0204` is **APPLIED and FROZEN**: this needs a **new migration**, never an edit. |
+| **Synthetic step-G entry RETAINED** | `ff942ef2-…` was deliberately **not** removed, pending authorization. **Two dated observations, and nothing claimed after the second.** **(1) 2026-10-01T22:25:36Z, at step-G acceptance:** status **`waiting`**, position **47 of 47** of Willow's Waiting section (`joined_at` ASC, `id` ASC, page size 100 — then the last row on page one), a submitted phone number, no SMS consent. **(2) 2026-10-02T00:14:55Z, controlled invitation-acceptance exercise:** the same entry was **claimed** and then **invited by a practitioner** — status **`invited`**, so it was **no longer in Waiting**; invitation `delivery_disposition` **`accepted`**, stored `expires_at` **2026-10-04T00:14:55Z**, and `redeemed_at`/`declined_at`/`expired_at`/`released_at`/`closed_at` all NULL. **Real inbox receipt was OPERATOR-OBSERVED**; every other fact here is a read-only database reading. ⚠️ **Its state after that instant is NOT asserted** — the expiry is a stored value, not a prediction. An earlier revision said the entry "sits in" Waiting; **withdrawn**, because it was already false when written. **Re-query by id**, never by position or status. **Origin, which does not change: this row was created by a synthetic acceptance test, not by a real prospect, against a real inbox.** **No cleanup was performed in this change.** Whoever acts on it must **re-read the entry and its invitation by id first**; if either is still outstanding at that moment, removal or release is a **separately authorized** action. **This row makes no claim about whether they are outstanding now** — an earlier revision said it "now carries a live invitation", which asserted a present state immediately after promising not to, and is **withdrawn**. |
+
 ### Open pull requests are not production
 
-**No open PR is described as shipped anywhere in this document.** At this reconciliation:
+**No open PR is described as shipped anywhere in this document.** At this reconciliation (every row re-read from GitHub on 2026-10-16; the four US/USD rows were added on 2026-10-13 because §7 cites them):
 
 | PR | State | Why it is not production |
 |---|---|---|
-| **TRUTH-01B-1** — the first export-payload slice | **IN DEVELOPMENT**, no PR merged (carried by draft #647) | The registry and the disclosure landed in TRUTH-01A; **the export payload is byte-for-byte unchanged**, so nothing here is live. See §12. |
-| **#647** — TRUTH-01B-1, the joinable archive | **OPEN**, and a **DRAFT** | Parked. `#648` records it as untouched. Nothing here is live. |
+| **#775** — SMS-NUMBER-SEARCH-01 number lookup | **OPEN**, release candidate | Not merged. No owner can reach a number lookup in production. |
+| **#774** — BROWSER-FINDING-01 probe-lot provenance | **OPEN**, and a **DRAFT** | Not merged. |
+| **#833** — PAY-CCY-02 (#824 US/USD 2/4): per-studio payment country and charge currency | **OPEN**, and a **DRAFT** | Not merged. Carries the unapplied **0214**; no studio has a payment country in production. |
+| **#836** — PAY-CCY-03 (#824 US/USD 3/4): Stripe accounts follow the studio's verified country | **OPEN**, and a **DRAFT**, stacked on #833 | Not merged. No USD Stripe account is provisioned by production code. |
+| **#839** — PAY-CCY-04 (#824 US/USD 4/4): money surfaces name the studio's currency | **OPEN**, and a **DRAFT**, stacked on #836 | Not merged. |
+| **#847** — PAY-CCY-05 (#824 US/USD): US studio session payment end to end in USD, fake Stripe | **OPEN**, and a **DRAFT**, stacked on #839 | Not merged. US/USD activation remains **PENDING** (§7). |
+
+**2026-10-14 (CANON-REFRESH-2026-10-14): two rows left the table above because the PRs merged.**
+`#769` (UX-02 slice 2, SectionLabel across Settings) merged as `82a0e520` and `#776` (UX-02 slice 3,
+SectionLabel across session charting) merged as `338014f4`, both on 2026-10-14 and both deployed
+(header row *Current Vercel Production deployment evidence*). They were correctly OPEN at the
+2026-10-13 sync; this is a state change, not a correction. Their rows as of 2026-10-13 are preserved here:
+
+<!-- canonical-facts:ignore-start reason=preserves-the-2026-10-13-open-rows-for-769-and-776-which-have-since-merged -->
+> | PR | State at 2026-10-13 | Why it was not production then |
+> |---|---|---|
+> | **#769** — UX-02 slice 2, SectionLabel across Settings | **OPEN**, release candidate | Not merged. It was `MERGEABLE`/`CLEAN` throughout the NEW-CLIENT-MODE-01 release and was deliberately **held** so it could not land ahead of #773. |
+> | **#776** — UX-02 slice 3, SectionLabel across session charting | **OPEN**, release candidate | Not merged. |
+<!-- canonical-facts:ignore-end -->
+
+⚠️ **CORRECTION, 2026-10-01 (NEW-CLIENT-MODE-01 release) — FIVE ROWS WERE REMOVED FROM THE TABLE ABOVE.**
+It declared `#752`, `#754`, `#746`, `#750` and `#755` OPEN. **All five had merged** — `1c50bd95`, `c4b0e263`,
+`54ad9cf2`, `d59330d1` and `93381b40` respectively, every one of them contained in this history. They are
+removed rather than reworded, for exactly the reason PROD-TRUTH-01 gave when it removed `#647`: a merged PR
+does not belong in a table about what is *not* production. **This is the same defect recurring, and the
+mechanism is worth naming rather than just fixing** — nobody edited these rows to make them false. Production
+moved and the rows stayed still, which is why the guard checks the converse direction too and why this
+correction will be needed again the next time production advances without this table being re-read. The rows
+now listed are the candidates genuinely open at this reconciliation, re-read from GitHub at this sync.
+
+**AND IT RECURRED WHILE THIS VERY CORRECTION WAS BEING WRITTEN.** `#777` was listed as
+OPEN in the first draft of the table above and merged as `ce3091e9` before the change
+landed, so its row was deleted too. That is not an embarrassing footnote, it is the
+measurement: the window in which this table is true is shorter than the time it takes
+to edit it, which is the argument for the guard rather than for more careful authors.
+
+⚠️ **CORRECTION, 2026-09-21 (PROD-TRUTH-01) — `#647` WAS REMOVED FROM THE TABLE ABOVE.** It carried two rows
+declaring TRUTH-01B-1 open and `#647` a parked draft. `#647` merged on **2026-08-30** as `1d6d7c48` and is
+contained in this history, so those rows had been false for three weeks. Describing a merged PR as open is the
+same class of defect as the converse, and production advancing creates it by default — which is why the rows
+were deleted rather than reworded: a merged PR does not belong in a table about what is *not* production. The
+rows now listed are the candidates genuinely open at this reconciliation.
 
 > **No head SHA is recorded for an open PR, deliberately.** An open branch's head moves whenever
 > it is pushed to, so a SHA written here is stale the moment it is useful — the same defect this
@@ -187,10 +439,31 @@ surfaces then made affirmative clinical statements nobody had read: *Last visit*
 Intelligence* reported every stat as a known zero, and *Before today* reported no watch or plan
 notes and a complete procedure record.
 
-At `0f07dae6` all four check `unavailable` **before** `hasHistory`, and
+At `ce133c18` all four check `unavailable` **before** `hasHistory`, and
 `session_blocks.caution_for_next_session` / `caution_note` — which reach the practitioner only
 through the Watch/Plan band built from that same read — are protected on both the Overview and
-Sessions tabs. Read failure now renders *clinical history could not be loaded*.
+Sessions tabs. Read failure now renders *clinical history could not be loaded*. **Re-run on
+2026-10-16 through `0ae33bd3` (CANON-REFRESH-2026-10-16b):** across `ce133c18..0ae33bd3` (7
+merges, none runtime-bearing), none of the five files named below changed. **Re-run on
+2026-10-16 through `1ae096e2` (CANON-REFRESH-2026-10-16):** across `ce133c18..1ae096e2` (5
+merges, none runtime-bearing), none of the five files named below changed. **Re-run on
+2026-10-14 through `ce133c18` (CANON-REFRESH-2026-10-14):** across `6f7281bb..ce133c18` (5
+merges), none of the five files named below changed; #776's changes sit under
+`app/(app)/clients/[id]/sessions/`, outside them. **Re-run on
+2026-10-13 through `6f7281bb` (CANON-REFRESH-2026-10-13):** across `d5efa20a..6f7281bb` (2
+merges), none of the five files named below changed at all. **Re-run again on
+2026-10-12 through `d5efa20a` (CANON-REFRESH-2026-10-12):** across `410e5039..d5efa20a` (57
+merges), no added or removed line touching `unavailable` or `hasHistory` appears in the five
+files named below; the only change among them is two lines of `app/(app)/clients/[id]/page.tsx`,
+neither touching the guards. The 2026-09-21 record follows unchanged. **Re-pinned from
+the original #659 observation (`0f07dae6`), and verified mechanically rather than assumed — the
+comparison was RE-RUN through the current baseline on 2026-09-21, not merely re-pointed: across
+`0f07dae6..410e5039`, which now includes #751, #753 and #745, no added or removed line touching
+`unavailable` or `hasHistory` appears in any of the five files that carry these guards — `app/(app)/clients/[id]/page.tsx`,
+`components/last-visit-card.tsx`, `components/treatment-intelligence-card.tsx`,
+`components/before-today-card.tsx` and `components/clinical-unavailable-notice.tsx`. The guards
+are unchanged across the interval, so the property carries to the current baseline rather than
+being re-asserted at it.**
 
 **Deliberate non-change, recorded so it is not mistaken for a gap:** `attachStructuredAreas`
 still **throws** on a `session_block_areas` read failure, surfacing the error boundary. That is
@@ -476,14 +749,59 @@ direct booking route and is live today.
 
 ## 5b. New-client waitlist (admission control)
 
+### 2026-09-20 Level 3 WAIT checkpoint — TOP PRODUCT PRIORITY
+
+**Decision scope:** this is a product-priority and shipped-software reconciliation. It is **not**
+a customer-message, provider-effect, migration or launch-acceptance authorization.
+
+At this checkpoint the production branch contains the following WAIT tranche:
+
+| Layer | Shipped production software | What it establishes | What it does **not** establish |
+|---|---|---|---|
+| **Level 1 — durable queue** | Existing WAIT-02B durable queue + owner lifecycle/manual/legacy tools | A studio-scoped durable waiting list exists; Willow was collecting on it throughout the last measured interval. | Present allowlist configuration, complete historical reconciliation or Chloe acceptance. |
+| **Level 2 — Invite-to-book core** | #708/#709/#713 core; **#741/#747** redeemed-no-booking exit; **#748** 48-hour invitation **default** | Scoped email invitation, proof-bound Book/Decline, atomic booking/conversion, lifecycle exits, a 48-hour default, and a safe operator exit after redemption without booking. | **Fixed/no-choice 48h policy remains open** because the composer still permits alternate TTLs; the full four-response Chloe taxonomy, WAIT-specific 24h reminder, dual-channel delivery and Willow real-client acceptance also remain open. |
+| **Level 3 — Full WAIT Operating System** | **NOT COMPLETE — now Hone's top product priority.** | The required finish line is explicit and bounded. | It must not be inferred from Level 1/2 software being deployed. |
+| **SMS sender visibility** | **#749**, read-only owner status on Settings → Integrations | An owner can see whether Hone has a recorded studio sender and its truthful state; UNKNOWN/read-failed stays distinct. | No provisioning, purchase, adoption, release, #716 routing cutover or WAIT SMS. The shared fallback is unchanged. |
+
+**Level 3 exit contract:** retrospective Willow queue/provenance reconciliation + trustworthy
+owner discoverability/control → WAIT-04B durable rich profile and completion authority → verified
+mobile + waitlist-prospect STOP/suppression → supported studio sender provisioning/adoption/test +
+real Willow sender proof → **fixed 48-hour policy with no practitioner expiry choice** → email + eligible SMS as one invitation opportunity → WAIT-specific
+24-hour reminder → all four recipient response choices → first-consult cancellation/reschedule/
+no-show/exception boundaries → Chloe real-device acceptance.
+
+**Controlled use before Level 3:** the shipped email Invite-to-book core may be exercised only under
+the normal current release/activation gates. Before any real Willow send, confirm the current
+waitlist gate and delivery posture from their authorities. This section does not infer a current
+allowlist value, a real Willow invitation, a provider send or human acceptance.
+
+
 Two different things share this name. They are at **different stages** and must not be merged
 into one status sentence.
 
-### WAIT-01 — the email-delivered waitlist. LIVE at Willow.
+### WAIT-01 — the email-delivered waitlist. SUPERSEDED at Willow; the FALLBACK path.
 
-**Implemented · merged (PR #601) · deployed · ENABLED for one studio · production exercised.**
+**Implemented · merged (PR #601) · deployed · admission gate WAS enabled for one studio at every
+measured instant · its EMAIL COMMIT POINT no longer served any studio.**
 
-New-client booking at Willow is **refused and routed to a waitlist**. This is admission control:
+> ⚠️ **CORRECTED 2026-09-19.** This section was headed *LIVE at Willow* and read as though the
+> email were still Willow's commit point. The **admission gate** below is indeed still on for
+> Willow at every measured instant — that part is unchanged and is why new-client booking was
+> refused throughout. (`isNewClientWaitlistEnabled` re-reads that variable per call too, so rows
+> bound the gate's state exactly as weakly as they bound the durable flag's.) What changed is
+> what happens next: `app/book/[slug]/waitlist-actions.ts:562` routes a studio named on **both**
+> allowlists to the durable branch, and Willow was on both at every measured instant from on or
+> before 2026-08-25 to 2026-09-15.
+> So for Willow the email was a **notification** and the row the record, at every measured
+> instant. WAIT-01's commit point applies to a waitlisted studio outside the durable allowlist;
+> **no such studio existed at any measured instant, and that is a dated observation, not a
+> statement about route occupancy now.** ⚠️ **THAT APPLIES ONLY TO A STUDIO THAT IS NOT CUT OVER.** Since 2026-10-01T21:35:33.139540Z Willow's mode is **persisted**, and `newClientWaitlistCommitIsDurable` (`lib/booking/new-client-waitlist-durability-bridge.ts`) returns true at its cut-over check **before** it consults `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS`. **Clearing or emptying that list therefore cannot return a cut-over studio to WAIT-01 email-only** — it governs only studios still on the legacy bridge. An operator who clears it expecting a commit-point rollback at Willow would believe the rollback succeeded while durable rows kept being written. **AND THERE IS NO COMMIT-POINT ROLLBACK FOR A CUT-OVER STUDIO AT ALL.** An earlier revision of this note said "rolling a cut-over studio back is a row write through `set_new_client_admission_mode`", which conflated changing its ADMISSION MODE with restoring its COMMIT POINT, and is **withdrawn**. (1) For **NEW-CLIENT ADMISSION AND COMMIT-POINT ROUTING**, clearing or emptying either env list affects **only a studio still on the legacy bridge** — ⚠️ **but that is scoped to new-client routing and is NOT a statement that env edits are inert at a stamped studio.** `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` is read **independently** by EMERG-01's free-consult reschedule restriction (`isFreeConsultWaitlistOnlyReschedule` → `isNewClientWaitlistEnabled`), which never consults `new_client_admission_mode`. Editing that list at a **cut-over** studio therefore still changes whether an **already-confirmed free consultation** can be self-service moved. Deliberately so: an owner changing new-client admission must not move the rights of a confirmed appointment; (2) `set_new_client_admission_mode` is the supported way to change a cut-over studio's **ADMISSION MODE**; (3) ⚠️ **RESTORING A CUT-OVER STUDIO TO WAIT-01 EMAIL-ONLY COMMIT SEMANTICS IS NOT SUPPORTED BY ANY EXISTING MECHANISM** (a consequence of the three-mode set and the bridge's own law, derivable from source rather than measured) — `waitlist` keeps it durable *by law*, `open` / `closed` remove the waitlist rather than making it email-only; (4) **a mode transition is NOT a commit-point rollback** and must never be described as one. Restoring email-only would need a **new, explicitly designed and supported mechanism**, not an operator workaround.
+> An earlier revision said *"clearing the allowlist re-routes Willow through WAIT-01 on the very
+> next request"*; that was true while Willow sat on the legacy bridge and is **withdrawn** now that
+> it does not.
+
+New-client booking at Willow was **refused and routed to a waitlist** at every measured instant.
+This is admission control:
 a studio whose existing treatment clients cannot be served on a clinically useful cadence stops
 accepting brand-new consultations, because each new client consumes capacity already spoken for.
 
@@ -494,43 +812,85 @@ accepting brand-new consultations, because each new client consumes capacity alr
   *(verified 2026-08-23)*.
 - **The commit point is the studio notification email, not a database row.** Under WAIT-01 a
   waitlist request is delivered; it is not stored.
-- Default OFF, exact-slug match only. Clearing the env var is the entire kill switch.
+- Default OFF, exact-slug match only. Clearing the env var is the entire kill switch **for a studio still on the legacy bridge, and is NOT a kill switch for a cut-over studio**. ⚠️ **THAT WAS TRUE WHILE EVERY WAITLISTED STUDIO SAT ON THE LEGACY BRIDGE, AND IS NOT TRUE OF A CUT-OVER STUDIO.** Since 2026-10-01T21:35:33.139540Z Willow's mode is **persisted**, and the admission reader answers a stamped row before the env bridge is consulted — so clearing the env var does **not** switch new-client admission off at a cut-over studio, and `newClientWaitlistCommitIsDurable` likewise returns true at its cut-over check before reading the durable list. **`set_new_client_admission_mode` changes a cut-over studio's ADMISSION MODE, and that is not the same thing as a commit-point rollback.** **THE CONTRACT, IN FULL, BECAUSE A PARTIAL VERSION IS WHAT WENT WRONG HERE:** (1) for **NEW-CLIENT ADMISSION AND COMMIT-POINT ROUTING**, clearing or emptying either env list affects **only a studio still on the legacy bridge** — ⚠️ **but that is scoped to new-client routing and is NOT a statement that env edits are inert at a stamped studio.** `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` is read **independently** by EMERG-01's free-consult reschedule restriction (`isFreeConsultWaitlistOnlyReschedule` → `isNewClientWaitlistEnabled`), which never consults `new_client_admission_mode`. Editing that list at a **cut-over** studio therefore still changes whether an **already-confirmed free consultation** can be self-service moved. Deliberately so: an owner changing new-client admission must not move the rights of a confirmed appointment; (2) `set_new_client_admission_mode` is the supported way to change a cut-over studio's **ADMISSION MODE**; (3) ⚠️ **RESTORING A CUT-OVER STUDIO TO WAIT-01 EMAIL-ONLY COMMIT SEMANTICS IS NOT SUPPORTED BY ANY EXISTING MECHANISM** (a consequence of the three-mode set and the bridge's own law, derivable from source rather than measured) — `waitlist` keeps it durable *by law*, and `open` / `closed` remove the waitlist rather than making it email-only; (4) **a mode transition is therefore NOT a commit-point rollback**, and must never be described as one. Restoring email-only would need a **new, explicitly designed and supported mechanism**, not an operator workaround.
 - Release record: [releases/2026-08-19-willow-new-client-waitlist.md](./releases/2026-08-19-willow-new-client-waitlist.md).
 
-### WAIT-02B Stage A — the durable waitlist. DEPLOYED DARK. Reachable by nobody.
+### WAIT-02B Stage A — the durable waitlist. ACTIVATED and collecting at every measured instant (2026-08-25 – 2026-09-15).
 
 **Implemented · merged (PR #629, `48f02389`) · DB applied (migration 0185) · deployed ·
-NOT ENABLED · NOT production exercised.** Human acceptance is **not applicable** at this stage.
+WAS ACTIVATED for `willow-electrolysis` at every measured instant · production exercised
+(joining only).** ⚠️ **Dated evidence, not current configuration** — the bound is
+2026-08-25T22:27Z through 2026-09-15; see the paragraph in Stage B1 below for why committed rows
+cannot report the present. Owner device acceptance is **still outstanding** and is not implied by
+any row below.
+
+> ⚠️ **CORRECTED 2026-09-19 (WAIT-DOCS-RECON).** Every bullet in this subsection previously
+> described the durable path as deployed-but-dark, switched on for no studio at all. Production
+> had disproved that for roughly three weeks. The superseded text is preserved verbatim in the
+> frozen block at the end of this subsection rather than deleted.
 
 - The durable table `new_client_waitlist_entries` and both commands
   (`join_new_client_waitlist`, `remove_new_client_waitlist_entry`) **exist in production
   schema**. Migration 0185 is applied and frozen — evidence in
   [migration-ledger.md](./migration-ledger.md).
-- **The table held 0 rows when last measured.** It held 0 at apply verification and **0 on
-  2026-08-23** *(read-only query)*, and **has not been re-measured since**. ⚠️ That is evidence
-  for 2026-08-23 and **not** a claim about today: it does not prove the table is empty now, nor
-  that no prospect entry has been created since.
-<!-- canonical-facts:ignore-start reason=quotes-the-superseded-present-tense-waitlist-row -->
-  This row used to read *"holds **0 now** … **No prospect data is being collected**"*, which
-  converted a dated measurement into a standing fact.
-<!-- canonical-facts:ignore-end -->
-  The second half compounded it, because the allowlist absence that would license that inference
-  is **also** only verified to 2026-08-23. A table existing is not data being collected; a dated
-  zero is not a present-tense one.
-- **`NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` is absent from the Vercel Production
-  environment** *(verified 2026-08-23, variable names only)*. **No studio is enabled. Willow is
-  not enabled.** Willow's public booking page continues to serve the WAIT-01 behaviour above.
+- **The table held 31 rows when measured 2026-09-19** *(read-only hosted query)* — **28 of them
+  for `willow-electrolysis`**: 27 `waiting` and 1 `removed`, the remaining 3 on the controlled
+  test studio. ⚠️ That is evidence **for 2026-09-19** and is not a claim about today. It does
+  prove the table is **not** empty and that prospect data **is** being collected.
+- **Oldest durable Willow entry: 2026-08-25T22:27Z; most recent: 2026-09-15.** Activation
+  therefore happened on or before 2026-08-25 — a **bound**, not a timestamp. The activating act
+  itself was not recorded and **no production release record for it exists**; see
+  [known-limitations.md](./known-limitations.md) **L25**.
+- **`NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` NAMED `willow-electrolysis` at every instant a
+  durable row was written** — earliest 2026-08-25T22:27Z, latest 2026-09-15 — **established
+  STRUCTURALLY rather than by reading the variable.** The value is Sensitive and was **not**
+  read. Every one of the 31 rows carries `source = 'public_booking'`, which migration 0193's
+  CHECK constraints make exclusive to the public path; its only writer is
+  `join_new_client_waitlist`, whose only caller is reached solely when **both**
+  `isNewClientWaitlistEnabled` and `isNewClientWaitlistDurableEnabled` return true.
+- ⚠️ **THAT IS A BOUND, NOT A CURRENT READING, and the distinction is load-bearing.** A row is
+  durable and outlives the flag; `lib/booking/new-client-waitlist.ts` re-reads `process.env` on
+  every call, so for a studio **still on the legacy bridge** clearing the variable returns new
+  submissions to WAIT-01 **immediately** — but **not for a cut-over studio**, whose persisted mode
+  is answered before the list is read (see the cut-over note in §5b) — while
+  every row already written stays exactly where it is. **A persisted row can never prove present
+  configuration.** This document previously over-read the same evidence in the opposite
+  direction — carrying a dated *absence* forward as a standing posture — and asserting a dated
+  *presence* as the current value is the same error wearing the other sign.
+- **Willow's public booking page served the durable commit point** at every measured instant
+  above, rather than the WAIT-01 notification behaviour. To learn what it serves **now**, confirm
+  it in the product.
 - **The application code shipped FIRST and DARK** — the reverse of the migration-first ordering
-  used for 0183/0184. That was deliberate: WAIT-01 is already live, so shipping the durable path
+  used for 0183/0184. That was deliberate: WAIT-01 was already live, so shipping the durable path
   on the existing flag would have moved a live studio's commit point with no operator GO in
   between, and clearing the gate list to keep it dark would have reopened new-client booking —
-  the exact failure the gate exists to prevent.
-- **The public privacy policy is unchanged.**
+  the exact failure the gate exists to prevent. **That dark period has ended.**
+- **The public privacy policy covers the three fields actually collected** (name, email, optional
+  phone) and no others. It is **not** yet widened for WAIT-04B's proposed profile fields, which
+  are not collected and must not be described as though they were.
 
-### WAIT-02B Stage B1 — disclosure shipped, activation still ungranted. SHIPPED · NOT ACTIVATED.
+<!-- canonical-facts:ignore-start reason=preserves-the-superseded-deployed-dark-waitlist-subsection-verbatim -->
+> **SUPERSEDED 2026-09-19, preserved verbatim.** This subsection formerly read:
+> *"WAIT-02B Stage A — the durable waitlist. DEPLOYED DARK. Reachable by nobody. … NOT ENABLED ·
+> NOT production exercised. … **The table held 0 rows when last measured.** It held 0 at apply
+> verification and **0 on 2026-08-23** (read-only query), and **has not been re-measured since**.
+> … This row used to read 'holds **0 now** … **No prospect data is being collected**', which
+> converted a dated measurement into a standing fact. … **`NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS`
+> is absent from the Vercel Production environment** (verified 2026-08-23, variable names only).
+> **No studio is enabled. Willow is not enabled.** Willow's public booking page continues to serve
+> the WAIT-01 behaviour above. … **The public privacy policy is unchanged.**"*
+>
+> It was true when written and false by 2026-08-25. The failure was not the measurement but the
+> **carrying forward of a dated absence as a standing posture** — the same defect this document
+> had already named one paragraph earlier and then committed again in the next bullet.
+<!-- canonical-facts:ignore-end -->
 
-**Implemented · merged (PR #637, `1013a97b`) · deployed · NO STUDIO ENABLED · NOT production
-exercised.** **No migration.** Merging it enabled nothing, for anybody.
+### WAIT-02B Stage B1 — disclosure shipped, and since ACTED ON. SHIPPED · ACTIVATION TAKEN.
+
+**Implemented · merged (PR #637, `1013a97b`) · deployed · ONE STUDIO WAS ENABLED at every
+measured instant · production exercised (joining only).** **No migration.** Merging it enabled nothing by itself; the activation was a
+**separate, later operator act** against the runtime allowlist, bounded to on or before
+**2026-08-25** by the oldest durable Willow row.
 
 Stage B1 changed **two** things, and the difference between them matters:
 
@@ -556,20 +916,45 @@ Gate 4's contract, sentence 9: *"Naming a studio in `NEW_CLIENT_WAITLIST_DURABLE
 activates nothing unless that studio is also named in `NEW_CLIENT_WAITLIST_STUDIO_SLUGS`."* The
 durable variable selects the **commit point** for a studio that is *already* on the admission
 waitlist; it cannot by itself put a studio onto one. An empty durable allowlist leaves every
-studio on the non-durable (WAIT-01, email) path.
+**studio still on the legacy bridge** on the non-durable (WAIT-01, email) path. ⚠️ **THAT APPLIES ONLY TO A STUDIO THAT IS NOT CUT OVER.** Since 2026-10-01T21:35:33.139540Z Willow's mode is **persisted**, and `newClientWaitlistCommitIsDurable` (`lib/booking/new-client-waitlist-durability-bridge.ts`) returns true at its cut-over check **before** it consults `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS`. **Clearing or emptying that list therefore cannot return a cut-over studio to WAIT-01 email-only** — it governs only studios still on the legacy bridge. An operator who clears it expecting a commit-point rollback at Willow would believe the rollback succeeded while durable rows kept being written. **AND THERE IS NO COMMIT-POINT ROLLBACK FOR A CUT-OVER STUDIO AT ALL.** An earlier revision of this note said "rolling a cut-over studio back is a row write through `set_new_client_admission_mode`", which conflated changing its ADMISSION MODE with restoring its COMMIT POINT, and is **withdrawn**. (1) For **NEW-CLIENT ADMISSION AND COMMIT-POINT ROUTING**, clearing or emptying either env list affects **only a studio still on the legacy bridge** — ⚠️ **but that is scoped to new-client routing and is NOT a statement that env edits are inert at a stamped studio.** `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` is read **independently** by EMERG-01's free-consult reschedule restriction (`isFreeConsultWaitlistOnlyReschedule` → `isNewClientWaitlistEnabled`), which never consults `new_client_admission_mode`. Editing that list at a **cut-over** studio therefore still changes whether an **already-confirmed free consultation** can be self-service moved. Deliberately so: an owner changing new-client admission must not move the rights of a confirmed appointment; (2) `set_new_client_admission_mode` is the supported way to change a cut-over studio's **ADMISSION MODE**; (3) ⚠️ **RESTORING A CUT-OVER STUDIO TO WAIT-01 EMAIL-ONLY COMMIT SEMANTICS IS NOT SUPPORTED BY ANY EXISTING MECHANISM** (a consequence of the three-mode set and the bridge's own law, derivable from source rather than measured) — `waitlist` keeps it durable *by law*, `open` / `closed` remove the waitlist rather than making it email-only; (4) **a mode transition is NOT a commit-point rollback** and must never be described as one. Restoring email-only would need a **new, explicitly designed and supported mechanism**, not an operator workaround.
 
-**Current posture: NOT ACTIVATED.** `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` was **absent from
-the Vercel Production environment** when last read *(2026-08-23, variable names only)* and was
-**not re-read on 2026-08-26** — so absence is carried forward as dated evidence, not re-asserted.
-**Willow is not enabled on the durable path** and continues to serve WAIT-01.
+**Activation bound: one studio WAS activated at every measured instant**, 2026-08-25T22:27Z
+through 2026-09-15. Established from **committed rows**: 28 durable `willow-electrolysis`
+entries, all `source = 'public_booking'` *(read-only hosted query, 2026-09-19)*. The allowlist
+value is Sensitive and was **not** read; see the structural derivation in Stage A above.
 
-**Stage B2 — activation — has not been granted and remains blocked.** It requires an explicit
-per-studio operator GO and human activation smoke. Tracked as **L25** in
+⚠️ **THERE IS NO CURRENT POSTURE RECORDED HERE, AND THAT IS DELIBERATE.** This paragraph opened by naming a
+current posture — activated, one studio — and derived it from those rows. Rows are durable
+and outlive the flag, and `lib/booking/new-client-waitlist.ts` re-reads `process.env` on every
+call — so if the variable was cleared after 2026-09-15, every row above still exists while no
+studio is activated at all. **Committed rows can bound an activation in time; they can never
+report present configuration.** Confirm that in the product.
+
+<!-- canonical-facts:ignore-start reason=preserves-the-superseded-not-activated-posture-paragraph -->
+> **SUPERSEDED 2026-09-19, preserved verbatim.** This paragraph formerly read:
+> *"**Current posture: NOT ACTIVATED.** `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` was **absent
+> from the Vercel Production environment** when last read (2026-08-23, variable names only) and
+> was **not re-read on 2026-08-26** — so absence is carried forward as dated evidence, not
+> re-asserted. **Willow is not enabled on the durable path** and continues to serve WAIT-01."*
+>
+> And: *"**Stage B2 — activation — has not been granted and remains blocked.**"* Activation was
+> in fact taken. Whether it carried the explicit per-studio GO and activation smoke that Stage B2
+> required **is not established by any repository artefact**, and is not asserted either way here.
+<!-- canonical-facts:ignore-end -->
+
+**Stage B2 — activation — WAS TAKEN, and its governance record is missing.** Stage B2 required an
+explicit per-studio operator GO and a human activation smoke. The activation happened; **no
+release record, ledger entry or smoke result for it exists in this repository.** That gap is the
+open item — not the activation. Tracked as **L25** in
 [known-limitations.md](./known-limitations.md).
 
-> **Never describe the durable waitlist as "live".** It is *deployed*, *disclosed*, and
-> *dormant*. The capability live for new clients today is WAIT-01, and its commit point is an
-> email.
+> **The durable waitlist WAS ACTIVATED at every measured instant, and that is still not the same
+> as ACCEPTED.** It was
+> *deployed*, *disclosed*, *was enabled for one studio at every measured instant* and
+> *collecting*. It has **not** been
+> exercised beyond joining on that studio at the measured instants — **zero invitations had been
+> issued there as of that reading** — ⚠️ **NO LONGER TRUE, AND THE COUNT IS DATED.** One invitation **was** issued at Willow on **2026-10-02T00:14:55.792262Z**, by a practitioner, against the synthetic step-G acceptance entry; its `delivery_disposition` read `accepted`. That was an **acceptance exercise, not ordinary operator use**, and it is a dated observation — nothing is asserted about invitation state after that instant. Treat the zero above as the reading it was, not as a standing fact. —
+> and owner device acceptance has not been given.
 
 ## 6. Client portal and intake
 
@@ -609,6 +994,18 @@ enforceability. Hone's documentation does not claim signatures are legally bindi
   `require_card_on_file` is **false on every one of the four `studio_payment_settings` rows**
   (two studios × live/test), and both studios read `stripe_account_status = 'enabled'`
   *(as of 2026-08-23, read-only query)*.
+- **Provider-money integrity is live** (PR #834, PAY-CCY-01, merge `6f7281bb`, deployed
+  2026-10-13, no migration). Before a Stripe object updates a prepared payment attempt, its
+  **amount and currency must equal the attempt's**. This covers synchronous charges,
+  reconciliation, refunds and webhook outcomes, including PaymentIntents that are retrieved,
+  created or replayed. A mismatch is not recorded, cancelled or marked failed: the attempt
+  stays unresolved for manual review and an operational alert is raised. Matching CAD
+  payments behave as before. **No production mismatch has been observed or measured at this
+  sync.**
+- **US/USD remains PENDING.** Per-studio payment jurisdiction, USD Stripe accounts and USD
+  activation are **not merged and not active**: #833, #836, #839 and #847 are drafts. Their
+  migration chain (0214 onward) is unmerged and **not applied**. #834 changes no studio's
+  currency or Stripe configuration.
 - **Receipts** are live. **Refunds** are deployed but have **zero production rows on this
   baseline**. **Disputes** are **alert-only** — 0 have occurred.
 - **Live manual no-show / late-cancellation fees are HELD** by a server-side allow-list;
@@ -910,15 +1307,21 @@ live manual no-show / late-cancellation fees · public-booking card collection �
 practitioner selection and assignment.
 
 **Dormant** (deployed but not acting): all Google Calendar sync phases · practitioner capacity
-at Willow · onboarding v2 at Willow · **the durable new-client waitlist (WAIT-02B) on every
-studio** — see §5b. *(The parenthetical above previously read "structurally unable to act". For
-the durable waitlist that is no longer accurate: Stage B1 replaced the build-time prohibition
-with a report-only gate, so what keeps it dormant is now **runtime allowlist membership**, and
-it takes two allowlists rather than one. It is dormant by configuration, not by structure.)*
+at Willow · onboarding v2 at Willow. ⚠️ **CORRECTED 2026-09-19 — the durable new-client waitlist
+(WAIT-02B) HAS LEFT THIS LIST.** It was recorded here as dormant *on every studio*; it is
+was enabled for `willow-electrolysis` and collecting at every measured instant, **31 rows
+measured 2026-09-19** — see §5b.
+*(The reasoning that kept it here was sound and is worth preserving: Stage B1 replaced the
+build-time prohibition with a report-only gate, so what governed activation became **runtime
+allowlist membership** across two allowlists. That is configuration rather than structure — and
+configuration is exactly what changed, unobserved, on or before 2026-08-25.)*
 
 **Shipped since the previous reconciliation, and NOT production-exercised:** non-card
-appointment settlement (§7 — 0 rows) · `/dashboard/capacity` (§10b — no usage measured) ·
-WAIT-02B Stage B1 (§5b — no studio enabled).
+appointment settlement (§7 — 0 rows) · `/dashboard/capacity` (§10b — no usage measured).
+⚠️ **CORRECTED 2026-09-19 — WAIT-02B Stage B1 HAS LEFT THIS LIST**; it was recorded here as
+having none. One studio was enabled and joining exercised at every measured instant (§5b). It is
+still
+**not accepted**. No invitation had been issued on that studio as of the 2026-09-19 reading; one **was** issued on **2026-10-02T00:14:55.792262Z** during the step-G acceptance exercise (`delivery_disposition` `accepted`), which is a dated observation and not ordinary operator use.
 
 **Retired by product decision (2026-07-29), enforced by migration 0159:** signed / finalized
 clinical records · signed-record corrections and amendments · practitioner-facing Finalize and
@@ -976,7 +1379,7 @@ independent dimensions, and only an explicit statement from Chloe closes the sec
    P1 framing was withdrawn. Sequenced after a complete export and jointly with offboarding.
 
 The direct new-client consultation booking route is **not** on this list. It is deferred by
-product decision — a separate matter from the waitlist that is live today (§5b).
+product decision — a separate matter from the waitlist measured live in §5b.
 
 ---
 

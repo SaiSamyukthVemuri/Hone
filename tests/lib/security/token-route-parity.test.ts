@@ -48,13 +48,20 @@ describe("the registry is the single source for both consumers", () => {
     }
   });
 
-  it("the six expected families are present — a removal must be deliberate", () => {
+  it("the seven expected families are present — a removal must be deliberate", () => {
     // Pinned explicitly so silently DELETING a family from the registry (which
     // would drop both protections at once) fails loudly.
+    //
+    // `/invitation` joined in WAIT-03 B3: the recipient's link carries a
+    // replayable bearer token as a path segment. Possession reaches the offer
+    // and can request a proof code; it cannot book or decline, which need the
+    // second secret. The URL is credential material either way, so it takes the
+    // same no-referrer / no-index headers and the same telemetry scrubbing.
     expect([...TOKEN_ROUTE_PREFIXES].sort()).toEqual([
       "/calendar-feed",
       "/cancel",
       "/intake",
+      "/invitation",
       "/manage",
       "/portal/verify",
       "/reschedule",
@@ -95,7 +102,15 @@ describe("the Sentry hooks stay wired in all three runtimes", () => {
     it(`${file} keeps sendDefaultPii:false and all three scrub hooks`, () => {
       const src = readFileSync(join(ROOT, file), "utf8");
       expect(src).toMatch(/sendDefaultPii:\s*false/);
-      expect(src).toContain("beforeSend: scrubErrorEvent");
+      // SENTRY-NOISE-01: server/edge wrap the error hook (see
+      // lib/observability/sentry-e2e-fault.ts); the client wires it directly.
+      // Either way sentry-scrub remains the single scrubbing authority, which
+      // the import assertion below still enforces for every runtime.
+      expect(src).toContain(
+        file === "sentry.server.config.ts"
+          ? "beforeSend: beforeSendWithE2eFaultSuppression"
+          : "beforeSend: scrubErrorEvent",
+      );
       expect(src).toContain("beforeSendTransaction: scrubTransactionEvent");
       expect(src).toContain("beforeBreadcrumb: scrubBreadcrumb");
       // The pure common module stays the single authority: no runtime may

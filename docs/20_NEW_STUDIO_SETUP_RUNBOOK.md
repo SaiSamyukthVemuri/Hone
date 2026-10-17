@@ -1,10 +1,15 @@
 # 20 New Studio Setup Runbook (internal)
 
-> **Guided onboarding v2 (PR #459 — MERGED; flag `onboarding_v2_enabled`, default OFF; migrations 0140–0141 APPLIED in production, *not* repo-only as earlier revisions said; the flag is currently true on the controlled test studio only and FALSE at Willow):** when enabled per studio, this manual runbook is supplemented by a welcome email + an in-app guided wizard + existing-account invitation reconciliation. See **[docs/24_ONBOARDING_V2.md](./24_ONBOARDING_V2.md)** for the flag, migrations/rollback, admin welcome/resend, reconciliation, chooser, `/no-access` reasons, analytics, and the manual test checklist. Until that flag is on, this runbook is unchanged.
+> **Guided onboarding v2 (PR #459 — MERGED; flag `onboarding_v2_enabled`, default OFF; migrations 0140–0141 APPLIED in production, *not* repo-only as earlier revisions said; per-studio, and a studio owner cannot set it — it is operator-only):** when enabled per studio, this manual runbook is supplemented by a welcome email + an in-app guided wizard + existing-account invitation reconciliation. See **[docs/24_ONBOARDING_V2.md](./24_ONBOARDING_V2.md)** for the flag, migrations/rollback, admin welcome/resend, reconciliation, chooser, `/no-access` reasons, analytics, and the manual test checklist. Until that flag is on, this runbook is unchanged.
 
 **Audience: operator (Sam). This is an INTERNAL operator checklist for safely creating Studio #2 (Laura's studio) and any studio after it. It is NOT user-facing documentation, NOT an onboarding feature, and it adds no app surface.** The practitioner-facing guidance stays where it is: /getting-started in the app and docs/12 smokes.
 
-Last reconciled **2026-07-27** against **production migration max 0157** (earlier revisions said 0113 — superseded). **Payment posture:** supervised live owner-run **session** payments are already live for approved studios (Willow + Sam's controlled studio); a **new** studio starts in **test mode** and is enabled for live payments per-studio only after supervised onboarding + approval — do not flip live as part of basic setup. Public booking card collection, deposits/packages/partial, and live manual fees remain off/held (see [docs/production/current-state.md](./production/current-state.md)). Always re-verify the current migration max against `supabase migration list --linked` before using this — do not trust a hardcoded number. (Originally written for the post-PR #223 / migration-0088 state; that reference is superseded.)
+**Migration state is DERIVED, never quoted here.** Earlier revisions pinned a
+number in this sentence (0113, then 0157); every one of them went stale, and a
+stale number in a setup runbook reads as fact. Immediately before onboarding a
+studio, derive the current state from the canonical tooling instead:
+`npm run migration:state` for the repository chain, and
+`docs/production/migration-state.json` for what production has actually applied. **Payment posture:** supervised live owner-run **session** payments are already live for approved studios (Willow + Sam's controlled studio); a **new** studio starts in **test mode** and is enabled for live payments per-studio only after supervised onboarding + approval — do not flip live as part of basic setup. Public booking card collection, deposits/packages/partial, and live manual fees remain off/held (see [docs/production/current-state.md](./production/current-state.md)). Re-verify hosted state against `docs/production/migration-state.json` (or `supabase migration list --linked`) before using this — never trust a number written into prose. (Originally written for the post-PR #223 / migration-0088 state; that reference is superseded.)
 
 > Schema note (PR #252, migration 0089): the Imported Treatment Memory tables (`import_batches`, `imported_treatment_memories`, `imported_treatment_memory_audit_events`) are studio-scoped, RLS-backed (member SELECT, owner-only INSERT/UPDATE, no delete), and need NO per-studio setup — nothing to configure. There is no UI surface yet (schema + read-model only); imported history is written by the future Quick Import flow (PR #253), not during new-studio setup.
 
@@ -22,13 +27,59 @@ Standing discipline applies to every step here: **production WRITES require the 
 | Timezone | America/Toronto | IANA name; drives booking slots, reminders, dashboard weeks, procedure-record date filters. Default is America/Toronto; set explicitly anyway |
 | Booking slug | lauraelectrolysis | studios.slug, UNIQUE; becomes hone.care/book/<slug>; lowercase, no spaces; cannot collide with willow's |
 | Address / contact basics | optional | studios.address, booking_description; can be filled in-app later (Settings -> Studio / Booking) |
-| Services to seed | e.g. "Electrolysis 30 min" | created in-app via Settings -> Services after first login; collect names, durations, prices |
+| Services to seed | e.g. "New Client Consultation" + "Electrolysis 30 min" | created in-app via Settings -> Services after first login; collect names, durations, prices. **Include a consultation** — a new client cannot book publicly without one (§1a) |
 | Default appointment duration | 60 (default) | studios.default_appointment_duration_minutes; in-app later |
 | Buffer minutes | 15 (default) | studios.buffer_minutes; snapshotted into every appointment's blocked range |
 | Default machine frequency | 13.56 MHz / 27.12 MHz / unknown | practitioners.default_machine_frequency is STICKY-LEARNED from charting (PR #203); do not set by SQL; it seeds itself after her first charted treatment area |
 | Booking policy assumptions | cancellation / no-show text | studio-authored free text in Settings; optional at setup; fees stay NULL (no fee charging without card-on-file consent chain) |
 | Payment status | **new studio starts test mode; live enabled per-studio only after supervised approval** | see section 7; live session payments are already live for approved studios |
 | Practitioner count | ONE | multi-practitioner needs the exposure-incident access review first (section 7) |
+
+## 1a. The launch sequence at a glance
+
+Two operator writes, then everything else is the owner's. Rehearsed end to end
+(see §5a).
+
+**SAM — operator-only. Laura cannot do either of these; both are refused at the
+database with `42501 insufficient_privilege`.**
+
+1. Create the **studio row** (§2.1, or the `/admin/studios/new` wizard).
+2. Create Laura's **owner `pending_invitations` row** (§2.2).
+
+**No feature flag is part of this.** `practitioner_capacity_enabled`,
+`practitioner_capacity_booking_enabled` and `onboarding_v2_enabled` all default
+to **false**, are operator-only, and **none of them is required for an ordinary
+launch.** Do not enable any of them to "make onboarding work".
+
+**LAURA — self-service, in the app, after acceptance.**
+
+3. **Accept the invitation** (§2.3) — mandatory for a brand-new owner, and
+   nothing below is reachable until she does. (An invited person who already
+   practises in another Hone studio can be auto-linked at sign-in instead; §2.3
+   says when.)
+4. Create **at least one active service** — and, for public booking, at least
+   one active **consultation** service (see below).
+5. Configure **weekly availability**.
+6. Then ordinary operation: create clients, book internally and publicly, chart
+   and reopen sessions, complete appointments, and edit studio settings.
+
+**Minimum first-booking readiness: one active service + valid availability.**
+Both are hers to set; neither needs the operator.
+
+**A new client booking PUBLICLY needs one thing more: an active CONSULTATION
+service.** `isBookableByNewClient` (`lib/booking/consultation.ts`) admits a
+service only when it is this studio's, `active`, **and** a consultation —
+`services.modality = 'consultation'`, or, where modality was never set, a
+service *name* containing "consultation". The public action enforces it
+server-side, so the rule cannot be dressed around in the UI.
+
+A studio whose catalogue is ordinary treatments therefore books normally
+**internally** while its public page tells every new visitor *"Online
+consultation booking is not set up yet. Please contact <studio>."* On day one
+every visitor is a new client, so this presents as a broken booking page rather
+than as missing configuration. Note that the §1 example service
+("Electrolysis 30 min") does **not** satisfy the rule on its own — collect a
+consultation service alongside it.
 
 ## 2. Setup checklist
 
@@ -68,9 +119,59 @@ values ('<STUDIO_ID>', '<OWNER EMAIL>', 'owner', '<OWNER DISPLAY NAME>')
 returning id, studio_id, email, role, status;
 ```
 
-### 2.3 Owner first sign-in
+### 2.3 Owner first sign-in, then **ACCEPT THE INVITATION** (for a new owner, two steps)
 
-The new owner signs in at hone.care/login with the invited email (magic link or Google with the same address). **Under migration 0141 the owner practitioner row is created by the application at sign-in — not by a database trigger.** The `/auth/callback` path reconciles the pending invitation and records the single authoritative acceptance event. Verify (read-only):
+**Signing in does NOT create ownership.** Earlier revisions of this section said
+the practitioner row "is created by the application at sign-in" and then asked
+you to verify exactly one practitioner row. That is incomplete, and following it
+literally produces a verification failure that looks like a bug: after sign-in
+alone there is **no practitioner row at all** and the invitation is still
+`pending`.
+
+Rehearsed on an isolated local stack against production source
+`67023c60`:
+
+    sign in  ->  reconcile_my_pending_invitation()  ->  "acceptance_required"
+                 practitioners = 0
+                 pending_invitations.status = 'pending'
+
+    accept   ->  /accept-invitation  ->  "linked"
+                 practitioners = 1  (role=owner, active=true, terms accepted)
+                 pending_invitations.status = 'accepted', accepted_at set
+
+This is correct, deliberate behaviour, not a defect: **nothing fabricates
+consent.** Membership and legal acceptance are one explicit act by the owner, so
+no membership can activate merely because an Auth account exists.
+
+**Step 1 — sign in.** The new owner signs in at hone.care/login with the exact
+invited email (magic link, or Google with the same address). `/auth/callback`
+reconciles the pending invitation.
+
+**Step 2 — accept.** If reconciliation returns `acceptance_required`, the owner
+is routed to **`/accept-invitation`** and must accept. Until she does, she has no
+studio access and **cannot begin any of the §2.4 configuration.** If she stops
+here, this is the first thing to check — not the invitation row, and not
+`handle_new_user()`.
+
+> **When step 2 is skipped, and why that is not a contradiction.** Acceptance is
+> demanded only when there is nothing valid to carry forward. If the invited
+> person ALREADY holds a Hone membership whose **terms and privacy acceptance
+> are both at the current version**, `reconcile_my_pending_invitation()` copies
+> those four exact values onto the new membership, creates it, and returns
+> `linked` during sign-in — no acceptance screen, and consent still never
+> fabricated, because nothing fresh is stamped
+> (`supabase/migrations/0141_onboarding_invitation_reconciliation.sql`,
+> the `link_invited_membership` branch). Explicit acceptance is required when
+> that evidence is **absent or stale**, and also when the person's existing row
+> in THIS studio is inactive — reactivation needs its own consent.
+>
+> **For a brand-new owner like Laura the answer is always "acceptance
+> required"**, because she holds no prior membership to copy from. That is the
+> case this runbook is written for, so treat step 2 as mandatory here. Expect to
+> skip it only when onboarding someone who already practises in another Hone
+> studio.
+
+Only after the membership exists — by either route — verify (read-only):
 
 > Invite-only posture (PR #253): Hone is invite-only. Self-serve signup and public studio creation do NOT exist (no `/signup` route, no signup CTA; `studios` has no INSERT policy; a practitioner is only provisioned from a matching `pending_invitations` row — at sign-in, by the application under migration 0141; `handle_new_user` itself is now a NO-OP). The owner's first sign-in MUST use the exact invited email — an uninvited sign-in creates an `auth.users` row but no studio/practitioner and is gated to `/no-access` (a friendly "No studio access yet" page with Sign out + Contact Hone), never the app shell or any studio data. So the §2.2 invitation row is a prerequisite for §2.3; if Laura lands on `/no-access`, the email she used does not match a pending invitation.
 
@@ -90,7 +191,18 @@ where studio_id = '<STUDIO_ID>';
 
 1. **Settings -> Studio**: confirm name, timezone; add address/booking description if desired.
 2. **Settings -> Services**: create the collected services (name, duration, price; pre-care instructions optional).
+   **At least one must be a consultation** (`modality = 'consultation'`, or a
+   name containing "consultation") or the public page cannot take a new-client
+   booking at all — see §1a.
 3. **Settings -> Availability**: set her weekly open days/hours. Until this is set the booking page shows no slots, which is correct, not broken.
+   **Shape matters.** In ordinary (non-capacity) mode, availability is
+   **studio-wide**: `studio_availability_default.practitioner_id IS NULL`. A
+   **per-practitioner** row is only valid where practitioner capacity is
+   enabled — inserting one otherwise is refused by
+   `guard_availability_practitioner_scope`: *"per-practitioner availability
+   requires practitioner capacity to be enabled for this studio"*. That error
+   means the availability was written with the wrong scope, **not** that Laura
+   needs capacity mode turned on.
 4. **Settings -> Booking**: review confirmation/reminder toggles (defaults are sensible); cancellation/no-show policy text optional now, required before she relies on fee workflows.
 5. **Settings -> Consent / Intake**: review the consent templates and intake; intake schema is code-defined (no per-studio builder yet, known limitation).
 6. **Machine frequency**: nothing to configure; it learns from her first charted treatment area.
@@ -153,6 +265,34 @@ Cleanup, WITHOUT violating the clinical delete hardening (0087: clients/sessions
 - Record-keeping audit rows for the smoke REMAIN (append-only, by design); they are clearly attributable to the ZZ TEST records and are acceptable residue.
 - Do NOT hand-delete anything by SQL.
 
+## 4a. Booking and capacity: what the flags actually do
+
+Verified behaviour of `create_internal_appointment_v2`, rehearsed on three
+isolated fixtures:
+
+| `practitioner_capacity_enabled` | `practitioner_capacity_booking_enabled` | Result |
+|---|---|---|
+| **false** | **false** | **booking created** ← fresh-studio default |
+| true | false | **`booking_paused`** |
+| true | true | booking created, but only where **scoped practitioner availability** permits it |
+
+`booking_paused` is returned on exactly one condition: capacity enabled **and**
+capacity booking disabled. It is a deliberate, operator-configured pause.
+
+**Sam's `booking_paused` test-studio configuration is NOT Laura's default.** A
+new studio is created with both flags `false`, and that default was proved
+behaviourally to book normally — internally and through the public booking page.
+If a new studio ever reports `booking_paused`, someone enabled
+`practitioner_capacity_enabled`; that is a configuration to undo, not a bug to
+work around, and it is not reachable by the studio owner.
+
+**Two different things are called "capacity" — do not confuse them.** This
+section is about the two `studios` **columns** above, which only an operator can
+set. Separately, Settings -> Waitlist offers the owner an **"invitation
+capacity"** (the new-client waitlist admission round). That one is hers, it is
+not a studio flag, and it can never produce `booking_paused`. Neither is part of
+an ordinary launch.
+
 ## 5. Do-not-touch list
 
 - **Do not enable live payments as part of adding a studio.** Adding a studio is separate from live-payment enablement: a new studio starts test-mode. Live owner-run session payments are already live for approved studios, but enabling a NEW studio for live is its own supervised step (Stripe onboarding + approval + the docs/18 checks) — not part of basic setup.
@@ -162,6 +302,42 @@ Cleanup, WITHOUT violating the clinical delete hardening (0087: clients/sessions
 - **Do not invite a second practitioner into ANY studio without the exposure-incident access review.** The PR #222 owner tier protects incident history, but multi-practitioner operation has open questions (charge permissions, records visibility expectations) recorded in docs/13; review before sending a non-owner invitation from Settings -> Team.
 - **Do not create public/self-serve onboarding, billing automation, or admin tooling as a side effect.** If a step feels like it wants tooling, write it down in docs/13 instead.
 - **Do not run migrations** unless a setup step genuinely requires one, and then only through the normal approval + migration-first process.
+
+## 5a. Rehearsal evidence (2026-09-15)
+
+The full sequence above was rehearsed on an **isolated local Supabase stack**
+against production source `67023c603b78327c2fab2687b64fdac5c68a0029`, on a
+brand-new synthetic studio created only through the two operator writes in §2.1
+and §2.2, with **no convenience flags seeded**. Hosted production, Willow and
+the controlled test studio were not touched.
+
+Proved end to end:
+
+- invitation acceptance (including that sign-in alone provisions nothing, and
+  that an uninvited account sees no studio and gains no membership);
+- service creation;
+- weekly availability (studio-wide shape);
+- client creation;
+- internal booking — `created`, correctly studio/client/practitioner/service
+  scoped, with **no `booking_paused`** on the default flags;
+- public booking — slug resolved to one studio, configured availability exposed
+  slots, booking succeeded, no cross-studio leakage;
+- the booking-pause / capacity matrix in §4a, across all three configurations;
+- chart creation, reopening that same chart, and appointment completion via the
+  supported path with the session still editable afterwards;
+- confirmation-email identity — studio name and contact drive the copy, with no
+  Willow or test-studio identity leaking.
+
+**Result: no onboarding P0 or P1, and no product blocker.** Every stop
+encountered during the rehearsal was a fixture error, with the product behaving
+correctly each time.
+
+**Scope limit, stated plainly.** The rehearsal used **fake providers only** — no
+real Stripe, Resend or Twilio call was made. It therefore proves the *onboarding
+and booking* path, and says **nothing** about real-provider or live-payment
+readiness. Payment posture was verified only as *absence*: a new studio has no
+Stripe settings row, no card on file, no charge attempts, and NULL fee columns.
+Live enablement remains the separate supervised step in §7.
 
 ## 6. Known limitations (accepted for Studio #2)
 

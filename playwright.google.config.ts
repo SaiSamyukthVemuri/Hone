@@ -15,6 +15,18 @@ import { GOOGLE_E2E_APP_ORIGIN, GOOGLE_WEB_SERVER_ENV } from "./e2e-google/helpe
 // (pinned by HONE_E2E_PORT) on its OWN runner; locally a per-worktree derived
 // port (TEST-PORT-01). reuseExistingServer:false is unchanged.
 export default defineConfig({
+  // E2E SCHEMA PREFLIGHT. Refuses to run when the local Supabase stack's applied
+  // migrations do not match the migrations THIS checkout defines. Every browser
+  // lane reaches the same stack (local-env's endpoints are literals), so a
+  // reset from another worktree's branch would otherwise let this lane test its
+  // application against that branch's schema and report green.
+  // One shared module, deliberately: see e2e/global-setup.ts.
+  globalSetup: "./e2e/global-setup",
+  // Re-checks at the END that the database is still the one the preflight
+  // verified. The preflight is a snapshot; the stack is shared, so a reset
+  // landing mid-run would otherwise produce a green run against a schema
+  // this lane never verified.
+  globalTeardown: "./e2e/global-teardown",
   testDir: "./e2e-google",
   timeout: 180_000,
   expect: { timeout: 20_000 },

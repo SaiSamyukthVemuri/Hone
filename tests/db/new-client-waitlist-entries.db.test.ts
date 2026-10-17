@@ -553,12 +553,25 @@ describe("0185: nothing can convert, move or rewrite an entry", () => {
     ).rejects.toThrow(/immutable/);
   });
 
-  it("contact details are frozen — there is no correction path in this release", async () => {
+  it("name and email are frozen, and the mobile is ONE-WAY", async () => {
+    // 0202 NARROWED THIS CLAUSE, DELIBERATELY, AND THIS TEST IS STRICTER FOR IT.
+    //
+    // It used to read "contact details are frozen — there is no correction path
+    // in this release" and loop name/email/phone through one message. Name and
+    // email still have no correction path at all. The mobile now has exactly
+    // one: a legacy entry that never had a number must be able to receive one
+    // through a completion, because that is the single thing the completion
+    // surface exists to do.
+    //
+    // ONE is the operative word. Absent may become present exactly once; present
+    // may never become a DIFFERENT number and may never become absent. That is
+    // what stops a bearer link retargeting a studio's texts, and it is now
+    // asserted in all three directions rather than implied by a blanket freeze.
     const created = await join(a.studioId, "Frozen", email("frozen"));
+
     for (const [column, value] of [
       ["name", "Someone Else"],
       ["email", "someone.else@harness.local"],
-      ["phone", "555 0000"],
     ] as const) {
       await expect(
         adminQuery(
@@ -566,8 +579,32 @@ describe("0185: nothing can convert, move or rewrite an entry", () => {
           [created.entry_id, value],
         ),
         `${column} must be immutable`,
-      ).rejects.toThrow(/contact details are immutable/);
+      ).rejects.toThrow(/name and email are immutable/);
     }
+
+    // The entry was created with NO phone (join() defaults it to null), so the
+    // first write is the one a completion performs.
+    await adminQuery(
+      `update public.new_client_waitlist_entries set phone = '555 0000' where id = $1`,
+      [created.entry_id],
+    );
+
+    // And from here it is as frozen as the rest.
+    await expect(
+      adminQuery(
+        `update public.new_client_waitlist_entries set phone = '555 1111' where id = $1`,
+        [created.entry_id],
+      ),
+      "a stored mobile may not be REPLACED",
+    ).rejects.toThrow(/may not be replaced or cleared/);
+
+    await expect(
+      adminQuery(
+        `update public.new_client_waitlist_entries set phone = null where id = $1`,
+        [created.entry_id],
+      ),
+      "a stored mobile may not be CLEARED",
+    ).rejects.toThrow(/may not be replaced or cleared/);
   });
 
   it("removal evidence cannot be forged onto a waiting row", async () => {

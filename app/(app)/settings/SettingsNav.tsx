@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { PendingLink } from "@/components/pending-link";
 import { usePathname, useRouter } from "next/navigation";
 
 // Settings navigation that renders correctly on phone screens.
@@ -70,9 +70,10 @@ export function SettingsNav({ items }: Props) {
         {items.map((i) => {
           const isActive = i.href === active;
           return (
-            <Link
+            <PendingLink
               key={i.href}
               href={i.href}
+              pendingLabel="Loading settings…"
               aria-current={isActive ? "page" : undefined}
               className={`-mb-px whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition ${
                 isActive
@@ -81,7 +82,7 @@ export function SettingsNav({ items }: Props) {
               }`}
             >
               {i.label}
-            </Link>
+            </PendingLink>
           );
         })}
       </nav>

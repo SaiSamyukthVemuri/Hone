@@ -309,6 +309,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "notes", reason: "pending_review", note: "General client note text." },
       { column: "created_by", reason: "pending_review", note: "Creator attribution; belongs with the wider actor-attribution export decision." },
       { column: "normalized_email", reason: "internal_state", note: "Generated from email, which is exported; a second copy carries no new fact." },
+      { column: "sms_phone", reason: "internal_state", note: "Generated from exported `phone`; carries no additional customer fact and exists to support canonical SMS routing/eligibility. Same call as normalized_email: the export preserves the AUTHORED customer value, never a second generated copy of it. Migration 0199 added the column as `generated always as (public.sms_normalized_phone(phone)) stored`." },
       { column: "archived_by", reason: "pending_review", note: "Archive attribution; see archived_at." },
     ],
     sourceCountCheck: { kind: "studio_scoped" },
@@ -1614,12 +1615,57 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Private invitation history for the new-client waitlist, live since migration 0188. The lifecycle itself is studio-owned demand truth and belongs in the backlog alongside new_client_waitlist_entries, so this is PENDING rather than EXCLUDED. It is tier 2 and field-review-required because the row is not only that history: token_hash is security material and MUST NEVER be emitted, raw or otherwise, and the row also carries operational attribution and lifecycle stamps (issued_by_practitioner_id, redeemed_at, expired_at, released_at) whose export shape has not been reviewed. Excluding the whole resource on account of one column would hide legitimate studio-owned invitation history from the backlog; the field review decides the payload column by column, the way calendar_connections separates its non-secret half from secrets that stay permanently excluded.",
   },
+  studio_sms_senders: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "The per-studio SMS sender Hone rents on a studio's behalf, live since migration 0191 (COMMS-01B). Studio-scoped and genuinely split down the middle, which is why this is a field review rather than a whole-resource verdict: the E.164 number IS studio-meaningful — it is the number their clients see and reply to — while phone_number_sid, messaging_service_sid and provisioning_claim_key are Hone's provider-infrastructure identifiers, carry no customer meaning, and are already withheld from the studio's own browser session by a column-level grant. Dumping them into an export would hand out through one door what the schema deliberately closes at another. The claim key is additionally an idempotency handle whose whole purpose is to be the unique thing that identifies one billable provisioning attempt. Same shape as calendar_connections: a real customer-facing half beside provider material that must never be emitted raw, decided column by column rather than by excluding the resource and hiding the studio's own number from the backlog. No export surface ships in COMMS-01B.",
+  },
+  sms_outbound_messages: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "The outbound SMS delivery ledger, live since migration 0206 (SMS-00): one row per appointment or waitlist-invitation text attempt, with its purpose, status, skip reason and timestamps. It holds no message body and no phone number. Studio-scoped operational history, so PENDING rather than EXCLUDED, and field-review-required for the same reason as studio_sms_senders: provider_message_sid is Hone's provider identifier for one message and carries no customer meaning, while the status history is what a studio would recognise (whether a reminder reached a client). No export surface ships in SMS-00.",
+  },
   new_client_waitlist_entry_events: {
     kind: "pending",
     ticket: "TRUTH-01B",
     tier: 2,
     reason:
       "Append-only lifecycle provenance for waitlist entries, written by trigger on every status change since migration 0188. Studio-owned operational history - it is the only record of a claim/release cycle that issues no invitation - but it is an event log whose payload and export shape have not been reviewed, so it is tier 2 and decided deliberately rather than dumped.",
+  },
+  studio_waitlist_admission_rounds: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "One DURABLE ROW PER ADMISSION ROUND for the new-client waitlist, live since migration 0192 (WAIT-03B). PENDING rather than EXCLUDED because the allowance is the owner's OWN decision about how many people they will admit in a round - studio-owned intent, not a machine-derived projection - and these rows are now the only record of what the studio chose and when. THE SHAPE CHANGED AND SO DID THE STAKES: this was previously one mutable row per studio holding a single current number, which carried no history worth exporting. It is now an append-mostly ledger of rounds, each with its own identity, allowance, opening and closing instants and the practitioners who opened and closed it - so an export that dropped it would lose the studio's admission history outright, and one that emitted only the latest row would silently misrepresent it. Still tier 2 and still decided with new_client_waitlist_entries rather than dumped on its own. No security material and no provider identifier, so no field review is required; opened_by_practitioner_id and closed_by_practitioner_id are ordinary attribution of the kind new_client_waitlist_entries already carries. No export surface ships in WAIT-03B.",
+  },
+  new_client_waitlist_entry_preferences: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    reason:
+      "Which days a waiting prospect told the studio they can attend (weekdays / weekends / both), live since migration 0193 (WAIT-ADMIT-01). Tier 1 for the same reason new_client_waitlist_entries is: this is the prospect's OWN answer, a one-to-one attribute of a studio-owned demand record rather than an event log or a derived projection, and the absence of a row is itself the meaningful state (nobody has asked yet). It carries no security material and no provider identifier, so it needs no field review; recorded_by_practitioner_id is ordinary attribution of the kind new_client_waitlist_entries already carries at tier 1 (claimed_by_practitioner_id, removed_by_practitioner_id, created_by_practitioner_id). It should be decided with new_client_waitlist_entries, whose demand records it belongs to. No export surface ships in WAIT-ADMIT-01.",
+  },
+  new_client_waitlist_preference_grants: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "The expiring, hashed capability that lets a prospect update their own availability without an account, live since migration 0193 (WAIT-ADMIT-01). Same verdict and the same reasoning as new_client_waitlist_invitations, which this table deliberately mirrors: the lifecycle is studio-owned truth about who was asked and when, so PENDING rather than EXCLUDED, but token_hash is security material and MUST NEVER be emitted, raw or otherwise, and the row also carries operational attribution and lifecycle stamps (issued_by_practitioner_id, redeemed_at, revoked_at) whose export shape has not been reviewed. Excluding the whole resource on account of one column would hide legitimate history from the backlog; the field review decides the payload column by column. The schema already withholds token_hash from the studio's own browser session by a positive column-level SELECT grant, and an export must not hand out through one door what the schema closes at another. No export surface ships in WAIT-ADMIT-01.",
+  },
+  studio_waitlist_admission_policy: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    reason:
+      "How an owner wants their waitlist ranked and how many people they invite at a time, live since migration 0193 (WAIT-ADMIT-01). STANDING BUSINESS CONFIGURATION THE OWNER AUTHORED, which is the tier 1 class studio_availability_default (\"practice configuration it authored\") and studio_recurring_break_rules (\"the rule, not the derived occurrence, is the studio's fact\") already occupy. It is deliberately NOT grouped with studio_waitlist_admission_rounds despite the adjacent name: that table holds THIS ROUND's transient allowance — per-round workflow state — whereas this one holds the durable policy a studio sets once and keeps. Not provider telemetry, not credential material, not audit telemetry, so no field review is required; ranking_policy is the owner's own configuration document rather than a machine-derived payload, and updated_by_practitioner_id is ordinary attribution. Absence of a row means FIFO, so a studio that has configured nothing has nothing here to export. No export surface ships in WAIT-ADMIT-01.",
   },
   // -------------------------------------------------------------------------
   // STORAGE

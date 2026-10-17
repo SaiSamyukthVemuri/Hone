@@ -26,6 +26,24 @@ const read = (rel: string): string =>
   readFileSync(path.join(REPO_ROOT, rel), "utf8");
 
 const CHARGE = read("lib/billing/session-payment-charge.ts");
+
+/**
+ * The same source with PROSE removed.
+ *
+ * These are source-grep guards, and a guard that counts code must not count a
+ * comment that happens to quote the code. PAY-RECEIPT-AUTO-01 tripped exactly
+ * that: documenting the `committedNow` discriminator meant naming the
+ * persistence check in a doc block, and the count below read 3 guard sites
+ * where the file has 2. The same leak has now been seen three times in this
+ * repo, always by SHAPE rather than by intent.
+ *
+ * Block comments go entirely; line comments only when they own the whole line,
+ * so a `//` inside a string literal on a code line is never touched.
+ */
+const CHARGE_CODE = CHARGE.replace(/\/\*[\s\S]*?\*\//g, "").replace(
+  /^[ \t]*\/\/.*$/gm,
+  "",
+);
 const count = (s: string, re: RegExp): number => (s.match(re) ?? []).length;
 
 // ---------------------------------------------------------------------------
@@ -34,7 +52,12 @@ const count = (s: string, re: RegExp): number => (s.match(re) ?? []).length;
 describe("writeSucceededOutcome reports whether the success was persisted", () => {
   it("declares a SuccessPersistenceResult union (persisted true | false+reason)", () => {
     expect(CHARGE).toMatch(/type SuccessPersistenceResult =/);
-    expect(CHARGE).toMatch(/\{\s*persisted:\s*true\s*\}/);
+    // PAY-ZERO-ROW-RACE-01: `persisted: true` now carries WHICH writer persisted
+    // it, so both arms are pinned by name. A bare `{ persisted: true }` is no
+    // longer the shape, and the union must still distinguish the two writers --
+    // that distinction is what the receipt decision keys off.
+    expect(CHARGE).toMatch(/persisted:\s*true;\s*by:\s*"this_invocation"/);
+    expect(CHARGE).toMatch(/persisted:\s*true;\s*by:\s*"concurrent_writer"\s*\}/);
     expect(CHARGE).toMatch(
       /persisted:\s*false;\s*reason:\s*"db_error"\s*\|\s*"zero_rows"/,
     );
@@ -51,8 +74,39 @@ describe("writeSucceededOutcome reports whether the success was persisted", () =
     expect(sig).toBe("Promise<SuccessPersistenceResult>");
   });
 
-  it("returns persisted:true only after a proven (non-error, non-zero-row) write", () => {
-    expect(CHARGE).toMatch(/return \{ persisted: true \};/);
+  it("returns persisted:true only after a proven write, and names the writer", () => {
+    // The clean path: our own conditional UPDATE matched a row.
+    expect(CHARGE).toMatch(
+      /return \{ persisted: true, by: "this_invocation" \};/,
+    );
+  });
+
+  it("returns persisted:true by:concurrent_writer ONLY inside a proven-benign recheck", () => {
+    // PAY-ZERO-ROW-RACE-01. This arm reports a correct ledger written by somebody
+    // else, so it may only be reachable from the verified branch. Pinned two ways:
+    // the return exists, and it sits AFTER the classifier call and INSIDE the
+    // `verdict.benign` branch -- never on a bare zero-row path.
+    // Persistence facts ONLY. Ownership deliberately does not travel on this
+    // union any more: keeping it here put the rule inside the writer and left
+    // each call site to combine it with `by`, which is how one branch got the
+    // gate and its sibling did not.
+    expect(CHARGE).toMatch(
+      /return \{ persisted: true, by: "concurrent_writer" \};/,
+    );
+    expect(CHARGE, "ownership must not travel on the persistence union").not.toMatch(
+      /persisted: true;\s*by: "concurrent_writer";\s*receiptOwed/,
+    );
+    const zeroRowBlock =
+      CHARGE.slice(CHARGE.indexOf("if (!updatedRows || updatedRows.length === 0)"));
+    const classifyAt = zeroRowBlock.indexOf("classifyZeroRowSuccessWrite({");
+    const benignAt = zeroRowBlock.indexOf("if (verdict.benign)");
+    const concurrentAt = zeroRowBlock.indexOf('by: "concurrent_writer"');
+    expect(classifyAt, "the classifier must be called").toBeGreaterThan(-1);
+    expect(benignAt, "the benign branch must exist").toBeGreaterThan(classifyAt);
+    expect(
+      concurrentAt,
+      "the concurrent-writer success must sit inside the proven-benign branch",
+    ).toBeGreaterThan(benignAt);
   });
 
   it("returns persisted:false reason 'db_error' on a DB error", () => {
@@ -90,11 +144,11 @@ describe("non-persistence raises a critical ops alert (operator wake-up)", () =>
 describe("callers return needs_manual_review when persistence fails, not succeeded", () => {
   it("both success callers call writeSucceededOutcome and capture the result", () => {
     // main create/confirm path + reconcileExistingPaymentIntent.
-    expect(count(CHARGE, /const persistence = await writeSucceededOutcome\(/g)).toBe(2);
+    expect(count(CHARGE_CODE, /const persistence = await writeSucceededOutcome\(/g)).toBe(2);
   });
 
   it("both callers guard on !persistence.persisted before returning success", () => {
-    expect(count(CHARGE, /if \(!persistence\.persisted\)/g)).toBe(2);
+    expect(count(CHARGE_CODE, /if \(!persistence\.persisted\)/g)).toBe(2);
   });
 
   it("the persistence-failed branch returns needs_manual_review (ok:false), never succeeded", () => {
@@ -170,11 +224,11 @@ describe("Stripe failure paths unchanged", () => {
 // ---------------------------------------------------------------------------
 describe("Stripe gates + live-mode block unchanged", () => {
   it("keeps exactly one paymentIntents.create", () => {
-    expect(count(CHARGE, /paymentIntents\.create/g)).toBe(1);
+    expect(count(CHARGE_CODE, /paymentIntents\.create/g)).toBe(1);
   });
 
   it("introduces no refunds.create / charges.create / checkout.sessions here", () => {
-    expect(count(CHARGE, /refunds\.create/g)).toBe(0);
+    expect(count(CHARGE_CODE, /refunds\.create/g)).toBe(0);
     expect(CHARGE).not.toMatch(/charges\.create/);
     expect(CHARGE).not.toMatch(/checkout\.sessions/);
   });

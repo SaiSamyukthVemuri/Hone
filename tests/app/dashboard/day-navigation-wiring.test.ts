@@ -259,8 +259,14 @@ describe("the two day controls do not fight each other", () => {
     // (e2e/dashboard-day-navigation.spec.ts, "the period filter updates IN
     // PLACE"). This pin is what stops the opt-out being dropped in an edit that
     // never runs a browser lane.
-    expect((SNAPSHOT_CODE.match(/<Link\b/g) ?? []).length).toBe(1);
-    const periodLink = SNAPSHOT_CODE.slice(SNAPSHOT_CODE.indexOf("<Link"));
+    // UI-01H-A: the period control is now a <PendingLink> so the tap is
+    // acknowledged, but it is STILL one control and still a Link underneath —
+    // PendingLink spreads `...rest` onto next/link, so `scroll={false}` reaches
+    // the same place it always did. The opt-out is what this test guards, not
+    // the element's name.
+    expect((SNAPSHOT_CODE.match(/<PendingLink\b/g) ?? []).length).toBe(1);
+    expect((SNAPSHOT_CODE.match(/<Link\b/g) ?? []).length).toBe(0);
+    const periodLink = SNAPSHOT_CODE.slice(SNAPSHOT_CODE.indexOf("<PendingLink"));
     expect(periodLink).toMatch(/scroll=\{false\}/);
     // Still server-driven query navigation, and the href/aria contract is
     // unchanged: the same Link carries both.

@@ -1,0 +1,34 @@
+{
+ "recorded": "2026-10-08 (read-only GraphQL introspection)",
+ "Commit.associatedPullRequests": "The merged Pull Request that introduced the commit to the repository. If the commit is not present in the default branch, additionally returns open Pull Requests associated with the commit",
+ "PullRequest.headRefName": "Identifies the name of the head Ref associated with the pull request, even if the ref has been deleted.",
+ "PullRequest.headRefOid": "Identifies the oid of the head ref associated with the pull request, even if the ref has been deleted.",
+ "PullRequest.headRef": "Identifies the head Ref associated with the pull request.",
+ "PullRequest.headRepository": "The repository associated with this pull request's head Ref.",
+ "UpdatePullRequestInput.fields": [
+  "clientMutationId",
+  "pullRequestId",
+  "baseRefName",
+  "title",
+  "body",
+  "state",
+  "maintainerCanModify",
+  "assigneeIds",
+  "milestoneId",
+  "labelIds",
+  "projectIds"
+ ],
+ "Mutation.archivePullRequest": "Archive a pull request. Closes and marks the pull request as archived. Users with the triage role or higher can archive pull requests.",
+ "Mutation.unarchivePullRequest": "Unarchive a pull request. Removes the archived flag from the pull request. Does not automatically reopen or unlock the pull request. Users with the triage role or higher can unarchive pull requests.",
+ "PullRequest has an archived field": false,
+ "PullRequestTimelineItemsItemType (head/base ref events)": [
+  "AUTOMATIC_BASE_CHANGE_FAILED_EVENT",
+  "AUTOMATIC_BASE_CHANGE_SUCCEEDED_EVENT",
+  "BASE_REF_CHANGED_EVENT",
+  "BASE_REF_FORCE_PUSHED_EVENT",
+  "BASE_REF_DELETED_EVENT",
+  "HEAD_REF_DELETED_EVENT",
+  "HEAD_REF_FORCE_PUSHED_EVENT",
+  "HEAD_REF_RESTORED_EVENT"
+ ]
+}

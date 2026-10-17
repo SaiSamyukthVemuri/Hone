@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { PendingContainerLink } from "@/components/pending-link";
 import { resolvePractitionerColor } from "@/lib/practitioner-colors";
 import type { ScopePractitioner } from "@/lib/booking/practitioner-availability";
 
@@ -28,17 +29,23 @@ export function ScopeSelector({
         practitioners who work different schedules.
       </p>
       <div className="flex flex-wrap gap-2">
-        <Link href={base} className={chip(selected === null)} aria-current={selected === null ? "page" : undefined}>
+        <PendingContainerLink
+          href={base}
+          className={chip(selected === null)}
+          pendingLabel="Loading schedule…"
+          aria-current={selected === null ? "page" : undefined}
+        >
           Studio default
-        </Link>
+        </PendingContainerLink>
         {practitioners.map((p) => {
           const active = selected === p.id;
           const color = resolvePractitionerColor(p.color);
           return (
-            <Link
+            <PendingContainerLink
               key={p.id}
               href={`${base}?practitioner=${encodeURIComponent(p.id)}`}
               className={chip(active)}
+              pendingLabel="Loading schedule…"
               aria-current={active ? "page" : undefined}
             >
               <span
@@ -46,7 +53,7 @@ export function ScopeSelector({
                 className={`h-2.5 w-2.5 rounded-full ${color.bg}`}
               />
               {p.display_name}
-            </Link>
+            </PendingContainerLink>
           );
         })}
       </div>

@@ -46,9 +46,32 @@ describe("public booking route — no direct appointment creation", () => {
     expect(CODE).toMatch(/rpc\(\s*\n?\s*"create_public_appointment"/);
   });
 
+  it("commits an INVITATION booking through 0195, never through a hand-rolled pair", () => {
+    // WAIT-03. The invitation path composes appointment + audit + conversion in
+    // ONE transaction. The guard widened rather than moved: both commands are
+    // now named here, so removing either — or reintroducing a direct write
+    // beside them — still fails.
+    expect(CODE).toMatch(/rpc\(\s*\n?\s*"create_waitlist_public_appointment"/);
+
+    // AND THE SECOND CONVERSION WRITER MUST STAY GONE. This route used to
+    // record the conversion itself after the commit; 0195 owns it now, and two
+    // writers for one fact is the defect this binding removed.
+    expect(CODE).not.toContain("recordInvitationConversion(");
+    expect(CODE).not.toContain("record_new_client_waitlist_conversion");
+  });
+
   it("passes only server-prepared identifiers to the command", () => {
-    const call = CODE.slice(CODE.indexOf('"create_public_appointment"'));
-    const args = call.slice(0, call.indexOf("},") + 1);
+    // BOTH COMMANDS SHARE ONE ARGUMENT LITERAL, so this reads that literal
+    // rather than slicing forward from a call site. Slicing from the call broke
+    // the moment the arguments were hoisted to be shared — and it would have
+    // gone on "passing" while inspecting `commitArgs)` and nothing else.
+    const declared = CODE.indexOf("const commitArgs = {");
+    expect(declared, "the shared argument literal was renamed or removed").toBeGreaterThan(0);
+    const args = CODE.slice(declared, CODE.indexOf("};", declared) + 2);
+    // Non-vacuity: a slice that found no arguments would satisfy every
+    // "must not contain" below.
+    expect(args).toContain("p_service_id");
+    expect(args).toContain("p_starts_at");
     // The studio id is resolved from the slug server-side, never posted.
     expect(args).toContain("p_studio_id: studio.id");
     // No duration, end time, status, practitioner or override may be supplied.
@@ -63,6 +86,34 @@ describe("public booking route — no direct appointment creation", () => {
     ]) {
       expect(args, `must not pass ${forbidden}`).not.toContain(forbidden);
     }
+
+    // AND THE SAME LIST OVER THE 0195 CALL'S OWN LITERAL. `commitArgs` is
+    // SPREAD into it, so anything added beside the spread escaped a check that
+    // only read the shared object — which is most of the argument surface on
+    // the invitation path.
+    const waitlistLiteral = CODE.slice(CODE.indexOf('"create_waitlist_public_appointment"'));
+    const waitlistBody = waitlistLiteral.slice(0, waitlistLiteral.indexOf("})") + 2);
+    expect(waitlistBody).toContain("...commitArgs");
+    for (const forbidden of [
+      "p_duration",
+      "p_ends_at",
+      "p_status",
+      "p_practitioner",
+      "p_allow_outside",
+      "p_capacity",
+      "p_details",
+    ]) {
+      expect(waitlistBody, `0195 call must not pass ${forbidden}`).not.toContain(forbidden);
+    }
+
+    // THE ONE EXTRA ARGUMENT 0195 TAKES, and where it may come from. The entry
+    // id is the locked redemption's own answer; a browser-supplied one would
+    // name somebody else's entry, which is the single failure this parameter
+    // exists to make impossible.
+    const waitlistCall = CODE.slice(CODE.indexOf('"create_waitlist_public_appointment"'));
+    const waitlistArgs = waitlistCall.slice(0, waitlistCall.indexOf("})") + 2);
+    expect(waitlistArgs).toContain("p_entry_id: atomicEntryId");
+    expect(waitlistArgs).not.toMatch(/p_entry_id:\s*(fd|form|body|params|searchParams|input)/);
   });
 
   it("never sends a confirmation before the command has confirmed success", () => {
@@ -149,10 +200,39 @@ describe("policy split — what the command does NOT enforce", () => {
     // public-flow product policy rather than an appointment-table lineage fact.
     // It must therefore run before the RPC and must not be claimed as a DB
     // guarantee.
-    const gate = CODE.indexOf("isConsultationService");
+    //
+    // WAIT-03 B3 renamed the predicate: `isConsultationService` -> the wider
+    // `isBookableByNewClient`, which asks the same question plus `active`, so
+    // the invitation route can ask it of a row it fetched itself instead of
+    // restating "what counts as a consultation" a second time.
+    //
+    // PINNED BY CALL, NOT BY NAME ALONE. This guard was a bare
+    // `indexOf("isConsultationService")` and would have been satisfied by the
+    // word appearing anywhere the comment filter did not strip -- a string, an
+    // import left behind after the guard itself was deleted. The `(` ties it to
+    // an actual invocation.
+    const gate = CODE.indexOf("isBookableByNewClient(service)");
     const rpc = CODE.indexOf('"create_public_appointment"');
     expect(gate, "the consultation gate must exist").toBeGreaterThan(-1);
     expect(gate, "and must precede the command").toBeLessThan(rpc);
+  });
+
+  it("NON-VACUITY — the pin can tell a present gate from an absent one", () => {
+    // A predicate nobody calls here must NOT match, or the assertion above
+    // would pass for any source at all.
+    expect(CODE.indexOf("isNotARealPredicate(service)")).toBe(-1);
+  });
+
+  // The rule is a NEW-CLIENT rule, not an invitation-mode rule. WAIT-03 B3
+  // considered and rejected an invitation-shaped bypass here: letting a scoped
+  // invitation admit an arbitrary service would let an unconsulted new client
+  // book a treatment, which is what the consultation-first rule exists to stop.
+  it("the consultation gate is not conditioned on invitation state", () => {
+    const gate = CODE.indexOf("isBookableByNewClient(service)");
+    const line = CODE.slice(CODE.lastIndexOf("\n", gate) + 1, CODE.indexOf("\n", gate));
+    expect(line).toContain('clientType === "new"');
+    expect(line).not.toContain("invitation");
+    expect(line).not.toContain("Auth");
   });
 
   it("does not pass client_type to the command", () => {

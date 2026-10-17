@@ -2,8 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   getClientById,
-  getCurrentPractitionerWithStudio,
+  requirePractitionerWithStudio,
 } from "@/lib/supabase/queries";
+import { PendingButton } from "@/components/pending-button";
 import { ClientForm, type ClientFormValues } from "@/components/client-form";
 import { updateClientAction, unarchiveClientAction } from "../actions";
 import { ArchiveClientControl } from "./ArchiveClientControl";
@@ -14,7 +15,7 @@ export default async function EditClientPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { studio } = await requirePractitionerWithStudio();
   const data = await getClientById(studio.id, id);
   if (!data) notFound();
 
@@ -73,14 +74,22 @@ export default async function EditClientPage({
               exist (past appointments, sessions, intake, audit) and
               are reachable from this page.
             </p>
+            {/* UI-04. HALF OF A PAIR WAS UPGRADED AND THIS HALF WAS NOT.
+                UI-R02 gave ArchiveClientControl — directly opposite this, on
+                this page — a PendingButton, the 44px floor, press and focus.
+                Unarchive kept a raw submit: ~36px, no `active:`, no
+                `focus-visible:`, its own dark: pair, and no in-flight state at
+                all, so a practitioner clicking it had no way to know whether
+                Hone had heard them. Two halves of one decision should not
+                behave differently.
+
+                `secondary`, not `danger`: unarchiving restores a client, and
+                the solid-danger treatment belongs to the destructive half. */}
             <form action={unarchiveClientAction}>
               <input type="hidden" name="client_id" value={id} />
-              <button
-                type="submit"
-                className="rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-              >
+              <PendingButton variant="secondary" busyLabel="Unarchiving…">
                 Unarchive client
-              </button>
+              </PendingButton>
             </form>
           </>
         ) : (

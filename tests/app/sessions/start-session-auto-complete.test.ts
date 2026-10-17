@@ -147,7 +147,11 @@ describe("startSessionAction: helper is invoked after session insert", () => {
 
   it("the call site revalidates the calendar appointment detail path so the new status is visible", () => {
     expect(ACTIONS).toMatch(
-      /maybeMarkAppointmentCompletedOnSessionStart\(\{[\s\S]{0,800}\}\);[\s\S]{0,300}revalidatePath\(`\/calendar\/\$\{appointmentId\}`\)/,
+      // SESSION-START-01 2A: the call may now be wrapped in a perf-timing helper,
+    // so its terminator is `}),` rather than `});`. The ORDERING and PROXIMITY
+    // this guard exists for are unchanged: the helper is invoked, and the
+    // calendar detail path is revalidated close after it.
+    /maybeMarkAppointmentCompletedOnSessionStart\(\{[\s\S]{0,800}\}\)[,;][\s\S]{0,300}revalidatePath\(`\/calendar\/\$\{appointmentId\}`\)/,
     );
   });
 });

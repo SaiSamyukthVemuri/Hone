@@ -97,3 +97,69 @@ export const UI_TRANSITION = "hone-transition-ui";
 /** Disabled/pending look, spelled once. 168 of 191 existing sites use opacity-50. */
 export const CONTROL_DISABLED =
   "disabled:cursor-not-allowed disabled:opacity-50";
+
+/**
+ * THE TACTILE PRESS LAYER — opt-in, and a LAYER, not a complete treatment.
+ *
+ * WHAT IT IS FOR
+ * --------------
+ * A compact LEAF control that owns its own positioning context: a button, a
+ * pill, a segmented-control segment. It adds the physical sense of a press and
+ * nothing else.
+ *
+ * IT IS NOT A PRESS TREATMENT BY ITSELF. Under `prefers-reduced-motion` the
+ * scale collapses to a no-op, so a control composing ONLY this has no press
+ * feedback at all for exactly the users least able to tolerate a control that
+ * looks untapped. THE CALLER MUST SUPPLY A COLOUR TREATMENT. Every Button
+ * variant does — primary/secondary/quiet/danger each carry their own
+ * `active:bg-*`, chosen for their own background — and that colour is what
+ * survives when the motion is removed. Guarded in
+ * tests/components/ui-r01-interaction-foundations.test.ts.
+ *
+ * THE POSITIONING RESTRICTION, EXPLICITLY: while `:active`, a scaled control IS
+ * a containing block for `position: fixed` descendants and DOES form a new
+ * stacking context. Do not use it on a control that anchors a fixed-position
+ * menu, popover, tooltip or portal-less overlay.
+ *
+ * 0.98 — not lower. Below about 0.97 a 44px control reads as a bounce rather
+ * than a press, and text inside it starts to visibly resample. A transform is
+ * paint-time, so the LAYOUT box is untouched: a pressed control cannot reflow
+ * its neighbours. Proved in the browser against a NEIGHBOUR's position, not
+ * merely against its own box.
+ */
+export const LEAF_CONTROL_PRESS = cx(
+  "active:scale-[0.98] motion-reduce:active:scale-100",
+  PRESS_TRANSITION,
+);
+
+/**
+ * Press treatment for the NEUTRAL-SURFACE families, and ONLY those.
+ *
+ * COMPATIBLE: a list row, a card, a container link, a quiet/ghost control, an
+ * outlined control — anything already sitting on `surface` and carrying
+ * foreground-coloured text.
+ *
+ * NOT COMPATIBLE, and this is why the name changed: a FILLED control. Sinking
+ * a dark button to `surface-sunken` (oklch 98.5%, near-white) underneath
+ * `text-on-accent` (#fff) is white on near-white — the label disappears for as
+ * long as the control is pressed. Those families carry their own `active:bg-*`
+ * instead; see Button's VARIANT map.
+ *
+ * THERE IS NO UNIVERSAL PRESS CLASS, AND UI-R01 STOPPED PRETENDING OTHERWISE.
+ * An earlier export named CONTROL_PRESS was retired rather than renamed. Three
+ * successive attempts to make one blind-adoptable constant each traded one
+ * requirement for another — `scale` and `opacity` both created a stacking
+ * context; a background change fixed that and broke contrast on filled
+ * controls; removing the background from the leaf layer fixed the conflict and
+ * removed reduced-motion feedback. A treatment that is safe on any element AND
+ * visible on any background has to know what it is painting on, and a constant
+ * adopted without reading the call site cannot. The name invited exactly the
+ * blind adoption that is unsafe, so it is gone.
+ *
+ * UI-R03 therefore classifies a control into a FAMILY first and applies that
+ * family's treatment — it does not apply one class to 108 files.
+ *
+ * Creates no containing block and no stacking context: a background-colour
+ * change does neither, which is why the surface families can share one string.
+ */
+export const SURFACE_PRESS = cx("active:bg-surface-sunken", PRESS_TRANSITION);

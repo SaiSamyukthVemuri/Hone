@@ -1,7 +1,71 @@
+import { InviteComposer } from "@/components/waitlist/invite-composer";
+import { InvitationCapacityPanel } from "@/components/waitlist/invitation-capacity-panel";
+import {
+  canOfferInvite,
+  inviteUnavailableReason,
+  type InvitationCapacity,
+} from "@/lib/waitlist/invitation-capacity";
+import { closeInvitationsFormAction, startInvitingFormAction } from "./capacity-actions";
+import { readRoundConsumed } from "@/lib/waitlist/round-consumption-server";
+import { InviteOutcomeBoundary } from "@/components/waitlist/invite-outcome-boundary";
+import {
+  INVITATION_DELIVERY_COPY,
+  type InvitationDeliveryState,
+} from "@/lib/waitlist/invite-to-book-contract";
+import { WaitlistNavLink } from "@/components/waitlist/waitlist-nav-link";
+import { isBookableByNewClient } from "@/lib/booking/consultation";
+import {
+  emptyDraft,
+  INVITE_TO_BOOK_STATUSES,
+} from "@/lib/waitlist/b4-invitation-draft";
+import { admissionCommandAdapter } from "@/lib/waitlist/invite-to-book-adapter";
+import { inviteToBookAction } from "./invite-actions";
 import { createClient } from "@/lib/supabase/server";
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import { localLongDate } from "@/lib/booking/tz";
-import { removeWaitlistEntryAction } from "./actions";
+import {
+  AVAILABILITY_PREFERENCE_LABEL,
+  isAvailabilityPreference,
+  type AvailabilityPreference,
+} from "@/lib/waitlist/join-profile";
+import {
+  joinedAtClaim,
+  joinedAtNote,
+  mayRenderAsWait,
+  originLabel,
+  UNKNOWN_JOINED_AT_COPY,
+} from "@/lib/waitlist/entry-provenance";
+import { EntryAvailability } from "@/components/waitlist/entry-availability";
+import { EntrySmsConsent, type SmsConsentView } from "@/components/waitlist/entry-sms-consent";
+import { AddToWaitlistPanel } from "@/components/waitlist/add-to-waitlist-panel";
+import {
+  setWaitlistAvailabilityFormAction,
+  addWaitlistEntryFormAction,
+  importLegacyWaitlistEntryFormAction,
+} from "./profile-actions";
+import { recordProspectSmsConsentFormAction } from "./consent-actions";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
+import { formatLocalDateLabel, localDateString, localLongDate } from "@/lib/booking/tz";
+// `claimWaitlistEntryAction` and `claimNextWaitlistEntriesAction` are
+// deliberately NOT imported. Both still exist, are still tested and still reach
+// their commands — this surface simply no longer offers claiming. See the
+// CLAIMING IS INTERNAL note below.
+import {
+  closeUnbookedWaitlistInvitationAction,
+  expireWaitlistInvitationAction,
+  releaseWaitlistEntryAction,
+  removeWaitlistEntryAction,
+  requeueWaitlistEntryAction,
+} from "./actions";
+import {
+  STATUS_LABEL,
+  STATUS_MEANING,
+  actionAvailability,
+  actionHelp,
+  actionLabel,
+  statusMeaning,
+  type AdmissionAction,
+  type WaitlistEntryStatus,
+} from "@/lib/waitlist/admission-model";
+import { OPERATOR_QUEUE_STATUSES } from "@/lib/waitlist/operator-queue-presence";
 
 // ===========================================================================
 // NEW-CLIENT WAITLIST — OPERATOR QUEUE (WAIT-02)
@@ -12,11 +76,40 @@ import { removeWaitlistEntryAction } from "./actions";
 // email. This page answers exactly those three questions against the durable
 // record and stops there.
 //
-// WHAT IT IS NOT. No invite, no "next N", no queue position shown to anyone,
-// no ranking, no capacity forecast, no appointment creation, no contact
-// editing, no notes. Those are WAIT-03 / ADMIT-01..03 and none of them are
-// reachable from here — the database refuses every transition except
-// waiting -> removed, so this surface could not grow one by accident.
+// WHAT IT IS NOT. It surfaces the practitioner lifecycle that migrations
+// 0188-0190 already shipped: setting someone aside, cancelling an invitation,
+// recording an expiry, returning someone to the waitlist, and the original
+// removal. It shows NO queue position to anyone, does NO ranking, forecasts no
+// capacity, creates no appointment, edits no contact and takes no notes.
+//
+// A LABEL MAY ONLY PROMISE WHAT ITS COMMAND DELIVERS. `release` and `requeue`
+// are two different transitions and must never read as one: release lands the
+// entry in `released` (0189), and only requeue reaches `waiting` (0188). So
+// "Return to waitlist" belongs to requeue alone, and release reads "Set aside"
+// or "Cancel invitation" depending on what it is ending. `ACTION_RESULT_STATUS`
+// in the model records each command's outcome, and a test refuses to let two
+// controls with different outcomes share a label.
+//
+// CLAIMING IS INTERNAL, AND IS NOT SHOWN. `claimed` is a real database state and
+// `claim_new_client_waitlist_entry(_ies)` are real, wired, tested commands —
+// nothing about them changed. What changed is that this page stopped putting
+// them in front of a practitioner. "Claim" describes how the queue moves an
+// entry out of general contention; it is not a task a studio owner sets out to
+// perform, and offering it made the surface read like an implementation detail
+// rather than a list of people waiting to hear back.
+//
+// So: no Claim button, no "Claim the next N" form, and the state itself is shown
+// as "Ready to invite" — which is what it MEANS to a practitioner. Entries
+// already sitting in that state from the previous release keep working: they
+// render, they are counted, and they can be set aside — which lands them in
+// Released, where "Return to waitlist" then puts them back in line. Restoring
+// any of this is a rendering change and nothing more, because no command, action
+// or authority was touched to remove it.
+//
+// It still cannot INVITE. `issue`, `redeem` and `record_conversion` are not
+// referenced anywhere on this surface: issuing mints a token that must reach a
+// real recipient, and redeem/conversion create a booking. Those wait on
+// B1/B1.5c + B2.
 //
 // PEOPLE HERE ARE NOT CLIENTS. Nothing on this page links into a client
 // record, because no client record exists: joining a waitlist creates none.
@@ -32,16 +125,52 @@ import { removeWaitlistEntryAction } from "./actions";
 // same millisecond still have one stable, repeatable position, so the list
 // does not shuffle between renders — and the index backing it is declared in
 // exactly that column order.
+//
+// EVERY ROW STAYS REACHABLE, AND SO DOES ITS ONLY WAY OUT. Each section shows
+// SECTION_PAGE_SIZE rows at a time and is navigable past that with
+// `?section=<status>&page=<n>`. That is not a display nicety: an entry's escape
+// action lives on its own row, so a row that cannot be displayed is an entry
+// that cannot be released, expired or returned to the queue — and "Claim next
+// N" can push the held section past one page on its own. The default view is
+// unchanged, first page of all five sections; a group with more offers a link
+// to the rest instead of a sentence saying it is incomplete.
 // ===========================================================================
 
 /**
- * One bounded page of the active queue. This is a display bound, NOT the size
- * of the queue: `count` below is a separate authoritative count over the whole
- * filtered set, so a studio with more waiting people than this is told the real
- * number and told that the list is truncated. Reading `data.length` as the
+ * How many rows one section shows at a time.
+ *
+ * A PAGE SIZE, NOT A CAP — and the difference is the whole point. Under a cap,
+ * a section holding more than this stranded every row past it TOGETHER WITH ITS
+ * ONLY ESCAPE ACTION: a claimed entry beyond the hundredth could never be
+ * released, an invited one never expired, an expired one never returned to the
+ * queue. "Claim next N" could itself create such rows, so the surface could
+ * manufacture entries it was then unable to reach. Raising the number would
+ * only move that cliff; every section is therefore NAVIGABLE past it, via
+ * `?section=<status>&page=<n>` below.
+ *
+ * `count` remains a separate authoritative count over the whole filtered set,
+ * so a studio is always told the real number. Reading `data.length` as the
  * queue size is exactly the lie this split exists to prevent.
  */
-const QUEUE_PAGE_SIZE = 100;
+const SECTION_PAGE_SIZE = 100;
+
+/** This route. Pagination links are plain hrefs to it: the read is decided
+ *  entirely on the server, so a full navigation is the honest mechanism and
+ *  costs the page no client JavaScript. */
+const QUEUE_PATH = "/settings/waitlist";
+
+/**
+ * One person's stated availability, as the queue renders it.
+ *
+ * `confirmedAt` travels with the value because "weekends" recorded eight
+ * months ago and "weekends" re-affirmed last week are different facts to an
+ * operator deciding who to invite, and 0193 keeps `stated_at` and
+ * `confirmed_at` apart precisely so that distinction survives.
+ */
+type StoredAvailability = {
+  preference: AvailabilityPreference;
+  confirmedAt: string | null;
+};
 
 type WaitlistRow = {
   id: string;
@@ -49,6 +178,103 @@ type WaitlistRow = {
   email: string;
   phone: string | null;
   joined_at: string;
+  status: WaitlistEntryStatus;
+  // WAIT-04A. Read because `joined_at` ALONE CANNOT BE RENDERED TRUTHFULLY.
+  // 0193 stamps an imported row's `joined_at` with the import instant when
+  // nobody has a real date, and states that "no reader may render it as a
+  // wait". Without the provenance beside it this page would report that
+  // instant as the day they joined. See lib/waitlist/entry-provenance.ts.
+  source: string | null;
+  joined_at_provenance: string | null;
+  // 0208. Read so the row states the person's SMS standing as recorded, and
+  // offers the owner's consent form only where the command would accept it.
+  // The evidence reference and the recorder are deliberately NOT read: the
+  // row says what is on record, not the owner's private note.
+  sms_consent_at: string | null;
+  sms_consent_source: string | null;
+  sms_consent_given_on: string | null;
+  sms_opted_out_at: string | null;
+};
+
+/**
+ * One row's SMS standing, as the queue renders it (0208).
+ *
+ * STOP is checked first and wins over everything, as it does at send time. A
+ * practitioner record carries the day they agreed only when the owner knew
+ * it; `null` renders as "not known", never as the recording date. Both days
+ * are rendered as calendar days: `sms_consent_given_on` is a bare date, and
+ * shifting it through a timezone would move it by a day.
+ */
+function smsConsentView(row: WaitlistRow, timezone: string): SmsConsentView {
+  if (row.sms_opted_out_at) return { kind: "opted_out" };
+  if (row.sms_consent_at) {
+    const source =
+      row.sms_consent_source === "public_form" ||
+      row.sms_consent_source === "prospect_link" ||
+      row.sms_consent_source === "practitioner"
+        ? row.sms_consent_source
+        : null;
+    if (source !== null) {
+      return {
+        kind: "consented",
+        source,
+        recordedOnLabel: formatLocalDateLabel(
+          localDateString(new Date(row.sms_consent_at), timezone),
+        ),
+        agreedOnLabel:
+          source === "practitioner" && row.sms_consent_given_on
+            ? formatLocalDateLabel(row.sms_consent_given_on)
+            : null,
+      };
+    }
+  }
+  if (!row.phone) return { kind: "none", recordable: false, reason: "no_phone" };
+  if (row.status === "converted" || row.status === "removed") {
+    return { kind: "none", recordable: false, reason: "not_active" };
+  }
+  return { kind: "none", recordable: true };
+}
+
+/**
+ * The sections, in the order they appear — most actionable first. This list is
+ * also the set of states READ: one paged query per entry below, and the set a
+ * `?section=` value is validated against.
+ *
+ * `converted` and `removed` are terminal history and are deliberately absent.
+ * Reading them would spend a bound on rows nothing can be done to, and an
+ * operator queue exists to show what still needs attention.
+ */
+const SECTION_STATUSES = OPERATOR_QUEUE_STATUSES;
+
+/**
+ * THE HEADING IS THE STATE'S ONE PRACTITIONER-FACING NAME, read from the model
+ * rather than written again here. A second copy is exactly how a state ends up
+ * called "Held" in a heading and something else on the rows inside it.
+ */
+const SECTIONS: ReadonlyArray<{ status: WaitlistEntryStatus; heading: string }> =
+  SECTION_STATUSES.map((status) => ({ status, heading: STATUS_LABEL[status] }));
+
+/**
+ * Which server action performs each lifecycle move THIS SURFACE OFFERS.
+ *
+ * `claim` is absent because claiming is no longer offered here, not because it
+ * is unwired — `claimWaitlistEntryAction` is unchanged and still tested. Its
+ * absence from this map is what makes the removal total: a `claim` verdict can
+ * still come back available from the model and there is simply no form to
+ * render for it.
+ *
+ * `invite` and `remove` are absent for their own reasons. Inviting is B2 work
+ * and is not wired anywhere in this release; removal keeps its own two-step
+ * disclosure below because it is terminal and a mis-tap must not perform it.
+ */
+const ACTION_FORMS: Partial<
+  Record<AdmissionAction, (formData: FormData) => Promise<void>>
+> = {
+  release: releaseWaitlistEntryAction,
+  requeue: requeueWaitlistEntryAction,
+  // WAIT-P1-EXIT. The only control a redeemed-but-unbooked row can offer; the
+  // admission model decides when, and it is the exact complement of release.
+  close: closeUnbookedWaitlistInvitationAction,
 };
 
 function DenialCard({ children }: { children: React.ReactNode }) {
@@ -71,38 +297,185 @@ function ageLabel(days: number): string {
   return `${days} day${days === 1 ? "" : "s"}`;
 }
 
-export default async function WaitlistSettingsPage() {
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+/** Next hands a repeated query param through as an array. Take the first
+ *  rather than stringifying, which would turn `?page=2&page=3` into "2,3". */
+function firstParam(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+/**
+ * The requested page, 1-based.
+ *
+ * Anything unparseable, zero or negative becomes page one. A bad URL must land
+ * on something real: rendering an empty section instead would read as "nobody
+ * here", which is the one wrong answer this surface can give.
+ */
+function parsePageNumber(raw: string | undefined): number {
+  const n = Number.parseInt(raw ?? "", 10);
+  return Number.isFinite(n) && n >= 1 ? n : 1;
+}
+
+function sectionHref(status: WaitlistEntryStatus, page = 1): string {
+  return page <= 1
+    ? `${QUEUE_PATH}?section=${status}`
+    : `${QUEUE_PATH}?section=${status}&page=${page}`;
+}
+
+const NAV_LINK_CLASS =
+  "inline-flex min-h-[44px] items-center rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900";
+
+export default async function WaitlistSettingsPage({
+  searchParams,
+}: {
+  // Next 15 App Router: searchParams is async, and a repeated param arrives as
+  // an array. Both values are browser-controlled, so the type says so rather
+  // than lying about it — and neither reaches a query except through the
+  // validation immediately below.
+  searchParams?: Promise<{ section?: string | string[]; page?: string | string[] }>;
+}) {
+  const { practitioner, studio } = await requirePractitionerWithStudio();
 
   if (practitioner.role !== "owner") {
     return <DenialCard>Only studio owners can see the new-client waitlist.</DenialCard>;
   }
+
+  // A SECTION IS HONOURED ONLY WHEN IT NAMES ONE OF THE FIVE READ STATES.
+  // A typo, a terminal status, or an injected value falls back to the
+  // all-sections view rather than rendering an empty page — and because the
+  // value is matched against SECTIONS rather than passed through, nothing
+  // browser-supplied ever reaches the `status` filter.
+  const params = (await searchParams) ?? {};
+  const requestedSection = firstParam(params.section);
+  const focusedStatus =
+    SECTIONS.find(({ status }) => status === requestedSection)?.status ?? null;
+  // `page` is meaningless without a section, so it is only read alongside one.
+  const pageNumber = focusedStatus ? parsePageNumber(firstParam(params.page)) : 1;
 
   // RLS-scoped user client, NOT the service-role client: the read is genuinely
   // gated by `is_studio_owner` at the database rather than by this page having
   // remembered to filter. The explicit studio filter is defence in depth and
   // the leading column of the queue index.
   //
-  // ONE query, bounded and ordered. No per-row follow-up read exists or could:
-  // every column rendered below comes from this select.
+  // ONE PAGED READ PER SECTION, not one global cap across all of them.
+  //
+  // A single bound over every active state lets one state starve the others:
+  // fill the page with old expired/released rows and a freshly CLAIMED entry
+  // falls off the end, taking its only escape action (Release) with it. The
+  // operator would then have claimed someone they cannot subsequently reach.
+  // Each section therefore carries its own window and its own exact count, so
+  // no section can be crowded out by another's volume — and the existing
+  // (studio_id, status, joined_at, id) index serves exactly this shape.
+  //
+  // ORDERING IS UNTOUCHED BY PAGING. `.range()` windows the SAME
+  // (joined_at, id) total order the index declares, so page 2 is the rows the
+  // database itself puts after page 1. Nothing here re-sorts or re-ranks.
   const supabase = await createClient();
-  const { data, count, error } = await supabase
-    .from("new_client_waitlist_entries")
-    .select("id,name,email,phone,joined_at", { count: "exact" })
-    .eq("studio_id", studio.id)
-    .eq("status", "waiting")
-    .order("joined_at", { ascending: true })
-    .order("id", { ascending: true })
-    .limit(QUEUE_PAGE_SIZE);
 
-  if (error) {
+  // ===========================================================================
+  // INVITATION CAPACITY — read with THIS page's client, not another one
+  // ===========================================================================
+  //
+  // ONE CLIENT. The queue above and this read share the single owner-scoped
+  // instance the page already built. A second client would be a second identity
+  // to keep in step and a second thing to mock; 0192 grants `authenticated` a
+  // COLUMN-LEVEL SELECT on this table behind the owner RLS policy
+  // `studio_waitlist_admission_rounds_owner_select`, so the owner's own session
+  // is the designed reader. Service-role would bypass that policy and move the
+  // tenant scope into application code.
+  //
+  // `studio_id` is still filtered explicitly as DEFENCE IN DEPTH — RLS is the
+  // authority, this is the belt. `closed_at is null` asks only for the open
+  // round, which the database already guarantees is at most one per studio.
+  //
+  // ONE VALUE, SHARED. The panel and the send guard must never disagree about
+  // whether a capacity is open, so both read this and neither asks again.
+  //
+  // FAILS CLOSED, NEVER TO "none". An unreadable capacity is `unknown`, which
+  // withholds the send. Reading it as "no capacity" would be the same sentence
+  // to the practitioner but a different fact, and a SECOND row -- which the
+  // one-open-round index forbids -- means something is wrong with an assumption
+  // here, not that the first row is fine to use.
+  const capacityRead = await supabase
+    .from("studio_waitlist_admission_rounds")
+    .select("id,allowance,opened_at")
+    .eq("studio_id", studio.id)
+    .is("closed_at", null)
+    .limit(2);
+
+  const capacity: InvitationCapacity = await (async () => {
+    if (capacityRead.error) return { state: "unknown" } as const;
+    const rows = capacityRead.data ?? [];
+    if (rows.length > 1) {
+      console.error(
+        JSON.stringify({
+          event: "waitlist_capacity_impossible_shape",
+          studioId: studio.id,
+          openRounds: rows.length,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      return { state: "unknown" } as const;
+    }
+    const row = rows[0];
+    if (!row) return { state: "none" } as const;
+    const allowance = Number(row.allowance);
+    if (!Number.isFinite(allowance)) return { state: "unknown" } as const;
+    // The database's own definition of "used". Null means it could not be
+    // established, which is unknown capacity -- not zero.
+    // BOTH IDS FROM SERVER STATE: the studio this page is already scoped to, and
+    // the round its OWN owner/RLS-scoped read just returned. The 0197 gateway
+    // validates the pair again regardless.
+    const used = await readRoundConsumed(studio.id, String(row.id));
+    if (used === null) return { state: "unknown" } as const;
+    return {
+      state: "open",
+      capacity: {
+        roundId: String(row.id),
+        allowance,
+        used,
+        openedAt: String(row.opened_at),
+      },
+    } as const;
+  })();
+
+  const rangeFrom = (pageNumber - 1) * SECTION_PAGE_SIZE;
+  const sectionReads = await Promise.all(
+    SECTIONS.map(async ({ status }) => {
+      // IN A FOCUSED VIEW THE OTHER FOUR SECTIONS ARE STILL COUNTED — head-only,
+      // so no rows come back but their exact counts do. Without that, the
+      // headline "Waitlist entries: N" would quietly change meaning from "the
+      // whole queue" to "this group", which is a different claim under the same
+      // words. Five reads either way.
+      const listed = focusedStatus === null || focusedStatus === status;
+      const from = focusedStatus === status ? rangeFrom : 0;
+      const query = supabase
+        .from("new_client_waitlist_entries")
+        .select(
+          "id,name,email,phone,joined_at,status,source,joined_at_provenance,sms_consent_at,sms_consent_source,sms_consent_given_on,sms_opted_out_at",
+          { count: "exact", head: !listed },
+        )
+        .eq("studio_id", studio.id)
+        .eq("status", status)
+        .order("joined_at", { ascending: true })
+        .order("id", { ascending: true });
+      const res = await (listed
+        ? query.range(from, from + SECTION_PAGE_SIZE - 1)
+        : query);
+      return { status, res, from };
+    }),
+  );
+
+  const failed = sectionReads.find(({ res }) => res.error);
+  if (failed) {
     // Say so plainly instead of rendering an empty queue, which would read as
-    // "nobody is waiting" — the one wrong answer this page can give.
+    // "nobody is waiting" — the one wrong answer this page can give. ANY
+    // section failing collapses the whole surface: a partially rendered queue
+    // is indistinguishable from a shorter one.
     console.error(
       JSON.stringify({
         event: "waitlist_queue_load_failed",
         studioId: studio.id,
-        code: error.code ?? "unknown",
+        code: failed.res.error?.code ?? "unknown",
         timestamp: new Date().toISOString(),
       }),
     );
@@ -114,15 +487,326 @@ export default async function WaitlistSettingsPage() {
     );
   }
 
-  const rows = (data ?? []) as WaitlistRow[];
-  // The authoritative total, from the count query — never `rows.length`, which
-  // is capped at QUEUE_PAGE_SIZE.
-  const waiting = count ?? rows.length;
-  const truncated = rows.length < waiting;
+  const bySection = new Map<
+    WaitlistEntryStatus,
+    { rows: WaitlistRow[]; total: number; from: number }
+  >();
+  for (const { status, res, from } of sectionReads) {
+    const sectionRows = (res.data ?? []) as WaitlistRow[];
+    // The authoritative total per section, from its own count — never
+    // `rows.length`, which is one page of it. `from` travels with the rows
+    // because "Showing 101–150" is a claim about the WINDOW, and only the read
+    // knows which window it asked for.
+    bySection.set(status, {
+      rows: sectionRows,
+      total: res.count ?? sectionRows.length,
+      from,
+    });
+  }
+  // Only the sections actually being listed contribute rows; a head-only read
+  // has none by construction.
+  const rows = SECTIONS.flatMap(({ status }) => bySection.get(status)?.rows ?? []);
+  // The headline counts the WHOLE queue in both views, because every section is
+  // counted in both views.
+  const active = SECTIONS.reduce((n, { status }) => n + (bySection.get(status)?.total ?? 0), 0);
+  // The FOCUSED view renders one section; the default renders all five, first
+  // page each — the same read count, and the same rows a reader saw before.
+  const visibleSections = focusedStatus
+    ? SECTIONS.filter(({ status }) => status === focusedStatus)
+    : SECTIONS;
   const now = Date.now();
+
+  // WAIT-04A — STATED AVAILABILITY, on the page's OWN owner-scoped client.
+  //
+  // THE SAME `supabase` INSTANCE THE QUEUE USED, deliberately. 0193 grants
+  // `authenticated` column-level SELECT on the six preference columns and adds
+  // an owner-only RLS policy, so the owner's own session is the correct
+  // authority here — an admin client would bypass the policy that makes this
+  // read safe, and a SECOND client would be a second authority for one page.
+  //
+  // SCOPED TO THE ROWS ACTUALLY RENDERED. One `in` over the listed ids rather
+  // than the whole studio: the queue pages at 50 a section, and a studio with
+  // a long history would otherwise ship every preference it has ever recorded
+  // to render at most 250 of them. `studio_id` is filtered too — the RLS
+  // policy is the authority, this is the belt.
+  //
+  // A FAILED READ IS NOT "NO PREFERENCE". It leaves the map null, and a null
+  // map renders nothing at all rather than "not set" — which would be a claim
+  // about the person instead of a fact about the read.
+  const preferenceRead =
+    rows.length === 0
+      ? null
+      : await supabase
+          .from("new_client_waitlist_entry_preferences")
+          .select("entry_id,preference,confirmed_at")
+          .eq("studio_id", studio.id)
+          .in(
+            "entry_id",
+            rows.map((r) => r.id),
+          );
+
+  const preferenceByEntry: Map<string, StoredAvailability> | null = (() => {
+    if (preferenceRead === null) return new Map();
+    if (preferenceRead.error) {
+      console.error(
+        JSON.stringify({
+          event: "waitlist_preferences_load_failed",
+          studioId: studio.id,
+          code: preferenceRead.error.code ?? "unknown",
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      return null;
+    }
+    const map = new Map<string, StoredAvailability>();
+    for (const row of preferenceRead.data ?? []) {
+      const entryId = (row as { entry_id?: unknown }).entry_id;
+      const preference = (row as { preference?: unknown }).preference;
+      const confirmedAt = (row as { confirmed_at?: unknown }).confirmed_at;
+      if (typeof entryId !== "string") continue;
+      // A value outside the three the CHECK permits means this build and the
+      // database disagree; rendering it would put an unknown string in front
+      // of a practitioner. Skipped, so the row reads as "not recorded yet".
+      if (!isAvailabilityPreference(preference)) continue;
+      map.set(entryId, {
+        preference,
+        confirmedAt: typeof confirmedAt === "string" ? confirmedAt : null,
+      });
+    }
+    return map;
+  })();
+
+  // WAIT INTEGRATION-01 — THE SELECTOR SHOWS EXACTLY WHAT A NEW CLIENT CAN BOOK.
+  //
+  // AN EARLIER REVISION OF THIS READ WAS WRONG, and its own comment argued for
+  // the mistake: it selected only `id, name, modality`, declined to narrow on
+  // `active`, and left the filtering to the composer on the grounds that
+  // filtering twice is how a visible list and a validation rule drift apart.
+  //
+  // The premise was false. The composer applies `isConsultationService`, which
+  // is STRICTLY WEAKER than the rule the booking path enforces: it asks only
+  // "is this a consultation", never "is it active". So an archived consultation
+  // service passed it, appeared in the selector, and was rejected later by the
+  // recipient's own booking path — the practitioner scoping an invitation to a
+  // service the invitee could never book.
+  //
+  // THE CANONICAL PREDICATE OWNS THE RULE. `isBookableByNewClient` is the same
+  // function `publicBookAppointmentAction` and the invitation route consult, and
+  // it is deliberately more than an `active` flag: it fails closed on
+  // `active !== true` and THEN asks the consultation question. Reusing it —
+  // rather than adding `.eq("active", true)` here — is what keeps this selector
+  // from becoming a second, quietly diverging opinion about eligibility. Every
+  // field the predicate reads is loaded for it, `active` included.
+  //
+  // The database remains the final authority regardless: `admit_` re-checks the
+  // service itself, so this narrowing decides what is OFFERED, never what is
+  // ALLOWED.
+  //
+  // AN UNREADABLE LIST IS AN EMPTY LIST, not a missing one. #683's contract
+  // requires an explicit concrete service, so an empty list leaves the send
+  // control refusing rather than widening — the failure must never resolve
+  // towards "any service".
+  const { data: serviceRows, error: servicesError } = await supabase
+    .from("services")
+    .select("id, name, modality, active")
+    .eq("studio_id", studio.id)
+    .order("name");
+  if (servicesError) {
+    console.error(
+      JSON.stringify({
+        event: "waitlist_composer_services_read_failed",
+        studioId: studio.id,
+        code: servicesError.code ?? "unknown",
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+  const bookableServices = (
+    servicesError
+      ? []
+      : ((serviceRows ?? []) as Array<{
+          id: string;
+          name: string;
+          modality: string | null;
+          active: boolean | null;
+        }>)
+  )
+    // Shaped for the predicate, then judged BY the predicate. The mapping exists
+    // only because `Pick<Service, "modality" | "name" | "active">` is what it
+    // reads; the decision itself is never re-expressed here.
+    .filter((s) =>
+      isBookableByNewClient({
+        name: s.name,
+        modality: s.modality,
+        // `Service.active` is non-nullable in the schema type, but this row came
+        // over the wire and could arrive null. `=== true` is the SAME strictness
+        // the predicate applies one line later (`active !== true` fails closed),
+        // so narrowing here cannot widen the answer — a null is ineligible under
+        // either spelling. It is a type narrowing, not a second decision.
+        active: s.active === true,
+      }),
+    )
+    .map((s) => ({ id: s.id, name: s.name, modality: s.modality ?? null }));
+
+  // WHETHER AN INVITATION HAS RUN OUT IS A DATABASE FACT, NOT A GUESS.
+  //
+  // "Record expired" may only be offered once `expires_at` has actually
+  // elapsed: expiry RECORDS that the clock ran out, it does not cause it. The
+  // operator's way to end a live invitation early is Release. So the elapsed
+  // fact is read rather than assumed, and only for the entries that could use
+  // it.
+  // WAIT-P1-EXIT. `released` ROWS NEED THE INVITATION FACTS TOO, NOW.
+  //
+  // 0200 refuses to requeue an entry holding a redeemed invitation, so
+  // "Return to waitlist" on such a row could only ever fail. Deciding that from
+  // the status alone is impossible: a `released` entry that was merely set
+  // aside IS requeueable, and one whose used invitation was closed is not. The
+  // two are distinguished by exactly the fact this read already fetches.
+  //
+  // It rides the SAME two queries — one `.in()` list, no new round trip, no new
+  // policy — and the read is still owner-RLS-scoped.
+  const cycleIds = rows
+    .filter((r) => r.status === "invited" || r.status === "released")
+    .map((r) => r.id);
+  /** Recorded provider outcome per invited entry. ABSENT means never recorded,
+   *  which is NOT the same as the observed verdict `unknown`. */
+  const deliveryByEntry = new Map<string, InvitationDeliveryState>();
+  let cycleByEntry: Map<string, { elapsed: boolean; redeemed: boolean }> | null = new Map();
+  if (cycleIds.length > 0) {
+    // THE LIVE INVITATION IS A SCHEMA INVARIANT, NOT A CHRONOLOGY GUESS.
+    //
+    // `new_client_waitlist_invitations` is append-only, so an entry that went
+    // invite -> expire -> requeue -> invite carries several rows. An earlier
+    // revision of this page chose the current one by `issued_at desc, id desc`
+    // — which is EXACTLY the heuristic migration 0189 was written to remove.
+    // Its own comment records why: two cycles completed inside ONE transaction
+    // share an identical `issued_at`, so the tie-break fell to a random v4
+    // UUID and "which invitation is current" was decided by coin flip; a
+    // released historical row could win, and the genuine live cycle was left
+    // unstamped.
+    //
+    // 0189 names the answer instead: `new_client_waitlist_invitations_one_live_
+    // per_entry` is a UNIQUE index on (entry_id) WHERE redeemed_at, expired_at
+    // and released_at are ALL null. At most one invitation per entry can be
+    // live, so the live row IS the current cycle by construction, with no
+    // ordering of any kind. This asks that question directly.
+    //
+    // REDEEMED IS ASKED SEPARATELY. A redeemed entry has no live row, and by
+    // the same migration's lifecycle invariants it cannot acquire a later
+    // cycle — so a redeemed stamp on an `invited` entry describes its current
+    // cycle unambiguously.
+    const [live, redeemed] = await Promise.all([
+      supabase
+        .from("new_client_waitlist_invitations")
+          // 0196 rides this EXISTING studio-scoped, RLS-governed read: the
+          // disposition belongs to this invitation, so it needs no second query,
+          // no new policy and no service-role path.
+        .select("entry_id,expires_at,delivery_disposition")
+        .eq("studio_id", studio.id)
+        .in("entry_id", cycleIds)
+        .is("redeemed_at", null)
+        .is("expired_at", null)
+        .is("released_at", null)
+        // WAIT INTEGRATION-01 — THE PREDICATE MUST BE THE INDEX'S PREDICATE.
+        //
+        // The comment above names `..._one_live_per_entry` as the authority for
+        // "which invitation is current", and that is right — but 0192 REDEFINED
+        // that index. It is now FOUR columns:
+        //
+        //   where redeemed_at is null and expired_at is null
+        //     and released_at is null and declined_at is null
+        //
+        // This read still asked 0188/0189's THREE. That is not a stylistic gap:
+        // 0192 added `declined_at` precisely so a declined invitation stops
+        // blocking its entry, so the database considers such a row CLOSED and
+        // frees the entry for a later offer — while this page went on counting
+        // it as live. The practitioner saw a phantom live invitation on a row
+        // that was in fact available, with Cancel/Record-expired decided from a
+        // dead cycle's clock.
+        //
+        // Neither component is wrong alone, which is why only an assembly finds
+        // it: the page is correct against a pre-0192 schema, and 0192 is correct
+        // on its own. Matching the index is the fix; no privilege changes and no
+        // second opinion about liveness.
+        //
+        // MIGRATION-FIRST: this column exists because 0192 is in this candidate.
+        // Deploying this read before hosted 0192 is applied would query a column
+        // production does not have. See the PR body's deployment boundary.
+        .is("declined_at", null),
+      supabase
+        .from("new_client_waitlist_invitations")
+        .select("entry_id")
+        .eq("studio_id", studio.id)
+        .in("entry_id", cycleIds)
+        .not("redeemed_at", "is", null),
+    ]);
+
+    if (live.error || redeemed.error) {
+      // UNKNOWN — which is NOT "not elapsed" and NOT "not redeemed". Every
+      // control that depends on the invitation is withheld, and the sentence
+      // beside them says which of the two it is.
+      console.error(
+        JSON.stringify({
+          event: "waitlist_invitation_window_read_failed",
+          studioId: studio.id,
+          code: (live.error ?? redeemed.error)?.code ?? "unknown",
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      cycleByEntry = null;
+    } else {
+      const redeemedIds = new Set(
+        ((redeemed.data ?? []) as Array<{ entry_id: string }>).map((r) => r.entry_id),
+      );
+      // Default every entry in the census to "no live invitation": an entry
+      // with neither a live nor a redeemed row offers nothing, which is the
+      // safe direction. A `released` row that was merely set aside lands here
+      // with `redeemed: false` and stays requeueable, which is what separates
+      // it from one whose used invitation was closed.
+      for (const id of cycleIds) {
+        cycleByEntry.set(id, { elapsed: false, redeemed: redeemedIds.has(id) });
+      }
+      for (const inv of (live.data ?? []) as Array<{
+        entry_id: string;
+        expires_at: string;
+        delivery_disposition: string | null;
+      }>) {
+        // NULL stays absent. `unknown` is an OBSERVED verdict — the provider was
+        // asked and the answer was unreadable. Nothing recorded means no send has
+        // reported back, and the row must not claim otherwise.
+        if (
+          inv.delivery_disposition === "accepted" ||
+          inv.delivery_disposition === "refused" ||
+          inv.delivery_disposition === "unknown"
+        ) {
+          deliveryByEntry.set(inv.entry_id, inv.delivery_disposition);
+        }
+        const expiresAt = new Date(inv.expires_at).getTime();
+        cycleByEntry.set(inv.entry_id, {
+          // A LIVE row whose clock has passed is the only thing that may be
+          // recorded as expired.
+          elapsed: Number.isFinite(expiresAt) && expiresAt <= now,
+          redeemed: false,
+        });
+      }
+    }
+  }
 
   return (
     <div className="flex flex-col gap-6">
+      <InvitationCapacityPanel
+        capacity={capacity}
+        startAction={startInvitingFormAction}
+        closeAction={closeInvitationsFormAction}
+      />
+      {/* WAIT-04A. BELOW CAPACITY, ABOVE THE QUEUE. Capacity is the decision
+          that gates inviting anyone at all, so it stays first; adding a person
+          is the next thing an operator does and belongs beside the list it
+          changes rather than buried under five sections of it. */}
+      <AddToWaitlistPanel
+        addAction={addWaitlistEntryFormAction}
+        importAction={importLegacyWaitlistEntryFormAction}
+      />
       <section>
         <h2 className="text-xl font-medium">Waitlist</h2>
         <p className="mt-1 text-sm text-neutral-500">
@@ -133,78 +817,482 @@ export default async function WaitlistSettingsPage() {
       </section>
 
       <p className="text-sm font-medium" aria-live="polite">
-        Waiting: <span className="tabular-nums">{waiting}</span>
+        Waitlist entries: <span className="tabular-nums">{active}</span>
       </p>
 
-      {waiting === 0 ? (
+      {/* NO BULK CLAIM CONTROL. "Claim the next N" was removed with the rest of
+          the claiming vocabulary — see the CLAIMING IS INTERNAL note at the top
+          of this file. `claim_new_client_waitlist_entries` and its server action
+          are untouched and still tested; nothing on this page invokes them. */}
+
+      {active === 0 ? (
         <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
           Nobody is waiting right now. New-client requests from your booking
           page will appear here.
         </div>
       ) : (
         <>
-          {truncated && (
-            <p className="text-sm text-neutral-500">
-              Showing the {rows.length} longest-waiting of {waiting}.
+          <InviteOutcomeBoundary
+            action={inviteToBookAction}
+            entryNames={Object.fromEntries(rows.map((r) => [r.id, r.name]))}
+          >
+          {focusedStatus && (
+            <p className="text-sm">
+              <WaitlistNavLink href={QUEUE_PATH} className="underline">
+                Back to all groups
+              </WaitlistNavLink>
             </p>
           )}
-          {/* One card per person, stacking naturally on a phone: no horizontal
-              table to scroll at 390px, and every contact detail is selectable
-              text so it can be copied straight into an email or a phone app. */}
-          <ul className="flex flex-col gap-3">
-            {rows.map((row) => {
-              const days = daysWaiting(row.joined_at, now);
-              return (
-                <li
-                  key={row.id}
-                  className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800 sm:flex-row sm:items-start sm:justify-between"
-                >
-                  <div className="flex min-w-0 flex-col gap-1">
-                    <p className="font-medium break-words">{row.name}</p>
-                    <p className="text-sm break-all text-neutral-600 dark:text-neutral-400">
-                      {row.email}
-                    </p>
-                    {row.phone && (
-                      <p className="text-sm text-neutral-600 dark:text-neutral-400">
-                        {row.phone}
-                      </p>
-                    )}
-                    <p className="text-sm text-neutral-500">
-                      Joined {localLongDate(new Date(row.joined_at), studio.timezone)}
-                      {" · "}
-                      <span className="tabular-nums">{ageLabel(days)}</span> waiting
-                      {" · "}
-                      Waiting
-                    </p>
-                  </div>
 
-                  {/* Two-step removal with no client JavaScript: the confirm
-                      button does not exist in the DOM until the disclosure is
-                      opened, so a mis-tap on a phone cannot remove someone.
-                      Removal is terminal — the row keeps its history, but it
-                      does not come back to this queue. */}
-                  <details className="shrink-0">
-                    <summary className="min-h-[44px] cursor-pointer list-none rounded-md border border-neutral-300 px-3 py-2 text-sm text-neutral-700 select-none hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900">
-                      Remove
-                    </summary>
-                    <form action={removeWaitlistEntryAction} className="mt-2 flex flex-col gap-2">
-                      <input type="hidden" name="entry_id" value={row.id} />
-                      <p className="text-sm text-neutral-500">
-                        Take {row.name} off the waitlist? This cannot be undone
-                        from here.
-                      </p>
-                      <button
-                        type="submit"
-                        className="min-h-[44px] rounded-md border border-red-300 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 dark:border-red-700/50 dark:text-red-300 dark:hover:bg-red-950/30"
+          {/* THE SUBMISSION RESULT LIVES HERE, above every section.
+              `revalidatePath` on a committed admission moves the row to
+              `invited`, and a composer is mounted only for waiting/claimed — so
+              the composer unmounts on exactly the outcomes that carry a delivery
+              disposition. This boundary survives that, and survives the row
+              leaving the visible list altogether. */}
+
+          {visibleSections.map(({ status, heading }) => {
+            const group = bySection.get(status);
+            if (!group) return null;
+            const focused = focusedStatus === status;
+            // IN THE ALL-GROUPS VIEW an empty group is simply absent: an
+            // operator queue shows what still needs attention. IN A FOCUSED
+            // VIEW the group was asked for by name, so it must answer even when
+            // the answer is "nobody" — an absent section would read as a broken
+            // link rather than an empty group.
+            if (!focused && group.total === 0) return null;
+            const firstShown = group.from + 1;
+            const lastShown = group.from + group.rows.length;
+            // A PAGE PAST THE END returns no rows against a non-zero count.
+            // Rendering that as an empty section would say "nobody here" about
+            // a group that is not empty, so it says what actually happened and
+            // offers the way back.
+            const pastEnd = focused && group.rows.length === 0 && group.total > 0;
+            const hasPrev = focused && pageNumber > 1;
+            const hasNext = focused && lastShown < group.total;
+            return (
+              <section key={status} className="flex flex-col gap-3">
+                <h3 className="text-sm font-medium" data-testid={`waitlist-section-${status}`}>
+                  {/* THE GROUP'S OWN EXACT COUNT, not the number on screen.
+                      `rows.length` here would restate the page size and tell a
+                      studio with 150 held entries that it has 100. */}
+                  {heading} <span className="tabular-nums">({group.total})</span>
+                </h3>
+                <p className="text-sm text-neutral-500">{STATUS_MEANING[status]}</p>
+
+                {/* WHAT IS ON SCREEN, AND HOW TO REACH THE REST. The heading
+                    carries the whole group; this line carries the window, and
+                    in the all-groups view it carries the way through. */}
+                {focused ? (
+                  pastEnd ? (
+                    <p className="text-sm text-neutral-500">
+                      That page is past the end of this group, which holds{" "}
+                      {group.total}.{" "}
+                      <WaitlistNavLink
+                        href={sectionHref(status)}
+                        data-testid="waitlist-page-first"
+                        className="underline"
                       >
-                        Confirm removal
-                      </button>
-                    </form>
-                  </details>
-                </li>
-              );
-            })}
-          </ul>
+                        Go to the first page
+                      </WaitlistNavLink>
+                    </p>
+                  ) : group.total === 0 ? (
+                    <p className="text-sm text-neutral-500">
+                      Nobody is in this group right now.
+                    </p>
+                  ) : (
+                    <p className="text-sm text-neutral-500">
+                      Showing {firstShown}–{lastShown} of {group.total}.
+                    </p>
+                  )
+                ) : (
+                  group.rows.length < group.total && (
+                    <p className="text-sm text-neutral-500">
+                      {/* WAIT-04A — PROVENANCE-NEUTRAL, AND DELIBERATELY SO.
+                          "The N longest-waiting" is a claim about DURATION
+                          made over the whole displayed set, and an imported
+                          row whose join date is unknown participates in this
+                          ordering while having no waiting time anyone can
+                          state. One such row makes the sentence false for the
+                          set that contains it.
+                          "In queue order" is true of every row regardless of
+                          provenance: the order is (joined_at, id) and every
+                          row has a position in it. It asserts ORDERING, which
+                          is real, rather than DURATION, which for an unknown
+                          row is not. Individual rows still show their own
+                          truthful joined date and wait where they have one —
+                          that claim is per-row and provenance-gated, and this
+                          one could not be. */}
+                      Showing the first {group.rows.length} of {group.total}, in
+                      queue order.{" "}
+                      <WaitlistNavLink
+                        href={sectionHref(status)}
+                        data-testid={`waitlist-section-all-${status}`}
+                        className="underline"
+                      >
+                        Show all {group.total}
+                      </WaitlistNavLink>
+                    </p>
+                  )
+                )}
+
+                {/* One card per person, stacking naturally on a phone: no
+                    horizontal table to scroll at 390px, and every contact detail
+                    is selectable text so it can be copied straight into an email
+                    or a phone app. */}
+                <ul className="flex flex-col gap-3">
+                  {group.rows.map((row) => {
+                    // WAIT-04A. THE CLAIM COMES FIRST, THEN THE NUMBER.
+                    // `daysWaiting` is computed only where a wait may be
+                    // asserted at all: an imported row whose provenance is
+                    // `unknown` carries the IMPORT INSTANT in `joined_at`, so
+                    // computing an age from it would render "0 days waiting"
+                    // for someone who has been waiting for a year.
+                    const claim = joinedAtClaim(row.joined_at_provenance, row.joined_at);
+                    const days = mayRenderAsWait(claim) ? daysWaiting(claim.joinedAt, now) : null;
+                    const claimNote = joinedAtNote(claim);
+                    const origin = originLabel(row.source);
+                    const availability =
+                      preferenceByEntry === null ? null : (preferenceByEntry.get(row.id) ?? null);
+                    // PRESENTATION AVAILABILITY COMES FROM STORED STATE, never
+                    // from firing a command and rendering its refusal. The RPC
+                    // is still the authority — it re-derives everything — but a
+                    // control the row's own state forbids is not offered.
+                    const cycle = cycleByEntry === null ? null : cycleByEntry.get(row.id);
+                    const elapsed = cycleByEntry === null ? undefined : cycle?.elapsed === true;
+                    const redeemed =
+                      cycleByEntry === null ? undefined : cycle?.redeemed === true;
+                    return (
+                      <li
+                        key={row.id}
+                        // WHICH PERSON THIS ROW IS, on the row itself.
+                        //
+                        // A control is only reachable if it is reachable ON THE
+                        // ROW THAT NEEDS IT. Without an identifier here, "this
+                        // page renders a Release" and "entry 150 can be
+                        // released" are the same assertion — and on a page of
+                        // a hundred claimed entries the first is satisfied by
+                        // any of the other ninety-nine. This is what lets a
+                        // test scope the second claim to one person.
+                        //
+                        // IT DISCLOSES NOTHING NEW. The id is already in this
+                        // markup twice, as the hidden `entry_id` of each action
+                        // form below, on a route that is owner-only three times
+                        // over. It sits on the <li> rather than being read off
+                        // those inputs because a row whose state offers no
+                        // action has no form to read it from, and that row
+                        // still has to be identifiable.
+                        data-entry-id={row.id}
+                        data-entry-status={row.status}
+                        className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800 sm:flex-row sm:items-start sm:justify-between"
+                      >
+                        <div className="flex min-w-0 flex-col gap-1">
+                          <p className="font-medium break-words">{row.name}</p>
+                          <p className="text-sm break-all text-neutral-600 dark:text-neutral-400">
+                            {row.email}
+                          </p>
+                          {row.phone && (
+                            <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                              {row.phone}
+                            </p>
+                          )}
+                          {/* WAIT-04A — THE QUEUE SAYS ONLY WHAT IT CAN
+                              STAND BEHIND. Three renderings, because there are
+                              three different strengths of claim and collapsing
+                              them would state the weakest as if it were the
+                              strongest. 0193: "no reader may render it as a
+                              wait" for an unknown join date. */}
+                          {days === null ? (
+                            <p className="text-sm text-neutral-500" data-testid="joined-unknown">
+                              {UNKNOWN_JOINED_AT_COPY}
+                            </p>
+                          ) : (
+                            <p className="text-sm text-neutral-500" data-testid="joined-known">
+                              Joined {localLongDate(new Date(row.joined_at), studio.timezone)}
+                              {claimNote && (
+                                <span data-testid="joined-note"> ({claimNote})</span>
+                              )}
+                              {" · "}
+                              <span className="tabular-nums">{ageLabel(days)}</span> waiting
+                            </p>
+                          )}
+                          {origin && (
+                            <p className="text-sm text-neutral-500" data-testid="entry-origin">
+                              {origin}
+                            </p>
+                          )}
+                          <EntryAvailability
+                            entryId={row.id}
+                            entryName={row.name}
+                            availability={
+                              preferenceByEntry === null
+                                ? { kind: "unknown" }
+                                : availability === null
+                                  ? { kind: "unrecorded" }
+                                  : {
+                                      kind: "recorded",
+                                      preference: availability.preference,
+                                      confirmedAtLabel: availability.confirmedAt
+                                        ? localLongDate(
+                                            new Date(availability.confirmedAt),
+                                            studio.timezone,
+                                          )
+                                        : null,
+                                    }
+                            }
+                            action={setWaitlistAvailabilityFormAction}
+                          />
+                          <EntrySmsConsent
+                            entryId={row.id}
+                            entryName={row.name}
+                            view={smsConsentView(row, studio.timezone)}
+                            action={recordProspectSmsConsentFormAction}
+                          />
+                          {/* THE ROW SAYS WHAT THE PAGE ACTUALLY KNOWS. The
+                              section sentence is status-only, and for `invited`
+                              that is deliberately neutral — a redeemed entry
+                              stays `invited` until conversion is recorded, so
+                              "has not yet been used" would contradict this
+                              row's own controls. Where the invitation facts are
+                              loaded, the sentence is derived from them. */}
+                          {/* THE RECORDED PROVIDER OUTCOME (0196).
+                              Rendered ONLY when something was actually recorded:
+                              an absent row says nothing, because nothing has
+                              reported back. `unknown` is different — it is an
+                              observed verdict and says so. This is what survives
+                              the practitioner navigating away, which no amount of
+                              in-page state could do. */}
+                          {row.status === "invited" &&
+                            deliveryByEntry.has(row.id) && (
+                              <p
+                                data-testid="row-delivery-outcome"
+                                data-disposition={deliveryByEntry.get(row.id)}
+                                className="text-sm text-neutral-500"
+                              >
+                                {
+                                  INVITATION_DELIVERY_COPY[
+                                    deliveryByEntry.get(
+                                      row.id,
+                                    ) as InvitationDeliveryState
+                                  ]
+                                }
+                              </p>
+                            )}
+                          {/* WAIT-P1-EXIT ADDED `released` HERE, AND THE
+                              ADDITION IS A CORRECTION, NOT AN EXTRA.
+                              `STATUS_MEANING.released` promises "Return them to
+                              it to put them back in line" — true of a set-aside
+                              entry and FALSE of one whose used invitation was
+                              closed, because 0200 refuses that requeue. The row
+                              was therefore promising, in prose, exactly what
+                              the missing control could not deliver. */}
+                          {(row.status === "invited" || row.status === "released") && (
+                            <p
+                              data-testid="row-status-meaning"
+                              className="text-sm text-neutral-500"
+                            >
+                              {statusMeaning(row.status, {
+                                invitationElapsed: elapsed,
+                                invitationRedeemed: redeemed,
+                                invitationFactsUnknown: cycleByEntry === null,
+                              })}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto">
+                          {/* CLAIM IS NOT IN THIS LIST. Claiming is an internal
+                              transition, not a practitioner's job — the model
+                              still rules on it and the command is untouched,
+                              but nothing here asks for it. */}
+                          {(
+                            [
+                              "release",
+                              // WAIT-P1-EXIT. Listed immediately after release
+                              // because the two are mutually exclusive by
+                              // construction: release is withheld once the
+                              // invitation has been used and close is offered
+                              // only then, so an `invited` row shows exactly
+                              // one of them and never both.
+                              "close",
+                              "expire",
+                              "requeue",
+                            ] as AdmissionAction[]
+                          ).map(
+                            (action) => {
+                              const verdict = actionAvailability(action, row.status, {
+                                invitationElapsed: elapsed,
+                                invitationRedeemed: redeemed,
+                                invitationFactsUnknown: cycleByEntry === null,
+                              });
+                              if (!verdict.available) return null;
+                              const formAction =
+                                action === "expire"
+                                  ? expireWaitlistInvitationAction
+                                  : ACTION_FORMS[action];
+                              if (!formAction) return null;
+                              const help = actionHelp(action, row.status);
+                              return (
+                                <form key={action} action={formAction}>
+                                  <input type="hidden" name="entry_id" value={row.id} />
+                                  <button
+                                    type="submit"
+                                    data-testid={`waitlist-action-${action}`}
+                                    className="min-h-[44px] w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900 sm:w-auto"
+                                  >
+                                    {/* THE ROW DECIDES THE VERB, AND IT MAY ONLY
+                                        PROMISE WHAT THE COMMAND DELIVERS.
+                                        Release reads "Set aside" on a ready-to-
+                                        invite entry and "Cancel invitation" on
+                                        an invited one — neither says "Return to
+                                        waitlist", because release lands the
+                                        entry in Released and only requeue
+                                        reaches Waiting. */}
+                                    {actionLabel(action, row.status)}
+                                  </button>
+                                  {/* The consequence, where the verb alone does
+                                      not carry it. Beside the control, not in a
+                                      tooltip: a tooltip is unreachable by touch. */}
+                                  {help && (
+                                    <span
+                                      data-testid={`waitlist-action-help-${action}`}
+                                      className="mt-1 block text-xs leading-snug text-neutral-500"
+                                    >
+                                      {help}
+                                    </span>
+                                  )}
+                                </form>
+                              );
+                            },
+                          )}
+
+                          {/* The invitation window could not be read, so whether
+                              it has run out is UNKNOWN. Say that, rather than
+                              letting the absent control imply "still live". */}
+                          {/* No action is offered here on purpose. An earlier
+                              revision claimed Release worked regardless, which
+                              was false: a redeemed invitation cannot be
+                              released, and this is exactly the case where we do
+                              not know whether it was. (The old sentence is not
+                              quoted here — a reviewer matched it as live copy.) */}
+                          {row.status === "invited" && cycleByEntry === null && (
+                            <span className="text-xs text-neutral-500">
+                              This invitation&apos;s current state could not be
+                              checked, so no action is offered for it. Refresh to
+                              try again.
+                            </span>
+                          )}
+
+                          {/* REMOVE IS NOT OFFERED WHERE IT ALWAYS REFUSES.
+                              `remove_new_client_waitlist_entry` answers
+                              `release_required` for a held or invited entry and
+                              changes nothing, so an owner who opened this and
+                              pressed Confirm would get an avoidable error. The
+                              same availability authority decides it. */}
+                          {actionAvailability("remove", row.status).available && (
+                          /* Two-step removal with no client JavaScript: the
+                              confirm button does not exist in the DOM until the
+                              disclosure is opened, so a mis-tap on a phone
+                              cannot remove someone. Removal is terminal — the
+                              row keeps its history, but it does not come back to
+                              this queue. */
+                          <details>
+                            <summary className="min-h-[44px] cursor-pointer list-none rounded-md border border-neutral-300 px-3 py-2 text-sm text-neutral-700 select-none hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900">
+                              Remove
+                            </summary>
+                            <form
+                              action={removeWaitlistEntryAction}
+                              className="mt-2 flex flex-col gap-2"
+                            >
+                              <input type="hidden" name="entry_id" value={row.id} />
+                              <p className="text-sm text-neutral-500">
+                                Take {row.name} off the waitlist? This cannot be
+                                undone from here.
+                              </p>
+                              <button
+                                type="submit"
+                                className="min-h-[44px] rounded-md border border-red-300 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 dark:border-red-700/50 dark:text-red-300 dark:hover:bg-red-950/30"
+                              >
+                                Confirm removal
+                              </button>
+                            </form>
+                          </details>
+                          )}
+                          {/* WAIT INTEGRATION-01 — THE REAL INVITE-TO-BOOK PATH.
+                              #683 ships the composer and #685 ships `admit_`;
+                              they are siblings off production, so this binding
+                              exists only in the assembly. The composer is given
+                              the server action directly — its `action` prop is
+                              typed as a plain `(FormData) => …`, which IS a
+                              server action's shape — so there is no second form
+                              and no duplicated composer state here.
+
+                              OFFERED ONLY WHERE THE STATE ALLOWS IT, from
+                              #683's own `INVITE_TO_BOOK_STATUSES`. A row in any
+                              other state gets no composer at all rather than a
+                              disabled one, because the send control's own
+                              disabled state is about the DRAFT, not about
+                              whether this person can be invited. */}
+                          {INVITE_TO_BOOK_STATUSES.includes(row.status) && (
+                            <details className="mt-2">
+                              <summary className="min-h-[44px] cursor-pointer list-none rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium dark:border-neutral-700">
+                                Invite to book
+                              </summary>
+                              <InviteComposer
+                                entryId={row.id}
+                                entryName={row.name}
+                                draft={emptyDraft()}
+                                services={bookableServices}
+                                // NO CAPACITY, NO OFFERED SEND. The composer
+                                // still opens for inspection; what it must not
+                                // do is present Send as valid and fail only
+                                // after submission. Usability, not authority —
+                                // the command re-checks regardless.
+                                capabilities={
+                                  canOfferInvite(capacity)
+                                    ? admissionCommandAdapter.capabilities
+                                    : null
+                                }
+                                unavailableReason={inviteUnavailableReason(capacity)}
+                              />
+                            </details>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+
+                {/* PREV / NEXT — what turns a page size into a page. Without
+                    it, row 101 of a group and the only action that can move it
+                    are both unreachable. Rendered only where there is somewhere
+                    to go, so a single-page group carries no dead controls. */}
+                {(hasPrev || hasNext) && (
+                  <nav aria-label={`${heading} pages`} className="flex flex-wrap gap-2">
+                    {hasPrev && (
+                      <WaitlistNavLink
+                        href={sectionHref(status, pageNumber - 1)}
+                        data-testid="waitlist-page-prev"
+                        className={NAV_LINK_CLASS}
+                      >
+                        Previous
+                      </WaitlistNavLink>
+                    )}
+                    {hasNext && (
+                      <WaitlistNavLink
+                        href={sectionHref(status, pageNumber + 1)}
+                        data-testid="waitlist-page-next"
+                        className={NAV_LINK_CLASS}
+                      >
+                        Next
+                      </WaitlistNavLink>
+                    )}
+                  </nav>
+                )}
+              </section>
+            );
+          })}
+          </InviteOutcomeBoundary>
         </>
       )}
     </div>

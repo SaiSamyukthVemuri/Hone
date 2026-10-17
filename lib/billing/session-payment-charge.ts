@@ -6,6 +6,10 @@ import { getSessionPaymentStripe } from "@/lib/stripe/session-payment-stripe";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { getChargeReadyCardAuthorizationStatus } from "@/lib/consent/current-card-authorization";
 import { buildChargeDescription } from "@/lib/billing/charge-description";
+import {
+  compareProviderMoney,
+  providerMoneyMismatchDetails,
+} from "@/lib/billing/provider-money-facts";
 
 // ---------------------------------------------------------------------------
 // runSessionPaymentCharge (PR #173).
@@ -125,6 +129,101 @@ export type SessionPaymentChargeResult =
       outcome: "succeeded";
       stripePaymentIntentId: string;
       stripeChargeId: string | null;
+      /**
+       * TRUE only when THIS invocation moved the row to succeeded; FALSE when
+       * it short-circuited on a row that was already succeeded before the
+       * call.
+       *
+       * Both are `ok: true` — a replay is a legitimate no-op and the money is
+       * settled either way — but they are NOT the same event.
+       *
+       * THIS FIELD ALONE IS NOT THE ONCE-PER-CHARGE KEY. Automatic receipt
+       * eligibility is `committedNow || concurrentlyReconciled` (see that field
+       * below), because a charge can genuinely succeed with `committedNow`
+       * false: the `payment_intent.succeeded` webhook is a THIRD writer
+       * (`reconcile_card_payment_succeeded`, 0187) which takes the appointment
+       * advisory key and `FOR UPDATE`, so when IT wins the row this
+       * invocation's conditional UPDATE matches zero rows and `committedNow`
+       * becomes true ZERO times for a charge that really happened. Keying
+       * once-per-charge work off this field by itself is what stranded a real
+       * receipt in production.
+       *
+       * EXCLUSIVE AT THE DATABASE, not merely observed here: the succeeded
+       * write is a conditional UPDATE scoped to `.eq("status",
+       * "pending_stripe")`, so of two concurrent writers exactly one gets rows
+       * back and `committedNow` is true for at most one of them.
+       *
+       * THE LOSER IS NOT AUTOMATICALLY needs_manual_review. A zero-row write is
+       * classified, not assumed: a loser that holds the SAME PaymentIntent and
+       * whose row passes the full identity/money/lineage check returns clean
+       * `succeeded` with `concurrentlyReconciled` true. needs_manual_review is
+       * for a zero-row write that canNOT be explained that way. Do not restore
+       * a blanket "loser -> needs_manual_review" reading of this field.
+       *
+       * IT IS NOT A RECEIPT-OWNERSHIP FACT, THOUGH IT IS A RECEIPT INPUT.
+       * Together with `concurrentlyReconciled` it answers only "did a brand-new
+       * charge succeed in THIS invocation", which is what
+       * `lib/billing/auto-payment-receipt.ts` uses to decide who may ATTEMPT a
+       * send. NEITHER FIELD OWNS EMAIL DELIVERY. Who actually SENDS is decided
+       * by the durable conditional `receipt_status: null -> sending` claim in
+       * `sendPaymentChargeReceipt`.
+       *
+       * A HISTORICAL REPLAY -- an invocation that starts against a row already
+       * succeeded before the call -- has neither fact, and starts no automatic
+       * receipt attempt at all.
+       *
+       * DO NOT REINTRODUCE A PROCESS-LEVEL OWNER FIELD HERE. Three revisions
+       * tried; the last anchored ownership to the claim RPC and lost LIVENESS,
+       * because a recovery of an orphaned claim could then never receipt the
+       * charge. See the note below.
+       */
+      committedNow: boolean;
+      /**
+       * TRUE only when ALL of these hold:
+       *
+       *   1. THIS invocation created, confirmed or RECOVERED the PaymentIntent,
+       *      and
+       *   2. Stripe reported it `succeeded`, and
+       *   3. the ledger row was ALREADY stamped succeeded by a different
+       *      legitimate writer before our conditional UPDATE ran, and
+       *   4. an authoritative re-read proved that row records the IDENTICAL
+       *      charge — same attempt, PaymentIntent, charge lineage, studio,
+       *      client, livemode, amount, currency and charge reason.
+       *
+       * THE MONEY IS SETTLED AND A RECEIPT MAY STILL BE OWED. This is NOT a
+       * replay: a replay short-circuits before any PaymentIntent is created and
+       * owes nothing. Here a real charge exists that may not have been receipted,
+       * so `lib/billing/auto-payment-receipt.ts` treats this exactly like
+       * `committedNow` when deciding who may ATTEMPT a send.
+       *
+       * A VERIFICATION FACT, NOT AN OWNERSHIP FACT. It says the ledger is
+       * correct and who made it so; it says nothing about whether THIS
+       * invocation actually sends the receipt. That is settled by the durable
+       * `receipt_status` claim.
+       *
+       * AND IT IS SET ON THE RECONCILE PATH TOO. An `already_pending` claim
+       * carrying a stored PaymentIntent goes through
+       * `reconcileExistingPaymentIntent`, and if its succeeded write loses to a
+       * verified concurrent writer this is true there as well. That is
+       * deliberate: it is exactly the orphaned-claim recovery whose receipt
+       * liveness this design restores.
+       */
+      concurrentlyReconciled?: boolean;
+      /**
+       * WHY THERE IS NO PROCESS-LEVEL RECEIPT-OWNER FIELD HERE.
+       *
+       * A process-level receipt-owner field lived here for one revision, anchored
+       * to the claim RPC result. It gave exclusivity and lost LIVENESS: when
+       * the claim winner died after Stripe succeeded, the invocation that
+       * recovered the charge was forbidden to receipt it and nobody could.
+       *
+       * EMAIL OWNERSHIP IS NOT A FACT ABOUT A PROCESS. It is the durable
+       * `receipt_status: null -> sending` claim in
+       * `lib/billing/payment-receipt.ts`, which survives a dead process and
+       * admits exactly one winner. The two fields above say who moved the MONEY;
+       * `lib/billing/auto-payment-receipt.ts` uses them only to decide who may
+       * ATTEMPT a send, and the database decides who actually does.
+       */
     }
   | {
       ok: false;
@@ -323,23 +422,208 @@ async function loadCardAndVerifyLineage(args: {
 // the refund helper's writeOkErr || okWriteZeroRows -> needs_manual_review
 // posture (lib/billing/payment-refund.ts).
 type SuccessPersistenceResult =
-  | { persisted: true }
-  | { persisted: false; reason: "db_error" | "zero_rows" };
+  | { persisted: true; by: "this_invocation" }
+  /**
+   * The row is correct and records THIS charge, but a different legitimate
+   * writer stamped it first. Still `persisted: true`, so every existing
+   * `if (!persistence.persisted)` guard keeps its meaning untouched.
+   *
+   * RECEIPT OWNERSHIP IS ABSENT HERE, AND ABSENT FROM THE RESULT TOO. One
+   * revision returned an ownership flag from this union; a later one moved it to
+   * the result and anchored it to the claim RPC. Both were wrong, the second
+   * because it lost LIVENESS -- a recovery of an orphaned claim could then never
+   * receipt the charge.
+   *
+   * Email ownership is the durable `receipt_status: null -> sending` claim in
+   * lib/billing/payment-receipt.ts. Nothing in this file grants it.
+   */
+  | { persisted: true; by: "concurrent_writer" }
+  // `provider_money_mismatch` (PAY-CCY-01): Stripe's succeeded PaymentIntent
+  // states a different amount or currency than the prepared attempt. Nothing
+  // was written; the row stays `pending_stripe` for manual review.
+  | { persisted: false; reason: "db_error" | "zero_rows" | "provider_money_mismatch" };
 
 // Snapshots a successful PaymentIntent back onto the attempt row.
 // Returns whether the success outcome was durably persisted: the
 // caller must NOT report a normal success unless persisted === true.
+/**
+ * Is a zero-row succeeded write PROVABLY the benign concurrent-writer race?
+ *
+ * PAY-ZERO-ROW-RACE-01. A zero-row conditional UPDATE says only "the row left
+ * pending_stripe before I got there". It does NOT say who moved it or why, and
+ * the two possibilities are opposites:
+ *
+ *   BENIGN    the `payment_intent.succeeded` webhook reconciled the IDENTICAL
+ *             charge onto the row microseconds earlier. The ledger is already
+ *             right and nothing is owed but the receipt.
+ *   DANGEROUS the row was cancelled, failed, blocked, settled in cash, or
+ *             stamped with a DIFFERENT PaymentIntent. Real money moved against
+ *             a row that does not record it.
+ *
+ * Today both raise CRITICAL, which is why a correct ledger woke an operator.
+ * This proves which one happened BEFORE any alert is written, and every single
+ * fact must line up: anything missing, mismatched, unreadable or terminal falls
+ * through to CRITICAL. The default is manual review; benign is the exception
+ * that must be earned.
+ */
+async function classifyZeroRowSuccessWrite(args: {
+  attemptId: string;
+  studioId: string;
+  clientId: string;
+  pi: Stripe.PaymentIntent;
+  expectedChargeReason: string | null;
+  expectedLatestChargeId: string | null;
+}): Promise<
+  | { benign: true; row: ZeroRowRecheckRow }
+  | { benign: false; why: string; observedStatus: string | null }
+> {
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("payment_charge_attempts")
+    .select(
+      "id, studio_id, client_id, status, charge_reason, amount_cents, currency, " +
+        "stripe_livemode, stripe_payment_intent_id, stripe_charge_id, " +
+        "cancelled_at, refund_status",
+    )
+    .eq("id", args.attemptId)
+    .maybeSingle();
+
+  // UNREADABLE IS NOT BENIGN. A read error or a missing row leaves us unable to
+  // say anything about a real charge, which is the definition of manual review.
+  if (error) {
+    return { benign: false, why: `recheck_read_error:${error.code ?? "unknown"}`, observedStatus: null };
+  }
+  if (!data) {
+    return { benign: false, why: "recheck_row_missing", observedStatus: null };
+  }
+  const row = data as unknown as ZeroRowRecheckRow;
+
+  // Every predicate is stated separately so the alert can name WHICH one failed.
+  // `pi.amount` and `pi.currency` are Stripe's own numbers, so the money facts
+  // are compared against the provider rather than against our own expectations.
+  const checks: ReadonlyArray<readonly [boolean, string]> = [
+    [row.id === args.attemptId, "attempt_id_mismatch"],
+    [row.status === "succeeded", "status_not_succeeded"],
+    [row.studio_id === args.studioId, "studio_mismatch"],
+    [row.client_id === args.clientId, "client_mismatch"],
+    [row.stripe_payment_intent_id === args.pi.id, "payment_intent_mismatch"],
+    [row.stripe_livemode === args.pi.livemode, "livemode_mismatch"],
+    [row.amount_cents === args.pi.amount, "amount_mismatch"],
+    [
+      (row.currency ?? "").toLowerCase() === (args.pi.currency ?? "").toLowerCase(),
+      "currency_mismatch",
+    ],
+    [row.charge_reason === args.expectedChargeReason, "charge_reason_mismatch"],
+    [row.cancelled_at === null, "row_cancelled"],
+    // ANY refund activity at all, not just a COMPLETED one. `!== "succeeded"`
+    // accepted `pending_stripe`, i.e. a refund already in flight with an unknown
+    // Stripe outcome — and then sent the client an automatic receipt for money
+    // that is on its way back. Before this repair every zero-row write stayed
+    // fail-closed, so that was a regression, not a pre-existing gap. NULL is the
+    // only benign value.
+    [row.refund_status === null, "refund_in_progress_or_done"],
+    // CHARGE LINEAGE, AND IT IS DELIBERATELY ASYMMETRIC.
+    //
+    // A NULL ROW VALUE is compatible: the concurrent writer coalesces and may not
+    // have persisted the charge id yet, so its absence proves nothing either way
+    // and every other identity and money fact still has to match.
+    //
+    // A NON-NULL ROW VALUE MUST BE PROVEN EQUAL. An earlier revision also
+    // accepted any row value whenever the PROVIDER's latest_charge was null,
+    // which is a different exception entirely and was not the one documented: a
+    // missing provider charge id cannot establish that some arbitrary charge on
+    // the row is this charge. That would let a conflicting lineage suppress the
+    // critical alert and, with ownership, trigger a receipt.
+    [
+      row.stripe_charge_id === null
+        ? true
+        : args.expectedLatestChargeId !== null &&
+          row.stripe_charge_id === args.expectedLatestChargeId,
+      "charge_id_mismatch",
+    ],
+  ];
+  for (const [ok, why] of checks) {
+    if (!ok) return { benign: false, why, observedStatus: row.status };
+  }
+  return { benign: true, row };
+}
+
+type ZeroRowRecheckRow = {
+  id: string;
+  studio_id: string;
+  client_id: string;
+  status: string;
+  charge_reason: string | null;
+  amount_cents: number;
+  currency: string | null;
+  stripe_livemode: boolean;
+  stripe_payment_intent_id: string | null;
+  stripe_charge_id: string | null;
+  cancelled_at: string | null;
+  refund_status: string | null;
+};
+
 async function writeSucceededOutcome(args: {
   attemptId: string;
   studioId: string;
   clientId: string;
   pi: Stripe.PaymentIntent;
+  /**
+   * The attempt's charge_reason as this invocation read it, compared against the
+   * re-read so a zero-row race cannot be blessed across a different charge kind.
+   */
+  expectedChargeReason: string | null;
+  /**
+   * PAY-CCY-01. The PREPARED money facts, read from the attempt row. The
+   * succeeded outcome is recorded only when Stripe's PaymentIntent states
+   * exactly this amount and currency.
+   */
+  expectedAmountCents: number | null;
+  expectedCurrency: string | null;
 }): Promise<SuccessPersistenceResult> {
   const admin = createAdminClient();
   const latestCharge =
     typeof args.pi.latest_charge === "string"
       ? args.pi.latest_charge
       : (args.pi.latest_charge?.id ?? null);
+
+  // PAY-CCY-01. CHECKED BEFORE THE WRITE, BECAUSE THE WRITE IS THE CLAIM.
+  //
+  // Stamping `succeeded` says "this attempt's money moved". If Stripe's
+  // PaymentIntent names a different amount or currency, that sentence would be
+  // false about the one row the receipt, the refund and every financial report
+  // read. So the row is left exactly as it is (`pending_stripe`, a valid
+  // reconciliation source) and a person is told. The money is real on Stripe
+  // either way; what this refuses is recording it as the prepared charge.
+  const prepared = {
+    amountCents: args.expectedAmountCents,
+    currency: args.expectedCurrency,
+  };
+  const provider = { amount: args.pi.amount, currency: args.pi.currency };
+  const money = compareProviderMoney(prepared, provider);
+  if (!money.ok) {
+    logInternal("session_payment_provider_money_mismatch", {
+      attemptId: args.attemptId,
+      mismatches: money.mismatches,
+    });
+    await recordOpsAlert({
+      severity: "critical",
+      event: "session_payment_provider_money_mismatch",
+      message:
+        "Stripe reported a succeeded PaymentIntent whose amount or currency does not equal the prepared attempt. Hone did NOT record it as succeeded; the row stays 'pending_stripe'. The charge may be real on Stripe. Manual reconciliation required.",
+      studioId: args.studioId,
+      clientId: args.clientId,
+      stripePaymentIntentId: args.pi.id,
+      route: "lib/billing/session-payment-charge:writeSucceededOutcome",
+      safeDetails: {
+        attempt_id: args.attemptId,
+        attempted_status: "succeeded",
+        ...providerMoneyMismatchDetails(prepared, provider, money.mismatches),
+      },
+    });
+    return { persisted: false, reason: "provider_money_mismatch" };
+  }
+
   const { data: updatedRows, error } = await admin
     .from("payment_charge_attempts")
     .update({
@@ -393,14 +677,87 @@ async function writeSucceededOutcome(args: {
   // ledger row unstamped while real money moved. Surface for manual
   // reconciliation instead of continuing as if the outcome was recorded.
   if (!updatedRows || updatedRows.length === 0) {
+    // PAY-ZERO-ROW-RACE-01. CLASSIFY BEFORE ALERTING.
+    //
+    // A real incident (2026-09-27, pi_3UKQ8h…) woke an operator at CRITICAL for a
+    // ledger that was already completely correct: the payment_intent.succeeded
+    // webhook's reconcile command had stamped the identical charge 2.1s earlier.
+    // The alert was true about the zero rows and false about everything an
+    // operator would act on.
+    //
+    // So the row is re-read FIRST and the alert is only written if the benign
+    // race cannot be proved. Establishing safety before the alert write is
+    // deliberate: a critical money alert that turns out to be noise is not a
+    // harmless false positive, it is a cost on the one signal that must stay
+    // trustworthy.
+    const verdict = await classifyZeroRowSuccessWrite({
+      attemptId: args.attemptId,
+      studioId: args.studioId,
+      clientId: args.clientId,
+      pi: args.pi,
+      expectedChargeReason: args.expectedChargeReason,
+      expectedLatestChargeId: latestCharge,
+    });
+
+    if (verdict.benign) {
+      // THE LEDGER IS RIGHT AND NO MONEY IS AT RISK. Recorded at WARNING, not
+      // critical: the race is real, worth watching and worth a paging-free
+      // signal, but there is nothing for a human to reconcile. Only `critical`
+      // pages (lib/ops/alerts.ts), so this stays out of the manual-review queue
+      // while remaining visible if the race becomes frequent.
+      // THIS ALERT MAKES NO RECEIPT CLAIM AT ALL, and that is the point.
+      //
+      // It is written here, inside the charge writer, BEFORE the action layer
+      // calls autoSendReceiptAfterCharge -- so it cannot know whether a receipt
+      // was dispatched, let alone delivered. An earlier revision said "dispatched
+      // it automatically"; a later one branched on a process-level owner. Both
+      // asserted more than this point in the code can support.
+      //
+      // Email ownership is the durable `receipt_status: null -> sending` claim in
+      // lib/billing/payment-receipt.ts. This invocation is eligible to ATTEMPT a
+      // send because it holds a succeeded PaymentIntent for this attempt, and the
+      // database decides whether it actually sends. So the alert reports the MONEY
+      // verdict and says explicitly that the receipt outcome is recorded
+      // elsewhere.
+      logInternal("session_payment_succeeded_write_concurrent_reconciliation", {
+        attemptId: args.attemptId,
+      });
+      await recordOpsAlert({
+        severity: "warning",
+        event: "session_payment_succeeded_write_concurrent_reconciliation",
+        message:
+          "The succeeded-outcome update affected zero rows because another legitimate writer " +
+          "(normally the payment_intent.succeeded webhook) had already persisted the IDENTICAL " +
+          "charge on this attempt. Verified by authoritative re-read: same attempt, PaymentIntent, " +
+          "charge lineage, studio, client, livemode, amount, currency and charge reason. " +
+          "The ledger is correct and NO money reconciliation is required. " +
+          "Automatic receipt dispatch is attempted by the action layer and owned by the durable " +
+          "receipt_status claim; this alert asserts no receipt outcome of any kind.",
+        studioId: args.studioId,
+        clientId: args.clientId,
+        stripePaymentIntentId: args.pi.id,
+        route: "lib/billing/session-payment-charge:writeSucceededOutcome",
+        safeDetails: {
+          attempt_id: args.attemptId,
+          attempted_status: "succeeded",
+          resolution: "concurrent_writer_already_persisted",
+          receipt_outcome_recorded_elsewhere: true,
+        },
+      });
+      return { persisted: true, by: "concurrent_writer" };
+    }
+
+    // NOT PROVABLY BENIGN — unchanged behaviour, and the reason is now named so
+    // the operator is told WHICH fact failed rather than only that rows were zero.
     logInternal("session_payment_succeeded_write_zero_rows", {
       attemptId: args.attemptId,
+      recheck: verdict.why,
     });
     await recordOpsAlert({
       severity: "critical",
       event: "session_payment_succeeded_write_zero_rows",
       message:
-        "PaymentIntent succeeded but the succeeded-outcome update affected zero rows (the attempt was no longer 'pending_stripe'). The ledger row may be unstamped while the charge is real on Stripe. Manual reconciliation required.",
+        "PaymentIntent succeeded but the succeeded-outcome update affected zero rows (the attempt was no longer 'pending_stripe'), and an authoritative re-read could NOT prove the row records this same charge. The ledger row may be unstamped, or stamped with a different charge, while the charge is real on Stripe. Manual reconciliation required.",
       studioId: args.studioId,
       clientId: args.clientId,
       stripePaymentIntentId: args.pi.id,
@@ -408,13 +765,15 @@ async function writeSucceededOutcome(args: {
       safeDetails: {
         attempt_id: args.attemptId,
         attempted_status: "succeeded",
+        recheck_failed: verdict.why,
+        observed_status: verdict.observedStatus,
       },
     });
     // PR #281: a zero-row success write is NOT a normal success. The
     // caller must return needs_manual_review with the reconciliation ids.
     return { persisted: false, reason: "zero_rows" };
   }
-  return { persisted: true };
+  return { persisted: true, by: "this_invocation" };
 }
 
 async function writeFailedOutcome(args: {
@@ -604,6 +963,68 @@ async function finalizeRequiresActionPaymentIntent(args: {
 // Pending reconciliation branch. Stale pending_stripe rows with a
 // known PaymentIntent id: read the PI back from Stripe to recover
 // the true status without re-creating.
+// PAY-CCY-01, Codex P1 4253998912. MONEY FIRST, STATUS SECOND.
+//
+// A PaymentIntent this path obtains — retrieved for a pending row, or returned
+// by create (including an idempotent replay) — is compared with the attempt's
+// PREPARED amount and currency BEFORE any status branch runs. The status
+// branches act on it: `requires_action` CANCELS it and records `failed`, and
+// every other non-success status records `failed`. Doing either on an intent
+// whose money is not the prepared charge would retire a real prepared attempt
+// on the strength of an unrelated (stale, misbound or replayed) provider
+// object, and cancel that object on Stripe.
+//
+// So on ANY mismatch — different amount or currency, unreadable provider
+// money, or invalid prepared facts — nothing is written, nothing is
+// cancelled, the row stays `pending_stripe`, and a person is told. Same-money
+// intents take exactly the path they took before. writeSucceededOutcome keeps
+// its own identical check as defense in depth.
+async function refuseOnProviderMoneyMismatch(args: {
+  pi: Stripe.PaymentIntent;
+  expectedAmountCents: number | null;
+  expectedCurrency: string | null;
+  attemptId: string;
+  studioId: string;
+  clientId: string;
+  sessionId: string;
+  appointmentId: string | null;
+  route: string;
+}): Promise<SessionPaymentChargeResult | null> {
+  const prepared = { amountCents: args.expectedAmountCents, currency: args.expectedCurrency };
+  const provider = { amount: args.pi.amount, currency: args.pi.currency };
+  const money = compareProviderMoney(prepared, provider);
+  if (money.ok) return null;
+  logInternal("session_payment_provider_money_mismatch", {
+    attemptId: args.attemptId,
+    stripeStatus: args.pi.status,
+    mismatches: money.mismatches,
+  });
+  await recordOpsAlert({
+    severity: "critical",
+    event: "session_payment_provider_money_mismatch",
+    message:
+      "Stripe returned a PaymentIntent for this attempt whose amount or currency does not equal the prepared attempt. Hone wrote nothing, did NOT cancel the PaymentIntent, and left the row 'pending_stripe'. Manual reconciliation required.",
+    studioId: args.studioId,
+    clientId: args.clientId,
+    stripePaymentIntentId: args.pi.id,
+    route: args.route,
+    safeDetails: {
+      attempt_id: args.attemptId,
+      session_id: args.sessionId,
+      appointment_id: args.appointmentId,
+      attempted_status: args.pi.status,
+      ...providerMoneyMismatchDetails(prepared, provider, money.mismatches),
+    },
+  });
+  return {
+    ok: false,
+    outcome: "needs_manual_review",
+    message: NEEDS_MANUAL_REVIEW_MESSAGE,
+    stripePaymentIntentId: args.pi.id,
+    attemptId: args.attemptId,
+  };
+}
+
 async function reconcileExistingPaymentIntent(args: {
   attemptId: string;
   studioId: string;
@@ -612,6 +1033,11 @@ async function reconcileExistingPaymentIntent(args: {
   appointmentId: string | null;
   stripeAccountId: string;
   paymentIntentId: string;
+  /** Compared against the row on a zero-row recheck. */
+  expectedChargeReason: string | null;
+  /** PAY-CCY-01. The prepared money facts the retrieved PI must equal. */
+  expectedAmountCents: number | null;
+  expectedCurrency: string | null;
 }): Promise<SessionPaymentChargeResult> {
   const stripe = getSessionPaymentStripe();
   let pi: Stripe.PaymentIntent;
@@ -649,12 +1075,28 @@ async function reconcileExistingPaymentIntent(args: {
       message: NEEDS_MANUAL_REVIEW_MESSAGE,
     };
   }
+  // Codex P1 4253998912: money before ANY status branch (cancel / failed write).
+  const moneyRefusal = await refuseOnProviderMoneyMismatch({
+    pi,
+    expectedAmountCents: args.expectedAmountCents,
+    expectedCurrency: args.expectedCurrency,
+    attemptId: args.attemptId,
+    studioId: args.studioId,
+    clientId: args.clientId,
+    sessionId: args.sessionId,
+    appointmentId: args.appointmentId,
+    route: "lib/billing/session-payment-charge:reconcileExistingPaymentIntent",
+  });
+  if (moneyRefusal) return moneyRefusal;
   if (pi.status === "succeeded") {
     const persistence = await writeSucceededOutcome({
       attemptId: args.attemptId,
       studioId: args.studioId,
       clientId: args.clientId,
       pi,
+      expectedChargeReason: args.expectedChargeReason,
+      expectedAmountCents: args.expectedAmountCents,
+      expectedCurrency: args.expectedCurrency,
     });
     if (!persistence.persisted) {
       // PR #281: Stripe says succeeded but Hone could not persist it
@@ -677,6 +1119,10 @@ async function reconcileExistingPaymentIntent(args: {
       outcome: "succeeded",
       stripePaymentIntentId: pi.id,
       stripeChargeId: latestCharge,
+      // Three independent facts: the WRITE, who else wrote it, and WHOSE CHARGE
+      // it is. The last is threaded from the claim, never re-derived here.
+      committedNow: persistence.by === "this_invocation",
+      concurrentlyReconciled: persistence.by === "concurrent_writer",
     };
   }
   // PR #320: requires_action is not terminal on Stripe: cancel before failing.
@@ -794,6 +1240,8 @@ export async function runSessionPaymentCharge(args: {
       outcome: "succeeded",
       stripePaymentIntentId: attemptRow.stripe_payment_intent_id ?? "",
       stripeChargeId: null,
+      // Already succeeded BEFORE this call: a replay, not a new charge.
+      committedNow: false,
     };
   }
   // Refuse retry of terminal-non-success states.
@@ -957,6 +1405,8 @@ export async function runSessionPaymentCharge(args: {
       outcome: "succeeded",
       stripePaymentIntentId: claim.stripe_payment_intent_id ?? "",
       stripeChargeId: null,
+      // The claim RPC found it already succeeded: a replay, not a charge.
+      committedNow: false,
     };
   }
   // PAY-SETTLE / 0187. TERMINAL, AND BEFORE ANY STRIPE CALL.
@@ -1020,6 +1470,9 @@ export async function runSessionPaymentCharge(args: {
         appointmentId: attemptRow.appointment_id,
         stripeAccountId: card.stripe_account_id,
         paymentIntentId: claim.stripe_payment_intent_id,
+        expectedChargeReason: attemptRow.charge_reason ?? null,
+        expectedAmountCents: attemptRow.amount_cents,
+        expectedCurrency: attemptRow.currency,
       });
     }
     // No PI id on the row. Check whether the claim is recent enough
@@ -1180,6 +1633,22 @@ export async function runSessionPaymentCharge(args: {
 
   // 7. Stripe accepted the create+confirm. The PI either succeeded
   //    or sits in requires_action / requires_payment_method.
+  //
+  // Codex P1 4253998912: money before ANY status branch. An idempotent replay
+  // returns the intent Stripe already holds for this key, so even here the
+  // returned money is checked, not assumed.
+  const moneyRefusal = await refuseOnProviderMoneyMismatch({
+    pi,
+    expectedAmountCents: attemptRow.amount_cents,
+    expectedCurrency: attemptRow.currency,
+    attemptId: attemptRow.id,
+    studioId: attemptRow.studio_id,
+    clientId: attemptRow.client_id,
+    sessionId: attemptRow.session_id,
+    appointmentId: attemptRow.appointment_id,
+    route: "lib/billing/session-payment-charge:runSessionPaymentCharge",
+  });
+  if (moneyRefusal) return moneyRefusal;
   if (pi.status === "succeeded") {
     // PR #281: success is authoritative ONLY if Hone also persisted the
     // succeeded outcome on the ledger row. If persistence failed (DB
@@ -1193,6 +1662,26 @@ export async function runSessionPaymentCharge(args: {
       studioId: attemptRow.studio_id,
       clientId: attemptRow.client_id,
       pi,
+      expectedChargeReason: attemptRow.charge_reason ?? null,
+      expectedAmountCents: attemptRow.amount_cents,
+      expectedCurrency: attemptRow.currency,
+      // WHY SEVERAL INVOCATIONS CAN REACH HERE HOLDING THE SAME CHARGE.
+      //
+      // The `already_pending` branch above DELIBERATELY lets several requests
+      // fall through to the create-and-confirm call below with the same
+      // deterministic idempotency key, so Stripe returns the SAME succeeded
+      // PaymentIntent to all of them.
+      //
+      // (The provider method is deliberately not named in prose here: the repo's
+      // Stripe call-site inventory guards count that literal to pin exactly one
+      // create site, and they count source text rather than parsed calls.)
+      //
+      // THAT IS FINE, because nothing here decides who sends the receipt. Each of
+      // them may ATTEMPT one, and the durable `receipt_status` claim admits
+      // exactly one. An earlier revision tried to settle it here instead, by
+      // giving ownership to the claim winner -- which excluded the invocation
+      // that RECOVERS an orphaned claim, and stranded that receipt with nobody
+      // able to send it.
     });
     if (!persistence.persisted) {
       return {
@@ -1212,6 +1701,13 @@ export async function runSessionPaymentCharge(args: {
       outcome: "succeeded",
       stripePaymentIntentId: pi.id,
       stripeChargeId: latestCharge,
+      // TWO MONEY FACTS, AND NEITHER IS A RECEIPT OWNER. `committedNow` = did I
+      // write the row. `concurrentlyReconciled` = did a verified concurrent
+      // writer write the identical charge. Their disjunction decides who may
+      // ATTEMPT a receipt, in auto-payment-receipt.ts; who actually sends is the
+      // durable receipt_status claim, which no field here can grant.
+      committedNow: persistence.by === "this_invocation",
+      concurrentlyReconciled: persistence.by === "concurrent_writer",
     };
   }
 

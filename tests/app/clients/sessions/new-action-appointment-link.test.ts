@@ -135,9 +135,23 @@ describe("startSessionAction lineage + safety contract for appointment_id", () =
     expect(params).not.toMatch(/p_studio_id:\s*(formData|sp|searchParams|params)\b/);
     expect(params).not.toMatch(/practitioner/i);
     // `studio` exists in scope only because the action resolved it server-side.
+    //
+    // SESSION-START-01 slice 2A widened the SHAPE, not the property. The
+    // resolution may now sit inside a perf-timing wrapper, which returns its
+    // callback's result untouched and cannot substitute a value. What is still
+    // required is exactly what was required before: a destructure containing
+    // `studio`, assigned from an awaited getCurrentPractitionerWithStudio()
+    // call. An arbitrary expression, a different function, or a value reaching
+    // `studio` from anywhere else all still fail this.
     expect(SOURCE).toMatch(
-      /const\s*\{[^}]*studio[^}]*\}\s*=\s*await\s+getCurrentPractitionerWithStudio\(\)/,
+      /const\s*\{[^}]*studio[^}]*\}\s*=\s*await\s+(?:timed\(\s*"[^"]+",\s*\(\)\s*=>\s*getCurrentPractitionerWithStudio\(\)\s*,?\s*\)|getCurrentPractitionerWithStudio\(\))\s*;/,
     );
+    // The wrapper, when present, must be the timing primitive and nothing else.
+    if (/timed\(\s*"session-start\.identity"/.test(SOURCE)) {
+      expect(SOURCE).toMatch(
+        /import \{[^}]*timed[^}]*\} from "@\/lib\/observability\/perf-timing"/,
+      );
+    }
     // …and the form still supplies nothing tenant-scoped.
     expect(SOURCE).not.toMatch(/formData\.get\(\s*["'`][^"'`]*studio/i);
 
@@ -213,6 +227,17 @@ const PAGE_PATH = path.resolve(
   "../../../../app/(app)/clients/[id]/sessions/new/page.tsx",
 );
 const PAGE_SOURCE = readFileSync(PAGE_PATH, "utf8");
+// SESSION-START-01 moved the two per-card <form>s into ONE client picker, so
+// the appointment_id carrier moved with them. The guard below follows the
+// carrier rather than being deleted: dropping it would retire a pin that
+// exists to stop a refactor silently leaving the FK null.
+const PICKER_SOURCE = readFileSync(
+  path.resolve(
+    __dirname,
+    "../../../../app/(app)/clients/[id]/sessions/new/ModalityPicker.tsx",
+  ),
+  "utf8",
+);
 
 describe("new-session page carries appointment_id from search params", () => {
   it("accepts an optional appointment_id search parameter", () => {
@@ -224,15 +249,18 @@ describe("new-session page carries appointment_id from search params", () => {
     expect(PAGE_SOURCE).toMatch(/UUID_RE\.test\(/);
   });
 
-  it("renders a hidden appointment_id input on the modality forms", () => {
-    expect(PAGE_SOURCE).toMatch(
+  it("renders a hidden appointment_id input in the modality picker", () => {
+    expect(PICKER_SOURCE).toMatch(
       /<input[^>]*type="hidden"[^>]*name="appointment_id"[^>]*\/>/,
     );
+    // The page must hand the value to the picker, or the carrier is broken
+    // one level up and the input above would render an undefined value.
+    expect(PAGE_SOURCE).toMatch(/<ModalityPicker[^>]*appointmentId=\{appointmentId\}/);
   });
 
   it("does not render the hidden input when no appointment id is present", () => {
     // Conditional render: {appointmentId && <input ... />}
-    expect(PAGE_SOURCE).toMatch(/\{appointmentId && \(/);
+    expect(PICKER_SOURCE).toMatch(/\{appointmentId && \(/);
   });
 });
 

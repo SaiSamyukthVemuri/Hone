@@ -203,6 +203,67 @@ const NEXT_FONT_GOOGLE = /^next\/font\/google$/i;
 // beside the binaries in app/_fonts.
 const LICENSE_DIR = path.join("public", "fonts");
 
+/**
+ * THE THREE PUBLIC NOTICES, and the single source both licence tests read.
+ *
+ * One list rather than two literals, because the failure this closes was exactly
+ * a divergence between them: MKT-02A added Instrument Sans to the middleware
+ * matcher and to the allowlist test, and left the content validation covering
+ * two families. Anything that adds a fourth family now has to add it here, and
+ * both the content contract and the unauthenticated-reachability cases pick it
+ * up together.
+ */
+/**
+ * THE OFL-COMPLETENESS CONTRACT, as one function.
+ *
+ * Extracted so the controls at the bottom of this file exercise the SAME code
+ * the real notices are validated by. A control that re-implements the check
+ * proves something about the copy, not about the guard.
+ *
+ * Returns the list of failures rather than asserting, so a control can assert
+ * that a stub IS rejected and name which property caught it.
+ */
+export function oflShortfalls(text: string, holder: string): string[] {
+  const missing: string[] = [];
+  if (!text.includes(holder)) missing.push(`copyright holder "${holder}"`);
+  // The real licence body, not a stub that merely names the licence.
+  if (!text.includes("SIL OPEN FONT LICENSE Version 1.1")) missing.push("OFL 1.1 header");
+  if (!text.includes("contains the above copyright notice and this license")) {
+    missing.push("clause 2 redistribution condition");
+  }
+  // The clauses that make it a usable licence rather than an excerpt.
+  for (const clause of ["PERMISSION", "TERMINATION", "DISCLAIMER"]) {
+    if (!text.includes(clause)) missing.push(`${clause} clause`);
+  }
+  if (text.length <= 3500) missing.push(`body length ${text.length} <= 3500`);
+  return missing;
+}
+
+/**
+ * Every `/fonts` alternative the middleware matcher exempts, in order.
+ *
+ * `[^|)]*` — ZERO or more, and the quantifier is the whole point. Written `+`
+ * this function could not see a BARE `fonts/` alternative at all, because the
+ * next character is the `|` delimiter. The allowlist comparison would still have
+ * failed on the resulting empty list, but it would have failed with "expected []
+ * to equal [three paths]" — reporting that the notices went missing, when what
+ * actually happened is the opposite: the matcher was widened into an auth hole
+ * that exempts `/fonts/private` too. A guard that misreports the direction of a
+ * security failure sends the next reader looking in the wrong place.
+ *
+ * Found by writing the control for exactly that mutation, which is the argument
+ * for writing controls at all.
+ */
+export function fontsAlternativesIn(entries: readonly string[]): string[] {
+  return entries.flatMap((e) => [...e.matchAll(/fonts\/[^|)]*/g)].map((m) => m[0]));
+}
+
+const NOTICES: ReadonlyArray<readonly [string, string]> = [
+  ["LICENSE-Inter.txt", "The Inter Project Authors"],
+  ["LICENSE-Fraunces.txt", "The Fraunces Project Authors"],
+  ["LICENSE-InstrumentSans.txt", "The Instrument Sans Project Authors"],
+] as const;
+
 // The only files allowed to name the Google Fonts hosts in CODE. Both do it to
 // assert the hosts are ABSENT, which is the same property this file protects; a
 // guard that could not tell "asserts absence" from "reintroduces it" would
@@ -480,25 +541,32 @@ describe("the faces are loaded from local files", () => {
     //
     // So the notices live in public/, which Next serves verbatim, making them
     // reachable at /fonts/LICENSE-*.txt in the deployed app.
-    for (const [file, holder] of [
-      ["LICENSE-Inter.txt", "The Inter Project Authors"],
-      ["LICENSE-Fraunces.txt", "The Fraunces Project Authors"],
-    ]) {
+    // ALL THREE NOTICES, FROM ONE LIST.
+    //
+    // Instrument Sans was allowlisted in the middleware matcher by MKT-02A but
+    // its CONTENT was never validated here, so the notice could have been
+    // deleted, truncated, or replaced by a stub naming the licence while the
+    // matcher test went on passing. A path exemption proves a URL is reachable;
+    // it says nothing about what the URL returns.
+    //
+    // `NOTICES` is now the single list both this test and the reachability test
+    // below read, so a family cannot be added to one and forgotten in the other.
+    for (const [file, holder] of NOTICES) {
       const full = path.join(ROOT, LICENSE_DIR, file);
       expect(existsSync(full), `${file} must be under ${LICENSE_DIR}`).toBe(true);
       const text = readFileSync(full, "utf8");
-      expect(text).toContain(holder);
-      // Pin that it is the real licence body, not a stub naming the licence.
-      expect(text).toContain("SIL OPEN FONT LICENSE Version 1.1");
-      expect(text).toContain(
-        "contains the above copyright notice and this license",
-      );
-      // The clauses that make it a usable licence rather than an excerpt.
-      expect(text).toContain("PERMISSION");
-      expect(text).toContain("TERMINATION");
-      expect(text).toContain("DISCLAIMER");
-      expect(text.length).toBeGreaterThan(3500);
+      expect(
+        oflShortfalls(text, holder),
+        `${file} is not a complete OFL notice`,
+      ).toEqual([]);
     }
+    // AND THE LIST ITSELF IS PINNED, so a family cannot be quietly dropped from
+    // the contract to make it pass.
+    expect(NOTICES.map(([f]) => f)).toEqual([
+      "LICENSE-Inter.txt",
+      "LICENSE-Fraunces.txt",
+      "LICENSE-InstrumentSans.txt",
+    ]);
   });
 
   it("ONLY the two exact licence URLs bypass the auth middleware", () => {
@@ -528,8 +596,9 @@ describe("the faces are loaded from local files", () => {
       entries.some((e) => new RegExp(`^${e}$`).test(p));
 
     for (const exempt of [
-      "/fonts/LICENSE-Inter.txt",
-      "/fonts/LICENSE-Fraunces.txt",
+      // DERIVED, so a new notice cannot be proven reachable in one test and
+      // left unproven here.
+      ...NOTICES.map(([file]) => `/fonts/${file}`),
     ]) {
       expect(
         runsMiddleware(exempt),
@@ -542,8 +611,9 @@ describe("the faces are loaded from local files", () => {
       "/fonts/private",
       "/fonts/anything",
       // Suffixes must not ride on an exact filename.
-      "/fonts/LICENSE-Inter.txt/extra",
-      "/fonts/LICENSE-Fraunces.txt/extra",
+      // EVERY notice's exact path plus a suffix must still be protected — the
+      // trailing `$` is what makes the exemption exact rather than a prefix.
+      ...NOTICES.map(([file]) => `/fonts/${file}/extra`),
       // Near-miss prefixes and case.
       "/fonts",
       "/fontsx/dashboard",
@@ -592,16 +662,25 @@ describe("the faces are loaded from local files", () => {
     // LICENSE" - which explicitly permitted ANY `LICENSE...` filename. Adding
     // `|fonts/LICENSE-Other.txt$` would have kept one entry, kept both required
     // substrings, matched none of the sampled paths, and passed the probe,
-    // while exempting a third path from authentication. Only two notices exist;
-    // anything else under /fonts is a boundary change and must be re-derived by
-    // a human, not waved through by a pattern that happens to spell LICENSE.
-    const fontsAlternatives = normalised.flatMap((e) =>
-      [...e.matchAll(/fonts\/[^|)]+/g)].map((m) => m[0]),
-    );
+    // while exempting a further path from authentication. Anything under /fonts
+    // that is not on this list is a boundary change and must be re-derived by a
+    // human, not waved through by a pattern that happens to spell LICENSE.
+    //
+    // RE-DERIVED FOR THREE NOTICES (MKT-02A). The marketing surface moved from
+    // Inter to Instrument Sans, so a third OFL notice must reach the browser on
+    // exactly the same terms. The list grew by one EXACT path; it did not widen
+    // to a prefix, and the trailing `$` is present on the new entry too. A
+    // FOURTH addition still trips here, which is the property worth keeping.
+    //
+    // Note what this does NOT license: the Inter notice stays because the
+    // authenticated app still loads Inter. Marketing changing its face does not
+    // retire the root layout's family.
+    const fontsAlternatives = fontsAlternativesIn(normalised);
     expect(fontsAlternatives.sort()).toEqual(
       [
         "fonts/LICENSE-Fraunces\\.txt$",
         "fonts/LICENSE-Inter\\.txt$",
+        "fonts/LICENSE-InstrumentSans\\.txt$",
       ].sort(),
     );
   });
@@ -654,16 +733,31 @@ describe("the faces are loaded from local files", () => {
     expect(fonts.length).toBeGreaterThan(0);
     for (const file of fonts) {
       const names = readWoff2NameTable(path.join(ROOT, "app/_fonts", file));
-      const family = file.startsWith("inter") ? "Inter" : "Fraunces";
-      const holder =
-        family === "Inter"
-          ? "The Inter Project Authors"
-          : "The Fraunces Project Authors";
+      // THREE FAMILIES NOW. Instrument Sans arrived with MKT-02A; Inter stays
+      // because the authenticated app still loads it.
+      const family = file.startsWith("inter")
+        ? "Inter"
+        : file.startsWith("instrument-sans")
+          ? "Instrument Sans"
+          : "Fraunces";
+      const holder = `The ${family} Project Authors`;
       expect(names[NAME_ID.copyright], `${file} name ID 0`).toContain(holder);
       expect(names[NAME_ID.licenseInfoUrl], `${file} name ID 14`).toMatch(
         /openfontlicense\.org|scripts\.sil\.org\/OFL/,
       );
-      expect(names[NAME_ID.family], `${file} name ID 1`).toBe(family);
+      // FAMILY IS A PREFIX MATCH FOR THE STATIC WEIGHTS, and the reason is a
+      // property of static fonts rather than a looser assertion. Upstream's
+      // per-weight webfonts name ID 1 the way static families are conventionally
+      // named: the 400 and 700 say "Instrument Sans", while the 500 and 600 say
+      // "Instrument Sans Medium" and "Instrument Sans SemiBold" — the weight is
+      // folded into the family so that pre-CSS3 consumers could select it. The
+      // browser never uses these names here: marketing-fonts.ts declares
+      // `font-family: Instrument Sans` explicitly, so CSS matching is by the
+      // declared family. What this assertion protects is that a re-vendor cannot
+      // quietly substitute a DIFFERENT family's bytes.
+      expect(names[NAME_ID.family], `${file} name ID 1`).toMatch(
+        new RegExp(`^${family}\\b`),
+      );
     }
   });
 
@@ -677,6 +771,148 @@ describe("the faces are loaded from local files", () => {
       // wOF2 magic. Catches an LFS pointer or a truncated download landing
       // here and rendering the whole surface in a fallback face.
       expect(buf.subarray(0, 4).toString("ascii")).toBe("wOF2");
+    }
+  });
+});
+
+describe("CONTROLS — the licence contract can actually fail", () => {
+  // EVERY ASSERTION IN THE LICENCE TESTS ABOVE IS SATISFIED TODAY, which is
+  // exactly when a guard is impossible to tell from a no-op. These controls feed
+  // the real predicates the broken inputs the contract exists to reject.
+  //
+  // They are PERMANENT rather than a one-off mutation run, because a mutation
+  // proves the guard worked on the day someone ran it. They also exercise
+  // `oflShortfalls` and `fontsAlternativesIn` — the same functions the real
+  // tests call — so they cannot drift into testing a copy of the rule.
+
+  /**
+   * Read a notice, or "" if it is not there.
+   *
+   * GUARDED, AND THE REASON IS A DEFECT THIS CONTROL CAUGHT IN ITSELF. Read at
+   * collection time with a bare `readFileSync`, deleting the notice threw ENOENT
+   * while vitest was still collecting — the whole FILE reported "no tests" and
+   * every readable assertion in it, including the one that names the missing
+   * path, never ran. A guard that becomes unrunnable when the thing it guards
+   * disappears is worse than one that fails: the output says nothing about the
+   * licence. This file already applies the same rule to `statSync` for exactly
+   * that reason.
+   *
+   * So deletion now arrives as an empty body and is reported by the contract.
+   */
+  const noticeText = (file: string): string => {
+    try {
+      return readFileSync(path.join(ROOT, LICENSE_DIR, file), "utf8");
+    } catch {
+      return "";
+    }
+  };
+  const REAL = noticeText("LICENSE-InstrumentSans.txt");
+
+  it("the real Instrument Sans notice passes the contract", () => {
+    // The positive pole. Without it, every rejection below could be a predicate
+    // that rejects everything.
+    expect(oflShortfalls(REAL, "The Instrument Sans Project Authors")).toEqual([]);
+  });
+
+  it("REJECTS a deleted notice", () => {
+    // Deletion shows up as an empty read, and must fail on the body itself
+    // rather than only on a missing-file check somewhere else.
+    const missing = oflShortfalls("", "The Instrument Sans Project Authors");
+    expect(missing.length).toBeGreaterThan(0);
+    expect(missing).toContain("OFL 1.1 header");
+    // And the file must genuinely be required to exist at the public path.
+    expect(
+      existsSync(path.join(ROOT, LICENSE_DIR, "LICENSE-InstrumentSans.txt")),
+    ).toBe(true);
+  });
+
+  it("REJECTS a stub that merely names the licence", () => {
+    // The tempting replacement: technically mentions the licence, grants
+    // nothing, and is ~40 bytes.
+    const stub = "Instrument Sans is licensed under the SIL Open Font License (OFL).\n";
+    const missing = oflShortfalls(stub, "The Instrument Sans Project Authors");
+    expect(missing).toContain("OFL 1.1 header");
+    expect(missing).toContain("clause 2 redistribution condition");
+    expect(missing).toContain("TERMINATION clause");
+  });
+
+  it("REJECTS a TRUNCATED notice that keeps the header", () => {
+    // The subtler failure, and the reason length alone is not the test: a copy
+    // cut off partway keeps the header and the copyright line, so only the
+    // later clauses reveal it.
+    const truncated = REAL.slice(0, 1200);
+    expect(truncated).toContain("SIL OPEN FONT LICENSE Version 1.1");
+    const missing = oflShortfalls(truncated, "The Instrument Sans Project Authors");
+    expect(missing.length).toBeGreaterThan(0);
+    expect(missing.some((m) => m.startsWith("body length"))).toBe(true);
+  });
+
+  it("REJECTS the wrong family's notice under the right filename", () => {
+    // Swapping in Inter's OFL would satisfy every structural property and still
+    // fail to carry Instrument Sans' copyright — which is the notice OFL clause
+    // 2 actually requires for these binaries.
+    const inter = noticeText("LICENSE-Inter.txt");
+    expect(oflShortfalls(inter, "The Instrument Sans Project Authors")).toContain(
+      'copyright holder "The Instrument Sans Project Authors"',
+    );
+  });
+
+  it("REJECTS a matcher that DROPS the Instrument Sans exact path", () => {
+    // The live matcher with the third alternative removed. `fontsAlternativesIn`
+    // must report two paths, which is what the allowlist assertion compares —
+    // so the omission fails there rather than passing as "still exact".
+    const dropped = middlewareMatchers().map((e) =>
+      e.replace("fonts/LICENSE-InstrumentSans\\.txt$|", ""),
+    );
+    const alts = fontsAlternativesIn(dropped);
+    expect(alts).not.toContain("fonts/LICENSE-InstrumentSans\\.txt$");
+    expect(alts.length).toBe(2);
+  });
+
+  it("REJECTS a matcher WIDENED to a /fonts/ prefix", () => {
+    // The auth hole this whole model exists to prevent: a prefix exemption also
+    // matches `/fonts/private`, a real grouped route that would then never run
+    // updateSession. The extractor must surface the bare prefix so the exact
+    // allowlist comparison fails on it.
+    const widened = middlewareMatchers().map((e) =>
+      e.replace(
+        "fonts/LICENSE-Inter\\.txt$|fonts/LICENSE-Fraunces\\.txt$|fonts/LICENSE-InstrumentSans\\.txt$|",
+        "fonts/|",
+      ),
+    );
+    const alts = fontsAlternativesIn(widened);
+    expect(alts, "a widened matcher must not look like the exact allowlist").not.toEqual([
+      "fonts/LICENSE-Fraunces\\.txt$",
+      "fonts/LICENSE-Inter\\.txt$",
+      "fonts/LICENSE-InstrumentSans\\.txt$",
+    ]);
+    expect(alts).toContain("fonts/");
+    // AND THE CONSEQUENCE, not just the shape: the widened form really would
+    // stop protecting a genuine route. ANCHORED as `^…$`, the same way the
+    // reachability test above evaluates matcher entries — an unanchored `test`
+    // finds a match at the LATER `/` in `/fonts/private` and reports the route
+    // as still protected, which is precisely backwards.
+    const runsMiddleware = (pth: string, entries: readonly string[]): boolean =>
+      entries.some((e) => new RegExp(`^${e}$`).test(pth));
+    expect(
+      runsMiddleware("/fonts/private", widened),
+      "a widened matcher leaves /fonts/private unauthenticated",
+    ).toBe(false);
+    // The real matcher still protects it.
+    expect(runsMiddleware("/fonts/private", middlewareMatchers())).toBe(true);
+  });
+
+  it("the mutations above are built from the LIVE matcher, not a fixture", () => {
+    // If the real matcher were reshaped, the string replacements would silently
+    // no-op and the two tests above would assert against an unmutated value.
+    const live = middlewareMatchers();
+    expect(live.length).toBe(1);
+    for (const needle of [
+      "fonts/LICENSE-Inter\\.txt$",
+      "fonts/LICENSE-Fraunces\\.txt$",
+      "fonts/LICENSE-InstrumentSans\\.txt$",
+    ]) {
+      expect(live[0], `the live matcher no longer contains ${needle}`).toContain(needle);
     }
   });
 });
@@ -722,13 +958,33 @@ describe("the declared faces match what production rendered", () => {
     expect(weightsFor(APP_FONTS, "inter-latin.woff2")).toEqual(["400", "500"]);
   });
 
-  it("marketing Inter declares 400, 500, 600 and 700", () => {
-    expect(weightsFor(MARKETING_FONTS, "inter-latin.woff2")).toEqual([
-      "400",
-      "500",
-      "600",
-      "700",
-    ]);
+  it("marketing Instrument Sans declares 400, 500, 600 and 700 — one file each", () => {
+    // ONE FILE PER WEIGHT, unlike the Inter subsets, which declared all four
+    // weights against the SAME file because Google shipped them as variable
+    // fonts split by unicode-range. Upstream Instrument Sans publishes a static
+    // webfont per weight, so each weight has its own file and each file declares
+    // exactly one weight.
+    for (const weight of ["400", "500", "600", "700"]) {
+      expect(
+        weightsFor(MARKETING_FONTS, `instrument-sans-${weight}.woff2`),
+        `instrument-sans-${weight}.woff2 must declare exactly weight ${weight}`,
+      ).toEqual([weight]);
+    }
+    // AND THE MARKETING MODULE NO LONGER LOADS INTER AT ALL. Without this, the
+    // loop above would pass while a leftover Inter loader still put the old face
+    // into the marketing stylesheet beside the new one.
+    expect(codeOnly(MARKETING_FONTS)).not.toMatch(/inter-[a-z-]*\.woff2/);
+    // RAW SOURCE, not codeOnly: `codeOnly` strips string delimiters as well as
+    // comments, so a quoted declaration cannot be matched through it.
+    expect(MARKETING_FONTS).toMatch(/prop: "font-family", value: "Instrument Sans"/);
+  });
+
+  it("the authenticated app's faces are UNTOUCHED by the marketing swap", () => {
+    // The product decision was marketing-only. The root layout must still load
+    // Inter, and must not have gained Instrument Sans.
+    expect(weightsFor(APP_FONTS, "inter-latin.woff2")).toEqual(["400", "500"]);
+    expect(codeOnly(APP_FONTS)).not.toMatch(/instrument-sans/);
+    expect(codeOnly(APP_FONTS)).not.toMatch(/Instrument Sans/);
   });
 
   it("Fraunces declares 400 and 700 in both normal and italic", () => {

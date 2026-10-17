@@ -181,8 +181,24 @@ export async function listActiveStudioMemberships(): Promise<
   }));
 }
 
-// Returns the signed-in user's active practitioner row + studio.
-// Redirects to /login if no auth user, or throws if the user has no practitioner row.
+// The SERVER-ACTION backstop. Returns the signed-in user's active practitioner
+// row + studio, redirects to /login if there is no auth user, and THROWS when
+// there is no usable membership (none, or 2+ with no valid selection), because
+// a redirect raised inside an action's try/catch would be swallowed into that
+// action's generic denial.
+//
+// Server actions ONLY. Pages, layouts and server components call
+// requirePractitionerWithStudio() below (SENTRY-IDENTITY-01). Next renders a
+// route's layouts and its page IN PARALLEL, so the shell layout's redirect does
+// not stop a page from running: a page that threw here still reached
+// onRequestError (Sentry) on every full load, and on a soft navigation, where
+// the shell layout is not re-rendered at all, the throw WAS the screen the
+// practitioner saw. The middleware's gate narrows that window but cannot close
+// it: a membership deactivated after the middleware admits a request is first
+// seen by this read. tests/app/authenticated-pages-identity-sweep.test.ts
+// renders every authenticated page and layout in each identity state and
+// proves it redirects; tests/source-guards/server-render-identity-guard.test.ts is the
+// fast syntactic hint that keeps server-rendered modules off this function.
 export async function getCurrentPractitionerWithStudio(): Promise<PractitionerWithStudio> {
   // PERF-01A: same three outcomes, resolved from this request's single
   // identity read instead of a third round trip to GoTrue and Postgres.
@@ -203,11 +219,10 @@ export async function getCurrentPractitionerWithStudio(): Promise<PractitionerWi
     throw new Error("No active practitioner found for the signed-in user.");
   }
   if (membership.kind === "choose") {
-    // Controlled (not raw-DB) error, and never an auto-picked studio. Reached
-    // only as a server-action backstop: the middleware + shell layout redirect
-    // multi-membership users with no valid selection to the chooser before any
-    // page loader runs, and server actions run inside try/catch that returns a
-    // generic denial, so no raw 500 reaches the user because of multiple rows.
+    // Controlled (not raw-DB) error, and never an auto-picked studio. Only a
+    // server action reaches this branch: a server-rendered module never calls
+    // this function, so its multi-membership user is redirected to the chooser
+    // instead.
     throw new Error(
       `Multiple active studio memberships (${membership.options.length}) with no valid studio selection; choose a studio first.`,
     );
@@ -215,20 +230,24 @@ export async function getCurrentPractitionerWithStudio(): Promise<PractitionerWi
   return membership.value;
 }
 
-// Route-guard variant of getCurrentPractitionerWithStudio for the
-// authenticated app SHELL (app/(app)/layout.tsx). Hone is invite-only
-// (PR #189 / migration 0081 / PR #253): a signed-in user with no active
-// practitioner row: e.g. an uninvited Google sign-in, which creates an
-// auth.users row but NO studio/practitioner, must not reach the app.
+// Route-guard variant of getCurrentPractitionerWithStudio for EVERY
+// server-rendered module: the authenticated app shell (app/(app)/layout.tsx),
+// every page and nested layout, and any server component that needs identity.
+// Hone is invite-only (PR #189 / migration 0081 / PR #253): a signed-in user
+// with no active practitioner row: e.g. an uninvited Google sign-in, which
+// creates an auth.users row but NO studio/practitioner, must not reach the app.
 // Instead of throwing a raw 500 (what getCurrentPractitionerWithStudio
 // does), this redirects:
 //   * no auth user                 -> /login
 //   * authed, but no studio        -> /no-access  (the safe invite-only gate)
 //   * authed, 2+ studios, no valid selection -> /no-access?reason=multiple-studios (chooser)
-// The throwing variant stays the backstop for direct server-action POSTs
-// (those run inside try/catch and safely return a generic denial), so
-// this redirecting guard is used ONLY where a clean redirect is wanted
-// and not swallowed by a surrounding catch (the shell layout).
+// A failed membership read is NOT one of those states: it still throws (from
+// loadActiveMembershipRows), so a broken read stays loud instead of becoming a
+// quiet "no access".
+// The throwing variant stays the backstop for direct server-action POSTs,
+// where a surrounding try/catch would swallow a redirect. A redirect is wanted
+// everywhere else, and the shell layout alone cannot provide it for its pages:
+// see getCurrentPractitionerWithStudio above (SENTRY-IDENTITY-01).
 export async function requirePractitionerWithStudio(): Promise<PractitionerWithStudio> {
   // PERF-01A: same three redirect outcomes, resolved from this request's
   // single identity read. The redirects stay OUT of the memoised function so a
@@ -890,6 +909,51 @@ export async function getSessionBlockById(
 // display every treated area + laterality. Studio isolation is enforced by RLS
 // (session_block_areas member policy); the caller passes block ids it already
 // read under its own studio scope, and rows for other studios are invisible.
+/**
+ * How many block ids may travel in ONE `.in(...)` filter.
+ *
+ * PostgREST filters ride in the query string, so an `.in()` over N uuids puts
+ * ~39 bytes per id on the GET request line, and the gateway in front of
+ * PostgREST refuses a request line over ~8 KiB with **HTTP 414**. Measured
+ * against the local stack through this exact function: **205 block ids is the
+ * last that succeeds and 206 fails**, surfacing as
+ * `Failed to load block areas: URI too long`.
+ *
+ * That was reachable, not theoretical. This loader is called with one id per
+ * live block across a client's whole read window — 200 sessions on the client
+ * profile — and blocks-per-session is unbounded, so the id list grows with a
+ * client's history until the profile stops opening.
+ *
+ * 50 is a ~2.1 KB request line, a ~4x margin. The margin is deliberately larger
+ * than the arithmetic needs because this query selects `*`: a column added to
+ * `session_block_areas` lengthens every request without anyone thinking about
+ * this ceiling.
+ */
+export const SESSION_BLOCK_AREA_ID_CHUNK = 50;
+
+/**
+ * How many area rows ONE chunk may return.
+ *
+ * A SECOND silent defect lived in this function's absence of any `.limit()`:
+ * PostgREST applies its own `max_rows` (1000 on this stack) and truncates
+ * **with HTTP 200 and no error** — measured, `content-range: 0-999/*`. A
+ * truncated area set does not fail, it renders a clinical record that
+ * understates which areas were treated.
+ *
+ * So the limit is explicit and reaching it is treated as a FAILED read rather
+ * than a complete one. Sized against real data: production's busiest block
+ * holds 6 areas and its busiest studio 273 area rows in total, so a 50-block
+ * chunk carries ~300 rows at the observed maximum — a 3x margin under this
+ * ceiling, which keeps saturation unreachable in practice while leaving it
+ * detectable if that ever stops being true.
+ *
+ * NOTE: detection assumes the provider's own `max_rows` is not BELOW this
+ * number, or the provider would truncate first and return fewer rows than this
+ * limit. `tests/db/session-block-areas-chunking.db.test.ts` pins the stack's
+ * cap so a change to it fails there rather than here.
+ */
+export const SESSION_BLOCK_AREA_ROW_LIMIT = 1000;
+
 export async function getSessionBlockAreasByBlockIds(
   blockIds: ReadonlyArray<string>,
   studioId?: string,
@@ -898,22 +962,62 @@ export async function getSessionBlockAreasByBlockIds(
   const ids = [...new Set(blockIds)].filter(Boolean);
   if (ids.length === 0) return out;
   const supabase = await createClient();
-  let query = supabase
-    .from("session_block_areas")
-    .select("*")
-    .in("session_block_id", ids);
-  // RLS already scopes to the caller's studio; when the caller already knows its
-  // studio id we add an explicit filter as defence-in-depth so a cross-studio
-  // block id (should one ever be passed) can never surface a foreign area row.
-  if (studioId) query = query.eq("studio_id", studioId);
-  const { data, error } = await query
-    .order("display_order", { ascending: true })
-    .order("created_at", { ascending: true });
-  if (error) throw new Error(`Failed to load block areas: ${error.message}`);
-  for (const a of (data ?? []) as SessionBlockArea[]) {
-    const bucket = out.get(a.session_block_id) ?? [];
-    bucket.push(a);
-    out.set(a.session_block_id, bucket);
+
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += SESSION_BLOCK_AREA_ID_CHUNK) {
+    chunks.push(ids.slice(i, i + SESSION_BLOCK_AREA_ID_CHUNK));
+  }
+
+  // ALL OR NOTHING, by construction. `Promise.all` rejects on the first chunk
+  // that fails, so a caller can never receive a map that is missing one chunk's
+  // areas while looking complete — which on a procedure record would silently
+  // understate which areas were treated. Rejecting is also what this function
+  // did before chunking, so no caller's failure handling changes.
+  //
+  // Parallel, not a serial loop: this loader sits in the client profile's read
+  // path and a serial chunk loop would reintroduce the waterfall PERF-02C
+  // removed. `Promise.all` subscribes to every chunk immediately, so a second
+  // failing chunk cannot become an unhandled rejection.
+  const perChunk = await Promise.all(
+    chunks.map(async (chunk) => {
+      let query = supabase
+        .from("session_block_areas")
+        .select("*")
+        .in("session_block_id", chunk);
+      // RLS already scopes to the caller's studio; when the caller already knows
+      // its studio id we add an explicit filter as defence-in-depth so a
+      // cross-studio block id (should one ever be passed) can never surface a
+      // foreign area row. It is applied to EVERY chunk: splitting the id list
+      // must change how many requests are made, never what one may see.
+      if (studioId) query = query.eq("studio_id", studioId);
+      const { data, error } = await query
+        .order("display_order", { ascending: true })
+        .order("created_at", { ascending: true })
+        .limit(SESSION_BLOCK_AREA_ROW_LIMIT);
+      if (error) throw new Error(`Failed to load block areas: ${error.message}`);
+      const rows = (data ?? []) as SessionBlockArea[];
+      if (rows.length >= SESSION_BLOCK_AREA_ROW_LIMIT) {
+        // Complete-result semantics: a response at the ceiling may have been
+        // cut, and the areas it dropped are indistinguishable from areas that
+        // were never recorded. Refusing is the only truthful answer.
+        throw new Error(
+          `Failed to load block areas: response reached the ${SESSION_BLOCK_AREA_ROW_LIMIT}-row ceiling for ${chunk.length} blocks, so the area set may be incomplete`,
+        );
+      }
+      return rows;
+    }),
+  );
+
+  // Grouping order is preserved exactly: every area of a given block comes from
+  // ONE chunk's response — a block id sits in exactly one chunk — and that
+  // response is ordered by display_order then created_at, so each block's
+  // bucket keeps the order it had before chunking.
+  for (const rows of perChunk) {
+    for (const a of rows) {
+      const bucket = out.get(a.session_block_id) ?? [];
+      bucket.push(a);
+      out.set(a.session_block_id, bucket);
+    }
   }
   return out;
 }

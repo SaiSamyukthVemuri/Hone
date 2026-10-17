@@ -1,6 +1,11 @@
-import Link from "next/link";
+import {
+  PendingContainerLink,
+  PendingLink,
+} from "@/components/pending-link";
+import { PrimaryNavLink } from "./PrimaryNavLink";
 import { MobileMenu } from "./MobileMenu";
 import { AccountMenu } from "./AccountMenu";
+import { SignOutFlightProvider } from "./signout-flight";
 import { GlobalSearch } from "./GlobalSearch";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -75,6 +80,13 @@ export default async function AppLayout({
           Solid background plus a higher z-index than every in-page
           element (calendar slot z-10, TimePicker dropdown z-20, etc.)
           guarantees the header sits visually above everything. */}
+      {/* SIGNOUT-02c · the logout-in-flight hold, owned here so BOTH
+          responsive menus below share one answer and neither can be left
+          holding a flag the other released. It is created per mount: the
+          only component that can report a settlement lives inside these
+          menus, so an authority outliving them could never be cleared.
+          See ./signout-flight. */}
+      <SignOutFlightProvider>
       <header className="sticky top-0 z-30 border-b border-neutral-200 bg-white print:hidden dark:border-neutral-800 dark:bg-neutral-950">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3 md:px-8">
           <div className="flex items-center gap-6">
@@ -84,13 +96,15 @@ export default async function AppLayout({
                 nav tab labeled "Today" (since renamed "Dashboard"),
                 and on phones the wordmark is the only always-visible
                 way home now that the tab row lives inside the Menu. */}
-            <Link
+            <PendingLink
               href="/dashboard"
               aria-label="Go to Dashboard"
+              data-testid="nav-wordmark"
+              pendingLabel="Opening Dashboard…"
               className="select-none text-xl font-semibold tracking-tight"
             >
               Hone
-            </Link>
+            </PendingLink>
             {/* PR #228: the full horizontal nav is DESKTOP-ONLY. On
                 phones the whitespace-nowrap row was wider than the
                 viewport and dragged the whole page sideways; smaller
@@ -115,24 +129,30 @@ export default async function AppLayout({
             >
               {/* PR #208: the landing page is the practice Dashboard
                   (it contains the Today section). */}
-              <Link
+              <PrimaryNavLink
                 href="/dashboard"
-                className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
+                match="exact"
+                testId="nav-dashboard"
+                pendingLabel="Opening Dashboard…"
               >
                 Dashboard
-              </Link>
-              <Link
+              </PrimaryNavLink>
+              <PrimaryNavLink
                 href="/clients"
-                className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
+                match="section"
+                testId="nav-clients"
+                pendingLabel="Opening Clients…"
               >
                 Clients
-              </Link>
-              <Link
+              </PrimaryNavLink>
+              <PrimaryNavLink
                 href="/calendar"
-                className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
+                match="section"
+                testId="nav-calendar"
+                pendingLabel="Opening Calendar…"
               >
                 Calendar
-              </Link>
+              </PrimaryNavLink>
               {/* PR #229: Notifications moved out of the main tab
                   row to the header bell (right side, both
                   breakpoints), so the primary nav competes less and
@@ -142,12 +162,14 @@ export default async function AppLayout({
                   under Settings (Chloe's ask). PR #209: nav label
                   shortened to "Records" so the header fits without
                   wrapping; the page heading stays "Record Keeping". */}
-              <Link
+              <PrimaryNavLink
                 href="/records"
-                className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
+                match="section"
+                testId="nav-records"
+                pendingLabel="Opening Records…"
               >
                 Records
-              </Link>
+              </PrimaryNavLink>
               {/* OWNER-CAP follow-up: a PERMANENT owner entry point.
                   Labelled "Business", not "Capacity": capacity is the
                   first owner operating surface, not the whole domain,
@@ -166,12 +188,14 @@ export default async function AppLayout({
                   advertising a surface they cannot use, rather than
                   offering a disabled item or a permission placeholder. */}
               {practitioner.role === "owner" && (
-                <Link
+                <PrimaryNavLink
                   href="/dashboard/capacity"
-                  className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
+                  match="section"
+                  testId="nav-business"
+                  pendingLabel="Opening Business…"
                 >
                   Business
-                </Link>
+                </PrimaryNavLink>
               )}
               {/* PR #231: Settings and Admin moved into the account
                   dropdown; the primary nav is the working surfaces. */}
@@ -221,6 +245,7 @@ export default async function AppLayout({
           </div>
         </div>
       </header>
+      </SignOutFlightProvider>
       <main className="mx-auto max-w-5xl px-5 py-8 md:px-8 md:py-10">
         {children}
       </main>
@@ -283,10 +308,26 @@ function NotificationsBell({ unread }: { unread: number }) {
   const label =
     unread > 0 ? `Notifications, ${unread} unread` : "Notifications";
   return (
-    <Link
+    // THE CONTAINER FORM, and the only one of the seven that needs it.
+    //
+    // The other six anchors are LABELS — a word, which may fade to `opacity-0`
+    // because its accessible name survives the fade. This one's content is a
+    // LAYOUT: an icon plus a count badge positioned against the anchor itself.
+    // `PendingLink` would wrap both in a single in-flow span (collapsing the
+    // flex arrangement) and fade them, so the bell AND its unread count would
+    // blank on press — a control going empty reads as a bug, not as an
+    // acknowledgement. `PendingContainerLink` leaves both children exactly
+    // where they were and dims them under an out-of-flow scrim instead.
+    //
+    // `relative` is NOT repeated here: the primitive owns that class precisely
+    // so the scrim cannot escape to a distant positioned ancestor. The badge
+    // below still resolves against this same anchor, unchanged.
+    <PendingContainerLink
       href="/notifications"
       aria-label={label}
-      className="relative flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-900"
+      data-testid="nav-notifications"
+      pendingLabel="Opening Notifications…"
+      className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-900"
     >
       <svg
         aria-hidden="true"
@@ -309,6 +350,6 @@ function NotificationsBell({ unread }: { unread: number }) {
           {unread > 99 ? "99+" : unread}
         </span>
       )}
-    </Link>
+    </PendingContainerLink>
   );
 }

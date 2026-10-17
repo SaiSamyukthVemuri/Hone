@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { SectionLabel } from "@/components/ui/section-label";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
   NO_LAST_SESSION_NOTES_COPY,
@@ -41,17 +42,9 @@ import {
 
 function Chip({ children }: { children: React.ReactNode }) {
   return (
-    <span className="inline-flex items-center rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-0.5 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
+    <span className="inline-flex items-center rounded-full border border-line bg-surface-sunken px-2.5 py-0.5 text-xs text-fg-muted">
       {children}
     </span>
-  );
-}
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <h3 className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
-      {children}
-    </h3>
   );
 }
 
@@ -103,7 +96,7 @@ function NoteGroup({
 }) {
   return (
     <div>
-      <p className="text-[11px] font-medium uppercase tracking-wider text-neutral-400">
+      <p className="text-xs font-medium uppercase tracking-wider text-neutral-400">
         {heading}
       </p>
       <ul className="mt-1 flex flex-col gap-2">{children}</ul>
@@ -167,7 +160,7 @@ export function AppointmentPrepMemoryCard({
       className={
         embedded
           ? "flex flex-col gap-4"
-          : "flex flex-col gap-4 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800"
+          : "flex flex-col gap-4 rounded-lg border border-line p-5"
       }
     >
       {/* ---- HEADLINE: zero taps ---- */}
@@ -216,7 +209,7 @@ export function AppointmentPrepMemoryCard({
       {/* ---- AREAS TREATED, with laterality ---- */}
       {hasBlockDetail ? (
         <div>
-          <SectionLabel>Areas treated</SectionLabel>
+          <SectionLabel size="caption" as="h3">Areas treated</SectionLabel>
           <p
             data-testid="prep-areas"
             className="mt-1 break-words text-sm font-medium text-neutral-900 dark:text-neutral-100"
@@ -268,18 +261,22 @@ export function AppointmentPrepMemoryCard({
               fallback copy is exactly the dead end this replaces. ---- */}
       <div
         data-testid="prep-notes"
-        className="border-t border-neutral-200 pt-3 dark:border-neutral-800"
+        className="border-t border-line pt-3"
       >
-        <SectionLabel>Last session notes</SectionLabel>
+        <SectionLabel size="caption" as="h3">Last session notes</SectionLabel>
         {notes.hasAny ? (
           <div className="mt-1.5 flex flex-col gap-3">
             {notes.forNextVisit && (
               /* Blue is the established treatment-memory colour. The plan and
                  the cautions are what change what she does today, so they lead. */
               <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-3 dark:border-blue-900 dark:bg-blue-950/40">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-800 dark:text-blue-300">
+                <SectionLabel
+                  as="p"
+                  tone="inherit"
+                  className="text-blue-800 dark:text-blue-300"
+                >
                   {notes.forNextVisit.label}
-                </p>
+                </SectionLabel>
                 <p
                   data-testid="prep-note-item"
                   className="mt-0.5 whitespace-pre-wrap break-words text-sm text-blue-950 dark:text-blue-100"
@@ -290,7 +287,7 @@ export function AppointmentPrepMemoryCard({
             )}
             {notes.cautions.length > 0 && (
               <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900 dark:bg-amber-950/40">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-800 dark:text-amber-300">
+                <p className="text-xs font-semibold uppercase tracking-wider text-amber-800 dark:text-amber-300">
                   Watch today
                 </p>
                 <ul className="mt-1 flex flex-col gap-2">
@@ -345,8 +342,8 @@ export function AppointmentPrepMemoryCard({
       {/* ---- WHAT HAPPENED: outcomes, per area, structured. Distinct from the
               setup below. This is the result, not the recipe. ---- */}
       {hasBlockDetail && (
-        <div className="border-t border-neutral-200 pt-3 dark:border-neutral-800">
-          <SectionLabel>What happened</SectionLabel>
+        <div className="border-t border-line pt-3">
+          <SectionLabel size="caption" as="h3">What happened</SectionLabel>
           <ul className="mt-1.5 flex flex-col gap-2">
             {memory.areas.map((area) => (
               <li
@@ -393,20 +390,29 @@ export function AppointmentPrepMemoryCard({
       {/* ---- SETUP USED: expanded by default, collapsible. Native <details>,
               so there is no client state on this card. ---- */}
       {hasBlockDetail && (
-        <details open className="group border-t border-neutral-200 pt-3 dark:border-neutral-800">
-          <summary className="flex min-h-[44px] cursor-pointer items-center justify-between text-[11px] font-medium uppercase tracking-wider text-neutral-500">
+        <details open className="group border-t border-line pt-3">
+          <summary className="flex min-h-[44px] cursor-pointer items-center justify-between text-xs font-medium uppercase tracking-wider text-neutral-500">
             Setup used
-            <span className="text-[11px] font-normal normal-case tracking-normal text-neutral-400">
+            <span className="text-xs font-normal normal-case tracking-normal text-neutral-400">
               <span className="group-open:hidden">Show</span>
               <span className="hidden group-open:inline">Hide</span>
             </span>
           </summary>
-          <ul className="mt-2 flex flex-col gap-3">
+          {/* UI-06 item 3. Each row was its own bordered box at JSX depth 3.
+              The box carried nothing the list did not already say, so it is
+              replaced by a hairline divider and row padding — `gap-3` goes
+              with it, because a divider plus py-2.5 already does the
+              separating and keeping both produced a double gap.
+
+              `divide-line` is the semantic token, so no hand-maintained dark:
+              pair is needed. Flattening must not cost scanning: the divider is
+              what preserves it. */}
+          <ul className="mt-2 flex flex-col divide-y divide-line">
             {memory.areas.map((area) => (
               <li
                 key={area.key}
                 data-testid="prep-setup-area"
-                className="rounded-md border border-neutral-200 px-3 py-2.5 dark:border-neutral-800"
+                className="py-2.5 first:pt-1"
               >
                 <AreaHeading area={area} />
                 <div className="mt-1.5 flex flex-wrap gap-1.5">

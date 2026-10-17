@@ -6,7 +6,7 @@ import {
   type OwnerCapacityBriefing,
 } from "@/lib/dashboard/owner-capacity";
 import type { Fact } from "@/lib/dashboard/owner-capacity-model";
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 
 // ===========================================================================
 // PRACTICE CAPACITY — the owner's client-truth briefing
@@ -34,7 +34,7 @@ import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 export const metadata = { title: "Practice capacity" };
 
 export default async function PracticeCapacityPage() {
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await requirePractitionerWithStudio();
   if (practitioner.role !== "owner") {
     return (
       <section className="rounded-lg border border-line bg-surface-sunken p-6 text-sm text-fg-muted">

@@ -96,6 +96,43 @@ function horizonInStudio(
   return { min, max };
 }
 
+// Ties the disabled submit to its reason. One constant so the id on the <p> and
+// the aria-describedby on the button cannot drift apart.
+/**
+ * Why the reschedule submit is blocked, or null when nothing blocks it.
+ *
+ * EXPORTED SO THE PROOF CAN RUN THE REAL THING. The equivalence test first
+ * re-implemented both the old and new expressions by hand and enumerated them,
+ * which Codex correctly flagged as proving my transcription equals itself
+ * rather than proving the shipped predicate is right. A hand-copied predicate
+ * in a test is a second implementation that can drift silently from the first.
+ *
+ * Pure and dependency-free on purpose: it takes booleans, not the component's
+ * state, so the test can exhaust its input space without rendering anything.
+ * `picked` is passed as a boolean rather than the Slot so this stays free of
+ * the form's types.
+ *
+ * The strings are the ones `submit()` already used; see the note at the call
+ * site for why they were unreachable.
+ */
+export function rescheduleBlockedReason({
+  picked,
+  requiresAcknowledgement,
+  acknowledged,
+}: {
+  picked: boolean;
+  requiresAcknowledgement: boolean;
+  acknowledged: boolean;
+}): string | null {
+  if (!picked) return "Pick a time first.";
+  if (requiresAcknowledgement && !acknowledged) {
+    return "Please review and acknowledge the appointment policies before rescheduling.";
+  }
+  return null;
+}
+
+const BLOCKED_HINT_ID = "reschedule-submit-blocked";
+
 export function RescheduleForm({
   token,
   studioTimezone,
@@ -177,6 +214,36 @@ export function RescheduleForm({
       setDate(r.date);
     });
   }
+
+  // UI-03 (obvious next action). WHY THIS EXISTS.
+  //
+  // The submit below is gated by TWO independent conditions — no slot picked,
+  // and, where the studio has policy text, an unticked acknowledgement. Neither
+  // was exposed anywhere. A client who opened their reschedule link saw a grey
+  // button and no way to learn what it wanted.
+  //
+  // The explanations already existed. `submit()` sets "Pick a time first." and
+  // the policy message, and both were STRUCTURALLY UNREACHABLE: they run only on
+  // submit, and a disabled submit button never fires one. The form's only inputs
+  // are a date field and a checkbox, so implicit submission cannot reach them
+  // either — the HTML spec blocks implicit submission when the default button is
+  // disabled. So the copy was written for exactly this purpose and could never
+  // be shown.
+  //
+  // This surfaces that same copy, verbatim, and invents no new product wording.
+  //
+  // DERIVED FROM ONE PREDICATE, deliberately. If the hint had its own condition
+  // it could drift from `disabled` — a blocked button with no reason, or a reason
+  // beside a working button. `blockedReason` is the single source and the button
+  // consumes it, so the two cannot disagree.
+  //
+  // NOT a change to reschedule authority: the guards in `submit()` stay as
+  // defence in depth and the server action re-validates, exactly as before.
+  const blockedReason = rescheduleBlockedReason({
+    picked: picked !== null,
+    requiresAcknowledgement,
+    acknowledged,
+  });
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -395,16 +462,30 @@ export function RescheduleForm({
       <div className="flex items-center gap-3">
         <button
           type="submit"
-          disabled={
-            !picked
-            || submitting
-            || (requiresAcknowledgement && !acknowledged)
-          }
+          // Identical semantics to before: blockedReason is non-null exactly
+          // when `!picked || (requiresAcknowledgement && !acknowledged)` held.
+          disabled={blockedReason !== null || submitting}
+          aria-describedby={blockedReason ? BLOCKED_HINT_ID : undefined}
           className="rounded-md bg-[#0A0A0A] px-5 py-3 text-base font-medium text-white hover:opacity-90 disabled:opacity-50"
         >
           {submitting ? "Rescheduling…" : "Confirm new time"}
         </button>
       </div>
+
+      {/* BELOW the control, on purpose. Placed above it, the hint would vanish
+          the moment a client picks a time and shove the button upward — moving
+          the target under a finger mid-reach. Below, the button's own geometry
+          never changes as the hint appears and disappears.
+
+          A disabled button is not in the tab order, so `aria-describedby` alone
+          would not reach a keyboard user; the hint is therefore VISIBLE text in
+          reading order for everyone, with the description wired as well for
+          assistive technology that reaches the control in browse mode. */}
+      {blockedReason && (
+        <p id={BLOCKED_HINT_ID} className="text-sm text-neutral-600">
+          {blockedReason}
+        </p>
+      )}
     </form>
   );
 }
