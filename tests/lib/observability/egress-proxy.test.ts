@@ -56,7 +56,13 @@ let upstream: Server;
 let upstreamPort = 0;
 const captured: Captured[] = [];
 const respond = (res: import("node:http").ServerResponse): void => {
-  res.writeHead(200, { "content-type": "application/json", "set-cookie": "upstream=1; Path=/" });
+  res.writeHead(200, {
+    "content-type": "application/json",
+    "set-cookie": "upstream=1; Path=/",
+    "x-sentry-rate-limits": "60:transaction:key",
+    "retry-after": "60",
+    "x-internal-upstream": "secret-ish",
+  });
   res.end('{"ok":true}');
 };
 
@@ -192,6 +198,10 @@ describe("/monitoring (Sentry tunnel): only the envelope body leaves, only for H
       );
       expect(res.status).toBe(200);
       expect(res.headers.get("set-cookie")).toBeNull();
+      expect(res.headers.get("x-internal-upstream")).toBeNull();
+      // The SDK's back-off signals come through (Codex P2 4304118573).
+      expect(res.headers.get("x-sentry-rate-limits")).toBe("60:transaction:key");
+      expect(res.headers.get("retry-after")).toBe("60");
       expect(upstreamUrls).toEqual([`https://${SENTRY_DSN_HOST}/api/${SENTRY_PROJECT_ID}/envelope/`]);
       expectNothingFromTheBrowser(captured[0]!, page);
       expect(captured[0]!.body.toString()).toBe(body);

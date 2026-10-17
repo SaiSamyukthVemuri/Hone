@@ -215,7 +215,7 @@ What this baseline is **not**:
 
 They are now route handlers (`app/ingest/[...path]/route.ts`, `app/monitoring/route.ts`) built on `lib/observability/egress-proxy.ts`:
 - **Request headers:** only `content-type`, `content-encoding` and `accept` are forwarded. No `Referer`, `Origin`, `Cookie`, `Authorization`, `X-Forwarded-For`/`X-Real-IP`, `User-Agent` or `sec-fetch-*`.
-- **Response headers:** only `content-type` and `cache-control` come back. Never `Set-Cookie`.
+- **Response headers:** only `content-type`, `cache-control` and Sentry's back-off headers (`x-sentry-rate-limits`, `retry-after`, which the SDK reads to stop sending) come back. Never `Set-Cookie`.
 - **PostHog paths:** only the SDK's own prefixes are proxied (`e`, `i`, `flags`, `decide`, `static`, `array`); anything else is a 404, so the route is not a general proxy. Methods are GET, HEAD and POST.
 - **Sentry:** forwards only the envelope body, and only when the envelope's DSN names Hone's own host and project (Sentry's documented tunnel pattern). The browser SDK uses `tunnel: "/monitoring"`.
 - **Limits:** 1 MB body cap, 10 s upstream timeout, and bare 4xx/502 answers with no detail.

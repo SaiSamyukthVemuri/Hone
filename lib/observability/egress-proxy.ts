@@ -20,7 +20,8 @@
 //     (no client IP: PostHog GeoIP is lost and the upstream sees the server's
 //     IP, a deliberate minimization), User-Agent (posthog-js already sends
 //     $raw_user_agent in the event body) or sec-fetch-*.
-//   * response headers: content-type and cache-control. Never Set-Cookie.
+//   * response headers: content-type, cache-control, and Sentry's back-off
+//     headers (x-sentry-rate-limits, retry-after). Never Set-Cookie.
 //   * methods, path prefixes and body size are allowlisted / capped, the
 //     upstream fetch has a timeout, and every failure answers with a bare
 //     status and no detail.
@@ -34,7 +35,15 @@
 export const FORWARDED_REQUEST_HEADERS: readonly string[] = ["content-type", "content-encoding", "accept"];
 // content-encoding is deliberately NOT returned: fetch() has already decoded
 // the upstream body, so echoing "gzip" would make the browser decode it twice.
-export const RETURNED_RESPONSE_HEADERS: readonly string[] = ["content-type", "cache-control"];
+// x-sentry-rate-limits and retry-after carry no visitor data and the Sentry
+// browser transport reads them to back off (Codex P2 4304118573); stripping
+// them would make the SDK keep posting envelopes Sentry has said it drops.
+export const RETURNED_RESPONSE_HEADERS: readonly string[] = [
+  "content-type",
+  "cache-control",
+  "x-sentry-rate-limits",
+  "retry-after",
+];
 
 /** Request body cap for both proxies. PostHog batches and Sentry envelopes
  *  (no replay, no attachments in Hone) stay far below this. */

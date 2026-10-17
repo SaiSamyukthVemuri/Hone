@@ -423,7 +423,10 @@ test.describe("deliberate faults never reach the operational Sentry project", ()
     // The browser keeps this event BY DESIGN (SENTRY-NOISE-01: deciding in the
     // browser would need a NEXT_PUBLIC_* bypass). Before this lane it reached
     // the operational project through the tunnel; here it is the guard that
-    // receives it, from this server's own forwarding of the tunnel request.
+    // receives it, from this server's own forwarding of the tunnel request:
+    // app/monitoring/route.ts re-posts the envelope with fetch (the server SDK
+    // uses https.request), carrying none of the browser's headers (#828
+    // G-07/G-26). No X-Forwarded-Host, and no browser User-Agent, left.
     const { record, item } = await waitForSentryEgress(
       (records) =>
         errorEvents(records).find(
@@ -433,7 +436,9 @@ test.describe("deliberate faults never reach the operational Sentry project", ()
         ),
       { since: start },
     );
-    expect(record.forwardedHost).toBe(new URL(E2E_APP_ORIGIN).host);
+    expect(record.via).toBe("fetch");
+    expect(record.forwardedHost).toBeNull();
+    expect(record.userAgent ?? "").not.toMatch(/Mozilla|Chrome|HeadlessChrome/);
     expect(record.path).toContain("/envelope/");
     expect(item.exceptions?.[0]?.mechanism).toEqual({ type: "generic", handled: true });
   });
