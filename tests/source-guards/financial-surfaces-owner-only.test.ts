@@ -62,16 +62,42 @@ function parenBody(src: string, parenAt: number): string {
   throw new Error("unbalanced parens while scoping the practitioners table");
 }
 
-const PAYMENT_PAGES = [
+/** Every `page.tsx` under `rel`, recursively, as repo-relative paths. */
+function discoverPages(rel: string): string[] {
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+      const child = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) walk(child);
+      else if (entry.name === "page.tsx") out.push(child);
+    }
+  };
+  walk(rel);
+  return out.sort();
+}
+
+// DISCOVERED, NOT LISTED (raised against my own guard before review did). A
+// hardcoded list fails the standard this file is held to: the smallest edit
+// that breaks the claim is "add a new payments route with no owner refusal",
+// and a list of three would have stayed green while the new route was open.
+// The walk closes that, and the known routes are asserted PRESENT below so the
+// walk cannot pass by discovering nothing.
+const PAYMENT_PAGES = discoverPages("app/(app)/settings/payments");
+const FINANCIALS_PAGES = discoverPages("app/(app)/financials");
+
+const KNOWN_PAYMENT_PAGES = [
   "app/(app)/settings/payments/page.tsx",
   "app/(app)/settings/payments/refresh/page.tsx",
   "app/(app)/settings/payments/return/page.tsx",
 ] as const;
 
 /**
- * Surfaces that must STAY open to any practitioner. Without these the suite
- * would pass against a codebase that had put an owner refusal on everything,
- * which would lock electrologists out of their own work.
+ * A NAMED SAMPLE, deliberately not discovered: surfaces that must STAY open to
+ * any practitioner. Without it the suite would pass against a codebase that
+ * had put an owner refusal on everything, locking electrologists out of their
+ * own work. It is a sample because "every page a practitioner may open" is not
+ * a set this file can enumerate correctly — so it proves the refusal is not
+ * universal, and claims nothing more.
  */
 const PRACTITIONER_PAGES = [
   "app/(app)/dashboard/page.tsx",
@@ -79,6 +105,16 @@ const PRACTITIONER_PAGES = [
 ] as const;
 
 describe("#824: financial surfaces refuse a non-owner before any read", () => {
+  it("the walks find the known surfaces, so a discovery failure cannot pass as coverage", () => {
+    for (const known of KNOWN_PAYMENT_PAGES) {
+      expect(PAYMENT_PAGES, `the payments walk lost ${known}`).toContain(known);
+    }
+    expect(
+      FINANCIALS_PAGES,
+      "the financials walk lost the page it exists to cover",
+    ).toContain("app/(app)/financials/page.tsx");
+  });
+
   for (const rel of PAYMENT_PAGES) {
     it(`${rel} refuses a non-owner before it loads anything`, () => {
       const src = code(read(rel));
@@ -86,13 +122,23 @@ describe("#824: financial surfaces refuse a non-owner before any read", () => {
       const refuseAt = src.search(/practitioner\.role\s*!==\s*"owner"/);
       expect(resolveAt, "the page must resolve identity itself").toBeGreaterThan(-1);
       expect(refuseAt, "the page must refuse a non-owner").toBeGreaterThan(-1);
-      // ORDER IS THE PROPERTY, not presence. Nothing may be awaited between
-      // resolving the identity and refusing, or a non-owner's request does the
-      // work and is only then turned away.
+      // ORDER IS THE PROPERTY, and the region starts at the COMPONENT, not at
+      // the resolver (Codex P2 4303257432). Slicing from
+      // requirePractitionerWithStudio could not see a loader awaited EARLIER in
+      // the page — work done before the identity is even resolved, which is
+      // strictly worse than work done between resolving and refusing.
+      //
+      // So: every await before the refusal must be the resolver's, and there
+      // must be exactly one of them.
+      const fnAt = src.search(/export default async function/);
+      expect(fnAt, "the page must export an async component").toBeGreaterThan(-1);
+      const awaitsBefore = [
+        ...src.slice(fnAt, refuseAt).matchAll(/await\s+([A-Za-z_$][\w$]*)/g),
+      ].map((m) => m[1]);
       expect(
-        src.slice(resolveAt, refuseAt),
-        "no await may sit between resolving identity and the owner refusal",
-      ).not.toMatch(/\bawait\b/);
+        awaitsBefore,
+        "the ONLY await before the owner refusal may be the identity resolver",
+      ).toEqual(["requirePractitionerWithStudio"]);
       // AND THE BRANCH ITSELF MUST HALT. Scoped to the branch BODY by
       // brace-matching, not to a character window (Codex P2 4303218405): a
       // 400-character window around the condition swept up the OWNER's later
@@ -112,13 +158,28 @@ describe("#824: financial surfaces refuse a non-owner before any read", () => {
     });
   }
 
-  it("/financials delegates to a helper whose refusal precedes every read", () => {
-    const page = code(read("app/(app)/financials/page.tsx"));
-    expect(
-      page,
-      "the page must hand the practitioner to the helper that refuses",
-    ).toMatch(/loadFinancialsView\s*\(\s*practitioner/);
+  for (const rel of FINANCIALS_PAGES) {
+    it(`${rel} refuses a non-owner, by its own branch or by delegating`, () => {
+      // TWO LEGITIMATE SHAPES, so the walk admits either rather than forcing
+      // the one the current page happens to use. /financials carries no in-page
+      // check because loadFinancialsView refuses as its first statement; a
+      // future financials route could instead refuse in-page. What is NOT
+      // acceptable is neither.
+      const src = code(read(rel));
+      const delegates = /loadFinancialsView\s*\(\s*practitioner/.test(src);
+      const refuseAt = src.search(/practitioner\.role\s*!==\s*"owner"/);
+      expect(
+        delegates || refuseAt > -1,
+        `${rel} must either refuse in-page or hand the practitioner to loadFinancialsView`,
+      ).toBe(true);
+      if (!delegates) {
+        const body = blockBody(src, src.indexOf("{", refuseAt));
+        expect(body, "an in-page refusal must halt").toMatch(/\breturn\b|\bredirect\s*\(/);
+      }
+    });
+  }
 
+  it("loadFinancialsView refuses before every read", () => {
     const helper = code(read("lib/finance/financial-briefing.ts"));
     const refuseAt = helper.search(/practitioner\.role\s*!==\s*"owner"/);
     expect(refuseAt, "the helper must refuse on the role").toBeGreaterThan(-1);
@@ -166,6 +227,28 @@ describe("#824: financial surfaces refuse a non-owner before any read", () => {
     // NON-VACUITY: the constraint must be FOUND on practitioners itself, so
     // removing or renaming it fails here rather than passing by absence.
     expect(found.length, "practitioners.role must carry a role CHECK constraint").toBe(1);
+
+    // AND NOTHING LATER MAY REDEFINE IT (Codex P2 4303257438). This reads the
+    // historical CREATE TABLE, which is the EFFECTIVE schema only while no
+    // later migration alters that constraint. Measured today: none does. If one
+    // ever appears, this trips — and the right response is to move this
+    // assertion to a tests/db suite that queries pg_constraint for the
+    // effective check, not to widen the pattern here. Stated as the limit it
+    // is rather than left implied.
+    const laterAlters: string[] = [];
+    for (const f of readdirSync(migrations).filter((n) => n.endsWith(".sql"))) {
+      const sql = readFileSync(path.join(migrations, f), "utf8");
+      for (const stmt of sql.split(";")) {
+        if (!/alter\s+table[^;]*\bpractitioners\b/i.test(stmt)) continue;
+        if (/\brole\b/i.test(stmt) && /constraint|check/i.test(stmt)) laterAlters.push(f);
+      }
+    }
+    expect(
+      [...new Set(laterAlters)],
+      "a migration alters practitioners' role constraint — this source-level " +
+        "assertion can no longer stand for the effective schema; move it to a " +
+        "DB suite that reads pg_constraint",
+    ).toEqual([]);
     expect(found[0], "unexpected practitioners.role domain").toEqual([
       "owner",
       "practitioner",
