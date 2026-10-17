@@ -14,7 +14,13 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-15, post-0212 apply; hosted `0212`; `0213`–`0228` AUTHORED AND PENDING, contiguous, in that order; `0231` AUTHORED AND PENDING above an allocated, absent `0229`/`0230`)
+## Current state (verified 2026-10-15, post-0212 apply; hosted `0212`; `0213`–`0228` AUTHORED AND PENDING, contiguous, in that order; `0231` and `0232` AUTHORED AND PENDING above an allocated, absent `0229`/`0230`)
+
+> **0232 IS AUTHORED AND PENDING, on `feat/fett-capture-stage` only** (FETT photos, HON-43), stacked on `feat/fett-client-portrait` (0231). It applies after `0231`.
+> `0232_treatment_image_capture_stage.sql` adds ONE nullable column, `treatment_images.capture_stage` (`check (capture_stage in ('before', 'after'))`, NULL = unlabelled, no backfill), and ONE new command; it writes no rows and adds no trigger.
+> - **The command:** `set_treatment_image_capture_stage(uuid, uuid, text)`. The actor is resolved by `treatment_image_actor(studio)`; a wrong studio, client, archived photo, deactivated practitioner or receptionist gets NULL (non-disclosing, like `set_treatment_image_note`). Only a photo linked to a session can carry a stage. EXECUTE is revoked from `public`, `anon`, `authenticated` and `service_role` by name, then granted to `authenticated` only.
+> - **The pinned 0168 commands are untouched:** a separate command instead of a tenth argument on `create_treatment_image_metadata`.
+> - **Allocation:** `0232` allocated by the coordinator (#825). It inherits 0231's by-construction `0229`/`0230` hole.
 
 > **0231 IS AUTHORED AND PENDING, on `feat/fett-client-portrait` only** (FETT photos, HON-43), stacked on `integration/fett-composed-824` @ `380f2ab1`.
 > `0231_client_identification_portrait.sql` adds ONE nullable column, `clients.portrait_image_id` → `treatment_images(id)` (`on delete set null`), one trigger (on `clients`), ONE new command, one partial index, and a redefinition of `archive_treatment_image` (clears the pointer); it writes no rows.
@@ -176,10 +182,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0212** (`0212_email_delivery_events.sql`), applied 2026-10-12 from #832's reviewed head. |
-| **Repo migration max** | **0231**: `0231_client_identification_portrait.sql` (FETT photos), above the absent, allocated `0229`/`0230` and `0228_legacy_new_client_refusal_atomicity.sql` (#874). Derived by `npm run migration:state` on this tree. |
+| **Repo migration max** | **0232**: `0232_treatment_image_capture_stage.sql` (FETT photos), above `0231_client_identification_portrait.sql`, both above the absent, allocated `0229`/`0230` and `0228_legacy_new_client_refusal_atomicity.sql` (#874). Derived by `npm run migration:state` on this tree. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **`0213`–`0228`** (`0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`), contiguous from hosted + 1, and **`0231`** above an absent, allocated `0229`/`0230` (a hole **by construction** until integration), all **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING. `0211` and `0212` are APPLIED and FROZEN and carried byte-identical. Each pending migration applies from its own reviewed head, never from this branch. |
-| **Next free migration** | Next free number is **0232**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** here: availability is not allocation, and `0229`/`0230` are allocated elsewhere though absent from this tree. |
+| **Pending migrations** | **`0213`–`0228`** (`0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`), contiguous from hosted + 1, and **`0231`**, **`0232`** above an absent, allocated `0229`/`0230` (a hole **by construction** until integration), all **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING. `0211` and `0212` are APPLIED and FROZEN and carried byte-identical. Each pending migration applies from its own reviewed head, never from this branch. |
+| **Next free migration** | Next free number is **0233**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** here: availability is not allocation, and `0229`/`0230` are allocated elsewhere though absent from this tree. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. |
 
 ## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, repo == hosted)
