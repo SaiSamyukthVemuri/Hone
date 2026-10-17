@@ -228,6 +228,7 @@ export type ExportNoteSource = {
   occurred_at: string;
   practitioner_id: string | null;
   supersedes_note_id: string | null;
+  created_at: string;
 };
 
 // ---- The document -----------------------------------------------------------
@@ -277,6 +278,8 @@ export type ClinicalRecordsDocument = {
     occurredAt: string;
     practitioner: string | null;
     isRevision: boolean;
+    /** A later version replaces this one; it is NOT the current note. */
+    isSuperseded: boolean;
   }>;
 };
 
@@ -365,6 +368,11 @@ export function buildClinicalRecordsDocument(input: {
   entries: ReadonlyArray<ExportEntrySource>;
   laserEntries?: ReadonlyArray<ExportLaserSource>;
   notes: ReadonlyArray<ExportNoteSource>;
+  /**
+   * Ids of notes some OTHER note supersedes, across the client's FULL note
+   * history (a revision may be dated outside the exported range).
+   */
+  supersededNoteIds?: ReadonlySet<string>;
   practitionerNameById: ReadonlyMap<string, string>;
 }): ClinicalRecordsDocument {
   const name = (id: string | null) => (id ? (input.practitionerNameById.get(id) ?? null) : null);
@@ -430,8 +438,9 @@ export function buildClinicalRecordsDocument(input: {
       entries: [...(looseBySession.get(s.id) ?? [])].sort(byCreated).map(exportEntry),
       laserEntries: [...(laserBySession.get(s.id) ?? [])].sort(byCreated).map(exportLaser),
     }));
+  // Same-day versions in the order they were written (Codex P1 4302740025).
   const clinicalNotes = [...input.notes]
-    .sort((a, b) => a.occurred_at.localeCompare(b.occurred_at))
+    .sort((a, b) => a.occurred_at.localeCompare(b.occurred_at) || a.created_at.localeCompare(b.created_at))
     .map((n) => ({
       id: n.id,
       kind: n.kind,
@@ -440,6 +449,9 @@ export function buildClinicalRecordsDocument(input: {
       occurredAt: n.occurred_at,
       practitioner: name(n.practitioner_id),
       isRevision: n.supersedes_note_id !== null,
+      // An obsolete version is labelled as one, never printed as the current
+      // note (Codex P1 4302740025), as the clinical-notes print already does.
+      isSuperseded: input.supersededNoteIds?.has(n.id) ?? false,
     }));
   return { sessions, clinicalNotes };
 }

@@ -35,7 +35,7 @@ const ENTRY_COLUMNS =
   "id, session_id, block_id, area, areas, probe_type, probe_size, mode, apilus_modality, intensity, duration_seconds, energy_level, machine_frequency, thermolysis_intensity_percent, thermolysis_duration_seconds, galvanic_ma, galvanic_duration_seconds, galvanic_intensity_percent, units_of_lye, pulse_delay_seconds, minutes_performed, pulse_count, hairs_treated, observation_chips, comments, created_at";
 const LASER_COLUMNS =
   "id, session_id, zone, session_number, equipment_params, observation_notes, ejection_results, created_at";
-const NOTE_COLUMNS = "id, kind, body, areas, occurred_at, practitioner_id, supersedes_note_id";
+const NOTE_COLUMNS = "id, kind, body, areas, occurred_at, practitioner_id, supersedes_note_id, created_at";
 
 /**
  * The ONLY client read allowed before the audit (Codex P1 4301153305): the
@@ -117,6 +117,7 @@ export type ClinicalRecordsLoad =
         entries: ExportEntrySource[];
         laserEntries: ExportLaserSource[];
         notes: ExportNoteSource[];
+        supersededNoteIds: Set<string>;
         practitionerNameById: Map<string, string>;
         truncated: boolean;
       };
@@ -177,6 +178,7 @@ export async function loadClinicalRecordsForExport(args: {
           entries: [],
           laserEntries: [],
           notes: [],
+          supersededNoteIds: new Set(),
           practitionerNameById: new Map(),
           truncated: false,
         },
@@ -191,7 +193,7 @@ export async function loadClinicalRecordsForExport(args: {
 
   const sessionIds = sessions.map((s) => s.id);
   const bounds = noteBounds;
-  const [blocks, entries, laserEntries, notes] = await Promise.all([
+  const [blocks, entries, laserEntries, notes, supersedingLinks] = await Promise.all([
     readAllForSessions<ExportBlockSource>(sessionIds, (ids, from, to) =>
       supabase
         .from("session_blocks")
@@ -237,10 +239,28 @@ export async function loadClinicalRecordsForExport(args: {
             .range(from, to)
             .returns<ExportNoteSource[]>(),
         ),
+    // Which notes a later version replaces (Codex P1 4302740025). Read across
+    // the client's WHOLE note history, not the exported range: a revision dated
+    // after the range still makes the in-range original obsolete. Paged to
+    // completion and fail-closed, like every read here.
+    bounds === null
+      ? Promise.resolve([] as Array<{ id: string; supersedes_note_id: string }>)
+      : readAllPages<{ id: string; supersedes_note_id: string }>((from, to) =>
+          supabase
+            .from("client_clinical_notes")
+            .select("id, supersedes_note_id")
+            .eq("studio_id", studioId)
+            .eq("client_id", clientId)
+            .not("supersedes_note_id", "is", null)
+            .order("id", { ascending: true })
+            .range(from, to)
+            .returns<Array<{ id: string; supersedes_note_id: string }>>(),
+        ),
   ]);
-  if (blocks === null || entries === null || laserEntries === null || notes === null) {
+  if (blocks === null || entries === null || laserEntries === null || notes === null || supersedingLinks === null) {
     return { ok: false };
   }
+  const supersededNoteIds = new Set(supersedingLinks.map((l) => l.supersedes_note_id));
 
   // Author names for ONLY the practitioners these records reference, read to
   // completion (Codex P2 4302690102): an unbounded studio-wide read is capped
@@ -288,7 +308,17 @@ export async function loadClinicalRecordsForExport(args: {
   for (const p of authors) practitionerNameById.set(p.id, p.display_name);
   return {
     ok: true,
-    value: { sessions, blocks, blockAreasById, entries, laserEntries, notes, practitionerNameById, truncated },
+    value: {
+      sessions,
+      blocks,
+      blockAreasById,
+      entries,
+      laserEntries,
+      notes,
+      supersededNoteIds,
+      practitionerNameById,
+      truncated,
+    },
   };
 }
 

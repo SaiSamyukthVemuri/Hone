@@ -109,6 +109,22 @@ describe("HON-46 export reads exclude private and payment data", () => {
     expect(src).toMatch(/if \(authors === null\) return \{ ok: false \};/);
   });
 
+  it("labels superseded note versions from the WHOLE note history, fail closed (Codex P1 4302740025)", () => {
+    const src = code(FILES.queries);
+    const at = src.indexOf('.select("id, supersedes_note_id")');
+    expect(at).toBeGreaterThan(-1);
+    const chain = src.slice(at, src.indexOf(".returns<", at));
+    expect(chain).toContain('.eq("client_id", clientId)');
+    expect(chain).toContain('.not("supersedes_note_id", "is", null)');
+    expect(chain).toContain(".range(from, to)");
+    // Not bounded to the exported range: a later revision still obsoletes.
+    expect(chain).not.toContain("occurred_at");
+    expect(src).toMatch(/supersedingLinks === null\)\s*\{\s*return \{ ok: false \};/);
+    const page = code(FILES.page);
+    expect(page).toContain("n.isSuperseded");
+    expect(page).toContain("superseded, not the current note");
+  });
+
   it("reads the caution flag on its own (Codex P2 4302644062)", () => {
     expect(code(FILES.queries)).toContain("caution_for_next_session");
   });

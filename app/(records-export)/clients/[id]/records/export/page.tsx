@@ -315,7 +315,12 @@ export default async function ClinicalRecordsExportPage({
             ) : (
               <ul className="flex flex-col gap-4">
                 {outcome.document.clinicalNotes.map((n) => (
-                  <li key={n.id} className="break-inside-avoid border-b border-neutral-100 pb-3" data-testid="export-note">
+                  <li
+                    key={n.id}
+                    className="break-inside-avoid border-b border-neutral-100 pb-3"
+                    data-testid="export-note"
+                    data-note-superseded={n.isSuperseded ? "true" : "false"}
+                  >
                     <p className="text-sm font-medium">
                       {/* A calendar date, never an instant (Codex P1 4302644059). */}
                       {NOTE_KIND_LABEL[n.kind] ?? n.kind} · {formatClinicalDate(n.occurredAt)}
@@ -323,6 +328,7 @@ export default async function ClinicalRecordsExportPage({
                     <p className="text-[11px] text-neutral-600">
                       {n.practitioner ?? "Unknown practitioner"}
                       {n.isRevision ? " · revision" : ""}
+                      {n.isSuperseded ? " · superseded, not the current note" : ""}
                     </p>
                     <p className="mt-1 whitespace-pre-wrap break-words text-sm">{n.body}</p>
                     {n.areas.length > 0 && <p className="mt-1 text-[11px]">Areas: {n.areas.join(", ")}</p>}

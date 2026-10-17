@@ -259,6 +259,7 @@ describe("buildClinicalRecordsDocument is an allow-list", () => {
     occurred_at: "2026-10-01T14:00:00Z",
     practitioner_id: "p1",
     supersedes_note_id: null,
+    created_at: "2026-10-01T14:05:00Z",
     personal_notes: PERSONAL,
   } as unknown as ExportNoteSource;
 
@@ -333,6 +334,46 @@ describe("buildClinicalRecordsDocument is an allow-list", () => {
     for (const sentinel of [PRIVATE, PERSONAL, String(PAY), "SENTINEL-PLANNING", "SENTINEL-DELETE"]) {
       expect(json).not.toContain(sentinel);
     }
+  });
+});
+
+describe("superseded clinical-note versions are labelled (Codex P1 4302740025)", () => {
+  const v = (id: string, createdAt: string, supersedes: string | null): ExportNoteSource => ({
+    id,
+    kind: "consultation",
+    body: `body ${id}`,
+    areas: [],
+    occurred_at: "2026-10-01T00:00:00+00:00",
+    practitioner_id: null,
+    supersedes_note_id: supersedes,
+    created_at: createdAt,
+  });
+  const build = (notes: ExportNoteSource[], superseded: string[]) =>
+    buildClinicalRecordsDocument({
+      sessions: [],
+      entries: [],
+      notes,
+      supersededNoteIds: new Set(superseded),
+      practitionerNameById: new Map(),
+    }).clinicalNotes;
+
+  it("marks the obsolete version superseded and orders same-day versions as written", () => {
+    const notes = build(
+      [v("revision", "2026-10-01T11:00:00Z", "original"), v("original", "2026-10-01T10:00:00Z", null)],
+      ["original"],
+    );
+    expect(notes.map((n) => [n.id, n.isRevision, n.isSuperseded])).toEqual([
+      ["original", false, true],
+      ["revision", true, false],
+    ]);
+  });
+
+  it("an in-range note replaced by a revision OUTSIDE the range is still superseded", () => {
+    expect(build([v("original", "2026-10-01T10:00:00Z", null)], ["original"])[0].isSuperseded).toBe(true);
+  });
+
+  it("a note nothing supersedes is current", () => {
+    expect(build([v("only", "2026-10-01T10:00:00Z", null)], [])[0].isSuperseded).toBe(false);
   });
 });
 

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createServerClient } from "@supabase/ssr";
 import { adminQuery, closePool, seedStudio } from "./helpers/harness";
 import { EXPORT_PAGE_SIZE, loadClinicalRecordsForExport } from "@/lib/clinical-records/export-queries";
+import { buildClinicalRecordsDocument } from "@/lib/clinical-records/export-scope";
 import {
   E2E_SERVICE_ROLE_KEY,
   E2E_SUPABASE_URL,
@@ -152,4 +153,43 @@ describe("HON-46 export reads every author and every note to completion", () => 
     expect(missing).toEqual([]);
     expect(load.value.practitionerNameById.size).toBe(AUTHORS);
   }, 120_000);
+
+  it("labels a note superseded by a revision dated OUTSIDE the range (Codex P1 4302740025)", async () => {
+    const s = await seedStudio("hon46sup");
+    studios.push(s.studioId);
+    const orig = await adminQuery(
+      `insert into public.client_clinical_notes (client_id, studio_id, practitioner_id, kind, body, occurred_at)
+       values ($1, $2, $3, 'consultation', 'original text', $4::date) returning id`,
+      [s.clientId, s.studioId, s.practitionerId, DAY],
+    );
+    const originalId = orig.rows[0].id as string;
+    // The revision is recorded a month later, so it is NOT in the day's export.
+    await adminQuery(
+      `insert into public.client_clinical_notes
+         (client_id, studio_id, practitioner_id, kind, body, occurred_at, supersedes_note_id)
+       values ($1, $2, $3, 'consultation', 'revised text', ($4::date + 30), $5)`,
+      [s.clientId, s.studioId, s.practitionerId, DAY, originalId],
+    );
+    // A same-day note nothing supersedes stays current.
+    await adminQuery(
+      `insert into public.client_clinical_notes (client_id, studio_id, practitioner_id, kind, body, occurred_at)
+       values ($1, $2, $3, 'skin_hair_analysis', 'current text', $4::date)`,
+      [s.clientId, s.studioId, s.practitionerId, DAY],
+    );
+
+    await signInOwner(s.practitionerId);
+    const args = { studioId: s.studioId, clientId: s.clientId, scope: { kind: "day" as const, day: DAY }, timezone: "America/Toronto" };
+    let load = await loadClinicalRecordsForExport(args);
+    for (let attempt = 0; !load.ok && attempt < 20; attempt += 1) {
+      await new Promise((r) => setTimeout(r, 250));
+      load = await loadClinicalRecordsForExport(args);
+    }
+    expect(load.ok).toBe(true);
+    if (!load.ok) return;
+    const notes = buildClinicalRecordsDocument(load.value).clinicalNotes;
+    expect(notes.map((n) => [n.body, n.isSuperseded]).sort()).toEqual([
+      ["current text", false],
+      ["original text", true],
+    ]);
+  }, 60_000);
 });
