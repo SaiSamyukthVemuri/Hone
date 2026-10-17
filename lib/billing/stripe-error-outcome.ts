@@ -22,14 +22,18 @@ import Stripe from "stripe";
 //   AuthenticationError (401) the platform key was refused
 //   PermissionError (403)     the key may not act on this account
 //   RateLimitError (429)      rejected before processing
-//   IdempotencyError          the key was refused for a mismatched replay
+//
+// NOT definitive, deliberately: IdempotencyError. It means this key was
+// already used for a different request (or one still in flight), and Stripe
+// documents that it says nothing about whether that EARLIER request succeeded
+// (Codex P1 4301326107). It arises exactly on a retry of an ambiguous first
+// attempt, so treating it as a refusal would reopen the double charge.
 export function isDefinitiveStripeRefusal(err: unknown): boolean {
   return (
     err instanceof Stripe.errors.StripeCardError ||
     err instanceof Stripe.errors.StripeInvalidRequestError ||
     err instanceof Stripe.errors.StripeAuthenticationError ||
     err instanceof Stripe.errors.StripePermissionError ||
-    err instanceof Stripe.errors.StripeRateLimitError ||
-    err instanceof Stripe.errors.StripeIdempotencyError
+    err instanceof Stripe.errors.StripeRateLimitError
   );
 }

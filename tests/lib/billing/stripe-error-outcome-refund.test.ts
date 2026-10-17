@@ -137,6 +137,7 @@ const AMBIGUOUS: Array<[string, () => unknown]> = [
   ["StripeAPIError (5xx)", () => new Stripe.errors.StripeAPIError(raw({ statusCode: 500, type: "api_error" }))],
   ["an unrecognised StripeError subtype (TemporarySessionExpiredError)", () => new Stripe.errors.TemporarySessionExpiredError(raw())],
   ["a bare StripeError", () => new Stripe.errors.StripeError(raw())],
+  ["StripeIdempotencyError (key reused; the earlier request may have succeeded)", () => new Stripe.errors.StripeIdempotencyError(raw({ type: "idempotency_error", statusCode: 400 }))],
 ];
 
 const DEFINITIVE: Array<[string, () => unknown]> = [
@@ -145,7 +146,6 @@ const DEFINITIVE: Array<[string, () => unknown]> = [
   ["StripeAuthenticationError", () => new Stripe.errors.StripeAuthenticationError(raw({ statusCode: 401 }))],
   ["StripePermissionError", () => new Stripe.errors.StripePermissionError(raw({ statusCode: 403 }))],
   ["StripeRateLimitError", () => new Stripe.errors.StripeRateLimitError(raw({ statusCode: 429 }))],
-  ["StripeIdempotencyError", () => new Stripe.errors.StripeIdempotencyError(raw({ type: "idempotency_error", statusCode: 400 }))],
 ];
 
 describe("HON-11 #1 refund: an UNKNOWN outcome is never shown as 'refund failed'", () => {
