@@ -1582,9 +1582,14 @@ describe("loadMachineSetupContext reads the block's recorded captures", () => {
     ).not.toMatch(/readingsForBlockAction/);
     // The post-save refresh is the only other call, and it lives in the
     // record closure.
+    // COUNTED AS CALLS, not as occurrences of the name. Raising the count
+    // to 2 would have passed on a file containing one call and one TYPE
+    // reference (`Awaited<ReturnType<typeof mod.readingsForBlockAction>>`),
+    // which is exactly what this file now has — a looser claim than the one
+    // intended.
     expect(
-      (src.match(/readingsForBlockAction/g) ?? []).length,
-      "exactly one read outside the loader",
+      (src.match(/mod\.readingsForBlockAction\(/g) ?? []).length,
+      "exactly one read outside the loader: the post-save refresh",
     ).toBe(1);
   });
 });

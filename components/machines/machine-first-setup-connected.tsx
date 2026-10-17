@@ -200,19 +200,48 @@ export function MachineFirstSetupConnected({
       // absorbed retry (`reused`) writes nothing while still meaning those
       // groups exist.
       if (out.ok) {
+        // A FAILED REFRESH KEEPS THE OLD SNAPSHOT AND SAYS SO.
+        //
+        // The first version of this installed whatever came back and
+        // wrapped the call in a `catch`. The catch could not fire —
+        // `readingsForBlockAction` returned `[]` on failure rather than
+        // throwing — so a transient read failure REPLACED the history with
+        // an empty list while `recordedSetupUnavailable` stayed false. The
+        // list she relies on to avoid recording twice simply vanished,
+        // right after a save (Codex, #860 4300759932).
+        //
+        // That is round 4's conflation one layer down: I fixed "a failed
+        // read must not render as nothing recorded" in the component and
+        // then rebuilt it in the data path feeding that component. The
+        // action now reports failure explicitly, and this keeps the
+        // PREVIOUS readings — which are still true, just one capture out of
+        // date — and marks the surface unavailable so the copy says it
+        // could not be refreshed.
+        //
+        // The save itself is untouched either way: it already committed,
+        // and reporting it as failed here would manufacture the
+        // lost-response defect.
+        let fresh: Awaited<ReturnType<typeof mod.readingsForBlockAction>>;
         try {
-          const fresh = await mod.readingsForBlockAction({
+          fresh = await mod.readingsForBlockAction({
             blockId: input.blockId,
             clientId,
             sessionId,
           });
-          setCtx((prev) => (prev ? { ...prev, recordedSetup: fresh } : prev));
         } catch {
-          // A FAILED REFRESH MUST NOT FAIL THE SAVE, which already
-          // committed. The panel keeps the older snapshot and the next
-          // open reads the truth; reporting the save as failed here would
-          // be the lost-response defect, manufactured.
+          fresh = { ok: false };
         }
+        setCtx((prev) =>
+          prev
+            ? fresh.ok
+              ? {
+                  ...prev,
+                  recordedSetup: fresh.readings,
+                  recordedSetupUnavailable: false,
+                }
+              : { ...prev, recordedSetupUnavailable: true }
+            : prev,
+        );
       }
       return out.ok
         ? {
@@ -286,6 +315,14 @@ export function MachineFirstSetupConnected({
       // line missing the moment the field joined MachineSetupContext - a
       // third instance of the defect its comment describes, found by the test
       // rather than in review (Codex, #860 4290452722).
+      // THE GUARD CAUGHT THIS ONE TOO. `priorSetupUnavailable` joined
+      // MachineSetupContext and was not forwarded — the fourth time the
+      // context-forwarding test has found a field that existed in the
+      // loader, the type and the panel's props and died on this line,
+      // leaving the feature inert in the real route while every
+      // direct-render test passed (Codex, 2351742d, 15cc6c99, #860
+      // 4290452722).
+      priorSetupUnavailable={ctx.priorSetupUnavailable}
       recordedSetupUnavailable={ctx.recordedSetupUnavailable}
       blockId={blockId}
       // CREATE MODE. Forwarded rather than recreated here, and the

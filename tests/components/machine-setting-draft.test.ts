@@ -621,9 +621,9 @@ describe("switching machine or mode clears the collected draft", () => {
     // the condition rather than the whole of it, because round 10 added
     // `|| settingDraftFrozen` to both and an exact-match assertion would
     // fail on a change that STRENGTHENS the rule it is guarding.
-    expect(src).toMatch(/disabled=\{[\s\S]{0,60}?selectionPending/);
+    expect(src).toMatch(/disabled=\{[\s\S]{0,80}?selectionPending/);
     expect(
-      (src.match(/selectionPending \|\| settingDraftFrozen|selectionPending\s*\n/g) ?? [])
+      (src.match(/selectionPending \|\| identityFrozen|selectionPending \|\| /g) ?? [])
         .length,
       "both the picker and the mode buttons must observe it",
     ).toBeGreaterThanOrEqual(2);
@@ -701,11 +701,19 @@ describe("switching machine or mode clears the collected draft", () => {
     // retry key sends the save down the non-setup path and duplicates the
     // area; switching changes the payload and the digest refuses the retry.
     // The machine and the mode are PART of what the key is bound to.
+    // ASSERTED AS THE RULE, not the expression. Round 12 replaced
+    // `settingDraftFrozen` at these call sites with `identityFrozen`,
+    // which is settingDraftFrozen OR an unresolved REVISION save — a
+    // strictly stronger freeze (Codex, #860 4300759930). An exact-text
+    // assertion fails on a change that widens the rule it guards, which is
+    // the fourth time that has happened in this lane.
     const src = read(PANEL_SRC);
-    expect(src).toMatch(
-      /disabled=\{\s*selectable\.length === 0 \|\| selectionPending \|\| settingDraftFrozen\s*\}/,
-    );
-    expect(src).toMatch(/disabled=\{selectionPending \|\| settingDraftFrozen\}/);
+    expect(
+      src,
+      "the freeze must come from EITHER save path",
+    ).toMatch(/const identityFrozen = settingDraftFrozen \|\| revisionUnresolved/);
+    expect(src).toMatch(/selectable\.length === 0 \|\| selectionPending \|\| identityFrozen/);
+    expect(src).toMatch(/disabled=\{selectionPending \|\| identityFrozen\}/);
   });
 
   it("a rejected selection write is SETTLED as a failure, not dropped", () => {
@@ -764,18 +772,30 @@ describe("switching machine or mode clears the collected draft", () => {
     // exists to stop her recording it twice. One root, two harms, one fix.
     const src = read(CONN_SRC);
     expect(src).toMatch(
-      /if \(out\.ok\) \{[\s\S]{0,1400}?await mod\.readingsForBlockAction\(\{[\s\S]{0,200}?blockId: input\.blockId,/,
+      /if \(out\.ok\) \{[\s\S]{0,2200}?await mod\.readingsForBlockAction\(\{[\s\S]{0,200}?blockId: input\.blockId,/,
     );
-    expect(src).toMatch(/setCtx\(\(prev\) => \(prev \? \{ \.\.\.prev, recordedSetup: fresh \} : prev\)\)/);
+    // ON SUCCESS the new readings replace the snapshot and the surface is
+    // marked available again.
+    expect(src).toMatch(/recordedSetup: fresh\.readings,[\s\S]{0,80}?recordedSetupUnavailable: false,/);
   });
 
   it("and a failed refresh does not fail the save that already committed", () => {
     // Reporting a committed save as failed is the lost-response defect,
     // manufactured. The refresh is best-effort; the next open reads truth.
+    // AND ON FAILURE the PREVIOUS readings are kept and the surface is
+    // marked unavailable — not replaced with an empty list.
+    //
+    // The first version of this guard asserted only that a `catch` existed.
+    // It did, and it could never fire: the action returned `[]` rather than
+    // throwing, so a transient failure installed an empty history and the
+    // guard reported the protection as present (Codex, #860 4300759932).
+    // Asserting the FAILURE BRANCH is what the claim actually needs.
     const src = read(CONN_SRC);
-    expect(src).toMatch(
-      /const fresh = await mod\.readingsForBlockAction\([\s\S]{0,300}?\} catch \{/,
-    );
+    expect(src).toMatch(/: \{ \.\.\.prev, recordedSetupUnavailable: true \}/);
+    expect(
+      src,
+      "a thrown refresh must also become a failure, not an exception",
+    ).toMatch(/\} catch \{\s*fresh = \{ ok: false \};/);
   });
 
   it("the SEED SOURCES are enumerated, and every one is current", () => {
@@ -815,6 +835,72 @@ describe("switching machine or mode clears the collected draft", () => {
       (sql.match(/c\.quantity, c\.optional/g) ?? []).length,
       "both published projections must carry optional",
     ).toBe(2);
+  });
+
+  it("an unresolved REVISION save freezes the identity controls too", () => {
+    // THE P2 (Codex, #860 4300759930). Round 10 froze the identity controls
+    // against the CREATE form's unresolved save; a REVISION save's
+    // unresolved state lived entirely inside `MachineReadingEntry`, so the
+    // dropdown and the mode buttons stayed live through it.
+    //
+    // WHAT THAT COSTS: switching after a lost response UNMOUNTS the entry
+    // and discards the retry key it is holding. Switch back, press Save,
+    // and a new key is minted — appending a duplicate immutable capture if
+    // the first request had committed. A control that can destroy the key
+    // is part of the gap the key exists to cover.
+    const entry = read(ENTRY_SRC);
+    expect(entry).toMatch(/onUnresolvedChange\?: \(unresolved: boolean\) => void;/);
+    expect(
+      entry,
+      "the entry must report BOTH edges, or the freeze never lifts",
+    ).toMatch(/onUnresolvedChange\?\.\(save\.unresolved\)/);
+
+    const panel = read(PANEL_SRC);
+    expect(panel).toMatch(/onUnresolvedChange=\{setRevisionUnresolved\}/);
+    expect(panel).toMatch(/const identityFrozen = settingDraftFrozen \|\| revisionUnresolved/);
+  });
+
+  it("and the two save paths stay separate flags, combined at use", () => {
+    // They are reported by different owners and either can be true alone;
+    // merging them into one piece of state would make the host's save and
+    // the child's indistinguishable, and clearing one would clear both.
+    const panel = read(PANEL_SRC);
+    expect(panel).toMatch(/const \[revisionUnresolved, setRevisionUnresolved\] = useState\(false\)/);
+    expect(panel).toMatch(/settingDraftFrozen = false,/);
+  });
+
+  it("the recorded read reports FAILURE, instead of returning an empty list", () => {
+    // ROUND 4'S CONFLATION, ONE LAYER DOWN (Codex, #860 4300759932). The
+    // action turned `{ ok: false }` into `[]`, so round 11's refresh
+    // installed an empty history over the real one and left the surface
+    // marked available — the list that exists to prevent a second capture
+    // simply vanished after a save.
+    const src = read(SETUP_ACTIONS_SRC);
+    expect(src).toMatch(/export type ReadingsRead =\s*\n\s*\| \{ ok: true; readings: RecordedReading\[\] \}\s*\n\s*\| \{ ok: false \};/);
+    expect(src).toMatch(/return got\.ok \? \{ ok: true, readings: got\.value \} : \{ ok: false \};/);
+    // NOT SIGNED IN is a failure too, not an empty treatment.
+    expect(src).toMatch(/if \(!scope\) return \{ ok: false \};/);
+  });
+
+  it("a failed GUIDANCE read is distinguishable from no previous treatment", () => {
+    // ADDED SCOPE, named as such: the enumeration of every
+    // failure-to-empty conversion found this one, which Codex did not
+    // report. Different harm from the recorded-history case — she loses
+    // reference rather than creating a duplicate — and so quieter copy,
+    // but the same rule.
+    const actions = read(SETUP_ACTIONS_SRC);
+    expect(actions).toMatch(/const priorSetupUnavailable = !prior\.ok;/);
+    const prior = read(PRIOR_SRC);
+    expect(prior).toMatch(/data-testid="machine-prior-setup-unavailable"/);
+    expect(
+      prior,
+      "the failure branch must be checked BEFORE the empty case",
+    ).toMatch(/if \(unavailable\) \{[\s\S]{0,900}?if \(readings\.length === 0\) return null;/);
+    // AND IT REACHES THE COMPONENT. The forwarding guard caught this
+    // missing when the field was added — the fourth instance of that
+    // defect in this lane.
+    const panel = read(PANEL_SRC);
+    expect(panel).toMatch(/unavailable=\{priorSetupUnavailable\}/);
   });
 
   it("the machine opener keeps the 44px touch floor", () => {

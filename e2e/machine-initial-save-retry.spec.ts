@@ -438,6 +438,49 @@ test("a lost response on the initial save is retried, not duplicated @390px", as
     await expect(page.getByTestId("reading-current")).toBeDisabled();
     await expect(page.getByTestId("setting-group-add")).toBeDisabled();
 
+    // AND SO IS THE MACHINE IDENTITY, which is the round-12 repair
+    // (Codex, #860 4300759930). The entry's own fields froze from round 6;
+    // the dropdown and the mode buttons did not, because the revision
+    // save's unresolved state never left this child component.
+    //
+    // WHY THAT MATTERED MORE THAN IT LOOKS: switching machine here
+    // UNMOUNTS the entry and discards the retry key it is holding. Switch
+    // back, press Save, and a new key is minted — appending a duplicate
+    // IMMUTABLE capture if the first request committed. The control that
+    // can destroy the key has to be inside the freeze the key depends on.
+    await expect(
+      page.getByTestId("machine-select"),
+      "the machine could be changed while a revision save was unresolved",
+    ).toBeDisabled();
+    // THE MODE BUTTONS ARE NOT PROVEN HERE, AND SAYING SO IS THE POINT.
+    // My first version of this assertion looped over `/^machine-mode-/` and
+    // passed. It passed VACUOUSLY: `synthetic:demo-multineedle` declares one
+    // mode, the picker renders only at `modes.length > 1`, so the locator
+    // matched nothing and a loop over zero elements asserts nothing. (It
+    // would also have matched `machine-mode-picker`, the container DIV,
+    // which `toBeDisabled` can never hold.) A zero-iteration loop reporting
+    // success is the same green-by-absence trap as a spec-count pin.
+    //
+    // So this branch is a TRIPWIRE, not a proof: if a future catalogue gives
+    // this profile a second mode, the picker appears and the buttons must be
+    // frozen like the select above - the test will then prove it rather than
+    // quietly resume passing on nothing.
+    const picker = page.getByTestId("machine-mode-picker");
+    if (await picker.count()) {
+      const modeButtons = picker.getByRole("button");
+      const modeCount = await modeButtons.count();
+      expect(modeCount, "a rendered picker offers a choice").toBeGreaterThan(1);
+      for (let i = 0; i < modeCount; i += 1) {
+        await expect(modeButtons.nth(i)).toBeDisabled();
+      }
+    } else {
+      test.info().annotations.push({
+        type: "not-proven",
+        description:
+          "Mode-button freeze NOT proven at runtime: this profile has one mode, so no picker renders. The machine select above proves `identityFrozen` reaches the identity controls; the mode button is the same flag at a sibling call site and is asserted only at source level.",
+      });
+    }
+
     // AND THE RETRY IS ABSORBED — exactly one new capture for the change she
     // made once, which is the whole clinical point: a second capture is
     // permanent and reads as another adjustment.
@@ -740,4 +783,228 @@ test("another client's recorded captures never render on this chart @390px", asy
   if ((await recorded.count()) > 0) {
     await expect(recorded).not.toContainText("777");
   }
+});
+
+// ===========================================================================
+// THE MODE BUTTONS, MOUNTED — the half the test above cannot prove.
+//
+// WHY IT IS A SEPARATE TEST AND NOT ANOTHER STEP. The test above runs on
+// `synthetic:demo-multineedle`, which declares ONE mode, so its picker never
+// renders. My first attempt asserted the mode freeze there anyway, by looping
+// over `/^machine-mode-/`, and it PASSED — over zero elements. A loop that
+// iterates nothing reports success exactly like a loop that checked
+// something. (The same regex would also have matched `machine-mode-picker`,
+// the container DIV, which `toBeDisabled` can never hold, so the assertion
+// could only pass while it was vacuous.) The fix is not a better regex; it
+// is a fixture where the control actually exists.
+//
+// So this runs on `synthetic:demo-single-probe`, which has TWO modes, and
+// asserts the count BEFORE asserting the state — a proof whose setup can go
+// missing has to say so out loud.
+//
+// WHAT IS AT STAKE, same as its sibling. A mode change writes the same stored
+// selection as a device change and is part of the digest the held retry key
+// is bound to; changing mode mid-flight remounts the entry and discards that
+// key. Press Save after that and a NEW key is minted — appending a duplicate
+// IMMUTABLE capture if the first request had already committed. A control
+// that can destroy the key belongs inside the freeze the key depends on.
+// ===========================================================================
+
+/** Unit B: no channels, two modes. Mirrors the catalogue, including OPTIONAL. */
+const SINGLE_PROBE = {
+  profileId: "synthetic:demo-single-probe",
+  version: 1,
+  channels: null as number | null,
+  modes: {
+    // `pulse_width` is OPTIONAL in the catalogue, and the fixture says so.
+    // The command refuses a capture missing a REQUIRED field, so a fixture
+    // that silently promoted it would stand in for a STRICTER machine than
+    // the product — the same correction round 11 made to the contract above.
+    blend: [
+      { field_key: "current", native_unit: "mA", decimals: 2, quantity: "current" },
+      {
+        field_key: "pulse_width",
+        native_unit: "ms",
+        decimals: 0,
+        quantity: "duration",
+        optional: true,
+      },
+    ],
+    thermolysis: [
+      { field_key: "current", native_unit: "µA", decimals: 1, quantity: "current" },
+      { field_key: "intensity", native_unit: "%", decimals: 0, quantity: "intensity" },
+    ],
+  },
+} as const;
+
+async function registerSingleProbe(studioId: string, displayName: string) {
+  const id = randomUUID();
+  await sql(
+    `insert into public.studio_machines
+       (id, studio_id, machine_profile_id, machine_profile_version, display_name)
+     values ($1, $2, $3, $4, $5)`,
+    [id, studioId, SINGLE_PROBE.profileId, SINGLE_PROBE.version, displayName],
+  );
+  // ONE PUBLISH PER MODE: the contract is per (profile, version, MODE), and a
+  // mode whose contract is missing is refused at save time with a message
+  // about the contract — which would read exactly like the defect being
+  // looked for here.
+  for (const [modeKey, fields] of Object.entries(SINGLE_PROBE.modes)) {
+    await sql(
+      `select public.sync_machine_profile_contract($1, $2, $3, $4, null, $5::jsonb)`,
+      [
+        SINGLE_PROBE.profileId,
+        SINGLE_PROBE.version,
+        modeKey,
+        SINGLE_PROBE.channels,
+        JSON.stringify(fields),
+      ],
+    );
+  }
+  return id;
+}
+
+test("an unresolved REVISION save freezes the MODE BUTTONS too @390px", async ({
+  page,
+}) => {
+  const seed = await seedE2eStudio();
+  const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(seed);
+  const machineId = await registerSingleProbe(seed.studioId, "Room 2 single");
+  await loginAsOwner(page, seed);
+
+  // Armed only around the save being lost — see the sibling above.
+  const lost = { arm: false, fired: 0 };
+  await page.route(`**/clients/${clientId}/sessions/${sessionId}**`, async (route) => {
+    if (route.request().method() !== "POST" || !lost.arm) {
+      await route.continue();
+      return;
+    }
+    lost.arm = false;
+    lost.fired += 1;
+    try {
+      await route.fetch();
+    } catch {
+      // An upstream failure is an ordinary network error, a different case;
+      // the commit poll below fails either way, which is the right outcome.
+    }
+    await route.abort("failed");
+  });
+
+  await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
+  await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+  const gateOpen = await openMachinePanel(page);
+
+  if (!gateOpen) {
+    test.info().annotations.push({
+      type: "gate-closed",
+      description:
+        "HONE_SYNTHETIC_MACHINE_PROFILE is not in the server env, so the " +
+        "mode-button freeze did NOT run. Not acceptance evidence for it.",
+    });
+    expect(await totals(sessionId)).toEqual({
+      blocks: 0,
+      submissions: 0,
+      captures: 0,
+      readings: 0,
+      claims: 0,
+    });
+    return;
+  }
+
+  test.info().annotations.push({
+    type: "gate-open",
+    description: "The mode-button freeze executed against a two-mode unit.",
+  });
+
+  const picker = page.getByTestId("machine-mode-picker");
+  // THE BUTTONS, not the container. `getByRole` inside the picker cannot
+  // match the wrapping div, which is how the vacuous version went wrong.
+  const modeButtons = picker.getByRole("button");
+
+  await test.step("0: the fixture really does offer a choice of mode", async () => {
+    // ASSERTED FIRST, AND ON PURPOSE. Everything below is about the STATE of
+    // these buttons; if they do not exist, every one of those assertions
+    // passes without checking anything. This is the guard that makes the
+    // rest of the test falsifiable.
+    await page.getByTestId("machine-select").selectOption(machineId);
+    await expect(page.getByTestId("machine-chosen")).toContainText("Room 2 single", {
+      timeout: T,
+    });
+    await expect(picker).toBeVisible({ timeout: T });
+    expect(
+      await modeButtons.count(),
+      "the two-mode fixture rendered no choice — the proof below would be vacuous",
+    ).toBe(2);
+    // AND THEY START LIVE, or "disabled" below proves nothing either.
+    await expect(modeButtons.nth(0)).toBeEnabled();
+    await expect(modeButtons.nth(1)).toBeEnabled();
+  });
+
+  await test.step("1: the initial settings are recorded", async () => {
+    // Blend is the first active mode, so these are blend's fields.
+    await page.getByTestId("reading-current").fill("1.20");
+    await page.getByTestId("reading-pulse_width").fill("9");
+    await page.getByTestId("save-treatment-area").click({ timeout: T });
+    await expect
+      .poll(async () => (await totals(sessionId)).blocks, { timeout: T })
+      .toBe(1);
+  });
+
+  await test.step("2: a REVISION is saved and its answer is LOST", async () => {
+    await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
+    await page.getByTestId(/^edit-area-/).first().click({ timeout: T });
+    expect(await openMachinePanel(page)).toBe(true);
+    await expect(page.getByTestId("machine-reading-entry")).toBeVisible({
+      timeout: T,
+    });
+
+    const before = await totals(sessionId);
+
+    await page.getByTestId("reading-current").fill("1.40");
+    lost.arm = true;
+    await page.getByTestId("machine-reading-save").click();
+
+    // IT COMMITTED. Without this the "retry" below is just a first save, and
+    // the freeze it is testing would be guarding nothing.
+    await expect
+      .poll(async () => (await totals(sessionId)).submissions, {
+        timeout: T,
+        message: "the intercepted revision never reached the database",
+      })
+      .toBe(before.submissions + 1);
+    expect(lost.fired, "the interception never fired").toBe(1);
+
+    // THE CLAIM. Every mode button is frozen while the outcome is unknown.
+    await expect(page.getByTestId("setting-draft-frozen")).toBeVisible({
+      timeout: T,
+    });
+    const n = await modeButtons.count();
+    expect(n, "the picker disappeared mid-test; nothing below is proven").toBe(2);
+    for (let i = 0; i < n; i += 1) {
+      await expect(
+        modeButtons.nth(i),
+        `mode button ${i} stayed live while a revision save was unresolved`,
+      ).toBeDisabled();
+    }
+    // The device picker too, which the sibling test also proves — kept here
+    // because the two controls are frozen by one flag and a change that
+    // split them should fail somewhere.
+    await expect(page.getByTestId("machine-select")).toBeDisabled();
+
+    // AND THE RETRY IS ABSORBED: one change she made once, one capture.
+    await page.getByTestId("machine-reading-save").click();
+    await expect(page.getByTestId("machine-reading-saved")).toBeVisible({
+      timeout: T,
+    });
+    const after = await totals(sessionId);
+    expect(
+      after.submissions,
+      "the retry minted a new save instead of being absorbed",
+    ).toBe(before.submissions + 1);
+
+    // AND THE FREEZE LIFTS. A control that never comes back is a different
+    // defect wearing this test's green.
+    await expect(modeButtons.nth(0)).toBeEnabled();
+    await expect(page.getByTestId("machine-select")).toBeEnabled();
+  });
 });

@@ -155,6 +155,13 @@ export type MachineFirstSetupPanelProps = {
    */
   recordedSetup?: RecordedReading[];
   /**
+   * The next-visit GUIDANCE read failed, as distinct from this client having
+   * no previous treatment. Same rule as the field below, different surface
+   * and quieter copy: that one prevents a duplicate immutable capture, this
+   * is reference she can work without.
+   */
+  priorSetupUnavailable?: boolean;
+  /**
    * The recorded-captures read FAILED. Forwarded rather than flattened: an
    * empty list and an unreadable one must not look alike on this surface
    * (Codex, #860 4290452722).
@@ -241,6 +248,7 @@ export function MachineFirstSetupPanel({
   canManageMachines = false,
   priorSetup = [],
   recordedSetup = [],
+  priorSetupUnavailable = false,
   recordedSetupUnavailable = false,
   onSettingDraft,
   settingDraftFrozen = false,
@@ -283,6 +291,23 @@ export function MachineFirstSetupPanel({
    * also the honest thing to show: the choice is not yet made.
    */
   const [selectionPending, setSelectionPending] = useState(false);
+  /**
+   * A REVISION SAVE'S OUTCOME IS UNKNOWN.
+   *
+   * `settingDraftFrozen` is the CREATE form's unresolved save, reported by
+   * the host. This is the other save path — `MachineReadingEntry` on an
+   * existing block — whose unresolved state lived only in that child, so
+   * the identity controls stayed live through it (Codex, #860 4300759930).
+   *
+   * The two are kept separate and combined at the point of use rather than
+   * merged into one flag, because they are reported by different owners
+   * and either can be true alone.
+   */
+  const [revisionUnresolved, setRevisionUnresolved] = useState(false);
+  // EITHER SAVE PATH FREEZES THE IDENTITY. The machine and the mode are
+  // part of the payload both digests are bound to, and switching away can
+  // unmount the component holding a retry key.
+  const identityFrozen = settingDraftFrozen || revisionUnresolved;
   const [selection, setSelection] = useState<SelectionState>(() =>
     // A stored machine that cannot be charted on is NOT a selection, but it is
     // still stored, and the reason has to be visible. `unusableSelection`
@@ -503,7 +528,7 @@ export function MachineFirstSetupPanel({
             // key is bound to. A freeze that covers the readings and not
             // the identity is not a freeze.
             disabled={
-              selectable.length === 0 || selectionPending || settingDraftFrozen
+              selectable.length === 0 || selectionPending || identityFrozen
             }
             data-testid="machine-select"
           >
@@ -633,7 +658,7 @@ export function MachineFirstSetupPanel({
                     // is in flight is the same race by another route.
                     // Same freeze as the machine picker: the mode is part
                     // of the digest the held retry key is bound to.
-                    disabled={selectionPending || settingDraftFrozen}
+                    disabled={selectionPending || identityFrozen}
                     aria-pressed={m.key === mode?.key}
                     data-testid={`machine-mode-${m.key}`}
                   >
@@ -716,6 +741,10 @@ export function MachineFirstSetupPanel({
               // attributed to the one it was made on. `groupsFromRecorded`
               // scopes it to this mount's device, version and mode.
               recordedGroups={recordedSetup}
+              // The revision path's half of the freeze: the entry owns that
+              // save's state, and the controls that can discard its retry
+              // key are out here.
+              onUnresolvedChange={setRevisionUnresolved}
               onRecord={recordAndCount!}
             />
           ) : (
@@ -821,6 +850,10 @@ export function MachineFirstSetupPanel({
 
       <MachinePriorSetup
         readings={priorSetup}
+        // AND WHETHER THAT READ FAILED. Without this the component cannot
+        // tell "no previous treatment" from "could not find out", and the
+        // quieter of the two renders as silence.
+        unavailable={priorSetupUnavailable}
         catalogue={catalogue}
         unitNames={unitNames}
       />

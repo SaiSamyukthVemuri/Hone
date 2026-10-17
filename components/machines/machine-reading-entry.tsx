@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { nativeFieldGroups } from "@/lib/machines/charting";
@@ -104,6 +104,23 @@ export type MachineReadingEntryProps = {
   }>;
   /** Injected by tests so the retry key is deterministic. */
   mintKey?: () => string;
+  /**
+   * REPORT WHEN THIS SAVE'S OUTCOME IS UNKNOWN, so the panel can freeze the
+   * machine and mode with it.
+   *
+   * Round 10 froze the identity controls against the CREATE form's
+   * unresolved save. A REVISION save is the other path, and its unresolved
+   * state lived entirely in this child: the dropdown stayed live, and
+   * switching after a lost response UNMOUNTED this component and discarded
+   * the retry key it was holding. Switching back and saving then minted a
+   * new key and appended a duplicate immutable capture if the first request
+   * had committed (Codex, #860 4300759930).
+   *
+   * The key's whole purpose is to survive the gap between a lost answer and
+   * the retry; a control that can unmount the thing holding it is part of
+   * that gap.
+   */
+  onUnresolvedChange?: (unresolved: boolean) => void;
 };
 
 export function MachineReadingEntry({
@@ -114,6 +131,7 @@ export function MachineReadingEntry({
   recordedGroups,
   onRecord,
   mintKey,
+  onUnresolvedChange,
 }: MachineReadingEntryProps) {
   const fieldGroups = nativeFieldGroups(profile, mode);
   // SETTING GROUPS - probes sharing one set of values. One to begin with, which
@@ -200,6 +218,17 @@ export function MachineReadingEntry({
   // promise "press Save again" is only honest while the thing being saved
   // cannot change underneath it.
   const frozen = !canEditDraft(save);
+
+  // TOLD TO THE PANEL, because the controls that can destroy this save's
+  // retry key are not in this component. Reported on every change of the
+  // flag, including back to false when the retry settles, so the freeze
+  // lifts rather than sticking.
+  const reportedUnresolved = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (reportedUnresolved.current === save.unresolved) return;
+    reportedUnresolved.current = save.unresolved;
+    onUnresolvedChange?.(save.unresolved);
+  }, [save.unresolved, onUnresolvedChange]);
 
   // EVERY DRAFT CHANGE CLOSES THE OPEN SAVE, which is how the retry key keeps
   // meaning what it says: a changed draft is a DIFFERENT save and must mint a

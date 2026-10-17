@@ -37,6 +37,15 @@ export type MachinePriorSetupProps = {
    * which has no retired filter, and passes only what this component needs.
    */
   unitNames?: Readonly<Record<string, string>>;
+  /**
+   * The read FAILED, which an empty list cannot express.
+   *
+   * Separate from `readings` for the same reason
+   * `recordedSetupUnavailable` is separate: "there is no previous
+   * treatment" and "I could not find out" are different facts and only one
+   * of them is safe to act on.
+   */
+  unavailable?: boolean;
 };
 
 function formatValue(r: RecordedReading): string {
@@ -55,7 +64,36 @@ export function MachinePriorSetup({
   readings,
   catalogue,
   unitNames = {},
+  unavailable = false,
 }: MachinePriorSetupProps) {
+  // THE READ FAILED, WHICH IS NOT "NO PREVIOUS TREATMENT".
+  //
+  // Checked BEFORE the empty case, because a failed read arrives with no
+  // readings and would otherwise render as silence — telling her this
+  // client has never been treated on a machine, so she charts without
+  // reference to settings that exist (Codex, #860 4300759932 found the
+  // same conflation on the recorded-history read; this one came from
+  // enumerating every failure-to-empty conversion).
+  //
+  // Quieter copy than the recorded-history warning, and deliberately: that
+  // one is preventing a DUPLICATE IMMUTABLE CAPTURE, while this is
+  // reference material she can work without. It says what happened and
+  // does not alarm.
+  if (unavailable) {
+    return (
+      <div
+        className="flex flex-col gap-1 border-t border-neutral-200 pt-3 dark:border-neutral-800"
+        data-testid="machine-prior-setup-unavailable"
+      >
+        <SectionLabel size="caption">Previous treatment</SectionLabel>
+        <p className="text-xs text-neutral-600 dark:text-neutral-400" role="status">
+          Previous settings could not be loaded just now. This does NOT mean
+          there are none — reload if you want to see them before charting.
+        </p>
+      </div>
+    );
+  }
+
   if (readings.length === 0) return null;
 
   const first = readings[0]!;

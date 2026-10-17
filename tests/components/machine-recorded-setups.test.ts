@@ -27,6 +27,9 @@ import type { RecordedReading } from "@/lib/machines/machine-queries";
 
 const { createElement } = await import("react");
 const { renderToStaticMarkup } = await import("react-dom/server");
+const { MachinePriorSetup } = await import(
+  "@/components/machines/machine-prior-setup"
+);
 const { MachineRecordedSetups } = await import(
   "@/components/machines/machine-recorded-setups"
 );
@@ -498,5 +501,50 @@ describe("a failed read is not the same as nothing recorded", () => {
     expect(html).toContain('data-testid="machine-recorded-setups"');
     expect(html).not.toContain("machine-recorded-setups-unavailable");
     expect(html).toMatch(/120/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MPX-03 · PREVIOUS TREATMENT: a failed read is not "no previous treatment"
+//
+// Found by enumerating every place a failed read became an empty list, after
+// Codex reported the same conflation on the recorded-history surface
+// (#860 4300759932). Different harm, same rule: she is told this client has
+// never been treated on a machine, so she charts without reference to
+// settings that exist and that she would otherwise have worked from.
+// ---------------------------------------------------------------------------
+describe("MachinePriorSetup · the guidance read failed", () => {
+  const priorRender = (props: {
+    readings: RecordedReading[];
+    unavailable?: boolean;
+    unitNames?: Record<string, string>;
+  }) =>
+    renderToStaticMarkup(
+      createElement(MachinePriorSetup, { catalogue: CAT, ...props }),
+    );
+
+  it("says it could not load, instead of rendering nothing", () => {
+    const html = priorRender({ readings: [], unavailable: true });
+    expect(html).toContain('data-testid="machine-prior-setup-unavailable"');
+    expect(html).toMatch(/could not be loaded/i);
+  });
+
+  it("says outright that this does NOT mean there are none", () => {
+    // The whole point: silence here is read as "no previous treatment".
+    const html = priorRender({ readings: [], unavailable: true });
+    expect(html).toMatch(/does NOT mean there are none/i);
+  });
+
+  it("is DISTINGUISHABLE from the empty case, in both directions", () => {
+    expect(priorRender({ readings: [] })).toBe("");
+    expect(priorRender({ readings: [], unavailable: true })).not.toBe("");
+  });
+
+  it("CONTROL: a successful read with readings is unaffected", () => {
+    // The unavailable branch is checked FIRST, so a bug there could swallow
+    // the ordinary case.
+    const html = priorRender({ readings: [reading({ recordedAt: "2026-10-14T14:00:00Z", value: 120 })] });
+    expect(html).toContain('data-testid="machine-prior-setup"');
+    expect(html).not.toContain("machine-prior-setup-unavailable");
   });
 });

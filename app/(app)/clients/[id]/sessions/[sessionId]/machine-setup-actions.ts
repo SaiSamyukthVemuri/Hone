@@ -142,6 +142,12 @@ export type MachineSetupContext = {
    */
   recordedSetup: RecordedReading[];
   /** The recorded-captures read failed; empty here would be a lie. */
+  /**
+   * The next-visit guidance read FAILED, as distinct from this client
+   * having no previous treatment. See `recordedSetupUnavailable`; same
+   * rule, different surface.
+   */
+  priorSetupUnavailable: boolean;
   recordedSetupUnavailable: boolean;
   /**
    * Recorded unit id -> the studio's own name for it.
@@ -171,6 +177,7 @@ const ANONYMOUS: MachineSetupContext = {
   canManageMachines: false,
   priorSetup: [],
   recordedSetup: [],
+  priorSetupUnavailable: false,
   recordedSetupUnavailable: false,
   unitNames: {},
 };
@@ -280,6 +287,19 @@ export async function loadMachineSetupContext(input: {
     input.sessionId,
   );
   const priorSetup = prior.ok ? prior.value : [];
+  // AND WHETHER THAT READ FAILED, which an empty list cannot say.
+  //
+  // BEYOND THE REPORTED FINDING, and named as such. Codex found the
+  // conflation on the recorded-history read (#860 4300759932); the
+  // enumeration of every failure-to-empty conversion found this one, on
+  // next-visit GUIDANCE. The harm is different and still real: a failed
+  // read tells her this client has no previous treatment, so she charts
+  // without reference to settings that exist and that she would otherwise
+  // have worked from.
+  //
+  // Same shape as `recordedSetupUnavailable`, deliberately: one way of
+  // saying "the surface could not answer" rather than two.
+  const priorSetupUnavailable = !prior.ok;
 
   // ONE LOOKUP, for the two things that need to see a RETIRED unit.
   //
@@ -362,6 +382,7 @@ export async function loadMachineSetupContext(input: {
     canManageMachines: who?.practitioner.role === "owner",
     priorSetup,
     recordedSetup,
+    priorSetupUnavailable,
     recordedSetupUnavailable,
     unitNames,
   };
@@ -793,9 +814,11 @@ export async function readingsForBlockAction(input: {
   blockId: string;
   clientId: string;
   sessionId: string;
-}): Promise<RecordedReading[]> {
+}): Promise<ReadingsRead> {
   const scope = await identity();
-  if (!scope) return [];
+  // NOT SIGNED IN is a FAILURE, not an empty treatment. It reaches the same
+  // surface as a failed query and must not read as "nothing recorded".
+  if (!scope) return { ok: false };
   // BEYOND THE REPORTED FINDING, and deliberately. Codex named the WRITE
   // path (#860 4297032712), but this read took a bare block id with no
   // lineage check either: the member-scoped SELECT policy admits any block
@@ -812,8 +835,36 @@ export async function readingsForBlockAction(input: {
   const db = await machineDb();
   // ...and this one binds the BLOCK to that session, in the query.
   const got = await readingsForBlock(db, input.blockId, input.sessionId);
-  return got.ok ? got.value : [];
+  // A FAILED READ IS REPORTED AS ONE.
+  //
+  // This returned `[]` on failure, and round 11's post-save refresh then
+  // installed that empty list over the real history while leaving
+  // `recordedSetupUnavailable` false — so a transient read failure made the
+  // "Recorded this treatment" list VANISH right after a save, which is the
+  // one message that invites a second immutable capture
+  // (Codex, #860 4300759932).
+  //
+  // THAT IS ROUND 4'S CONFLATION, ONE LAYER DOWN. I fixed "a failed read
+  // must not render as nothing recorded" in the component and then
+  // reintroduced it in the action feeding the component. The `catch` I
+  // wrote around the refresh could never fire, because this never threw.
+  //
+  // The caller decides what to do with a failure; this one's job is to stop
+  // pretending there was none.
+  return got.ok ? { ok: true, readings: got.value } : { ok: false };
 }
+
+/**
+ * The outcome of reading what is recorded against a block.
+ *
+ * A DISCRIMINATED RESULT rather than an array, because the two cases that
+ * an array conflates are exactly the two that matter clinically: "nothing
+ * is recorded on this treatment" and "I could not find out". The second
+ * must never render as the first.
+ */
+export type ReadingsRead =
+  | { ok: true; readings: RecordedReading[] }
+  | { ok: false };
 
 /** The profiles a practitioner may pick in this studio right now. */
 export async function listSelectableForCaller(): Promise<
