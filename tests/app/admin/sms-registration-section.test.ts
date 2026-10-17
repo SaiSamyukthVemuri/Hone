@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
+import { readFileSync } from "node:fs";
 
 // SMS-SENDER-REG-01: the operator's form exists only over a readable snapshot
 // with exactly one live sender, shows that sender's number before any record,
@@ -9,6 +10,7 @@ import { createElement } from "react";
 vi.mock("@/app/admin/studios/[id]/actions", () => ({
   recordSmsRegistrationAction: async () => ({ ok: true }),
   recordSmsRegistrationFormAction: async () => ({ ok: true }),
+  checkSmsCampaignFormAction: async () => ({ ok: true, result: "recorded", message: "" }),
 }));
 
 import { SmsRegistrationSection } from "@/app/admin/studios/[id]/SmsRegistrationSection";
@@ -201,5 +203,22 @@ describe("success names the number it recorded for", () => {
     const form = readFileSync("app/admin/studios/[id]/SmsRegistrationForm.tsx", "utf8");
     expect(form).toMatch(/state\.ok \? successText\(state\.phoneNumber, target\?\.phoneNumber \?\? null, dataState\)/);
     expect(form).not.toMatch(/state\.ok \? "Recorded\."/);
+  });
+});
+
+describe("HON-50 G4b: the US campaign block", () => {
+  it("shows the recorded verdict and the check form for a US long-code sender only", () => {
+    const html = render({ ok: true, senders: [SENDER], registrations: [], campaignBindings: [] });
+    expect(html).toContain('data-testid="admin-sms-campaign"');
+    expect(html).toContain('data-verdict="missing"');
+    expect(html).toContain(`value="${SENDER.id}"`);
+    // Toll-free numbers are verified, not linked to a campaign: no block.
+    const tollFree = render({ ok: true, senders: [{ ...SENDER, phone_number: "+18885550123" }], registrations: [], campaignBindings: [] });
+    expect(tollFree).not.toContain('data-testid="admin-sms-campaign"');
+    // The form never carries a Messaging Service: the server reads it from the snapshot.
+    expect(html).not.toContain('name="messaging_service_sid"');
+    // Keyed by sender and number, so a replacement sender gets a fresh form.
+    const src = readFileSync("app/admin/studios/[id]/SmsRegistrationSection.tsx", "utf8");
+    expect(src).toMatch(/<SmsCampaignCheckForm\s[\s\S]*?key=\{`\$\{sender\.id\}:\$\{sender\.phone_number\}`\}/);
   });
 });
