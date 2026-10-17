@@ -14,7 +14,27 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-12, post-0211 apply; `0211` APPLIED, repo == hosted on this branch)
+## Current state (verified 2026-10-12, post-0211 apply; hosted `0211` per production's record; `0217` AUTHORED AND PENDING on the SMS-SENDER-REG-01 branch)
+
+> **0217 IS AUTHORED AND PENDING, on `feat/sms-sender-reg-01` only** (stacked on #841, which has no migration).
+> `0217_studio_sms_sender_registrations.sql` adds one table (`studio_sms_sender_registrations`), one service_role-only command and one service_role-only snapshot read.
+> - **The table:** support-recorded US registration evidence (10DLC or toll-free verification) for the number a studio's sender holds, one row per (sender, number, kind); the kind is the number's, enforced by a check. The owner reads it without the provider reference.
+> - **The command:** `record_studio_sms_sender_registration`, which resolves the studio's live sender itself, compares the sender AND number the operator verified, refuses a sender with no number, and derives the kind from the number.
+> - **Out of scope:** no provider call, no activation, no existing object altered, no row written.
+>
+>
+> **Merged with production `d5efa20a`** (#827's merge), which carries the `0211` apply record below. `0212` is recorded as applied on #832's branch only, so it is not in this tree. Until #832 lands, this branch's pending suffix has a **hole at `0212`-`0216`**. The contiguity guard reports it and is not weakened.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0211** (`0211_client_sms_permission_guard.sql`), per production's record (below). |
+| **Repo migration max** | **0217** — `0217_studio_sms_sender_registrations.sql`, authored on `feat/sms-sender-reg-01`. No data; no existing object altered. |
+| **Remote-only migrations** | **none recorded in this tree.** |
+| **Pending migrations** | **`0217`** on this branch, **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING, with `0212`-`0216` absent from this tree. |
+| **Next free migration** | Next free number is **0218**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated**. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. |
+
+## Previous state (verified 2026-10-12, post-0211 apply; `0211` APPLIED, repo == hosted on the production branch)
 
 > **0211 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #827 HEAD, BEFORE ANY MERGE.**
 > `0211_client_sms_permission_guard.sql` was applied to production on

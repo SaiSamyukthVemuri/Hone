@@ -58,9 +58,11 @@ import { RECOVERY_ROUTE_BY_ERROR_CODE, type SenderRead } from "./sender-status";
 // covered by a BAA (#828); nothing in this model knows or implies that.
 //
 // REGISTRATION EVIDENCE: the caller passes the evidence for the ONE kind of
-// registration the sender's number uses (10DLC for a long code, toll-free
-// verification for a toll-free number). Nothing in this PR stores it, so the
-// page passes `{ state: "not_recorded" }`; #844 (0217) records it.
+// registration the sender's number uses (10DLC for a long code, Canadian or
+// US; toll-free verification for a toll-free number). Hone support records it
+// in 0217 (SMS-SENDER-REG-01) after checking the provider account, read
+// through lib/sms/sender-registration.ts. Recording "approved" is evidence,
+// not an activation.
 //
 // This module reads nothing and sends nothing. It is the input the later
 // send-time refusal will consume, so the panel and the refusal cannot disagree.
@@ -85,6 +87,8 @@ export type DestinationCountry = "CA" | "US";
  */
 export type UsRegistrationEvidence =
   | { state: "not_recorded" }
+  /** The evidence read did not answer: never treated as "not recorded". */
+  | { state: "unreadable" }
   | { state: "pending" }
   | { state: "requires_information"; missing: string }
   | { state: "approved" }
@@ -188,6 +192,8 @@ function fromRegistration(
 ): DestinationReadiness {
   const kind = senderCountry === "toll_free" ? "toll-free verification" : "A2P 10DLC brand and campaign registration";
   switch (evidence.state) {
+    case "unreadable":
+      return make(destination, "unavailable", `Hone could not read the ${kind} record just now.`, "Try again in a moment.", "none", senderCountry);
     case "approved":
       return make(
         destination,
