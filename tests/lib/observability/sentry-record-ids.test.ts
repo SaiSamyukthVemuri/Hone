@@ -261,21 +261,37 @@ describe("G-25: the final whole-event sweep (backstop for fields no pass lists)"
     expect(out.event_id).toBe(EVENT_ID);
   });
 
-  it("keeps sdkProcessingMetadata verbatim: internal, never sent (Codex P2 4301513265)", () => {
+  it("keeps SDK-internal metadata by reference (Codex P2 4301513265) but sweeps the dynamic sampling context, which IS sent in the envelope trace header (Codex P1 4301561882)", () => {
     class FakeScope {
       tag = `scope-${CLIENT}`;
     }
     const scope = new FakeScope();
-    const meta = { capturedSpanScope: scope, normalizedRequest: { url: `/clients/${CLIENT}` } };
+    const request = { url: `/clients/${CLIENT}` };
+    const meta = {
+      capturedSpanScope: scope,
+      normalizedRequest: request,
+      dynamicSamplingContext: { trace_id: TRACE_ID, transaction: `GET /clients/${CLIENT}`, sample_rate: "1" },
+    };
     const out = scrubTransactionEvent({
       type: "transaction",
       transaction: `GET /clients/${CLIENT}`,
       sdkProcessingMetadata: meta,
     } as unknown as Event);
-    expect(out.sdkProcessingMetadata).toBe(meta);
-    expect((out.sdkProcessingMetadata as unknown as typeof meta).capturedSpanScope).toBe(scope);
-    const wire = { ...out, sdkProcessingMetadata: undefined };
-    expectNoRecordId(wire, "wire payload beside sdkProcessingMetadata");
+    const outMeta = out.sdkProcessingMetadata as unknown as typeof meta;
+    expect(outMeta.capturedSpanScope).toBe(scope);
+    expect(outMeta.normalizedRequest).toBe(request);
+    expect(outMeta.dynamicSamplingContext).toEqual({ trace_id: TRACE_ID, transaction: "GET /clients/[id]", sample_rate: "1" });
+    const wire = { ...out, sdkProcessingMetadata: outMeta.dynamicSamplingContext };
+    expectNoRecordId(wire, "wire payload and the envelope trace header source");
+  });
+
+  it("an error event's dynamic sampling context is swept too", () => {
+    const out = scrubErrorEvent(
+      errorEvent({
+        sdkProcessingMetadata: { dynamicSamplingContext: { transaction: `/sessions/${SESSION}` } },
+      } as unknown as Partial<ErrorEvent>),
+    );
+    expect(JSON.stringify(out.sdkProcessingMetadata)).not.toContain(SESSION);
   });
 
   it("keeps a deep but legitimate transaction structure intact", () => {

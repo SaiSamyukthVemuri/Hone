@@ -149,7 +149,7 @@ Clients, sessions, appointments, intake forms and studios are addressed by UUID,
   - It does not depend on a field list, so a field nobody enumerated is covered too, including one Sentry adds later.
   - It touches only record ids. Stack-frame chunk file names keep their digits, so source maps still resolve. Sentry's own `event_id`, `trace_id` and `span_id` are dashless hex and stay.
   - Anything deeper than its depth bound is replaced with `[Redacted]`, never sent unscrubbed.
-  - `sdkProcessingMetadata` is kept verbatim. It is the SDK's internal processing state (captured scopes, request metadata), and it is never transmitted.
+  - `sdkProcessingMetadata`, the SDK's internal processing state, is not walked; captured scopes and request metadata are kept by reference. The one part of it that IS transmitted, the dynamic sampling context (copied into the envelope's `trace` header), is swept.
 - **Defense in depth, not the guarantee:** the per-field passes. `redactString` also replaces UUIDs in each field it scrubs, **after** token-route canonicalization, so token routes still read `[Redacted]` and `/clients/<uuid>` becomes `/clients/[id]`, Next's route-template form, so events still group by route. Those passes also:
   - match compound identifiers (`hone_booking_<uuid>`; the boundary is "not a hex digit", not `\b`) and `%2D`-encoded hyphens;
   - scrub object keys, so `{ [clientId]: "failed" }` becomes `{ "[id]": "failed" }`, with `#2` and `#3` on collisions so no value is dropped (own keys only);

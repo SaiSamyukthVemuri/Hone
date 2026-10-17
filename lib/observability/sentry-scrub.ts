@@ -221,15 +221,29 @@ const SWEEP_MAX_DEPTH = 24;
  *  survives, in any string or key, and touches nothing else. */
 function sweepRecordIds<T>(value: T): T {
   // `sdkProcessingMetadata` is the SDK's internal processing state (captured
-  // Scope objects, request metadata), never transmitted. It is kept verbatim
-  // (Codex P2 4301513265): walking it would copy whole Scope/client graphs on
-  // every event and replace live class instances with plain objects.
+  // Scope objects, request metadata). It is NOT walked (Codex P2 4301513265):
+  // that would copy whole Scope/client graphs on every event and replace live
+  // class instances with plain objects. The one part of it that IS
+  // transmitted, the dynamic sampling context, is swept below.
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return withoutRecordIds(value, new WeakSet(), 0, SWEEP_MAX_DEPTH) as T;
   }
   const { sdkProcessingMetadata, ...wire } = value as Record<string, unknown>;
   const swept = withoutRecordIds(wire, new WeakSet(), 0, SWEEP_MAX_DEPTH) as Record<string, unknown>;
-  if (sdkProcessingMetadata !== undefined) swept.sdkProcessingMetadata = sdkProcessingMetadata;
+  if (isRecord(sdkProcessingMetadata)) {
+    // EXCEPT the dynamic sampling context (Codex P1 4301561882): the SDK
+    // copies it into the transmitted envelope's `trace` header, and its
+    // `transaction` is the resolved route ("/clients/<uuid>"). It is plain
+    // data, so it is swept; every other entry (captured Scope instances,
+    // request metadata) is kept by reference.
+    const dsc = sdkProcessingMetadata.dynamicSamplingContext;
+    swept.sdkProcessingMetadata =
+      dsc === undefined
+        ? sdkProcessingMetadata
+        : { ...sdkProcessingMetadata, dynamicSamplingContext: withoutRecordIds(dsc, new WeakSet(), 0, SWEEP_MAX_DEPTH) };
+  } else if (sdkProcessingMetadata !== undefined) {
+    swept.sdkProcessingMetadata = sdkProcessingMetadata;
+  }
   return swept as T;
 }
 
