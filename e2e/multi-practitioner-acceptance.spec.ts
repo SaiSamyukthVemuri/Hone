@@ -328,7 +328,26 @@ test("ACCEPTANCE: pick A, pick B, reschedule one, and the owner's calendar attri
   // THE RESCHEDULE PAGE OPENS ON TODAY, not on the appointment's date, so its
   // date must be set exactly as the booking form's is. Without this the grid
   // below is TODAY'S and the wait for the target date never resolves.
+  //
+  // AND THE HEADING IS NOT A SETTLE SIGNAL HERE (Codex, 724b0388). Unlike the
+  // booking form — where the picker spec removes this race BY CONSTRUCTION by
+  // setting the date before a grid exists — this page already has a rendered
+  // grid, and `loadingSlots` comes from useTransition inside the slot
+  // useEffect. So between `fill()` and that effect firing, the heading ALREADY
+  // shows the new date, "Loading slots…" is NOT yet present, and `slots` still
+  // holds TODAY'S. waitForGrid would pass on the stale grid, and the window
+  // assertions below cannot detect it: today's slots are A's too, so they
+  // satisfy the same bounds. Only the fetch itself distinguishes them.
+  //
+  // So: let the initial grid settle, then arm a wait for the slot request the
+  // date change triggers, and only read slots after it has answered.
+  await expect(page.getByText(/loading slots/i)).toHaveCount(0, { timeout: 20_000 });
+  const slotFetch = page.waitForResponse(
+    (r) => r.request().method() === "POST" && Boolean(r.request().headers()["next-action"]),
+    { timeout: 20_000 },
+  );
   await page.getByLabel("Pick a new date").fill(bookDate);
+  await slotFetch;
   await waitForGrid(page, bookDate);
   const rescheduleLabels = await offeredSlotLabels(page);
   // A DIFFERENT time, still inside A's window: the successor must stay bookable
@@ -428,6 +447,28 @@ test("ACCEPTANCE: pick A, pick B, reschedule one, and the owner's calendar attri
       [ownerPractitionerId],
     )
   )[0].display_name;
+
+  // THE GRID FIRST, because the detail pages alone do not prove the owner can
+  // SEE either booking (Codex, 724b0388). Both ids come straight from SQL and
+  // `goto('/calendar/<id>')` bypasses the calendar entirely, so a regression
+  // that filtered A or B out of getAppointmentsForRange — or out of the grid
+  // rendering — would leave every assertion below green. "The owner's calendar
+  // shows both practitioners' bookings" is a claim about the GRID.
+  //
+  // `?week=` anchors the week view to the week containing that studio-local
+  // date, and DayColumn labels each entry "<client> · <service> · <time> · <n>m",
+  // so the client names are what identify the two bookings there. Scoped to
+  // main so the navigation chrome cannot satisfy it.
+  await page.goto(`/calendar?week=${bookDate}`);
+  const grid = page.locator("main");
+  await expect(
+    grid.getByText(clientA.name, { exact: false }).first(),
+    "the owner's calendar grid must show A's booking",
+  ).toBeVisible({ timeout: 20_000 });
+  await expect(
+    grid.getByText(clientB.name, { exact: false }).first(),
+    "the owner's calendar grid must show B's booking",
+  ).toBeVisible({ timeout: 20_000 });
 
   for (const [id, expectedName, label] of [
     [successorId, A.displayName, "A's rescheduled booking"],
