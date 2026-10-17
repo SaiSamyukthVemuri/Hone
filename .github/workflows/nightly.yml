@@ -134,6 +134,10 @@ jobs:
         # at this exact SHA.
         with:
           persist-credentials: false
+          # The unit lane's canonical production-record checks need history and
+          # the production ref; shallow, they passed by asserting they could
+          # not run (#825 6215529089).
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -192,10 +196,13 @@ jobs:
 
       - name: Bring up the database
         if: matrix.needs_supabase
-        run: supabase start
+        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start
 
       - name: Run lane
         run: ${{ matrix.command }}
+        env:
+          # The nightly production check ENFORCES canonical freshness (A3/A5).
+          CANONICAL_FRESHNESS: enforce
 
       # Traces are large; upload them only when there is a failure to inspect.
       - name: Upload traces on failure

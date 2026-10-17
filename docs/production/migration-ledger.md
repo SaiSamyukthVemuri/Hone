@@ -146,7 +146,8 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 > `0211` is now **FROZEN**. Any correction is a new forward migration; there is no
 > manual down-migration.
 
-
+<!-- integration: incoming lane's ledger prose, preserved verbatim -->
+<!-- integration: incoming lane's ledger prose, preserved verbatim -->
 
 > **0217 IS AUTHORED AND PENDING, on `feat/sms-sender-reg-01` only** (stacked on #841, which has no migration).
 > `0217_studio_sms_sender_registrations.sql` adds one table (`studio_sms_sender_registrations`) and one service_role-only command.
