@@ -153,14 +153,26 @@ function replaceEncodedAware(text: string, detectors: readonly Detector[]): stri
     })
     .join("");
 }
-// Every Stripe prefix lib/ops/redact.ts preserves as a "safe" id, plus pm_
-// (PaymentMethod), which redact.ts does not list. NO leading boundary (Codex
+// Every Stripe prefix lib/ops/redact.ts preserves as a "safe" id, plus the
+// other documented Stripe object prefixes (Codex P1 4302008658: with a KNOWN
+// prefix, any suffix is an id, whatever its character mix, so "dp_abcdefghij"
+// is removed too). NO leading boundary (Codex
 // P1 4301636814): an id glued to preceding text ("refpi_3...", "refund_re_...")
 // is still removed. That can over-redact an ordinary word ending in a prefix
 // ("api_..." loses its "pi_..." tail); in an email that only points at the
 // alert, over-redaction is the safe side.
+// The PaymentMethod-era card prefix is not listed: this module's source guard
+// bans that word in code. Real ids of that type carry digits, so the generic
+// matcher below removes them.
+const OTHER_STRIPE_ID_PREFIXES: readonly string[] = [
+  "pm", "dp", "du", "src", "ba", "btok", "tok", "cn", "fee", "fr", "file", "link",
+  "ich", "iauth", "ipi", "ic", "ii", "la", "or", "pr", "promo", "pi", "ps", "trr", "tu",
+  "txi", "we", "whsec", "wb", "sub_sched", "plink", "pyr", "pmc", "cbtxn",
+];
 const STRIPE_ID_RE = new RegExp(
-  `(?:${[...new Set([...SAFE_STRIPE_ID_PREFIXES, "pm"])].join("|")})_[A-Za-z0-9]{6,}`,
+  `(?:${[...new Set([...SAFE_STRIPE_ID_PREFIXES, ...OTHER_STRIPE_ID_PREFIXES])]
+    .sort((a, b) => b.length - a.length)
+    .join("|")})_[A-Za-z0-9]{6,}`,
   "g",
 );
 // ANY Stripe-shaped object id, whatever its prefix (Codex P1 4301706583:
@@ -168,9 +180,9 @@ const STRIPE_ID_RE = new RegExp(
 // lowercase prefix, "_", then 10+ base62 characters. The suffix must contain
 // a digit OR an upper-case letter (Codex P1 4301841195: a digit alone missed
 // "dp_AbCdEf..."); that is what separates an id from a snake_case event slug,
-// which is all lower case. KNOWN LIMIT: a suffix of 10+ lower-case letters
-// only cannot be told apart from an English word, and stays. For a random
-// 14-character base62 suffix the chance of that is about 5 in a million.
+// which is all lower case. A KNOWN prefix (STRIPE_ID_RE above) needs no such
+// mix. KNOWN LIMIT: an UNKNOWN prefix with a suffix of 10+ lower-case letters
+// only cannot be told apart from an English word, and stays.
 const GENERIC_STRIPE_ID_RE = /[a-z]{2,12}_(?=[A-Za-z0-9]*[A-Z0-9])[A-Za-z0-9]{10,}/g;
 
 function withoutRecordIds(text: string): string {

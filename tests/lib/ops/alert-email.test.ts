@@ -223,6 +223,13 @@ describe("#828 G-24: the alert email carries no record identifiers", () => {
     expect(mail.text).toContain("💥%20[id]%20x 😀[id]%20y 🎉%20[stripe-id]");
   });
 
+  it("a KNOWN Stripe prefix removes any suffix, even all lower case (Codex P1 4302008658)", async () => {
+    const ids = ["dp_abcdefghijklmn", "src_abcdefghij", "pm_abcdefghij", "du_abcdefghij"];
+    const mail = await send(`ids ${ids.join(" ")} in session_payment_succeeded_write_zero_rows`);
+    for (const id of ids) expect(mail.text, id).not.toContain(id);
+    expect(mail.text).toContain("in session_payment_succeeded_write_zero_rows");
+  });
+
   it("keeps what the operator needs to triage: event slug, time, environment and the admin link", async () => {
     const mail = await send("Benign message");
     expect(mail.subject).toBe("[Hone CRITICAL] session_payment_succeeded_write_zero_rows");
