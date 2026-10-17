@@ -68,6 +68,18 @@ describe("G-25: record ids are removed from every Sentry error-event surface", (
     expectNoRecordId(out, "extra/tags/contexts/user");
   });
 
+  it("logentry message and params, and a custom fingerprint, lose record ids (Codex P1 4301281977)", () => {
+    const out = scrubErrorEvent(
+      errorEvent({
+        logentry: { message: `Failed to load client ${CLIENT}`, params: [SESSION, { appt: APPT }] },
+        fingerprint: ["{{ default }}", `/clients/${CLIENT}`],
+      } as Partial<ErrorEvent>),
+    );
+    expectNoRecordId(out, "logentry/fingerprint");
+    expect(out.logentry?.message).toBe("Failed to load client [id]");
+    expect(out.fingerprint).toEqual(["{{ default }}", "/clients/[id]"]);
+  });
+
   it("keeps Sentry's own dashless correlation ids (event, trace, span)", () => {
     const out = scrubErrorEvent(
       errorEvent({

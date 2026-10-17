@@ -305,6 +305,22 @@ function scrubEventCommon<T extends Event>(event: T): T {
     event.message = redactString(event.message);
   }
 
+  // Some capture paths (captureMessage with a template) send the text in the
+  // logentry interface instead of `message` (Codex P1 4301281977), and its
+  // params are the interpolated values. Both go through the same redaction,
+  // as does a custom fingerprint, which is grouping text built from the
+  // same strings.
+  const logentry = (event as { logentry?: unknown }).logentry;
+  if (isRecord(logentry)) {
+    if (typeof logentry.message === "string") logentry.message = redactString(logentry.message);
+    if (Array.isArray(logentry.params)) {
+      logentry.params = deepScrub(logentry.params, { redactKeys: true }, seen, 0);
+    }
+  }
+  if (Array.isArray(event.fingerprint)) {
+    event.fingerprint = event.fingerprint.map((f) => (typeof f === "string" ? redactString(f) : f));
+  }
+
   // F-PRIV-001. The transaction NAME was previously never scrubbed at all: it
   // is the event's grouping key and reads as structural metadata, but on a
   // dynamic route it is built from the resolved path, so it carried the raw
