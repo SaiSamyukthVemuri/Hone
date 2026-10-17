@@ -14,7 +14,16 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-12, post-0210 apply; `0210` APPLIED, `0216`, `0218` and `0220` AUTHORED AND PENDING on the STUDIO-READY-02a/02b/02c branches)
+## Current state (verified 2026-10-12, post-0211 apply; `0211` APPLIED, `0216`, `0218` and `0220` AUTHORED AND PENDING on the STUDIO-READY-02a/02b/02c branches)
+
+> **WHY THIS BLOCK SAYS 0211 WHERE THE STUDIO-READY-02 LANE WROTE 0210.** This
+> proof branch merged production in to obtain the #885 paired-target guard,
+> which brought `0211`'s apply record and its `migration-state.json` with it.
+> Only the HOSTED figure moved, and it moved because of #832's migration-first
+> apply — not because anything here was applied. `0216`, `0218` and `0220` are
+> still authored-and-pending exactly as the lane wrote them, and no apply was
+> performed or claimed on this branch. The `0210` apply record below is
+> historical and is not rewritten.
 
 > **`0220` IS AUTHORED AND PENDING, stacked on `0218`.** STUDIO-READY-02c (#824)
 > authors `0220_receptionist_scheduling.sql`: receptionist scheduling over the
@@ -49,9 +58,11 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 > authors `0216_receptionist_membership_foundation.sql` on
 > `feat/receptionist-foundation-824`. It is **not** applied to production, no
 > production write was performed, and `docs/production/migration-state.json` is
-> **untouched** — `hosted_migration_max` stays **0210**. The repository therefore
-> sits legitimately ABOVE hosted, which is the second of the two legal shapes the
-> parity guard admits.
+> **untouched by `0216`** — its `hosted_migration_max` reads **0211**, advanced by
+> #832's migration-first apply and brought onto this proof branch by the
+> production merge, never by this branch and never by `0216`. The repository
+> therefore sits legitimately ABOVE hosted, which is the second of the two legal
+> shapes the parity guard admits.
 >
 > **WHAT IT ADDS.** A receptionist membership that is deliberately **not** a
 > `practitioners` row: the table `studio_receptionists`; three bounded read
