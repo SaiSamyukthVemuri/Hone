@@ -83,6 +83,62 @@ describe("the three-state rule", () => {
     expect(p.detail).toMatch(/no real money moves/);
   });
 
+  // EVERY capability, not just `ready` (Codex P2 4301040473). The first fix
+  // guarded `capability === "ready" && mode === "test"`, so payouts-pending
+  // fell through to the live copy and read "Cards can be charged" on a test
+  // deployment. The console carries no separate mode indicator, so a panel
+  // that omits the mode is the whole defect.
+  const ALL_CAPABILITIES = [
+    "ready",
+    "charges_enabled_payouts_pending",
+    "onboarding_started",
+    "charges_disabled",
+    "not_connected",
+    "unknown",
+  ] as const;
+
+  it("payments: NO test-mode state claims real cards can be charged (Codex P2 4301040473)", () => {
+    for (const c of ALL_CAPABILITIES) {
+      const p = paymentsPanel(c, "test");
+      // Every test-mode panel says so in its own words.
+      expect(p.detail, `${c}: test mode must be stated in the panel's words`).toMatch(
+        /test mode|no real money moves/i,
+      );
+      // And none of them asserts real charging.
+      expect(p.detail, `${c}: must not claim cards can be charged`).not.toMatch(
+        /^Cards can be charged/,
+      );
+      expect(p.detail, `${c}: must not claim LIVE card payments`).not.toMatch(
+        /Live card payments/,
+      );
+    }
+  });
+
+  it("payments: the regression itself — payouts-pending in test mode (Codex P2 4301040473)", () => {
+    const test = paymentsPanel("charges_enabled_payouts_pending", "test");
+    expect(test.status).toBe("Test mode: payouts pending");
+    expect(test.detail).toMatch(/No real cards can be charged in test mode/);
+    // NON-VACUITY: the live panel for the same capability must DIFFER, or this
+    // suite would pass just as well against a mode-blind implementation.
+    const live = paymentsPanel("charges_enabled_payouts_pending", "live");
+    expect(live.status).not.toBe(test.status);
+    expect(live.detail).not.toBe(test.detail);
+    expect(live.detail).not.toMatch(/test mode/i);
+    // The live copy is HEDGED to match connectBannerCopy's approved wording:
+    // the console may not out-claim the page that owns the truth.
+    expect(live.detail).toMatch(/Charges may be enabled/);
+    expect(live.detail).not.toMatch(/^Cards can be charged/);
+  });
+
+  it("payments: tone is preserved across modes where it carries meaning", () => {
+    // The mode changes the WORDS, not the severity: a pending payout is still
+    // "attention" in test mode, and an unread status is still "unknown".
+    expect(paymentsPanel("charges_enabled_payouts_pending", "test").tone).toBe("attention");
+    expect(paymentsPanel("unknown", "test").tone).toBe("unknown");
+    // `ready` is the one deliberate exception: test-ready is never "ready".
+    expect(paymentsPanel("ready", "test").tone).toBe("chosen");
+  });
+
   it("booking: a deliberate admission mode is a choice, never a setup step (Codex P2 4244007433)", () => {
     const wait = { key: "wait_admission", label: "New clients join the waitlist instead of booking directly." };
     const closed = { key: "admission_closed", label: "This studio is not accepting new clients." };

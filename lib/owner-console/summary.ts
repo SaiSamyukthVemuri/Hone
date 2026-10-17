@@ -91,8 +91,11 @@ const CONNECT_COPY: Record<ConnectCapability, { tone: PanelTone; status: string;
   ready: { tone: "ready", status: "Live payments ready", detail: "Live card payments and payouts are enabled." },
   charges_enabled_payouts_pending: {
     tone: "attention",
+    // HEDGED, matching connectBannerCopy's approved wording. The console must
+    // not make a STRONGER money claim than the page that owns this truth: the
+    // approved copy says charges MAY be enabled, never "cards can be charged".
     status: "Payouts pending",
-    detail: "Cards can be charged; payouts are not enabled yet.",
+    detail: "Charges may be enabled, but payouts are not ready yet.",
   },
   onboarding_started: { tone: "attention", status: "Setup in progress", detail: "Stripe onboarding is not finished." },
   charges_disabled: { tone: "attention", status: "Charges disabled", detail: "Stripe is not accepting charges for this account." },
@@ -100,19 +103,55 @@ const CONNECT_COPY: Record<ConnectCapability, { tone: PanelTone; status: string;
   unknown: { tone: "unknown", status: "Unknown", detail: "Payment status could not be read just now. Nothing is assumed." },
 };
 
+// TEST-MODE copy, declared for EVERY capability (Codex P2 4301040473 on #851).
+// The first fix handled only `ready`, so `charges_enabled_payouts_pending` fell
+// through to the live copy and told an owner "Cards can be charged" when only
+// TEST cards could be. The console has no separate mode indicator, so the mode
+// has to live in the panel's own words. A full Record (not a Partial) makes
+// this exhaustive: a new ConnectCapability will not compile until it is
+// answered here, instead of silently inheriting a live-money claim.
+const TEST_MODE_COPY: Record<ConnectCapability, { tone?: PanelTone; status: string; detail: string }> = {
+  ready: {
+    tone: "chosen",
+    status: "Test mode ready",
+    detail: "Test payment setup is ready. Test mode charges no real cards, so no real money moves.",
+  },
+  charges_enabled_payouts_pending: {
+    status: "Test mode: payouts pending",
+    detail: "Test charges may be enabled, but payouts are not ready yet. No real cards can be charged in test mode.",
+  },
+  onboarding_started: {
+    status: "Test mode: setup in progress",
+    detail: "Stripe onboarding is not finished. No real cards can be charged in test mode.",
+  },
+  charges_disabled: {
+    status: "Test mode: charges disabled",
+    detail: "Stripe is not accepting test charges for this account. No real cards can be charged in test mode.",
+  },
+  not_connected: {
+    status: "Test mode: not connected",
+    detail: "No payment account is connected. No real cards can be charged in test mode.",
+  },
+  // UNKNOWN STAYS UNKNOWN. The deployment mode is a fact and is safe to state,
+  // but nothing about the ACCOUNT may be asserted from a read that failed.
+  unknown: {
+    status: "Unknown",
+    detail:
+      "Payment status could not be read just now. Nothing is assumed. No real cards can be charged in test mode.",
+  },
+};
+
 export function paymentsPanel(capability: ConnectCapability, mode: RuntimeMode): ConsolePanel {
   const base = { key: "payments" as const, title: "Payments", href: "/settings/payments" };
+  const live = CONNECT_COPY[capability];
   // Test-mode readiness is never shown as live readiness: no real money can
   // move (Codex P2 4244007430 on #851; the same split as connectBannerCopy).
-  if (capability === "ready" && mode === "test") {
-    return {
-      ...base,
-      tone: "chosen",
-      status: "Test mode ready",
-      detail: "Test payment setup is ready. Test mode charges no real cards, so no real money moves.",
-    };
+  // Every state is now answered, not just `ready` (Codex P2 4301040473).
+  if (mode === "test") {
+    const { tone, ...copy } = TEST_MODE_COPY[capability];
+    return { ...base, tone: tone ?? live.tone, ...copy };
   }
-  return { ...base, ...CONNECT_COPY[capability] };
+  return { ...base, ...live };
 }
 
 /** Panels whose authority does not exist yet. Stated plainly, never implied to be fine. */
