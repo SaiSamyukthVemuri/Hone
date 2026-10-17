@@ -54,7 +54,12 @@ describe("session photos on the chart page", () => {
   });
 
   it("is read-only: no server action, no form, no click handler, links to the Photos tab", () => {
-    expect(section).not.toMatch(/use server|<form|onClick|from "\.\/actions"|from "\.\.\/\.\.\/images\/actions"/);
+    expect(section).not.toMatch(/use server|<form|onClick|from "\.\/actions"/);
+    // Read-only still: the ONLY import from the Photos actions is the READ-only
+    // signer the expired-URL re-mint uses (#913's bounded recovery), never an
+    // upload, note or archive write.
+    expect(section).toMatch(/import \{ getTreatmentImageSignedUrlAction \} from "\.\.\/\.\.\/images\/actions";/);
+    expect(section).not.toMatch(/uploadTreatmentImageAction|archiveTreatmentImageAction|updateTreatmentImageNoteAction|setClientPortraitAction/);
     expect(section).toMatch(/href=\{`\/clients\/\$\{clientId\}\/images`\}/);
     expect(section).toMatch(/if \(photos\.length === 0\) return null;/);
     expect(page).toMatch(/<SessionPhotos clientId=\{id\} photos=\{sessionPhotos\} \/>/);
@@ -84,8 +89,12 @@ describe("session photos: Codex P1 4301862700 / P2 4301862702", () => {
     expect(helper).toMatch(/buildTreatmentImageThumbPath\(r\.storage_path\)/);
     // Grid uses the derivative; a derivative that will not load demotes to the
     // original; only the original failing marks the cell unavailable.
-    expect(section).toMatch(/const useThumb = Boolean\(p\.thumbUrl\) && !thumbFailed\[p\.id\];/);
-    expect(section).toMatch(/if \(useThumb\) setThumbFailed/);
-    expect(section).toMatch(/else setBroken/);
+    // Since #913 this is the SAME bounded machine as the Photos grid:
+    // derivative, then original, re-minting an expired URL once per variant.
+    expect(section).toMatch(/initialGridPhoto\(\{ previewUrl: p\.url, thumbUrl: p\.thumbUrl \}\)/);
+    expect(section).toMatch(/getTreatmentImageSignedUrlAction\(\{ imageId: p\.id, variant \}\)/);
+    expect(section).toMatch(/el\.complete && el\.naturalWidth === 0/);
+    expect(section).toMatch(/state\.stage === "broken" \|\| !state\.src/);
+    expect(section).not.toMatch(/loading="lazy"/);
   });
 });
