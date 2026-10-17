@@ -86,6 +86,22 @@ function blockBody(src: string, braceAt: number): string {
   throw new Error("unbalanced braces while scoping the refusal branch");
 }
 
+/** The text inside a balanced `( … )` whose opening paren is at `parenAt`. */
+function parenText(src: string, parenAt: number): string {
+  let depth = 0;
+  for (let i = parenAt; i < src.length; i += 1) {
+    if (src[i] === "(") depth += 1;
+    else if (src[i] === ")") {
+      depth -= 1;
+      if (depth === 0) return src.slice(parenAt + 1, i);
+    }
+  }
+  throw new Error("unbalanced parens");
+}
+
+/** Collapse whitespace so a comparison is about CODE, not formatting. */
+const norm = (t: string) => t.replace(/\s+/g, " ").trim();
+
 /** The parenthesised body of `create table … (` starting at `parenAt`. */
 function parenBody(src: string, parenAt: number): string {
   let depth = 0;
@@ -205,6 +221,19 @@ describe("#824: financial surfaces refuse a non-owner before any read", () => {
       const refuseAt = src.search(/practitioner\.role\s*!==\s*"owner"/);
       expect(resolveAt, "the page must resolve identity itself").toBeGreaterThan(-1);
       expect(refuseAt, "the page must refuse a non-owner").toBeGreaterThan(-1);
+
+      // THE WHOLE CONDITION, not a substring of it (Codex P2 4303407203).
+      // `practitioner.role !== "owner" && paymentsLockdownEnabled` contains the
+      // role test, so a substring search passed while the refusal applied only
+      // when the extra conjunct happened to be true — a non-owner through the
+      // gate, guard green. The condition is paren-matched and compared whole.
+      const ifAt = src.lastIndexOf("if", refuseAt);
+      expect(ifAt, "the refusal must sit in an if statement").toBeGreaterThan(-1);
+      expect(
+        norm(parenText(src, src.indexOf("(", ifAt))),
+        "the refusal condition must be EXACTLY the role test — no extra conjunct " +
+          "may narrow when a non-owner is refused",
+      ).toBe('practitioner.role !== "owner"');
       // ORDER IS THE PROPERTY, and the region starts at the COMPONENT, not at
       // the resolver (Codex P2 4303257432). Slicing from
       // requirePractitionerWithStudio could not see a loader awaited EARLIER in
@@ -380,15 +409,22 @@ describe("#824: financial surfaces refuse a non-owner before any read", () => {
     // claims no longer enforced. Measured: both checks exist and both read
     // ('owner','practitioner'), which is exactly why the loose version passed.
     const migrations = path.join(ROOT, "supabase", "migrations");
-    const found: string[][] = [];
+    const found: { expr: string; roles: string[] }[] = [];
     for (const f of readdirSync(migrations).filter((n) => n.endsWith(".sql"))) {
       const sql = readFileSync(path.join(migrations, f), "utf8");
       const create = /create table\s+(?:if not exists\s+)?public\.practitioners\s*\(/i.exec(sql);
       if (!create) continue;
       const columns = parenBody(sql, create.index + create[0].length - 1);
-      const check = /check\s*\(\s*role\s+in\s*\(([^)]*)\)/i.exec(columns);
-      if (check) {
-        found.push(roleLiteralsIn(check[1]));
+      // THE WHOLE CHECK EXPRESSION (Codex P2 4303407206). The previous regex
+      // stopped at the first `)`, so widening the constraint to
+      // `check (role in ('owner','practitioner') or role = 'admin')` left the
+      // parsed list equal to the expected pair and the tripwire green while
+      // 'admin' was admitted. The check is paren-matched and compared whole, so
+      // ANY additional predicate fails rather than being skipped past.
+      const checkAt = columns.search(/\bcheck\s*\(/i);
+      if (checkAt > -1) {
+        const expr = norm(parenText(columns, columns.indexOf("(", checkAt)));
+        found.push({ expr, roles: roleLiteralsIn(expr) });
       }
     }
     // NON-VACUITY: the constraint must be FOUND on practitioners itself, so
@@ -416,9 +452,16 @@ describe("#824: financial surfaces refuse a non-owner before any read", () => {
         "assertion can no longer stand for the effective schema; move it to a " +
         "DB suite that reads pg_constraint",
     ).toEqual([]);
-    expect(found[0], "unexpected practitioners.role domain").toEqual([
+    expect(found[0].roles, "unexpected practitioners.role domain").toEqual([
       "owner",
       "practitioner",
     ]);
+    // And the expression must be ONLY that list — no `or role = …` appended
+    // (Codex P2 4303407206). Quotes are normalised so the comparison is about
+    // the EXPRESSION, not the dialect's quoting.
+    expect(
+      found[0].expr.replace(/'/g, '"'),
+      "the role CHECK must be exactly an IN list of the two roles",
+    ).toBe('role in ("owner", "practitioner")');
   });
 });
