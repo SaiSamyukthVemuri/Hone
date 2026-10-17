@@ -47,6 +47,21 @@ export const BROWSER_GROUPS = {
       // the same surface conditional-numbing-notes and
       // repeat-client-fast-charting drive.
       "machine-first-charting.spec.ts",
+      // MPX-03: the CREATE-mode journey through the same surface — the panel
+      // before a block exists, then the one atomic save that follows. Same
+      // group as its sibling for the same reason.
+      "machine-create-mode-journey.spec.ts",
+      // MPX-03: changing the machine or the mode UNDER a typed draft, and the
+      // unit going out of service mid-draft. Same surface again - the panel
+      // inside the settings-block form - so the same group: a diff to that
+      // form must run this spec, and filing it elsewhere would hide it from
+      // the only lane its subject can regress in.
+      "machine-switch-discards-draft.spec.ts",
+      // MPX-03: the LOST RESPONSE on the initial save, and pressing Save
+      // again. Same surface once more, so the same group - and this one most
+      // of all, because what it proves is that the FORM reuses its retry key,
+      // which no database test can see.
+      "machine-initial-save-retry.spec.ts",
       "copy-settings-machine-readings.spec.ts",
       "custom-area-commit.spec.ts",
       "galvanic-intensity-retirement.spec.ts",
@@ -238,6 +253,12 @@ export const BROWSER_GROUPS = {
       // STUDIO-READY-03b (#824): the owner console's composition of the
       // delivery, SMS and payment-country authorities.
       "owner-console-overview.spec.ts",
+      // FETT photos (HON-43): Photos-tab grid thumbnails survive a reload and
+      // the 60 s signed-URL expiry. Here and not in `sessions` for UI-04's two
+      // reasons: /clients/** has no PATH_TO_GROUP pattern (a photo diff already
+      // runs extended) and `sessions` carries a cost pin. Needs REAL storage,
+      // so it SELF-SKIPS in CI (no storage-api); its evidence is a local run.
+      "fett-photos-thumbnail-recovery.spec.ts",
       // OWNER-CAP Slice 1: /dashboard/capacity. This group's stated scope is
       // already "owner/admin, onboarding, studio setup AND CAPACITY", and the
       // spec is exactly an owner-authority surface — an owner reaches the

@@ -17,7 +17,7 @@ import type { StudioDevice } from "@/lib/machines/selection";
 
 const { createElement } = await import("react");
 const { renderToStaticMarkup } = await import("react-dom/server");
-const { MachineFirstSetupPanel } = await import(
+const { MachineFirstSetupPanel, withheld } = await import(
   "@/components/machines/machine-first-setup-panel"
 );
 const { MachineFirstSetupConnected } = await import(
@@ -157,41 +157,58 @@ describe("the panel with no identity yet", () => {
   });
 });
 
-describe("evidence-blocked models are exposed truthfully", () => {
-  const html = render();
+describe("the withheld-model catalogue is NOT in the treatment form", () => {
+  // THESE FOUR ASSERTIONS ARE INVERTED, NOT DELETED, and the inversion is the
+  // product decision rather than a loosening.
+  //
+  // They required the charting form to list every unverified model with its
+  // full evidence reason - firmware conflicts, unread operating screens, a
+  // manual returning 403 - eleven entries deep. The reasoning was sound as
+  // far as it went: a picker that silently omits a studio's machine is worse
+  // than one that says why. But on a charting form, mid-treatment, it put a
+  // wall of procurement detail between the practitioner and the fields she
+  // was filling in, and Sam's screenshot said exactly that ("this looks
+  // weird ... is this all prepopulated").
+  //
+  // The information is not lost: `withheld(catalogue)` still computes it from
+  // the same contract and is exported for an owner or support
+  // machine-readiness surface, where somebody is actually deciding what to
+  // register. What charting needs is a concise reason and a next action
+  // (#860 6156583955).
+  const html = render({ scope: SCOPE, devices: [], catalogue: MACHINE_CATALOGUE });
 
-  it("lists every withheld profile by name", () => {
-    expect(html).toContain("Not yet selectable");
-    for (const name of [
-      "Dectro xCell",
-      "Dectro Senior 3G",
-      "Dectro Junior 3G",
-      "Silhouet-Tone ST 250",
-      "Silhouet-Tone Evolution 5HD",
-      "Silhouet-Tone Evolution ST 350",
-      "Permanence GEMM-16",
-    ]) {
-      expect(html, `${name} should be shown, not silently omitted`).toContain(name);
+  it("names no withheld model", () => {
+    for (const name of ["Dectro", "Silhouet-Tone", "Permanence"]) {
+      expect(html, `${name} is procurement detail, not charting`).not.toContain(name);
     }
   });
 
-  it("gives the real reason rather than a generic one", () => {
-    // The ST 350's reason is the finding from the activation review.
-    expect(html).toContain("four native display LABELS");
-    // The ST 250's is the 403 manual.
-    expect(html).toContain("403");
-    // The GEMM's is its timer page.
-    expect(html).toContain("microamps");
+  it("carries no evidence reason or implementation status", () => {
+    for (const phrase of [
+      "Not yet selectable",
+      "firmware",
+      "operating-screen",
+      "403",
+      "historical records only",
+    ]) {
+      expect(html).not.toContain(phrase);
+    }
   });
 
-  it("marks a legacy-only profile as historical rather than merely blocked", () => {
-    expect(html).toContain("Dectro Platinum");
-    expect(html).toContain("historical records only");
+  it("says concisely that nothing is available, instead", () => {
+    // The replacement has to actually be there, or this is a deletion dressed
+    // up as a decision.
+    expect(html).toContain('data-testid="machine-select"');
+    expect(html).toMatch(/no verified machine|not available|no machine/i);
   });
 
-  it("distinguishes the two GEMM variants", () => {
-    expect(html).toContain("Permanence GEMM-16 (US)");
-    expect(html).toContain("Permanence GEMM-16 (Beauty)");
+  it("keeps the detail available to a readiness surface", () => {
+    // The seam, asserted so the data cannot be quietly dropped later: the
+    // computation is still exported and still returns the withheld models with
+    // their reasons.
+    const list = withheld(MACHINE_CATALOGUE);
+    expect(list.length).toBeGreaterThan(0);
+    expect(list[0]!.reason.length).toBeGreaterThan(0);
   });
 });
 
@@ -220,7 +237,12 @@ describe("with a synthetic studio machine, selection is offered", () => {
   const html = render({ scope: SCOPE, devices: [DEVICE], catalogue: CAT });
 
   it("invites the machine-first choice", () => {
-    expect(html).toContain("Choose the machine you are working on before entering settings");
+    // The prompt moved with the control: the pill row and its "before
+    // entering settings" copy are gone, because the dropdown is always
+    // visible and the settings now appear in the same form rather than after
+    // it.
+    expect(html).toContain('data-testid="machine-select"');
+    expect(html).toContain("Choose the machine you are working on");
   });
 
   it("names the studio's own device and the exact model behind it", () => {
@@ -253,8 +275,20 @@ describe("once chosen, the panel shows that model's native fields", () => {
     expect(html).toContain("Galvanic");
   });
 
-  it("offers a visible way to change machine", () => {
-    expect(html).toContain("Change machine");
+  it("offers a visible way to change machine - the dropdown itself", () => {
+    // THE LINK IS GONE ON PURPOSE. A separate "Change machine" control existed
+    // because the pill picker DISAPPEARED once something was chosen, so there
+    // had to be a way back. The dropdown is always visible, so switching is
+    // choosing another option and clearing is choosing the empty one; a second
+    // control would be a second way to do what this one already does
+    // (Sam, 19:16; #860 6156583955).
+    expect(html).toContain('data-testid="machine-select"');
+    expect(html, "the link it replaced must not linger").not.toContain(
+      "Change machine",
+    );
+    // The empty option is how a selection is cleared, so clearing stays
+    // reachable after a choice.
+    expect(html).toContain("Choose machine");
   });
 
   it("renders the machine's own labels with their native units", () => {
@@ -303,15 +337,24 @@ describe("the panel records nothing, structurally", () => {
     catalogue: CAT,
   });
 
-  it("renders no input, textarea or select anywhere", () => {
-    // The load-bearing safety property of this slice: there are no reading
-    // columns yet, and a clinical form that accepted numbers and then dropped
-    // them would be worse than one that does not ask. The only controls are
-    // the machine buttons and "Change machine".
-    for (const tag of ["<input", "<textarea", "<select"]) {
-      expect(chosen, `${tag} would imply this panel collects readings`).not.toContain(
-        tag,
-      );
+  it("collects no READING without somewhere to put it", () => {
+    // THIS TEST'S ORIGINAL CLAIM EXPIRED, and its own comment said why without
+    // anyone noticing: "there are no reading columns yet". 0223 created them.
+    // It kept passing only because this fixture has no blockId, so no entry
+    // surface rendered - an assertion that had quietly become about the
+    // fixture rather than the component.
+    //
+    // The property that still matters is the original intent: a clinical form
+    // must not accept numbers it would then discard. So the assertion is about
+    // READING inputs specifically. A <select> for the machine is not a
+    // reading - it chooses which contract governs the fields - and the
+    // dropdown is now the product's primary control, so forbidding every
+    // <select> would forbid the feature.
+    expect(chosen, "no reading input without a block").not.toContain(
+      'data-testid="reading-',
+    );
+    for (const tag of ["<textarea"]) {
+      expect(chosen, `${tag} would imply free-text capture here`).not.toContain(tag);
     }
   });
 
@@ -385,7 +428,16 @@ describe("the connected wrapper makes NO request until asked", () => {
     // test conflated them: it demanded a no-argument loader, which is exactly
     // what made the prior-setup read fall back to the whole studio and show
     // one client's settings on another's chart (Codex, 9c6fbbe5).
-    expect(code).toMatch(/loadMachineSetupContext\(\{\s*clientId,\s*sessionId\s*\}\)/);
+    // `blockId` joined the argument list when the recorded-setup read was
+    // folded into this SAME round trip. It is the same KIND of value as the
+    // other two - which block is open is a route subject, not an authority
+    // claim, and the server authorizes it - so the regex admits it rather than
+    // this test demanding a shape that would force a SECOND server-action
+    // POST, which is what broke repeat-client-fast-charting and
+    // conditional-numbing-notes before.
+    expect(code).toMatch(
+      /loadMachineSetupContext\(\{\s*clientId,\s*sessionId,\s*blockId\s*\}\)/,
+    );
     // No ownership, in any spelling.
     expect(code).not.toMatch(/studioId/);
     expect(code).not.toMatch(/practitionerId/);
@@ -485,7 +537,11 @@ describe("historical values are untouched by anything here", () => {
       initialDeviceId: "room-9",
       catalogue: CAT,
     });
-    for (const tag of ["<input", "<textarea", "<select", "<form"]) {
+    // READING inputs and a form of its own are what must be absent. The
+    // machine <select> is present and is the point of the surface; see the
+    // note on the sibling assertion above.
+    expect(html).not.toContain('data-testid="reading-');
+    for (const tag of ["<textarea", "<form"]) {
       expect(html).not.toContain(tag);
     }
     // And what it shows instead is the contract: label, unit, precision.
@@ -584,7 +640,14 @@ describe("the next-visit retrieval renders the prior setup", () => {
 
   it("names the machine, the mode, the value and its unit", () => {
     expect(html).toContain('data-testid="machine-prior-setup"');
-    expect(html).toContain("Last recorded setup");
+    // "PREVIOUS TREATMENT", in Sam's words, replacing "Last recorded setup".
+    // The rename is the product point rather than wording: Sam's screenshot
+    // asked "is this all prepopulated", which is what a reader asks when past
+    // values sit in the same visual register as the fields to be filled in.
+    expect(html).toContain("Previous treatment");
+    expect(html, "the old label must not linger").not.toContain(
+      "Last recorded setup",
+    );
     expect(html).toContain("Fixture Panel");
     expect(html).toContain("Galvanic");
     expect(html).toContain("120");
@@ -769,7 +832,10 @@ describe("a stored machine that cannot be used says so", () => {
   });
 
   it("still offers the picker, so a replacement can be chosen", () => {
-    expect(html).toContain(`machine-pick-${DEVICE.deviceId}`);
+    // The dropdown, not a pill: a replacement is chosen by selecting another
+    // option in the control that is always on screen.
+    expect(html).toContain('data-testid="machine-select"');
+    expect(html).toContain(`value="${DEVICE.deviceId}"`);
   });
 
   it("does not claim nothing is remembered, because something is", () => {
@@ -824,7 +890,7 @@ describe("next-visit guidance names the unit, not just the model", () => {
       devices: [DEVICE],
       catalogue: CAT,
       priorSetup: [reading()],
-      priorUnitNames: { [DEVICE.deviceId]: "Room 9 unit" },
+      unitNames: { [DEVICE.deviceId]: "Room 9 unit" },
     });
     expect(html).toContain('data-testid="prior-setup-unit"');
     const prior = html.slice(html.indexOf('data-testid="machine-prior-setup"'));
@@ -854,7 +920,7 @@ describe("next-visit guidance names the unit, not just the model", () => {
       devices: [DEVICE],
       catalogue: CAT,
       priorSetup: [reading({ deviceId: "device-no-longer-listed" })],
-      priorUnitNames: { [DEVICE.deviceId]: "Room 9 unit" },
+      unitNames: { [DEVICE.deviceId]: "Room 9 unit" },
     });
     const prior = html.slice(html.indexOf('data-testid="machine-prior-setup"'));
     expect(prior).not.toContain("device-no-longer-listed");
@@ -878,7 +944,7 @@ describe("next-visit guidance names the unit, not just the model", () => {
       devices: [], // retired units are absent from the picker, as in production
       catalogue: CAT,
       priorSetup: [reading()],
-      priorUnitNames: { [DEVICE.deviceId]: "Room 9 unit" },
+      unitNames: { [DEVICE.deviceId]: "Room 9 unit" },
     });
     const prior = html.slice(html.indexOf('data-testid="machine-prior-setup"'));
     expect(prior).toContain("Room 9 unit");
@@ -949,7 +1015,15 @@ describe("the connected wrapper forwards the whole context", () => {
     // matching, this fails here rather than passing an empty loop below.
     expect(fields.length).toBeGreaterThanOrEqual(8);
     expect(fields).toContain("priorSetup");
-    expect(fields).toContain("priorUnitNames");
+    // RENAMED from `priorUnitNames` when the recorded-setup surface landed:
+    // one lookup now names the units of BOTH reads plus the unusable stored
+    // selection, so a name tied to the prior setup alone was misleading.
+    expect(fields).toContain("unitNames");
+    // WHAT IS ALREADY RECORDED against the block being charted. The field
+    // exists because a recorded capture was permanent and INVISIBLE - both
+    // reads were built, granted and proved against Postgres, and neither ever
+    // reached a screen.
+    expect(fields).toContain("recordedSetup");
     expect(fields).toContain("persistence");
   });
 
@@ -1181,12 +1255,18 @@ describe("mode and device controls meet DESIGN.md's interaction floor", () => {
     expect(tagFor("machine-mode-second")).toContain("pointer-fine:min-h-8");
   });
 
-  it("the DEVICE control carries it too, which it did not before", () => {
-    // Pre-existing and unflagged: `py-2 text-sm` with no minimum height is
-    // about 36px. Same law, one control over.
-    expect(tagFrom(pickingHtml, `machine-pick-${DEV.deviceId}`)).toContain(
-      "min-h-[44px]",
+  it("the DEVICE control carries it too - now as the dropdown", () => {
+    // This asserted the pill row's height, which was ~36px and under the
+    // floor. The pills are gone; the control is a <select> built from
+    // `fieldControlClass`, which carries the floor, the 16px type that stops
+    // iOS zooming on focus, and the focus ring. Asserted on the select rather
+    // than deleted, because the LAW is what the test was for, not the pill.
+    const tag = (pickingHtml.match(/<select[^>]*>/g) ?? []).find((t) =>
+      t.includes('data-testid="machine-select"'),
     );
+    expect(tag, "no machine dropdown was rendered").toBeTruthy();
+    expect(tag).toContain("min-h-[44px]");
+    expect(tag).toContain("text-base");
   });
 
   it("the shared focus treatment comes with them", () => {
@@ -1308,5 +1388,331 @@ describe("setting groups in the entry surface", () => {
     expect(current).toBeTruthy();
     expect(current).toContain("min-h-[44px]");
     expect(current).toContain("text-base");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE MACHINE DROPDOWN's own contract.
+//
+// Sam's correction, 19:16: "it should be a dropdown to select the machine then
+// each machine's settings show up so we can do live charting"
+// (#860 6156583955).
+// ---------------------------------------------------------------------------
+describe("the machine dropdown", () => {
+  const SECOND: StudioDevice = {
+    ...DEVICE,
+    deviceId: "room-3",
+    displayName: "Room 3 unit",
+  };
+
+  it("is ALWAYS VISIBLE, with nothing chosen and with something chosen", () => {
+    // The pills it replaced vanished once a machine was chosen, which is why a
+    // separate "Change machine" link had to exist. An always-present control
+    // is the whole point.
+    const empty = render({ scope: SCOPE, devices: [DEVICE], catalogue: CAT });
+    const picked = render({
+      scope: SCOPE,
+      devices: [DEVICE],
+      catalogue: CAT,
+      initialDeviceId: DEVICE.deviceId,
+    });
+    expect(empty).toContain('data-testid="machine-select"');
+    expect(picked).toContain('data-testid="machine-select"');
+  });
+
+  it("is LABELLED, not a bare control", () => {
+    const html = render({ scope: SCOPE, devices: [DEVICE], catalogue: CAT });
+    expect(html).toContain("Machine");
+  });
+
+  it("names the UNIT first and the model second", () => {
+    // A studio names its rooms, and two rooms can hold the same model - so the
+    // studio's own name is the identifying part and the model qualifies it.
+    const html = render({ scope: SCOPE, devices: [DEVICE], catalogue: CAT });
+    const select = html.slice(html.indexOf('data-testid="machine-select"'));
+    const option = select.slice(select.indexOf("<option value=\"room-9\""));
+    const text = option.slice(0, option.indexOf("</option>"));
+    expect(text).toContain("Room 9 unit");
+    expect(text).toContain("Fixture Panel");
+    expect(
+      text.indexOf("Room 9 unit"),
+      "the unit name comes first",
+    ).toBeLessThan(text.indexOf("Fixture Panel"));
+  });
+
+  it("lists every usable unit, so a studio with two can choose", () => {
+    const html = render({
+      scope: SCOPE,
+      devices: [DEVICE, SECOND],
+      catalogue: CAT,
+    });
+    expect(html).toContain('value="room-9"');
+    expect(html).toContain('value="room-3"');
+  });
+
+  it("EXCLUDES a retired unit, which selectableDevices already filters", () => {
+    // Asserted here rather than trusted: the dropdown is a new consumer of
+    // that filter, and a dropdown built from the raw device list would offer a
+    // unit the command then refuses.
+    const retired: StudioDevice = { ...SECOND, retiredAt: "2026-10-01T00:00:00Z" };
+    const html = render({
+      scope: SCOPE,
+      devices: [DEVICE, retired],
+      catalogue: CAT,
+    });
+    expect(html).toContain('value="room-9"');
+    expect(html, "a retired unit must not be offered").not.toContain('value="room-3"');
+  });
+
+  it("initialises from the REMEMBERED unit when it is still usable", () => {
+    const html = render({
+      scope: SCOPE,
+      devices: [DEVICE, SECOND],
+      catalogue: CAT,
+      initialDeviceId: SECOND.deviceId,
+    });
+    // React renders the selected option's `selected` attribute on the server.
+    const select = html.slice(
+      html.indexOf('data-testid="machine-select"') - 400,
+      html.indexOf("</select>"),
+    );
+    expect(select).toMatch(/room-3/);
+  });
+
+  it("offers the explicit empty state, which is also how a choice is cleared", () => {
+    const html = render({
+      scope: SCOPE,
+      devices: [DEVICE],
+      catalogue: CAT,
+      initialDeviceId: DEVICE.deviceId,
+    });
+    expect(html).toContain('<option value="">');
+    expect(html).toContain("Choose machine");
+  });
+
+  it("is DISABLED with a reason when the studio has nothing usable", () => {
+    // Not an empty dropdown with no explanation: emptiness has two causes and
+    // the practitioner needs the right one.
+    const html = render({
+      scope: SCOPE,
+      devices: [],
+      catalogue: CAT,
+      inventoryReason: "This studio has no machine registered yet.",
+    });
+    expect(html).toContain("disabled");
+    expect(html).toContain("no machine registered yet");
+  });
+
+  it("uses the SHARED control classes, so the touch floor is not re-derived", () => {
+    // fieldControlClass carries the 44px floor, the 16px type that stops iOS
+    // zooming on focus, and the focus ring. The pills it replaced were
+    // hand-rolled at about 36px, under DESIGN.md LAW 6.
+    const html = render({ scope: SCOPE, devices: [DEVICE], catalogue: CAT });
+    const tag = (html.match(/<select[^>]*>/g) ?? []).find((t) =>
+      t.includes('data-testid="machine-select"'),
+    );
+    expect(tag).toBeTruthy();
+    expect(tag).toContain("min-h-[44px]");
+    expect(tag).toContain("text-base");
+    expect(tag).toContain("focus-visible:");
+  });
+
+  it("renders no dropdown at all without identity, rather than an empty one", () => {
+    // Without a scope the panel cannot know which studio's units to list, and
+    // guessing is what the server-derived identity exists to prevent.
+    const html = render({ devices: [DEVICE], catalogue: CAT });
+    expect(html).not.toContain('data-testid="machine-select"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PREVIOUS TREATMENT is a REFERENCE, and has to read as one.
+//
+// Sam's screenshot asked "is this all prepopulated". Nothing ever was - the
+// entry draft starts empty and the setting-groups suite proves a new capture
+// begins blank - but it READ as prepopulated, because past values sat in the
+// same visual register as the fields about to be filled in. Queue item 2 of
+// #860 6156583955: "Prior treatment setup is a small clearly labelled
+// Previous treatment reference. Its values are seeded history, not today's
+// entries."
+// ---------------------------------------------------------------------------
+describe("the Previous treatment reference", () => {
+  const prior = [
+    {
+      blockId: "b1",
+      deviceId: DEVICE.deviceId,
+      profileId: "fixture:panel",
+      profileVersion: 1,
+      modeKey: "galvanic",
+      groupKey: "g1",
+      channels: [],
+      stageKey: null,
+      fieldKey: "current",
+      value: { kind: "value", value: 120 },
+      nativeUnit: "µA",
+      decimals: 0,
+      recordedAt: "2026-09-20T15:04:00Z",
+    },
+  ];
+
+  const html = render({
+    scope: SCOPE,
+    devices: [DEVICE],
+    catalogue: CAT,
+    priorSetup: prior,
+    unitNames: { [DEVICE.deviceId]: "Room 9 unit" },
+  });
+
+  it("is labelled as PREVIOUS, not as a current reading", () => {
+    expect(html).toContain("Previous treatment");
+  });
+
+  it("says in words that these are not today's entries", () => {
+    // The line that actually answers the question Sam asked.
+    expect(html).toContain('data-testid="prior-setup-reference-note"');
+    // The apostrophe is asserted AROUND rather than through: the source writes
+    // &apos; and renderToStaticMarkup emits &#x27;, which is the renderer's
+    // choice and not the product's claim. Pinning one encoding makes the test
+    // fail on a React upgrade that picks another.
+    expect(html).toMatch(/not today/);
+    expect(html).toMatch(/s entries/);
+    expect(html).toMatch(/reference only/i);
+  });
+
+  it("is DATED, so it cannot be mistaken for this visit", () => {
+    // A date is the cheapest unambiguous signal that this is a past event.
+    expect(html).toContain('data-testid="prior-setup-when"');
+    expect(html).toMatch(/2026/);
+  });
+
+  it("shows the DATE only, not a time of day", () => {
+    // Deliberate: a clock time invites reading the row set as "the settings at
+    // that instant", and with several groups these rows can carry different
+    // instants. Codex's decision is explicit that independently timed
+    // revisions must not be presented as one moment (#860 6157725545).
+    const when = html.slice(html.indexOf('data-testid="prior-setup-when"'));
+    const text = when.slice(when.indexOf(">") + 1, when.indexOf("</span>"));
+    expect(text).not.toMatch(/\d{1,2}:\d{2}/);
+  });
+
+  it("does NOT pre-fill today's entry fields from it", () => {
+    // The property Sam's question was really about. A value she has not
+    // re-read off the machine is not a reading, and the record must not be
+    // able to acquire one by her failing to notice a filled box.
+    const withEntry = render({
+      scope: SCOPE,
+      devices: [DEVICE],
+      catalogue: CAT,
+      initialDeviceId: DEVICE.deviceId,
+      blockId: "block-1",
+      onRecord: async () => ({ ok: true }),
+      priorSetup: prior,
+      unitNames: { [DEVICE.deviceId]: "Room 9 unit" },
+    });
+    const input = (withEntry.match(/<input[^>]*>/g) ?? []).find((t) =>
+      t.includes('data-testid="reading-current"'),
+    );
+    expect(input, "no entry input was rendered").toBeTruthy();
+    expect(input, "today's field must start empty").toMatch(/value=""|(?!.*value=)/);
+    expect(input, "the previous 120 must not be pre-filled").not.toContain(
+      'value="120"',
+    );
+  });
+
+  it("renders nothing at all when there is no history", () => {
+    const none = render({ scope: SCOPE, devices: [DEVICE], catalogue: CAT });
+    expect(none).not.toContain('data-testid="machine-prior-setup"');
+    expect(none).not.toContain("Previous treatment");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WHAT IS ALREADY RECORDED reaches the practitioner.
+//
+// A recorded capture was permanent and INVISIBLE: nothing in the application
+// read what had already been recorded against the block being charted, so
+// after a page load the only thing she saw was nothing, and her options were
+// to re-record - appending a second immutable capture indistinguishable from
+// a genuine mid-treatment change - or to guess.
+//
+// The surface itself is proved in tests/components/machine-recorded-setups.
+// What is proved HERE is that the panel renders it at all, in the right place,
+// and only when there is something to show - which is the part a direct test
+// of the component cannot see.
+// ---------------------------------------------------------------------------
+describe("the panel shows what is already recorded on this block", () => {
+  const recorded = [
+    {
+      blockId: "block-1",
+      captureId: "cap-1",
+      revision: 1,
+      deviceId: DEVICE.deviceId,
+      profileId: "fixture:panel",
+      profileVersion: 1,
+      modeKey: "galvanic",
+      groupKey: "g1",
+      channels: [],
+      stageKey: null,
+      fieldKey: "current",
+      value: { kind: "value" as const, value: 120 },
+      nativeUnit: "µA",
+      decimals: 0,
+      recordedAt: "2026-10-14T14:00:00Z",
+    },
+  ];
+
+  it("renders the recorded surface when there is something recorded", () => {
+    const html = render({
+      scope: SCOPE,
+      devices: [DEVICE],
+      catalogue: CAT,
+      recordedSetup: recorded,
+      unitNames: { [DEVICE.deviceId]: "Room 9 unit" },
+    });
+    expect(html).toContain('data-testid="machine-recorded-setups"');
+    expect(html).toContain("Recorded this treatment");
+  });
+
+  it("renders NOTHING of it when nothing is recorded", () => {
+    // The default. A heading over no content reads as a surface that failed
+    // to load, which is the opposite of the reassurance it exists to give.
+    const html = render({ scope: SCOPE, devices: [DEVICE], catalogue: CAT });
+    expect(html).not.toContain('data-testid="machine-recorded-setups"');
+    expect(html).not.toContain("Recorded this treatment");
+  });
+
+  it("puts TODAY'S RECORD ABOVE last visit's reference", () => {
+    // The order of the questions she actually asks. Putting today's record
+    // below last visit's reference buries the one that stops a double
+    // capture.
+    const html = render({
+      scope: SCOPE,
+      devices: [DEVICE],
+      catalogue: CAT,
+      recordedSetup: recorded,
+      priorSetup: recorded.map((r) => ({ ...r, blockId: "older-block" })),
+      unitNames: { [DEVICE.deviceId]: "Room 9 unit" },
+    });
+    const recordedAt = html.indexOf('data-testid="machine-recorded-setups"');
+    const priorAt = html.indexOf('data-testid="machine-prior-setup"');
+    expect(recordedAt).toBeGreaterThan(-1);
+    expect(priorAt).toBeGreaterThan(-1);
+    expect(recordedAt, "today's record must come first").toBeLessThan(priorAt);
+  });
+
+  it("names the recorded unit from the SAME map that names the prior one", () => {
+    // One server lookup feeds both, which is why the context field is called
+    // `unitNames` and not `priorUnitNames` any more.
+    const html = render({
+      scope: SCOPE,
+      devices: [DEVICE],
+      catalogue: CAT,
+      recordedSetup: recorded,
+      unitNames: { [DEVICE.deviceId]: "Room 9 unit" },
+    });
+    const section = html.slice(
+      html.indexOf('data-testid="machine-recorded-setups"'),
+    );
+    expect(section).toContain("Room 9 unit");
   });
 });

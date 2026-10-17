@@ -50,12 +50,81 @@ import {
 // Native field projection
 // ---------------------------------------------------------------------------
 
-/** How a unit is written next to an input. */
+/**
+ * The units that are WRITTEN AS NOTHING, in one place.
+ *
+ * `device-display` and `none` are sentinels, not units: the machine's own label
+ * already carries the meaning, and inventing a unit for a 5HD's UE or an ST
+ * 350's UL would be the exact normalisation the contract forbids. Printing the
+ * sentinel itself is worse than printing nothing - "1.25 device-display" reads
+ * as a unit the machine has and does not.
+ */
+const UNWRITTEN_UNITS: ReadonlySet<string> = new Set(["device-display", "none"]);
+
+/** How a unit is written next to an input, from TODAY'S contract. */
 export function unitLabel(unit: NativeUnit): string {
-  // `device-display` and `none` render nothing: the machine's own label already
-  // carries the meaning, and inventing a unit for UE or UL would be the exact
-  // normalisation the contract forbids.
-  return unit === "device-display" || unit === "none" ? "" : unit;
+  return UNWRITTEN_UNITS.has(unit) ? "" : unit;
+}
+
+/**
+ * The same rule for a unit read back off the RECORD.
+ *
+ * SEPARATE FROM `unitLabel` BECAUSE THE INPUT IS DIFFERENT, not because the
+ * rule is. `treatment_setup_readings.native_unit` is a free text column holding
+ * whatever the contract said when the row was written, so it is a `string` and
+ * may be a unit today's `NativeUnit` union no longer contains. Anything that is
+ * not a sentinel is therefore printed VERBATIM - a historical µA stays µA, and
+ * harmonising it to today's vocabulary is the one thing this must never do.
+ *
+ * It exists because the recorded-history surface printed the sentinels
+ * literally while the entry form beside it did not: the same reading rendered
+ * "1.25" with an input and "1.25 device-display" in the history below
+ * (Codex, #860 4288424526).
+ */
+export function recordedUnitLabel(unit: string | null | undefined): string {
+  if (!unit) return "";
+  return UNWRITTEN_UNITS.has(unit) ? "" : unit;
+}
+
+/**
+ * How a recorded reading was obtained, in words, for the clinical record.
+ *
+ * THE PROVENANCE WAS STORED AND NEVER SHOWN (Codex, #860 4301669064). The
+ * write path records `observation_source`, the SQL emits it and the query
+ * preserves it, but neither the recorded-history row nor the
+ * previous-treatment renderer consumed it - so an ESTIMATED value and a
+ * value transcribed off the machine's own display rendered identically on
+ * the chart. Those are different clinical facts about the same number.
+ *
+ * RENDERED FOR EVERY SOURCE, NOT ONLY A MISMATCH, and that is deliberate.
+ * Showing it only when it disagrees with the expectation would mean reading
+ * the expectation off TODAY'S contract, which is exactly what the finding
+ * says not to do: a contract may be republished at a new version, and a
+ * historical row's provenance must not change meaning because the model's
+ * current description did. The stored value is the only thing that is
+ * still true about how that reading was obtained.
+ *
+ * Null for a row written before the column existed; those render nothing
+ * rather than being backfilled with a guess.
+ */
+export function observationSourceLabel(
+  source: string | null | undefined,
+): string {
+  switch (source) {
+    case "machine-displayed":
+      return "from the machine display";
+    case "device-computed":
+      return "computed by the machine";
+    case "practitioner-entered":
+      return "entered by hand";
+    case "estimated":
+      return "estimated";
+    default:
+      // An unknown value is NOT invented into a label. A row from before the
+      // column existed, or one carrying a source this build does not know,
+      // says nothing rather than something wrong.
+      return "";
+  }
 }
 
 export type FieldDescriptor = {

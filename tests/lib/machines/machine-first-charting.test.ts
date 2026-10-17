@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 import { MACHINE_CATALOGUE } from "@/lib/machines/catalogue";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
@@ -20,6 +22,7 @@ import {
   nativeFieldGroups,
   priorSetupView,
   proposeSetup,
+  recordedUnitLabel,
   settingGroupIssues,
   unitLabel,
   type RecordedSetup,
@@ -401,6 +404,34 @@ describe("the chart shows that model's native fields", () => {
     expect(unitLabel("µA")).toBe("µA");
   });
 
+  it("applies the SAME rule to a unit read back off the record", () => {
+    // THE ENTRY FORM OBEYED THIS AND THE HISTORY BESIDE IT DID NOT, so one
+    // reading rendered as "1.25" above and "1.25 device-display" below
+    // (Codex, #860 4288424526). The rule is one rule; what differs is the
+    // input, which is why there are two entry points and one sentinel set.
+    expect(recordedUnitLabel("device-display")).toBe("");
+    expect(recordedUnitLabel("none")).toBe("");
+    expect(recordedUnitLabel("µA")).toBe("µA");
+  });
+
+  it("prints a HISTORICAL unit verbatim rather than harmonising it", () => {
+    // `native_unit` is free text holding whatever the contract said when the
+    // row was written, so it can be a unit today's union no longer contains.
+    // Anything that is not a sentinel is printed as recorded - rewriting it to
+    // today's vocabulary would destroy the native precision the whole contract
+    // exists to preserve.
+    expect(recordedUnitLabel("mC")).toBe("mC");
+    expect(recordedUnitLabel("UE")).toBe("UE");
+  });
+
+  it("treats a missing recorded unit as nothing to write, not as a crash", () => {
+    // The column is NOT NULL today, but this reads rows written by a command
+    // that predates it, and a renderer is the wrong place to discover that.
+    expect(recordedUnitLabel("")).toBe("");
+    expect(recordedUnitLabel(null)).toBe("");
+    expect(recordedUnitLabel(undefined)).toBe("");
+  });
+
   it("keeps MultiPlex's two stages as two visible groups, in order", () => {
     const xcell = MACHINE_CATALOGUE.find((p) => p.profileId === "dectro-apilus:xcell")!;
     const mp = xcell.modes.find((m) => m.key === "multiplex")!;
@@ -640,5 +671,180 @@ describe("carry-forward is a reviewable proposal that clears on incompatibility"
     // The stored setup is untouched: the proposal holds deep copies.
     expect(PRIOR.groups[0]!.readings.current).toEqual({ kind: "value", value: 120 });
     expect(PRIOR.groups[0]!.channels).toEqual([1, 2]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MPX-03 · ONE CONTRACT, TWO LAYERS, ONE ANSWER
+//
+// The defect here is not a missing rule; it is two layers DISAGREEING about
+// the same rule, which is worse than either being wrong alone. A value the
+// application accepts and the database refuses reaches her as a FAILED SAVE
+// rather than as a field telling her something — and on the atomic create
+// path that refusal aborts the whole area, so she loses the treatment record
+// too, for a value a label could have caught.
+//
+// Codex has reported this shape twice on this PR: advisory precision
+// (4289974660) and negative values (4301531160). So the guard DERIVES both
+// lists and compares them rather than pinning either one's spelling — a test
+// that listed the quantities would pass while the layers drifted, which is
+// exactly how the second instance arrived after the first.
+// ---------------------------------------------------------------------------
+describe("the negative-value rule is the SAME rule in both layers", () => {
+  const MIGRATION = readFileSync(
+    path.resolve(
+      __dirname,
+      "../../../supabase/migrations/0223_machine_inventory_and_setup_readings.sql",
+    ),
+    "utf8",
+  );
+  const VALIDATOR = readFileSync(
+    path.resolve(__dirname, "../../../lib/machines/validate-reading.ts"),
+    "utf8",
+  );
+
+  /** The quantities 0223 refuses a negative value for. */
+  function sqlQuantities(): Set<string> {
+    // Anchored on the refusal itself, so an unrelated `in (...)` list
+    // elsewhere in a 3,000-line migration cannot be picked up by accident.
+    const m = MIGRATION.match(
+      /if v_quantity in \(([^)]*)\)\s*\n\s*and v_value < 0 then/,
+    );
+    expect(
+      m,
+      "the SQL negative-value rule was not found — this guard would be blind",
+    ).toBeTruthy();
+    return new Set([...m![1].matchAll(/'([^']+)'/g)].map((q) => q[1]));
+  }
+
+  /** The quantities the application calls malformed when negative. */
+  function appQuantities(): Set<string> {
+    const m = VALIDATOR.match(/const NON_NEGATIVE = new Set\(\[([\s\S]*?)\]\)/);
+    expect(
+      m,
+      "NON_NEGATIVE was not found — this guard would be blind",
+    ).toBeTruthy();
+    return new Set([...m![1].matchAll(/"([^"]+)"/g)].map((q) => q[1]));
+  }
+
+  it("neither layer refuses a negative value the other accepts", () => {
+    const sql = sqlQuantities();
+    const app = appQuantities();
+    // NON-VACUITY FIRST: both sides come from a regex over source text, and
+    // an empty set on either side would make the comparison below pass while
+    // checking nothing.
+    expect(sql.size, "extracted no SQL quantities").toBeGreaterThan(0);
+    expect(app.size, "extracted no application quantities").toBeGreaterThan(0);
+
+    expect(
+      [...sql].filter((q) => !app.has(q)).sort(),
+      "the DATABASE refuses a negative value for these quantities while the application accepts one, so she learns it as a failed save",
+    ).toEqual([]);
+    expect(
+      [...app].filter((q) => !sql.has(q)).sort(),
+      "the APPLICATION refuses a negative value for these quantities while the database accepts one, so a direct RPC caller can store it",
+    ).toEqual([]);
+  });
+
+  // A profile carrying the two quantities the shared fixture above does not.
+  // Local on purpose: CAT is used by every test in this file, and widening it
+  // to prove one rule is how a fixture change becomes someone else's failure.
+  const SIGNED: MachineProfile = {
+    profileId: "fixture:signed",
+    version: 1,
+    family: "Synthetic/Demo",
+    manufacturer: "Fixture",
+    model: "Signed",
+    availability: "active",
+    verification: "device-confirmed",
+    frequency: { kind: "not-applicable" },
+    evidence: [
+      {
+        id: "fx",
+        kind: "studio-device-photo",
+        consultedOn: "2026-10-17",
+        establishes:
+          "Nothing about any real machine. Carried only to exercise the signed-quantity rule.",
+      },
+    ],
+    openQuestions: [],
+    modes: [
+      {
+        key: "m",
+        nativeLabel: "M",
+        family: "thermolysis",
+        availability: "active",
+        verification: "device-confirmed",
+        evidence: ["fx"],
+        stages: [],
+        fields: [
+          {
+            key: "intensity",
+            nativeLabel: "Intensity",
+            quantity: "intensity",
+            unit: "%",
+            decimals: 0,
+            optional: false,
+            expectedSource: "practitioner-entered",
+            editable: true,
+            verification: "device-confirmed",
+            evidence: ["fx"],
+          },
+          {
+            key: "shown",
+            nativeLabel: "Energy",
+            quantity: "energy-display",
+            unit: "device-display",
+            decimals: 2,
+            optional: false,
+            expectedSource: "device-computed",
+            editable: false,
+            verification: "device-confirmed",
+            evidence: ["fx"],
+          },
+        ],
+      },
+    ],
+  } as MachineProfile;
+
+  it("and the rule FIRES, in the layer this file can execute", () => {
+    // The comparison above compares two pieces of TEXT. It would still pass
+    // if `NON_NEGATIVE` were never consulted at all, so each newly added
+    // quantity gets one executed case.
+    for (const fieldKey of ["intensity", "shown"] as const) {
+      const out = validateReading(
+        {
+          profileId: "fixture:signed",
+          version: 1,
+          modeKey: "m",
+          fieldKey,
+          source: fieldKey === "shown" ? "device-computed" : "practitioner-entered",
+          value: { kind: "value", value: -1 },
+        },
+        { catalogue: [SIGNED] },
+      );
+      expect(out.ok, `a negative ${fieldKey} was accepted by the validator`).toBe(
+        false,
+      );
+    }
+  });
+
+  it("CONTROL: a positive value on the same fields is still accepted", () => {
+    // Or the case above would also pass if the validator refused everything
+    // on this fixture for an unrelated reason.
+    for (const fieldKey of ["intensity", "shown"] as const) {
+      const out = validateReading(
+        {
+          profileId: "fixture:signed",
+          version: 1,
+          modeKey: "m",
+          fieldKey,
+          source: fieldKey === "shown" ? "device-computed" : "practitioner-entered",
+          value: { kind: "value", value: 5 },
+        },
+        { catalogue: [SIGNED] },
+      );
+      expect(out.ok, `a positive ${fieldKey} was refused`).toBe(true);
+    }
   });
 });

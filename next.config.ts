@@ -65,25 +65,10 @@ const nextConfig: NextConfig = {
       bodySizeLimit: "16mb",
     },
   },
-  // PostHog reverse proxy. Routes /ingest/* to the PostHog ingestion endpoint so
-  // browser-side analytics calls stay on the same origin (avoids ad-blockers) and
-  // the CSP connect-src 'self' entry covers all PostHog traffic without changes.
-  async rewrites() {
-    return [
-      {
-        source: "/ingest/static/:path*",
-        destination: "https://us-assets.i.posthog.com/static/:path*",
-      },
-      {
-        source: "/ingest/array/:path*",
-        destination: "https://us-assets.i.posthog.com/array/:path*",
-      },
-      {
-        source: "/ingest/:path*",
-        destination: "https://us.i.posthog.com/:path*",
-      },
-    ];
-  },
+  // PostHog reverse proxy: NOT a rewrite (#828 G-07/G-26). /ingest/* is served
+  // by app/ingest/[...path]/route.ts, which forwards only allowlisted paths,
+  // methods and headers. A rewrite to an external origin proxies every browser
+  // header, including the page URL as Referer and the Supabase auth Cookie.
   skipTrailingSlashRedirect: true,
   async headers() {
     return [
@@ -134,12 +119,12 @@ export default withSentryConfig(nextConfig, {
   // deployed runtime. See lib/observability/e2e-build-sentry-overrides.ts.
   ...localE2eBuildSentryOverrides(),
 
-  // Route browser -> Sentry traffic through a same-origin rewrite (/monitoring)
-  // instead of hitting *.ingest.sentry.io directly. This keeps the strict CSP
-  // (connect-src 'self') intact and defeats ad-blockers. The route is
-  // allowlisted in lib/supabase/middleware.ts so auth middleware never bounces
-  // the envelope POST to /login. Adds some serverless invocations.
-  tunnelRoute: "/monitoring",
+  // NO tunnelRoute (#828 G-07/G-26): it is a bare rewrite that forwards every
+  // browser header (Referer = the page URL, the Supabase auth Cookie, the
+  // client IP) to Sentry. Browser events go through the same-origin tunnel
+  // app/monitoring/route.ts instead (Sentry.init({ tunnel: "/monitoring" }) in
+  // instrumentation-client.ts), which forwards only the envelope body for
+  // Hone's own DSN. The route stays allowlisted in lib/supabase/middleware.ts.
 
   webpack: {
     // Instrument Vercel Cron Monitors automatically. No PII; gives cron

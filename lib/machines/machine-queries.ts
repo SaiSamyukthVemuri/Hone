@@ -1,3 +1,4 @@
+import { isDefinitiveDatabaseAnswer } from "./save-attempt";
 import type { ReadingValue } from "./profile-contract";
 import type { StudioDevice } from "./selection";
 
@@ -22,7 +23,19 @@ import type { StudioDevice } from "./selection";
  * database re-checks, never a claim this layer is making.
  */
 
-export type MachineDbError = { message: string } | null;
+export type MachineDbError = {
+  message: string;
+  /**
+   * The SQLSTATE or PostgREST code, when the request reached one of them.
+   *
+   * Carried so a caller can tell a DEFINITIVE database answer from a
+   * transport failure that supabase-js reported in `error` rather than by
+   * rejecting (Codex, #860 4301722737). Optional because a transport
+   * failure is exactly the case that has none - see
+   * `isDefinitiveDatabaseAnswer`.
+   */
+  code?: string | null;
+} | null;
 
 export type MachineDb = {
   rpc: (
@@ -52,6 +65,39 @@ export type MachineDb = {
             n: number,
           ) => Promise<{ data: unknown; error: MachineDbError }>;
         };
+        // `gt` is the KEYSET predicate: "the page after the last id I saw".
+        // Declared rather than cast around, because this type's narrowness is
+        // the point - a shape it does not describe is a query this module has
+        // no business performing, and `readingsForBlock` genuinely performs
+        // this one now that it reads a block's readings COMPLETELY instead of
+        // taking the first 500 (Codex, #860 4288424513).
+        gt: (
+          column: string,
+          value: string,
+        ) => {
+          order: (
+            column: string,
+            opts: { ascending: boolean },
+          ) => {
+            limit: (
+              n: number,
+            ) => Promise<{ data: unknown; error: MachineDbError }>;
+          };
+        };
+        // A SECOND `eq` IS THE ROUTE BINDING: "this block, in this session".
+        // Declared rather than cast around, for the same reason as the rest
+        // of this type - a shape it does not describe is a query this module
+        // has no business performing - and this one it must perform, because
+        // an application lineage check authorizes the route while only a
+        // predicate binds the record to it (Codex, #860 4298457378).
+        eq: (
+          column: string,
+          value: unknown,
+        ) => {
+          limit: (
+            n: number,
+          ) => Promise<{ data: unknown; error: MachineDbError }>;
+        };
         // `in` is how a lookup names SPECIFIC units by id. Declared here
         // because the slice is deliberately narrow: a query shape this type
         // does not describe is one this module has no business performing.
@@ -70,7 +116,19 @@ export type MachineDb = {
 
 export type MachineOutcome<T> =
   | { ok: true; value: T }
-  | { ok: false; error: string };
+  | {
+      ok: false;
+      error: string;
+      /**
+       * The request's fate is UNKNOWN - it may have committed.
+       *
+       * Set only where the distinction is load-bearing (a write carrying a
+       * retry key). Absent means the caller has no reason to treat the
+       * failure as anything but final; it is never a claim that the outcome
+       * WAS definitive.
+       */
+      unresolved?: boolean;
+    };
 
 function fail(error: MachineDbError, fallback: string): string {
   return error?.message?.trim() || fallback;
@@ -303,6 +361,23 @@ export type ReadingSubmission = {
   observationSource: ReadingInputRow["observationSource"];
 };
 
+/**
+ * WHERE A NUMBER CAME FROM. One definition, because two lists drift and this
+ * one is checked on the way in and narrowed on the way out.
+ *
+ * It lives beside `ReadingInputRow` rather than beside the validator because
+ * the validator already imports its types from here; the reverse edge is
+ * type-only and erases, so there is no runtime cycle.
+ */
+export const OBSERVATION_SOURCES = [
+  "practitioner-entered",
+  "machine-displayed",
+  "device-computed",
+  "estimated",
+] as const;
+
+export type ObservationSource = (typeof OBSERVATION_SOURCES)[number];
+
 export type ReadingInputRow = {
   /** Null for a mode-level field. */
   stageKey: string | null;
@@ -310,11 +385,7 @@ export type ReadingInputRow = {
   value: ReadingValue;
   nativeUnit: string;
   decimals: number;
-  observationSource:
-    | "practitioner-entered"
-    | "machine-displayed"
-    | "device-computed"
-    | "estimated";
+  observationSource: ObservationSource;
 };
 
 /**
@@ -337,6 +408,17 @@ export async function recordSetupGroup(
     groupKey: string;
     channels: number[];
     readings: ReadingInputRow[];
+  /**
+   * THE AUTHORIZED ROUTE, required. The command refuses a block that is not
+   * this session's and a session that is not this client's: studio
+   * membership alone let a stale or tampered request append immutable
+   * readings to another client's treatment (Codex, #860 4297032712).
+   *
+   * Required rather than optional so a caller cannot omit the binding and
+   * silently get the old, unscoped behaviour back.
+   */
+  sessionId: string;
+  clientId: string;
   },
 ): Promise<MachineOutcome<number>> {
   const payload = input.readings.map((r) => ({
@@ -357,11 +439,133 @@ export async function recordSetupGroup(
     p_group_key: input.groupKey,
     p_channels: input.channels,
     p_readings: payload,
+    p_session_id: input.sessionId,
+    p_client_id: input.clientId,
   });
   if (error) {
     return { ok: false, error: fail(error, "Could not save those settings.") };
   }
   return { ok: true, value: Number(data ?? 0) };
+}
+
+/** One settings group of a whole-save submission. */
+export type SetupSubmissionGroup = {
+  groupKey: string;
+  channels: number[];
+  readings: ReadingInputRow[];
+};
+
+/** What the database says one Save produced. */
+export type SetupSubmissionResult = {
+  submissionId: string;
+  /** Captures the submission holds, as the database counted them. */
+  groups: number;
+  readings: number;
+  /**
+   * True when the retry key matched an EXISTING submission.
+   *
+   * Nothing was written by this call and nothing was duplicated: an earlier
+   * attempt committed and its answer was lost. The caller needs to know,
+   * because "saved" and "already saved" are different facts about the record.
+   */
+  reused: boolean;
+};
+
+/**
+ * Record ONE SAVE - every settings group the practitioner entered - atomically.
+ *
+ * The block determines the studio in the database, so no studio is sent. A
+ * block or machine in another studio is refused there, not here.
+ *
+ * `idempotencyKey` identifies the SAVE, and the caller must reuse it on every
+ * retry of that save: that is what makes a retry safe after a lost response.
+ * `lib/machines/save-attempt.ts` owns its lifetime.
+ *
+ * The per-reading payload is identical to `recordSetupGroup`'s and for the same
+ * reasons: `value` goes as a string so a recorded zero survives JSON, and an
+ * absence sends `absence_reason` with no value at all.
+ */
+export async function recordSetupSubmission(
+  db: MachineDb,
+  input: {
+    blockId: string;
+    machineId: string;
+    modeKey: string;
+    idempotencyKey: string;
+    groups: SetupSubmissionGroup[];
+  /**
+   * THE AUTHORIZED ROUTE, required. The command refuses a block that is not
+   * this session's and a session that is not this client's: studio
+   * membership alone let a stale or tampered request append immutable
+   * readings to another client's treatment (Codex, #860 4297032712).
+   *
+   * Required rather than optional so a caller cannot omit the binding and
+   * silently get the old, unscoped behaviour back.
+   */
+  sessionId: string;
+  clientId: string;
+  },
+): Promise<MachineOutcome<SetupSubmissionResult>> {
+  const { data, error } = await db.rpc("record_treatment_setup_submission", {
+    p_block_id: input.blockId,
+    p_studio_machine_id: input.machineId,
+    p_mode_key: input.modeKey,
+    p_idempotency_key: input.idempotencyKey,
+    p_groups: input.groups.map((g) => ({
+      group_key: g.groupKey,
+      channels: g.channels,
+      readings: g.readings.map((r) => ({
+        stage_key: r.stageKey,
+        field_key: r.fieldKey,
+        ...(r.value.kind === "value"
+          ? { value: String(r.value.value) }
+          : { absence_reason: r.value.reason }),
+        native_unit: r.nativeUnit,
+        decimals: r.decimals,
+        observation_source: r.observationSource,
+      })),
+    })),
+    p_session_id: input.sessionId,
+    p_client_id: input.clientId,
+  });
+  if (error) {
+    // A TRANSPORT FAILURE IS NOT A REFUSAL (Codex, #860 4301722737).
+    //
+    // When the connection drops AFTER the command commits, supabase-js can
+    // report it here in `error` rather than rejecting the promise. Returning
+    // a plain failure told the entry the save was REFUSED, which unfreezes
+    // the draft and releases the retry key; the next save mints a new key
+    // and appends a DUPLICATE immutable capture. The throw path was already
+    // handled - this is the same lost response wearing the other shape.
+    return {
+      ok: false,
+      error: fail(error, "Could not save those settings."),
+      unresolved: !isDefinitiveDatabaseAnswer(error),
+    };
+  }
+  // SHAPE-CHECKED RATHER THAN CAST. The command returns a jsonb object; a
+  // deployment where the migration has not been applied, or an older function
+  // still resolving, hands back something else entirely. Casting that would
+  // report a successful save with an undefined submission id.
+  const row = data as Partial<Record<string, unknown>> | null;
+  const submissionId = typeof row?.submission_id === "string" ? row.submission_id : null;
+  if (!submissionId) {
+    return {
+      ok: false,
+      error:
+        "The save did not report which capture it created, so whether it was " +
+        "recorded cannot be confirmed.",
+    };
+  }
+  return {
+    ok: true,
+    value: {
+      submissionId,
+      groups: Number(row?.groups ?? 0),
+      readings: Number(row?.readings ?? 0),
+      reused: row?.reused === true,
+    },
+  };
 }
 
 export type RecordedReading = {
@@ -394,6 +598,25 @@ export type RecordedReading = {
   value: ReadingValue;
   nativeUnit: string;
   decimals: number;
+  /**
+   * WHERE THE NUMBER CAME FROM, as the capture recorded it.
+   *
+   * THE RECORDED FACT, NOT THE CONTRACT'S EXPECTATION. The two are allowed to
+   * differ: `validateReading` deliberately permits a mismatch and records what
+   * actually happened, so a field the profile says is machine-displayed can
+   * legitimately carry a practitioner-entered reading. Deriving this from
+   * today's profile instead of reading it back therefore does not recover it -
+   * it overwrites the exception with the rule, which is the one case where
+   * provenance matters.
+   *
+   * The write path stored it and the SQL emitted it; the column list, this
+   * type and `toReading` all dropped it, so both previous-treatment and
+   * recorded-history lost it permanently at the application boundary
+   * (Codex, #860 4294673727).
+   *
+   * Null only for a row recorded before the column existed.
+   */
+  observationSource: ObservationSource | null;
   recordedAt: string;
 };
 
@@ -413,6 +636,7 @@ type ReadingRow = {
   revision: number;
   capture_id: string | null;
   studio_machine_id: string;
+  observation_source: string | null;
   recorded_at: string;
 };
 
@@ -446,6 +670,15 @@ function toReading(r: ReadingRow): RecordedReading {
           },
     nativeUnit: r.native_unit,
     decimals: r.decimals,
+    // NARROWED AGAINST THE SAME LIST THE WRITE PATH VALIDATES, so an
+    // unrecognised value becomes null rather than being asserted into the
+    // union. A row written before the column existed is null too, and both
+    // mean the same thing to a reader: provenance unknown, not assumed.
+    observationSource: OBSERVATION_SOURCES.includes(
+      r.observation_source as ObservationSource,
+    )
+      ? (r.observation_source as ObservationSource)
+      : null,
     recordedAt: r.recorded_at,
   };
 }
@@ -453,7 +686,8 @@ function toReading(r: ReadingRow): RecordedReading {
 const READING_COLUMNS =
   "session_block_id, machine_profile_id, machine_profile_version, mode_key, " +
   "group_key, channels, stage_key, field_key, value_numeric, absence_reason, " +
-  "native_unit, decimals, revision, capture_id, studio_machine_id, recorded_at";
+  "native_unit, decimals, revision, capture_id, studio_machine_id, " +
+  "observation_source, recorded_at";
 
 /**
  * Is a contract PUBLISHED for this (profile, version)? Used to refuse
@@ -533,6 +767,16 @@ export async function publishMachineContract(
       nativeUnit: string;
       decimals: number;
       quantity: string;
+      /**
+       * May a capture omit this field?
+       *
+       * Carried into the published contract because the RECORDING command
+       * now refuses a capture missing a required field, and the contract is
+       * the only place that knows which those are (Codex, #860 4299434251).
+       * Omitted means REQUIRED, matching the column's default: a publisher
+       * that forgets the flag gets the stricter reading.
+       */
+      optional?: boolean;
     }>;
   },
 ): Promise<MachineOutcome<number>> {
@@ -548,6 +792,7 @@ export async function publishMachineContract(
       native_unit: f.nativeUnit,
       decimals: f.decimals,
       quantity: f.quantity,
+      optional: f.optional ?? false,
     })),
   });
   if (error) {
@@ -559,20 +804,141 @@ export async function publishMachineContract(
   return { ok: true, value: Number(data ?? 0) };
 }
 
-/** Every reading recorded against one block, for the chart being edited. */
+/** One keyset page of this read. 1,000 is PostgREST's own ceiling on Hone. */
+export const BLOCK_READING_PAGE_SIZE = 1000;
+/** 50 pages: past this the read is bounded out and fails closed. */
+export const BLOCK_READING_MAX_PAGES = 50;
+
+/**
+ * Every reading recorded against one block, for the chart being edited.
+ *
+ * READ COMPLETELY OR NOT AT ALL, and the version this replaces was neither.
+ * It asked for `.order("field_key").limit(500)`, which has two faults that
+ * compound (Codex, #860 4288424513):
+ *
+ *   1. A BLOCK CAN EXCEED THE CAP. Each capture carries one row per field and a
+ *      save appends one capture per settings group, so a four-channel unit
+ *      re-read through a long treatment reaches several hundred rows without
+ *      anything unusual happening.
+ *   2. ORDERED BY `field_key` ALONE, the cap does not cut at a capture
+ *      boundary - it cuts mid-alphabet across every capture at once. The
+ *      surface groups these rows into captures, so the result is not "the last
+ *      N captures missing" but captures rendered with SOME of their fields.
+ *      A setup is only reproducible as a set: a current without its duration is
+ *      not a setting anyone can repeat, and a capture silently missing a field
+ *      reads as a complete record of a different treatment.
+ *
+ * AND RAISING THE LIMIT WOULD HAVE MOVED THE CLIFF, not removed it. PostgREST
+ * answers a read past `max_rows` with 200, the first window and NO error, so
+ * dropping `.limit(500)` just relocates the same silent truncation to 1,000.
+ * That is the trap `lib/sms/suppression-candidates.ts` was written for, and
+ * this uses its idiom: KEYSET pages by `id`, each after the last id seen, until
+ * a page comes back EMPTY. A short page is never trusted to be the last one, so
+ * a row limit below the page size cannot end the read early.
+ *
+ * FAIL-CLOSED. A failed page, a keyset that does not advance, or more pages
+ * than the ceiling allows returns `{ ok: false }` - never a partial list
+ * wearing `ok: true`. The caller already handles a failed read by saying so;
+ * what it cannot do is notice that a successful one was incomplete.
+ *
+ * THE RETURNED ORDER IS UNCHANGED - sorted by `field_key` in memory - so the
+ * rendering contract this read has always had is not quietly altered by the
+ * repair.
+ */
 export async function readingsForBlock(
   db: MachineDb,
   blockId: string,
+  /**
+   * THE AUTHORIZED SESSION. Required, and checked against the block IN A
+   * QUERY before anything is read.
+   *
+   * THE DEFECT THIS CLOSES, which is my own repair of the write path
+   * repeated on the read (Codex, #860 4298457378). Round 8 added
+   * `assertSessionForClient` to the read action and I reported the hole
+   * closed. It was not: that call validates the SUPPLIED session and
+   * client are a real pair for this studio — it says nothing about the
+   * BLOCK. The read then filtered on the block id alone and the
+   * studio-member SELECT policy admitted it, so a crafted request still
+   * returned another client's captures and the chart rendered them under
+   * "Recorded this treatment".
+   *
+   * An application lineage check authorizes the ROUTE. Only a predicate in
+   * a query binds the record to it. That is the same sentence as the write
+   * path's, and I wrote it there before making the opposite mistake here.
+   *
+   * WHY VERIFY-THEN-READ IS SOUND HERE and not a time-of-check race:
+   * `session_blocks.session_id` is IMMUTABLE. A trigger refuses to move a
+   * block between sessions ("A treatment record cannot be re-assigned"),
+   * which this lane confirmed the hard way when that trigger rejected a
+   * test fixture. The pair cannot change between the check and the read,
+   * so one bounded lookup settles it for the whole paginated read that
+   * follows.
+   */
+  sessionId: string,
 ): Promise<MachineOutcome<RecordedReading[]>> {
-  const { data, error } = await db
-    .from("treatment_setup_readings")
-    .select(READING_COLUMNS)
-    .eq("session_block_id", blockId)
-    .order("field_key", { ascending: true })
-    .limit(500);
+  // THE BINDING, AS A QUERY. Two predicates: this block, in this session.
+  // RLS still scopes the row to the caller's studio, so a block outside it
+  // is invisible here regardless.
+  const bound = await db
+    .from("session_blocks")
+    .select("id")
+    .eq("id", blockId)
+    .eq("session_id", sessionId)
+    .limit(1);
+  if (bound.error) {
+    return { ok: false, error: fail(bound.error, "Could not read settings.") };
+  }
+  if (!Array.isArray(bound.data) || bound.data.length === 0) {
+    // DELIBERATELY THE SAME MESSAGE a missing block would give. Confirming
+    // that the block exists but belongs to someone else is the fact this
+    // check exists to withhold.
+    return { ok: false, error: "Could not read settings." };
+  }
 
-  if (error) return { ok: false, error: fail(error, "Could not read settings.") };
-  return { ok: true, value: ((data ?? []) as ReadingRow[]).map(toReading) };
+  const rows: ReadingRow[] = [];
+  let after: string | null = null;
+
+  for (let page = 0; page < BLOCK_READING_MAX_PAGES; page += 1) {
+    const base = db
+      .from("treatment_setup_readings")
+      .select(`id, ${READING_COLUMNS}`)
+      .eq("session_block_id", blockId);
+    // THE KEYSET PREDICATE applies only after the first page. Written as two
+    // whole chains rather than a reassigned builder: `gt` narrows the shape,
+    // so a `let` holding the pre-`gt` type cannot hold the post-`gt` one.
+    const { data, error } = await (after === null
+      ? base.order("id", { ascending: true }).limit(BLOCK_READING_PAGE_SIZE)
+      : base
+          .gt("id", after)
+          .order("id", { ascending: true })
+          .limit(BLOCK_READING_PAGE_SIZE));
+
+    if (error) return { ok: false, error: fail(error, "Could not read settings.") };
+    if (!Array.isArray(data)) {
+      return { ok: false, error: fail(null, "Could not read settings.") };
+    }
+    // AN EMPTY PAGE ENDS THE READ. A short one does not: that is the whole
+    // difference between this and the version it replaces.
+    if (data.length === 0) break;
+
+    const keyed = data as Array<ReadingRow & { id?: unknown }>;
+    rows.push(...keyed);
+    const last = keyed[keyed.length - 1]!.id;
+    // The keyset must move forward, or the loop could re-read a page for ever.
+    if (typeof last !== "string" || (after !== null && last <= after)) {
+      return { ok: false, error: fail(null, "Could not read settings.") };
+    }
+    after = last;
+
+    if (page === BLOCK_READING_MAX_PAGES - 1) {
+      // The ceiling was reached with a full page still arriving, so this read
+      // cannot be shown complete. Refusing is the only honest answer.
+      return { ok: false, error: fail(null, "Could not read settings.") };
+    }
+  }
+
+  rows.sort((a, b) => a.field_key.localeCompare(b.field_key));
+  return { ok: true, value: rows.map(toReading) };
 }
 
 /**
@@ -605,10 +971,26 @@ export async function latestRecordedSetup(
   db: MachineDb,
   studioId: string,
   clientId: string,
+  /**
+   * The session being charted, which this must NOT offer back as history.
+   *
+   * REQUIRED, and a positional parameter rather than an option, so the type
+   * checker refuses a caller that forgets it. Without the exclusion the
+   * lookup returned the client's newest capture full stop - including one
+   * recorded minutes earlier in the session on screen, presented under copy
+   * that says it is not today's entries (Codex, #860 4289974654).
+   *
+   * It is passed to SQL rather than filtered here, for the same reason the
+   * client scoping is: the paragraph above this function says the scoping
+   * lives in SQL "so a future caller cannot omit it", and a filter applied in
+   * this wrapper would be exactly the omission it warns about.
+   */
+  excludeSessionId: string,
 ): Promise<MachineOutcome<RecordedReading[]>> {
   const { data, error } = await db.rpc("latest_setup_for_client", {
     p_studio_id: studioId,
     p_client_id: clientId,
+    p_exclude_session_id: excludeSessionId,
   });
 
   if (error) {

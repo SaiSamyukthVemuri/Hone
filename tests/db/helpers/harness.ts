@@ -401,6 +401,33 @@ export async function purgeAppointmentAudit(studioId: string): Promise<void> {
 }
 
 // Seed a session (electrolysis) for a studio's client; returns ids.
+/**
+ * The route a block belongs to: its session, and that session's client.
+ *
+ * 0223's setup commands require the authorized route and refuse a block that
+ * is not that session's (Codex, #860 4297032712). Most tests here are
+ * exercising something else entirely - validation, grants, concurrency - and
+ * simply need the route that matches the block they seeded, so they derive
+ * it rather than restating it. Correct by construction, and it keeps the
+ * route-binding behaviour itself testable in one place rather than asserted
+ * incidentally by forty call sites.
+ *
+ * Tests that DO exercise the binding pass a deliberately wrong route instead.
+ */
+export async function routeFor(
+  blockId: string,
+): Promise<{ sessionId: string; clientId: string }> {
+  const r = await adminQuery(
+    `select b.session_id, s.client_id
+       from public.session_blocks b
+       join public.sessions s on s.id = b.session_id
+      where b.id = $1`,
+    [blockId],
+  );
+  const row = r.rows[0] as { session_id: string; client_id: string };
+  return { sessionId: row.session_id, clientId: row.client_id };
+}
+
 export async function seedSession(
   studio: SeededStudio,
 ): Promise<{ sessionId: string; blockId: string }> {

@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { FieldLabel, fieldControlClass } from "@/components/ui/field";
 import { SectionLabel } from "@/components/ui/section-label";
 import { MACHINE_CATALOGUE } from "@/lib/machines/catalogue";
 import {
@@ -22,6 +23,13 @@ import type {
 } from "@/lib/machines/machine-queries";
 import { MachineReadingEntry } from "./machine-reading-entry";
 import { MachinePriorSetup } from "./machine-prior-setup";
+import { MachineRecordedSetups } from "./machine-recorded-setups";
+import {
+  MachineSettingDraft,
+  MachineSettingDraftReset,
+} from "./machine-setting-draft";
+import type { GroupSubmission } from "@/lib/machines/setting-groups";
+import type { PendingSetupIdentity } from "@/lib/machines/pending-setup";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
 import { nativeFieldGroups } from "@/lib/machines/charting";
 import {
@@ -91,7 +99,7 @@ export type MachineFirstSetupPanelProps = {
    * Recorded unit id -> the studio's name for it, for next-visit guidance.
    * Resolved on the server, where retired units are visible.
    */
-  priorUnitNames?: Readonly<Record<string, string>>;
+  unitNames?: Readonly<Record<string, string>>;
   /** Injectable for tests and for a future studio-scoped catalogue. */
   catalogue?: readonly MachineProfile[];
   /**
@@ -107,10 +115,67 @@ export type MachineFirstSetupPanelProps = {
   inventoryReason?: string | null;
   /** The treatment block being charted. Entry is impossible without it. */
   blockId?: string | null;
+  /**
+   * Collect settings in CREATE mode, before any block exists.
+   *
+   * SUPPLIED ONLY BY A HOST THAT CAN CARRY THEM. Without it the panel shows
+   * the model's field contract read-only, exactly as before, because there is
+   * nowhere to put a reading - and a form that collected one would have to
+   * discard it. With it, the host's own Save writes the area and these
+   * settings in one transaction through `create_block_with_initial_setup`.
+   */
+  /** The host form's save is unresolved, so the create-mode draft is frozen. */
+  settingDraftFrozen?: boolean;
+  /**
+   * Report that a REVISION save's outcome is unknown, so the HOST can freeze
+   * its own controls.
+   *
+   * The panel freezes what it owns. It cannot freeze the host form's Cancel,
+   * and that is the control whose use destroys the retry key by unmounting
+   * the entry (Codex, #860 4302176844).
+   */
+  onRevisionUnresolved?: (unresolved: boolean) => void;
+  onSettingDraft?: (
+    draft: {
+      groups: GroupSubmission[];
+      blocking: string | null;
+    /**
+     * WHAT THE READINGS MEAN - device, profile, version and mode.
+     *
+     * Supplied by the PANEL rather than by the collector, which knows the
+     * profile and the mode but not which physical unit is chosen. The host
+     * needs all four: a draft typed under one machine and saved under
+     * another is numbers she never read off anything, and
+     * `pending-setup.ts` refuses exactly that comparison.
+     */
+      identity: PendingSetupIdentity;
+    } | null,
+  ) => void;
   /** Owner-only affordances appear only when the SERVER says so. */
   canManageMachines?: boolean;
   /** The studio's most recent recorded setup, for next-visit prep. */
   priorSetup?: RecordedReading[];
+  /**
+   * What is ALREADY RECORDED against this block.
+   *
+   * Closes the defect that a recorded capture was permanent and invisible:
+   * after a page load the only thing she saw was nothing, so her options were
+   * to re-record - appending a second immutable capture - or to guess.
+   */
+  recordedSetup?: RecordedReading[];
+  /**
+   * The next-visit GUIDANCE read failed, as distinct from this client having
+   * no previous treatment. Same rule as the field below, different surface
+   * and quieter copy: that one prevents a duplicate immutable capture, this
+   * is reference she can work without.
+   */
+  priorSetupUnavailable?: boolean;
+  /**
+   * The recorded-captures read FAILED. Forwarded rather than flattened: an
+   * empty list and an unreadable one must not look alike on this surface
+   * (Codex, #860 4290452722).
+   */
+  recordedSetupUnavailable?: boolean;
   /**
    * Persists the chosen machine as this practitioner's default. Supplied by
    * the connected wrapper.
@@ -128,19 +193,47 @@ export type MachineFirstSetupPanelProps = {
     deviceId: string | null;
     modeKey: string | null;
   }) => Promise<{ ok: boolean; error?: string }>;
-  /** Records one settings group. Supplied by the connected wrapper. */
+  /**
+   * Records ONE SAVE - every settings group at once. Supplied by the connected
+   * wrapper.
+   *
+   * It used to record one GROUP, and the entry form looped. The command is
+   * atomic now, so the save is one call and a partial outcome is unreachable.
+   */
   onRecord?: (input: {
     blockId: string;
     machineId: string;
     modeKey: string;
-    groupKey: string;
-    channels: number[];
-    readings: ReadingSubmission[];
-  }) => Promise<{ ok: boolean; error?: string }>;
+    idempotencyKey: string;
+    groups: Array<{
+      groupKey: string;
+      channels: number[];
+      readings: ReadingSubmission[];
+    }>;
+  }) => Promise<{
+    ok: boolean;
+    error?: string;
+    captures?: number;
+    written?: number;
+    reused?: boolean;
+  }>;
 };
 
 /** Every profile a practitioner might expect to see, with its real status. */
-function withheld(catalogue: readonly MachineProfile[]) {
+/**
+ * The models this catalogue withholds, with the reason each is withheld.
+ *
+ * EXPORTED, though this file no longer renders it. The treatment form used to
+ * list all eleven entries with their full evidence reasons, which Sam's
+ * screenshot rejected as procurement detail in the middle of charting - but
+ * the data is correct and someone deciding what to REGISTER needs exactly
+ * this. It belongs on an owner or support machine-readiness surface, and this
+ * is the seam for it (#860 6156583955).
+ *
+ * tests/components/machine-first-setup-panel.test.ts asserts both halves: that
+ * charting does not render it, and that this still returns it.
+ */
+export function withheld(catalogue: readonly MachineProfile[]) {
   return catalogue
     .filter((p) => p.availability !== "active")
     .map((p) => ({
@@ -163,8 +256,14 @@ export function MachineFirstSetupPanel({
   blockId = null,
   canManageMachines = false,
   priorSetup = [],
+  recordedSetup = [],
+  priorSetupUnavailable = false,
+  recordedSetupUnavailable = false,
+  onSettingDraft,
+  settingDraftFrozen = false,
+  onRevisionUnresolved,
   unavailableSelection = null,
-  priorUnitNames = {},
+  unitNames = {},
   onSelectMachine,
   onRecord,
 }: MachineFirstSetupPanelProps) {
@@ -176,6 +275,63 @@ export function MachineFirstSetupPanel({
   // remember which was which. The rule now lives in lib/machines/selection-state,
   // where it has an exhaustive truth table, and this component only applies it.
   // That module's header records both failures.
+  /**
+   * THE LATEST SELECTION WRITE. Overlapping picks are ordinary - she taps one
+   * machine, changes her mind, taps another - and the two requests can finish
+   * in either order. Every completion used to be applied, so an earlier one
+   * finishing last restored the older device as selected AND persisted.
+   *
+   * A ref, not state: it must be readable by a handler that started before
+   * the newer pick, and bumping it must not re-render.
+   */
+  const selectionRequestRef = useRef(0);
+  /**
+   * A SELECTION WRITE IS IN FLIGHT.
+   *
+   * THE TOKEN ALONE WAS NOT ENOUGH, and the second review said so plainly:
+   * it runs AFTER `onSelectMachine` has already committed, so discarding the
+   * stale answer only fixes the panel. The older write still reached
+   * `set_own_default_machine`, so the UI showed her latest choice until a
+   * reload brought the older one back (Codex, #860 4296709037, then
+   * 4297032722 on the half-fix).
+   *
+   * Overlapping writes cannot be ordered from here - the client does not
+   * control which request the database serves first - so they are not
+   * allowed to overlap. The picker is disabled for the duration, which is
+   * also the honest thing to show: the choice is not yet made.
+   */
+  const [selectionPending, setSelectionPending] = useState(false);
+  /**
+   * A REVISION SAVE'S OUTCOME IS UNKNOWN.
+   *
+   * `settingDraftFrozen` is the CREATE form's unresolved save, reported by
+   * the host. This is the other save path — `MachineReadingEntry` on an
+   * existing block — whose unresolved state lived only in that child, so
+   * the identity controls stayed live through it (Codex, #860 4300759930).
+   *
+   * The two are kept separate and combined at the point of use rather than
+   * merged into one flag, because they are reported by different owners
+   * and either can be true alone.
+   */
+  const [revisionUnresolved, setRevisionUnresolved] = useState(false);
+
+  // AND THE HOST IS TOLD (Codex, #860 4302176844).
+  //
+  // This state froze the panel's OWN identity controls from round 12, and
+  // stayed here. The host form's Cancel button is outside the panel, checks
+  // only the create-mode flag, and unmounting the entry is what destroys
+  // the retry key - so the one control that can lose the key never saw the
+  // state that should have frozen it.
+  const reportUnresolved = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (reportUnresolved.current === revisionUnresolved) return;
+    reportUnresolved.current = revisionUnresolved;
+    onRevisionUnresolved?.(revisionUnresolved);
+  }, [revisionUnresolved, onRevisionUnresolved]);
+  // EITHER SAVE PATH FREEZES THE IDENTITY. The machine and the mode are
+  // part of the payload both digests are bound to, and switching away can
+  // unmount the component holding a retry key.
+  const identityFrozen = settingDraftFrozen || revisionUnresolved;
   const [selection, setSelection] = useState<SelectionState>(() =>
     // A stored machine that cannot be charted on is NOT a selection, but it is
     // still stored, and the reason has to be visible. `unusableSelection`
@@ -214,9 +370,41 @@ export function MachineFirstSetupPanel({
     // Step 2: the acknowledged outcome. `null` means no persister is wired,
     // which is NOT the same as a successful write and must not be reported as
     // one - `selectionSettled` is what keeps those apart.
-    const write = onSelectMachine
-      ? await onSelectMachine({ deviceId: next, modeKey: nextMode })
-      : null;
+    // Step 2: the acknowledged outcome, APPLIED ONLY IF THIS IS STILL THE
+    // LATEST REQUEST. Two picks in quick succession overlap, and the server
+    // answers in whatever order it finishes: without this, an earlier
+    // request completing last restored the OLDER device as both selected and
+    // persisted, so the panel and the stored selection both disagreed with
+    // what she last chose (Codex, #860 4296709037).
+    const token = ++selectionRequestRef.current;
+    setSelectionPending(true);
+    let write: Awaited<ReturnType<NonNullable<typeof onSelectMachine>>> | null = null;
+    try {
+      write = onSelectMachine
+        ? await onSelectMachine({ deviceId: next, modeKey: nextMode })
+        : null;
+    } catch (cause) {
+      // A REJECTION IS A FAILED WRITE, not an absence of one.
+      //
+      // `finally` cleared the pending flag but the throw skipped
+      // `selectionSettled` entirely, so the optimistic choice stayed on
+      // screen with NO failure note while the database still held the
+      // previous default — and a reload silently restored the old machine
+      // (Codex, #860 4299408386). An unreachable server is the ordinary
+      // case here, not an exotic one.
+      //
+      // Settled as `{ ok: false }` so it travels the SAME path a refusal
+      // does: one definition of "the write did not happen", not two.
+      write = {
+        ok: false,
+        error: cause instanceof Error ? cause.message : "That did not save.",
+      };
+    } finally {
+      // CLEARED EVEN ON A THROW, or one failed write leaves the picker dead
+      // for the rest of the treatment.
+      setSelectionPending(false);
+    }
+    if (token !== selectionRequestRef.current) return;
     setSelection((prev) => selectionSettled(prev, next, write));
   };
 
@@ -230,9 +418,27 @@ export function MachineFirstSetupPanel({
   const chooseMode = async (key: string) => {
     setModeKey(key);
     setSelection((prev) => selectionRequested(prev, deviceId));
-    const write = onSelectMachine
-      ? await onSelectMachine({ deviceId, modeKey: key })
-      : null;
+    // SAME TOKEN AS THE DEVICE PICK, deliberately: a mode change and a device
+    // change are both writes to one stored selection, so a stale mode
+    // completion must not land after a newer device pick either. Two counters
+    // would let exactly that through.
+    const token = ++selectionRequestRef.current;
+    setSelectionPending(true);
+    let write: Awaited<ReturnType<NonNullable<typeof onSelectMachine>>> | null = null;
+    try {
+      write = onSelectMachine
+        ? await onSelectMachine({ deviceId, modeKey: key })
+        : null;
+    } catch (cause) {
+      // Same rule as the device pick: a rejection is a failed write.
+      write = {
+        ok: false,
+        error: cause instanceof Error ? cause.message : "That did not save.",
+      };
+    } finally {
+      setSelectionPending(false);
+    }
+    if (token !== selectionRequestRef.current) return;
     setSelection((prev) => selectionSettled(prev, deviceId, write));
   };
 
@@ -250,7 +456,6 @@ export function MachineFirstSetupPanel({
   const modes = chosen ? supportedModes(chosen.device, chosen.profile) : [];
   const mode = modes.find((m) => m.key === modeKey) ?? modes[0] ?? null;
   const groups = chosen && mode ? nativeFieldGroups(chosen.profile, mode) : [];
-  const blocked = withheld(catalogue);
 
   /**
    * onRecord, plus the one side effect the status line needs. Counting here
@@ -261,7 +466,17 @@ export function MachineFirstSetupPanel({
   const recordAndCount: typeof onRecord = onRecord
     ? async (input) => {
         const out = await onRecord(input);
-        if (out.ok) setSavedCount((n) => n + input.readings.length);
+        if (out.ok) {
+          // THE DATABASE'S OWN COUNT where it gave one, and it does. Summing
+          // what was SENT is wrong on a reused submission: that call wrote
+          // nothing, and the readings it reports are the ones the earlier
+          // attempt recorded - which is the true answer and the one this
+          // status line must show.
+          const written =
+            out.written ??
+            input.groups.reduce((n, g) => n + g.readings.length, 0);
+          setSavedCount((n) => n + written);
+        }
         return out;
       }
     : undefined;
@@ -276,17 +491,86 @@ export function MachineFirstSetupPanel({
         <SectionLabel as="h3" className="!text-neutral-700 dark:!text-neutral-300">
           <span id="machine-first-heading">Machine</span>
         </SectionLabel>
-        {chosen && (
-          <button
-            type="button"
-            onClick={() => void chooseDevice(null)}
-            data-testid="machine-change"
-            className="text-xs font-medium text-neutral-600 underline hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
-          >
-            Change machine
-          </button>
-        )}
+        {/*
+          NO "CHANGE MACHINE" LINK ANY MORE. The dropdown below is always
+          visible, so switching is just choosing a different option and
+          clearing is choosing "Choose machine". A separate link would be a
+          second way to do what the control already does.
+        */}
       </div>
+
+      {/*
+        THE MACHINE DROPDOWN - compact, labelled, and ALWAYS VISIBLE.
+        Sam's correction (19:16, recorded at #860 6156583955): "it should be a
+        dropdown to select the machine then each machine's settings show up so
+        we can do live charting."
+
+        WHAT IT REPLACED: a row of pills that disappeared once something was
+        chosen, with a separate "Change machine" link to get back. For a studio
+        with several units that is a worse control than a list, and it hid the
+        current choice behind a mode change.
+
+        It lists the studio's own USABLE units - `selectableDevices` already
+        excludes retired units, other studios' units, unknown or inactive
+        profiles and stale contract versions - with the unit's own name first
+        and the model qualifying it, because a studio names its rooms and two
+        rooms can hold the same model.
+
+        SHARED CONTROLS, not a hand-rolled select: `fieldControlClass` carries
+        the 44px floor, the 16px type that stops iOS zooming on focus, the
+        focus ring and the disabled treatment, and `FieldLabel` carries the
+        label and required marker. The pills it replaced were hand-rolled at
+        about 36px, under DESIGN.md LAW 6.
+      */}
+      {scope && (
+        <FieldLabel
+          label="Machine"
+          hint={
+            selectable.length === 0
+              ? (inventoryReason ??
+                "No verified machine is available for this studio yet.")
+              : undefined
+          }
+        >
+          <select
+            className={fieldControlClass()}
+            value={deviceId ?? ""}
+            onChange={(e) => void chooseDevice(e.target.value || null)}
+            // FROZEN BY THE HOST'S UNRESOLVED SAVE TOO, not only by a
+            // selection write in flight.
+            //
+            // Round 6 froze the reading collector and I reported the
+            // invariant closed; `settingDraftFrozen` was never applied to
+            // the IDENTITY controls (Codex, #860 4299408376). What that
+            // cost: clearing the machine replaces the host's draft with
+            // null while the retry key is held, so Save retries down the
+            // non-setup `create_block_with_entry` path and duplicates the
+            // area if the first request committed. Switching instead
+            // changes the payload and the digest refuses the retry.
+            //
+            // The machine and the mode are PART OF THE PAYLOAD the retry
+            // key is bound to. A freeze that covers the readings and not
+            // the identity is not a freeze.
+            disabled={
+              selectable.length === 0 || selectionPending || identityFrozen
+            }
+            data-testid="machine-select"
+          >
+            {/*
+              THE EMPTY OPTION IS THE EXPLICIT "not chosen" STATE, and it is
+              also how a selection is cleared. It stays present after a choice
+              so clearing remains reachable.
+            */}
+            <option value="">Choose machine…</option>
+            {selectable.map(({ device, profile }) => (
+              <option key={device.deviceId} value={device.deviceId}>
+                {device.displayName} — {profile.manufacturer} {profile.model}
+                {profile.variant ? ` (${profile.variant})` : ""}
+              </option>
+            ))}
+          </select>
+        </FieldLabel>
+      )}
 
       {/* Selection. An empty list is a legitimate answer and says why. */}
       {/*
@@ -305,6 +589,33 @@ export function MachineFirstSetupPanel({
           {selectionNote}
         </p>
       )}
+      {/*
+        NO COLLECTOR, NO DRAFT - AND THIS MUST LIVE ABOVE THE BRANCH, for the
+        same reason the failure note above it does.
+        ------------------------------------------------------------------
+        It was nested inside the chosen-machine arm, and from there it could
+        never fire on the one case it was written for. Clearing the machine
+        takes the `!chosen` arm, so the whole subtree - this component included
+        - unmounts, nothing reports, and the host form keeps the non-empty
+        draft it was last told about. Press Save then and the readings are
+        recorded under the PREVIOUSLY selected machine, as an immutable
+        capture: numbers she never read off the unit now chosen, and no unit
+        chosen at all (Codex, #860 4288424506).
+        ------------------------------------------------------------------
+        THE PRECEDENT WAS ALREADY IN THIS FILE, ten lines up: the selection
+        note was moved above the branch because rendering it inside the
+        chosen-machine block hid a failed CLEAR, which is the identical shape.
+        I read that comment, wrote the same defect underneath it, and the
+        earlier widening missed it too - it covered switch, mode and retire,
+        and clearing to none is a fourth limb.
+        ------------------------------------------------------------------
+        The condition is unchanged - `!(chosen && mode)` already covered
+        "nothing chosen"; only its position was wrong. It renders nothing, so
+        sitting here costs nothing.
+      */}
+      {!blockId && onSettingDraft && !(chosen && mode) && (
+        <MachineSettingDraftReset onSettingDraft={onSettingDraft} />
+      )}
       {selectable.length === 0 ? (
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           No verified machine is available to select yet.{" "}
@@ -314,35 +625,18 @@ export function MachineFirstSetupPanel({
               "This studio has no registered machine on a reviewed profile.")}
         </p>
       ) : !chosen ? (
-        <div className="flex flex-col gap-2">
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            Choose the machine you are working on before entering settings.
-          </p>
-          {/*
-            THE SAME LAW, one control over, and not in the finding. `py-2
-            text-sm` with no minimum height is about 36px, also under the 44px
-            floor. It predates the mode picker and nobody flagged it, but
-            fixing the new violation while leaving its neighbour would be
-            knowingly shipping the one I had just been taught to see.
-          */}
-          <div className="flex flex-wrap gap-2">
-            {selectable.map(({ device, profile }) => (
-              <Button
-                key={device.deviceId}
-                type="button"
-                variant="secondary"
-                size="md"
-                onClick={() => void chooseDevice(device.deviceId)}
-                data-testid={`machine-pick-${device.deviceId}`}
-              >
-                {device.displayName}
-                <span className="ml-1.5 text-neutral-500">
-                  {profile.manufacturer} {profile.model}
-                </span>
-              </Button>
-            ))}
-          </div>
-        </div>
+        /*
+          NOTHING CHOSEN YET - and the prompt is all this arm needs now.
+          The pill row that used to live here is gone: the labelled dropdown
+          above is always visible and does the same job better for a studio
+          with more than one unit. Keeping both would give the form two
+          controls for one decision, which is the "additional conflicting
+          set" the assignment rules out (#860 6156583955).
+        */
+        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          Choose the machine you are working on, and its own settings appear
+          here.
+        </p>
       ) : (
         <div className="flex flex-col gap-3" data-testid="machine-chosen">
           <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
@@ -382,6 +676,13 @@ export function MachineFirstSetupPanel({
                     variant={m.key === mode?.key ? "primary" : "secondary"}
                     size="sm"
                     onClick={() => void chooseMode(m.key)}
+                    // SERIALISED WITH THE DEVICE PICKER, from one flag: a
+                    // mode change and a device change both write the same
+                    // stored selection, so letting one start while the other
+                    // is in flight is the same race by another route.
+                    // Same freeze as the machine picker: the mode is part
+                    // of the digest the held retry key is bound to.
+                    disabled={selectionPending || identityFrozen}
                     aria-pressed={m.key === mode?.key}
                     data-testid={`machine-mode-${m.key}`}
                   >
@@ -398,7 +699,45 @@ export function MachineFirstSetupPanel({
           {/* ENTRY when we know which block is being charted; otherwise the
               field contract as a read-only reference. The panel never collects
               a reading it has nowhere to put. */}
-          {blockId && recordAndCount && mode ? (
+          {/*
+            THREE ARMS, and the middle one is new.
+              block + a recorder -> record against it (MachineReadingEntry);
+              NO block + a host that can carry a draft -> collect it;
+              otherwise -> the field contract, read-only.
+            The third is unchanged and is still the honest answer when nothing
+            can carry a reading: the panel never collects one it has nowhere
+            to put.
+          */}
+          {/*
+            THE DRAFT RESET USED TO SIT HERE, and it could not do its job from
+            inside this branch. See the hoisted copy above the branch.
+          */}
+          {!blockId && onSettingDraft && mode ? (
+            <MachineSettingDraft
+              // Same payload, same freeze — see block-setup-form.
+              frozen={settingDraftFrozen}
+              // REMOUNTED WHEN THE IDENTITY CHANGES, for the same reason the
+              // entry form is: the draft is keyed by group, stage and field
+              // and NOT by mode, so two modes sharing a field identity would
+              // otherwise let a value typed under one be submitted under the
+              // other without being re-read (Codex, ebc69ff6).
+              key={`${chosen.device.deviceId}::${chosen.profile.profileId}::${chosen.profile.version}::${mode.key}`}
+              profile={chosen.profile}
+              mode={mode}
+              // THE IDENTITY IS ADDED HERE, where the chosen unit is known.
+              onDraftChange={(d) =>
+                onSettingDraft({
+                  ...d,
+                  identity: {
+                    deviceId: chosen.device.deviceId,
+                    profileId: chosen.profile.profileId,
+                    profileVersion: chosen.profile.version,
+                    modeKey: mode.key,
+                  },
+                })
+              }
+            />
+          ) : blockId && recordAndCount && mode ? (
             <MachineReadingEntry
               // REMOUNTED WHEN THE IDENTITY CHANGES, which is the whole fix.
               //
@@ -420,6 +759,16 @@ export function MachineFirstSetupPanel({
               mode={mode}
               blockId={blockId}
               deviceId={chosen.device.deviceId}
+              // THE IDENTITIES THE BLOCK ALREADY HAS. The same list rendered
+              // below as history, handed to the form for the one thing the
+              // history cannot do: tell it which probes exist, so a change is
+              // attributed to the one it was made on. `groupsFromRecorded`
+              // scopes it to this mount's device, version and mode.
+              recordedGroups={recordedSetup}
+              // The revision path's half of the freeze: the entry owns that
+              // save's state, and the controls that can discard its retry
+              // key are out here.
+              onUnresolvedChange={setRevisionUnresolved}
               onRecord={recordAndCount!}
             />
           ) : (
@@ -480,29 +829,23 @@ export function MachineFirstSetupPanel({
         </div>
       )}
 
-      {blocked.length > 0 && (
-        <div className="flex flex-col gap-1.5 border-t border-neutral-200 pt-3 dark:border-neutral-800">
-          <SectionLabel size="caption">Not yet selectable</SectionLabel>
-          <ul className="flex flex-col gap-1.5">
-            {blocked.map((b) => (
-              <li
-                key={b.key}
-                className="text-xs text-neutral-600 dark:text-neutral-400"
-              >
-                <span className="font-medium text-neutral-800 dark:text-neutral-200">
-                  {b.name}
-                </span>
-                {b.availability === "legacy-only" && (
-                  <span className="ml-1.5 text-neutral-500">
-                    (historical records only)
-                  </span>
-                )}
-                <span className="mt-0.5 block">{b.reason}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      {/*
+        THE WITHHELD-MODEL CATALOGUE IS GONE FROM THE TREATMENT FORM.
+
+        This rendered every unverified model in the catalogue with its full
+        evidence reason - firmware conflicts, unread operating screens,
+        403ing manuals - eleven entries deep. On a charting form, during a
+        treatment, that is a wall of procurement detail between the
+        practitioner and the fields she is trying to fill, and Sam's screenshot
+        said so ("this looks weird ... is this all prepopulated").
+
+        The information is not deleted: it is `withheld(catalogue)`, still
+        computed from the same contract, and belongs on an owner or support
+        machine-readiness surface where someone is actually deciding what to
+        register. What charting needs is a concise reason when there is
+        nothing to choose and a useful next action, which is the hint on the
+        dropdown above and the owner line below (#860 6156583955).
+      */}
 
       {canManageMachines && selectable.length === 0 && scope && (
         <p
@@ -514,10 +857,29 @@ export function MachineFirstSetupPanel({
         </p>
       )}
 
+      {/*
+        WHAT SHE HAS ALREADY RECORDED TODAY, ABOVE what she did last time, and
+        both above the entry fields. The order is the order of the questions
+        she actually asks: which machine, what have I already recorded on this
+        treatment, what did she have last time, and then what am I entering
+        now. Putting today's record below last visit's reference would bury
+        the one that stops a double capture.
+      */}
+      <MachineRecordedSetups
+        readings={recordedSetup}
+        catalogue={catalogue}
+        unitNames={unitNames}
+        unavailable={recordedSetupUnavailable}
+      />
+
       <MachinePriorSetup
         readings={priorSetup}
+        // AND WHETHER THAT READ FAILED. Without this the component cannot
+        // tell "no previous treatment" from "could not find out", and the
+        // quieter of the two renders as silence.
+        unavailable={priorSetupUnavailable}
         catalogue={catalogue}
-        unitNames={priorUnitNames}
+        unitNames={unitNames}
       />
 
       <PersistenceStatus
