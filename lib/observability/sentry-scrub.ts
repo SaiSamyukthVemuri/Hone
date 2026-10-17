@@ -106,18 +106,53 @@ const SUPABASE_TOKEN_RE =
 // boundary (Codex P1 4301586679, on #903) still let one glued to hex letters
 // ("abc<uuid>") through. The dashes make it a UUID, so dashless hex (Sentry's
 // own ids, hashes) is never matched.
-// A separator may be percent-encoded ("%2D", Codex P2 4301149388): browsers
-// keep "%2D" in a serialized URL, and it decodes straight back to the id.
-const RECORD_ID_RE = new RegExp(
-  // A hex digit may itself be percent-encoded (%30-%39, %41-%46, %61-%66):
-  // URL serialization keeps the escape, and routing decodes it straight back
-  // to the id (Codex P2 4301707490). Same for the hyphen (%2D).
-  ["{8}", "{4}", "{4}", "{4}", "{12}"]
-    .map((n) => `(?:[0-9a-f]|%3[0-9]|%4[1-6]|%6[1-6])${n}`)
-    .join("(?:-|%2d)"),
-  "gi",
-);
+// Encodings (%2D, Codex P2 4301149388; %3x hex digits, P2 4301707490) are
+// handled by decoding, below, not by the regex.
 const RECORD_ID_PLACEHOLDER = "[id]";
+// THE GUARANTEE for encodings: no string or key, after ASCII percent-decoding
+// to a fixed point, contains a UUID.
+//
+// The regex is the plain dashed 8-4-4-4-12 form with no boundary (an id glued
+// to letters, "_" or digits is still a full id). Its dashes are what make it a
+// UUID, so dashless hex (Sentry trace and span ids, hashes) is never matched.
+// Encodings are NOT enumerated in it (%2D, %36, %252D, ... were found one at a
+// time in review). Instead, each whitespace-delimited token that contains "%"
+// is decoded (ASCII %XX only, so a malformed escape never throws and
+// multibyte text is untouched), repeatedly until stable, at most
+// MAX_DECODE_ROUNDS times. If the decoded token contains a UUID, the DECODED
+// token is written with the ids replaced ("/clients/%36f1…" becomes
+// "/clients/[id]", keeping the route shape). A token still changing after the
+// bound is replaced with "[Redacted]": fail closed, never sent undecoded.
+// Out of scope: non-URL encodings (HTML entities, \u escapes, base64), which
+// URL serialization does not produce.
+const RECORD_ID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+const HAS_RECORD_ID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+const MAX_DECODE_ROUNDS = 4;
+
+function decodeAsciiEscapes(text: string): string {
+  return text.replace(/%([0-7][0-9a-f])/gi, (_m, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+}
+
+function replaceRecordIds(text: string): string {
+  if (!text.includes("%")) return text.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER);
+  return text
+    .split(/(\s+)/)
+    .map((token) => {
+      if (!token.includes("%")) return token.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER);
+      let decoded = token;
+      for (let round = 0; round < MAX_DECODE_ROUNDS; round += 1) {
+        const next = decodeAsciiEscapes(decoded);
+        if (next === decoded) break;
+        decoded = next;
+      }
+      if (decodeAsciiEscapes(decoded) !== decoded) return REDACTED;
+      if (decoded !== token && HAS_RECORD_ID.test(decoded)) {
+        return decoded.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER);
+      }
+      return token.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER);
+    })
+    .join("");
+}
 // Loose phone matcher: a run of 9+ digits with optional +, spaces, (), ., -.
 // Bounded so it doesn't swallow adjacent digits of an unrelated token.
 const PHONE_RE = /(?<!\d)\+?\d[\d\s().-]{7,}\d(?!\d)/g;
@@ -140,8 +175,7 @@ const PHONE_RE = /(?<!\d)\+?\d[\d\s().-]{7,}\d(?!\d)/g;
  *  breadcrumb messages, exception values) funnels through here, they all
  *  inherit the protection rather than each needing its own call. */
 export function redactString(input: string): string {
-  return canonicalizeTokenPaths(input)
-    .replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER)
+  return replaceRecordIds(canonicalizeTokenPaths(input))
     .replace(EMAIL_RE, REDACTED)
     .replace(JWT_RE, REDACTED)
     .replace(BEARER_RE, REDACTED)
@@ -182,7 +216,7 @@ type ScrubOpts = { redactKeys: boolean };
  *  scrubbed or arrived literally -- gets a numeric suffix, so no value is
  *  silently dropped, whatever the key order. */
 function scrubKey(key: string, taken: Record<string, unknown>): string {
-  const base = key.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER);
+  const base = replaceRecordIds(key);
   // Check EVERY key, changed or not (Codex P2 4301073939): an unchanged
   // literal "[id]" arriving after a scrubbed UUID key must not overwrite it.
   // OWN keys only (Codex P2 4301342389): `in` also sees Object.prototype, so
@@ -204,7 +238,7 @@ function withoutRecordIds(
   depth: number,
   maxDepth: number = MAX_DEPTH,
 ): unknown {
-  if (typeof value === "string") return value.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER);
+  if (typeof value === "string") return replaceRecordIds(value);
   if (value === null || typeof value !== "object") return value;
   if (depth > maxDepth) return REDACTED;
   if (seen.has(value)) return REDACTED;
