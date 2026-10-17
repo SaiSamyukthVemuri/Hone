@@ -1,5 +1,8 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { adminQuery, asUser, closePool, seedMember } from "./helpers/harness";
+import { SETTLEMENT_STATE_BY_METHOD } from "@/lib/billing/appointment-payment-state";
+import { settlementIsOutranked } from "@/lib/billing/appointment-settlement";
+import type { SettlementMethod } from "@/lib/billing/settlement-types";
 import {
   cleanupPaymentScenario,
   seedEligibleQuickCheckoutScenario,
@@ -82,6 +85,31 @@ async function settlements(studioId: string) {
   }>;
 }
 
+/**
+ * What the OWNER sees for this visit: the exact live-settlement read the app's
+ * loader makes (lib/billing/appointment-settlement.ts getAppointmentSettlements:
+ * studio-scoped, superseded_at is null), run AS THE OWNER under RLS, then the
+ * app's own mapping onto the display state. Without this the proof could pass
+ * with a record nobody can see.
+ */
+async function ownerView(ownerUserId: string, studioId: string, appointmentId: string) {
+  const rows = await asUser(ownerUserId, async (q) => {
+    const r = await q(
+      `select method, amount_cents from public.appointment_settlements
+        where studio_id = $1 and superseded_at is null and appointment_id = any($2::uuid[])`,
+      [studioId, [appointmentId]],
+    );
+    return r.rows as Array<{ method: SettlementMethod; amount_cents: number }>;
+  });
+  return rows.map((r) => ({
+    method: r.method,
+    amountCents: r.amount_cents,
+    state: SETTLEMENT_STATE_BY_METHOD[r.method],
+    // No Hone-verified money exists at this studio, so nothing outranks it.
+    outranked: settlementIsOutranked(r.method, false),
+  }));
+}
+
 async function cardFacts(studioId: string) {
   const r = await adminQuery(
     `select
@@ -136,11 +164,25 @@ describe("HON-45 — a cardless clinic completes a charted visit with the amount
     );
     expect(flags.rows[0]).toEqual({ card_money: false, blocking: false });
 
+    // THE OWNER SEES IT AS OUTSTANDING: the app's live read, as the owner,
+    // maps to "settled_owing" for the full amount, and nothing outranks it.
+    expect(await ownerView(s.practitionerUserId, s.studioId, s.appointmentId)).toEqual([
+      { method: "still_owes", amountCents: PRICE, state: "settled_owing", outranked: false },
+    ]);
+    // CONTROL: the read is RLS-scoped, so it CAN come back empty. The owner of
+    // a different studio, running the same read, sees nothing.
+    const other = await cardlessChartedVisit();
+    expect(await ownerView(other.practitionerUserId, s.studioId, s.appointmentId)).toEqual([]);
+
     // Recording the outstanding amount changed nothing in the chart.
     expect(await chartIntact(s)).toEqual({ sessions: 1, entries: 1, appointment_status: "completed" });
   });
 
-  it("when the third party pays later, only the OWNER can record it, and the outstanding history is kept", async () => {
+  // TODAY'S MECHANISM, NOT A DECISION. Whether a practitioner should be able to
+  // record the insurer's payment is an open product question (HON-45 D2). This
+  // pins what 0187 does now, owner-only correction, so a change to it is
+  // deliberate and visible; it does not settle D2.
+  it("today, when the third party pays later, only the OWNER can record it, and the outstanding history is kept", async () => {
     const s = await cardlessChartedVisit();
     const member = await seedMember(
       { studioId: s.studioId, userId: s.practitionerUserId, practitionerId: s.practitionerId, clientId: s.clientId },
@@ -155,6 +197,9 @@ describe("HON-45 — a cardless clinic completes a charted visit with the amount
     expect(byMember.result).toBe("not_owner");
     expect((await settlements(s.studioId)).filter((r) => r.superseded_at === null)).toEqual([
       expect.objectContaining({ method: "still_owes", amount_cents: PRICE }),
+    ]);
+    expect(await ownerView(s.practitionerUserId, s.studioId, s.appointmentId)).toEqual([
+      { method: "still_owes", amountCents: PRICE, state: "settled_owing", outranked: false },
     ]);
 
     // The owner records the payment as received some other way.
@@ -174,6 +219,11 @@ describe("HON-45 — a cardless clinic completes a charted visit with the amount
         supersedes_id: owed.settlement_id,
         supersede_reason: "insurer paid",
       }),
+    ]);
+
+    // The owner now sees the visit as paid some other way, no longer outstanding.
+    expect(await ownerView(s.practitionerUserId, s.studioId, s.appointmentId)).toEqual([
+      { method: "paid_other_external", amountCents: PRICE, state: "settled_other", outranked: false },
     ]);
 
     // Still no card fact anywhere, and the chart is untouched.
