@@ -429,3 +429,31 @@ export async function archiveTreatmentImageAction(input: {
     return { ok: false, error: "Could not archive the image." };
   }
 }
+
+// FETT photos (HON-43), 0231: mark one of a client's own CLIENT-SCOPED photos
+// as their identification portrait, or clear it with imageId=null. The command
+// resolves the actor from auth.uid() per studio and the database refuses any
+// photo that is not a current client photo of the same client, so this action
+// only gates auth and maps the outcome. Errors stay generic: they never reveal
+// whether another client's or studio's photo exists.
+export async function setClientPortraitAction(input: {
+  clientId: string;
+  imageId: string | null;
+}): Promise<ImageActionResult> {
+  await getCurrentPractitionerWithStudio();
+  try {
+    const supabase = await createClient();
+    const { error } = await supabase.rpc("set_client_portrait", {
+      p_client_id: input.clientId,
+      p_image_id: input.imageId,
+    });
+    if (error) {
+      return { ok: false, error: "Could not update the ID photo." };
+    }
+    revalidatePath(`/clients/${input.clientId}/images`);
+    revalidatePath(`/clients/${input.clientId}`);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Could not update the ID photo." };
+  }
+}
