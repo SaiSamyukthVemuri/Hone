@@ -18,8 +18,8 @@ import {
 import { TREATMENT_NOTE_MAX_LENGTH } from "./note-constants";
 import {
   validateTreatmentImageUpload,
-  selectGridImageSource,
 } from "@/lib/images/treatment-images";
+import { GridPhoto } from "./GridPhoto";
 
 // Per-file upload status (PR: multi-file upload). Each selected file is
 // processed independently so one failure never blocks the others.
@@ -213,11 +213,6 @@ export function TreatmentImagesManager({
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
   const [fileResults, setFileResults] = useState<UploadFileResult[]>([]);
-  const [broken, setBroken] = useState<Record<string, boolean>>({});
-  // PERF-IMG-03. Tracks derivatives that failed to LOAD (as opposed to failing
-  // to sign, which the server already handles by sending thumbUrl=null). A
-  // failure here demotes that one cell to the original; it never hides it.
-  const [thumbFailed, setThumbFailed] = useState<Record<string, boolean>>({});
 
   // PR #284: attach-at-upload context. Default "client" (no session/block).
   const hasSessions = sessionOptions.length > 0;
@@ -558,56 +553,23 @@ export function TreatmentImagesManager({
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {images.map((img) => {
-            // Availability is decided by the ORIGINAL alone, exactly as before
-            // this change: a derivative can never be the reason a clinical
-            // image is withheld. The rule itself lives in a pure helper so all
-            // four states are unit-tested rather than argued about here.
-            const {
-              src: gridSrc,
-              showPreview,
-              usingThumb: useThumb,
-            } = selectGridImageSource({
-              previewUrl: img.previewUrl,
-              thumbUrl: img.thumbUrl,
-              thumbFailed: !!thumbFailed[img.id],
-              broken: !!broken[img.id],
-            });
             return (
               <div
                 key={img.id}
                 className="flex flex-col gap-2 rounded-lg border border-neutral-200 p-3 dark:border-neutral-800"
               >
-                {showPreview ? (
-                  <button
-                    type="button"
-                    onClick={() => openPreview(img)}
-                    className="block overflow-hidden rounded-md"
-                    aria-label="View larger treatment photo"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={gridSrc ?? ""}
-                      alt="Treatment photo"
-                      loading="lazy"
-                      onError={() => {
-                        // A derivative that will not load demotes to the
-                        // original and re-renders; only the ORIGINAL failing
-                        // marks the cell broken. Without this branch a missing
-                        // thumbnail would read as a missing clinical image.
-                        if (useThumb) {
-                          setThumbFailed((t) => ({ ...t, [img.id]: true }));
-                        } else {
-                          setBroken((b) => ({ ...b, [img.id]: true }));
-                        }
-                      }}
-                      className="aspect-square w-full object-cover transition hover:opacity-90"
-                    />
-                  </button>
-                ) : (
-                  <div className="grid aspect-square w-full place-items-center rounded-md bg-neutral-100 text-xs text-neutral-400 dark:bg-neutral-900">
-                    Image not available
-                  </div>
-                )}
+                {/* PERF-IMG-03 + FETT thumbnail recovery: derivative first,
+                    demote to the original, re-mint an EXPIRED URL once per
+                    variant (lib/images/grid-photo-recovery.ts). Keyed by the
+                    server URLs so fresh URLs from router.refresh() start the
+                    cell over. Availability still keys off the ORIGINAL. */}
+                <GridPhoto
+                  key={`${img.id}:${img.previewUrl ?? ""}:${img.thumbUrl ?? ""}`}
+                  imageId={img.id}
+                  previewUrl={img.previewUrl}
+                  thumbUrl={img.thumbUrl}
+                  onOpen={() => openPreview(img)}
+                />
                 <div>
                   {/* Human title, never the raw .jpg filename: the SESSION
                       date when the photo is attached to a session, else the
