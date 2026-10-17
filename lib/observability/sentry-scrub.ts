@@ -176,9 +176,11 @@ function scrubKey(key: string, taken: Record<string, unknown>): string {
   const base = key.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER);
   // Check EVERY key, changed or not (Codex P2 4301073939): an unchanged
   // literal "[id]" arriving after a scrubbed UUID key must not overwrite it.
-  if (!(base in taken)) return base;
+  // OWN keys only (Codex P2 4301342389): `in` also sees Object.prototype, so
+  // an ordinary "constructor" or "toString" key would be renamed for nothing.
+  if (!Object.hasOwn(taken, base)) return base;
   let n = 2;
-  while (`${base}#${n}` in taken) n += 1;
+  while (Object.hasOwn(taken, `${base}#${n}`)) n += 1;
   return `${base}#${n}`;
 }
 

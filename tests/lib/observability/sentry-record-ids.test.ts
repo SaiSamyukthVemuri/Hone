@@ -159,6 +159,12 @@ describe("G-25: record ids as object KEYS (Codex P2 4301012675)", () => {
     expectNoRecordId(after, "collision keys");
   });
 
+  it("leaves ordinary keys named like Object.prototype members unchanged (Codex P2 4301342389)", () => {
+    const extra = JSON.parse('{"constructor":"a","toString":"b","hasOwnProperty":"c","valueOf":"d"}');
+    const out = scrubErrorEvent(errorEvent({ extra }));
+    expect(Object.keys(out.extra as object).sort()).toEqual(["constructor", "hasOwnProperty", "toString", "valueOf"]);
+  });
+
   it("removes id keys in breadcrumb data and span data", () => {
     const crumb = scrubBreadcrumb({ category: "app", data: { [CLIENT]: { [SESSION]: "x" } } } as Breadcrumb);
     const tx = scrubTransactionEvent({
