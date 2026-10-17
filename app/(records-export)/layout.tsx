@@ -11,6 +11,10 @@
 // a FULL document load (typed URL or a plain <a>), never a client-side
 // next/link navigation from an analytics-enabled page; a source guard
 // (tests/app/clinical-records-export-contract.test.ts) forbids such a Link.
+// The same holds for LEAVING it (Codex P1 4302941126): a soft navigation out
+// would load analytics into this document, and Back would bring the export
+// back inside it. So nothing in this tree uses next/link or the client
+// router; every exit is a plain <a>, guarded over the whole tree.
 //
 // Sentry is NOT kept out by this tree: instrumentation-client.ts initializes it
 // globally. It is kept out by the shared scrubber instead, which DROPS every

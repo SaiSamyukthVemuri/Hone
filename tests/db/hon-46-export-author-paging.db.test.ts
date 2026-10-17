@@ -154,6 +154,52 @@ describe("HON-46 export reads every author and every note to completion", () => 
     expect(load.value.practitionerNameById.size).toBe(AUTHORS);
   }, 120_000);
 
+  it("omits the active children of a SOFT-DELETED block; a true legacy entry still prints (Codex P1 4302941115)", async () => {
+    const s = await seedStudio("hon46del");
+    studios.push(s.studioId);
+    const session = await adminQuery(
+      `insert into public.sessions (studio_id, client_id, practitioner_id, modality, started_at)
+       values ($1, $2, $3, 'electrolysis', ($4::date + time '15:00') at time zone 'America/Toronto') returning id`,
+      [s.studioId, s.clientId, s.practitionerId, DAY],
+    );
+    const sessionId = session.rows[0].id as string;
+    const blocks = await adminQuery(
+      `insert into public.session_blocks (studio_id, session_id, sort_order, primary_area)
+       values ($1, $2, 0, 'chin'), ($1, $2, 1, 'upper lip') returning id, primary_area`,
+      [s.studioId, sessionId],
+    );
+    const liveBlock = blocks.rows.find((r) => r.primary_area === "chin")!.id as string;
+    const deletedBlock = blocks.rows.find((r) => r.primary_area === "upper lip")!.id as string;
+    const entries = await adminQuery(
+      `insert into public.electrolysis_entries (session_id, block_id, area)
+       values ($1, $2, 'chin'), ($1, $3, 'upper lip'), ($1, null, 'jaw') returning id, area`,
+      [sessionId, liveBlock, deletedBlock],
+    );
+    const idOf = (area: string) => entries.rows.find((r) => r.area === area)!.id as string;
+    // Block-only soft delete: the block is gone, its child entry stays ACTIVE.
+    await adminQuery(`update public.session_blocks set deleted_at = now() where id = $1`, [deletedBlock]);
+    const child = await adminQuery(`select deleted_at from public.electrolysis_entries where id = $1`, [idOf("upper lip")]);
+    expect(child.rows[0].deleted_at).toBeNull();
+
+    await signInOwner(s.practitionerId);
+    const args = { studioId: s.studioId, clientId: s.clientId, scope: { kind: "day" as const, day: DAY }, timezone: "America/Toronto" };
+    let load = await loadClinicalRecordsForExport(args);
+    for (let attempt = 0; !load.ok && attempt < 20; attempt += 1) {
+      await new Promise((r) => setTimeout(r, 250));
+      load = await loadClinicalRecordsForExport(args);
+    }
+    expect(load.ok).toBe(true);
+    if (!load.ok) return;
+    // The query DOES return the orphaned child: the bug was in what we did with it.
+    expect(load.value.entries.map((e) => e.id)).toContain(idOf("upper lip"));
+    const doc = buildClinicalRecordsDocument(load.value);
+    expect(JSON.stringify(doc)).not.toContain(idOf("upper lip"));
+    const exported = doc.sessions.find((x) => x.id === sessionId)!;
+    expect(exported.blocks.map((b) => b.id)).toEqual([liveBlock]);
+    expect(exported.blocks[0].entries.map((e) => e.id)).toEqual([idOf("chin")]);
+    expect(exported.entries.map((e) => e.id)).toEqual([idOf("jaw")]);
+  }, 60_000);
+
   it("labels a note superseded by a revision dated OUTSIDE the range (Codex P1 4302740025)", async () => {
     const s = await seedStudio("hon46sup");
     studios.push(s.studioId);

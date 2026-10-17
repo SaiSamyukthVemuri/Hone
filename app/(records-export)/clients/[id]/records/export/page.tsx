@@ -15,7 +15,6 @@
 // default file name when printing to PDF.
 
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import {
@@ -190,9 +189,13 @@ export default async function ClinicalRecordsExportPage({
           <p className="text-xs text-neutral-600 dark:text-neutral-400">
             {studio.name} · Generated {formatInstant(new Date().toISOString(), tz)}
           </p>
-          <Link href={`/clients/${client.id}`} className="text-xs underline print:hidden">
+          {/* EVERY exit is a FULL document load (Codex P1 4302941126). A
+              client-side navigation into app/(app) would load analytics in this
+              same document, and Back would then re-enter the export with it
+              still running. */}
+          <a href={`/clients/${client.id}`} className="text-xs underline print:hidden">
             Back to client
-          </Link>
+          </a>
         </div>
         {outcome?.ok && <AuditedPrintButton clientId={client.id} rawScope={rawScope} />}
       </header>

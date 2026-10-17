@@ -293,6 +293,28 @@ describe("HON-46 is structurally outside third-party telemetry (Codex P1 4301165
     }
   });
 
+  it("nothing soft-navigates OUT of the export either: no next/link or client router anywhere in its tree (Codex P1 4302941126)", () => {
+    const files = execSync("git ls-files 'app/(records-export)'", { cwd: ROOT, encoding: "utf8" })
+      .split("\n")
+      .filter((f) => /\.(tsx?|jsx?)$/.test(f));
+    expect(files.length).toBeGreaterThanOrEqual(4);
+    const offenders: string[] = [];
+    for (const f of files) {
+      const src = code(f);
+      for (const banned of [
+        /from\s+["']next\/link["']/,
+        /\buseRouter\b/,
+        /\brouter\.(push|replace|back|forward|prefetch|refresh)\b/,
+        /<Link\b/,
+      ]) {
+        if (banned.test(src)) offenders.push(`${f}: ${banned}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+    // The exit itself is a plain anchor.
+    expect(code(FILES.page)).toMatch(/<a href=\{`\/clients\/\$\{client\.id\}`\}/);
+  });
+
   it("nothing soft-navigates into the export (no next/link to records/export)", () => {
     const files = execSync("git ls-files 'app/*.tsx' 'components/*.tsx' 'app/**/*.tsx' 'components/**/*.tsx'", {
       cwd: ROOT,

@@ -337,6 +337,48 @@ describe("buildClinicalRecordsDocument is an allow-list", () => {
   });
 });
 
+describe("entries of a filtered-out (soft-deleted) block are omitted (Codex P1 4302941115)", () => {
+  const session = {
+    id: "s7",
+    started_at: "2026-10-01T15:00:00Z",
+    ended_at: null,
+    modality: "electrolysis",
+    session_notes: null,
+    performed_by_practitioner_id: null,
+    practitioner_id: null,
+    record_status: null,
+    finalized_at: null,
+    aftercare_and_risks_explained_at: null,
+  };
+  const entry = (id: string, blockId: string | null) =>
+    ({
+      id,
+      session_id: "s7",
+      block_id: blockId,
+      area: "chin",
+      areas_list: null,
+      created_at: `2026-10-01T15:0${id.length}:00Z`,
+    }) as unknown as ExportEntrySource;
+  const live = { id: "b-live", session_id: "s7", sort_order: 0, primary_area: "chin", side: null, created_at: "2026-10-01T15:01:00Z" } as unknown as ExportBlockSource;
+  const doc = buildClinicalRecordsDocument({
+    sessions: [session],
+    // "b-deleted" is NOT here: the block query filtered it (deleted_at set).
+    blocks: [live],
+    entries: [entry("in-live", "b-live"), entry("orphan-of-deleted", "b-deleted"), entry("legacy", null)],
+    notes: [],
+    practitionerNameById: new Map(),
+  });
+  const s = doc.sessions[0];
+
+  it("an active child of a deleted block is not printed anywhere", () => {
+    expect(JSON.stringify(doc)).not.toContain("orphan-of-deleted");
+  });
+  it("a true legacy entry (no block) still prints at session level, and a live block keeps its entry", () => {
+    expect(s.entries.map((e) => e.id)).toEqual(["legacy"]);
+    expect(s.blocks[0].entries.map((e) => e.id)).toEqual(["in-live"]);
+  });
+});
+
 describe("probe-lot confirmation is exported (Codex P2 4302799069)", () => {
   const lotOf = (over: Record<string, unknown>) =>
     buildClinicalRecordsDocument({

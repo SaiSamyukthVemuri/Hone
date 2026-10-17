@@ -384,11 +384,16 @@ export function buildClinicalRecordsDocument(input: {
   const entriesByBlock = new Map<string, ExportEntrySource[]>();
   const looseBySession = new Map<string, ExportEntrySource[]>();
   for (const e of input.entries) {
-    if (e.block_id && blockIds.has(e.block_id)) {
-      entriesByBlock.set(e.block_id, [...(entriesByBlock.get(e.block_id) ?? []), e]);
-    } else {
+    if (e.block_id === null || e.block_id === undefined || e.block_id === "") {
+      // Only a TRUE legacy entry (no block at all) prints at session level.
       looseBySession.set(e.session_id, [...(looseBySession.get(e.session_id) ?? []), e]);
+    } else if (blockIds.has(e.block_id)) {
+      entriesByBlock.set(e.block_id, [...(entriesByBlock.get(e.block_id) ?? []), e]);
     }
+    // Otherwise the entry belongs to a block that was filtered out (soft-
+    // deleted; its children may still be active) and is OMITTED, as the
+    // session loader omits it (Codex P1 4302941115). It must never resurface
+    // as a "legacy" entry.
   }
   const laserBySession = new Map<string, ExportLaserSource[]>();
   for (const l of input.laserEntries ?? []) {

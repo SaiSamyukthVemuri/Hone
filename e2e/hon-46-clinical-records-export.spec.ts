@@ -256,14 +256,13 @@ test("owner: the day's records appear; every excluded sentinel is absent from pa
 
   // SENTRY (#828 item 6; Codex P1 4302852097): NOTHING about the export page
   // reaches Sentry. An error thrown ON the export page is DROPPED by the shared
-  // scrubber, so it must never be captured. NON-VACUOUS by a positive control
-  // in the SAME browser context: a soft navigation away (the page's own "Back
-  // to client" link, so the SDK and its transport carry over) and a second
-  // error there IS captured. The egress path demonstrably works, and the
-  // export-page error, raised first, would have arrived before the control.
-  // Scope, stated honestly: the guard records a SUMMARY of each envelope
-  // (transaction, message, exception values), not the full payload; the drop
-  // itself is proven field by field in tests/lib/observability.
+  // scrubber, so it must never be captured. NON-VACUOUS by a positive control:
+  // the export page is given time to send (Sentry transmits an event as soon
+  // as it is captured), THEN the owner leaves by the page's own "Back to
+  // client" exit and a second error there IS captured. Scope, stated honestly:
+  // the guard records a SUMMARY of each envelope (transaction, message,
+  // exception values), not the full payload; the drop itself is proven field
+  // by field in tests/lib/observability.
   const droppedCanary = `HON46-CANARY-EXPORT-${fx.seed.runId}`;
   const controlCanary = `HON46-CANARY-CONTROL-${fx.seed.runId}`;
   const throwSoon = (msg: string) =>
@@ -273,8 +272,21 @@ test("owner: the day's records appear; every excluded sentinel is absent from pa
       }, 0);
     }, msg);
   await throwSoon(droppedCanary);
+  await page.waitForLoadState("networkidle");
+  await page.waitForTimeout(1_500);
+
+  // LEAVING is a FULL document load (Codex P1 4302941126): the exit is a plain
+  // <a>, so the app page, which DOES load analytics, gets its own document.
+  vercel.length = 0;
+  const exportUrl = page.url();
+  const leave = page.waitForEvent("load");
   await page.getByRole("link", { name: "Back to client" }).click();
-  await page.waitForURL((url) => url.pathname === `/clients/${fx.clientId}`);
+  await leave;
+  await page.waitForURL((u) => u.pathname === `/clients/${fx.clientId}`);
+  // Positive control for the Back check below: analytics IS live out here.
+  await expect
+    .poll(() => page.evaluate(() => typeof (window as unknown as { va?: unknown }).va), { timeout: 15_000 })
+    .not.toBe("undefined");
   await throwSoon(controlCanary);
   await expect
     .poll(() => JSON.stringify(readSentryEgress(egressMark)).includes(controlCanary), { timeout: 20_000 })
@@ -286,10 +298,37 @@ test("owner: the day's records appear; every excluded sentinel is absent from pa
     expect(egress, `a Sentry envelope carried ${s}`).not.toContain(s);
   }
 
-  // Two previews (goto + request.get) -> two audit rows, owner as actor, no PHI.
+  // BACK into the export (Codex P1 4302941126): it must come back as its OWN
+  // analytics-free document, never inside the app page's document where the
+  // Vercel scripts are running.
+  await page.waitForLoadState("networkidle");
+  vercel.length = 0;
+  await page.goBack();
+  await page.waitForURL((u) => u.href === exportUrl);
+  await expect(page.getByTestId("export-session")).toHaveCount(1);
+  await page.waitForLoadState("networkidle");
+  expect(await page.evaluate(() => typeof (window as unknown as { va?: unknown }).va), "window.va on the export after Back").toBe("undefined");
+  expect(await page.evaluate(() => typeof (window as unknown as { si?: unknown }).si), "window.si on the export after Back").toBe("undefined");
+  expect(
+    await page.evaluate(() => [...document.scripts].map((x) => x.src).filter((src) => src.includes("/_vercel/"))),
+    "a /_vercel/ script in the export document after Back",
+  ).toEqual([]);
+  expect(
+    vercel.filter((v) => v.doc.includes("/records/export")),
+    "Vercel telemetry requested on the export after Back",
+  ).toEqual([]);
+
+  // THREE previews -> three audit rows, owner as actor, no PHI: the goto, the
+  // raw-HTML request.get, and the Back above. The export is served no-store,
+  // so Back is a fresh server render (never a back/forward-cache restore), and
+  // that re-display is audited like any other preview.
   const ownerId = await getOwnerPractitionerId(fx.seed.studioId);
   const rows = await auditRows(fx.clientId);
-  expect(rows.map((r) => r.action)).toEqual(["clinical_records_previewed", "clinical_records_previewed"]);
+  expect(rows.map((r) => r.action)).toEqual([
+    "clinical_records_previewed",
+    "clinical_records_previewed",
+    "clinical_records_previewed",
+  ]);
   for (const r of rows) {
     expect(r.actor_id).toBe(ownerId);
     expect(r.metadata).toEqual({ scope: "day", day: DAY });
