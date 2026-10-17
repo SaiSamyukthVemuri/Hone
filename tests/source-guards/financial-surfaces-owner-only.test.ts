@@ -35,6 +35,33 @@ const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 const code = (src: string) =>
   src.replace(/^[ \t]*\/\/[^\n]*$/gm, " ").replace(/\/\*[\s\S]*?\*\//g, " ");
 
+
+/** The body of a `{ … }` block starting at `braceAt`, brace-matched. */
+function blockBody(src: string, braceAt: number): string {
+  let depth = 0;
+  for (let i = braceAt; i < src.length; i += 1) {
+    if (src[i] === "{") depth += 1;
+    else if (src[i] === "}") {
+      depth -= 1;
+      if (depth === 0) return src.slice(braceAt + 1, i);
+    }
+  }
+  throw new Error("unbalanced braces while scoping the refusal branch");
+}
+
+/** The parenthesised body of `create table … (` starting at `parenAt`. */
+function parenBody(src: string, parenAt: number): string {
+  let depth = 0;
+  for (let i = parenAt; i < src.length; i += 1) {
+    if (src[i] === "(") depth += 1;
+    else if (src[i] === ")") {
+      depth -= 1;
+      if (depth === 0) return src.slice(parenAt + 1, i);
+    }
+  }
+  throw new Error("unbalanced parens while scoping the practitioners table");
+}
+
 const PAYMENT_PAGES = [
   "app/(app)/settings/payments/page.tsx",
   "app/(app)/settings/payments/refresh/page.tsx",
@@ -66,14 +93,21 @@ describe("#824: financial surfaces refuse a non-owner before any read", () => {
         src.slice(resolveAt, refuseAt),
         "no await may sit between resolving identity and the owner refusal",
       ).not.toMatch(/\bawait\b/);
-      // AND IT MUST HALT, by either shape. page.tsx RETURNS an owner-only
-      // message; the two Connect callbacks REDIRECT to /settings/payments,
-      // which then shows that message. redirect() throws in Next, so both
-      // halt — asserting only `return` would have failed the callbacks for
-      // being correct, which is what the first draft of this test did.
+      // AND THE BRANCH ITSELF MUST HALT. Scoped to the branch BODY by
+      // brace-matching, not to a character window (Codex P2 4303218405): a
+      // 400-character window around the condition swept up the OWNER's later
+      // `redirect(url)` in refresh/page.tsx, so deleting the non-owner's own
+      // `redirect("/settings/payments")` still passed while a non-owner went on
+      // to create the connected account. The window proved the wrong thing.
+      //
+      // Both halting shapes are accepted on purpose: page.tsx RETURNS the
+      // owner-only message, the two Connect callbacks REDIRECT to it, and
+      // redirect() throws in Next. An earlier draft demanded a literal
+      // `return` and failed the callbacks for being correct.
+      const body = blockBody(src, src.indexOf("{", refuseAt));
       expect(
-        src.slice(refuseAt, refuseAt + 400),
-        "the refusal must halt — return a refusal or redirect away, not merely branch",
+        body,
+        "the non-owner branch must halt — return a refusal or redirect away",
       ).toMatch(/\breturn\b|\bredirect\s*\(/);
     });
   }
@@ -107,28 +141,34 @@ describe("#824: financial surfaces refuse a non-owner before any read", () => {
 
   it("practitioners.role admits no third role, so owner-only is unambiguous", () => {
     // THE ONE GENUINELY NEW GUARANTEE IN THIS PR. "Owner/admins" resolves to
-    // owner-only because there IS no admin studio role: practitioners.role is
-    // CHECK-constrained to exactly ('owner','practitioner'). The only "admin"
-    // in Hone is the PLATFORM /admin surface, which is not a studio
-    // membership. If a third role is ever added this fails, and the financial
-    // rule gets applied to it deliberately instead of by omission.
+    // owner-only because there IS no admin studio role. The only "admin" in
+    // Hone is the PLATFORM /admin surface, which is not a studio membership.
+    //
+    // SCOPED TO THE practitioners TABLE (Codex P2 4303218407). An earlier draft
+    // collected EVERY `check (role in (…))` across all migrations, and
+    // 0007_pending_invitations.sql carries an identical check on
+    // pending_invitations.role — so deleting the practitioners constraint would
+    // have left the array non-empty and the test green, with the guarantee it
+    // claims no longer enforced. Measured: both checks exist and both read
+    // ('owner','practitioner'), which is exactly why the loose version passed.
     const migrations = path.join(ROOT, "supabase", "migrations");
-    const checks = readdirSync(migrations)
-      .filter((f) => f.endsWith(".sql"))
-      .flatMap((f) =>
-        [
-          ...readFileSync(path.join(migrations, f), "utf8").matchAll(
-            /check\s*\(\s*role\s+in\s*\(([^)]*)\)/gi,
-          ),
-        ].map((m) => m[1]),
-      );
-    expect(checks.length, "the role CHECK constraint must exist").toBeGreaterThan(0);
-    for (const list of checks) {
-      const roles = [...list.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]).sort();
-      expect(roles, `unexpected role domain: ${list.trim()}`).toEqual([
-        "owner",
-        "practitioner",
-      ]);
+    const found: string[][] = [];
+    for (const f of readdirSync(migrations).filter((n) => n.endsWith(".sql"))) {
+      const sql = readFileSync(path.join(migrations, f), "utf8");
+      const create = /create table\s+(?:if not exists\s+)?public\.practitioners\s*\(/i.exec(sql);
+      if (!create) continue;
+      const columns = parenBody(sql, create.index + create[0].length - 1);
+      const check = /check\s*\(\s*role\s+in\s*\(([^)]*)\)/i.exec(columns);
+      if (check) {
+        found.push([...check[1].matchAll(/'([a-z_]+)'/g)].map((m) => m[1]).sort());
+      }
     }
+    // NON-VACUITY: the constraint must be FOUND on practitioners itself, so
+    // removing or renaming it fails here rather than passing by absence.
+    expect(found.length, "practitioners.role must carry a role CHECK constraint").toBe(1);
+    expect(found[0], "unexpected practitioners.role domain").toEqual([
+      "owner",
+      "practitioner",
+    ]);
   });
 });
