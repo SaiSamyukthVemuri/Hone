@@ -4,7 +4,6 @@
 
 import { redirect } from "next/navigation";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
-import { assertStudioOwner } from "@/lib/auth/require-studio-owner";
 import {
   createConnectOnboardingLink,
   createOrLoadConnectedAccountForStudio,
@@ -15,7 +14,6 @@ export const dynamic = "force-dynamic";
 
 export default async function StripeOnboardingRefreshPage() {
   const { practitioner, studio } = await requirePractitionerWithStudio();
-  assertStudioOwner(practitioner);
   if (practitioner.role !== "owner") {
     redirect("/settings/payments");
   }

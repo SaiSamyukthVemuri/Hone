@@ -1,5 +1,4 @@
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
-import { assertStudioOwner } from "@/lib/auth/require-studio-owner";
 import { createClient } from "@/lib/supabase/server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import {
@@ -19,7 +18,6 @@ export const dynamic = "force-dynamic";
 
 export default async function PaymentsSettingsPage() {
   const { practitioner, studio } = await requirePractitionerWithStudio();
-  assertStudioOwner(practitioner);
   if (practitioner.role !== "owner") {
     return (
       <section className="flex flex-col gap-2">
