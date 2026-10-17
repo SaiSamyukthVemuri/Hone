@@ -80,6 +80,35 @@ describe("G-25: record ids are removed from every Sentry error-event surface", (
     expect(out.fingerprint).toEqual(["{{ default }}", "/clients/[id]"]);
   });
 
+  it("structured exception and thread payloads lose record ids, frames stay symbolicable (Codex P1, review 5556246142)", () => {
+    const chunk = "app:///_next/static/chunks/app/1234567890123-abcdef.js";
+    const out = scrubErrorEvent(
+      errorEvent({
+        exception: {
+          values: [
+            {
+              type: `ClientLoad_${CLIENT}`,
+              value: "boom",
+              mechanism: { type: "generic", handled: true, data: { session: SESSION, [APPT]: "k" } },
+              stacktrace: {
+                frames: [
+                  { filename: chunk, lineno: 12, colno: 3 },
+                  { filename: `/clients/${CLIENT}/page.js`, context_line: `load("${STUDIO}")`, vars: { id: APPT } },
+                ],
+              },
+            },
+          ],
+        },
+        threads: { values: [{ id: 1, stacktrace: { frames: [{ abs_path: `https://hone.care/clients/${CLIENT}` }] } }] },
+      } as Partial<ErrorEvent>),
+    );
+    expectNoRecordId(out, "exception structure / threads");
+    const frames = out.exception?.values?.[0]?.stacktrace?.frames ?? [];
+    expect(frames[0]).toEqual({ filename: chunk, lineno: 12, colno: 3 });
+    expect(frames[1]?.filename).toBe("/clients/[id]/page.js");
+    expect(out.exception?.values?.[0]?.type).toBe("ClientLoad_[id]");
+  });
+
   it("keeps Sentry's own dashless correlation ids (event, trace, span)", () => {
     const out = scrubErrorEvent(
       errorEvent({

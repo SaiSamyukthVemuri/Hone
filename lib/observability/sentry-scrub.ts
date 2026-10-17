@@ -184,6 +184,25 @@ function scrubKey(key: string, taken: Record<string, unknown>): string {
   return `${base}#${n}`;
 }
 
+/** Replace record ids ONLY, in every string and key of a structure. Used on
+ *  exception and thread payloads, where the full redactString would damage
+ *  stack frames (its phone pattern matches digit runs in chunk file names and
+ *  would break source-map symbolication). Beyond MAX_DEPTH the remainder is
+ *  dropped, never sent unscrubbed. */
+function withoutRecordIds(value: unknown, seen: WeakSet<object>, depth: number): unknown {
+  if (typeof value === "string") return value.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER);
+  if (value === null || typeof value !== "object") return value;
+  if (depth > MAX_DEPTH) return REDACTED;
+  if (seen.has(value)) return REDACTED;
+  seen.add(value);
+  if (Array.isArray(value)) return value.map((v) => withoutRecordIds(v, seen, depth + 1));
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value)) {
+    out[scrubKey(k, out)] = withoutRecordIds(v, seen, depth + 1);
+  }
+  return out;
+}
+
 function deepScrub(
   value: unknown,
   opts: ScrubOpts,
@@ -336,9 +355,17 @@ function scrubEventCommon<T extends Event>(event: T): T {
   }
 
   if (event.exception?.values) {
-    for (const ex of event.exception.values) {
+    event.exception.values = event.exception.values.map((ex) => {
       if (typeof ex.value === "string") ex.value = redactString(ex.value);
-    }
+      // The rest of the exception is structured too (Codex P1, review 5556246142):
+      // `type` (from Error.name), `mechanism.data` and stack frames
+      // (filename, abs_path, context lines, vars) can each carry a record id.
+      return withoutRecordIds(ex, seen, 0) as typeof ex;
+    });
+  }
+  const threads = (event as { threads?: unknown }).threads;
+  if (threads !== undefined) {
+    (event as { threads?: unknown }).threads = withoutRecordIds(threads, seen, 0);
   }
 
   if (isRecord(event.request)) scrubRequest(event.request);
