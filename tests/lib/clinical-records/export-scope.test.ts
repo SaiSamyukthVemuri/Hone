@@ -13,6 +13,7 @@ import {
   type ExportSessionSource,
 } from "@/lib/clinical-records/export-scope";
 import { guardBrowserEvent } from "@/lib/analytics/client-boundary";
+import { EXPORT_MAX_PAGES, EXPORT_PAGE_SIZE, readAllPages } from "@/lib/clinical-records/export-queries";
 
 // HON-46 — the pure half of the per-client clinical-records export: which
 // scopes parse, how a local day becomes UTC bounds, that the document is an
@@ -211,7 +212,8 @@ describe("buildClinicalRecordsDocument is an allow-list", () => {
 
     // The settings block, with its structured probe, lot and observations.
     expect(s.blocks).toHaveLength(1);
-    expect(s.blocks[0].title).toBe("upper lip · left");
+    // Legacy single-area block: the shared label contract (blockAreasLabel).
+    expect(s.blocks[0].title).toBe("Left upper lip");
     expect(s.blocks[0].readings).toEqual(
       expect.arrayContaining([
         { label: "Mode", value: "blend" },
@@ -266,6 +268,98 @@ describe("buildClinicalRecordsDocument is an allow-list", () => {
     for (const sentinel of [PRIVATE, PERSONAL, String(PAY), "SENTINEL-PLANNING", "SENTINEL-DELETE"]) {
       expect(json).not.toContain(sentinel);
     }
+  });
+});
+
+describe("multi-area blocks use the authoritative area rows (Codex P1 4301307238)", () => {
+  it("structured session_block_areas win over the legacy single area, every area kept", () => {
+    const block = {
+      id: "b9",
+      session_id: "s9",
+      sort_order: 0,
+      primary_area: "Cheeks", // legacy projection keeps only the FIRST area
+      side: null, // and clears the side when laterality differs
+      custom_area_detail: null,
+      block_name: null,
+      created_at: "2026-10-01T15:05:00Z",
+    } as unknown as ExportBlockSource;
+    const doc = buildClinicalRecordsDocument({
+      sessions: [
+        {
+          id: "s9",
+          started_at: "2026-10-01T15:00:00Z",
+          ended_at: null,
+          modality: "electrolysis",
+          session_notes: null,
+          performed_by_practitioner_id: null,
+          practitioner_id: null,
+          record_status: null,
+          finalized_at: null,
+          aftercare_and_risks_explained_at: null,
+        },
+      ],
+      blocks: [block],
+      blockAreasById: new Map([
+        [
+          "b9",
+          [
+            { area: "Cheeks", laterality: "left" },
+            { area: "Sideburns", laterality: "right" },
+          ] as never,
+        ],
+      ]),
+      entries: [],
+      notes: [],
+      practitionerNameById: new Map(),
+    });
+    expect(doc.sessions[0].blocks[0].title).toBe("Left Cheeks · Right Sideburns");
+  });
+});
+
+describe("readAllPages — complete or nothing (Codex P1 4301307242)", () => {
+  const page = (n: number) => Array.from({ length: n }, (_, i) => i);
+
+  it("reads to exhaustion across full pages", async () => {
+    const sizes = [EXPORT_PAGE_SIZE, EXPORT_PAGE_SIZE, 7];
+    const calls: Array<[number, number]> = [];
+    const rows = await readAllPages<number>(async (from, to) => {
+      calls.push([from, to]);
+      return { data: page(sizes[calls.length - 1]), error: null };
+    });
+    expect(rows).toHaveLength(EXPORT_PAGE_SIZE * 2 + 7);
+    expect(calls).toEqual([
+      [0, EXPORT_PAGE_SIZE - 1],
+      [EXPORT_PAGE_SIZE, EXPORT_PAGE_SIZE * 2 - 1],
+      [EXPORT_PAGE_SIZE * 2, EXPORT_PAGE_SIZE * 3 - 1],
+    ]);
+  });
+
+  it("an error anywhere fails the read", async () => {
+    let n = 0;
+    expect(
+      await readAllPages<number>(async () => {
+        n += 1;
+        return n === 2 ? { data: null, error: { code: "x" } } : { data: page(EXPORT_PAGE_SIZE), error: null };
+      }),
+    ).toBeNull();
+  });
+
+  it("saturation (every page full up to the cap) fails closed instead of truncating", async () => {
+    let calls = 0;
+    const rows = await readAllPages<number>(async () => {
+      calls += 1;
+      return { data: page(EXPORT_PAGE_SIZE), error: null };
+    });
+    expect(rows).toBeNull();
+    expect(calls).toBe(EXPORT_MAX_PAGES);
+  });
+
+  it("an exactly-full final page is followed by one more read, not assumed complete", async () => {
+    const sizes = [EXPORT_PAGE_SIZE, 0];
+    let i = 0;
+    const rows = await readAllPages<number>(async () => ({ data: page(sizes[i++]), error: null }));
+    expect(rows).toHaveLength(EXPORT_PAGE_SIZE);
+    expect(i).toBe(2);
   });
 });
 

@@ -59,6 +59,23 @@ describe("HON-46 export reads exclude private and payment data", () => {
     expect(code(FILES.queries).match(/\.is\("deleted_at", null\)/g) ?? []).toHaveLength(3);
   });
 
+  it("pages every child read to exhaustion (Codex P1 4301307242)", () => {
+    const src = code(FILES.queries);
+    for (const table of ["session_blocks", "electrolysis_entries", "client_clinical_notes"]) {
+      const at = src.indexOf(`.from("${table}")`);
+      expect(at, table).toBeGreaterThan(-1);
+      const chain = src.slice(at, src.indexOf(".returns<", at));
+      expect(chain, `${table} must be ranged`).toContain(".range(from, to)");
+      expect(chain, `${table} must have a stable order`).toContain('.order("id"');
+    }
+    expect(src).toMatch(/readAllPages|readAllForSessions/);
+  });
+
+  it("loads the authoritative multi-area rows through the shared loader (Codex P1 4301307238)", () => {
+    expect(code(FILES.queries)).toContain("getSessionBlockAreasByBlockIds(");
+    expect(code(FILES.scope)).toContain("blockAreasLabel(");
+  });
+
   it("reads the CURRENT charting fields as well as the legacy ones (Codex P1 4301165385)", () => {
     const src = code(FILES.queries);
     expect(src).toContain('.from("session_blocks")');
@@ -78,6 +95,40 @@ describe("HON-46 export reads exclude private and payment data", () => {
     ]) {
       expect(src, col).toContain(col);
     }
+  });
+});
+
+describe("HON-46 authenticates in the PAGE, not the layout", () => {
+  // A Next layout's redirect never gates its page (recorded trap), so the page
+  // and the action each resolve identity themselves, before any read.
+  it("the page's first await is requirePractitionerWithStudio, before any read", () => {
+    const src = code(FILES.page);
+    const fn = src.slice(src.indexOf("export default async function ClinicalRecordsExportPage"));
+    const auth = fn.indexOf("await requirePractitionerWithStudio()");
+    expect(auth).toBeGreaterThan(-1);
+    for (const read of ["getClientById(", "loadClinicalRecordsForExport(", "recordClinicalRecordsAudit("]) {
+      expect(auth, read).toBeLessThan(fn.indexOf(read));
+    }
+  });
+
+  it("the print action resolves identity first too", () => {
+    const src = code(FILES.action);
+    expect(src.indexOf("await requirePractitionerWithStudio()")).toBeGreaterThan(-1);
+    expect(src.indexOf("await requirePractitionerWithStudio()")).toBeLessThan(src.indexOf("getClientById("));
+  });
+
+  it("the layout performs no auth of its own to rely on (the page does it)", () => {
+    expect(code(FILES.layout)).not.toMatch(/redirect\(|requirePractitioner/);
+  });
+
+  it("middleware does not list /clients among its public routes", () => {
+    const mw = code("lib/supabase/middleware.ts");
+    const pub = mw.slice(mw.indexOf("const isPublicRoute"), mw.indexOf(";", mw.indexOf("const isPublicRoute")));
+    // The slice really spans the list: it reaches entries from its far end.
+    expect(pub).toContain('"/login"');
+    expect(pub).toContain('"/manage/"');
+    expect(pub).not.toMatch(/["'`]\/clients/);
+    expect(pub).not.toMatch(/records\/export/);
   });
 });
 

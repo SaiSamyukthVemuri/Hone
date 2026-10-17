@@ -1,4 +1,5 @@
 import { addDays, utcInstantFromLocal } from "@/lib/booking/tz";
+import { blockAreasLabel, type BlockArea } from "@/lib/sessions/block-areas";
 
 // ===========================================================================
 // HON-46 — what a per-client clinical-records export contains, as pure code.
@@ -297,14 +298,23 @@ function exportEntry(e: ExportEntrySource): ExportedEntry {
   };
 }
 
-function blockTitle(b: ExportBlockSource): string {
-  const area = [b.primary_area, b.side, b.custom_area_detail].filter((x) => present(x)).join(" · ");
-  return area || b.block_name || "Area not recorded";
+/**
+ * A block's treated areas, through the SINGLE display contract every clinical
+ * surface uses (Codex P1 4301307238): structured session_block_areas rows win,
+ * otherwise the legacy primary_area + side. Custom detail is appended.
+ */
+function blockTitle(b: ExportBlockSource, structured: ReadonlyArray<BlockArea> | undefined): string {
+  const areas = blockAreasLabel(structured ?? null, { primary_area: b.primary_area, side: b.side });
+  const base = areas ?? (present(b.block_name) ? b.block_name : null);
+  if (!base) return present(b.custom_area_detail) ? b.custom_area_detail : "Area not recorded";
+  return present(b.custom_area_detail) ? `${base} (${b.custom_area_detail})` : base;
 }
 
 export function buildClinicalRecordsDocument(input: {
   sessions: ReadonlyArray<ExportSessionSource>;
   blocks?: ReadonlyArray<ExportBlockSource>;
+  /** Structured treated areas per block id (session_block_areas). */
+  blockAreasById?: ReadonlyMap<string, ReadonlyArray<BlockArea>>;
   entries: ReadonlyArray<ExportEntrySource>;
   notes: ReadonlyArray<ExportNoteSource>;
   practitionerNameById: ReadonlyMap<string, string>;
@@ -342,7 +352,7 @@ export function buildClinicalRecordsDocument(input: {
         .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.created_at.localeCompare(b.created_at))
         .map((b) => ({
           id: b.id,
-          title: blockTitle(b),
+          title: blockTitle(b, input.blockAreasById?.get(b.id)),
           readings: readings([
             ["Mode", b.mode],
             ["Apilus modality", b.apilus_modality],

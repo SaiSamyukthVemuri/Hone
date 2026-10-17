@@ -1,5 +1,7 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { getSessionBlockAreasByBlockIds } from "@/lib/supabase/queries";
+import type { BlockArea } from "@/lib/sessions/block-areas";
 import {
   localDayBounds,
   type ExportBlockSource,
@@ -34,12 +36,58 @@ const NOTE_COLUMNS = "id, kind, body, areas, occurred_at, practitioner_id, super
 /** Cap on sessions in one export; a range is already bounded to a year. */
 export const EXPORT_SESSION_LIMIT = 500;
 
+// COMPLETE OR NOTHING (Codex P1 4301307242). PostgREST caps a response at
+// max_rows (1000) and still answers 200, so an unpaged read silently drops the
+// rest. Every child read is paged to exhaustion in a stable order; a read that
+// would need more than EXPORT_MAX_PAGES pages fails the whole load closed, and
+// the page shows no record rather than a partial clinical one.
+export const EXPORT_PAGE_SIZE = 1000;
+export const EXPORT_MAX_PAGES = 50;
+// Session ids per .in() filter, so a 500-session export never builds an
+// over-long request URL. Same reason as getSessionBlockAreasByBlockIds' chunks.
+const SESSION_ID_CHUNK = 100;
+
+type PageResult<T> = PromiseLike<{ data: T[] | null; error: unknown }>;
+
+/** Read every row, page by page; null on error OR on saturation (fail closed). */
+export async function readAllPages<T>(page: (from: number, to: number) => PageResult<T>): Promise<T[] | null> {
+  const out: T[] = [];
+  for (let p = 0; p < EXPORT_MAX_PAGES; p += 1) {
+    const from = p * EXPORT_PAGE_SIZE;
+    const { data, error } = await page(from, from + EXPORT_PAGE_SIZE - 1);
+    if (error) return null;
+    const rows = data ?? [];
+    out.push(...rows);
+    if (rows.length < EXPORT_PAGE_SIZE) return out;
+  }
+  return null;
+}
+
+function chunks<T>(xs: ReadonlyArray<T>, size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < xs.length; i += size) out.push(xs.slice(i, i + size));
+  return out;
+}
+
+/** Every row for every chunk of session ids, or null if any chunk fails. */
+async function readAllForSessions<T>(
+  sessionIds: ReadonlyArray<string>,
+  page: (ids: string[], from: number, to: number) => PageResult<T>,
+): Promise<T[] | null> {
+  const parts = await Promise.all(
+    chunks(sessionIds, SESSION_ID_CHUNK).map((ids) => readAllPages<T>((from, to) => page(ids, from, to))),
+  );
+  if (parts.some((part) => part === null)) return null;
+  return (parts as T[][]).flat();
+}
+
 export type ClinicalRecordsLoad =
   | {
       ok: true;
       value: {
         sessions: ExportSessionSource[];
         blocks: ExportBlockSource[];
+        blockAreasById: Map<string, BlockArea[]>;
         entries: ExportEntrySource[];
         notes: ExportNoteSource[];
         practitionerNameById: Map<string, string>;
@@ -92,7 +140,15 @@ export async function loadClinicalRecordsForExport(args: {
     if (!only) {
       return {
         ok: true,
-        value: { sessions: [], blocks: [], entries: [], notes: [], practitionerNameById: new Map(), truncated: false },
+        value: {
+          sessions: [],
+          blocks: [],
+          blockAreasById: new Map(),
+          entries: [],
+          notes: [],
+          practitionerNameById: new Map(),
+          truncated: false,
+        },
       };
     }
     const localDay = new Intl.DateTimeFormat("en-CA", {
@@ -105,33 +161,62 @@ export async function loadClinicalRecordsForExport(args: {
   }
 
   const sessionIds = sessions.map((s) => s.id);
-  const [blocksRes, entriesRes, notesRes, practitionersRes] = await Promise.all([
-    sessionIds.length === 0
-      ? Promise.resolve({ data: [] as ExportBlockSource[], error: null })
-      : supabase
-          .from("session_blocks")
-          .select(BLOCK_COLUMNS)
-          .eq("studio_id", studioId)
-          .in("session_id", sessionIds)
-          .is("deleted_at", null),
-    sessionIds.length === 0
-      ? Promise.resolve({ data: [] as ExportEntrySource[], error: null })
-      : supabase
-          .from("electrolysis_entries")
-          .select(ENTRY_COLUMNS)
-          .in("session_id", sessionIds)
-          .is("deleted_at", null),
-    supabase
-      .from("client_clinical_notes")
-      .select(NOTE_COLUMNS)
-      .eq("studio_id", studioId)
-      .eq("client_id", clientId)
-      .gte("occurred_at", noteBounds!.fromUtc)
-      .lt("occurred_at", noteBounds!.toUtcExclusive)
-      .order("occurred_at", { ascending: true }),
+  const bounds = noteBounds!;
+  const [blocks, entries, notes, practitionersRes] = await Promise.all([
+    readAllForSessions<ExportBlockSource>(sessionIds, (ids, from, to) =>
+      supabase
+        .from("session_blocks")
+        .select(BLOCK_COLUMNS)
+        .eq("studio_id", studioId)
+        .in("session_id", ids)
+        .is("deleted_at", null)
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<ExportBlockSource[]>(),
+    ),
+    readAllForSessions<ExportEntrySource>(sessionIds, (ids, from, to) =>
+      supabase
+        .from("electrolysis_entries")
+        .select(ENTRY_COLUMNS)
+        .in("session_id", ids)
+        .is("deleted_at", null)
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<ExportEntrySource[]>(),
+    ),
+    readAllPages<ExportNoteSource>((from, to) =>
+      supabase
+        .from("client_clinical_notes")
+        .select(NOTE_COLUMNS)
+        .eq("studio_id", studioId)
+        .eq("client_id", clientId)
+        .gte("occurred_at", bounds.fromUtc)
+        .lt("occurred_at", bounds.toUtcExclusive)
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<ExportNoteSource[]>(),
+    ),
     supabase.from("practitioners").select("id, display_name").eq("studio_id", studioId),
   ]);
-  if (blocksRes.error || entriesRes.error || notesRes.error || practitionersRes.error) return { ok: false };
+  if (blocks === null || entries === null || notes === null || practitionersRes.error) return { ok: false };
+
+  // The treated areas of each block (Codex P1 4301307238): for blocks charted
+  // through the multi-area flow, session_block_areas is authoritative and
+  // primary_area keeps only the first area. Read through the same loader the
+  // other clinical surfaces use; it is all-or-nothing, so a failure fails the
+  // export closed rather than understating which areas were treated.
+  let blockAreasById: Map<string, BlockArea[]>;
+  try {
+    const raw = await getSessionBlockAreasByBlockIds(
+      blocks.map((b) => b.id),
+      studioId,
+    );
+    blockAreasById = new Map(
+      [...raw.entries()].map(([id, rows]) => [id, rows.map((r) => ({ area: r.area, laterality: r.laterality }))]),
+    );
+  } catch {
+    return { ok: false };
+  }
 
   const practitionerNameById = new Map<string, string>();
   for (const p of (practitionersRes.data ?? []) as Array<{ id: string; display_name: string }>) {
@@ -139,14 +224,7 @@ export async function loadClinicalRecordsForExport(args: {
   }
   return {
     ok: true,
-    value: {
-      sessions,
-      blocks: (blocksRes.data ?? []) as ExportBlockSource[],
-      entries: (entriesRes.data ?? []) as ExportEntrySource[],
-      notes: (notesRes.data ?? []) as ExportNoteSource[],
-      practitionerNameById,
-      truncated,
-    },
+    value: { sessions, blocks, blockAreasById, entries, notes, practitionerNameById, truncated },
   };
 }
 

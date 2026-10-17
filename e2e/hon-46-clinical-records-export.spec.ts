@@ -105,6 +105,13 @@ test.beforeAll(async () => {
      values ($1, $2, 0, 'upper lip', 'left', 'blend', 'Ballet F3', $3, 'mild_redness', 4, $4) returning id`,
     [seed.studioId, inScope.id, sentinel.probeLot, sentinel.block],
   );
+  // Multi-area charting: session_block_areas is authoritative; primary_area
+  // keeps only the first area (Codex P1 4301307238).
+  await sql(
+    `insert into public.session_block_areas (session_block_id, studio_id, area, laterality, display_order)
+     values ($1, $2, 'Cheeks', 'left', 0), ($1, $2, 'Sideburns', 'right', 1)`,
+    [block.id, seed.studioId],
+  );
   await sql(
     `insert into public.electrolysis_entries
        (session_id, block_id, area, thermolysis_intensity_percent, pulse_delay_seconds, observation_chips, comments)
@@ -143,12 +150,21 @@ test("owner: the day's records appear; every excluded sentinel is absent from pa
   // VERCEL TELEMETRY (Codex P1 4301165382, #828 G-26). Positive control first:
   // an ordinary app page DOES load the Vercel scripts, so the check below can
   // fail. Then the export document, entered by a full load, loads none.
-  const vercel: string[] = [];
+  // Each request is attributed to the document that was current when it was
+  // made, so a late script load from the control page (Analytics injects its
+  // scripts after hydration, which can land after goto() resolves) is never
+  // counted against the export.
+  const vercel: Array<{ url: string; doc: string }> = [];
   page.on("request", (r) => {
-    if (r.url().includes("/_vercel/")) vercel.push(r.url());
+    if (r.url().includes("/_vercel/")) vercel.push({ url: r.url(), doc: page.url() });
   });
   await page.goto(`/clients/${fx.clientId}`);
-  await expect.poll(() => vercel.length, { timeout: 15_000 }).toBeGreaterThan(0);
+  await expect
+    .poll(() => vercel.filter((v) => /\/_vercel\/(insights|speed-insights)\/script\.js/.test(v.url)).length, {
+      timeout: 15_000,
+    })
+    .toBeGreaterThanOrEqual(2);
+  await page.waitForLoadState("networkidle");
   vercel.length = 0;
 
   const res = await page.goto(url);
@@ -160,7 +176,7 @@ test("owner: the day's records appear; every excluded sentinel is absent from pa
   await expect(page.getByTestId("export-entry")).toContainText(fx.sentinel.entry);
   // The CURRENT charting fields reach the document (Codex P1 4301165385).
   const blockEl = page.getByTestId("export-block");
-  await expect(blockEl).toContainText("upper lip · left");
+  await expect(blockEl).toContainText("Left Cheeks · Right Sideburns");
   await expect(blockEl).toContainText("Probe: Ballet F3");
   await expect(blockEl).toContainText(`Probe lot: ${fx.sentinel.probeLot}`);
   await expect(blockEl).toContainText("Reaction: mild_redness");
@@ -171,7 +187,10 @@ test("owner: the day's records appear; every excluded sentinel is absent from pa
 
   // No Vercel script or beacon on the export document.
   await page.waitForLoadState("networkidle");
-  expect(vercel, "the export loaded Vercel telemetry").toEqual([]);
+  expect(
+    vercel.filter((v) => v.doc.includes("/records/export")),
+    "the export document loaded Vercel telemetry",
+  ).toEqual([]);
   expect(await page.evaluate(() => typeof (window as unknown as { va?: unknown }).va)).toBe("undefined");
   expect(await page.evaluate(() => typeof (window as unknown as { si?: unknown }).si)).toBe("undefined");
   await expect(page.getByTestId("export-note")).toContainText(fx.sentinel.clinicalNote);
@@ -255,6 +274,24 @@ test("owner: printing is audited first, and the dialog opens only after", async 
   const rows = await auditRows(fx.clientId);
   expect(rows.slice(before).map((r) => r.action)).toEqual(["clinical_records_printed"]);
   expect(rows[rows.length - 1].metadata).toEqual({ scope: "range", from: DAY, to: DAY });
+});
+
+test("a signed-out request is sent to login, gets no record data, and writes no audit row", async ({ browser }) => {
+  // A fresh context: no session cookie at all. The route left app/(app), and
+  // a layout redirect never gates a page, so this proves the middleware and
+  // the page's own requirePractitionerWithStudio() both still apply.
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const before = (await auditRows(fx.clientId)).length;
+  const res = await page.goto(`/clients/${fx.clientId}/records/export?scope=day&day=${DAY}`);
+  await expect(page).toHaveURL(/\/login/);
+  const html = (await res?.text()) ?? "";
+  for (const s of [fx.sentinel.session, fx.sentinel.clinicalNote, fx.sentinel.entry, fx.seed.clientName]) {
+    expect(html, `signed-out response leaked ${s}`).not.toContain(s);
+    expect(await page.content()).not.toContain(s);
+  }
+  expect((await auditRows(fx.clientId)).length).toBe(before);
+  await context.close();
 });
 
 test("a practitioner who is not the owner is refused and no audit row is written", async ({ page }) => {
