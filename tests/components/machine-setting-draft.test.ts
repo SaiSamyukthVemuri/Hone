@@ -287,6 +287,7 @@ describe("switching machine or mode clears the collected draft", () => {
   const CONN_SRC = "components/machines/machine-first-setup-connected.tsx";
   const PRIOR_SRC = "components/machines/machine-prior-setup.tsx";
   const QUERIES_SRC = "lib/machines/machine-queries.ts";
+  const SAVE_ATTEMPT_SRC = "lib/machines/save-attempt.ts";
   const MIGRATION_SRC =
     "supabase/migrations/0223_machine_inventory_and_setup_readings.sql";
   const SYNTH_SRC = "lib/machines/synthetic-profile.ts";
@@ -529,6 +530,78 @@ describe("switching machine or mode clears the collected draft", () => {
     expect(src).toMatch(/const draftFrozen = saveUnresolved/);
   });
 
+  it("EVERY relayed failure on the recorder path carries the outcome code", () => {
+    // THE P2 (Codex, #860 4301771498), and the fifth time in this lane that
+    // a value existed, was correct, and was never forwarded.
+    //
+    // Round 16 taught the query, the action and the entry to tell a
+    // transport failure from a refusal, and I wrote a guard asserting those
+    // three links by name. The connector between the action and the entry
+    // returned only the error text, so `code: "unknown"` was produced
+    // correctly, forwarded correctly, and discarded one hop short of the
+    // component that acts on it.
+    //
+    // WHAT ACTUALLY FAILED WAS NOT THE LIST OF FILES — the connector was
+    // already in it. It was asserting NAMED patterns inside each file
+    // instead of every failure the file relays. So this checks them all.
+    //
+    // AND IT IS SCOPED TO THE RECORDER PATH, not to every wrapper: a
+    // selection failure legitimately carries no code, because there is no
+    // retry key to protect. Requiring one there would be ceremony, and
+    // ceremony is what makes a guard get relaxed later.
+    const relayedFailures = (text: string): string[] =>
+      [...text.matchAll(/\{[^{}]*ok:\s*false[^{}]*\}/gs)]
+        .map((m) => m[0])
+        // Only failures RELAYING an upstream result. A guard clause that
+        // refuses before the recorder is called has no code to carry.
+        .filter((f) => /\bout\./.test(f));
+
+    // THE RELAY IS A NAMED FUNCTION NOW, and that is the durable part of
+    // this guard: the component must DELEGATE to it rather than hand-roll a
+    // return, because a hand-rolled one is exactly where the last five
+    // dropped values lived.
+    const conn = read(CONN_SRC);
+    expect(
+      conn,
+      "the connector must delegate the relay, not rebuild it inline",
+    ).toMatch(/return relayRecordResult\(out\);/);
+
+    // SLICED BETWEEN TWO STABLE MARKERS, not matched with a lazy `\n}`.
+    // That spelling stopped at the end of the PARAMETER TYPE LITERAL rather
+    // than the function body — the third time tonight an extraction anchor
+    // has stopped early and failed for a reason unrelated to the claim.
+    const relayStart = conn.indexOf("export function relayRecordResult");
+    const relayEnd = conn.indexOf("export function MachineFirstSetupConnected");
+    expect(
+      relayStart >= 0 && relayEnd > relayStart,
+      "relayRecordResult was not found above the component",
+    ).toBe(true);
+    const relay = [conn.slice(relayStart, relayEnd)];
+
+    let checked = 0;
+    for (const [what, text] of [
+      ["the relay", relay![0]],
+      ["the action", read(SETUP_ACTIONS_SRC)],
+    ] as const) {
+      for (const failure of relayedFailures(text)) {
+        checked += 1;
+        expect(
+          failure.replace(/\s+/g, " "),
+          `${what} relays a failure without its code — this is exactly where the unknown outcome was lost`,
+        ).toMatch(/code/);
+      }
+    }
+    // NON-VACUITY, and it has already earned its place twice: the first
+    // version only matched `return { ... }` and so missed the connector's
+    // TERNARY ARM — the precise construct the defect lived in — and the
+    // second was scoped to a slice the relay then moved out of. Both times
+    // this assertion is what said so.
+    expect(
+      checked,
+      "fewer relayed failures were found than the recorder path has — the scan is missing a shape",
+    ).toBeGreaterThan(1);
+  });
+
   it("a TRANSPORT failure on the settings save is unknown, not refused", () => {
     // THE P2 (Codex, #860 4301722737). A dropped connection after the
     // command commits can arrive in PostgREST's `error` rather than as a
@@ -553,12 +626,20 @@ describe("switching machine or mode clears the collected draft", () => {
       "the action must forward it rather than collapsing it to `rejected`",
     ).toMatch(/code: out\.unresolved \? "unknown" : "rejected"/);
 
+    // THE MAPPING MOVED INTO `save-attempt` so a test could drive it, so
+    // the claim here is in two halves: the rule lives there, and the entry
+    // delegates to it instead of keeping a second copy.
+    const save = read(SAVE_ATTEMPT_SRC);
+    expect(
+      save,
+      "the unknown code must still reach the unknown outcome",
+    ).toMatch(/if \(out\.code === "unknown"\) return \{ kind: "unknown" \};/);
+
     const entry = read(ENTRY_SRC);
     expect(
       entry,
-      "the entry must route the unknown code to the same outcome a throw produces",
-    ).toMatch(/out\.code === "unknown"/);
-    expect(entry).toMatch(/\{ kind: "unknown" \}/);
+      "the entry must delegate the mapping, not re-derive it",
+    ).toMatch(/outcomeFromRecordResult\(out, submissions\.length\)/);
   });
 
   it("and so is a transport failure on the INITIAL save", () => {

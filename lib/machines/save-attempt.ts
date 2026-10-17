@@ -126,6 +126,48 @@ export function canSubmit(state: SaveState): boolean {
   return !state.recorded;
 }
 
+/**
+ * What one recorder result MEANS, as a `SaveOutcome`.
+ *
+ * EXTRACTED SO THE CHAIN CAN BE TESTED. It lived inline in
+ * `MachineReadingEntry`, which this repository cannot mount - there is no
+ * jsdom - so the only available evidence that a transport failure reaches
+ * the unknown outcome was a source scan. A scan proves the text mentions
+ * the field; it cannot prove the value arrives, and this lane has now lost
+ * the same kind of value five times at a hop every scan called fine.
+ *
+ * `sentGroups` is the fallback tally for a server that reported none.
+ */
+export function outcomeFromRecordResult(
+  out: {
+    ok: boolean;
+    code?: string;
+    error?: string;
+    captures?: number;
+    written?: number;
+    reused?: boolean;
+  },
+  sentGroups: number,
+): SaveOutcome {
+  if (out.ok) {
+    return {
+      kind: "saved",
+      // THE DATABASE'S OWN TALLY where it gave one. Counting the groups sent
+      // would be wrong on a reused submission - it reports what the ORIGINAL
+      // save recorded, which is the only true answer.
+      groups: out.captures ?? sentGroups,
+      readings: out.written ?? 0,
+      reused: out.reused === true,
+    };
+  }
+  // THE SAME OUTCOME AS A THROW, because it is the same event: the write may
+  // have committed and only the answer was lost. This keeps the key and
+  // freezes the draft, which is what makes pressing Save again safe
+  // (Codex, #860 4301722737).
+  if (out.code === "unknown") return { kind: "unknown" };
+  return { kind: "refused", error: out.error };
+}
+
 /** The state after an attempt made with `key` returns `outcome`. */
 export function afterOutcome(
   state: SaveState,

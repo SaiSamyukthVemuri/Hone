@@ -18,6 +18,7 @@ import {
 } from "@/lib/machines/setting-groups";
 import {
   afterDraftChanged,
+  outcomeFromRecordResult,
   afterOutcome,
   afterRecordAnother,
   canEditDraft,
@@ -290,23 +291,9 @@ export function MachineReadingEntry({
         idempotencyKey: key,
         groups: submissions,
       });
-      outcome = out.ok
-        ? {
-            kind: "saved",
-            // THE DATABASE'S OWN TALLY where it gave one. Counting the groups
-            // sent would be wrong on a reused submission - it reports what the
-            // ORIGINAL save recorded, which is the only true answer.
-            groups: out.captures ?? submissions.length,
-            readings: out.written ?? 0,
-            reused: out.reused === true,
-          }
-        : out.code === "unknown"
-          ? // THE SAME OUTCOME AS A THROW, because it is the same event: the
-            // write may have committed and only the answer was lost. This
-            // keeps the key and freezes the draft, which is what makes
-            // pressing Save again safe (Codex, #860 4301722737).
-            { kind: "unknown" }
-          : { kind: "refused", error: out.error };
+      // THE MAPPING LIVES IN `save-attempt`, not here, so a test can drive
+      // it: this component cannot be mounted in this repository.
+      outcome = outcomeFromRecordResult(out, submissions.length);
     } catch {
       // THE TRANSPORT FAILED, SO THE ANSWER IS UNKNOWN - not failed. The write
       // may well have committed. This used to end in "reload the chart to see

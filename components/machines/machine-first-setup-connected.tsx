@@ -77,6 +77,44 @@ type MachineFirstSetupPanelRecord = NonNullable<
   Parameters<typeof MachineFirstSetupPanel>[0]["onRecord"]
 >;
 
+/**
+ * One recorder result, relayed to the entry.
+ *
+ * EXPORTED AND PURE so the chain can be driven by a test. It was an inline
+ * ternary inside the component's `onRecord` closure, which nothing could
+ * call — this repository has no jsdom — so the only evidence that the
+ * outcome code survived this hop was a source scan. It did not survive it
+ * (Codex, #860 4301771498), and the scan said it did.
+ *
+ * THE WHOLE JOB IS NOT LOSING ANYTHING. That sounds too small to name until
+ * you count: five values in this lane have been computed correctly and
+ * dropped at a hop exactly like this one.
+ */
+export function relayRecordResult(out: {
+  ok: boolean;
+  code?: string;
+  error?: string;
+  captures?: number;
+  written?: number;
+  reused?: boolean;
+}): {
+  ok: boolean;
+  code?: string;
+  error?: string;
+  captures?: number;
+  written?: number;
+  reused?: boolean;
+} {
+  return out.ok
+    ? {
+        ok: true,
+        captures: out.captures,
+        written: out.written,
+        reused: out.reused,
+      }
+    : { ok: false, code: out.code, error: out.error };
+}
+
 export function MachineFirstSetupConnected({
   blockId = null,
   clientId,
@@ -261,14 +299,7 @@ export function MachineFirstSetupConnected({
             : prev,
         );
       }
-      return out.ok
-        ? {
-            ok: true,
-            captures: out.captures,
-            written: out.written,
-            reused: out.reused,
-          }
-        : { ok: false, error: out.error };
+      return relayRecordResult(out);
     });
 
   // The selection action the panel calls on every pick and on "Change
