@@ -169,26 +169,35 @@ describe("the recorded STOP preflight, the snapshot, and the verdict", () => {
     expect(await record(s.studioId, old.id, first, service, PASS)).toEqual({ result: "no_live_sender", preflight_id: null });
   });
 
-  it("the route decision, end to end from the real snapshot: refused until proven, then served", async () => {
+  it("the route decision end to end from the real snapshot: G6 then G7, each refusing until recorded, then served", async () => {
+    // A CA long code with approved 10DLC evidence serves US recipients (#841
+    // readiness), so readiness passes and the two HON-50 gates decide.
     const s = await seedStudio("sp-route");
     const number = await freshNumber("416");
     const service = mg();
     await adopt(s, number, service);
     const sender = await liveSender(s.studioId);
+    expect(
+      (await adminQuery("select result from public.record_studio_sms_sender_registration($1, $2, $3, 'approved', null, null, null)", [
+        s.studioId, sender.id, number,
+      ])).rows[0].result,
+    ).toBe("recorded");
     const route = async () => {
       const state = parseLiveRegistrationState(await snapshot(s.studioId), s.studioId);
       const read = state.ok
         ? { ok: true as const, senders: state.senders as never, registrations: state.registrations, campaignBindings: state.campaignBindings, stopPreflights: state.stopPreflights }
         : { ok: false as const };
-      return decideStudioRoute({ studioId: s.studioId, recipientE164: "+14165550123", read, env: ENV });
+      return decideStudioRoute({ studioId: s.studioId, recipientE164: "+12125550123", read, env: ENV });
     };
     expect(await route()).toEqual({ ok: false, reason: "stop_preflight_missing" });
     await record(s.studioId, sender.id, number, service, PASS);
-    // Past G6 now; the CA long code is then decided by readiness (#841), so
-    // the refusal is no longer the preflight's.
-    const after = await route();
-    expect(after).not.toEqual({ ok: false, reason: "stop_preflight_missing" });
-    expect((after as { reason?: string }).reason ?? "").not.toMatch(/^stop_preflight_/);
+    expect(await route()).toEqual({ ok: false, reason: "campaign_binding_missing" });
+    expect(
+      (await adminQuery("select result from public.record_studio_sms_campaign_binding($1, $2, $3, $4, $5, 'verified', 'cutover', null)", [
+        s.studioId, sender.id, number, service, `QE${hex(16)}`,
+      ])).rows[0].result,
+    ).toBe("recorded");
+    expect(await route()).toMatchObject({ ok: true, mode: "studio", fromNumber: number, messagingServiceSid: service, destination: "US" });
   });
 });
 
