@@ -187,6 +187,10 @@ describe("0233: clinical-records audit rows are actor-bound", () => {
       asUser(s.userId, (q) => q(`select public.record_clinical_records_audit($1, 'clinical_records_previewed', $2)`, [s.clientId, m]));
     for (const [why, m] of [
       ["day not YYYY-MM-DD", { scope: "day", day: "15/09/2026" }],
+      // N2: the right shape, but not a calendar date.
+      ["day 2026-99-99 (shape only)", { scope: "day", day: "2026-99-99" }],
+      ["day 2026-02-30 (no such day)", { scope: "day", day: "2026-02-30" }],
+      ["range to 2026-13-01 (no such month)", { scope: "range", from: "2026-09-01", to: "2026-13-01" }],
       ["from not YYYY-MM-DD", { scope: "range", from: "2026-9-1", to: "2026-09-30" }],
       ["to carries free text", { scope: "range", from: "2026-09-01", to: "Jane Doe" }],
       ["session_id not a UUID", { scope: "session", session_id: "not-a-uuid" }],
@@ -245,11 +249,31 @@ describe("0233: clinical-records audit rows are actor-bound", () => {
     ] as const) {
       await expect(print(s.userId, s.clientId, previewId), why).rejects.toSatisfy((e) => refused(e) === "22023");
     }
-    // A print row cannot be cited as a preview either.
+    // N1: the cited preview must be of the SAME scope as the print...
+    await expect(
+      asUser(s.userId, (q) =>
+        q(`select public.record_clinical_records_audit($1, 'clinical_records_printed', $2)`, [
+          s.clientId,
+          { scope: "day", day: "2026-09-16", preview_audit_id: ownPreview },
+        ]),
+      ),
+      "a print of a different day than the cited preview",
+    ).rejects.toSatisfy((e) => refused(e) === "22023");
+    // ...and RECENT: within the print token's 30 minutes.
+    const stalePreview = await preview(s.userId, s.clientId);
+    await adminQuery(`update public.audit_logs set created_at = now() - interval '31 minutes' where id = $1`, [stalePreview]);
+    await expect(print(s.userId, s.clientId, stalePreview), "a preview older than 30 minutes").rejects.toSatisfy(
+      (e) => refused(e) === "22023",
+    );
+    // A print row cannot be cited as a preview either; the honest print is accepted.
     const ok = await print(s.userId, s.clientId, ownPreview);
     await expect(print(s.userId, s.clientId, ok.rows[0].id as string)).rejects.toSatisfy((e) => refused(e) === "22023");
     // Exactly: the owner's preview, then the one honest print.
-    expect((await rowsFor(s.clientId)).map((r) => r.action)).toEqual(["clinical_records_previewed", "clinical_records_printed"]);
+    expect((await rowsFor(s.clientId)).map((r) => r.action)).toEqual([
+      "clinical_records_previewed",
+      "clinical_records_previewed",
+      "clinical_records_printed",
+    ]);
   });
 
   it("EXECUTE: authenticated only; revoked from anon and service_role by name", async () => {

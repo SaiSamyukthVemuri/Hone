@@ -17,11 +17,12 @@
 --      client's, and the actor is derived from auth.uid() as that studio's
 --      ACTIVE OWNER (the export is owner-only). The action and the metadata
 --      keys/values are allow-listed. Values are SHAPED (HIPAA review F2):
---      day/from/to are YYYY-MM-DD, session_id/preview_audit_id are UUIDs, and
---      the key set matches the scope (day: day; range: from+to; session:
---      session_id). A PRINT must cite, as preview_audit_id, an existing
---      clinical_records_previewed row for the SAME client, actor and studio
---      (F3). Every violation raises 22023. Execute: authenticated only,
+--      day/from/to are real calendar dates in YYYY-MM-DD (N2), session_id/
+--      preview_audit_id are UUIDs, and the key set matches the scope (day:
+--      day; range: from+to; session: session_id). A PRINT must cite, as
+--      preview_audit_id, an existing clinical_records_previewed row for the
+--      SAME client, actor and studio (F3), of the SAME scope, created within
+--      the print token's 30 minutes (N1). Every violation raises 22023. Execute: authenticated only,
 --      revoked from public, anon AND service_role by name (the 0129/0164
 --      lesson).
 --   2. audit_actor_is_caller(actor, studio) -- a SECURITY DEFINER predicate
@@ -82,6 +83,7 @@ declare
   v_actor uuid;
   v_key text;
   v_value jsonb;
+  v_text text;
   v_id uuid;
 begin
   if v_uid is null then
@@ -113,6 +115,15 @@ begin
   ) then
     raise exception 'metadata dates must be YYYY-MM-DD' using errcode = '22023';
   end if;
+  -- ...and REAL calendar dates (HIPAA note N2): '2026-99-99' or '2026-02-30'
+  -- has the shape but is not a date.
+  for v_key, v_text in select key, value from jsonb_each_text(p_metadata) where key in ('day', 'from', 'to') loop
+    begin
+      perform v_text::date;
+    exception when others then
+      raise exception 'metadata % is not a calendar date', v_key using errcode = '22023';
+    end;
+  end loop;
   if exists (
     select 1 from jsonb_each_text(p_metadata) e
      where e.key in ('session_id', 'preview_audit_id')
@@ -156,7 +167,11 @@ begin
     raise exception 'only the studio owner can record a clinical-records export' using errcode = '42501';
   end if;
   -- A PRINT CITES A REAL PREVIEW (HIPAA review F3): an existing
-  -- clinical_records_previewed row for the SAME client, actor and studio.
+  -- clinical_records_previewed row for the SAME client, actor and studio,
+  -- of the SAME scope (its metadata equals the print's apart from
+  -- preview_audit_id), and RECENT: created within the 30 minutes the print
+  -- token itself allows (lib/clinical-records/print-token.ts
+  -- PRINT_TOKEN_TTL_MS; HIPAA note N1).
   if p_action = 'clinical_records_printed' and not exists (
     select 1 from public.audit_logs a
      where a.id = (p_metadata ->> 'preview_audit_id')::uuid
@@ -164,6 +179,9 @@ begin
        and a.entity_id = p_client_id
        and a.actor_id = v_actor
        and a.studio_id = v_studio
+       and a.metadata = (p_metadata - 'preview_audit_id')
+       and a.created_at >= now() - interval '30 minutes'
+       and a.created_at <= now()
   ) then
     raise exception 'the cited preview is not this owner''s preview of this client' using errcode = '22023';
   end if;

@@ -74,6 +74,15 @@ describe("0233: value shapes, scope key sets and the print's preview reference (
     expect(CODE).toMatch(/= 'range'\s+and \(not \(p_metadata \?& array\['from', 'to'\]\) or p_metadata \?\| array\['day', 'session_id'\]\)/);
     expect(CODE).toMatch(/= 'session'\s+and \(not \(p_metadata \? 'session_id'\) or p_metadata \?\| array\['day', 'from', 'to'\]\)/);
   });
+  it("dates are CALENDAR dates, checked by a cast inside an exception block (N2)", () => {
+    expect(CODE).toMatch(/begin\s+perform v_text::date;\s+exception when others then\s+raise exception 'metadata % is not a calendar date', v_key using errcode = '22023';/);
+  });
+
+  it("the cited preview is of the same scope and within the token's 30 minutes (N1)", () => {
+    expect(CODE).toContain("and a.metadata = (p_metadata - 'preview_audit_id')");
+    expect(CODE).toContain("and a.created_at >= now() - interval '30 minutes'");
+  });
+
   it("a print must cite an existing preview for the SAME client, actor and studio", () => {
     expect(CODE).toContain("p_action = 'clinical_records_printed' and not (p_metadata ? 'preview_audit_id')");
     expect(CODE).toMatch(
