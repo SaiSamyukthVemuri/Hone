@@ -16,7 +16,9 @@ import {
   updateTreatmentImageNoteAction,
 } from "./actions";
 import { TREATMENT_NOTE_MAX_LENGTH } from "./note-constants";
-import { validateTreatmentImageUpload } from "@/lib/images/treatment-images";
+import {
+  validateTreatmentImageUpload,
+} from "@/lib/images/treatment-images";
 import { GridPhoto } from "./GridPhoto";
 
 // Per-file upload status (PR: multi-file upload). Each selected file is
