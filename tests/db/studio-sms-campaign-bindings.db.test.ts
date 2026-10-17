@@ -114,14 +114,21 @@ describe("adoption, the recorded binding, and the verdict", () => {
   });
 
   it("a binding checked BEFORE the sender's provisioning is stale", async () => {
+    // provisioned_at is write-once (0191), so the fixture INSERTS a sender
+    // whose provisioning time is after the check that is about to run.
     const s = await seedStudio("cb-stale");
     const number = await freshNumber("416");
     const service = mg();
-    await adopt(s, number, service);
-    const sender = await liveSender(s.studioId);
-    await record(s.studioId, sender.id, number, service, qe(), "verified");
-    // Fixture: move the provisioning after the check (as a later finalize would).
-    await adminQuery("update public.studio_sms_senders set provisioned_at = now() + interval '1 minute' where id = $1", [sender.id]);
+    const id = (await adminQuery(
+      `insert into public.studio_sms_senders
+         (studio_id, provider, status, country, claimed_phone_number, phone_number, phone_number_sid,
+          messaging_service_sid, provisioning_claim_key, provisioning_claim_at,
+          provisioning_claim_by_practitioner_id, provisioning_lease_generation, provisioned_at, last_test_ok_at)
+       values ($1, 'twilio', 'active', 'CA', $2, $2, $3, $4, $5, now(), $6, 1, now() + interval '1 minute', now())
+       returning id`,
+      [s.studioId, number, `PN${hex(16)}`, service, `hone-sms-${hex(16)}`, s.practitionerId],
+    )).rows[0].id as string;
+    expect(await record(s.studioId, id, number, service, qe(), "verified")).toMatchObject({ result: "recorded" });
     expect(await verdictFor(s.studioId)).toEqual({ ok: false, reason: "stale" });
   });
 
@@ -141,7 +148,9 @@ describe("adoption, the recorded binding, and the verdict", () => {
     await adopt(s, first, service);
     const old = await liveSender(s.studioId);
     await record(s.studioId, old.id, first, service, qe(), "verified");
-    // Fixture: the old sender is released (the release paths are proved elsewhere).
+    // Fixture: the old sender is released through the LEGAL transitions
+    // (active -> releasing -> released, 0191); the release commands are proved elsewhere.
+    await adminQuery("update public.studio_sms_senders set status = 'releasing' where id = $1", [old.id]);
     await adminQuery("update public.studio_sms_senders set status = 'released', released_at = now() where id = $1", [old.id]);
 
     const second = await freshNumber("416");
