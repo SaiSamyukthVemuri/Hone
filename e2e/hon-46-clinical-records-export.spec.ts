@@ -332,6 +332,11 @@ test("owner: one session is reachable from the audited range view and exports al
   await expect(page.getByText(fx.sentinel.outside)).toHaveCount(0);
   // A single-session view offers no further session link.
   await expect(page.getByTestId("export-session-link")).toHaveCount(0);
+  // And it carries NO clinical notes, even the one dated that day (Codex P1
+  // 4302690099): notes are not session-linked. The page says why.
+  await expect(page.getByTestId("export-note")).toHaveCount(0);
+  await expect(page.getByText(fx.sentinel.clinicalNote)).toHaveCount(0);
+  await expect(page.getByTestId("export-notes-session-scope")).toBeVisible();
 
   const rows = await auditRows(fx.clientId);
   expect(rows.slice(before).map((r) => r.action)).toEqual(["clinical_records_previewed"]);

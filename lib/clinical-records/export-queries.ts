@@ -182,19 +182,16 @@ export async function loadClinicalRecordsForExport(args: {
         },
       };
     }
-    const localDay = new Intl.DateTimeFormat("en-CA", {
-      timeZone: timezone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(new Date(only.started_at));
-    // The session's studio-local CIVIL day, applied to calendar-date notes.
-    noteBounds = civilDayBounds(localDay, localDay);
+    // NO clinical notes in a single-session export (Codex P1 4302690099):
+    // notes carry no session association, so a same-day note would put
+    // unrelated clinical narrative into a printout labelled "this session".
+    // The page says so and points to the day view, which includes them.
+    noteBounds = null;
   }
 
   const sessionIds = sessions.map((s) => s.id);
-  const bounds = noteBounds!;
-  const [blocks, entries, laserEntries, notes, practitionersRes] = await Promise.all([
+  const bounds = noteBounds;
+  const [blocks, entries, laserEntries, notes] = await Promise.all([
     readAllForSessions<ExportBlockSource>(sessionIds, (ids, from, to) =>
       supabase
         .from("session_blocks")
@@ -226,23 +223,48 @@ export async function loadClinicalRecordsForExport(args: {
         .range(from, to)
         .returns<ExportLaserSource[]>(),
     ),
-    readAllPages<ExportNoteSource>((from, to) =>
-      supabase
-        .from("client_clinical_notes")
-        .select(NOTE_COLUMNS)
-        .eq("studio_id", studioId)
-        .eq("client_id", clientId)
-        .gte("occurred_at", bounds.fromUtc)
-        .lt("occurred_at", bounds.toUtcExclusive)
-        .order("id", { ascending: true })
-        .range(from, to)
-        .returns<ExportNoteSource[]>(),
-    ),
-    supabase.from("practitioners").select("id, display_name").eq("studio_id", studioId),
+    bounds === null
+      ? Promise.resolve([] as ExportNoteSource[])
+      : readAllPages<ExportNoteSource>((from, to) =>
+          supabase
+            .from("client_clinical_notes")
+            .select(NOTE_COLUMNS)
+            .eq("studio_id", studioId)
+            .eq("client_id", clientId)
+            .gte("occurred_at", bounds.fromUtc)
+            .lt("occurred_at", bounds.toUtcExclusive)
+            .order("id", { ascending: true })
+            .range(from, to)
+            .returns<ExportNoteSource[]>(),
+        ),
   ]);
-  if (blocks === null || entries === null || laserEntries === null || notes === null || practitionersRes.error) {
+  if (blocks === null || entries === null || laserEntries === null || notes === null) {
     return { ok: false };
   }
+
+  // Author names for ONLY the practitioners these records reference, read to
+  // completion (Codex P2 4302690102): an unbounded studio-wide read is capped
+  // at max_rows with no useful order, which would print a real author as
+  // "Unknown practitioner". Chunked and paged like every other read here.
+  const authorIds = [
+    ...new Set(
+      [
+        ...sessions.flatMap((s) => [s.performed_by_practitioner_id, s.practitioner_id]),
+        ...notes.map((n) => n.practitioner_id),
+      ].filter((id): id is string => typeof id === "string" && id.length > 0),
+    ),
+  ];
+  const authors = await readAllForSessions<{ id: string; display_name: string }>(authorIds, (ids, from, to) =>
+    supabase
+      .from("practitioners")
+      .select("id, display_name")
+      .eq("studio_id", studioId)
+      .in("id", ids)
+      .order("id", { ascending: true })
+      .range(from, to)
+      .returns<Array<{ id: string; display_name: string }>>(),
+  );
+  if (authors === null) return { ok: false };
 
   // The treated areas of each block (Codex P1 4301307238): for blocks charted
   // through the multi-area flow, session_block_areas is authoritative and
@@ -263,9 +285,7 @@ export async function loadClinicalRecordsForExport(args: {
   }
 
   const practitionerNameById = new Map<string, string>();
-  for (const p of (practitionersRes.data ?? []) as Array<{ id: string; display_name: string }>) {
-    practitionerNameById.set(p.id, p.display_name);
-  }
+  for (const p of authors) practitionerNameById.set(p.id, p.display_name);
   return {
     ok: true,
     value: { sessions, blocks, blockAreasById, entries, laserEntries, notes, practitionerNameById, truncated },

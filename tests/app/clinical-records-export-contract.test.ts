@@ -84,11 +84,29 @@ describe("HON-46 export reads exclude private and payment data", () => {
   it("filters clinical notes by CIVIL day, sessions by the studio-local window (Codex P1 4302644059)", () => {
     const src = code(FILES.queries);
     expect(src).toMatch(/noteBounds = civilDayBounds\(from, to\)/);
-    expect(src).toMatch(/noteBounds = civilDayBounds\(localDay, localDay\)/);
     expect(src).not.toMatch(/noteBounds = localDayBounds\(/);
     const page = code(FILES.page);
     expect(page).toContain("formatClinicalDate(n.occurredAt)");
     expect(page).not.toContain("formatInstant(n.occurredAt");
+  });
+
+  it("a single-session export reads NO clinical notes, and says so (Codex P1 4302690099)", () => {
+    const src = code(FILES.queries);
+    const sessionBranch = src.slice(src.indexOf('if (scope.kind === "session") {\n    const only'));
+    expect(sessionBranch.slice(0, sessionBranch.indexOf("const sessionIds"))).toContain("noteBounds = null;");
+    expect(src).toMatch(/bounds === null\s*\?\s*Promise\.resolve\(\[\] as ExportNoteSource\[\]\)/);
+    expect(code(FILES.page)).toContain('data-testid="export-notes-session-scope"');
+  });
+
+  it("author names: referenced ids only, paged to completion (Codex P2 4302690102)", () => {
+    const src = code(FILES.queries);
+    const at = src.indexOf('.from("practitioners")');
+    expect(at).toBeGreaterThan(-1);
+    const chain = src.slice(at, src.indexOf(".returns<", at));
+    expect(chain).toContain('.in("id", ids)');
+    expect(chain).toContain(".range(from, to)");
+    expect(src.match(/\.from\("practitioners"\)/g) ?? []).toHaveLength(1);
+    expect(src).toMatch(/if \(authors === null\) return \{ ok: false \};/);
   });
 
   it("reads the caution flag on its own (Codex P2 4302644062)", () => {

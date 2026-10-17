@@ -305,7 +305,12 @@ export default async function ClinicalRecordsExportPage({
 
           <section className="flex flex-col gap-3" aria-label="Clinical notes">
             <h2 className="text-sm font-semibold uppercase tracking-wider">Clinical notes</h2>
-            {outcome.document.clinicalNotes.length === 0 ? (
+            {outcome.scopeKind === "session" ? (
+              <p className="text-sm text-neutral-500" data-testid="export-notes-session-scope">
+                Clinical notes are not linked to a single session, so they are not included here. Print the day to include
+                that day&apos;s clinical notes.
+              </p>
+            ) : outcome.document.clinicalNotes.length === 0 ? (
               <p className="text-sm text-neutral-500">No clinical notes in this scope.</p>
             ) : (
               <ul className="flex flex-col gap-4">
