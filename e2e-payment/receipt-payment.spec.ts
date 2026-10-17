@@ -49,6 +49,7 @@ const AMOUNT_LABEL = /Paid · \$225\.00/;
 let success: PaymentSeed;
 let failed: PaymentSeed;
 let ambiguous: PaymentSeed;
+let nonOwner: PaymentSeed;
 
 async function setClientEmail(seed: PaymentSeed, mode: string): Promise<string> {
   const email = `${mode}+receipt-${seed.scenario.runId}@harness.local`;
@@ -85,17 +86,17 @@ async function settledReceiptStatus(sessionId: string, expected: string): Promis
 }
 
 // Exactly one charge, read from the fake processor's ledger for THIS
-// scenario's synthetic connected account.
+// scenario's synthetic connected account. The WHOLE account-scoped ledger is
+// checked (Codex P2 4301359791): every processor method is recorded there, so
+// a receipt path that retrieved, cancelled or refunded anything fails here.
 function expectExactlyOneCharge(seed: PaymentSeed, attemptId: string): void {
+  expect(callsForAccount(seed.connectedAccountId).map((c) => c.method)).toEqual(["pi_create"]);
   expect(countInvocationsForAccount(seed.connectedAccountId)).toBe(1);
   const effects = effectsForAccount(seed.connectedAccountId);
   expect(effects).toHaveLength(1);
   expect(effects[0].idempotencyKey).toBe(idempotencySelectorForAttempt(attemptId));
   expect(effects[0].amountCents).toBe(seed.expectedAmountMinor);
   expect(effects[0].resultId).toMatch(/^pi_test_e2e_/);
-  expect(
-    callsForAccount(seed.connectedAccountId).filter((c) => c.method === "refund_create"),
-  ).toHaveLength(0);
 }
 
 async function expectOneSucceededAttempt(seed: PaymentSeed): Promise<void> {
@@ -151,11 +152,12 @@ test.beforeAll(async () => {
   success = await seedEligiblePaymentWithLogin({ label: "receipt-ok", bookedService });
   failed = await seedEligiblePaymentWithLogin({ label: "receipt-fail", bookedService });
   ambiguous = await seedEligiblePaymentWithLogin({ label: "receipt-amb", bookedService });
+  nonOwner = await seedEligiblePaymentWithLogin({ label: "receipt-member", bookedService });
 });
 
 test.afterAll(async () => {
   try {
-    for (const s of [success, failed, ambiguous]) {
+    for (const s of [success, failed, ambiguous, nonOwner]) {
       if (s) await cleanupPaymentScenario(s.studioId);
     }
   } finally {
@@ -195,13 +197,19 @@ test("receipt success: the charge sends one receipt automatically, and exactly o
 test("receipt success, non-owner view: masked receipt line, no technical details, full address not rendered", async ({
   page,
 }) => {
-  // Same paid session as the journey above, seen by an active practitioner who
-  // is NOT the owner. TechnicalPaymentDetails returns null for a non-owner (a
-  // render gate, not CSS), so the full address must not be rendered for them.
-  const email = `success+receipt-${success.scenario.runId}@harness.local`;
-  const member = await seedE2eMember(success);
+  // Its OWN paid session (Codex P2 4301359797): charged here by the owner, so
+  // this test runs alone and survives a retry in a fresh worker. Then seen by
+  // an active practitioner who is NOT the owner. TechnicalPaymentDetails
+  // returns null for a non-owner (a render gate, not CSS), so the full address
+  // must not be rendered for them.
+  const email = await setClientEmail(nonOwner, "success");
+  const attemptId = await chargeOnce(page, nonOwner);
+  await settledReceiptStatus(nonOwner.sessionId, "sent");
+
+  await page.context().clearCookies();
+  const member = await seedE2eMember(nonOwner);
   await loginByMagicLink(page, member.email);
-  const view = await openSessionPayment(page, success);
+  const view = await openSessionPayment(page, nonOwner);
   await expect(view.getByText(/^Receipt sent to /)).toBeVisible();
   await expect(view.getByTestId("technical-payment-details")).toHaveCount(0);
   // RENDERED text only. Known gap, flagged on the PR as an open privacy
@@ -211,7 +219,8 @@ test("receipt success, non-owner view: masked receipt line, no technical details
   // This assertion pins what the render gate does guarantee today.
   expect(await page.evaluate(() => document.body.innerText)).not.toContain(email);
   // Viewing is not charging.
-  expectExactlyOneCharge(success, (await getSessionPaymentAttemptRows(success.sessionId))[0].id);
+  expectExactlyOneCharge(nonOwner, attemptId);
+  await expectOneSucceededAttempt(nonOwner);
 });
 
 test("receipt failure then retry: Paid stays Paid, the retry sends the receipt, and it never charges again", async ({
@@ -227,7 +236,7 @@ test("receipt failure then retry: Paid stays Paid, the retry sends the receipt, 
   expect(row.receipt_status).toBe("failed");
   expect(row.receipt_failure_code).not.toBeNull();
   expectExactlyOneCharge(failed, attemptId);
-  const callsAfterCharge = callsForAccount(failed.connectedAccountId).length;
+  const ledgerAfterCharge = callsForAccount(failed.connectedAccountId);
 
   const view = await openSessionPayment(page, failed, "paid_receipt_failed");
   await expect(view.getByText("Receipt send failed.")).toBeVisible();
@@ -252,7 +261,7 @@ test("receipt failure then retry: Paid stays Paid, the retry sends the receipt, 
   await expect(reloaded.getByRole("button", { name: /^send receipt$/i })).toHaveCount(0);
 
   // The retry made NO processor call at all, and the ledger still holds one charge.
-  expect(callsForAccount(failed.connectedAccountId)).toHaveLength(callsAfterCharge);
+  expect(callsForAccount(failed.connectedAccountId)).toEqual(ledgerAfterCharge);
   expectExactlyOneCharge(failed, attemptId);
   await expectOneSucceededAttempt(failed);
 });
