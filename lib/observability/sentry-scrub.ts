@@ -104,8 +104,10 @@ const SUPABASE_TOKEN_RE =
 // Bounded by "not a hex digit" rather than \b (Codex P2 4301012678): \b treats
 // "_", letters and digits as word characters, so a UUID inside a compound
 // identifier ("hone_booking_<uuid>", "client_<uuid>") would slip through.
+// A separator may be percent-encoded ("%2D", Codex P2 4301149388): browsers
+// keep "%2D" in a serialized URL, and it decodes straight back to the id.
 const RECORD_ID_RE =
-  /(?<![0-9a-f])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9a-f])/gi;
+  /(?<![0-9a-f])[0-9a-f]{8}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{4}(?:-|%2d)[0-9a-f]{12}(?![0-9a-f])/gi;
 const RECORD_ID_PLACEHOLDER = "[id]";
 // Loose phone matcher: a run of 9+ digits with optional +, spaces, (), ., -.
 // Bounded so it doesn't swallow adjacent digits of an unrelated token.

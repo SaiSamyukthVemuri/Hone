@@ -170,6 +170,23 @@ describe("G-25: ids inside compound identifiers (Codex P2 4301012678)", () => {
     expect(out.message).toBe("event hone_booking_[id] for client_[id]_x and z[id]q");
   });
 
+  it("removes a UUID whose hyphens are percent-encoded, in either case (Codex P2 4301149388)", () => {
+    const upper = CLIENT.replace(/-/g, "%2D");
+    const lower = SESSION.replace(/-/g, "%2d");
+    const mixed = APPT.replace("-", "%2D");
+    const out = scrubErrorEvent(
+      errorEvent({
+        request: { url: `https://hone.care/clients/${upper}/sessions/${lower}` },
+        message: `load ${mixed} failed`,
+        extra: { [upper]: "key" },
+      }),
+    );
+    const json = JSON.stringify(out).toLowerCase();
+    for (const id of [upper, lower, mixed]) expect(json).not.toContain(id.toLowerCase());
+    expect(out.request?.url).toBe("https://hone.care/clients/[id]/sessions/[id]");
+    expect(out.message).toBe("load [id] failed");
+  });
+
   it("does not touch a longer hex run that is not a UUID", () => {
     const notUuid = `a${CLIENT.replace(/-/g, "")}ff`; // dashless hex, like Sentry's own ids
     const out = scrubErrorEvent(errorEvent({ message: `trace ${notUuid}` }));
