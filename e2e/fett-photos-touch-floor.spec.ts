@@ -80,6 +80,8 @@ test.describe("FETT photos: touch floor, mounted at phone width", () => {
     await page.getByLabel("Treatment area photo").check();
     await page.locator("main select").first().selectOption(previousSessionId);
     await expect(page.locator("main select")).toHaveCount(2, { timeout: T });
+    // Measure while BOTH selects are shown: switching scope hides them.
+    const areaPanel = await controlHeights(page);
     // Back to a client photo for the upload, so it never depends on the area list.
     await page.getByLabel("Client photo").check();
     const panel = await controlHeights(page);
@@ -94,7 +96,7 @@ test.describe("FETT photos: touch floor, mounted at phone width", () => {
     await expect(page.getByRole("button", { name: "Close preview" })).toBeVisible({ timeout: T });
     const preview = await controlHeights(page);
 
-    const all = [...panel, ...tiles, ...preview];
+    const all = [...areaPanel, ...panel, ...tiles, ...preview];
     const under = all.filter((c) => c.height < FLOOR);
     // The surfaces the check claims to cover must actually be in the sample.
     for (const must of [/Choose images/, /Client photo/, /Treatment area photo/, /Attach/, /Archive/, /Close preview/]) {
