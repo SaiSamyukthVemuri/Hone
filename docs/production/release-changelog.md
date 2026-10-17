@@ -33,12 +33,13 @@ This section previously carried a "(through 2026-07-27)" heading while containin
 
 **Coverage gap, stated rather than hidden:** this table covers PRs **#357–#479**, **#601**,
 **#629**, **#630**, and — added by the 2026-08-26 reconciliation and kept current through each
-production refresh since — **every** first-parent merge in `b9e0003f..62ff27b2`, all
-**157** PR merges among them (**#632–#909**, plus **#631**, whose number sits below that floor but
+production refresh since — **every** first-parent merge in `b9e0003f..6acea261`, all
+**160** PR merges among them (**#632–#913**, plus **#631**, whose number sits below that floor but
 whose merge does not — see below). ⚠️ **EXTENDED 2026-10-12 by CANON-REFRESH-2026-10-12:**
 the range previously ended at `410e5039` (81 merges, the 2026-09-21 extension described next);
 **56** rows were backfilled from the first-parent graph and each merge's own diff, and the
-pre-existing `#773` row was moved, unchanged, to its first-parent position. ⚠️ **EXTENDED 2026-10-17 by CANON-REFRESH-2026-10-17b:** 3 rows added, `#909`, `#842`, `#891`,
+pre-existing `#773` row was moved, unchanged, to its first-parent position. ⚠️ **EXTENDED 2026-10-17 by CANON-REFRESH-2026-10-17c:** 3 rows added, `#911`, `#913`, `#912`,
+taking the range through `6acea261` (160 merges); `#913` and `#912` are runtime-bearing. ⚠️ **EXTENDED 2026-10-17 by CANON-REFRESH-2026-10-17b:** 3 rows added, `#909`, `#842`, `#891`,
 taking the range through `62ff27b2` (157 merges); `#842` and `#891` are runtime-bearing. ⚠️ **EXTENDED 2026-10-17 by CANON-REFRESH-2026-10-17:** 2 rows added, `#889`, `#898`,
 taking the range through `b08845ce` (154 merges); `#898` is runtime-bearing. ⚠️ **EXTENDED 2026-10-16 by CANON-REFRESH-2026-10-16b:** 2 rows added, `#886`, `#887`,
 taking the range through `0ae33bd3` (152 merges); none is runtime-bearing. ⚠️ **EXTENDED 2026-10-16 by CANON-REFRESH-2026-10-16:** five rows added, `#880`, `#883`, `#881`, `#879` and `#885`,
@@ -67,7 +68,7 @@ historical completeness. Do not read a missing row as "not shipped".
 
 **The block is complete, not sampled — and completeness is over the GIT RANGE, not over a
 span of PR numbers.** It was enumerated mechanically
-(`git log --merges --first-parent b9e0003f..62ff27b2`, 157 merges; 154 through `b08845ce`; 152 through `0ae33bd3`; 150 through `1ae096e2`; 145 through `ce133c18` on 2026-10-14; 140 through `6f7281bb` on 2026-10-13; 138 through `d5efa20a` on 2026-10-12; it was `b9e0003f..410e5039`, 81 merges, at the 2026-09-21 extension) rather than recalled, so the
+(`git log --merges --first-parent b9e0003f..6acea261`, 160 merges; 157 through `62ff27b2`; 154 through `b08845ce`; 152 through `0ae33bd3`; 150 through `1ae096e2`; 145 through `ce133c18` on 2026-10-14; 140 through `6f7281bb` on 2026-10-13; 138 through `d5efa20a` on 2026-10-12; it was `b9e0003f..410e5039`, 81 merges, at the 2026-09-21 extension) rather than recalled, so the
 current state can be reconstructed from shipped history without a gap. Each row records whether
 the merge was **runtime-bearing**, decided by changed-path analysis rather than by the PR title.
 
@@ -80,6 +81,9 @@ enumeration of `b9e0003f..bf6f09c4` while omitting `#631` entirely.
 
 | PR | Migration | Status | What shipped | Notes |
 |---|---|---|---|---|
+| **#912** | none | **Runtime-bearing** | fix(privacy): /ingest and /monitoring forward only allowlisted headers (#828 G-07/G-26) | Merged `6acea261` on `2026-10-17T19:55:12Z` from head `c146004a`. 11 files: 5 shipping (`app/ingest/[...path]/route.ts`, `app/monitoring/route.ts`, `instrumentation-client.ts`, `lib/observability/egress-proxy.ts`, `next.config.ts`), a doc, two e2e specs and tests; no migration. The two proxies forward only allowlisted request and response headers. Vercel deployment `dpl_LbwCQZX6F1T7cdpo6tgGeayuyqQN` READY `2026-10-17T19:57:42Z`, production, aliased to `hone.care`. |
+| **#913** | none | **Runtime-bearing** | FETT photos: grid thumbnails recover after the 60 s signed URL expires (HON-43) | Merged `4ae19a41` on `2026-10-17T19:37:16Z` from head `be1c94b9`. 11 files: 4 shipping (`GridPhoto.tsx` (new), `TreatmentImagesManager.tsx`, `actions.ts`, `lib/images/grid-photo-recovery.ts` (new)), docs, an e2e spec, `scripts/browser-groups.mjs` and tests; no migration. Vercel deployment `dpl_Gz7vPNNsPvZWgRR2d3ZbTSh2r3cj` READY `2026-10-17T19:39:24Z`, superseded on `hone.care` by `6acea261`. Production push CI `39063253755` failed only canonical-production-facts A3/A5 (stale record). |
+| **#911** | none | **Documentation only — NOT runtime-bearing** | docs(production): record #842 and #891 at 62ff27b2 (CANON-REFRESH-2026-10-17b) | Merged `c0982d63` on `2026-10-17T18:07:11Z`. 3 files under `docs/production/`; no migration. Vercel deployment `4Jz6qWXig6ciQ1Qh3QHvZUYehMQa` success `2026-10-17T18:08:59Z`, with no runtime change. |
 | **#891** | none | **Runtime-bearing** | fix(privacy): record ids never reach Sentry (#828 G-25) | Merged `62ff27b286` on `2026-10-17T15:29:18Z` from head `1cf1440f`. 3 files: `lib/observability/sentry-scrub.ts`, `docs/03_SECURITY_AND_PRIVACY.md` and one test; no migration. The Sentry scrubber replaces dashed UUIDs in event fields with `[id]`. Vercel deployment `dpl_39M9TZukQDF2W2figToXg2uicHJA` READY `2026-10-17T15:31:27Z`, production, aliased to `hone.care`. |
 | **#842** | none | **Runtime-bearing** | fix(privacy): redact record ids from Vercel analytics URLs (#828 G-07) | Merged `25956e5c` on `2026-10-17T15:29:07Z` from head `6faba20b`. 4 files: `app/_components/SafeAnalytics.tsx`, `lib/analytics/vercel-url-redaction.ts` (new), `docs/03_SECURITY_AND_PRIVACY.md` and one test; no migration. Analytics and Speed Insights events pass through `redactVercelEvent`. Vercel deployment `6rUKRWiPS1WtgjohBYNHfK6W5tCM` success `2026-10-17T15:31:14Z`, superseded on `hone.care` by `62ff27b2`. |
 | **#909** | none | **Documentation only — NOT runtime-bearing** | docs(production): record #898 runtime release at b08845ce (CANON-REFRESH-2026-10-17) | Merged `981bf49b` on `2026-10-17T15:28:56Z`. 3 files under `docs/production/`; no migration. Vercel deployment `AcArB7tboaXoJ7fd7uNAXw8nVehG` success `2026-10-17T15:30:59Z`, with no runtime change. |
