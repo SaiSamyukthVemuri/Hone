@@ -279,9 +279,15 @@ test("owner: the day's records appear; every excluded sentinel is absent from pa
   // <a>, so the app page, which DOES load analytics, gets its own document.
   vercel.length = 0;
   const exportUrl = page.url();
-  const leave = page.waitForEvent("load");
+  // Whether leaving was a full document load is RECORDED here and asserted
+  // only after the Back checks, so that on a soft-navigating exit the Back
+  // assertions (the observable leak) are what fail first.
+  let leftByFullLoad = false;
+  const onLoad = () => {
+    leftByFullLoad = true;
+  };
+  page.once("load", onLoad);
   await page.getByRole("link", { name: "Back to client" }).click();
-  await leave;
   await page.waitForURL((u) => u.pathname === `/clients/${fx.clientId}`);
   // Positive control for the Back check below: analytics IS live out here.
   await expect
@@ -317,6 +323,9 @@ test("owner: the day's records appear; every excluded sentinel is absent from pa
     vercel.filter((v) => v.doc.includes("/records/export")),
     "Vercel telemetry requested on the export after Back",
   ).toEqual([]);
+  // And the exit itself was a full document load.
+  page.off("load", onLoad);
+  expect(leftByFullLoad, "leaving the export by its exit was not a full document load").toBe(true);
 
   // THREE previews -> three audit rows, owner as actor, no PHI: the goto, the
   // raw-HTML request.get, and the Back above. The export is served no-store,
