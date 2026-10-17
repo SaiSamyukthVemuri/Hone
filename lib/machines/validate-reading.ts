@@ -133,8 +133,32 @@ export type ValidateOptions = {
 
 // ---------------------------------------------------------------------------
 
-/** Quantities for which a negative number is malformed, not merely unusual. */
-const NON_NEGATIVE = new Set(["duration", "current", "count", "percentage", "frequency"]);
+/**
+ * Quantities for which a negative number is malformed, not merely unusual.
+ *
+ * `intensity` and `energy-display` JOINED THIS SET to end a disagreement
+ * between the layers, not because a new rule was decided (Codex, #860
+ * 4301531160). 0223's `record_treatment_setup_submission` already refuses a
+ * negative value for all seven quantities as definitional; this set listed
+ * only five. So a negative intensity passed `validateReading`, passed the
+ * server action, and was refused at PERSISTENCE - she gets a failed save
+ * instead of the field telling her, which is the worse of the two places to
+ * learn it, and on this path the refusal aborts an atomic create.
+ *
+ * The SQL rule is the authority here and the application is being brought
+ * into line with it; this is not a judgement about what a device can
+ * display. Same defect class as the advisory-precision disagreement
+ * (4289974660): one contract, two layers, different answers.
+ */
+const NON_NEGATIVE = new Set([
+  "duration",
+  "current",
+  "count",
+  "percentage",
+  "frequency",
+  "intensity",
+  "energy-display",
+]);
 
 function decimalsOf(n: number): number {
   if (Number.isInteger(n)) return 0;

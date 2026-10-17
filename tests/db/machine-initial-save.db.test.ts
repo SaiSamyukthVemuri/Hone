@@ -967,3 +967,102 @@ describe("0223 · the initial save's privileges", () => {
     expect(src).not.toMatch(/insert\s+into\s+public\.session_blocks/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Part N — A MALFORMED SETTINGS PAYLOAD IS REFUSED, NOT SILENTLY DROPPED
+//
+// THE DEFECT (Codex, #860 4301531156). The settings write was guarded by
+// `jsonb_typeof(p_setup_groups) = 'array'`, so a non-null payload of any
+// other shape — an object, a string, a number, JSON `null` — fell past the
+// guard, wrote no settings, and STILL COMMITTED THE TREATMENT AREA. That is
+// precisely the half-saved state this atomic command exists to prevent,
+// reached by a malformed call rather than by a failure, and the standalone
+// submission command refuses the same shape outright.
+//
+// WHY IT IS CHECKED BEFORE THE CLAIM, which is the part the finding did not
+// have to spell out: the claim's digest coerces a non-array to '[]'. Left
+// alone, a malformed call would ALSO have recorded a create claim standing
+// for a payload the command ignored — so an honest retry carrying the real
+// settings would have matched that claim and been told it had already
+// succeeded. The assertions below check the claims table for that reason.
+//
+// IT IS A DB-LEVEL TEST because it is a DB-level rule: an authenticated RPC
+// caller reaches this command directly, which is the whole premise of the
+// finding. A source contract would prove the text, not the refusal.
+// ---------------------------------------------------------------------------
+
+describe("0223 · a malformed settings payload creates nothing", () => {
+  const MALFORMED: Array<[string, string]> = [
+    ["an object", JSON.stringify({ group_key: "g1", readings: [] })],
+    ["a string", JSON.stringify("g1")],
+    ["a number", JSON.stringify(7)],
+    ["a boolean", JSON.stringify(true)],
+    // JSON null is NOT SQL NULL: it arrives as a jsonb value whose type is
+    // 'null', so it took the silent-skip path too.
+    ["JSON null", JSON.stringify(null)],
+  ];
+
+  for (const [label, groups] of MALFORMED) {
+    it(`refuses ${label}, and leaves no area, no claim and no settings`, async () => {
+      const studio = await seedStudio("init-malformed");
+      const { sessionId } = await seedSession(studio);
+      const machineId = await registerMachine(studio);
+
+      // MEASURED AS A DELTA, not against zero. `seedSession` already seeds a
+      // block, so an absolute `toBe(0)` here asserted something about the
+      // FIXTURE rather than about the call - my first version of this test
+      // failed on its own setup, controls included, which is what a wrong
+      // baseline looks like.
+      const before = await sessionTotals(sessionId);
+
+      await expect(
+        initialSave(studio, sessionId, { machine: machineId, groups }),
+      ).rejects.toThrow(/list of groups/i);
+
+      // THE WHOLE POINT: nothing moved. Before the fix the call SUCCEEDED
+      // and blocks advanced by one with zero settings attached.
+      const after = await sessionTotals(sessionId);
+      expect(
+        after,
+        `${label} changed the session: the area, its entry, its settings or its receipt`,
+      ).toEqual(before);
+    });
+  }
+
+  it("CONTROL: SQL NULL still creates an area with no settings", async () => {
+    // The fix must not turn "no setup" into an error. This command
+    // legitimately creates an area without settings, which is why it cannot
+    // simply adopt the standalone command's refusal of '[]' as well.
+    const studio = await seedStudio("init-null-ok");
+    const { sessionId } = await seedSession(studio);
+
+    const before = await sessionTotals(sessionId);
+    const out = await initialSave(studio, sessionId, { groups: null });
+
+    expect(out.block_id).toBeTruthy();
+    expect(out.setup, "a null payload recorded settings").toBeNull();
+    const after = await sessionTotals(sessionId);
+    expect(after.blocks, "the area was not created").toBe(before.blocks + 1);
+    expect(after.submissions, "settings were recorded from a null payload").toBe(
+      before.submissions,
+    );
+  });
+
+  it("CONTROL: an EMPTY array also still creates an area with no settings", async () => {
+    const studio = await seedStudio("init-empty-ok");
+    const { sessionId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+
+    const before = await sessionTotals(sessionId);
+    const out = await initialSave(studio, sessionId, {
+      machine: machineId,
+      groups: JSON.stringify([]),
+    });
+
+    expect(out.block_id).toBeTruthy();
+    expect(out.setup, "an empty payload recorded settings").toBeNull();
+    const after = await sessionTotals(sessionId);
+    expect(after.blocks, "the area was not created").toBe(before.blocks + 1);
+    expect(after.submissions).toBe(before.submissions);
+  });
+});

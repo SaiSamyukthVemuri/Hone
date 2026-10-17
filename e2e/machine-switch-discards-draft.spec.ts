@@ -86,7 +86,27 @@ const SINGLE = {
   modes: {
     blend: [
       { field_key: "current", native_unit: "mA", decimals: 2, quantity: "current" },
-      { field_key: "pulse_width", native_unit: "ms", decimals: 0, quantity: "duration" },
+      {
+        field_key: "pulse_width",
+        native_unit: "ms",
+        decimals: 0,
+        quantity: "duration",
+        // OPTIONAL, because the CATALOGUE says it is.
+        //
+        // This was omitted, so the publish defaulted it to required and this
+        // fixture stood in for a STRICTER machine than the product - the same
+        // correction round 11 made to the three multineedle fixtures
+        // (Codex, #860 4299434251).
+        //
+        // IT ALSO BROKE THE OTHER SPEC. A published contract is immutable per
+        // (profile, version, MODE), and machine-initial-save-retry publishes
+        // this same identity faithfully. On a shard carrying both, whichever
+        // ran second was refused with "already published with different
+        // fields" - CI shard 2 at c0991e0d, 151 passed and this one red in
+        // its FIXTURE. Two specs sharing one contract identity must publish
+        // the same fields, and the catalogue is what both must match.
+        optional: true,
+      },
     ],
     thermolysis: [
       { field_key: "current", native_unit: "µA", decimals: 1, quantity: "current" },

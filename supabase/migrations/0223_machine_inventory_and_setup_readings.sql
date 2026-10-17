@@ -2727,6 +2727,36 @@ declare
   v_groups integer;
   v_readings integer;
 begin
+  -- PAYLOAD SHAPE FIRST, BEFORE THE CLAIM AND BEFORE THE BLOCK EXISTS
+  -- (Codex, #860 4301531156).
+  --
+  -- The settings write below was guarded by `jsonb_typeof(...) = 'array'`,
+  -- so a non-null payload of any other shape - an object, a string, a
+  -- number, JSON `null` - SILENTLY SKIPPED the settings and still committed
+  -- the treatment area. That is exactly the half-saved state this atomic
+  -- command exists to remove, reached by a malformed call rather than by a
+  -- failure. The standalone submission command refuses the same shape
+  -- (`p_groups is null or jsonb_typeof(p_groups) <> 'array'`), so the two
+  -- write paths disagreed about the same payload.
+  --
+  -- IT IS CHECKED HERE, not at the write, for a second reason: the claim's
+  -- digest a few statements down coerces a non-array to '[]'. Left alone,
+  -- a malformed call would also have RECORDED a create claim whose digest
+  -- stood for a payload the command then ignored - so a later retry
+  -- carrying the correct settings would match the claim and be told it had
+  -- already succeeded.
+  --
+  -- NULL AND '[]' STILL MEAN NO SETUP, which is the one shape distinction
+  -- that matters: this command legitimately creates an area with no
+  -- settings, whereas the standalone submission has nothing to do without
+  -- them and refuses '[]' too.
+  if p_setup_groups is not null
+     and jsonb_typeof(p_setup_groups) <> 'array' then
+    raise exception
+      'Settings must be sent as a list of groups.'
+      using errcode = 'check_violation';
+  end if;
+
   v_key := btrim(coalesce(p_setup_idempotency_key, ''));
 
   -- -----------------------------------------------------------------------
