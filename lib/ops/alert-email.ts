@@ -60,47 +60,93 @@ const RECORD_ID_REDACTED = "[Redacted]";
 // UUID, so dashless hex (Sentry trace and span ids, hashes) is never matched.
 // Encodings are NOT enumerated in it (%2D, %36, %252D, ... were found one at a
 // time in review). Instead, each whitespace-delimited token that contains "%"
-// is decoded (ASCII %XX only, so a malformed escape never throws and
-// multibyte text is untouched), repeatedly until stable, at most
-// MAX_DECODE_ROUNDS times. If the decoded token contains a UUID, the DECODED
-// token is written with the ids replaced ("/clients/%36f1…" becomes
-// "/clients/[id]", keeping the route shape). A token still changing after the
-// bound is replaced with "[Redacted]": fail closed, never sent undecoded.
+// is DECODED FOR DETECTION ONLY: every character of the decoded form keeps the
+// range of the original text it came from (ASCII %XX escapes, decoded
+// repeatedly until stable, at most MAX_DECODE_ROUNDS times, so %252D, %2536
+// and %25%32%44 all resolve). Each match found in the decoded form replaces
+// exactly its ORIGINAL range; everything else in the token is written back
+// byte for byte, still encoded (Codex P2 4301838851, P2 4301902163, P1
+// 4301902565: emitting the decoded token injected control characters, forged
+// JSON fields, and re-exposed an email the upstream redaction had removed). A
+// token still changing after the bound is replaced with "[Redacted]": fail
+// closed, never sent undecoded.
 // Out of scope: non-URL encodings (HTML entities, \u escapes, base64), which
 // URL serialization does not produce.
 const RECORD_ID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
-const HAS_RECORD_ID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const MAX_DECODE_ROUNDS = 4;
 
-function reescapeControls(text: string): string {
-  return text.replace(/[\x00-\x20\x7f]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`);
+type Detector = { re: RegExp; placeholder: string };
+
+/** One decoded character and the [start, end) range of the original token it
+ *  decodes from. */
+type Unit = { ch: string; start: number; end: number };
+
+const isHex = (u: Unit | undefined): boolean => u !== undefined && /^[0-9a-f]$/i.test(u.ch);
+
+/** One round of ASCII %XX decoding over units, left to right. Returns null
+ *  when nothing changed. */
+function decodeRound(units: Unit[]): Unit[] | null {
+  const out: Unit[] = [];
+  let changed = false;
+  for (let i = 0; i < units.length; i += 1) {
+    const u = units[i]!;
+    const h1 = units[i + 1];
+    const h2 = units[i + 2];
+    if (u.ch === "%" && isHex(h1) && isHex(h2)) {
+      const code = parseInt(h1!.ch + h2!.ch, 16);
+      if (code < 0x80) {
+        out.push({ ch: String.fromCharCode(code), start: u.start, end: h2!.end });
+        i += 2;
+        changed = true;
+        continue;
+      }
+    }
+    out.push(u);
+  }
+  return changed ? out : null;
 }
 
-function decodeAsciiEscapes(text: string): string {
-  return text.replace(/%([0-7][0-9a-f])/gi, (_m, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+/** Replace every detector match found in the token's decoded form, at its
+ *  original range. `undefined` means the token is still changing after the
+ *  bound and must be dropped. */
+function replaceDecodedMatches(token: string, detectors: readonly Detector[]): string | undefined {
+  let units: Unit[] = [...token].map((ch, i) => ({ ch, start: i, end: i + 1 }));
+  for (let round = 0; ; round += 1) {
+    const next = decodeRound(units);
+    if (next === null) break;
+    if (round === MAX_DECODE_ROUNDS) return undefined;
+    units = next;
+  }
+  const decoded = units.map((u) => u.ch).join("");
+  const hits: Array<{ start: number; end: number; placeholder: string }> = [];
+  for (const { re, placeholder } of detectors) {
+    for (const m of decoded.matchAll(re)) {
+      const first = units[m.index!]!;
+      const last = units[m.index! + m[0].length - 1]!;
+      hits.push({ start: first.start, end: last.end, placeholder });
+    }
+  }
+  if (hits.length === 0) return token;
+  hits.sort((a, b) => a.start - b.start || b.end - a.end);
+  let out = "";
+  let at = 0;
+  for (const h of hits) {
+    if (h.start < at) continue; // overlapped by an earlier (wider) hit
+    out += token.slice(at, h.start) + h.placeholder;
+    at = h.end;
+  }
+  return out + token.slice(at);
 }
 
-function replaceRecordIds(text: string): string {
-  if (!text.includes("%")) return text.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER);
+/** Apply detectors to text, decoding any token that contains "%". */
+function replaceEncodedAware(text: string, detectors: readonly Detector[]): string {
   return text
     .split(/(\s+)/)
     .map((token) => {
-      if (!token.includes("%")) return token.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER);
-      let decoded = token;
-      for (let round = 0; round < MAX_DECODE_ROUNDS; round += 1) {
-        const next = decodeAsciiEscapes(decoded);
-        if (next === decoded) break;
-        decoded = next;
+      if (!token.includes("%")) {
+        return detectors.reduce((t, { re, placeholder }) => t.replace(re, placeholder), token);
       }
-      if (decodeAsciiEscapes(decoded) !== decoded) return RECORD_ID_REDACTED;
-      if (decoded !== token && HAS_RECORD_ID.test(decoded)) {
-        // Decoding must not INJECT characters (Codex P2 4301838851): a
-        // control character or whitespace that was escaped in the input
-        // (%0A, %1B, %20) is escaped again on the way out, so a decoded
-        // token can never forge a log line or a terminal sequence.
-        return reescapeControls(decoded.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER));
-      }
-      return token.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER);
+      return replaceDecodedMatches(token, detectors) ?? RECORD_ID_REDACTED;
     })
     .join("");
 }
@@ -125,9 +171,14 @@ const STRIPE_ID_RE = new RegExp(
 const GENERIC_STRIPE_ID_RE = /[a-z]{2,12}_(?=[A-Za-z0-9]*[A-Z0-9])[A-Za-z0-9]{10,}/g;
 
 function withoutRecordIds(text: string): string {
-  return replaceRecordIds(text)
-    .replace(STRIPE_ID_RE, "[stripe-id]")
-    .replace(GENERIC_STRIPE_ID_RE, "[stripe-id]");
+  // UUIDs and Stripe ids are detected on the DECODED form of an encoded token
+  // (Codex P1 4301902572: "pi%5F3..." hid its "_"), and only their original
+  // ranges are replaced.
+  return replaceEncodedAware(text, [
+    { re: RECORD_ID_RE, placeholder: "[id]" },
+    { re: STRIPE_ID_RE, placeholder: "[stripe-id]" },
+    { re: GENERIC_STRIPE_ID_RE, placeholder: "[stripe-id]" },
+  ]);
 }
 
 let missingEnvWarned = false;

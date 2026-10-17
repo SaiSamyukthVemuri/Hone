@@ -203,6 +203,20 @@ describe("#828 G-24: the alert email carries no record identifiers", () => {
     expect(mail.text).toContain("in session_payment_succeeded_write_zero_rows");
   });
 
+  it("does not re-expose other encoded text when an encoded id is removed (Codex P1 4301902565)", async () => {
+    const mail = await send(`at https://example.test/client/foo%40example.com/${CLIENT}`);
+    expect(mail.text).toContain("at https://example.test/client/foo%40example.com/[id]");
+    expect(mail.text).not.toContain("foo@example.com");
+  });
+
+  it("removes percent-encoded Stripe ids (Codex P1 4301902572)", async () => {
+    const mail = await send("pay pi%5F3TestPaymentIntent dispute dp%5F1TestDispute9Ab and evt%255F1TestEventABCDEF");
+    for (const id of ["pi%5F3TestPaymentIntent", "dp%5F1TestDispute9Ab", "evt%255F1TestEventABCDEF", "3TestPaymentIntent", "1TestDispute9Ab"]) {
+      expect(mail.text, id).not.toContain(id);
+    }
+    expect(mail.text).toContain("pay [stripe-id] dispute [stripe-id] and [stripe-id]");
+  });
+
   it("keeps what the operator needs to triage: event slug, time, environment and the admin link", async () => {
     const mail = await send("Benign message");
     expect(mail.subject).toBe("[Hone CRITICAL] session_payment_succeeded_write_zero_rows");
