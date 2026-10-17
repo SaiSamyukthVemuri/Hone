@@ -140,7 +140,25 @@ jobs:
             # every lane that file belongs to (Codex P1 4297335910).
             git diff --name-only --no-renames "$MB" "$HEAD_SHA" > changed.txt || true
           else
-            git show --name-only --no-renames --pretty=format: "${{ github.sha }}" > changed.txt
+            # PUSH (and any other non-PR event): what this push SHIPPED, i.e.
+            # the diff from the previous tip. `git show --name-only` on a merge
+            # commit prints its COMBINED diff - only files touched on BOTH sides
+            # - so a production merge that shipped route handlers but shared one
+            # doc with production read as docs-only and skipped validate, db,
+            # the browser shards and the canonical lane while the run said
+            # success (6acea261 #912, 62ff27b2 #891). `before` is the previous
+            # tip; when it is absent, all zeros or not in this clone, fall back
+            # to the first parent. A commit with no parent yields an EMPTY list,
+            # which the classifier fails safe to the full matrix.
+            SHA="${{ github.sha }}"
+            BEFORE="${{ github.event.before }}"
+            if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
+               && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+              BASE="$BEFORE"
+            else
+              BASE="${SHA}^1"
+            fi
+            git diff --name-only --no-renames "$BASE" "$SHA" > changed.txt || true
           fi
           echo "--- changed files ---"; cat changed.txt
 
