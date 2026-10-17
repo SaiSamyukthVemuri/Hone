@@ -334,8 +334,7 @@ function PostcarePreviewModal({
           <div className="flex flex-col">
             <h2 className="text-sm font-medium">Postcare email preview</h2>
             <p className="text-xs text-neutral-500">
-              Subject: Aftercare for your appointment with{" "}
-              {studioName || "your studio"}
+              Subject: A message from {studioName || "your studio"}
             </p>
           </div>
           <button
