@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
-import { loginAsOwner } from "../e2e/helpers/flows";
+import { loginAsOwner, loginByMagicLink } from "../e2e/helpers/flows";
+import { seedE2eMember } from "../e2e/helpers/seed";
 import {
   seedEligiblePaymentWithLogin,
   getSessionPaymentAttemptRows,
@@ -178,14 +179,34 @@ test("receipt success: the charge sends one receipt automatically, and exactly o
   const view = await openSessionPayment(page, success);
   const sentLine = view.getByText(/^Receipt sent to /);
   await expect(sentLine).toBeVisible();
-  // The practitioner's receipt line is masked; the full address is only in the
-  // owner-only technical details.
+  // The practitioner's receipt line is masked. The full address is INTENDED to
+  // appear only in the owner-only, collapsed "Technical payment details"
+  // disclosure (PR #418, components/payment/technical-payment-details.tsx); the
+  // non-owner journey below proves the other side of that gate.
   await expect(sentLine).not.toContainText(email);
+  await expect(view.getByTestId("technical-payment-details")).toContainText(email);
   // Sent is final: there is no button to send it again.
   await expect(view.getByRole("button", { name: /^send receipt$/i })).toHaveCount(0);
 
   expectExactlyOneCharge(success, attemptId);
   await expectOneSucceededAttempt(success);
+});
+
+test("receipt success, non-owner view: masked receipt line, no technical details, no full address", async ({
+  page,
+}) => {
+  // Same paid session as the journey above, seen by an active practitioner who
+  // is NOT the owner. TechnicalPaymentDetails returns null for a non-owner (a
+  // render gate, not CSS), so the full address must not reach this DOM at all.
+  const email = `success+receipt-${success.scenario.runId}@harness.local`;
+  const member = await seedE2eMember(success);
+  await loginByMagicLink(page, member.email);
+  const view = await openSessionPayment(page, success);
+  await expect(view.getByText(/^Receipt sent to /)).toBeVisible();
+  await expect(view.getByTestId("technical-payment-details")).toHaveCount(0);
+  expect(await page.content()).not.toContain(email);
+  // Viewing is not charging.
+  expectExactlyOneCharge(success, (await getSessionPaymentAttemptRows(success.sessionId))[0].id);
 });
 
 test("receipt failure then retry: Paid stays Paid, the retry sends the receipt, and it never charges again", async ({
