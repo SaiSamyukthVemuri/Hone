@@ -70,7 +70,7 @@ const COMMANDS = [
 // not absent: all four roles revoked, and granted back to NOTHING.
 const INTERNALS = [
   "public.assert_setup_scope(uuid, uuid, uuid, uuid)",
-  "public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid)",
+  "public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid, text[])",
 ] as const;
 
 /**

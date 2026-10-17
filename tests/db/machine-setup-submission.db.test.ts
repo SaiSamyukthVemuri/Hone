@@ -873,9 +873,16 @@ describe("0223 · the shared internals cannot be called directly", () => {
       await expect(
         asRole(role, (q) =>
           q(
+            // THIRTEEN ARGUMENTS since the writer gained
+            // `p_participating_groups` (Codex, #860 4302093846). The call
+            // must MATCH the real signature or this stops testing the
+            // grant: a 12-argument call now raises "function does not
+            // exist", and only because the assertion below pins
+            // /permission denied/i did that show up as a failure instead
+            // of a pass on the wrong error.
             `select public.record_setup_group_in_scope(
                $1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7::text[],$8,$9,
-               $10::smallint[],$11::jsonb,null)`,
+               $10::smallint[],$11::jsonb,null,$12::text[])`,
             [
               "00000000-0000-0000-0000-000000000001",
               "00000000-0000-0000-0000-000000000002",
@@ -888,6 +895,7 @@ describe("0223 · the shared internals cannot be called directly", () => {
               "g1",
               [1],
               JSON.stringify([reading("current", "120")]),
+              ["g1"],
             ],
           ),
         ),
@@ -1308,5 +1316,196 @@ describe("0223 · a channel freed by nobody cannot be claimed by a revision", ()
     ]);
     expect(again.reused).toBe(true);
     expect(again.submission_id).toBe(rev.submission_id);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ONE PROBE, ONE SETTING — THROUGH EVERY DOOR, AND ATOMICALLY
+//
+// Round 18 fixed this invariant in `record_treatment_setup_submission` only,
+// and non-atomically. Codex found both halves (#860 4302093846, 4302093849):
+//
+//   * `record_treatment_setup_group` is granted and delegates straight to the
+//     shared writer, so the rule did not apply to it at all;
+//   * the rule read the surviving captures and then wrote, while the only
+//     locks were keyed on (block, GROUP) — so two saves touching DIFFERENT
+//     groups never serialised, both read the old state, and both committed.
+//
+// The rule now lives in the shared writer, behind an identity-wide advisory
+// lock. These two tests are the ones that would have failed before.
+// ---------------------------------------------------------------------------
+describe("0223 · channel exclusivity holds through the single-group door", () => {
+  it("refuses a group claiming a channel another group still holds", async () => {
+    const studio = await seedStudio("chan-door");
+    const { blockId, sessionId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+
+    await save(studio.userId, blockId, machineId, "door-key-0001", [
+      group("g1", [1], "120"),
+    ]);
+
+    const before = await capturesOf(blockId);
+
+    // THE OTHER DOOR. Round 18's fix was not on this path at all.
+    await expect(
+      asUser(studio.userId, (q) =>
+        q(
+          `select public.record_treatment_setup_group(
+             $1::uuid,$2::uuid,$3,$4,$5::smallint[],$6::jsonb,$7::uuid,$8::uuid)`,
+          [
+            blockId,
+            machineId,
+            "galvanic",
+            "g2",
+            [1],
+            JSON.stringify([reading("current", "80")]),
+            sessionId,
+            studio.clientId,
+          ],
+        ),
+      ),
+    ).rejects.toThrow(/still assigned to settings group/i);
+
+    expect(
+      await capturesOf(blockId),
+      "the refused single-group write still recorded a capture",
+    ).toHaveLength(before.length);
+  });
+
+  it("CONTROL: the same door still accepts a FREE channel", async () => {
+    // The rule must not break the command it was added to. Without this, a
+    // check that refused everything would pass the test above.
+    const studio = await seedStudio("chan-door-ok");
+    const { blockId, sessionId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+
+    await save(studio.userId, blockId, machineId, "door-ok-0001", [
+      group("g1", [1], "120"),
+    ]);
+
+    const written = await asUser(studio.userId, (q) =>
+      q(
+        `select public.record_treatment_setup_group(
+           $1::uuid,$2::uuid,$3,$4,$5::smallint[],$6::jsonb,$7::uuid,$8::uuid) as n`,
+        [
+          blockId,
+          machineId,
+          "galvanic",
+          "g2",
+          [2],
+          JSON.stringify([reading("current", "80")]),
+          sessionId,
+          studio.clientId,
+        ],
+      ),
+    );
+    expect(written.rows[0].n).toBe(1);
+  });
+
+  it("CONTROL: a group may still revise onto its OWN channel", async () => {
+    // Its own key participates, so its own held channel is not a conflict.
+    // If this failed, no group could ever be revised in place.
+    const studio = await seedStudio("chan-door-self");
+    const { blockId, sessionId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+
+    await save(studio.userId, blockId, machineId, "door-self-0001", [
+      group("g1", [1], "120"),
+    ]);
+
+    const again = await asUser(studio.userId, (q) =>
+      q(
+        `select public.record_treatment_setup_group(
+           $1::uuid,$2::uuid,$3,$4,$5::smallint[],$6::jsonb,$7::uuid,$8::uuid) as n`,
+        [
+          blockId,
+          machineId,
+          "galvanic",
+          "g1",
+          [1],
+          JSON.stringify([reading("current", "130")]),
+          sessionId,
+          studio.clientId,
+        ],
+      ),
+    );
+    expect(again.rows[0].n).toBe(1);
+  });
+});
+
+describe("0223 · channel exclusivity is SERIALISED, not just checked", () => {
+  it("a concurrent save onto the same free channel waits, then is refused", async () => {
+    // THE RACE (Codex, #860 4302093849). Before the identity-wide lock, A
+    // and B touched DIFFERENT groups, so they took different (block, group)
+    // locks, never waited for each other, both read a channel as free and
+    // both committed — one probe with two settings, permanently.
+    //
+    // SEQUENCED, NOT RACED, for the reason recorded on the deadlock test
+    // above: A completes its statement and holds its transaction open, B
+    // starts and must BLOCK, then A commits and B proceeds and must be
+    // REFUSED by the now-visible capture. A fixed sleep here would prove
+    // nothing; `waitUntilBlocked` reads the server's own wait state.
+    const studio = await seedStudio("chan-serial");
+    const { blockId, sessionId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+
+    const a = await beginAsUser(studio.userId);
+    const b = await beginAsUser(studio.userId);
+    try {
+      await a.query(
+        `select public.record_treatment_setup_submission($1,$2,$3,$4,$5::jsonb,$6::uuid,$7::uuid) as r`,
+        [
+          blockId,
+          machineId,
+          "galvanic",
+          "serial-key-a",
+          JSON.stringify([group("g2", [3], "120")]),
+          sessionId,
+          studio.clientId,
+        ],
+      );
+
+      const bPid = (await b.query("select pg_backend_pid() as pid")).rows[0]
+        .pid as number;
+      const runB = b.query(
+        `select public.record_treatment_setup_submission($1,$2,$3,$4,$5::jsonb,$6::uuid,$7::uuid) as r`,
+        [
+          blockId,
+          machineId,
+          "galvanic",
+          "serial-key-b",
+          // A DIFFERENT GROUP, the same channel. This is the pair that used
+          // to sail past each other.
+          JSON.stringify([group("g3", [3], "90")]),
+          sessionId,
+          studio.clientId,
+        ],
+      );
+
+      const blocked = await waitUntilBlocked(bPid);
+      expect(
+        blocked,
+        "save B never waited: the identity-wide lock is not serialising different groups",
+      ).toBe(true);
+
+      await a.query("commit");
+
+      // AND THEN REFUSED, on the state A committed. Blocking alone would not
+      // be enough — it has to re-read and see the channel taken.
+      await expect(runB).rejects.toThrow(/still assigned to settings group/i);
+      await b.query("rollback");
+    } finally {
+      try {
+        await a.query("rollback");
+      } catch {
+        // already committed
+      }
+      a.release();
+      b.release();
+    }
+
+    // EXACTLY ONE capture exists for that channel.
+    const caps = await capturesOf(blockId);
+    expect(caps.filter((c) => c.channels.includes(3))).toHaveLength(1);
   });
 });

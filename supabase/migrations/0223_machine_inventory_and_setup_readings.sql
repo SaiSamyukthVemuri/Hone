@@ -1272,7 +1272,19 @@ create or replace function public.record_setup_group_in_scope(
   p_group_key text,
   p_channels smallint[],
   p_readings jsonb,
-  p_submission_id uuid
+  p_submission_id uuid,
+  /**
+   * The group keys participating in THIS save, including this one.
+   *
+   * The cross-group channel check below must not see them as conflicts: a
+   * legitimate SWAP within one save moves g1 onto g2's channel while g2
+   * still holds it, and refusing that would make a channel change
+   * impossible rather than safe (Codex, #860 4302093846).
+   *
+   * The single-group command passes just its own key, which is what gives
+   * that door the same protection the submission has.
+   */
+  p_participating_groups text[]
 )
 returns integer
 language plpgsql
@@ -1281,6 +1293,8 @@ set search_path = pg_catalog, pg_temp
 as $$
 declare
   v_count integer := 0;
+  v_conflict_group text;
+  v_conflict_channel smallint;
   v_item jsonb;
   -- Derived per reading from the published contract, never accepted from input.
   v_stage text;
@@ -1398,6 +1412,76 @@ begin
   -- group), and it would change the lock ordering that the submission
   -- command's sorted group-key loop relies on to avoid deadlocks. Not worth
   -- the concurrency on a surface where one practitioner saves at a time.
+  -- THE IDENTITY-WIDE LOCK, TAKEN FIRST (Codex, #860 4302093849).
+  --
+  -- Channel exclusivity spans GROUPS, so a lock keyed on one group cannot
+  -- protect it. Two saves revising DIFFERENT groups onto the same free
+  -- channel took different (block, group) locks, both read the surviving
+  -- captures, both passed, and both committed - one probe, two settings,
+  -- permanently. A check-then-write with no lock on the thing being checked
+  -- is not an invariant; it is a race that usually wins.
+  --
+  -- COARSE BEFORE FINE, which is also why this cannot deadlock against the
+  -- per-group lock below: every writer takes this one first, so the
+  -- acquisition order is total. The submission command's sorted group-key
+  -- loop still orders the fine locks among themselves.
+  -- HASHED AS A COMPOSITE, not a ':'-joined string. The string form was
+  -- ambiguous: `profile_id` and `mode_key` are free text, and real profile
+  -- ids contain colons (`synthetic:demo-multineedle`), so a shifted parse
+  -- mapped two different identities onto one lock. That cost waiting rather
+  -- than correctness - the check below filters on the columns themselves -
+  -- but a composite's text form quotes its delimiters and cannot shift.
+  perform pg_advisory_xact_lock(
+    hashtextextended(
+      row(
+        p_block_id,
+        p_studio_machine_id,
+        p_profile_id,
+        p_profile_version,
+        v_mode
+      )::text,
+      0
+    )
+  );
+
+  -- NO OTHER GROUP MAY HOLD A CHANNEL THIS ONE CLAIMS.
+  --
+  -- IN THE SHARED WRITER, so both doors are covered by one implementation
+  -- (Codex, #860 4302093846). Round 18 put this in the submission command
+  -- alone, and `record_treatment_setup_group` - granted, and used by
+  -- `recordReadingsAction` - delegated straight past it. The extraction of
+  -- this writer exists precisely so the two commands cannot drift apart,
+  -- and I had put a cross-cutting rule in only one of them.
+  --
+  -- Groups participating in this save are excluded: see
+  -- `p_participating_groups`.
+  select k.group_key,
+         (select min(ch) from unnest(p_channels) ch where ch = any (k.channels))
+    into v_conflict_group, v_conflict_channel
+    from (
+      select distinct on (c.group_key) c.group_key, c.channels
+        from public.treatment_setup_captures c
+       where c.session_block_id = p_block_id
+         and c.studio_machine_id = p_studio_machine_id
+         and c.machine_profile_id = p_profile_id
+         and c.machine_profile_version = p_profile_version
+         and c.mode_key = v_mode
+         and not (btrim(c.group_key) = any (
+           select btrim(g)
+             from unnest(coalesce(p_participating_groups, '{}'::text[])) g
+         ))
+       order by c.group_key, c.revision desc
+    ) k
+   where k.channels && p_channels
+   limit 1;
+
+  if v_conflict_group is not null then
+    raise exception
+      'Channel % is still assigned to settings group "%" on this treatment. Record the change for that group too, or move it off the channel first - a probe can only be on one setting at a time.',
+      v_conflict_channel, v_conflict_group
+      using errcode = 'check_violation';
+  end if;
+
   perform pg_advisory_xact_lock(
     hashtextextended(p_block_id::text || ':' || v_group, 0)
   );
@@ -1618,7 +1702,7 @@ begin
 end;
 $$;
 
-comment on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid) is
+comment on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid, text[]) is
   '0223. INTERNAL. Writes ONE settings group inside an already-asserted scope: validates the mode contract, the installed-option requirement, the channel bounds and every per-field value rule, derives unit, precision and quantity FROM THE PUBLISHED CONTRACT, allocates one capture at the next revision and inserts its readings. The single definition of what gets stored for a group, shared by record_treatment_setup_group and record_treatment_setup_submission so a clinical rule cannot hold on one path and not the other. SECURITY INVOKER ON PURPOSE: it trusts the scope its caller proved, so it must not carry the definer''s privileges - called directly by a runtime role it fails at the table privilege layer, independently of its EXECUTE revoke. Not granted to any role.';
 
 -- PART 3 COMMAND — record one settings group
@@ -1686,7 +1770,10 @@ begin
     p_group_key,
     p_channels,
     p_readings,
-    null
+    null,
+    -- ONLY THIS GROUP participates: a single-group save moves one group, so
+    -- every other group's channels are still held and must be respected.
+    array[p_group_key]
   );
 end;
 $$;
@@ -1983,63 +2070,19 @@ begin
       using errcode = 'check_violation';
   end if;
 
-  -- AND AGAINST THE GROUPS THIS SAVE DOES NOT TOUCH (Codex, #860 4301851852).
+  -- THE CROSS-GROUP RULE NOW LIVES IN THE SHARED WRITER.
   --
-  -- THE CHECK ABOVE ONLY SEES THIS SUBMISSION, and a revision is allowed to
-  -- carry a subset: `assembleGroupSubmissions` omits groups she did not
-  -- change. Their channel assignments survive, because
-  -- `latest_setup_for_client` composes the latest revision of EVERY group.
+  -- Round 18 implemented it here, in this command only, and
+  -- `record_treatment_setup_group` delegated straight past it
+  -- (Codex, #860 4302093846). Keeping a copy here as well would be the
+  -- same mistake in the other direction: two implementations of one
+  -- cross-cutting rule, which is exactly what extracting the writer was
+  -- meant to prevent. The writer is also where the identity-wide lock is
+  -- taken, so the check and the write are serialised together
+  -- (Codex, #860 4302093849).
   --
-  -- So: save g1 on channel 1 and g2 on channel 2, then record a change for
-  -- g2 alone moving it to channel 1. Every group in that save is distinct,
-  -- the check above passes, and the retrieved setup then shows TWO settings
-  -- for channel 1 — one probe with two different settings, which is exactly
-  -- the invariant this command exists to hold. Nothing downstream can repair
-  -- it afterwards: captures are immutable.
-  --
-  -- SCOPED TO THE SETUP IDENTITY, not to the block alone: a capture on
-  -- another machine, profile version or mode is a different setup and its
-  -- channel numbers mean something else. That is the same scope the revision
-  -- allocation and its unique constraint use.
-  --
-  -- IT CANNOT REFUSE A RETRY: an absorbed retry returns above, before this
-  -- runs, and a retry submits the same group keys anyway — which this
-  -- excludes by construction.
-  with submitted as (
-    select distinct (ch.value)::text::smallint as ch
-      from jsonb_array_elements(p_groups) g
-      cross join lateral
-        jsonb_array_elements(
-          case when jsonb_typeof(g.value->'channels') = 'array'
-               then g.value->'channels' else '[]'::jsonb end
-        ) ch
-  ),
-  untouched as (
-    select distinct on (k.group_key) k.group_key, k.channels
-      from public.treatment_setup_captures k
-     where k.session_block_id = p_block_id
-       and k.studio_machine_id = p_studio_machine_id
-       and k.machine_profile_id = v_scope.o_profile_id
-       and k.machine_profile_version = v_scope.o_profile_version
-       and k.mode_key = v_mode
-       and btrim(k.group_key) not in (
-         select btrim(coalesce(g2.value->>'group_key', ''))
-           from jsonb_array_elements(p_groups) g2
-       )
-     order by k.group_key, k.revision desc
-  )
-  select u.group_key, s.ch
-    into v_dup_group, v_dup_channel
-    from submitted s
-    join untouched u on s.ch = any(u.channels)
-   limit 1;
-
-  if v_dup_channel is not null then
-    raise exception
-      'Channel % is still assigned to settings group "%" on this treatment. Record the change for that group too, or move it off the channel first - a probe can only be on one setting at a time.',
-      v_dup_channel, v_dup_group
-      using errcode = 'check_violation';
-  end if;
+  -- The WITHIN-SAVE duplicate check above stays here: the writer sees one
+  -- group at a time and cannot know about a sibling not yet written.
 
   -- THE SAVE ITSELF. Its machine, profile version and mode are recorded, so a
   -- Save made under a different one is necessarily a different submission and
@@ -2094,7 +2137,11 @@ begin
       v_group_item->>'group_key',
       v_channels,
       v_group_item->'readings',
-      v_submission
+      v_submission,
+      -- EVERY GROUP IN THIS SAVE, so a swap within one save is allowed while
+      -- a group left untouched still holds its channel.
+      (select array_agg(btrim(coalesce(g.value->>'group_key', '')))
+         from jsonb_array_elements(p_groups) g)
     );
     v_groups := v_groups + 1;
   end loop;
@@ -3123,10 +3170,10 @@ revoke execute on function public.assert_setup_scope(uuid, uuid, uuid, uuid) fro
 revoke execute on function public.assert_setup_scope(uuid, uuid, uuid, uuid) from authenticated;
 revoke execute on function public.assert_setup_scope(uuid, uuid, uuid, uuid) from service_role;
 
-revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid) from public;
-revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid) from anon;
-revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid) from authenticated;
-revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid) from service_role;
+revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid, text[]) from public;
+revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid, text[]) from anon;
+revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid, text[]) from authenticated;
+revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid, text[]) from service_role;
 
 -- The whole-save command IS an entry point: it is what the treatment form
 -- calls.
