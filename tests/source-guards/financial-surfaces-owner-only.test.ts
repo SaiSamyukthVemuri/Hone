@@ -66,14 +66,34 @@ describe("#824: studio-wide financial surfaces are owner-only", () => {
         resolveAt,
         "identity must be resolved BEFORE the owner rule is applied",
       ).toBeLessThan(assertAt);
-      // And nothing may read money before the rule runs: the first data load
-      // must follow the assertion, or a non-owner's request does the work and
-      // only then gets redirected.
-      const firstAwaitAfter = src.slice(assertAt);
+      // NOTHING MAY RUN BETWEEN RESOLVING IDENTITY AND GATING, and the page
+      // must still do its work afterwards. Codex P2 4303043481 caught the
+      // previous form of this — `src.slice(assertAt).length > 0` — as VACUOUS:
+      // the slice begins AT the assertion, so its length is always positive and
+      // the check could never fail.
+      //
+      // Both halves are needed. Without the first, the gate could be moved
+      // below the data loads and a non-owner's request would do the work and
+      // only then be redirected. Without the second, the gate could be the last
+      // statement in a page that never loads anything, which would satisfy the
+      // first trivially.
+      const between = src.slice(resolveAt, assertAt);
       expect(
-        firstAwaitAfter.length,
-        "the owner rule must not be the last statement — the page body follows it",
-      ).toBeGreaterThan(0);
+        between,
+        "no await may sit between resolving identity and asserting the owner",
+      ).not.toMatch(/\bawait\b/);
+      // WHAT THIS SECOND HALF DOES AND DOES NOT PROVE. It catches a financial
+      // page with NO data loads after the gate, which would satisfy the first
+      // half trivially. It CANNOT see reachability: measured, inserting
+      // `return null;` immediately after the gate leaves the later awaits
+      // textually present and this assertion still passes. A text guard cannot
+      // do reachability, so it is written as the weaker claim it can actually
+      // support rather than described as proof that the page does real work.
+      const afterGate = src.slice(assertAt + "assertStudioOwner".length);
+      expect(
+        afterGate,
+        "a financial page must have data loads after the gate, or the first half is vacuous",
+      ).toMatch(/\bawait\b/);
     });
   }
 
