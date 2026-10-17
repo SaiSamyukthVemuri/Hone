@@ -189,18 +189,38 @@ function scrubKey(key: string, taken: Record<string, unknown>): string {
  *  stack frames (its phone pattern matches digit runs in chunk file names and
  *  would break source-map symbolication). Beyond MAX_DEPTH the remainder is
  *  dropped, never sent unscrubbed. */
-function withoutRecordIds(value: unknown, seen: WeakSet<object>, depth: number): unknown {
+function withoutRecordIds(
+  value: unknown,
+  seen: WeakSet<object>,
+  depth: number,
+  maxDepth: number = MAX_DEPTH,
+): unknown {
   if (typeof value === "string") return value.replace(RECORD_ID_RE, RECORD_ID_PLACEHOLDER);
   if (value === null || typeof value !== "object") return value;
-  if (depth > MAX_DEPTH) return REDACTED;
+  if (depth > maxDepth) return REDACTED;
   if (seen.has(value)) return REDACTED;
   seen.add(value);
-  if (Array.isArray(value)) return value.map((v) => withoutRecordIds(v, seen, depth + 1));
+  if (Array.isArray(value)) return value.map((v) => withoutRecordIds(v, seen, depth + 1, maxDepth));
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value)) {
-    out[scrubKey(k, out)] = withoutRecordIds(v, seen, depth + 1);
+    out[scrubKey(k, out)] = withoutRecordIds(v, seen, depth + 1, maxDepth);
   }
   return out;
+}
+
+// The whole event is far deeper than any one field (spans -> data, exception
+// -> frames -> vars), and Sentry has already normalized it before beforeSend,
+// so the final sweep allows more depth than the per-field passes.
+const SWEEP_MAX_DEPTH = 24;
+
+/** FINAL backstop over the WHOLE event or breadcrumb, after every field pass.
+ *  The field-by-field passes above stay (they also redact emails, phones and
+ *  tokens), but #828 G-25 must not depend on listing every field Sentry
+ *  serializes: Codex review rounds kept finding one more (logentry.formatted,
+ *  exception frames, threads). This sweep replaces a record id wherever it
+ *  survives, in any string or key, and touches nothing else. */
+function sweepRecordIds<T>(value: T): T {
+  return withoutRecordIds(value, new WeakSet(), 0, SWEEP_MAX_DEPTH) as T;
 }
 
 function deepScrub(
@@ -315,7 +335,7 @@ export function scrubBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb | null {
     ) as Breadcrumb["data"];
   }
 
-  return breadcrumb;
+  return sweepRecordIds(breadcrumb);
 }
 
 // Shared across error + transaction events (both extend Event).
@@ -331,12 +351,12 @@ function scrubEventCommon<T extends Event>(event: T): T {
   // params are the interpolated values. Both go through the same redaction,
   // as does a custom fingerprint, which is grouping text built from the
   // same strings.
+  // The WHOLE interface is scrubbed, not a field list (Codex P1 4301447093:
+  // `formatted`, which Sentry prefers over `message`, was missed), so a field
+  // Sentry adds later is covered too.
   const logentry = (event as { logentry?: unknown }).logentry;
-  if (isRecord(logentry)) {
-    if (typeof logentry.message === "string") logentry.message = redactString(logentry.message);
-    if (Array.isArray(logentry.params)) {
-      logentry.params = deepScrub(logentry.params, { redactKeys: true }, seen, 0);
-    }
+  if (logentry !== undefined) {
+    (event as { logentry?: unknown }).logentry = deepScrub(logentry, { redactKeys: true }, seen, 0);
   }
   if (Array.isArray(event.fingerprint)) {
     event.fingerprint = event.fingerprint.map((f) => (typeof f === "string" ? redactString(f) : f));
@@ -415,7 +435,7 @@ function scrubEventCommon<T extends Event>(event: T): T {
 
 /** beforeSend: scrub an error event in place. */
 export function scrubErrorEvent(event: ErrorEvent): ErrorEvent {
-  return scrubEventCommon(event);
+  return sweepRecordIds(scrubEventCommon(event));
 }
 
 /** beforeSendTransaction: scrub a performance/tracing event, including the
@@ -437,7 +457,7 @@ export function scrubTransactionEvent<T extends Event>(event: T): T {
     }
   }
 
-  return event;
+  return sweepRecordIds(event);
 }
 
 /** Production traces at 0.1 (10%); development at 1.0 for full local

@@ -68,15 +68,20 @@ describe("G-25: record ids are removed from every Sentry error-event surface", (
     expectNoRecordId(out, "extra/tags/contexts/user");
   });
 
-  it("logentry message and params, and a custom fingerprint, lose record ids (Codex P1 4301281977)", () => {
+  it("logentry message and params, and a custom fingerprint, lose record ids (Codex P1 4301281977, 4301447093)", () => {
     const out = scrubErrorEvent(
       errorEvent({
-        logentry: { message: `Failed to load client ${CLIENT}`, params: [SESSION, { appt: APPT }] },
+        logentry: {
+          message: `Failed to load client ${CLIENT}`,
+          formatted: `Failed to load client ${CLIENT} in studio ${STUDIO}`,
+          params: [SESSION, { appt: APPT }],
+        },
         fingerprint: ["{{ default }}", `/clients/${CLIENT}`],
       } as Partial<ErrorEvent>),
     );
     expectNoRecordId(out, "logentry/fingerprint");
     expect(out.logentry?.message).toBe("Failed to load client [id]");
+    expect((out.logentry as { formatted?: string }).formatted).toBe("Failed to load client [id] in studio [id]");
     expect(out.fingerprint).toEqual(["{{ default }}", "/clients/[id]"]);
   });
 
@@ -238,5 +243,31 @@ describe("G-25: ids inside compound identifiers (Codex P2 4301012678)", () => {
     const notUuid = `a${CLIENT.replace(/-/g, "")}ff`; // dashless hex, like Sentry's own ids
     const out = scrubErrorEvent(errorEvent({ message: `trace ${notUuid}` }));
     expect(out.message).toBe(`trace ${notUuid}`);
+  });
+});
+
+describe("G-25: the final whole-event sweep (backstop for fields no pass lists)", () => {
+  it("removes a record id from any field, including ones Sentry may add later", () => {
+    const out = scrubErrorEvent(
+      errorEvent({
+        server_name: `worker-${CLIENT}`,
+        dist: SESSION,
+        modules: { [`pkg-${APPT}`]: "1.0.0" },
+        debug_meta: { images: [{ code_file: `/srv/${STUDIO}/chunk.js` }] },
+        future_field: { nested: [{ deep: { deeper: `/clients/${CLIENT}` } }] },
+      } as unknown as Partial<ErrorEvent>),
+    );
+    expectNoRecordId(out, "whole-event sweep");
+    expect(out.event_id).toBe(EVENT_ID);
+  });
+
+  it("keeps a deep but legitimate transaction structure intact", () => {
+    const out = scrubTransactionEvent({
+      type: "transaction",
+      contexts: { trace: { trace_id: TRACE_ID, span_id: SPAN_ID } },
+      spans: [{ description: "load", data: { a: { b: { c: 1 } } } }] as unknown as Event["spans"],
+    } as Event);
+    expect((out.spans as unknown as Array<{ data: unknown }>)[0]?.data).toEqual({ a: { b: { c: 1 } } });
+    expect((out.contexts?.trace as Record<string, unknown>).trace_id).toBe(TRACE_ID);
   });
 });
