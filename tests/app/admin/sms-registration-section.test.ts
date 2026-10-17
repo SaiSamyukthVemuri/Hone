@@ -208,12 +208,12 @@ describe("success names the number it recorded for", () => {
 
 describe("HON-50 G4b: the US campaign block", () => {
   it("shows the recorded verdict and the check form for a US long-code sender only", () => {
-    const html = render({ ok: true, senders: [SENDER], registrations: [], campaignBindings: [] });
+    const html = render({ ok: true, senders: [SENDER], registrations: [], campaignBindings: [], stopPreflights: [] });
     expect(html).toContain('data-testid="admin-sms-campaign"');
     expect(html).toContain('data-verdict="missing"');
     expect(html).toContain(`value="${SENDER.id}"`);
     // Toll-free numbers are verified, not linked to a campaign: no block.
-    const tollFree = render({ ok: true, senders: [{ ...SENDER, phone_number: "+18885550123" }], registrations: [], campaignBindings: [] });
+    const tollFree = render({ ok: true, senders: [{ ...SENDER, phone_number: "+18885550123" }], registrations: [], campaignBindings: [], stopPreflights: [] });
     expect(tollFree).not.toContain('data-testid="admin-sms-campaign"');
     // The form never carries a Messaging Service: the server reads it from the snapshot.
     expect(html).not.toContain('name="messaging_service_sid"');
