@@ -58,14 +58,22 @@ export function bookingPanel(readiness: NewClientReadiness | null): ConsolePanel
   // checks could not run, the COUNT is a lower bound and is never stated as
   // exact (Codex P2 4243961742 on #851).
   const steps = `${setup} step${setup === 1 ? "" : "s"} left`;
-  const finish = partial
-    ? "Finish setup before clients can book online. Some checks could not run, so there may be more."
-    : "Finish setup before clients can book online.";
+  const more = partial ? " Some checks could not run, so there may be more." : "";
+  // MIXED STATE: a deliberate admission choice sits alongside unfinished setup.
+  // Finishing the counted steps does NOT override the choice, so the
+  // instruction must not promise online booking (Codex P2 4301111467 on #851).
+  // The old copy said "Finish setup before clients can book online" and then
+  // appended "clients join the waitlist", which contradicted itself. The two
+  // conditions are independent and BOTH have to change.
+  const detail =
+    admission.length > 0
+      ? `${chosen} Finishing the remaining setup does not change that: clients can book online once setup is complete AND that setting allows direct booking.${more}`
+      : `Finish setup before clients can book online.${more}`;
   return {
     ...base,
     tone: "attention",
     status: partial ? `At least ${steps}` : steps,
-    detail: admission.length > 0 ? `${finish} ${chosen}` : finish,
+    detail,
   };
 }
 

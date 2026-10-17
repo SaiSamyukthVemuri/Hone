@@ -164,6 +164,40 @@ describe("the three-state rule", () => {
     expect(only([wait], ["consent"]).detail).toMatch(/may still need steps/);
   });
 
+  it("booking: a mixed state never promises booking that admission still blocks (Codex P2 4301111467)", () => {
+    const wait = { key: "wait_admission", label: "New clients join the waitlist instead of booking directly." };
+    const closed = { key: "admission_closed", label: "This studio is not accepting new clients." };
+    const step = { key: "availability", label: "x" };
+    const panel = (blockers: unknown[], unavailable: unknown[] = []) =>
+      bookingPanel({ status: "not_ready", blockers: blockers as never, nextStep: null, unavailable: unavailable as never });
+
+    for (const choice of [wait, closed]) {
+      const mixed = panel([step, choice]);
+      // The choice is still stated, and the step count still excludes it.
+      expect(mixed.detail).toContain(choice.label);
+      expect(mixed.status).toBe("1 step left");
+      // THE DEFECT: the old copy promised that finishing setup would let
+      // clients book online, while the same sentence said they are waitlisted
+      // or refused. The bare promise must be gone.
+      expect(mixed.detail, "must not promise booking on setup alone").not.toMatch(
+        /Finish setup before clients can book online/,
+      );
+      // And BOTH conditions must be named, not just the steps.
+      expect(mixed.detail).toMatch(/does not change that/);
+      expect(mixed.detail).toMatch(/that setting allows direct booking/);
+    }
+
+    // NON-VACUITY: with no admission choice, the plain instruction is correct
+    // and MUST still be used — otherwise this test would pass against copy
+    // that simply dropped the sentence everywhere.
+    const setupOnly = panel([step]);
+    expect(setupOnly.detail).toMatch(/Finish setup before clients can book online/);
+    expect(setupOnly.detail).not.toMatch(/that setting allows direct booking/);
+
+    // The lower-bound clause survives in the mixed state too.
+    expect(panel([step, wait], ["consent"]).detail).toMatch(/there may be more/);
+  });
+
   it("panels without an authority yet say so, and link nowhere", () => {
     for (const k of ["delivery", "notifications"] as const) {
       expect(notYetAvailablePanel(k)).toMatchObject({ tone: "unavailable", status: "Not available yet", href: null });
