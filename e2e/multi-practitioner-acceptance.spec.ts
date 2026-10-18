@@ -229,6 +229,28 @@ function awaitScopedSlots(page: Page, practitionerId: string) {
   );
 }
 
+/** A slot request whose body carries THIS DATE.
+ *
+ *  CODEX 4307203948. `waitForGrid` is not enough on its own: opening the form
+ *  starts a slot request for the form's DEFAULT date (today), and changing the
+ *  date does NOT clear the already-rendered slots. So the heading can already
+ *  read the target date, and "loading slots" can already be absent, while the
+ *  buttons on screen are still TODAY'S — and a click then submits a past
+ *  instant that the server refuses with "no longer available", which reads like
+ *  a conflict and is not one. Keyed on the date STRING, so today's in-flight
+ *  request cannot satisfy it. The reschedule path already waited this way; the
+ *  legacy case did not, which is the half I had left standing. */
+function awaitSlotsForDate(page: Page, localDate: string) {
+  return page.waitForResponse(
+    (r) => {
+      if (r.request().method() !== "POST") return false;
+      if (!r.request().headers()["next-action"]) return false;
+      return (r.request().postData() ?? "").includes(localDate);
+    },
+    { timeout: 20_000 },
+  );
+}
+
 async function waitForGrid(page: Page, localDate: string): Promise<void> {
   const [y, m, d] = localDate.split("-").map((n) => Number(n));
   const monthDay = new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-US", {
@@ -257,9 +279,19 @@ async function openNewClientForm(
   localDate: string,
 ): Promise<void> {
   await page.goto(`/book/${studioSlug}`);
+  // ARMED BEFORE THE FIRST CLICK, deliberately. With a single service the form
+  // selects it by default, so opening the form can start the slot read on its
+  // own; registering the wait afterwards races it, and registering it after the
+  // date fill can miss it outright. Keyed to localDate, so the form's initial
+  // request for TODAY does not satisfy it.
+  const slotsForDate = awaitSlotsForDate(page, localDate);
   await page.getByRole("button", { name: /new client/i }).first().click();
   await page.getByLabel("Date").fill(localDate);
   await page.getByLabel("Service").selectOption(serviceId);
+  // Every caller reads the grid immediately after this, so the wait belongs
+  // HERE rather than at each call site — the legacy case is the one that was
+  // missing it, and fixing only that one would leave the next caller exposed.
+  await slotsForDate;
 }
 
 /** The slot labels currently offered, as text. */
