@@ -555,6 +555,15 @@ export async function recordSetupSubmission(
       error:
         "The save did not report which capture it created, so whether it was " +
         "recorded cannot be confirmed.",
+      // UNRESOLVED, BECAUSE THE WRITE MAY HAVE COMMITTED (Codex, #860
+      // 4305555266). This branch is reached when the RPC returned NO ERROR
+      // and a response this module cannot read - a stale function, or an
+      // unexpected shape - so the command may well have recorded the capture.
+      // Omitting the flag mapped it to a DEFINITIVE rejection, which unfreezes
+      // the draft and lets the retry key be discarded, so a later save appends
+      // a duplicate capture. The message already says the outcome cannot be
+      // confirmed; this makes the state machine agree with the sentence.
+      unresolved: true,
     };
   }
   return {

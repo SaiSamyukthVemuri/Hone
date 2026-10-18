@@ -58,6 +58,23 @@ function dbReturning(error: MachineDbError): MachineDb {
   } as unknown as MachineDb;
 }
 
+/**
+ * A db whose RPC reports NO ERROR and hands back a body the module cannot
+ * read — a stale function, or an unexpected shape.
+ *
+ * This is the case the `submission_id` shape check exists for, and the point
+ * is that it happens AFTER the write was attempted: the command may well have
+ * committed.
+ */
+function dbReturningBody(data: unknown): MachineDb {
+  return {
+    rpc: async () => ({ data, error: null }),
+    from: () => {
+      throw new Error("not used by this path");
+    },
+  } as unknown as MachineDb;
+}
+
 const INPUT = {
   blockId: "block-1",
   machineId: "dev-1",
@@ -99,6 +116,60 @@ async function chain(error: MachineDbError) {
   const relayed = relayRecordResult(asAction);
   return outcomeFromRecordResult(relayed, INPUT.groups.length);
 }
+
+/** The same chain, for a transport SUCCESS carrying an unreadable body. */
+async function chainOfBody(data: unknown) {
+  const queried = await recordSetupSubmission(dbReturningBody(data), INPUT);
+  const asAction = queried.ok
+    ? { ok: true as const }
+    : {
+        ok: false as const,
+        code: queried.unresolved ? "unknown" : "rejected",
+        error: queried.error,
+      };
+  return outcomeFromRecordResult(relayRecordResult(asAction), INPUT.groups.length);
+}
+
+describe("a malformed SUCCESS is unresolved, not a refusal", () => {
+  // THE DEFECT (Codex, #860 4305555266). The RPC returned no error and a body
+  // without `submission_id`, so the shape check refused — correctly — but the
+  // result omitted `unresolved`, so the action mapped it to a DEFINITIVE
+  // rejection. That unfreezes the draft and lets the retry key be discarded,
+  // and a later save then appends a duplicate capture. The write may have
+  // committed: nothing here says otherwise.
+  //
+  // The message already told her the outcome could not be confirmed. This
+  // makes the STATE MACHINE agree with the sentence.
+  for (const [label, body] of [
+    ["an empty object", {}],
+    ["a null body", null],
+    ["a non-object", "ok"],
+    ["a wrong-typed submission_id", { submission_id: 42 }],
+    ["a body missing only submission_id", { groups: 1, readings: 3 }],
+  ] as Array<[string, unknown]>) {
+    it(`treats ${label} as UNKNOWN`, async () => {
+      expect(await chainOfBody(body)).toEqual({ kind: "unknown" });
+    });
+  }
+
+  it("so the draft stays frozen and the retry key is KEPT", async () => {
+    const key = keyForSave(initialSaveState(), () => "retry-key-00000001");
+    const state = afterOutcome(initialSaveState(), key, await chainOfBody({}));
+    expect(canEditDraft(state, false), "the draft was left editable").toBe(false);
+    expect(state.unresolved).toBe(true);
+    expect(
+      state.key,
+      "the key was released, so a later save would append a duplicate capture",
+    ).toBe("retry-key-00000001");
+  });
+
+  it("CONTROL: a WELL-FORMED success still succeeds", async () => {
+    // Without this the rule above would also pass if every response were
+    // treated as unreadable, which would refuse every real save.
+    const out = await chainOfBody({ submission_id: "sub-1", groups: 1, readings: 3 });
+    expect(out.kind).toBe("saved");
+  });
+});
 
 describe("a dropped connection reaches the practitioner as UNKNOWN", () => {
   it("the whole chain ends in the unknown outcome, not a refusal", async () => {

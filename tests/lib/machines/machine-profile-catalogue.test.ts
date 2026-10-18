@@ -2488,3 +2488,107 @@ describe("readiness assesses the modes being PROPOSED, not every mode", () => {
     }
   });
 });
+
+describe("an unsourced channel count is advisory, never refusing", () => {
+  // THE CODE HALF of Codex #855 4305551166. `channels.count` is enforced on
+  // every path, including the historical one, so a count no source
+  // establishes REFUSES A REAL OBSERVATION on the strength of a model name.
+  // The answer is the one `ConstraintClass` already gives for ranges: only a
+  // constraint that is established AND undisputed may refuse input, because
+  // refusing a true observation is a clinical record defect rather than a
+  // safety feature.
+  //
+  // WHAT THIS DOES NOT DO. It does not change the GEMM-16 contract, which
+  // declares its 16 channels `manufacturer-documented` and therefore still
+  // refuses. Whether that declaration overclaims its sources — the finding's
+  // actual complaint — is a SOURCE-EVIDENCE question escalated to Sam, not a
+  // code decision, and it is deliberately untouched here.
+  const withChannels = (
+    verification: "unverified" | "pending-evidence" | "manufacturer-documented" | "device-confirmed",
+    count = 4,
+  ): MachineProfile => ({
+    ...offered(),
+    channels: {
+      count,
+      nativeLabel: "Probe",
+      associationRequired: false,
+      supportsDistinctSettingGroups: true,
+      verification,
+      evidence: ["fx"],
+    },
+  });
+
+  const readChannel = (prof: MachineProfile, channel: number) =>
+    validateReading(
+      {
+        profileId: prof.profileId,
+        version: prof.version,
+        modeKey: "m",
+        fieldKey: "current",
+        source: "practitioner-entered",
+        value: { kind: "value", value: 1.2 },
+        channel,
+      },
+      { catalogue: [prof] },
+    );
+
+  for (const weak of ["unverified", "pending-evidence"] as const) {
+    it(`ACCEPTS a channel above a ${weak} count, and names the gap`, () => {
+      const out = readChannel(withChannels(weak), 7);
+      expect(
+        out.ok,
+        "a true observation was refused on the strength of an unsourced count",
+      ).toBe(true);
+      if (!out.ok) throw new Error(out.code);
+      expect(out.notes.map((n) => n.code)).toContain(
+        "channel_beyond_unverified_count",
+      );
+      // The note has to say WHY it is only a note, or it is unactionable.
+      expect(out.notes.map((n) => n.message).join(" ")).toContain(weak);
+    });
+  }
+
+  for (const strong of ["manufacturer-documented", "device-confirmed"] as const) {
+    it(`CONTROL: a ${strong} count still REFUSES — this is GEMM's case, unchanged`, () => {
+      const out = readChannel(withChannels(strong), 7);
+      expect(out.ok).toBe(false);
+      if (out.ok) throw new Error("expected a refusal");
+      expect(out.code).toBe("channel_out_of_range");
+    });
+  }
+
+  it("CONTROL: a MALFORMED channel refuses whatever the evidence says", () => {
+    // Not an evidence question: no machine has a channel 0 or a channel 1.5.
+    for (const verification of ["unverified", "device-confirmed"] as const) {
+      for (const channel of [0, -1, 1.5]) {
+        const out = readChannel(withChannels(verification), channel);
+        expect(out.ok, `channel ${channel} was accepted`).toBe(false);
+        if (out.ok) throw new Error("expected a refusal");
+        expect(out.code).toBe("channel_out_of_range");
+      }
+    }
+  });
+
+  it("CONTROL: a channel WITHIN an unverified count carries no note", () => {
+    // The note marks the gap, not the channel structure's existence.
+    const out = readChannel(withChannels("unverified"), 3);
+    expect(out.ok).toBe(true);
+    if (!out.ok) throw new Error(out.code);
+    expect(out.notes.map((n) => n.code)).not.toContain(
+      "channel_beyond_unverified_count",
+    );
+  });
+
+  it("and the real catalogue is UNAFFECTED by this change", () => {
+    // Stated as a test because it is the honest scope of the fix: exactly one
+    // profile carries a channel structure, and it declares itself documented,
+    // so nothing in MACHINE_CATALOGUE behaves differently today. This is a
+    // rule for future contracts and for the historical path, not a change to
+    // shipped data.
+    const withChannelStructures = MACHINE_CATALOGUE.filter((p) => p.channels);
+    expect(withChannelStructures).toHaveLength(1);
+    expect(withChannelStructures[0]!.channels!.verification).toBe(
+      "manufacturer-documented",
+    );
+  });
+});
