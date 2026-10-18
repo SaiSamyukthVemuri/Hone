@@ -341,8 +341,8 @@ export async function recoverOwedConfirmations(opts: {
               client: row.client,
               routeReader: opts.routeReader,
               manageUrlFor: (startsAt) => opts.manageUrlFor(row.id, startsAt),
-              revalidate: async () => {
-                const check = await revalidateOwed(opts.admin, row.id, clock(), listedPhone);
+              revalidate: async (phase) => {
+                const check = await revalidateOwed(opts.admin, row.id, clock(), listedPhone, phase);
                 // A confirmation goes WITH its manage link or not at all: refused
                 // before the claim, so nothing is spent and it stays owed.
                 if (check.ok && !opts.manageUrlFor(row.id, check.startsAt)) {
@@ -456,6 +456,7 @@ async function readOwedPage(
 
 type RevalidatedRow = {
   status: string;
+  sms_confirmation_send_attempts: number | null;
   starts_at: string;
   created_at: string;
   studio: { send_confirmation_sms: boolean } | Array<{ send_confirmation_sms: boolean }> | null;
@@ -472,6 +473,7 @@ async function revalidateOwed(
   appointmentId: string,
   nowMs: number,
   listedPhone: string | null,
+  phase: "before_claim" | "after_claim",
 ): Promise<{ ok: true; startsAt: Date } | { ok: false; reason: string }> {
   // An unreadable answer is looked at again; only a READ verdict refuses.
   let row: RevalidatedRow | null = null;
@@ -480,7 +482,7 @@ async function revalidateOwed(
       const { data, error } = await admin
         .from("appointments")
         .select(
-          "status, starts_at, created_at, studio:studios(send_confirmation_sms), client:clients(phone, sms_consent_at, sms_opted_out_at)",
+          "status, starts_at, created_at, sms_confirmation_send_attempts, studio:studios(send_confirmation_sms), client:clients(phone, sms_consent_at, sms_opted_out_at)",
         )
         .eq("id", appointmentId)
         .maybeSingle();
@@ -494,6 +496,17 @@ async function revalidateOwed(
   const studio = Array.isArray(row.studio) ? (row.studio[0] ?? null) : row.studio;
   if (!client || !studio) return { ok: false, reason: "recovery_revalidate_failed" };
   if (studio.send_confirmation_sms !== true) return { ok: false, reason: "studio_toggle_off" };
+  // RECOVERY SENDS ONLY A ROW THAT HAS NEVER REACHED THE PROVIDER (Codex P2
+  // 4305212716). claim_sms_send accepts any confirmation under three attempts,
+  // so two runs that selected the same zero-attempt row could each claim it in
+  // turn: the first makes an ambiguous attempt and clears its claim, the second
+  // claims the now-one-attempt row and sends a duplicate. The claim increments
+  // the count atomically and holds an exclusive lease, so the count read right
+  // after it is exactly this claim's: 1 proves no earlier attempt; anything
+  // else refuses before the provider (the claim is released, nothing sent).
+  const attempts = row.sms_confirmation_send_attempts;
+  const expectedAttempts = phase === "before_claim" ? 0 : 1;
+  if (attempts !== expectedAttempts) return { ok: false, reason: "recovery_attempt_already_made" };
   const created = Date.parse(row.created_at);
   if (!Number.isFinite(created) || created < nowMs - RECOVERY_MAX_AGE_MS) {
     return { ok: false, reason: "recovery_expired" };

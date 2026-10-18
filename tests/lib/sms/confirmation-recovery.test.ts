@@ -221,6 +221,7 @@ function admin(): SupabaseClient {
                   status: row.status,
                   starts_at: row.starts_at,
                   created_at: row.created_at,
+                  sms_confirmation_send_attempts: row.sms_confirmation_send_attempts,
                   studio: { send_confirmation_sms: !switchOff.has(row.studio_id) },
                   // The client as it is NOW, not as the page saw it.
                   client: { phone: row.client_phone, sms_consent_at: "2026-10-01T00:00:00Z", sms_opted_out_at: row.client_opted_out_at },
@@ -533,6 +534,36 @@ describe("races after the selection", () => {
     };
     expect(await run()).toMatchObject({ sent: 0, skipped: { not_claimed: 1 } });
     expect(providerCalls()).toBe(0);
+  });
+
+  // Codex P2 4305212716: two runs select the same zero-attempt row. The first
+  // makes an ambiguous attempt and clears its claim; claim_sms_send would let
+  // the second claim the now-one-attempt row. The post-claim re-read sees two
+  // attempts and refuses before the provider: no duplicate.
+  it("a second run that claims a row ANOTHER run already attempted: refused after the claim, no provider call", async () => {
+    db = [appt()];
+    beforeClaim = (id) => {
+      const row = db.find((x) => x.id === id)!;
+      // The other run's ambiguous attempt landed between our selection and claim.
+      row.sms_confirmation_send_attempts = 1;
+      row.sms_confirmation_claimed_at = null;
+    };
+    const r = await run();
+    expect(r).toMatchObject({ sent: 0, skipped: { recovery_attempt_already_made: 1 } });
+    expect(providerCalls()).toBe(0);
+    expect(db[0].sms_confirmation_sent_at).toBeNull();
+    expect(db[0].sms_confirmation_claimed_at).toBeNull();
+  });
+
+  it("a row whose count rose before our claim is refused BEFORE it (attempts must be 0), spending nothing", async () => {
+    db = [appt()];
+    preClaimRead = (row) => {
+      row.sms_confirmation_send_attempts = 1;
+    };
+    const r = await run();
+    expect(r).toMatchObject({ sent: 0, skipped: { recovery_attempt_already_made: 1 } });
+    expect(providerCalls()).toBe(0);
+    expect(db[0].sms_confirmation_send_attempts).toBe(1);
   });
 
   it("a possibly-sent attempt (provider 5xx) is recorded as sent and never recovered again", async () => {
