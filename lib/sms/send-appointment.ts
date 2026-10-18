@@ -68,7 +68,19 @@ import {
 export type SmsSendResult =
   | { ok: true; messageSid: string }
   | { ok: false; skipped: true; reason: string }
-  | { ok: false; skipped?: false; error: string; retryable: boolean };
+  | {
+      ok: false;
+      skipped?: false;
+      error: string;
+      retryable: boolean;
+      /**
+       * The provider was asked and its answer was lost (sendSmsSafely's
+       * `attempt: "ambiguous"`), so the client may have the message (Codex P2
+       * 4305038680). Still a failure here; a caller that issued something in
+       * the message (the recovery pass's intake link) accounts for it.
+       */
+      possiblySent?: true;
+    };
 
 /**
  * SMS-02: what a reminder send tells the cron. It says two things SmsSendResult
@@ -1022,6 +1034,7 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
         ok: false,
         error: result.error,
         retryable: result.retryable,
+        ...(result.attempt === "ambiguous" ? { possiblySent: true as const } : {}),
       };
       logSmsFailure({
         appointmentId: args.appointmentId,
