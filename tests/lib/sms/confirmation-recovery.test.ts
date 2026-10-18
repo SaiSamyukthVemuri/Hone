@@ -1065,6 +1065,30 @@ describe("the first studio rotates per 15-minute slot", () => {
 // Codex P2 4305313120: a stride sharing a factor with the studio count only
 // ever started at a few indices (100 studios, stride 50: indices 0 and 50), so
 // studios behind a time-budget-exhausting start were never examined.
+// General's P3: recovery took opts.env for the switch and the routing list,
+// but the per-row send read process.env, so an injected env could select a
+// row as studio-routed and then send it on the PLATFORM route.
+describe("the injected env's routing list governs the per-row send", () => {
+  it("process.env lists NO studio, the injected env lists A: the row is still sent on A's own route", async () => {
+    delete process.env[STUDIO_ROUTING_ENV];
+    db = [appt()];
+    snapshot = readyStudioA();
+    const r = await run(ENABLED);
+    expect(r).toMatchObject({ sent: 1 });
+    expect(providerBodies[0].get("From")).toBe(READY_NUMBER);
+    expect(providerBodies[0].get("MessagingServiceSid")).toBe(MSID_A);
+  });
+
+  it("process.env lists A, the injected env lists only another studio: A is not selected, nothing is sent", async () => {
+    process.env[STUDIO_ROUTING_ENV] = A;
+    db = [appt()];
+    snapshot = readyStudioA();
+    const r = await run({ [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: "studio-elsewhere" });
+    expect(r).toMatchObject({ sent: 0 });
+    expect(providerCalls()).toBe(0);
+  });
+});
+
 describe("the rotation reaches EVERY studio as a starting point", () => {
   const capacityFor = (n: number) => {
     const per = Math.max(1, Math.floor(RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN / n));

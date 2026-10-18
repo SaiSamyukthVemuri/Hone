@@ -328,6 +328,7 @@ export async function recoverOwedConfirmations(opts: {
           try {
             result = await sendRecoveredConfirmationSmsToClient({
               admin: opts.admin,
+              routeEnv: env,
               appointmentId: row.id,
               timezone: row.studio.timezone,
               studio: row.studio,
