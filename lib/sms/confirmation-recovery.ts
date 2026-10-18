@@ -118,6 +118,26 @@ export const RECOVERY_POST_CLAIM_LOOKS = 3;
 
 type Env = Readonly<Record<string, string | undefined>>;
 
+const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+
+/**
+ * Which listed studio a slot's run starts with. Successive slots step by about
+ * one run's capacity, so each run starts where the last one could not reach.
+ *
+ * THE STRIDE IS COPRIME WITH THE STUDIO COUNT (Codex P2 4305313120): with 100
+ * studios and a capacity of 50, a stride of 50 only ever started at index 0 or
+ * 50, so if those runs spent their time budget the other 98 studios were never
+ * examined. A stride sharing no factor with the count visits every index once
+ * per `count` slots. It is the LARGEST such stride not above the capacity, so
+ * consecutive runs' chunks overlap rather than leave a gap. Pure.
+ */
+export function recoveryFirstStudioIndex(slot: number, studioCount: number, capacity: number): number {
+  if (studioCount <= 1) return 0;
+  let stride = capacity >= studioCount ? 1 : Math.max(1, capacity);
+  while (stride > 1 && gcd(stride, studioCount) !== 1) stride -= 1;
+  return (((slot * stride) % studioCount) + studioCount) % studioCount;
+}
+
 export function confirmationRecoveryEnabled(env: Env = process.env): boolean {
   return env[CONFIRMATION_RECOVERY_ENV] === "on";
 }
@@ -274,8 +294,7 @@ export async function recoverOwedConfirmations(opts: {
   const perStudio = Math.max(1, Math.floor(RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN / studioIds.length));
   const slot = Math.floor(opts.nowMs / RECOVERY_SLOT_MS);
   const capacity = Math.floor(RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN / perStudio);
-  const stride = capacity >= studioIds.length ? 1 : capacity;
-  const first = (slot * stride) % studioIds.length;
+  const first = recoveryFirstStudioIndex(slot, studioIds.length, capacity);
   const newestFirst = slot % 2 === 1;
   const ordered = [...studioIds.slice(first), ...studioIds.slice(0, first)];
 
@@ -335,6 +354,8 @@ export async function recoverOwedConfirmations(opts: {
           try {
             result = await sendRecoveredConfirmationSmsToClient({
               admin: opts.admin,
+              // Injected keys override, the rest fall back to process.env, so the G6 webhook-base comparison still sees the deployment's base.
+              routeEnv: { ...process.env, ...env },
               appointmentId: row.id,
               timezone: row.studio.timezone,
               studio: row.studio,
@@ -383,10 +404,11 @@ export async function recoverOwedConfirmations(opts: {
             skip(result.reason);
             if (STUDIO_WIDE_REFUSALS.has(result.reason)) {
               studioRefusal.set(studioId, result.reason);
-              // Codex P2 4305191997: every remaining row of this studio would
-              // get the same refusal, so stop paging through them; a large or
-              // slow backlog must not spend the run's budget before later
-              // studios are visited. The rows stay owed for the next run.
+              // Every remaining row of this studio would get the same refusal,
+              // so stop paging through them (Codex P2 4305191997, 4305390797):
+              // a studio whose sender is unusable must not spend the run's
+              // four-minute budget before later studios are visited. The rows
+              // stay owed for the next run.
               continue studios;
             } else if (DESTINATION_REFUSALS.has(result.reason) && destKey) {
               destinationRefusal.set(destKey, result.reason);
