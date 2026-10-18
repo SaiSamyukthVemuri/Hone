@@ -210,6 +210,12 @@ export type MachineFirstSetupPanelProps = {
       channels: number[];
       readings: ReadingSubmission[];
     }>;
+    /**
+     * The recorded group keys the entry's draft was built from, for the
+     * staleness refusal (Codex, #860 4305780322). Forwarded unchanged; the
+     * comparison is the action's.
+     */
+    expectedGroupKeys?: string[];
   }) => Promise<{
     ok: boolean;
     error?: string;

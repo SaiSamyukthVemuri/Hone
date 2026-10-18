@@ -1,6 +1,8 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { SETUP_GROUPS_MOVED } from "@/lib/machines/pending-setup";
+import { recordedGroupsMoved } from "@/lib/machines/setting-groups";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { activeModes, type MachineProfile } from "@/lib/machines/profile-contract";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
@@ -696,6 +698,16 @@ export async function recordSetupSubmissionAction(input: {
   blockId: string;
   machineId: string;
   modeKey: string;
+  /**
+   * The recorded group keys the caller's draft was built from (Codex, #860
+   * 4305780322).
+   *
+   * OPTIONAL, AND THAT IS DELIBERATE: the per-group action and older callers
+   * do not send it, and a caller that cannot say what it saw must not be
+   * silently blocked from saving. Absent means "no claim", and the check below
+   * is skipped. What it buys when present is the staleness refusal.
+   */
+  expectedGroupKeys?: string[];
   idempotencyKey: string;
   groups: Array<{
     groupKey: string;
@@ -823,6 +835,37 @@ export async function recordSetupSubmissionAction(input: {
   // process is bypassed by anything calling the RPC directly, and a check in
   // both is two definitions of one rule. The form warns before the round trip
   // through `settingGroupIssues`; this relies on the database.
+  // THE RECORDED GROUPS MUST NOT HAVE MOVED (Codex, #860 4305780322).
+  //
+  // Group identities are derived from the snapshot the caller's draft was
+  // built from, so two page loads that both add a group both pick the SAME
+  // next key - and `record_setup_group_in_scope` takes the second as the next
+  // REVISION of the first. Two distinct probe sets merge into one timeline and
+  // only the second's values read as current: a silent loss of what she
+  // recorded first. `setting-groups.ts` already names that outcome for a
+  // sibling case and calls it "one guard away from a corrupt clinical
+  // record"; this is the guard, for the case that is actually reachable.
+  //
+  // COMPARED HERE RATHER THAN IN THE FORM, so the read and the write are one
+  // request: the window is this function's own microseconds instead of a
+  // user-visible round trip. It is still DETECTION - durable allocation of the
+  // identity is the real fix and needs the command, which is 0223's to make.
+  //
+  // BLOCK-WIDE, not scope-wide, because revisions are allocated per (block,
+  // group_key): a collision does not care which device or mode produced it.
+  if (input.expectedGroupKeys) {
+    const current = await readingsForBlock(db, input.blockId, input.sessionId);
+    if (!current.ok) {
+      // A READ THAT FAILED IS NOT A SET THAT MATCHES. Treating it as "no
+      // change" would skip the guard exactly when the database is unhappy.
+      return { ok: false, code: "rejected", error: SETUP_GROUPS_MOVED };
+    }
+    const seen = current.value.map((r) => r.groupKey);
+    if (recordedGroupsMoved(input.expectedGroupKeys, seen)) {
+      return { ok: false, code: "rejected", error: SETUP_GROUPS_MOVED };
+    }
+  }
+
   const out = await recordSetupSubmission(db, {
     blockId: input.blockId,
     machineId: input.machineId,

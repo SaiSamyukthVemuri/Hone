@@ -593,6 +593,74 @@ describe("switching machine or mode clears the collected draft", () => {
     expect(assignedExpression(src, "draftFrozen")).toContain("saveUnresolved");
   });
 
+  it("the stale-group refusal REACHES the action, hop by hop", () => {
+    // ASSERTED AT EVERY HOP, because this lane's most repeated defect is a
+    // value that exists, is correct, and never arrives. The rule itself is
+    // proved behaviourally in tests/lib/machines/stale-setting-groups.test.ts;
+    // what this pins is that the action is given something to compare
+    // (Codex, #860 4305780322).
+    const entry = read(ENTRY_SRC);
+    // 1/3 the entry captures the set AT DRAFT BUILD, not at submit — the
+    // identity it will mint is a function of exactly that snapshot.
+    expect(entry, "1/3 the entry does not capture the recorded set").toMatch(
+      /const \[expectedGroupKeys\] = useState<string\[\]>\(\(\) =>/,
+    );
+    // 2/3 and sends it with the save.
+    expect(entry, "2/3 the captured set never leaves the entry").toMatch(
+      /idempotencyKey: key,\s*groups: submissions,\s*expectedGroupKeys,/,
+    );
+
+    // 3/3 the action compares it BEFORE the write, and the comparison IS the
+    // guard's condition.
+    //
+    // PINNED WITH NO GAP, because the first spelling of this asserted only
+    // that the call's TEXT appeared before the write — which a dead
+    // `if (false && recordedGroupsMoved(...))` satisfies perfectly. The
+    // negative control caught it. `read()` strips comment lines, so a
+    // zero-gap match is reliable here and a `{0,N}` gap is not.
+    const actions = read(SETUP_ACTIONS_SRC);
+    expect(
+      actions,
+      "3/3 the comparison is not the condition that refuses",
+    ).toMatch(
+      /if \(recordedGroupsMoved\(input\.expectedGroupKeys, seen\)\) \{\s*return \{ ok: false, code: "rejected", error: SETUP_GROUPS_MOVED \};\s*\}/,
+    );
+    const i = actions.indexOf("recordedGroupsMoved(input.expectedGroupKeys");
+    const j = actions.indexOf("const out = await recordSetupSubmission(db, {");
+    expect(
+      i,
+      "3/3 the comparison happens AFTER the write, which is no guard at all",
+    ).toBeLessThan(j);
+  });
+
+  it("and a FAILED read of the recorded groups refuses, rather than skipping the guard", () => {
+    // The direction that matters: treating an unreadable set as "no change"
+    // would disable the guard exactly when the database is unhappy, which is
+    // when a concurrent save is most likely to be in flight.
+    const actions = read(SETUP_ACTIONS_SRC);
+    const i = actions.indexOf("if (input.expectedGroupKeys) {");
+    expect(i, "the staleness block is gone").toBeGreaterThan(-1);
+    const block = actions.slice(i, actions.indexOf("const out = await recordSetupSubmission", i));
+    // ZERO GAP, for the same reason as above: a `{0,400}` window reached the
+    // NEXT refusal return eight lines down, so emptying this branch still
+    // matched. Comment lines are already stripped by `read()`.
+    expect(
+      block,
+      "an unreadable recorded set no longer refuses, so the guard is skipped exactly when it matters",
+    ).toMatch(
+      /if \(!current\.ok\) \{\s*return \{ ok: false, code: "rejected", error: SETUP_GROUPS_MOVED \};\s*\}/,
+    );
+  });
+
+  it("and the claim is OPTIONAL, so an older caller is not silently blocked", () => {
+    // The per-group action and other callers do not send the set. Absent must
+    // mean "no claim" and skip the check, not "nothing was recorded" — which
+    // would refuse every save those callers make.
+    const actions = read(SETUP_ACTIONS_SRC);
+    expect(actions).toMatch(/expectedGroupKeys\?: string\[\];/);
+    expect(actions).toMatch(/if \(input\.expectedGroupKeys\) \{/);
+  });
+
   it("a malformed CREATE success is unresolved, exactly like the read-back failure", () => {
     // THE DEFECT (Codex, #860 4305702528). `create_block_with_initial_setup`
     // returns no RPC error and no `block_id` — the stale-function or
