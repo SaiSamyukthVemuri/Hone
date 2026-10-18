@@ -48,6 +48,7 @@ const yaml = nodeRequire("js-yaml") as { load(src: string): unknown };
 
 type Step = {
   name?: string;
+  id?: string;
   run?: string;
   uses?: string;
   if?: string;
@@ -108,6 +109,29 @@ function survivesFailure(cond: string | undefined): boolean {
   if (!cond) return false;
   const c = cond.replace(/\s+/g, "");
   return c.includes("!cancelled()") || c.includes("always()");
+}
+
+/** The step ids a condition reads, e.g. `steps.db_chain.outcome`. */
+function referencedStepIds(cond: string | undefined): string[] {
+  if (!cond) return [];
+  return [...cond.matchAll(/steps\.([A-Za-z0-9_-]+)\./g)].map((m) => m[1]!);
+}
+
+/**
+ * A condition may require a PREREQUISITE to have succeeded — that is correct,
+ * and `check:db-types` needs it. What it must never require is the success of
+ * a TEST step, because that is the hiding this file exists to prevent, and
+ * `!cancelled() && steps.<the tests>.outcome == 'success'` would smuggle it
+ * back in while still containing `!cancelled()`.
+ */
+function gatesOnATestStep(job: Job, cond: string | undefined): boolean {
+  const ids = referencedStepIds(cond);
+  if (ids.length === 0) return false;
+  const steps = job.steps ?? [];
+  return ids.some((id) => {
+    const target = steps.find((s) => s.id === id);
+    return target ? isTestStep(target) : false;
+  });
 }
 
 /** Every post-test verification step, with whether it is guarded. */
@@ -238,6 +262,80 @@ describe("ci.yml: no verification step is hidden behind an earlier failure", () 
     const driftIdx = steps.findIndex((s) => (s.run ?? "").includes("npm run check:db-types"));
     expect(testIdx).toBeGreaterThanOrEqual(0);
     expect(driftIdx).toBeGreaterThan(testIdx);
+  });
+
+  it("no post-test check is gated on a TEST step's success", () => {
+    // The hole in `survivesFailure` on its own: a condition can contain
+    // `!cancelled()` and STILL be hidden behind the tests, by requiring the
+    // test step's own outcome. That would reintroduce the defect while passing
+    // the sweep above, so it is checked separately.
+    const offenders: string[] = [];
+    for (const [id, job] of jobs(CI_BODY)) {
+      const steps = job.steps ?? [];
+      const firstTest = steps.findIndex(isTestStep);
+      if (firstTest < 0) continue;
+      for (const s of steps.slice(firstTest + 1)) {
+        if (!isVerificationStep(s)) continue;
+        if (gatesOnATestStep(job, s.if)) offenders.push(`${id}: ${s.name}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("the drift check requires the migration chain to have applied", () => {
+    // Codex P2 4307392979. `scripts/check-db-types.mjs` declares its own
+    // prerequisite (`supabase db start && supabase db reset --local`), so
+    // running it against an absent or half-migrated database reports BOGUS
+    // drift — a misleading second failure on top of the real one.
+    const dbJob = jobs(CI_BODY).find(([id]) => id === "db-integration")?.[1];
+    const steps = dbJob?.steps ?? [];
+    const drift = steps.find((s) => (s.run ?? "").includes("npm run check:db-types"));
+    const ids = referencedStepIds(drift?.if);
+    expect(ids.length, "the drift check must name a prerequisite step").toBeGreaterThan(0);
+    // The referenced step must be the one that APPLIES THE CHAIN, and it must
+    // really exist — a typo'd id silently evaluates to an empty outcome and
+    // would skip the check forever.
+    const prereqs = ids.map((id) => steps.find((s) => s.id === id));
+    expect(prereqs.every(Boolean), `unknown step id in: ${drift?.if}`).toBe(true);
+    expect(
+      prereqs.some((s) => /db reset --local/.test(s?.run ?? "")),
+      "the gate must be the migration-chain step",
+    ).toBe(true);
+    // ...and that prerequisite must NOT itself be a verification or a test, or
+    // we are back to one check hiding another.
+    for (const s of prereqs) {
+      expect(isTestStep(s!)).toBe(false);
+      expect(isVerificationStep(s!)).toBe(false);
+    }
+  });
+
+  it("CONTROL: a bare !cancelled() on the drift check is NOT sufficient", () => {
+    // Proves the assertion above can fail: the previous revision of this
+    // change carried exactly this condition, and the reviewer was right that
+    // it runs the check against a database that may not exist.
+    const bare = [
+      "name: synthetic",
+      "on: push",
+      "jobs:",
+      "  db-integration:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - name: Apply full migration chain from scratch",
+      "        id: db_chain",
+      "        run: supabase db reset --local",
+      "      - name: DB/RLS integration tests",
+      "        run: npm run test:db",
+      "      - name: Generated types drift check",
+      "        if: ${{ !cancelled() }}",
+      "        run: npm run check:db-types",
+      "",
+    ].join("\n");
+    const steps = jobs(bare).find(([id]) => id === "db-integration")?.[1].steps ?? [];
+    const drift = steps.find((s) => (s.run ?? "").includes("check:db-types"));
+    // It survives a test failure...
+    expect(survivesFailure(drift?.if)).toBe(true);
+    // ...but names no prerequisite, which is the defect the finding named.
+    expect(referencedStepIds(drift?.if)).toEqual([]);
   });
 
   it("artifact, diagnostic and cleanup steps are left alone", () => {

@@ -338,6 +338,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
+        id: deps
         run: npm ci
 
       - name: Typecheck
@@ -372,7 +373,12 @@ jobs:
       - name: Whitespace + conflict-marker check
         # CI-HARDEN-POSTTEST: see the drift-check step's note. A verification
         # step must not be skipped behind an earlier failure.
-        if: ${{ !cancelled() }}
+        # AND ON A WORKING TOOLCHAIN (Codex P2 4307392979). `!cancelled()` alone
+        # would also run this when `npm ci` FAILED, producing a second,
+        # misleading failure about missing modules on top of the real one. The
+        # point is only that a TEST failure must not hide a check — not that a
+        # check should run on a machine that never installed.
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         # Catches stray trailing whitespace + leftover merge-conflict
         # markers. Matches the manual `git diff --check` step every
         # local PR is asked to run.
@@ -381,13 +387,23 @@ jobs:
       - name: Stripe / payment safety grep gates
         # CI-HARDEN-POSTTEST: see the drift-check step's note. A verification
         # step must not be skipped behind an earlier failure.
-        if: ${{ !cancelled() }}
+        # AND ON A WORKING TOOLCHAIN (Codex P2 4307392979). `!cancelled()` alone
+        # would also run this when `npm ci` FAILED, producing a second,
+        # misleading failure about missing modules on top of the real one. The
+        # point is only that a TEST failure must not hide a check — not that a
+        # check should run on a machine that never installed.
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: npm run check:stripe-gates
 
       - name: Migration extension-qualification check
         # CI-HARDEN-POSTTEST: see the drift-check step's note. A verification
         # step must not be skipped behind an earlier failure.
-        if: ${{ !cancelled() }}
+        # AND ON A WORKING TOOLCHAIN (Codex P2 4307392979). `!cancelled()` alone
+        # would also run this when `npm ci` FAILED, producing a second,
+        # misleading failure about missing modules on top of the real one. The
+        # point is only that a TEST failure must not hide a check — not that a
+        # check should run on a machine that never installed.
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         # Fresh-managed-project fence (RC hardening): every pgcrypto/uuid-ossp call
         # in supabase/migrations must be extensions.<fn>-qualified so the
         # 0001->NNNN chain applies on a FRESH managed project, where `extensions`
@@ -533,6 +549,7 @@ jobs:
         run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 
       - name: Apply full migration chain from scratch
+        id: db_chain
         # Fails the job if ANY migration 0001-current cannot apply to
         # an empty database, or if any policy/function/trigger SQL
         # fails to compile. This is itself a guarantee no static test
@@ -569,7 +586,24 @@ jobs:
         #
         # The job's overall result is unchanged: a failing step still fails the
         # job, this only stops a later check being skipped.
-        if: ${{ !cancelled() }}
+        #
+        # GATED ON THE RESET, NOT MERELY ON `!cancelled()` (Codex P2 4307392979).
+        # `scripts/check-db-types.mjs` states its own prerequisite — "supabase db
+        # start && supabase db reset --local" — so running it when the stack
+        # failed to start, or the chain failed to apply, generates BOGUS schema
+        # drift against an absent or half-migrated database: a misleading
+        # secondary failure stacked on the real one, which is the opposite of
+        # what this change is for.
+        #
+        # `steps.db_chain.outcome == 'success'` covers the whole prerequisite
+        # chain transitively: if `Start local Supabase` fails, the reset step is
+        # skipped, its outcome is 'skipped' rather than 'success', and this stays
+        # skipped too.
+        #
+        # It deliberately does NOT depend on `Fresh-managed extension proof` or
+        # on the tests. Those are VERIFICATIONS, and gating one verification on
+        # another is exactly the hiding this change removes.
+        if: ${{ !cancelled() && steps.db_chain.outcome == 'success' }}
         # PR #221. Regenerates types from the just-migrated LOCAL
         # database (supabase gen types typescript --local) and
         # compares column sets exactly, both directions, against the
