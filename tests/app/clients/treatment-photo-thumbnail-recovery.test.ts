@@ -156,15 +156,51 @@ describe("source contract: the grid recovers through GridPhoto", () => {
     expect(mgr).not.toMatch(/thumbFailed|setBroken/);
   });
 
-  it("the cell stays lazy, re-mints through the shared action, and checks for a pre-hydration failure", () => {
+  it("the cell stays lazy and drives the SHARED recovery hook with the shared re-mint action", () => {
     expect(cell).toMatch(/loading="lazy"/);
-    expect(cell).toMatch(/getTreatmentImageSignedUrlAction\(\{ imageId, variant \}\)/);
-    expect(cell).toMatch(/if \(el\.complete && el\.naturalWidth === 0\) \{\s*handleError\(\);\s*return;\s*\}/);
-    // The hydration-window race: a NATIVE error listener per src, removed on cleanup.
-    expect(cell).toMatch(/el\.addEventListener\("error", onNativeError\);/);
-    expect(cell).toMatch(/return \(\) => el\.removeEventListener\("error", onNativeError\);/);
-    expect(cell).toMatch(/\}, \[state\.src, handleError\]\);/);
-    // Transitions never run inside a state updater (no duplicate re-mint).
-    expect(cell).not.toMatch(/setState\(\(current\) =>/);
+    expect(cell).toMatch(/getTreatmentImageSignedUrlAction\(\{ imageId, variant \}\)\.then\(\(res\) => \(res\.ok \? res\.url : null\)\)/);
+    expect(cell).toMatch(/useGridPhotoRecovery\(\{ previewUrl, thumbUrl, remint \}\)/);
+    expect(cell).toMatch(/ref=\{imgRef\}/);
+    expect(cell).toMatch(/onError=\{onError\}/);
+  });
+});
+
+describe("source contract: the shared recovery hook (bounded pending + hydration window)", () => {
+  const hook = readFileSync("lib/images/use-grid-photo-recovery.ts", "utf8");
+
+  it("is a client module that never imports application code (the re-mint call is a parameter)", () => {
+    expect(hook).toMatch(/^"use client";/);
+    expect(hook).not.toMatch(/from "@\/app\//);
+    expect(hook).toMatch(/remint: \(variant: GridPhotoVariant\) => Promise<string \| null>;/);
+  });
+
+  it("every re-mint has a timer of GRID_PHOTO_REMINT_TIMEOUT_MS; a timeout AND a rejection take the failed path", () => {
+    expect(hook).toMatch(/setTimeout\(\(\) => \{\s*timers\.current\.delete\(timer\);\s*fail\(\);\s*\}, GRID_PHOTO_REMINT_TIMEOUT_MS\);/);
+    // rejection branch of .then(...) → clear the timer, then the same fail()
+    expect(hook).toMatch(/\(\) => \{\s*clearTimeout\(timer\);\s*timers\.current\.delete\(timer\);\s*fail\(\);\s*\}/);
+    expect(hook).toMatch(/onGridPhotoRemintFailed\(stateRef\.current, urls, req\.variant, req\.attempt\)/);
+    // a retry issued by the machine is sent
+    expect(hook).toMatch(/if \(next\.remint\) issueRemint\(next\.remint\);/);
+  });
+
+  it("timers are cleared on landing, when nothing is pending (variant change / give-up), and on unmount", () => {
+    // landing
+    expect(hook).toMatch(/\(url\) => \{\s*clearTimeout\(timer\);\s*timers\.current\.delete\(timer\);/);
+    // nothing pending any more
+    expect(hook).toMatch(/useEffect\(\(\) => \{\s*if \(!state\.pending\) clearTimers\(\);\s*\}, \[state\.pending, clearTimers\]\);/);
+    // unmount
+    expect(hook).toMatch(/return \(\) => \{\s*alive\.current = false;\s*clearTimers\(\);\s*\};/);
+  });
+
+  it("handles an image that already failed, else listens NATIVELY for a later failure, per src", () => {
+    expect(hook).toMatch(/if \(el\.complete && el\.naturalWidth === 0\) \{\s*handleError\(\);\s*return;\s*\}/);
+    expect(hook).toMatch(/el\.addEventListener\("error", onNativeError\);/);
+    expect(hook).toMatch(/return \(\) => el\.removeEventListener\("error", onNativeError\);/);
+    expect(hook).toMatch(/\}, \[state\.src, handleError\]\);/);
+  });
+
+  it("transitions never run inside a state updater (no duplicate re-mint)", () => {
+    expect(hook).not.toMatch(/setState\(\(current\) =>/);
+    expect(hook).toMatch(/stateRef\.current = next;\s*setState\(next\);/);
   });
 });
