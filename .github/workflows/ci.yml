@@ -370,15 +370,24 @@ jobs:
           CANONICAL_FRESHNESS: ${{ (github.event_name != 'pull_request' || needs.changes.outputs.production_record == 'true') && 'enforce' || 'measure' }}
 
       - name: Whitespace + conflict-marker check
+        # CI-HARDEN-POSTTEST: see the drift-check step's note. A verification
+        # step must not be skipped behind an earlier failure.
+        if: ${{ !cancelled() }}
         # Catches stray trailing whitespace + leftover merge-conflict
         # markers. Matches the manual `git diff --check` step every
         # local PR is asked to run.
         run: git diff --check HEAD
 
       - name: Stripe / payment safety grep gates
+        # CI-HARDEN-POSTTEST: see the drift-check step's note. A verification
+        # step must not be skipped behind an earlier failure.
+        if: ${{ !cancelled() }}
         run: npm run check:stripe-gates
 
       - name: Migration extension-qualification check
+        # CI-HARDEN-POSTTEST: see the drift-check step's note. A verification
+        # step must not be skipped behind an earlier failure.
+        if: ${{ !cancelled() }}
         # Fresh-managed-project fence (RC hardening): every pgcrypto/uuid-ossp call
         # in supabase/migrations must be extensions.<fn>-qualified so the
         # 0001->NNNN chain applies on a FRESH managed project, where `extensions`
@@ -543,6 +552,24 @@ jobs:
         run: npm run test:db
 
       - name: Generated types drift check
+        # CI-HARDEN-POSTTEST. Runs even when an EARLIER step failed, because a
+        # step with no `if:` inherits `success()` and is silently SKIPPED behind
+        # one. `check:db-types` sat unreachable behind `test:db` on the whole G1
+        # stack, where test:db fails on an inherited pending-suffix hole, so a
+        # REAL drift (0222's practitioners.last_public_assignment_at missing from
+        # the hand-rolled type) went unseen until a composed branch happened to
+        # make test:db pass. A verification step must not be hidden by the
+        # failure of the thing it verifies alongside.
+        #
+        # `!cancelled()` rather than `always()`: on a CANCELLED run (a shard cut
+        # at its hard timeout) `always()` would still run these and report their
+        # output as if the run had completed, and this repository has a long
+        # history of cancellations being misread as test failures. This runs on
+        # success and on failure, and stops at cancellation.
+        #
+        # The job's overall result is unchanged: a failing step still fails the
+        # job, this only stops a later check being skipped.
+        if: ${{ !cancelled() }}
         # PR #221. Regenerates types from the just-migrated LOCAL
         # database (supabase gen types typescript --local) and
         # compares column sets exactly, both directions, against the
