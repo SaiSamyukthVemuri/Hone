@@ -134,6 +134,46 @@ function gatesOnATestStep(job: Job, cond: string | undefined): boolean {
   });
 }
 
+/**
+ * THE MIRROR: every TEST step that runs after a VERIFICATION step, with
+ * whether it is guarded.
+ *
+ * The same defect in the other direction, and it costs more when it bites: a
+ * red `check:fresh-managed` used to skip the ENTIRE DB/RLS suite, and a lint
+ * failure used to skip the entire unit suite. One check's failure should not
+ * cost every test result in the lane.
+ */
+function postVerificationTestSteps(body: string): Array<{
+  job: string;
+  step: string;
+  guarded: boolean;
+}> {
+  const out: Array<{ job: string; step: string; guarded: boolean }> = [];
+  for (const [id, job] of jobs(body)) {
+    const steps = job.steps ?? [];
+    const firstVerification = steps.findIndex(isVerificationStep);
+    if (firstVerification < 0) continue;
+    for (const s of steps.slice(firstVerification + 1)) {
+      if (!isTestStep(s)) continue;
+      out.push({
+        job: id,
+        step: s.name ?? "(unnamed)",
+        guarded: survivesFailure(s.if),
+      });
+    }
+  }
+  return out;
+}
+
+/** Is this condition gated on some VERIFICATION step's success? */
+function gatesOnAVerificationStep(job: Job, cond: string | undefined): boolean {
+  const steps = job.steps ?? [];
+  return referencedStepIds(cond).some((id) => {
+    const target = steps.find((s) => s.id === id);
+    return target ? isVerificationStep(target) : false;
+  });
+}
+
 /** Every post-test verification step, with whether it is guarded. */
 function postTestVerificationSteps(body: string): Array<{
   job: string;
@@ -336,6 +376,77 @@ describe("ci.yml: no verification step is hidden behind an earlier failure", () 
     expect(survivesFailure(drift?.if)).toBe(true);
     // ...but names no prerequisite, which is the defect the finding named.
     expect(referencedStepIds(drift?.if)).toEqual([]);
+  });
+
+  it("MIRROR: no TEST is hidden behind a verification's failure", () => {
+    // `Fresh-managed extension proof` precedes the DB/RLS suite and `Lint`
+    // precedes the unit suite. Unguarded, a red check there cost every test
+    // result in that lane — a far bigger loss than the drift check this PR
+    // started from.
+    const found = postVerificationTestSteps(CI_BODY);
+    expect(found.length, "the mirror sweep must find the test steps it polices").toBeGreaterThanOrEqual(2);
+    expect(found.filter((s) => !s.guarded).map((s) => `${s.job}: ${s.step}`)).toEqual([]);
+  });
+
+  it("MIRROR: and no test is gated on a verification's success either", () => {
+    // Gating the tests on the check that precedes them would satisfy the
+    // sweep above while preserving the defect exactly.
+    const offenders: string[] = [];
+    for (const [id, job] of jobs(CI_BODY)) {
+      const steps = job.steps ?? [];
+      const firstVerification = steps.findIndex(isVerificationStep);
+      if (firstVerification < 0) continue;
+      for (const s of steps.slice(firstVerification + 1)) {
+        if (!isTestStep(s)) continue;
+        if (gatesOnAVerificationStep(job, s.if)) offenders.push(`${id}: ${s.name}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("CONTROL: an unguarded test after a verification IS detected", () => {
+    // The shape db-integration had before this change: a check, then the
+    // suite, with no condition — so the check's failure skipped the suite.
+    const synthetic = [
+      "name: synthetic",
+      "on: push",
+      "jobs:",
+      "  demo:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - name: Some proof",
+      "        run: npm run check:fresh-managed",
+      "      - name: DB tests",
+      "        run: npm run test:db",
+      "",
+    ].join("\n");
+    expect(postVerificationTestSteps(synthetic)).toEqual([
+      { job: "demo", step: "DB tests", guarded: false },
+    ]);
+  });
+
+  it("CONTROL: a test gated on the preceding CHECK is caught as an offender", () => {
+    // Distinct from the control above: this one DOES carry `!cancelled()`, so
+    // it passes the guarded sweep and must still be rejected.
+    const sneaky = [
+      "name: synthetic",
+      "on: push",
+      "jobs:",
+      "  demo:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - name: Some proof",
+      "        id: proof",
+      "        run: npm run check:fresh-managed",
+      "      - name: DB tests",
+      "        if: ${{ !cancelled() && steps.proof.outcome == 'success' }}",
+      "        run: npm run test:db",
+      "",
+    ].join("\n");
+    const job = jobs(sneaky).find(([id]) => id === "demo")![1];
+    const dbTests = (job.steps ?? []).find((s) => s.name === "DB tests");
+    expect(survivesFailure(dbTests?.if), "it looks guarded...").toBe(true);
+    expect(gatesOnAVerificationStep(job, dbTests?.if), "...but it is not").toBe(true);
   });
 
   it("artifact, diagnostic and cleanup steps are left alone", () => {

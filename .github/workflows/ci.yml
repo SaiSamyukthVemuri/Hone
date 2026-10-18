@@ -364,6 +364,11 @@ jobs:
           NODE_OPTIONS: --require ./scripts/block-google-fonts.cjs
 
       - name: Unit tests
+        # Same mirror rule. `Lint` runs above with no `if:`, so a lint failure
+        # used to skip the entire unit suite — and unit results do not depend
+        # on lint, typecheck or the build in any way (vitest runs from source).
+        # Gated on the toolchain only.
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: npm test
         env:
           # enforce: pushes to production and production-record changes;
@@ -566,6 +571,12 @@ jobs:
         run: npm run check:fresh-managed
 
       - name: DB/RLS integration tests
+        # THE MIRROR RULE: a VERIFICATION must not hide a TEST either.
+        # `Fresh-managed extension proof` runs just above with no `if:`, so a
+        # red extension proof used to SKIP this entire suite — one check
+        # costing every DB/RLS result in the lane. Gated on the migration chain
+        # (transitively: install, start, reset) and NOT on the proof above it.
+        if: ${{ !cancelled() && steps.db_chain.outcome == 'success' }}
         run: npm run test:db
 
       - name: Generated types drift check
