@@ -879,3 +879,152 @@ describe("recorded history keeps the machine's stages", () => {
     expect(html).not.toMatch(/recorded-source-[a-z]+-/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// MPX-03 · THE CHANGE SUMMARY NAMES THE COMPONENT, NOT JUST THE FIELD
+//
+// THE DEFECT (Codex, #860 4308488007). A staged mode repeats native labels
+// across its components - MultiPlex carries "Duration" and "Intensity" under
+// both "Slow thermolysis" and "Snap" - and the summary printed only the
+// FIELD's label. Two genuinely different adjustments therefore rendered as
+// two identical rows:
+//
+//     Duration 3 → 5
+//     Duration 40 → 55
+//
+// On the one surface whose job is to say what changed during the treatment,
+// that is a clinical record she cannot attribute. It also collided in the
+// testid, so a proof asking for one row silently got whichever came first.
+//
+// `changesWithin` was ALREADY RIGHT: stageKey is part of the series identity,
+// so the two stages were never paired. The pairing was correct and the
+// rendering threw the distinction away - which is why these cases assert the
+// RENDERED rows rather than the pairing.
+// ---------------------------------------------------------------------------
+describe("the change summary names which stage moved", () => {
+  const stagedChange = (
+    stageKey: string,
+    revision: number,
+    recordedAt: string,
+    value: number,
+  ): RecordedReading =>
+    ({
+      ...reading({ recordedAt, revision, captureId: `cap-${stageKey}-${revision}` }),
+      profileId: "fixture:staged",
+      profileVersion: 1,
+      modeKey: "galvanic",
+      stageKey,
+      fieldKey: "duration",
+      observationSource: null,
+      value: { kind: "value", value },
+    }) as RecordedReading;
+
+  const html = () =>
+    renderToStaticMarkup(
+      createElement(MachineRecordedSetups, {
+        catalogue: [STAGED],
+        readings: [
+          stagedChange("slow", 1, "2026-10-16T10:00:00Z", 3),
+          stagedChange("snap", 1, "2026-10-16T10:00:00Z", 40),
+          stagedChange("slow", 2, "2026-10-16T10:20:00Z", 5),
+          stagedChange("snap", 2, "2026-10-16T10:20:00Z", 55),
+        ],
+      }),
+    );
+
+  it("renders BOTH changes, with distinct ids", () => {
+    // Before the fix both were `recorded-change-g1-duration`.
+    const out = html();
+    expect(out).toContain('data-testid="recorded-change-g1-slow-duration"');
+    expect(out).toContain('data-testid="recorded-change-g1-snap-duration"');
+  });
+
+  it("and each row carries the machine's own name for its stage", () => {
+    const out = html();
+    const row = (id: string) => {
+      const from = out.indexOf(`data-testid="${id}"`);
+      expect(from, `${id} did not render`).toBeGreaterThan(-1);
+      return out.slice(from, out.indexOf("</li>", from));
+    };
+    expect(row("recorded-change-g1-slow-duration")).toMatch(/Slow thermolysis/);
+    expect(row("recorded-change-g1-snap-duration")).toMatch(/Snap/);
+  });
+
+  it("so the two rows are not byte-identical, which is the whole defect", () => {
+    // THE ASSERTION THAT WOULD HAVE CAUGHT IT. Distinct ids and present
+    // labels can both hold while the visible text of the two rows is the
+    // same; this compares what she actually reads.
+    const out = html();
+    const text = (id: string) => {
+      const from = out.indexOf(`data-testid="${id}"`);
+      return out
+        .slice(out.indexOf(">", from) + 1, out.indexOf("</li>", from))
+        .replace(/<[^>]*>/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    };
+    const a = text("recorded-change-g1-slow-duration");
+    const b = text("recorded-change-g1-snap-duration");
+    expect(a.length, "the row rendered empty, so this comparison is vacuous")
+      .toBeGreaterThan(5);
+    expect(
+      a,
+      "the two change rows read identically, so she cannot tell which component moved",
+    ).not.toBe(b);
+  });
+
+  it("falls back to the stage KEY when the version is historical", () => {
+    // A SUPERSEDED VERSION has no current labels to offer, and the earlier
+    // spelling would then have printed the field key alone for both rows -
+    // restoring the collision exactly where the record is oldest. The raw
+    // stage key is not pretty, but it distinguishes them.
+    //
+    // READ FROM THE ROW'S VISIBLE TEXT, not from the document. A negative
+    // control is why: asserting `/slow/` against the whole markup passed with
+    // the fallback REMOVED, because "slow" is in the testid, which comes from
+    // `change.stageKey` and not from the label. The assertion was satisfied
+    // by the one thing it was not testing.
+    const out = renderToStaticMarkup(
+      createElement(MachineRecordedSetups, {
+        catalogue: [STAGED],
+        readings: [
+          { ...stagedChange("slow", 1, "2026-10-16T10:00:00Z", 3), profileVersion: 0 } as RecordedReading,
+          { ...stagedChange("slow", 2, "2026-10-16T10:20:00Z", 5), profileVersion: 0 } as RecordedReading,
+          { ...stagedChange("snap", 1, "2026-10-16T10:00:00Z", 40), profileVersion: 0 } as RecordedReading,
+          { ...stagedChange("snap", 2, "2026-10-16T10:20:00Z", 55), profileVersion: 0 } as RecordedReading,
+        ],
+      }),
+    );
+    expect(out).toContain('data-testid="recorded-change-g1-slow-duration"');
+    expect(out).toContain('data-testid="recorded-change-g1-snap-duration"');
+    const rowText = (id: string) => {
+      const from = out.indexOf(`data-testid="${id}"`);
+      expect(from, `${id} did not render`).toBeGreaterThan(-1);
+      return out
+        .slice(out.indexOf(">", from) + 1, out.indexOf("</li>", from))
+        .replace(/<[^>]*>/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    };
+    expect(rowText("recorded-change-g1-slow-duration")).toMatch(/\bslow\b/);
+    expect(rowText("recorded-change-g1-snap-duration")).toMatch(/\bsnap\b/);
+  });
+
+  it("CONTROL: an UNSTAGED change keeps the id and shows no stage at all", () => {
+    // Every shipped profile is stageless, so this is the only path in
+    // production and it must be untouched - including the testid the browser
+    // proofs already depend on.
+    const out = renderToStaticMarkup(
+      createElement(MachineRecordedSetups, {
+        catalogue: CAT,
+        readings: [
+          reading({ captureId: "c1", revision: 1, recordedAt: "2026-10-14T14:00:00Z", value: 120 }),
+          reading({ captureId: "c2", revision: 2, recordedAt: "2026-10-14T14:30:00Z", value: 150 }),
+        ],
+      }),
+    );
+    expect(out).toContain('data-testid="recorded-change-g1-current"');
+    expect(out).not.toMatch(/recorded-change-g1-[a-z]+-current/);
+    expect(out).not.toContain('data-testid="recorded-change-stage"');
+  });
+});

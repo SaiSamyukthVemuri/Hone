@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import nodePath from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -129,49 +129,142 @@ describe("activeProfiles still means current AND active", () => {
   });
 });
 
-describe("and ALL THREE sites use it, so they cannot diverge again", () => {
+describe("and EVERY site uses it, so they cannot diverge again", () => {
   // WITHOUT THIS THE RESOLVER IS OPTIONAL. A negative control proved it: I
   // reverted ONE call site to its own `catalogue.find(...)` and every
   // behavioural test above still passed, because they exercise the resolver
   // rather than its callers. A shared helper that callers may ignore is not a
   // single definition - it is a fourth one waiting to be written.
+  //
+  // AND A HAND-WRITTEN LIST OF CALLERS IS THE SAME TRAP ONE LEVEL UP. The
+  // first spelling of this guard listed five files and swept only those, so
+  // the four SERVER-ACTION sites were invisible to it (Codex, #860
+  // 4308488012) - including the one that validates a clinical reading against
+  // a profile's field contract. The sweep below WALKS THE TREE instead: a new
+  // file cannot be absent from a list it is not part of.
   const read = (rel: string) =>
     readFileSync(nodePath.resolve(__dirname, "../../..", rel), "utf8");
 
+  /**
+   * The banned CODE FORM, matched against comment-stripped source.
+   *
+   * `(\w+)` with a back-reference, so renaming the parameter cannot bypass it:
+   * `(x) => x.profileId ===` is the same defect as `(p) => p.profileId ===`.
+   *
+   * AND WHITESPACE IS TOLERATED EVERYWHERE, which a negative control is the
+   * reason for. The first spelling demanded `.find((p) =>` with no gap, and
+   * all four real call sites are formatted across lines - so reverting one of
+   * them to the defect changed nothing and the limb reported NOT CAUGHT. A
+   * guard written to one formatting is a guard against nothing.
+   *
+   * COMMENTS ARE STRIPPED FIRST, and LINE comments before BLOCK comments -
+   * `profile-contract.ts` quotes the banned form verbatim in the docblock that
+   * explains it, and several call sites name it in prose. A guard that reads
+   * raw text is satisfied, or tripped, by an explanation.
+   */
+  const FIRST_MATCH =
+    /\.find\(\s*\((\w+)\)\s*=>\s*\1\.profileId\s*===\s*([^)]*?)\s*,?\s*\)/g;
+
+  const stripComments = (src: string) =>
+    src.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+
+  /**
+   * Every first-match profile lookup in a file that is NOT pinned to a version.
+   *
+   * AN EXACT-VERSION LOOKUP IS NOT THIS DEFECT. `catalogue.ts` resolves one
+   * published contract with `p.profileId === id && p.version === version`,
+   * which names exactly one entry and is the right thing to do. The exemption
+   * reads the PREDICATE the regex captured rather than a window of nearby
+   * text, because a proximity window exempts by accident - which is how three
+   * earlier guards in this lane came to pass over the thing they banned.
+   */
+  const offenders = (src: string): string[] => {
+    const out: string[] = [];
+    for (const m of stripComments(src).matchAll(FIRST_MATCH)) {
+      if (!/\.version === /.test(m[2]!)) out.push(m[0]!);
+    }
+    return out;
+  };
+
+  /** Every .ts/.tsx under the application tree. */
+  const walk = (rel: string): string[] => {
+    const abs = nodePath.resolve(__dirname, "../../..", rel);
+    const out: string[] = [];
+    for (const e of readdirSync(abs, { withFileTypes: true })) {
+      if (e.name === "node_modules" || e.name.startsWith(".")) continue;
+      const next = `${rel}/${e.name}`;
+      if (e.isDirectory()) out.push(...walk(next));
+      else if (/\.tsx?$/.test(e.name)) out.push(next);
+    }
+    return out;
+  };
+
+  /** The callers that must resolve through it, named so a deletion is visible. */
   const SITES = [
     "components/machines/machine-recorded-setups.tsx",
     "components/machines/machine-prior-setup.tsx",
+    // THE SERVER ACTIONS, which the first version of this guard never saw.
+    "app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts",
+    "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts",
   ];
 
   it("each resolves through currentProfile", () => {
     for (const rel of SITES) {
       expect(read(rel), `${rel} does not use the resolver`).toMatch(
-        /currentProfile\(catalogue, /,
+        /currentProfile\(/,
       );
     }
   });
 
   it("and none of them resolves a profile by its own find", () => {
-    // THE CODE FORM, not the word: these files legitimately use `.find` for
-    // other things, and the comments discuss the defect by name. What is
-    // banned is resolving a PROFILE ID this way.
     for (const rel of SITES) {
       expect(
-        read(rel),
+        offenders(read(rel)),
         `${rel} resolves a profile with its own find, which takes the FIRST match`,
-      ).not.toMatch(/\.find\(\(p\) => p\.profileId ===/);
+      ).toEqual([]);
     }
   });
 
-  it("and the three call sites are the only ones, so this list is complete", () => {
-    // A FOURTH SITE shows up here as an unpinned file rather than as a
-    // mislabelled reading in production.
-    const sweep = [
-      ...SITES,
-      "components/machines/machine-first-setup-panel.tsx",
-      "components/machines/machine-reading-entry.tsx",
-      "lib/machines/charting.ts",
-    ].filter((rel) => /\.find\(\(p\) => p\.profileId ===/.test(read(rel)));
-    expect(sweep, "a surface resolves a profile id by its own find").toEqual([]);
+  it("and NOTHING in app, lib or components does, which is what makes the list complete", () => {
+    // A FIFTH SITE shows up here as a named file rather than as a mislabelled
+    // reading - or a reading validated against the wrong contract - in
+    // production.
+    const found: string[] = [];
+    for (const rel of [...walk("app"), ...walk("lib"), ...walk("components")]) {
+      if (offenders(read(rel)).length > 0) found.push(rel);
+    }
+    expect(found, "a surface resolves a profile id by its own find").toEqual([]);
+  });
+
+  it("and the sweep can still SEE the banned form, so an empty result means absence", () => {
+    // THE VACUITY CHECK. A sweep that strips comments, walks a tree and
+    // exempts version-pinned lookups has four ways to find nothing by
+    // accident. This proves it finds the real thing when it is there, and
+    // keeps exempting the one lookup that is legitimate.
+    expect(
+      offenders("const x = list.find((q) => q.profileId === wanted);"),
+      "the sweep no longer recognises the defect it exists to ban",
+    ).toHaveLength(1);
+    expect(
+      // THE SPELLING THAT ACTUALLY GOT THROUGH, kept as a case of its own.
+      offenders(
+        "const x = cat().find(\n  (p) => p.profileId === input.profileId,\n);",
+      ),
+      "the sweep misses the multi-line form, which is how all four sites are written",
+    ).toHaveLength(1);
+    expect(
+      offenders(
+        "const x = list.find((p) => p.profileId === id && p.version === v);",
+      ),
+      "the sweep now flags an exact-version lookup, which is not this defect",
+    ).toEqual([]);
+    expect(
+      offenders("// const x = list.find((p) => p.profileId === id);"),
+      "the sweep reads commented-out code as live",
+    ).toEqual([]);
+    expect(
+      walk("lib").length,
+      "the tree walk returned nothing, so the sweep above was vacuous",
+    ).toBeGreaterThan(50);
   });
 });

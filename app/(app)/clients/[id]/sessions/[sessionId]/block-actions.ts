@@ -15,6 +15,7 @@ import { INITIAL_SAVE_UNRESOLVED } from "@/lib/machines/pending-setup";
 import { isDefinitiveDatabaseAnswer } from "@/lib/machines/save-attempt";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
+import { currentProfile } from "@/lib/machines/profile-contract";
 import { listStudioDevices } from "@/lib/machines/studio-devices";
 import type {
   MachineDb,
@@ -1387,9 +1388,12 @@ export async function createTreatmentAreaWithEntryAction(
         error: "That machine is not registered to this studio.",
       };
     }
-    const profile = catalogueForRuntime().find(
-      (p) => p.profileId === device.profileId,
-    );
+    // THE CURRENT VERSION (Codex, #860 4308488012), and here it decides
+    // whether a CLINICAL VALUE is accepted: `validateSubmittedReadings` below
+    // checks each reading against this profile's field contract, so a
+    // first-match v1 validates her readings by the wrong version's rules -
+    // refusing a legal value, or admitting one the current contract bounds.
+    const profile = currentProfile(catalogueForRuntime(), device.profileId);
     if (!profile) {
       return { ok: false, error: "That machine does not offer that mode." };
     }

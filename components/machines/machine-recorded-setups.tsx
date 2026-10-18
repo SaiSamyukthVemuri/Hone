@@ -173,18 +173,58 @@ function ChangeLine({
     for (const { field, stageKey } of modeFields(mode)) {
       if (
         field.key === change.to.fieldKey &&
-        (stageKey ?? null) === (change.to.stageKey ?? null)
+        (stageKey ?? null) === change.stageKey
       ) {
         label = field.nativeLabel;
       }
     }
   }
+
+  // AND THE COMPONENT IS NAMED, because the field's label does not identify
+  // it (Codex, #860 4308488007).
+  //
+  // THE DEFECT. A staged mode repeats native labels across its components -
+  // MultiPlex carries "Duration" and "Intensity" under both "Slow
+  // thermolysis" and "Snap" - so two genuinely different adjustments rendered
+  // as two identical rows, "Duration 120 → 130" and "Duration 9 → 10", on the
+  // one surface whose job is to say what changed during the treatment.
+  //
+  // THE CAPTURE HISTORY ABOVE ALREADY DOES THIS by grouping under each
+  // stage's own native label. This list is flat, so it carries the stage
+  // inline instead; same fact, shape that fits the surface.
+  //
+  // THE KEY IS THE FALLBACK, not a blank: on a historical version or an
+  // unknown stage the machine's word for it is unavailable, and the raw key
+  // still distinguishes the two rows - which is the whole point - where
+  // omitting it would silently restore the collision.
+  const stage =
+    change.stageKey === null
+      ? null
+      : ((mode && !historical
+          ? mode.stages.find((s) => s.key === change.stageKey)?.nativeLabel
+          : undefined) ?? change.stageKey);
   const at = clockTime(change.to.recordedAt);
   return (
     <li
       className="text-sm text-neutral-700 dark:text-neutral-300"
-      data-testid={`recorded-change-${change.groupKey}-${change.fieldKey}`}
+      /*
+        THE STAGE IS IN THE TESTID, because the collision was there too: two
+        stages reusing one field key produced the SAME id, so a test could not
+        address them apart and `getByTestId` matched two nodes. An unstaged
+        mode keeps the id it had.
+      */
+      data-testid={
+        change.stageKey === null
+          ? `recorded-change-${change.groupKey}-${change.fieldKey}`
+          : `recorded-change-${change.groupKey}-${change.stageKey}-${change.fieldKey}`
+      }
     >
+      {stage && (
+        <span className="text-neutral-500" data-testid="recorded-change-stage">
+          {stage}
+        </span>
+      )}
+      {stage && <span className="mx-1 text-neutral-400">·</span>}
       <span className="text-neutral-500">{label}</span>{" "}
       <span className="font-medium">{formatValue(change.from)}</span>
       {/*
@@ -392,7 +432,10 @@ export function MachineRecordedSetups({
           <ul className="flex flex-col gap-0.5">
             {changes.map((c) => (
               <ChangeLine
-                key={`${c.groupKey}:${c.fieldKey}:${c.to.recordedAt}`}
+                // THE STAGE IS IN THE REACT KEY TOO: two stages' changes
+                // can share a transaction-start `recordedAt`, and without it
+                // React saw one key twice.
+                key={`${c.groupKey}:${c.stageKey ?? ""}:${c.fieldKey}:${c.to.recordedAt}`}
                 change={c}
                 catalogue={catalogue}
               />

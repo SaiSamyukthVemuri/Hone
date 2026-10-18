@@ -166,6 +166,16 @@ export function chronology(
 export type SettingChange = {
   groupKey: string;
   fieldKey: string;
+  /**
+   * THE COMPONENT THIS SETTING BELONGS TO, or null on an unstaged mode.
+   *
+   * ON THE CHANGE ITSELF, not left to be read off `to` (Codex, #860
+   * 4308488007). It is already part of the series identity below - two stages
+   * reusing one field key are never paired - so every reading in a change
+   * shares it. Carrying it here is what lets a consumer NAME the component
+   * without reaching into one side of the pair and risking the other.
+   */
+  stageKey: string | null;
   from: RecordedReading;
   to: RecordedReading;
 };
@@ -271,7 +281,13 @@ export function changesWithin(
       const from = ordered[i - 1]!;
       const to = ordered[i]!;
       if (sameValue(from, to)) continue;
-      out.push({ groupKey: to.groupKey, fieldKey: to.fieldKey, from, to });
+      out.push({
+        groupKey: to.groupKey,
+        fieldKey: to.fieldKey,
+        stageKey: to.stageKey ?? null,
+        from,
+        to,
+      });
     }
   }
   // Oldest change first, matching the chronology it was derived from.
@@ -286,6 +302,12 @@ export function changesWithin(
       a.to.recordedAt.localeCompare(b.to.recordedAt) ||
       a.to.revision - b.to.revision ||
       a.groupKey.localeCompare(b.groupKey) ||
+      // THE STAGE BEFORE THE FIELD, so the order is TOTAL (Codex, #860
+      // 4308488007). Two stages that reuse a field key produce two changes
+      // agreeing on every key above this one, and without it their order was
+      // whatever the series map happened to yield - an unstable summary on
+      // exactly the staged profiles the label fix is for.
+      (a.stageKey ?? "").localeCompare(b.stageKey ?? "") ||
       a.fieldKey.localeCompare(b.fieldKey),
   );
   return out;
