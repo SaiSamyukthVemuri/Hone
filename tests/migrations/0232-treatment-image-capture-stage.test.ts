@@ -56,9 +56,29 @@ describe("0232's transaction and shape", () => {
     expect(TOP_LEVEL).not.toMatch(/\bcreate table\b/i);
   });
 
-  it("adds NO trigger anywhere, and leaves the pinned 0168 commands alone", () => {
-    // treatment_images' trigger set is pinned by the 0093/0168/0169 guards.
-    expect(TOP_LEVEL).not.toMatch(/\bcreate (or replace )?trigger\b/i);
+  it("adds exactly ONE trigger, and leaves the pinned 0168 commands alone", () => {
+    // treatment_images' trigger set is pinned by the 0093/0168/0169 guards;
+    // tests/db/treatment-image-write-commands.db.test.ts names this one.
+    // Codex 4308037526: a photo that loses its visit (0092's ON DELETE SET
+    // NULL) loses its label. It REPAIRS, never refuses, so a session delete
+    // can never be blocked; and it is no CHECK, which would make the cascade
+    // throw.
+    const triggers = TOP_LEVEL.match(/\bcreate (or replace )?trigger\b/gi) ?? [];
+    expect(triggers).toHaveLength(1);
+    expect(TOP_LEVEL).toMatch(
+      /create trigger treatment_images_clear_stage_without_session\s+before update on public\.treatment_images\s+for each row\s+when \(new\.session_id is null and new\.capture_stage is not null\)\s+execute function public\.treatment_images_clear_stage_without_session\(\);/,
+    );
+    const fn = sql.slice(sql.indexOf("create or replace function public.treatment_images_clear_stage_without_session()"));
+    expect(fn.slice(0, fn.indexOf("$$;") + 3)).toMatch(/begin\s+new\.capture_stage := null;\s+return new;\s+end;/);
+    expect(fn.slice(0, fn.indexOf("$$;"))).not.toMatch(/raise/i);
+    for (const role of ["public", "anon", "authenticated", "service_role"]) {
+      expect(TOP_LEVEL).toMatch(
+        new RegExp(`revoke execute on function public\\.treatment_images_clear_stage_without_session\\(\\) from ${role};`),
+      );
+    }
+    expect(TOP_LEVEL).not.toMatch(/grant execute on function public\.treatment_images_clear_stage_without_session/);
+    // No table CHECK ties the label to a session.
+    expect(TOP_LEVEL).not.toMatch(/check \([^)]*session_id/i);
     for (const pinned of [
       "create_treatment_image_metadata",
       "set_treatment_image_note",

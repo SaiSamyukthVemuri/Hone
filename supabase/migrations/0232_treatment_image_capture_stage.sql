@@ -12,6 +12,13 @@
 --   * Only a photo linked to a VISIT (session_id not null) can carry a stage.
 --     Enforced in the command, not as a table CHECK, so sessions.id's
 --     ON DELETE SET NULL can never make a cascade throw.
+--   * ...and KEPT true when the visit goes away (Codex 4308037526). Hard
+--     deleting a session runs 0092's ON DELETE SET NULL on session_id, which
+--     would leave a 'before'/'after' label on a photo that is now
+--     client-scoped. One BEFORE UPDATE trigger clears the label whenever a row
+--     ends up with no session. It REPAIRS the row instead of refusing it, so
+--     the FK cascade (an UPDATE) still succeeds and a session delete is never
+--     blocked; a CHECK here would make that cascade fail.
 --   * The label is set by its own command rather than a tenth argument on
 --     create_treatment_image_metadata: an overload or a signature change would
 --     break the frozen 0168 pins (privilege/definer matrices and every caller
@@ -21,8 +28,8 @@
 --     an ACTIVE practitioner of that studio. A receptionist, a deactivated
 --     practitioner or another studio gets NULL, exactly like
 --     set_treatment_image_note (non-disclosing).
---   * Deliberately NO trigger on treatment_images: its trigger set is pinned
---     by the 0093/0168 and 0169 guards.
+--   * That is the ONE trigger this adds to treatment_images, whose trigger set
+--     is pinned by the 0093/0168 and 0169 guards; those pins name it.
 --   * A photo on a LEGACY finalized or void session (0159 retired the signed
 --     record system; the one surviving artifact stays immutable) gets NULL
 --     before any write. Neither the retired snapshot builder nor the retired
@@ -113,6 +120,32 @@ begin
   return v_id;
 end;
 $$;
+
+-- ---------------------------------------------------------------------------
+-- A photo that loses its visit loses its before/after label (Codex 4308037526).
+-- ---------------------------------------------------------------------------
+create or replace function public.treatment_images_clear_stage_without_session()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  new.capture_stage := null;
+  return new;
+end;
+$$;
+
+revoke execute on function public.treatment_images_clear_stage_without_session() from public;
+revoke execute on function public.treatment_images_clear_stage_without_session() from anon;
+revoke execute on function public.treatment_images_clear_stage_without_session() from authenticated;
+revoke execute on function public.treatment_images_clear_stage_without_session() from service_role;
+
+drop trigger if exists treatment_images_clear_stage_without_session on public.treatment_images;
+create trigger treatment_images_clear_stage_without_session
+  before update on public.treatment_images
+  for each row
+  when (new.session_id is null and new.capture_stage is not null)
+  execute function public.treatment_images_clear_stage_without_session();
 
 revoke execute on function public.set_treatment_image_capture_stage(uuid, uuid, text) from public;
 revoke execute on function public.set_treatment_image_capture_stage(uuid, uuid, text) from anon;
