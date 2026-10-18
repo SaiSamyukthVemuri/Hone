@@ -675,6 +675,7 @@ export async function recordReadingsAction(input: {
     profile,
     input.modeKey,
     input.readings,
+    input.channels,
   );
   if ("error" in checkedRows) {
     return { ok: false, code: "rejected", error: checkedRows.error };
@@ -868,6 +869,7 @@ export async function recordSetupSubmissionAction(input: {
       profile,
       input.modeKey,
       g.readings,
+      g.channels,
     );
     if ("error" in checked) {
       return { ok: false, code: "rejected", error: checked.error };

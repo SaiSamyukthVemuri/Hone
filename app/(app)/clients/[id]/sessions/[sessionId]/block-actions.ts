@@ -1414,6 +1414,7 @@ export async function createTreatmentAreaWithEntryAction(
         profile,
         setup.modeKey,
         g.readings,
+        g.channels,
       );
       if ("error" in checked) return { ok: false, error: checked.error };
       setupGroups.push({

@@ -74,30 +74,62 @@ export function validateSubmittedReadings(
   profile: MachineProfile,
   modeKey: string,
   readings: readonly ReadingSubmission[],
+  /**
+   * The channels THE GROUP named, which may be empty.
+   *
+   * REQUIRED, not defaulted (Codex, #860 4309004312). Without it every
+   * reading reached `validateReading` with no channel, so a contract
+   * declaring `associationRequired: true` refused even a group that HAD named
+   * one - and the channel-range checks never ran on this path at all. A
+   * defaulted `[]` would have let any of the three callers silently keep that,
+   * which is the same trap the required `inFlight` on `canEditDraft` exists
+   * for.
+   */
+  channels: readonly number[],
 ): { rows: ReadingInputRow[] } | { error: string } {
   const rows: ReadingInputRow[] = [];
   for (const r of readings) {
     if (!OBSERVATION_SOURCES.includes(r.observationSource)) {
       return { error: "That is not a recognised way of observing a reading." };
     }
-    const checked = validateReading(
-      {
-        profileId: profile.profileId,
-        // The DEVICE's registered version, so a stale registration is refused
-        // here rather than silently captured under today's contract.
-        version: device.profileVersion,
-        modeKey,
-        stageKey: r.stageKey,
-        fieldKey: r.fieldKey,
-        value: r.value,
-        source: r.observationSource,
-      },
-      {
-        installedOptions: device.installedOptions,
-        catalogue: catalogueForRuntime(),
-      },
-    );
+    const reading = (channel: number | null) => ({
+      profileId: profile.profileId,
+      // The DEVICE's registered version, so a stale registration is refused
+      // here rather than silently captured under today's contract.
+      version: device.profileVersion,
+      modeKey,
+      stageKey: r.stageKey,
+      fieldKey: r.fieldKey,
+      value: r.value,
+      source: r.observationSource,
+      ...(channel === null ? {} : { channel }),
+    });
+    const options = {
+      installedOptions: device.installedOptions,
+      catalogue: catalogueForRuntime(),
+    };
+    // EVERY CHANNEL THE GROUP NAMED, and a single UNASSOCIATED pass when it
+    // named none - which is what lets `channel_required` fire where the
+    // contract requires an association and stay silent where it does not.
+    //
+    // NO SENTINEL ARRAY. The first spelling built `[null]` for the empty case
+    // and then indexed it with a non-null assertion; a negative control that
+    // emptied that array turned out to be a NO-OP, because the resulting
+    // `channel: undefined` reads as absent to the validator exactly as `null`
+    // does. So the mutation could not be caught - not because a test was
+    // missing, but because the shape made two different intents
+    // indistinguishable. This says the thing directly instead.
+    const first: number | null = channels.length > 0 ? channels[0]! : null;
+    const checked = validateReading(reading(first), options);
     if (!checked.ok) return { error: checked.message };
+    // THE REST ARE CHECKED FOR THEMSELVES, not for their field: the resolved
+    // field is the same whichever channel is named, but an out-of-range or
+    // malformed channel further down the list must still be refused rather
+    // than stored.
+    for (const channel of channels.slice(1)) {
+      const also = validateReading(reading(channel), options);
+      if (!also.ok) return { error: also.message };
+    }
     rows.push({
       stageKey: r.stageKey,
       fieldKey: r.fieldKey,
