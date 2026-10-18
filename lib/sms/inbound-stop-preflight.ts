@@ -155,9 +155,13 @@ export function retriesRecoverDelivery(url: string | null | undefined, staticPro
  *             and so is any edge list of fewer than two (no alternate
  *             origin). An OMITTED `e` is Twilio's documented single default
  *             edge, `ashburn` (Codex P2 4266813200): one edge, so UNSAFE;
- *   "matched" the Setting decides edges (webhook_zones judges them), so `e=`
- *             is ignored; Settings have no SNI field, so whether a URL
- *             `sni=n` still applies is undocumented: UNKNOWN (handoff A8);
+ *   "matched" a matching CUSTOMER Setting REPLACES the URL's overrides
+ *             outright and ignores every fragment key (Twilio Webhooks
+ *             configuration FAQ; Codex P2 4305212622): edges are the
+ *             Setting's (webhook_zones judges them) and `sni=n` no longer
+ *             applies, so neither counts against it. A SYSTEM Setting keeps
+ *             applying the URL's overrides and is judged as "none" instead
+ *             (Codex P2 4305024182);
  *   "unknown" the Rules are unread, so `sni=n` or a one-edge `e=` is UNKNOWN.
  * An unparseable URL or fragment is unsafe. An omitted sni is Twilio's
  * default (SNI on) and fine.
@@ -180,7 +184,7 @@ function urlTransport(url: string | null | undefined, rules: "none" | "matched" 
   if (!n.ok) return "unsafe";
   const o = n.overrides ?? {};
   const bad: Transport = rules === "none" ? "unsafe" : "unknown";
-  const sni: Transport = o.sni === "n" ? (rules === "none" ? "unsafe" : "unknown") : "ok";
+  const sni: Transport = o.sni === "n" ? (rules === "none" ? "unsafe" : rules === "matched" ? "ok" : "unknown") : "ok";
   // Edges: under a matching Rule the Setting's edgeZones govern. Otherwise an
   // omitted e is the single default edge (ashburn), and an edge list counts
   // only once Static Proxy is known to be off. Twilio moves to the next edge
