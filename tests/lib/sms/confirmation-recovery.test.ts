@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { provenSnapshot, withProvenSenderEnv } from "./helpers/proven-sender";
+import { TEST_WEBHOOK_BASE, provenSnapshot, withProvenSenderEnv } from "./helpers/proven-sender";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   CONFIRMATION_RECOVERY_ENV,
@@ -9,6 +9,8 @@ import {
   isOwedConfirmation,
   recoverOwedConfirmations,
   type OwedConfirmationRow,
+  recoveryFirstStudioIndex,
+  RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN,
 } from "@/lib/sms/confirmation-recovery";
 import { STUDIO_ROUTING_ENV, type SendTimeRouteRead } from "@/lib/sms/send-time-route";
 import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
@@ -678,7 +680,7 @@ describe("FAIRNESS: rows that keep refusing never starve the rest", () => {
         : readySnap(B2, "sender-b2");
     process.env[STUDIO_ROUTING_ENV] = `${A},${B2}`;
     const r = await run({ [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: `${A},${B2}` }, 50);
-    // Codex P2 4305191997: the studio-wide refusal ENDS A's visit, so A's
+    // A studio-wide refusal ENDS A's visit (Codex P2 4305191997, 4305390797), so A's
     // backlog is neither skipped row by row nor paged through.
     expect(r).toMatchObject({ ran: true, sent: 1, skipped: { sms_route_no_active_sender: 1 } });
     expect(db.find((x) => x.id === "b-1")!.sms_confirmation_sent_at).not.toBeNull();
@@ -1142,6 +1144,148 @@ describe("the first studio rotates per 15-minute slot", () => {
     }
     const reached = new Set(db.filter((x) => x.sms_confirmation_sent_at).map((x) => x.studio_id));
     expect(reached.size).toBe(149);
+  });
+});
+
+// Codex P2 4305313120: a stride sharing a factor with the studio count only
+// ever started at a few indices (100 studios, stride 50: indices 0 and 50), so
+// studios behind a time-budget-exhausting start were never examined.
+// General's P3: recovery took opts.env for the switch and the routing list,
+// but the per-row send read process.env, so an injected env could select a
+// row as studio-routed and then send it on the PLATFORM route.
+// Codex P2 4305390797: a rotation can only promise every studio a START
+// within the 24-hour lifetime if refusals cannot eat the run. With a
+// studio-wide refusal ending the visit, one run reaches every studio.
+describe("refused studios cannot consume the run: every studio is reached in ONE run", () => {
+  it("100 routed studios, 99 with no usable sender: one run reads every studio once, and the last one sends", async () => {
+    const ids = Array.from({ length: 100 }, (_, i) => `studio-w${String(i).padStart(3, "0")}`);
+    const list = ids.join(",");
+    process.env[STUDIO_ROUTING_ENV] = list;
+    const ready = ids[99];
+    snapshot = (studioId) => (studioId === ready ? readySnap(ready, "sender-ready") : { data: { senders: [], registrations: [] }, error: null });
+    // Every refused studio has a three-page backlog; the ready one has one row.
+    db = [
+      ...ids.slice(0, 99).flatMap((sid) =>
+        Array.from({ length: 3 }, (_, k) => appt({ id: `${sid}-${k}`, studio_id: sid, created_at: iso(NOW - HOUR - k * 60_000), starts_at: iso(NOW + 48 * HOUR) })),
+      ),
+      appt({ id: "ready-1", studio_id: ready, created_at: iso(NOW - HOUR), starts_at: iso(NOW + 48 * HOUR) }),
+    ];
+    const r = await recoverOwedConfirmations({
+      admin: admin(),
+      nowMs: NOW,
+      env: { [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: list },
+      clock: () => NOW,
+      pageSize: 1,
+      manageUrlFor: () => "https://app.example/manage/x",
+    });
+    expect(r).toMatchObject({ ran: true, sent: 1, skipped: { sms_route_no_active_sender: 99 } });
+    // Each refused studio reads ONE page and stops (not three). The ready
+    // studio reads two: its one-row page is full at pageSize 1, so the empty
+    // next page confirms the end. 99 + 2 = 101.
+    expect(events.filter((e) => e === "select_owed")).toHaveLength(101);
+    expect(db.find((x) => x.id === "ready-1")!.sms_confirmation_sent_at).not.toBeNull();
+  });
+});
+
+describe("the injected env's routing list governs the per-row send", () => {
+  it("process.env lists NO studio, the injected env lists A: the row is still sent on A's own route", async () => {
+    delete process.env[STUDIO_ROUTING_ENV];
+    db = [appt()];
+    snapshot = readyStudioA();
+    const r = await run(ENABLED);
+    expect(r).toMatchObject({ sent: 1 });
+    expect(providerBodies[0].get("From")).toBe(READY_NUMBER);
+    expect(providerBodies[0].get("MessagingServiceSid")).toBe(MSID_A);
+  });
+
+  it("process.env lists A, the injected env lists only another studio: A is not selected, nothing is sent", async () => {
+    process.env[STUDIO_ROUTING_ENV] = A;
+    db = [appt()];
+    snapshot = readyStudioA();
+    const r = await run({ [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: "studio-elsewhere" });
+    expect(r).toMatchObject({ sent: 0 });
+    expect(providerCalls()).toBe(0);
+  });
+
+  it("an injected routing list overrides process.env's: process.env lists another studio, the injected env lists A, A is sent on its own route", async () => {
+    process.env[STUDIO_ROUTING_ENV] = "studio-elsewhere";
+    db = [appt()];
+    snapshot = readyStudioA();
+    expect(await run(ENABLED)).toMatchObject({ sent: 1 });
+    expect(providerBodies[0].get("MessagingServiceSid")).toBe(MSID_A);
+  });
+
+  // The overlay (ops01, option a): injected keys override, the rest fall back
+  // to process.env, so the G6 webhook-base comparison sees the deployment's base.
+  it("an injected env WITHOUT a webhook base uses process.env's base for the G6 comparison", async () => {
+    process.env.TWILIO_WEBHOOK_BASE_URL = TEST_WEBHOOK_BASE;
+    db = [appt()];
+    snapshot = readyStudioA();
+    expect(ENABLED).not.toHaveProperty("TWILIO_WEBHOOK_BASE_URL");
+    expect(await run(ENABLED)).toMatchObject({ sent: 1 });
+  });
+
+  it("proof it IS process.env's base: with process.env's base moved, the same run refuses on the STOP preflight", async () => {
+    process.env.TWILIO_WEBHOOK_BASE_URL = "https://moved.example";
+    db = [appt()];
+    snapshot = readyStudioA();
+    expect(await run(ENABLED)).toMatchObject({ sent: 0, skipped: { sms_route_stop_preflight_base_changed: 1 } });
+    expect(providerCalls()).toBe(0);
+  });
+
+  it("an injected webhook base overrides process.env's", async () => {
+    process.env.TWILIO_WEBHOOK_BASE_URL = TEST_WEBHOOK_BASE;
+    db = [appt()];
+    snapshot = readyStudioA();
+    expect(await run({ ...ENABLED, TWILIO_WEBHOOK_BASE_URL: "https://moved.example" })).toMatchObject({
+      sent: 0,
+      skipped: { sms_route_stop_preflight_base_changed: 1 },
+    });
+  });
+});
+
+describe("the rotation reaches EVERY studio as a starting point", () => {
+  const capacityFor = (n: number) => {
+    const per = Math.max(1, Math.floor(RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN / n));
+    return Math.floor(RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN / per);
+  };
+
+  it("for every studio count 1..300, `count` consecutive slots start at every index exactly once", () => {
+    for (let n = 1; n <= 300; n += 1) {
+      const starts = new Set(Array.from({ length: n }, (_, slot) => recoveryFirstStudioIndex(slot, n, capacityFor(n))));
+      expect(starts.size, `n=${n}`).toBe(n);
+    }
+  });
+
+  it("the reported case: 100 studios, capacity 50, no longer alternates between 0 and 50", () => {
+    expect(capacityFor(100)).toBe(50);
+    const firstTwenty = new Set(Array.from({ length: 20 }, (_, slot) => recoveryFirstStudioIndex(slot, 100, 50)));
+    expect(firstTwenty.size).toBe(20);
+  });
+
+  it("the stride stays as close to the capacity as the count allows (successive runs barely overlap)", () => {
+    // 100 studios: 49 is the largest stride <= 50 coprime with 100.
+    expect(recoveryFirstStudioIndex(1, 100, 50)).toBe(49);
+    // 149 studios: 50 is already coprime, unchanged.
+    expect(recoveryFirstStudioIndex(1, 149, 50)).toBe(50);
+    // Everything fits in one run: start rotates by one.
+    expect(recoveryFirstStudioIndex(3, 7, 50)).toBe(3);
+  });
+
+  it("100 routed studios with backlogs: every one is reached within 3 slots (with stride 50 it was 2 starts forever)", async () => {
+    const ids = Array.from({ length: 100 }, (_, i) => `studio-q${String(i).padStart(3, "0")}`);
+    const list = ids.join(",");
+    const env = { [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: list };
+    process.env[STUDIO_ROUTING_ENV] = list;
+    snapshot = (studioId) => readySnap(studioId, `sender-${studioId}`);
+    db = ids.flatMap((sid) => [0, 1].map((k) => appt({ id: `${sid}-${k}`, studio_id: sid, created_at: iso(NOW - HOUR - k * 60_000), starts_at: iso(NOW + 48 * HOUR) })));
+    const slot0 = Math.floor(NOW / (15 * 60_000)) * 15 * 60_000;
+    for (const k of [0, 1, 2]) {
+      const at = slot0 + k * 15 * 60_000 + 60_000;
+      await recoverOwedConfirmations({ admin: admin(), nowMs: at, env, clock: () => at, manageUrlFor: () => "https://app.example/manage/x" });
+    }
+    const reached = new Set(db.filter((x) => x.sms_confirmation_sent_at).map((x) => x.studio_id));
+    expect(reached.size).toBe(100);
   });
 });
 

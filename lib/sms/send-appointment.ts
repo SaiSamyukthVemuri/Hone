@@ -354,6 +354,13 @@ export type SendRecoveredConfirmationInput = Omit<SendConfirmationInput, "starts
   manageUrlFor: (startsAt: Date) => string | null;
   /** The intake link the original confirmation would carry, read live; null for none. */
   intakeUrlFor?: () => string | null;
+  /**
+   * The env the recovery pass was given (General's P3): the same routing list
+   * that made this row "routed" decides its send-time route, so an injected
+   * env can never select a row as studio-routed and then send it on the
+   * platform route. Defaults to process.env, which the cron always uses.
+   */
+  routeEnv?: Readonly<Record<string, string | undefined>>;
 };
 
 export async function sendRecoveredConfirmationSmsToClient(
@@ -366,6 +373,7 @@ export async function sendRecoveredConfirmationSmsToClient(
     studio: input.studio,
     client: input.client,
     routeReader: input.routeReader,
+    routeEnv: input.routeEnv,
     // The confirmation's own re-reads of an unreadable route (3 looks): a row
     // in its last eligible slot has no later run. The recovery pass remembers
     // a studio-wide refusal for the run, so this costs one studio, not a row.
@@ -842,6 +850,12 @@ type SendOneArgs = {
   to: (normalizedPhone: string) => string;
   routeReader?: SendTimeRouteReader;
   /**
+   * The env the send-time ROUTE decision reads (the routing list and the
+   * route's own checks). Defaults to process.env. Provider credentials and the
+   * deployment fence always read process.env.
+   */
+  routeEnv?: Readonly<Record<string, string | undefined>>;
+  /**
    * D5 (a recovered confirmation only): re-validate the appointment AFTER the
    * claim and before the provider. A refusal releases the claim with no
    * provider call; the attempt it spent keeps recovery from ever retrying it.
@@ -887,13 +901,14 @@ async function sendTimeRouteFor(
   smsType: SmsType,
   reader: SendTimeRouteReader | undefined,
   maxLooks: number = ROUTE_READ_ATTEMPTS[smsType],
+  env?: Readonly<Record<string, string | undefined>>,
 ): Promise<SendTimeRoute> {
   const read = reader ?? liveSendTimeRouteReader(admin);
   let looks = 0;
   let route: SendTimeRoute;
   for (;;) {
     looks += 1;
-    route = await resolveSendTimeRoute({ studioId, recipientE164, reader: read });
+    route = await resolveSendTimeRoute({ studioId, recipientE164, reader: read, env });
     if (route.ok || route.reason !== "sender_read_failed" || looks >= maxLooks) break;
     await new Promise((r) => setTimeout(r, ROUTE_READ_BACKOFF_MS[looks - 1] ?? 0));
   }
@@ -973,6 +988,7 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
     args.smsType,
     args.routeReader,
     args.routeLooks,
+    args.routeEnv,
   );
   if (!route.ok) {
     return { ok: false, skipped: true, reason: `sms_route_${route.reason}` };
