@@ -154,6 +154,13 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
+    path: "app/(app)/clients/[id]/images/sign-treatment-image.ts",
+    purpose:
+      "FETT photos (HON-43): the ONE treatment-photo URL signer, shared by getTreatmentImageSignedUrlAction (View larger) and GET /api/clients/[clientId]/images/[imageId]/signed-url (photo-cell re-mint).",
+    why: "Storage signing only (createSignedUrl), never a table read or write through the admin client. Both callers resolve the studio from the session first (getCurrentPractitionerWithStudio); this function then reads the row through the caller's RLS client scoped to that studio.id (and the route's clientId) and not archived, and validateTreatmentImagePath binds the stored path to that studio and client before the service-role client signs the path that verified read returned. No bucket or path is taken from input.",
+    scopeGuard: "validateTreatmentImagePath",
+  },
+  {
     path: "app/(app)/clients/[id]/images/page.tsx",
     purpose: "Authenticated practitioner server action/query.",
     why: "Service-role write/read-through after the caller's studio is resolved via requirePractitionerWithStudio(); every query is scoped to that studio.id.",

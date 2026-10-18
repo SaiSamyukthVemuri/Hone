@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import sharp from "sharp";
-import { seedE2eStudio, seedE2eClient, sql } from "./helpers/seed";
-import { loginAsOwner } from "./helpers/flows";
+import { seedE2eStudio, seedE2eClient, seedNoStudioAuthUser, sql } from "./helpers/seed";
+import { loginAsOwner, loginByMagicLink } from "./helpers/flows";
 import { E2E_SERVICE_ROLE_KEY, E2E_SUPABASE_URL } from "./helpers/local-env";
 
 // FETT photos (HON-43): Photos-tab grid thumbnails survive a reload AND the
@@ -146,10 +146,14 @@ test("no derivative: the ORIGINAL renders; no original either: 'Image not availa
 // ---------------------------------------------------------------------------
 // BOUNDED PENDING (deterministic; needs no race). The derivative's first signed
 // token is refused on every request (true expiry), so the cell must re-mint;
-// the re-mint server action (Next-Action POST) is then HELD OPEN, as one that
-// never settles. Before bounded pending, a held re-mint stranded the cell on a
-// dead URL forever.
+// the re-mint GET (/api/clients/<c>/images/<i>/signed-url) is then HELD OPEN,
+// as one that never settles. It is an abortable request, NOT a server action:
+// Next runs a page's server actions one at a time, so a held re-mint ACTION
+// queued its own retry and every later action on the page behind it (Codex P1
+// 4307807754). Here the retry must be a SECOND request on the wire.
 // ---------------------------------------------------------------------------
+
+const REMINT = /\/api\/clients\/[^/]+\/images\/[^/]+\/signed-url\?variant=/;
 
 /** Refuse every request carrying the FIRST signed token seen (true expiry). */
 async function expireFirstToken(page: Page) {
@@ -162,31 +166,34 @@ async function expireFirstToken(page: Page) {
   });
 }
 
-/** Hold the first `n` server-action POSTs open (never answered); let the rest through. */
-async function holdServerActions(page: Page, n: number) {
+/** Hold the first `n` re-mint GETs open (never answered while the test runs); let the rest through. */
+async function holdRemints(page: Page, n: number) {
   const held: Array<() => void> = [];
   let seen = 0;
-  await page.route(
-    (url) => url.pathname.startsWith("/clients/"),
-    async (route) => {
-      const req = route.request();
-      if (req.method() !== "POST" || !req.headers()["next-action"]) return route.fallback();
-      seen += 1;
-      if (seen <= n) {
-        // Never answered while the test runs; aborted at teardown.
-        await new Promise<void>((resolve) => held.push(resolve));
-        return route.abort().catch(() => undefined);
-      }
-      return route.continue();
-    },
-  );
+  await page.route(REMINT, async (route) => {
+    seen += 1;
+    if (seen <= n) {
+      await new Promise<void>((resolve) => held.push(resolve));
+      return route.abort().catch(() => undefined);
+    }
+    return route.continue();
+  });
   return {
     count: () => seen,
     release: () => held.forEach((r) => r()),
   };
 }
 
-test("a re-mint that NEVER settles is retried after the timeout, and the cell recovers", async ({ page }) => {
+async function imageIdFor(clientId: string): Promise<string> {
+  const rows = await sql<{ id: string }>(
+    `select id from public.treatment_images where client_id = $1 and deleted_at is null order by created_at limit 1`,
+    [clientId],
+  );
+  expect(rows).toHaveLength(1);
+  return rows[0].id;
+}
+
+test("a re-mint that NEVER settles is ABORTED and retried as a SECOND request, and the cell recovers", async ({ page }) => {
   test.setTimeout(120_000);
   const seed = await seedE2eStudio();
   const { clientId } = await seedE2eClient(seed);
@@ -194,18 +201,18 @@ test("a re-mint that NEVER settles is retried after the timeout, and the cell re
   await uploadPhotos(page, clientId, 1);
 
   await expireFirstToken(page);
-  const actions = await holdServerActions(page, 1); // attempt 1 hangs; attempt 2 goes through
+  const remints = await holdRemints(page, 1); // attempt 1 hangs; attempt 2 goes through
   await page.reload();
   try {
     // 8 s timeout + the retry's round trip.
     await expect.poll(async () => cells(page), { timeout: 20_000 }).toEqual([{ stage: "thumb", rendered: true }]);
-    expect(actions.count()).toBeGreaterThanOrEqual(2);
+    expect(remints.count()).toBe(2);
   } finally {
-    actions.release();
+    remints.release();
   }
 });
 
-test("re-mints that NEVER settle twice give up on the derivative: the ORIGINAL renders, never a stuck cell", async ({ page }) => {
+test("re-mints that NEVER settle twice give up on the derivative: TWO requests, then the ORIGINAL renders", async ({ page }) => {
   test.setTimeout(120_000);
   const seed = await seedE2eStudio();
   const { clientId } = await seedE2eClient(seed);
@@ -213,14 +220,103 @@ test("re-mints that NEVER settle twice give up on the derivative: the ORIGINAL r
   await uploadPhotos(page, clientId, 1);
 
   await expireFirstToken(page);
-  const actions = await holdServerActions(page, 2); // both derivative attempts hang
+  const remints = await holdRemints(page, 2); // both derivative attempts hang
   await page.reload();
   try {
     // Two 8 s timeouts, then the server-signed original (a different, valid token).
     await expect.poll(async () => cells(page), { timeout: 30_000 }).toEqual([{ stage: "original", rendered: true }]);
-    expect(actions.count()).toBe(2);
+    expect(remints.count()).toBe(2);
     await expect(page.getByText("Image not available")).toHaveCount(0);
   } finally {
-    actions.release();
+    remints.release();
+  }
+});
+
+test("PAGE-WIDE: while a re-mint hangs, a note save on the same page still completes", async ({ page }) => {
+  test.setTimeout(120_000);
+  const seed = await seedE2eStudio();
+  const { clientId } = await seedE2eClient(seed);
+  await loginAsOwner(page, seed);
+  await uploadPhotos(page, clientId, 1);
+  const imageId = await imageIdFor(clientId);
+
+  await expireFirstToken(page);
+  const remints = await holdRemints(page, Number.POSITIVE_INFINITY); // every re-mint hangs
+  await page.reload();
+  try {
+    await expect.poll(() => remints.count(), { timeout: T }).toBeGreaterThanOrEqual(1);
+    const note = `synthetic note ${Date.now()}`;
+    await page.getByRole("button", { name: "Add note" }).click();
+    await page.locator("textarea").fill(note);
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    // A server action queued behind a hung one would never get here.
+    await expect
+      .poll(
+        async () =>
+          (await sql<{ n: string | null }>(`select practitioner_note as n from public.treatment_images where id = $1`, [imageId]))[0]?.n,
+        { timeout: 6_000 },
+      )
+      .toBe(note);
+    expect(remints.count()).toBeGreaterThanOrEqual(1); // ...and the re-mint was still held throughout
+  } finally {
+    remints.release();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// The re-mint route through the REAL session middleware. The route adds no
+// middleware exemption, so the existing redirects refuse it before the
+// handler runs; the response must carry no signed URL anywhere.
+// ---------------------------------------------------------------------------
+
+function expectNoSignedUrl(body: string, location: string | undefined) {
+  for (const s of [body, location ?? ""]) {
+    expect(s).not.toMatch(/\/storage\/v1\/object\/sign\/|token=/);
+  }
+}
+
+test("re-mint route via the middleware: owner 200 (control); logged-out 307 /login; no-practitioner 307 /no-access", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(120_000);
+  const seed = await seedE2eStudio();
+  const { clientId } = await seedE2eClient(seed);
+  await loginAsOwner(page, seed);
+  await uploadPhotos(page, clientId, 1);
+  const imageId = await imageIdFor(clientId);
+  const path = `/api/clients/${clientId}/images/${imageId}/signed-url?variant=thumb`;
+
+  // POSITIVE CONTROL: the owner gets a fresh signed URL, never cached.
+  const ok = await page.request.get(path, { maxRedirects: 0 });
+  expect(ok.status()).toBe(200);
+  expect(ok.headers()["cache-control"]).toBe("no-store, private");
+  expect(Object.keys(ok.headers()).filter((k) => k.startsWith("access-control-"))).toEqual([]);
+  expect((await ok.json()).url).toMatch(/\/storage\/v1\/object\/sign\/treatment-images\//);
+
+  // LOGGED OUT: a fresh context with no session.
+  const anon = await browser.newContext();
+  try {
+    const r = await anon.request.get(path, { maxRedirects: 0 });
+    expect(r.status()).toBe(307);
+    expect(new URL(r.headers()["location"]!, "http://x").pathname).toBe("/login");
+    expectNoSignedUrl(await r.text(), r.headers()["location"]);
+  } finally {
+    await anon.close();
+  }
+
+  // SIGNED IN, NO ACTIVE PRACTITIONER (how a receptionist or an uninvited
+  // account reaches this gate).
+  const { email } = await seedNoStudioAuthUser();
+  const other = await browser.newContext();
+  try {
+    const p2 = await other.newPage();
+    await loginByMagicLink(p2, email);
+    const r = await p2.request.get(path, { maxRedirects: 0 });
+    expect(r.status()).toBe(307);
+    expect(new URL(r.headers()["location"]!, "http://x").pathname).toBe("/no-access");
+    expectNoSignedUrl(await r.text(), r.headers()["location"]);
+  } finally {
+    await other.close();
   }
 });
