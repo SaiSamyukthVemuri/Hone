@@ -1,7 +1,8 @@
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createServerClient } from "@supabase/ssr";
-import { adminQuery, closePool, seedStudio } from "./helpers/harness";
+import { adminQuery, asUser, closePool, seedStudio } from "./helpers/harness";
+import { countVersion } from "../migrations/helpers/migration-state";
 import {
   EXPORT_PAGE_SIZE,
   loadClinicalRecordsForExport,
@@ -44,6 +45,20 @@ const ANON = E2E_WEB_SERVER_ENV.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 const AUTHORS = 250; // three chunks of 100
 const NOTES = EXPORT_PAGE_SIZE + 200; // two pages
 const DAY = "2026-09-15";
+
+// CANDIDATE-COMPOSITION cases need a command a LATER migration adds. They RUN
+// on a chain that has it (the composed candidate, 0213-0233) and SKIP, by
+// name, on one that does not (#896 alone). Detected from the live catalog,
+// never assumed from a file list.
+async function hasFunction(name: string): Promise<boolean> {
+  const r = await adminQuery(
+    `select exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                     where n.nspname = 'public' and p.proname = $1) as ok`,
+    [name],
+  );
+  return r.rows[0].ok === true;
+}
+const HAS_INITIAL_SAVE = await hasFunction("create_block_with_initial_setup"); // 0223
 
 const studios: string[] = [];
 afterAll(async () => {
@@ -204,6 +219,92 @@ describe("HON-46 export reads every author and every note to completion", () => 
     expect(exported.blocks.map((b) => b.id)).toEqual([liveBlock]);
     expect(exported.blocks[0].entries.map((e) => e.id)).toEqual([idOf("chin")]);
     expect(exported.entries.map((e) => e.id)).toEqual([idOf("jaw")]);
+  }, 60_000);
+
+  // NOT GREEN-BY-SKIP: on a tree that CARRIES 0223 the gate must be open, so
+  // the initial-save case below can only skip where 0223 truly is absent.
+  it("the initial-save gate is open wherever the tree carries 0223", () => {
+    if (countVersion("0223") > 0) expect(HAS_INITIAL_SAVE, "0223 is in the tree but create_block_with_initial_setup is not in the catalog").toBe(true);
+  });
+
+  it.runIf(HAS_INITIAL_SAVE)("a treatment area saved through 0223's INITIAL SAVE prints the values it stored (candidate composition; skips without create_block_with_initial_setup from 0223)", async () => {
+    const s = await seedStudio("hon46mpx");
+    studios.push(s.studioId);
+    const session = await adminQuery(
+      `insert into public.sessions (studio_id, client_id, practitioner_id, modality, started_at)
+       values ($1, $2, $3, 'electrolysis', ($4::date + time '15:00') at time zone 'America/Toronto') returning id`,
+      [s.studioId, s.clientId, s.practitionerId, DAY],
+    );
+    const sessionId = session.rows[0].id as string;
+    // A synthetic machine and one recorded setting group, as machine-initial-save.db.test.ts does.
+    const PROFILE = "fixture:hon46-export";
+    await adminQuery(`select public.sync_machine_profile_contract($1,$2,$3,$4,$5,$6::jsonb)`, [
+      PROFILE,
+      1,
+      "galvanic",
+      4,
+      null,
+      JSON.stringify([{ field_key: "current", native_unit: "µA", decimals: 0, quantity: "current", optional: true }]),
+    ]);
+    const machineId = await asUser(s.userId, async (q) => {
+      const r = await q(`select public.register_studio_machine($1,$2,$3,$4,$5) as id`, [s.studioId, PROFILE, 1, "Room 1", []]);
+      return r.rows[0].id as string;
+    });
+    // Distinct numbers, so a value printed under the wrong label cannot pass.
+    const saved = await asUser(s.userId, async (q) => {
+      const r = await q(
+        `select public.create_block_with_initial_setup(
+          $1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,$7,$8::text[],$9,$10,$11,$12,$13,$14,
+          $15::jsonb,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,
+          $27,$28,$29,$30::jsonb) as r`,
+        [
+          sessionId, s.clientId,
+          JSON.stringify({ block_name: "Initial save", mode: "blend", energy_level: 9, minutes_performed: 8, primary_area: "jaw" }),
+          JSON.stringify({}), JSON.stringify([]), true, "chin", ["chin"], null, null,
+          "blend", 3, 1.5, "hon46 initial save", JSON.stringify(["Coarse hair"]), null, 11, 22, null, null,
+          33, 44.5, 55, 66, 77.5, 88.5,
+          machineId, "galvanic", "hon46-initial-save-0001",
+          JSON.stringify([{ group_key: "g1", channels: [1], readings: [{ field_key: "current", value: "120", observation_source: "practitioner-entered" }] }]),
+        ],
+      );
+      return r.rows[0].r as { block_id: string; entry_id: string | null; setup: { readings: number } | null };
+    });
+    expect(saved.entry_id).toBeTruthy();
+    expect(saved.setup?.readings).toBe(1);
+
+    await signInOwner(s.practitionerId);
+    const args = { studioId: s.studioId, clientId: s.clientId, scope: { kind: "day" as const, day: DAY }, timezone: "America/Toronto" };
+    let load = await loadClinicalRecordsForExport(args);
+    for (let attempt = 0; !load.ok && attempt < 20; attempt += 1) {
+      await new Promise((r) => setTimeout(r, 250));
+      load = await loadClinicalRecordsForExport(args);
+    }
+    expect(load.ok).toBe(true);
+    if (!load.ok) return;
+    const doc = buildClinicalRecordsDocument(load.value);
+    const block = doc.sessions.find((x) => x.id === sessionId)!.blocks.find((b) => b.id === saved.block_id)!;
+    const num = (rs: { label: string; value: string }[], label: string) => {
+      const r = rs.find((x) => x.label === label);
+      return r ? Number(r.value.split(" ")[0]) : undefined;
+    };
+    // The BLOCK's own columns (the bag), as stored.
+    expect(block.readings.find((r) => r.label === "Mode")?.value).toBe("blend");
+    expect(num(block.readings, "Energy level")).toBe(9);
+    expect(num(block.readings, "Minutes performed")).toBe(8);
+    // The ENTRY's scalars, as stored, under their own labels.
+    const entry = block.entries.find((e) => e.id === saved.entry_id)!;
+    expect(num(entry.readings, "Energy level")).toBe(11);
+    expect(num(entry.readings, "Minutes performed")).toBe(22);
+    expect(num(entry.readings, "Hairs treated")).toBe(33);
+    expect(num(entry.readings, "Galvanic current")).toBe(44.5);
+    expect(num(entry.readings, "Galvanic duration")).toBe(55);
+    expect(num(entry.readings, "Thermolysis intensity")).toBe(66);
+    expect(num(entry.readings, "Thermolysis duration")).toBe(77.5);
+    expect(num(entry.readings, "Units of lye")).toBe(88.5);
+    expect(num(entry.readings, "Pulses")).toBe(3);
+    expect(num(entry.readings, "Pulse delay")).toBe(1.5);
+    expect(entry.observations).toEqual(["Coarse hair"]);
+    expect(entry.comments).toBe("hon46 initial save");
   }, 60_000);
 
   it("the PRINT audit is bound to the rendered preview: forged, foreign and expired tokens audit nothing (Codex P1 4303617257)", async () => {
