@@ -137,15 +137,48 @@ describe("push: a production merge lists what it SHIPPED", () => {
   });
 
   for (const [label, before] of [
-    ["empty", ""],
-    ["all zeros (a new branch)", "0000000000000000000000000000000000000000"],
+    ["empty (a non-push event)", ""],
+    ["all zeros (a new or recreated branch)", "0000000000000000000000000000000000000000"],
     ["not in this clone", "1111111111111111111111111111111111111111"],
   ] as const) {
-    it(`with \`before\` ${label}: falls back to the first parent, the same set`, () => {
+    it(`with \`before\` ${label}: FAILS CLOSED to an empty list, so the full matrix runs`, () => {
       const { dir, sha } = repoWithMerge();
-      expect(runStep(dir, { event: "push", sha, before })).toEqual(SHIPPED);
+      expect(runStep(dir, { event: "push", sha, before })).toEqual([]);
+      expect(classify(dir).full_matrix_required).toBe("true");
     });
   }
+
+  it("a NEW-BRANCH push of several commits (app code first, docs-only tip) runs the FULL matrix (Codex P2 4305052075)", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "hone-push-diff-newbranch-"));
+    dirs.push(dir);
+    git(dir, "init", "-q", "-b", "feature");
+    write(dir, "README.md", "x\n");
+    git(dir, "add", "-A");
+    git(dir, "commit", "-q", "-m", "base");
+    write(dir, "app/ingest/route.ts", "export const a = 1;\n");
+    git(dir, "add", "-A");
+    git(dir, "commit", "-q", "-m", "app code");
+    write(dir, "docs/03_SECURITY_AND_PRIVACY.md", "doc\n");
+    git(dir, "add", "-A");
+    git(dir, "commit", "-q", "-m", "docs-only tip");
+    const sha = git(dir, "rev-parse", "HEAD");
+    // CONTROL: the dropped ^1 fallback would have seen only the docs-only tip.
+    expect(git(dir, "diff", "--name-only", "--no-renames", `${sha}^1`, sha)).toBe("docs/03_SECURITY_AND_PRIVACY.md");
+    expect(runStep(dir, { event: "push", sha, before: "0000000000000000000000000000000000000000" })).toEqual([]);
+    expect(classify(dir).full_matrix_required).toBe("true");
+  });
+
+  it("a FORCE-PUSH (`before` is a real commit but NOT an ancestor of the pushed sha) runs the FULL matrix", () => {
+    const { dir, sha } = repoWithMerge();
+    git(dir, "checkout", "-q", "-b", "abandoned", `${sha}^1^1`);
+    write(dir, "app/other.ts", "export const b = 1;\n");
+    git(dir, "add", "-A");
+    git(dir, "commit", "-q", "-m", "rewritten history");
+    const before = git(dir, "rev-parse", "HEAD");
+    expect(() => git(dir, "merge-base", "--is-ancestor", before, sha)).toThrow();
+    expect(runStep(dir, { event: "push", sha, before })).toEqual([]);
+    expect(classify(dir).full_matrix_required).toBe("true");
+  });
 
   it("a root commit (no parent) yields an EMPTY list, which the classifier fails SAFE to the full matrix", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "hone-push-diff-root-"));

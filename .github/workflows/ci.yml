@@ -146,19 +146,25 @@ jobs:
             # - so a production merge that shipped route handlers but shared one
             # doc with production read as docs-only and skipped validate, db,
             # the browser shards and the canonical lane while the run said
-            # success (6acea261 #912, 62ff27b2 #891). `before` is the previous
-            # tip; when it is absent, all zeros or not in this clone, fall back
-            # to the first parent. A commit with no parent yields an EMPTY list,
-            # which the classifier fails safe to the full matrix.
+            # success (6acea261 #912, 62ff27b2 #891).
+            #
+            # FAIL CLOSED. `before` is used only when it is a real commit in
+            # this clone AND an ancestor of the pushed sha (an ordinary push).
+            # A new or recreated branch (`before` all zeros or missing), a
+            # force-push (`before` not an ancestor) or any other event yields an
+            # EMPTY list, which the classifier turns into the FULL matrix. No
+            # `^1` fallback: it would see only the final commit, and a push whose
+            # earlier commit changed app code with a docs-only tip would read as
+            # docs-only (Codex P2 4305052075).
             SHA="${{ github.sha }}"
             BEFORE="${{ github.event.before }}"
+            BASE=""
             if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
-               && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+               && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null \
+               && git merge-base --is-ancestor "$BEFORE" "$SHA" 2>/dev/null; then
               BASE="$BEFORE"
-            else
-              BASE="${SHA}^1"
             fi
-            git diff --name-only --no-renames "$BASE" "$SHA" > changed.txt || true
+            { if [ -n "$BASE" ]; then git diff --name-only --no-renames "$BASE" "$SHA" || true; fi; } > changed.txt
           fi
           echo "--- changed files ---"; cat changed.txt
 
