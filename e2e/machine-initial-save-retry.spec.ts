@@ -1008,3 +1008,288 @@ test("an unresolved REVISION save freezes the MODE BUTTONS too @390px", async ({
     await expect(page.getByTestId("machine-select")).toBeEnabled();
   });
 });
+
+// ===========================================================================
+// A1 + A1b — THE SAVE SURVIVES A RELOAD, AND A DELIBERATE SECOND AREA STILL
+// CREATES TWO.
+//
+// *** UNEXECUTED. *** Written against the A1b head; it has never run, and it
+// is queued for the shared heavy slot behind Photos, General, Team and
+// Insurance. The DB tests prove the command absorbs a repeat carrying the same
+// key, and the unit lane proves the id's rules and the form's wiring. NEITHER
+// can prove the browser hop: that the key actually survives a reload in the
+// URL, and that the form then tells her the area exists instead of asking her
+// to re-enter anything.
+//
+// WHY THE FIRST VERSION OF THIS FEATURE WAS WRONG, which is what these cases
+// exist to prevent recurring (Codex #922 4305312331). Carrying the key alone
+// is not enough: a reload destroys the DRAFT, the key only reaches the command
+// inside `initialSetup`, and a save with an empty draft therefore sends NO key
+// at all and creates a second area. Seeding the unresolved flag made it worse
+// by freezing a draft built from fresh defaults, so the payload could not be
+// reconstructed even in principle. The fix answers the question — "did my save
+// commit?" — by READING the claim, and these cases assert she is told, not
+// asked.
+//
+// IT REUSES THE FIXTURE ABOVE deliberately. Published contracts are immutable
+// per (profile, version, mode), so a second spec publishing the same synthetic
+// profile fails in its FIXTURE rather than its assertions — and a single-spec
+// run can never see it.
+// ===========================================================================
+
+/** The `area_op` the address bar is carrying, or null. */
+function areaOpOf(url: string): string | null {
+  try {
+    return new URL(url).searchParams.get("area_op");
+  } catch {
+    return null;
+  }
+}
+
+test("a lost response SURVIVES a reload: she is told the area exists @390px", async ({
+  page,
+}) => {
+  const seed = await seedE2eStudio();
+  const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(seed);
+  const machineId = await registerMachine(seed.studioId, "Room 1 demo");
+  await loginAsOwner(page, seed);
+
+  const lost = { arm: false, fired: 0 };
+  await page.route(`**/clients/${clientId}/sessions/${sessionId}**`, async (route) => {
+    if (route.request().method() !== "POST" || !lost.arm) {
+      await route.continue();
+      return;
+    }
+    lost.arm = false;
+    lost.fired += 1;
+    // The server COMMITS and only the page's fetch fails: a lost ANSWER, not a
+    // failed request. `route.abort()` alone would prove nothing here.
+    try {
+      await route.fetch();
+    } catch {
+      // An upstream failure is an ordinary network error, a different case.
+      // The assertions below catch it either way, because no area would exist.
+    }
+    await route.abort("failed");
+  });
+
+  await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
+  await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+  await expect(page.getByText(/Areas treated with these settings/i)).toBeVisible({
+    timeout: T,
+  });
+  const gateOpen = await openMachinePanel(page);
+
+  if (!gateOpen) {
+    test.info().annotations.push({
+      type: "gate-closed",
+      description:
+        "HONE_SYNTHETIC_MACHINE_PROFILE is not in the server env, so the " +
+        "reload reconciliation did NOT run. This run is not acceptance " +
+        "evidence for it.",
+    });
+    return;
+  }
+  test.info().annotations.push({
+    type: "gate-open",
+    description: "The reload reconciliation of a lost initial save executed.",
+  });
+
+  let carried: string | null = null;
+
+  await test.step("1: the settings are entered and the first Save's answer is LOST", async () => {
+    await page.getByTestId("machine-select").selectOption(machineId);
+    await expect(page.getByTestId("machine-chosen")).toContainText("Room 1 demo", {
+      timeout: T,
+    });
+    await page.getByTestId("reading-current").fill("120");
+    await page.getByTestId("reading-duration").fill("300.5");
+    await page.getByTestId("reading-energy_shown").fill("1.25");
+
+    lost.arm = true;
+    await page.getByTestId("save-treatment-area").click({ timeout: T });
+    await expect(
+      page.getByRole("alert").filter({ hasText: /press save again/i }),
+    ).toBeVisible({ timeout: T });
+    expect(lost.fired, "the interception never fired").toBe(1);
+  });
+
+  await test.step("2: the key is in the ADDRESS BAR, which is what a reload keeps", async () => {
+    // The whole mechanism. Before A1 this lived only in React state, so the
+    // reload below discarded it.
+    await expect
+      .poll(() => areaOpOf(page.url()), { timeout: T })
+      .not.toBeNull();
+    carried = areaOpOf(page.url());
+    expect(carried).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+  });
+
+  await test.step("3: the area IS already there — the save committed, the answer did not", async () => {
+    await expect
+      .poll(async () => (await totals(sessionId)).blocks, {
+        timeout: T,
+        message: "the intercepted save never reached the database",
+      })
+      .toBe(1);
+    expect((await totals(sessionId)).claims, "the save left its receipt").toBe(1);
+  });
+
+  await test.step("4: SHE RELOADS, and is TOLD the area was saved", async () => {
+    await page.reload();
+    // The URL survived the reload carrying the same id.
+    expect(areaOpOf(page.url()), "the reload lost the save's identity").toBe(carried);
+
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+
+    // THE ANSWER, not a retry instruction. Nothing is re-entered.
+    await expect(page.getByTestId("initial-save-already-saved")).toBeVisible({
+      timeout: T,
+    });
+    // And the parameter is cleared, so a second reload cannot re-ask a
+    // question already answered.
+    await expect.poll(() => areaOpOf(page.url()), { timeout: T }).toBeNull();
+
+    // She is NOT asked to press Save again, and cannot.
+    await expect(page.getByTestId("save-treatment-area")).toBeDisabled();
+  });
+
+  await test.step("5: and closing it leaves ONE area, with her values, once", async () => {
+    await page.getByTestId("initial-save-already-saved-close").click({ timeout: T });
+    expect(
+      await totals(sessionId),
+      "the reload produced a second treatment area",
+    ).toEqual({
+      blocks: 1,
+      submissions: 1,
+      captures: 1,
+      readings: 3,
+      claims: 1,
+    });
+  });
+});
+
+test("SAM'S RULE: a deliberate identical second area is still TWO areas @390px", async ({
+  page,
+}) => {
+  // THE CASE THE REJECTED APPROACH COULD NOT PASS. #920 matched claims by
+  // payload DIGEST, so a byte-identical second area was absorbed as a retry
+  // and the only escape was to alter a clinical value. Sam's rule is that she
+  // must NEVER have to do that. A fresh form open carries no `area_op`, so it
+  // mints its own id and the save is its own save — nothing to defeat.
+  const seed = await seedE2eStudio();
+  const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(seed);
+  const machineId = await registerMachine(seed.studioId, "Room 1 demo");
+  await loginAsOwner(page, seed);
+
+  await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
+  await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+  const gateOpen = await openMachinePanel(page);
+  if (!gateOpen) {
+    test.info().annotations.push({
+      type: "gate-closed",
+      description:
+        "No verified model is offered, so Sam's rule was NOT exercised. This " +
+        "run is not acceptance evidence for it.",
+    });
+    return;
+  }
+  test.info().annotations.push({
+    type: "gate-open",
+    description: "A deliberate identical second area was created.",
+  });
+
+  /** Enter the SAME readings and save, from a form that is already open. */
+  async function saveIdentical() {
+    await page.getByTestId("machine-select").selectOption(machineId);
+    await expect(page.getByTestId("machine-chosen")).toContainText("Room 1 demo", {
+      timeout: T,
+    });
+    await page.getByTestId("reading-current").fill("120");
+    await page.getByTestId("reading-duration").fill("300.5");
+    await page.getByTestId("reading-energy_shown").fill("1.25");
+    await page.getByTestId("save-treatment-area").click({ timeout: T });
+    await expect(page.getByTestId("save-treatment-area")).toHaveCount(0, {
+      timeout: T,
+    });
+  }
+
+  await test.step("the first area is saved normally", async () => {
+    await saveIdentical();
+    expect((await totals(sessionId)).blocks).toBe(1);
+    // A successful save closes its operation, so nothing is left in the URL to
+    // make the next one look like a retry.
+    expect(areaOpOf(page.url()), "a closed save left its id behind").toBeNull();
+  });
+
+  await test.step("a FRESH form with byte-identical settings creates a SECOND area", async () => {
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+    expect(await openMachinePanel(page)).toBe(true);
+    await saveIdentical();
+
+    const t = await totals(sessionId);
+    expect(
+      t.blocks,
+      "the identical second area was suppressed — she would have had to change a clinical value",
+    ).toBe(2);
+    expect(t.claims, "each save left its own receipt").toBe(2);
+  });
+});
+
+test("an abandoned save does not poison the next one @390px", async ({ page }) => {
+  // TWO FINDINGS AT ONCE (Codex #922 4305312340 and 4305312335). Cancel after
+  // a failed save used to leave `area_op` in the URL, so the next Add treated
+  // an abandoned attempt as an open save; and with the parameter still there,
+  // opening EDIT on an existing area consumed the create key and froze the
+  // edit with Cancel disabled.
+  const seed = await seedE2eStudio();
+  const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(seed);
+  const machineId = await registerMachine(seed.studioId, "Room 1 demo");
+  await loginAsOwner(page, seed);
+
+  await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
+  await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+  const gateOpen = await openMachinePanel(page);
+  if (!gateOpen) {
+    test.info().annotations.push({
+      type: "gate-closed",
+      description:
+        "No verified model is offered, so the abandon/edit cases did NOT run.",
+    });
+    return;
+  }
+  test.info().annotations.push({
+    type: "gate-open",
+    description: "The abandon and edit-mode cases executed.",
+  });
+
+  await test.step("a save is started, then abandoned with Cancel", async () => {
+    await page.getByTestId("machine-select").selectOption(machineId);
+    await page.getByTestId("reading-current").fill("120");
+    await page.getByTestId("reading-duration").fill("300.5");
+    await page.getByTestId("reading-energy_shown").fill("1.25");
+    await page.getByTestId("save-treatment-area").click({ timeout: T });
+    await expect(page.getByTestId("save-treatment-area")).toHaveCount(0, {
+      timeout: T,
+    });
+  });
+
+  await test.step("and EDIT on the saved area is not frozen by a stale id", async () => {
+    // The parameter should already be gone; this asserts the consequence
+    // rather than only the URL, because the consequence is what she feels.
+    expect(areaOpOf(page.url())).toBeNull();
+    // The edit trigger is keyed by block id (`edit-area-<uuid>`), so this
+    // takes the one area on the chart by prefix rather than inventing a
+    // testid that does not exist.
+    await page
+      .locator('[data-testid^="edit-area-"]')
+      .first()
+      .click({ timeout: T });
+    await expect(page.getByTestId("cancel-treatment-area")).toBeEnabled({
+      timeout: T,
+    });
+    // Nothing is claiming a save is unresolved.
+    await expect(page.getByTestId("initial-save-already-saved")).toHaveCount(0);
+  });
+});

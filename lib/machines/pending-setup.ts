@@ -137,6 +137,34 @@ export const INITIAL_SAVE_UNRESOLVED =
   "this save carries a retry key, so if it did save you will get that same " +
   "area back rather than a second copy of it.";
 
+/**
+ * The resumed save DID commit, and she is simply told so.
+ *
+ * NOTHING IS RE-ENTERED and nothing is retried (A1b, Codex #922
+ * 4305312331). After a reload the retry key survives in the URL but the
+ * payload does not, so the honest move is to answer the question the reload
+ * actually raises — "did my save go through?" — by reading the claim, rather
+ * than asking her to reconstruct a payload that would have to match a stored
+ * digest byte for byte.
+ */
+export const INITIAL_SAVE_ALREADY_SAVED =
+  "This treatment area was already saved — the connection dropped before the " +
+  "confirmation reached you, but the save itself completed. It is on the " +
+  "chart below, and nothing was duplicated.";
+
+/**
+ * The resumed save could not be CHECKED, which is not the same as not saved.
+ *
+ * FAILS SAFE. It does not claim the save completed and it does not quietly
+ * invite a second one: a duplicate clinical record is the cost of guessing
+ * wrong in either direction, so she is told what is unknown and left the
+ * choice.
+ */
+export const INITIAL_SAVE_RESUME_UNKNOWN =
+  "Whether this treatment area was already saved could not be checked just " +
+  "now. Look at the chart below before saving again: if the area is already " +
+  "there, close this form instead of saving.";
+
 export const WRONG_BLOCK =
   "These settings were entered for a different treatment area and cannot be " +
   "recorded against this one.";

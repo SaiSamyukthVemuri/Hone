@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { isAreaOperationId } from "@/lib/machines/area-operation";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { activeModes, type MachineProfile } from "@/lib/machines/profile-contract";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
@@ -961,4 +962,105 @@ export async function listSelectableForCaller(): Promise<
       modes: activeModes(profile).map((m) => m.key),
     }),
   );
+}
+
+// ---------------------------------------------------------------------------
+// A1b — DID MY SAVE COMMIT? The reconciliation read.
+// ---------------------------------------------------------------------------
+
+/**
+ * What a resumed `area_op` resolves to.
+ *
+ * THREE OUTCOMES, NOT TWO, and the third is the point. "Found" and "not
+ * found" are both ANSWERS; a read that failed is not an answer, and
+ * collapsing it into "not found" would tell her nothing was saved when the
+ * truth is unknown — the exact conflation that produces a duplicate clinical
+ * record.
+ */
+export type AreaCreateClaimLookup =
+  | { ok: true; found: true; blockId: string }
+  | { ok: true; found: false }
+  | { ok: false; error: string };
+
+/**
+ * Did the initial save carrying this key commit?
+ *
+ * WHY A READ AND NOT A RETRY (Codex, #922 4305312331, and the same gap found
+ * independently while writing the e2e). After a reload the retry key survives
+ * in the URL but the PAYLOAD does not — `draft` and `machineDraft` initialise
+ * from fresh defaults. The key only ever reaches
+ * `create_block_with_initial_setup` inside `initialSetup`, so a save with an
+ * empty draft sends NO key at all, takes the ordinary create path, and makes
+ * the duplicate the whole mechanism exists to prevent. And a hand-reconstructed
+ * payload would have to match the stored digest BYTE FOR BYTE or 0223 refuses
+ * it as a reused key — which is the "alter a clinical value to get past
+ * suppression" shape, arriving from the other side.
+ *
+ * So the question after a reload is not "retry the save". It is "did my save
+ * commit?", and the claim row answers that directly without a payload.
+ *
+ * THE GRANT FOR THIS ALREADY EXISTED. 0223 wrote
+ * `grant select on public.treatment_area_create_claims to authenticated` with
+ * `treatment_area_create_claims_member_select using (is_studio_member(studio_id))`,
+ * and no application code read the table until now.
+ *
+ * IT READS THROUGH THE AUTHENTICATED CLIENT, never the service role, so that
+ * policy is what scopes the row — the lookup cannot become a cross-studio
+ * oracle for "does this session hold a claim under this key". The route's own
+ * lineage is checked too, so a key cannot be probed against another client's
+ * chart inside the same studio.
+ */
+export async function lookupAreaCreateClaimAction(input: {
+  clientId: string;
+  sessionId: string;
+  idempotencyKey: string;
+}): Promise<AreaCreateClaimLookup> {
+  const { clientId, sessionId, idempotencyKey } = input;
+  const scope = await identity();
+  if (!scope) {
+    return { ok: false, error: "Sign in to check whether that save completed." };
+  }
+
+  // A KEY WE DID NOT MINT IS NOT ANSWERED EITHER WAY. The client only ever
+  // sends a value `readAreaOperationId` accepted, so a malformed one here
+  // means the URL was crafted or corrupted. Returning "not found" would
+  // invite a fresh save under a key whose history we cannot see; refusing
+  // leaves her the choice, which is the safe direction.
+  if (!isAreaOperationId(idempotencyKey)) {
+    return { ok: false, error: "That save could not be identified." };
+  }
+
+  try {
+    // The session must belong to BOTH this studio AND this route client, or
+    // this would be reading another client's chart. Throws.
+    await assertSessionForClient(scope.studioId, clientId, sessionId);
+  } catch (cause) {
+    if (cause instanceof SessionLineageError) {
+      return {
+        ok: false,
+        error: "This treatment could not be confirmed as this client's.",
+      };
+    }
+    throw cause;
+  }
+
+  const db = await createClient();
+  const { data, error } = await db
+    .from("treatment_area_create_claims")
+    .select("block_id")
+    // THE SESSION PREDICATE IS THE ROUTE BINDING, in the query rather than
+    // in a separate check — the same shape every other consumer of a block id
+    // here uses, and what machine-setting-draft.test.ts polices.
+    .eq("session_id", sessionId)
+    .eq("idempotency_key", idempotencyKey)
+    .maybeSingle();
+
+  // A FAILED READ IS NOT AN EMPTY RESULT. PostgREST reports both as a falsy
+  // `data`, and treating them alike is how "we could not check" becomes
+  // "nothing was saved".
+  if (error) {
+    return { ok: false, error: "That save could not be checked just now." };
+  }
+  if (!data) return { ok: true, found: false };
+  return { ok: true, found: true, blockId: data.block_id as string };
 }

@@ -97,10 +97,16 @@ import { ProbePicker } from "@/components/probe-picker";
 import { READING_INPUT_CLS } from "@/lib/sessions/charting-input-styles";
 import { resolveModeSections } from "@/lib/sessions/mode-sections";
 import {
+  INITIAL_SAVE_ALREADY_SAVED,
+  INITIAL_SAVE_RESUME_UNKNOWN,
   INITIAL_SAVE_UNRESOLVED,
   prepareHandoff,
   type PendingSetupIdentity,
 } from "@/lib/machines/pending-setup";
+import {
+  lookupAreaCreateClaimAction,
+  type AreaCreateClaimLookup,
+} from "./machine-setup-actions";
 import type { GroupSubmission } from "@/lib/machines/setting-groups";
 import {
   createTreatmentAreaWithEntryAction,
@@ -461,10 +467,19 @@ export function BlockSetupForm({
    * missing, malformed, repeated or not v4-shaped, and a null simply mints a
    * fresh one. Honouring a value we did not mint could have 0223 hand her
    * ANOTHER save's treatment area, which is far worse than one extra area.
+   *
+   * AND ONLY IN CREATE MODE (Codex, #922 4305312335). This component is
+   * dual-mode: the same file renders the EDIT form for an existing area. With
+   * a stale `area_op` still in the URL, opening Edit consumed the create
+   * operation's key, froze her edits and disabled Cancel — and the edit
+   * success path never cleared the parameter, so every subsequent edit stayed
+   * poisoned until she navigated away. An edit is not that save, so in edit
+   * mode this reads nothing and touches nothing: a genuine unresolved create's
+   * key has to survive her editing something else.
    */
   const searchParams = useSearchParams();
   const [resumedSaveKey] = useState<string | null>(() =>
-    readAreaOperationId(searchParams),
+    isEdit ? null : readAreaOperationId(searchParams),
   );
 
   /**
@@ -476,22 +491,42 @@ export function BlockSetupForm({
    * because it still has a job - it keeps the key alive across attempts and
    * puts the instruction on screen. See `INITIAL_SAVE_UNRESOLVED`.
    *
-   * IT IS SEEDED FROM THE URL TOO, and seeding the key alone was not enough.
-   * The parameter is present if and only if a save is open and unresolved, so
-   * restoring the key without restoring this flag left the two disagreeing —
-   * and the disagreement was not cosmetic. The collector reports an EMPTY
-   * draft on mount; `onSettingDraftChanged` drops the open key on a draft
-   * change unless a save is unresolved; and after a reload this flag is a
-   * fresh `false`. So the resumed key was dropped by the collector's own
-   * mount report, before she could press Save, on precisely the path the
-   * resume exists to serve.
+   * IT IS NOT SEEDED FROM THE URL, and an earlier spelling of this change
+   * made that mistake (Codex, #922 4305312331). Seeding it true on a resumed
+   * key froze a draft that had just been initialised from FRESH DEFAULTS, so
+   * the practitioner could not reconstruct the original payload — and the key
+   * only reaches `create_block_with_initial_setup` inside `initialSetup`, so
+   * saving with that empty draft sent NO key, took the ordinary create path,
+   * and made the very duplicate the mechanism exists to prevent.
    *
-   * Restoring it also restores what she should see: the instruction to look
-   * before saving again, and the frozen payload that keeps the retry honest.
+   * A reload does not resume a RETRY. It resumes a QUESTION — "did my save
+   * commit?" — and `resolvedResume` below answers it by reading the claim
+   * instead of asking her to re-enter anything.
    */
-  const [saveUnresolved, setSaveUnresolved] = useState(
-    () => resumedSaveKey !== null,
-  );
+  const [saveUnresolved, setSaveUnresolved] = useState(false);
+
+  /**
+   * THE ANSWER TO THE RESUMED SAVE'S QUESTION, or null while it is unknown.
+   *
+   *   * `checking` — the claim read is in flight. Save is held, because
+   *     committing a second save before the answer lands is the one thing
+   *     this must not allow.
+   *   * `saved` — the claim exists: the first attempt DID commit. She is told
+   *     so, the parameter is cleared, and nothing is re-entered.
+   *   * `absent` — no claim: nothing committed. The key is adopted so another
+   *     reload is still reconcilable, and she saves normally.
+   *   * `unknown` — the read itself failed. It FAILS SAFE: it does not claim
+   *     the save completed and does not silently permit a duplicate. She
+   *     keeps the "check the chart before saving again" instruction and the
+   *     choice.
+   */
+  const [resume, setResume] = useState<
+    | { state: "idle" }
+    | { state: "checking" }
+    | { state: "saved"; blockId: string }
+    | { state: "absent" }
+    | { state: "unknown" }
+  >(() => (resumedSaveKey === null ? { state: "idle" } : { state: "checking" }));
 
   /**
    * A REVISION save inside the machine panel has an unknown outcome.
@@ -542,6 +577,94 @@ export function BlockSetupForm({
    * other submit state below.
    */
   const draftFrozen = pending || saveUnresolved;
+
+  /**
+   * CLOSING THE FORM ABANDONS THE OPEN SAVE, so the parameter goes with it
+   * (Codex, #922 4305312340).
+   *
+   * A definitive server error leaves `saveUnresolved` false and Cancel
+   * enabled, and Cancel unmounted the form without going through the syncing
+   * setter — so `area_op` stayed in the URL and the next Add treated an
+   * abandoned attempt as an open save. Every exit routes through here, which
+   * is the same reason the key is mirrored at its setter rather than at its
+   * call sites.
+   *
+   * IN EDIT MODE IT CLEARS NOTHING, because the parameter is not this form's:
+   * a genuine unresolved create must survive her editing another area.
+   */
+  const closeForm = () => {
+    if (!isEdit) syncAreaOperationParam(null);
+    onCancel();
+  };
+
+  /**
+   * Take the resumed key as this form's open save.
+   *
+   * Through the SHADOW setter, like every other write: the URL already holds
+   * this value so the mirror is a no-op, and routing it here keeps "nothing
+   * reaches the raw setter but the shadow" true.
+   */
+  const adoptResumedKey = () => {
+    if (resumedSaveKey !== null) setPendingSaveKey(resumedSaveKey);
+  };
+
+  /**
+   * ANSWER THE RESUMED SAVE'S QUESTION BY READING THE CLAIM.
+   *
+   * Runs once per mount, only when the URL carried a key we minted. The three
+   * outcomes are handled where they are decided rather than being collapsed:
+   * a read that FAILED is not an empty result, and treating it as one would
+   * turn "we could not check" into "nothing was saved".
+   */
+  useEffect(() => {
+    if (resumedSaveKey === null) return;
+    let live = true;
+    void (async () => {
+      const res = await lookupAreaCreateClaimAction({
+        clientId,
+        sessionId,
+        idempotencyKey: resumedSaveKey,
+      }).catch(
+        (): AreaCreateClaimLookup => ({
+          // A THROW IS THE UNKNOWN CASE, not a refusal. The action returns its
+          // own refusals; reaching here means the call itself did not complete.
+          ok: false,
+          error: INITIAL_SAVE_RESUME_UNKNOWN,
+        }),
+      );
+      if (!live) return;
+
+      if (!res.ok) {
+        // ADOPTED EVEN THOUGH THE ANSWER IS UNKNOWN, and this is the safer
+        // direction rather than the tidier one. If she decides to save anyway
+        // and the first attempt HAD committed, a save carrying the original
+        // key is REFUSED by 0223 as a used key with a different payload — she
+        // is told. A freshly minted key would silently create the duplicate
+        // instead.
+        adoptResumedKey();
+        setResume({ state: "unknown" });
+        setError(INITIAL_SAVE_RESUME_UNKNOWN);
+        return;
+      }
+      if (res.found) {
+        // IT COMMITTED. Clear the parameter before anything else, so a second
+        // reload cannot re-enter this branch against a question already
+        // answered.
+        syncAreaOperationParam(null);
+        setResume({ state: "saved", blockId: res.blockId });
+        return;
+      }
+      // NOTHING COMMITTED. Adopt the key so another reload is still
+      // reconcilable, and let her save normally — the draft is untouched and
+      // unfrozen, which is the whole difference from the first spelling.
+      adoptResumedKey();
+      setResume({ state: "absent" });
+    })();
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumedSaveKey, clientId, sessionId]);
   const setDraft: typeof setDraftRaw = (...args) => {
     if (draftFrozen) return;
     setDraftRaw(...args);
@@ -575,13 +698,11 @@ export function BlockSetupForm({
    * `(session_id, idempotency_key)` alone, so nothing about the command or
    * the schema changes here; the key simply has to outlive the page.
    *
-   * Seeded from `resumedSaveKey`, which is the single read of the URL and
-   * also seeds `saveUnresolved` — the two must agree, or the collector's
-   * mount report drops the key this resume just recovered.
+   * NOT SEEDED FROM THE URL. A resumed key is ADOPTED by the claim read
+   * below, once it knows what happened, because a key whose claim may already
+   * exist must not be live on a save before anything has checked.
    */
-  const [pendingSaveKey, setPendingSaveKeyRaw] = useState<string | null>(
-    resumedSaveKey,
-  );
+  const [pendingSaveKey, setPendingSaveKeyRaw] = useState<string | null>(null);
   /**
    * MIRRORED AT THE SETTER, not at the call sites.
    *
@@ -618,7 +739,13 @@ export function BlockSetupForm({
     } | null,
   ) => {
     setMachineDraft(next);
-    if (!saveUnresolved) setPendingSaveKey(null);
+    // NOT WHILE THE RESUMED QUESTION IS OPEN. The collector reports an EMPTY
+    // draft on mount, which arrives BEFORE the claim read resolves — so
+    // without this the mount report would clear the parameter out of the URL
+    // for the width of the round trip, and a reload inside that window would
+    // lose the save's identity. The in-flight read owns the key until it has
+    // an answer.
+    if (!saveUnresolved && resume.state !== "checking") setPendingSaveKey(null);
   };
 
   /**
@@ -1001,7 +1128,7 @@ export function BlockSetupForm({
           setError(res.error);
           return;
         }
-        onCancel();
+        closeForm();
         return;
       }
       // Create: one save → treatment area + first entry. block_name omitted
@@ -1065,7 +1192,7 @@ export function BlockSetupForm({
       // retry of the first and be answered with it.
       setPendingSaveKey(null);
       setSaveUnresolved(false);
-      onCancel();
+      closeForm();
     });
   }
 
@@ -1757,6 +1884,38 @@ export function BlockSetupForm({
           data is never lost and keeps rendering in the From last
           visit summaries. */}
 
+      {/* THE RESUMED SAVE'S ANSWER (A1b, Codex #922 4305312331). A reload
+          raises a question, not a retry: this is where it is answered, and
+          "already saved" is a plain statement rather than an error. */}
+      {resume.state === "saved" && (
+        <div
+          className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300"
+          role="status"
+          data-testid="initial-save-already-saved"
+          data-block-id={resume.blockId}
+        >
+          <p>{INITIAL_SAVE_ALREADY_SAVED}</p>
+          <button
+            type="button"
+            onClick={closeForm}
+            className="mt-2 underline"
+            data-testid="initial-save-already-saved-close"
+          >
+            Close
+          </button>
+        </div>
+      )}
+
+      {resume.state === "checking" && (
+        <p
+          className="text-sm text-neutral-600 dark:text-neutral-400"
+          role="status"
+          data-testid="initial-save-resume-checking"
+        >
+          Checking whether this treatment area was already saved…
+        </p>
+      )}
+
       {error && (
         <p className="text-sm text-red-600 dark:text-red-400" role="alert">
           {error}
@@ -1767,7 +1926,10 @@ export function BlockSetupForm({
         <button
           type="button"
           onClick={submit}
-          disabled={pending}
+          // HELD WHILE THE RESUMED QUESTION IS OPEN. Committing a second save
+          // before the claim read lands is the one outcome this must not
+          // allow, and once the answer is "saved" there is nothing to save.
+          disabled={pending || resume.state === "checking" || resume.state === "saved"}
           data-testid="save-treatment-area"
           className="rounded-md bg-neutral-900 px-5 py-3 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
         >
@@ -1795,7 +1957,7 @@ export function BlockSetupForm({
         */}
         <button
           type="button"
-          onClick={onCancel}
+          onClick={closeForm}
           // EITHER unresolved save freezes dismissal. Round 14 wired this
           // to `saveUnresolved` alone — the CREATE-mode flag — so on an
           // existing block, where the panel records directly, Cancel stayed

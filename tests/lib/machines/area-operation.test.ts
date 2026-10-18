@@ -156,69 +156,100 @@ describe("a reload and a Back replay the same id", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 2b. THE RESUMED KEY SURVIVES THE COLLECTOR'S MOUNT REPORT.
+// 2b. A RELOAD RESUMES A QUESTION, NOT A RETRY.
 // ---------------------------------------------------------------------------
-describe("the resumed key survives the collector's mount report", () => {
-  // A DEFECT THIS FEATURE HAD BEFORE IT SHIPPED, caught by reading the mount
-  // path rather than by any test here. Carrying the key in the URL is not
-  // enough on its own:
+describe("a reload resumes a question, not a retry", () => {
+  // TWO DEFECTS ARE RECORDED HERE, and the first one shipped in this PR's own
+  // first head before Codex and I found it independently (#922 4305312331).
   //
-  //   * `MachineSettingDraft` reports an EMPTY draft on mount;
-  //   * the form's `onSettingDraftChanged` drops the open key on a draft
-  //     change UNLESS a save is unresolved;
-  //   * after a reload `saveUnresolved` is a fresh `false`.
+  // ONE: the key survives a reload; the PAYLOAD does not. `draft` and
+  // `machineDraft` initialise from fresh defaults, and the key only reaches
+  // `create_block_with_initial_setup` inside `initialSetup` — so a save with
+  // an empty draft sends NO key, takes the ordinary create path, and makes the
+  // duplicate the mechanism exists to prevent. Seeding `saveUnresolved` true
+  // made it worse: it FROZE that fresh draft, so she could not reconstruct the
+  // payload even in principle, and the screen told her to press Save again.
   //
-  // So the key recovered from the URL was dropped by the collector's own
-  // mount report, before she could press Save — on exactly the path the
-  // resume exists to serve, and with nothing on screen to say so.
+  // TWO: a reconstructed payload would not help either. 0223 refuses a reused
+  // key whose digest differs, so absorption needs a byte-identical payload —
+  // which is the "alter a clinical value to get past suppression" shape Sam
+  // rejected, arriving from the other side.
   //
-  // The fix is that the parameter's presence restores BOTH: the parameter is
-  // there if and only if a save is open and unresolved.
+  // So the answer is a READ, and these are its rules as a state machine.
 
-  /** What a page load resumes from the URL — the form's two seeds. */
-  const resume = (search: string | null) => {
-    const key = readAreaOperationId(search);
-    return { key, unresolved: key !== null };
+  type Resume =
+    | { state: "checking" }
+    | { state: "saved"; blockId: string }
+    | { state: "absent" }
+    | { state: "unknown" };
+
+  type Lookup =
+    | { ok: true; found: true; blockId: string }
+    | { ok: true; found: false }
+    | { ok: false; error: string };
+
+  /** The form's own handling of the claim read's three outcomes. */
+  const settle = (res: Lookup): { resume: Resume; key: string | null; paramCleared: boolean } => {
+    const resumed = UUID_A;
+    if (!res.ok) {
+      // Adopted even though the answer is unknown: see below.
+      return { resume: { state: "unknown" }, key: resumed, paramCleared: false };
+    }
+    if (res.found) {
+      return {
+        resume: { state: "saved", blockId: res.blockId },
+        key: null,
+        paramCleared: true,
+      };
+    }
+    return { resume: { state: "absent" }, key: resumed, paramCleared: false };
   };
 
-  /** `onSettingDraftChanged`: a draft change drops the open key, unless unresolved. */
-  const afterMountReport = (st: { key: string | null; unresolved: boolean }) =>
-    st.unresolved ? st : { ...st, key: null };
-
-  const carried = `?${AREA_OP_PARAM}=${UUID_A}`;
-
-  it("resuming restores the UNRESOLVED flag as well as the key", () => {
-    expect(resume(carried)).toEqual({ key: UUID_A, unresolved: true });
+  it("CLAIM FOUND: she is told it saved, the parameter is cleared, nothing is re-entered", () => {
+    const out = settle({ ok: true, found: true, blockId: "block-1" });
+    expect(out.resume).toEqual({ state: "saved", blockId: "block-1" });
+    expect(out.paramCleared, "a second reload would re-ask an answered question").toBe(
+      true,
+    );
+    // No key is left live, because there is nothing left to save.
+    expect(out.key).toBeNull();
   });
 
-  it("so the mount report cannot drop it", () => {
-    expect(afterMountReport(resume(carried)).key).toBe(UUID_A);
+  it("NO CLAIM: nothing committed, so the key is adopted and she saves normally", () => {
+    const out = settle({ ok: true, found: false });
+    expect(out.resume).toEqual({ state: "absent" });
+    expect(out.key, "another reload would no longer be reconcilable").toBe(UUID_A);
   });
 
-  it("THE DEFECT: restoring the key WITHOUT the flag loses it on mount", () => {
-    // The state the form was in when the key alone was seeded. This is the
-    // assertion that would have caught it, and it is kept as the record of
-    // why both are seeded from one read rather than one of them.
-    const keyOnly = { key: readAreaOperationId(carried), unresolved: false };
-    expect(keyOnly.key).toBe(UUID_A);
+  it("READ FAILED: it does not claim she saved, and does not permit a silent duplicate", () => {
+    // FAILS SAFE IN BOTH DIRECTIONS. "Not found" and "could not check" are
+    // different answers, and collapsing them is how "we do not know" becomes
+    // "nothing was saved".
+    const out = settle({ ok: false, error: "boom" });
+    expect(out.resume).toEqual({ state: "unknown" });
     expect(
-      afterMountReport(keyOnly).key,
-      "the key survived without the flag, so this control proves nothing",
-    ).toBeNull();
+      out.key,
+      "an unknown outcome minted a fresh key, which duplicates silently if the first attempt committed",
+    ).toBe(UUID_A);
   });
 
-  it("CONTROL: a fresh open has no key and nothing to lose", () => {
-    expect(resume("?tab=chart")).toEqual({ key: null, unresolved: false });
-    expect(afterMountReport(resume("?tab=chart")).key).toBeNull();
+  it("and ADOPTING on an unknown read is the safer direction, not the tidier one", () => {
+    // If the first attempt HAD committed and she saves anyway, the original
+    // key makes 0223 refuse it as a used key with a different payload — she is
+    // told. A fresh key would create the duplicate instead. So the unknown
+    // case keeps the key for exactly the same reason the absent case does.
+    expect(settle({ ok: false, error: "boom" }).key).toBe(
+      settle({ ok: true, found: false }).key,
+    );
   });
 
-  it("CONTROL: a malformed id does not resume an unresolved save either", () => {
-    // Otherwise a crafted URL would freeze her draft and disable Cancel on a
-    // save that never happened.
-    expect(resume(`?${AREA_OP_PARAM}=junk`)).toEqual({
-      key: null,
-      unresolved: false,
-    });
+  it("the three outcomes are distinct — none collapses into another", () => {
+    const states = [
+      settle({ ok: true, found: true, blockId: "b" }).resume.state,
+      settle({ ok: true, found: false }).resume.state,
+      settle({ ok: false, error: "boom" }).resume.state,
+    ];
+    expect(new Set(states).size, "two outcomes are indistinguishable").toBe(3);
   });
 });
 
@@ -336,26 +367,68 @@ describe("the analytics boundary drops the id", () => {
 // 5. THE FORM IS ACTUALLY WIRED TO ALL OF IT.
 // ---------------------------------------------------------------------------
 describe("the create form carries the key in the URL", () => {
-  it("seeds the retry key FROM the URL, through ONE read", () => {
-    // Without this the id is written and never read, and the reload it exists
-    // for still duplicates — the lane's most repeated defect is a value that
-    // exists, is correct, and never arrives.
+  it("reads the URL once, in CREATE mode only", () => {
+    // IN EDIT MODE IT READS NOTHING (Codex, #922 4305312335). This component
+    // is dual-mode, and with a stale `area_op` in the URL opening Edit on any
+    // area consumed the create operation's key, froze her edits and disabled
+    // Cancel — and the edit success path never cleared the parameter, so every
+    // later edit stayed poisoned until she navigated away.
     const src = read(FORM_SRC);
     expect(src).toMatch(
-      /const \[resumedSaveKey\] = useState<string \| null>\(\(\) =>\s*readAreaOperationId\(searchParams\),?\s*\)/,
-    );
-    expect(src).toMatch(
-      /useState<string \| null>\(\s*resumedSaveKey,?\s*\)/,
+      /const \[resumedSaveKey\] = useState<string \| null>\(\(\) =>\s*isEdit \? null : readAreaOperationId\(searchParams\),?\s*\)/,
     );
   });
 
-  it("and seeds the UNRESOLVED flag from the same read", () => {
-    // Seeding the key alone is the defect group 2b records: the collector's
-    // mount report drops an open key unless a save is unresolved, so the key
-    // was recovered and then immediately discarded.
+  it("does NOT seed the unresolved flag from the URL", () => {
+    // The defect group 2b records: seeding it froze a draft built from fresh
+    // defaults, so the payload could not be reconstructed and the save sent no
+    // key at all (Codex, #922 4305312331).
+    const src = read(FORM_SRC);
+    expect(src).toMatch(/const \[saveUnresolved, setSaveUnresolved\] = useState\(false\)/);
+  });
+
+  it("and answers the resumed question by READING THE CLAIM", () => {
+    const src = read(FORM_SRC);
+    expect(src).toMatch(/lookupAreaCreateClaimAction\(\{/);
+    // All three outcomes handled where they are decided.
+    expect(src).toMatch(/setResume\(\{ state: "saved", blockId: res\.blockId \}\)/);
+    expect(src).toMatch(/setResume\(\{ state: "absent" \}\)/);
+    expect(src).toMatch(/setResume\(\{ state: "unknown" \}\)/);
+  });
+
+  it("holds Save while the question is open, and once it is answered 'saved'", () => {
+    // Committing a second save before the read lands is the one outcome this
+    // must not allow.
     const src = read(FORM_SRC);
     expect(src).toMatch(
-      /useState\(\s*\(\) => resumedSaveKey !== null,?\s*\)/,
+      /disabled=\{pending \|\| resume\.state === "checking" \|\| resume\.state === "saved"\}/,
+    );
+  });
+
+  it("clears the parameter on EVERY exit, and never in edit mode", () => {
+    // Cancel on a definitive error used to leave `area_op` behind, so the next
+    // Add treated an abandoned attempt as an open save (Codex, #922
+    // 4305312340). In edit mode it clears nothing, because the parameter is
+    // not this form's to discard.
+    const src = read(FORM_SRC);
+    expect(src).toMatch(
+      /const closeForm = \(\) => \{\s*if \(!isEdit\) syncAreaOperationParam\(null\);\s*onCancel\(\);\s*\}/,
+    );
+    expect(
+      (src.match(/onCancel\(\)/g) ?? []).length,
+      "an exit path still calls onCancel directly, bypassing the parameter clear",
+    ).toBe(1);
+    expect((src.match(/closeForm\b/g) ?? []).length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("does not drop the key while the claim read is still in flight", () => {
+    // The collector reports an EMPTY draft on mount, which arrives BEFORE the
+    // read resolves — so without this the mount report would clear the
+    // parameter for the width of the round trip, and a reload in that window
+    // would lose the save's identity.
+    const src = read(FORM_SRC);
+    expect(src).toMatch(
+      /if \(!saveUnresolved && resume\.state !== "checking"\) setPendingSaveKey\(null\)/,
     );
   });
 
@@ -369,11 +442,14 @@ describe("the create form carries the key in the URL", () => {
     expect(src).toMatch(
       /const setPendingSaveKey = \(next: string \| null\) => \{\s*setPendingSaveKeyRaw\(next\);\s*syncAreaOperationParam\(next\);\s*\}/,
     );
-    // Nothing may reach the raw setter except the shadow itself.
+    // Nothing may reach the raw setter except the shadow itself — including
+    // the resumed key's adoption, which goes through `setPendingSaveKey` so
+    // this invariant stays true as the paths multiply.
     expect(
       (src.match(/setPendingSaveKeyRaw\(/g) ?? []).length,
       "something bypasses the URL-syncing setter",
     ).toBe(1);
+    expect(src).toMatch(/if \(resumedSaveKey !== null\) setPendingSaveKey\(resumedSaveKey\)/);
   });
 
   it("and every existing drop site still goes through the shadow", () => {
@@ -381,12 +457,13 @@ describe("the create form carries the key in the URL", () => {
     // Asserted as a count rather than by location so moving them does not
     // red this, but removing one does.
     const src = read(FORM_SRC);
-    expect(src).toMatch(/if \(!saveUnresolved\) setPendingSaveKey\(null\)/);
     expect(src).toMatch(/const key = pendingSaveKey \?\? crypto\.randomUUID\(\)/);
     expect(
       (src.match(/setPendingSaveKey\(null\)/g) ?? []).length,
       "a drop site stopped clearing the URL",
     ).toBe(2);
+    // And the form's exits clear it directly, which `closeForm` owns.
+    expect(src).toMatch(/syncAreaOperationParam\(null\)/);
   });
 
   it("writes through replaceState, never the router", () => {
@@ -401,5 +478,69 @@ describe("the create form carries the key in the URL", () => {
   it("and is a no-op on the server, so a render cannot touch history", () => {
     const src = read(AREA_OP_SRC);
     expect(src).toMatch(/typeof window === "undefined"\) return/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. THE CLAIM READ'S SAFETY PROPERTIES.
+//
+// ASSERTED ON SOURCE BECAUSE THE DATABASE PROOF HAS NOT RUN. The RLS scoping
+// and the cross-studio denial are a DB test (written, queued for the shared
+// slot); these pin the properties that test would otherwise be the only
+// evidence for, so a regression is caught in the unit lane rather than waiting
+// for a lane that needs a Postgres.
+// ---------------------------------------------------------------------------
+describe("the claim read is scoped, and a failed read is not an empty one", () => {
+  const ACTIONS_SRC =
+    "app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts";
+
+  /** `lookupAreaCreateClaimAction`'s own body. */
+  const lookup = () => {
+    const src = read(ACTIONS_SRC);
+    const i = src.indexOf("export async function lookupAreaCreateClaimAction");
+    expect(i, "the claim read is gone").toBeGreaterThan(-1);
+    return src.slice(i);
+  };
+
+  it("reads through the AUTHENTICATED client, never the service role", () => {
+    // The row is scoped by `treatment_area_create_claims_member_select`, which
+    // is `using (is_studio_member(studio_id))`. Reading as the service role
+    // would bypass it and make this lookup a cross-studio oracle for "does
+    // this session hold a claim under this key".
+    const body = lookup();
+    expect(body).toMatch(/await createClient\(\)/);
+    expect(
+      body,
+      "the claim read reached for an admin client, which bypasses the policy",
+    ).not.toMatch(/createAdminClient|service_role|SERVICE_ROLE/);
+  });
+
+  it("binds the session in the QUERY, and the route's lineage before it", () => {
+    const body = lookup();
+    expect(body).toMatch(/\.eq\("session_id", sessionId\)/);
+    expect(body).toMatch(/\.eq\("idempotency_key", idempotencyKey\)/);
+    // Studio membership is not enough on its own: without this, a key could be
+    // probed against another CLIENT's chart inside the same studio.
+    expect(body).toMatch(
+      /assertSessionForClient\(scope\.studioId, clientId, sessionId\)/,
+    );
+  });
+
+  it("A FAILED READ IS NOT AN EMPTY RESULT", () => {
+    // PostgREST reports both as a falsy `data`. Collapsing them is how "we
+    // could not check" becomes "nothing was saved" — and then a duplicate.
+    const body = lookup();
+    expect(body).toMatch(/if \(error\) \{\s*return \{ ok: false/);
+    expect(body).toMatch(/if \(!data\) return \{ ok: true, found: false \}/);
+  });
+
+  it("refuses a key we did not mint rather than answering either way", () => {
+    expect(lookup()).toMatch(/if \(!isAreaOperationId\(idempotencyKey\)\)/);
+  });
+
+  it("and an unauthenticated caller is refused, not told 'not found'", () => {
+    // "Not found" would invite a fresh save under a key whose history nobody
+    // checked.
+    expect(lookup()).toMatch(/if \(!scope\) \{\s*return \{ ok: false/);
   });
 });
