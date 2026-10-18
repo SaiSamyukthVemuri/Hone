@@ -1,15 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback } from "react";
 import Link from "next/link";
 import type { SessionPhoto } from "./session-photos";
 import { getTreatmentImageSignedUrlAction } from "../../images/actions";
-import {
-  initialGridPhoto,
-  onGridPhotoError,
-  onGridPhotoRemint,
-  type GridPhotoState,
-} from "@/lib/images/grid-photo-recovery";
+import type { GridPhotoVariant } from "@/lib/images/grid-photo-recovery";
+import { useGridPhotoRecovery } from "@/lib/images/use-grid-photo-recovery";
 
 // FETT photos (HON-43): the photos attached to this visit, on the visit's own
 // chart page, so before/after photos sit with the treatment they document.
@@ -83,53 +79,15 @@ function PhotoGrid({ photos }: { photos: SessionPhoto[] }) {
 }
 
 function SessionPhotoCell({ photo: p }: { photo: SessionPhoto }) {
-  const [state, setState] = useState<GridPhotoState>(() => initialGridPhoto({ previewUrl: p.url, thumbUrl: p.thumbUrl }));
-  const imgRef = useRef<HTMLImageElement | null>(null);
-  const alive = useRef(true);
-  useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-    };
-  }, []);
-
-  // Transitions run against a ref, never inside a state updater, so React may
-  // re-run an updater without issuing a second re-mint request.
-  const stateRef = useRef(state);
-  stateRef.current = state;
-  const handleError = useCallback(() => {
-    const urls = { previewUrl: p.url, thumbUrl: p.thumbUrl };
-    const next = onGridPhotoError(stateRef.current, urls);
-    stateRef.current = next.state;
-    setState(next.state);
-    if (!next.remint) return;
-    const variant = next.remint;
-    void getTreatmentImageSignedUrlAction({ imageId: p.id, variant })
-      .then((res) => (res.ok ? res.url : null))
-      .catch(() => null)
-      .then((fresh) => {
-        if (!alive.current) return;
-        const landed = onGridPhotoRemint(stateRef.current, urls, variant, fresh);
-        stateRef.current = landed;
-        setState(landed);
-      });
-  }, [p.id, p.url, p.thumbUrl]);
-
-  // An image that fails AROUND hydration can be missed by React's onError (the
-  // same race fixed in GridPhoto). Per src: already failed -> handle now;
-  // otherwise a NATIVE error listener catches any later failure. A duplicate
-  // signal is a no-op (the machine ignores errors while a re-mint is pending).
-  useEffect(() => {
-    const el = imgRef.current;
-    if (!el || !el.getAttribute("src")) return;
-    if (el.complete && el.naturalWidth === 0) {
-      handleError();
-      return;
-    }
-    const onNativeError = () => handleError();
-    el.addEventListener("error", onNativeError);
-    return () => el.removeEventListener("error", onNativeError);
-  }, [state.src, handleError]);
+  // The SHARED bounded recovery (lib/images/use-grid-photo-recovery.ts): one
+  // retry on a timed-out or rejected re-mint, then terminal; the
+  // hydration-window check. Identical to the Photos grid and the ID photo.
+  const remint = useCallback(
+    (variant: GridPhotoVariant) =>
+      getTreatmentImageSignedUrlAction({ imageId: p.id, variant }).then((res) => (res.ok ? res.url : null)),
+    [p.id],
+  );
+  const { state, imgRef, onError } = useGridPhotoRecovery({ previewUrl: p.url, thumbUrl: p.thumbUrl, remint });
 
   const area = p.areaLabel;
   return (
@@ -146,7 +104,7 @@ function SessionPhotoCell({ photo: p }: { photo: SessionPhoto }) {
           alt={area ? `Treatment photo, ${area}` : "Treatment photo from this visit"}
           className="aspect-square w-full rounded-md object-cover"
           data-stage={state.stage}
-          onError={handleError}
+          onError={onError}
         />
       )}
       {area && <span className="text-xs text-neutral-600 dark:text-neutral-300">{area}</span>}

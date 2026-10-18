@@ -89,13 +89,14 @@ describe("session photos: Codex P1 4301862700 / P2 4301862702", () => {
     expect(helper).toMatch(/buildTreatmentImageThumbPath\(r\.storage_path\)/);
     // Grid uses the derivative; a derivative that will not load demotes to the
     // original; only the original failing marks the cell unavailable.
-    // Since #913 this is the SAME bounded machine as the Photos grid:
-    // derivative, then original, re-minting an expired URL once per variant.
-    expect(section).toMatch(/initialGridPhoto\(\{ previewUrl: p\.url, thumbUrl: p\.thumbUrl \}\)/);
-    expect(section).toMatch(/getTreatmentImageSignedUrlAction\(\{ imageId: p\.id, variant \}\)/);
-    expect(section).toMatch(/if \(el\.complete && el\.naturalWidth === 0\) \{\s*handleError\(\);\s*return;\s*\}/);
-    expect(section).toMatch(/el\.addEventListener\("error", onNativeError\);/);
-    expect(section).toMatch(/return \(\) => el\.removeEventListener\("error", onNativeError\);/);
+    // The SHARED bounded recovery (#929 hook) used by the Photos grid and the ID
+    // photo: timeout → one retry → terminal, the hydration-window check, no
+    // retry loop. Pinned once, in treatment-photo-thumbnail-recovery.test.ts.
+    expect(section).toMatch(/import \{ useGridPhotoRecovery \} from "@\/lib\/images\/use-grid-photo-recovery";/);
+    expect(section).toMatch(/useGridPhotoRecovery\(\{ previewUrl: p\.url, thumbUrl: p\.thumbUrl, remint \}\)/);
+    expect(section).toMatch(/getTreatmentImageSignedUrlAction\(\{ imageId: p\.id, variant \}\)\.then\(\(res\) => \(res\.ok \? res\.url : null\)\)/);
+    expect(section).toMatch(/ref=\{imgRef\}/);
+    expect(section).toMatch(/onError=\{onError\}/);
     expect(section).toMatch(/state\.stage === "broken" \|\| !state\.src/);
     expect(section).not.toMatch(/loading="lazy"/);
   });
