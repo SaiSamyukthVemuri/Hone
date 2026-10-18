@@ -80,6 +80,45 @@ function logLedger(event: string, fields: Record<string, unknown>): void {
   console.error(JSON.stringify({ event, ...fields, timestamp: new Date().toISOString() }));
 }
 
+// LEDGER BOOKKEEPING IS BOUNDED (Codex P2 4307424676).
+//
+// Both wrappers below already return null when the RPC REJECTS. They did not
+// cover the RPC that STALLS -- a degraded Supabase connection that neither
+// answers nor errors. The await was unbounded, and the surrounding try/catch
+// only ever covered client construction, so the documented fail-soft behaviour
+// did not apply: `sendEmailSafely` was never reached, and because every booking
+// flow awaits its sender AFTER committing the appointment, the request could
+// exhaust its runtime having written an appointment and sent NO confirmation.
+//
+// A timeout is therefore treated exactly as a write failure already is: return
+// null, log it, and let the caller send UNTAGGED. Losing the ledger row costs
+// attribution; losing the confirmation costs the client their email.
+//
+// 2s follows the precedent for non-critical bookkeeping in this repository
+// (`DISPATCH_TIMEOUT_MS`, lib/analytics/server.ts) and sits far below any
+// serverless request budget. The timer is ALWAYS cleared: a pending timer keeps
+// Node's event loop alive, so leaking one would delay the very response this
+// bound exists to protect.
+const LEDGER_RPC_TIMEOUT_MS = 2_000;
+
+const LEDGER_TIMED_OUT = Symbol("ledger_rpc_timeout");
+
+async function withLedgerTimeout<T>(
+  work: PromiseLike<T>,
+): Promise<T | typeof LEDGER_TIMED_OUT> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race<T | typeof LEDGER_TIMED_OUT>([
+      work,
+      new Promise<typeof LEDGER_TIMED_OUT>((resolve) => {
+        timer = setTimeout(() => resolve(LEDGER_TIMED_OUT), LEDGER_RPC_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 /**
  * Create the ledger row for one appointment email attempt, AFTER the caller's
  * own send claim. Returns the row id, or null when it could not be written --
@@ -90,11 +129,18 @@ export async function beginAppointmentEmailMessage(
   input: { studioId: string; appointmentId: string; purpose: AppointmentEmailPurpose },
 ): Promise<string | null> {
   try {
-    const { data, error } = await admin.rpc("begin_appointment_email_message", {
-      p_studio_id: input.studioId,
-      p_appointment_id: input.appointmentId,
-      p_purpose: input.purpose,
-    });
+    const raced = await withLedgerTimeout(
+      admin.rpc("begin_appointment_email_message", {
+        p_studio_id: input.studioId,
+        p_appointment_id: input.appointmentId,
+        p_purpose: input.purpose,
+      }),
+    );
+    if (raced === LEDGER_TIMED_OUT) {
+      logLedger("email_ledger_begin_failed", { purpose: input.purpose, shape: "timeout" });
+      return null;
+    }
+    const { data, error } = raced;
     if (error) {
       logLedger("email_ledger_begin_failed", { purpose: input.purpose, shape: "rpc_error" });
       return null;
@@ -133,14 +179,24 @@ export async function settleEmailMessage(
   settle: EmailSettleOutcome,
 ): Promise<EmailSettleResult | null> {
   try {
-    const { data, error } = await admin.rpc("settle_email_message", {
-      p_message_id: messageId,
-      p_outcome: settle.outcome,
-      p_provider_email_id: settle.outcome === "accepted" ? settle.providerEmailId : null,
-      p_provider_error:
-        settle.outcome === "refused" || settle.outcome === "unknown" ? settle.providerError : null,
-      p_skip_reason: settle.outcome === "skipped" ? settle.skipReason : null,
-    });
+    // Bounded for the same reason, and it matters even more here: the send this
+    // describes has ALREADY happened, so stalling on the bookkeeping would
+    // delay a response that has nothing left to decide.
+    const raced = await withLedgerTimeout(
+      admin.rpc("settle_email_message", {
+        p_message_id: messageId,
+        p_outcome: settle.outcome,
+        p_provider_email_id: settle.outcome === "accepted" ? settle.providerEmailId : null,
+        p_provider_error:
+          settle.outcome === "refused" || settle.outcome === "unknown" ? settle.providerError : null,
+        p_skip_reason: settle.outcome === "skipped" ? settle.skipReason : null,
+      }),
+    );
+    if (raced === LEDGER_TIMED_OUT) {
+      logLedger("email_ledger_settle_failed", { outcome: settle.outcome, shape: "timeout" });
+      return null;
+    }
+    const { data, error } = raced;
     if (error) {
       logLedger("email_ledger_settle_failed", { outcome: settle.outcome, shape: "rpc_error" });
       return null;
