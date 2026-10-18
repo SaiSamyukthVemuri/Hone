@@ -21,6 +21,7 @@
 // change.
 
 import { useEffect, useId, useMemo, useState, useTransition } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   APILUS_MODALITIES_BY_MODE,
   ELECTROLYSIS_MODES,
@@ -82,6 +83,10 @@ import {
   ADDITIONAL_NOTES_HELPER,
 } from "@/lib/sessions/charting-labels";
 import { SESSION_BLOCK_SIDE_OPTIONS } from "@/lib/sessions/side-labels";
+import {
+  readAreaOperationId,
+  syncAreaOperationParam,
+} from "@/lib/machines/area-operation";
 import { AreaPicker } from "@/components/area-picker";
 import { isCanonicalTreatmentArea } from "@/lib/sessions/area-validation";
 import { BodyMapAreaPicker } from "@/components/body-map-area-picker";
@@ -443,7 +448,50 @@ export function BlockSetupForm({
    * because it still has a job - it keeps the key alive across attempts and
    * puts the instruction on screen. See `INITIAL_SAVE_UNRESOLVED`.
    */
-  const [saveUnresolved, setSaveUnresolved] = useState(false);
+  /**
+   * THE OPEN SAVE THIS PAGE LOAD IS RESUMING, read from the URL exactly once.
+   *
+   * `syncAreaOperationParam` writes through `history.replaceState`, which
+   * deliberately does NOT notify the router — so `useSearchParams()` never
+   * reports our own writes back, and re-reading it later would be reading a
+   * stale value. Held in state so it is the value this mount resumed from,
+   * whatever the address bar says afterwards.
+   *
+   * ONLY AN ID WE MINTED: `readAreaOperationId` returns null for anything
+   * missing, malformed, repeated or not v4-shaped, and a null simply mints a
+   * fresh one. Honouring a value we did not mint could have 0223 hand her
+   * ANOTHER save's treatment area, which is far worse than one extra area.
+   */
+  const searchParams = useSearchParams();
+  const [resumedSaveKey] = useState<string | null>(() =>
+    readAreaOperationId(searchParams),
+  );
+
+  /**
+   * An initial save whose answer was lost.
+   *
+   * RETRYABLE NOW, and it was not when this state was added: 0223's create
+   * claim anchors the retry key to the SESSION, so pressing Save again returns
+   * the original area instead of creating a second one. The flag survives
+   * because it still has a job - it keeps the key alive across attempts and
+   * puts the instruction on screen. See `INITIAL_SAVE_UNRESOLVED`.
+   *
+   * IT IS SEEDED FROM THE URL TOO, and seeding the key alone was not enough.
+   * The parameter is present if and only if a save is open and unresolved, so
+   * restoring the key without restoring this flag left the two disagreeing —
+   * and the disagreement was not cosmetic. The collector reports an EMPTY
+   * draft on mount; `onSettingDraftChanged` drops the open key on a draft
+   * change unless a save is unresolved; and after a reload this flag is a
+   * fresh `false`. So the resumed key was dropped by the collector's own
+   * mount report, before she could press Save, on precisely the path the
+   * resume exists to serve.
+   *
+   * Restoring it also restores what she should see: the instruction to look
+   * before saving again, and the frozen payload that keeps the retry honest.
+   */
+  const [saveUnresolved, setSaveUnresolved] = useState(
+    () => resumedSaveKey !== null,
+  );
 
   /**
    * A REVISION save inside the machine panel has an unknown outcome.
@@ -517,7 +565,37 @@ export function BlockSetupForm({
    * passes, which is precisely why it is held here rather than inside
    * `machineSetupForSave`.
    */
-  const [pendingSaveKey, setPendingSaveKey] = useState<string | null>(null);
+  /**
+   * THE KEY SURVIVES A RELOAD, because it is carried in the URL.
+   *
+   * It used to live only here, so a reload, a tab close or browser Back
+   * discarded it — and a save that had COMMITTED and only lost its answer
+   * then became a second treatment area when she re-entered the same
+   * settings (Codex #860 4302218408). 0223 already dedupes on
+   * `(session_id, idempotency_key)` alone, so nothing about the command or
+   * the schema changes here; the key simply has to outlive the page.
+   *
+   * Seeded from `resumedSaveKey`, which is the single read of the URL and
+   * also seeds `saveUnresolved` — the two must agree, or the collector's
+   * mount report drops the key this resume just recovered.
+   */
+  const [pendingSaveKey, setPendingSaveKeyRaw] = useState<string | null>(
+    resumedSaveKey,
+  );
+  /**
+   * MIRRORED AT THE SETTER, not at the call sites.
+   *
+   * The key is dropped in two places and minted in a third, and the whole
+   * mechanism fails silently if any one of them forgets the URL. Shadowing
+   * the setter is the same answer this file already uses for `setDraft`, and
+   * the same answer `canEditDraft(state, inFlight)` reached by a different
+   * route: make the structure carry the rule instead of asking every caller
+   * to remember it.
+   */
+  const setPendingSaveKey = (next: string | null) => {
+    setPendingSaveKeyRaw(next);
+    syncAreaOperationParam(next);
+  };
   const [machineDraft, setMachineDraft] = useState<{
     groups: GroupSubmission[];
     blocking: string | null;
