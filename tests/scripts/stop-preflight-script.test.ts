@@ -1,0 +1,306 @@
+import { describe, expect, it } from "vitest";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import path from "node:path";
+import { runStopPreflight, targetAllowed, type AdminLike } from "@/scripts/sms/stop-preflight/run";
+import { sanitizeFacts, FACTS_FILE_VERSION } from "@/scripts/sms/stop-preflight/facts";
+import { STOP_PREFLIGHT_CHECKLIST, STOP_PREFLIGHT_CHECKLIST_VERSION } from "@/lib/sms/inbound-stop-preflight";
+
+// ===========================================================================
+// HON-50 G6 operator script (scripts/sms/record-stop-preflight.mjs): the facts
+// file is validated field by field (malformed = not read = unknown), identity
+// comes from the database, DRY RUN writes nothing, --record writes exactly the
+// evaluator's v1 output with the checked_at compare-and-set, and the output
+// carries codes and ids only.
+// ===========================================================================
+
+const NOW = Date.parse("2026-10-18T12:00:00Z");
+const STUDIO = "22222222-2222-4222-8222-222222222222";
+const SENDER = "33333333-3333-4333-8333-333333333333";
+const NUMBER = "+14165550100";
+const MSID = `MG${"c".repeat(32)}`;
+const ACCOUNT = `AC${"1".repeat(32)}`;
+const BASE = "https://hone.example";
+const URL_RETRY = `${BASE}/api/twilio/inbound-sms#ct=1000&rt=5000&tt=15000&rc=2&rp=4xx,5xx,ct,rt&e=ashburn,umatilla`;
+
+/** A facts file that, with the snapshot below, evaluates READY. */
+const readyFacts = (): Record<string, unknown> => ({
+  factsVersion: FACTS_FILE_VERSION,
+  deployment: { webhookBaseUrl: BASE, authTokenSet: true, appOrigin: BASE, accountSid: ACCOUNT },
+  signatureProof: { lastVerifiedCallbackAt: "2026-10-12T10:00:00Z", credentialsActiveSince: "2026-10-01T00:00:00Z" },
+  endpointProbe: { status: 405, redirectedTo: null },
+  service: { inboundRequestUrl: URL_RETRY, inboundMethod: "POST", useInboundWebhookOnNumber: false, numberSmsUrl: null, numberSmsApplicationSid: null, accountSid: ACCOUNT },
+  webhookRules: { matched: false },
+  staticProxyEnabled: false,
+  webhookPropagation: { ruleOperationStatuses: ["COMPLETED"], secondsSinceLastConfigChange: 3600 },
+  liveStopObservation: {
+    reachedRoute: true,
+    routeStatus: 200,
+    phoneWideOptOutStamped: true,
+    observedAt: "2026-10-12T12:00:00Z",
+    toNumber: NUMBER,
+    messagingServiceSid: MSID,
+  },
+  optOutConfiguration: { dropsKeywordMessages: false, lastChangedAt: "2026-10-01T00:00:00Z" },
+  currentActivation: { handlerDeployedAt: "2026-10-11T00:00:00Z", databaseMigratedAt: "2026-10-10T00:00:00Z" },
+});
+
+type Call = { fn: string; args: Record<string, unknown> };
+function fakeAdmin(over: {
+  snapshot?: unknown;
+  snapshotError?: boolean;
+  mapped?: string | null;
+  record?: () => { data: unknown; error: unknown };
+  recordThrows?: boolean;
+} = {}) {
+  const calls: Call[] = [];
+  const admin: AdminLike = {
+    rpc: async (fn, args) => {
+      calls.push({ fn, args });
+      if (fn === "get_live_studio_sms_sender_registration_state") {
+        if (over.snapshotError) return { data: null, error: { code: "57014" } };
+        return {
+          data:
+            over.snapshot ??
+            {
+              senders: [{ id: SENDER, studio_id: STUDIO, status: "active", phone_number: NUMBER, messaging_service_sid: MSID, provisioned_at: "2026-10-01T00:00:00Z" }],
+              registrations: [],
+              campaign_bindings: [],
+              stop_preflights: [],
+            },
+          error: null,
+        };
+      }
+      if (fn === "resolve_studio_by_sms_messaging_service") return { data: over.mapped === undefined ? STUDIO : over.mapped, error: null };
+      if (fn === "record_studio_sms_stop_preflight") {
+        if (over.recordThrows) throw new Error("socket hang up");
+        return over.record ? over.record() : { data: [{ result: "recorded", preflight_id: "p-1" }], error: null };
+      }
+      throw new Error(`unexpected rpc ${fn}`);
+    },
+  };
+  return { admin, calls };
+}
+
+const run = (admin: AdminLike, raw: unknown, mode: "dry_run" | "record" = "dry_run") =>
+  runStopPreflight({ admin, studioId: STUDIO, raw, mode, context: "cutover", nowMs: NOW });
+
+describe("DRY RUN (the default) evaluates and writes nothing", () => {
+  it("a complete, proven facts file evaluates READY with the complete v1 checklist", async () => {
+    const { admin, calls } = fakeAdmin();
+    const r = await run(admin, readyFacts());
+    expect(r).toMatchObject({ result: "evaluated", ready: true, senderId: SENDER, malformed: [], ignored: [] });
+    expect(r.checks?.map((c) => c.id)).toEqual([...STOP_PREFLIGHT_CHECKLIST]);
+    expect(calls.some((c) => c.fn === "record_studio_sms_stop_preflight")).toBe(false);
+  });
+});
+
+describe("--record writes EXACTLY the evaluator's v1 output, guarded by the CAS", () => {
+  it("records the checklist ids and statuses, version 1, the snapshot's identity, and the CAS read first", async () => {
+    const prior = "2026-10-15T09:00:00.123456+00:00";
+    const { admin, calls } = fakeAdmin({
+      snapshot: {
+        senders: [{ id: SENDER, studio_id: STUDIO, status: "active", phone_number: NUMBER, messaging_service_sid: MSID, provisioned_at: "2026-10-01T00:00:00Z" }],
+        registrations: [],
+        campaign_bindings: [],
+        stop_preflights: [
+          { sender_id: SENDER, studio_id: STUDIO, phone_number: NUMBER, messaging_service_sid: MSID, ready: false, checklist_version: 1, checks: [], webhook_base: BASE, credentials_epoch: null, checked_at: prior },
+        ],
+      },
+    });
+    const r = await run(admin, readyFacts(), "record");
+    expect(r.result).toBe("recorded");
+    const rec = calls.find((c) => c.fn === "record_studio_sms_stop_preflight")!;
+    expect(rec.args).toMatchObject({
+      p_studio_id: STUDIO,
+      p_expected_sender_id: SENDER,
+      p_expected_phone: NUMBER,
+      p_messaging_service_sid: MSID,
+      p_checklist_version: STOP_PREFLIGHT_CHECKLIST_VERSION,
+      p_webhook_base: BASE,
+      p_context: "cutover",
+      p_expected_checked_at: prior,
+      p_credentials_active_since: "2026-10-01T00:00:00Z",
+    });
+    expect(rec.args.p_checks).toEqual(r.checks);
+    expect((rec.args.p_checks as Array<{ id: string }>).map((c) => c.id)).toEqual([...STOP_PREFLIGHT_CHECKLIST]);
+  });
+
+  it("a NOT-ready evaluation is recorded as such (it replaces a stale ready); the writer derives ready", async () => {
+    const facts = readyFacts();
+    (facts.optOutConfiguration as Record<string, unknown>).dropsKeywordMessages = true;
+    const { admin, calls } = fakeAdmin();
+    const r = await run(admin, facts, "record");
+    expect(r).toMatchObject({ result: "recorded", ready: false });
+    expect(calls.find((c) => c.fn === "record_studio_sms_stop_preflight")).toBeTruthy();
+  });
+
+  it("a stale CAS is refused and reported, never overwritten", async () => {
+    const { admin } = fakeAdmin({ record: () => ({ data: [{ result: "preflight_changed", preflight_id: null }], error: null }) });
+    expect(await run(admin, readyFacts(), "record")).toMatchObject({ result: "record_refused", code: "preflight_changed" });
+  });
+
+  it("a lost answer (thrown, an error, or no row) is outcome_unknown, never 'not recorded'", async () => {
+    expect((await run(fakeAdmin({ recordThrows: true }).admin, readyFacts(), "record")).result).toBe("outcome_unknown");
+    expect((await run(fakeAdmin({ record: () => ({ data: null, error: { code: "57014" } }) }).admin, readyFacts(), "record")).result).toBe("outcome_unknown");
+    expect((await run(fakeAdmin({ record: () => ({ data: [], error: null }) }).admin, readyFacts(), "record")).result).toBe("outcome_unknown");
+  });
+
+  it("without a webhook base nothing is recorded (the record would fail base_changed anyway)", async () => {
+    const facts = readyFacts();
+    delete (facts.deployment as Record<string, unknown>).webhookBaseUrl;
+    const { admin, calls } = fakeAdmin();
+    expect((await run(admin, facts, "record")).result).toBe("cannot_record_without_webhook_base");
+    expect(calls.some((c) => c.fn === "record_studio_sms_stop_preflight")).toBe(false);
+  });
+});
+
+describe("identity comes from the DATABASE, never the facts file", () => {
+  it("the file's service.sid, checkedNumber, routedFromNumber and studio ids are ignored and reported", async () => {
+    const facts: Record<string, unknown> = { ...readyFacts(), routedFromNumber: "+14165550199", mappedStudioId: STUDIO, expectedStudioId: STUDIO };
+    (facts.service as Record<string, unknown>).sid = `MG${"d".repeat(32)}`;
+    (facts.service as Record<string, unknown>).checkedNumber = "+14165550199";
+    const { admin } = fakeAdmin();
+    const r = await run(admin, facts);
+    expect(r).toMatchObject({ result: "evaluated", ready: true });
+    expect(r.ignored?.sort()).toEqual(["expectedStudioId", "mappedStudioId", "routedFromNumber", "service.checkedNumber", "service.sid"]);
+  });
+
+  it("the service mapped to ANOTHER studio fails studio_mapping", async () => {
+    const r = await run(fakeAdmin({ mapped: "99999999-9999-4999-8999-999999999999" }).admin, readyFacts());
+    expect(r.checks?.find((c) => c.id === "studio_mapping")?.status).toBe("fail");
+    expect(r.ready).toBe(false);
+  });
+
+  it.each([
+    ["an unreadable snapshot", { snapshotError: true }, "snapshot_unreadable"],
+    ["no active sender", { snapshot: { senders: [], registrations: [] } }, "no_active_sender"],
+    [
+      "two active senders",
+      {
+        snapshot: {
+          senders: [
+            { id: SENDER, studio_id: STUDIO, status: "active", phone_number: NUMBER, messaging_service_sid: MSID },
+            { id: "44444444-4444-4444-8444-444444444444", studio_id: STUDIO, status: "active", phone_number: "+14165550101", messaging_service_sid: MSID },
+          ],
+          registrations: [],
+        },
+      },
+      "ambiguous_active_sender",
+    ],
+    ["a sender with no service", { snapshot: { senders: [{ id: SENDER, studio_id: STUDIO, status: "active", phone_number: NUMBER, messaging_service_sid: null }], registrations: [] } }, "sender_identity_missing"],
+  ])("%s → %s, nothing evaluated or recorded", async (_n, over, result) => {
+    const { admin, calls } = fakeAdmin(over as never);
+    expect((await run(admin, readyFacts(), "record")).result).toBe(result);
+    expect(calls.some((c) => c.fn === "record_studio_sms_stop_preflight")).toBe(false);
+  });
+});
+
+describe("the facts file: secrets refused, every field validated (malformed = unknown, never pass)", () => {
+  it.each([
+    ["an auth token value", { deployment: { TWILIO_AUTH_TOKEN: "abc123" } }],
+    ["a nested secret", { service: { apiKey: "sk_live_x" } }],
+    ["a password", { password: "hunter2" }],
+  ])("%s → refused before anything is read", async (_n, extra) => {
+    const { admin, calls } = fakeAdmin();
+    expect(await run(admin, { ...readyFacts(), ...extra })).toEqual({ result: "facts_refused", code: "secret_in_facts" });
+    expect(calls).toEqual([]);
+  });
+
+  it("the wrong facts version, or not an object, is refused", async () => {
+    expect((await run(fakeAdmin().admin, { ...readyFacts(), factsVersion: 2 })).code).toBe("wrong_facts_version");
+    expect((await run(fakeAdmin().admin, [])).code).toBe("not_an_object");
+  });
+
+  // ops01: E.164 To, an MG SID, a time not in the future, a status in the
+  // closed set; anything malformed leaves the checklist item UNKNOWN.
+  it.each<[string, Record<string, unknown>]>([
+    ["To not E.164", { toNumber: "416-555-0100" }],
+    ["To not canonical", { toNumber: "+1 4165550100" }],
+    ["SID not MG", { messagingServiceSid: `PN${"c".repeat(32)}` }],
+    ["SID too short", { messagingServiceSid: "MG123" }],
+    ["time in the future", { observedAt: "2026-10-19T00:00:00Z" }],
+    ["time unparseable", { observedAt: "yesterday" }],
+    ["route status out of range", { routeStatus: 999 }],
+    ["route status a string", { routeStatus: "200" }],
+    ["reachedRoute a string", { reachedRoute: "true" }],
+  ])("live STOP %s → reported malformed, stop_forwarded never passes, not ready", async (_n, bad) => {
+    const facts = readyFacts();
+    Object.assign(facts.liveStopObservation as Record<string, unknown>, bad);
+    const r = await run(fakeAdmin().admin, facts);
+    expect(r.malformed?.length).toBeGreaterThan(0);
+    expect(r.checks?.find((c) => c.id === "stop_forwarded")?.status).not.toBe("pass");
+    expect(r.ready).toBe(false);
+  });
+
+  it("a malformed Webhook Rule makes the whole rule set unread (webhook_rules unknown)", async () => {
+    const r = await run(fakeAdmin().admin, { ...readyFacts(), webhookRules: { matched: true, settings: [{ percentage: 101 }] } });
+    expect(r.malformed).toContain("webhookRules");
+    expect(r.checks?.find((c) => c.id === "webhook_rules")?.status).toBe("unknown");
+  });
+
+  it("every top-level fact group malformed: nothing passes that depends on it, and the run is never ready", () => {
+    const s = sanitizeFacts(
+      {
+        factsVersion: 1,
+        deployment: "x",
+        signatureProof: 1,
+        endpointProbe: [],
+        service: "x",
+        webhookRules: 1,
+        webhookPropagation: "x",
+        staticProxyEnabled: "no",
+        edgeZoneCatalog: {},
+        liveStopObservation: "x",
+        currentActivation: 1,
+        optOutConfiguration: [],
+      },
+      NOW,
+    );
+    expect("refused" in s).toBe(false);
+    if ("refused" in s) return;
+    expect(s.malformed.length).toBeGreaterThanOrEqual(10);
+  });
+});
+
+describe("output and reach", () => {
+  it("the printed result carries codes and ids only: no phone number, SID, token or URL", async () => {
+    const r = await run(fakeAdmin().admin, readyFacts(), "record");
+    const text = JSON.stringify(r);
+    expect(text).not.toMatch(/\+1\d{10}/);
+    expect(text).not.toMatch(/\b(MG|AC|PN|AP)[0-9a-f]{32}\b/i);
+    expect(text).not.toMatch(/https?:\/\//);
+    expect(text).not.toMatch(/present/);
+  });
+
+  it("targets a local Supabase only, unless hosting is explicitly approved (flag AND env)", () => {
+    expect(targetAllowed("http://127.0.0.1:61321", false, {})).toEqual({ ok: true, hosted: false });
+    expect(targetAllowed("http://localhost:54321", false, {})).toEqual({ ok: true, hosted: false });
+    expect(targetAllowed("https://abc.supabase.co", false, {})).toEqual({ ok: false, code: "hosted_not_approved" });
+    expect(targetAllowed("https://abc.supabase.co", true, {})).toEqual({ ok: false, code: "hosted_not_approved" });
+    expect(targetAllowed("https://abc.supabase.co", false, { HONE_STOP_PREFLIGHT_HOSTED_APPROVED: "yes" })).toEqual({ ok: false, code: "hosted_not_approved" });
+    expect(targetAllowed("https://abc.supabase.co", true, { HONE_STOP_PREFLIGHT_HOSTED_APPROVED: "yes" })).toEqual({ ok: true, hosted: true });
+    expect(targetAllowed(undefined, true, {})).toEqual({ ok: false, code: "no_supabase_url" });
+  });
+
+  it("NO app code imports the script (scripts/ is operator-only)", () => {
+    const root = process.cwd();
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const p = path.join(dir, name);
+        if (statSync(p).isDirectory()) walk(p);
+        else if (/\.(ts|tsx|mjs|js)$/.test(name) && /scripts\/sms|stop-preflight\/(run|facts)/.test(readFileSync(p, "utf8"))) {
+          offenders.push(path.relative(root, p));
+        }
+      }
+    };
+    for (const d of ["app", "lib", "components"]) walk(path.join(root, d));
+    expect(offenders).toEqual([]);
+  });
+
+  it("the CLI defaults to DRY RUN and records only with an explicit --record", () => {
+    const cli = readFileSync(path.join(process.cwd(), "scripts/sms/record-stop-preflight.mjs"), "utf8");
+    expect(cli).toMatch(/record: false/);
+    expect(cli).toMatch(/mode: args\.record \? "record" : "dry_run"/);
+  });
+});
