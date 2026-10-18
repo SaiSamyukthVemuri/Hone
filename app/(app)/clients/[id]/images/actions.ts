@@ -483,3 +483,40 @@ export async function setClientPortraitAction(input: {
     return { ok: false, error: "Could not update the ID photo." };
   }
 }
+
+// FETT photos (HON-43), 0232: label a VISIT photo as taken before or after
+// treatment, or clear the label with stage=null. The command resolves the actor
+// from auth.uid() per studio and refuses a photo with no visit, so this action
+// only gates auth, rejects any value but the two stages, and maps the outcome.
+// A NULL return stays the generic "not found": it never reveals whether
+// another client's or studio's photo exists.
+export type TreatmentImageCaptureStage = "before" | "after";
+
+export async function setTreatmentImageCaptureStageAction(input: {
+  imageId: string;
+  clientId: string;
+  stage: TreatmentImageCaptureStage | null;
+}): Promise<ImageActionResult> {
+  await getCurrentPractitionerWithStudio();
+  if (input.stage !== null && input.stage !== "before" && input.stage !== "after") {
+    return { ok: false, error: "Choose before or after." };
+  }
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("set_treatment_image_capture_stage", {
+      p_image_id: input.imageId,
+      p_client_id: input.clientId,
+      p_stage: input.stage,
+    });
+    if (error) {
+      return { ok: false, error: "Could not update the photo label." };
+    }
+    if (!data) {
+      return { ok: false, error: "Treatment photo not found." };
+    }
+    revalidatePath(`/clients/${input.clientId}/images`);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Could not update the photo label." };
+  }
+}
