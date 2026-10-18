@@ -94,6 +94,12 @@ export type MachineReadingEntryProps = {
       channels: number[];
       readings: ReadingSubmission[];
     }>;
+    /**
+     * The recorded group keys this draft was built from, for the staleness
+     * refusal (Codex, #860 4305780322). The action compares them; this form
+     * only reports what it saw.
+     */
+    expectedGroupKeys?: string[];
   }) => Promise<{
     ok: boolean;
     error?: string;
@@ -179,6 +185,23 @@ export function MachineReadingEntry({
   // arriving through its repair, which is why it is read from the seed once
   // rather than tracked separately.
   const [groupOrdinal, setGroupOrdinal] = useState(() => highestOrdinal(groups));
+  /**
+   * THE RECORDED GROUP KEYS THIS DRAFT WAS BUILT FROM (Codex, #860
+   * 4305780322).
+   *
+   * Captured ONCE, at the same moment `groupOrdinal` is seeded from them,
+   * because the two are the same fact: the next identity this form will mint
+   * is a function of exactly this set. If the set has moved by the time she
+   * saves, the identity it produced is no longer the next one, and the command
+   * would file her new group as a REVISION of someone else's.
+   *
+   * Sent with the save and compared SERVER-SIDE rather than re-read here: the
+   * comparison then happens in the same request as the write, so the window is
+   * the action's own microseconds instead of a user-visible round trip.
+   */
+  const [expectedGroupKeys] = useState<string[]>(() =>
+    [...new Set(recordedGroups.map((g) => g.groupKey))].sort(),
+  );
   // THE WHOLE SAVE, as one state machine.
   //
   // THIS REPLACED FIVE PIECES OF PER-GROUP BOOKKEEPING - a saved-group set, an
@@ -315,6 +338,7 @@ export function MachineReadingEntry({
         modeKey: mode.key,
         idempotencyKey: key,
         groups: submissions,
+        expectedGroupKeys,
       });
       // THE MAPPING LIVES IN `save-attempt`, not here, so a test can drive
       // it: this component cannot be mounted in this repository.

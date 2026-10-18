@@ -185,6 +185,27 @@ export const INITIAL_SAVE_RESUME_NEEDS_SETTINGS =
   "close this form to abandon it — the area may already be on the chart " +
   "below, so check there before adding another.";
 
+/**
+ * THE RECORDED GROUPS MOVED WHILE THIS FORM WAS OPEN.
+ *
+ * WHY THIS REFUSES RATHER THAN SAVES (Codex, #860 4305780322). Group
+ * identities are derived from the recorded snapshot this form loaded, so two
+ * page loads that both add a group both pick the SAME next key - and
+ * `record_setup_group_in_scope` then takes the second as the next REVISION of
+ * the first. Two distinct probe sets merge into one timeline and only the
+ * second one's values read as current: a silent loss of what she recorded
+ * first.
+ *
+ * `setting-groups.ts` already names this outcome for a sibling case and says
+ * it sits "one guard away from a corrupt clinical record". This is that guard
+ * for the case that is actually reachable - a second tab, or a draft left open
+ * while another save landed.
+ */
+export const SETUP_GROUPS_MOVED =
+  "Another save added or changed the settings groups for this treatment " +
+  "while this form was open, so saving now could overwrite them. Reload the " +
+  "chart and enter these settings again - nothing here has been recorded.";
+
 export const WRONG_BLOCK =
   "These settings were entered for a different treatment area and cannot be " +
   "recorded against this one.";

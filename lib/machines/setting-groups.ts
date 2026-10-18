@@ -293,6 +293,38 @@ export function highestOrdinal(groups: readonly SettingGroupDraft[]): number {
   return n;
 }
 
+/**
+ * Have the recorded group identities moved since a draft was built?
+ *
+ * THE DEFECT THIS ANSWERS (Codex, #860 4305780322). The next identity a form
+ * mints is a function of the recorded set it loaded - `highestOrdinal` over
+ * exactly that snapshot. So two page loads that both add a group both pick the
+ * SAME next key, and `record_setup_group_in_scope` takes the second as the
+ * next REVISION of the first: two distinct probe sets merge into one timeline
+ * and only the second's values read as current. `addGroup` above already
+ * names this outcome for a sibling case and calls it "one guard away from a
+ * corrupt clinical record"; this is the guard, for the case that is reachable
+ * - a second tab, or a draft left open while another save landed.
+ *
+ * COMPARED AS A SET, not a list: order and duplicates are not facts about the
+ * record, and treating them as changes would refuse saves that are fine.
+ *
+ * BLOCK-WIDE, because revisions are allocated per (block, group_key). A
+ * collision does not care which device or mode produced it, so neither does
+ * this.
+ *
+ * IT IS DETECTION, NOT PREVENTION, and deliberately so for now: allocating
+ * the identity durably is the real fix and belongs to the command.
+ */
+export function recordedGroupsMoved(
+  expected: readonly string[],
+  current: readonly string[],
+): boolean {
+  const a = [...new Set(expected)].sort();
+  const b = [...new Set(current)].sort();
+  return a.length !== b.length || a.some((k, i) => k !== b[i]);
+}
+
 /** Add or remove one channel from one group. Contract-declared ids only. */
 export function toggleChannel(
   group: SettingGroupDraft,
