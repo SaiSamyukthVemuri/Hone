@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import { renderToStaticMarkup } from "react-dom/server";
 
 // ===========================================================================
 // DELIVERY-VISIBILITY-02 — support resolves a delivery incident from /admin.
@@ -12,7 +13,10 @@ const h: {
   audits: Array<Record<string, unknown>>;
   rpcCalls: Array<[string, unknown]>;
   answer: { data: unknown; error: unknown };
-} = { email: null, audits: [], rpcCalls: [], answer: { data: "resolved", error: null } };
+  // Per-RPC answers for the page render below; `answer` stays the fallback so
+  // the action cases are untouched.
+  byFn: Record<string, { data: unknown; error: unknown }>;
+} = { email: null, audits: [], rpcCalls: [], answer: { data: "resolved", error: null }, byFn: {} };
 
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
 vi.mock("@/lib/supabase/server", () => ({
@@ -30,7 +34,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ({
     rpc: (fn: string, args: unknown) => {
       h.rpcCalls.push([fn, args]);
-      return Promise.resolve(h.answer);
+      return Promise.resolve(h.byFn[fn] ?? h.answer);
     },
   }),
 }));
@@ -123,6 +127,99 @@ describe("closeDeliveryConcernAction (DELIVERY-VISIBILITY-04)", () => {
     ]);
     expect(JSON.stringify(h.audits)).not.toContain("1; drop");
     expect(JSON.stringify(h.audits)).not.toContain("deleted");
+  });
+});
+
+describe("the capped incident list is not presented as a total (Codex P2 4307533285)", () => {
+  // RENDERED, not grepped. The sibling cases in this file are source guards,
+  // and a source guard cannot tell whether the indicator actually appears at
+  // the cap — which is the whole property. `support_delivery_incidents` applies
+  // `limit 300` inside 0215, so at 300 rows this page is holding a SLICE.
+  const CAP = 300;
+  const incidentRow = (i: number) => ({
+    incident_id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+    studio_id: "4f0a1b2c-3d4e-4f50-8a6b-7c8d9e0f1a2b",
+    studio_name: "Studio",
+    channel: "email",
+    purpose: "appointment_reminder_24h",
+    failure_class: "bounced",
+    occurrences: 1,
+    first_seen_at: "2026-10-12T15:00:00Z",
+    last_seen_at: "2026-10-12T18:00:00Z",
+    last_reason: "no_email",
+    last_appointment_id: null,
+    resolved_at: null,
+    resolution: null,
+  });
+
+  const renderWith = async (count: number): Promise<string> => {
+    h.byFn = {
+      support_delivery_incidents: {
+        data: Array.from({ length: count }, (_, i) => incidentRow(i)),
+        error: null,
+      },
+      support_email_receipt_outcomes: { data: [], error: null },
+      email_delivery_health: { data: [], error: null },
+      // EVERY rpc this page reads must be answered. Omitting one let it fall
+      // through to the shared `h.answer` ("resolved", a STRING), and the page
+      // died with `concerns.map is not a function` — a test-harness gap, not a
+      // product fault. It only appeared once #865's concerns section merged in,
+      // which is why a merge needs the conflicted file's own suite re-run.
+      support_delivery_concerns: { data: [], error: null },
+    };
+    const { default: Page } = await import("@/app/admin/delivery/page");
+    return renderToStaticMarkup(await Page());
+  };
+
+  const INDICATOR = "Showing the most recent 300 incidents. Older incidents are not listed.";
+
+  it("AT the cap: says the list is truncated", async () => {
+    const html = await renderWith(CAP);
+    expect(html).toContain(INDICATOR);
+  });
+
+  it("BELOW the cap: no indicator, because nothing is hidden", async () => {
+    // One short of the cap. The boundary is the point: an indicator that is
+    // always on is as untrue as one that never is.
+    const html = await renderWith(CAP - 1);
+    expect(html).not.toContain("Older incidents are not listed");
+  });
+
+  it("the CONCERNS section is capped the same way, and says so", async () => {
+    // `support_delivery_concerns` also applies `limit 300` (0221:394), and this
+    // page renders its length too — the same false total on a second section.
+    const concernRow = (i: number) => ({
+      concern_id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+      studio_id: "4f0a1b2c-3d4e-4f50-8a6b-7c8d9e0f1a2b",
+      studio_name: "Studio",
+      appointment_id: null,
+      channel: "email",
+      purpose: "appointment_postcare",
+      ledger_status_at_report: "delivered",
+      reported_at: "2026-10-12T16:00:00Z",
+      state: "open",
+    });
+    h.byFn = {
+      support_delivery_incidents: { data: [], error: null },
+      support_email_receipt_outcomes: { data: [], error: null },
+      email_delivery_health: { data: [], error: null },
+      support_delivery_concerns: {
+        data: Array.from({ length: CAP }, (_, i) => concernRow(i)),
+        error: null,
+      },
+    };
+    const { default: Page } = await import("@/app/admin/delivery/page");
+    const html = renderToStaticMarkup(await Page());
+    expect(html).toContain("Showing the most recent 300 concerns. Older concerns are not listed.");
+    expect(html).toContain("shown");
+    expect(html).not.toMatch(/Client says not received \(\d+ open\)/);
+  });
+
+  it("the counts say SHOWN, never implying a total", async () => {
+    const html = await renderWith(CAP);
+    expect(html).toContain("shown");
+    // The bare "Open incidents (300)" form is what read as authoritative.
+    expect(html).not.toMatch(/Open incidents \(\d+\)</);
   });
 });
 
