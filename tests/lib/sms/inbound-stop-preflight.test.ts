@@ -1296,11 +1296,22 @@ describe("the FALLBACK's transport is judged like the primary's (Codex P1 426552
       }
     });
 
-    it("complete Setting retries, but the PRIMARY URL says sni=n: undetermined, unknown (no fallback either)", () => {
+    // Codex P2 4305212622: a matching CUSTOMER Setting replaces the URL's
+    // overrides outright and ignores every fragment key (Twilio Webhooks
+    // configuration FAQ), so a leftover `#sni=n` no longer counts against it.
+    it("complete CUSTOMER Setting retries, the PRIMARY URL still says sni=n: the Setting governs, pass", () => {
       const f = ruled(URL_OK, `${URL_OK}#sni=n`, {});
       Object.assign(f.service!, { fallbackUrl: null, fallbackMethod: null });
-      expect(status(f, "stop_redelivery")).toBe("unknown");
+      expect(status(f, "stop_redelivery")).toBe("pass");
       f.service!.inboundRequestUrl = URL_OK;
+      expect(status(f, "stop_redelivery")).toBe("pass");
+    });
+
+    it("the same URL under a SYSTEM Setting: the URL's overrides still apply, so sni=n fails", () => {
+      const f = ruled(URL_OK, `${URL_RETRY}&sni=n`, { settingType: "SYSTEM" as const });
+      Object.assign(f.service!, { fallbackUrl: null, fallbackMethod: null });
+      expect(status(f, "stop_redelivery")).toBe("fail");
+      f.service!.inboundRequestUrl = URL_RETRY;
       expect(status(f, "stop_redelivery")).toBe("pass");
     });
 
