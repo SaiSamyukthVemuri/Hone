@@ -23,7 +23,10 @@ import type { EmailSendResult } from "./send-appointment";
 export type AppointmentEmailPurpose =
   | "appointment_confirmation"
   | "appointment_reminder_24h"
-  | "appointment_reminder_2h";
+  | "appointment_reminder_2h"
+  // 0221 (DELIVERY-VISIBILITY-04)
+  | "appointment_cancellation"
+  | "appointment_postcare";
 
 /** Why a begun attempt made no provider call. A closed vocabulary. */
 export const EMAIL_SKIP_REASONS = ["provider_not_configured", "no_recipient"] as const;

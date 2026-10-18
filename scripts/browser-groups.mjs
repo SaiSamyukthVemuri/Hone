@@ -181,6 +181,10 @@ export const BROWSER_GROUPS = {
       // than which diffs are allowed to break it unnoticed.
       "ui03-blocked-reason.spec.ts",
       "manual-override-buffer-booking.spec.ts",
+      // STUDIO-READY-02c (#824): the front desk books, moves and cancels over
+      // the shared core. It is appointment lifecycle, so it runs with the other
+      // booking specs; app/front-desk/(desk)/book matches /\bbook\b/.
+      "front-desk-booking.spec.ts",
       "move-appointment-custom-time.spec.ts",
       "move-appointment-mobile-submit.spec.ts",
       "move-appointment-responsive.spec.ts",
@@ -316,6 +320,10 @@ export const BROWSER_GROUPS = {
       "onboarding.spec.ts",
       "quick-import.spec.ts",
       "welcome-email-admin.spec.ts",
+      // DELIVERY-VISIBILITY-02: the owner's delivery card (Settings -> Launch,
+      // moving to the owner console) and the /admin/delivery support queue.
+      // Owner-authority and platform-admin surfaces, so the owner/admin family.
+      "delivery-visibility.spec.ts",
       "practitioner-availability-compat.spec.ts",
       "practitioner-booking-studio-b.spec.ts",
       "practitioner-quick-book-studio-b.spec.ts",

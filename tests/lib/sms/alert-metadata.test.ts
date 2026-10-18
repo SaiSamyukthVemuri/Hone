@@ -82,7 +82,9 @@ describe("SMS send callers pass a studio object with id available", () => {
   const CALLER_PATHS = [
     "app/reschedule/[token]/actions.ts",
     "app/book/[slug]/actions.ts",
-    "app/(app)/calendar/actions.ts",
+    // STUDIO-READY-02c: the internal booking SMS moved verbatim with the
+    // shared dispatch, which the calendar and the front desk both call.
+    "lib/booking/booking-notifications.ts",
     "app/api/cron/appointment-reminders/route.ts",
   ];
   for (const rel of CALLER_PATHS) {

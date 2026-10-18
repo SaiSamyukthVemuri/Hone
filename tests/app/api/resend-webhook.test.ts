@@ -213,16 +213,50 @@ describe("an accepted delivery is durable before it is acknowledged", () => {
     expect(res.status).toBe(500);
   });
 
-  it("still answers 200 when processing fails after the receipt is durable; the sweep finishes it", async () => {
+  it("answers 500 when its own processing fails, so the provider's retry recovers the still-pending receipt (Codex P2 4244387538)", async () => {
     h.answers = {
       record_email_provider_event: [recorded()],
       claim_email_provider_events: [claimedOwn, claimedNone],
       process_email_provider_event: [{ data: null, error: { message: "deadlock detected" } }],
     };
     const res = await deliver(payload());
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ ok: false, recorded: true });
     expect(logged.join("\n")).toContain("processing_failed");
   });
+
+  it("answers 500 when the claim itself fails, for the same reason", async () => {
+    h.answers = {
+      record_email_provider_event: [recorded()],
+      claim_email_provider_events: [{ data: null, error: { message: "db blip" } }],
+    };
+    expect((await deliver(payload())).status).toBe(500);
+  });
+
+  it("acknowledges the provider's retry once the receipt is processed or quarantined after its bounded attempts", async () => {
+    // The database quarantines a receipt after five attempts; the retry that
+    // follows finds it processed and gets 200, so a poison event cannot keep
+    // the provider retrying until it disables the endpoint.
+    h.answers = { record_email_provider_event: [recorded("quarantined", "duplicate")] };
+    const res = await deliver(payload());
+    expect(res.status).toBe(200);
+    expect(fns()).toEqual(["record_email_provider_event"]);
+  });
+
+  it("keeps the provider retrying while a failed attempt's claim is still held (Codex P2 4244798597)", async () => {
+    // The 5-second retry lands inside the two-minute claim a failed attempt
+    // left behind: the claim comes back empty. Answering 200 here would stop
+    // Resend's retries and strand the receipt, so the answer is 500 until a
+    // retry lands after the claim expires.
+    h.answers = {
+      record_email_provider_event: [recorded("pending", "duplicate")],
+      claim_email_provider_events: [claimedNone, claimedNone],
+    };
+    const res = await deliver(payload());
+    expect(res.status).toBe(500);
+    expect(fns()).not.toContain("process_email_provider_event");
+  });
+
 
   it("acknowledges a malformed but signed body as a receipt rather than refusing it", async () => {
     h.answers = {
@@ -257,15 +291,16 @@ describe("retries and replays", () => {
     expect(fns()).toContain("process_email_provider_event");
   });
 
-  it("leaves a receipt another worker holds to that worker", async () => {
+  it("leaves a receipt another worker holds to that worker, and asks the provider to try again later", async () => {
     h.answers = {
       record_email_provider_event: [recorded("pending", "duplicate")],
       claim_email_provider_events: [claimedNone],
     };
     const res = await deliver(payload());
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(500);
     expect(fns()).not.toContain("process_email_provider_event");
   });
+
 
   it("uses its turn to recover older receipts, without letting their outcome change its answer", async () => {
     const OLDER = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";

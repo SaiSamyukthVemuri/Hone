@@ -34,15 +34,14 @@ function bodyOf(sql: string, fn: string): string {
 }
 
 describe("0218 sits correctly in the migration sequence", () => {
-  it("is no longer the repo max — it handed off to 0219", () => {
-    // CLAUDE.md §2 HANDOFF, performed on the G1 branch ONLY. Only the CURRENT
-    // maximum migration's own test may assert isRepoMax, and 0219 (public
-    // practitioner selection) now sits above 0218. #850's own branch is
-    // unmodified; there it is still the max and still asserts it.
+  it("is no longer the repository maximum", () => {
+    // HANDED OFF, per CLAUDE.md §2: only the CURRENT max may assert
+    // `isRepoMax`, and that claim now lives in the current max's own test.
     expect(isRepoMax(VERSION)).toBe(false);
-    // DERIVED, not pinned: something is above, and everything above is greater.
+    // DERIVED, NOT PINNED: something sits above it, and everything above it is
+    // greater. A literal list would be the forbidden pin in other clothes.
     const above = versionsAbove(VERSION);
-    expect(above.length, "nothing sits above 0218").toBeGreaterThan(0);
+    expect(above.length, "nothing sits above this older migration").toBeGreaterThan(0);
     expect(
       above.every((v) => Number(v) > Number(VERSION)),
       "versionsAbove returned a version at or below its own",
