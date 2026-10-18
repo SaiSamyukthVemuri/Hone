@@ -1,3 +1,4 @@
+import { FormattedDateTime } from "@/components/formatted-date-time";
 import { SectionLabel } from "@/components/ui/section-label";
 import {
   changesWithin,
@@ -89,10 +90,28 @@ function formatValue(r: RecordedReading): string {
   return r.value.value.toFixed(Math.max(r.decimals, own));
 }
 
-function clockTime(iso: string): string | null {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+/**
+ * Is this instant renderable at all?
+ *
+ * IT NO LONGER FORMATS (Codex, #860 4309128374). `toLocaleTimeString(undefined,
+ * ...)` took the RUNTIME's default locale and timezone, so this component
+ * produced one string in Node and another in the browser - a hydration
+ * mismatch, and near midnight a different DAY. Formatting belongs to
+ * `FormattedDateTime`, which renders nothing on the server and the viewer's
+ * own zone on mount; `recorded_at` is a `timestamptz` and therefore a real
+ * instant, which is the case `lib/clinical-notes/clinical-date.ts` says
+ * belongs in the viewer's zone.
+ *
+ * The null answer is kept, because both call sites render nothing at all for
+ * an unparseable timestamp rather than an empty slot.
+ */
+function renderableInstant(iso: string): string | null {
+  return Number.isNaN(Date.parse(iso)) ? null : iso;
+}
+
+/** The capture's own clock time, in the viewer's zone, or nothing. */
+function ClockTime({ iso }: { iso: string }) {
+  return <FormattedDateTime iso={iso} format="time" />;
 }
 
 /**
@@ -203,7 +222,7 @@ function ChangeLine({
       : ((mode && !historical
           ? mode.stages.find((s) => s.key === change.stageKey)?.nativeLabel
           : undefined) ?? change.stageKey);
-  const at = clockTime(change.to.recordedAt);
+  const at = renderableInstant(change.to.recordedAt);
   return (
     <li
       className="text-sm text-neutral-700 dark:text-neutral-300"
@@ -248,7 +267,11 @@ function ChangeLine({
           {recordedUnitLabel(change.to.nativeUnit)}
         </span>
       ) : null}
-      {at && <span className="ml-2 text-xs text-neutral-500">{at}</span>}
+      {at && (
+        <span className="ml-2 text-xs text-neutral-500">
+          <ClockTime iso={at} />
+        </span>
+      )}
     </li>
   );
 }
@@ -315,7 +338,7 @@ export function MachineRecordedSetups({
       <ol className="flex flex-col gap-2">
         {entries.map((entry) => {
           const { labels, stageLabels, historical } = labelsFor(entry, catalogue);
-          const at = clockTime(entry.recordedAt);
+          const at = renderableInstant(entry.recordedAt);
           const unitName = unitNames[entry.deviceId] ?? null;
           return (
             <li
@@ -330,7 +353,11 @@ export function MachineRecordedSetups({
                   clock time here is honest where it would not be on the
                   Previous treatment panel.
                 */}
-                {at && <span data-testid="recorded-capture-when">{at}</span>}
+                {at && (
+                  <span data-testid="recorded-capture-when">
+                    <ClockTime iso={at} />
+                  </span>
+                )}
                 {entry.channels.length > 0 && (
                   <span className="ml-2">Channels {entry.channels.join(", ")}</span>
                 )}

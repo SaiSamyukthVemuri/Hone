@@ -1,3 +1,4 @@
+import { FormattedDateTime } from "@/components/formatted-date-time";
 import { SectionLabel } from "@/components/ui/section-label";
 import {
   observationSourceLabel,
@@ -180,17 +181,24 @@ export function MachinePriorSetup({
   // different instants. The date answers the question that matters - this is a
   // previous visit, not today - without implying a precision the row set does
   // not have.
-  const recordedOn = (() => {
+  // THE INSTANT, VALIDATED BUT NOT FORMATTED HERE (Codex, #860 4309128374).
+  //
+  // Formatting it in this component used the RUNTIME's default locale and
+  // timezone, which differs between Node and the browser - a hydration
+  // mismatch, and near midnight a different DAY on a clinical record.
+  // `FormattedDateTime` is the page's own answer for an instant: SSR renders
+  // nothing, the browser fills in its own zone on mount. `recorded_at` is a
+  // `timestamptz` and therefore a real instant, which
+  // `lib/clinical-notes/clinical-date.ts` says belongs in the viewer's zone -
+  // and `CopyPreviousAreasPanel` already renders a previous VISIT's date this
+  // way on the same screen.
+  //
+  // Still validated here, because an unparseable value must read as "Recorded
+  // earlier" rather than as an empty space.
+  const recordedIso = (() => {
     const iso = first.recordedAt;
     if (!iso) return null;
-    const d = new Date(iso);
-    return Number.isNaN(d.getTime())
-      ? null
-      : d.toLocaleDateString(undefined, {
-          year: "numeric",
-          month: "short",
-          day: "numeric",
-        });
+    return Number.isNaN(Date.parse(iso)) ? null : iso;
   })();
 
   return (
@@ -228,9 +236,9 @@ export function MachinePriorSetup({
         <span className="ml-2 text-neutral-500">
           {historical ? first.modeKey : (mode?.nativeLabel ?? first.modeKey)}
         </span>
-        {recordedOn && (
+        {recordedIso && (
           <span className="ml-2 text-neutral-500" data-testid="prior-setup-when">
-            {recordedOn}
+            <FormattedDateTime iso={recordedIso} format="date" />
           </span>
         )}
       </p>
@@ -379,7 +387,13 @@ export function MachinePriorSetup({
         where the shared value is simply null.
       */}
       <p className="text-xs text-neutral-500">
-        {recordedOn ? `Recorded ${recordedOn}` : "Recorded earlier"}
+        {recordedIso ? (
+          <>
+            Recorded <FormattedDateTime iso={recordedIso} format="date" />
+          </>
+        ) : (
+          "Recorded earlier"
+        )}
         {historical
           ? ". The field contract has changed since, so the recorded keys are shown rather than today's labels."
           : "."}
