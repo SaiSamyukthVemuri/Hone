@@ -73,9 +73,26 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
   const rows = data as OwnerIncident[];
   const open = rows.filter((r) => r.resolved_at === null);
   const openConcerns = (concerns ?? []).filter((c) => c.state === "open");
-  // A resolved incident was still reported: never claim "no problems" while the
-  // window holds one (Codex P2 4244957358).
   const resolvedCount = rows.length - open.length;
+
+  // EVERY CATEGORY THIS CARD CAN REPORT, IN ONE PLACE, and the summary claim is
+  // derived from it rather than from a subset.
+  //
+  // That claim has now been wrong TWICE for the same reason: it read fewer
+  // categories than the card displays. First it ignored RESOLVED incidents
+  // (Codex P2 4244957358); then it ignored OPEN CONCERNS and printed "No
+  // delivery problems reported in the last 14 days" directly above a list of
+  // them (Codex P2 4307428928). Adding `openConcerns` to the old condition
+  // would have been the third instance waiting to happen, so the counts are
+  // enumerated here and the sentences below consult ONLY these derived
+  // booleans. A fourth category is added to this object, and the claim follows.
+  const reportedCounts = {
+    openIncidents: open.length,
+    resolvedIncidents: resolvedCount,
+    openConcerns: openConcerns.length,
+  };
+  const anythingReported = Object.values(reportedCounts).some((n) => n > 0);
+  const anythingOpen = reportedCounts.openIncidents + reportedCounts.openConcerns > 0;
   const resolvedNote =
     resolvedCount === 0
       ? ""
@@ -91,11 +108,13 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
           Message delivery
         </h3>
         <p className="text-xs text-neutral-600 dark:text-neutral-400">
-          {open.length === 0
-            ? resolvedCount === 0
-              ? "No delivery problems reported in the last 14 days."
-              : `No open delivery problems.${resolvedNote}`
-            : `${open.length} open delivery ${open.length === 1 ? "problem" : "problems"}. Repeats of the same problem are counted, not listed again.${resolvedNote}`}
+          {!anythingReported
+            ? "No delivery problems reported in the last 14 days."
+            : !anythingOpen
+              ? `No open delivery problems.${resolvedNote}`
+              : open.length === 0
+                ? `${openConcerns.length} open ${openConcerns.length === 1 ? "report" : "reports"} from your studio.${resolvedNote}`
+                : `${open.length} open delivery ${open.length === 1 ? "problem" : "problems"}. Repeats of the same problem are counted, not listed again.${resolvedNote}`}
         </p>
         <p className="text-xs text-neutral-500">
           {/* Never infers that bounce reporting is live: a stored signing secret is
@@ -112,7 +131,13 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
       {openConcerns.length > 0 && (
         <div className="flex flex-col gap-1">
           <p className="text-xs font-medium text-neutral-800 dark:text-neutral-200">
-            Reported by you: client says they did not receive it ({openConcerns.length} open)
+            {/* NOT "Reported by you" (Codex P2 4307428933). `owner_delivery_concerns`
+                returns every concern for the STUDIO with no reporter filter, so a
+                co-owner's report was shown to every other owner as their own.
+                Attributing it to the studio is true for one owner and for five.
+                Per-reporter attribution needs the query to return the reporter
+                and is a separate product question. */}
+            Reported by your studio: client says they did not receive it ({openConcerns.length} open)
           </p>
           <ul className="flex flex-col gap-1 text-xs text-neutral-600 dark:text-neutral-400">
             {openConcerns.map((c) => (
