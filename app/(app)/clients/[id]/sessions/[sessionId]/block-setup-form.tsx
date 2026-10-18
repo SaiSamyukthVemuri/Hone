@@ -640,13 +640,27 @@ export function BlockSetupForm({
    * a genuine unresolved create must survive her editing another area.
    */
   const closeForm = () => {
-    // IN EDIT MODE the parameter is not this form's to discard, and while the
-    // resumed operation still owns the key, clearing it would throw away the
-    // only thing that can reconcile a save that may have committed. Closing
-    // the form is allowed in that state — she must be able to leave — but it
-    // leaves the identity behind so reopening Add can still answer the
-    // question (Codex, #922 4305431336).
-    if (!isEdit && !resumeOwnsKey) syncAreaOperationParam(null);
+    // IN EDIT MODE the parameter is not this form's to discard.
+    //
+    // OTHERWISE CLOSING IS AN EXPLICIT ABANDONMENT and it clears the key
+    // (Codex, #922 4305701038). The previous round preserved it whenever the
+    // resumed operation still owned it, and that turned my own instruction
+    // into a trap: the on-screen line tells her to close the form when the
+    // settings did not survive the reload, and closing then left `area_op`
+    // behind — so EVERY later Add resumed the abandoned operation, re-ran the
+    // lookup, and `resumedNeedsSettings` blocked an ordinary settings-free
+    // save. There was no way back to a fresh area short of editing the URL.
+    //
+    // THE EXCEPTION IS `checking` ONLY, which is what 4305431336 was actually
+    // about: closing while the lookup is in flight would discard an answer
+    // that is one round trip away. Cancel is disabled in that state, so this
+    // is the belt to that braces — and the two together mean she can always
+    // leave, and leaving always means leaving.
+    //
+    // Abandoning in `unknown` is hers to choose, and the copy says what it
+    // costs: the area may already be on the chart, so check before adding
+    // another.
+    if (!isEdit && resume.state !== "checking") syncAreaOperationParam(null);
     onCancel();
   };
 

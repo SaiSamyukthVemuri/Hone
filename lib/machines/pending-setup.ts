@@ -182,7 +182,8 @@ export const INITIAL_SAVE_RESUME_UNKNOWN =
 export const INITIAL_SAVE_RESUME_NEEDS_SETTINGS =
   "The machine settings for this area were entered before the page reloaded, " +
   "so they are not on screen any more. Re-enter them to save this area, or " +
-  "close this form — saving without them would record a second area.";
+  "close this form to abandon it — the area may already be on the chart " +
+  "below, so check there before adding another.";
 
 export const WRONG_BLOCK =
   "These settings were entered for a different treatment area and cannot be " +

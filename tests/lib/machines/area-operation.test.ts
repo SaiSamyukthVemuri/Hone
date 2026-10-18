@@ -469,10 +469,27 @@ describe("the create form carries the key in the URL", () => {
     );
     expect(close, "the form's exit path was not found").toBeTruthy();
     expect(close![1]).toContain("!isEdit");
+
+    // CLOSING IS AN EXPLICIT ABANDONMENT, and this assertion REVERSED once
+    // (Codex, #922 4305701038). It used to require `!resumeOwnsKey`, i.e.
+    // preserve the key whenever a resumed operation owned it — which turned
+    // the form's own instruction into a trap: the on-screen line tells her to
+    // close when the settings did not survive the reload, and closing then
+    // left `area_op` behind, so every later Add resumed the abandoned
+    // operation and `resumedNeedsSettings` blocked an ordinary settings-free
+    // save. No way back to a fresh area short of editing the URL.
+    //
+    // The narrower exception is what the earlier finding (4305431336) was
+    // actually about: closing while the lookup is IN FLIGHT would discard an
+    // answer one round trip away.
     expect(
       close![1],
-      "closing mid-resume discards the only identity that can reconcile",
-    ).toContain("!resumeOwnsKey");
+      "closing no longer abandons the operation, so a fresh area is unreachable",
+    ).toContain('resume.state !== "checking"');
+    expect(
+      close![1],
+      "closing preserves the key for a resumed state it should abandon",
+    ).not.toContain("resumeOwnsKey");
     expect(
       (src.match(/onCancel\(\)/g) ?? []).length,
       "an exit path still calls onCancel directly, bypassing the parameter clear",
@@ -552,6 +569,27 @@ describe("the create form carries the key in the URL", () => {
       refresh,
       "the parameter was cleared before the chart was refreshed",
     ).toBeLessThan(clear);
+  });
+
+  it("and the ABANDONMENT path is actually reachable", () => {
+    // The fix is worthless if Cancel is disabled in the state she is told to
+    // use it from. Cancel is held for `checking` only, so in `absent` and
+    // `unknown` — the states that show the re-enter-or-close line — it is
+    // live, and closing clears the key.
+    const src = read(FORM_SRC);
+    const cancel = /disabled=\{([^}]*)\}\s*\n\s*data-testid="cancel-treatment-area"/.exec(
+      src,
+    );
+    expect(cancel, "the Cancel button's disabled expression was not found").toBeTruthy();
+    expect(cancel![1]).toContain('resume.state === "checking"');
+    for (const state of ["absent", "unknown"]) {
+      expect(
+        cancel![1],
+        `Cancel is disabled in ${state}, where the form tells her to close`,
+      ).not.toContain(`resume.state === "${state}"`);
+    }
+    // And the line she reads says what closing costs.
+    expect(src).toMatch(/INITIAL_SAVE_RESUME_NEEDS_SETTINGS/);
   });
 
   it("and Cancel waits for a lookup that is already in flight", () => {
