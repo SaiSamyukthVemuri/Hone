@@ -84,7 +84,7 @@ import {
 } from "@/lib/sessions/charting-labels";
 import { SESSION_BLOCK_SIDE_OPTIONS } from "@/lib/sessions/side-labels";
 import {
-  readAreaOperationId,
+  readAreaOperationIdAtMount,
   syncAreaOperationParam,
 } from "@/lib/machines/area-operation";
 import { AreaPicker } from "@/components/area-picker";
@@ -469,6 +469,15 @@ export function BlockSetupForm({
    * stale value. Held in state so it is the value this mount resumed from,
    * whatever the address bar says afterwards.
    *
+   * AND THAT IS WHY IT READS `readAreaOperationIdAtMount` AND NOT
+   * `useSearchParams()` (found by journey (ii) on #922). The comment above
+   * was right about the WRITE and wrong about this READ: reading the router's
+   * params here reported the value from the last real NAVIGATION, so after a
+   * reload carrying `area_op=A` every later mount resumed A no matter how
+   * many times it had since been released or replaced. The address bar is the
+   * one surface; the helper consults the router only on the server, where
+   * there is no address bar and its params are the request's own.
+   *
    * ONLY AN ID WE MINTED: `readAreaOperationId` returns null for anything
    * missing, malformed, repeated or not v4-shaped, and a null simply mints a
    * fresh one. Honouring a value we did not mint could have 0223 hand her
@@ -486,7 +495,7 @@ export function BlockSetupForm({
   const router = useRouter();
   const searchParams = useSearchParams();
   const [resumedSaveKey] = useState<string | null>(() =>
-    isEdit ? null : readAreaOperationId(searchParams),
+    isEdit ? null : readAreaOperationIdAtMount(searchParams),
   );
 
   /**
