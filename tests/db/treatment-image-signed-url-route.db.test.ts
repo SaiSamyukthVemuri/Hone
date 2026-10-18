@@ -65,7 +65,7 @@ let A: SeededStudio;
 let B: SeededStudio;
 let clientA2: string;
 const users: Record<"ownerA" | "ownerB" | "noPractitioner", { email: string; password: string }> = {} as never;
-const img = { a1: randomUUID(), a2: randomUUID(), b1: randomUUID(), archived: randomUUID(), mismatch: randomUUID() };
+const img = { a1: randomUUID(), a2: randomUUID(), b1: randomUUID(), archived: randomUUID() };
 
 async function upload(path: string) {
   const r = await fetch(`${E2E_SUPABASE_URL}/storage/v1/object/treatment-images/${path}`, {
@@ -169,15 +169,11 @@ describe.skipIf(!STORAGE_UP)("signed-url route on the real stack (needs storage-
     const pA2 = `${A.studioId}/${clientA2}/${img.a2}.png`;
     const pB1 = `${B.studioId}/${B.clientId}/${img.b1}.png`;
     const pArch = `${A.studioId}/${A.clientId}/${img.archived}.png`;
-    // A row of client A1 whose stored path sits under client A2: the object
-    // EXISTS there, so only the path/param binding can refuse it.
-    const pMis = `${A.studioId}/${clientA2}/${img.mismatch}.png`;
-    for (const p of [pA1, `${A.studioId}/${A.clientId}/${img.a1}.thumb.webp`, pA2, pB1, pArch, pMis]) await upload(p);
+    for (const p of [pA1, `${A.studioId}/${A.clientId}/${img.a1}.thumb.webp`, pA2, pB1, pArch]) await upload(p);
     await insertImage(img.a1, A.studioId, A.clientId, pA1);
     await insertImage(img.a2, A.studioId, clientA2, pA2);
     await insertImage(img.b1, B.studioId, B.clientId, pB1);
     await insertImage(img.archived, A.studioId, A.clientId, pArch, true);
-    await insertImage(img.mismatch, A.studioId, A.clientId, pMis);
 
     GET_ = (await import("@/app/api/clients/[clientId]/images/[imageId]/signed-url/route")).GET;
   }, 120_000);
@@ -212,12 +208,15 @@ describe.skipIf(!STORAGE_UP)("signed-url route on the real stack (needs storage-
     expect((await call(clientA2, img.a2)).status).toBe(200);
   });
 
-  it("PATH/PARAM MISMATCH: a row whose stored path names another client is 404 under either client, though the object exists", async () => {
-    await as("ownerA");
-    alerts.length = 0;
-    expect((await call(A.clientId, img.mismatch)).status).toBe(404);
-    expect((await call(clientA2, img.mismatch)).status).toBe(404);
-    expect(alerts.length).toBe(1); // the rejected path is reported (once: the other call never found the row)
+  it("PATH/CLIENT MISMATCH cannot even be stored: 0093's path-shape CHECK refuses the row (the route's own refusal is unit-tested)", async () => {
+    // A row of client A1 whose stored path sits under client A2. The signer
+    // would refuse it (validateTreatmentImagePath, bound to the route's
+    // clientId; tests/app/clients/treatment-image-signed-url-route.test.ts),
+    // but the database is the first line: such a row never exists.
+    const id = randomUUID();
+    await expect(insertImage(id, A.studioId, A.clientId, `${A.studioId}/${clientA2}/${id}.png`)).rejects.toMatchObject({
+      code: "23514",
+    });
   });
 
   it("ARCHIVED: 404 for the owner, though its object exists", async () => {
@@ -244,7 +243,6 @@ describe.skipIf(!STORAGE_UP)("signed-url route on the real stack (needs storage-
     const refusals = [
       await call(B.clientId, img.b1),
       await call(A.clientId, img.a2),
-      await call(A.clientId, img.mismatch),
       await call(A.clientId, img.archived),
       await call(A.clientId, randomUUID()),
     ];
