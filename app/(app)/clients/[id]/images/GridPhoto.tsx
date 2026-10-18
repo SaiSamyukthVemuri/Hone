@@ -58,11 +58,26 @@ export function GridPhoto({
       });
   }, [imageId, previewUrl, thumbUrl]);
 
-  // An image that failed BEFORE hydration never reached React's onError. Check
-  // once per src after mount; a lazy image not yet requested is not `complete`.
+  // An image that fails AROUND hydration can be missed by React's onError
+  // (observed: 2 of 7 strong-expiry browser runs left a cell on a dead URL with
+  // no re-mint). So, per src, after mount:
+  //   * already failed (`complete` with no pixels) -> handle it now;
+  //   * otherwise attach a NATIVE error listener, which catches any later
+  //     failure regardless of React's listener.
+  // React's onError and this listener can both fire for one failure; the
+  // second is a no-op, because the machine ignores errors while a re-mint is
+  // pending and the state ref is updated synchronously.
+  // A lazy image not yet requested is not `complete`, so it gets the listener.
   useEffect(() => {
     const el = imgRef.current;
-    if (el && el.complete && el.naturalWidth === 0 && el.getAttribute("src")) handleError();
+    if (!el || !el.getAttribute("src")) return;
+    if (el.complete && el.naturalWidth === 0) {
+      handleError();
+      return;
+    }
+    const onNativeError = () => handleError();
+    el.addEventListener("error", onNativeError);
+    return () => el.removeEventListener("error", onNativeError);
   }, [state.src, handleError]);
 
   if (state.stage === "broken" || !state.src) {
