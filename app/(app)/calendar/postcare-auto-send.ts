@@ -217,6 +217,12 @@ export async function autoSendPostcareOnComplete(
         reviewUrl: (studio.postcare_review_url as string | null) ?? null,
         reviewPromptText:
           (studio.postcare_review_prompt_text as string | null) ?? null,
+        // DELIVERY-VISIBILITY: without this the send takes
+        // sendLedgeredAppointmentEmail's UNTAGGED path, so an automatic
+        // postcare failure opens no delivery incident, a provider webhook
+        // cannot attribute it, and the owner's report reads `no_record` —
+        // unlike the practitioner-triggered send, which passes it.
+        ledger: { studioId, appointmentId },
       }),
     );
 
