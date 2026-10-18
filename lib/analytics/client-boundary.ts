@@ -30,7 +30,7 @@
 // Pure module (no posthog-js import); unit-tested against event-shaped payloads.
 
 import { MARKETING_PAGES } from "@/lib/marketing/content";
-import { redactIdsInPath } from "@/lib/analytics/path-ids";
+import { redactIdsInPath, redactIdsInValue } from "@/lib/analytics/path-ids";
 import { TOKEN_ROUTE_PREFIXES } from "@/lib/security/token-routes";
 
 // The exact canonical marketing surfaces, derived from the single registry the
@@ -172,7 +172,8 @@ export function sanitizeMarketingUrl(raw: string): string {
   if (!tokenRoute && !isMarketingPath(pathname)) pathname = redactIdsInPath(pathname);
   const params = new URLSearchParams();
   for (const [k, v] of u.searchParams) {
-    if (ATTRIBUTION_PARAMS.has(k)) params.set(k, v);
+    // The VALUE is kept for attribution, minus any record id (Codex P1 4309025843).
+    if (ATTRIBUTION_PARAMS.has(k)) params.set(k, redactIdsInValue(v));
   }
   const qs = params.toString();
   const suffix = qs ? `?${qs}` : "";
@@ -184,14 +185,24 @@ export function sanitizeUrl(url: string): string {
   return sanitizeTokenPaths(url);
 }
 
+// Campaign parameters posthog-js copies into STANDALONE properties, bare or
+// with its $initial_ / $session_entry_ prefixes: the utm_* set plus the ad
+// click ids it collects. Their values are kept for attribution, minus any
+// record id (Codex P1 4309025843). PostHog's own ids ($session_id,
+// distinct_id, $device_id, uuid) are not here and are never touched.
+const CAMPAIGN_PROP = new RegExp(
+  "^(?:\\$initial_|\\$session_entry_)?(?:utm_(?:source|medium|campaign|term|content)|" +
+    "gclid|gad_source|gclsrc|dclid|gbraid|wbraid|fbclid|msclkid|twclid|li_fat_id|mc_cid|igshid|ttclid|rdt_cid|epik|qclid|sccid|irclid|_kx)$",
+);
+
 function sanitizeProps(value: unknown, key: string, depth: number): unknown {
   if (depth > MAX_DEPTH) {
     return typeof value === "string" ? "[redacted]" : value;
   }
   if (typeof value === "string") {
-    return isUrlPropKey(key)
-      ? sanitizeMarketingUrl(value)
-      : sanitizeTokenPaths(value);
+    if (isUrlPropKey(key)) return sanitizeMarketingUrl(value);
+    if (CAMPAIGN_PROP.test(key)) return redactIdsInValue(sanitizeTokenPaths(value));
+    return sanitizeTokenPaths(value);
   }
   if (Array.isArray(value)) {
     return value.map((v) => sanitizeProps(v, key, depth + 1));
