@@ -55,10 +55,11 @@ describe("session photos on the chart page", () => {
 
   it("is read-only: no server action, no form, no click handler, links to the Photos tab", () => {
     expect(section).not.toMatch(/use server|<form|onClick|from "\.\/actions"/);
-    // Read-only still: the ONLY import from the Photos actions is the READ-only
-    // signer the expired-URL re-mint uses (#913's bounded recovery), never an
-    // upload, note or archive write.
-    expect(section).toMatch(/import \{ getTreatmentImageSignedUrlAction \} from "\.\.\/\.\.\/images\/actions";/);
+    // Read-only, and now with NO import from the Photos actions at all: the
+    // expired-URL re-mint is the shared hook's abortable GET (Codex P1
+    // 4307807754), never a server action, and never an upload, note or
+    // archive write.
+    expect(section).not.toMatch(/images\/actions"|getTreatmentImageSignedUrlAction/);
     expect(section).not.toMatch(/uploadTreatmentImageAction|archiveTreatmentImageAction|updateTreatmentImageNoteAction|setClientPortraitAction/);
     expect(section).toMatch(/href=\{`\/clients\/\$\{clientId\}\/images`\}/);
     expect(section).toMatch(/if \(photos\.length === 0\) return null;/);
@@ -93,8 +94,8 @@ describe("session photos: Codex P1 4301862700 / P2 4301862702", () => {
     // photo: timeout → one retry → terminal, the hydration-window check, no
     // retry loop. Pinned once, in treatment-photo-thumbnail-recovery.test.ts.
     expect(section).toMatch(/import \{ useGridPhotoRecovery \} from "@\/lib\/images\/use-grid-photo-recovery";/);
-    expect(section).toMatch(/useGridPhotoRecovery\(\{ previewUrl: p\.url, thumbUrl: p\.thumbUrl, remint \}\)/);
-    expect(section).toMatch(/getTreatmentImageSignedUrlAction\(\{ imageId: p\.id, variant \}\)\.then\(\(res\) => \(res\.ok \? res\.url : null\)\)/);
+    expect(section).toMatch(/useGridPhotoRecovery\(\{\s*previewUrl: p\.url,\s*thumbUrl: p\.thumbUrl,\s*clientId,\s*imageId: p\.id,\s*\}\)/);
+    expect(section).toMatch(/<SessionPhotoCell key=\{`\$\{p\.id\}:\$\{p\.url\}:\$\{p\.thumbUrl \?\? ""\}`\} clientId=\{clientId\} photo=\{p\} \/>/);
     expect(section).toMatch(/ref=\{imgRef\}/);
     expect(section).toMatch(/onError=\{onError\}/);
     expect(section).toMatch(/state\.stage === "broken" \|\| !state\.src/);

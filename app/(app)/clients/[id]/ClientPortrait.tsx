@@ -1,36 +1,30 @@
 "use client";
 
-import { useCallback } from "react";
-import { getTreatmentImageSignedUrlAction } from "./images/actions";
-import type { GridPhotoVariant } from "@/lib/images/grid-photo-recovery";
 import { useGridPhotoRecovery } from "@/lib/images/use-grid-photo-recovery";
 
 // FETT photos (HON-43), 0231: the client's ID photo in the profile header.
 // The avatar is 56 px, so it loads the bounded derivative first (Codex P2
 // 4302682032) and demotes to the original (PERF-IMG-03). A signed URL that
 // EXPIRED before the image was requested (60 s TTL; a page left open, or one
-// restored from the router cache) is re-minted through the same server action
-// the Photos tab uses, by the SHARED bounded recovery
-// (lib/images/use-grid-photo-recovery.ts: one retry on a timed-out or rejected
-// re-mint, then terminal). If everything fails, the header simply shows no
+// restored from the router cache) is re-minted through the same abortable
+// signed-url route the Photos tab uses (never a server action), by the SHARED
+// bounded recovery (lib/images/use-grid-photo-recovery.ts: one retry on a
+// timed-out or rejected re-mint, then terminal). If everything fails, the header simply shows no
 // portrait. The parent keys this by the server URLs, so fresh URLs remount it.
 export function ClientPortrait({
+  clientId,
   imageId,
   url,
   thumbUrl,
   clientName,
 }: {
+  clientId: string;
   imageId: string;
   url: string;
   thumbUrl: string | null;
   clientName: string;
 }) {
-  const remint = useCallback(
-    (variant: GridPhotoVariant) =>
-      getTreatmentImageSignedUrlAction({ imageId, variant }).then((res) => (res.ok ? res.url : null)),
-    [imageId],
-  );
-  const { state, imgRef, onError } = useGridPhotoRecovery({ previewUrl: url, thumbUrl, remint });
+  const { state, imgRef, onError } = useGridPhotoRecovery({ previewUrl: url, thumbUrl, clientId, imageId });
 
   if (state.stage === "broken" || !state.src) return null;
   return (
