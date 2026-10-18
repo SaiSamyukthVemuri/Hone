@@ -451,7 +451,9 @@ export async function sendBookingConfirmationToClient(params: {
   practitionerDisplayName: string | null;
   clientName: string;
   clientEmail: string;
-  cancellationUrl: string;
+  // HON-47. Null when the studio has switched client cancellation off, so the
+  // link is never SENT. Already the shape `rescheduleUrl` has.
+  cancellationUrl: string | null;
   rescheduleUrl: string | null;
   intakeUrl: string | null;
   treatmentTimeLine: string | null;
@@ -488,8 +490,11 @@ export async function sendBookingConfirmationToClient(params: {
     end,
     summary: `${serviceName} · ${params.studio.name}`,
     location: params.studio.address ?? undefined,
-    description:
-      `${serviceName} at ${params.studio.name}.\nCancel: ${params.cancellationUrl}`,
+    // HON-47. The calendar invite is a channel too: a suppressed link must
+    // not reach it either, and the description simply names the appointment.
+    description: params.cancellationUrl
+      ? `${serviceName} at ${params.studio.name}.\nCancel: ${params.cancellationUrl}`
+      : `${serviceName} at ${params.studio.name}.`,
     organizerName: params.studio.name,
     organizerEmail: params.studio.owner_email,
     attendeeName: params.clientName,
@@ -681,7 +686,9 @@ type ReminderInput = {
   practitionerDisplayName: string | null;
   clientName: string;
   clientEmail: string;
-  cancellationUrl: string;
+  // HON-47. Null when the studio has switched client cancellation off, so the
+  // link is never SENT. Already the shape `rescheduleUrl` has.
+  cancellationUrl: string | null;
   rescheduleUrl: string | null;
   treatmentTimeLine: string | null;
   // A FRESH secure intake link, or null. The reminder cron passes non-null

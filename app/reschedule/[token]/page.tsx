@@ -206,7 +206,8 @@ export default async function ReschedulePage({
               {cancelWouldBeRefused && (
                 <p className="mt-4 text-[16px] leading-relaxed text-[#0A0A0A]">
                   {CLIENT_CANCELLATION_DISABLED_HEADLINE}, so please contact
-                  them to cancel this appointment or to join the waitlist.
+                  the studio to cancel this appointment or to join the
+                  waitlist.
                 </p>
               )}
 

@@ -75,3 +75,66 @@ export function clientRescheduleAllowed(
 ): boolean {
   return studio?.client_reschedule_enabled ?? true;
 }
+
+// ===========================================================================
+// THE LINKS — slice 3. Suppression at the point of MINTING.
+// ===========================================================================
+//
+// 0234 refuses the command and the surfaces withdraw their CTAs, so a client
+// who follows a stale link is told the truth rather than shown a form that
+// cannot work. This closes the remaining gap: a studio that has switched an
+// action off should not be SENDING the link in the first place, in any email or
+// SMS, because the link itself is a promise.
+//
+// WHY ONE HELPER AND NOT A CHECK AT EACH SITE. The same three URLs were built
+// by hand at six places — the public booking confirmation, the portal rebook,
+// the reschedule successor, the shared notification builder, the moved-notice
+// email and the reminder cron. Six copies of a policy decision is six chances
+// for one to be missed, and the one that is missed is invisible: the email
+// simply goes out with a link that refuses.
+//
+// /manage IS ALWAYS RETURNED, deliberately. It is the honest fallback: it
+// mutates nothing, it names only the actions it can actually offer, and when
+// both switches are off it explains and points at the studio. Withholding it
+// would leave a client with no link at all.
+//
+// THE FLAGS MUST BE READ SERVER-SIDE AT MINT TIME, from the same studio row the
+// commands lock. This module is `server-only`, so that is structural rather
+// than a convention: a browser cannot reach this function, and no caller can
+// pass a flag that did not come from the database.
+
+/**
+ * The three client links for one appointment, with the suppressed ones null.
+ *
+ * `null` means DO NOT SEND and do not render a label for it — not "render an
+ * empty href", which is how a suppressed link becomes a dead button.
+ */
+export type ClientSelfServiceLinks = {
+  cancelUrl: string | null;
+  rescheduleUrl: string | null;
+  /** Never null: see the header. */
+  manageUrl: string;
+};
+
+export function clientSelfServiceLinks(input: {
+  /** Absolute origin, no trailing slash — as every mint site already derives. */
+  origin: string;
+  /** The RAW token that belongs in the URL, never its hash. */
+  token: string;
+  studio: ClientSelfServicePolicyStudio | null | undefined;
+}): ClientSelfServiceLinks {
+  const { origin, token, studio } = input;
+  // NOT encodeURIComponent, matching every call site this replaces: appointment
+  // tokens are hex, so encoding is a no-op for every token the app mints, and
+  // changing it here would silently alter URLs rather than only suppress them.
+  // Suppression is the whole change; nothing else about these strings moves.
+  return {
+    cancelUrl: clientCancellationAllowed(studio)
+      ? `${origin}/cancel/${token}`
+      : null,
+    rescheduleUrl: clientRescheduleAllowed(studio)
+      ? `${origin}/reschedule/${token}`
+      : null,
+    manageUrl: `${origin}/manage/${token}`,
+  };
+}

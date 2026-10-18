@@ -1,4 +1,5 @@
 import { generateCancellationToken } from "@/lib/booking/tokens";
+import { clientSelfServiceLinks } from "@/lib/booking/client-self-service-policy";
 import { ensureIntakeForClient } from "@/lib/intake/queries";
 import {
   buildTreatmentTimeLine,
@@ -53,12 +54,23 @@ export async function dispatchBookingNotifications(p: DispatchParams) {
     p.appointment.id,
     new Date(p.appointment.starts_at),
   );
-  const cancellationUrl = `${appOrigin}/cancel/${token}`;
-  const rescheduleUrl = `${appOrigin}/reschedule/${token}`;
-  // SMS uses the single neutral /manage/<token> entry point, built from the
-  // same HMAC token so a client sees one policy-aware landing page before
-  // choosing cancel or reschedule.
-  const manageUrl = `${appOrigin}/manage/${token}`;
+  // HON-47. The three links come from one policy-aware helper: a studio that
+  // has switched an action off must not have the link SENT, in any channel,
+  // because the link is itself a promise. `cancelUrl` and `rescheduleUrl` are
+  // null when suppressed and every renderer below must omit them rather than
+  // render an empty href.
+  //
+  // SMS uses the single neutral /manage/<token> entry point, which is never
+  // suppressed: it is the honest fallback, naming only the actions it can
+  // offer and pointing at the studio when it can offer none.
+  //
+  // The flags come from `p.studio`, the row the caller already read
+  // server-side. Nothing here trusts the browser.
+  const { cancelUrl, rescheduleUrl, manageUrl } = clientSelfServiceLinks({
+    origin: appOrigin,
+    token,
+    studio: p.studio,
+  });
   const appointmentUrl = `${appOrigin}/calendar`;
 
   if (p.clientEmail && p.studio.send_confirmation_emails) {
@@ -87,7 +99,7 @@ export async function dispatchBookingNotifications(p: DispatchParams) {
       practitionerDisplayName: p.practitionerName,
       clientName: p.clientName,
       clientEmail: p.clientEmail,
-      cancellationUrl,
+      cancellationUrl: cancelUrl,
       rescheduleUrl,
       intakeUrl: intake?.url ?? null,
       treatmentTimeLine,

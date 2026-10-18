@@ -4,6 +4,7 @@ import { sendEmailSafely } from "./send-appointment";
 import { resolveReplyTo, studioClientContactEmail } from "@/lib/email/studio-identity";
 import { generateCancellationToken } from "@/lib/booking/tokens";
 import { localLongDate, formatTimeForStudio } from "@/lib/booking/tz";
+import { clientSelfServiceLinks } from "@/lib/booking/client-self-service-policy";
 
 // Practitioner Move appointment: the NARROW client "appointment updated" notification.
 //
@@ -65,7 +66,7 @@ export async function notifyAppointmentMoved(
     const { data } = await admin
       .from("appointments")
       .select(
-        "id, starts_at, client:clients(name, email), service:services(name), studio:studios(name, timezone, owner_email, postcare_contact_email), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name)",
+        "id, starts_at, client:clients(name, email), service:services(name), studio:studios(name, timezone, owner_email, postcare_contact_email, client_cancellation_enabled, client_reschedule_enabled), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name)",
       )
       .eq("id", input.appointmentId)
       .eq("studio_id", input.studioId)
@@ -81,6 +82,12 @@ export async function notifyAppointmentMoved(
         timezone: string | null;
         owner_email: string | null;
         postcare_contact_email: string | null;
+        // HON-47. Projected by the select above. Nullable here because this is
+        // the PROJECTION's type, not the table's: if a future edit drops them
+        // the helper's `?? true` keeps the link rather than suppressing it for
+        // a studio that never asked.
+        client_cancellation_enabled: boolean | null;
+        client_reschedule_enabled: boolean | null;
       } | null;
       practitioner: { display_name: string | null } | null;
     };
@@ -99,10 +106,20 @@ export async function notifyAppointmentMoved(
     // present; never an id. Absent name falls back to neutral phrasing.
     const practitionerName = row.practitioner?.display_name ?? null;
 
-    // Stateless HMAC token (no stored raw token) → the neutral manage + reschedule links.
+    // Stateless HMAC token (no stored raw token) → the neutral manage +
+    // reschedule links.
+    //
+    // HON-47. `rescheduleUrl` is null when the studio has switched client
+    // rescheduling off, and every renderer below must omit it rather than
+    // render an empty href. /manage is never suppressed. The flags are
+    // projected by the select above — without that projection the helper's
+    // `?? true` would keep the link and the suppression would be invisible.
     const token = generateCancellationToken(row.id, start);
-    const manageUrl = `${input.appOrigin}/manage/${token}`;
-    const rescheduleUrl = `${input.appOrigin}/reschedule/${token}`;
+    const { rescheduleUrl, manageUrl } = clientSelfServiceLinks({
+      origin: input.appOrigin,
+      token,
+      studio: row.studio,
+    });
 
     const kind: MoveNotificationKind = input.resultKind ?? "moved";
     let subject: string;
@@ -141,7 +158,14 @@ export async function notifyAppointmentMoved(
       <tr><td style="padding-bottom:24px;font-family:-apple-system,system-ui,sans-serif;font-size:16px;line-height:1.6;">
         ${bodyHtml}</td></tr>
       <tr><td style="padding-bottom:16px;font-family:-apple-system,system-ui,sans-serif;font-size:16px;line-height:1.6;">
-        Need to make a change? <a href="${esc(rescheduleUrl)}">Reschedule</a> or <a href="${esc(manageUrl)}">manage your appointment</a>.</td></tr>
+        Need to make a change? ${
+          // HON-47. No "Reschedule" link at a studio that has switched client
+          // rescheduling off; /manage still answers, and it names only what it
+          // can actually offer.
+          rescheduleUrl
+            ? `<a href="${esc(rescheduleUrl)}">Reschedule</a> or <a href="${esc(manageUrl)}">manage your appointment</a>`
+            : `<a href="${esc(manageUrl)}">Manage your appointment</a>`
+        }.</td></tr>
     </table>
   </td></tr></table>
 </body></html>`;

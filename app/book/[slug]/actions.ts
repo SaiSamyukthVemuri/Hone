@@ -77,6 +77,7 @@ import { dispatchBookingConversion } from "@/lib/conversion/dispatch";
 import { normalizeWaitlistBookingResult } from "@/lib/booking/waitlist-atomic-result";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { captureServerEvent } from "@/lib/analytics/server";
+import { clientSelfServiceLinks } from "@/lib/booking/client-self-service-policy";
 // PR #261: salted SHA-256 fingerprint helper reused for public booking
 // error logs so a raw client email never lands in server logs while
 // repeated failures stay correlatable. Same helper + salt the portal
@@ -2306,14 +2307,25 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // Emails. New confirmation + reminder + reschedule URLs use the random
   // appointment_token column; legacy /cancel/[hmac] route still validates
   // older in-flight links.
-  const cancellationUrl = `${appOrigin}/cancel/${appointmentToken}`;
-  const rescheduleUrl = `${appOrigin}/reschedule/${appointmentToken}`;
+  // HON-47. One policy-aware helper for all three links: a studio that has
+  // switched an action off must not have that link SENT, in any channel.
+  // `/manage` is never suppressed — it is the honest fallback. The flags come
+  // from the studio row already read server-side.
+  const { cancelUrl: cancellationUrl, rescheduleUrl } = clientSelfServiceLinks({
+    origin: appOrigin,
+    token: appointmentToken,
+    studio,
+  });
   // SMS carries one neutral /manage/<token> link that surfaces both
   // reschedule and cancel after the studio's policies. Email still
   // includes the separate cancel + reschedule URLs above; SMS used
   // to mirror them and now does not, per the pilot direction change
   // away from encouraging cancel/reschedule from inside the SMS.
-  const manageUrl = `${appOrigin}/manage/${appointmentToken}`;
+  const manageUrl = clientSelfServiceLinks({
+    origin: appOrigin,
+    token: appointmentToken,
+    studio,
+  }).manageUrl;
   // Note: the HMAC-fallback generateCancellationToken() call previously
   // sat here purely to keep the import "used". It has been removed; the
   // public booking flow now depends exclusively on

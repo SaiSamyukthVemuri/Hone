@@ -55,6 +55,7 @@ import {
   CLIENT_RESCHEDULE_DISABLED_ERROR,
   clientCancellationAllowed,
   clientRescheduleAllowed,
+  clientSelfServiceLinks,
 } from "@/lib/booking/client-self-service-policy";
 
 const POLICY_ACK_REQUIRED_ERROR =
@@ -934,9 +935,23 @@ export async function rescheduleAppointmentViaTokenAction(
 
   // Built in memory BEFORE the command so the success path cannot fail to
   // produce it. It is RETURNED only after the command reports success.
-  const cancellationUrl = `${appOrigin}/cancel/${newToken}`;
-  const rescheduleUrl = `${appOrigin}/reschedule/${newToken}`;
-  const manageUrl = `${appOrigin}/manage/${newToken}`;
+  // HON-47. One policy-aware helper for all three links: a studio that has
+  // switched an action off must not have that link SENT, in any channel.
+  // `/manage` is never suppressed — it is the honest fallback. The flags come
+  // from the studio row already read server-side.
+  //
+  // THE SUCCESSOR's links, so they follow the policy as it stands NOW: a studio
+  // that switched cancellation off between the original booking and this
+  // reschedule must not hand the client a fresh cancel link.
+  const {
+    cancelUrl: cancellationUrl,
+    rescheduleUrl,
+    manageUrl,
+  } = clientSelfServiceLinks({
+    origin: appOrigin,
+    token: newToken,
+    studio: studioRow,
+  });
 
   // ONE AUTHORITATIVE MUTATION. The command owns the cancellation, the
   // successor, both lineage directions, both audits and the policy
