@@ -169,7 +169,16 @@ export async function notifyAppointmentMoved(
     </table>
   </td></tr></table>
 </body></html>`;
-    const text = `Hi ${clientName},\n\n${bodyText}\n\nManage or reschedule: ${manageUrl}\n`;
+    // HON-47 (Codex 4309085858). THE SAME CONDITION AS THE HTML ABOVE. The
+    // plain-text alternative said "Manage or reschedule" unconditionally, so a
+    // studio with client rescheduling switched off dropped the promise from the
+    // HTML and kept it in the text — and the text part is what a plain-text
+    // client, and some accessibility tooling, actually renders. Derived from
+    // `rescheduleUrl` rather than restated, so the two cannot diverge again.
+    const manageLabel = rescheduleUrl
+      ? "Manage or reschedule"
+      : "Manage your appointment";
+    const text = `Hi ${clientName},\n\n${bodyText}\n\n${manageLabel}: ${manageUrl}\n`;
 
     const res = await sendEmailSafely({
       studioIdentity: {

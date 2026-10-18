@@ -567,10 +567,29 @@ describe("public reschedule — the success result carries a management path", (
   });
 
   it("builds the manage URL before the command so success can never lack one", () => {
-    const built = SUBMIT.indexOf("const manageUrl =");
+    // RE-POINTED, NOT LOOSENED (HON-47 slice 3). This looked for the literal
+    // `const manageUrl =`, which HON-47 replaced: the three client links are
+    // now destructured together from `clientSelfServiceLinks(...)`, the
+    // policy-aware helper that suppresses a link the studio has switched off.
+    // The PROPERTY is unchanged and still the point — a management URL must
+    // exist BEFORE `reschedule_appointment_v2` is called, so a committed
+    // success can never be returned without one.
+    //
+    // Verified before re-pointing: in the current source the destructured
+    // binding precedes the RPC call. Anchored on the HELPER CALL and on the
+    // `manageUrl` binding it produces, so a future edit that moves the call
+    // after the command still fails here — which is the negative control for
+    // this assertion, and it was checked by doing exactly that.
+    const binding = SUBMIT.indexOf("manageUrl,");
+    const helper = SUBMIT.indexOf("clientSelfServiceLinks({");
     const rpc = SUBMIT.indexOf('"reschedule_appointment_v2"');
-    expect(built).toBeGreaterThan(-1);
-    expect(rpc).toBeGreaterThan(built);
+    expect(binding, "the submit path must bind manageUrl").toBeGreaterThan(-1);
+    expect(helper, "manageUrl must come from the policy-aware helper").toBeGreaterThan(-1);
+    expect(binding, "the manageUrl binding belongs to the helper call").toBeLessThan(helper);
+    expect(
+      rpc,
+      "the manage URL must be built BEFORE reschedule_appointment_v2 is called",
+    ).toBeGreaterThan(helper);
   });
 });
 
