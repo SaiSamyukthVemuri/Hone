@@ -2524,3 +2524,98 @@ describe("an unsourced channel count is advisory, never refusing", () => {
     );
   });
 });
+
+describe("an INFERRED precision makes no precision claim", () => {
+  // THE DEFECT (Codex, #855 4305642899). `MachineField.unverified` exists to
+  // say which aspects the evidence does not cover, and the ST 350 and the 5HD
+  // both declare `["decimals", "editability"]` — their precision was inferred
+  // from a manual mirror that establishes labels and units only. The check
+  // compared against that inferred number anyway and said the field "is
+  // documented to N decimal place(s)", asserting exactly what the ledger
+  // disclaims.
+  //
+  // SEVERITY DIFFERS BY BRANCH, and this file lives on the lower one. Here
+  // `precision_beyond_contract` is a NOTE, so the harm is a false annotation
+  // on a clinical record. On #860 it is a REFUSAL, so there the same defect
+  // refuses a TRUE OBSERVATION and a stored reading with an extra decimal
+  // stops rendering on the historical path.
+  const field = (over: Record<string, unknown>): MachineProfile => {
+    const b = offered();
+    return {
+      ...b,
+      modes: [{ ...b.modes[0]!, fields: [{ ...b.modes[0]!.fields[0]!, ...over }] }],
+    } as MachineProfile;
+  };
+
+  /** Did the outcome make a precision claim, as a note OR as a refusal? */
+  const flagged = (prof: MachineProfile, value: number) => {
+    const out = validateReading(
+      {
+        profileId: prof.profileId,
+        version: prof.version,
+        modeKey: "m",
+        fieldKey: "current",
+        source: "practitioner-entered",
+        value: { kind: "value", value },
+      },
+      { catalogue: [prof] },
+    );
+    // WIDENED TO `string` DELIBERATELY, so this compiles on BOTH stacked
+    // branches. `precision_beyond_contract` is a NoteCode here and a
+    // RefusalCode on #860, so a typed comparison is impossible on one tree or
+    // the other — TS2367 — and an earlier test in this file needed a merge
+    // resolution every round for exactly that reason. The question being
+    // asked is the same on both: did the outcome make a precision claim.
+    const codes = out.ok ? out.notes.map((n) => String(n.code)) : [String(out.code)];
+    return codes.includes("precision_beyond_contract");
+  };
+
+  it("makes NO precision claim when decimals are unverified", () => {
+    expect(
+      flagged(field({ decimals: 1, unverified: ["decimals"] }), 1.234),
+      "an inferred precision was asserted as documented",
+    ).toBe(false);
+  });
+
+  it("nor when decimals sit among other unverified aspects", () => {
+    // The shipped shape: ST 350 and 5HD both declare both aspects.
+    expect(
+      flagged(field({ decimals: 1, unverified: ["decimals", "editability"] }), 1.234),
+    ).toBe(false);
+  });
+
+  it("CONTROL: an ESTABLISHED precision still speaks", () => {
+    // Without this the rule above would also pass if the check had simply
+    // been deleted.
+    expect(flagged(field({ decimals: 1 }), 1.234)).toBe(true);
+    expect(flagged(field({ decimals: 1, unverified: [] }), 1.234)).toBe(true);
+  });
+
+  it("CONTROL: an UNRELATED unverified aspect does not silence precision", () => {
+    // `editability` says nothing about decimals, so the claim still holds.
+    expect(
+      flagged(field({ decimals: 1, unverified: ["editability"] }), 1.234),
+      "an unrelated unverified aspect silenced the precision claim",
+    ).toBe(true);
+  });
+
+  it("CONTROL: a value within the precision is unremarkable either way", () => {
+    expect(flagged(field({ decimals: 1, unverified: ["decimals"] }), 1.2)).toBe(false);
+    expect(flagged(field({ decimals: 1 }), 1.2)).toBe(false);
+  });
+
+  it("and the SHIPPED ST 350 and 5HD fields are the real subject", () => {
+    // Pins that this is about data that exists rather than a hypothetical:
+    // both models declare the decimals aspect unverified on display fields.
+    for (const id of ["silhouettone:evolution-st-350", "silhouettone:evolution-5hd"]) {
+      const prof = profileById(id)!;
+      const declared = prof.modes.flatMap((m) =>
+        modeFields(m).map(({ field: f }) => f.unverified ?? []),
+      );
+      expect(
+        declared.some((aspects) => aspects.includes("decimals")),
+        `${id} no longer declares an unverified precision`,
+      ).toBe(true);
+    }
+  });
+});

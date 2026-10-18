@@ -498,8 +498,28 @@ export function validateReading(
 
   // Precision: recorded as submitted, flagged if finer than the contract.
   // Rounding here is exactly the silent rewrite the contract forbids.
+  //
+  // BUT ONLY WHERE THE CONTRACT'S PRECISION IS ESTABLISHED (Codex, #855
+  // 4305642899). `MachineField.unverified` exists to say which aspects the
+  // evidence does NOT cover, and the ST 350 and the 5HD both declare
+  // `["decimals", "editability"]` — their precision was INFERRED from a manual
+  // mirror that establishes labels and units only. Comparing against an
+  // inferred number asserted the very thing the ledger disclaims: the message
+  // says the field "is documented to N decimal place(s)" when the catalogue
+  // says it is not.
+  //
+  // THE COST IS NOT COSMETIC ON THE STACKED BRANCHES, which is why this is a
+  // fix rather than a tidy-up. Here `precision_beyond_contract` is a NOTE, so
+  // the harm is a false annotation on a clinical record. On #860 it is a
+  // REFUSAL — promoted there so the app would stop promising "stored exactly
+  // as entered" for a value 0223 refuses — so on that tree this REFUSES A
+  // TRUE OBSERVATION against an inferred precision, and a stored reading with
+  // an extra decimal stops rendering on the historical path. Same class as
+  // the step with no evidenced origin and the unsourced channel count: only
+  // an established constraint may speak.
   const given = decimalsOf(value);
-  if (given > field.decimals) {
+  const decimalsEstablished = !(field.unverified ?? []).includes("decimals");
+  if (decimalsEstablished && given > field.decimals) {
     notes.push({
       code: "precision_beyond_contract",
       message: `Field '${field.key}' is documented to ${field.decimals} decimal place(s); ${value} carries ${
