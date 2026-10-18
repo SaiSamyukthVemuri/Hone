@@ -1414,7 +1414,24 @@ export async function createTreatmentAreaWithEntryAction(
         // THE DERIVED ROWS, never the caller's: unit and precision come from
         // the contract the validator resolved.
         p_setup_groups: setupGroups.map((g) => ({
-          group_key: g.groupKey,
+          // SPREAD, NOT BOTH KEYS WITH A NULL (Codex, #860 4307426212).
+          //
+          // THE DEFECT THIS FIXES was the whole create journey: on this path
+          // EVERY group is new - the block does not exist yet - so
+          // `assembleGroupSubmissions` sets `groupKey: null` and a non-null
+          // `newGroupRef`. Emitting `group_key: g.groupKey` sent
+          // `{"group_key": null}`, and a JSON null is PRESENT to the `?`
+          // operator: the command's exactly-one check passed, then the group
+          // fell through to "A settings group must be named." because
+          // `->>'group_key'` on a JSON null is SQL NULL. The command refused
+          // and the atomic create rolled the area back with it.
+          //
+          // SAME SHAPE AS `recordSetupSubmission`, deliberately. I had written
+          // this exact warning there and then left this call site - the one
+          // where every group is necessarily new - emitting the wrong form.
+          ...(g.groupKey === null
+            ? { new_group_ref: g.newGroupRef }
+            : { group_key: g.groupKey }),
           channels: g.channels,
           readings: g.readings.map((r) => ({
             stage_key: r.stageKey,
