@@ -53,6 +53,15 @@ async function fencedFetch(input: RequestInfo | URL, init?: RequestInit): Promis
   if (url.hostname === "api.twilio.com" && /\/Accounts\/[^/]+\/Messages\.json$/.test(url.pathname) && init?.method === "POST") {
     const form = Object.fromEntries(new URLSearchParams(String(init.body ?? "")));
     twilioCalls.push({ url: url.href, form });
+    // A Messaging Service may pool several numbers, and without From Twilio
+    // picks any member (Codex P2 4305406389). The fake refuses a service send
+    // that does not pin its sender, as an unverified pool member could go out.
+    if (form.MessagingServiceSid && !form.From) {
+      return new Response(JSON.stringify({ code: 21603, message: "From is required by this fake for a pinned studio send" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
     return new Response(
       JSON.stringify({ sid: `SM${hex(16)}`, status: "queued", to: form.To, from: null, messaging_service_sid: form.MessagingServiceSid ?? null }),
       { status: 201, headers: { "content-type": "application/json" } },
@@ -306,6 +315,8 @@ describe("1. sender configured, complete v1 STOP preflight, campaign binding: re
     expect(out.ok, JSON.stringify(out)).toBe(true);
     expect(twilioCalls).toHaveLength(1);
     expect(twilioCalls[0].form.MessagingServiceSid).toBe(f.service);
+    // The EXACT sender whose STOP readiness was verified, not any pool member.
+    expect(twilioCalls[0].form.From).toBe(f.senderPhone);
     expect(twilioCalls[0].form.To).toBe(f.clientPhone);
     expect(twilioCalls[0].url).toBe(`https://api.twilio.com/2010-04-01/Accounts/${ACCOUNT}/Messages.json`);
     const a = await attemptsOf(appt.id);
