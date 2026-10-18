@@ -57,6 +57,19 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
   // A resolved incident was still reported: never claim "no problems" while the
   // window holds one (Codex P2 4244957358).
   const resolvedCount = rows.length - open.length;
+
+  // THIS READ IS CAPPED, SO ITS COUNTS DESCRIBE WHAT IS SHOWN (Codex P2
+  // 4307695060). `owner_delivery_incidents` applies `limit 200`
+  // (supabase/migrations/0215_delivery_incidents.sql:314) after ordering open
+  // incidents first, so a studio at the cap sees a SLICE: older open incidents
+  // are absent, and because resolved rows sort LAST they are the first thing
+  // the cap removes — which would also distort `resolvedCount` silently.
+  //
+  // The cap is mirrored here rather than derived, because the function does not
+  // report it; the test pins this exact number so a divergence from 0215 fails
+  // rather than drifts.
+  const OWNER_INCIDENT_CAP = 200;
+  const incidentsTruncated = rows.length >= OWNER_INCIDENT_CAP;
   const resolvedNote =
     resolvedCount === 0
       ? ""
@@ -76,8 +89,13 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
             ? resolvedCount === 0
               ? "No delivery problems reported in the last 14 days."
               : `No open delivery problems.${resolvedNote}`
-            : `${open.length} open delivery ${open.length === 1 ? "problem" : "problems"}. Repeats of the same problem are counted, not listed again.${resolvedNote}`}
+            : `${open.length} open delivery ${open.length === 1 ? "problem" : "problems"} shown. Repeats of the same problem are counted, not listed again.${resolvedNote}`}
         </p>
+        {incidentsTruncated && (
+          <p className="text-xs text-amber-800 dark:text-amber-300">
+            Showing the most recent {OWNER_INCIDENT_CAP} incidents. Older incidents are not listed.
+          </p>
+        )}
         <p className="text-xs text-neutral-500">
           {/* Never infers that bounce reporting is live: a stored signing secret is
               not a configured, tested endpoint (Codex P2 4253217747), and the

@@ -16,7 +16,18 @@ const h: {
   // Per-RPC answers for the page render below; `answer` stays the fallback so
   // the action cases are untouched.
   byFn: Record<string, { data: unknown; error: unknown }>;
-} = { email: null, audits: [], rpcCalls: [], answer: { data: "resolved", error: null }, byFn: {} };
+  /** What `delivery_incidents.resolution` holds, for the conflict path. */
+  storedResolution: { resolution: string } | null;
+  tableReads: string[];
+} = {
+  email: null,
+  audits: [],
+  rpcCalls: [],
+  answer: { data: "resolved", error: null },
+  byFn: {},
+  storedResolution: null,
+  tableReads: [],
+};
 
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
 vi.mock("@/lib/supabase/server", () => ({
@@ -36,6 +47,17 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       h.rpcCalls.push([fn, args]);
       return Promise.resolve(h.byFn[fn] ?? h.answer);
     },
+    // The conflicting-resolution path reads the STORED resolution, because the
+    // command returns only a result word and never says what is on record.
+    from: (table: string) => {
+      h.tableReads.push(table);
+      const chain = {
+        select: () => chain,
+        eq: () => chain,
+        maybeSingle: async () => ({ data: h.storedResolution, error: null }),
+      };
+      return chain;
+    },
   }),
 }));
 
@@ -53,6 +75,9 @@ beforeEach(() => {
   h.audits = [];
   h.rpcCalls = [];
   h.answer = { data: "resolved", error: null };
+  h.byFn = {};
+  h.storedResolution = null;
+  h.tableReads = [];
 });
 
 describe("resolveDeliveryIncidentAction", () => {
@@ -97,6 +122,64 @@ describe("resolveDeliveryIncidentAction", () => {
     h.answer = { data: null, error: { message: "db down" } };
     await expect(resolveDeliveryIncidentAction(form({ incident_id: ID, resolution: "fixed" }))).rejects.toThrow();
     expect(h.audits[0]).toMatchObject({ outcome: "failed" });
+  });
+});
+
+describe("a conflicting second resolution is not a success (Codex P2 4307695064)", () => {
+  it("already_resolved with a DIFFERENT resolution fails, and the audit never shows the submitted word", async () => {
+    // `resolve_delivery_incident` returns already_resolved WITHOUT updating
+    // (0215:343), so the row keeps the FIRST admin's resolution. Recording the
+    // submitted word as a success made the audit assert a resolution that was
+    // never committed — and the audit is the one place a reviewer looks to find
+    // out what an incident was closed as.
+    h.email = "support@hone.test";
+    h.answer = { data: "already_resolved", error: null };
+    h.storedResolution = { resolution: "acknowledged" };
+
+    await expect(
+      resolveDeliveryIncidentAction(form({ incident_id: ID, resolution: "fixed" })),
+    ).rejects.toThrow(/already resolved as "acknowledged"/i);
+
+    expect(h.tableReads, "it must read what IS recorded").toContain("delivery_incidents");
+    const audit = h.audits[0]!;
+    expect(audit).toMatchObject({
+      outcome: "failed",
+      metadata: {
+        result: "already_resolved_conflict",
+        applied: false,
+        recorded_resolution: "acknowledged",
+      },
+    });
+    // THE LOAD-BEARING ABSENCE: the submitted word must not appear anywhere in
+    // the audit, because it was not applied.
+    expect(JSON.stringify(audit)).not.toContain("fixed");
+  });
+
+  it("already_resolved with the SAME resolution stays idempotent success", async () => {
+    // The outcome the caller asked for is the outcome on record, so there is
+    // nothing to warn about and nothing to undo.
+    h.email = "support@hone.test";
+    h.answer = { data: "already_resolved", error: null };
+    h.storedResolution = { resolution: "fixed" };
+
+    await resolveDeliveryIncidentAction(form({ incident_id: ID, resolution: "fixed" }));
+
+    expect(h.audits[0]).toMatchObject({
+      outcome: "succeeded",
+      metadata: { resolution: "fixed", result: "already_resolved" },
+    });
+  });
+
+  it("a first resolution still succeeds, and reads nothing extra", async () => {
+    // CONTROL: the ordinary path must not have grown a read, or every resolve
+    // pays for the conflict case.
+    h.email = "support@hone.test";
+    h.answer = { data: "resolved", error: null };
+
+    await resolveDeliveryIncidentAction(form({ incident_id: ID, resolution: "fixed" }));
+
+    expect(h.audits[0]).toMatchObject({ outcome: "succeeded", metadata: { result: "resolved" } });
+    expect(h.tableReads, "no stored-resolution read on the happy path").toEqual([]);
   });
 });
 
