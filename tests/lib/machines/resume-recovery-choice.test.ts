@@ -64,13 +64,24 @@ const MIGRATION = read(
 );
 
 describe("1 · a RESUMED save that already committed is ABSORBED", () => {
-  it("carries the retained key, so the command can recognise the repeat", () => {
+  it("re-uses the RETAINED key rather than minting a fresh one", () => {
     // The key is the whole mechanism: `create_block_with_initial_setup` looks
     // the claim up by (session, key) and returns the original ids.
+    //
+    // RESUME MEANS RE-ENTER HER SETTINGS, so the key travels the ordinary
+    // way - inside the setup payload that `machineSetupForSave` builds from a
+    // draft that HAS groups. `adoptResumedKey` is what makes that key the
+    // URL's rather than a new one.
     expect(FORM).toMatch(
-      /if \(resumeChoice === "resume" && pendingSaveKey !== null\) \{/,
+      /const chooseResume = \(\) => \{\s*\n\s*setResumeChoice\("resume"\);\s*\n\s*adoptResumedKey\(\);/,
     );
-    expect(FORM).toMatch(/idempotencyKey: pendingSaveKey,/);
+    expect(FORM).toMatch(
+      /const adoptResumedKey = \(\) => \{\s*\n\s*if \(resumedSaveKey !== null\) setPendingSaveKey\(resumedSaveKey\);/,
+    );
+    // AND THE SAVE USES THE HELD KEY, not a fresh uuid, whenever one is held.
+    expect(FORM).toMatch(
+      /const key = pendingSaveKey \?\? crypto\.randomUUID\(\)/,
+    );
   });
 
   it("and the command returns the ORIGINAL ids rather than creating again", () => {
@@ -84,25 +95,36 @@ describe("1 · a RESUMED save that already committed is ABSORBED", () => {
 });
 
 describe("2 · a RESUMED save that never committed creates ONCE", () => {
-  it("reaches the claiming command on a key alone, not the unkeyed path", () => {
-    // THE DEFECT THIS CLOSES. Without `withClaim` a settings-free save took
-    // the ordinary create path, carried no key, and made a SECOND area the
-    // moment the original transaction committed.
-    expect(ACTIONS).toMatch(/const withClaim\s*=/);
-    expect(ACTIONS).toMatch(/const withSetup = withSettings \|\| withClaim;/);
+  it("goes through the claiming command, because it carries settings", () => {
+    // A RESUMED SAVE ALWAYS HAS SETTINGS, because the hold requires them - so
+    // it takes the same route any settings-bearing save takes, with the
+    // retained key instead of a fresh one. One area, one claim.
+    expect(ACTIONS).toMatch(
+      /const withSetup\s*=\s*\n?\s*input\.initialSetup != null && input\.initialSetup\.groups\.length > 0;/,
+    );
   });
 
-  it("and names NO machine, because a settings-free save has none", () => {
-    expect(ACTIONS).toMatch(
-      /p_studio_machine_id: withSettings\s*\n?\s*\? input\.initialSetup!\.machineId\s*\n?\s*: null,/,
+  it("and a SETTINGS-FREE resume cannot reach the action at all", () => {
+    // THE PATH THAT WAS REMOVED BEFORE IT RAN. It would have created an area
+    // with NO machine settings whenever the original never committed -
+    // silently discarding what she entered. Banned by name in both files so
+    // it cannot return as an apparent simplification.
+    // THE DECLARATION, not the word. The action's comment names `withClaim`
+    // to say why it was removed, and a ban on the bare word would be tripped
+    // by the explanation itself - which is how a guard ends up rewritten to
+    // be satisfiable rather than true.
+    expect(ACTIONS, "the claim-only arm is back").not.toMatch(
+      /const withClaim/,
     );
-    expect(ACTIONS).toMatch(
-      /p_setup_mode_key: withSettings \? input\.initialSetup!\.modeKey : null,/,
+    expect(
+      FORM,
+      "the keyed settings-free save is back",
+    ).not.toMatch(/groups: \[\],/);
+    // THE HOLD IS WHAT STANDS IN ITS PLACE.
+    expect(FORM).toMatch(
+      /const resumedNeedsSettings =\s*\n?\s*resumeUnsettled && resumeChoice === "resume" && !hasSettingsToSend;/,
     );
-    // AND 0223 DECLARES THAT VALID, which is why no migration change was
-    // needed. If this comment ever leaves the migration, the claim above is
-    // no longer grounded.
-    expect(MIGRATION).toContain("Null/empty means \"no settings to record\"");
+    expect(FORM).toMatch(/resumedNeedsSettings\n/);
   });
 });
 

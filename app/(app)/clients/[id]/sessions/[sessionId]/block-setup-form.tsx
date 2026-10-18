@@ -865,6 +865,31 @@ export function BlockSetupForm({
    * save in this state is therefore a DIFFERENT save, and it is the one that
    * must not proceed unkeyed while the original may still be committing.
    *
+   * AND THAT WAS NOT THE REAL REASON, which I had wrong until a browser test
+   * would not write (ops01's ruling on #922 4307515255). Carrying the key on a
+   * settings-free save is possible - 0223's settings half is nullable and it
+   * still writes the claim - so "unkeyed" was fixable and would not have
+   * justified a hold on its own.
+   *
+   * THE REASON THAT SURVIVES IS THAT A SETTINGS-FREE SAVE CANNOT REPRODUCE
+   * THE SETTINGS SHE ENTERED. If the original committed, a keyed bare save is
+   * absorbed and she gets the original with its settings - fine. If it never
+   * committed, which is what `absent` usually means, it would create an area
+   * with NO machine settings and silently discard what she typed before the
+   * reload. That is data loss dressed as recovery, and we cannot tell the two
+   * cases apart at save time - which is the whole premise of the finding.
+   *
+   * SO RESUME MEANS RE-ENTER, and the retained key then decides it: identical
+   * values are absorbed, different values are refused by name, and a save
+   * whose original never committed proceeds once. None of the three loses a
+   * setting.
+   *
+   * THE WAY BACK IS THE CHOICE, NOT A BARE SAVE. 4305701038's trap - a
+   * retained key blocking an ordinary settings-free save for ever - is closed
+   * by "Start a new area as well", which releases the key. There is no dead
+   * end: unsettled with nothing entered offers Start New, or Resume plus her
+   * settings.
+   *
    * Derived from `machineDraft` directly rather than from
    * `machineSetupForSave()`, because that function MINTS AND STORES a key —
    * calling it during render would set state from a render pass.
@@ -929,36 +954,7 @@ export function BlockSetupForm({
    */
   const machineSetupForSave = () => {
     const chosen = machineDraft;
-    if (!chosen || chosen.groups.length === 0) {
-      // A RESUMED SAVE STILL CARRIES ITS KEY, with no settings at all
-      // (ops01's ruling on #922 4307515255).
-      //
-      // THE DEFECT THIS CLOSES. The key travelled to
-      // `create_block_with_initial_setup` only INSIDE `initialSetup`, so a
-      // settings-free save sent none, took the unkeyed create path, and
-      // created a SECOND treatment area the moment the original transaction
-      // committed. That is why closing used to discard the key instead - and
-      // discarding it was the other half of the same defect.
-      //
-      // 0223 ANTICIPATED THIS: `p_studio_machine_id`, `p_setup_mode_key` and
-      // `p_setup_groups` are nullable and the declaration says "Null/empty
-      // means 'no settings to record', which is a valid save". The claim is
-      // written whenever a key is supplied, so the reconciliation still
-      // works. No migration change.
-      //
-      // ONLY WHEN SHE CHOSE TO RESUME. An ordinary settings-free save must
-      // keep taking the proven unkeyed path, and "start a new area" has
-      // already released the key.
-      if (resumeChoice === "resume" && pendingSaveKey !== null) {
-        return {
-          machineId: null,
-          modeKey: null,
-          idempotencyKey: pendingSaveKey,
-          groups: [],
-        };
-      }
-      return null;
-    }
+    if (!chosen || chosen.groups.length === 0) return null;
     // THE IDENTITY COMES WITH THE DRAFT, from the report that produced it.
     //
     // That is safe only because every change of identity REPORTS - the

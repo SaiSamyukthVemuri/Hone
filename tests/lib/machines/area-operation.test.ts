@@ -422,7 +422,7 @@ describe("the create form carries the key in the URL", () => {
     }
   });
 
-  it("a resumed settings-free save CARRIES ITS KEY, once she chooses to resume", () => {
+  it("a resumed settings-free save is HELD, because it cannot reproduce her settings", () => {
     // THIS REVERSES 4305550889's REMEDY AND KEEPS ITS CLAIM (ops01's ruling on
     // #922 4307515255).
     //
@@ -443,14 +443,24 @@ describe("the create form carries the key in the URL", () => {
     // she meant to create as a second one, which Sam's standing requirement
     // forbids - recovery must preserve the ability to make an identical
     // second area deliberately.
+    // AND THE REASON IS NOT THE ONE 4305550889 GAVE, which I repeated until a
+    // browser test would not write. "It would go unkeyed" was fixable: 0223's
+    // settings half is nullable and it still writes the claim, so a bare save
+    // CAN carry the key. What cannot be fixed is that a settings-free save
+    // reproduces NO settings - so if the original never committed, which is
+    // what `absent` usually means, it creates an area missing everything she
+    // typed before the reload.
+    //
+    // THE KEYED BARE-SAVE PATH WAS WRITTEN AND REMOVED WITHOUT RUNNING. It is
+    // banned by name so it cannot come back as an apparent simplification.
     const src = read(FORM_SRC);
-    const keyed = /if \(resumeChoice === "resume" && pendingSaveKey !== null\) \{/;
-    expect(src, "a resumed settings-free save cannot carry its key").toMatch(keyed);
-    // NULL MACHINE AND MODE, not an invention: she has no settings, so there
-    // is no device to name.
-    expect(src).toMatch(/machineId: null,\s*\n\s*modeKey: null,/);
-    expect(src).toMatch(/idempotencyKey: pendingSaveKey,/);
-    expect(src).toMatch(/groups: \[\],/);
+    expect(
+      src,
+      "the keyed settings-free save is back, and it can create a settings-less area",
+    ).not.toMatch(/groups: \[\],/);
+    expect(src).not.toMatch(/machineId: null,/);
+    // THE HOLD IS WHAT STANDS IN ITS PLACE, and the way back is the choice.
+    expect(src).toMatch(/const machineSetupForSave = \(\) => \{\s*\n\s*const chosen = machineDraft;\s*\n\s*if \(!chosen \|\| chosen\.groups\.length === 0\) return null;/);
   });
 
   it("and the choice is EXPLICIT, never inferred from the values", () => {
