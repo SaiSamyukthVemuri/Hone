@@ -83,6 +83,8 @@ import {
   resolveAutoEditBlockId,
 } from "@/lib/sessions/fast-chart-start";
 import { SectionLabel } from "@/components/ui/section-label";
+import { SessionPhotos } from "./SessionPhotos";
+import { signedSessionPhotos } from "./session-photos";
 
 export default async function SessionDetailPage({
   params,
@@ -138,6 +140,7 @@ export default async function SessionDetailPage({
   const linkedAppointmentId = session.appointment_id ?? null;
 
   const [
+    sessionPhotos,
     lastEntry,
     treatmentCounts,
     audit,
@@ -148,6 +151,11 @@ export default async function SessionDetailPage({
     settlementLoad,
     settlementJurisdiction,
   ] = await Promise.all([
+    // FETT photos: this visit's photos, signed for 60 s under the Photos tab's
+    // trust boundary. Depends only on (studio, client, session).
+    timed("session-chart.photos", () =>
+      signedSessionPhotos({ studioId: studio.id, clientId: id, sessionId: session.id }),
+    ),
     timed("session-chart.recent-entry", () =>
       getRecentEntryForClient(studio.id, id, session.modality),
     ),
@@ -802,6 +810,8 @@ export default async function SessionDetailPage({
           </section>
         </>
       )}
+
+      <SessionPhotos clientId={id} photos={sessionPhotos} />
 
       {/* PR #190 (clinical memory): plan for the NEXT visit. Saved on
           sessions.next_session_note and shown as "From last visit"
