@@ -422,7 +422,68 @@ describe("the create form carries the key in the URL", () => {
     }
   });
 
-  it("and a resumed save with NO settings cannot be committed", () => {
+  it("a resumed settings-free save is HELD, because it cannot reproduce her settings", () => {
+    // THIS REVERSES 4305550889's REMEDY AND KEEPS ITS CLAIM (ops01's ruling on
+    // #922 4307515255).
+    //
+    // That finding was right that a bare save from a reloaded form must not
+    // proceed UNKEYED - it took the ordinary create path and made a second
+    // area. The remedy was to BLOCK such a save. But blocking it is what made
+    // closing discard the key (4305701038), and discarding the key is how an
+    // unsettled save came to be duplicable (4307515255). The three findings
+    // are one knot.
+    //
+    // UNTIED BY LETTING THE KEY TRAVEL WITHOUT SETTINGS, which 0223 already
+    // permits: the settings half is nullable, "null/empty means no settings
+    // to record, which is a valid save", and the claim is still written. So
+    // the save proceeds KEYED, and is absorbed or refused rather than
+    // duplicating.
+    //
+    // ONLY ON HER EXPLICIT CHOICE. A key used silently would absorb an area
+    // she meant to create as a second one, which Sam's standing requirement
+    // forbids - recovery must preserve the ability to make an identical
+    // second area deliberately.
+    // AND THE REASON IS NOT THE ONE 4305550889 GAVE, which I repeated until a
+    // browser test would not write. "It would go unkeyed" was fixable: 0223's
+    // settings half is nullable and it still writes the claim, so a bare save
+    // CAN carry the key. What cannot be fixed is that a settings-free save
+    // reproduces NO settings - so if the original never committed, which is
+    // what `absent` usually means, it creates an area missing everything she
+    // typed before the reload.
+    //
+    // THE KEYED BARE-SAVE PATH WAS WRITTEN AND REMOVED WITHOUT RUNNING. It is
+    // banned by name so it cannot come back as an apparent simplification.
+    const src = read(FORM_SRC);
+    expect(
+      src,
+      "the keyed settings-free save is back, and it can create a settings-less area",
+    ).not.toMatch(/groups: \[\],/);
+    expect(src).not.toMatch(/machineId: null,/);
+    // THE HOLD IS WHAT STANDS IN ITS PLACE, and the way back is the choice.
+    expect(src).toMatch(/const machineSetupForSave = \(\) => \{\s*\n\s*const chosen = machineDraft;\s*\n\s*if \(!chosen \|\| chosen\.groups\.length === 0\) return null;/);
+  });
+
+  it("and the choice is EXPLICIT, never inferred from the values", () => {
+    // SAM'S STANDING REQUIREMENT. Absorbing by value would suppress an
+    // intentionally identical second area, and nothing here may ask her to
+    // change a clinical value to get one.
+    const src = read(FORM_SRC);
+    expect(src).toMatch(/RESUME_CHOICE_PROMPT/);
+    expect(src).toMatch(/data-testid="initial-save-resume-choice"/);
+    expect(src).toMatch(/data-testid="initial-save-resume-choice-resume"/);
+    expect(src).toMatch(/data-testid="initial-save-resume-choice-new"/);
+    // SAVE IS HELD WHILE IT IS UNANSWERED: saving first would decide it for
+    // her, either absorbing an area she meant to create or duplicating one
+    // she did not.
+    expect(src).toMatch(/resumeChoicePending \|\|/);
+    // AND "START NEW" RELEASES THE KEY, which is what makes a second area
+    // possible without touching a recorded value.
+    expect(src).toMatch(
+      /const chooseStartNew = \(\) => \{\s*\n\s*setResumeChoice\("new"\);\s*\n\s*setPendingSaveKey\(null\);/,
+    );
+  });
+
+  it("the needs-settings hold now applies only to a chosen RESUME", () => {
     // THE P1 ITSELF (Codex, #922 4305550889). The retry key only reaches
     // `create_block_with_initial_setup` inside `initialSetup`, so a bare save
     // from a freshly reloaded form sent no key, took the ordinary create path
@@ -436,11 +497,12 @@ describe("the create form carries the key in the URL", () => {
     const src = read(FORM_SRC);
     const expr = /const resumedNeedsSettings =\s*([^;]*);/.exec(src);
     expect(expr, "the resumed-needs-settings rule was not found").toBeTruthy();
-    expect(expr![1]).toContain('"absent"');
-    expect(
-      expr![1],
-      "an unanswerable read still allowed a bare save",
-    ).toContain('"unknown"');
+    // NARROWED, not removed. The hold existed because a bare save went
+            // unkeyed; it now goes KEYED when she resumes, so what is left to
+            // hold is the case where she has chosen RESUME and there is
+            // genuinely nothing to send yet.
+    expect(expr![1]).toContain("resumeUnsettled");
+    expect(expr![1]).toContain('resumeChoice === "resume"');
     expect(expr![1]).toContain("!hasSettingsToSend");
 
     // Derived from the draft, NOT from `machineSetupForSave()` — that
@@ -482,14 +544,27 @@ describe("the create form carries the key in the URL", () => {
     // The narrower exception is what the earlier finding (4305431336) was
     // actually about: closing while the lookup is IN FLIGHT would discard an
     // answer one round trip away.
+    // AND IT HAS NOW REVERSED BACK (Codex, #922 4307515255). The narrow
+    // `checking` test was too narrow: `absent` is not settled either, because
+    // the command takes its advisory lock BEFORE the claim lookup and writes
+    // the claim at the very END, so a read landing mid-commit sees no row for
+    // a save that is about to succeed. Clearing on that answer discarded the
+    // only identity that could absorb the original.
+    //
+    // WHAT MAKES THE REVERSAL SAFE THIS TIME is that 4305701038's trap is
+    // closed elsewhere rather than by discarding the key: a resumed
+    // settings-free save now CARRIES the key through
+    // `create_block_with_initial_setup` with null groups, so retaining it no
+    // longer blocks the way back to a fresh area - and the explicit recovery
+    // choice means a retained key is never used to absorb silently.
     expect(
       close![1],
-      "closing no longer abandons the operation, so a fresh area is unreachable",
-    ).toContain('resume.state !== "checking"');
+      "closing clears a key the resumed operation still owns, which is how an unsettled save became duplicable",
+    ).toContain("!resumeOwnsKey");
     expect(
       close![1],
-      "closing preserves the key for a resumed state it should abandon",
-    ).not.toContain("resumeOwnsKey");
+      "the narrow checking-only test is back, and absent is unsettled too",
+    ).not.toContain('resume.state !== "checking"');
     expect(
       (src.match(/onCancel\(\)/g) ?? []).length,
       "an exit path still calls onCancel directly, bypassing the parameter clear",
@@ -629,10 +704,13 @@ describe("the create form carries the key in the URL", () => {
     // red this, but removing one does.
     const src = read(FORM_SRC);
     expect(src).toMatch(/const key = pendingSaveKey \?\? crypto\.randomUUID\(\)/);
+    // THREE NOW: a changed draft, a save that closed, and "start a new area"
+    // - which releases the retained key so an identical second area is
+    // possible without touching a recorded value.
     expect(
       (src.match(/setPendingSaveKey\(null\)/g) ?? []).length,
       "a drop site stopped clearing the URL",
-    ).toBe(2);
+    ).toBe(3);
     // And the form's exits clear it directly, which `closeForm` owns.
     expect(src).toMatch(/syncAreaOperationParam\(null\)/);
   });
