@@ -206,8 +206,12 @@ const CAMPAIGN_PROP = new RegExp(
 function redactPathLikeIds(value: string): string {
   const decoded = decodeBounded(value);
   if (decoded === null) return "[token]";
-  return decoded !== value || decoded.includes("/") ? redactIdsInValue(value) : value;
+  // A BARE, unencoded UUID is PostHog's own id: kept. Any other string that
+  // holds a UUID ("word:<uuid>", "/clients/<uuid>", an encoded id) loses it.
+  if (decoded === value && BARE_UUID.test(value)) return value;
+  return redactIdsInValue(value);
 }
+const BARE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // A string that IS a URL, absolute (http/https) or app-relative ("/…"), is
 // sanitized AS a URL whatever its key (Codex 4309069519): query and fragment
@@ -217,23 +221,30 @@ function looksLikeUrl(value: string): boolean {
   return /^https?:\/\//i.test(decoded) || decoded.startsWith("/");
 }
 
-// A value that is a URL under ANY scheme other than http(s) (ftp:, mailto:,
-// data:, javascript:, file:, a custom app scheme, ...) is replaced by a fixed
-// placeholder, never its text (Codex 4309131383): there is no reviewed way to
-// keep part of it. Decided on the decoded text. A scheme must be followed
-// directly by a non-space character, so ordinary prose such as a page title
-// "Pricing: Hone" is not mistaken for a URL.
+// A STRING is treated as a non-http(s) URL only when that is UNAMBIGUOUS
+// (Codex 4309185282: "summer:sale" and autocapture's "a:attr__href=…" are not
+// URLs, and turning them into a placeholder broke attribution):
+//   * the scheme is followed by "//" (an authority form: ftp://, file://,
+//     custom-app://…), or
+//   * the scheme is one of the path-less schemes that carry data.
+// Any other "word:rest" string is ordinary text and goes through the value
+// rules below, so a record id inside it is still redacted. URL INSTANCES are
+// unambiguous and handled in sanitizeProps by type.
 const NON_HTTP_URL_PLACEHOLDER = "[url]";
+const DATA_SCHEMES = new Set(["mailto", "data", "javascript", "blob", "tel", "sms", "file"]);
 function isNonHttpUrl(value: string): boolean {
   const decoded = (decodeBounded(value) ?? value).trim();
-  if (!/^[a-z][a-z0-9+.-]*:\S/i.test(decoded)) return false;
-  try {
-    const u = new URL(decoded);
-    return u.protocol !== "http:" && u.protocol !== "https:";
-  } catch {
-    return false;
-  }
+  const m = /^([a-z][a-z0-9+.-]*):(.*)$/is.exec(decoded);
+  if (!m) return false;
+  const scheme = m[1]!.toLowerCase();
+  if (scheme === "http" || scheme === "https") return false;
+  return m[2]!.startsWith("//") || DATA_SCHEMES.has(scheme);
 }
+
+// PostHog autocapture's own structural fields: never classified as URLs
+// (their syntax is selectors, "a:attr__href=…"), but record ids inside them
+// are still redacted.
+const STRUCTURAL_KEYS = new Set(["$elements_chain", "$el_text"]);
 
 /** Object keys lose record ids too (decoded first, unconditionally); a
  *  collision gets a numeric suffix so no value is silently dropped. */
@@ -265,6 +276,7 @@ function sanitizeProps(value: unknown, key: string, depth: number): unknown {
   if (typeof value === "number" || typeof value === "boolean") return value;
   if (typeof value === "string") {
     if (depth > MAX_DEPTH) return "[redacted]";
+    if (STRUCTURAL_KEYS.has(key)) return redactIdsInValue(sanitizeTokenPaths(value));
     if (isNonHttpUrl(value)) return NON_HTTP_URL_PLACEHOLDER;
     if (isUrlPropKey(key)) return sanitizeMarketingUrl(value);
     // A URL-shaped value under any other key: sanitized as the URL it decodes

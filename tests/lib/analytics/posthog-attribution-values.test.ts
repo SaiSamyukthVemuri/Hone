@@ -300,3 +300,52 @@ describe("non-http(s) URLs fail closed to [url]", () => {
     expect(p.link).toBe(`${HOST}/clients/[id]`);
   });
 });
+
+// ===========================================================================
+// Codex 4309185282 (review of 3a2bbf9f): OVER-redaction. Only UNAMBIGUOUS
+// non-http(s) URL strings become [url]: an authority form (scheme://) or a
+// path-less data scheme (mailto:, data:, javascript:, blob:, tel:, sms:,
+// file:). Any other "word:rest" string is ordinary text: kept, with record
+// ids inside it redacted. PostHog's autocapture structural fields are never
+// URL-classified but still lose ids. URL INSTANCES are unchanged.
+// ===========================================================================
+describe("only unambiguous non-http URL strings become [url]", () => {
+  const chain = 'a.btn:attr__href="/pricing"attr__class="btn"nth-child="1"nth-of-type="1";div.hero:nth-child="2"';
+
+  it("campaign values and autocapture's $elements_chain are kept as they are", () => {
+    const p = pageview({ utm_campaign: "summer:sale", $elements_chain: chain, label: "plan:pro" }).properties as Record<string, string>;
+    expect(p.utm_campaign).toBe("summer:sale");
+    expect(p.$elements_chain).toBe(chain);
+    expect(p.label).toBe("plan:pro");
+  });
+
+  it("an id inside a word:rest string or the elements chain is still redacted, shape kept", () => {
+    const p = pageview({
+      note: `word:${CLIENT}`,
+      utm_campaign: `summer:${CLIENT}`,
+      $elements_chain: `a:attr__href="/clients/${CLIENT}"nth-child="1"`,
+    }).properties as Record<string, string>;
+    expect(p.note).toBe("word:[id]");
+    expect(p.utm_campaign).toBe("summer:[id]");
+    expect(p.$elements_chain).toBe('a:attr__href="/clients/[id]"nth-child="1"');
+  });
+
+  it.each([
+    `ftp://files.example/clients/${CLIENT}?email=patient@example.com`,
+    "mailto:patient@example.com",
+    "data:text/plain,hello",
+    "javascript:void(0)",
+    "blob:https://hone.care/0b1c2d3e",
+    "tel:+15555550100",
+    "sms:+15555550100",
+    "custom-app://open/x?email=patient@example.com",
+  ])("%s is still [url]", (raw) => {
+    expect((pageview({ note: raw }).properties as Record<string, string>).note).toBe("[url]");
+  });
+
+  it("URL INSTANCES under any scheme are unchanged: non-http(s) still [url]", () => {
+    const p = pageview({ a: new URL("custom:summer"), b: new URL("mailto:x@y.z") }).properties as Record<string, string>;
+    expect(p.a).toBe("[url]");
+    expect(p.b).toBe("[url]");
+  });
+});
