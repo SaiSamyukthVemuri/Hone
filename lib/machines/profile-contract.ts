@@ -476,11 +476,31 @@ export function findField(
 /**
  * The profiles a practitioner may actually choose. Everything else stays in the
  * catalogue — described, auditable, and not offered.
+ *
+ * ONE ENTRY PER MODEL: ITS CURRENT CONTRACT (Codex, #855 4305243747). Filtering
+ * on availability alone returned every active version of a model, and retaining
+ * v1 beside v2 is now the whole point of versioned identity — so the picker
+ * offered v1 as a choice while `validateReading` refuses new capture against it
+ * with `superseded_profile_version`. An option guaranteed to fail is worse than
+ * an absent one: she picks it, enters a full set of readings, and is refused at
+ * save for a reason she cannot act on.
+ *
+ * THE TEST IS THE HIGHEST VERSION'S availability, not "the highest ACTIVE
+ * version", and the difference is not academic. New capture resolves through
+ * `profileById`, which is the highest version REGARDLESS of availability. So if
+ * v2 is blocked and v1 is active, v1 is still unrecordable — offering it would
+ * reproduce exactly this defect one case over. Every entry returned here can
+ * therefore actually be recorded against, which is the property worth having.
  */
 export function activeProfiles(
   profiles: readonly MachineProfile[],
 ): MachineProfile[] {
-  return profiles.filter((p) => p.availability === "active");
+  const current = new Map<string, MachineProfile>();
+  for (const p of profiles) {
+    const held = current.get(p.profileId);
+    if (!held || p.version > held.version) current.set(p.profileId, p);
+  }
+  return [...current.values()].filter((p) => p.availability === "active");
 }
 
 /** Modes offered for a profile: active profile, active mode. */
