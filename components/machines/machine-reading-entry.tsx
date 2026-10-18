@@ -238,16 +238,33 @@ export function MachineReadingEntry({
   // flag, including back to false when the retry settles, so the freeze
   // lifts rather than sticking.
   //
-  // IT REPORTS THE SAME `frozen`, not `save.unresolved`. The host freezes its
-  // machine picker, mode picker and Cancel from this flag, and each of those
-  // can discard this save's retry key — so they have to be frozen for the
-  // in-flight window too, or the defect simply moves one component out.
+  /**
+   * WHAT THE HOST HAS TO FREEZE, which is NOT the same as what this form has
+   * to freeze (Codex, #860 4305364945).
+   *
+   * The last round reported `frozen` upward, and `frozen` is
+   * `!canEditDraft(save, pending)` — which is also false once a save is
+   * ACKNOWLEDGED. So after an ordinary successful capture the host's machine
+   * picker, mode picker and Cancel stayed disabled until she pressed "record
+   * a setting change". A confirmed save should release the form, not hold it.
+   *
+   * The host's controls are frozen for exactly one reason: each of them can
+   * DISCARD THIS SAVE'S RETRY KEY, and that only matters while a key is at
+   * risk — the request is in flight, or its outcome is unknown. An
+   * acknowledged save has no key left to protect.
+   *
+   * `frozen` keeps `recorded` for the entry's OWN fields, which is right:
+   * after a recorded save she starts a new capture rather than editing the
+   * one in the record.
+   */
+  const transportHold = pending || save.unresolved;
+
   const reportedUnresolved = useRef<boolean | null>(null);
   useEffect(() => {
-    if (reportedUnresolved.current === frozen) return;
-    reportedUnresolved.current = frozen;
-    onUnresolvedChange?.(frozen);
-  }, [frozen, onUnresolvedChange]);
+    if (reportedUnresolved.current === transportHold) return;
+    reportedUnresolved.current = transportHold;
+    onUnresolvedChange?.(transportHold);
+  }, [transportHold, onUnresolvedChange]);
 
   // EVERY DRAFT CHANGE CLOSES THE OPEN SAVE, which is how the retry key keeps
   // meaning what it says: a changed draft is a DIFFERENT save and must mint a
