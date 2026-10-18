@@ -1131,6 +1131,26 @@ describe("the intake link the original confirmation would carry", () => {
     expect(events).not.toContain("intake_read");
   });
 
+  // Codex P2 4305038680 / 4305026103: the provider was asked and its answer
+  // lost (5xx), so the message, and the link in it, may be with the client.
+  // The claim spent the attempt, so this run is the only chance to record it.
+  it("an AMBIGUOUS provider outcome (5xx) that carried the link: stamped as issued, still counted as a failure", async () => {
+    db = [appt()];
+    intakes = [{ id: "intake-1", studio_id: A, client_id: "client-1", status: "in_progress", created_at: iso(NOW - HOUR) }];
+    providerStatus = 503;
+    expect(await run()).toMatchObject({ sent: 0, failed: 1 });
+    expect(providerBodies[0].get("Body")).toContain("https://app.example/intake/intake-1");
+    expect(stamps).toEqual([["intake-1", { emailed: false }]]);
+  });
+
+  it("a DEFINITE provider refusal (4xx): the message never left, so no stamp", async () => {
+    db = [appt()];
+    intakes = [{ id: "intake-1", studio_id: A, client_id: "client-1", status: "in_progress", created_at: iso(NOW - HOUR) }];
+    providerStatus = 400;
+    expect(await run()).toMatchObject({ sent: 0, failed: 1 });
+    expect(stamps).toEqual([]);
+  });
+
   it("refused after the claim: no stamp", async () => {
     db = [appt()];
     intakes = [{ id: "intake-1", studio_id: A, client_id: "client-1", status: "in_progress", created_at: iso(NOW - HOUR) }];

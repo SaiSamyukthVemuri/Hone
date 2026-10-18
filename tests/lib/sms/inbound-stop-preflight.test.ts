@@ -36,12 +36,14 @@ const SETTING_RECOVERY = {
 };
 const ACCOUNT = `AC${"1".repeat(32)}`;
 
+const CERTIFIED_SID = `MG${"c".repeat(32)}`;
 const allProven = (): InboundStopFacts => ({
   env: { TWILIO_WEBHOOK_BASE_URL: BASE, TWILIO_AUTH_TOKEN: "x", NEXT_PUBLIC_APP_ORIGIN: BASE },
   // A signature-verified callback after the current token and base went live.
   signatureProof: { lastVerifiedCallbackAt: "2026-10-12T10:00:00Z", credentialsActiveSince: "2026-10-01T00:00:00Z" },
   endpointProbe: { status: 405, redirectedTo: null },
   service: {
+    sid: CERTIFIED_SID,
     inboundRequestUrl: URL_RETRY,
     inboundMethod: "POST",
     useInboundWebhookOnNumber: false,
@@ -62,7 +64,15 @@ const allProven = (): InboundStopFacts => ({
   mappedStudioId: "studio-b",
   expectedStudioId: "studio-b",
   // The approved live STOP was accepted and stamped phone-wide.
-  liveStopObservation: { reachedRoute: true, routeStatus: 200, phoneWideOptOutStamped: true, observedAt: "2026-10-12T12:00:00Z" },
+  liveStopObservation: {
+    reachedRoute: true,
+    routeStatus: 200,
+    phoneWideOptOutStamped: true,
+    observedAt: "2026-10-12T12:00:00Z",
+    // HON-50 (Codex P2 4305038675): the STOP exercised THIS sender.
+    toNumber: "+14165550100",
+    messagingServiceSid: CERTIFIED_SID,
+  },
   // The service forwards keyword messages, unchanged since before that STOP.
   optOutConfiguration: { dropsKeywordMessages: false, lastChangedAt: "2026-10-01T00:00:00Z" },
   // The handler deployment and database migration now serving STOP predate that STOP.
@@ -192,13 +202,13 @@ describe("evaluateInboundStopPreflight", () => {
 
   it("a number-level override is decided without the (irrelevant) service URL", () => {
     const f = allProven();
-    f.service = { useInboundWebhookOnNumber: true, numberSmsUrl: URL_RETRY, numberSmsMethod: "POST", numberSmsApplicationSid: null, accountSid: ACCOUNT, checkedNumber: "+14165550100" };
+    f.service = { sid: CERTIFIED_SID, useInboundWebhookOnNumber: true, numberSmsUrl: URL_RETRY, numberSmsMethod: "POST", numberSmsApplicationSid: null, accountSid: ACCOUNT, checkedNumber: "+14165550100" };
     expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
   });
 
   it("with the flag OFF, an unread service URL is still unknown", () => {
     const f = allProven();
-    f.service = { useInboundWebhookOnNumber: false, inboundMethod: "POST", accountSid: ACCOUNT };
+    f.service = { sid: CERTIFIED_SID, useInboundWebhookOnNumber: false, inboundMethod: "POST", accountSid: ACCOUNT, checkedNumber: "+14165550100" };
     const r = evaluateInboundStopPreflight(f);
     expect(r.blockers).toEqual(["inbound_reaches"]);
     // Not read is UNKNOWN, never reported as "disabled".
@@ -1805,7 +1815,14 @@ describe("the live STOP proves only the handler and database it ran against (Cod
   it("a fresh STOP after the deployment and migration restores the pass", () => {
     const r = run((f) => {
       f.currentActivation = { handlerDeployedAt: "2026-10-13T00:00:00Z", databaseMigratedAt: "2026-10-13T00:00:00Z" };
-      f.liveStopObservation = { reachedRoute: true, routeStatus: 200, phoneWideOptOutStamped: true, observedAt: "2026-10-13T06:00:00Z" };
+      f.liveStopObservation = {
+        reachedRoute: true,
+        routeStatus: 200,
+        phoneWideOptOutStamped: true,
+        observedAt: "2026-10-13T06:00:00Z",
+        toNumber: "+14165550100",
+        messagingServiceSid: CERTIFIED_SID,
+      };
     });
     expect(r).toMatchObject({ status: "pass", ready: true });
   });
@@ -1813,6 +1830,41 @@ describe("the live STOP proves only the handler and database it ran against (Cod
   it("the opt-out ordering still binds: a fresh deployment does not excuse a later opt-out change", () => {
     const r = run((f) => (f.optOutConfiguration = { dropsKeywordMessages: false, lastChangedAt: "2026-10-12T13:00:00Z" }));
     expect(r).toMatchObject({ status: "unknown", ready: false });
+  });
+});
+
+// HON-50, Codex P2 4305038675: a live STOP through sender A proves nothing
+// about sender B. The observation must name the checked number and the
+// certified service, or stop_forwarded never passes.
+describe("the live STOP is bound to the sender being certified", () => {
+  const stopForwarded = (f: InboundStopFacts) => evaluateInboundStopPreflight(f).checks.find((c) => c.id === "stop_forwarded")!;
+
+  it("control: the STOP arrived at the checked number through the certified service → pass", () => {
+    expect(stopForwarded(allProven()).status).toBe("pass");
+    expect(evaluateInboundStopPreflight(allProven()).ready).toBe(true);
+  });
+
+  it.each<[string, (f: InboundStopFacts) => void]>([
+    ["sent to ANOTHER number", (f) => (f.liveStopObservation!.toNumber = "+14165550199")],
+    ["through ANOTHER Messaging Service", (f) => (f.liveStopObservation!.messagingServiceSid = `MG${"d".repeat(32)}`)],
+    ["the certified service is a different one", (f) => (f.service!.sid = `MG${"e".repeat(32)}`)],
+  ])("%s → fail, never ready", (_name, mutate) => {
+    const f = allProven();
+    mutate(f);
+    expect(stopForwarded(f).status).toBe("fail");
+    expect(evaluateInboundStopPreflight(f).ready).toBe(false);
+  });
+
+  it.each<[string, (f: InboundStopFacts) => void]>([
+    ["the observation's To not read", (f) => (f.liveStopObservation!.toNumber = undefined)],
+    ["the observation's service not read", (f) => (f.liveStopObservation!.messagingServiceSid = null)],
+    ["the certified service not read", (f) => (f.service!.sid = undefined)],
+    ["the checked number not read", (f) => (f.service!.checkedNumber = null)],
+  ])("%s → unknown, never ready", (_name, mutate) => {
+    const f = allProven();
+    mutate(f);
+    expect(stopForwarded(f).status).toBe("unknown");
+    expect(evaluateInboundStopPreflight(f).ready).toBe(false);
   });
 });
 

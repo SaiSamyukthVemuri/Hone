@@ -279,6 +279,12 @@ export type InboundStopFacts = {
   endpointProbe?: { status: number; redirectedTo: string | null };
   /** The studio's service, read-only (provider.readMessagingServiceConfig and console). */
   service?: {
+    /**
+     * The Messaging Service being certified (MG..., the sender's
+     * messaging_service_sid). The live STOP must have arrived through it
+     * (Codex P2 4305038675). Undefined/null = not read.
+     */
+    sid?: string | null;
     /** MessagingServiceConfig.inboundRequestUrl; undefined = not read. */
     inboundRequestUrl?: string | null;
     /** MessagingServiceConfig.useInboundWebhookOnNumber; null = not reported (UNKNOWN). */
@@ -440,6 +446,14 @@ export type InboundStopFacts = {
     phoneWideOptOutStamped: boolean | null;
     /** ISO time of that STOP; undefined or null = not read. */
     observedAt?: string | null;
+    /**
+     * WHICH sender the STOP exercised (Codex P2 4305038675): the signed
+     * request's `To` (E.164) and `MessagingServiceSid`. A STOP through sender A
+     * proves nothing about sender B, so both must equal the checked number and
+     * the certified service. Undefined/null = not read.
+     */
+    toNumber?: string | null;
+    messagingServiceSid?: string | null;
   };
   /**
    * The studio service's opt-out handling, read-only from the Console (Codex
@@ -955,6 +969,13 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
   const handlerDeployedAt = isoTime(activation?.handlerDeployedAt);
   const databaseMigratedAt = isoTime(activation?.databaseMigratedAt);
   const stopObservedOk = stop?.reachedRoute === true && stop.routeStatus === 200 && stop.phoneWideOptOutStamped === true;
+  // Was it THIS sender's STOP? Both sides must be read, and both must match.
+  const svcSid = typeof svc?.sid === "string" && svc.sid.trim() !== "" ? svc.sid.trim() : null;
+  const svcNumber = typeof svc?.checkedNumber === "string" && svc.checkedNumber.trim() !== "" ? svc.checkedNumber.trim() : null;
+  const obsSid = typeof stop?.messagingServiceSid === "string" && stop.messagingServiceSid.trim() !== "" ? stop.messagingServiceSid.trim() : null;
+  const obsTo = typeof stop?.toNumber === "string" && stop.toNumber.trim() !== "" ? stop.toNumber.trim() : null;
+  const stopIdentity: "match" | "mismatch" | "unknown" =
+    !svcSid || !svcNumber || !obsSid || !obsTo ? "unknown" : svcSid === obsSid && svcNumber === obsTo ? "match" : "mismatch";
   checks.push(
     optOut?.dropsKeywordMessages === true
       ? check("stop_forwarded", "fail", "the service is configured to drop opt-out keyword messages: a STOP never reaches Hone, whatever an earlier observation showed")
@@ -968,6 +989,10 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
               ? check("stop_forwarded", "fail", "the route accepted the STOP but no phone-wide opt-out was stamped")
               : !stopObservedOk
                 ? check("stop_forwarded", "unknown", "the live STOP's delivery, response status or phone-wide stamp was not read (or not well-formed)")
+                : stopIdentity === "mismatch"
+                  ? check("stop_forwarded", "fail", "the live STOP arrived through another number or Messaging Service: it proves nothing about the sender being certified")
+                : stopIdentity === "unknown"
+                  ? check("stop_forwarded", "unknown", "the live STOP's To number and Messaging Service, or the certified service and checked number, were not read: the observation cannot be tied to this sender")
                 : optOut?.dropsKeywordMessages !== false
                   ? check("stop_forwarded", "unknown", "the service's opt-out configuration (does it drop keyword messages?) was not read as an explicit true/false")
                   : Number.isNaN(observedAt) || Number.isNaN(optOutChangedAt)

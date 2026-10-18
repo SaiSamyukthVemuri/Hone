@@ -353,8 +353,13 @@ export async function recoverOwedConfirmations(opts: {
           } catch {
             result = { ok: false, error: "recovery_threw", retryable: false };
           }
-          if (result.ok) {
-            run.sent += 1;
+          // The message may be in the client's hands when it was sent OR when
+          // the provider's answer was lost (Codex P2 4305038680, 4305026103):
+          // either way the intake link it carried counts as issued, exactly as
+          // the reminder path accounts for it. The claim already spent the
+          // attempt, so recovery never revisits this row to repair it later.
+          const mayHaveReachedClient = result.ok || (!result.skipped && result.possiblySent === true);
+          if (mayHaveReachedClient) {
             const issued = intake as { id: string; url: string } | null;
             if (issued) {
               try {
@@ -363,6 +368,9 @@ export async function recoverOwedConfirmations(opts: {
                 // Display metadata only; never fails the run.
               }
             }
+          }
+          if (result.ok) {
+            run.sent += 1;
           }
           else if (result.skipped) {
             skip(result.reason);
