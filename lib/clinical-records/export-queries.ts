@@ -25,7 +25,7 @@ import {
 // quote row data, and nothing here may reach a log or an error tracker.
 
 const SESSION_COLUMNS =
-  "id, started_at, ended_at, modality, session_notes, performed_by_practitioner_id, practitioner_id, record_status, finalized_at, aftercare_and_risks_explained_at";
+  "id, started_at, ended_at, modality, session_notes, performed_by_practitioner_id, practitioner_id, record_status, finalized_at, aftercare_and_risks_explained_at, aftercare_and_risks_explained_by";
 // Current charting fields AND the legacy ones (Codex P1 4301165385): the
 // area-first flow records settings on session_blocks and readings on the newer
 // electrolysis_entries columns, while older charts used the generic ones.
@@ -269,7 +269,8 @@ export async function loadClinicalRecordsForExport(args: {
   const authorIds = [
     ...new Set(
       [
-        ...sessions.flatMap((s) => [s.performed_by_practitioner_id, s.practitioner_id]),
+        // The aftercare disclosure is attributed to whoever recorded it (Codex P2 4307259896).
+        ...sessions.flatMap((s) => [s.performed_by_practitioner_id, s.practitioner_id, s.aftercare_and_risks_explained_by]),
         ...notes.map((n) => n.practitioner_id),
       ].filter((id): id is string => typeof id === "string" && id.length > 0),
     ),

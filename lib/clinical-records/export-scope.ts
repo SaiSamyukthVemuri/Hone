@@ -1,9 +1,7 @@
 import { addDays, utcInstantFromLocal } from "@/lib/booking/tz";
-import { blockAreasLabel, type BlockArea } from "@/lib/sessions/block-areas";
-import { legacyBlockReactionLabel } from "@/lib/sessions/reaction-unified";
-import { hasStructuredReadings, pulseReadingsShown } from "@/lib/sessions/structured-readings";
-import { resolveDisplayChips } from "@/lib/observation-chips";
-import { numbingDisplay, toleranceLabel } from "@/lib/sessions/clinical-response";
+import type { BlockArea } from "@/lib/sessions/block-areas";
+import type { SavedEntryFields, SavedLaserFields } from "@/components/entry-row";
+import type { SavedAreaBlock } from "@/app/(app)/clients/[id]/sessions/[sessionId]/session-blocks-view";
 
 // ===========================================================================
 // HON-46 — what a per-client clinical-records export contains, as pure code.
@@ -144,6 +142,8 @@ export type ExportSessionSource = {
   record_status: string | null;
   finalized_at: string | null;
   aftercare_and_risks_explained_at: string | null;
+  /** Who recorded the disclosure; may differ from the performer (Codex P2 4307259896). */
+  aftercare_and_risks_explained_by: string | null;
 };
 
 /**
@@ -246,20 +246,39 @@ export type ExportNoteSource = {
 /** One labelled value, already formatted. Only present values are emitted. */
 export type Reading = { label: string; value: string };
 
-export type ExportedEntry = {
-  id: string;
-  areas: string[];
-  readings: Reading[];
-  observations: string[];
-  comments: string | null;
-};
+// SCREEN == PAPER, BY CONSTRUCTION. A block, a blockless entry and a laser pass
+// print through the SAME components the saved session view renders
+// (SavedAreaRecord, ElectrolysisEntryRow, LaserEntryRow), so the document
+// carries the allow-listed ROWS those components read, never a second
+// presentation of them. #896 rounds 6-8 each found another field where a
+// second presenter had drifted from the view; there is no second presenter
+// now. The parity test (tests/components/saved-record-print-parity.test.ts)
+// renders the real view and this document from one fixture and requires the
+// same text.
+//
+// PRINT-ONLY, NAMED. A few stored clinical fields are not on the saved view
+// but ARE treatment record, so the printout keeps them (HON-46: keep the day's
+// treatments and clinical notes), as an explicit list rendered AFTER the shared
+// render. They are exactly these, and the parity test allows exactly these:
+export const PRINT_ONLY_FIELDS = {
+  /** session_blocks.block_notes: a legacy free-text clinical note per area. */
+  block: ["Area notes"],
+  /** laser_entries: the results, and every setting LaserEntryRow does not show. */
+  laser: ["Results", "Settings"],
+} as const;
 
 export type ExportedBlock = {
   id: string;
-  title: string;
-  readings: Reading[];
-  notes: Reading[];
-  entries: ExportedEntry[];
+  /** Exactly what SavedAreaRecord renders. */
+  record: SavedAreaBlock;
+  printOnly: Reading[];
+};
+
+export type ExportedLaser = {
+  id: string;
+  /** Exactly what LaserEntryRow renders. */
+  record: SavedLaserFields;
+  printOnly: Reading[];
 };
 
 export type ClinicalRecordsDocument = {
@@ -273,12 +292,14 @@ export type ClinicalRecordsDocument = {
     recordStatus: string | null;
     finalizedAt: string | null;
     aftercareExplainedAt: string | null;
+    /** The practitioner who recorded the aftercare disclosure (Codex P2 4307259896). */
+    aftercareExplainedBy: string | null;
     /** Settings blocks (current charting), each with the entries charted in it. */
     blocks: ExportedBlock[];
-    /** Entries not attached to a block (older charting). */
-    entries: ExportedEntry[];
-    /** Laser treatment passes. */
-    laserEntries: Array<{ id: string; zone: string; readings: Reading[]; notes: Reading[] }>;
+    /** Entries not attached to a block (older charting): ElectrolysisEntryRow, as the view's "Unassigned entries". */
+    entries: SavedEntryFields[];
+    /** Laser treatment passes, newest first as the session page lists them. */
+    laserEntries: ExportedLaser[];
   }>;
   clinicalNotes: Array<{
     id: string;
@@ -298,86 +319,103 @@ function present(v: unknown): v is string | number {
 }
 
 /** Allow-listed label/value pairs: a label is emitted only when its value exists. */
-function readings(pairs: Array<[string, unknown, string?]>): Reading[] {
+function readings(pairs: Array<[string, unknown]>): Reading[] {
   const out: Reading[] = [];
-  for (const [label, value, unit] of pairs) {
-    if (present(value)) out.push({ label, value: unit ? `${value} ${unit}` : String(value) });
-  }
+  for (const [label, value] of pairs) if (present(value)) out.push({ label, value: String(value) });
   return out;
 }
 
-function exportEntry(e: ExportEntrySource): ExportedEntry {
-  // STRUCTURED readings make the legacy generic intensity/duration stale: a
-  // legacy row edited through structured charting keeps the old pair beside
-  // the new fields. Suppressed by the SAME rule as the saved-record view
-  // (lib/sessions/structured-readings.ts; Codex P1 4304983088).
-  const legacyPair = !hasStructuredReadings(e);
-  // PULSES are a thermolysis setting: shown by the SAME rule as the saved view
-  // (pulseReadingsShown; Codex P1 4305560955), so a galvanic pass's stored
-  // default "1" is never printed as an active setting.
-  const pulse = pulseReadingsShown(e);
-  // OBSERVATIONS through the saved view's resolver (Codex P2 4305560961): a
-  // pre-0108 entry stored its chips inside `comments`, so they are hydrated
-  // out of it, and only the remaining narrative prints as the comment.
-  const display = resolveDisplayChips(e.observation_chips, e.comments);
+// ALLOW-LIST COPIES. Each names the fields its component reads; a column the
+// query returns, or one added to a table later, cannot reach the page.
+function pickEntry(e: ExportEntrySource): SavedEntryFields {
   return {
     id: e.id,
-    areas: e.areas && e.areas.length > 0 ? [...e.areas] : e.area ? [e.area] : [],
-    readings: readings([
-      ["Mode", e.mode],
-      ["Apilus modality", e.apilus_modality],
-      ["Probe", [e.probe_type, e.probe_size].filter(Boolean).join(" ")],
-      ["Energy level", e.energy_level],
-      ["Machine frequency", e.machine_frequency],
-      ["Thermolysis intensity", e.thermolysis_intensity_percent, "%"],
-      ["Thermolysis duration", e.thermolysis_duration_seconds, "s"],
-      ["Galvanic current", e.galvanic_ma, "mA"],
-      ["Galvanic duration", e.galvanic_duration_seconds, "s"],
-      ["Units of lye", e.units_of_lye],
-      ["Pulse delay", pulse.delay ? e.pulse_delay_seconds : null, "s"],
-      ["Intensity", legacyPair ? e.intensity : null],
-      ["Duration", legacyPair ? e.duration_seconds : null, "s"],
-      ["Minutes performed", e.minutes_performed, "min"],
-      ["Pulses", pulse.pulses ? e.pulse_count : null],
-      ["Hairs treated", e.hairs_treated],
-    ]),
-    observations: display.chips,
-    comments: display.note.length > 0 ? display.note : null,
-  };
+    created_at: e.created_at,
+    area: e.area ?? "",
+    areas: e.areas,
+    mode: e.mode,
+    apilus_modality: e.apilus_modality,
+    energy_level: e.energy_level,
+    minutes_performed: e.minutes_performed,
+    probe_type: e.probe_type,
+    probe_size: e.probe_size,
+    machine_frequency: e.machine_frequency,
+    units_of_lye: e.units_of_lye,
+    galvanic_duration_seconds: e.galvanic_duration_seconds,
+    galvanic_ma: e.galvanic_ma,
+    thermolysis_duration_seconds: e.thermolysis_duration_seconds,
+    thermolysis_intensity_percent: e.thermolysis_intensity_percent,
+    pulse_count: e.pulse_count,
+    pulse_delay_seconds: e.pulse_delay_seconds,
+    intensity: e.intensity,
+    duration_seconds: e.duration_seconds,
+    hairs_treated: e.hairs_treated,
+    observation_chips: e.observation_chips ?? [],
+    comments: e.comments,
+  } as SavedEntryFields;
 }
 
-/**
- * A block's treated areas, through the SINGLE display contract every clinical
- * surface uses (Codex P1 4301307238): structured session_block_areas rows win,
- * otherwise the legacy primary_area + side. Custom detail is appended.
- */
-/** Equipment parameters are free-form: only plain string/number values are shown. */
-function equipmentReadings(params: Record<string, unknown> | null): Reading[] {
-  if (!params || typeof params !== "object" || Array.isArray(params)) return [];
-  return readings(
-    Object.entries(params)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, value]) => [key.replace(/_/g, " "), value] as [string, unknown]),
-  );
+function pickBlock(
+  b: ExportBlockSource,
+  areas: ReadonlyArray<BlockArea> | undefined,
+  entries: ReadonlyArray<ExportEntrySource>,
+): SavedAreaBlock {
+  return {
+    id: b.id,
+    sort_order: b.sort_order ?? 0,
+    block_name: b.block_name,
+    primary_area: b.primary_area,
+    side: b.side,
+    custom_area_detail: b.custom_area_detail,
+    mode: b.mode,
+    apilus_modality: b.apilus_modality,
+    energy_level: b.energy_level,
+    machine_frequency: b.machine_frequency,
+    minutes_performed: b.minutes_performed,
+    probe_label: b.probe_label,
+    probe_type: b.probe_type,
+    probe_size: b.probe_size,
+    probe_lot_number: b.probe_lot_number,
+    probe_lot_confirmed: b.probe_lot_confirmed ?? false,
+    numbing_status: b.numbing_status,
+    numbing_notes: b.numbing_notes,
+    tolerance_rating: b.tolerance_rating,
+    reaction_type: b.reaction_type,
+    reaction_notes: b.reaction_notes,
+    caution_for_next_session: b.caution_for_next_session ?? false,
+    caution_note: b.caution_note,
+    structured_areas: areas ? areas.map((a) => ({ area: a.area, laterality: a.laterality })) : [],
+    electrolysis_entries: entries.map(pickEntry),
+  } as SavedAreaBlock;
 }
 
-function exportLaser(l: ExportLaserSource) {
+// LaserEntryRow shows the session number and the fluence / pulse width / spot
+// size settings when they are text; every other setting prints in the named
+// "Settings" line, so nothing recorded is lost from paper.
+const LASER_ROW_SETTINGS = ["fluence", "pulse_width", "spot_size"] as const;
+
+function pickLaser(l: ExportLaserSource): ExportedLaser {
+  const params = l.equipment_params ?? {};
+  const shownByRow = (key: string, value: unknown) =>
+    (LASER_ROW_SETTINGS as readonly string[]).includes(key) && typeof value === "string" && value.length > 0;
+  const otherSettings = Object.entries(params)
+    .filter(([key, value]) => !shownByRow(key, value) && present(value))
+    .map(([key, value]) => `${key.replace(/_/g, " ")} ${String(value)}`);
   return {
     id: l.id,
-    zone: l.zone,
-    readings: [...readings([["Session number", l.session_number]]), ...equipmentReadings(l.equipment_params)],
-    notes: readings([
-      ["Observations", l.observation_notes],
+    record: {
+      id: l.id,
+      created_at: l.created_at,
+      zone: l.zone,
+      session_number: l.session_number,
+      equipment_params: l.equipment_params,
+      observation_notes: l.observation_notes,
+    } as SavedLaserFields,
+    printOnly: readings([
+      ["Settings", otherSettings.length > 0 ? otherSettings.join(" · ") : null],
       ["Results", l.ejection_results],
     ]),
   };
-}
-
-function blockTitle(b: ExportBlockSource, structured: ReadonlyArray<BlockArea> | undefined): string {
-  const areas = blockAreasLabel(structured ?? null, { primary_area: b.primary_area, side: b.side });
-  const base = areas ?? (present(b.block_name) ? b.block_name : null);
-  if (!base) return present(b.custom_area_detail) ? b.custom_area_detail : "Area not recorded";
-  return present(b.custom_area_detail) ? `${base} (${b.custom_area_detail})` : base;
 }
 
 export function buildClinicalRecordsDocument(input: {
@@ -433,57 +471,17 @@ export function buildClinicalRecordsDocument(input: {
       recordStatus: s.record_status,
       finalizedAt: s.finalized_at,
       aftercareExplainedAt: s.aftercare_and_risks_explained_at,
+      aftercareExplainedBy: s.aftercare_and_risks_explained_at ? name(s.aftercare_and_risks_explained_by) : null,
       blocks: [...(blocksBySession.get(s.id) ?? [])]
         .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.created_at.localeCompare(b.created_at))
         .map((b) => ({
           id: b.id,
-          title: blockTitle(b, input.blockAreasById?.get(b.id)),
-          readings: readings([
-            ["Mode", b.mode],
-            ["Apilus modality", b.apilus_modality],
-            ["Energy level", b.energy_level],
-            ["Machine frequency", b.machine_frequency],
-            ["Minutes performed", b.minutes_performed, "min"],
-            ["Probe", b.probe_label || [b.probe_type, b.probe_size].filter(Boolean).join(" ")],
-            // The confirmation travels with the lot (Codex P2 4302799069), worded
-            // as the live chart words it (session-blocks-view.tsx).
-            ["Probe lot", present(b.probe_lot_number) ? `${b.probe_lot_number.trim()}${b.probe_lot_confirmed ? " (confirmed)" : ""}` : null],
-            // NUMBING through the saved view's presenter (Codex P2 4305737602):
-            // its practitioner-facing label, and a note only when numbing was
-            // USED, so a stray note on "none" never implies numbing.
-            ["Numbing", numbingDisplay(b.numbing_status, b.numbing_notes)?.label ?? null],
-            // TOLERANCE as the saved view words it (Codex P2 4307190165): the
-            // stored 1-5 integer's direction is not self-evident, so the
-            // printout carries the practitioner-facing label, never the number.
-            ["Client tolerance", b.tolerance_rating != null ? toleranceLabel(b.tolerance_rating) : null],
-          ]),
-          notes: readings([
-            ["Numbing notes", numbingDisplay(b.numbing_status, b.numbing_notes)?.note ?? null],
-            // REACTIONS through the SAME rule as the saved-record view
-            // (legacyBlockReactionLabel; Codex P1 4304382927). Current
-            // responses print as the entries' chips ("Observed: ..."); a
-            // block's reaction_type prints only when it is un-migrated history,
-            // and then LABELLED legacy, never as an active finding, never
-            // twice, and never "none" beside a real response.
-            [
-              "Legacy skin response",
-              // Classified against the entries' chips as DISPLAYED, legacy
-              // comment chips hydrated (Codex P1 4305737599), as the view does.
-              legacyBlockReactionLabel(
-                b.reaction_type,
-                (entriesByBlock.get(b.id) ?? []).map((e) => resolveDisplayChips(e.observation_chips, e.comments).chips),
-              ),
-            ],
-            ["Legacy response note", b.reaction_notes],
-            // The flag stands on its own (Codex P2 4302644062): a legacy block may
-            // carry the caution with no note, and the chart still shows it.
-            ["Caution for next session", present(b.caution_note) ? b.caution_note : b.caution_for_next_session ? "Yes" : null],
-            ["Notes", b.block_notes],
-          ]),
-          entries: [...(entriesByBlock.get(b.id) ?? [])].sort(byCreated).map(exportEntry),
+          record: pickBlock(b, input.blockAreasById?.get(b.id), [...(entriesByBlock.get(b.id) ?? [])].sort(byCreated)),
+          printOnly: readings([["Area notes", b.block_notes]]),
         })),
-      entries: [...(looseBySession.get(s.id) ?? [])].sort(byCreated).map(exportEntry),
-      laserEntries: [...(laserBySession.get(s.id) ?? [])].sort(byCreated).map(exportLaser),
+      entries: [...(looseBySession.get(s.id) ?? [])].sort(byCreated).map(pickEntry),
+      // Newest first, as the session page lists laser passes.
+      laserEntries: [...(laserBySession.get(s.id) ?? [])].sort((a, b) => byCreated(b, a)).map(pickLaser),
     }));
   // Same-day versions in the order they were written (Codex P1 4302740025).
   const clinicalNotes = [...input.notes]

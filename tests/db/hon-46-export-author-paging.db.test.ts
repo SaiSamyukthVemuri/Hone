@@ -9,6 +9,9 @@ import {
   recordClinicalRecordsAudit,
 } from "@/lib/clinical-records/export-queries";
 import { buildClinicalRecordsDocument } from "@/lib/clinical-records/export-scope";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { ExportSessionTreatments } from "@/app/(records-export)/clients/[id]/records/export/session-treatments";
 import { mintPrintToken, PRINT_TOKEN_TTL_MS } from "@/lib/clinical-records/print-token";
 import { recordClinicalRecordsPrintAction } from "@/app/(records-export)/clients/[id]/records/export/actions";
 import {
@@ -217,7 +220,7 @@ describe("HON-46 export reads every author and every note to completion", () => 
     expect(JSON.stringify(doc)).not.toContain(idOf("upper lip"));
     const exported = doc.sessions.find((x) => x.id === sessionId)!;
     expect(exported.blocks.map((b) => b.id)).toEqual([liveBlock]);
-    expect(exported.blocks[0].entries.map((e) => e.id)).toEqual([idOf("chin")]);
+    expect(exported.blocks[0].record.electrolysis_entries.map((e) => e.id)).toEqual([idOf("chin")]);
     expect(exported.entries.map((e) => e.id)).toEqual([idOf("jaw")]);
   }, 60_000);
 
@@ -283,28 +286,38 @@ describe("HON-46 export reads every author and every note to completion", () => 
     if (!load.ok) return;
     const doc = buildClinicalRecordsDocument(load.value);
     const block = doc.sessions.find((x) => x.id === sessionId)!.blocks.find((b) => b.id === saved.block_id)!;
-    const num = (rs: { label: string; value: string }[], label: string) => {
-      const r = rs.find((x) => x.label === label);
-      return r ? Number(r.value.split(" ")[0]) : undefined;
-    };
-    // The BLOCK's own columns (the bag), as stored.
-    expect(block.readings.find((r) => r.label === "Mode")?.value).toBe("blend");
-    expect(num(block.readings, "Energy level")).toBe(9);
-    expect(num(block.readings, "Minutes performed")).toBe(8);
-    // The ENTRY's scalars, as stored, under their own labels.
-    const entry = block.entries.find((e) => e.id === saved.entry_id)!;
-    expect(num(entry.readings, "Energy level")).toBe(11);
-    expect(num(entry.readings, "Minutes performed")).toBe(22);
-    expect(num(entry.readings, "Hairs treated")).toBe(33);
-    expect(num(entry.readings, "Galvanic current")).toBe(44.5);
-    expect(num(entry.readings, "Galvanic duration")).toBe(55);
-    expect(num(entry.readings, "Thermolysis intensity")).toBe(66);
-    expect(num(entry.readings, "Thermolysis duration")).toBe(77.5);
-    expect(num(entry.readings, "Units of lye")).toBe(88.5);
-    expect(num(entry.readings, "Pulses")).toBe(3);
-    expect(num(entry.readings, "Pulse delay")).toBe(1.5);
-    expect(entry.observations).toEqual(["Coarse hair"]);
-    expect(entry.comments).toBe("hon46 initial save");
+    // The ROWS reach the printout intact, every stored value (PostgREST types).
+    expect(block.record).toMatchObject({ mode: "blend", energy_level: 9, minutes_performed: 8 });
+    const entry = block.record.electrolysis_entries.find((e) => e.id === saved.entry_id)!;
+    expect(entry).toMatchObject({
+      energy_level: 11,
+      minutes_performed: 22,
+      hairs_treated: 33,
+      galvanic_ma: 44.5,
+      galvanic_duration_seconds: 55,
+      thermolysis_intensity_percent: 66,
+      thermolysis_duration_seconds: 77.5,
+      units_of_lye: 88.5,
+      pulse_count: 3,
+      observation_chips: ["Coarse hair"],
+      comments: "hon46 initial save",
+    });
+    expect(Number(entry.pulse_delay_seconds)).toBe(1.5);
+    // ...and PRINT as the saved view shows them: the area's own settings on
+    // its header line, each pass reading under its own group, in machine order.
+    const printed = renderToStaticMarkup(createElement(ExportSessionTreatments, { session: doc.sessions.find((x) => x.id === sessionId)! }))
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ");
+    for (const shown of [
+      "Blend · EL 9 · 8 min",
+      "Galvanic: 88.5 UL · 55s · 44.5 mA",
+      "Thermolysis: 77.5 seconds · 66% · 3 pulses · 1.50s delay",
+      "Hairs treated: 33",
+      "Coarse hair",
+      "Notes: hon46 initial save",
+    ]) {
+      expect(printed, shown).toContain(shown);
+    }
   }, 60_000);
 
   it("the PRINT audit is bound to the rendered preview: forged, foreign and expired tokens audit nothing (Codex P1 4303617257)", async () => {

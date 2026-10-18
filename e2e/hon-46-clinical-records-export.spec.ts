@@ -242,36 +242,39 @@ test("owner: the day's records appear; every excluded sentinel is absent from pa
 
   await expect(page.getByTestId("export-session")).toHaveCount(1);
   await expect(page.getByText(fx.sentinel.session)).toBeVisible();
-  await expect(page.getByTestId("export-entry")).toContainText(fx.sentinel.entry);
+  // The treatment prints through the SAVED VIEW's own render (#896): its
+  // wording, its fields (tests/components/saved-record-print-parity.test.ts).
   // The CURRENT charting fields reach the document (Codex P1 4301165385).
   const blockEl = page.getByTestId("export-block");
+  await expect(blockEl).toContainText(fx.sentinel.entry);
   await expect(blockEl).toContainText("Left Cheeks · Right Sideburns");
-  await expect(blockEl).toContainText("Probe: Ballet F3");
-  await expect(blockEl).toContainText(`Probe lot: ${fx.sentinel.probeLot}`);
+  await expect(blockEl).toContainText(`Probe: Ballet F3 · Lot #${fx.sentinel.probeLot}`);
   // Un-migrated block reaction: printed as LEGACY, by its label, through the
   // saved-record view's rule (Codex P1 4304382927).
   await expect(blockEl).toContainText("Legacy skin response: Mild redness");
   await expect(blockEl).not.toContainText("Reaction: mild_redness");
-  await expect(blockEl).toContainText(fx.sentinel.block);
-  await expect(blockEl).toContainText("Thermolysis intensity: 22 %");
+  // The legacy block note is not on the saved view; it is kept on paper as
+  // a NAMED print-only field (PRINT_ONLY_FIELDS).
+  await expect(blockEl).toContainText(`Area notes: ${fx.sentinel.block}`);
   // Tolerance as the saved view words it, never the stored 4 (Codex P2 4307190165).
   await expect(blockEl).toContainText("Client tolerance: Mild discomfort");
   await expect(blockEl).not.toContainText("Tolerance: 4");
   // A blend pass with three pulses: the saved view shows its pulses AND its
-  // delay, so the printout does too (pulseReadingsShown, Codex P1 4305560955).
-  await expect(blockEl).toContainText("Pulses: 3");
-  await expect(blockEl).toContainText("Pulse delay: 1.5 s");
-  await expect(blockEl).toContainText("Observed: Coarse hair");
-  // A flag-only caution is exported (Codex P2 4302644062).
-  await expect(blockEl).toContainText("Caution for next session: Yes");
+  // delay, so the printout does too (Codex P1 4305560955).
+  await expect(blockEl).toContainText("Thermolysis: 22% · 3 pulses · 1.50s delay");
+  await expect(blockEl).toContainText("Coarse hair");
+  // A flag-only caution is exported (Codex P2 4302644062), worded as the view.
+  await expect(blockEl).toContainText("Caution for next session");
   // The day's clinical note is in, dated as its CIVIL date; the next day's is
   // out (Codex P1 4302644059, Los Angeles studio).
   await expect(page.getByTestId("export-note")).toHaveCount(1);
   await expect(page.getByTestId("export-note")).toContainText(formatClinicalDate(`${DAY}T00:00:00+00:00`));
   await expect(page.getByText(fx.sentinel.nextDayNote)).toHaveCount(0);
   const laserEl = page.getByTestId("export-laser");
-  await expect(laserEl).toContainText("Laser · Underarm");
-  await expect(laserEl).toContainText("fluence j cm2: 18");
+  await expect(laserEl).toContainText("Underarm");
+  await expect(laserEl).toContainText("Treatment #3");
+  // Settings LaserEntryRow does not show are kept on paper, NAMED.
+  await expect(laserEl).toContainText("Settings: fluence j cm2 18");
   await expect(laserEl).toContainText(fx.sentinel.laser);
 
   // No Vercel script or beacon on the export document.
@@ -501,9 +504,9 @@ test("HON-46 journey: client record -> choose a date -> preview -> print, includ
   // The legacy entry edited with structured readings prints ONLY the
   // structured set; its stale generic pair (77, 9 s) is absent.
   const edited = page.getByTestId("export-entry").filter({ hasText: fx.sentinel.editedEntry });
-  await expect(edited).toContainText("Thermolysis intensity: 33 %");
-  await expect(edited).not.toContainText("Intensity: 77");
-  await expect(edited).not.toContainText("Duration: 9 s");
+  await expect(edited).toContainText("Thermolysis: 2 seconds · 33%");
+  await expect(edited).not.toContainText("77%");
+  await expect(edited).not.toContainText("9s");
   // The day's clinical note is kept (Sam's decision).
   await expect(page.getByTestId("export-note")).toHaveCount(1);
   await expect(page.getByTestId("export-note")).toContainText(fx.sentinel.journeyNote);

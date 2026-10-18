@@ -25,9 +25,8 @@ import {
   parseExportScope,
   scopeAuditMetadata,
   type ClinicalRecordsDocument,
-  type ExportedEntry,
-  type Reading,
 } from "@/lib/clinical-records/export-scope";
+import { ExportSessionTreatments } from "./session-treatments";
 import {
   loadClinicalRecordsForExport,
   loadExportClientIdentity,
@@ -77,31 +76,6 @@ const NOTE_KIND_LABEL: Record<string, string> = {
   consultation: "Consultation note",
   skin_hair_analysis: "Skin & hair analysis",
 };
-
-function ReadingList({ readings }: { readings: Reading[] }) {
-  if (readings.length === 0) return null;
-  return (
-    <p className="mt-1">
-      {readings.map((r) => `${r.label}: ${r.value}`).join(" · ")}
-    </p>
-  );
-}
-
-function EntryList({ entries }: { entries: ExportedEntry[] }) {
-  if (entries.length === 0) return null;
-  return (
-    <ul className="mt-1 flex flex-col gap-1 text-xs">
-      {entries.map((e) => (
-        <li key={e.id} data-testid="export-entry">
-          <span className="font-medium">{e.areas.join(", ") || "Area not recorded"}</span>
-          {e.readings.length > 0 ? ` · ${e.readings.map((r) => `${r.label}: ${r.value}`).join(" · ")}` : ""}
-          {e.observations.length > 0 ? ` · Observed: ${e.observations.join(", ")}` : ""}
-          {e.comments ? ` — ${e.comments}` : ""}
-        </li>
-      ))}
-    </ul>
-  );
-}
 
 export default async function ClinicalRecordsExportPage({
   params,
@@ -366,24 +340,15 @@ export default async function ClinicalRecordsExportPage({
                     )}
                     {s.notes && <p className="mt-1 whitespace-pre-wrap break-words text-sm">{s.notes}</p>}
                     {s.aftercareExplainedAt && (
-                      <p className="mt-1 text-[11px]">Risks explained and aftercare provided: {formatInstant(s.aftercareExplainedAt, tz)}</p>
+                      <p className="mt-1 text-[11px]" data-testid="export-session-aftercare">
+                        Risks explained and aftercare provided: {formatInstant(s.aftercareExplainedAt, tz)}
+                        {/* Attributed to whoever recorded it, which can differ from
+                            the performer (Codex P2 4307259896). */}
+                        {s.aftercareExplainedBy ? ` · ${s.aftercareExplainedBy}` : ""}
+                      </p>
                     )}
-                    {s.blocks.map((b) => (
-                      <div key={b.id} className="mt-2 rounded border border-neutral-200 p-2 text-xs" data-testid="export-block">
-                        <p className="font-medium">{b.title}</p>
-                        <ReadingList readings={b.readings} />
-                        <ReadingList readings={b.notes} />
-                        <EntryList entries={b.entries} />
-                      </div>
-                    ))}
-                    <EntryList entries={s.entries} />
-                    {s.laserEntries.map((l) => (
-                      <div key={l.id} className="mt-2 rounded border border-neutral-200 p-2 text-xs" data-testid="export-laser">
-                        <p className="font-medium">Laser · {l.zone}</p>
-                        <ReadingList readings={l.readings} />
-                        <ReadingList readings={l.notes} />
-                      </div>
-                    ))}
+                    {/* The saved session view's own render (session-treatments.tsx). */}
+                    <ExportSessionTreatments session={s} />
                     {/* SINGLE-SESSION SCOPE (Codex P2 4301153316): reachable from this
                         audited view; a plain anchor, so it is a full document load. */}
                     {outcome.scopeKind !== "session" && (

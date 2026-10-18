@@ -9,6 +9,42 @@ import { formatSeconds } from "@/lib/sessions/format-seconds";
 import { hasStructuredReadings } from "@/lib/sessions/structured-readings";
 import { resolveDisplayChips } from "@/lib/observation-chips";
 
+// The fields this row reads, and nothing else: the saved session view passes
+// full rows, and the HON-46 printout passes its allow-listed rows, through the
+// SAME component (SavedAreaRecord in session-blocks-view.tsx).
+export type SavedEntryFields = Pick<
+  ElectrolysisEntry,
+  | "id"
+  | "created_at"
+  | "area"
+  | "areas"
+  | "mode"
+  | "apilus_modality"
+  | "energy_level"
+  | "minutes_performed"
+  | "probe_type"
+  | "probe_size"
+  | "machine_frequency"
+  | "units_of_lye"
+  | "galvanic_duration_seconds"
+  | "galvanic_ma"
+  | "thermolysis_duration_seconds"
+  | "thermolysis_intensity_percent"
+  | "pulse_count"
+  | "pulse_delay_seconds"
+  | "intensity"
+  | "duration_seconds"
+  | "hairs_treated"
+  | "observation_chips"
+  | "comments"
+>;
+
+// The laser fields LaserEntryRow reads (shared with the printout the same way).
+export type SavedLaserFields = Pick<
+  LaserEntry,
+  "id" | "created_at" | "zone" | "session_number" | "equipment_params" | "observation_notes"
+>;
+
 function modeLabel(value: ElectrolysisEntry["mode"]): string | null {
   if (!value) return null;
   return ELECTROLYSIS_MODES.find((m) => m.value === value)?.label ?? value;
@@ -52,9 +88,9 @@ export function ElectrolysisEntryRow({
   hideArea = false,
   label,
 }: {
-  entry: ElectrolysisEntry;
+  entry: SavedEntryFields;
   treatmentParams?: TreatmentParams;
-  block?: SessionBlock | null;
+  block?: Pick<SessionBlock, "mode"> | null;
   density?: "comfortable" | "compact";
   action?: React.ReactNode;
   // "readings": compact render for entries shown INSIDE a treatment-area
@@ -351,7 +387,7 @@ export function LaserEntryRow({
   density = "comfortable",
   action,
 }: {
-  entry: LaserEntry;
+  entry: SavedLaserFields;
   density?: "comfortable" | "compact";
   action?: React.ReactNode;
 }) {
