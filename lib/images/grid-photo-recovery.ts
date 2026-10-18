@@ -20,7 +20,12 @@
 // request for the first signed token refused showed cells stranded on a dead
 // URL: the re-mint server action sometimes never settled around hydration
 // (4 of 10 instrumented runs reported the action fetch ERR_ABORTED), and an
-// unbounded `pending` then waited forever. A pending re-mint now ends by one of:
+// unbounded `pending` then waited forever. Next also runs a page's server
+// actions ONE AT A TIME, so a hung re-mint action held its own retry and every
+// later action on the page (Codex P1 4307807754); the re-mint is therefore an
+// abortable GET (./remint-request, ./remint-controller), never an action, and
+// a timed-out attempt is aborted before the retry is sent. A pending re-mint
+// now ends by one of:
 //   * its URL arriving (used whenever the cell is STILL waiting on that
 //     variant, even from a superseded attempt: a slow first attempt that lands
 //     after the retry started is still a good URL);
