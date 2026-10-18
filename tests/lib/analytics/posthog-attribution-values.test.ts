@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { guardBrowserEvent } from "@/lib/analytics/client-boundary";
 
@@ -126,7 +126,7 @@ describe("sanitizeProps fails closed on every branch", () => {
     leakFree(out.properties);
   });
 
-  it("toJSON objects are sanitized as what they serialize to (URL, custom)", () => {
+  it("Date and URL are serialized; a custom toJSON object is not (see 4309252682 below)", () => {
     const out = pageview({
       when: new Date("2026-10-18T00:00:00.000Z"),
       link: new URL(`${HOST}/clients/${CLIENT}`),
@@ -347,5 +347,110 @@ describe("only unambiguous non-http URL strings become [url]", () => {
     const p = pageview({ a: new URL("custom:summer"), b: new URL("mailto:x@y.z") }).properties as Record<string, string>;
     expect(p.a).toBe("[url]");
     expect(p.b).toBe("[url]");
+  });
+});
+
+// ===========================================================================
+// Codex 4309252679 (review of 0f1aa9f1): http(s) URLs are recognised by
+// PARSING, as a browser would, never by a textual prefix. Leading whitespace
+// or control characters, backslash separators, a missing "//" or an embedded
+// newline still make an http(s) URL, so the query (?email=…) is dropped and
+// the path's ids redacted. WHATWG-special non-http schemes (ftp, ws, wss,
+// file) with backslashes are [url].
+// ===========================================================================
+describe("http(s) URL strings are classified by parsing, not by prefix", () => {
+  it.each([
+    ` https:\\\\hone.care\\clients\\${CLIENT}?email=patient@example.com`,
+    `\thttps://hone.care/clients/${CLIENT}?email=patient@example.com`,
+    `\u0000https://hone.care/clients/${CLIENT}?email=patient@example.com`,
+    `https:hone.care/clients/${CLIENT}?email=patient@example.com`,
+    `HTTPS:\\\\hone.care/clients/${CLIENT}?email=patient@example.com`,
+    `ht\ntps://hone.care/clients/${CLIENT}?email=patient@example.com`,
+    ` https:%5C%5Chone.care%5Cclients%5C${CLIENT}%3Femail%3Dpatient%40example.com`,
+  ])("%j loses its query and its id", (raw) => {
+    const note = (pageview({ note: raw }).properties as Record<string, string>).note;
+    expect(note).not.toContain("email");
+    expect(note).not.toContain("patient");
+    expect(note).not.toContain(CLIENT);
+    expect(note).toBe("https://hone.care/clients/[id]");
+  });
+
+  it.each([
+    ` /clients/${CLIENT}?email=patient@example.com`,
+    `\\clients\\${CLIENT}?email=patient@example.com`,
+  ])("app-relative %j loses its query and its id", (raw) => {
+    const note = (pageview({ note: raw }).properties as Record<string, string>).note;
+    expect(note).toBe("/clients/[id]");
+  });
+
+  it("the same variants under a URL key ($referrer) lose the query too", () => {
+    const p = pageview({ $referrer: ` https:\\\\hone.care\\clients\\${CLIENT}?email=patient@example.com` })
+      .properties as Record<string, string>;
+    expect(p.$referrer).toBe("https://hone.care/clients/[id]");
+  });
+
+  it.each([
+    "ftp:\\\\files.example\\x?email=patient@example.com",
+    " wss:\\\\socket.example\\x?email=patient@example.com",
+  ])("WHATWG-special non-http %j is [url]", (raw) => {
+    expect((pageview({ note: raw }).properties as Record<string, string>).note).toBe("[url]");
+  });
+
+  it("ordinary values are still not URLs", () => {
+    const p = pageview({ utm_campaign: "summer:sale", note: "localhost:3000" }).properties as Record<string, string>;
+    expect(p.utm_campaign).toBe("summer:sale");
+    expect(p.note).toBe("localhost:3000");
+  });
+});
+
+// ===========================================================================
+// Codex 4309252682 (review of 0f1aa9f1): toJSON is called ONLY for Date. An
+// unknown class or object with a toJSON can serialize hidden state, so it
+// becomes [unsupported] and its toJSON is never invoked.
+// ===========================================================================
+describe("toJSON is called only for an allowlisted type", () => {
+  it("an unknown class with toJSON over hidden state is [unsupported], toJSON not called", () => {
+    const toJSON = vi.fn(function (this: { secret: string }) { return { email: this.secret }; });
+    class Hidden {
+      #email = "patient@example.com";
+      get secret() { return this.#email; }
+      toJSON = toJSON;
+    }
+    const out = pageview({ hidden: new Hidden() });
+    expect((out.properties as Record<string, unknown>).hidden).toBe("[unsupported]");
+    expect(toJSON).not.toHaveBeenCalled();
+    expect(JSON.stringify(out.properties)).not.toContain("patient");
+  });
+
+  it("a prototype toJSON on a class is not called either", () => {
+    const spy = vi.fn(() => ({ email: "patient@example.com" }));
+    class Proto { toJSON() { return spy(); } }
+    const out = pageview({ v: new Proto() });
+    expect((out.properties as Record<string, unknown>).v).toBe("[unsupported]");
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("a plain object carrying a toJSON is [unsupported], toJSON not called", () => {
+    const toJSON = vi.fn(() => ({ email: "patient@example.com" }));
+    const out = pageview({ v: { toJSON } });
+    expect((out.properties as Record<string, unknown>).v).toBe("[unsupported]");
+    expect(toJSON).not.toHaveBeenCalled();
+  });
+
+  it("Date is still serialized, with Date's OWN toJSON (an override is ignored)", () => {
+    const d = new Date("2026-10-18T00:00:00.000Z");
+    const override = vi.fn(() => "patient@example.com");
+    (d as unknown as { toJSON: () => string }).toJSON = override;
+    const p = pageview({ when: new Date("2026-10-18T00:00:00.000Z"), overridden: d }).properties as Record<string, unknown>;
+    expect(p.when).toBe("2026-10-18T00:00:00.000Z");
+    expect(p.overridden).toBe("2026-10-18T00:00:00.000Z");
+    expect(override).not.toHaveBeenCalled();
+  });
+
+  it("plain objects and arrays keep the normal recursion", () => {
+    const p = pageview({ obj: { a: `/clients/${CLIENT}` }, arr: [`/clients/${CLIENT}`, "ok"] })
+      .properties as Record<string, unknown>;
+    expect(p.obj).toEqual({ a: "/clients/[id]" });
+    expect(p.arr).toEqual(["/clients/[id]", "ok"]);
   });
 });

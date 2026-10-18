@@ -213,12 +213,26 @@ function redactPathLikeIds(value: string): string {
 }
 const BARE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// A string that IS a URL, absolute (http/https) or app-relative ("/…"), is
-// sanitized AS a URL whatever its key (Codex 4309069519): query and fragment
-// dropped, path ids redacted. Decided on the decoded text.
+// A string that IS a URL, absolute (http/https) or app-relative, is sanitized
+// AS a URL whatever its key (Codex 4309069519): query and fragment dropped,
+// path ids redacted. Decided by PARSING the decoded text the way a browser
+// would (Codex 4309252679), never by a textual prefix: the WHATWG parser
+// trims leading/trailing C0 controls and spaces, drops tabs and newlines
+// anywhere, and reads "\\" as "/" in an http(s) URL, so " https:\\host\\…",
+// "https:host/…" and "ht<LF>tps://…" are all http(s) URLs.
+function whatwgTrim(value: string): string {
+  return value.replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, "").replace(/[\t\n\r]/g, "");
+}
 function looksLikeUrl(value: string): boolean {
   const decoded = decodeBounded(value) ?? value;
-  return /^https?:\/\//i.test(decoded) || decoded.startsWith("/");
+  try {
+    const u = new URL(decoded);
+    if (u.protocol === "http:" || u.protocol === "https:") return true;
+  } catch {
+    // not absolute; may still be app-relative
+  }
+  const trimmed = whatwgTrim(decoded);
+  return trimmed.startsWith("/") || trimmed.startsWith("\\");
 }
 
 // A STRING is treated as a non-http(s) URL only when that is UNAMBIGUOUS
@@ -226,19 +240,23 @@ function looksLikeUrl(value: string): boolean {
 // URLs, and turning them into a placeholder broke attribution):
 //   * the scheme is followed by "//" (an authority form: ftp://, file://,
 //     custom-app://…), or
-//   * the scheme is one of the path-less schemes that carry data.
+//   * the scheme is one of the path-less schemes that carry data, or
+//   * the scheme is WHATWG-special (ftp, ws, wss, file), where "\\" is a
+//     separator too, so "ftp:\\\\host\\…" is as much a URL as "ftp://host/…"
+//     (Codex 4309252679).
 // Any other "word:rest" string is ordinary text and goes through the value
 // rules below, so a record id inside it is still redacted. URL INSTANCES are
 // unambiguous and handled in sanitizeProps by type.
 const NON_HTTP_URL_PLACEHOLDER = "[url]";
 const DATA_SCHEMES = new Set(["mailto", "data", "javascript", "blob", "tel", "sms", "file"]);
+const SPECIAL_SCHEMES = new Set(["ftp", "ws", "wss", "file"]);
 function isNonHttpUrl(value: string): boolean {
-  const decoded = (decodeBounded(value) ?? value).trim();
+  const decoded = whatwgTrim(decodeBounded(value) ?? value);
   const m = /^([a-z][a-z0-9+.-]*):(.*)$/is.exec(decoded);
   if (!m) return false;
   const scheme = m[1]!.toLowerCase();
   if (scheme === "http" || scheme === "https") return false;
-  return m[2]!.startsWith("//") || DATA_SCHEMES.has(scheme);
+  return m[2]!.startsWith("//") || DATA_SCHEMES.has(scheme) || SPECIAL_SCHEMES.has(scheme);
 }
 
 // PostHog autocapture's own structural fields: never classified as URLs
@@ -264,9 +282,10 @@ function sanitizeKey(key: string, taken: Record<string, unknown>): string {
  *   * containers over the depth limit: "[depth-limited]", never the original;
  *   * URL instances: by what they ARE, before toJSON: http(s) sanitized as a
  *     URL, any other scheme "[url]"; non-http(s) URL strings likewise "[url]";
- *   * other objects with toJSON (Date, custom): sanitized as what they
- *     serialize to, through these same rules;
- *   * Map / Set / other non-plain objects: "[unsupported]";
+ *   * Date: sanitized as its ISO string, the ONLY toJSON ever called;
+ *   * every other object with a toJSON, and Map / Set / class instances /
+ *     any non-plain prototype: "[unsupported]", WITHOUT calling toJSON
+ *     (Codex 4309252682: a toJSON can serialize hidden state);
  *   * arrays and plain objects: element by element, keys included;
  *   * number / boolean / null / undefined: as is (no text to carry an id);
  *   * bigint / symbol / function: dropped (undefined).
@@ -295,17 +314,19 @@ function sanitizeProps(value: unknown, key: string, depth: number): unknown {
       ? sanitizeMarketingUrl(value.href)
       : NON_HTTP_URL_PLACEHOLDER;
   }
-  const toJSON = (value as { toJSON?: unknown }).toJSON;
-  if (typeof toJSON === "function") {
-    let serialized: unknown;
+  // toJSON is called ONLY for an allowlisted type (Codex 4309252682): an
+  // unknown class's toJSON can serialize hidden state ({ email }). Date's own
+  // implementation is used, never an override on the instance or a subclass.
+  if (value instanceof Date) {
+    let iso: unknown;
     try {
-      serialized = (toJSON as () => unknown).call(value);
+      iso = Date.prototype.toJSON.call(value);
     } catch {
       return "[unsupported]";
     }
-    if (serialized === value) return "[unsupported]";
-    return sanitizeProps(serialized, key, depth + 1);
+    return sanitizeProps(iso, key, depth + 1);
   }
+  if (typeof (value as { toJSON?: unknown }).toJSON === "function") return "[unsupported]";
   if (Array.isArray(value)) {
     return value.map((v) => sanitizeProps(v, key, depth + 1));
   }
