@@ -10,7 +10,11 @@ import {
   recordedUnitLabel,
 } from "@/lib/machines/charting";
 import type { RecordedReading } from "@/lib/machines/machine-queries";
-import { findMode, modeFields } from "@/lib/machines/profile-contract";
+import {
+  currentProfile,
+  findMode,
+  modeFields,
+} from "@/lib/machines/profile-contract";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
 
 // MPX-03 — WHAT HAS ALREADY BEEN RECORDED ON THIS TREATMENT.
@@ -122,7 +126,7 @@ function labelsFor(
   stageLabels: Map<string, string>;
   historical: boolean;
 } {
-  const profile = catalogue.find((p) => p.profileId === entry.profileId);
+  const profile = currentProfile(catalogue, entry.profileId);
   const historical = profile ? entry.profileVersion !== profile.version : true;
   const labels = new Map<string, string>();
   const mode = profile ? findMode(profile, entry.modeKey) : undefined;
@@ -159,7 +163,7 @@ function ChangeLine({
   // versions (the same field key can mean something else there), or a field
   // re-read at the SAME value (another capture, not an adjustment). So this
   // line cannot make any of those claims, whatever it says.
-  const profile = catalogue.find((p) => p.profileId === change.to.profileId);
+  const profile = currentProfile(catalogue, change.to.profileId);
   const historical = profile ? change.to.profileVersion !== profile.version : true;
   const mode = profile ? findMode(profile, change.to.modeKey) : undefined;
   let label = change.to.fieldKey;
