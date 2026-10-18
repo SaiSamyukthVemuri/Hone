@@ -57,7 +57,12 @@
  * `discrepancy`, and `validateReading` refuses on neither.
  */
 
-import type { EvidenceRef, MachineProfile, OpenQuestion } from "./profile-contract";
+import type {
+  EvidenceRef,
+  MachineProfile,
+  OpenQuestion,
+  VerificationState,
+} from "./profile-contract";
 
 // ---------------------------------------------------------------------------
 // Shared evidence — the source ledger from #829, by family
@@ -1056,6 +1061,38 @@ export function catalogueIntegrity(
 
       for (const { f, stage } of fields) {
         cites(`field ${mode.key}.${f.key}`, f.evidence);
+        // A RANGE'S NUMBERS HAVE TO BE A RANGE (Codex, #855 4305364906).
+        // Checked for every range regardless of class or availability,
+        // because a non-finite bound, an inverted pair or a nonpositive step
+        // is a data error rather than a policy question — and each one fails
+        // in a different, quiet direction: an inverted HARDWARE range refuses
+        // every value a practitioner could enter, while a nonpositive step is
+        // skipped by the step check's own `step > 0` guard, so the contract
+        // declares an increment it never enforces.
+        for (const r of f.ranges ?? []) {
+          const bad: string[] = [];
+          if (r.min !== undefined && !Number.isFinite(r.min)) bad.push("min is not finite");
+          if (r.max !== undefined && !Number.isFinite(r.max)) bad.push("max is not finite");
+          if (
+            r.min !== undefined &&
+            r.max !== undefined &&
+            Number.isFinite(r.min) &&
+            Number.isFinite(r.max) &&
+            r.min > r.max
+          ) {
+            bad.push(`min ${r.min} exceeds max ${r.max}`);
+          }
+          if (r.step !== undefined && (!Number.isFinite(r.step) || r.step <= 0)) {
+            bad.push(`step ${r.step} is not a positive increment`);
+          }
+          for (const problem of bad) {
+            out.push({
+              profileId: p.profileId,
+              problem: `field ${mode.key}.${f.key} range is malformed: ${problem}`,
+            });
+          }
+        }
+
         // A range may only refuse input when it is hardware-enforced AND
         // undisputed. Anything else is advisory by construction.
         for (const r of f.ranges ?? []) {
@@ -1133,14 +1170,45 @@ export function catalogueIntegrity(
     // for — the ST 350 review found a placeholder "Treatment" on a mode marked
     // documented — one level up, and `active` means "verified named choice" or
     // it means nothing.
-    const profileQualifies =
-      p.verification === "manufacturer-documented" ||
-      p.verification === "device-confirmed";
-    if (p.availability === "active" && !profileQualifies) {
-      out.push({
-        profileId: p.profileId,
-        problem: `profile is active but its own identity is ${p.verification}`,
-      });
+    // SOURCE-BACKED MEANS ONE THING, SO IT IS WRITTEN ONCE. Rounds 3 and 4
+    // each found another contract whose own `verification` nobody consulted —
+    // the profile's identity (4305243749), then its channel structure and its
+    // frequency (4305364897) — after the field and mode gates had been there
+    // from the start. Enumerating contracts one review at a time is what made
+    // that a series, so this says what "qualifies" means and then names every
+    // contract that has to.
+    const qualifies = (v: VerificationState) =>
+      v === "manufacturer-documented" || v === "device-confirmed";
+
+    if (p.availability === "active") {
+      if (!qualifies(p.verification)) {
+        out.push({
+          profileId: p.profileId,
+          problem: `profile is active but its own identity is ${p.verification}`,
+        });
+      }
+      // THE CHANNEL COUNT IS ENFORCED, so an unverified one produces real
+      // refusals: `validateReading` rejects a channel above `channels.count`
+      // and requires an association when `associationRequired` says so. An
+      // unverified structure therefore refuses true observations.
+      if (p.channels && !qualifies(p.channels.verification)) {
+        out.push({
+          profileId: p.profileId,
+          problem: `profile is active but its channel structure is ${p.channels.verification}`,
+        });
+      }
+      // The frequency is PRESENTED to the practitioner as fact, and on a few
+      // models it is a selectable control, so an unverified value is either a
+      // displayed claim nobody checked or an invented choice.
+      if (
+        (p.frequency.kind === "fixed" || p.frequency.kind === "selectable") &&
+        !qualifies(p.frequency.verification)
+      ) {
+        out.push({
+          profileId: p.profileId,
+          problem: `profile is active but its ${p.frequency.kind} frequency is ${p.frequency.verification}`,
+        });
+      }
     }
 
     // AN ACTIVE PROFILE WITH NO MODES AT ALL (Codex, #855 4305243750). There
@@ -1154,6 +1222,22 @@ export function catalogueIntegrity(
       out.push({
         profileId: p.profileId,
         problem: "profile is active but carries no modes at all",
+      });
+    } else if (
+      p.availability === "active" &&
+      !p.modes.some((m) => m.availability === "active")
+    ) {
+      // AN INVENTORY IS NOT AN OFFER (Codex, #855 4305364901). The rule above
+      // tested only that the list was non-empty, so a profile whose every
+      // mode is `blocked` or `legacy-only` passed — and then `activeProfiles`
+      // offered it while `activeModes` returned nothing and `validateReading`
+      // refused every possible mode with `mode_not_offered`. That is the same
+      // unusable picker the no-modes rule exists to prevent, reached by a
+      // different route. `else if` because "no modes at all" is the more
+      // specific complaint and saying both would be noise.
+      out.push({
+        profileId: p.profileId,
+        problem: "profile is active but none of its modes is",
       });
     }
 
