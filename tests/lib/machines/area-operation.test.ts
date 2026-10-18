@@ -447,18 +447,60 @@ describe("the create form carries the key in the URL", () => {
     expect(drop![1]).toContain("!resumeOwnsKey");
   });
 
-  it("and OWNERSHIP covers the unknown outcome, not only the in-flight one", () => {
-    // THE P1'S SUBSTANCE. Adopting the key on a failed read is worthless if
-    // the next keystroke discards it, so what counts as "still open" has to
-    // include the state that cannot be answered.
+  it("OWNERSHIP, state by state: only a POSITIVE answer releases the key", () => {
+    // TWO P1s LIVE IN THIS TABLE, both from treating a non-answer as settled.
+    //
+    //   * `unknown` — a read that FAILED (4305431332). Adopting the key there
+    //     is worthless if the next keystroke discards it.
+    //   * `absent` — a read that returned no row (4305501015). 0223 takes its
+    //     advisory lock BEFORE the claim lookup and inserts the claim at the
+    //     END, so a reload landing mid-commit sees no row for a save that is
+    //     about to succeed. "Not found yet" is not "not saved".
+    //
+    // Only `saved` is positively true, and it is the state where the form
+    // closes anyway. `idle` is the ordinary non-resumed form, where a changed
+    // draft still mints a new key as it always did.
+    const owns = (state: string) => state !== "idle" && state !== "saved";
+    expect(owns("checking"), "the read is in flight").toBe(true);
+    expect(owns("absent"), "a negative read can race the original commit").toBe(
+      true,
+    );
+    expect(owns("unknown"), "an unanswerable read is not an answer").toBe(true);
+    expect(owns("saved"), "a positive answer releases it").toBe(false);
+    expect(owns("idle"), "an ordinary form owns no resumed key").toBe(false);
+
+    // And the form implements exactly that exclusion — asserted on which
+    // states are EXCLUDED, not on the operator order.
     const src = read(FORM_SRC);
-    const owns = /const resumeOwnsKey =\s*([^;]*);/.exec(src);
-    expect(owns, "the resumed-ownership rule was not found").toBeTruthy();
-    expect(owns![1]).toContain('"checking"');
+    const expr = /const resumeOwnsKey =\s*([^;]*);/.exec(src);
+    expect(expr, "the resumed-ownership rule was not found").toBeTruthy();
+    expect(expr![1]).toContain('!== "idle"');
+    expect(expr![1]).toContain('!== "saved"');
     expect(
-      owns![1],
-      "an unanswerable read was treated as settled, so the adopted key is discarded",
-    ).toContain('"unknown"');
+      expr![1],
+      "a resumed state other than 'saved' stopped owning the key",
+    ).not.toMatch(/=== "(checking|absent|unknown)"/);
+  });
+
+  it("and a FOUND claim refreshes the chart before saying the area is on it", () => {
+    // THE OTHER P1 (Codex, #922 4305501020). If the server page read `blocks`
+    // before the original transaction committed and this read ran after, the
+    // claim is found while the chart still holds the pre-commit prop — so the
+    // message said "on the chart below" when it was not, and after Close she
+    // would reopen Add and create a second area.
+    //
+    // This is the ONE place the router is right: everywhere else the form
+    // edits the URL through `history.replaceState` precisely to avoid
+    // refetching the server component mid-save.
+    const src = read(FORM_SRC);
+    const found = src.slice(src.indexOf("if (res.found)"));
+    const refresh = found.indexOf("router.refresh()");
+    const clear = found.indexOf("syncAreaOperationParam(null)");
+    expect(refresh, "the found branch never refreshes the chart").toBeGreaterThan(-1);
+    expect(
+      refresh,
+      "the parameter was cleared before the chart was refreshed",
+    ).toBeLessThan(clear);
   });
 
   it("and Cancel waits for a lookup that is already in flight", () => {

@@ -21,7 +21,7 @@
 // change.
 
 import { useEffect, useId, useMemo, useState, useTransition } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   APILUS_MODALITIES_BY_MODE,
   ELECTROLYSIS_MODES,
@@ -477,6 +477,7 @@ export function BlockSetupForm({
    * mode this reads nothing and touches nothing: a genuine unresolved create's
    * key has to survive her editing something else.
    */
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [resumedSaveKey] = useState<string | null>(() =>
     isEdit ? null : readAreaOperationId(searchParams),
@@ -546,8 +547,31 @@ export function BlockSetupForm({
    *
    * So the ownership is named once here and both paths defer to it, rather
    * than each re-deriving which states count as open.
+   *
+   * AND "ABSENT" IS NOT SETTLED EITHER (Codex, #922 4305501015, P1).
+   * `create_block_with_initial_setup` takes its advisory lock BEFORE looking
+   * for a claim and inserts the claim at the very END
+   * (0223: `pg_advisory_xact_lock` then the lookup; the insert ~140 lines
+   * later). The reconciliation read does not hold that lock, so a reload
+   * landing while the original transaction is still committing sees NO ROW for
+   * a save that is about to succeed. Treating that as settled let the next
+   * keystroke clear the key, and the retry then minted a fresh uuid and
+   * duplicated the area the moment the first transaction committed.
+   *
+   * SO THE KEY IS OWNED FOR THE WHOLE LIFE OF A RESUMED OPERATION, and the
+   * only state that releases it is `saved` — the one answer that is
+   * positively true, and the one where the form closes anyway. `idle` is the
+   * ordinary non-resumed form, where a changed draft still mints a new key as
+   * it always did.
+   *
+   * KEEPING THE KEY IS SAFE IN EVERY BRANCH, which is why this is the whole
+   * fix and no lock is needed on the read. If the original committed and her
+   * reconstruction differs, 0223 refuses the reused key and SAYS so; if it
+   * matches, the save is absorbed and she gets the original area; if the
+   * original never committed, the key is unused and the save proceeds. A
+   * fresh key is the only option that duplicates silently.
    */
-  const resumeOwnsKey = resume.state === "checking" || resume.state === "unknown";
+  const resumeOwnsKey = resume.state !== "idle" && resume.state !== "saved";
 
   /**
    * A REVISION save inside the machine panel has an unknown outcome.
@@ -674,9 +698,18 @@ export function BlockSetupForm({
         return;
       }
       if (res.found) {
-        // IT COMMITTED. Clear the parameter before anything else, so a second
-        // reload cannot re-enter this branch against a question already
-        // answered.
+        // IT COMMITTED — BUT THE CHART MAY NOT SHOW IT YET (Codex, #922
+        // 4305501020, P1). If the server page read `blocks` before the
+        // original transaction committed and this read ran after, the claim is
+        // found while `SessionBlocksView` still holds the pre-commit prop. The
+        // message then said the area was "on the chart below" when it was not,
+        // and after Close she would reopen Add and create a second one.
+        //
+        // REFRESHED FIRST, so the statement is true when she reads it. This is
+        // the one place the ROUTER is right: everywhere else this form edits
+        // the URL through `history.replaceState` precisely to avoid refetching
+        // the server component mid-save, but here a refetch is the point.
+        router.refresh();
         syncAreaOperationParam(null);
         setResume({ state: "saved", blockId: res.blockId });
         return;
