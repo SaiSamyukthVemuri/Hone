@@ -1,34 +1,29 @@
 "use client";
 
-import { useCallback } from "react";
-import { getTreatmentImageSignedUrlAction } from "./actions";
-import type { GridPhotoVariant } from "@/lib/images/grid-photo-recovery";
 import { useGridPhotoRecovery } from "@/lib/images/use-grid-photo-recovery";
 
 // FETT photos (HON-43): one Photos-tab grid cell. It renders the derivative,
-// demotes to the original, and re-mints an EXPIRED signed URL through the same
-// server action "View larger" uses. The bounded recovery (one retry on a
-// timed-out or rejected re-mint, then terminal; the hydration-window check) is
-// lib/images/use-grid-photo-recovery.ts, shared with the profile ID photo and
-// the visit chart. The parent keys this component by the server URLs, so fresh
+// demotes to the original, and re-mints an EXPIRED signed URL through the
+// abortable signed-url route (never a server action, which would queue every
+// other action on the page behind a hung one). The bounded recovery (one retry
+// on a timed-out or rejected re-mint, then terminal; the hydration-window
+// check) is lib/images/use-grid-photo-recovery.ts, shared with the profile ID
+// photo and the visit chart. The parent keys this component by the server URLs, so fresh
 // URLs from router.refresh() remount it and clear any failure.
 export function GridPhoto({
+  clientId,
   imageId,
   previewUrl,
   thumbUrl,
   onOpen,
 }: {
+  clientId: string;
   imageId: string;
   previewUrl: string | null;
   thumbUrl: string | null;
   onOpen: () => void;
 }) {
-  const remint = useCallback(
-    (variant: GridPhotoVariant) =>
-      getTreatmentImageSignedUrlAction({ imageId, variant }).then((res) => (res.ok ? res.url : null)),
-    [imageId],
-  );
-  const { state, imgRef, onError } = useGridPhotoRecovery({ previewUrl, thumbUrl, remint });
+  const { state, imgRef, onError } = useGridPhotoRecovery({ previewUrl, thumbUrl, clientId, imageId });
 
   if (state.stage === "broken" || !state.src) {
     return (
