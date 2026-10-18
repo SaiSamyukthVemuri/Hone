@@ -40,7 +40,18 @@ function harness(opts: { honourAbort?: boolean } = {}) {
         if (honourAbort) signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
       }),
   });
-  return { c, calls, writes, get state() { return state; } };
+  return {
+    c,
+    calls,
+    writes,
+    get state() {
+      return state;
+    },
+    /** Move the cell's state from outside (another transition), for settle cases. */
+    force(next: GridPhotoState) {
+      state = next;
+    },
+  };
 }
 
 const flush = async () => {
@@ -208,13 +219,31 @@ describe("lifetime", () => {
     expect(h.calls).toHaveLength(1);
   });
 
-  it("settle (nothing pending any more) aborts whatever is still in flight", async () => {
+  it("settle when the LIVE state has nothing pending aborts whatever is still in flight", async () => {
     const h = harness();
     h.c.onImageError();
+    h.force({ ...h.state, pending: null }); // the cell moved on by another transition
     h.c.settle();
     expect(h.calls[0].signal.aborted).toBe(true);
     expect(h.c.inFlight()).toBe(0);
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("Codex P2 4307931365: a STALE settle (the render saw nothing pending) never cancels a LIVE re-mint", async () => {
+    // An image that failed BEFORE hydration: the per-src effect calls
+    // onImageError(), which starts a re-mint and moves stateRef to pending,
+    // and the next effect in the same commit, still holding the render's
+    // `pending === null`, calls settle(). That must not abort the request,
+    // or the cell stays pending on its dead URL forever.
+    const h = harness();
+    h.c.onImageError();
+    h.c.settle();
+    expect(h.calls[0].signal.aborted).toBe(false);
+    expect(h.c.inFlight()).toBe(1);
+    expect(h.state.pending).toEqual({ variant: "thumb", attempt: 1 });
+    h.calls[0].resolve("thumb-fresh");
+    await flush();
+    expect(h.state).toMatchObject({ stage: "thumb", src: "thumb-fresh", pending: null });
   });
 
   it("activate after dispose (React StrictMode's effect replay) resumes the cell", async () => {
