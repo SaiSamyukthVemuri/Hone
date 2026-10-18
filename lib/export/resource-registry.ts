@@ -1732,6 +1732,22 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "US registration evidence (10DLC or toll-free verification) for a studio's live SMS sender, live since migration 0217 (SMS-SENDER-REG-01). Studio-scoped and split like studio_sms_senders: the registration status and what is missing are studio-meaningful, while provider_reference is a provider brand or campaign identifier already withheld from the studio's own session by a column grant. Decided column by column, not excluded. No export surface ships in SMS-SENDER-REG-01.",
   },
+  studio_sms_sender_campaign_bindings: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "What a provider check observed about a studio sender's Messaging Service and its US A2P campaign, one current row per sender, live since migration 0229 (SMS-CAMPAIGN-BINDING-01, HON-50 G4a). Studio-scoped and split like studio_sms_sender_registrations: whether the campaign was verified, and when it was checked, are studio-meaningful, while messaging_service_sid and campaign_sid are Hone's provider identifiers with no customer meaning. Decided column by column, not excluded. Revoked from every client role; read only through the service-role snapshot. No export surface ships in SMS-CAMPAIGN-BINDING-01.",
+  },
+  studio_sms_sender_stop_preflights: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "The recorded inbound STOP preflight of a studio sender, one current row per sender, live since migration 0230 (SMS-STOP-PREFLIGHT-RECORD-01, HON-50 G6). Studio-scoped and split like studio_sms_sender_campaign_bindings: whether the STOP path passed, which checks passed, and when it was checked are studio-meaningful, while messaging_service_sid is Hone's provider identifier and webhook_base and credentials_epoch are Hone deployment configuration with no customer meaning. It holds no secret and no free text. Decided column by column, not excluded. Revoked from every client role; read only through the service-role snapshot. No export surface ships in SMS-STOP-PREFLIGHT-RECORD-01.",
+  },
   sms_outbound_messages: {
     kind: "pending",
     ticket: "TRUTH-01B",

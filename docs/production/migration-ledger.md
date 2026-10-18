@@ -16,6 +16,13 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 
 ## Current state (verified 2026-10-15, post-0212 apply; hosted `0212`; `0213`–`0228` AUTHORED AND PENDING, contiguous, in that order)
 
+> **0230 IS AUTHORED AND PENDING, on `wip/hon-50-g6g7` (#916) only**, stacked on #902 (`0229`). Reserved for HON-50 G6 by the migration coordinator.
+> `0230_studio_sms_sender_stop_preflights.sql` adds one table (`studio_sms_sender_stop_preflights`), one service_role-only writer (`record_studio_sms_stop_preflight`), and REPLACES `0229`'s body of `get_live_studio_sms_sender_registration_state` (0229's body verbatim plus `stop_preflights`).
+> - **What it records:** a sender's inbound STOP preflight, accepted only as the COMPLETE version-1 STOP checklist (check ids and pass/fail/unknown only; no secrets, no free text). It calls no provider, activates nothing and sends nothing.
+> - **Order:** after `0229`, migration-first.
+>
+> **0229 IS AUTHORED AND PENDING** on #901 (HON-50 G4a): `studio_sms_sender_campaign_bindings`, its writer, and an additive redefinition of `0217`'s snapshot.
+
 > **0228 IS AUTHORED AND PENDING, on `feat/g1-public-booking-picker` (#874) only.** It applies after `0227`.
 > **`0228` IS A FORWARD-ONLY REPAIR of the applied, frozen `0204`** — it
 > redefines `create_public_appointment_for_new_client` and nothing else, restates

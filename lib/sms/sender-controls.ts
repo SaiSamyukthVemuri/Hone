@@ -16,6 +16,7 @@ import { createProvisioningStore } from "./provisioning-store";
 import { SMS_STATUS_CALLBACK_PATH } from "./delivery-ledger";
 import { sameTwilioWebhook, twilioWebhookUrl } from "./webhook-base";
 import { inboundReaches } from "./inbound-routing";
+import { liveGateFor, type LiveGateRefusal } from "./sender-controls-live";
 
 // ===========================================================================
 // SMS-SENDER-CONTROL-01 (#824): the studio owner's controls over the 0191
@@ -50,6 +51,13 @@ import { inboundReaches } from "./inbound-routing";
 // Twilio adapter. Live provisioning, number purchase and US registration
 // submission are separate, owner-approved release decisions.
 //
+// LIVE MODE (HON-50, SMS-SENDER-LIVE-GATE-01): HONE_SMS_SENDER_CONTROLS="live"
+// is a separate branch, decided entirely by lib/sms/sender-controls-live.ts
+// (production only, outbound fence open, live provisioning armed, and the
+// studio on an operator allowlist that ships empty). That module, not this
+// one, is the only path from the controls to the real adapter. The fake
+// branch below is unchanged.
+//
 // AUTHORITY: the claim inside both orchestrations re-derives membership and
 // owner role from (studio_id, actor_user_id) in the database. The actions add
 // the page's owner check on top; neither trusts a browser-supplied studio.
@@ -61,9 +69,11 @@ type Env = Readonly<Record<string, string | undefined>>;
 
 export type SenderControlsGate =
   | { open: true; mode: "fake" }
+  | { open: true; mode: "live" }
   | {
       open: false;
       reason:
+        | LiveGateRefusal
         | "not_enabled"
         | "live_provisioning_armed"
         | "production"
@@ -93,7 +103,11 @@ function isLoopbackDatabase(raw: string | undefined): boolean {
 export function senderControlsGate(
   env: Env = process.env,
   liveArmed: () => boolean = liveProvisioningArmed,
+  studioId: string | null = null,
 ): SenderControlsGate {
+  // The live branch is its own decision, for ONE studio. It never falls
+  // through to the fake one: a refused live request is refused, not demoted.
+  if (env[SENDER_CONTROLS_ENV] === "live") return liveGateFor(env, studioId, liveArmed);
   if (env.VERCEL_ENV === "production") return { open: false, reason: "production" };
   // PREVIEWS TOO (Codex P1 4251747841): Vercel previews run against the
   // PRODUCTION database (docs/08), so a fake sender written there would be a

@@ -13,7 +13,9 @@ const armed = () => true;
 describe("senderControlsGate", () => {
   it("opens only for HONE_SMS_SENDER_CONTROLS=fake", () => {
     expect(senderControlsGate({ ...LOCAL, HONE_SMS_SENDER_CONTROLS: "fake" }, never)).toEqual({ open: true, mode: "fake" });
-    for (const v of [undefined, "", "true", "live", "FAKE"]) {
+    // "live" is its own branch (HON-50, tests/lib/sms/sender-controls-live.test.ts)
+    // and never opens the fake one.
+    for (const v of [undefined, "", "true", "LIVE", "FAKE"]) {
       expect(senderControlsGate({ ...LOCAL, HONE_SMS_SENDER_CONTROLS: v }, never), String(v)).toEqual({ open: false, reason: "not_enabled" });
     }
   });
@@ -57,14 +59,17 @@ describe("senderControlsGate", () => {
   });
 });
 
-describe("the actions can only reach the fake provider (source guard)", () => {
+describe("the actions reach the fake provider unless the live gate opened (source guard)", () => {
   const strip = (s: string) => s.split("\n").filter((l) => !/^\s*(\/\/|\*)/.test(l)).join("\n");
   const actions = strip(readFileSync("app/(app)/settings/integrations/sender-control-actions.ts", "utf8"));
   const lib = strip(readFileSync("lib/sms/sender-controls.ts", "utf8"));
 
   it("the actions pass the controls' own seeded FAKE explicitly and never resolve a provider", () => {
-    // Per studio (Codex P2 4251747847): every action, release included.
-    expect(actions.match(/senderControlsFakeProvider\(getRequiredAppOrigin\(\), ctx\.studioId\)/g)).toHaveLength(4);
+    // Per studio (Codex P2 4251747847): every action, release included, takes
+    // its provider from providerFor, whose fake branch is this studio's fake
+    // and whose live branch is sender-controls-live (HON-50).
+    expect(actions.match(/providerFor\(ctx\)/g)).toHaveLength(4);
+    expect(actions).toMatch(/ctx\.mode === "live" \? liveSenderControlsProvider\(\) : senderControlsFakeProvider\(getRequiredAppOrigin\(\), ctx\.studioId\)/);
     expect(lib).toMatch(/new FakeSmsProvisioningProvider\(\{/);
     for (const forbidden of ["resolveProvisioningProvider", "twilioProvisioningProvider", "twilio-provider"]) {
       expect(actions, forbidden).not.toContain(forbidden);
@@ -78,7 +83,9 @@ describe("the actions can only reach the fake provider (source guard)", () => {
       const firstAwait = body.indexOf("await ");
       expect(body.slice(firstAwait, firstAwait + 30), name).toContain("ownerContext()");
     }
-    expect(actions).toMatch(/const gate = senderControlsGate\(\);\s*\n\s*if \(!gate\.open\)/);
+    // The studio is resolved server-side first (the live branch is per studio),
+    // then the gate, before any other check.
+    expect(actions).toMatch(/const gate = senderControlsGate\(process\.env, undefined, studio\.id\);\s*\n\s*if \(!gate\.open\)/);
   });
 });
 

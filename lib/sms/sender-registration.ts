@@ -1,4 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { campaignBindingsFromSnapshot, type BindingSender, type RecordedCampaignBinding } from "./campaign-binding";
+import { stopPreflightsFromSnapshot, type RecordedStopPreflight } from "./stop-preflight-record";
 import { classifyNanpNumber } from "./nanp";
 import type { UsRegistrationEvidence } from "./sender-readiness";
 
@@ -113,7 +115,8 @@ export function registrationEvidenceFor(
 }
 
 // ---------------------------------------------------------------------------
-// The operator's snapshot (0217 get_live_studio_sms_sender_registration_state)
+// The operator's snapshot (0217 get_live_studio_sms_sender_registration_state,
+// extended additively by 0229 with provisioned_at and campaign_bindings)
 // ---------------------------------------------------------------------------
 
 export type LiveSenderSnapshot = {
@@ -122,6 +125,8 @@ export type LiveSenderSnapshot = {
   status: string;
   phone_number: string | null;
   messaging_service_sid: string | null;
+  /** 0229. Absent before 0229 is applied; read as unknown (null). */
+  provisioned_at?: string | null;
 };
 
 export type LiveRegistrationSnapshot = {
@@ -141,8 +146,43 @@ export type LiveRegistrationSnapshot = {
  * shape 0217 returns; a caller must then offer no write at all.
  */
 export type LiveRegistrationState =
-  | { ok: true; senders: LiveSenderSnapshot[]; registrations: LiveRegistrationSnapshot[] }
+  | {
+      ok: true;
+      senders: LiveSenderSnapshot[];
+      registrations: LiveRegistrationSnapshot[];
+      /** 0229: the recorded campaign bindings of the listed senders (HON-50 G4a). */
+      campaignBindings: RecordedCampaignBinding[];
+      /** 0230: the recorded STOP preflights of the listed senders (HON-50 G6). */
+      stopPreflights: RecordedStopPreflight[];
+    }
   | { ok: false };
+
+/** The snapshot sender as campaignBindingVerdict takes it. */
+export function bindingSenderFrom(sender: LiveSenderSnapshot): BindingSender {
+  return {
+    id: sender.id,
+    studioId: sender.studio_id,
+    phoneNumber: sender.phone_number,
+    messagingServiceSid: sender.messaging_service_sid,
+    provisionedAt: sender.provisioned_at ?? null,
+  };
+}
+
+/** The recorded binding for ONE sender, or null (the verdict's "missing"). */
+export function campaignBindingFor(
+  state: Extract<LiveRegistrationState, { ok: true }>,
+  senderId: string,
+): RecordedCampaignBinding | null {
+  return state.campaignBindings.find((b) => b.senderId === senderId) ?? null;
+}
+
+/** The recorded STOP preflight for ONE sender, or null (the verdict's "missing"). */
+export function stopPreflightFor(
+  state: Extract<LiveRegistrationState, { ok: true }>,
+  senderId: string,
+): RecordedStopPreflight | null {
+  return state.stopPreflights.find((p) => p.senderId === senderId) ?? null;
+}
 
 export function parseLiveRegistrationState(data: unknown, studioId: string): LiveRegistrationState {
   if (!data || typeof data !== "object") return { ok: false };
@@ -165,5 +205,14 @@ export function parseLiveRegistrationState(data: unknown, studioId: string): Liv
   ) {
     return { ok: false };
   }
-  return { ok: true, senders: ownSenders, registrations: rows };
+  // 0229: two rows for one sender, a binding for an unlisted sender, or a
+  // malformed array make the WHOLE read unreadable; an absent key is [].
+  const listed = new Set(ownSenders.map((s) => s.id));
+  const campaignBindings = campaignBindingsFromSnapshot(data, studioId, listed);
+  if (!campaignBindings) return { ok: false };
+  // 0230 (HON-50 G6), same strictness, parsed AFTER the bindings: a failure in
+  // either makes the WHOLE read unreadable; an absent key is [].
+  const stopPreflights = stopPreflightsFromSnapshot(data, studioId, listed);
+  if (!stopPreflights) return { ok: false };
+  return { ok: true, senders: ownSenders, registrations: rows, campaignBindings, stopPreflights };
 }

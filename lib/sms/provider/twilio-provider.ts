@@ -1,4 +1,5 @@
 import "server-only";
+import { normalizeUsA2pCampaigns, type SmsCampaignReader } from "./campaign-read";
 import { classifyAssociation } from "./association";
 import {
   asArray,
@@ -742,5 +743,27 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
       // second message. Parsed fail-closed: anything that is not E.164 becomes
       // null, and null is never read as "the number we asked for".
       return { ok: true, messageSid: sid, sentFrom: asE164(rec?.from) };
+  },
+};
+
+/**
+ * SMS-CAMPAIGN-CHECK-01 (HON-50 G4b). READ-ONLY: the US A2P campaign linked to
+ * one Messaging Service (Twilio `GET /v1/Services/{sid}/Compliance/Usa2p`),
+ * normalised by normalizeUsA2pCampaigns. Never part of a provisioning attempt.
+ */
+export const twilioCampaignReader: SmsCampaignReader = {
+  async readUsA2pCampaign(input) {
+    const creds = readCredentials();
+    if (!creds) return providerError("provider_not_configured", false);
+    const res = await request(
+      creds,
+      `${MESSAGING_BASE}/Services/${encodeURIComponent(input.messagingServiceSid)}/Compliance/Usa2p?PageSize=2`,
+      { method: "GET" },
+    );
+    if (!res.ok) return res;
+    if (res.status !== 200) return httpError(res.status);
+    const campaign = normalizeUsA2pCampaigns(res.json);
+    if (!campaign) return providerError("provider_response_unparseable", false);
+    return { ok: true, campaign };
   },
 };
