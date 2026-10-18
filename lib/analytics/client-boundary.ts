@@ -195,26 +195,69 @@ const CAMPAIGN_PROP = new RegExp(
     "gclid|gad_source|gclsrc|dclid|gbraid|wbraid|fbclid|msclkid|twclid|li_fat_id|mc_cid|igshid|ttclid|rdt_cid|epik|qclid|sccid|irclid|_kx)$",
 );
 
+// A string that names a path or URL (has a "/") and carries a record id. Bare
+// UUIDs are PostHog's OWN ids ($session_id, distinct_id, $device_id, uuid:
+// UUIDv7) and are kept; any id inside a path-like string is replaced, whatever
+// the key (Codex P2/P1 audit, 4309044244).
+const UUID_ANYWHERE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+function redactPathLikeIds(value: string): string {
+  return value.includes("/") || /%2f/i.test(value) ? redactIdsInValue(value) : value;
+}
+
+/** Object keys lose record ids too; a collision gets a numeric suffix so no
+ *  value is silently dropped. */
+function sanitizeKey(key: string, taken: Record<string, unknown>): string {
+  const base = UUID_ANYWHERE.test(key) || /%2d/i.test(key) ? redactIdsInValue(key) : key;
+  if (!Object.hasOwn(taken, base)) return base;
+  let n = 2;
+  while (Object.hasOwn(taken, `${base}#${n}`)) n += 1;
+  return `${base}#${n}`;
+}
+
+/**
+ * Every value that leaves is sanitized; NOTHING passes through unexamined
+ * (Codex 4309044244: an over-depth container used to be returned as is).
+ *   * strings: URL keys as URLs, campaign keys by value, path-like strings
+ *     lose ids, all lose token paths; over the depth limit, "[redacted]";
+ *   * containers over the depth limit: "[depth-limited]", never the original;
+ *   * objects with toJSON (Date, URL, ...): sanitized as what they serialize to;
+ *   * Map / Set / other non-plain objects: "[unsupported]";
+ *   * arrays and plain objects: element by element, keys included;
+ *   * number / boolean / null / undefined: as is (no text to carry an id);
+ *   * bigint / symbol / function: dropped (undefined).
+ */
 function sanitizeProps(value: unknown, key: string, depth: number): unknown {
-  if (depth > MAX_DEPTH) {
-    return typeof value === "string" ? "[redacted]" : value;
-  }
+  if (value === null || value === undefined) return value;
+  if (typeof value === "number" || typeof value === "boolean") return value;
   if (typeof value === "string") {
+    if (depth > MAX_DEPTH) return "[redacted]";
     if (isUrlPropKey(key)) return sanitizeMarketingUrl(value);
     if (CAMPAIGN_PROP.test(key)) return redactIdsInValue(sanitizeTokenPaths(value));
-    return sanitizeTokenPaths(value);
+    return redactPathLikeIds(sanitizeTokenPaths(value));
+  }
+  if (typeof value !== "object") return undefined;
+  if (depth > MAX_DEPTH) return "[depth-limited]";
+  const toJSON = (value as { toJSON?: unknown }).toJSON;
+  if (typeof toJSON === "function") {
+    let serialized: unknown;
+    try {
+      serialized = (toJSON as () => unknown).call(value);
+    } catch {
+      return "[unsupported]";
+    }
+    if (serialized === value) return "[unsupported]";
+    return sanitizeProps(serialized, key, depth + 1);
   }
   if (Array.isArray(value)) {
     return value.map((v) => sanitizeProps(v, key, depth + 1));
   }
-  if (value && typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = sanitizeProps(v, k, depth + 1);
-    }
-    return out;
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) return "[unsupported]";
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    out[sanitizeKey(k, out)] = sanitizeProps(v, k, depth + 1);
   }
-  return value;
+  return out;
 }
 
 // Loose structural constraint so this module avoids depending on posthog-js
