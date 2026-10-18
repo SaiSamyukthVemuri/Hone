@@ -1581,8 +1581,20 @@ describe("the Previous treatment reference", () => {
 
   it("is DATED, so it cannot be mistaken for this visit", () => {
     // A date is the cheapest unambiguous signal that this is a past event.
+    //
+    // THE SLOT, NOT THE TEXT (Codex, #860 4309128374). This asserted the YEAR
+    // in the SERVER markup, which was the hazard itself: the string came from
+    // the runtime's default locale and timezone, so Node and the browser
+    // produced different text and, near midnight, a different DAY.
+    // `FormattedDateTime` renders nothing server-side on purpose, so what
+    // holds here is that the dated slot exists; the text is a browser fact,
+    // and `machine-recorded-setups.test.ts` bans local formatting in this
+    // component tree.
     expect(html).toContain('data-testid="prior-setup-when"');
-    expect(html).toMatch(/2026/);
+    expect(
+      html,
+      "a year was rendered on the SERVER, which is the hydration hazard",
+    ).not.toMatch(/\b20\d{2}\b/);
   });
 
   it("shows the DATE only, not a time of day", () => {
@@ -1590,9 +1602,26 @@ describe("the Previous treatment reference", () => {
     // that instant", and with several groups these rows can carry different
     // instants. Codex's decision is explicit that independently timed
     // revisions must not be presented as one moment (#860 6157725545).
+    //
+    // ASSERTED AT THE SOURCE NOW. The rendered text is deliberately empty
+    // server-side, so "contains no clock" became true for a reason that has
+    // nothing to do with the claim - a vacuous pass. What actually enforces
+    // date-only is the `format` handed to the shared renderer, so that is what
+    // is pinned.
     const when = html.slice(html.indexOf('data-testid="prior-setup-when"'));
     const text = when.slice(when.indexOf(">") + 1, when.indexOf("</span>"));
     expect(text).not.toMatch(/\d{1,2}:\d{2}/);
+    const src = readFileSync(
+      nodePath.resolve(__dirname, "../..", "components/machines/machine-prior-setup.tsx"),
+      "utf8",
+    );
+    expect(
+      src,
+      "the prior-setup instant is no longer rendered as a DATE",
+    ).toMatch(/<FormattedDateTime iso=\{recordedIso\} format="date" \/>/);
+    expect(src, "a clock format crept into the prior-setup panel").not.toMatch(
+      /format="(time|datetime)"/,
+    );
   });
 
   it("does NOT pre-fill today's entry fields from it", () => {

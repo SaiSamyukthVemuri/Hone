@@ -598,11 +598,34 @@ describe("switching machine or mode clears the collected draft", () => {
     //
     // Only on the withSetup path, because only that command binds a retry
     // key; without one there is no safe retry to offer.
+    // RE-POINTED AT THE DELEGATION (Codex, #860 4309128376). The outcome used
+    // to be a ternary written out at each site; there are now THREE sites -
+    // the missing block, this read-back, and a missing setup receipt - so it
+    // is factored into `unresolvableResponse()`. The claim is the same and the
+    // assertion is stronger: previously each branch could have carried a
+    // subtly different ternary and this would still have passed.
+    //
+    // SCOPED TO THE BRANCH, not matched by proximity: a lazy gap reached past
+    // the end of a branch once already in this file, and the fix was to bound
+    // the slice to the thing it is about.
     const src = read(ACTIONS_SRC);
-    expect(src).toMatch(
-      /if \(blockReadErr \|\| !blockRow\) \{[\s\S]{0,1400}?return withSetup\s*\?\s*\{[\s\S]{0,200}?unresolved: true as const,/,
+    const i = src.indexOf("if (blockReadErr || !blockRow)");
+    expect(i, "the read-back failure branch is gone").toBeGreaterThan(-1);
+    const j = src.indexOf("const block = blockRow as SessionBlock", i);
+    expect(j, "the end of the branch is gone").toBeGreaterThan(i);
+    expect(
+      src.slice(i, j),
+      "the post-commit read failure no longer reports the unresolved outcome",
+    ).toMatch(/return unresolvableResponse\(\);/);
+    // AND THE ONE DEFINITION still carries the withSetup rule and the fields
+    // the form acts on.
+    const helper = src.slice(
+      src.indexOf("const unresolvableResponse"),
+      src.indexOf("const createdBlockId"),
     );
-    expect(src).toMatch(/error: INITIAL_SAVE_UNRESOLVED,/);
+    expect(helper, "the shared outcome is gone").toMatch(/withSetup/);
+    expect(helper).toMatch(/unresolved: true as const,/);
+    expect(helper).toMatch(/error: INITIAL_SAVE_UNRESOLVED,/);
   });
 
   it("and the form already freezes on exactly that signal", () => {
@@ -725,12 +748,12 @@ describe("switching machine or mode clears the collected draft", () => {
     const j = src.indexOf("const { data: blockRow", i);
     expect(j, "the read-back that bounds this branch is gone").toBeGreaterThan(i);
     const branch = src.slice(i, j);
-    expect(branch).toMatch(/return withSetup/);
+    // THE DELEGATION, for the reason given on the read-back guard above: the
+    // outcome is one definition now, shared by three sites.
     expect(
       branch,
       "a malformed create success is still reported as a definitive failure",
-    ).toMatch(/unresolved: true as const/);
-    expect(branch).toMatch(/INITIAL_SAVE_UNRESOLVED/);
+    ).toMatch(/return unresolvableResponse\(\);/);
   });
 
   it("a PRE-WRITE lineage refusal on the CREATE path is rejected, not unresolved", () => {

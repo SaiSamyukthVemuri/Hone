@@ -310,6 +310,22 @@ export type BlockResult =
    */
   | { ok: false; error: string; unresolved?: boolean };
 
+/**
+ * Does this `setup` value confirm that a settings submission exists?
+ *
+ * THE SUBMISSION ID IS THE CONFIRMATION (Codex, #860 4309128376). `groups` and
+ * `readings` are counts and may legitimately be absent from a shape this code
+ * does not recognise; the id is what says a submission row is there to point
+ * at. Anything else - null, a non-object, an object without a usable id - is a
+ * response this caller cannot confirm, and on the `withSetup` path that must
+ * be reported as unresolved rather than as a success that closes the form.
+ */
+function hasSetupReceipt(setup: unknown): boolean {
+  if (typeof setup !== "object" || setup === null) return false;
+  const id = (setup as { submission_id?: unknown }).submission_id;
+  return typeof id === "string" && id.trim().length > 0;
+}
+
 export type CreateBlockInput = {
   clientId: string;
   sessionId: string;
@@ -1497,6 +1513,29 @@ export async function createTreatmentAreaWithEntryAction(
   const asRow = Array.isArray(createdRows)
     ? (createdRows[0] as { block_id?: string } | undefined)
     : (createdRows as { block_id?: string; setup?: unknown } | null);
+  /**
+   * The outcome for a response this call cannot interpret.
+   *
+   * ONE DEFINITION FOR THREE SITES (the missing block, the failed read-back,
+   * and the missing setup receipt). They are the same event to the
+   * practitioner - the command may have committed and the answer is not
+   * trustworthy - so they must be reported identically, and a third hand-made
+   * copy of this ternary is a third place for it to drift.
+   *
+   * `withSetup` is what makes the retry safe: that command binds a retry key,
+   * so pressing Save again unchanged is answered with the original result.
+   * `create_block_with_entry` binds none, so there is no safe retry to offer
+   * and it keeps the plain failure it had.
+   */
+  const unresolvableResponse = (): BlockResult =>
+    withSetup
+      ? {
+          ok: false as const,
+          error: INITIAL_SAVE_UNRESOLVED,
+          unresolved: true as const,
+        }
+      : { ok: false, error: GENERIC_BLOCK_COMMAND_ERROR };
+
   const createdBlockId = asRow?.block_id;
   const setupResult = Array.isArray(createdRows)
     ? undefined
@@ -1513,13 +1552,7 @@ export async function createTreatmentAreaWithEntryAction(
     // reason: this is the `withSetup` path's retry key that makes pressing
     // Save again safe, and `create_block_with_entry` binds none, so it keeps
     // the plain failure it had.
-    return withSetup
-      ? {
-          ok: false as const,
-          error: INITIAL_SAVE_UNRESOLVED,
-          unresolved: true as const,
-        }
-      : { ok: false, error: GENERIC_BLOCK_COMMAND_ERROR };
+    return unresolvableResponse();
   }
 
   const { data: blockRow, error: blockReadErr } = await supabase
@@ -1547,13 +1580,31 @@ export async function createTreatmentAreaWithEntryAction(
     // pressing Save again unchanged is answered with the original result.
     // `create_block_with_entry` binds none, so there is no safe retry to
     // offer and it keeps the plain failure it had.
-    return withSetup
-      ? {
-          ok: false as const,
-          error: INITIAL_SAVE_UNRESOLVED,
-          unresolved: true as const,
-        }
-      : { ok: false, error: GENERIC_BLOCK_COMMAND_ERROR };
+    return unresolvableResponse();
+  }
+
+  // THE SETTINGS NEED THEIR RECEIPT BEFORE THIS IS A SUCCESS (Codex, #860
+  // 4309128376).
+  //
+  // Reporting `ok: true` closes the form and discards the draft, so a response
+  // carrying a block but no usable `setup` loses every entered setting
+  // SILENTLY - with nothing on screen to retry and no confirmation the
+  // submission exists.
+  //
+  // NULL IS ANOMALOUS ON THIS PATH, verified in 0223 rather than assumed: the
+  // fresh path builds the receipt only when the groups array is non-empty,
+  // which is exactly when `withSetup` is true, and the one place a null
+  // receipt is legitimate is an absorbed retry whose original recorded NO
+  // settings - which cannot be a same-digest retry of a save that carried
+  // them.
+  //
+  // UNRESOLVED, NOT FAILED, because the block id came back: the area and
+  // perhaps the settings may be committed, so unfreezing the draft and
+  // dropping the key would let a later save append a second area with a second
+  // copy of the settings. Same law as #860 4308887493 - only an authoritative
+  // answer for the same key may settle this.
+  if (withSetup && !hasSetupReceipt(setupResult)) {
+    return unresolvableResponse();
   }
   const block = blockRow as SessionBlock;
 
