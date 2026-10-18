@@ -305,6 +305,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "admin_complete_onboarding",
   },
   {
+    path: "app/api/cron/sms-confirmation-recovery/route.ts",
+    purpose: "Scheduled, session-less cron: D5 owed-confirmation recovery (#824, inert unless SMS_CONFIRMATION_RECOVERY=on).",
+    why: "Runs with no user session; authorized by the CRON_SECRET bearer, and creates no client while disabled. Service-role is required for the appointments read and claim_sms_send; every query is scoped to one listed studio in-query.",
+    scopeGuard: "isAuthorizedCronRequest",
+  },
+  {
     path: "app/api/cron/appointment-reminders/route.ts",
     purpose: "Scheduled, session-less cron / heartbeat.",
     why: "Runs with no user session; authorized by the CRON_SECRET bearer. Service-role is required; each row is studio-scoped in-query.",
