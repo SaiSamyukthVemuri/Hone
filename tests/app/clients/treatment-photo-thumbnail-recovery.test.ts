@@ -198,6 +198,9 @@ describe("source contract: the shared recovery hook (abortable re-mint + hydrati
     expect(ctl).toMatch(/timeoutMs = deps\.timeoutMs \?\? GRID_PHOTO_REMINT_TIMEOUT_MS/);
     expect(hook).toMatch(/return \(\) => controller\.dispose\(\);/);
     expect(hook).toMatch(/if \(!state\.pending\) controller\.settle\(\);/);
+    // ...and settle is gated on the LIVE state, so a stale render's effect can
+    // never cancel a re-mint an earlier effect just started (Codex P2 4307931365).
+    expect(ctl).toMatch(/settle\(\) \{[\s\S]{0,600}?if \(read\(\)\.pending\) return;\s*for \(const a of \[\.\.\.attempts\]\)/);
   });
 
   it("handles an image that already failed, else listens NATIVELY for a later failure, per src", () => {
