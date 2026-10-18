@@ -316,6 +316,61 @@ describe("what counts as a CHANGE of setting", () => {
   });
 });
 
+describe("an INVERTED timestamp cannot reorder the CHRONOLOGY either", () => {
+  // THE SAME FAULT ON THE SURFACE SHE READS (Codex, #860 4307914915).
+  // `chronology` led on `recordedAt`, the transaction-start `now()`, so two
+  // captures of one group could be listed opposite to their revisions -
+  // "Recorded this treatment" showing capture 2 above capture 1. The change
+  // series was fixed at 4307735447; this is the primary list.
+
+  it("lists a series in REVISION order even when the timestamps invert", () => {
+    const out = chronology([
+      reading({ captureId: "cap-2", revision: 2, recordedAt: "2026-10-15T10:00:00Z", value: 130 }),
+      reading({ captureId: "cap-1", revision: 1, recordedAt: "2026-10-15T10:05:00Z", value: 120 }),
+    ]);
+    expect(
+      out.map((e) => e.revision),
+      "the chronology listed capture 2 before capture 1",
+    ).toEqual([1, 2]);
+  });
+
+  it("CONTROL: ordinary ascending timestamps are unchanged", () => {
+    const out = chronology([
+      reading({ captureId: "cap-1", revision: 1, recordedAt: "2026-10-15T10:00:00Z", value: 120 }),
+      reading({ captureId: "cap-2", revision: 2, recordedAt: "2026-10-15T10:05:00Z", value: 130 }),
+    ]);
+    expect(out.map((e) => e.revision)).toEqual([1, 2]);
+  });
+
+  it("and two SERIES stay in the order they began", () => {
+    // Revision cannot lead globally: revisions are allocated per group, so
+    // revision 1 of one series and revision 1 of another are not comparable.
+    // Each series is placed by its own earliest capture.
+    const out = chronology([
+      reading({ captureId: "b1", groupKey: "g2", revision: 1, recordedAt: "2026-10-15T11:00:00Z", value: 80 }),
+      reading({ captureId: "a1", groupKey: "g1", revision: 1, recordedAt: "2026-10-15T10:00:00Z", value: 120 }),
+      reading({ captureId: "a2", groupKey: "g1", revision: 2, recordedAt: "2026-10-15T10:30:00Z", value: 130 }),
+    ]);
+    expect(out.map((e) => `${e.groupKey}:${e.revision}`)).toEqual([
+      "g1:1",
+      "g1:2",
+      "g2:1",
+    ]);
+  });
+
+  it("and the order is STABLE when two captures share a timestamp", () => {
+    // The same save's groups often share an instant to the precision stored,
+    // and an unstable order would render the same data two ways on two loads.
+    const rows = [
+      reading({ captureId: "x", groupKey: "g2", revision: 1, recordedAt: "2026-10-15T10:00:00Z", value: 80 }),
+      reading({ captureId: "y", groupKey: "g1", revision: 1, recordedAt: "2026-10-15T10:00:00Z", value: 120 }),
+    ];
+    const first = chronology(rows).map((e) => e.groupKey);
+    const again = chronology([...rows].reverse()).map((e) => e.groupKey);
+    expect(first).toEqual(again);
+  });
+});
+
 describe("an INVERTED timestamp cannot reverse a change", () => {
   // THE DEFECT (Codex, #860 4307735447). `recorded_at` is the TRANSACTION-START
   // `now()`, so a long transaction can start first and commit second - leaving
