@@ -647,9 +647,12 @@ describe("FAIRNESS: rows that keep refusing never starve the rest", () => {
         : readySnap(B2, "sender-b2");
     process.env[STUDIO_ROUTING_ENV] = `${A},${B2}`;
     const r = await run({ [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: `${A},${B2}` }, 50);
-    expect(r).toMatchObject({ ran: true, sent: 1, skipped: { sms_route_no_active_sender: 60 } });
+    // Codex P2 4305191997: the studio-wide refusal ENDS A's visit, so A's
+    // backlog is neither skipped row by row nor paged through.
+    expect(r).toMatchObject({ ran: true, sent: 1, skipped: { sms_route_no_active_sender: 1 } });
     expect(db.find((x) => x.id === "b-1")!.sms_confirmation_sent_at).not.toBeNull();
     expect(events.filter((e) => e === SNAPSHOT_RPC)).toHaveLength(2);
+    expect(events.filter((e) => e === "select_owed")).toHaveLength(2);
     expect(db.filter((x) => x.studio_id === A).every((x) => x.sms_confirmation_send_attempts === 0)).toBe(true);
   });
 
@@ -673,10 +676,27 @@ describe("FAIRNESS: rows that keep refusing never starve the rest", () => {
     };
     process.env[STUDIO_ROUTING_ENV] = `${A},${B2}`;
     const r = await run({ [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: `${A},${B2}` }, 50);
-    expect(r).toMatchObject({ ran: true, sent: 1, skipped: { sms_route_stop_preflight_missing: 60 } });
+    expect(r).toMatchObject({ ran: true, sent: 1, skipped: { sms_route_stop_preflight_missing: 1 } });
     expect(reads[A]).toBe(1);
     expect(reads[B2]).toBe(1);
+    // One page of A's backlog was read, then the visit ended (Codex P2 4305191997).
+    expect(events.filter((e) => e === "select_owed")).toHaveLength(2);
     expect(db.find((x) => x.id === "b-1")!.sms_confirmation_sent_at).not.toBeNull();
+    expect(db.filter((x) => x.studio_id === A).every((x) => x.sms_confirmation_send_attempts === 0)).toBe(true);
+  });
+
+  it("a studio-wide refusal ends the studio's visit across PAGES: a 3-page backlog reads one page, and the next studio still sends", async () => {
+    const B2 = "studio-b2";
+    db = [
+      ...Array.from({ length: 150 }, (_, i) => appt({ id: `a-${i}`, created_at: minutesAgo(900 - i) })),
+      appt({ id: "b-1", studio_id: B2, created_at: minutesAgo(30) }),
+    ];
+    snapshot = (studioId) =>
+      studioId === A ? { data: { senders: [], registrations: [] }, error: null } : readySnap(B2, "sender-b2");
+    process.env[STUDIO_ROUTING_ENV] = `${A},${B2}`;
+    const r = await run({ [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: `${A},${B2}` }, 50);
+    expect(r).toMatchObject({ ran: true, sent: 1, considered: 2, skipped: { sms_route_no_active_sender: 1 } });
+    expect(events.filter((e) => e === "select_owed")).toHaveLength(2);
     expect(db.filter((x) => x.studio_id === A).every((x) => x.sms_confirmation_send_attempts === 0)).toBe(true);
   });
 
@@ -716,8 +736,10 @@ describe("FAIRNESS: rows that keep refusing never starve the rest", () => {
   it("an unreadable snapshot costs one row's looks per run (3), not looks per row", async () => {
     db = Array.from({ length: 5 }, (_, i) => appt({ id: `r-${i}`, created_at: iso(NOW - (60 + i) * 60_000) }));
     snapshot = { data: null, error: { code: "PGRST202" } };
-    expect(await run()).toMatchObject({ sent: 0, skipped: { sms_route_sender_read_failed: 5 } });
+    // Studio-wide: the first row's three looks, then the studio's visit ends.
+    expect(await run()).toMatchObject({ sent: 0, skipped: { sms_route_sender_read_failed: 1 } });
     expect(events.filter((e) => e === SNAPSHOT_RPC)).toHaveLength(3);
+    expect(db.every((x) => x.sms_confirmation_send_attempts === 0)).toBe(true);
   });
 });
 
@@ -913,7 +935,7 @@ describe("FRESHNESS: an approval is never reused, and a STOP mid-run is honoured
       reads += 1;
       return { data: { senders: [], registrations: [] }, error: null };
     };
-    expect(await run()).toMatchObject({ sent: 0, skipped: { sms_route_no_active_sender: 2 } });
+    expect(await run()).toMatchObject({ sent: 0, skipped: { sms_route_no_active_sender: 1 } });
     expect(reads).toBe(1);
     reads = 0;
     events = [];
