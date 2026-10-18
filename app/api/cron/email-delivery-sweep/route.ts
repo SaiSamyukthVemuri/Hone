@@ -49,21 +49,41 @@ export async function GET(req: Request) {
   const health = await readEmailDeliveryHealth(admin);
   const raised: string[] = [];
 
-  if (!health || !sweep) {
-    // Unknown is not success: a sweep or health read that failed is itself
-    // reported, never treated as a healthy run.
+  // A FAILED HEARTBEAT WRITE IS A FAILED RUN (Codex P2 4307534331). `heartbeat`
+  // was absent from this condition, so when `record_email_sweep_run` alone
+  // failed the else-branch ran, no alert was raised and the response still said
+  // `ok: true` — the heartbeat going silent was invisible precisely when its
+  // own write path was unavailable, which is the one failure it exists to
+  // surface.
+  if (!health || !sweep || !heartbeat) {
+    // Unknown is not success: a sweep, heartbeat or health read that failed is
+    // itself reported, never treated as a healthy run.
     const event = "email_delivery_sweep_failing";
     if (!(await hasOpenOpsAlert(admin, event))) {
       await recordOpsAlert({
         severity: "warning",
         event,
-        message: "The email delivery recovery sweep could not run or could not read delivery health.",
+        message:
+          "The email delivery recovery sweep could not run, could not record its heartbeat, or could not read delivery health.",
         route: "/api/cron/email-delivery-sweep",
-        safeDetails: { sweep_ran: sweep !== null, health_read: health !== null },
+        safeDetails: {
+          sweep_ran: sweep !== null,
+          heartbeat_written: heartbeat,
+          health_read: health !== null,
+        },
       });
       raised.push(event);
     }
-  } else {
+  }
+
+  // EVALUATED INDEPENDENTLY, not in an `else`. This was an if/else, so ANY one
+  // failure suppressed the other signal entirely: a heartbeat write failure
+  // would now have cost this run its health findings too, and a sweep failure
+  // already did. One failure hiding another's signal is the same defect this
+  // branch was just fixed for, so the two are decoupled — the alert above is
+  // about the RUN, these findings are about the DATA, and health being readable
+  // is the only precondition for reading them.
+  if (health) {
     for (const finding of healthFindings(health)) {
       if (await hasOpenOpsAlert(admin, finding.event)) continue;
       // Recorded at WARNING at most: recordOpsAlert emails every critical
@@ -82,5 +102,14 @@ export async function GET(req: Request) {
     }
   }
 
-  return NextResponse.json({ ok: sweep !== null && health !== null, sweep, heartbeat, health, raised });
+  // A NON-2xx WHEN THE RUN FAILED (Codex P2 4307534335). This returned the
+  // default 200 with `ok: false` in the body, so cron infrastructure and uptime
+  // checks keyed on HTTP STATUS recorded a failed recovery run as a success and
+  // neither retried nor alerted. 500 matches every other cron route here
+  // (appointment-reminders, calendar-reconcile, materialize-recurring-breaks).
+  const ok = sweep !== null && health !== null && heartbeat;
+  return NextResponse.json(
+    { ok, sweep, heartbeat, health, raised },
+    { status: ok ? 200 : 500 },
+  );
 }
