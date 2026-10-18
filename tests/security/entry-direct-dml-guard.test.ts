@@ -488,7 +488,30 @@ describe("L18 Phase 4 — command-bound table direct DML guard", () => {
         // reviewed by tests/migrations/0173-appointment-repair-commands.test.ts
         // plus tests/db/appointment-repair-commands.db.test.ts. Excluded by
         // exact name so any OTHER new block-ish command still trips this guard.
-        c !== "appointment_has_blocking_dependents",
+        c !== "appointment_has_blocking_dependents" &&
+        // MPX-03 (0223). `create_block_with_initial_setup` writes a treatment
+        // area AND the machine settings recorded on it in ONE transaction,
+        // closing the window where the area commits and the settings do not -
+        // an area that silently has no machine settings while the
+        // practitioner believes she entered them.
+        //
+        // IT IS A LEGITIMATE CALLEE FOR THIS GUARD'S PURPOSE BECAUSE IT
+        // DELEGATES: it calls `create_block_with_entry` (0166) rather than
+        // writing `session_blocks` itself, so this guard's six
+        // command-bound tables keep exactly the write paths they already
+        // had. That delegation is asserted - declaration, order, types and
+        // by-name forwarding, all re-derived from 0166's own declaration - in
+        // tests/migrations/0223-machine-inventory-and-setup-readings.test.ts.
+        //
+        // ITS BEHAVIOUR IS NOT YET PROVEN. 0223 is PENDING and no database
+        // has run it; the behavioural specification is
+        // tests/db/machine-setup-submission.db.test.ts, which HAS NOT RUN.
+        // This entry says the command is REVIEWED, which is what this guard
+        // asks, and must not be read as saying it works.
+        //
+        // Excluded by exact name, like the entry above, so any OTHER new
+        // block-ish command still trips this guard.
+        c !== "create_block_with_initial_setup",
     );
     expect(unknown, "an unreviewed block/entry command appeared").toEqual([]);
   });

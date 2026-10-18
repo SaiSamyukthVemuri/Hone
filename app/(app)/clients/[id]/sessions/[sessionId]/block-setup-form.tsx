@@ -87,9 +87,16 @@ import { isCanonicalTreatmentArea } from "@/lib/sessions/area-validation";
 import { BodyMapAreaPicker } from "@/components/body-map-area-picker";
 import { MultiAreaEditor } from "@/components/multi-area-editor";
 import { resolveBlockAreas, type BlockArea } from "@/lib/sessions/block-areas";
+import { MachineFirstSetupConnected } from "@/components/machines/machine-first-setup-connected";
 import { ProbePicker } from "@/components/probe-picker";
 import { READING_INPUT_CLS } from "@/lib/sessions/charting-input-styles";
 import { resolveModeSections } from "@/lib/sessions/mode-sections";
+import {
+  INITIAL_SAVE_UNRESOLVED,
+  prepareHandoff,
+  type PendingSetupIdentity,
+} from "@/lib/machines/pending-setup";
+import type { GroupSubmission } from "@/lib/machines/setting-groups";
 import {
   createTreatmentAreaWithEntryAction,
   updateTreatmentAreaWithEntryAction,
@@ -398,7 +405,7 @@ export function BlockSetupForm({
   onCancel,
 }: Props) {
   const isEdit = !!block;
-  const [draft, setDraft] = useState<Draft>(() =>
+  const [draft, setDraftRaw] = useState<Draft>(() =>
     initialDraft(block, firstEntry, defaultPrimaryArea, defaultMachineFrequency, initialAreas),
   );
   // A lot/batch belongs to ONE probe. Provenance is therefore tracked PER PROBE
@@ -415,10 +422,164 @@ export function BlockSetupForm({
     () => draft.probeKey,
   );
   const [error, setError] = useState<string | null>(null);
+  /**
+   * The machine settings the panel is collecting, in CREATE mode only.
+   *
+   * HELD HERE BECAUSE THIS FORM'S SAVE CARRIES THEM. With no block there is
+   * nothing to record against, so the panel cannot save them itself - and
+   * `create_block_with_initial_setup` writes the area and the settings in one
+   * transaction, so there is exactly one Save for both.
+   *
+   * `blocking` is non-null when the draft is half-finished - a group with
+   * some values and a missing required field, or two groups claiming the same
+   * probe - and `submit` refuses rather than discarding her numbers.
+   */
+  /**
+   * An initial save whose answer was lost.
+   *
+   * RETRYABLE NOW, and it was not when this state was added: 0223's create
+   * claim anchors the retry key to the SESSION, so pressing Save again returns
+   * the original area instead of creating a second one. The flag survives
+   * because it still has a job - it keeps the key alive across attempts and
+   * puts the instruction on screen. See `INITIAL_SAVE_UNRESOLVED`.
+   */
+  const [saveUnresolved, setSaveUnresolved] = useState(false);
+
+  /**
+   * A REVISION save inside the machine panel has an unknown outcome.
+   *
+   * SEPARATE FROM `saveUnresolved`, which is THIS form's own create-mode
+   * save. They are owned by different components and either can be true
+   * alone; merging them would make clearing one clear the other. They are
+   * combined only where a control has to be frozen.
+   */
+  const [revisionUnresolved, setRevisionUnresolved] = useState(false);
+
+  /**
+   * WHILE THE INITIAL SAVE'S OUTCOME IS UNKNOWN, ITS PAYLOAD IS FROZEN.
+   *
+   * `create_block_with_initial_setup` binds the retry key to a digest of the
+   * WHOLE payload - all 27 parameters - so the preserved key only makes the
+   * retry safe while the thing being retried is identical. Editing any field
+   * first turns a committed first attempt's safe retry into a mismatch
+   * refusal, which leaves her unable to recover the original result and
+   * pushes toward cancel-and-recreate: a duplicate area
+   * (Codex, #860 4296029608).
+   *
+   * FROZEN AT THE SETTER, not control by control. This form has five
+   * user-driven writers across 1,700 lines and more fields than any of them
+   * touches; disabling inputs one at a time is a list that goes stale the
+   * next time a field is added, and a missed one is a duplicated clinical
+   * record. Shadowing the setter makes the payload immutable no matter which
+   * control is wired, and the controls are disabled as well so the screen
+   * says what is happening rather than silently ignoring her.
+   *
+   * The SAVE button stays live: pressing it again, unchanged, is the whole
+   * recovery.
+   */
+  const [pending, startTransition] = useTransition();
+  /**
+   * THE FREEZE COVERS THE REQUEST ITSELF, NOT ONLY ITS AFTERMATH
+   * (Codex, #860 4305022475).
+   *
+   * `saveUnresolved` alone starts the freeze when the answer comes back, and
+   * the whole payload — `attachedSetup` and every other action input — was
+   * snapshotted before `startTransition`. So an edit made during a slow save
+   * was already outside the thing being saved: a success discarded it
+   * silently and showed a confirmation for values she had changed, and a lost
+   * response retried the retained key with the NEW payload, which the create
+   * claim refuses as a digest mismatch.
+   *
+   * `pending` is why the transition is declared here rather than beside the
+   * other submit state below.
+   */
+  const draftFrozen = pending || saveUnresolved;
+  const setDraft: typeof setDraftRaw = (...args) => {
+    if (draftFrozen) return;
+    setDraftRaw(...args);
+  };
+  /**
+   * The retry key of the save in progress, or null when none is open.
+   *
+   * THIS IS THE WHOLE MECHANISM, and its lifetime is the subtle part - the
+   * same rule `save-attempt.ts` states for the edit path. The key identifies a
+   * SAVE, not an attempt:
+   *
+   *   * minted when a save starts and there is none;
+   *   * REUSED by every retry of that save, which is what makes the retry
+   *     safe - if the first attempt committed and only its answer was lost,
+   *     the command returns the original area;
+   *   * dropped when she changes the draft, because a changed draft is a
+   *     DIFFERENT save - EXCEPT while an attempt is unresolved, where dropping
+   *     it would turn the retry into a second area.
+   *
+   * A key minted per attempt makes idempotence useless while every test still
+   * passes, which is precisely why it is held here rather than inside
+   * `machineSetupForSave`.
+   */
+  const [pendingSaveKey, setPendingSaveKey] = useState<string | null>(null);
+  const [machineDraft, setMachineDraft] = useState<{
+    groups: GroupSubmission[];
+    blocking: string | null;
+    identity: PendingSetupIdentity;
+  } | null>(null);
+
+  /**
+   * The collector's report, plus the key's lifetime rule.
+   *
+   * A CHANGED DRAFT IS A DIFFERENT SAVE, so the open key is dropped and the
+   * next attempt mints a new one. WHILE AN ATTEMPT IS UNRESOLVED it is kept
+   * instead: that key is the retry's safety, and dropping it because a
+   * remount reported an empty draft would turn the retry into a second area.
+   */
+  const onSettingDraftChanged = (
+    next: {
+      groups: GroupSubmission[];
+      blocking: string | null;
+      identity: PendingSetupIdentity;
+    } | null,
+  ) => {
+    setMachineDraft(next);
+    if (!saveUnresolved) setPendingSaveKey(null);
+  };
+
+  /**
+   * The settings to send with the area, or null.
+   *
+   * THE RETRY KEY IS MINTED HERE, ONCE PER SAVE, through `prepareHandoff` -
+   * which also COPIES the groups, so a keystroke landing after the save began
+   * cannot change what is recorded while the key still claims it is the same
+   * save. A key minted per attempt would make every retry a new save; a key
+   * that never changed would make a deliberate second capture impossible.
+   */
+  const machineSetupForSave = () => {
+    const chosen = machineDraft;
+    if (!chosen || chosen.groups.length === 0) return null;
+    // THE IDENTITY COMES WITH THE DRAFT, from the report that produced it.
+    //
+    // That is safe only because every change of identity REPORTS - the
+    // collector announces its remount with an empty draft, and the panel
+    // clears this when no collector renders at all. Without those, a draft
+    // typed under one machine could still be live after a switch and would be
+    // saved under its own stale identity (Codex, db3373bc P1).
+    const identity = chosen.identity;
+    // ONE KEY PER SAVE, reused by every attempt at it. `prepareHandoff` still
+    // mints through an injected function, so the module stays pure and a test
+    // can pin the key; what changed is that the function returns the HELD one.
+    const key = pendingSaveKey ?? crypto.randomUUID();
+    if (key !== pendingSaveKey) setPendingSaveKey(key);
+    const pending = prepareHandoff(identity, chosen.groups, () => key);
+    if (!pending) return null;
+    return {
+      machineId: identity.deviceId,
+      modeKey: identity.modeKey,
+      idempotencyKey: pending.idempotencyKey,
+      groups: pending.groups,
+    };
+  };
   // PR #191: inline feedback after "Copy settings" so the
   // practitioner knows what was copied and from where.
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
   // 0156: stable id so the numbing-notes helper text is programmatically
   // connected to the textarea via aria-describedby.
   const numbingNotesHelpId = useId();
@@ -576,6 +737,17 @@ export function BlockSetupForm({
 
   function submit() {
     setError(null);
+    // THE MACHINE DRAFT BLOCKS THE SAVE WHEN IT IS HALF-FINISHED, and says
+    // which group and why. Skipping it would discard numbers she typed;
+    // sending it would be refused by the command after a round trip.
+    if (machineDraft?.blocking) {
+      setError(machineDraft.blocking);
+      return;
+    }
+    // AN UNRESOLVED INITIAL SAVE IS RETRYABLE, and this is where it used to be
+    // refused: the form returned early and told her to reload the chart,
+    // because a second attempt created a second treatment area. 0223's create
+    // claim closed that, so the retry now proceeds and carries the same key.
     const el = draft.energyLevel.trim();
     const elNum = el === "" ? null : Number(el);
     if (el !== "" && (!Number.isFinite(elNum) || (elNum as number) < 0)) {
@@ -708,6 +880,10 @@ export function BlockSetupForm({
       observationChips: draft.observationChips,
     };
 
+    // COMPUTED ONCE PER ATTEMPT. Calling `machineSetupForSave()` again in
+    // the catch would mint a SECOND retry key for the same save, which is the
+    // defect the key exists to prevent.
+    const attachedSetup = machineSetupForSave();
     startTransition(async () => {
       if (block) {
         // Edit: update the treatment area + its first entry's readings.
@@ -775,11 +951,42 @@ export function BlockSetupForm({
         areas: draft.areas,
         readings,
         ...clinicalResponse,
+        // THE SETTINGS, WHEN THERE ARE ANY. `prepareHandoff` mints the retry
+        // key ONCE and copies the groups, so a keystroke after the save began
+        // cannot change what is recorded while the key still claims it is the
+        // same save. Null when nothing was entered, which is an ordinary save
+        // of an area with no machine settings.
+        initialSetup: attachedSetup,
+      }).catch((cause: unknown) => {
+        // THE TRANSPORT FAILED, so the server's answer is UNKNOWN - not
+        // negative. The area may well have been created.
+        //
+        // AND HERE THE ADVICE IS THE OPPOSITE OF THE EDIT PATH'S. A save
+        // against an existing block is safely retryable, because the
+        // submission command recognises its retry key. This one creates the
+        // block FIRST, so the key is scoped to a block that did not exist on
+        // the first attempt: pressing Save again produces a SECOND treatment
+        // area with a second copy of the settings. Proved against a real
+        // database in tests/db/machine-initial-save.db.test.ts.
+        //
+        // So she is told to LOOK, and the control is held closed, rather than
+        // being offered a retry that duplicates her treatment.
+        return {
+          ok: false as const,
+          error: attachedSetup ? INITIAL_SAVE_UNRESOLVED : String(cause),
+          unresolved: Boolean(attachedSetup),
+        };
       });
       if (!res.ok) {
         setError(res.error);
+        if ("unresolved" in res && res.unresolved) setSaveUnresolved(true);
         return;
       }
+      // THE SAVE IS CLOSED. The next one is a different save and mints its own
+      // key; keeping this one would make a deliberate second area look like a
+      // retry of the first and be answered with it.
+      setPendingSaveKey(null);
+      setSaveUnresolved(false);
       onCancel();
     });
   }
@@ -987,13 +1194,50 @@ export function BlockSetupForm({
           <button
             type="button"
             onClick={copySettings}
-            disabled={pending}
+            // Copying another area's settings REPLACES most of the payload,
+            // so it is the largest possible edit under a held retry key.
+            disabled={pending || draftFrozen}
             className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
           >
             Copy settings from another area in this session
           </button>
         )}
       </div>
+
+      {/* MPX-03. Machine first: the exact model is chosen before the settings
+          it governs, and the panel then shows that model's own fields under the
+          machine's labels and units. It is a DISPLAY surface - it records
+          nothing, and says so - so every field below remains the record and is
+          untouched by it. No studio or practitioner id reaches this form, so
+          identity is derived on the SERVER by machine-setup-actions.ts, which
+          takes no studio or practitioner argument at all - so the client cannot
+          name an owner, and cannot name the wrong one. See
+          components/machines/machine-first-setup-connected.tsx.
+
+          The block id is passed only when one EXISTS: a new settings block has
+          no row yet, so there is nothing to record readings against and the
+          panel shows the field contract read-only instead of inviting a value
+          it would have to discard. */}
+      <MachineFirstSetupConnected
+        blockId={block?.id ?? null}
+        clientId={clientId}
+        sessionId={sessionId}
+        // CREATE MODE ONLY. With no block there is nothing to record against,
+        // so the panel hands its draft here and THIS form's Save carries it:
+        // `create_block_with_initial_setup` writes the area and the settings
+        // in one transaction. On an EXISTING block the panel records directly
+        // and this is not supplied, so the two paths never both run.
+        onSettingDraft={block ? undefined : onSettingDraftChanged}
+        // THE MACHINE SETTINGS ARE PART OF THE SAME PAYLOAD. In create mode
+        // the panel's draft is carried into THIS form's save, so the digest
+        // covers it too and it has to freeze with everything else - the same
+        // flag, not a second rule that could disagree.
+        settingDraftFrozen={draftFrozen}
+        // THE PANEL'S REVISION SAVE REACHES THIS FORM, so the Cancel button
+        // below can be frozen by it (Codex, #860 4302176844).
+        onRevisionUnresolved={setRevisionUnresolved}
+      />
+
       {copyMessage && (
         <p className="text-xs text-neutral-600 dark:text-neutral-400" role="status">
           {copyMessage}
@@ -1451,10 +1695,36 @@ export function BlockSetupForm({
         >
           {pending ? "Saving…" : "Save settings block"}
         </button>
+        {/*
+          CANCEL IS FROZEN WHILE THE SAVE'S OUTCOME IS UNKNOWN
+          (Codex, #860 4301633049).
+          It was disabled only on `pending`, so the moment the lost response
+          cleared `pending` this button was live again - and it is the one
+          control that destroys the retry key rather than changing the
+          payload. `onCancel` closes the form, `saveUnresolved` and
+          `pendingSaveKey` go with it, and the next save mints a NEW key: if
+          the first attempt had committed, that is a second immutable
+          treatment area for one treatment.
+
+          THIRD CONTROL, SAME INVARIANT. The draft setter was frozen in round
+          5, the machine and mode pickers in round 12, and this is the
+          dismissal. A control that can discard the key belongs inside the
+          freeze the key depends on, whether it edits the payload or not.
+
+          THE SAVE BUTTON STAYS LIVE, which is what keeps this from being a
+          trap: pressing Save again, unchanged, is the recovery, and the
+          message above says so.
+        */}
         <button
           type="button"
           onClick={onCancel}
-          disabled={pending}
+          // EITHER unresolved save freezes dismissal. Round 14 wired this
+          // to `saveUnresolved` alone — the CREATE-mode flag — so on an
+          // existing block, where the panel records directly, Cancel stayed
+          // live through an unresolved REVISION save and unmounting the
+          // entry discarded its retry key (Codex, #860 4302176844).
+          disabled={pending || saveUnresolved || revisionUnresolved}
+          data-testid="cancel-treatment-area"
           className="rounded-md border border-neutral-300 px-5 py-3 text-sm hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
         >
           Cancel

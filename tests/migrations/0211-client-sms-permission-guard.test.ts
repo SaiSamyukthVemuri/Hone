@@ -35,11 +35,32 @@ const BODY = (CODE.match(/as \$\$([\s\S]*?)\$\$/) ?? ["", ""])[1];
 const FN = "clients_sms_permission_guard";
 
 describe("0211 sits correctly in the migration sequence", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    // Only the CURRENT maximum migration's own test may assert this — see
-    // CLAUDE.md §2. It reached this file from 0210's test.
-    expect(isRepoMax(VERSION), "0211 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION), "something was added above 0211").toEqual([]);
+  it("is no longer the repository maximum", () => {
+    // HANDED OFF AT THE PRODUCTION SYNC OF 2026-10-16, and this file is the
+    // reason that sync needed a third edit rather than two.
+    //
+    // GIT REPORTED NO CONFLICT HERE. This file exists only on production's
+    // side, so the merge brought it in cleanly — and its content became FALSE
+    // the moment it landed beside 0223: `isRepoMax("0211")` is now false and
+    // `versionsAbove("0211")` is `["0223"]`. A clean merge and a red suite
+    // afterwards, which is exactly the failure CLAUDE.md §2 records — "that is
+    // precisely how 0163, 0164 and 0165 each went red after push". The two
+    // files git DID flag were the easy half.
+    //
+    // Only the CURRENT maximum's own test may assert the claim (§2), so it has
+    // moved to
+    // tests/migrations/0223-machine-inventory-and-setup-readings.test.ts. It
+    // reached this file from 0210's test and leaves on the same terms.
+    expect(isRepoMax(VERSION)).toBe(false);
+    // DERIVED, NOT PINNED. Two facts about an older migration hold for every
+    // future head: something sits above it, and everything above it is
+    // greater. A literal list would be the forbidden pin in other clothes.
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above this older migration").toBeGreaterThan(0);
+    expect(
+      above.every((v) => Number(v) > Number(VERSION)),
+      "versionsAbove returned a version at or below its own",
+    ).toBe(true);
   });
 
   it("is allocated exactly once", () => {
