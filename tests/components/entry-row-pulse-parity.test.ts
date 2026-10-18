@@ -48,6 +48,11 @@ const MATRIX: Array<[string, Record<string, unknown>]> = [
   ["blend, 2 pulses, no delay", { mode: "blend", galvanic_ma: 0.3, pulse_count: 2 }],
   ["legacy (no structured), 2 pulses + delay", { mode: null, intensity: 40, pulse_count: 2, pulse_delay_seconds: 0.4 }],
   ["legacy galvanic mode, no structured readings, 2 pulses", { mode: "galvanic", intensity: 40, pulse_count: 2 }],
+  // The STORED galvanic mode is "galv" (0001's CHECK). A galv pass saved with NO
+  // readings keeps the writer's default count 1 and must show no pulses
+  // (Codex P1 4307447121), on screen and on paper.
+  ["galv pass, no readings, stored default 1 pulse", { mode: "galv", pulse_count: 1 }],
+  ["galv pass, legacy pair, 2 pulses", { mode: "galv", intensity: 40, pulse_count: 2, pulse_delay_seconds: 0.5 }],
   ["no pulse count at all", { mode: "thermo", thermolysis_intensity_percent: 20 }],
 ];
 
