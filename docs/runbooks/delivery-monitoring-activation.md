@@ -64,7 +64,16 @@ What this stack adds stays inside the boundary #828 asked for:
    - `unmatched` / `unmatched_email_id`, or `quarantined` / `unknown_event_type`, depending on the test event's shape;
    - **no** ledger row changed, and **no** incident opened.
 
-   A 403 means the secret does not match. A 500 means the secret is absent or the receipt could not be written. Fix before continuing.
+   **Reading a failure.** A **403** means the secret does not match.
+
+   A **500 is two different failures**, and the response body tells them apart — check it before changing anything:
+
+   | Response | What happened | Where to look |
+   |---|---|---|
+   | `{"ok":false}` | The secret is absent, or the receipt row could not be WRITTEN. Nothing was recorded. | `RESEND_WEBHOOK_SECRET` in production; the route's logs for the write failure |
+   | `{"ok":false,"recorded":true}` | The receipt WAS written; processing then failed or is held by another claim (`app/api/resend/webhook/route.ts:198`). | the receipt's `processing_state` / `processing_result` in `email_provider_events`; the processing logs. The provider will retry, and a retry landing inside a failed attempt's two-minute claim answers 500 again by design |
+
+   Do not read `recorded: true` as a missing secret or a failed write: the write succeeded, and the failure is in claiming or processing. Fix before continuing.
 4. **Controlled test with a real send to a staff mailbox** (separate approval):
    - book a staff-only appointment in a staff test studio whose client email is the operator's own mailbox;
    - expect the confirmation's ledger row to move `accepted` → `sent` → `delivered`, with the receipts `applied`;
