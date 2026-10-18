@@ -3,10 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import {
-  assertSessionForClient,
-  SessionLineageError,
-} from "@/lib/sessions/session-lineage";
+// TWO STATEMENTS, AND THE FIRST ONE'S SHAPE IS PINNED. PR #286's lineage
+// guard matches `import { assertSessionForClient } from ".../session-lineage"`
+// as a single line, so folding these together — the tidier spelling — silently
+// breaks a security guard. Left split deliberately; do not merge them.
+import { assertSessionForClient } from "@/lib/sessions/session-lineage";
+import { SessionLineageError } from "@/lib/sessions/session-lineage";
 import { findProbeOptionByKey } from "@/lib/probes";
 import { normalizeChips } from "@/lib/observation-chips";
 import { INITIAL_SAVE_UNRESOLVED } from "@/lib/machines/pending-setup";
@@ -1134,22 +1136,10 @@ export async function createTreatmentAreaWithEntryAction(
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot log sessions." };
   }
-  // A PRE-WRITE REFUSAL IS A REFUSAL, NOT AN UNKNOWN OUTCOME (Codex, #860
-  // 4305702526). `assertSessionForClient` THROWS, and the create form's catch
-  // labels anything thrown as unresolved whenever settings are attached - so a
-  // stale session froze the draft, the machine controls and Cancel, and every
-  // retry repeated the same error. Nothing had been written, so there was
-  // nothing ambiguous to protect and she had no way out.
-  //
-  // Converted HERE rather than in the form, because only this side knows the
-  // RPC was never reached. Same fix as the setup action's (4304930968), which
-  // is the other half of this pair.
-  //
-  // ONLY `SessionLineageError` IS CONVERTED; anything else is rethrown.
-  // `getCurrentPractitionerWithStudio` above calls Next's `redirect()` for an
-  // anonymous session, and a redirect PROPAGATES BY THROWING - swallowing it
-  // to report a "definitive failure" would leave her on a dead form instead
-  // of the login page.
+  // A pre-write refusal is a refusal, not an unknown outcome (Codex, #860
+  // 4305702526). Full reasoning below the catch — it is kept there so this
+  // assertion stays inside the 1400-character window PR #286's lineage guard
+  // slices from the start of each action.
   try {
     await assertSessionForClient(studio.id, input.clientId, input.sessionId);
   } catch (cause) {
@@ -1163,6 +1153,22 @@ export async function createTreatmentAreaWithEntryAction(
     }
     throw cause;
   }
+  // WHY THAT CATCH EXISTS (Codex, #860 4305702526). `assertSessionForClient`
+  // THROWS, and the create form's catch labels anything thrown as unresolved
+  // whenever settings are attached - so a stale session froze the draft, the
+  // machine controls and Cancel, and every retry repeated the same error.
+  // Nothing had been written, so there was nothing ambiguous to protect and
+  // she had no way out.
+  //
+  // Converted HERE rather than in the form, because only this side knows the
+  // RPC was never reached. Same fix as the setup action's (4304930968), which
+  // is the other half of this pair.
+  //
+  // ONLY `SessionLineageError` IS CONVERTED; anything else is rethrown.
+  // `getCurrentPractitionerWithStudio` above calls Next's `redirect()` for an
+  // anonymous session, and a redirect PROPAGATES BY THROWING - swallowing it
+  // to report a "definitive failure" would leave her on a dead form instead of
+  // the login page.
 
   const areaCheck = normalizeStructuredArea({
     primaryArea: input.primaryArea ?? null,
