@@ -92,6 +92,7 @@ import { ProbePicker } from "@/components/probe-picker";
 import { READING_INPUT_CLS } from "@/lib/sessions/charting-input-styles";
 import { resolveModeSections } from "@/lib/sessions/mode-sections";
 import {
+  INITIAL_SAVE_REUSED,
   INITIAL_SAVE_UNRESOLVED,
   prepareHandoff,
   type PendingSetupIdentity,
@@ -972,6 +973,27 @@ export function BlockSetupForm({
       // retry of the first and be answered with it.
       setPendingSaveKey(null);
       setSaveUnresolved(false);
+
+      // ANSWERED FROM AN EARLIER SAVE, NOT CREATED (0234, DRAFT PENDING SAM).
+      //
+      // She lost the retry key — a reload, a tab close, browser Back — and
+      // the command recognised the payload instead of creating a second
+      // treatment area. Closing silently here would make that invisible:
+      // the duplicate she was about to make simply would not appear, with
+      // no explanation, and option 3's premise is that the decision stays
+      // with her, which requires her to know what happened.
+      //
+      // SO THE FORM STAYS OPEN with the message and she closes it herself.
+      // Saving again from here is harmless — it is answered the same way.
+      //
+      // PLACEMENT IS PROVISIONAL. Whether this reads best as a status line
+      // here, a page-level confirmation, or something else is a product
+      // decision; the data path and the copy do not depend on it.
+      if ("reused" in res && res.reused) {
+        setCopyMessage(INITIAL_SAVE_REUSED);
+        return;
+      }
+
       onCancel();
     });
   }

@@ -1066,3 +1066,193 @@ describe("0223 · a malformed settings payload creates nothing", () => {
     expect(after.submissions).toBe(before.submissions);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 0234 (DRAFT, PENDING SAM) — A LOST KEY IS ANSWERED BY THE PAYLOAD'S DIGEST
+//
+// THE DEFECT (Codex, #860 4302218408). The initial save's retry key lives in
+// React state. A reload, a tab close, browser Back or any route change
+// discards it, and nothing in the application guards unload — rounds 14 and
+// 20 froze every control that could discard the key, and none of them can
+// intercept navigation. So she re-enters the same settings, a NEW key is
+// minted, the key lookup finds nothing, and a SECOND treatment area is
+// created carrying a duplicate copy of the settings. Captures are immutable,
+// so nothing downstream can repair it.
+//
+// THE KEY IS LOST; THE DIGEST IS NOT. 0234 matches the claim by
+// (session, payload_digest) when no claim matches the key, and answers with
+// the original ids and `reused: true` rather than creating.
+//
+// These tests fail on 0223 alone. They are the proof the proposal promised.
+// ---------------------------------------------------------------------------
+describe("0234 · a new key with the same payload is answered, not duplicated", () => {
+  it("returns the ORIGINAL area and creates no second one", async () => {
+    const studio = await seedStudio("claim-digest");
+    const { sessionId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+
+    const groups = JSON.stringify([group("g1", [1], "120")]);
+    const first = await initialSave(studio, sessionId, {
+      machine: machineId,
+      groups,
+      key: "digest-key-first-0001",
+    });
+    expect(first.reused).toBe(false);
+    const before = await sessionTotals(sessionId);
+
+    // THE RELOAD: same payload, a key she no longer has.
+    const second = await initialSave(studio, sessionId, {
+      machine: machineId,
+      groups,
+      key: "digest-key-second-002",
+    });
+
+    expect(
+      second.block_id,
+      "a second treatment area was created for one treatment",
+    ).toBe(first.block_id);
+    expect(second.reused, "the caller was not told this was already saved").toBe(
+      true,
+    );
+
+    const after = await sessionTotals(sessionId);
+    expect(after.blocks, "a duplicate area exists").toBe(before.blocks);
+    expect(after.submissions).toBe(before.submissions);
+    expect(after.captures).toBe(before.captures);
+    expect(after.readings).toBe(before.readings);
+  });
+
+  it("reports the ORIGINAL submission's own counts", async () => {
+    // The settings half must be rebuilt from what is actually stored, in the
+    // same shape a fresh save returns, so the caller cannot tell an absorbed
+    // save from the original except by `reused`.
+    const studio = await seedStudio("claim-digest-setup");
+    const { sessionId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+
+    const groups = JSON.stringify([
+      group("g1", [1], "120"),
+      group("g2", [2], "80"),
+    ]);
+    const first = await initialSave(studio, sessionId, {
+      machine: machineId,
+      groups,
+      key: "digest-setup-first-01",
+    });
+    const second = await initialSave(studio, sessionId, {
+      machine: machineId,
+      groups,
+      key: "digest-setup-second-1",
+    });
+
+    expect(second.setup).not.toBeNull();
+    expect(second.setup!.submission_id).toBe(first.setup!.submission_id);
+    expect(second.setup!.groups).toBe(2);
+    expect(second.setup!.readings).toBe(2);
+    expect(second.setup!.reused).toBe(true);
+  });
+
+  it("CONTROL: a DIFFERENT payload with a different key still creates", async () => {
+    // The rule must not swallow a genuine second area. Without this, a check
+    // that answered every save from the first claim would pass the tests
+    // above — and silently make a second treatment area impossible.
+    const studio = await seedStudio("claim-digest-diff");
+    const { sessionId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+
+    const before = await sessionTotals(sessionId);
+    const first = await initialSave(studio, sessionId, {
+      machine: machineId,
+      groups: JSON.stringify([group("g1", [1], "120")]),
+      key: "digest-diff-first-001",
+    });
+    const second = await initialSave(studio, sessionId, {
+      machine: machineId,
+      groups: JSON.stringify([group("g1", [1], "140")]),
+      key: "digest-diff-second-01",
+    });
+    const after = await sessionTotals(sessionId);
+
+    expect(second.block_id).not.toBe(first.block_id);
+    expect(second.reused).toBe(false);
+    // MEASURED AS A DELTA. `seedSession` already seeds a block, so an
+    // absolute count asserts something about the FIXTURE rather than about
+    // these two saves — it read 3 and expected 2. This is the SAME mistake
+    // round 13 made in this file, and I wrote the delta fix for it earlier
+    // tonight before repeating it here.
+    expect(after.blocks - before.blocks, "two distinct payloads must create two areas").toBe(2);
+  });
+
+  it("CONTROL: a different payload differing only in AREA still creates", async () => {
+    // The digest covers the whole payload, not just the settings. Two areas
+    // with identical settings on different parts of the body are two
+    // treatments, and must stay two.
+    const studio = await seedStudio("claim-digest-area");
+    const { sessionId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+
+    const groups = JSON.stringify([group("g1", [1], "120")]);
+    const first = await initialSave(studio, sessionId, {
+      machine: machineId,
+      groups,
+      key: "digest-area-first-001",
+      area: "chin",
+      areasList: ["chin"],
+    });
+    const second = await initialSave(studio, sessionId, {
+      machine: machineId,
+      groups,
+      key: "digest-area-second-01",
+      area: "lip",
+      areasList: ["lip"],
+    });
+
+    expect(second.block_id).not.toBe(first.block_id);
+    expect(second.reused).toBe(false);
+  });
+
+  it("CONTROL: the same key with a DIFFERENT payload is still refused", async () => {
+    // 0223's behaviour, which 0234 must not disturb: a key reused for a
+    // different save is a bug, not a retry.
+    const studio = await seedStudio("claim-digest-mismatch");
+    const { sessionId } = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+
+    await initialSave(studio, sessionId, {
+      machine: machineId,
+      groups: JSON.stringify([group("g1", [1], "120")]),
+      key: "digest-mismatch-00001",
+    });
+    await expect(
+      initialSave(studio, sessionId, {
+        machine: machineId,
+        groups: JSON.stringify([group("g1", [1], "999")]),
+        key: "digest-mismatch-00001",
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("CONTROL: a claim in ANOTHER session is not matched", async () => {
+    // The match is per session, deliberately: an identical area in a
+    // different session is a different visit and must create.
+    const studio = await seedStudio("claim-digest-session");
+    const a = await seedSession(studio);
+    const b = await seedSession(studio);
+    const machineId = await registerMachine(studio);
+
+    const groups = JSON.stringify([group("g1", [1], "120")]);
+    const first = await initialSave(studio, a.sessionId, {
+      machine: machineId,
+      groups,
+      key: "digest-sess-first-001",
+    });
+    const second = await initialSave(studio, b.sessionId, {
+      machine: machineId,
+      groups,
+      key: "digest-sess-second-01",
+    });
+
+    expect(second.block_id).not.toBe(first.block_id);
+    expect(second.reused).toBe(false);
+  });
+});

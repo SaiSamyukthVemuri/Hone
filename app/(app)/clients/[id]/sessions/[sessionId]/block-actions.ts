@@ -1126,7 +1126,17 @@ export type InitialSetupInput = {
 
 export async function createTreatmentAreaWithEntryAction(
   input: CreateAreaWithEntryInput & { initialSetup?: InitialSetupInput | null },
-): Promise<BlockResult & { setup?: unknown }> {
+): Promise<
+  BlockResult & {
+    setup?: unknown;
+    /**
+     * The command answered from an EXISTING claim rather than creating
+     * (0234, DRAFT PENDING SAM). Absent on the no-settings path, which uses
+     * a command that binds no retry key and so has nothing to reuse.
+     */
+    reused?: boolean;
+  }
+> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot log sessions." };
@@ -1419,6 +1429,18 @@ export async function createTreatmentAreaWithEntryAction(
   const setupResult = Array.isArray(createdRows)
     ? undefined
     : (createdRows as { setup?: unknown } | null)?.setup;
+  // THE COMMAND'S OWN ANSWER ABOUT WHETHER IT CREATED ANYTHING (0234,
+  // DRAFT). `create_block_with_initial_setup` returns `reused: true` when it
+  // answered from an existing claim — by key, or by payload digest after the
+  // key was lost. Dropping it here would make an absorbed save
+  // indistinguishable from a fresh one, which is the one thing she needs to
+  // be told: the record has one area, not two.
+  //
+  // `create_block_with_entry` returns a table and no such flag, so the
+  // array shape is false by construction rather than by assumption.
+  const createReused = Array.isArray(createdRows)
+    ? false
+    : (createdRows as { reused?: boolean } | null)?.reused === true;
   if (!createdBlockId) return { ok: false, error: GENERIC_BLOCK_COMMAND_ERROR };
 
   const { data: blockRow, error: blockReadErr } = await supabase
@@ -1465,7 +1487,12 @@ export async function createTreatmentAreaWithEntryAction(
   // `setup` is UNDEFINED on the proven path and null when the atomic command
   // recorded nothing, which the caller must be able to tell apart from a
   // submission result. It is passed through rather than interpreted here.
-  return { ok: true, block: block as SessionBlock, setup: setupResult };
+  return {
+    ok: true,
+    block: block as SessionBlock,
+    setup: setupResult,
+    reused: createReused,
+  };
 }
 
 export type UpdateAreaWithEntryInput = {
