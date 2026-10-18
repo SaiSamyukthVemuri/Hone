@@ -764,17 +764,6 @@ function allFive(): Array<{
 test("ACCEPTANCE (5): all five practitioners are offered, book, and are attributed", async ({
   page,
 }) => {
-  // THE FILE-WIDE 120s TIMEOUT CANNOT HOLD THIS TEST, and that is a statement
-  // about the test rather than about the host: it drives FIVE complete bookings
-  // through the real public form — each one a page load, a practitioner
-  // selection with its scoped slot fetch, a slot click and a submit — and then
-  // walks the owner's calendar five times, clicking through the grid entry, the
-  // preview dialog and the detail page for each. That is the cost of proving
-  // five practitioners instead of two, and raising the budget is the honest
-  // response; trimming the bookings to fit would remove the only thing the test
-  // adds. Raised HERE, in the spec, because CI's per-test timeout is the same
-  // 120s — a local-only workaround would have passed here and failed there.
-  test.setTimeout(900_000);
   const runId = live.runId;
 
   // --- every one of the five is OFFERED ----------------------------------
@@ -913,9 +902,6 @@ test("ACCEPTANCE (5): all five practitioners are offered, book, and are attribut
 test("ACCEPTANCE (5): every practitioner can sign in and sees the whole studio's day", async ({
   page,
 }) => {
-  // Four separate magic-link sign-ins, each followed by a calendar load and a
-  // five-booking read. Same reasoning as above.
-  test.setTimeout(600_000);
   // THE ACCESS HALF, and it is a different claim from attribution. The
   // calendar loads through `getAppointmentsForRange(studio.id, ...)`, i.e.
   // STUDIO-WIDE, so a member must see their colleagues' bookings too. The
