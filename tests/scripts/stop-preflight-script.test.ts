@@ -232,6 +232,36 @@ describe("the facts file: secrets refused, every field validated (malformed = un
     expect(r.ready).toBe(false);
   });
 
+  // Codex P2 4305455242: Date.parse accepts locale forms and rolls invalid
+  // dates over; every timestamp must be a strict ISO instant on a real date.
+  it.each([
+    ["a locale date", "10/12/2026"],
+    ["a rolled-over date (Feb 30)", "2026-02-30T00:00:00Z"],
+    ["month 13", "2026-13-01T00:00:00Z"],
+    ["hour 24", "2026-10-12T24:00:00Z"],
+    ["no zone", "2026-10-12T12:00:00"],
+    ["a date only", "2026-10-12"],
+    ["a non-ISO separator", "2026-10-12 12:00:00Z"],
+    ["an offset out of range", "2026-10-12T12:00:00+25:00"],
+  ])("a timestamp that is %s is malformed (never feeds a pass)", async (_n, bad) => {
+    const facts = readyFacts();
+    (facts.liveStopObservation as Record<string, unknown>).observedAt = bad;
+    (facts.currentActivation as Record<string, unknown>).handlerDeployedAt = bad;
+    const r = await run(fakeAdmin().admin, facts);
+    expect(r.malformed).toEqual(expect.arrayContaining(["liveStopObservation.observedAt", "currentActivation.handlerDeployedAt"]));
+    expect(r.checks?.find((c) => c.id === "stop_forwarded")?.status).not.toBe("pass");
+    expect(r.ready).toBe(false);
+  });
+
+  it("strict ISO instants with Z, an offset, or fractional seconds are accepted", async () => {
+    for (const ok of ["2026-10-12T12:00:00Z", "2026-10-12T12:00Z", "2026-10-12T17:30:00.123+05:30", "2024-02-29T00:00:00Z"]) {
+      const facts = readyFacts();
+      (facts.liveStopObservation as Record<string, unknown>).observedAt = ok;
+      const r = await run(fakeAdmin().admin, facts);
+      expect(r.malformed, ok).not.toContain("liveStopObservation.observedAt");
+    }
+  });
+
   it("a malformed Webhook Rule makes the whole rule set unread (webhook_rules unknown)", async () => {
     const r = await run(fakeAdmin().admin, { ...readyFacts(), webhookRules: { matched: true, settings: [{ percentage: 101 }] } });
     expect(r.malformed).toContain("webhookRules");
@@ -296,6 +326,17 @@ describe("output and reach", () => {
     };
     for (const d of ["app", "lib", "components"]) walk(path.join(root, d));
     expect(offenders).toEqual([]);
+  });
+
+  // Codex P2 4305455246: the record step must reach the same target as the
+  // dry run, and the hosted case must show both gates.
+  it("the runbook exports the target once and shows the hosted gates on the record command", () => {
+    const rb = readFileSync(path.join(process.cwd(), "docs/runbooks/sms-stop-preflight-record.md"), "utf8");
+    expect(rb).toMatch(/export NEXT_PUBLIC_SUPABASE_URL=/);
+    expect(rb).toMatch(/export SUPABASE_SERVICE_ROLE_KEY=/);
+    expect(rb).toMatch(/export HONE_STOP_PREFLIGHT_HOSTED_APPROVED=yes/);
+    expect(rb).toMatch(/--record --context cutover --allow-hosted/);
+    expect(rb).not.toMatch(/^NEXT_PUBLIC_SUPABASE_URL=\S+ SUPABASE_SERVICE_ROLE_KEY=/m);
   });
 
   it("the CLI defaults to DRY RUN and records only with an explicit --record", () => {

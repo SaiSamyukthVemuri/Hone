@@ -33,7 +33,7 @@ Write a JSON file. **Never put a secret in it.** The auth token is reported only
 Validation is strict. A field that is missing or malformed counts as **not read**: the checklist item it feeds is `unknown`, never `pass`, and its path is listed under `malformed`. For the live STOP:
 - `To` must be canonical E.164;
 - the SID must be an `MG` SID;
-- the time must parse and must not be in the future;
+- the time must be a strict ISO 8601 instant with a zone (`2026-10-12T12:00:00Z` or `…+05:30`), a real calendar date, and not in the future (the same applies to every time in the file);
 - the status must be an integer from 100 to 599;
 - the booleans must be real booleans.
 
@@ -57,10 +57,22 @@ Template (fill in every value; this one is illustrative only):
 
 ## 2. Dry run (the default; writes nothing)
 
+Set the target once for the shell session, so that the dry run and the record step (section 3) both reach the same database:
+
 ```sh
-NEXT_PUBLIC_SUPABASE_URL=<target> SUPABASE_SERVICE_ROLE_KEY=<from your secret store> \
-  node scripts/sms/record-stop-preflight.mjs --studio <studio uuid> --facts ./stop-facts.json
+export NEXT_PUBLIC_SUPABASE_URL=<target>
+export SUPABASE_SERVICE_ROLE_KEY=<from your secret store>
+node scripts/sms/record-stop-preflight.mjs --studio <studio uuid> --facts ./stop-facts.json
 ```
+
+**Hosted (production) target, for a Sam-approved cutover only.** Both gates are required on every command, the dry run included:
+
+```sh
+export HONE_STOP_PREFLIGHT_HOSTED_APPROVED=yes
+node scripts/sms/record-stop-preflight.mjs --studio <studio uuid> --facts ./stop-facts.json --allow-hosted
+```
+
+Unset it afterwards (`unset HONE_STOP_PREFLIGHT_HOSTED_APPROVED SUPABASE_SERVICE_ROLE_KEY`).
 
 The output is one JSON line with codes and ids only:
 - `result`, `ready` and `blockers`;
@@ -71,9 +83,19 @@ It never contains a phone number, a SID, a URL or a token. Fix the facts, or the
 
 ## 3. Record
 
+In the same shell, with the target still exported from section 2:
+
 ```sh
 node scripts/sms/record-stop-preflight.mjs --studio <studio uuid> --facts ./stop-facts.json --record --context cutover
 ```
+
+For the hosted cutover, add the same gates as the dry run:
+
+```sh
+node scripts/sms/record-stop-preflight.mjs --studio <studio uuid> --facts ./stop-facts.json --record --context cutover --allow-hosted
+```
+
+(`HONE_STOP_PREFLIGHT_HOSTED_APPROVED=yes` must still be exported.) Without the target variables the script answers `target_refused` (`no_supabase_url` or `no_service_role_key`). A hosted target without both gates answers `target_refused` (`hosted_not_approved`).
 
 - `--context` is `evidence` or `cutover`.
 - `--credentials-epoch <value>` records a non-secret epoch (it is used only if Sam chooses the epoch option for token rotation).

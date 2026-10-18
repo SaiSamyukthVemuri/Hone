@@ -38,6 +38,9 @@ const MG = /^MG[0-9a-fA-F]{32}$/;
 const AC = /^AC[0-9a-fA-F]{32}$/;
 const AP = /^AP[0-9a-fA-F]{32}$/;
 const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
+// YYYY-MM-DDTHH:MM[:SS[.fraction]] followed by Z or ±HH:MM. Groups: year, month,
+// day, hour, minute, second, (fraction), offset hour, offset minute.
+const ISO_INSTANT = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(\.\d{1,9})?)?(?:Z|[+-](\d{2}):(\d{2}))$/;
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -86,8 +89,25 @@ export function sanitizeFacts(raw: unknown, nowMs: number): SanitizedFacts | Fac
     }
   };
   const urlOrNull = (v: unknown): v is string | null => v === null || httpsUrl(v);
-  // An observation time must parse and must not be in the future.
-  const pastIso = (v: unknown): v is string => str(v) && Number.isFinite(Date.parse(v)) && Date.parse(v) <= nowMs;
+  // An observation time must be a STRICT ISO 8601 instant with a zone (Codex
+  // P2 4305455242): Date.parse alone accepts locale forms ("10/12/2026") and
+  // silently rolls invalid dates over ("2026-02-30" becomes March 2), so a typo
+  // could join a passing checklist. The calendar date and clock are validated
+  // field by field, then the instant must not be in the future.
+  const pastIso = (v: unknown): v is string => {
+    if (!str(v)) return false;
+    const m = ISO_INSTANT.exec(v);
+    if (!m) return false;
+    const [, y, mo, d, h, mi, se = "0", , oh = "0", om = "0"] = m;
+    const year = Number(y);
+    const month = Number(mo);
+    const day = Number(d);
+    if (month < 1 || month > 12 || day < 1) return false;
+    if (day > new Date(Date.UTC(year, month, 0)).getUTCDate()) return false;
+    if (Number(h) > 23 || Number(mi) > 59 || Number(se) > 59 || Number(oh) > 23 || Number(om) > 59) return false;
+    const t = Date.parse(v);
+    return Number.isFinite(t) && t <= nowMs;
+  };
   const pastIsoOrNull = (v: unknown): v is string | null => v === null || pastIso(v);
   const e164 = (v: unknown): v is string => {
     if (!str(v)) return false;
