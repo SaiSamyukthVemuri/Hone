@@ -555,8 +555,27 @@ export function validateReading(
   // stands: this does not round, it refuses and says what it saw. The
   // practitioner reads the machine again, or the contract's precision is
   // wrong and wants an evidence review.
+  //
+  // AND IT ONLY SPEAKS WHERE THE PRECISION IS ESTABLISHED (Codex, #855
+  // 4305642899). `MachineField.unverified` says which aspects the evidence
+  // does NOT cover, and the ST 350 and the 5HD both declare
+  // `["decimals", "editability"]` - their precision was INFERRED from a
+  // manual mirror establishing labels and units only.
+  //
+  // THIS IS THE BRANCH WHERE THAT MATTERS MOST, which is the merge resolution
+  // between the two stacked PRs: on #855 the unguarded comparison produces a
+  // false NOTE, and here it REFUSES A TRUE OBSERVATION - a stored reading
+  // carrying an extra decimal stops rendering on the historical path. The
+  // refusal mechanism is kept and the establishment gate goes in front of it.
+  // Only the `decimals` aspect silences it: an unrelated unverified aspect
+  // says nothing about how many places the screen shows.
+  //
+  // Third member of one family, all closed the same way - a step with no
+  // evidenced origin, an unsourced channel count, an inferred precision. Only
+  // an established constraint may speak.
   const given = decimalsOf(value);
-  if (given > field.decimals) {
+  const decimalsEstablished = !(field.unverified ?? []).includes("decimals");
+  if (decimalsEstablished && given > field.decimals) {
     return {
       ok: false,
       code: "precision_beyond_contract",
