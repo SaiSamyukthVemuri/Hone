@@ -57,7 +57,8 @@ type Fixture = {
     | "journeyMorning"
     | "journeyAfternoon"
     | "journeyPrevDay"
-    | "journeyNote",
+    | "journeyNote"
+    | "editedEntry",
     string
   >;
 };
@@ -108,6 +109,7 @@ test.beforeAll(async () => {
     journeyAfternoon: `JOURNEY-AFTERNOON-${run}`,
     journeyPrevDay: `JOURNEY-PREV-DAY-${run}`,
     journeyNote: `JOURNEY-NOTE-${run}`,
+    editedEntry: `EDITED-ENTRY-${run}`,
   };
   const at = (day: string, time: string) =>
     sql<{ t: string }>(`select (($1::date + $2::time) at time zone $3)::text as t`, [day, time, tz]).then((r) => r[0].t);
@@ -174,6 +176,19 @@ test.beforeAll(async () => {
       await at(JOURNEY_PREV_DAY, "16:30"),
       sentinel.journeyPrevDay,
     ],
+  );
+  // On the morning treatment: a LEGACY entry later edited through structured
+  // charting. Its old generic intensity/duration (77, 9 s) are still stored
+  // beside the new thermolysis readings, and only the structured set may print
+  // (Codex P1 4304983088).
+  const [morning] = await sql<{ id: string }>(`select id from public.sessions where session_notes = $1`, [
+    sentinel.journeyMorning,
+  ]);
+  await sql(
+    `insert into public.electrolysis_entries
+       (session_id, area, intensity, duration_seconds, thermolysis_intensity_percent, thermolysis_duration_seconds, comments)
+     values ($1, 'chin', 77, 9, 33, 2, $2)`,
+    [morning.id, sentinel.editedEntry],
   );
   // A clinical note ON the journey date: kept, per Sam's decision.
   await sql(
@@ -457,11 +472,32 @@ test("HON-46 journey: client record -> choose a date -> preview -> print, includ
   // 4. Choose the treatment date and preview: BOTH treatments that day, nothing
   //    from any other date, no private warning or personal note.
   await page.getByRole("textbox", { name: "Treatment date" }).fill(JOURNEY_DAY);
+  // AUDIT BEFORE CONTENT: the export document's own response.
+  const docResponse = page.waitForResponse(
+    (r) => r.request().resourceType() === "document" && r.url().includes(`day=${JOURNEY_DAY}`),
+  );
   await page.getByRole("button", { name: "Preview" }).click();
+  const doc = await docResponse;
+  const body = await doc.text();
+  // The response that DELIVERS the day's records...
+  expect(body).toContain(fx.sentinel.journeyMorning);
+  // ...arrives with its preview audit row already written. The page writes
+  // the audit before reading any record (auditThenLoad, unit-pinned), so
+  // content in the body implies the row exists, which this observes directly.
+  const previewsAtDelivery = (await auditRows(fx.clientId))
+    .slice(before)
+    .filter((r) => r.action === "clinical_records_previewed" && r.metadata.day === JOURNEY_DAY);
+  expect(previewsAtDelivery, "no preview audit row when the records were delivered").toHaveLength(1);
   await page.waitForURL((u) => u.searchParams.get("scope") === "day" && u.searchParams.get("day") === JOURNEY_DAY);
   await expect(page.getByTestId("export-session")).toHaveCount(2);
   await expect(page.getByTestId("export-session").nth(0)).toContainText(fx.sentinel.journeyMorning);
   await expect(page.getByTestId("export-session").nth(1)).toContainText(fx.sentinel.journeyAfternoon);
+  // The legacy entry edited with structured readings prints ONLY the
+  // structured set; its stale generic pair (77, 9 s) is absent.
+  const edited = page.getByTestId("export-entry").filter({ hasText: fx.sentinel.editedEntry });
+  await expect(edited).toContainText("Thermolysis intensity: 33 %");
+  await expect(edited).not.toContainText("Intensity: 77");
+  await expect(edited).not.toContainText("Duration: 9 s");
   // The day's clinical note is kept (Sam's decision).
   await expect(page.getByTestId("export-note")).toHaveCount(1);
   await expect(page.getByTestId("export-note")).toContainText(fx.sentinel.journeyNote);
@@ -622,6 +658,12 @@ test("a practitioner who is not the owner is refused and no audit row is written
   const member = await seedE2eMember(fx.seed);
   const before = (await auditRows(fx.clientId)).length;
   await loginByMagicLink(page, member.email);
+  // No print entry point on the client record for a non-owner.
+  await page.goto(`/clients/${fx.clientId}`);
+  // (Rendered first, so the absence below is observed, not assumed.)
+  await expect(page.getByText(fx.seed.clientName).first()).toBeVisible();
+  await expect(page.getByTestId("client-print-records")).toHaveCount(0);
+  // ...and a direct request to the route is refused.
   await page.goto(`/clients/${fx.clientId}/records/export?scope=day&day=${DAY}`);
   await expect(page.getByText("Only the studio owner can export clinical records.")).toBeVisible();
   const html = await page.content();
