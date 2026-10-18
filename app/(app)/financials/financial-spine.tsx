@@ -189,7 +189,7 @@ export function FinancialSpine({ briefing }: { briefing: FinancialBriefing }) {
       <section className="flex flex-col gap-3">
         <SectionLabel as="h2">The calendar</SectionLabel>
         <div className="flex flex-col">
-          <Row label="Booked in this period" fact={calendar.booked} />
+          <Row label="Appointments in this period" fact={calendar.booked} />
           <Row label="Still to happen" fact={calendar.stillToHappen} />
           <Row label="Past, still confirmed" fact={calendar.pastConfirmed} />
           <Row label="Cancelled" fact={calendar.cancelled} />
@@ -253,18 +253,24 @@ export function FinancialSpine({ briefing }: { briefing: FinancialBriefing }) {
  * `stillToHappen + pastConfirmed + completed + cancelled + noShow === booked`.
  * That is a fact about STATUS COVERAGE. An earlier version of this note printed
  * it as a fact about LAYOUT — "every appointment in this period is on exactly
- * one line above" — and that was false twice over: `Booked in this period` is
- * the TOTAL, so every appointment is on that line AND on its status line; and
- * `completed` has no line in this section at all, because Direction B gives the
- * work that actually happened its own. Codex raised it on PR #646 and was
- * right. The owner was shown an exactness the screen does not have.
+ * one line above" — and that was false twice over: the first row is the TOTAL,
+ * so every appointment is on that line AND on its status line; and `completed`
+ * has no line in this section at all, because Direction B gives the work that
+ * actually happened its own. Codex raised it on PR #646 and was right. The
+ * owner was shown an exactness the screen does not have.
  *
  * The two claims are easy to confuse and were: one is about which statuses
- * exist, the other about which rows are drawn. The sentence now names the four
- * statuses it is actually about, and says where the fourth is shown.
+ * exist, the other about which rows are drawn. The sentence names the five
+ * categories it is actually about, and says where `completed` is shown.
  *
- * A status this build does not recognise leaves the four counts perfectly
- * correct while making them no longer a complete account of what was booked —
+ * That total row was labelled "Booked in this period" when this comment was
+ * written and is labelled "Appointments in this period" now, which is why the
+ * text above names it by POSITION rather than by its wording: a comment that
+ * quotes a label goes stale the moment the label is corrected, and this one
+ * did.
+ *
+ * A status this build does not recognise leaves the five counts perfectly
+ * correct while making them no longer a complete account of the period —
  * so the claim is withdrawn and the reason named, rather than the row being
  * dropped to keep a total looking tidy.
  */
@@ -275,8 +281,8 @@ function PartitionNote({ briefing }: { briefing: FinancialBriefing }) {
     return (
       <p className="text-xs text-fg">
         Still to happen, past but still confirmed, completed, cancelled and no-show
-        account for every appointment booked in this period. Completed is counted in
-        the next section.
+        account for every appointment in this period. Completed is counted in the
+        next section.
       </p>
     );
   }
@@ -304,7 +310,8 @@ function PartitionNote({ briefing }: { briefing: FinancialBriefing }) {
   return (
     <p className="text-xs text-warning-fg">
       {reasons.join("; and ")}, so still to happen, past but still confirmed,
-      completed, cancelled and no-show do not account for every appointment booked.
+      completed, cancelled and no-show do not account for every appointment in this
+      period.
     </p>
   );
 }

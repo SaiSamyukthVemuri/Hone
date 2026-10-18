@@ -73,6 +73,10 @@ export async function issuePortalMagicLink(
   const email = buildPortalMagicLinkEmail({ studioName, magicLink });
 
   const sendResult = await sendEmailSafely({
+    // Display-only: this issuer receives a studio NAME, not a studio row, so
+    // there is no reply authority in scope. Branding without a fabricated
+    // Reply-To is the honest half.
+    studioIdentity: { displayName: studioName, replyTo: null },
     to: input.email,
     subject: email.subject,
     html: email.html,

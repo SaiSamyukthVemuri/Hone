@@ -16,8 +16,10 @@ import {
   stampIntakeLinkIssued,
 } from "@/lib/intake/queries";
 import {
+  createLedgerBudget,
   send24hReminderSmsToClient,
   send2hReminderSmsToClient,
+  type LedgerBudget,
 } from "@/lib/sms/send-appointment";
 import {
   buildTreatmentTimeLine,
@@ -452,6 +454,8 @@ async function sendSmsReminderPass(opts: {
   kind: "24h" | "2h";
   windowStartIso: string;
   windowEndIso: string;
+  /** The run's ONE ledger budget, shared with the other SMS pass. */
+  ledgerBudget: LedgerBudget;
 }): Promise<SmsRunStats> {
   const sentColumn: SentColumn =
     opts.kind === "24h" ? "sms_reminder_24h_sent_at" : "sms_reminder_2h_sent_at";
@@ -497,6 +501,10 @@ async function sendSmsReminderPass(opts: {
 
     // PR #258: same cancellation-race re-check as the email pass, never SMS a
     // reminder for an appointment cancelled/no-showed after the window query.
+    // A cheap PRE-FILTER, so a cancelled row costs no intake read and no
+    // claim. SMS-02: the authoritative re-check (status AND start) runs inside
+    // the send helper's claim_reminder_sms_send, under the appointment row
+    // lock and in the same transaction as the claim.
     const { data: freshSms } = await admin
       .from("appointments")
       .select("status")
@@ -531,15 +539,20 @@ async function sendSmsReminderPass(opts: {
     // HMAC token so the SMS manage link resolves (/manage accepts it). Null
     // only if minting fails (unparseable start); the SMS template then drops
     // the manage line and still sends the moment-only reminder.
-    let manageToken: string | null;
-    try {
-      manageToken = generateCancellationToken(appt.id, new Date(appt.starts_at));
-    } catch {
-      manageToken = null;
-    }
-    const manageUrl = manageToken
-      ? `${smsAppOrigin}/manage/${manageToken}`
-      : null;
+    //
+    // SMS-02: a BUILDER, called by the helper with the start it re-read after
+    // the claim. The token expires at the start, so a link minted from the
+    // window query's start would be wrong for an appointment moved since.
+    const appointmentId = appt.id;
+    const manageUrlFor = (startsAt: Date): string | null => {
+      let manageToken: string | null;
+      try {
+        manageToken = generateCancellationToken(appointmentId, startsAt);
+      } catch {
+        manageToken = null;
+      }
+      return manageToken ? `${smsAppOrigin}/manage/${manageToken}` : null;
+    };
 
     const sendFn =
       opts.kind === "24h"
@@ -548,7 +561,7 @@ async function sendSmsReminderPass(opts: {
     const result = await sendFn({
       admin,
       appointmentId: appt.id,
-      startsAt: new Date(appt.starts_at),
+      window: { startIso: opts.windowStartIso, endIso: opts.windowEndIso },
       timezone: appt.studio.timezone,
       studio: appt.studio,
       client: {
@@ -556,28 +569,38 @@ async function sendSmsReminderPass(opts: {
         sms_consent_at: appt.client.sms_consent_at,
         sms_opted_out_at: appt.client.sms_opted_out_at,
       },
-      manageUrl,
+      manageUrlFor,
       intakeUrl: smsIntakeUrl,
+      ledgerBudget: opts.ledgerBudget,
     });
+    // Whether the intake link may now be in the client's hands: the message
+    // carrying it was accepted, or POSSIBLY accepted (an answer that was lost;
+    // recorded as sent and never retried). Never for a definite refusal or a
+    // skip, where the link never left Hone.
+    let linkMayHaveGone = false;
     if (result.ok) {
       stats.attempted += 1;
       stats.succeeded += 1;
-      // Stamp intake-link metadata ONLY when the SMS that actually sent
-      // carried the link. A plain appointment SMS must never look like an
-      // intake link was issued, and the email pass's own stamp is separate.
-      if (smsIntakeUrl && smsIntake) {
-        await stampIntakeLinkIssued(admin, smsIntake.id, { emailed: false });
-        stats.intakeCtaIncluded += 1;
-      }
+      linkMayHaveGone = result.intakeLinkIncluded;
     } else if (result.skipped) {
-      // Helper-level skip (toggle race, claim collision, gate miss).
-      // We do not count these as attempted because no Twilio call
-      // was made; the operator wants attempted/succeeded/failed to
-      // reflect actual Twilio invocations.
+      // Helper-level skip (toggle race, claim collision, gate miss, or a
+      // reminder claim that could not be reached). We do not count these
+      // as attempted because no Twilio call was made; the operator wants
+      // attempted/succeeded/failed to reflect actual Twilio invocations.
       stats.skipped += 1;
     } else {
+      // A refusal, or a possibly-sent answer: either way not proven sent.
       stats.attempted += 1;
       stats.failed += 1;
+      linkMayHaveGone = result.possiblySent === true && result.intakeLinkIncluded;
+    }
+    // Stamp intake-link metadata ONLY for a message that carried the link and
+    // may have reached the client. A plain appointment SMS must never look
+    // like an intake link was issued, and the email pass's own stamp is
+    // separate.
+    if (linkMayHaveGone && smsIntake) {
+      await stampIntakeLinkIssued(admin, smsIntake.id, { emailed: false });
+      stats.intakeCtaIncluded += 1;
     }
   }
 
@@ -618,15 +641,23 @@ export async function GET(req: Request) {
     // additional fields; existing email keys (reminder_24h /
     // reminder_2h) are unchanged so downstream log parsing stays
     // compatible.
+    //
+    // SMS-02 (Codex P1 4232680578): ONE ledger budget for this run, shared
+    // by both SMS passes, so a stalled or slow ledger costs the run a bounded
+    // wait however many reminders it carries. The email passes never touch
+    // the SMS ledger.
+    const ledgerBudget = createLedgerBudget();
     const sms_reminder_24h = await sendSmsReminderPass({
       kind: "24h",
       windowStartIso: win24.startIso,
       windowEndIso: win24.endIso,
+      ledgerBudget,
     });
     const sms_reminder_2h = await sendSmsReminderPass({
       kind: "2h",
       windowStartIso: win2.startIso,
       windowEndIso: win2.endIso,
+      ledgerBudget,
     });
 
     // PR #265: record a non-sensitive "last successful reminder cron run"

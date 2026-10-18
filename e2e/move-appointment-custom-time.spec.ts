@@ -2,8 +2,17 @@ import { test, expect, type Browser, type Page, type BrowserContext } from "@pla
 import {
   seedE2eStudio,
   seedE2eMember,
+  seedE2eClient,
   getClientIdByEmail,
   getAppointmentsForClient,
+  getE2eServiceId,
+  getStudioTimezone,
+  seedConfirmedAppointment,
+  seedFutureAppointmentAt,
+  seedPractitionerDefault,
+  setStudioCapacityBookingEnabled,
+  setStudioCapacityEnabled,
+  sql,
   type E2eSeed,
 } from "./helpers/seed";
 import { bookAppointment, loginAsOwner, loginByMagicLink } from "./helpers/flows";
@@ -164,4 +173,269 @@ test("owner custom-time move works across mobile, tablet, desktop; non-owner can
     await expect(dialog.getByRole("button", { name: /^\d{1,2}:\d{2} (AM|PM)$/ }).first()).toBeVisible({ timeout: 15_000 });
     await ctx.close();
   });
+});
+
+// ---------------------------------------------------------------------------
+// EMERG-02 — the customer-reported "Move appointment stays greyed out".
+//
+// The reported shape is a capacity-ON studio whose appointment is still held by
+// a practitioner who is no longer service-eligible. The DB command REFUSES to
+// preserve that practitioner on a time-only move — `move_or_reassign_appointment`
+// coalesces a NULL target to the appointment's current practitioner and then
+// validates it independently, returning `practitioner_reassignment_required`
+// (0144 -> 0174; proved directly by tests/db/move-target-integrity.db.test.ts).
+//
+// So the DISABLED BUTTON IS CORRECT and must stay. What was missing is any
+// statement of WHY at the point of action: the owner scrolls to a greyed
+// primary button in the footer with the only hint far above it, and — when the
+// appointment holds no practitioner at all — with no hint anywhere.
+//
+// These tests pin the DISCLOSURE and the recovery path. They must never be
+// "fixed" by enabling the button: that would submit a move the database
+// refuses.
+// ---------------------------------------------------------------------------
+
+type Fixture = {
+  seed: E2eSeed;
+  tz: string;
+  clientId: string;
+  A: { email: string; displayName: string; practitionerId: string };
+  B: { email: string; displayName: string; practitionerId: string };
+  serviceId: string;
+};
+
+// Capacity-ON studio, two active members A + B, both with wide-open hours.
+async function capacityFixture(): Promise<Fixture> {
+  const seed = await seedE2eStudio();
+  const tz = await getStudioTimezone(seed.studioId);
+  const { clientId } = await seedE2eClient(seed);
+  const A = await seedE2eMember(seed);
+  const B = await seedE2eMember(seed);
+  await setStudioCapacityEnabled(seed.studioId, true);
+  await setStudioCapacityBookingEnabled(seed.studioId, true);
+  for (let d = 0; d <= 6; d++) {
+    await seedPractitionerDefault(seed.studioId, A.practitionerId, d, true, "06:00", "22:00");
+    await seedPractitionerDefault(seed.studioId, B.practitionerId, d, true, "06:00", "22:00");
+  }
+  const serviceId = await getE2eServiceId(seed.studioId);
+  return { seed, tz, clientId, A, B, serviceId };
+}
+
+// seedConfirmedAppointment leaves `service_id` NULL, and BOTH the eligibility
+// lookup and the DB command skip the service check entirely when it is NULL
+// (`if v_appt.service_id is not null ...`). A service-less appointment therefore
+// cannot express this defect at all — attach the studio's service so eligibility
+// is actually consulted. Missing this is why the first reproduction ran green.
+const attachService = (apptId: string, serviceId: string) =>
+  sql(`update public.appointments set service_id = $2 where id = $1`, [apptId, serviceId]);
+
+// seedFutureAppointmentAt only seeds TODAY, so an EARLY-MORNING studio-local
+// time — the whole point of the outside-hours case — is already in the past by
+// the time the suite runs and the appointment is no longer movable. Seed the
+// same studio-local time on a future date instead.
+async function seedLocalTimeOnFutureDate(f: Fixture, offsetDays: number, localHHMM: string) {
+  const rows = await sql<{ startu: string; endu: string }>(
+    `select (to_char((now() at time zone $1)::date + $3::int, 'YYYY-MM-DD') || ' ' || $2)::timestamp at time zone $1 as startu,
+            ((to_char((now() at time zone $1)::date + $3::int, 'YYYY-MM-DD') || ' ' || $2)::timestamp + interval '60 min') at time zone $1 as endu`,
+    [f.tz, localHHMM, offsetDays],
+  );
+  return seedConfirmedAppointment(
+    f.seed.studioId,
+    f.A.practitionerId,
+    f.clientId,
+    new Date(rows[0].startu).toISOString(),
+    new Date(rows[0].endu).toISOString(),
+  );
+}
+
+const removeEligibility = (serviceId: string, practitionerId: string) =>
+  sql(`delete from public.service_practitioners where service_id = $1 and practitioner_id = $2`, [
+    serviceId,
+    practitionerId,
+  ]);
+
+async function openMoveDialog(page: Page, apptId: string) {
+  await page.goto(`/calendar/${apptId}`);
+  await page.getByRole("button", { name: /^Move appointment$/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Move appointment" });
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
+
+// Enter a valid future custom date/time and acknowledge the override.
+async function fillCustom(dialog: ReturnType<Page["getByRole"]>, date: string, time: string) {
+  await dialog.getByRole("button", { name: "Custom time" }).click();
+  await dialog.locator('input[type="date"]').fill(date);
+  await dialog.locator('input[type="time"]').fill(time);
+  await dialog.getByRole("checkbox").check();
+}
+
+test.describe("EMERG-02 — custom-time move gate", () => {
+test.describe.configure({ mode: "default" });
+
+test("EMERG-02 A: ineligible current practitioner — custom time states WHY at the footer, and reassignment recovers", async ({
+  browser,
+}) => {
+  const f = await capacityFixture();
+  const apptId = await seedFutureAppointmentAt(f.seed.studioId, f.A.practitionerId, f.clientId, f.tz, "15:00");
+  await attachService(apptId, f.serviceId);
+  await removeEligibility(f.serviceId, f.A.practitionerId); // A can no longer hold this service
+
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await ctx.newPage();
+  await loginByMagicLink(page, f.seed.ownerEmail);
+  const dialog = await openMoveDialog(page, apptId);
+  await expect(dialog.getByLabel("Practitioner")).toBeVisible({ timeout: 20_000 });
+
+  await fillCustom(dialog, futureYmd(410), "05:00");
+
+  const confirm = dialog.getByRole("button", { name: /^Move appointment$/ });
+  // The gate itself is CORRECT — the database would refuse this move.
+  await expect(confirm, "blocked while the current practitioner cannot hold the appointment").toBeDisabled();
+  // THE DEFECT: the footer said nothing about why.
+  const reason = dialog.getByTestId("confirm-disabled-reason");
+  await expect(reason, "a disabled primary action must state its prerequisite").toBeVisible();
+  await expect(reason).toContainText(/practitioner/i);
+
+  // Recovery: an explicit, eligible reassignment target unblocks the SAME custom time.
+  await dialog.getByLabel("Practitioner").selectOption({ label: f.B.displayName });
+  await expect(reason).toHaveCount(0);
+  await expect(confirm.or(dialog.getByRole("button", { name: /Move and reassign appointment/ }))).toBeEnabled();
+  await ctx.close();
+});
+
+test("EMERG-02 B (negative control): a capacity-ON studio CANNOT hold an unassigned confirmed appointment", async () => {
+  const f = await capacityFixture();
+  const apptId = await seedFutureAppointmentAt(f.seed.studioId, f.A.practitionerId, f.clientId, f.tz, "16:00");
+  await attachService(apptId, f.serviceId);
+
+  // `appointments.practitioner_id` is nullable (ON DELETE SET NULL), which is
+  // why move-confirm-state does NOT gate its notice on a non-empty current id.
+  // That branch is DEFENSIVE, and this is the proof: on a capacity-ON studio
+  // `appointments_capacity_requires_practitioner` (0134) forbids the state for a
+  // confirmed appointment — and reassignment is only ever enabled when capacity
+  // is ON, so the branch cannot fire in production. Recorded here so a later
+  // reader does not mistake it for dead code and delete it, and so that a
+  // WEAKENING of the constraint shows up as a failure right next to the gate
+  // that depends on it.
+  await expect(
+    sql(`update public.appointments set practitioner_id = null where id = $1`, [apptId]),
+  ).rejects.toThrow(/appointments_capacity_requires_practitioner/);
+});
+
+test("EMERG-02 M: the prerequisite is legible and the flow usable on a 390x844 touch viewport", async ({
+  browser,
+}) => {
+  const f = await capacityFixture();
+  const apptId = await seedFutureAppointmentAt(f.seed.studioId, f.A.practitionerId, f.clientId, f.tz, "17:00");
+  await attachService(apptId, f.serviceId);
+  await removeEligibility(f.serviceId, f.A.practitionerId);
+
+  const ctx = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    deviceScaleFactor: 2,
+  });
+  const page = await ctx.newPage();
+  await loginByMagicLink(page, f.seed.ownerEmail);
+  const dialog = await openMoveDialog(page, apptId);
+  await expect(dialog.getByLabel("Practitioner")).toBeVisible({ timeout: 20_000 });
+  await fillCustom(dialog, futureYmd(413), "05:45");
+
+  // The footer is a flex sibling of the scroll body, so the reason is painted
+  // WITH the button rather than scrolled away above it — that adjacency is the
+  // whole point of the fix on a small screen.
+  const reason = dialog.getByTestId("confirm-disabled-reason");
+  await expect(reason).toBeVisible();
+  await expect(reason).toBeInViewport();
+  const confirm = dialog.getByRole("button", { name: /^Move appointment$/ });
+  await expect(confirm).toBeInViewport();
+  await expect(confirm).toBeDisabled();
+  await expectNoPageOverflow(page, "mobile custom-time prerequisite");
+
+  // Recovering on mobile enables the same custom time.
+  await dialog.getByLabel("Practitioner").selectOption({ label: f.B.displayName });
+  await expect(reason).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: /Move and reassign appointment/ })).toBeEnabled();
+  await expectNoPageOverflow(page, "mobile custom-time ready");
+  await ctx.close();
+});
+
+// EMERG-02 P2 — the two spellings of one instant.
+//
+// A generated slot's `start` is Date#toISOString ("...T15:00:00.000Z"), while
+// `appointment.startsAt` comes straight off PostgREST, which renders timestamptz
+// as "...T15:00:00+00:00". Comparing those as STRINGS says "changed" for the
+// same instant, which re-enabled the button the no-op pre-emption exists to
+// disable and pushed a move to the RPC only for it to answer `no_change`.
+test("EMERG-02 H: selecting the appointment's CURRENT generated slot is not a move", async ({ browser }) => {
+  const f = await capacityFixture();
+  const apptId = await seedLocalTimeOnFutureDate(f, 3, "15:00"); // whole minute
+  await attachService(apptId, f.serviceId);
+
+  // NOTE: this helper talks to Postgres through `pg`, which parses timestamptz
+  // into a JS Date. The SPELLING divergence that causes the defect lives on the
+  // PostgREST/supabase-js wire the app actually reads ("...+00:00" with
+  // microseconds) versus a generated slot's Date#toISOString ("...Z") — pinned
+  // in tests/lib/calendar/move-confirm-state.test.ts. Here we assert BEHAVIOUR.
+  const before = await sql<{ starts_at: Date }>(
+    `select starts_at from public.appointments where id = $1`,
+    [apptId],
+  );
+
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await ctx.newPage();
+  await loginByMagicLink(page, f.seed.ownerEmail);
+  const dialog = await openMoveDialog(page, apptId);
+
+  // Available-slot mode is the default. The appointment's OWN reservation is
+  // excluded server-side, so its current time is offered back to it.
+  const currentSlot = dialog.getByRole("button", { name: "3:00 PM", exact: true });
+  await expect(currentSlot).toBeVisible({ timeout: 20_000 });
+  await currentSlot.click();
+
+  const confirm = dialog.getByRole("button", { name: /^Move appointment$/ });
+  await expect(confirm, "the same instant in a different spelling is not a change").toBeDisabled();
+  await expect(dialog.getByTestId("confirm-disabled-reason")).toContainText(/different time/i);
+
+  // Nothing reached the RPC.
+  const after = await sql<{ starts_at: Date }>(
+    `select starts_at from public.appointments where id = $1`,
+    [apptId],
+  );
+  expect(new Date(after[0].starts_at).getTime()).toBe(new Date(before[0].starts_at).getTime());
+  await ctx.close();
+});
+
+test("EMERG-02 L: an appointment ALREADY outside published hours moves to another custom time", async ({ browser }) => {
+  // Closest match to the real customer report: the appointment's CURRENT start
+  // is outside ordinary availability (04:00, before the 06:00 open) and its
+  // practitioner is healthy. Custom-time override must work end to end.
+  const f = await capacityFixture();
+  // 04:00 local, two hours before the 06:00 open, on a future date.
+  const apptId = await seedLocalTimeOnFutureDate(f, 3, "04:00");
+  await attachService(apptId, f.serviceId);
+
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await ctx.newPage();
+  await loginByMagicLink(page, f.seed.ownerEmail);
+  const dialog = await openMoveDialog(page, apptId);
+  await expect(dialog.getByLabel("Practitioner")).toBeVisible({ timeout: 20_000 });
+  await fillCustom(dialog, futureYmd(412), "05:15");
+
+  const confirm = dialog.getByRole("button", { name: /^Move appointment$/ });
+  await expect(dialog.getByTestId("confirm-disabled-reason")).toHaveCount(0);
+  await expect(confirm).toBeEnabled();
+  await confirm.click();
+  await expect(dialog).toHaveCount(0, { timeout: 20_000 });
+
+  const rows = await sql<{ practitioner_id: string | null; starts_at: string }>(
+    `select practitioner_id, starts_at from public.appointments where id = $1`,
+    [apptId],
+  );
+  expect(rows).toHaveLength(1);
+  // PRACTITIONER PRESERVED — a time-only custom move never reassigns.
+  expect(rows[0].practitioner_id).toBe(f.A.practitionerId);
+  await ctx.close();
+});
 });

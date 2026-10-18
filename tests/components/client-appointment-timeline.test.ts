@@ -96,11 +96,13 @@ describe("affordance rules per bucket", () => {
     expect(trail).toMatch(/Open appointment/);
   });
 
-  it("needsCharting renders Chart session AS PRIMARY (dark button)", () => {
+  it("needsCharting renders Chart session AS PRIMARY", () => {
     const needsBranch =
       SOURCE.match(/if \(bucket === "needsCharting"\)[\s\S]*?\n  \}/)?.[0] ?? "";
     expect(needsBranch).toMatch(/Chart session/);
-    expect(needsBranch).toMatch(/bg-neutral-900/);
+    // UI-01G: emphasis moved from a hand-spelled dark fill into the primitive's
+    // `primary` variant, which is the only place that fill is now defined.
+    expect(needsBranch).toMatch(/variant: "primary"/);
   });
 
   it("charted renders View session AS PRIMARY", () => {
@@ -109,7 +111,7 @@ describe("affordance rules per bucket", () => {
         /if \(bucket === "charted" && row\.linked_session\)[\s\S]*?\n  \}/,
       )?.[0] ?? "";
     expect(chartedBranch).toMatch(/View session/);
-    expect(chartedBranch).toMatch(/bg-neutral-900/);
+        expect(chartedBranch).toMatch(/variant: "primary"/);
   });
 });
 

@@ -1,3 +1,4 @@
+import { COMPOSED_DASHBOARD } from "../dashboard/helpers/composed-dashboard";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -16,7 +17,11 @@ function read(rel: string): string {
 
 const PAGE = read("app/(app)/getting-started/page.tsx");
 const HELPER = read("lib/onboarding/getting-started.ts");
-const DASH = read("app/(app)/dashboard/page.tsx");
+// PERF-01C: the Dashboard's secondary stack renders from
+// app/(app)/dashboard/secondary-stack.tsx behind a Suspense boundary. This
+// assertion is about what RENDERS, so it reads the COMPOSED source.
+// See tests/app/dashboard/helpers/composed-dashboard.ts.
+const DASH = COMPOSED_DASHBOARD;
 
 function signals(over: Partial<GettingStartedSignals> = {}): GettingStartedSignals {
   return {
@@ -38,6 +43,9 @@ function signals(over: Partial<GettingStartedSignals> = {}): GettingStartedSigna
     disinfectants: 1,
     paymentAttempts: 2,
     runtimeLivemode: false,
+    // Default: every signal read succeeded. Read-failure behaviour is pinned
+    // in tests/lib/onboarding/next-setup-step.test.ts.
+    nextStepSignalsAvailable: true,
     ...over,
   };
 }
@@ -139,7 +147,7 @@ describe("placement + page", () => {
   });
 
   it("the route is a protected server page resolving the studio", () => {
-    expect(PAGE).toMatch(/getCurrentPractitionerWithStudio/);
+    expect(PAGE).toMatch(/requirePractitionerWithStudio/);
     expect(PAGE).not.toMatch(/"use client"/);
   });
 

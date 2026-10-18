@@ -42,10 +42,24 @@ describe("header fit", () => {
   });
 
   it("the Records nav item renders the short label to /records", () => {
-    expect(LAYOUT).toMatch(/href="\/records"[\s\S]{0,200}>\s*Records\s*<\/Link>/);
+    // NAV-ACK-02: bound to the ANCHOR, not to its tag name or to a character
+    // distance. This read `href="/records"[\s\S]{0,200}>\s*Records\s*</Link>`,
+    // which pinned two things nobody meant to freeze: that the element is
+    // spelled `Link`, and that its href sits within 200 characters of its
+    // label. Giving the tab its acknowledgement changed both, and the guard
+    // failed on a change that does exactly what it asks for.
+    //
+    // The label, and the route it points at, are the properties. Located by
+    // href and read to its own closing tag, so the element may be renamed and
+    // may grow attributes — and an item relabelled or repointed still fails.
+    const item = LAYOUT.match(
+      /<(\w+)[^>]*href="\/records"[^>]*>([\s\S]*?)<\/\1>/,
+    );
+    expect(item).not.toBeNull();
+    expect(item![2].trim()).toBe("Records");
     // The long label no longer renders in the header (it remains in
     // the explanatory comment only).
-    expect(LAYOUT).not.toMatch(/>\s*Record Keeping\s*<\/Link>/);
+    expect(item![2]).not.toMatch(/Record Keeping/);
   });
 
   it("the page heading still says Record Keeping", () => {
@@ -74,9 +88,14 @@ describe("header fit", () => {
     // the entry is role-gated at all, on both surfaces, and points at the one
     // route that exists — there is no /business hub.
     const MOBILE = read("app/(app)/MobileMenu.tsx");
-    expect(LAYOUT).toMatch(
-      /\{practitioner\.role === "owner" && \(\s*<Link\s+href="\/dashboard\/capacity"[\s\S]{0,200}>\s*Business\s*<\/Link>/,
+    // NAV-ACK-02: same repair as the Records item above — the gate and the
+    // destination are the properties, not the element's tag name or the
+    // distance between its href and its label.
+    const gated = LAYOUT.match(
+      /\{practitioner\.role === "owner" && \(\s*<(\w+)[^>]*href="\/dashboard\/capacity"[^>]*>([\s\S]*?)<\/\1>/,
     );
+    expect(gated).not.toBeNull();
+    expect(gated![2].trim()).toBe("Business");
     expect(MOBILE).toMatch(
       /role === "owner"\s*\?\s*\[\{ href: "\/dashboard\/capacity", label: "Business" \}\]/,
     );

@@ -11,6 +11,7 @@ import {
 import type { MissingRecordsAssistant } from "@/lib/dashboard/missing-records-assistant";
 import type { ClientsNeedingAttention } from "@/lib/dashboard/clients-needing-attention";
 import type { ProcedureActionMetrics } from "@/lib/dashboard/practice-metrics";
+import { COMPOSED_DASHBOARD } from "../../app/dashboard/helpers/composed-dashboard";
 
 // ===========================================================================
 // Dashboard V2 Part 2B — ONE To-do model.
@@ -702,10 +703,7 @@ describe("To-do model — no I/O, no N+1", () => {
   });
 
   it("the page gained NO loader for the unified list", () => {
-    const page = readFileSync(
-      join(process.cwd(), "app/(app)/dashboard/page.tsx"),
-      "utf8",
-    );
+    const page = COMPOSED_DASHBOARD;
     // buildDashboardTodo is called once, and it is not awaited.
     expect(page.match(/buildDashboardTodo\(/g) ?? []).toHaveLength(1);
     expect(page).not.toMatch(/await buildDashboardTodo/);

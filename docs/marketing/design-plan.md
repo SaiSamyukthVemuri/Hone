@@ -80,6 +80,12 @@ section). Measure capped ~66ch.
 
 Editorial and asymmetric — not centered-everything, not repeated three-card grids.
 
+> **Superseded for the homepage.** The list below is the original plan. The shipped
+> homepage order is recorded in the header comment of `app/page.tsx`. MKT-03 revision 3
+> (the operator-authorised anti-slop pass) also retired the calendar-versus-treatment
+> contrast quoted in item 2, the homepage trust strip and the slogan labels; see
+> `tests/lib/marketing/content-v22.test.ts` for the retired-line guard.
+
 1. **Hero** — left-weighted text column (eyebrow, H1, supporting, differentiation line,
    Request + secondary CTA, proof line) with the **signature treatment-memory product
    frame** on the right. On the dark band? No — hero stays on paper; product frame carries

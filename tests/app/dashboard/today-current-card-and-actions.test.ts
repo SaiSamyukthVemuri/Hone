@@ -326,7 +326,14 @@ describe("row hygiene", () => {
   });
 
   it("the secondary actions wrap instead of forming a wall of buttons", () => {
-    expect(ROW).toMatch(/flex flex-wrap items-center justify-end gap-x-3 gap-y-1/);
+    // The WRAP is the claim — a wrapping strip rather than a stack of buttons.
+    // MOBILE-UI-01 left that untouched and made only the justification
+    // responsive: `justify-end` right-aligned this strip inside a
+    // left-aligned card, which is what put "Consultation notes" in the TIME
+    // gutter at phone width. The strip still wraps; it now wraps from the body
+    // edge on a phone and from the right on `sm:` and up.
+    expect(ROW).toMatch(/flex flex-wrap items-center justify-start gap-x-3 gap-y-1/);
+    expect(ROW).toMatch(/sm:justify-end/);
   });
 });
 

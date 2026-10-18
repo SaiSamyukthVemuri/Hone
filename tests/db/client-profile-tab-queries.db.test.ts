@@ -154,7 +154,11 @@ const EXPECTED: Record<string, Record<string, number>> = {
     imported_treatment_memories: 1,
     client_clinical_notes: 2,
     session_blocks: 2, // last treatment AND treatment intelligence
-    session_block_areas: 2,
+    // PERF-02A: ONE attachStructuredAreas call now covers both session_blocks
+    // reads. The summary read's block ids were always a strict subset of the
+    // intelligence read's, and getSessionBlockAreasByBlockIds de-duplicates ids,
+    // so the second call only ever re-fetched rows the first already had.
+    session_block_areas: 1,
   },
   sessions: {
     ...ALWAYS,

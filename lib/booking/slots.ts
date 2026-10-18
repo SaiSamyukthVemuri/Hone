@@ -1,6 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  localDayOfWeek,
   localMinutesSinceMidnight,
   localTimeString12h,
   minutesToHHMM,
@@ -305,6 +304,37 @@ export function protectedIntervals(
     });
 }
 
+/**
+ * The earliest instant a reservation may END and still protect time inside a
+ * search window that begins at `windowStartUtc`.
+ *
+ * WAIT-v4 PR0 — the midnight buffer spill. `studio_calendar_reservations` stores
+ * an appointment's ACTUAL end (0152); `protectedIntervals` above re-applies the
+ * studio buffer to reach its PROTECTED end. A loader that filters on the actual
+ * end therefore drops exactly the reservation whose protected end reaches into
+ * the window: a 23:50 appointment under a 30-minute buffer is protected to
+ * 00:20, but `ends_at > 00:00` is false, so it was never loaded and 00:00 was
+ * offered. The database's own `enforce_appointment_buffer` (0152) then refused
+ * the write with HB001 — an offer the authority would not accept.
+ *
+ * Widening the lower bound by the buffer is the whole repair, and it belongs
+ * here rather than at each call site so the two loaders cannot drift: every
+ * query that feeds `protectedIntervals` must select on the same boundary that
+ * function reconstructs.
+ *
+ * Non-appointment reservations are unaffected in substance. They are protected
+ * to their raw end, so one loaded by this wider bound ends at or before
+ * `windowStartUtc` and can collide with nothing inside the window.
+ */
+export function reservationWindowStartUtc(
+  windowStartUtc: Date,
+  bufferMinutes: number,
+): Date {
+  return new Date(
+    windowStartUtc.getTime() - Math.max(0, bufferMinutes) * 60_000,
+  );
+}
+
 export async function getAvailableSlots(
   supabase: SupabaseClient,
   studio: StudioRow,
@@ -324,7 +354,28 @@ export async function getAvailableSlots(
     studio.practitioner_capacity_enabled === true &&
     practitionerId !== undefined &&
     practitionerId !== null;
-  const dow = localDayOfWeek(new Date(`${dateStr}T12:00:00Z`), tz);
+  // THE WEEKDAY IS INTRINSIC TO THE REQUESTED LOCAL DATE, NOT A FUNCTION OF THE
+  // ZONE. `dateStr` arrives here as a studio-local calendar date, so which
+  // weekday it is has already been decided; asking the timezone again converts
+  // a value that was never in UTC.
+  //
+  // The previous shape was `localDayOfWeek(new Date(dateStr + "T12:00:00Z"), tz)`,
+  // which turns the local date into a NOON-UTC INSTANT and then asks which local
+  // weekday that instant falls on. East of UTC+12 the instant has already
+  // crossed local midnight, so the answer was TOMORROW'S weekday and a requested
+  // Monday was served Tuesday's weekly hours. Measured: at Pacific/Auckland
+  // (+13 NZDT and +12 NZST alike) and Pacific/Kiritimati (+14), 2026-01-05
+  // selected day_of_week 2 instead of 1.
+  //
+  // `localDayOfWeek(Date, tz)` IS NOT AT FAULT AND IS UNCHANGED. It is correct
+  // for an INSTANT; the defect was applying an instant-shaped helper to a value
+  // that is already a local date. This is the same intrinsic-date derivation
+  // `addDays` and `startOfWeek` in ./tz already use on a YYYY-MM-DD.
+  //
+  // The zone still governs everything downstream: `utcInstantFromLocal` below
+  // converts the selected window's local wall-clock times into UTC instants, and
+  // that is untouched.
+  const dow = new Date(`${dateStr}T12:00:00Z`).getUTCDay();
   const buffer = Math.max(0, studio.buffer_minutes ?? 0);
   const duration =
     serviceDurationMinutes ?? studio.default_appointment_duration_minutes ?? 60;
@@ -431,7 +482,13 @@ export async function getAvailableSlots(
     .from("studio_calendar_reservations")
     .select("starts_at, ends_at, source_kind, source_id")
     .lt("starts_at", windowEndUtc.toISOString())
-    .gt("ends_at", windowStartUtc.toISOString());
+    // Widened by the buffer: see reservationWindowStartUtc. Filtering on the
+    // raw end dropped a previous-day appointment whose protected end crossed
+    // into this window, and the write authority then refused the offer.
+    .gt(
+      "ends_at",
+      reservationWindowStartUtc(windowStartUtc, buffer).toISOString(),
+    );
   const { data: reservations } = await (capacityOn
     ? reservationBase.eq("resource_key", practitionerId)
     : reservationBase.eq("studio_id", studio.id));

@@ -14,6 +14,9 @@ import {
   validateTreatmentImagePath,
   sanitizeFilename,
   buildTreatmentImagePath,
+  buildTreatmentImageThumbPath,
+  TREATMENT_IMAGE_THUMB_CACHE_CONTROL,
+  TREATMENT_IMAGE_THUMB_CONTENT_TYPE,
 } from "@/lib/images/treatment-images";
 import { sanitizeTreatmentImage } from "@/lib/images/treatment-image-sanitize";
 import { TREATMENT_NOTE_MAX_LENGTH } from "./note-constants";
@@ -242,6 +245,34 @@ export async function uploadTreatmentImageAction(
       return { ok: false, error: "Could not save the image. Please retry." };
     }
 
+    // PERF-IMG-03. The grid derivative is uploaded LAST, only once the metadata
+    // insert has succeeded. That ordering is deliberate: the failure path above
+    // rolls back by removing [storagePath], and writing the thumbnail before the
+    // insert would create a second orphan class that rollback does not clean.
+    // Uploading it after the record exists also makes failure inherently
+    // non-fatal — the clinical image is already stored and recorded.
+    //
+    // A missing derivative is NOT an error and raises NO alert: the grid signs
+    // the original instead, which is exactly the behaviour before this change.
+    // storagePath here is server-constructed by buildTreatmentImagePath above,
+    // so the derived key inherits that authority rather than any client input.
+    if (sanitized.thumbBytes) {
+      const thumbPath = buildTreatmentImageThumbPath(storagePath);
+      if (thumbPath) {
+        try {
+          await admin.storage
+            .from(TREATMENT_IMAGES_BUCKET)
+            .upload(thumbPath, sanitized.thumbBytes, {
+              contentType: TREATMENT_IMAGE_THUMB_CONTENT_TYPE,
+              cacheControl: TREATMENT_IMAGE_THUMB_CACHE_CONTROL,
+              upsert: false,
+            });
+        } catch {
+          // Swallowed on purpose. See above: the fallback is the original.
+        }
+      }
+    }
+
     revalidatePath(`/clients/${clientId}/images`);
     return { ok: true };
   } catch {
@@ -249,8 +280,18 @@ export async function uploadTreatmentImageAction(
   }
 }
 
+// FETT photos (HON-43): `variant: "thumb"` re-mints the GRID derivative for a
+// cell whose server-rendered URL expired before the lazy image was requested
+// (60 s TTL). It goes through EXACTLY the same authorization as the original:
+// the same studio-scoped, unarchived row read and the same
+// validateTreatmentImagePath. The derivative key is then DERIVED from that
+// validated path (validate first, derive second), never taken from input, and
+// only after the original itself signed. A missing derivative is simply "not
+// available"; the grid then falls back to the original variant. The preview
+// modal never passes a variant, so it always gets the ORIGINAL.
 export async function getTreatmentImageSignedUrlAction(input: {
   imageId: string;
+  variant?: "original" | "thumb";
 }): Promise<SignedUrlResult> {
   const { studio } = await getCurrentPractitionerWithStudio();
   try {
@@ -290,6 +331,22 @@ export async function getTreatmentImageSignedUrlAction(input: {
     }
 
     const admin = createAdminClient();
+    if (input.variant === "thumb") {
+      // AUTHORIZATION CEILING (as on the page): a derivative URL is minted ONLY
+      // when the original itself signs, so it can never out-rank its original.
+      const { data: original, error: originalErr } = await admin.storage
+        .from(row.storage_bucket)
+        .createSignedUrl(row.storage_path, TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS);
+      if (originalErr || !original?.signedUrl) return { ok: false, error: "Image not available." };
+      const thumbPath = buildTreatmentImageThumbPath(row.storage_path);
+      if (!thumbPath) return { ok: false, error: "Image not available." };
+      const { data: thumb, error: thumbErr } = await admin.storage
+        .from(row.storage_bucket)
+        .createSignedUrl(thumbPath, TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS);
+      // No alert: a legacy photo without a derivative is expected.
+      if (thumbErr || !thumb?.signedUrl) return { ok: false, error: "Image not available." };
+      return { ok: true, url: thumb.signedUrl };
+    }
     const { data: signed, error: signErr } = await admin.storage
       .from(row.storage_bucket)
       .createSignedUrl(row.storage_path, TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS);

@@ -28,6 +28,28 @@ on:
     branches:
       - claude/build-hone-saas-hOex7
 
+# CI-HARDEN-01B. Least privilege, asserted rather than assumed.
+#
+# Neither workflow uses GITHUB_TOKEN, reads a secret, pushes a commit, tags,
+# comments, or calls a GitHub write API: every job checks out, builds and tests.
+# The default token scope was therefore wider than anything here needs, so read
+# is the whole requirement. That is verified rather than assumed - see the guard
+# in tests/ci/ci-config.test.ts, which asserts it over step text with comment
+# lines stripped, because this block's own rationale names GITHUB_TOKEN.
+#
+# Cache restore and artifact upload are unaffected: both authenticate with the
+# Actions runtime token, not GITHUB_TOKEN.
+#
+# Codex exact-head review deliberately does NOT run here. scripts/eng/* reads
+# GitHub with the operator's credential; putting it in a workflow would require
+# this workflow to hold an API credential, which is exactly what this block
+# removes. It stays operator-side: `npm run eng -- status <pr>`.
+#
+# A future workflow that genuinely writes to GitHub declares its own JOB-LEVEL
+# `permissions:` rather than widening this one.
+permissions:
+  contents: read
+
 # Cancel in-progress runs for the same ref when a newer commit lands.
 # Keeps CI minutes bounded and stops a slow run from blocking the
 # next attempt.
@@ -70,22 +92,38 @@ jobs:
       mobile: ${{ steps.classify.outputs.mobile }}
       ci_workflows: ${{ steps.classify.outputs.ci_workflows }}
       full_matrix_required: ${{ steps.classify.outputs.full_matrix_required }}
+      production_record: ${{ steps.record.outputs.production_record }}
       browser_run: ${{ steps.browser.outputs.browser_run }}
       browser_extended: ${{ steps.browser.outputs.browser_extended }}
       browser_specs: ${{ steps.browser.outputs.browser_specs }}
       browser_shards: ${{ steps.browser.outputs.browser_shards }}
+      # The DENOMINATOR the targeted run divides by. Declared here because a
+      # step output that is not surfaced on the job resolves to an empty string
+      # downstream, which would make the flag `--shard=N/` and fail the lane.
+      browser_shard_total: ${{ steps.browser.outputs.browser_shard_total }}
       browser_reason: ${{ steps.browser.outputs.browser_reason }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        # CI-HARDEN-01B. The checkout credential is not left behind for the rest
+        # of the job. Nothing here needs it: every git call in these workflows is
+        # LOCAL to the history checkout already fetched (merge-base, diff, show,
+        # diff --check). No job pushes, tags, comments or calls a write API, so a
+        # usable token sitting on disk for the remainder of the run buys nothing
+        # and widens what a compromised later step could reach.
+        #
+        # NOT redundant with the action default: persist-credentials still
+        # defaults to TRUE in actions/checkout v7.0.1, verified in its action.yml
+        # at this exact SHA.
         with:
+          persist-credentials: false
           # Full history so the PR BASE sha is reachable: the diff must be
           # against the merge base, not merely the previous commit, or a
           # multi-commit PR would classify only its most recent push.
           fetch-depth: 0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
 
@@ -96,11 +134,27 @@ jobs:
             BASE="${{ github.event.pull_request.base.sha }}"
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
             MB="$(git merge-base "$BASE" "$HEAD_SHA" 2>/dev/null || echo "$BASE")"
-            git diff --name-only "$MB" "$HEAD_SHA" > changed.txt || true
+            # --no-renames: a rename lists BOTH endpoints. With rename detection
+            # only the destination appeared, so moving a migration or a
+            # docs/production/** file into docs/ read as docs-only and skipped
+            # every lane that file belongs to (Codex P1 4297335910).
+            git diff --name-only --no-renames "$MB" "$HEAD_SHA" > changed.txt || true
           else
-            git show --name-only --pretty=format: "${{ github.sha }}" > changed.txt
+            git show --name-only --no-renames --pretty=format: "${{ github.sha }}" > changed.txt
           fi
           echo "--- changed files ---"; cat changed.txt
+
+      - name: Production-record change?
+        id: record
+        # #825 6215529089 (v)(b): canonical A3/A5 freshness BLOCKS on a change
+        # to the production record (docs/production/**), and on pushes and the
+        # nightly lane; an ordinary application PR measures it non-blocking.
+        run: |
+          if grep -q '^docs/production/' changed.txt; then
+            echo "production_record=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "production_record=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Classify
         id: classify
@@ -117,14 +171,66 @@ jobs:
               const files = fs.readFileSync("changed.txt","utf8").split("\n").filter(Boolean);
               const r = m.selectBrowserGroups(files);
               const specs = m.specsForGroups(r.groups);
+              // AN EMPTY SELECTION THAT STILL RAN MEANS "RUN EVERYTHING".
+              // This job is gated on `browser_run || full_matrix_required`, so
+              // reaching it with NO groups can only mean the second: the whole
+              // suite, unselected. That is extended coverage by definition, and
+              // it must be treated as such -- 4 shards and the 18 min ceiling.
+              // Before this line it fell through the targeted branch and ran the
+              // entire suite split across the TARGETED shard count under the
+              // TARGETED 15 min cap, which is strictly less time and fewer
+              // runners than the same workload gets when it is named extended.
+              const fullSuite = !specs || specs.length === 0;
+              const extended = r.extended || fullSuite;
+              // Extended runs the whole suite, which is never fewer files than
+              // shards. Targeted is capped at what it actually selected.
+              const shardTotal = extended
+                ? 4
+                : Math.max(1, Math.min(3, specs.length));
               const out = [
                 `browser_run=${r.groups.length > 0}`,
-                `browser_extended=${r.extended}`,
+                `browser_extended=${extended}`,
                 `browser_specs=${specs ? specs.map(s => "e2e/" + s).join(" ") : ""}`,
                 // Extended coverage is split across two SEPARATE JOBS, so each
                 // shard gets its own runner and its own Supabase stack. That
                 // preserves the isolation the single-worker config protects.
-                `browser_shards=${r.extended ? "[1,2,3,4]" : "[1]"}`,
+                //
+                // TARGETED IS SPLIT TOO, AND IT WAS THE LANE THAT NEEDED IT.
+                // It ran every selected spec in ONE shard while extended - the
+                // lane with FEWER specs per shard - already had four. On a diff
+                // touching `booking` + `owner_admin` that is 36 specs in one
+                // job: measured at 680s, 745s and 761s of tests on identical
+                // work, against a 15 min budget that ~180s of setup eats into.
+                // One of those four runs passed. The workload was never the
+                // variable; the runner was.
+                //
+                // THREE, NOT TWO, AND THE SETUP COST IS WHY.
+                // Each shard pays the fixed cost again, and this file records
+                // that cost swinging 266s -> 508s between runners. Two shards
+                // put the worst case at 380s of tests plus 508s of setup =
+                // ~14m48s against a 15 min cap, which is not a margin. Three
+                // brings the test phase to ~254s and the worst case to ~12m42s.
+                // Still no ceiling moves: no OTHER lane pays for this one.
+                //
+                // ...BUT NEVER MORE SHARDS THAN THERE ARE SPEC FILES.
+                // `playwright.config.ts` sets `fullyParallel: false`, so
+                // Playwright shards BY FILE. Hand two files to three shards and
+                // the third gets nothing, exits "No tests found", and fails the
+                // matrix child -- which fails the REQUIRED aggregator and blocks
+                // a PR for a reason that has nothing to do with its diff.
+                //
+                // THAT IS REACHABLE, NOT THEORETICAL: `smoke`, `marketing`,
+                // `responsive` and `google` are each TWO spec files, so four of
+                // the ten groups trip it on their own.
+                //
+                // Capping is preferred over `--pass-with-no-tests` deliberately.
+                // An empty shard still costs a full runner, a Supabase stack and
+                // a `next build` -- the 266s-508s this file already records --
+                // to execute nothing. And permitting empty shards globally would
+                // also silence a genuinely empty SELECTION, which is a real bug
+                // this lane should keep failing on.
+                `browser_shard_total=${shardTotal}`,
+                `browser_shards=[${Array.from({ length: shardTotal }, (_, i) => i + 1).join(",")}]`,
                 `browser_reason=${r.reason.replace(/\n/g," ").slice(0,300)}`,
               ].join("\n");
               fs.appendFileSync(process.env.GITHUB_OUTPUT, out + "\n");
@@ -141,7 +247,22 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    # A FAILURE CEILING, NOT A PERFORMANCE TARGET. The target for this lane is
+    # UNCHANGED; 15 minutes is only the point at which a run is declared broken,
+    # and is NOT an acceptable runtime.
+    #
+    # MEASURED on head e77b83cd. `npm ci` alone took 7.1 MINUTES on that runner
+    # -- against a lane that normally finishes in 3.7-4.7 min in total. Typecheck
+    # then passed (0.6 min) and Lint was 0.2 min in when the 8-minute ceiling
+    # killed the job: under one minute of budget survived install and typecheck,
+    # so Build, Unit tests and every safety gate were skipped without running.
+    # NO ASSERTION FAILED; nothing was even given the chance to.
+    #
+    # The same 7.1 min install appeared in db-integration and the Google lane on
+    # that run, so this is runner-batch variance in dependency installation, not
+    # workload growth. A ceiling that cannot absorb it reports a slow runner as a
+    # broken diff. Commands, test selection and assertions are unchanged.
+    timeout-minutes: 15
 
     # Dummy / test-safe env values. The build and test harness do not
     # need real Supabase / Stripe / Resend / Twilio / cron credentials
@@ -175,10 +296,16 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The canonical production-record checks need history and the
+          # production ref; a shallow clone made eight of them pass by
+          # asserting they could not run (#825 6204199888, 6215529089).
+          fetch-depth: 0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           # No .nvmrc and no engines.node in package.json today.
           # Pin to Node 20 (LTS), matches the docs/14 fallback and
@@ -213,6 +340,10 @@ jobs:
 
       - name: Unit tests
         run: npm test
+        env:
+          # enforce: pushes to production and production-record changes;
+          # measure (non-blocking, annotated): ordinary application PRs.
+          CANONICAL_FRESHNESS: ${{ (github.event_name != 'pull_request' || needs.changes.outputs.production_record == 'true') && 'enforce' || 'measure' }}
 
       - name: Whitespace + conflict-marker check
         # Catches stray trailing whitespace + leftover merge-conflict
@@ -247,19 +378,89 @@ jobs:
   #     stack only. No project ref, no access token, no push.
   #   * Runs as a separate job so the fast unit/static lane above is
   #     untouched; a Docker hiccup here never blocks typecheck/lint.
+  canonical-record:
+    # validate is skipped for docs-only diffs, so a production-record PR never
+    # ran the canonical checks at all (#825 6215529089). This runs ONLY the
+    # docs tests, enforced, for a docs-only change to docs/production/**.
+    name: canonical production record (docs-only)
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only == 'true' && needs.changes.outputs.production_record == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Canonical production-record checks (enforced)
+        run: npx vitest run tests/docs
+        env:
+          CANONICAL_FRESHNESS: enforce
+
   db-integration:
     name: db integration (local supabase)
     needs: changes
     if: ${{ needs.changes.outputs.database == 'true' || needs.changes.outputs.security == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    # A FAILURE CEILING, NOT A PERFORMANCE TARGET. The target for this lane is
+    # UNCHANGED; 12 minutes is only the point at which a run is declared broken.
+    # Twelve minutes is NOT an acceptable runtime for this lane.
+    #
+    # WHY 8 WAS TOO LOW. This lane historically finished at 6.1-7.5 min, which
+    # only fits when setup happens to be fast -- the ceiling and the observed
+    # run time were the same number, with nothing left for a slow runner. Both
+    # attempts on head 3013de3 were cancelled at ~8.3 min, at DIFFERENT points:
+    #
+    #   attempt 1 -- cancelled inside "Start local Supabase"; the migration
+    #     chain and every test step were skipped, so no branch code ran at all;
+    #   attempt 2 -- Supabase started (2.7 min), the full 0001->0190 chain
+    #     applied (0.9 min), fresh-managed extension proof passed, and the DB
+    #     suite then completed 1,030 tests across 21 files with ZERO failures
+    #     before the ceiling cancelled it mid-run.
+    #
+    # Supabase startup plus the migration chain alone were ~3.6 min on attempt
+    # 2, and dependency install added ~2.6 min on top, so ~6.3 min elapsed
+    # before the first test executed -- leaving under two minutes of an eight
+    # minute budget for the suite itself. Eight minutes therefore sits inside
+    # normal runner and setup variance and can cancel a HEALTHY DB suite before
+    # it reports any verdict, which reads like a broken diff and is not one.
+    #
+    # This is the same doctrine the browser lanes already carry: a hard timeout
+    # must EXCEED its performance target, or a merely slow runner is reported as
+    # a test failure. Test selection, Supabase startup and the assertions
+    # themselves are deliberately unchanged by this bump.
+    #
+    # 12 WAS STILL NOT ENOUGH, measured on head e77b83cd. `npm ci` alone took
+    # 7.1 MINUTES on that runner. Supabase then started, the full 0001->0190
+    # chain applied, the fresh-managed proof passed, and the DB suite ran real
+    # tests -- including the WAIT-03 wall-clock suite at 80/80 -- before the
+    # 12-minute ceiling cancelled it at 12.3 min. Install plus stack plus chain
+    # alone were 10.6 min, leaving under two minutes for the suite. Again NO
+    # branch assertion failed.
+    #
+    # 20 minutes is sized so that a slow-install runner still reaches a real
+    # VERDICT. It is a ceiling, not a target, and is not an acceptable runtime.
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
           cache: "npm"
@@ -268,8 +469,17 @@ jobs:
         run: npm ci
 
       - name: Set up Supabase CLI
-        uses: supabase/setup-cli@v1
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
         with:
+          # CI-HARDEN-01B. Pinned to a COMMIT, not to `v1`: `v1` is a BRANCH in
+          # supabase/setup-cli (refs/heads/v1), not a tag - that repository's
+          # tags run v1.7.1 -> v2.0.0 -> v3 - so every DB-touching job here
+          # executed whatever that branch pointed at. ab058987 == tag v1.7.1.
+          #
+          # NOT bumped to v3: v3 is a COMPOSITE action that installs the CLI
+          # from npm via Bun, with different `version` semantics. The 2.102.0
+          # pin below is a grants-parity DB-safety invariant; a major bump is a
+          # separate ticket with its own grants re-verification.
           # Pinned, not latest: the CLI version selects the local
           # postgres image, and newer images dropped the baseline
           # default privileges (grant all to anon/authenticated/
@@ -287,7 +497,7 @@ jobs:
         # resolver), that needs kong (54321), not just Postgres (54322). Bring
         # up the same trimmed stack the browser-e2e job uses (proven in CI); the
         # node-pg harness (54322) and `db reset --local` are unaffected.
-        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 
       - name: Apply full migration chain from scratch
         # Fails the job if ANY migration 0001-current cannot apply to
@@ -380,8 +590,14 @@ jobs:
     # minutes is still too slow and still worth investigating; it now reports
     # its own result instead of being cut mid-run and misread as a test failure.
     #
-    #   targeted  : target <10 min,          hard timeout 15 min
-    #   extended  : target <10 min per shard, hard timeout 18 min
+    #   targeted  : target <10 min per shard, hard timeout 15 min  (3 shards)
+    #   extended  : target <10 min per shard, hard timeout 18 min  (4 shards)
+    #
+    # NEITHER CEILING MOVED WHEN TARGETED WAS SPLIT. The targeted lane was the
+    # one breaching its budget, and the repair was to give it the sharding
+    # extended already had rather than to buy every PR more time. Raising 15
+    # would have moved the cliff for lanes that are nowhere near it; splitting
+    # moves the work.
     timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 18 || 15 }}
     strategy:
       fail-fast: false
@@ -390,10 +606,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
           cache: "npm"
@@ -402,9 +620,9 @@ jobs:
         run: npm ci
 
       - name: Set up Supabase CLI
-        uses: supabase/setup-cli@v1
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
         with:
-          # Same pin and rationale as db-integration (grants parity).
+          # Same pin and rationale as db-integration (grants parity, v1 branch).
           version: 2.102.0
 
       - name: Configure local auth for the E2E origin
@@ -419,7 +637,7 @@ jobs:
           sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
 
       - name: Start local Supabase stack (db + auth + mail capture)
-        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
@@ -434,7 +652,7 @@ jobs:
 
       - name: Cache Playwright browsers
         id: pw-cache
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ hashFiles('package-lock.json') }}
@@ -463,20 +681,39 @@ jobs:
             echo "extended coverage: native Playwright shard ${{ matrix.shard }} of 4"
             npx playwright test --shard=${{ matrix.shard }}/4
           else
+            # SHARDED OVER THE SELECTED SET, not over the whole suite. Playwright
+            # partitions exactly the specs it is handed, so the group selection
+            # above still decides WHAT runs and this only decides who runs which
+            # half. Disjoint and exhaustive by construction - proved, not
+            # assumed, by tests/ci/browser-shard-coverage.test.ts.
+            # THE DENOMINATOR IS DERIVED, NEVER LITERAL. It is capped at the
+            # selected file count upstream, so a two-file selection runs 1/2 and
+            # 2/2 rather than launching an empty 3/3 that fails "No tests found"
+            # and blocks the required aggregator.
+            SHARD_TOTAL="${{ needs.changes.outputs.browser_shard_total }}"
+            echo "targeted coverage: native Playwright shard ${{ matrix.shard }} of ${SHARD_TOTAL}"
             echo "targeted specs: ${{ needs.changes.outputs.browser_specs }}"
-            npx playwright test ${{ needs.changes.outputs.browser_specs }}
+            npx playwright test ${{ needs.changes.outputs.browser_specs }} --shard=${{ matrix.shard }}/${SHARD_TOTAL}
           fi
         env:
-          # Enables the guarded fake-Resend transport for the welcome-email
-          # contracts (success / provider-rejection / provider-exception /
-          # retry / in-progress, selected per-recipient by owner_email prefix).
-          # Server-only marker, refused in any deployed runtime; only the welcome
-          # path uses getResendTransport, so all other emails are unaffected.
+          # Enables the guarded fake-Resend transport (success /
+          # provider-rejection / provider-exception / retry / in-progress,
+          # selected per-recipient by the recipient's local-part prefix).
+          # Server-only marker, refused in any deployed runtime.
+          #
+          # RESCHEDULE-E2E-01: now REDUNDANT but harmless --
+          # e2e/helpers/local-env.ts arms the marker for every run of this lane,
+          # because webServer.env REPLACES process.env and the appointment send
+          # path needs the fake too. The note here used to say "only the welcome
+          # path uses getResendTransport, so all other emails are unaffected";
+          # that stopped being true when sendEmailSafely was routed through the
+          # resolver, which is what made the reschedule confirmation
+          # deterministic.
           HONE_E2E_FAKE_RESEND: "1"
 
       - name: Upload Playwright traces on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           # Per-shard so two shards never clobber each other's artifact.
           name: playwright-traces-shard-${{ matrix.shard }}
@@ -503,7 +740,9 @@ jobs:
   # legitimately skipped, and fails if any shard failed or was cancelled.
   browser-e2e:
     name: browser e2e (local stack)
-    needs: [changes, browser-e2e-shard]
+    # canonical-record rides on this STABLE required check (#825 6215529089,
+    # Codex P1 4296967177): branch protection must never point at a new name.
+    needs: [changes, browser-e2e-shard, canonical-record]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -518,6 +757,9 @@ jobs:
           FULL_MATRIX: ${{ needs.changes.outputs.full_matrix_required }}
           EXTENDED: ${{ needs.changes.outputs.browser_extended }}
           SHARDS: ${{ needs.changes.outputs.browser_shards }}
+          RECORD_RESULT: ${{ needs.canonical-record.result }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          PRODUCTION_RECORD: ${{ needs.changes.outputs.production_record }}
         run: |
           set -euo pipefail
 
@@ -545,6 +787,21 @@ jobs:
           # a green required check.
           if [ "${CHANGES_RESULT:-}" != "success" ]; then
             echo "::error::changed-path detection did not succeed (result: ${CHANGES_RESULT:-<missing>}), browser coverage cannot be proven unnecessary, so this required check fails closed"
+            exit 1
+          fi
+
+          # Canonical production record (#825 6215529089). On a docs-only
+          # docs/production/** change validate is skipped, so canonical-record is
+          # the only check that can reject a stale record. Its result is carried
+          # HERE, failing closed, rather than relying on a new check name.
+          if [ "${DOCS_ONLY:-}" = "true" ] && [ "${PRODUCTION_RECORD:-}" = "true" ]; then
+            if [ "${RECORD_RESULT:-}" != "success" ]; then
+              echo "::error::canonical production record check did not succeed (result: ${RECORD_RESULT:-<missing>}) on a production-record change, so this required check fails closed"
+              exit 1
+            fi
+            echo "canonical record : success"
+          elif [ "${RECORD_RESULT:-}" = "failure" ] || [ "${RECORD_RESULT:-}" = "cancelled" ]; then
+            echo "::error::canonical production record check reported ${RECORD_RESULT}"
             exit 1
           fi
 
@@ -625,10 +882,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
           cache: "npm"
@@ -645,9 +904,9 @@ jobs:
           echo "HONE_E2E_FAKE_STRIPE=1" >> "$GITHUB_ENV"
 
       - name: Set up Supabase CLI
-        uses: supabase/setup-cli@v1
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
         with:
-          # Same pin and rationale as db-integration / browser-e2e (grants parity).
+          # Same pin and rationale as db-integration / browser-e2e (grants parity, v1 branch).
           version: 2.102.0
 
       - name: Configure local auth for the E2E origin
@@ -660,7 +919,7 @@ jobs:
           sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
 
       - name: Start local Supabase stack (db + auth + mail capture)
-        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
@@ -675,7 +934,7 @@ jobs:
 
       - name: Cache Playwright browsers
         id: pw-cache
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ hashFiles('package-lock.json') }}
@@ -700,7 +959,7 @@ jobs:
 
       - name: Upload Playwright traces on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: payment-playwright-traces
           path: test-results/
@@ -728,10 +987,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
           cache: "npm"
@@ -748,9 +1009,9 @@ jobs:
           echo "HONE_E2E_FAKE_STRIPE=1" >> "$GITHUB_ENV"
 
       - name: Set up Supabase CLI
-        uses: supabase/setup-cli@v1
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
         with:
-          # Same pin and rationale as the other browser lanes (grants parity).
+          # Same pin and rationale as the other browser lanes (grants parity, v1 branch).
           version: 2.102.0
 
       - name: Configure local auth for the E2E origin
@@ -761,7 +1022,7 @@ jobs:
           sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
 
       - name: Start local Supabase stack (db + auth + mail capture)
-        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
@@ -772,7 +1033,7 @@ jobs:
 
       - name: Cache Playwright browsers
         id: pw-cache
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ hashFiles('package-lock.json') }}
@@ -797,7 +1058,7 @@ jobs:
 
       - name: Upload Playwright traces on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: mobile-completion-playwright-traces
           path: test-results/
@@ -813,14 +1074,33 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.google_calendar == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # A FAILURE CEILING, NOT A PERFORMANCE TARGET. The target for this lane is
+    # UNCHANGED and it should still finish materially faster under normal runner
+    # conditions; 15 minutes is only the point at which a run is declared broken,
+    # and is NOT an acceptable runtime.
+    #
+    # MEASURED on head 2a23e3e7. `npm ci` alone consumed ~5 min before the lane
+    # could do any useful work. Everything then SUCCEEDED -- the Supabase stack
+    # started, the full migration chain applied from scratch, and Playwright
+    # reported `Running 13 tests using 1 worker`. Tests 1 through 12 passed with
+    # ZERO assertion failures, and the 10-minute ceiling cancelled the job as
+    # test 13 was beginning. Nothing failed; the suite was cut mid-run.
+    #
+    # This is the third lane on this branch to hit the same shape: a ceiling that
+    # doubles as the target cannot absorb the runner-batch variance in dependency
+    # installation, so a slow runner is reported as a broken diff. Test selection,
+    # Playwright config, Supabase startup, worker count and every assertion are
+    # deliberately unchanged by this bump.
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
           cache: "npm"
@@ -837,7 +1117,7 @@ jobs:
           echo "HONE_E2E_FAKE_GOOGLE=1" >> "$GITHUB_ENV"
 
       - name: Set up Supabase CLI
-        uses: supabase/setup-cli@v1
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
         with:
           version: 2.102.0
 
@@ -849,7 +1129,7 @@ jobs:
           sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
 
       - name: Start local Supabase stack (db + auth + mail capture)
-        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
@@ -864,7 +1144,7 @@ jobs:
 
       - name: Cache Playwright browsers
         id: pw-cache
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ hashFiles('package-lock.json') }}
@@ -889,7 +1169,7 @@ jobs:
 
       - name: Upload Playwright traces on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: google-playwright-traces
           path: test-results/

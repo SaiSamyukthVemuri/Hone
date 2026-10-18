@@ -64,6 +64,23 @@ export type Studio = {
   // exactly today's read-only checklist. Optional for rows loaded via `select *`
   // before 0140 is applied; always read as `=== true`.
   onboarding_v2_enabled?: boolean;
+  // Migration 0204: the studio-owned NEW-CLIENT admission mode
+  // ('open' | 'waitlist' | 'closed'), plus the audit evidence for who set it
+  // and when. Typed as a bare `string`, NOT the narrow union, on purpose: a row
+  // arriving through `select *` is untrusted at the type level, and
+  // `isNewClientAdmissionMode` in lib/booking/new-client-admission.ts is the one
+  // narrowing point - declaring the union here would let a caller skip it. The
+  // database CHECK constraint is what actually restricts the stored value.
+  //
+  // `..._set_by` is a bare practitioner id with NO foreign key: a second
+  // studios<->practitioners relationship would make the established
+  // practitioners -> `studio:studios(*)` PostgREST embed ambiguous.
+  //
+  // All three optional for rows loaded before 0204 is applied. An ABSENT or
+  // unrecognised mode must never be read as 'open'; resolveAdmission owns that.
+  new_client_admission_mode?: string;
+  new_client_admission_mode_set_at?: string | null;
+  new_client_admission_mode_set_by?: string | null;
   // Migration 0025: studio-level email toggles.
   send_confirmation_emails: boolean;
   send_24h_reminders: boolean;
@@ -149,6 +166,10 @@ export type Studio = {
   send_confirmation_sms: boolean;
   send_24h_sms_reminders: boolean;
   send_2h_sms_reminders: boolean;
+  // Migration 0206 (SMS-01): whether a new waitlist invitation is also texted
+  // to an eligible prospect. Default false. Optional because a row read before
+  // 0206 is applied has no such column, and absent must mean OFF.
+  send_waitlist_invitation_sms?: boolean;
 };
 
 // Migration 0140: per-studio resumable onboarding-v2 (owner first-run) state.
@@ -769,6 +790,16 @@ export type Client = {
   pronouns: string | null;
   date_of_birth: string | null;
   phone: string | null;
+  // Migration 0199: the canonical SMS destination, DERIVED from `phone` by
+  // PostgreSQL on every write (`generated always as
+  // (public.sms_normalized_phone(phone)) stored`). NULL means this client
+  // cannot be sent an SMS at all -- it is the same rule
+  // `normalizePhoneForSms` applies, owned by the database so selection and
+  // sending cannot disagree. READ-ONLY: the database rejects any attempt to
+  // write it, so never include it in an insert or update payload. Carries no
+  // consent meaning; sms_consent_at and sms_opted_out_at stay separate and are
+  // still checked independently at send time.
+  sms_phone: string | null;
   email: string | null;
   address: string | null;
   fitzpatrick_type: FitzpatrickType | null;

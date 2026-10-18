@@ -117,7 +117,7 @@ export function LastVisitCard({
               </div>
               <Link
                 href={`/clients/${clientId}/sessions/${sessionId}`}
-                className="text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+                className="inline-flex items-center min-h-[44px] min-w-[44px] text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
               >
                 Open session →
               </Link>

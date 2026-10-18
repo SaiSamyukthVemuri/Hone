@@ -1,3 +1,4 @@
+import { COMPOSED_DASHBOARD } from "./dashboard/helpers/composed-dashboard";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -17,7 +18,11 @@ const SESSION_PAGE = read(
   "app/(app)/clients/[id]/sessions/[sessionId]/page.tsx",
 );
 const RECORDS = read("app/(app)/records/page.tsx");
-const DASH = read("app/(app)/dashboard/page.tsx");
+// PERF-01C: the secondary stack now renders from
+// app/(app)/dashboard/secondary-stack.tsx behind a Suspense boundary. These
+// assertions are about render ORDER and content, so they read the COMPOSED
+// source. See tests/app/dashboard/helpers/composed-dashboard.ts.
+const DASH = COMPOSED_DASHBOARD;
 
 describe("1. mobile search input does not trigger iOS zoom", () => {
   it("the mobile sheet input is 16px (text-base), not text-sm", () => {

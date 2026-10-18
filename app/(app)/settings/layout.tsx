@@ -1,8 +1,8 @@
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import {
-  isNewClientWaitlistEnabled,
-  isNewClientWaitlistDurableEnabled,
-} from "@/lib/booking/new-client-waitlist";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
+import { getNewClientAdmissionMode } from "@/lib/booking/new-client-admission";
+import { newClientWaitlistCommitIsDurable } from "@/lib/booking/new-client-waitlist-durability-bridge";
+import { createClient } from "@/lib/supabase/server";
+import { hasActiveWaitlistEntries } from "@/lib/waitlist/operator-queue-presence";
 import { SettingsNav, type SettingsNavItem } from "./SettingsNav";
 
 // Settings layout. The tab list is computed server-side based on
@@ -27,27 +27,47 @@ export default async function SettingsLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await requirePractitionerWithStudio();
   const isOwner = practitioner.role === "owner";
-  // WAIT-02. The durable waitlist tab appears only for a studio that is BOTH
-  // waitlisting new clients AND recording those requests durably — the same
-  // subordinate contract the submit path enforces, derived here from the
+  // WAIT-02. The durable waitlist tab appears for an owner whose studio is
+  // BOTH waitlisting new clients AND recording those requests durably — the
+  // same subordinate contract the submit path enforces, derived here from the
   // SERVER-RESOLVED slug and never from anything the browser sent.
   //
-  // BOTH flags, not just the durable one. Either half alone describes a studio
-  // that is not taking durable waitlist requests: with the gate off, new
-  // clients book normally and nothing new can arrive; with the durable flag
-  // off, the studio's queue is still its inbox and a tab reading "Waiting: 0"
-  // would be actively misleading. Advertising an intake surface in either state
-  // presents a stale queue as a live one.
+  // WAITLIST-NAV-VIS-01. ...OR whose studio already holds an entry the operator
+  // can still act on (waiting / claimed / invited / expired / released). A
+  // studio with a real queue must never lose its navigation to that queue just
+  // because the rollout flags are not both set; the flags also drive public
+  // booking behaviour, so they are not the lever for exposing a tab. Terminal
+  // history (converted / removed) alone does not count.
   //
-  // Hiding the TAB is not hiding the DATA: /settings/waitlist stays reachable
-  // by URL for an owner in every rollback shape, so entries already committed
-  // never become unreachable.
+  // The presence read runs only for an owner, only when the flags have not
+  // already answered, on the RLS-scoped user client, HEAD-only. It fails
+  // closed (tab hidden). /settings/waitlist stays reachable by URL for an
+  // owner in every shape either way — this governs navigation, not access.
+  // NEW-CLIENT-MODE-01: the canonical mode replaces the two env predicates.
+  // The second half of the rule below is UNCHANGED and deliberately so - a
+  // studio with a real queue must never lose its navigation to that queue,
+  // whatever the mode says. That is also why UNKNOWN cannot hide an active
+  // queue: an unreadable mode is not evidence that the queue is gone.
+  //
+  // THE FIRST HALF IS THE DURABLE COMMIT PATH, NOT THE MODE. `waitlist` alone
+  // was wrong: during the migration bridge a studio can be in WAITLIST mode
+  // while its joins still commit through legacy email acceptance, so the tab
+  // would open an operator queue that nothing writes to. The owner would be
+  // shown an empty queue while their prospects sat in an inbox - and a deploy
+  // that is meant to change no behaviour would have added a tab.
+  //
+  // This tab EXISTS to work a durable queue, so the question it must ask is
+  // whether a permitted join lands in one. That is exactly the bridge's
+  // decision, reused rather than restated: persisted WAITLIST always durable,
+  // legacy-inherited WAITLIST only while the legacy durable list says so.
+  const admission = await getNewClientAdmissionMode(studio);
+  const waitlistLive = newClientWaitlistCommitIsDurable(admission, studio.slug);
   const waitlistTabVisible =
     isOwner &&
-    isNewClientWaitlistEnabled(studio.slug) &&
-    isNewClientWaitlistDurableEnabled(studio.slug);
+    (waitlistLive ||
+      (await hasActiveWaitlistEntries(await createClient(), studio.id)));
 
   const items: SettingsNavItem[] = [
     { href: "/settings/profile", label: "Profile" },

@@ -523,7 +523,11 @@ describe("0185: nothing can convert, move or rewrite an entry", () => {
         "update public.new_client_waitlist_entries set status = 'converted' where id = $1",
         [created.entry_id],
       ),
-    ).rejects.toThrow(/only permitted status transition is waiting -> removed/);
+      // 0188 replaced this guard with the full invitation lifecycle. The rule
+      // asserted here is UNCHANGED, restated in the CURRENT wording: `converted`
+      // is reachable only from `invited`, so a waiting row still cannot be
+      // converted even by the table owner.
+    ).rejects.toThrow(/illegal lifecycle transition waiting -> converted/);
   });
 
   it("removed -> waiting is refused: history is not resurrected", async () => {
@@ -536,7 +540,7 @@ describe("0185: nothing can convert, move or rewrite an entry", () => {
           where id = $1`,
         [created.entry_id],
       ),
-    ).rejects.toThrow(/only permitted status transition/);
+    ).rejects.toThrow(/illegal lifecycle transition removed -> waiting/);
   });
 
   it("a row cannot be moved to another studio", async () => {
@@ -549,12 +553,25 @@ describe("0185: nothing can convert, move or rewrite an entry", () => {
     ).rejects.toThrow(/immutable/);
   });
 
-  it("contact details are frozen — there is no correction path in this release", async () => {
+  it("name and email are frozen, and the mobile is ONE-WAY", async () => {
+    // 0202 NARROWED THIS CLAUSE, DELIBERATELY, AND THIS TEST IS STRICTER FOR IT.
+    //
+    // It used to read "contact details are frozen — there is no correction path
+    // in this release" and loop name/email/phone through one message. Name and
+    // email still have no correction path at all. The mobile now has exactly
+    // one: a legacy entry that never had a number must be able to receive one
+    // through a completion, because that is the single thing the completion
+    // surface exists to do.
+    //
+    // ONE is the operative word. Absent may become present exactly once; present
+    // may never become a DIFFERENT number and may never become absent. That is
+    // what stops a bearer link retargeting a studio's texts, and it is now
+    // asserted in all three directions rather than implied by a blanket freeze.
     const created = await join(a.studioId, "Frozen", email("frozen"));
+
     for (const [column, value] of [
       ["name", "Someone Else"],
       ["email", "someone.else@harness.local"],
-      ["phone", "555 0000"],
     ] as const) {
       await expect(
         adminQuery(
@@ -562,8 +579,32 @@ describe("0185: nothing can convert, move or rewrite an entry", () => {
           [created.entry_id, value],
         ),
         `${column} must be immutable`,
-      ).rejects.toThrow(/contact details are immutable/);
+      ).rejects.toThrow(/name and email are immutable/);
     }
+
+    // The entry was created with NO phone (join() defaults it to null), so the
+    // first write is the one a completion performs.
+    await adminQuery(
+      `update public.new_client_waitlist_entries set phone = '555 0000' where id = $1`,
+      [created.entry_id],
+    );
+
+    // And from here it is as frozen as the rest.
+    await expect(
+      adminQuery(
+        `update public.new_client_waitlist_entries set phone = '555 1111' where id = $1`,
+        [created.entry_id],
+      ),
+      "a stored mobile may not be REPLACED",
+    ).rejects.toThrow(/may not be replaced or cleared/);
+
+    await expect(
+      adminQuery(
+        `update public.new_client_waitlist_entries set phone = null where id = $1`,
+        [created.entry_id],
+      ),
+      "a stored mobile may not be CLEARED",
+    ).rejects.toThrow(/may not be replaced or cleared/);
   });
 
   it("removal evidence cannot be forged onto a waiting row", async () => {
@@ -574,8 +615,13 @@ describe("0185: nothing can convert, move or rewrite an entry", () => {
         [created.entry_id],
       ),
       // Two independent layers refuse this: the BEFORE UPDATE trigger (which
-      // fires first) and the all-or-nothing CHECK behind it.
-    ).rejects.toThrow(/removal evidence is recorded once|removal_evidence_check/);
+      // fires first) and the all-or-nothing CHECK behind it. 0188 widened the
+      // trigger's clause from a removal-specific rule to one that freezes EVERY
+      // lifecycle stamp whenever `status` does not change -- strictly broader,
+      // so the forgery is still refused, and the CHECK still backs it up.
+    ).rejects.toThrow(
+      /lifecycle evidence changes only in the statement that performs a legal transition|removal_evidence_check/,
+    );
   });
 
   it("REMOVAL EVIDENCE IS WRITE-ONCE — it cannot be rewritten afterwards", async () => {
@@ -607,7 +653,9 @@ describe("0185: nothing can convert, move or rewrite an entry", () => {
       await expect(
         adminQuery(sql, [...params]),
         `${label} must be refused`,
-      ).rejects.toThrow(/removal evidence is recorded once|removal_evidence_check/);
+      ).rejects.toThrow(
+        /lifecycle evidence changes only in the statement that performs a legal transition|removal_evidence_check/,
+      );
     }
 
     // The original evidence is intact.
@@ -731,7 +779,9 @@ describe("0185: negative control", () => {
         "update public.new_client_waitlist_entries set removed_by_practitioner_id = $2 where id = $1",
         [created.entry_id, aMember.practitionerId],
       ),
-    ).rejects.toThrow(/removal evidence is recorded once/);
+    ).rejects.toThrow(
+      /lifecycle evidence changes only in the statement that performs a legal transition/,
+    );
 
     // ...and the original attribution survived the whole exercise.
     const row = await adminQuery(
@@ -801,7 +851,7 @@ describe("0185: negative control", () => {
     const restored = await adminQuery(
       `select indexdef from pg_indexes
         where tablename = 'new_client_waitlist_entries'
-          and indexname = 'new_client_waitlist_entries_one_waiting_per_email'`,
+          and indexname = 'new_client_waitlist_entries_one_active_per_email'`,
     );
     expect(restored.rows[0].indexdef).toContain("(studio_id, email_normalized)");
     const mutation = await adminQuery(

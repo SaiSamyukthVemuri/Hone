@@ -328,13 +328,32 @@ describe("guard 2: every column of an exported table is accounted for", () => {
         .map((c) => c.column);
       if (pending.length > 0) pendingByTable.set(resource, pending);
     }
-    // The four the recon named, none of them hard-coded into the MECHANISM —
-    // the mechanism is set arithmetic against the database. They are asserted
-    // here only to prove the accounting reached the columns that motivated it.
-    expect(pendingByTable.get("clients")).toContain("contraindications");
-    expect(pendingByTable.get("clients")).toContain("photo_consent");
-    expect(pendingByTable.get("laser_entries")).toContain("ejection_results");
-    expect(pendingByTable.get("electrolysis_entries")).toContain("pulse_delay_seconds");
+    // TRUTH-01B-1 CLOSED the four gaps that originally motivated this
+    // accounting — contraindications, photo_consent, ejection_results and
+    // pulse_delay_seconds are exported now, so they are no longer omissions and
+    // asserting them here would be asserting a falsehood. What the mechanism
+    // has to keep proving is that the gaps which REMAIN stay visible, so the
+    // pins move to those. None is hard-coded into the mechanism itself; it is
+    // set arithmetic against the live database either way.
+    for (const closed of [
+      ["clients", "contraindications"],
+      ["clients", "photo_consent"],
+      ["laser_entries", "ejection_results"],
+      ["electrolysis_entries", "pulse_delay_seconds"],
+    ] as const) {
+      expect(
+        pendingByTable.get(closed[0]) ?? [],
+        `${closed[0]}.${closed[1]} is exported now and must not still read as an omission`,
+      ).not.toContain(closed[1]);
+    }
+    // The remaining admissions: creator/deleter attribution, the delete
+    // narrative, and the one free-text field held for a product judgment.
+    expect(pendingByTable.get("clients")).toContain("notes");
+    expect(pendingByTable.get("clients")).toContain("created_by");
+    expect(pendingByTable.get("electrolysis_entries")).toContain("delete_reason");
+    expect(pendingByTable.get("laser_entries")).toContain("deleted_by");
+    expect(pendingByTable.get("appointments")).toContain("created_by_practitioner_id");
+    expect(pendingByTable.get("treatment_goals")).toContain("created_by");
   });
 
   it("every pending_review column says what the studio does not get", () => {
@@ -1027,6 +1046,95 @@ describe("what is excluded, and on what grounds", () => {
         disposition.kind === "pending" && disposition.fieldReviewRequired,
         `${resource} must not be exported raw without a field decision`,
       ).toBe(true);
+    }
+  });
+});
+
+// ===========================================================================
+// WAIT-ADMIT-01 (0193) — the three resources this slice created
+// ===========================================================================
+//
+// Guard 1 already fails if any of these is missing a disposition. These pin the
+// SPECIFIC verdicts, so a later edit cannot quietly re-tier them — most
+// importantly, cannot drop the field review off the one table that holds a live
+// credential.
+describe("0193 waitlist admission resources are classified deliberately", () => {
+  it("preferences are tier 1 studio-owned content, needing no field review", () => {
+    const d = EXPORT_RESOURCE_REGISTRY["new_client_waitlist_entry_preferences"];
+    expect(d.kind).toBe("pending");
+    if (d.kind !== "pending") return;
+    expect(d.ticket).toBe("TRUTH-01B");
+    // Same class as new_client_waitlist_entries, whose demand records this is a
+    // one-to-one attribute of.
+    expect(d.tier).toBe(1);
+    expect(d.fieldReviewRequired ?? false).toBe(false);
+  });
+
+  it("preference grants carry a live credential, so they are tier 2 AND field-reviewed", () => {
+    const d = EXPORT_RESOURCE_REGISTRY["new_client_waitlist_preference_grants"];
+    expect(d.kind).toBe("pending");
+    if (d.kind !== "pending") return;
+    expect(d.ticket).toBe("TRUTH-01B");
+    expect(d.tier).toBe(2);
+    // token_hash must never be emitted, raw or otherwise. Dropping this flag is
+    // the regression this assertion exists to catch.
+    expect(
+      d.fieldReviewRequired,
+      "token_hash is security material: this resource must never be queued for a raw dump",
+    ).toBe(true);
+  });
+
+  it("matches the invitation precedent it deliberately mirrors", () => {
+    const grants = EXPORT_RESOURCE_REGISTRY["new_client_waitlist_preference_grants"];
+    const invitations = EXPORT_RESOURCE_REGISTRY["new_client_waitlist_invitations"];
+    expect(grants.kind).toBe("pending");
+    expect(invitations.kind).toBe("pending");
+    if (grants.kind !== "pending" || invitations.kind !== "pending") return;
+    // Two hashed-token lifecycles for the same feature must not drift apart.
+    expect(grants.tier).toBe(invitations.tier);
+    expect(grants.fieldReviewRequired).toBe(invitations.fieldReviewRequired);
+  });
+
+  it("admission policy is tier 1 standing configuration, like availability defaults", () => {
+    const policy = EXPORT_RESOURCE_REGISTRY["studio_waitlist_admission_policy"];
+    expect(policy.kind).toBe("pending");
+    if (policy.kind !== "pending") return;
+    expect(policy.ticket).toBe("TRUTH-01B");
+    expect(policy.tier).toBe(1);
+    expect(policy.fieldReviewRequired ?? false).toBe(false);
+
+    // The class it belongs to: durable configuration the owner authored.
+    for (const sibling of ["studio_availability_default", "studio_recurring_break_rules"]) {
+      const d = EXPORT_RESOURCE_REGISTRY[sibling];
+      expect(d.kind).toBe("pending");
+      if (d.kind !== "pending") continue;
+      expect(d.tier, `${sibling} anchors the standing-configuration tier`).toBe(1);
+    }
+  });
+
+  it("is NOT lumped in with the transient per-round allowance", () => {
+    // studio_waitlist_admission_rounds holds THIS ROUND's number and is tier 2;
+    // the policy row is the durable choice behind it. The adjacent names invite
+    // exactly this conflation, so the distinction is pinned rather than assumed.
+    const rounds = EXPORT_RESOURCE_REGISTRY["studio_waitlist_admission_rounds"];
+    const policy = EXPORT_RESOURCE_REGISTRY["studio_waitlist_admission_policy"];
+    expect(rounds.kind).toBe("pending");
+    expect(policy.kind).toBe("pending");
+    if (rounds.kind !== "pending" || policy.kind !== "pending") return;
+    expect(rounds.tier).toBe(2);
+    expect(policy.tier).toBe(1);
+  });
+
+  it("adds no export payload: all three are pending, none is exported", () => {
+    for (const resource of [
+      "new_client_waitlist_entry_preferences",
+      "new_client_waitlist_preference_grants",
+      "studio_waitlist_admission_policy",
+    ]) {
+      expect(
+        EXPORT_RESOURCE_REGISTRY[resource].kind,
+        `${resource} must not join the export in WAIT-ADMIT-01`,
+      ).toBe("pending");
     }
   });
 });

@@ -1,6 +1,18 @@
 import { test, expect } from "@playwright/test";
-import { seedE2eStudio, seedE2eMember, sql } from "./helpers/seed";
+import { getOwnerPractitionerId, seedE2eStudio, seedE2eMember, sql } from "./helpers/seed";
 import { loginAsOwner, loginByMagicLink } from "./helpers/flows";
+import {
+  PRACTITIONER_SMS_CONSENT_SCOPE,
+  SMS_JOIN_CONSENT_QUESTION,
+  SMS_JOIN_CONSENT_TEXT_VERSION,
+  SMS_OPERATIONAL_CONSENT_DECLINED_NOTE,
+  SMS_OPERATIONAL_CONSENT_LABEL,
+} from "@/lib/waitlist/prospect-sms-consent";
+import {
+  WAITLIST_PHONE_HELP,
+  WAITLIST_PHONE_INVALID,
+  WAITLIST_PHONE_REQUIRED,
+} from "@/lib/waitlist/signup-contact";
 
 // ===========================================================================
 // NEW-CLIENT WAITLIST, END TO END (WAIT-01 gate + WAIT-02 durable record)
@@ -17,9 +29,27 @@ const WAITLIST_SLUG = "e2e-waitlist-p0";
 
 // WHAT THIS PROVES, AND WHAT IT DELIBERATELY DOES NOT.
 //
-// This lane runs with RESEND_API_KEY="re_dummy_resend_key" (see
-// e2e/helpers/local-env.ts), so the provider genuinely refuses every send.
-// THAT IS NOW THE MOST VALUABLE SETTING THIS SPEC COULD HAVE. Under WAIT-01 a
+// THE PROVIDER REFUSES EVERY SEND IN THIS SPEC, AND IT IS NOW ASKED TO.
+//
+// This used to rely on RESEND_API_KEY="re_dummy_resend_key" being rejected by
+// the real Resend API. RESCHEDULE-E2E-01 arms the server-only fake transport for
+// the whole lane, whose default mode ACCEPTS -- which would have left this spec
+// documenting a refusal it no longer exercised, and passing anyway, because its
+// durable-commit assertions render the same result either way. So the refusal is
+// now ASKED FOR, per recipient, for BOTH sends this flow makes: the studio
+// notice to `studios.owner_email` and the client acknowledgement to the
+// visitor's own submitted address (app/book/[slug]/waitlist-actions.ts). Each
+// gets a `reject+` local part, which the fake transport reads at send time, so
+// the refusal is local to this spec, needs no global state and no restart, and
+// is identical on every run and every machine.
+//
+// The browser lane ALSO defaults the fake to `reject`
+// (HONE_E2E_FAKE_RESEND_DEFAULT_MODE), which is what the dummy key used to do
+// for every send. That default is the safety net for specs nobody has
+// enumerated; the explicit prefixes above are this spec's own claim, and they
+// survive any future change to that default.
+//
+// THAT IS THE MOST VALUABLE SETTING THIS SPEC COULD HAVE. Under WAIT-01 a
 // refused provider meant the visitor was told they had NOT joined, because the
 // email WAS the record. Under WAIT-02 the record is a committed row, so the
 // same refusal must produce:
@@ -53,11 +83,84 @@ async function seedWaitlistStudio() {
     [WAITLIST_SLUG],
   );
   await sql(`update public.studios set slug = $2 where id = $1`, [seed.studioId, WAITLIST_SLUG]);
+
+  // The OTHER half of the pair: the studio notice recipient. Only the studios
+  // row changes, so the auth user and practitioner row keep the seeded address
+  // and owner sign-in is unaffected; `owner_email` carries no unique constraint.
+  await sql(`update public.studios set owner_email = $2 where id = $1`, [
+    seed.studioId,
+    `reject+waitlist-owner-${seed.runId}@harness.local`,
+  ]);
+
+
+  // RETURN THE STUDIO TO THE PRE-0204 UNSTAMPED SHAPE, which is the only state
+  // the legacy env bridge governs.
+  //
+  // WHY THIS BECAME NECESSARY AT 0205. This lane makes a studio waitlisted by
+  // holding the reserved slug in NEW_CLIENT_WAITLIST_STUDIO_SLUGS and letting
+  // the bridge escalate `open` -> `waitlist`. The bridge is ONE-WAY and applies
+  // only to a row whose persisted authority was never initialized. Since 0205
+  // `new_client_admission_mode_set_at` carries a `now()` default, so a seeded
+  // studio is born STAMPED and `resolveAdmission` answers `persisted` / `open`
+  // -- correctly ignoring the slug, because a brand-new studio is not a legacy
+  // row. Without this the four scenarios below run against an OPEN studio and
+  // the waitlist never appears.
+  //
+  // UNSTAMPING RATHER THAN PERSISTING `waitlist` IS DELIBERATE. The refusal
+  // scenario moves the slug away and expects the server to decline the join,
+  // which is a BRIDGE behaviour: a persisted `waitlist` would survive the slug
+  // moving and that scenario would stop testing anything. This lane is about
+  // the bridge, and it retires with the bridge at cutover.
+  //
+  // The permit is required because `studios_admission_mode_guard` (BEFORE
+  // UPDATE) refuses any update touching the three admission fields without one.
+  // It is transaction-local and names exactly this studio -- the same mechanism
+  // the supported command uses, not a bypass of it. A `do` block keeps the
+  // permit and the update in ONE transaction, which `sql()` cannot otherwise
+  // guarantee: it opens a fresh connection per call. The `::uuid` casts make a
+  // malformed id a loud error rather than an interpolation hazard.
+  await sql(
+    `do $do$
+     begin
+       perform set_config(
+         'hone.admission_mode_studio_id', '${seed.studioId}'::uuid::text, true);
+       update public.studios
+          set new_client_admission_mode        = 'open',
+              new_client_admission_mode_set_at = null,
+              new_client_admission_mode_set_by = null
+        where id = '${seed.studioId}'::uuid;
+     end
+     $do$;`,
+  );
+
+  // NON-VACUITY AT SETUP. If the unstamp ever silently stops working, every
+  // scenario below would fail somewhere deep in a page flow with no hint why.
+  // Fail here instead, naming the cause.
+  const [shape] = await sql<{ unstamped: boolean }>(
+    `select new_client_admission_mode_set_at is null as unstamped
+       from public.studios where id = $1`,
+    [seed.studioId],
+  );
+  if (!shape?.unstamped) {
+    throw new Error(
+      "seedWaitlistStudio: the studio is still STAMPED, so the legacy env bridge " +
+        "cannot make it waitlisted. The admission permit or the guard changed.",
+    );
+  }
+
   return { ...seed, slug: WAITLIST_SLUG };
 }
 
 function canaryEmail(runId: string) {
-  return `e2e-waitlist-canary-${runId}@harness.local`;
+  // `reject+` ASKS the fake transport to refuse THIS recipient.
+  //
+  // app/book/[slug]/waitlist-actions.ts sends twice: the studio notice to
+  // `studios.owner_email`, and the client acknowledgement to the visitor's own
+  // submitted address -- this one. An earlier revision of this fix prefixed only
+  // the studio address, so the client acknowledgement was still ACCEPTED and the
+  // header's claim that every send is refused was still false. Both are now
+  // asked for per-recipient, which needs no global state and no restart.
+  return `reject+waitlist-canary-${runId}@harness.local`;
 }
 
 async function countsFor(studioId: string, email: string) {
@@ -91,14 +194,57 @@ async function waitlistRows(studioId: string) {
   );
 }
 
+/** Every SMS-consent fact 0202 and 0208 keep on an entry, for one studio. */
+async function consentRows(studioId: string) {
+  return sql<{
+    id: string;
+    name: string;
+    phone: string | null;
+    status: string;
+    sms_consent_at: string | null;
+    sms_consent_source: string | null;
+    sms_consent_text_version: string | null;
+    sms_consent_recorded_by_practitioner_id: string | null;
+    sms_consent_scope: string | null;
+    sms_consent_evidence_ref: string | null;
+    sms_consent_given_on: string | null;
+    sms_opted_out_at: string | null;
+  }>(
+    `select id, name, phone, status, sms_consent_at, sms_consent_source,
+            sms_consent_text_version, sms_consent_recorded_by_practitioner_id,
+            sms_consent_scope, sms_consent_evidence_ref,
+            sms_consent_given_on::text as sms_consent_given_on, sms_opted_out_at
+       from public.new_client_waitlist_entries
+      where studio_id = $1
+      order by joined_at asc, id asc`,
+    [studioId],
+  );
+}
+
 async function fillAndSubmitWaitlist(
   page: import("@playwright/test").Page,
-  opts: { name: string; email: string; phone?: string },
+  // 0208. The SMS question is required and has no default, so every journey
+  // answers it. "no" unless the scenario is about the answer itself; `null`
+  // leaves it unanswered.
+  // SMS-04: a phone number is REQUIRED, so a journey that is not about the
+  // number gets a usable one; `null` leaves the field exactly as it is.
+  opts: { name: string; email: string; phone?: string | null; sms?: "yes" | "no" | null },
 ) {
   await page.getByLabel(/^name/i).fill(opts.name);
   await page.getByLabel(/^email/i).fill(opts.email);
-  if (opts.phone) await page.getByLabel(/^phone/i).fill(opts.phone);
+  const phone = opts.phone === undefined ? "416 555 0100" : opts.phone;
+  if (phone !== null) await page.getByLabel(/^phone/i).fill(phone);
+  const sms = opts.sms === undefined ? "no" : opts.sms;
+  if (sms) await page.getByRole("radio", { name: sms === "yes" ? /^yes$/i : /^no$/i }).check();
   await page.getByRole("button", { name: /^join waitlist$/i }).click();
+}
+
+async function openWaitlistForm(page: import("@playwright/test").Page) {
+  await page.goto(`/book/${WAITLIST_SLUG}`);
+  await page.getByRole("button", { name: /new client/i }).click();
+  await expect(
+    page.getByRole("heading", { name: /join the new-client waitlist/i }),
+  ).toBeVisible({ timeout: 20_000 });
 }
 
 test.describe("new client at a waitlisted studio", () => {
@@ -286,6 +432,145 @@ test.describe("new client at a waitlisted studio", () => {
     ).toHaveCount(0);
     expect(await waitlistRows(seed.studioId)).toHaveLength(0);
   });
+
+  // 0208 — THE SMS QUESTION, THROUGH THE REAL FORM, SERVER AND DATABASE.
+  test("the SMS question has no default, refuses no answer, and records a Yes as the person's own", async ({
+    page,
+  }) => {
+    const seed = await seedWaitlistStudio();
+    await openWaitlistForm(page);
+
+    // SMS-04: the approved version-2 question, verbatim; v1 is no longer shown.
+    await expect(page.getByText(SMS_JOIN_CONSENT_QUESTION)).toBeVisible();
+    await expect(page.getByText(SMS_OPERATIONAL_CONSENT_LABEL)).toHaveCount(0);
+    const yes = page.getByRole("radio", { name: /^yes$/i });
+    const no = page.getByRole("radio", { name: /^no$/i });
+    await expect(yes).not.toBeChecked();
+    await expect(no).not.toBeChecked();
+
+    // NOT ANSWERED is refused by the server, never read as No, and writes nothing.
+    await fillAndSubmitWaitlist(page, {
+      name: "Unanswered Person",
+      email: canaryEmail(seed.runId),
+      phone: "416 555 0161",
+      sms: null,
+    });
+    await expect(page.getByText("Please choose Yes or No for text messages.")).toBeVisible({
+      timeout: 60_000,
+    });
+    expect(await waitlistRows(seed.studioId)).toHaveLength(0);
+
+    // The same visitor answers Yes and submits again.
+    await yes.check();
+    await page.getByRole("button", { name: /^join waitlist$/i }).click();
+    await expect(
+      page.getByRole("heading", { name: /you[\u2019']re on the waitlist/i }),
+    ).toBeVisible({ timeout: 60_000 });
+
+    const rows = await consentRows(seed.studioId);
+    expect(rows).toHaveLength(1);
+    // Their own answer to the sentence they saw: the form, the v2 wording, and
+    // none of a practitioner record's provenance.
+    expect(rows[0]).toMatchObject({
+      phone: "416 555 0161",
+      sms_consent_source: "public_form",
+      sms_consent_text_version: SMS_JOIN_CONSENT_TEXT_VERSION,
+      sms_consent_recorded_by_practitioner_id: null,
+      sms_consent_scope: null,
+      sms_consent_evidence_ref: null,
+      sms_consent_given_on: null,
+      sms_opted_out_at: null,
+    });
+    expect(rows[0].sms_consent_at).not.toBeNull();
+  });
+
+  test("No keeps the place and the email, and records no consent", async ({ page }) => {
+    const seed = await seedWaitlistStudio();
+    await openWaitlistForm(page);
+
+    await page.getByRole("radio", { name: /^no$/i }).check();
+    await expect(page.getByText(SMS_OPERATIONAL_CONSENT_DECLINED_NOTE)).toBeVisible();
+
+    await fillAndSubmitWaitlist(page, {
+      name: "Declining Person",
+      email: canaryEmail(seed.runId),
+      phone: "416 555 0162",
+      sms: "no",
+    });
+    await expect(
+      page.getByRole("heading", { name: /you[\u2019']re on the waitlist/i }),
+    ).toBeVisible({ timeout: 60_000 });
+
+    const rows = await consentRows(seed.studioId);
+    expect(rows).toHaveLength(1);
+    // On the list, waiting, with the number kept: declining removes SMS
+    // eligibility only.
+    expect(rows[0]).toMatchObject({
+      status: "waiting",
+      phone: "416 555 0162",
+      sms_consent_at: null,
+      sms_consent_source: null,
+      sms_consent_text_version: null,
+    });
+  });
+
+  // SMS-04 — A PHONE NUMBER IS REQUIRED FOR EVERY NEW SIGNUP, YES OR NO.
+  test("SMS-04: a blank or unusable phone is refused in the form for a Yes and a No, and nothing is written", async ({
+    page,
+  }) => {
+    const seed = await seedWaitlistStudio();
+    await openWaitlistForm(page);
+
+    const phone = page.getByLabel(/^phone number/i);
+    await expect(phone).toHaveAttribute("required", "");
+    await expect(phone).toHaveAttribute("aria-required", "true");
+    await expect(page.getByText(WAITLIST_PHONE_HELP)).toBeVisible();
+
+    for (const sms of ["no", "yes"] as const) {
+      for (const [typed, message] of [
+        ["", WAITLIST_PHONE_REQUIRED],
+        ["   ", WAITLIST_PHONE_REQUIRED],
+        ["555-12", WAITLIST_PHONE_INVALID],
+      ] as const) {
+        await fillAndSubmitWaitlist(page, {
+          name: "Phone Check",
+          email: canaryEmail(`${seed.runId}-${sms}`),
+          phone: typed,
+          sms,
+        });
+        await expect(page.getByText(message)).toBeVisible();
+        await expect(phone).toHaveAttribute("aria-invalid", "true");
+        // Keyboard users land on the field that needs fixing.
+        await expect(phone).toBeFocused();
+        await expect(
+          page.getByRole("heading", { name: /you[\u2019']re on the waitlist/i }),
+        ).toHaveCount(0);
+      }
+    }
+    expect(await waitlistRows(seed.studioId)).toHaveLength(0);
+
+    // A usable number with a No joins: same entry, same place, no consent.
+    await fillAndSubmitWaitlist(page, {
+      name: "Phone Check",
+      email: canaryEmail(`${seed.runId}-ok`),
+      phone: "416 555 0163",
+      sms: "no",
+    });
+    await expect(
+      page.getByRole("heading", { name: /you[\u2019']re on the waitlist/i }),
+    ).toBeVisible({ timeout: 60_000 });
+    const rows = await consentRows(seed.studioId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: "waiting", phone: "416 555 0163", sms_consent_at: null });
+
+    // SMS-04: this studio's waitlist texts are OFF (the default), so no join
+    // text is even claimed: the ledger has no row for the entry.
+    const ledger = await sql<{ n: number }>(
+      `select count(*)::int as n from public.sms_outbound_messages where waitlist_entry_id = $1`,
+      [rows[0].id],
+    );
+    expect(ledger[0].n).toBe(0);
+  });
 });
 
 test("an existing client at a waitlisted studio keeps the normal booking path", async ({ page }) => {
@@ -328,7 +613,7 @@ test.describe("the studio's waitlist queue", () => {
     await fillAndSubmitWaitlist(page, {
       name: "Queue Person",
       email,
-      phone: "555 0142",
+      phone: "416 555 0142",
     });
     await expect(
       page.getByRole("heading", { name: /you[\u2019']re on the waitlist/i }),
@@ -342,10 +627,14 @@ test.describe("the studio's waitlist queue", () => {
 
     await page.goto("/settings/waitlist");
     await expect(page.getByRole("heading", { name: /^waitlist$/i })).toBeVisible();
-    await expect(page.getByText(/^Waiting:\s*1$/)).toBeVisible();
+    // WAIT-EXPOSE-01 renamed this counter. It now spans every ACTIVE lifecycle
+    // state the page surfaces (waiting, held, invited, expired, released), so
+    // "Waiting: N" would be a false label. The per-section heading below still
+    // carries the waiting-only count.
+    await expect(page.getByText(/^Waitlist entries:\s*1$/)).toBeVisible();
     await expect(page.getByText("Queue Person", { exact: true })).toBeVisible();
     await expect(page.getByText(email, { exact: true })).toBeVisible();
-    await expect(page.getByText("555 0142")).toBeVisible();
+    await expect(page.getByText("416 555 0142")).toBeVisible();
 
     // 390px: the queue is usable on a phone and does not overflow.
     await page.setViewportSize({ width: 390, height: 844 });
@@ -380,6 +669,100 @@ test.describe("the studio's waitlist queue", () => {
     );
     expect(evidence.removed_at).not.toBeNull();
     expect(evidence.removed_by).not.toBeNull();
+  });
+
+  // 0208 — THE OWNER RECORDS CONSENT GIVEN OUTSIDE HONE, AND STOP STILL WINS.
+  test("the owner records SMS consent given outside Hone, and a STOP elsewhere refuses it", async ({
+    page,
+  }) => {
+    const seed = await seedWaitlistStudio();
+
+    // Two people arrive through the REAL public flow, both answering No.
+    for (const [name, phone] of [
+      ["Recorded Person", "416 555 0171"],
+      ["Stopped Person", "416 555 0172"],
+    ] as const) {
+      await openWaitlistForm(page);
+      await fillAndSubmitWaitlist(page, {
+        name,
+        email: canaryEmail(`${seed.runId}-${phone.slice(-4)}`),
+        phone,
+        sms: "no",
+      });
+      await expect(
+        page.getByRole("heading", { name: /you[\u2019']re on the waitlist/i }),
+      ).toBeVisible({ timeout: 60_000 });
+    }
+    const joined = await consentRows(seed.studioId);
+    const recordedId = joined.find((r) => r.name === "Recorded Person")!.id;
+    const stoppedId = joined.find((r) => r.name === "Stopped Person")!.id;
+
+    // The second number already said STOP to ANOTHER studio, typed differently.
+    // Nothing on this studio's row says so; the phone-wide read must.
+    const other = await seedE2eStudio();
+    await sql(
+      `insert into public.clients (id, studio_id, name, email, phone, sms_opted_out_at, sms_opt_out_source)
+       values (gen_random_uuid(), $1, $2, $3, '+1 (416) 555-0172', now(), 'twilio_stop')`,
+      [other.studioId, `Stopped Elsewhere ${other.runId}`, `e2e-stopped-${other.runId}@harness.local`],
+    );
+
+    await loginAsOwner(page, seed);
+    await page.goto("/settings/waitlist");
+
+    const recorded = page.locator(`li[data-entry-id="${recordedId}"]`);
+    await expect(recorded.getByTestId("sms-consent-status")).toHaveText("Texts: no consent on record");
+    await recorded.getByText("Record SMS consent for Recorded Person").click();
+
+    // Nothing answered: refused inline, and nothing recorded.
+    await recorded.getByRole("button", { name: /^record consent$/i }).click();
+    await expect(recorded.getByRole("alert")).toContainText("Confirm the person agreed", {
+      timeout: 20_000,
+    });
+
+    const EVIDENCE = "Agreed by phone with the owner; noted in the intake binder";
+    await recorded.getByRole("checkbox", { name: /agreed to texts about this waitlist/i }).check();
+    await recorded.getByLabel(/where is the evidence/i).fill(EVIDENCE);
+    await recorded.getByRole("radio", { name: /^day not known$/i }).check();
+    await recorded.getByRole("button", { name: /^record consent$/i }).click();
+
+    await expect(recorded.getByTestId("sms-consent-status")).toContainText(
+      "Texts: consent recorded by the studio on",
+      { timeout: 20_000 },
+    );
+    await expect(recorded.getByTestId("sms-consent-status")).toContainText(
+      "they agreed on a day not known",
+    );
+    // Recorded once; the form is not offered again.
+    await expect(recorded.getByTestId("sms-consent-form")).toHaveCount(0);
+
+    const ownerPractitionerId = await getOwnerPractitionerId(seed.studioId);
+    const after = await consentRows(seed.studioId);
+    expect(after.find((r) => r.id === recordedId)).toMatchObject({
+      phone: "416 555 0171",
+      sms_consent_source: "practitioner",
+      sms_consent_text_version: null,
+      sms_consent_recorded_by_practitioner_id: ownerPractitionerId,
+      sms_consent_scope: PRACTITIONER_SMS_CONSENT_SCOPE,
+      sms_consent_evidence_ref: EVIDENCE,
+      sms_consent_given_on: null,
+    });
+    expect(after.find((r) => r.id === recordedId)!.sms_consent_at).not.toBeNull();
+
+    // STOP WINS, PHONE-WIDE: a fully answered recording is refused.
+    const stopped = page.locator(`li[data-entry-id="${stoppedId}"]`);
+    await stopped.getByText("Record SMS consent for Stopped Person").click();
+    await stopped.getByRole("checkbox", { name: /agreed to texts about this waitlist/i }).check();
+    await stopped.getByLabel(/where is the evidence/i).fill(EVIDENCE);
+    await stopped.getByRole("radio", { name: /^i know the day$/i }).check();
+    await stopped.getByLabel(/^day they agreed$/i).fill("2026-03-01");
+    await stopped.getByRole("button", { name: /^record consent$/i }).click();
+    await expect(stopped.getByRole("alert")).toHaveText(
+      "This number replied STOP to Hone texts. Consent can't be recorded for it.",
+      { timeout: 20_000 },
+    );
+    const stoppedRow = (await consentRows(seed.studioId)).find((r) => r.id === stoppedId)!;
+    expect(stoppedRow.sms_consent_at).toBeNull();
+    expect(stoppedRow.phone).toBe("416 555 0172");
   });
 
   test("a non-owner practitioner of the same studio is refused", async ({ page }) => {
@@ -425,6 +808,10 @@ test.describe("the studio's waitlist queue", () => {
 
     await expect(page.getByText("Studio B Person", { exact: true })).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText("Studio A Person", { exact: true })).toHaveCount(0);
-    await expect(page.getByText(/^Waiting:\s*1$/)).toBeVisible();
+    // WAIT-EXPOSE-01 renamed this counter. It now spans every ACTIVE lifecycle
+    // state the page surfaces (waiting, held, invited, expired, released), so
+    // "Waiting: N" would be a false label. The per-section heading below still
+    // carries the waiting-only count.
+    await expect(page.getByText(/^Waitlist entries:\s*1$/)).toBeVisible();
   });
 });

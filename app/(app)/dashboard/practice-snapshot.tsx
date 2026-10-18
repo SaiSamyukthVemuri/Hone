@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { PendingLink } from "@/components/pending-link";
 import { dashboardDayHref } from "@/lib/dashboard/day-navigation";
 import type { PracticeDashboardMetrics } from "@/lib/dashboard/practice-metrics";
 import type { ReportingPeriod } from "@/lib/booking/reporting-period";
@@ -73,7 +74,7 @@ export function PracticeSnapshot({
       <h2 className="text-lg font-medium">Practice snapshot</h2>
       <div className="flex flex-wrap items-center gap-2">
         {PERIODS.map((p) => (
-          <Link
+          <PendingLink
             key={p.key}
             /* Carries the selected day through. Hardcoding `/dashboard?period=…`
                would snap the appointment briefing back to today every time a
@@ -90,6 +91,7 @@ export function PracticeSnapshot({
                numbers they had just asked for. This stays server-driven
                query navigation — only the scroll reset is declined. */
             scroll={false}
+            pendingLabel="Loading period…"
             aria-current={metrics.period === p.key ? "page" : undefined}
             className={
               metrics.period === p.key
@@ -98,7 +100,7 @@ export function PracticeSnapshot({
             }
           >
             {p.label}
-          </Link>
+          </PendingLink>
         ))}
       </div>
 

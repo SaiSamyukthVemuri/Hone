@@ -136,13 +136,18 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // data, so it is exported for portability alongside every comparable
     // practitioner record. Deliberately EXCLUDED from the all-or-nothing error
     // guard below — see the comment there.
+    // TRUTH-01B-1: four studio-owned resources become first-class files.
+    consentSignaturesRes,
+    probeLotsRes,
+    servicePractitionersRes,
+    treatmentGoalsRes,
     budgetContextRes,
   ] = await Promise.all([
     fetchExportRows("clients", (from, to) =>
       supabase
         .from("clients")
         .select(
-          "id, name, pronouns, date_of_birth, fitzpatrick_type, allergies, skin_notes, emergency_contact_name, emergency_contact_phone, email, phone, created_at",
+          "id, name, pronouns, date_of_birth, fitzpatrick_type, allergies, skin_notes, emergency_contact_name, emergency_contact_phone, email, phone, created_at, address, contraindications, photo_consent, sms_consent_at, sms_consent_source, sms_opted_out_at, sms_opt_out_source, archived_at",
         )
         .eq("studio_id", studio.id)
         .order("name", { ascending: true })
@@ -153,7 +158,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
       supabase
         .from("sessions")
         .select(
-          "id, client_id, practitioner_id, performed_by_practitioner_id, modality, started_at, ended_at, price_paid_cents, session_notes, created_at",
+          "id, client_id, practitioner_id, performed_by_practitioner_id, modality, started_at, ended_at, price_paid_cents, session_notes, created_at, appointment_id, treatment_plan_id, started_at_original, next_session_note, aftercare_and_risks_explained_at, record_origin, legacy_classification",
         )
         .eq("studio_id", studio.id)
         .is("deleted_at", null)
@@ -165,7 +170,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
       supabase
         .from("electrolysis_entries")
         .select(
-          "id, session_id, area, areas, probe_size, probe_lot_id, mode, intensity, duration_seconds, pulse_count, pulse_delay_seconds, comments, observation_chips, created_at, block_id, energy_level, apilus_modality, machine_frequency, minutes_performed, probe_type, hairs_treated, galvanic_ma, galvanic_duration_seconds, galvanic_intensity_percent, thermolysis_intensity_percent, thermolysis_duration_seconds, units_of_lye",
+          "id, session_id, area, areas, probe_size, probe_lot_id, mode, intensity, duration_seconds, pulse_count, pulse_delay_seconds, comments, observation_chips, created_at, block_id, energy_level, apilus_modality, machine_frequency, minutes_performed, probe_type, hairs_treated, galvanic_ma, galvanic_duration_seconds, galvanic_intensity_percent, thermolysis_intensity_percent, thermolysis_duration_seconds, units_of_lye, deleted_at",
         )
         .order("created_at", { ascending: false })
         .order("id", { ascending: true })
@@ -175,20 +180,29 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
       supabase
         .from("laser_entries")
         .select(
-          "id, session_id, zone, session_number, equipment_params, observation_notes, created_at",
+          "id, session_id, zone, session_number, equipment_params, observation_notes, created_at, ejection_results, deleted_at",
         )
         .order("created_at", { ascending: false })
         .order("id", { ascending: true })
         .range(from, to),
     ),
+    // EVERY practitioner this studio holds, ACTIVE AND INACTIVE, and the
+    // absence of an `active` filter here is the point rather than an oversight.
+    // 0134 preserves a practitioner's service_practitioners rows when they are
+    // deactivated AFTER being made eligible ("removal is a separate, explicit
+    // action"), so an active-only read let service_practitioners.csv carry a
+    // practitioner_id with no matching row in practitioners.csv — the exported
+    // archive failing the very joinability this slice exists to deliver. The
+    // `active` column is itself exported, so a consumer can still tell the two
+    // apart; nothing about practitioner PRODUCT behaviour changes, and nobody
+    // is reactivated. The read stays studio-scoped and under the same RLS.
     fetchExportRows("practitioners", (from, to) =>
       supabase
         .from("practitioners")
         .select(
-          "id, display_name, email, role, active, created_at",
+          "id, display_name, email, role, active, created_at, color, default_machine_frequency",
         )
         .eq("studio_id", studio.id)
-        .eq("active", true)
         .order("display_name", { ascending: true })
         .order("id", { ascending: true })
         .range(from, to),
@@ -227,7 +241,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
       supabase
         .from("appointments")
         .select(
-          "id, client_id, practitioner_id, service_id, starts_at, ends_at, duration_minutes, status, notes, cancellation_reason, cancelled_at, cancelled_by, created_at, updated_at",
+          "id, client_id, practitioner_id, service_id, starts_at, ends_at, duration_minutes, status, notes, cancellation_reason, cancelled_at, cancelled_by, created_at, updated_at, referral_source, rescheduled_from_appointment_id, rescheduled_to_appointment_id, cancellation_kind, booked_outside_availability",
         )
         .eq("studio_id", studio.id)
         .order("starts_at", { ascending: false })
@@ -266,10 +280,12 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // Name-resolution maps (read-only). All services and ALL practitioners
     // (including inactive) so appointment/plan rows can show a readable
     // name beside the stored ID even when the referenced row is inactive.
-    fetchAllRows((from, to) =>
+    fetchExportRows("services", (from, to) =>
       supabase
         .from("services")
-        .select("id, name")
+        .select(
+          "id, name, description, default_duration_minutes, price_cents, active, modality, sort_order, pre_care_instructions, calendar_color, created_at, updated_at",
+        )
         .eq("studio_id", studio.id)
         .order("id", { ascending: true })
         .range(from, to),
@@ -295,7 +311,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         // stays in the export, now carrying the lifecycle fact that explains
         // why an expired row needs no action.
         .select(
-          "id, date_purchased, item_description, manufacturer_name, amount_purchased, lot_number, expiry_date, date_discarded, notes, created_by_practitioner_id, created_at, updated_at",
+          "id, date_purchased, item_description, manufacturer_name, amount_purchased, lot_number, expiry_date, date_discarded, notes, created_by_practitioner_id, created_at, updated_at, probe_key",
         )
         .eq("studio_id", studio.id)
         .order("date_purchased", { ascending: false })
@@ -372,6 +388,48 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // Current client budget context (0183). One row per client, so this is
     // small; still paginated to exhaustion like every other read. `id` is the
     // deterministic tiebreak.
+    fetchExportRows("client_consent_signatures", (from, to) =>
+      supabase
+        .from("client_consent_signatures")
+        .select(
+          "id, client_id, template_id, template_title_snapshot, template_body_snapshot, template_version, template_hash, signature_name, signed_at, response, response_label_snapshot, created_at",
+        )
+        .eq("studio_id", studio.id)
+        .order("signed_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchExportRows("probe_lots", (from, to) =>
+      supabase
+        .from("probe_lots")
+        .select(
+          "id, probe_size, lot_number, expiry_date, active, notes, created_at",
+        )
+        .eq("studio_id", studio.id)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchExportRows("service_practitioners", (from, to) =>
+      supabase
+        .from("service_practitioners")
+        .select("id, service_id, practitioner_id, created_at")
+        .eq("studio_id", studio.id)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchExportRows("treatment_goals", (from, to) =>
+      supabase
+        .from("treatment_goals")
+        .select(
+          "id, client_id, estimated_total_minutes, notes, status, created_at, updated_at",
+        )
+        .eq("studio_id", studio.id)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
     fetchExportRows("client_budget_context", (from, to) =>
       supabase
         .from("client_budget_context")
@@ -404,6 +462,10 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     exposureIncidentsRes,
     auditEventsRes,
     clinicalNotesRes,
+    consentSignaturesRes,
+    probeLotsRes,
+    servicePractitionersRes,
+    treatmentGoalsRes,
     // budgetContextRes is handled SEPARATELY, immediately below — not
     // excluded from failing the export.
   ]) {
@@ -444,6 +506,11 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     exposureIncidentsRes,
     auditEventsRes,
     clinicalNotesRes,
+    servicesRes,
+    consentSignaturesRes,
+    probeLotsRes,
+    servicePractitionersRes,
+    treatmentGoalsRes,
     budgetContextRes,
   ];
   const selected = auditSelectedColumns(selectedColumnsByResource(exportReads));
@@ -502,6 +569,8 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     equipment_params: Record<string, unknown> | null;
     observation_notes: string | null;
     created_at: string;
+    ejection_results: string | null;
+    deleted_at: string | null;
   };
   const laserRows = mapExportRows(filteredLaser, (rows) =>
     (rows as unknown as LaserRow[]).map((e) => {
@@ -518,6 +587,11 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
           typeof params.spot_size === "string" ? params.spot_size : null,
         observation_notes: e.observation_notes,
         created_at: e.created_at,
+        ejection_results: e.ejection_results,
+        // SOFT-DELETE HONESTY. Entries are exported regardless of their own
+        // delete state (only the parent session is filtered), so without this
+        // a deleted entry was indistinguishable from a live one in the archive.
+        deleted_at: e.deleted_at,
       };
     }),
   );
@@ -823,6 +897,19 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   // Reduced: identity + action + changed-field NAMES + actor + timestamp only.
   // No `changes` value-snapshot JSON, no free-form `metadata` (see load above).
   writeCsv("record_keeping_audit_events", auditEventsRes);
+
+  // TRUTH-01B-1. Studio-owned resources that were pending until now. Each is
+  // studio_id-scoped at the query; service_practitioners additionally cannot
+  // cross studios because both its foreign keys are composite on studio_id.
+  writeCsv("services", servicesRes);
+
+  writeCsv("client_consent_signatures", consentSignaturesRes);
+
+  writeCsv("probe_lots", probeLotsRes);
+
+  writeCsv("service_practitioners", servicePractitionersRes);
+
+  writeCsv("treatment_goals", treatmentGoalsRes);
 
   // The clinical narrative. Shaped by the pure builder so history retention,
   // lineage and author attribution are unit-testable; serialized through the
@@ -1137,10 +1224,13 @@ below, and only those. Every listed source is exported in full: reads are
 paginated, and the export refuses rather than hand over a partial file.
 
 IT IS NOT EVERYTHING HONE HOLDS FOR YOUR STUDIO. The NOT INCLUDED section below
-lists, by name, every studio-owned record type this export does not yet carry -
-most importantly your treatment photos, your intake forms, your signed consents,
-your service menu and your payment records. That list is generated from the same
-source that decides what gets written here, so it cannot quietly fall behind.
+lists, by name, every studio-owned record type this export does not yet carry.
+That list is generated from the same source that decides what gets written here,
+so it cannot quietly fall behind. It is the ONLY list of omissions in this file,
+deliberately: a hand-written summary beside it is a second authority that goes
+stale the moment a record type is promoted, and this paragraph previously did
+exactly that - it still named signed consents and the service menu as missing
+after both had become files in this archive.
 
 WHAT THIS IS NOT: it is not a transactional database backup and it is NOT
 point-in-time consistent. Each table is read independently, so records written

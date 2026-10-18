@@ -1,0 +1,232 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:27eab7db336d4f5c2f3c2eaaf4f0c6c55ff603bd46ec5f09f45a77c691c7a858",
+  "claims": [
+    {
+      "id": "claim_3a9ac8ad822c426184ae60439470b061",
+      "statement": "components/ui is a server-compatible primitive layer: tests/components/ui-foundations.test.ts fails if any file in it declares \"use client\", uses useState, useEffect, useRef, useTransition or useFormStatus, or imports a class-merging or motion dependency.",
+      "evidence": [
+        {
+          "resource": "repo://components/ui/button.tsx#L13-L22",
+          "version": "repo-lines-v1:sha256:b693760babf44fb043a3a0448c778910747945d1bbc8c7538e8a255963ac1b64:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc2MTljYjUyNDQyNGQ0Mjc0YWMzNDVkZTJlYmI0YmUzOGNmZGIxNzQ2YjE2YTFiZWMyMTljZGNjY2I0OTRiYTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4Yjk3ZTNmZGE2MTY4MTQ2NzBiMzk2MDBkODVlMjUwZmE1N2FjNmI5MmY0YTFmZjBhODFjNWE1MGZkOGJmMTkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkzODc4M2I5ZmQ3ZmVlNmUxNzFhNmJiMGE4N2I5MjE5OGIxNzYzOTUxNzUxMDVlMWJmOGNhZTc5M2IzNTRhZjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjMyMWI5NDE4NDJiYTQwMzM0ZWQxN2MyZTk0ZWFlMTMxYjAzZDE4MDQwNGRmYTczMjYwYmU4MTE3ZjEyNjhiZjMifQ"
+        },
+        {
+          "resource": "repo://tests/components/ui-foundations.test.ts#L441-L475",
+          "version": "repo-lines-v1:sha256:8d785894deea8f78619ddb93bfa1b69b6559d55da9894f2cc7a4ac710112ff3a:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM1NTI3ODM5MGUxMDc0ODU2NmFlNDg5NDg0MTI0MWI1NWEwMjBiYmY2NWE1OTM5ZjBiMzU3Njg0YzAxZjFlNmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ2N2M2YTExM2Y0MjM1MDNhOTgwMmEzYzM1NzM3NzFhOGZkYmIyYWI5ZDE2ZTYxYTI0OTBhOGFlMTIxZjk1MDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRkNGIwYzg1NTY4OTBiMjc2MDBkYTMxNzcwNDM2MzhhYjQxMGRjYzY4MmNjNzBlNmYwOWRkZGY0OTY0OGRiM2QifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_db02b26a1d6c423dbfdf2768efd80a4b",
+      "statement": "Client components that need a hook (PendingButton, PendingLink and the dialog keyboard and return-focus hooks) live in components/ rather than components/ui/, so the server-primitive guard is kept instead of being given an exception.",
+      "evidence": [
+        {
+          "resource": "repo://components/pending-button.tsx#L3-L28",
+          "version": "repo-lines-v1:sha256:604b0447a48d178b27099efbe337af0341282675fc1897ccba340117e796b419:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJlNjgwMTg3MWEwM2Q1NGViOWI1NTViOWMwMThhMWMyNDcwMGQyYjFiZDlhODJjM2YyMTdhYTk2OTRjYTEzM2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI3YjRlZjdiZDIzZjc2ZDA4YjI0MDcxNDgxZDI2YzFmNmQwZmU5MDI2NjA1NTJlOTliMTExYjZkM2FkMjVhNjgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjoyLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjMxZTk4MjA2ZTJiZjBiYjQzMmQxNzk3NTc5ZDljYTU5MDgxZmZiNmM1MDRmMTI1NjM3NmUzMjA3MzgzZTdkNzgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVlNTgxMGM4YjUzZmJkODYxNTNmZTNkMmNlNmM3MjU4MjExYmE2OWU5ODlmZGFhMjVkMzc2NzY2ZTcxOGU0YTAifQ"
+        },
+        {
+          "resource": "repo://components/use-dialog-keyboard.ts#L5-L12",
+          "version": "repo-lines-v1:sha256:97f203c982982e173f2995fc03317e40b0ff0d077d127b74253179a0d949149f:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZWFmMjJjZjA3MzI1OTJjMjQ3MTQxY2JlNjFlZmExMTAxMjYxMmY1YTMxMjJiOWFmOWJiYWY1MmY1NzI0ZDE5NCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMzFlMGZjNmEwNzg3MTk4OTgzN2Q3NjYyMzMzYmNmNDM2YTU2NzJhOTI4MTcwZDZmOWViNWUyNGYxMjk0Yjc5MyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZGY3ZTI5YjU1NzVmMWZkYzYzOTNkMmQzY2VkZWU5YWFjOTM2NGU4NjJlNGIzZDNlZTYwNmUyMTI1NTdmMmFmZCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDNkNGE2MzBmNzEyYTlkZGNiZDc3NDk1Mjg0NzMzMzk0NmM5ZWM0NmI4YWE4M2RlNWIwYjE2MTlhNzc1OGQxZSJ9"
+        },
+        {
+          "resource": "repo://components/use-return-focus.ts#L5-L11",
+          "version": "repo-lines-v1:sha256:d32453023ac3e7c465a55165c8c1331105ee6bef5130b4fe7d42b95c6179ab99:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZWFmMjJjZjA3MzI1OTJjMjQ3MTQxY2JlNjFlZmExMTAxMjYxMmY1YTMxMjJiOWFmOWJiYWY1MmY1NzI0ZDE5NCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZjlhMDc2MDRiYWU4NTM0ZjA1ZDI2NmU1OWVmYTYzOWQ3MGZiNmYwN2E5ZWIzYTEwNTNhMmU2MGVhZjNlZDg1NiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiM2RhMzU4MjcxNmE0YjBjMmQyMjg2Y2FkZjVjMTY2Mjk1YTdjNTFjOTdlMWI5ZTg0ZDQzOWIwNzQ4YjVjMGZjYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNmFlZGM4NDA5MjgxMWI1MGE1ZTU0ODVjYjllNTc1OWViN2QzZDVhOWY1Zjg5MDRhOWRlYWMxMjUwZjUxMGQ3OSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_16b115a2414a4d048c6bd5c2214402e5",
+      "statement": "CONTROL_MIN_TOUCH ships inline-flex together with min-h-[44px], and CONTROL_COMPACT_FINE_POINTER relaxes the height to 32px only under a fine pointer media query rather than a width breakpoint; the foundations test requires the 44px floor and inline-flex for every Button variant and size.",
+      "evidence": [
+        {
+          "resource": "repo://components/ui/control-base.ts#L33-L55",
+          "version": "repo-lines-v1:sha256:576cc13f982461f737ec9bc27962a9c0899d056fc11351f5704d41e739efab76:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJhMmEzOTQ5YmExOTA4MTM3YzI4ZmMxMGI4Mjk2MDA0NjVkZjUwMjZjOTRmMjY2ZmYwMDYwNzQ1ZDA5ZDlkZWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJmYTkzNWFiNWEwYzc4NmYyYTZlMzBiYzUzNjBiNzkzOGYxYjcwYTVkZmExZDAyYjIwY2Q1NzY4YjY0ZTVlOWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjMzYWMyZDkzYzc5MDgxNDU5MmE1Nzc1ZWMxZTk1MmY0NzI0OTY2NzMyYTk4ZDIyZDI0NDFmMDA2MTJkNzNjMDAifQ"
+        },
+        {
+          "resource": "repo://tests/components/ui-foundations.test.ts#L99-L143",
+          "version": "repo-lines-v1:sha256:d5e3e68d5f75168a28b483e1dc0128f7bb992eeaac5df18b80eda7ce2863fb2c:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRhNWYxMTBiNWExMjJlY2E3YmQzYTc5YjdkMmEyZGEwMmZiYzMxODRkOTQ5M2UzNTQ1MTZlYWNjZmEyMDNmYzgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA5NGZjMGMxNzNkMWVjM2ZjNTAxZDdkZmE5Mjg1NTAxYzUyN2NmYjQ3MTI1ODNkYTNjYzM2MTgwNTY2YjRiZTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJhZGVjNGRkY2NjYzI2Zjc3MzZiMTkzNWZlODQzYjU1MTJkNmE0ZTM2ZWFlNDUyNjY2YmQzMjBjYmJiOWJkMjIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f66061d30a494441b7e71c7d0cfa6e6c",
+      "statement": "FOCUS_RING uses focus-visible with outline-hidden so that forced-colors mode keeps a transparent outline fallback when the box-shadow ring is removed, and the test checks this against CSS compiled by the installed Tailwind.",
+      "evidence": [
+        {
+          "resource": "repo://components/ui/control-base.ts#L57-L87",
+          "version": "repo-lines-v1:sha256:da63d77cfd1112ea835591de69c356e33b316f40e69e5aae57d355dbf520e88c:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIzNDEzZGEzZDdkNmE1ZGJiNzExYTE2YjhmNmZiYWU4MzBiNmFjN2I2NzUxOTY2YzE4NmFmNjQ4YzI0NjM1NTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjMyMDJjZWI3ZGQ2ODVmOGIzY2M1YmU2YWI0YWJhMmZkMmYzNmJhYWNkMzhhOTI4NGFjMjZlMjIwZTZlOGQ3ZjQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBhNzIwNTliYzljMTllOWM3MTRkZWJkMDNiZGZiM2NhZDRmYjRiMWVhZGQxMWRhY2E0MzNiNzAwNzg1ZjQ4MTkifQ"
+        },
+        {
+          "resource": "repo://tests/components/ui-foundations.test.ts#L179-L244",
+          "version": "repo-lines-v1:sha256:9cf6ae3b7156412cc37f208badd6449392d7ff4341742ebe4052bc50ddb7b49e:eyJzZWxlY3RlZExpbmVDb3VudCI6NjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZkODc1NDFlM2I4NzAyNGRmM2E2OWIyNzAxYWIzMzRjYmUzMmNmY2Q4YWYyMzUwN2Q0MzBlY2IzZjk4MWZlZDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImU0YWU0NjVmMDQ5MzBiMzU1ZTE2Y2VhN2FjZTJmZjEzYmUzMDgxNzhlNWM3ZWZhM2Y3MTFlZGFiY2FjNTBiNTYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_fb36b316c8a442fea2082dec878741b5",
+      "statement": "Button defaults to type=button, and its pending prop disables the control and sets aria-busy and data-pending; it swaps the label only when busyLabel is supplied and otherwise keeps the label in flow at opacity-0 under a centred spinner so the box and accessible name do not change.",
+      "evidence": [
+        {
+          "resource": "repo://components/ui/button.tsx#L103-L194",
+          "version": "repo-lines-v1:sha256:13aa7f94056fdbedc0a34597fe9cd29810ceb75d270b3ee9d9ba981c6c1ea326:eyJzZWxlY3RlZExpbmVDb3VudCI6OTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRlYWNmOWRmMzA0ZjMxNWVkYmI4ZjU4NjQyYWFiMWJlYjAxODAyODU1NzkxYjkzYWI1NTY4MTEwMmQzY2U3YzMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA5NGZjMGMxNzNkMWVjM2ZjNTAxZDdkZmE5Mjg1NTAxYzUyN2NmYjQ3MTI1ODNkYTNjYzM2MTgwNTY2YjRiZTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f4eea54e289b4191b3935397a973072a",
+      "statement": "PendingButton reads useFormStatus inside its form and renders a submit Button whose pending state disables it, and a browser test issues two raw activations before the busy state commits and counts real server-action POSTs to prove a rapid second activation does not reach the server.",
+      "evidence": [
+        {
+          "resource": "repo://components/pending-button.tsx#L30-L84",
+          "version": "repo-lines-v1:sha256:e03f76cd3627aef992fd36f627e9385380d196703860dc65636eee2b800934be:eyJzZWxlY3RlZExpbmVDb3VudCI6NTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhmMDZmYjA0YzA2NDllYzIwZmMyZTRmY2MxNDhiZmFkM2Y0YWFmNmJiZDc1NDc4YTJmNDRkZTg5NzRhMTM1MDIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU3MmIzNDA3MmYyY2I5NzVhMzU4MTY0MTU2YzNiYTA1NjA2NTg0ODU5NTUxZjg1ZWUzMDE3NDEzNDFlM2VlODQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://e2e/ui-r01-interaction-foundations.spec.ts#L290-L346",
+          "version": "repo-lines-v1:sha256:b6365b3531349cf814681f414a432b365e5f368f3e3d81ce46bedf19b7f786d7:eyJzZWxlY3RlZExpbmVDb3VudCI6NTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU0ZTU3NjFhMTRiOWI4Mjg3NTQzYzVmYjYxMjZjYzA4MDBkMGNlMmQxOWU5N2M0YmJiYmFiZDExYTZiM2EwYjgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJlNTA2N2FmM2ZiMTA4OTczMjIyYmY3YWNmODNhNGQ2ZTU1ZjJmOWVjYjYwZDQ3MTVlNDFlNzAzMzg4ODI2MGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM1MDJhMTMyMmZmMGU0MGZhN2Q2ZDAzNTYwNTVkMzBmMTEwYzcxMjAxZTE2NWM4ZjFjY2RiZTM0MWJkMzdkNTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_70cb8f4f4081431b840c3b740a01b5dc",
+      "statement": "PendingLink is presentation-only navigation acknowledgement driven by useLinkStatus inside the owning Link, adopted because a group-level loading.tsx stalled query-only navigations and was withdrawn.",
+      "evidence": [
+        {
+          "resource": "repo://components/pending-link.tsx#L10-L60",
+          "version": "repo-lines-v1:sha256:ad8e7b38e5165f1fa6d92e5f7915a7c9c511943cd1659448ac264014a5bdbb41:eyJzZWxlY3RlZExpbmVDb3VudCI6NTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY1OWVmNWU0ZjBiYjdmNzJhYWJiZTEyYjc2ZTAxYjgxZjFlOTQ2ZTBmNmFjMzM5MjA2NGYxNjdhYWY1YTBmOTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEwMWVhZDkzNmEyMjgxZDUzZGNjMDY0YjdlMmEyYWIwZDUzYjkyZWYzZWY3YjM0YjY2ODY3MzAwNzg5NWM4NjAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQyNGEwZmRlYWRmOWM1ODc3YTIzOTkwODU1YjgxOWQxMWZiNzRiNzMwYzU4MjIwZDBmM2E2MGUxMDU4ZjI5ZTAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjcyZTY0NWRhMmFjNGUwMGI5M2RmYTM3YTg2ZWE1Y2VlYWE3MDlkZTE5Y2M1YTkyNTkxY2M3MzNjZGMzNDA1ZDQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_16b9c8d5dbca485eb512b020f3ba89d6",
+      "statement": "ConfirmDialog replaces window.confirm with a presentational alertdialog that never calls a server action, moves focus in on open and restores the opener on close, traps Tab, closes on Escape or backdrop only while not pending, disables both 44px buttons while pending and shows a caller-supplied error in an alert region.",
+      "evidence": [
+        {
+          "resource": "repo://components/confirm-dialog.tsx#L1-L60",
+          "version": "repo-lines-v1:sha256:ab5ce917159a22d283e882b418167e10c7276c915cb8b87e9e480a2c9594e901:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ1ZmYzZTg1ZDY3MTVhN2E5ZDBmNmMxYjMyZjMwY2Q4Y2IxNDRjYzc5YzhhYmFlOTUzZWExMzc4ODlmYWUyZGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImViZDkxNzE5OGNjMDI2NDBiMGEyOGMxMmU4OWFlZjQ5YmU2OGI0M2NmNjQ0NzZhODhlNjhjYzc1MjMyNDMwYTAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ0N2NiMWE5OTM4ZTRkMmU1ODcyZmIzNzE0NGFhMzhjNDkwOTg3ZGQxNmMzYjk2NWY1ZWZkOTRjYWEwOWRiMjgifQ"
+        },
+        {
+          "resource": "repo://components/confirm-dialog.tsx#L81-L211",
+          "version": "repo-lines-v1:sha256:72f0682e4151d0517c1730e5c49749c6bb1d7eef82f10ea3bb498f42d5abc24d:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMxLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIyY2JhZTY4NTQ0ZDc5YmRjODk3M2QyNjIyZmY2NDJhYzhkMGY2MjNhMDQ2YzViMDM3Y2RhMTEyMjM1OGIyYmU0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI0NTkwZWNkYjk3NTAxOThhMDc1Njg2Njg2YmJjMzcxN2I0ZTE2YzczNzdlNDE3ZWJiOWIwNDJlNzZjOWQ4MTY1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        },
+        {
+          "resource": "repo://tests/components/confirm-dialog.test.ts#L34-L120",
+          "version": "repo-lines-v1:sha256:aba4476981f358506c870a629bd5146b22f42b0bff5287f766fcaac50daa5f56:eyJzZWxlY3RlZExpbmVDb3VudCI6ODcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM1N2Q0YWNkYzg5MzhkMDI0YmE1NzY2YjczODBiOGFlNjIyOTYzMGE0ZTkyZDIzYmM1ZTQwNGMzZmU3OWJhZDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNhNzk2YzQyNDAyZDk1MWQxNDYyYzQyMzlkNGMzNGJkMGQ1NThlMDgwNjA0OGI0ZTUxZGE5NmMxYzJmOTdkNDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e675df07224d42388b14bcc9b2d8e85b",
+      "statement": "ESLint rejects native confirm, alert and prompt in app/** and components/** both as globals and as receiver-qualified calls through a local hone-dialog rule, the financials block repeats the dialog restrictions because flat config replaces rather than merges rule options, and a test lints native forms and legitimate bindings through the real config.",
+      "evidence": [
+        {
+          "resource": "repo://eslint.config.mjs#L12-L33",
+          "version": "repo-lines-v1:sha256:dfd65b0779b19853817f5868fcff854658f8b9bdef1330d55693fa670245245f:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk3YmY0NzM1YjNlNDg1OWE4NjUzY2Y5ZmMwYTgyYzJmZTE2Y2RiNjc1ZTlmYjVjMWMzYmZiMWJiNmRiYjBiOTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwMmQyYzBkNmRjNWU3NGQ5MmZhMTRiOTFkYmVhMjY0MDkwYmViMzVmZGI5MTg4ZDliMzQxMTgxZGNlOWY0Y2UiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImFmNWU0Yjc0YTFkYmUzNTdmNWUwZTA0ZjViMmQ4NmYwYWRiMTllZDBhYTM4OTEyNzVjYjdkYjg0ZTY4NjI1OWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRhNTkyOGUxM2MwYjdkN2UxNTUyYTYzOWJhYTNiNzlhZTdmNDExZWE1YzlkYTA5ZDc1ODVlOTc3YWM2MmFhYWUifQ"
+        },
+        {
+          "resource": "repo://eslint.config.mjs#L254-L308",
+          "version": "repo-lines-v1:sha256:1dac5ef6a8386fce366b3dfe45b1c9fb7a6dedfcc45f94034d398fc023d36b33:eyJzZWxlY3RlZExpbmVDb3VudCI6NTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjliYzliODhkZjJjOTIxZDA2NzExMWUzMWM4YzgzNTlmYmZhMTE2M2JmZjBhOGUxNTEwMTA4ODUxYjJkNDAyYzMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRkNWNkMmZiNGYzZGY4ODQ1MTUyNTViMzk1MjNmMmY4YjU0NzJiZWVhOWY1NjZmZmNhMjA0ZGI4MDI1NjEwNDEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI4MmU4NWVmNGE0OGZlYjU2OWYwMDI3ODdjY2NkMDVmODc2NDUyZjE0ZTlkZjQ2Y2M4NWM3YTQ2ZGMxMWNhMzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUxNzAxNjBjYjQxNDA2Yzg2ZWFiMDkzYTk4MzhhNTllYjhhMjg5ODFhZmQ3NjYwNWRlNDEyYWRkMTg4NDJkNjYifQ"
+        },
+        {
+          "resource": "repo://eslint.config.mjs#L340-L367",
+          "version": "repo-lines-v1:sha256:0efc5da009f711d9582379081d35f071476fb8f3c3b91b5557e9674fbf6078eb:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY1NWUwOTVmMmIwYTE3MGY5OGU3OTRjNDZkNWQ3OTY2MmNhMGFiYjJlNDY2NjZkMDQ0YTAzYzM4NzRlMTdiMWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRkNWNkMmZiNGYzZGY4ODQ1MTUyNTViMzk1MjNmMmY4YjU0NzJiZWVhOWY1NjZmZmNhMjA0ZGI4MDI1NjEwNDEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjcxZmQ0M2E5NmZjNDdiZGZjNGIzZjg3OTE1NWI1ZmEzMTc3YTVjNmQ2NWI4MDY1NWQ0YThlNWNkNTZkNTZmYmYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQxMzZhYjJhMjJlY2I2NjhlNjBkZTgzOTVlNDQ1MTJmNDNlY2U1NDQ3MGQ5OGQ1OTM5NmJjZWZlZWM0Y2M5Y2UifQ"
+        },
+        {
+          "resource": "repo://tests/components/ui05-native-confirm-retirement.test.ts#L219-L246",
+          "version": "repo-lines-v1:sha256:dc7a56448eb0d5be4ee55ef285c3a02847e65007e24f9d78a0887730a9e168b9:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjExYzlmZGZiZTE2YjQzOGViYzRiZGU5NThiZWVmNDBhYmYxOTQxMzA2MzU4ODBmMWQyMzU2YjViMWFkNzhiNTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZkNmU0OWE1ZDk4MmNlZDE0NWUwZTdmZmRmMDBhMjFhY2Y3ZjA1OTdmODE1NmM2NTJjZTc4ZWMzNTE0YjY2ZjIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM0NDczNzczYzk1ZmI0ZDk2N2U4NDgzMDFhYzMwYTc5MzViMmVjMjdlMDgzMmVjYzFmMWE4Y2M4ZjdmZDFlODQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVhMGU1ZDVhMjc1NTFhZWQ4MDAzMzA3Y2Y4ZjY1ZjA5MGViZTA5NzA0ZDE4OGM3OGYwNzQ0Y2I3NGQyZjExNTMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0d20944d56d24e50b50caa1ed4f628e5",
+      "statement": "useReturnFocus moves focus to a surviving anchor only after a confirmed action that removes its own opener, while cancel and failure leave ConfirmDialog's opener restoration untouched, and browser tests prove both paths.",
+      "evidence": [
+        {
+          "resource": "repo://components/use-return-focus.ts#L13-L77",
+          "version": "repo-lines-v1:sha256:196fa6bf1513f8aad825bf1f7f31402d05c3f39f9deadce80f8cf95e0be28a69:eyJzZWxlY3RlZExpbmVDb3VudCI6NjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRiMjc4NmE5ZjY3YTAxMzRmZTI0ZWZhYjBiZWUxNDA4YWIzYWQ3ZDU4N2M0ZjM3Yzc2NDhiNWQ2MGZiZGVhM2UiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQyZmQ1MmRiOTAxZjFlOTAxMGFhOTg3NzIzZDQ4YTA3OTBmNmJhZjc1ZWY4ODYxOTNiYWE2NDQ3Yzc5YTBiYjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://e2e/ui05-native-confirm-retirement.spec.ts#L116-L170",
+          "version": "repo-lines-v1:sha256:8e6b8396042cb5199818f40a56aaceb50f698d3cc4f8228ad5a0d92ce779a873:eyJzZWxlY3RlZExpbmVDb3VudCI6NTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA4ZTAwNWY4NTRkMzk3ZDBlOTU0NjRlMjYxMWRjNDA3ZWE1ZGIyOTk2ZjAzMjliZmRjMDg4OTZmOTk2ZTVhNDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQwNDI0OWFkMGQ4ZWU0OWJjMjI4NzNiMDJhY2VmYjcyMzYxYTMwYjExY2Y4MWZlOTJjOWI5Y2MxNWVmNTY5MWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBkMDg5N2U4YjAwOGE0NzVhMmNiNTgyOWRkYWE5ZDg3ZDkwYTI0MTJiMzlhOWZhZmY5OTk1M2YwYzllMTVkYzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzOWI1OTc3ZjIxNThkMDEzNmQ5MDM0ZTE4ZDc0MmU1Y2RjNTkwMGE5N2I3NDM1YzA0YmM1MjI3MzFlNjdjYTgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_21d7e977bb584911b575d8e546a1b024",
+      "statement": "useDialogKeyboard gives in-app modals a shared keyboard contract of focus-in, focus restore, a Tab trap and Escape suppressed while busy.",
+      "evidence": [
+        {
+          "resource": "repo://components/use-dialog-keyboard.ts#L14-L60",
+          "version": "repo-lines-v1:sha256:89a1d84b51bb929ac25cd80861ce81066df50b8ed40428236717028b89bac991:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE3NWU3NDQyODM5NmE4MWEzMmE3MTYyOGQzNzM4NzEwNzQwZTVhM2Q5NTExYjYwMzk0NmRkNDg3YzhhMGQ4ODYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM2M2RhZTc5MTk2NTAwNTBiYzBhZDA2YzE0Y2U4YjBkNzI3MGVkNThmOGU1MzJlNGExNTU1NDk2OWE2NjkzMzkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE3ODg2YTgwOTA5ZWM5YzNjYzEyYTgwODU5YzM0NDZhMmQxZTY1YWVhNzI1ZTNlYzBlZTMwMWE1MDQ0NDU4ZjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY1ZTdlNTRkZmRmNGNkN2Y3ZDllMmZmMGQ0MDdiNzVjYzNmOWRjZjRlZjE2MzM1ZDgzOTA5MGM1ZGIxNzYwNTEifQ"
+        },
+        {
+          "resource": "repo://components/use-dialog-keyboard.ts#L83-L138",
+          "version": "repo-lines-v1:sha256:98c0d30587ccb41ca392c58c2532ab9a012a0e593c0da5d1f2d46d0d95ed0c30:eyJzZWxlY3RlZExpbmVDb3VudCI6NTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU2NzJhZjJmZDViZDcwZjllNmZjZWRjMWIxMWMyNDI4ZDA4NTU2MzhjZTY3MWMwMmFmMjkzYTRiMTJjMGRjMzgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI2N2M4YTdjNmY4YmFlNzA2MmVkMjU1YmZkNjcyZWU2NmVkYTkyNTcyOTk5ZjMyZmNhYjgzZmEwMDExY2IzNTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZmMmJiZmUyZWNlYmMwMzUyMDFkOWIxZGZhMWNjZDViMTE5ZmRmZjNjNDdiNGU0ZTQ5ZmU1ZTIzNGQ3MmU1ZDIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImYxMTdkYjUxZTQyYzIxOGI4OWMxODg1N2ZiYTIwYjI3MTYyZjVjMWE2MzU0MDFmMWMyNTY2ZWE1M2FkNWM0MDYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8bd8efecba214a51ab239fcc313f4488",
+      "statement": "Interaction timing is defined once as CSS custom properties (120ms press, 180ms UI, a reserved 240ms overlay) applied through marker classes, and reduced motion collapses those transitions to 1ms and stops skeleton animation rather than removing the state change.",
+      "evidence": [
+        {
+          "resource": "repo://app/globals.css#L122-L169",
+          "version": "repo-lines-v1:sha256:a21af2287e35cd6b1d663c2a8c716658f1a5fe0daf02552ed01872759c94671b:eyJzZWxlY3RlZExpbmVDb3VudCI6NDgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY4ZjAwMzg1NTVlNjUxNjdjMjE3OGQ0ZTQ0MWRkM2VlZTJiNGRmMzY4MGZmZGZmZmI4ZTgwNjE3MDU4YzJlMzUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU1MzAwODM5YzRmMzQ5N2YxNzFmYzVhODI2YjhmNmY5MGY4NzBiYzI0ZmQ2NWZhMmQwZmExZTY0ZmVkNjlmZGIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE3YzlhODFiNDY0OTU3M2QyMmE0MjEzMTMwODdhNTRjYWMyNzczNTA0MTNlZGU4ZmM2ZGNhOTljOWE3ZTVmZjcifQ"
+        },
+        {
+          "resource": "repo://components/ui/control-base.ts#L89-L95",
+          "version": "repo-lines-v1:sha256:cbdd08ceb7cdbdadc55094648146b91696fa065bd97309e65b005096ef5a1d9c:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZWFmMjJjZjA3MzI1OTJjMjQ3MTQxY2JlNjFlZmExMTAxMjYxMmY1YTMxMjJiOWFmOWJiYWY1MmY1NzI0ZDE5NCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNTg0N2U2YThkNzM5MjM3NTVmODM0ZWVlMTcxMjlhYmQ5YmQzY2JkMDlkMTNjNjhmNWY2MGRmMjRlNjE5MmU0NSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiY2Y0N2M2MzNmZDgyZjQ5ZDAyNzY1NDM0YTg4OTA0ZWEyMmQ1ZGViZDI5MmI4NTE2YzUwYzhlNTc5ZTJlOGYyMyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZjE2YjQ2YWNmNzk2MDJhNmJkMTM1NTE1ZTcxMzgyNTk1MTI4MzEyN2IwZDA5ODNkNTY1MjBkY2EwMDQyM2Y3ZSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_0919f25233664fbd9f371b27146ea772",
+      "statement": "Each Button variant has a pressed colour distinct from its hover colour so a press is visible without hover or motion, while LEAF_CONTROL_PRESS contributes only a 0.98 scale and SURFACE_PRESS is restricted to neutral-surface controls.",
+      "evidence": [
+        {
+          "resource": "repo://components/ui/button.tsx#L32-L48",
+          "version": "repo-lines-v1:sha256:45d06ac2d1e3825a1d2ed1800d606ee994fd36506249613eb32abb19b3861a59:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEzOTUyZmY0OTMyZWIyYWFmMWQ0MGZmNDAyNTliNDlhN2E0ZGU3OTE0Yjc1YmQ5MTAyOGQxNDg5MzBmZGU0NDUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFhMWQxYTYzMzkwMjI5Yzc5ODM0N2U4M2EwNDA1NDQxYzk0MDAwMzUyODRhZDE2OGMxYmY2Y2RmMWQ3MGEzNzAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjViYzRjYzI4YjAyY2IzZDBiMDZiODY1MGYyMGQ5NzBjNzBhYmExYzlmMzc0NjIwYzA5Nzk5MzYxMDg0ZWRhODYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAwMTM3MWI5Y2U5MmQ5ZTYyNDI3OTA0MmUyNjk4NzViYWU4M2JlYzM5Mzg0ZWU2ZTFmZmI0OWRlNGFmMjdiZDkifQ"
+        },
+        {
+          "resource": "repo://components/ui/control-base.ts#L101-L165",
+          "version": "repo-lines-v1:sha256:35b78494eb285bbe0b96876c10380e49fe9315e65e75d4b7cef3cd051fc68aad:eyJzZWxlY3RlZExpbmVDb3VudCI6NjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI2MWJiMmMzMzJkMTgzODFkMGU5Y2YyOTMyYTY1MTI0YWIwZTgwNTY3MGY4ZTg0N2RkMDMzN2NhZjIzZWVmNjYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBiZTQzZmRjN2M4MmE3ZGI4YTFhZDI2ODViN2ZmOTkwYmNmMGM3ZDYyMWM4YjAxZmM0MTg1NjA1OWQwOGEyMTkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://tests/components/ui-r01-interaction-foundations.test.ts#L66-L190",
+          "version": "repo-lines-v1:sha256:6e2251d37f5ba5687391e435deeb413f6702d84ea274a747f6c47ee2efee6f0c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTI1LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJjNjE4MjgwNDdiYjk2ZWUyZmFhNTgxNzJlYjJjYTlkNGIzNTAwZGU1NTU0Y2Q0NTE4M2NiMTMxZWZiZDg1NjQ2IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIwOTQ3MWNmMDY0YzJmYjY2ZDFiYzZhOTA4NmYxMWEyZjM4Mzg2ODM3NzZkYzZmZGUyMDczOTVlNjI4YWRlMDg4IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJmYWIyYjEwMmYwOTQzMTVmZjU0YzZiNjI3Mzk2NzkxNzMxMTY1MjAxMzgxMzljY2I2ZmM0ZmI0Y2IyOGE3MGExIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJmODM1OWM0ODNmZDBlMGFlZjUxY2RhYjk5OTEyMzllMzI3MDIyMWEzMjgzOGIyNTEwNDIwOGE2NWM2N2MzMzMxIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_e436dea810d446199e44e88c729bf3aa",
+      "statement": "DESIGN.md states that it is canonical for design decisions but subordinate to ENGINEERING_STANDARDS.md, tags rules as LAW, CONTRACT, PILOT or PRODUCT AUTHORITY REQUIRED, and forbids agents from promoting proposals or review comments into laws.",
+      "evidence": [
+        {
+          "resource": "repo://DESIGN.md#L1-L48",
+          "version": "repo-lines-v1:sha256:ecb0427c18be486fc5e4a53013ced1aae9e583972bc8d79090f15fadcb37b3fe:eyJzZWxlY3RlZExpbmVDb3VudCI6NDgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmOTIzOThjNDJmMTA2MDcwZDdiODg2ODZmZTMwYmVlM2M2YWI4ZTk1ZTI3ZjhkNjYzMWE4MTM2ODAwNWIyNzgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY1MmQ3MTExMDNkNTBhNDM3ODMwYzZmYmNkMDRmYjRiYWI0OWEwZjgyZjZkMjZkMWM3OTFjNmU4NDg4ZGQwOTAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ2YjA5YTlmNjFkYTBjMjA4NjM2ZTI4NTJjYzgyY2ZhN2UyOWRlNjA4MTA1OGZlNTQyMjVkYjU2MmE4YzU2ZmQifQ"
+        },
+        {
+          "resource": "repo://DESIGN.md#L339-L361",
+          "version": "repo-lines-v1:sha256:7dd2116cc193b235744ee9aca44945235b069ae1a3f455af824be0f64b3fa5e4:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY0ZDcyY2ZhZjExMzdlNmE0MzI4MDEyNjJmMDcxZmFmNWM3MWZkYzdkZDE5YzQ1NmQxOGQxMjMyZGUzOTE4NDciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRlNWMxMjJjZjg1NTA0OWI3MzE5Y2Q4MThkZTkzYjFmMjI3YzkyOGRkYWEzNzc0MzUwYjYxYmNlMzZjMGY2YTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3e64a124dc7e4214ba1cc6845e79fdd0",
+      "statement": "DESIGN.md states that the MOTION-01 pilot must not start until the drawer's dismissal geometry is resolved, and records further motion candidates as neither pilots nor scheduled.",
+      "evidence": [
+        {
+          "resource": "repo://DESIGN.md#L162-L201",
+          "version": "repo-lines-v1:sha256:6e76d4e8aff808cbc79119b70f3e360e146fa64c02321f0c8fdcdd09e290e2a5:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE5YmI3MzM3NzFiNTNjOTgxMDVlMjQ1ZTc4YmU4YTU4NmZhMWUyMDhmOTNkZGVkZTFiNzg4ODdhZTIyZTI3MmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwN2ZmYmFmMDE5YjI5YzIyZTFhMjg3MGU1YjA1ZGU5ZjVlODQ3ZmJhNzQwOTJhZDcyMjVmYzFiNjQ2N2FiZDUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEifQ"
+        },
+        {
+          "resource": "repo://DESIGN.md#L339-L346",
+          "version": "repo-lines-v1:sha256:77364cad73e8c92af43caab2ae3efa99d608e491d316408f29a5e062a4a3c1eb:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNjRkNzJjZmFmMTEzN2U2YTQzMjgwMTI2MmYwNzFmYWY1YzcxZmRjN2RkMTljNDU2ZDE4ZDEyMzJkZTM5MTg0NyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiY2FkMDI3MTk1YTNlZTYxMGYyNmEzNzlmYzQwNGU3OGE1ZjQyZTI3Mjc1Y2RlNzQyMjM1MTcyZTI2NjY5MzEyMCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMDAxZjJlYzE3NTkzYzEwNTRlYjQ2MzY3ZDg0NTNlZjI0YTE3M2NlOTZiNzExN2Q5MWY5YTY4ZDQ0ZmVmOGIwMSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMTRhMDQ3OGY2MzllODIyODU5YTI5Zjk1ZTJkNDQ5NzZhN2FmZTZiNzRjZTE5NzQ0ZjNlMDU2NTdmMDgwMzBlNyJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-04T01:59:59.625Z"
+  }
+}

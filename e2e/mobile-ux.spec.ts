@@ -1,6 +1,9 @@
 import { test, expect, type Page } from "@playwright/test";
 import {
   seedE2eStudio,
+  seedE2eDashboardClient,
+  seedE2eDashboardMemoryClient,
+  seedE2eTodayAppointment,
   getClientIdByEmail,
   getAppointmentsForClient,
   getCancellationToken,
@@ -855,3 +858,302 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await desktop.close();
   });
 });
+
+// ===========================================================================
+// MOBILE-UI-01 — the Dashboard appointment card's spatial integrity
+// ===========================================================================
+//
+// WHY THE EXISTING COVERAGE IN THIS FILE COULD NOT SEE THIS
+// ---------------------------------------------------------
+// Everything above proves `scrollWidth <= clientWidth` — no page-wide
+// horizontal overflow. That assertion was TRUE, at 375, 390 and 430, for the
+// entire life of the defect this block pins. A layout can contain itself
+// perfectly and still fall apart: the appointment card's action column was
+// right-aligned (`items-end` / `justify-end`) inside a left-aligned card, and
+// at phone width it wrapped onto its own line starting at the card's
+// content-left — the TIME gutter. Right-aligning variable-width controls then
+// put every control's LEFT edge at `rightEdge - itsOwnWidth`, so the two
+// actions landed at x=107 and x=37 while the body and Before Today sat at 109.
+// Three left edges, none of them wrong individually, all of them disagreeing.
+//
+// So these assertions are about AGREEMENT BETWEEN BOXES, which is the thing a
+// containment check structurally cannot express.
+//
+// The time cell is the second, independent cause: `w-14` is 56px and the
+// widest 12-hour label renders at 65px in the shipped font, so `7:00 AM` broke
+// into two lines. That one is measured as a LINE-BOX COUNT rather than a
+// height, because the cell is a flex item and stretches to its row.
+
+const CARD_WIDTHS = [375, 390, 430] as const;
+
+for (const width of CARD_WIDTHS) {
+  test.describe(`MOBILE-UI-01 appointment card @ ${width}px`, () => {
+    test.use({ viewport: { width, height: 900 }, hasTouch: true, isMobile: true });
+
+    test(`body, Before Today and every action share one left edge`, async ({
+      page,
+    }) => {
+      const seed = await seedE2eStudio();
+      const client = await seedE2eDashboardClient(seed, { label: `Card ${width}` });
+      await seedE2eTodayAppointment(seed, {
+        clientId: client.clientId,
+        startsMinutesFromNow: 90,
+        endsMinutesFromNow: 135,
+        withService: true,
+      });
+      await loginAsOwner(page, seed);
+      await page.goto("/dashboard");
+      await expect(
+        page.getByRole("heading", { level: 2, name: "Today", exact: true }),
+      ).toBeVisible({ timeout: 30_000 });
+
+      const m = await page.evaluate(() => {
+        const rowBody = document.querySelector('[data-testid="today-row-body"]');
+        if (!rowBody) return { error: "no today-row-body" } as const;
+        const card = rowBody.parentElement!.parentElement!;
+        const timeCell = rowBody.firstElementChild as HTMLElement;
+        const textCol = rowBody.children[1] as HTMLElement;
+        const beforeToday =
+          [...document.querySelectorAll("span")].find(
+            (s) => s.textContent?.trim() === "Before today",
+          )?.parentElement ?? null;
+        const x = (el: Element | null) =>
+          el ? +el.getBoundingClientRect().x.toFixed(1) : null;
+        const rect = (el: Element | null) => {
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          return { x: +r.x.toFixed(1), y: +r.y.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1),
+                   right: +r.right.toFixed(1), bottom: +r.bottom.toFixed(1) };
+        };
+        // A Range reports one client rect per line box — the only honest way to
+        // ask "did this text wrap?" for a flex item that stretches vertically.
+        const timeRange = document.createRange();
+        timeRange.selectNodeContents(timeCell);
+        const actions = [...document.querySelectorAll('[data-testid="today-next-action"],[data-testid="today-consultation-notes"]')];
+        // The VISIBLE text edge, not the box edge. A borderless link with
+        // horizontal padding has a box that aligns while its glyphs sit 12px
+        // further in — which is exactly how this card looked wrong while a
+        // box-only assertion passed. A Range reports the glyph run.
+        const textLeft = (el: Element | null) => {
+          if (!el) return null;
+          const r = document.createRange();
+          r.selectNodeContents(el);
+          const rects = [...r.getClientRects()];
+          return rects.length ? +Math.min(...rects.map((q) => q.left)).toFixed(1) : null;
+        };
+        return {
+          bodyX: x(textCol),
+          bodyTextX: textLeft(textCol.firstElementChild),
+          beforeTodayX: x(beforeToday),
+          secondaryTextX: textLeft(
+            document.querySelector('[data-testid="today-consultation-notes"]'),
+          ),
+          actions: actions.map((a) => ({
+            id: a.getAttribute("data-testid"),
+            ...rect(a)!,
+          })),
+          card: rect(card)!,
+          timeLineBoxes: timeRange.getClientRects().length,
+          serviceClipped: (() => {
+            const s = textCol.children[1] as HTMLElement | undefined;
+            return s ? s.scrollWidth > s.clientWidth + 1 : null;
+          })(),
+          scrollW: document.documentElement.scrollWidth,
+          clientW: document.documentElement.clientWidth,
+        };
+      });
+      expect("error" in m ? m.error : null).toBeNull();
+      if ("error" in m) return;
+
+      // 1. No page overflow — the claim the old coverage already made, kept.
+      expect(m.scrollW).toBeLessThanOrEqual(m.clientW);
+
+      // 2. The complete time label stays on ONE line at every phone width.
+      expect(m.timeLineBoxes).toBe(1);
+
+      // 3. Before Today shares the body's left edge exactly (it is the same
+      //    column, not a nested one).
+      expect(m.beforeTodayX).toBe(m.bodyX);
+
+      // 4. EVERY action aligns with the BODY, never with the TIME gutter.
+      //    This is the assertion the defect fails: it put one action 26px left
+      //    of the body and the other 96px left of it.
+      for (const a of m.actions) {
+        expect(a.x, `${a.id} left edge`).toBe(m.bodyX);
+      }
+
+      // 4b. The BORDERLESS secondary action's GLYPHS align with the body text,
+      //     not merely its padded box. The primary action is bordered, so its
+      //     border is its alignment edge and its label is legitimately inset —
+      //     that is why this assertion names the borderless control only.
+      //     Tolerance, not equality: the left side bearing of a glyph differs
+      //     between type sizes, so the body name (base size) and this link
+      //     (text-xs) can differ by a pixel with their boxes perfectly aligned.
+      //     The defect being pinned moved the glyphs 12px, so 2px is a bar it
+      //     cannot sneak under.
+      expect(
+        Math.abs((m.secondaryTextX ?? 0) - (m.bodyTextX ?? 0)),
+        "secondary action text edge vs body text edge",
+      ).toBeLessThanOrEqual(2);
+
+      // 5. Actions stay inside the card.
+      for (const a of m.actions) {
+        expect(a.x, `${a.id} inside card left`).toBeGreaterThanOrEqual(m.card.x - 0.5);
+        expect(a.right, `${a.id} inside card right`).toBeLessThanOrEqual(m.card.right + 0.5);
+        expect(a.bottom, `${a.id} inside card bottom`).toBeLessThanOrEqual(m.card.bottom + 0.5);
+      }
+
+      // 6. No action overlaps another.
+      for (let i = 0; i < m.actions.length; i++) {
+        for (let j = i + 1; j < m.actions.length; j++) {
+          const a = m.actions[i];
+          const b = m.actions[j];
+          const overlapX = Math.min(a.right, b.right) - Math.max(a.x, b.x);
+          const overlapY = Math.min(a.bottom, b.bottom) - Math.max(a.y, b.y);
+          expect(overlapX > 1 && overlapY > 1, `${a.id} overlaps ${b.id}`).toBe(false);
+        }
+      }
+
+      // 7. UI-01D/UI-01E are not undone: the actions keep their touch floor.
+      for (const a of m.actions) {
+        expect(a.h, `${a.id} height`).toBeGreaterThanOrEqual(44);
+      }
+
+      // 8. The service/meta line is no longer cut off inside its own box.
+      expect(m.serviceClipped).toBe(false);
+    });
+  });
+}
+
+// ===========================================================================
+// MOBILE-UI-01 repair round 1 — the unbroken-token class
+// ===========================================================================
+//
+// WHY THIS BLOCK EXISTS AND THE ONE ABOVE WAS NOT ENOUGH
+// ------------------------------------------------------
+// The block above proved the card's geometry with ORDINARY fixture text, and
+// passed at all three widths while a real overflow shipped. Removing
+// `truncate` from two lines restored their full text — which is the product
+// contract — but `truncate` had also been supplying `overflow: hidden`, and
+// nothing replaced it. An unbroken token then painted straight past the
+// viewport: measured on the To-do detail at 390px, ink 720px wide, document
+// scrollWidth 757 against a clientWidth of 390.
+//
+// So the class is FULL TEXT VISIBLE + NO EXPLICIT WRAP POLICY, and it is
+// invisible to any fixture whose words happen to break. These fixtures do not
+// break: they are single tokens of 200 and 500 characters, which is what a
+// studio-named service or a pasted clinical note can look like.
+//
+// The caution line is included deliberately even though it already carried
+// `break-words` and was never the offender — a proof that only covers the
+// elements known to be broken cannot show the class is closed.
+
+const HOSTILE_WIDTHS = [375, 390, 430] as const;
+
+/** No element may paint outside the viewport, and none inside the card may leave it. */
+async function provesNothingEscapes(page: Page, label: string) {
+  const m = await page.evaluate(() => {
+    const doc = document.documentElement;
+    const escapees: string[] = [];
+    // Ink, not boxes: an unbroken token overflows its box while the box itself
+    // stays put, which is exactly how this defect hid from a box-only sweep.
+    for (const el of document.querySelectorAll("span,p,div,a,h1,h2,h3")) {
+      if (el.children.length) continue;
+      if (getComputedStyle(el).overflowX === "hidden") continue; // deliberately clipped
+      const r = document.createRange();
+      r.selectNodeContents(el);
+      for (const q of r.getClientRects()) {
+        if (q.right > doc.clientWidth + 1) {
+          escapees.push(
+            `${el.tagName.toLowerCase()}."${(el.className || "").toString().slice(0, 40)}" ink=${q.right.toFixed(0)}`,
+          );
+          break;
+        }
+      }
+    }
+    return { s: doc.scrollWidth, c: doc.clientWidth, escapees };
+  });
+  expect(m.escapees, `${label}: text painting past the viewport`).toEqual([]);
+  expect(m.s, `${label}: document scrollWidth`).toBeLessThanOrEqual(m.c);
+}
+
+for (const width of HOSTILE_WIDTHS) {
+  test.describe(`MOBILE-UI-01 hostile text @ ${width}px`, () => {
+    test.use({ viewport: { width, height: 900 }, hasTouch: true, isMobile: true });
+
+    test("a 200-char unbroken service name wraps inside the card", async ({ page }) => {
+      const seed = await seedE2eStudio();
+      const client = await seedE2eDashboardClient(seed, { label: `Svc ${width}` });
+      await seedE2eTodayAppointment(seed, {
+        clientId: client.clientId,
+        startsMinutesFromNow: 90,
+        endsMinutesFromNow: 135,
+        withService: true,
+        serviceName: "S".repeat(200),
+      });
+      await loginAsOwner(page, seed);
+      await page.goto("/dashboard");
+      await expect(
+        page.getByRole("heading", { level: 2, name: "Today", exact: true }),
+      ).toBeVisible({ timeout: 30_000 });
+      await provesNothingEscapes(page, "service name");
+
+      // The repair must not have re-broken the layout it was repairing.
+      const geo = await page.evaluate(() => {
+        const rowBody = document.querySelector('[data-testid="today-row-body"]');
+        if (!rowBody) return null;
+        const timeCell = rowBody.firstElementChild as HTMLElement;
+        const textCol = rowBody.children[1] as HTMLElement;
+        const rg = document.createRange();
+        rg.selectNodeContents(timeCell);
+        const card = rowBody.parentElement!.parentElement!.getBoundingClientRect();
+        const acts = [
+          ...document.querySelectorAll(
+            '[data-testid="today-next-action"],[data-testid="today-consultation-notes"]',
+          ),
+        ].map((a) => {
+          const r = a.getBoundingClientRect();
+          return { x: +r.x.toFixed(1), h: +r.height.toFixed(1), right: +r.right.toFixed(1) };
+        });
+        return {
+          timeLineBoxes: rg.getClientRects().length,
+          bodyX: +textCol.getBoundingClientRect().x.toFixed(1),
+          acts,
+          cardRight: +card.right.toFixed(1),
+        };
+      });
+      expect(geo).not.toBeNull();
+      expect(geo!.timeLineBoxes, "time still one line").toBe(1);
+      for (const a of geo!.acts) {
+        expect(a.x, "action still aligned to body").toBe(geo!.bodyX);
+        expect(a.h, "44px floor preserved").toBeGreaterThanOrEqual(44);
+        expect(a.right, "action still inside card").toBeLessThanOrEqual(geo!.cardRight + 0.5);
+      }
+    });
+
+    test("a 500-char unbroken caution, and the To-do detail it drives, both wrap", async ({
+      page,
+    }) => {
+      const seed = await seedE2eStudio();
+      // One fixture, two members of the class: the caution renders on the card
+      // AND reaches the To-do list as an item detail, which is where the
+      // shipped overflow actually surfaced.
+      await seedE2eDashboardMemoryClient(seed, {
+        cautionNote: `Lot ${"C".repeat(500)}`,
+      });
+      await loginAsOwner(page, seed);
+      await page.goto("/dashboard");
+      await expect(
+        page.getByRole("heading", { level: 2, name: "Today", exact: true }),
+      ).toBeVisible({ timeout: 30_000 });
+      await provesNothingEscapes(page, "caution + to-do detail");
+
+      // The caution keeps the break-word contract its own guard asserts.
+      const caution = page.locator("span.whitespace-pre-wrap").filter({ hasText: "CCC" }).first();
+      await expect(caution).toBeVisible({ timeout: 30_000 });
+      expect(
+        await caution.evaluate((n) => getComputedStyle(n).overflowWrap),
+      ).toBe("break-word");
+    });
+  });
+}

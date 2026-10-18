@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { countVersion, isRepoMax } from "./helpers/migration-state";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 // Migration 0163 — remove the `authenticated` INSERT capability on
@@ -27,14 +28,32 @@ const CODE = SQL.split("\n")
   .join("\n");
 const FLAT_CODE = CODE.replace(/\s+/g, " ");
 
+const VERSION = "0163";
+
 describe("0163 — intake INSERT boundary (repo migration-max tripwire)", () => {
   it("is present, 0162 precedes it, exactly one 0163, and it is the repo max", () => {
     expect(FILE).toMatch(/^0163_.*\.sql$/);
     const files = readdirSync(MIG_DIR);
     expect(files.some((f) => f.startsWith("0162_"))).toBe(true);
     expect(files.filter((f) => /^0163_/.test(f))).toHaveLength(1);
-    // Nothing beyond 0163 may exist.
-    expect(files.filter((f) => /^0[2-9]\d\d_/.test(f))).toEqual([]);
+    // THE "NOTHING BEYOND ME" PIN IS GONE, AND THIS IS THE CASE CLAUDE.md
+    // PREDICTED. It was a hand-maintained filename-prefix regex asserting
+    // that no 0200-0999 migration existed yet. It survived 0166..0199 only
+    // because every one of those is still in the 01xx range; the FIRST 02xx
+    // migration (0200, WAIT-P1-EXIT) tripped all three copies of it at once,
+    // in three files nobody editing the waitlist would think to open.
+    //
+    // That is precisely the failure CLAUDE.md records for 0163, 0164 and 0165,
+    // where it bans both a hard-coded `toBe(<max>)` and the filename-prefix
+    // "trip on the next one" regex this line was an instance of. The literal
+    // pattern is NOT quoted here: tests/ci/ci-config.test.ts forbids it with a
+    // raw `grep -rl` over tests/, which cannot tell a pin from a comment
+    // explaining why pins are banned — so quoting it made this repair itself
+    // the offender. The tripwire is now served CENTRALLY, by the current
+    // maximum's own file, and what stays true here forever is only
+    // that 0163 is NOT the maximum and owns its number alone.
+    expect(isRepoMax(VERSION)).toBe(false);
+    expect(countVersion(VERSION)).toBe(1);
     const nums = files
       .filter((f) => /^\d{4}_.*\.sql$/.test(f))
       .map((f) => parseInt(f.slice(0, 4), 10))

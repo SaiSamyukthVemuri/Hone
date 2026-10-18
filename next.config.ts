@@ -2,6 +2,7 @@ import { withSentryConfig } from "@sentry/nextjs";
 import type { NextConfig } from "next";
 import { buildGlobalSecurityHeaders, buildTokenRoutePrivacyHeaders,  } from "./lib/security/headers";
 import { TOKEN_ROUTE_PATTERNS } from "./lib/security/token-routes";
+import { localE2eBuildSentryOverrides } from "./lib/observability/e2e-build-sentry-overrides";
 
 // PR #142. Token route privacy header prefixes. Listed once here
 // because two header blocks in next.config.ts reference the same
@@ -45,6 +46,15 @@ const GLOBAL_SECURITY_HEADERS = buildGlobalSecurityHeaders({
 const TOKEN_ROUTE_PRIVACY_HEADERS = buildTokenRoutePrivacyHeaders();
 
 const nextConfig: NextConfig = {
+  // PAY-RECEIPT-PDF: the receipt PDF is drawn with four bundled, licensed
+  // DejaVu faces read from disk at render time (lib/billing/receipt-fonts.ts).
+  // Next.js traces server dependencies statically and CANNOT see a
+  // `readFileSync(join(process.cwd(), ...))` path, so without this the fonts
+  // are absent from the serverless bundle and every receipt fails preparation
+  // in production while passing locally. The licence file ships with them.
+  outputFileTracingIncludes: {
+    "/**": ["./lib/billing/fonts/**"],
+  },
   // PR #271: treatment image uploads (a server action) can be up to 15 MB
   // (TREATMENT_IMAGE_MAX_BYTES in lib/images/treatment-images.ts). The Next.js
   // default server-action body limit (~1 MB) would reject typical phone photos,
@@ -55,25 +65,10 @@ const nextConfig: NextConfig = {
       bodySizeLimit: "16mb",
     },
   },
-  // PostHog reverse proxy. Routes /ingest/* to the PostHog ingestion endpoint so
-  // browser-side analytics calls stay on the same origin (avoids ad-blockers) and
-  // the CSP connect-src 'self' entry covers all PostHog traffic without changes.
-  async rewrites() {
-    return [
-      {
-        source: "/ingest/static/:path*",
-        destination: "https://us-assets.i.posthog.com/static/:path*",
-      },
-      {
-        source: "/ingest/array/:path*",
-        destination: "https://us-assets.i.posthog.com/array/:path*",
-      },
-      {
-        source: "/ingest/:path*",
-        destination: "https://us.i.posthog.com/:path*",
-      },
-    ];
-  },
+  // PostHog reverse proxy: NOT a rewrite (#828 G-07/G-26). /ingest/* is served
+  // by app/ingest/[...path]/route.ts, which forwards only allowlisted paths,
+  // methods and headers. A rewrite to an external origin proxies every browser
+  // header, including the page URL as Referer and the Supabase auth Cookie.
   skipTrailingSlashRedirect: true,
   async headers() {
     return [
@@ -117,12 +112,19 @@ export default withSentryConfig(nextConfig, {
     deleteSourcemapsAfterUpload: true,
   },
 
-  // Route browser -> Sentry traffic through a same-origin rewrite (/monitoring)
-  // instead of hitting *.ingest.sentry.io directly. This keeps the strict CSP
-  // (connect-src 'self') intact and defeats ad-blockers. The route is
-  // allowlisted in lib/supabase/middleware.ts so auth middleware never bounces
-  // the envelope POST to /login. Adds some serverless invocations.
-  tunnelRoute: "/monitoring",
+  // SENTRY-E2E-NOISE-02: inside a local browser lane's build ONLY, an empty
+  // auth token, so that build creates no release and uploads no source map to
+  // the operational project. Nothing in a deployed build: the override exists
+  // only where the lane's egress guard armed, which it refuses to do in any
+  // deployed runtime. See lib/observability/e2e-build-sentry-overrides.ts.
+  ...localE2eBuildSentryOverrides(),
+
+  // NO tunnelRoute (#828 G-07/G-26): it is a bare rewrite that forwards every
+  // browser header (Referer = the page URL, the Supabase auth Cookie, the
+  // client IP) to Sentry. Browser events go through the same-origin tunnel
+  // app/monitoring/route.ts instead (Sentry.init({ tunnel: "/monitoring" }) in
+  // instrumentation-client.ts), which forwards only the envelope body for
+  // Hone's own DSN. The route stays allowlisted in lib/supabase/middleware.ts.
 
   webpack: {
     // Instrument Vercel Cron Monitors automatically. No PII; gives cron

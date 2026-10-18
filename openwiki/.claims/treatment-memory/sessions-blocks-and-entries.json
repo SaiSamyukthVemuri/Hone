@@ -1,0 +1,190 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:9de94ca682929418e5bcbb85e6486a3f76d1aceed801dad06177015c0401873d",
+  "claims": [
+    {
+      "id": "claim_0c29a2f3aa154c93b242207d22432bae",
+      "statement": "A settings block may carry several treated areas in session_block_areas, each with its own laterality; child rows are authoritative when present, otherwise the legacy primary_area and side apply, and writes also keep a legacy projection that sets side only when all areas share it.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/block-areas.ts#L1-L40",
+          "version": "repo-lines-v1:sha256:a0a3c2c6d410ddb667cd6bb76e285c5e8f0dc291c90eb6494569fcf18e832086:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRhY2RjNGViOGY0ODEwOTliNjZmZmQzNmQyYjE3NDlmYTg2YmJlMmE0N2E5NzlhODAyNDcxZGY5NGRmZDdmOGQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZmZGJkZDFiNTQ3N2U3MDk2NmMwZWU5YmRjMThmNGM0ZTA3MmFjNWIxZWExNmE4ZmUwZmYyMWI2ZmQwMTU2NTkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY2YWQzMzUzZmQ0N2RhNWQ4NjBkYjIyMzliYzcyYTFlOTBjOWNmODY2Njk1ZWQ0MzJjMTdlYWJkOWFjNDcyYzUifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0128_session_block_areas.sql#L1-L24",
+          "version": "repo-lines-v1:sha256:64d87183d61b0e3c850ca4e1b9892c8eb64537fb71357df0a36e1bdb5edcba2b:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA5NzRmMTY4YWVlOTdkN2I2MzUxMWJiYWQwMGUwOWI5YTNmZGM0ZWMxNTFkNjFiNTY3NDkwMGUxNzQ1NjgxNjIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4ef6de6983a94df181c311f37ce77f29",
+      "statement": "session_block_areas.studio_id is trigger-derived from the parent block so it cannot be spoofed, and RLS limits every operation to studio members.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0128_session_block_areas.sql#L20-L30",
+          "version": "repo-lines-v1:sha256:4f3e2327899117943aae2767720100dd58e225f3bc611dbf3a618906824c39c3:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBiNTYxYTE4N2M2NzVmMWI4ODhlMGQ1YTg3ZDViOWIwMDUzZGJhYzRhYmJiOTRlY2VkYjI5YTE4ODZmZDUzNmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAwNDkxYmU0NzZlMzg5ZjE2M2E2ZDA1NTQ0NzEyZDA2MTJkZjEzYWYwNWZlNGMzYjNmY2NmMDNlYTMzMmNmZmEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFiMWYyOTYxZGJiYWJhYzk4NjI3NTdjYWQwYTBkMTczYWRhZDM0MGM4ODViN2NmNzY3ZmFkNDAxYjk5MzI3YTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkzMDQ2MWFjY2NlNWI4NDQyYjJjOTkxMzI2Y2NhNjY4OGM0N2Q4ZjU5MmVkYmViMWVmZWEyMjkyZDU1OTYzNjUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_242d581b4c214bbaa6d70d3bc93d1388",
+      "statement": "Migrations 0164 through 0168 moved every runtime clinical writer behind narrow SECURITY DEFINER commands, and 0169 then revoked INSERT, UPDATE and DELETE from authenticated on sessions, session_blocks, session_block_areas, electrolysis_entries, laser_entries and treatment_images while retaining SELECT.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0169_revoke_authenticated_clinical_direct_dml.sql#L1-L83",
+          "version": "repo-lines-v1:sha256:7eb06541dca02524530fe7a9940327dad7eb791285fac19efca6e2396dd667b2:eyJzZWxlY3RlZExpbmVDb3VudCI6ODMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFjYjgxMjk3OTJhN2I3YjU2MTM4NTFjNjZlYzBiNTQwYTljN2ZjNjg0ZDk4MzI0ZDMxZmFhYzFmZGQ4YzM2YjEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk2OGQ0YzIzZDM3YWNlZjQxZmI1ZWIwNjlkOTk2ZThiZDZhNzQyOWMxMjU3ODdjNGNlMTJiNGU3ZmI0MjJiYTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1a672df74e9e43a0a14c2f72ed5d6255",
+      "statement": "The 0166 block commands perform each block, area, entry, probe-link and chip mutation in one function body so a failure rolls back the whole workflow, and they delegate the block-and-areas half to the existing 0129 commands to keep one area-write path.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0166_session_block_electrolysis_commands.sql#L60-L78",
+          "version": "repo-lines-v1:sha256:75c70c15cedd104db1c47897c5c6028fea92e36c150dc1484dab33df5422e0bc:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhYjE0OGVlYmRlZDNiYjdiODAwOGVhMmY0YjBiMDZiNzg0YjIyNGFhNWIzMDNiNWU1NDkyN2I4MGNiYzUxNWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM5NWI1Yjg4YmE4ODgyNjk0YzE0ODhhNDM4Njg3MzU3M2Q2OWUwOTkzNjQyN2FkYTZhODlhNjhhM2Y1MjUzZDAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjExZDg4MDUwMjdhMGM1ZGY4ODAzZTE2M2YxYzY1MjFkZGU4NmY1ZTNkNjY5NzE2Njg5OTJiMDE4ZGU3YzhmNjgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM3ZTM1ZDkwMmU1YmE1ZTIzZTFmOTRhMGI0M2Y1MmQ4OGU5Y2YyNDM0ZDJkNTVmY2Q2NDNlYTJhOGNkNDFhZDMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b3b0521cf02d493591a554982e475012",
+      "statement": "Session command failures map known raised sentences to fixed practitioner wording and everything else to one generic message, so raw database text never reaches the practitioner.",
+      "evidence": [
+        {
+          "resource": "repo://lib/sessions/session-command-errors.ts#L1-L50",
+          "version": "repo-lines-v1:sha256:ac804fb2de429a0c177602fa1df0cb1cb3629cd1481aa24c247ad990cc070cd5:eyJzZWxlY3RlZExpbmVDb3VudCI6NTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjMGY0OGUzOGZiZGI2YzBlZmU5ODdjOTg0NTIxZWQwNzQzMjc1NWI2YmFhY2NmNDVkOTc3ZTU3ZGI3Y2JhZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjczN2UzYmFjZDM4NjNkNTc3YzE1MDA0NWNmMTZmNjU2YzE3M2Q0NDg4ZjkwNDQ4NjY2OGNkZDY4ZmQzNDQzZjIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImU1ODJhMWRhZWFlM2QyYWZkZDBkNTVhYmJmZGJlZDQxMGMzYjRkNjEyNjNmYWUwY2UyYzliOTNkZDE5ZmNlZTkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8da5bf500ed04df8803b3c480fd325e6",
+      "statement": "DB tests prove the 0167 session commands accept authorized same-studio writes, refuse cross-studio sessions, mismatched clients, foreign performers, plans and appointments, refuse unauthenticated and inactive callers, derive soft-delete actors, are executable by authenticated only as SECURITY DEFINER with an empty search_path, and coexist with revoked direct DML.",
+      "evidence": [
+        {
+          "resource": "repo://tests/db/session-write-commands.db.test.ts#L84-L500",
+          "version": "repo-lines-v1:sha256:76ff5c23b7a78a0fdf6f2e12372fea90419f67f83e58fe8d5e8dcf517b7b19d9:eyJzZWxlY3RlZExpbmVDb3VudCI6NDE3LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI1Y2M5NTkyZTQ2MTQ2N2YxNWNiZTczYTY3MTUyZmY1Yjk2ZDM3YjA4MzA5NmUyY2NlZjRkZWRkM2IzNWM0M2QyIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxN2Q1OTJiZDNlYjU2MWU3NzQzNzUwMzU1MDU5M2U1NWMzODUzODczYzA5MjE3YzdkMmUzODJlMWRhZDljN2YxIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_d9b886cf169f4059b1c936fc1769dbeb",
+      "statement": "Migration 0160 makes clinical lineage immutable on UPDATE for every role: a session cannot change client or studio, a block cannot move to another session, and entries cannot change session or block, while other fields stay editable and a mis-filed session is corrected by soft delete and re-charting.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0160_immutable_clinical_lineage.sql#L1-L46",
+          "version": "repo-lines-v1:sha256:dcbcd0efdc7a66cb0f83343d58d3f47f8a26548490956d61af00f70ff3fb9624:eyJzZWxlY3RlZExpbmVDb3VudCI6NDYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0MmFhYWVhZGE3MWVhZDRiMGZjZjlkZDhkYTAxMzk1ZjAxYjcyYzkxMDdkNzc3ZTk3ZGY4NDc3NTNlNTAyNzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU4NTQ2ZDhlZWJmNjRlMTM3MDk0MWYwNzcwNjBiMDYzMjA1Mzk5NjljNjE2Yjk4ZDAzYjk2OTc1ODgwOGRkZjIifQ"
+        },
+        {
+          "resource": "repo://tests/db/immutable-clinical-lineage.db.test.ts#L54-L447",
+          "version": "repo-lines-v1:sha256:e0fc28fd31d4372d60a9a257301edfa34a40c0d4cd8c77ac7fffd628682a1db1:eyJzZWxlY3RlZExpbmVDb3VudCI6Mzk0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI1YTViMDM0NjU2MjAxMmU4YTE0MGQyNWQzZTBjMzcxNjhlYjE3OTZiMTY5NjU2YmFmNjkzNWM0MDA4NGVjZjYwIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI4MTM5Y2ZmNDE1NjI5NDUxNmFmYmE5NDUwYTJmMTA4ZGEyMTI5NTQ2NTEwZjk0ZTExMTQzMTIxMjVkNzY4ODQ5IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_e934e6dfa17f472a99829357175392b7",
+      "statement": "Migrations open their own transaction because supabase db push does not wrap a migration file, so a bare SET LOCAL lock_timeout never arms and the file would not be atomic.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0160_immutable_clinical_lineage.sql#L49-L70",
+          "version": "repo-lines-v1:sha256:dd8a7598bd5903d3d17279742c42ebdf536007a7e7d67a8c5d15aa4a69a68d59:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0MmFhYWVhZGE3MWVhZDRiMGZjZjlkZDhkYTAxMzk1ZjAxYjcyYzkxMDdkNzc3ZTk3ZGY4NDc3NTNlNTAyNzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE4NmMwYzc2NDI4ZWVjYWIyNGQ3OTYyMzI1MjU3YTU5Y2VkZDRiMGRkYWJjYzllNTAzMWZhOTU2OGQzYjJjNTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ5ZDAxZjkwNmU0ZWM0MTY1ZjA5YmM5YWIyMTc4MjU2YzFiMWQ0YTQyOGZhOTQ5ZGU3MjZjZGE4YWU1YjkzYWMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_354cc41c133340389efc4f392054463e",
+      "statement": "Signed and cryptographically finalized clinical records are permanently retired as a product decision, and treatment sessions remain ordinary editable records corrected through the normal charting commands.",
+      "evidence": [
+        {
+          "resource": "repo://docs/decisions/clinical-finalization-retired.md#L1-L35",
+          "version": "repo-lines-v1:sha256:e896594278ebe9463d941f174426f7d06a93b26ca99ffd79e9db1962f8b40a77:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFmZjZmY2QwMzM3OTE4YzNkNDllMjk4ZTk2YjU5ZjAyNWNlOWZlZWE1NWU5ZDJjZjNmZjgyZmIxNTI1ZDI2N2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjMwYmIxNTE3MTc3OGQ0ZTQ5YWRiODVmNGYwNjBlNmM4MzRiODA5YzkyYzQ2MzRlNThkZGQ4NzlmZTY0NzQzMjEifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0159_retire_signed_clinical_records.sql#L1-L66",
+          "version": "repo-lines-v1:sha256:de9927ba257f3ca8cd75ddc30f22909c5aa99699c1d101db52de1156076d82ce:eyJzZWxlY3RlZExpbmVDb3VudCI6NjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM0OThiMTYzZjg4OWMwMDk2NDYzMDdkZjUzNzM3ZmU2ZDAzMTJjMDMxMjFlNWU5MjE3NGM3OGIxMGRlMGRkMjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFmM2IyYzQ1MWQ2YjM3Y2Y3NDhiOTE3ZjBjMGE0MmVlMWU5ZWE1MjBhZmYxZmFmNTQxMTY5YmExNmYzYTNhYjIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c3f147d05cd4432c8c757186c4e5e514",
+      "statement": "Migration 0159 enforces the retirement in the database by pinning both studio finalization flags false with CHECK constraints, revoking EXECUTE on the retired finalize, correct and amend RPCs and correction appliers, blocking transitions into finalized or void record status, and blocking inserts into the signed-record ledgers.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0159_retire_signed_clinical_records.sql#L1-L66",
+          "version": "repo-lines-v1:sha256:de9927ba257f3ca8cd75ddc30f22909c5aa99699c1d101db52de1156076d82ce:eyJzZWxlY3RlZExpbmVDb3VudCI6NjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxNzM2ZDIwN2I2YmE0NWJjYjljMzMyYjc2YTg4YTM3ODU4MjM5YzM0ZGYxZmM4MzIyNWI4NDkwMDdmNmU4ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM0OThiMTYzZjg4OWMwMDk2NDYzMDdkZjUzNzM3ZmU2ZDAzMTJjMDMxMjFlNWU5MjE3NGM3OGIxMGRlMGRkMjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFmM2IyYzQ1MWQ2YjM3Y2Y3NDhiOTE3ZjBjMGE0MmVlMWU5ZWE1MjBhZmYxZmFmNTQxMTY5YmExNmYzYTNhYjIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b69b3806b8924521a190bc84d945c794",
+      "statement": "0159 keeps the 0119 and 0120 objects instead of dropping them and keeps sessions.record_status because whole-session copy and area soft delete read it.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0159_retire_signed_clinical_records.sql#L68-L90",
+          "version": "repo-lines-v1:sha256:5ee2bd1f0d78a739f3eca7519b6f06ee232efe2b31a1ff7558a477b52748a402:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI3ZTUzOWYyNjYwMDZjMGRiOTdiZmU1NGI0ZDUyODU3Y2U5N2NmNjRlZmIyMjU0MDgwNjY4NDdjMmE0MjNiNGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM3MTkyNmI1NDQ4NjczMWFjZTVlYzExMzk1YjAzZDNhZDc0Yjk4NTEyYTZjMWFiMDMzNmMzNDcyMzJmOTlmYTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZhM2RiZDE3NjUwODE1MTI4NjdlZTIzNjQ2NGU1YWQwMTIwMWVkNGE2NmVkYThlNjdmOWQxMzRjNDFiNDMxMjQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM4MjdlMzE5MjFkYmYyMDFlN2I5NTIyYzQ2ODg0OGUxNzgzNDg4NmIzNDIwMmUzNDAwZGM0ZDAzOTQ4MGY4M2YifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b91e37236a25469d9531a70356ab5e41",
+      "statement": "The ordinary audit trails (session_audit, record_keeping_audit_events, session_copy_operations, admin_action_events and client_portal_access_events) are retained, while clinical_audit_events belongs to the retired signed-record system.",
+      "evidence": [
+        {
+          "resource": "repo://docs/decisions/clinical-finalization-retired.md#L36-L60",
+          "version": "repo-lines-v1:sha256:5a9ec71f411a1da68529de7ffc34dc3f29cd286a1fa279e7d2ce89946c3fc1dd:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMzcxOGJiODA3YjY3NDIyZGY1MGY4NTAwMWUxZmJmMjYwODgzYmRjYjljOTZiZDg4ZTdmZDliZTZkMzNhZDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdkM2Q5NDIxNDM1MGQ5OTlhNDZlZTk0NTZhZTMwODMwNTczYmJjODBhZTQ2M2ZkZTgyM2FjNTcwYjg5YzExMTAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU0YzBiOWQxMzg0NTcxN2FjOTlmYTA5OTQ1NGUyZGE1YTY0ZDQ1ZDExMWJjMTdlMjliMmIyMzVjY2FjY2Q5MjIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQwYjg3OGMzZTJkNWUyY2FmNzA4MDk2NjM5NGM3OTk5YmM4ZTcwOWEwZjU0ZTU2MzJlZmRkNjM2OGZkYTU3M2IifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0008_session_audit.sql#L17-L30",
+          "version": "repo-lines-v1:sha256:ec740ca06ce86159b99dadc50e94cbdd03233758b4f3a3bae0f05f516e66cb4a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZiNmFjYzBlYzkwZDliODliNThmNjdjNmNiMjNlZWY5ZDU4YTE1N2IzYjRlMmFiYzIxYzc5YjI0MDdlNjEzODYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc0YzNkMzdjY2FhOGRmODU2ZjFjMmEyOWI1MzVlYzIxODFjYWRhY2ZjYmI4OWQwZGQ3ZDhkMmZhZjE0MGQwYTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjlmOGMwNmI4ZmQ3YTBlODE0Yzg1NGZiZTg1NzJjZDA5Mzc0MGI5OTVlMzhhNWIyMWFjZTQxY2JjNTZhNzdlYmUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk4YzQwNjdmM2EyOTE4YWFlM2UxNGU1NzllODZjNWIwNDUwZmZhNjExZjkzMzAxOWYyNjllZDg2OTNlOGMwOWMifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0111_client_portal_access_events.sql#L27-L40",
+          "version": "repo-lines-v1:sha256:387cfd763baa37069f126db11e37a02cd725f54ac936a0147db7295ca1004924:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFkZTc0MGY2ZGRlNzI2MzJkMjMwMTVhYmFiNWI1ZjNmYTk2MTg2YmQwOTA0YTYxM2U0ZjY2YTNhOTFkNmY3NTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNmMDUxOWMzNDNlZDcyMjAyOWE1NDc1NzRiZjg2YmM0N2U0NjEyYzcwOTE0MzJlYTIwMWQwNjg1OGRmNTBlYjYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkyZTgyZjJmNTI0YTIyMjQ4NGI4ZmM0NWMxMDIyZThjNDk5NjZiOTIyYTgyNTc0NzZmNmNlMWM4NjVkMmY3M2QiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE5ZWU1OWFhZDFiYTk1YzliYzE2NDA3MzdjMTEyYzk2NWMyYTc0MzM5YTg2MjUyMTk1NmM0NWVkOWQxZGQ4MTgifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0113_admin_action_events.sql#L36-L48",
+          "version": "repo-lines-v1:sha256:40abb55ac4049d86f98487e9f70722a82d55c8b4d316e93a9c008674e8a6cbe0:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI0ZGUyNzUyNzUzMGY0YjU5MzI4NTZjN2RjZjZjYTRlN2FlNWUxYTUyMGYxNzNhNDNjMTY2YmE4ZDI5NTIxZTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU4NDZhYmViNzE1NzRlODdiMDU5MDI3ZDdlYzMwYWY2YjNhZTBiMDE0YThjNzhmZWYwNmYyZTlkY2U4NjJjY2YiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJhY2UwNGNiY2IyYzg5MzMwZGYwNzVkZWUzNmVlNGFkYzRmYTQxOWFmZGJhNjUzMDI5MTMxMTJkNDE4OWMxNTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUwOGI1Y2Q2ZjVkZjJiNDNjYmM4MGJkMWZjZTllMWVkOTIwNGExZjcyYWRjMDMzYTFlMDE4OTk2OWE3ZmYwYzkifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0157_whole_session_copy_setup.sql#L68-L80",
+          "version": "repo-lines-v1:sha256:8e178a00735d5d78889cc2cf64ee4fb8238550ca9a139f179b416aa17aa73f68:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJhZjc4MWFiNzc0ZjRhNTk4YzI3YzgzMDRjYzdmMDhjMjg3OTRiZTZkZjAzMWQzYjQ2ZTNkYWJmMjY1Zjk3YzMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjlkZmY3ZTU1YjY4YWNhNDA4NzEzN2U2NGJlNGFkMjU4N2U0Y2FkMjRiMzBiMDE5NTEwNGI0MTVmMmNlNjU1OTkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE2NWM4NjlmZjhiMmZiNTVmZDIwYjRjODgwMmFkZDQ4ZDU4OWJkMmJiYzA0NTc2NjcxZDM4NDlmMjQ5MWNkOGIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI4Y2VjNjU5OGUwZTdkNGY1MjUwZjk4ZGUxM2E1NGVhZGYwMTBhNWE5MTk1ZWU1OWUwODIyZDU3ZTAzM2UxZTcifQ"
+        },
+        {
+          "resource": "repo://supabase/migrations/0159_retire_signed_clinical_records.sql#L56-L60",
+          "version": "repo-lines-v1:sha256:0bbc1166c00c93e23d3c55bc1c093f2d837880db11a78c5e71d5ed7c33428f15:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMDhiZTcxYWNjMmI5ZmFhY2UzYzU3OThjNjlmMWQ5NmM4NDAzNjY3YzJlMmYzYTViZDI2YjIyODBiMDJmODc2MCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNmZhNjFlN2E0YmM5MTI1YmFlNjQzZWQ0NmFhYjViZTU1ZjdjZGI4MzI5ODJjOGM2NzRmNzRlMmFjYzY5Y2JmZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMWFlNGYxNDc0NDRkNTZkNTM0ZjE5ODI4NTkyZWMxYmMyOWNmMDQ5MjI0NzhkZGZkNzc3OGFmMTg5YzU3ODk4MCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZjA5MTMxZTE0OGYzYTBmM2M5NDRiYjNjNjg2ZDk2ZDc1NzJmMzhiNzM2NGMzY2NhNzY5MjgxYmVlNTIyZGVmZSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_e92fcb5ba4c54c2f90c6cebbdc227d7f",
+      "statement": "The 0129 create_session_block_with_areas and update_session_block_with_areas RPCs remain EXECUTE-granted to both authenticated and service_role with no later revoke, although 0169 describes every clinical write command as authenticated-only with service_role denied.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0129_atomic_session_block_area_writes.sql#L164-L171",
+          "version": "repo-lines-v1:sha256:1ffa36b536958ea992719d1eb9de3a1f29e1cfb47f04d83898e2c413420be886:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZGVjNzRkNGRlYWJmNTNiMDEwZjhhOTQ4YmM4MzRkMmE1MmNiYTMxYzI4NDM0MTJhOGRiY2Y3NzQ4ODFiYzdiYSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZTZiNGYxMTRkZjU5YTU3Njg2YzgzNmQxMzhiMzEzYzU1NWUwOTQzMjBiYzdlNTVjMGE4ZWI3OTc4N2JhMDg5OSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiY2E5OWJlYjVlMWU5Y2E4YzAzNjAxZmUzMDMzMjQ5ZTYyNTNlNWU5MTAzMTg5Nzg5Yjk5NmM3MTRlMTQ3YzVhNSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjAsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0169_revoke_authenticated_clinical_direct_dml.sql#L25-L26",
+          "version": "repo-lines-v1:sha256:58a32856cc2d2523e9749664c017b28861cbff7a31f9efa6a443f82601010238:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNTYxZTMyODIxN2U3Njc0MTk1MjZlYTE4OGYyYWM5YTMxMWQxYTNjMjZiYTY4OTYyYjhjMDMwZDQ0OTgxNDM4NiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNmIwOGVmZDEwY2Y3NjFhZDc0MGU3OWE4MzFkMWUyM2ZlMDRhZjkwNWNlNzY5YzMyMDVmZjNmNjZjMDJjYWMyMiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYzQxNTAwYzJjYWZlZGVhNTdjZjM1MDA0NjY0OGEwMzE2ODE2NjA4NGFjZGE2MTVhZjc2M2YwNjJjNWJiNDgxMyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYTc3YmUzNTc3MTg4YzkwZjRmZmRjMDhmZDU1MTlkNzVjZmI1ZTU1NzhjY2RmMmU1YmM2YTQ5Nzg1ODViMzJhMyJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_8dddb2d8ca424d21816e2313f7533294",
+      "statement": "Migration 0169 deliberately avoids REVOKE ALL so as not to absorb future privilege types, the opposite of the revoke-all-then-grant-back doctrine 0178 applies.",
+      "evidence": [
+        {
+          "resource": "repo://supabase/migrations/0169_revoke_authenticated_clinical_direct_dml.sql#L61-L63",
+          "version": "repo-lines-v1:sha256:7a283896b4be86289e12cb0839bb1ace5f56a997e6ecc97c5661c98e34de0700:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZjkwZmRlZGZjMGE1ODA5YmYyM2FhZjJiZDVhYmZjMDk2NDA5MDRlYjIwYjM1OWIyM2FjNDkyNmYzMjNmMWJkMyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZThmNjY3MWRlZjY5ZjdkODYwMzYwMmY4OWVlYjQ5MGE1MGViNzFmMjRkODIxZDkxNzAwZWY5NzU0NDBlMzU2MyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOGMxZWU2MWZjMmQ5MDYzYzYyYzQzMTM0YmQyOTcxYzhkM2M4OTQxOGZkMDJmMDA0MWRlN2ExYTNkNTUzYWM1NyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYWQwZmE3MDRlNjdkN2YyYzY0MjE5MzAwNGE0NmI2YjI5YzBmMTg2NjUxMGI5N2VlY2M4MDY5ODQ5MTkxY2QwZSJ9"
+        },
+        {
+          "resource": "repo://supabase/migrations/0178_practitioner_identity_boundary.sql#L516-L535",
+          "version": "repo-lines-v1:sha256:2ed490bb54c978a41288b55082c8057c681e885a4918518b86d475956d9cfd40:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0MmFhYWVhZGE3MWVhZDRiMGZjZjlkZDhkYTAxMzk1ZjAxYjcyYzkxMDdkNzc3ZTk3ZGY4NDc3NTNlNTAyNzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhMjg0NmM0MmMzZjZlOWEwNzQ3MzNjZGJmMmRjMmZmODExY2U2MjEwY2FmZDQ2NzJkZjJkZTllOGI2ZTNkNGMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUyMDJkNDY5YTAzY2NjMDQ1MjBjOTRhZTM2YjBjOTE5ZGJhNzFjOTYyYzkzZThiZWExMDA4YWQ3ODgxZTVlNjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImU0MDk4MGE0OTRhMjEyNDNhMGIxZDkzYmE4N2MwYTM1NjgyOTZmMDgyMmM4MGM0YTgxNmRlZjM2Y2MwYWU1NTUifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.6.1",
+    "at": "2026-10-04T01:59:59.625Z"
+  }
+}

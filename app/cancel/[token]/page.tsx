@@ -8,6 +8,10 @@ import {
   buildPolicySnapshot,
   hasAnyPolicy,
 } from "@/lib/booking/policy-acknowledgement";
+import {
+  FREE_CONSULT_WAITLIST_ONLY_CANCEL_HEADING,
+  FREE_CONSULT_WAITLIST_ONLY_CANCEL_WARNING,
+} from "@/lib/booking/free-consult-reschedule-policy";
 import { fetchAppointmentForCancelAction } from "./actions";
 import { CancelForm } from "./CancelForm";
 
@@ -86,6 +90,37 @@ export default async function CancelAppointmentPage({
                 studioName={result.summary.studioName}
               />
 
+              {/* EMERG-01. A WARNING, ABOVE THE DESTRUCTIVE ACTION.
+                  Cancelling a free consultation at a waitlisted studio is
+                  one-way: /reschedule will refuse, so the time is not
+                  recoverable from here and the way back is the waitlist. That
+                  is a consequence the visitor deserves to know BEFORE they
+                  press the button, not after.
+
+                  Deliberately NOT a new consent contract: no checkbox, no
+                  extra gate, no change to publicCancelAppointmentAction, and
+                  no effect whatsoever on any other studio's cancellation
+                  policy. The visitor can still cancel, immediately. */}
+              {result.summary.freeConsultationWaitlistOnly && (
+                <div
+                  className="flex flex-col gap-2 p-6"
+                  style={{
+                    backgroundColor: "#FAFAF7",
+                    border: "1px solid #E5E2D9",
+                  }}
+                >
+                  <h2
+                    className="font-[var(--font-fraunces)] text-[20px] font-bold leading-tight"
+                    style={{ letterSpacing: "-0.02em" }}
+                  >
+                    {FREE_CONSULT_WAITLIST_ONLY_CANCEL_HEADING}
+                  </h2>
+                  <p className="text-[15px] leading-relaxed text-[#0A0A0A]">
+                    {FREE_CONSULT_WAITLIST_ONLY_CANCEL_WARNING}
+                  </p>
+                </div>
+              )}
+
               {/* PR #133. The acknowledgement checkbox + the server-
                   side ack gate fire only when the studio has at
                   least one policy configured. A studio with no
@@ -124,6 +159,13 @@ export default async function CancelAppointmentPage({
                     result.summary.cancellationPolicyText,
                   noShowPolicyText: result.summary.noShowPolicyText,
                 })}
+                // EMERG-01. Both server-derived by the fetch action from the
+                // appointment's own service and studio rows. They decide what
+                // the form SAYS — never what it may do.
+                freeConsultationWaitlistOnly={
+                  result.summary.freeConsultationWaitlistOnly
+                }
+                waitlistBookingSlug={result.summary.waitlistBookingSlug}
               />
             </>
           ) : (

@@ -397,46 +397,65 @@ describe("getAvailableSlots composes the pure core", () => {
 });
 
 // ---------------------------------------------------------------------------
-// A KNOWN, PRE-EXISTING DEFECT this refactor deliberately preserves
+// THE MIDNIGHT BUFFER SPILL — FIXED (WAIT-v4 PR0)
 // ---------------------------------------------------------------------------
 
-describe("midnight buffer spill (pre-existing defect, characterised not fixed)", () => {
-  it("still offers a start that the DATABASE will refuse", () => {
-    // getAvailableSlots selects the day's reservations on the shadow's RAW
-    // `ends_at` (`gt("ends_at", windowStart)`), so an appointment that ended
-    // just before local midnight is dropped from the next day even though its
-    // reconstructed protected end reaches into it.
+describe("midnight buffer spill (fixed at the loader's window)", () => {
+  it("the CORE excludes 00:00 once the previous day's reservation is supplied", () => {
+    // THE CORE WAS NEVER THE DEFECT, and this test is what says so. The
+    // characterisation this replaces passed `reservations: []` — "exactly as the
+    // loader's query leaves it" — and pinned the OFFER of 00:00 on purpose, so a
+    // behaviour-neutral refactor could be proved neutral over it. The absence was
+    // the bug.
     //
-    // Reproduced against the real database on a studio open 00:00-08:00 with a
-    // 30-minute buffer and an appointment ending 23:50 the previous day: the
-    // generator OFFERS 00:00, and the write is REFUSED with
-    // `HB001 appointment_buffer_conflict` from 0152's enforce_appointment_buffer.
-    // It is an offer/accept divergence, not a silent overbooking.
+    // `getAvailableSlots` filtered the day's reservations on the shadow's ACTUAL
+    // `ends_at` while `protectedIntervals` re-applies the buffer to reach the
+    // PROTECTED end, so a 23:50 appointment under a 30-minute buffer — protected
+    // to 00:20 — was never loaded for the following day. The generator offered
+    // 00:00 and 0152's enforce_appointment_buffer refused the write with HB001.
     //
-    // NOT FIXED HERE, and deliberately so. Repairing it changes which slots the
-    // engine offers, and migrations 0170/0171 re-derive this candidate set in
-    // SQL with exact millisecond membership — three parity suites assert set
-    // equality between the two engines. The fix is a coordinated migration plus
-    // this loader, in its own change; folding it into a behaviour-neutral
-    // refactor would hide a real booking change inside a "no behaviour change"
-    // PR. Reachable only by a studio whose open time falls within `buffer`
-    // minutes of local midnight.
+    // The repair is `reservationWindowStartUtc`, which opens both loaders'
+    // reservation windows one buffer early. Given that input the core already
+    // did the right thing, which is exactly what this asserts.
     //
-    // THIS TEST PINS TODAY'S DEFECTIVE BEHAVIOUR ON PURPOSE, so the refactor is
-    // provably behaviour-neutral over it. When the follow-up lands, this
-    // expectation MUST flip to `not.toContain`.
-    const spill = buildDaySlots({
+    // The loader's window is proved in
+    // tests/lib/booking/slots-midnight-buffer-window.test.ts (red before the
+    // repair), and the authority it now agrees with in
+    // tests/db/midnight-buffer-parity.db.test.ts.
+    const prevDay = buildDaySlots({
       dateStr: DATE,
       tz: TZ,
       duration: 60,
       buffer: 30,
       openTime: "00:00",
       closeTime: "08:00",
-      // The previous day's appointment is ABSENT, exactly as the loader's query
-      // leaves it — that absence is the defect, and the core faithfully honours
-      // the input it is given.
+      reservations: [
+        {
+          starts_at: utcInstantFromLocal("2026-07-05", "23:00", TZ).toISOString(),
+          ends_at: utcInstantFromLocal("2026-07-05", "23:50", TZ).toISOString(),
+          source_kind: "appointment",
+          source_id: "appt-prev",
+        },
+      ],
+    });
+    expect(starts(prevDay)).not.toContain(at("00:00"));
+    // And it offers the protected end itself, which the DB accepts.
+    expect(starts(prevDay)[0]).toBe(at("00:20"));
+  });
+
+  it("with the reservation ABSENT the core still offers 00:00, as it must", () => {
+    // The core is a pure function of its inputs: with nothing supplied there is
+    // nothing to protect. Keeping this says the repair lives in the loader and
+    // did not change the rule.
+    const empty = buildDaySlots({
+      dateStr: DATE,
+      tz: TZ,
+      duration: 60,
+      buffer: 30,
+      openTime: "00:00",
+      closeTime: "08:00",
       reservations: [],
     });
-    expect(starts(spill)).toContain(at("00:00"));
+    expect(starts(empty)).toContain(at("00:00"));
   });
 });

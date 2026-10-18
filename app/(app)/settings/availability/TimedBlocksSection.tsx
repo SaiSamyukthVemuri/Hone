@@ -19,6 +19,7 @@ import {
   type ScopeSelectable,
   type ViewScope,
 } from "./ScopeField";
+import { SectionLabel } from "@/components/ui/section-label";
 
 type Props = {
   studioTimezone: string;
@@ -247,9 +248,9 @@ export function TimedBlocksSection({
           </div>
         )}
         <label className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          <SectionLabel>
             Date
-          </span>
+          </SectionLabel>
           <input
             type="date"
             value={date}
@@ -271,18 +272,18 @@ export function TimedBlocksSection({
             className="mt-0.5 h-4 w-4 flex-none rounded border-neutral-400"
           />
           <span className="flex flex-col">
-            <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            <SectionLabel>
               All day
-            </span>
+            </SectionLabel>
             <span className="text-[11px] text-neutral-500">
               Block the entire day
             </span>
           </span>
         </label>
         <label className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          <SectionLabel>
             Start
-          </span>
+          </SectionLabel>
           <input
             type="time"
             value={startLocal}
@@ -293,9 +294,9 @@ export function TimedBlocksSection({
           />
         </label>
         <label className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          <SectionLabel>
             End
-          </span>
+          </SectionLabel>
           <input
             type="time"
             value={endLocal}
@@ -306,9 +307,9 @@ export function TimedBlocksSection({
           />
         </label>
         <label className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          <SectionLabel>
             Category
-          </span>
+          </SectionLabel>
           <select
             value={category}
             onChange={(e) => setCategory(e.target.value)}
@@ -335,9 +336,9 @@ export function TimedBlocksSection({
           </div>
         )}
         <label className="flex flex-col gap-1.5 md:col-span-4">
-          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          <SectionLabel>
             Private note (optional)
-          </span>
+          </SectionLabel>
           <input
             type="text"
             value={privateNote}

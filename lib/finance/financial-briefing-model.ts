@@ -87,7 +87,24 @@ export type PartitionClaim = {
 };
 
 export type CalendarCensus = {
-  /** Every appointment starting inside the period, whatever became of it. */
+  /**
+   * Every appointment record starting inside the period, whatever became of it.
+   *
+   * `rows.length`, with NO status filter anywhere on the path: the query
+   * narrows by studio and the half-open window only, and this count is taken
+   * independently of the classification loop below. So it includes cancelled,
+   * no-show, AND rows whose status this build does not recognise — which is
+   * exactly why the loop's `continue` statements cannot shrink it.
+   *
+   * THE FIELD IS NAMED `booked`; THE OWNER-FACING LABEL IS NOT, and the
+   * difference is deliberate. Rendered as "Booked in this period" it read as
+   * work the studio had on, while 18 of August's 92 were cancelled — the label
+   * quietly overstated the month by a fifth. The screen now says "Appointments
+   * in this period", which claims only what this count is. The field keeps its
+   * name because renaming it is a refactor with no owner-facing truth in it;
+   * this comment is here so the next author does not read `booked` and
+   * reintroduce the word on screen.
+   */
   readonly booked: Fact<number>;
   /** `confirmed` AND starting at or after the reference instant. */
   readonly stillToHappen: Fact<number>;

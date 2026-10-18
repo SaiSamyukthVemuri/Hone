@@ -16,7 +16,10 @@ import {
   updateTreatmentImageNoteAction,
 } from "./actions";
 import { TREATMENT_NOTE_MAX_LENGTH } from "./note-constants";
-import { validateTreatmentImageUpload } from "@/lib/images/treatment-images";
+import {
+  validateTreatmentImageUpload,
+} from "@/lib/images/treatment-images";
+import { GridPhoto } from "./GridPhoto";
 
 // Per-file upload status (PR: multi-file upload). Each selected file is
 // processed independently so one failure never blocks the others.
@@ -41,8 +44,14 @@ type Row = {
   // as the human card title instead of the raw .jpg filename (Chloe feedback).
   sessionDate: string | null;
   createdAt: string;
-  // Short-lived server-signed preview URL (null if signing failed).
+  // Short-lived server-signed preview URL (null if signing failed). This is the
+  // ORIGINAL, and it stays the authority: the modal uses it, and the grid falls
+  // back to it whenever the derivative is missing or fails to load.
   previewUrl: string | null;
+  // PERF-IMG-03. Short-lived signed URL for the bounded grid derivative, or null
+  // when there is none (every row uploaded before that change). Never a
+  // substitute for previewUrl — only a smaller stand-in for the grid cell.
+  thumbUrl: string | null;
   // PR #274: display-only context tags, computed server-side from existing
   // metadata + session-block area fields (never raw IDs/paths).
   scopeLabel: string;
@@ -204,7 +213,6 @@ export function TreatmentImagesManager({
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
   const [fileResults, setFileResults] = useState<UploadFileResult[]>([]);
-  const [broken, setBroken] = useState<Record<string, boolean>>({});
 
   // PR #284: attach-at-upload context. Default "client" (no session/block).
   const hasSessions = sessionOptions.length > 0;
@@ -545,35 +553,23 @@ export function TreatmentImagesManager({
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {images.map((img) => {
-            const showPreview = !!img.previewUrl && !broken[img.id];
             return (
               <div
                 key={img.id}
                 className="flex flex-col gap-2 rounded-lg border border-neutral-200 p-3 dark:border-neutral-800"
               >
-                {showPreview ? (
-                  <button
-                    type="button"
-                    onClick={() => openPreview(img)}
-                    className="block overflow-hidden rounded-md"
-                    aria-label="View larger treatment photo"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={img.previewUrl ?? ""}
-                      alt="Treatment photo"
-                      loading="lazy"
-                      onError={() =>
-                        setBroken((b) => ({ ...b, [img.id]: true }))
-                      }
-                      className="aspect-square w-full object-cover transition hover:opacity-90"
-                    />
-                  </button>
-                ) : (
-                  <div className="grid aspect-square w-full place-items-center rounded-md bg-neutral-100 text-xs text-neutral-400 dark:bg-neutral-900">
-                    Image not available
-                  </div>
-                )}
+                {/* PERF-IMG-03 + FETT thumbnail recovery: derivative first,
+                    demote to the original, re-mint an EXPIRED URL once per
+                    variant (lib/images/grid-photo-recovery.ts). Keyed by the
+                    server URLs so fresh URLs from router.refresh() start the
+                    cell over. Availability still keys off the ORIGINAL. */}
+                <GridPhoto
+                  key={`${img.id}:${img.previewUrl ?? ""}:${img.thumbUrl ?? ""}`}
+                  imageId={img.id}
+                  previewUrl={img.previewUrl}
+                  thumbUrl={img.thumbUrl}
+                  onOpen={() => openPreview(img)}
+                />
                 <div>
                   {/* Human title, never the raw .jpg filename: the SESSION
                       date when the photo is attached to a session, else the

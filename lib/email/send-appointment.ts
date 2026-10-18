@@ -1,5 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { FROM_ADDRESS, resend } from "@/lib/email/client";
+import { FROM_ADDRESS, getResendTransport } from "@/lib/email/client";
+import {
+  buildFromHeader,
+  resolveReplyTo,
+  studioClientContactEmail,
+  type StudioEmailIdentity,
+} from "@/lib/email/studio-identity";
 import {
   buildClientConfirmationEmail,
   buildPractitionerNotificationEmail,
@@ -42,6 +48,12 @@ export type EmailSendResult =
 
 const RESEND_TIMEOUT_MS = 15_000;
 
+/** The send payload, derived from the transport itself so the real client and
+ *  the E2E fake cannot drift apart from what this path actually builds. */
+type EmailPayload = Parameters<
+  NonNullable<ReturnType<typeof getResendTransport>>["emails"]["send"]
+>[0];
+
 type RawResendError = {
   statusCode?: number;
   name?: string;
@@ -79,8 +91,32 @@ export async function sendEmailSafely(opts: {
   html: string;
   text: string;
   icsContent?: string;
+  /**
+   * PAY-RECEIPT-PDF. Additional files to attach, already rendered to bytes.
+   *
+   * There is exactly ONE Resend path in this codebase and this widens it
+   * rather than forking it: a second transport would fork From-header
+   * sanitisation, Reply-To handling, the 15s timeout and the retryable /
+   * terminal classification that the receipt row depends on.
+   */
+  attachments?: ReadonlyArray<{ filename: string; content: Buffer }>;
+  /**
+   * COMMS-01A. Server-resolved studio identity. OPTIONAL on purpose: a caller
+   * that has no studio in scope (ops alerts, team invitations — Hone speaking
+   * as Hone) omits it and keeps today's exact From with no Reply-To.
+   */
+  studioIdentity?: StudioEmailIdentity;
 }): Promise<EmailSendResult> {
-  if (!resend) {
+  // RESCHEDULE-E2E-01. The transport is RESOLVED, not imported: in production
+  // `getResendTransport()` returns the same real Resend client this used to
+  // import directly, so delivery, the From header, Reply-To, the 15s timeout
+  // and the retryable/terminal classification are byte-identical. Under the
+  // E2E lane's server-only fake marker it returns the fake instead, which is
+  // what makes a refusal deterministic rather than a live-provider accident.
+  // Reading the raw `resend` export here was the bypass: the onboarding path
+  // already used this resolver, the appointment path never did.
+  const transport = getResendTransport();
+  if (!transport) {
     return {
       ok: false,
       error: "Resend not configured (RESEND_API_KEY missing)",
@@ -96,20 +132,39 @@ export async function sendEmailSafely(opts: {
     };
   }
 
-  const payload: Parameters<typeof resend.emails.send>[0] = {
-    from: FROM_ADDRESS,
+  // The From header is built in ONE place. `buildFromHeader` sanitises the
+  // studio name, so an operator-supplied name cannot inject a header here, and
+  // an absent/unsafe name yields exactly FROM_ADDRESS.
+  const payload: EmailPayload = {
+    from: opts.studioIdentity
+      ? buildFromHeader(opts.studioIdentity.displayName)
+      : FROM_ADDRESS,
     to: opts.to,
     subject: opts.subject,
     html: opts.html,
     text: opts.text,
   };
+  // Reply-To is attached ONLY when the studio has a usable address. A missing
+  // or malformed one omits the header rather than inventing a destination.
+  if (opts.studioIdentity?.replyTo) {
+    payload.replyTo = opts.studioIdentity.replyTo;
+  }
+  // ONE array, built once. This was previously a direct ASSIGNMENT for the
+  // calendar invite, so a second `payload.attachments = [...]` for any other
+  // file would have silently clobbered it. Accumulating is what makes adding
+  // the receipt PDF safe.
+  const attachments: Array<{ filename: string; content: Buffer }> = [];
   if (opts.icsContent) {
-    payload.attachments = [
-      {
-        filename: "appointment.ics",
-        content: Buffer.from(opts.icsContent, "utf8"),
-      },
-    ];
+    attachments.push({
+      filename: "appointment.ics",
+      content: Buffer.from(opts.icsContent, "utf8"),
+    });
+  }
+  if (opts.attachments) {
+    attachments.push(...opts.attachments);
+  }
+  if (attachments.length > 0) {
+    payload.attachments = attachments;
   }
 
   const controller = new AbortController();
@@ -119,7 +174,7 @@ export async function sendEmailSafely(opts: {
     // The Resend SDK doesn't accept an AbortSignal directly, so we race
     // its promise against a manually-rejected timer. Whichever resolves
     // first wins; the loser is ignored.
-    const sendPromise = resend.emails.send(payload);
+    const sendPromise = transport.emails.send(payload);
     const timeoutPromise = new Promise<never>((_, reject) => {
       controller.signal.addEventListener("abort", () =>
         reject(new Error("__timeout__")),
@@ -397,6 +452,7 @@ export async function sendBookingConfirmationToClient(params: {
   });
 
   return sendEmailSafely({
+    studioIdentity: identityFor(params.studio),
     to: params.clientEmail,
     subject,
     html,
@@ -479,6 +535,15 @@ export async function sendCancellationEmail(params: {
     rebookUrl: params.rebookUrl,
   });
   await sendEmailSafely({
+    // ONE helper, TWO recipients. `isClient` decides who is reading:
+    //   true  -> the CLIENT: brand as the studio, reply to the studio.
+    //   false -> the STUDIO OWNER: stay Hone. Branding this would make the
+    //            owner receive mail apparently from their own studio, with
+    //            replies routed to their own postcare inbox.
+    // The recipient decides the identity; the function name never does.
+    studioIdentity: params.isClient
+      ? identityFor(params.studio)
+      : undefined,
     to: params.to,
     subject,
     html,
@@ -531,7 +596,7 @@ export async function send24hReminderToClient(
     treatmentTimeLine: p.treatmentTimeLine,
     intakeUrl: p.intakeUrl ?? null,
   });
-  return sendEmailSafely({ to: p.clientEmail, subject, html, text });
+  return sendEmailSafely({ studioIdentity: identityFor(p.studio), to: p.clientEmail, subject, html, text });
 }
 
 export async function send2hReminderToClient(
@@ -559,7 +624,7 @@ export async function send2hReminderToClient(
     treatmentTimeLine: p.treatmentTimeLine,
     intakeUrl: p.intakeUrl ?? null,
   });
-  return sendEmailSafely({ to: p.clientEmail, subject, html, text });
+  return sendEmailSafely({ studioIdentity: identityFor(p.studio), to: p.clientEmail, subject, html, text });
 }
 
 // STANDALONE intake-form reminder, sent by the reminder cron at the ~24h or
@@ -589,7 +654,7 @@ export async function sendIntakeReminderToClient(p: {
     startsAt: p.startsAt,
     timezone: p.timezone,
   });
-  return sendEmailSafely({ to: p.clientEmail, subject, html, text });
+  return sendEmailSafely({ studioIdentity: { displayName: p.studioName, replyTo: null }, to: p.clientEmail, subject, html, text });
 }
 
 export async function sendNoShowFollowupToClient(params: {
@@ -606,7 +671,7 @@ export async function sendNoShowFollowupToClient(params: {
     studioName: params.studio.name,
     rebookUrl: params.rebookUrl,
   });
-  return sendEmailSafely({ to: params.clientEmail, subject, html, text });
+  return sendEmailSafely({ studioIdentity: identityFor(params.studio), to: params.clientEmail, subject, html, text });
 }
 
 
@@ -660,7 +725,7 @@ export async function sendPostcareToClient(params: {
     reviewUrl: params.reviewUrl,
     reviewPromptText: params.reviewPromptText,
   });
-  return sendEmailSafely({ to: params.clientEmail, subject, html, text });
+  return sendEmailSafely({ studioIdentity: identityFor(params.studio), to: params.clientEmail, subject, html, text });
 }
 
 // Resolve which email to render in the postcare Contact line. The
@@ -670,11 +735,23 @@ export async function sendPostcareToClient(params: {
 export function postcareContactEmail(
   studio: Pick<Studio, "postcare_contact_email" | "owner_email">,
 ): string | null {
-  const override = studio.postcare_contact_email?.trim();
-  if (override && override.length > 0) return override;
-  const fallback = studio.owner_email?.trim();
-  if (fallback && fallback.length > 0) return fallback;
-  return null;
+  // COMMS-01A: delegates to the shared authority so the postcare Contact line
+  // and the transactional Reply-To can never disagree about which address is
+  // the studio's client-facing contact.
+  return studioClientContactEmail(studio);
+}
+
+// COMMS-01A. Build the sender identity for a client-facing send from a studio
+// row we already loaded server-side. Callers never assemble headers themselves.
+function identityFor(studio: {
+  name?: string | null;
+  postcare_contact_email?: string | null;
+  owner_email?: string | null;
+}): StudioEmailIdentity {
+  return {
+    displayName: studio.name ?? null,
+    replyTo: resolveReplyTo(studioClientContactEmail(studio)),
+  };
 }
 
 // Practitioner-triggered intake reissue email. Sent when the
@@ -696,5 +773,5 @@ export async function sendIntakeUpdateRequestToClient(params: {
     studioName: params.studioName,
     intakeUrl: params.intakeUrl,
   });
-  return sendEmailSafely({ to: params.clientEmail, subject, html, text });
+  return sendEmailSafely({ studioIdentity: { displayName: params.studioName, replyTo: null }, to: params.clientEmail, subject, html, text });
 }

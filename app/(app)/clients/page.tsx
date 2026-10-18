@@ -1,8 +1,9 @@
 import Link from "next/link";
+import { PendingLink } from "@/components/pending-link";
 import {
   getArchivedClientsForStudio,
   getClientsForStudio,
-  getCurrentPractitionerWithStudio,
+  requirePractitionerWithStudio,
 } from "@/lib/supabase/queries";
 import { ClientSearch } from "@/components/client-search";
 import { ArchivedClientsList } from "./ArchivedClientsList";
@@ -40,7 +41,7 @@ export default async function ClientsPage({
   // identity resolution, separate from the two the shell layout already
   // performed; the summary line counts all three for one request.
   const { studio } = await timed("clients.identity", () =>
-    getCurrentPractitionerWithStudio(),
+    requirePractitionerWithStudio(),
   );
   const domain = startPerfSpan("clients.domain");
   const [activeClients, archivedClients] =
@@ -113,9 +114,10 @@ function ViewTabs({ current }: { current: View }) {
       {tabs.map((tab) => {
         const active = tab.value === current;
         return (
-          <Link
+          <PendingLink
             key={tab.value}
             href={tab.href}
+            pendingLabel="Loading clients…"
             aria-current={active ? "page" : undefined}
             className={
               active
@@ -124,7 +126,7 @@ function ViewTabs({ current }: { current: View }) {
             }
           >
             {tab.label}
-          </Link>
+          </PendingLink>
         );
       })}
     </nav>

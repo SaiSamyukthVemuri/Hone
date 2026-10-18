@@ -1,4 +1,4 @@
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { getAllServices, servicesHaveCalendarColor } from "@/lib/booking/queries";
 import { sortServicesForSettings } from "@/lib/booking/service-order";
 import { KNOWN_MODALITIES, type Service } from "@/lib/types/database";
@@ -15,6 +15,7 @@ import {
   ToggleActiveSubmitButton,
 } from "./ServiceFormControls";
 import { ServiceOrderList } from "./ServiceOrderList";
+import { SectionLabel } from "@/components/ui/section-label";
 
 function formatPrice(cents: number | null): string {
   if (cents == null) return "Not set";
@@ -22,7 +23,7 @@ function formatPrice(cents: number | null): string {
 }
 
 export default async function ServicesSettingsPage() {
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await requirePractitionerWithStudio();
   if (practitioner.role !== "owner") {
     return (
       <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
@@ -281,9 +282,7 @@ function AddServiceCard({ calendarColorAvailable }: { calendarColorAvailable: bo
   return (
     <section className="flex flex-col gap-3">
       <div>
-        <h3 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-          Add a new service
-        </h3>
+        <SectionLabel as="h3">Add a new service</SectionLabel>
         <p className="mt-1 text-xs text-neutral-500">
           New services appear on your public booking page right away.
         </p>
@@ -435,10 +434,10 @@ function FieldLabel({
 }) {
   return (
     <label className="flex min-w-0 flex-col gap-1.5">
-      <span className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
+      <SectionLabel size="caption">
         {label}
         {required && <span className="text-neutral-400"> *</span>}
-      </span>
+      </SectionLabel>
       {children}
       {hint && (
         <span className="text-[11px] text-neutral-500">{hint}</span>

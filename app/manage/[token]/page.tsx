@@ -5,6 +5,7 @@ import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { PublicPolicyReminderCard } from "@/app/_components/PublicPolicyReminderCard";
+import { FREE_CONSULT_WAITLIST_ONLY_HEADLINE } from "@/lib/booking/free-consult-reschedule-policy";
 import { fetchAppointmentForManageAction } from "./actions";
 
 // PR #142. Token-bearing route. See
@@ -58,8 +59,11 @@ export default async function ManageAppointmentPage({
                   Manage appointment
                 </h1>
                 <p className="mt-4 text-[16px] leading-relaxed text-[#0A0A0A]">
-                  Review your appointment below. You can reschedule or
-                  cancel from here.
+                  {result.summary.freeConsultationWaitlistOnly
+                    ? // EMERG-01. The intro must not promise an action the
+                      // page below no longer offers.
+                      "Review your appointment below. You can cancel from here."
+                    : "Review your appointment below. You can reschedule or cancel from here."}
                 </p>
               </div>
 
@@ -101,18 +105,33 @@ export default async function ManageAppointmentPage({
                   intent that does not lose the slot; cancel is the
                   secondary outlined button so a misclick stands out
                   visually. */}
+              {/* EMERG-01. A free consultation at a studio whose new-client
+                  intake is waitlisted cannot be self-service rescheduled, so
+                  the CTA is withdrawn rather than pointed at a refusal, and
+                  the reason is stated once from the shared string. Cancel
+                  stays exactly where it was, for every studio. */}
+              {result.summary.freeConsultationWaitlistOnly && (
+                <p className="text-[15px] leading-relaxed text-[#0A0A0A]">
+                  {FREE_CONSULT_WAITLIST_ONLY_HEADLINE}. You can cancel this
+                  appointment below, then join the waitlist for the next
+                  available consultation.
+                </p>
+              )}
+
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                <Link
-                  href={`/reschedule/${token}`}
-                  className="px-8 py-4 text-center text-[14px] font-medium uppercase"
-                  style={{
-                    backgroundColor: "#0A0A0A",
-                    color: "#FAFAF7",
-                    letterSpacing: "0.1em",
-                  }}
-                >
-                  Reschedule appointment
-                </Link>
+                {!result.summary.freeConsultationWaitlistOnly && (
+                  <Link
+                    href={`/reschedule/${token}`}
+                    className="px-8 py-4 text-center text-[14px] font-medium uppercase"
+                    style={{
+                      backgroundColor: "#0A0A0A",
+                      color: "#FAFAF7",
+                      letterSpacing: "0.1em",
+                    }}
+                  >
+                    Reschedule appointment
+                  </Link>
+                )}
                 <Link
                   href={`/cancel/${token}`}
                   className="px-8 py-4 text-center text-[14px] font-medium uppercase"

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildContentSecurityPolicy } from "@/lib/security/headers";
 
@@ -28,7 +28,17 @@ describe("Sentry init configs (client/server/edge)", () => {
   ] as const) {
     it(`${name}: disables PII and wires all three scrubbers`, () => {
       expect(src).toMatch(/sendDefaultPii:\s*false/);
-      expect(src).toMatch(/beforeSend:\s*scrubErrorEvent/);
+      // SENTRY-NOISE-01: the SERVER-side runtimes wrap the error hook so a
+      // PROVEN deliberate E2E fault (exact canary AND the harness's own
+      // server-only activation invariant) is dropped; the wrapper delegates
+      // every KEPT event to scrubErrorEvent, so scrubbing is unchanged. The
+      // client cannot prove harness context without a NEXT_PUBLIC_* bypass, so
+      // it wires the scrubber directly and fails open.
+      expect(src).toMatch(
+        name === "server"
+          ? /beforeSend:\s*beforeSendWithE2eFaultSuppression/
+          : /beforeSend:\s*scrubErrorEvent/,
+      );
       expect(src).toMatch(/beforeSendTransaction:\s*scrubTransactionEvent/);
       expect(src).toMatch(/beforeBreadcrumb:\s*scrubBreadcrumb/);
       expect(src).toMatch(/tracesSampleRate:\s*tracesSampleRate\(\)/);
@@ -44,8 +54,14 @@ describe("Sentry init configs (client/server/edge)", () => {
 });
 
 describe("next.config.ts Sentry build options", () => {
-  it("routes events through the same-origin tunnel", () => {
-    expect(NEXT_CONFIG).toMatch(/tunnelRoute:\s*"\/monitoring"/);
+  it("routes events through the same-origin tunnel: a header-allowlisting route, not a bare rewrite (#828 G-07/G-26)", () => {
+    // tunnelRoute is a bare rewrite that forwards the browser's Referer,
+    // Cookie and IP to Sentry; app/monitoring/route.ts forwards only the
+    // envelope body for Hone's own DSN (tests/lib/observability/egress-proxy.test.ts).
+    expect(NEXT_CONFIG).not.toMatch(/^\s*tunnelRoute\s*:/m);
+    const client = readFileSync(join(process.cwd(), "instrumentation-client.ts"), "utf8");
+    expect(client).toMatch(/tunnel:\s*"\/monitoring"/);
+    expect(existsSync(join(process.cwd(), "app/monitoring/route.ts"))).toBe(true);
   });
   it("disables build telemetry and deletes source maps after upload", () => {
     expect(NEXT_CONFIG).toMatch(/telemetry:\s*false/);

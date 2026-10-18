@@ -248,7 +248,10 @@ describe("refundPaymentChargeAttempt: atomic claim", () => {
   });
 
   it("zero-row claim returns outcome='claim_lost' (no duplicate Stripe call)", () => {
-    expect(HELPER).toMatch(
+    // HELPER_CODE, not HELPER: the window bounds intervening EXECUTABLE code,
+    // so a comment between the check and the return cannot push the return out
+    // of range, and cannot pad the window to hide real code either.
+    expect(HELPER_CODE).toMatch(
       /claimedRows\.length === 0[\s\S]{0,400}outcome:\s*"claim_lost"/,
     );
   });

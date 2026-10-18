@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Client } from "@/lib/types/database";
 import { FormattedDateTime } from "@/components/formatted-date-time";
+import { PendingButton } from "@/components/pending-button";
 import { unarchiveClientAction } from "./[id]/actions";
 
 // Archived clients list for /clients?view=archived. Plain list rather
@@ -79,14 +80,33 @@ function ArchivedClientRow({ client }: { client: Client }) {
             archived_by, writes an audit row, and redirects to the
             unarchived client's profile so the practitioner sees the
             row return to active immediately. */}
+        {/* UI-04. The same action, the same gap, and a worse touch target:
+            px-3 py-1.5 text-xs measured about 30px in a list a practitioner
+            taps on a phone. This was also a hand-rolled copy of Button
+            variant="primary" — bg-neutral-900 / hover:bg-neutral-800 with its
+            own dark: pair — one of the 57 such reimplementations Button's
+            docblock counts across 47 files.
+
+            `size="sm"` keeps the list's type scale while CONTROL_COMPACT_FINE_POINTER
+            relaxes the box only where the pointer is precise, so the row stays
+            dense on a desktop and reaches the floor on touch. */}
         <form action={unarchiveClientAction}>
           <input type="hidden" name="client_id" value={client.id} />
-          <button
-            type="submit"
-            className="rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-          >
+          {/* NO busyLabel here, deliberately, and the edit page keeps one.
+              With a busyLabel Button SWAPS the text, so "Unarchive" ->
+              "Unarchiving…" would change the control's width and reflow a dense
+              row mid-action. Without one it takes the geometry-stable path:
+              the label stays in flow at opacity-0 and the mark is overlaid
+              absolute inset-0, so the box cannot move. `aria-busy` still
+              announces the state either way.
+
+              The edit page is a full-width settings block where a wider control
+              disturbs nothing, so verbal feedback wins there. Treatment follows
+              the density of the surface rather than being uniform for its own
+              sake. */}
+          <PendingButton variant="primary" size="sm">
             Unarchive
-          </button>
+          </PendingButton>
         </form>
       </div>
     </li>

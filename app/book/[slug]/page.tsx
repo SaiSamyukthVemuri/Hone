@@ -7,7 +7,10 @@ import { MarketingFooter } from "@/app/_components/MarketingFooter";
 import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { PublicBookForm } from "./PublicBookForm";
-import { isNewClientWaitlistEnabled } from "@/lib/booking/new-client-waitlist";
+import {
+  getNewClientAdmissionMode,
+  publicNewClientSurface,
+} from "@/lib/booking/new-client-admission";
 import type { Service } from "@/lib/types/database";
 import {
   isPubliclyBookable,
@@ -29,12 +32,15 @@ export default async function PublicBookingPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
+  // null means the read SUCCEEDED and found no studio: a 404. A read that
+  // FAILED throws instead and lands in ./error.tsx as a retryable 500, so an
+  // unreadable studio is never reported as one that does not exist.
   const studio = await getStudioBySlug(slug);
   if (!studio) notFound();
 
   // Service-role read since this is public.
   const admin = createAdminClient();
-  const [{ data: servicesData }, { data: availabilityData }] =
+  const [servicesRes, availabilityRes] =
     await Promise.all([
       // THE canonical visible order: (sort_order, name, id), byte-identical to
       // the ordering inside migration 0161's reorder_studio_service RPC and to
@@ -59,8 +65,23 @@ export default async function PublicBookingPage({
         .eq("studio_id", studio.id)
         .eq("is_open", true),
     ]);
-  const services = (servicesData ?? []) as Service[];
-  const openAvailabilityDaysCount = (availabilityData ?? []).filter(
+  // Same rule for the readiness inputs. These errors used to be dropped, so a
+  // failed read became "no active services" or "no open day" and an open studio
+  // was shown to its visitors as UNAVAILABLE_PUBLIC_BOOKING_MESSAGE ("not
+  // available for this studio yet"). A read that did not complete says nothing
+  // about the studio's setup. It fails the whole page, not just the booking
+  // form, because the existing-client path depends on both reads in EVERY
+  // admission mode; only the new-client waitlist journey could do without them.
+  if (servicesRes.error) {
+    throw new Error(`Failed to load services: ${servicesRes.error.message}`);
+  }
+  if (availabilityRes.error) {
+    throw new Error(
+      `Failed to load availability: ${availabilityRes.error.message}`,
+    );
+  }
+  const services = (servicesRes.data ?? []) as Service[];
+  const openAvailabilityDaysCount = (availabilityRes.data ?? []).filter(
     (d) =>
       d.is_open === true &&
       typeof d.open_time === "string" &&
@@ -71,10 +92,33 @@ export default async function PublicBookingPage({
   // studio (no active services OR no open availability day). Identical
   // wording is intentional, never disclose which piece is missing to
   // a public visitor. The booking actions enforce the same gate.
+  // NEW-CLIENT-MODE-01: the studio-owned mode, resolved server-side. The value
+  // itself never reaches the browser as authority - the booking and waitlist
+  // actions each re-derive it from the server-resolved studio, so a stale tab
+  // or forged post cannot act around it.
+  const publicAdmission = await getNewClientAdmissionMode(studio);
+
   const bookable = isPubliclyBookable({
     activeServicesCount: services.length,
     openAvailabilityDaysCount,
   });
+
+  // PRESENTATION ORDER. `bookable` used to gate this whole region, so a studio
+  // that was CLOSED or UNREADABLE *and* structurally unready showed the generic
+  // setup copy instead of its real admission state. Structural readiness is the
+  // right answer only for OPEN: it is the one mode whose surface is the booking
+  // form. The other three each have a truthful surface of their own, and a
+  // waitlist in particular exists FOR a studio that cannot offer slots, so
+  // hiding it behind bookability inverts its purpose.
+  //
+  // Server actions remain the authority. This orders what a visitor is told; it
+  // grants nothing. Every mode is still re-derived server-side on submit.
+  const admissionMode = publicAdmission.ok ? publicAdmission.mode : "unknown";
+  const surface = publicNewClientSurface({
+    mode: admissionMode,
+    structurallyBookable: bookable,
+  });
+  const showAdmissionAwareForm = surface !== "setup_notice";
 
   const today = todayInTz(studio.timezone);
   const horizon = horizonRangeInStudioTz(
@@ -113,16 +157,23 @@ export default async function PublicBookingPage({
             )}
           </div>
 
-          {bookable ? (
+          {showAdmissionAwareForm ? (
             <PublicBookForm
               slug={studio.slug}
               studioName={studio.name}
+              /* ADMISSION OUTRANKS STRUCTURAL READINESS, except for OPEN.
+                 The form owns the truthful CLOSED / UNKNOWN / WAITLIST
+                 surfaces, so it has to render for them even when the studio
+                 has no active service and no open availability day. Passing
+                 readiness down rather than gating on it keeps the existing
+                 client path exactly where it was. */
+              structurallyBookable={bookable}
               /* P0 new-client waitlist. A DERIVED boolean only: the configured
                  slug allowlist is server-only and never reaches the browser,
                  and this flag is presentation authority only. The public
                  booking server action re-derives it from the server-resolved
                  studio, so a stale tab or forged post cannot book around it. */
-              newClientWaitlistEnabled={isNewClientWaitlistEnabled(studio.slug)}
+              newClientAdmission={admissionMode}
               studioAddress={studio.address ?? null}
               services={services}
               defaultDate={today}

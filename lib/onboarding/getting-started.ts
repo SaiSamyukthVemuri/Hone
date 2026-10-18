@@ -66,6 +66,31 @@ export type GettingStartedSignals = {
   // "test-mode payments" item).
   paymentAttempts: number;
   runtimeLivemode: boolean;
+  /**
+   * Did EVERY read that next-step selection depends on actually succeed?
+   *
+   * THE DEFECT THIS CLOSES. The counts below collapse a failed read into a
+   * legitimate zero: `appointments.count ?? 0`, `clients.count ?? 0`,
+   * `(blockRows ?? [])`. A Supabase error and a genuinely empty studio produce
+   * byte-identical signals. The checklist has always rendered that as a `todo`
+   * tick — passive, and visibly a checklist. The "Next step" CTA is different
+   * in kind: it is an AUTHORITATIVE directive, so the same ambiguity would tell
+   * an owner to create a test client they already have, because the clients
+   * read failed.
+   *
+   * This is the CLIN-01-B rule — a failed read is never an empty result —
+   * applied to onboarding. `liveTreatmentConsent` already models it correctly
+   * as tri-state; this extends the same epistemics to the reads that cannot,
+   * WITHOUT rewriting them into tri-state, which would be an ONB-02 data-model
+   * change rather than a bounded fix.
+   *
+   * `getActiveServices` is deliberately absent from the set: it THROWS on a
+   * read error rather than returning `[]`, so it is loud already and cannot
+   * masquerade as an empty catalogue.
+   *
+   * FALSE MEANS "DO NOT CHOOSE A TASK" — never "nothing is set up".
+   */
+  nextStepSignalsAvailable: boolean;
 };
 
 function auto(
@@ -85,6 +110,108 @@ function review(
   href: string | null,
 ): ChecklistItem {
   return { key, label, explanation, status: "review", href };
+}
+
+/**
+ * THE NEXT SETUP TASK, or null when there is nothing left to point at.
+ *
+ * WHY THIS EXISTS. The checklist was a STATUS DISPLAY, not a flow: every item
+ * carries an `href` INTO its own task and nothing carries a pointer onward, so
+ * finishing one task returned the operator to the settings page they had just
+ * used and left them to re-derive what to do next. Pilot feedback named this
+ * directly ("finishing one task should lead directly to the next setup task").
+ *
+ * IT INVENTS NO ORDER. `buildGettingStarted` already emits sections and items
+ * in a deliberate sequence (basics -> booking -> charting -> records -> daily
+ * -> payments); this walks that existing order and returns the first item an
+ * operator can actually act on. A second ordering here would be a competing
+ * authority, which is the failure this repository keeps re-learning.
+ *
+ * TWO EXCLUSIONS, both deliberate:
+ *
+ *   `review` items are guidance to read once, not detectable work. They are
+ *   already excluded from `autoDone`/`autoTotal`, and pointing "next" at one
+ *   would stall the chain on something completion can never clear.
+ *
+ *   `href === null` items are not navigable. An item can be genuinely
+ *   incomplete and have nowhere to send you (the consent read failing, for
+ *   instance); offering a dead CTA is worse than offering none.
+ *
+ * A `todo` item with no href therefore does NOT block the chain — the walk
+ * continues past it. The checklist below still shows it as outstanding, so it
+ * is surfaced, just not as the next click.
+ */
+/**
+ * MAY THIS CHECKLIST CLAIM TO KNOW WHAT COMES NEXT?
+ *
+ * Three independent reasons it may not, and the CTA needs ALL to clear.
+ *
+ * 1. IT IS AN OWNER AFFORDANCE, because the sequence contains owner-only work.
+ *
+ *    `nextSetupStep` walks studio-wide setup tasks, and four of the
+ *    checklist's destinations refuse a non-owner outright —
+ *    `/settings/consent` answers "Only studio owners can manage consent
+ *    forms", and services, payments and profile gate the same way. Handing a
+ *    practitioner an authoritative "Next step" that dead-ends in a refusal is
+ *    worse than offering none: it asserts the app knows what they should do
+ *    next and is wrong about who they are.
+ *
+ *    A non-owner still sees the whole Getting Started page. The checklist is a
+ *    readiness VIEW and remains useful to anyone; only the directive CTA is
+ *    withheld.
+ *
+ * 2. V2 OWNS THE SEQUENCE WHERE IT IS ENABLED. There are two onboarding orders:
+ *
+ *      this legacy checklist   basics -> booking -> charting -> records ->
+ *                              daily -> payments
+ *      ONBOARDING_STEP_ORDER   welcome -> service -> availability -> booking ->
+ *      (lib/onboarding/steps)  payments -> done
+ *
+ *    The dashboard hands onboarding to the v2 wizard for an owner whose studio
+ *    has `onboarding_v2_enabled`, while `/getting-started` stays reachable via
+ *    AccountMenu, MobileMenu and search. Without this the page would answer
+ *    "what is next?" from the LEGACY order while the studio ran the v2 one —
+ *    two authorities, two answers, and no way for the operator to tell which is
+ *    lying.
+ *
+ * 3. THE SIGNALS IT WOULD SELECT FROM MUST HAVE BEEN READ. See
+ *    `nextStepSignalsAvailable`: a failed count read collapses into a
+ *    legitimate zero, and an authoritative directive built on that tells an
+ *    owner to redo finished work. Unknown is never optimism.
+ *
+ * AN ABSENT COLUMN READS AS NOT-ENABLED. The type is optional for schema-skew
+ * tolerance, and a studio without the column is genuinely on the legacy flow;
+ * failing the other way would strand its owner in silence.
+ *
+ * ORDER IS UNTOUCHED. This decides only whether the question may be ASKED;
+ * `nextSetupStep` still answers it from the sequence `buildGettingStarted`
+ * already emits.
+ */
+export function legacyChecklistMayOfferNextStep(opts: {
+  isOwner: boolean;
+  onboardingV2Enabled?: boolean | null;
+  signalsAvailable: boolean;
+}): boolean {
+  // Owner-only: the sequence contains tasks a practitioner cannot perform.
+  if (!opts.isOwner) return false;
+  // FAIL CLOSED on an unreadable signal. A directive built on a collapsed read
+  // would tell an owner to repeat work that may already be done; silence is
+  // the honest answer to "I could not establish this". The checklist below
+  // keeps rendering whatever it independently owns.
+  if (!opts.signalsAvailable) return false;
+  // And only where the legacy checklist, not the v2 wizard, owns the sequence.
+  return opts.onboardingV2Enabled !== true;
+}
+
+export function nextSetupStep(checklist: GettingStarted): ChecklistItem | null {
+  for (const section of checklist.sections) {
+    for (const item of section.items) {
+      if (item.status !== "todo") continue;
+      if (item.href === null) continue;
+      return item;
+    }
+  }
+  return null;
 }
 
 export function buildGettingStarted(
@@ -376,6 +503,39 @@ export function buildGettingStarted(
   };
 }
 
+/**
+ * WORKING CAPS for the two bounded signal reads, and why they are probed at
+ * cap + 1.
+ *
+ * `.limit(N)` makes a false negative indistinguishable from a true one. A
+ * studio with more than N non-deleted sessions whose only `next_session_note`
+ * is older than the newest N returns `hasNextVisitNote: false` with NO error —
+ * the read succeeded and still lied. The same holds for frequency, probe,
+ * probe-lot and reaction evidence sitting outside the returned blocks.
+ *
+ * That is the SAME defect as a swallowed read error, arriving through the quiet
+ * door: the first guard closed the channel where failure is loud (`error`) and
+ * left the one where it is silent (truncation).
+ *
+ * So each read asks for one MORE row than it needs. Getting cap + 1 back proves
+ * the set is larger than the window and the derived predicates cannot be
+ * trusted; getting cap or fewer proves the window held everything. TRUNCATION
+ * IS THEN TREATED AS UNKNOWN — never as "not completed".
+ *
+ * Deliberately NOT per-predicate existence queries: that is a signals-layer
+ * redesign and belongs to ONB-02. This stays a suppression.
+ */
+const BLOCK_SIGNAL_CAP = 500;
+const NOTE_SIGNAL_CAP = 200;
+/**
+ * supabase/config.toml `max_rows` — the ceiling the Data API applies to an
+ * EMBEDDED rowset too, PER PARENT ROW, where the response's Content-Range
+ * describes only the ROOT. Nothing in the body says embedded rows went
+ * missing, so a full-looking embed is the only evidence of a clip there is.
+ * Measured against the real Data API in tests/db/owner-capacity.db.test.ts.
+ */
+const EMBEDDED_ROW_CEILING = 1_000;
+
 export async function getGettingStartedSignals(
   studio: { id: string; name: string; slug: string | null },
   practitionerName: string,
@@ -397,8 +557,8 @@ export async function getGettingStartedSignals(
     // One bounded existence read, in the SAME Promise.all as everything else:
     // no additional round trip and no per-item query.
     treatmentConsent,
-    { data: blockRows },
-    { data: noteRows },
+    blocksRes,
+    notesRes,
   ] = await Promise.all([
     getActiveServices(studio.id),
     count("appointments"),
@@ -421,15 +581,27 @@ export async function getGettingStartedSignals(
       )
       .eq("studio_id", studio.id)
       .is("deleted_at", null)
-      .limit(500),
+      .limit(BLOCK_SIGNAL_CAP + 1),
     supabase
       .from("sessions")
       .select("id, next_session_note")
       .eq("studio_id", studio.id)
       .is("deleted_at", null)
       .order("started_at", { ascending: false })
-      .limit(200),
+      .limit(NOTE_SIGNAL_CAP + 1),
   ]);
+
+  // Destructured AFTER the await so `error` survives: the previous
+  // `{ data: blockRows }` form discarded it at the call site, which is how a
+  // failed read became an empty studio.
+  const blockRows = blocksRes.data;
+  const noteRows = notesRes.data;
+
+  // A response that came back FULL may have more behind it, so the predicates
+  // derived from it are unknown rather than false. cap + 1 rows is proof of
+  // truncation; cap or fewer is proof of completeness.
+  const blocksTruncated = (blockRows?.length ?? 0) > BLOCK_SIGNAL_CAP;
+  const notesTruncated = (noteRows?.length ?? 0) > NOTE_SIGNAL_CAP;
 
   const blocks = (blockRows ?? []) as Array<{
     machine_frequency: string | null;
@@ -442,6 +614,34 @@ export async function getGettingStartedSignals(
       | Array<{ observation_chips: unknown; deleted_at: string | null }>
       | null;
   }>;
+
+  // The SAME truncation rule one level down. A block whose embedded entries came
+  // back AT the ceiling may have more behind it, and `hasReactionOrTolerance` is
+  // the one predicate derived from those embedded rows — so a clip there makes a
+  // missing reaction chip indistinguishable from an absent one.
+  const reactionRowsClipped = blocks.some(
+    (b) => (b.electrolysis_entries?.length ?? 0) >= EMBEDDED_ROW_CEILING,
+  );
+
+  // Every read whose failure would silently become "not done". Consent is
+  // included because its `null` renders a `review` item, which nextSetupStep
+  // SKIPS — so an unreadable consent state would send the owner past a step
+  // that may genuinely be outstanding. Truncation sits here for the same
+  // reason as error: both make a false negative indistinguishable from a
+  // true one.
+  const nextStepSignalsAvailable =
+    !appointments.error &&
+    !clients.error &&
+    !sterile.error &&
+    !disinfectants.error &&
+    !payments.error &&
+    !blocksRes.error &&
+    !notesRes.error &&
+    !blocksTruncated &&
+    !notesTruncated &&
+    !reactionRowsClipped &&
+    treatmentConsent.ok;
+
   const notes = (noteRows ?? []) as Array<{
     next_session_note: string | null;
   }>;
@@ -475,5 +675,6 @@ export async function getGettingStartedSignals(
     disinfectants: disinfectants.count ?? 0,
     paymentAttempts: payments.count ?? 0,
     runtimeLivemode: inferStripeLivemode(),
+    nextStepSignalsAvailable,
   };
 }

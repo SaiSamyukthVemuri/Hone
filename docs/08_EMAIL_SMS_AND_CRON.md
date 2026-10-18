@@ -72,7 +72,7 @@ SMS has no case-4 equivalent: if the window's SMS toggle is off the row is skipp
 
 **Secure link.** Every send that carries the CTA mints a **fresh** `generateIntakeLinkUrl` token (now + 14-day TTL; the signed token stays the authoritative expiry) against the **existing** intake row — saved answers preserved, no second row created, raw token never logged.
 
-**Link accounting is truthful per channel.** `stampIntakeLinkIssued` runs **only** when the message that actually sent carried the link. A plain appointment reminder never stamps. The email pass stamps `{ emailed: true }`; the SMS pass stamps `{ emailed: false }`, because `intake_link_last_sent_at` renders as *"Intake link emailed …"* in the practitioner UI and an SMS must not claim the email channel sent it. `intake_link_send_count` is channel-agnostic and counts links actually issued.
+**Link accounting is truthful per channel.** `stampIntakeLinkIssued` runs **only** when the message that carried the link was sent — or, for SMS, **possibly sent**: an ambiguous provider answer is recorded as sent and never retried, so the link may be in the client's hands (Codex P2 4232680581). Whether the SMS carried the link is reported by the send helper, read from the message it built. A definite refusal or a skipped send never stamps, and a plain appointment reminder never stamps. The email pass stamps `{ emailed: true }`; the SMS pass stamps `{ emailed: false }`, because `intake_link_last_sent_at` renders as *"Intake link emailed …"* in the practitioner UI and an SMS must not claim the email channel sent it. `intake_link_send_count` is channel-agnostic and counts links actually issued.
 
 **The retired 7d/3d state is preserved, not reinterpreted.** The 0098 columns, indexes and `claim_email_send` / `record_email_result` branches are retained untouched; the application simply stops writing them. A stamped `intake_reminder_7d_sent_at` still means "we emailed this client seven days out". Reusing those columns would have made every in-flight row that already carried a 7d stamp permanently ineligible for the 24h nudge — a silent, unalertable delivery loss — and would have rewritten frozen history. **0186 creates no function**, so the `ALTER DEFAULT PRIVILEGES` grant-enumeration failure class (0129 / 0164 / 0183-0184) cannot occur in it.
 
@@ -90,7 +90,9 @@ The double-send gap is closed. The reminder cron now claims each row via `claim_
 
 - **Default off.** `studios.send_*_sms` columns default `false`. Toggling on requires a SQL update (the practitioner UI does not toggle this yet).
 - **Per-client consent required.** `clients.sms_consent_at` must be set AND `clients.sms_opted_out_at` must be null.
+- **The database guards those four fields (0211, G3).** A studio member writing through the database API can never add, change or remove a client's SMS consent, and can add an opt-out only as a withdrawal (source `practitioner`, on the database clock). For every role, recorded consent is write-once and an opt-out is terminal. Consent is recorded only by the governed paths: the 0204 new-client booking command, the public booking action and, for opt-outs, the inbound STOP route.
 - **Per-environment gate.** Missing `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` makes the SMS helper return `ok: false` cleanly; the booking continues.
+- **Non-production fence (SMS-00).** Vercel preview deployments carry the live Twilio credentials and run against the production database, so `sendSmsSafely` refuses to send from any Vercel environment other than `production` (`outboundSmsFence`, `lib/sms/twilio.ts`) — before any credential is read and without a provider request. An operator can deliberately open a non-production deployment with `HONE_SMS_NON_PRODUCTION_SENDS=allow`; no other value opens it. Local and CI runs (no `VERCEL_ENV`) are not fenced here: they hold no live credentials.
 - **Test exposure.** SMS is not exercised in this pilot beyond manual smoke. Real production SMS would need real Twilio test runs.
 
 ### Outgoing message types
@@ -116,6 +118,131 @@ This endpoint is **not** a cron endpoint and does **not** use `CRON_SECRET`. It 
 **Twilio Console wiring** (carried over from the retired `CRON_SETUP.md`, PR OPS-01): Messaging → Services → (your service) → Inbound Settings → *Process inbound messages* → **Send a webhook**; Webhook URL `https://hone.care/api/twilio/inbound-sms`; Method `HTTP POST`; Save. Set `TWILIO_WEBHOOK_BASE_URL=https://hone.care` in the Vercel production env so the signature validator builds the canonical URL deterministically regardless of which internal Vercel hostname the runtime sees.
 
 STOP keywords (`STOP`, `STOPALL`, `UNSUBSCRIBE`, `CANCEL`, `END`, `QUIT`) opt out every Hone client whose stored phone normalizes to the inbound `From` digits, writing one `audit_logs` row per matched client. Non-STOP inbound messages are acknowledged with empty TwiML and not persisted (v1 is opt-out only, not conversational). After STOP, **email** reminders for that client continue; only SMS sends are blocked.
+
+### Delivery ledger and status callbacks (SMS-00, migrations 0206 and 0207)
+
+> **WHICH SEND PATHS ARE LEDGERED.** SMS-00 shipped the ledger, its commands and the status endpoint. SMS-02 wired the appointment send paths, and SMS-01 wires waitlist invitations. **Every SMS Hone sends is now ledgered**: booking confirmations, 24h and 2h reminders, and waitlist invitation texts. Each provider attempt gets one row, named in its `StatusCallback`, with delivery reports and `sms_delivery_failed` alerts. Invitation texts are claimed through `claim_waitlist_invitation_sms`.
+
+`public.sms_outbound_messages` holds **one row per ledgered outbound SMS attempt** — purpose, subject (an appointment or a waitlist invitation), status, Twilio's message SID and numeric error code. **No message body and no phone number.** It has RLS on, no policy and no table grant to any role; its only writers are five `service_role` commands (`lib/sms/delivery-ledger.ts` wraps them):
+
+| Command | Role |
+|---|---|
+| `begin_appointment_sms_message` | Creates the row for one appointment SMS attempt, **after** `claim_sms_send` has claimed it. It does not decide whether a send may happen. |
+| `claim_waitlist_invitation_sms` | The **once-per-invitation** claim: tenancy, invitation liveness and `studios.send_waitlist_invitation_sms` are checked in the database, and a unique index makes a second claim impossible. Claimers of one invitation run **one at a time** (0207: the invitation row is held `FOR NO KEY UPDATE`), so liveness and the clock are decided while holding the only right to insert. A claim that waited behind one that rolled back re-decides. Returns the prospect's phone, consent, opt-out and verification facts; `prospectMayReceiveSms` stays the one authority on whether they may be texted. |
+| `claim_reminder_sms_send` | The reminder claim (SMS-02): under the appointment row lock it refuses unless the appointment is confirmed and inside the cron window, then calls `claim_sms_send` unchanged, all in one transaction. It writes no ledger row. |
+| `settle_sms_message` | Records what the provider answered: `accepted` (with SID), `refused`, `unknown` (an attempt whose answer was lost) or `skipped` (no request; a reason slug says why). |
+| `record_sms_delivery_status` | Applies a Twilio status callback. Forward-only (`queued → sending → sent → delivered / undelivered / failed`); the three end states are terminal; a callback also resolves an `unknown` settle. |
+
+Once a send path is wired, the row exists **before** the provider call. Twilio's Messages API takes no idempotency key, so an attempt whose answer is lost may still have sent the message, and a later status callback is what tells Hone so. Each ledgered attempt is sent with `StatusCallback = TWILIO_WEBHOOK_BASE_URL + /api/twilio/message-status?m=<row id>`. Without `TWILIO_WEBHOOK_BASE_URL`, no callback is requested and the attempt is settled from the provider's synchronous answer alone.
+
+**Status endpoint:** `/api/twilio/message-status`. Same security model as the STOP webhook — the raw body and the full URL (which carries the row id) are verified against `X-Twilio-Signature` before any database work; a bad signature is a 403 with zero writes. `middleware.ts` allows the exact path unauthenticated. An `undelivered` or `failed` end state raises **one** `sms_delivery_failed` warning ops alert, attributed to the studio and (for appointment SMS) the appointment, carrying the purpose, the status and Twilio's error code — never a phone number.
+
+### Reminder SMS send discipline (SMS-02)
+
+The 24h / 2h reminder SMS (`send24hReminderSmsToClient` / `send2hReminderSmsToClient`, called only by the reminder cron) keep the consent gate, the deployment fence and `claim_sms_send`, and add three rules a scheduled send needs:
+
+1. **Validated and claimed in one transaction.** `claim_sms_send` validates nothing, so the helper claims through `claim_reminder_sms_send` (0206): under the appointment row lock it refuses unless the appointment is confirmed and starts inside this cron window, then calls `claim_sms_send` unchanged. A cancellation or a move cannot land between the check and the claim; a refusal — or an unreachable command, which rolls back — spends **no** attempt, and the cron counts it as `skipped`, never as `attempted` (those count provider requests only). The message and its `/manage/<token>` link (whose token expires at the start) are built from the start the claim returns, so a move made **before** the reminder goes out is reminded at its new start.
+2. **An ambiguous attempt is not retried automatically.** Twilio takes no idempotency key, so a timeout, a dropped connection, a 5xx or a success reply without a SID may already have reached the client. Such an attempt is recorded as sent (no duplicate), its ledger row stays `unknown` until a delivery callback reports, and a failure report raises `sms_delivery_failed`. The send helper returns it as **possibly sent**, never as a definite failure: the cron still counts it as a failed attempt, and keeps the accounting of the intake link it carried. A **definite** refusal — a 4xx, or a connection that never opened — is recorded unsent and retried on a later fire within the 3-attempt budget, as before.
+3. **The record comes before the ledger.** `record_sms_result`, the authority on whether the reminder may be sent again, is written as soon as the provider answers. Only then is the ledger row settled, as best-effort bookkeeping. A settle that hangs or fails, or an invocation killed during it, can no longer leave an accepted (or possibly accepted) reminder holding only its claim, which goes stale after five minutes and would be reclaimed and sent again. The window that remains is the single round trip between the provider's answer and that record. Each ledger step (the row before the send, the settle after it) is also bounded at 5 seconds, far inside the five-minute claim lease, so a ledger that stalls cannot keep a worker paused until another run reclaims the slot and sends it again. A bound per step alone would be paid again for every reminder in the sequential batch, so the reminder cron also gives each run **one 5-second ledger budget, shared by both SMS passes** (Codex P1 4232680578): every ledger step waits at most what is left of it and is charged its wait, a step that runs out of time spends the rest, and once it is spent no further ledger request is started in that run. Every reminder is still claimed, sent and recorded, record before settle, only without a ledger row (and so without delivery reports) for the rest of that run. A step that runs out of time is abandoned, and an answer that arrives later is ignored: the reminder goes, or returns, as it would without a ledger. The booking confirmation follows the same order and the per-step bound.
+
+The cron's own pre-claim "still confirmed?" read remains as a cheap pre-filter, so a cancelled row costs no intake read and no claim.
+
+**Not in this slice:** a practitioner move *after* a reminder already went out leaves that slot sent, so no reminder names the new start — for email and SMS alike, exactly as before SMS-02. Likewise, a cancellation or move that commits *after* the claim but before the provider has the message is not seen: that reminder names the start the claim returned. The window is at most the bounded ledger step plus the 15-second provider request, and the email reminder has the same window. Both residual windows are **accepted for P0 by operator decision (2026-10-08) and carried by SMS-03**:
+- D2(a) is this in-flight window (Codex P1 4224110906).
+- D1(a) is rule 3's one-round-trip duplicate window, which is monitored. That is the specified follow-up **SMS-03** in [13_BACKLOG_AND_DECISIONS.md](./13_BACKLOG_AND_DECISIONS.md).
+
+### Waitlist invitation SMS (SMS-01)
+
+A new waitlist invitation is **also texted** to an eligible prospect, beside its email and in the **same request** (`lib/waitlist/invite-to-book-adapter.ts` → `lib/waitlist/delivery/sms.ts`): the raw link token exists only in that request, so there is no later send and no "resend".
+
+- **Whether at all — the database.** `claim_waitlist_invitation_sms` (0206) admits **one claim per invitation**, only for the studio's own **live** invitation (it holds the invitation row while it decides, so a racing release, decline or redemption is seen), and only when `studios.send_waitlist_invitation_sms` is on (default off). A claim that cannot be taken means no text (fail closed).
+- **To whom — `prospectMayReceiveSms`.** STOP wins, then recorded consent decides. **Verification is optional** (Roadmap v1.25; operator decision D4(2), 2026-10-08): OTP / Twilio Verify is not a WAIT launch prerequisite. Three protections stay.
+  - **The consent is bound to the stored number.** The database records consent only on a row that holds a phone, and a stored phone can never be replaced or cleared (0202/0203). The claim reads both from the same locked row.
+  - **An unusable number is never tried** (`invalid_phone`).
+  - **Non-production deployments are fenced** (`non_production_deployment`).
+
+  - **STOP is re-read phone-wide at send time (0208).** A STOP stamps the rows that exist when it arrives; a row created later with the same number carries no stamp. So before texting, the sender asks the STOP route's own matching law (`lookupPhoneWideSuppression` → `selectHoneSuppressionTargets`) whether any client or prospect, in any studio, with this number already said STOP. If one did, the text is `skipped` / `opted_out`. If that read fails, the text is `skipped` / `suppression_check_failed`: an unchecked number is never texted.
+  - **Every STOP read is complete, or it fails closed (Codex P1 4234615485).** A single PostgREST response stops at the API's row limit (`max_rows`, 1,000) with no error, so one read past that limit would silently miss a STOP. The send-time check, the owner's recording check and the inbound STOP route itself all read clients and prospects through one reader (`lib/sms/suppression-candidates.ts`): keyset pages ordered by id until a page comes back empty, with at most 100 pages per source. A failed page, ids that do not advance, or a read past that ceiling counts as a failed read: the text is `suppression_check_failed`, the owner's recording is refused, and the STOP route answers 500 so Twilio retries. Matching is unchanged (`selectHoneSuppressionTargets`). Proven against a real PostgREST in `tests/db/sms-stop-read-beyond-row-limit.db.test.ts`.
+
+  Each "no" is recorded in the ledger as `skipped` with its reason: `opted_out`, `no_consent`, `invalid_phone`, `suppression_check_failed` or `non_production_deployment`. `mobile_unverified` is no longer produced. **Accepted residual:** nobody proves the number reaches the person. A mistyped number, or a join that pairs someone's name and email with a phone the submitter controls, receives the text, and STOP ends it. The live join form asks people to check the number is their own.
+- **How consent is recorded (0208).** Two paths, and only these two write it.
+  - **The person's own answer, at signup.** The live new-client waitlist form shows the approved sentence (`SMS_OPERATIONAL_CONSENT_LABEL`, `waitlist_sms_operational_v1`) with **Yes** and **No**, neither preselected. The server refuses a missing answer rather than reading it as No, and refuses a Yes unless the number is one the sender can text: the invitation sender's own law, `normalizePhoneForSms` (Codex P2 4234615500). The SQL wrapper keeps a 7-digit floor as a backstop; every number the sender's law accepts clears it. `join_new_client_waitlist_with_sms_answer` wraps 0204's guarded join unchanged and, in the same transaction, stamps a Yes on the entry **that join just created**: source `public_form`, wording v1, the database clock. A **No** joins exactly the same way, keeps the email acknowledgement and the place, and records nothing. A resubmission from someone already waiting writes no consent.
+  - **An owner's record of consent given outside Hone.** `/settings/waitlist` offers the owner, on each eligible row, an explicit attestation, an evidence reference (3 to 200 characters, one line) and the day they agreed or "Day not known", with no defaults. `record_waitlist_sms_consent_by_practitioner` (owner-only, `service_role`-only, owner re-derived from the session's user) records source `practitioner`, **who recorded it** (a same-studio FK to `practitioners`), the scope `waitlist_operational`, the evidence reference, the database clock as the recording time, and the day they agreed **only when known**. A practitioner record carries **no wording version**: the owner did not show one. It refuses STOP, existing consent, no phone, and removed or converted entries. The action also refuses a number the sender could never text (`normalizePhoneForSms`, before any other read), a number that said STOP through any other row, phone-wide, and refuses if it cannot check.
+  - **Write-once.** Once consent is on a row, its evidence (time, source, wording, recorder, scope, reference, day) can never be changed or removed (0208's clause in the 0203 guard). Recording again is refused as `already_consented`, and a STOP still wins over any of it.
+- **What it says.** The studio name, an invitation to book a consultation, the deadline **exactly as the email renders it** (`invitationExpiryLabel`), the `/invitation/<token>` link and the STOP disclosure. No held-slot or queue-position promise.
+- **Retries and alerts.** An ambiguous answer is never repeated. A definite, retryable refusal (rate limited, or a connection that never opened) is tried once more after 750 ms. A text that ends refused, or whose answer was lost, raises one `sms_send_failed` warning (purpose `waitlist_invitation`): this path has no later retry. The warning is raised **before** the ledger row is settled, so a settle that stalls cannot swallow it, and an unexpected error anywhere in the text path raises the same warning.
+- **Independence.** The text runs **off the response path**. It starts on a later macrotask and is handed to `after()` as a **started promise**, never a callback: in Next 15.5 a callback would move the Server Action's request to the `after` phase if the practitioner navigated away mid-send, and the action's re-render would then throw. Outside a request scope it falls back to fire-and-forget. The action never awaits it, so a stalled provider can never hold the Invite to book action open. It never delays, changes or fails the email or the invitation, and the practitioner's result is still the email's disposition.
+- **Activation.** Needs `send_waitlist_invitation_sms` (default off) for the studio. A consenting prospect is then texted at their stored number; no verification step is involved. See [runbooks/sms-p0-activation.md](./runbooks/sms-p0-activation.md).
+
+### Waitlist join acknowledgement SMS and the required phone (SMS-04, migration 0210)
+
+**The signup.**
+- **A phone number is required on every NEW public waitlist signup**, for a Yes and a No alike.
+  - The form refuses a blank, whitespace-only or unsendable number before it submits, and the server action refuses it again before any database call. Both use `validateWaitlistPhone` (`lib/waitlist/signup-contact.ts`), which applies the sender's own law, `normalizePhoneForSms` (now in the pure, browser-safe `lib/sms/phone.ts`, re-exported from `lib/sms/twilio.ts`).
+  - The signup command `join_new_client_waitlist_with_phone_and_sms_answer` (0210) refuses it as well, through `public.sms_normalized_phone`.
+  - There is no verification code (D4(2)).
+- **The question is version 2:** "May we text you about joining this waitlist and any appointment offered from it? Reply STOP at any time to opt out." (`SMS_JOIN_CONSENT_QUESTION`).
+  - A Yes is recorded as `waitlist_sms_operational_v2`. Answers already recorded keep v1, and `SMS_CONSENT_WORDING_BY_VERSION` resolves each version to its own sentence.
+  - Still two answers, neither preselected. A No still joins, with the same entry, emails and place.
+- **Existing entries are untouched**, email-only ones included. The owner's "Add someone to the waitlist" keeps its optional phone. `0208`'s `join_new_client_waitlist_with_sms_answer` is kept, unchanged, for the deployed application during the rollout window.
+
+**The join text.** A genuinely new public join with a Yes gets ONE text after the entry is durably saved:
+
+> `<Studio>`: you've joined our waitlist. We'll contact you when you're invited to book. Reply STOP to opt out.
+
+**The sender label** (`<Studio>`) follows its own policy. It was settled in a D3 design review after Codex P2 4239889929.
+- **The goal:** the whole text is GSM-7 in **one segment**, and the approved copy after the label never changes. So the label gets the 61 units the copy leaves, counted as carriers count them: `[ ] { } | ~ ^ \ €` cost two.
+- **What is kept:** characters GSM-7 supports, exactly as written (`É`, `é`, `è`, `Ø`, `Ñ`).
+- **What is normalized:**
+  - unsupported accents lose the accent (`ê`→`e`, `ç`→`c`);
+  - typographic punctuation becomes ASCII (`’`→`'`, `–`→`-`);
+  - a few Latin letters are transliterated (`œ`→`oe`, `ł`→`l`).
+- **What is dropped:** emoji, other scripts, and invisible characters.
+- **Over budget:** a long name is cut at a word boundary, with no ellipsis.
+- **The fallback:** a name with no letter or digit left becomes `Your clinic`.
+- **Scope:** only the join text. Confirmations, reminders and invitations keep the template file's documented policy.
+- **Implementation:** `lib/sms/templates.ts` and `lib/sms/gsm7.ts`.
+- **Tests:** `tests/lib/sms/join-ack-sender-label.test.ts` (with an independent GSM-7 counter) and `tests/lib/sms/gsm7.test.ts`.
+
+- **When.** The join action starts it after the commit and after the response (`app/book/[slug]/waitlist-actions.ts` → `lib/waitlist/delivery/join-ack-sms.ts`), beside the two emails, never before them in the response path.
+  - A resubmission (`already_waiting`) never reaches it.
+  - A No never asks for it.
+- **Whether at all — the database.** `claim_waitlist_join_ack_sms` (0210) admits one claim per entry. Each of these must hold, or it writes nothing:
+  - the studio's waitlist texts are on (`send_waitlist_invitation_sms`);
+  - the entry came from the public form and is still waiting;
+  - its consent is the form's own v2 Yes, recorded inside the join's own minute;
+  - it joined less than 15 minutes ago;
+  - no other join text that may have reached the same sendable number was claimed in the last 24 hours, in any studio.
+
+  **The per-number rule is atomic** across entries and studios.
+  - Before that check, the claim takes a **transaction-level advisory lock keyed by the normalized number** (`sms_join_ack_number:`). It holds the lock through its ledger insert, and a rollback releases it.
+  - A second claim for the same number waits, then sees the first claim and is refused (`recently_acknowledged`). A pending first claim counts; a skipped or refused one still does not.
+  - **Lock order** is always the entry row, then the number.
+  - **Waits are bounded** by the claim's own `lock_timeout` (5 s). A claim that times out writes nothing, and the sender, reading `unavailable`, sends nothing.
+  - **The lock is held briefly, and that does not change as the waitlist grows.**
+    - The check finds the entries sharing the number through `new_client_waitlist_entries_sms_number_idx`, an index on `sms_normalized_phone(phone)`.
+    - Without it, the planner normalized every entry's phone under the lock, because the function's `SET search_path` prevents inlining. That took 2.2 s at 30,350 entries; with the index it takes 0.1–0.2 ms.
+    - The index must be rebuilt if the normalizer is ever redefined.
+    - The decision is recorded in the D3 architecture review (Codex P2 4239987967).
+  - This repairs Codex P1 4239431828. It is proven with real concurrent connections in `tests/db/sms-waitlist-join-ack.db.test.ts`, including a mutation that removes the lock and reproduces the race.
+- **Who can never get it.** People already on a waitlist:
+  - an owner-recorded or backfilled consent is source `practitioner`;
+  - turning the switch on runs nothing;
+  - their join is older than 15 minutes.
+  A v1 Yes never qualifies either.
+- **To whom — the invitation text's protections, in the same order:**
+  - `prospectMayReceiveSms`;
+  - a usable number (`invalid_phone`);
+  - STOP re-read phone-wide (`opted_out`, `suppression_check_failed`);
+  - the production fence (`non_production_deployment`).
+
+  Each is settled on the claimed row.
+- **What it says.** The studio name and what happens next. It has **no link**: there is nothing to do yet, and the secure booking link only ever comes with an invitation (`/invitation/<token>`, to book a consultation).
+- **Retries and alerts.** These are as for the invitation text:
+  - an ambiguous answer is never repeated;
+  - a definite, retryable refusal is tried once more;
+  - a refused or lost text raises one `sms_send_failed` warning (purpose `waitlist_join_acknowledgement`), before the best-effort settle.
+- **The ledger.** Purpose `waitlist_join_acknowledgement`, subject `waitlist_entry_id`. The subject is tied to the studio by a composite key, there is at most one row per entry (unique index), and it is write-once.
 
 ### SMS RPC grants hardened (PR #141 / migration 0062)
 

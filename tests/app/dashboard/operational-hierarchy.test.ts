@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { dayHeading } from "@/lib/dashboard/day-navigation";
 import { join } from "node:path";
+import { COMPOSED_DASHBOARD } from "./helpers/composed-dashboard";
 
 // ===========================================================================
 // Dashboard V2 Part 1 — the operational hierarchy.
@@ -36,10 +37,13 @@ import { join } from "node:path";
 // Deliberately NOT asserted: CSS classes, colours, spacing, or markup shape.
 // Those must stay free to change without touching this file.
 
-const DASH = readFileSync(
-  join(process.cwd(), "app/(app)/dashboard/page.tsx"),
-  "utf8",
-);
+// PERF-01C: the secondary stack (To do, Birthdays, snapshot, setup cards) now
+// renders from app/(app)/dashboard/secondary-stack.tsx behind a Suspense
+// boundary, so the day's roster no longer waits on studio paperwork. These
+// assertions are about what RENDERS and in what order, so they read the
+// COMPOSED source (page with the child spliced in where it renders) rather
+// than half the page. See tests/app/dashboard/helpers/composed-dashboard.ts.
+const DASH = COMPOSED_DASHBOARD;
 
 /**
  * DASH with `//` lines and `{/* jsx *\/}` blocks removed.
@@ -201,7 +205,7 @@ describe("dashboard cleanup — completed setup and pilot tooling do not render"
     // Chloe saw "Booking page ready / Your public booking page is live" plus a
     // column of ticks, permanently. Complete readiness must render nothing.
     expect(DASH).toMatch(
-      /\{isOwner && bookingReadiness && bookingReadiness\.status !== "ready" && \(/,
+      /\{isOwner && readiness && readiness\.status !== "ready" && \(/,
     );
     // The card itself refuses too, so the contract does not depend on a caller
     // remembering the guard.
@@ -222,16 +226,31 @@ describe("dashboard cleanup — completed setup and pilot tooling do not render"
 
   it("D2: derived readiness stays the ONLY authority — no new completion flag", () => {
     // "Do not create a new completion flag if current state already determines
-    // readiness." The page must keep deriving from computeBookingReadiness and
-    // must not invent a persisted booking-complete signal.
-    expect(DASH).toMatch(/computeBookingReadiness\(/);
-    expect(DASH).not.toMatch(/booking_setup_complete|bookingSetupComplete|booking_ready\b/);
-    const readiness = readFileSync(
-      join(process.cwd(), "lib/booking/readiness.ts"),
+    // readiness." Still the rule. ONB-03 moved WHICH derivation the dashboard
+    // reads — from the booking-link gate to the canonical new-client authority —
+    // and did not add a flag.
+    // ONB-03 P2: the CALL moved to the page (its own deferred read); the stack
+    // awaits the promise. Both halves are pinned so the authority cannot quietly
+    // be re-called here, nor replaced by the old gate anywhere.
+    expect(DASH).toMatch(/await bookingReadiness/);
+    expect(DASH).not.toMatch(/computeBookingReadiness\(/);
+    const page = readFileSync(
+      join(process.cwd(), "app/(app)/dashboard/page.tsx"),
       "utf8",
     );
-    // The authority itself is untouched by this PR.
-    expect(readiness).toMatch(/const allRequiredOk = items\.every\(\(it\) => !it\.required \|\| it\.ok\);/);
+    expect(page).toMatch(/getNewClientReadiness\(studio\)/);
+    expect(page).not.toMatch(/computeBookingReadiness\(/);
+    expect(DASH).not.toMatch(/booking_setup_complete|bookingSetupComplete|booking_ready\b/);
+
+    // NEITHER AUTHORITY IS MODIFIED BY THIS PR, and both are asserted so the
+    // change is provably a consumer swap rather than a redefinition.
+    const legacy = readFileSync(join(process.cwd(), "lib/booking/readiness.ts"), "utf8");
+    expect(legacy).toMatch(/const allRequiredOk = items\.every\(\(it\) => !it\.required \|\| it\.ok\);/);
+    const canonical = readFileSync(
+      join(process.cwd(), "lib/booking/new-client-readiness.ts"),
+      "utf8",
+    );
+    expect(canonical).toMatch(/export async function getNewClientReadiness\(/);
   });
 
   it("D2: the incomplete state and the booking link's real homes all survive", () => {
@@ -240,9 +259,35 @@ describe("dashboard cleanup — completed setup and pilot tooling do not render"
       join(process.cwd(), "app/(app)/dashboard/BookingSetupCard.tsx"),
       "utf8",
     );
-    expect(card).toMatch(/>\s*Set up your booking page\s*</);
-    expect(card).toMatch(/<Checklist items=\{readiness\.items\}/);
-    expect(card).toMatch(/href=\{item\.href\}/);
+    // ONB-03: the not-ready state still renders every outstanding item with its
+    // own link. What changed is the SOURCE — canonical blockers rather than the
+    // booking-link gate's item list — and with it the heading, because the card
+    // now answers "can this studio take a new client", not "is the link
+    // publishable".
+    // THE HEADING REACHES AN <h2> THROUGH A PROP, so both halves are asserted:
+    // the not-ready state passes this text, and the shell renders whatever it is
+    // given inside the labelled heading. Checking only the literal would pass if
+    // the shell stopped rendering it at all.
+    expect(card).toContain('heading="Before you can take a new client"');
+    expect(card).toMatch(/<h2[^>]*id="booking-setup-heading"[\s\S]{0,80}\{heading\}/);
+    expect(card).toMatch(/readiness\.blockers\.map/);
+    expect(card).toMatch(/href=\{blocker\.href\}/);
+    // AND IT MUST NOT INVENT SATISFIED ITEMS. The authority reports only proven
+    // blockers; ticking whatever is absent from that list would assert something
+    // nobody proved whenever `unavailable` is non-empty.
+    //
+    // MEASURED ON CODE, NOT PROSE. The card's own comment explains why it does
+    // not reconstruct the full key list, and naming the identifier there is
+    // worth keeping — so the assertion strips comments rather than forcing the
+    // documentation to talk around the thing it is documenting. LINE comments
+    // first: a `/*`-first pass lets a `//`-commented block swallow real code.
+    const cardCode = card
+      .replace(/^[ \t]*\/\/.*$/gm, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(cardCode).not.toMatch(/NEW_CLIENT_BLOCKER_KEYS/);
+    expect(cardCode).not.toMatch(/item\.ok/);
+    // ANTI-VACUITY: the stripper must not have emptied the file.
+    expect(cardCode).toContain("readiness.blockers.map");
     // ...and the booking LINK still lives on the pages that own it, so hiding
     // the ready card removed a banner, not a capability.
     for (const f of [
@@ -277,7 +322,19 @@ describe("dashboard cleanup — completed setup and pilot tooling do not render"
       join(process.cwd(), "app/(app)/dashboard/onboarding/OnboardingSurface.tsx"),
       "utf8",
     );
-    expect(surface).toMatch(/\{!model\.isComplete && \(\s*<OnboardingProgressCard/);
+    // PERF-01C added a second, NARROWER condition rather than replacing this
+    // one: `!model.isComplete && !completedLocally`. The server model remains
+    // the authority — `completedLocally` is set ONLY when
+    // completeOnboardingAction reports ok, so a refusal still leaves the card.
+    // Asserted as both conjuncts rather than as one exact spelling, so the
+    // server gate cannot be dropped and the local one cannot become the only
+    // condition.
+    expect(surface).toMatch(
+      /\{!model\.isComplete && !completedLocally && \(\s*<OnboardingProgressCard/,
+    );
+    // The local flag is never set except on a RECORDED completion.
+    expect(surface).toMatch(/if \(res\.ok\) setCompletedLocally\(true\)/);
+    expect(surface).not.toMatch(/setCompletedLocally\(true\);?\s*\n?\s*\}?\s*startTransition/);
   });
 
   it("D3: the dedicated Getting Started route stays reachable and deliberate", () => {
@@ -322,10 +379,7 @@ describe("dashboard cleanup — completed setup and pilot tooling do not render"
     // Dashboard-specific, and deleting shared code is a wider decision than this
     // tranche was asked to make.
     expect(existsSync(join(process.cwd(), "lib/pilot/feedback-mailto.ts"))).toBe(true);
-    const page = readFileSync(
-      join(process.cwd(), "app/(app)/dashboard/page.tsx"),
-      "utf8",
-    )
+    const page = COMPOSED_DASHBOARD
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
     expect(page).not.toMatch(/<PilotFeedbackPrompt/);
@@ -571,7 +625,7 @@ describe("dashboard hierarchy — nothing operational was removed", () => {
     expect(DASH).toMatch(/todayWorkflowByAppointment|todayWorkflow/);
     expect(DASH).toMatch(/resolveTodayIntakeAction/);
     expect(DASH).toMatch(/getBeforeTodayPreviews/);
-    expect(DASH).toMatch(/getLatestPinnedNoteByClient/);
+    expect(DASH).toMatch(/getPinnedNotesByClient/);
   });
 
   it("the dashboard page never WRITES an appointment, by any route", () => {

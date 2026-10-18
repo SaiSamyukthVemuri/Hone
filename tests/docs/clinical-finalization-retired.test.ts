@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { currentProse } from "./helpers/canonical-facts";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -905,23 +906,30 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
     );
   });
 
-  it("the ledger states hosted max 0165 and repo max 0165 (0165 is APPLIED)", () => {
-    // Pinned to the specific rows. An existence check is not enough: the ledger
-    // names 0159 in several places, so a flipped hosted-max row would still find
-    // a match somewhere else in the file.
-    // 0162 (intake review transition integrity) was APPLIED to production
-    // 2026-08-02, so hosted and repo are level again. The assertions below are
-    // the reverse of what they enforced while it was still an unapplied DRAFT.
+  it("the ledger keeps its FROZEN 0165 block, and its CURRENT block is validated elsewhere", () => {
+    // SUPERSEDED 2026-08-23. This assertion used to require the ledger's
+    // "Hosted (production) migration max" and "Repo migration max" rows to read
+    // 0165 — and it PASSED FOR THE WRONG REASON. Its regex was unanchored, so
+    // it matched the FROZEN "Previous state (post-0165 apply)" block far down
+    // the file while the ledger's CURRENT block had long since moved on. A
+    // guard that cannot distinguish current from historical eventually enforces
+    // the historical one, which is exactly what happened: 20 migrations of
+    // drift accumulated underneath a green test.
+    //
+    // The current block is now validated against docs/production/migration-state.json
+    // and the derived repo state in tests/docs/canonical-production-facts.test.ts.
+    // What remains here is the half this file legitimately owns: that the 0165
+    // apply record still EXISTS as frozen history and was not rewritten.
     expect(
       MIGRATION_LEDGER,
-      "the ledger's Hosted (production) migration max row must read 0165",
+      "the frozen post-0165 apply record must survive as history",
     ).toMatch(
       /\|\s*\*\*Hosted \(production\) migration max\*\*\s*\|\s*\*\*0165\*\*/,
     );
     expect(
       MIGRATION_LEDGER,
-      "the ledger's Repo migration max row must read 0165 (hosted == repo)",
-    ).toMatch(/\|\s*\*\*Repo migration max\*\*\s*\|\s*\*\*0165\*\*/);
+      "…under a Previous-state heading, not a Current-state one",
+    ).toMatch(/^##\s+Previous state \(verified [^)]*post-0165 apply\)/m);
     expect(
       MIGRATION_LEDGER,
       "…and must record 0161 as APPLIED with its checksum, not as pending",
@@ -959,22 +967,40 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
     ).not.toMatch(/\|\s*\*\*(?:Hosted \(production\)|Repo) migration max\*\*\s*\|\s*\*\*015[79]\*\*/);
   });
 
-  it("production migration max is stated as 0165 where a max is asserted", () => {
+  it("no canonical production doc re-states a current migration max of its own", () => {
+    // SUPERSEDED 2026-08-23, and reversed in intent.
+    //
+    // This assertion used to REQUIRE five documents to each state "production
+    // migration max 0165". That is the drift mechanism itself written as a
+    // test: it made hand-copying the number mandatory, and it made correcting
+    // one copy a CI failure. It is why current-state.md still said 0165 while
+    // the ledger said 0185.
+    //
+    // The rule now matches CLAUDE.md §2, which already said this and had no
+    // enforcement: hosted max is declared once in migration-state.json, repo
+    // max and next-free are derived by scripts/migration-state.mjs, and every
+    // other document REFERENCES rather than repeats. Enforcement lives in
+    // tests/docs/canonical-production-facts.test.ts.
+    //
+    // KNOWN RESIDUAL, deliberately out of this change's authorized scope:
+    // docs/09_DATABASE_AND_RLS.md, README.md and docs/roadmap/CANONICAL_ROADMAP.md
+    // still carry a stale 0165. They are no longer MANDATED to (that mandate is
+    // what this block removed), and they are not canonical production docs.
+    // Migrating them is a follow-up, tracked in the PR body.
     for (const [name, doc] of [
-      ["docs/production/migration-ledger.md", MIGRATION_LEDGER],
       ["docs/production/current-state.md", CURRENT_STATE],
-      ["docs/09_DATABASE_AND_RLS.md", DB_RLS],
-      ["README.md", README],
-      ["docs/roadmap/CANONICAL_ROADMAP.md", ROADMAP],
+      ["docs/production/capability-register.md", CAPABILITY_REGISTER],
+      ["docs/production/known-limitations.md", KNOWN_LIMITATIONS],
     ] as const) {
-      expect(doc, `${name} must assert production migration max 0165`).toMatch(
-        /(?:migration max|max)[^.\n]{0,80}\b0165\b/i,
-      );
+      // currentProse() strips <!-- canonical-facts:ignore --> regions, so a
+      // document may still QUOTE the superseded claim it is correcting. One
+      // shared definition of "current prose" across both guards, deliberately.
       expect(
-        doc,
-        `${name} must not still assert a production migration max of 0157, 0159, 0161-0164`,
+        currentProse(doc),
+        `${name} must not assert a production migration max of its own — reference ` +
+          `docs/production/migration-state.json instead`,
       ).not.toMatch(
-        /production\s+migration\s+max\s*(?:=|is|:)?\s*\*{0,2}(?:015[79]|016[1234])\b/i,
+        /\bproduction\s+migration\s+max\s*(?:\bis\b|=|:)\s*\*{0,2}`?0\d{3}\b/i,
       );
     }
   });

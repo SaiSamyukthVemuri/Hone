@@ -29,6 +29,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // the tests can assert what did and did not run.
 
 type Stmt = {
+  isReread?: boolean;
   key: string;
   table: string;
   op: "select" | "update";
@@ -81,6 +82,8 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         //             the narrow re-read column list)
         if (st.op === "update") {
           st.key = `${table}:update:${String(st.payload?.receipt_status)}`;
+        } else if (st.isReread) {
+          st.key = `${table}:reread`;
         } else {
           st.key = `${table}:select`;
         }
@@ -93,16 +96,17 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         if (st.op === "select" && typeof cols === "string" && cols.startsWith("receipt_status,")) {
           st.key = "reread";
         }
+        // MARK THE STATEMENT, do not return a divergent object.
+        //
+        // This used to hand back `{ ...q }` with its own `maybeSingle`, but
+        // `q.eq()` returns the ORIGINAL `q` — so `.select(...).eq(...).maybeSingle()`
+        // silently landed on the default handler and the configured re-read
+        // response was never used. Every claim-loser test therefore passed on the
+        // null fallback, which reports `in_flight` — including the one meant to
+        // prove `already_sent`. A fixture that is never read is a test that
+        // proves nothing.
         if (st.op === "select" && st.key === "reread") {
-          // keep the marker; settle() will use it
-          const inner = { ...q };
-          inner.maybeSingle = async () => {
-            h.stmts.push({ ...st, key: "payment_charge_attempts:reread" });
-            return (
-              h.responses["payment_charge_attempts:reread"] ?? { data: null, error: null }
-            );
-          };
-          return inner;
+          st.isReread = true;
         }
         return q;
       };
@@ -119,7 +123,14 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         st.filters.push(["__or__", expr]);
         return q;
       };
-      q.is = () => q;
+      q.is = (col: string, val: unknown) => {
+        // RECORDED, so the claim POLICY can be asserted directly. Without this
+        // the automatic NULL-only claim was untestable: an early return for a
+        // `failed` row short-circuits before the claim query, so widening the
+        // query changed no observable outcome and a mutation of it went unnoticed.
+        st.filters.push([col, val === null ? "__is_null__" : val]);
+        return q;
+      };
       q.order = () => q;
       q.maybeSingle = async () => settle();
       q.then = (resolve: (v: unknown) => unknown) => resolve(settle());
@@ -176,6 +187,15 @@ function baseline(receiptStatus: string | null = null) {
 
 const run = () =>
   sendPaymentChargeReceipt({ attemptId: ATTEMPT, studioId: STUDIO, practitionerId: "p-1" });
+
+/** The automatic caller: claim policy admits receipt_status NULL only. */
+const runAutomatic = () =>
+  sendPaymentChargeReceipt({
+    attemptId: ATTEMPT,
+    studioId: STUDIO,
+    practitionerId: "p-1",
+    claimPolicy: "automatic",
+  });
 
 const keys = () => h.stmts.map((s) => s.key);
 const settlementWrites = () =>
@@ -285,81 +305,87 @@ describe("provider SUCCESS", () => {
   });
 });
 
-describe("provider RETRYABLE failure", () => {
+describe("provider RETRYABLE failure — delivery UNKNOWN, claim HELD", () => {
+  // `retryable` is timeout / network / empty response / 5xx: the request reached
+  // Resend, or may have, so the email may already be in the client's inbox.
+  //
+  // THIS BLOCK USED TO ASSERT A RELEASE. It no longer does, because releasing the
+  // claim on an unknown delivery is how a second caller sends a duplicate receipt
+  // — and once several concurrent charge invocations can reach the sender, that
+  // stopped being theoretical. The row now stays at 'sending' and a person
+  // reconciles.
   beforeEach(() => {
     h.sendResult = { ok: false, retryable: true, error: "Resend timeout after 10000ms" };
   });
 
-  it("R1 release write ok -> send_failed_retryable, row released to null", async () => {
+  it("R1 the claim is HELD: no release write is attempted at all", async () => {
     const r = await run();
-    expect(r).toMatchObject({ ok: false, reason: "send_failed_retryable" });
-    expect(keys()).toContain("payment_charge_attempts:update:null");
+    expect(r).toMatchObject({
+      ok: false,
+      reason: "send_ambiguous_state_not_recorded",
+    });
+    expect(
+      keys(),
+      "an ambiguous delivery must not write receipt_status back to null",
+    ).not.toContain("payment_charge_attempts:update:null");
   });
 
-  it("R2 release write FAILURE -> send_failed_state_not_recorded, never 'retryable'", async () => {
-    h.responses["payment_charge_attempts:update:null"] = {
-      data: null,
-      error: { code: "08006", message: "connection failure" },
-    };
+  it("R2 it never reports a plain retryable outcome", async () => {
+    // "try again in a moment" is advice that can duplicate a real receipt.
     const r = await run();
-    // The row is stuck at 'sending'; the claim admits only (null,'failed'),
-    // so telling the practitioner to "try again in a moment" would be a lie.
-    // Codex P2: retryable covers TIMEOUT/NETWORK, so DELIVERY IS UNKNOWN --
-    // this must be the ambiguous outcome, never the definitive one.
-    expect(r).toMatchObject({ ok: false, reason: "send_ambiguous_state_not_recorded" });
     expect(r).not.toMatchObject({ reason: "send_failed_retryable" });
     expect(r).not.toMatchObject({ reason: "send_failed_state_not_recorded" });
     if (!r.ok) expect(r.message).not.toMatch(/try again in a moment/i);
   });
 
-  it("R2b the ambiguous message must NOT claim the receipt did not send", async () => {
-    // Codex P2 on 0b808c10. Asserting non-delivery after a timeout is a
-    // claim Hone cannot support, and an operator acting on it can clear the
-    // row and duplicate a receipt the client already received.
-    h.responses["payment_charge_attempts:update:null"] = {
-      data: null,
-      error: { code: "08006", message: "connection failure" },
-    };
+  it("R2b the message must NOT claim the receipt did not send", async () => {
+    // Asserting non-delivery after a timeout is a claim Hone cannot support, and
+    // an operator acting on it can clear the row and duplicate a receipt the
+    // client already received.
     const r = await run();
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.message).not.toMatch(/did not send/i);
     expect(r.message).not.toMatch(/was not sent/i);
-    // It must say delivery is unconfirmed AND require provider
-    // reconciliation before clearing or resending.
     expect(r.message).toMatch(/could not confirm|unknown|may already/i);
     expect(r.message).toMatch(/provider/i);
   });
 
-  it("R2c the ambiguous alert records delivery as unknown, not not_delivered", async () => {
-    h.responses["payment_charge_attempts:update:null"] = {
-      data: null,
-      error: { code: "08006", message: "connection failure" },
-    };
+  it("R2c the alert records the held claim and unknown delivery, at CRITICAL", async () => {
+    // Critical because the row cannot proceed without a person: the claim is held
+    // deliberately, so this is not self-healing the way a released claim was.
     await run();
-    const alert = h.alerts.find((a) => a.event === "payment_receipt_release_failed");
-    expect((alert?.safeDetails as Record<string, unknown>)?.delivery).toBe("unknown");
-  });
-
-  it("R3 a failed release raises the PERSISTENCE failure to the operator", async () => {
-    h.responses["payment_charge_attempts:update:null"] = {
-      data: null,
-      error: { code: "08006", message: "connection failure" },
-    };
-    await run();
-    const alert = h.alerts.find((a) => a.event === "payment_receipt_release_failed");
-    expect(alert).toBeTruthy();
+    const alert = h.alerts.find(
+      (a) => a.event === "payment_receipt_send_ambiguous_claim_held",
+    );
+    expect(alert, "the held-claim alert must be raised").toBeTruthy();
     expect(alert?.severity).toBe("critical");
-    expect((alert?.safeDetails as Record<string, unknown>)?.stuck_receipt_status).toBe("sending");
+    const d = alert?.safeDetails as Record<string, unknown>;
+    expect(d?.delivery_unknown).toBe(true);
+    expect(d?.claim_released).toBe(false);
   });
 
-  it("R4 a failed release sends no second email", async () => {
-    h.responses["payment_charge_attempts:update:null"] = {
-      data: null,
-      error: { code: "08006", message: "connection failure" },
-    };
+  it("R3 the alert tells the operator to reconcile BEFORE clearing or resending", async () => {
+    await run();
+    const alert = h.alerts.find(
+      (a) => a.event === "payment_receipt_send_ambiguous_claim_held",
+    );
+    expect(String(alert?.message)).toMatch(/RECONCILE WITH THE EMAIL PROVIDER/i);
+    expect(String(alert?.message)).toMatch(/before clearing/i);
+  });
+
+  it("R4 exactly one email left Hone", async () => {
     await run();
     expect(h.sends).toHaveLength(1);
+  });
+
+  it("R5 a second automatic caller cannot claim the held row", async () => {
+    // The durable consequence: with receipt_status parked at 'sending', the
+    // automatic claim (NULL only) matches nothing, so no duplicate is possible.
+    await run();
+    expect(keys()).not.toContain("payment_charge_attempts:update:null");
+    const claimWrites = keys().filter((k) => k.includes("update") && k.includes("sending"));
+    expect(claimWrites.length).toBeLessThanOrEqual(1);
   });
 });
 
@@ -488,5 +514,185 @@ describe("the two persistence-failure families stay distinct", () => {
     };
     await run();
     expect(keys()).not.toContain("payment_charge_attempts:update:sent");
+  });
+});
+
+// ===========================================================================
+// CLAIM POLICY — one sender, two policies
+// ===========================================================================
+//
+// The durable `receipt_status: null -> sending` transition is the ONLY owner of
+// email delivery. What differs between callers is which prior states they may
+// claim, and the difference matters because an automatic caller is one of
+// possibly several concurrent charge/recovery invocations while a manual caller
+// is a person who has read the failure.
+
+describe("claim policy", () => {
+  it("P1 AUTOMATIC claims NULL only — a 'failed' receipt is not auto-retried", async () => {
+    baseline("failed");
+    const r = await runAutomatic();
+    expect(r.ok).toBe(false);
+    expect(
+      h.sends,
+      "an automatic caller must never resurrect a failed receipt",
+    ).toHaveLength(0);
+  });
+
+  it("P2 MANUAL may still claim 'failed' — the authorised recovery path", async () => {
+    baseline("failed");
+    const r = await run();
+    expect(r.ok).toBe(true);
+    expect(h.sends).toHaveLength(1);
+  });
+
+  it("P3 neither policy may claim 'sending'", async () => {
+    baseline("sending");
+    expect((await runAutomatic()).ok).toBe(false);
+    baseline("sending");
+    expect((await run()).ok).toBe(false);
+    expect(h.sends).toHaveLength(0);
+  });
+
+  it("P4 neither policy may claim 'sent'", async () => {
+    baseline("sent");
+    expect((await runAutomatic()).ok).toBe(false);
+    baseline("sent");
+    expect((await run()).ok).toBe(false);
+    expect(h.sends).toHaveLength(0);
+  });
+
+  it("P5 both policies claim NULL, and exactly one send leaves Hone per claim", async () => {
+    baseline(null);
+    expect((await runAutomatic()).ok).toBe(true);
+    expect(h.sends).toHaveLength(1);
+    baseline(null);
+    expect((await run()).ok).toBe(true);
+    expect(h.sends).toHaveLength(1);
+  });
+
+  it("P6 THE RACE: the claim UPDATE matching zero rows is the loser, and it sends nothing", async () => {
+    // Two concurrent callers both reach the sender; the database picks one. The
+    // loser's conditional UPDATE matches no row.
+    baseline(null);
+    h.responses["payment_charge_attempts:update:sending"] = { data: [], error: null };
+    h.responses["payment_charge_attempts:reread"] = {
+      data: { receipt_status: "sending" },
+      error: null,
+    };
+    const r = await runAutomatic();
+    expect(r.ok).toBe(false);
+    expect(r).toMatchObject({ reason: "in_flight" });
+    expect(h.sends, "the claim loser must send nothing").toHaveLength(0);
+  });
+
+  it("P7 the loser is told already_sent when the winner finished", async () => {
+    baseline(null);
+    h.responses["payment_charge_attempts:update:sending"] = { data: [], error: null };
+    h.responses["payment_charge_attempts:reread"] = {
+      data: { receipt_status: "sent", receipt_sent_at: "2026-09-28T00:00:00.000Z" },
+      error: null,
+    };
+    const r = await runAutomatic();
+    expect(r).toMatchObject({ ok: false, reason: "already_sent" });
+    expect(h.sends).toHaveLength(0);
+  });
+
+});
+
+describe("the claim POLICY itself, not just its observable outcome", () => {
+  // WHY THIS EXISTS. `P1 AUTOMATIC claims NULL only` passes even if the claim
+  // query is widened to admit 'failed', because the early return for a failed row
+  // fires first. A mutation that widened the query therefore went UNCAUGHT. The
+  // policy has to be asserted where it lives: in the filters of the claim UPDATE.
+  const claimFilters = () => {
+    const claim = h.stmts.find(
+      (x) => x.key === "payment_charge_attempts:update:sending",
+    );
+    return (claim?.filters ?? []).map(([c, v]) => `${c}=${String(v)}`);
+  };
+
+  it("AUTOMATIC claims with receipt_status IS NULL and no OR", async () => {
+    baseline(null);
+    await runAutomatic();
+    const f = claimFilters();
+    expect(f, "automatic must claim NULL only").toContain(
+      "receipt_status=__is_null__",
+    );
+    expect(
+      f.some((x) => x.startsWith("__or__")),
+      "automatic must not widen the claim with an OR",
+    ).toBe(false);
+  });
+
+  it("MANUAL claims with the NULL-or-failed OR, preserving recovery", async () => {
+    baseline(null);
+    await run();
+    const f = claimFilters();
+    const or = f.find((x) => x.startsWith("__or__"));
+    expect(or, "manual must keep its OR claim").toBeTruthy();
+    expect(or).toMatch(/receipt_status\.is\.null/);
+    expect(or).toMatch(/receipt_status\.eq\.failed/);
+  });
+
+  it("neither policy claims a row that is already 'sending' or 'sent'", async () => {
+    // Both are excluded by the claim's own status predicate, so the filters must
+    // never mention them as admissible.
+    baseline(null);
+    await runAutomatic();
+    const f = claimFilters().join(" ");
+    expect(f).not.toMatch(/sending/);
+    expect(f).not.toMatch(/eq\.sent/);
+  });
+});
+
+describe("the refund predicate survives to the CLAIM, not just the classifier", () => {
+  // THE TIME-OF-CHECK / TIME-OF-USE GAP. `classifyZeroRowSuccessWrite` refuses a
+  // benign verdict unless `refund_status` is NULL, but it checks that at READ
+  // time and the receipt claim runs later. `refundPaymentChargeAttempt` writes
+  // `refund_status` on the same row independently, so a refund starting in that
+  // gap used to leave the charge eligible: the claim filtered only
+  // `receipt_status`, matched, and an automatic receipt went out while the
+  // client's refund was in flight.
+  //
+  // Checking a condition and then acting on it in a separate statement is not the
+  // same as requiring it. These tests assert the requirement is in the claim.
+
+  const claimFilters = () => {
+    const claim = h.stmts.find(
+      (x) => x.key === "payment_charge_attempts:update:sending",
+    );
+    return (claim?.filters ?? []).map(([c, v]) => `${c}=${String(v)}`);
+  };
+
+  it("AUTOMATIC claims require refund_status IS NULL", async () => {
+    baseline(null);
+    await runAutomatic();
+    expect(
+      claimFilters(),
+      "the automatic claim must carry the refund predicate",
+    ).toContain("refund_status=__is_null__");
+  });
+
+  it("a refund that starts AFTER classification cannot be receipted", async () => {
+    // The row is succeeded with receipt_status NULL — classification-time state —
+    // but a refund has since begun. The claim must match nothing.
+    baseline(null);
+    h.responses["payment_charge_attempts:update:sending"] = { data: [], error: null };
+    h.responses["payment_charge_attempts:reread"] = {
+      data: { receipt_status: null },
+      error: null,
+    };
+    const r = await runAutomatic();
+    expect(r.ok).toBe(false);
+    expect(h.sends, "no receipt for a charge being refunded").toHaveLength(0);
+  });
+
+  it("MANUAL keeps its own decision and is NOT refund-gated", async () => {
+    // A practitioner sending a receipt for a charge later refunded is deciding
+    // about a real document; manual recovery owns that. Only the automatic path
+    // must never make the call on its own.
+    baseline(null);
+    await run();
+    expect(claimFilters()).not.toContain("refund_status=__is_null__");
   });
 });

@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import {
-  getCurrentPractitionerWithStudio,
+  requirePractitionerWithStudio,
   getPractitionersForStudio,
 } from "@/lib/supabase/queries";
 import type {
@@ -46,7 +46,7 @@ async function getPendingInvitations(
 }
 
 export default async function TeamSettingsPage() {
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await requirePractitionerWithStudio();
 
   if (practitioner.role !== "owner") {
     return (

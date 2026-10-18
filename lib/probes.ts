@@ -119,15 +119,21 @@ const STEREX: BrandSpec = {
 };
 
 // Ballet is one-piece only, available in Stainless steel, Gold, and
-// Insulated. Size 2 is Short and F-shank only; sizes 3-6 are Regular and
-// come in both F and K shanks. (Size 12 is deferred.) Every shape exists
-// in all three materials, so build the shape list once and fan out.
+// Insulated. Size 2 is F-shank only and comes in BOTH lengths — Short and
+// Regular; sizes 3-6 are Regular and come in both F and K shanks. (Size 12
+// and K2 are deferred.) Every shape exists in all three materials, so build
+// the shape list once and fan out.
+//
+// F2 Regular was added after F2 Short shipped. Length is part of the key
+// (`...-f2-short` vs `...-f2-regular`), so the two coexist and every stored
+// F2 Short probe_key still resolves.
 const BALLET_SHAPES: ReadonlyArray<{
   shank: ProbeShank;
   size: string;
   length: ProbeLength;
 }> = [
   { shank: "F", size: "2", length: "Short" },
+  { shank: "F", size: "2", length: "Regular" },
   { shank: "F", size: "3", length: "Regular" },
   { shank: "K", size: "3", length: "Regular" },
   { shank: "F", size: "4", length: "Regular" },

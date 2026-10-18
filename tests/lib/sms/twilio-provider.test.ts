@@ -1,0 +1,636 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// COMMS-01B — the REAL Twilio adapter, exercised against a stubbed fetch.
+//
+// WHY THIS FILE EXISTS. The fake provider proves the orchestration; it cannot
+// prove the adapter, because a fake does not enforce a provider's parameter
+// grammar. That gap shipped a defect: `isNumberAvailable` sent the E.164`+` to
+// Twilio's `Contains`, which accepts digits and `*`. Every live provisioning
+// attempt would have died on a 400 before any purchase, on a number that was
+// perfectly available -- and every test was green, because nothing checked what
+// the adapter actually put on the wire.
+//
+// So these tests assert the REQUEST, not just the response handling. No network
+// is touched: `fetch` is stubbed and every call is recorded.
+
+type Recorded = { url: string; method: string; body: string | null };
+
+let calls: Recorded[] = [];
+
+function stubFetch(responses: Array<{ status: number; json: unknown }>) {
+  let i = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({
+        url: String(url),
+        method: init?.method ?? "GET",
+        body: typeof init?.body === "string" ? init.body : null,
+      });
+      const res = responses[Math.min(i, responses.length - 1)];
+      i += 1;
+      return {
+        ok: res.status >= 200 && res.status < 300,
+        status: res.status,
+        json: async () => res.json,
+      } as unknown as Response;
+    }),
+  );
+}
+
+// The adapter is server-only and reads credentials at call time.
+beforeEach(async () => {
+  calls = [];
+  vi.stubEnv("TWILIO_ACCOUNT_SID", "ACtest");
+  vi.stubEnv("TWILIO_AUTH_TOKEN", "sekrit");
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
+
+async function adapter() {
+  const mod = await import("@/lib/sms/provider/twilio-provider");
+  return mod.twilioProvisioningProvider;
+}
+
+const MG = (c: string) => `MG${c.repeat(32)}`;
+
+// ---------------------------------------------------------------------------
+// isNumberAvailable — the request grammar
+// ---------------------------------------------------------------------------
+
+describe("isNumberAvailable", () => {
+  it("sends DIGITS to Contains, never the E.164 plus", async () => {
+    stubFetch([
+      { status: 200, json: { available_phone_numbers: [{ phone_number: "+14165550100" }] } },
+    ]);
+    const provider = await adapter();
+    const res = await provider.isNumberAvailable({
+      country: "CA",
+      phoneNumber: "+14165550100",
+    });
+
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.available).toBe(true);
+
+    // THE ASSERTION THE DEFECT NEEDED. Twilio's Contains matches digits and
+    // `*`; a `+` yields 400 and would have killed every live attempt.
+    const url = new URL(calls[0].url);
+    expect(url.searchParams.get("Contains")).toBe("14165550100");
+    expect(url.searchParams.get("Contains")).not.toContain("+");
+  });
+
+  it("still compares the RESPONSE in E.164, where the provider does speak it", async () => {
+    // A near-miss number must not count as the chosen one.
+    stubFetch([
+      { status: 200, json: { available_phone_numbers: [{ phone_number: "+14165550999" }] } },
+    ]);
+    const provider = await adapter();
+    const res = await provider.isNumberAvailable({
+      country: "CA",
+      phoneNumber: "+14165550100",
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.available).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// purchaseNumber — 400 classification
+// ---------------------------------------------------------------------------
+
+describe("purchaseNumber", () => {
+  it.each([21421, 21422, 21452])(
+    "maps Twilio code %i to number_no_longer_available",
+    async (code) => {
+      stubFetch([{ status: 400, json: { code } }]);
+      const provider = await adapter();
+      const res = await provider.purchaseNumber({
+        claimKey: `hone-sms-${"a".repeat(32)}`,
+        phoneNumber: "+14165550100",
+      });
+      expect(res).toMatchObject({ ok: false, code: "number_no_longer_available" });
+    },
+  );
+
+  it("does NOT tell the owner to pick another number for an unrelated 400", async () => {
+    // 21649 is a regulatory-bundle failure: it follows the owner to every
+    // number, so "choose another" sends them round a loop that cannot end.
+    stubFetch([{ status: 400, json: { code: 21649 } }]);
+    const provider = await adapter();
+    const res = await provider.purchaseNumber({
+      claimKey: `hone-sms-${"a".repeat(32)}`,
+      phoneNumber: "+14165550100",
+    });
+    expect(res).toMatchObject({ ok: false, code: "provider_rejected" });
+  });
+
+  it("asks for the EXACT number and never an area code", async () => {
+    stubFetch([
+      { status: 201, json: { sid: `PN${"a".repeat(32)}`, phone_number: "+14165550100" } },
+    ]);
+    const provider = await adapter();
+    await provider.purchaseNumber({
+      claimKey: `hone-sms-${"b".repeat(32)}`,
+      phoneNumber: "+14165550100",
+    });
+    const body = new URLSearchParams(calls[0].body ?? "");
+    expect(body.get("PhoneNumber")).toBe("+14165550100");
+    // AreaCode would let Twilio choose something else -- a silent substitution.
+    expect(body.get("AreaCode")).toBeNull();
+    // The claim key rides along as the reconciliation handle.
+    expect(body.get("FriendlyName")).toContain("hone-sms-");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// lookupResourcesByClaim — pagination must be exhaustive AND strict
+// ---------------------------------------------------------------------------
+
+describe("lookupResourcesByClaim", () => {
+  const claimKey = `hone-sms-${"c".repeat(32)}`;
+  const tag = `hone-sms-claim:${claimKey}`;
+
+  const noNumbers = { status: 200, json: { incoming_phone_numbers: [] } };
+
+  it("follows pagination and finds a service on a later page", async () => {
+    stubFetch([
+      noNumbers,
+      {
+        status: 200,
+        json: {
+          services: [{ sid: MG("1"), friendly_name: "someone else" }],
+          meta: { next_page_url: "https://messaging.twilio.com/v1/Services?Page=1" },
+        },
+      },
+      {
+        status: 200,
+        json: {
+          services: [{ sid: MG("2"), friendly_name: tag }],
+          meta: { next_page_url: null },
+        },
+      },
+    ]);
+    const provider = await adapter();
+    const res = await provider.lookupResourcesByClaim(claimKey);
+
+    expect(res.ok).toBe(true);
+    // A first-page-only scan would have reported "no service" and licensed a
+    // duplicate. The account crosses one page at ~100 studios.
+    if (res.ok) expect(res.found.messagingServiceSid).toBe(MG("2"));
+  });
+
+  it("FAILS CLOSED on malformed pagination metadata rather than calling it the end", async () => {
+    stubFetch([
+      noNumbers,
+      { status: 200, json: { services: [] } }, // no meta at all
+    ]);
+    const provider = await adapter();
+    const res = await provider.lookupResourcesByClaim(claimKey);
+    // Absent metadata is not proof of absence.
+    expect(res).toMatchObject({ ok: false, code: "provider_response_unparseable" });
+  });
+
+  it("FAILS CLOSED on a cursor pointing off Twilio's host", async () => {
+    stubFetch([
+      noNumbers,
+      {
+        status: 200,
+        json: { services: [], meta: { next_page_url: "https://elsewhere.example/Services" } },
+      },
+    ]);
+    const provider = await adapter();
+    expect(await provider.lookupResourcesByClaim(claimKey)).toMatchObject({
+      ok: false,
+      code: "provider_response_unparseable",
+    });
+  });
+
+  it("accepts an explicit null cursor as the genuine last page", async () => {
+    stubFetch([noNumbers, { status: 200, json: { services: [], meta: { next_page_url: null } } }]);
+    const provider = await adapter();
+    const res = await provider.lookupResourcesByClaim(claimKey);
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.found.messagingServiceSid).toBeNull();
+  });
+
+  it("refuses to choose when one claim carries two numbers", async () => {
+    stubFetch([
+      {
+        status: 200,
+        json: {
+          incoming_phone_numbers: [
+            { sid: `PN${"a".repeat(32)}`, phone_number: "+14165550100" },
+            { sid: `PN${"b".repeat(32)}`, phone_number: "+14165550101" },
+          ],
+        },
+      },
+    ]);
+    const provider = await adapter();
+    // Two numbers under one claim is the catastrophe; surfacing it beats guessing.
+    expect(await provider.lookupResourcesByClaim(claimKey)).toMatchObject({
+      ok: false,
+      code: "provider_resource_mismatch",
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Credentials
+// ---------------------------------------------------------------------------
+
+describe("credentials", () => {
+  it("never puts the Auth Token in a URL or a body", async () => {
+    stubFetch([{ status: 200, json: { available_phone_numbers: [] } }]);
+    const provider = await adapter();
+    await provider.isNumberAvailable({ country: "CA", phoneNumber: "+14165550100" });
+    for (const call of calls) {
+      expect(call.url).not.toContain("sekrit");
+      expect(call.body ?? "").not.toContain("sekrit");
+    }
+  });
+
+  it("refuses to call anything at all when unconfigured", async () => {
+    // Stub to EMPTY rather than unstubbing. `vi.unstubAllEnvs()` restores the
+    // ambient environment, and CI's ambient environment HAS Twilio
+    // credentials -- so this test passed locally (no creds) and failed in CI
+    // (creds present, adapter configured, fetch actually called). An assertion
+    // about "unconfigured" must construct that state, not assume it.
+    vi.stubEnv("TWILIO_ACCOUNT_SID", "");
+    vi.stubEnv("TWILIO_AUTH_TOKEN", "");
+    stubFetch([{ status: 200, json: {} }]);
+    const provider = await adapter();
+    expect(
+      await provider.isNumberAvailable({ country: "CA", phoneNumber: "+14165550100" }),
+    ).toMatchObject({ ok: false, code: "provider_not_configured" });
+    expect(calls).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// lookupOwnedNumber — the census, on the wire (WILLOW ADOPTION)
+// ---------------------------------------------------------------------------
+//
+// The fake proves the orchestration reacts correctly to each verdict. It cannot
+// prove the ADAPTER produces the right verdict from a real payload, and that
+// gap is not theoretical: breaking the adapter's fail-closed entry check turned
+// nothing red until these tests existed.
+
+const PN = (c: string) => `PN${c.repeat(32)}`;
+const NUMBER = "+14165550100";
+
+/** One owned number, then a services page, then per-service membership probes. */
+function ownedThen(...rest: Array<{ status: number; json: unknown }>) {
+  return [
+    { status: 200, json: { incoming_phone_numbers: [{ sid: PN("a"), phone_number: NUMBER }] } },
+    ...rest,
+  ];
+}
+
+describe("lookupOwnedNumber: read-only census", () => {
+  it("issues GETs only — it can never purchase, attach or move", async () => {
+    stubFetch(
+      ownedThen(
+        { status: 200, json: { services: [{ sid: MG("b") }], meta: { next_page_url: null } } },
+        { status: 200, json: {} },
+      ),
+    );
+    await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((c) => c.method === "GET")).toBe(true);
+    expect(calls.every((c) => c.body === null)).toBe(true);
+  });
+
+  it("IN_EXPECTED_SERVICE when the probe says the number is a member", async () => {
+    stubFetch(
+      ownedThen(
+        { status: 200, json: { services: [{ sid: MG("b") }], meta: { next_page_url: null } } },
+        { status: 200, json: {} },
+      ),
+    );
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok && r.facts.association).toEqual({
+      kind: "in_expected_service",
+      messagingServiceSid: MG("b"),
+    });
+  });
+
+  it("A MALFORMED SERVICE ENTRY FAILS THE CENSUS CLOSED", async () => {
+    // The skipped entry could be the one holding the number, so a census that
+    // ignored it and reported `not_associated` would license an attach.
+    stubFetch(
+      ownedThen({
+        status: 200,
+        json: { services: [{ sid: MG("b") }, { sid: "MG-not-a-sid" }], meta: { next_page_url: null } },
+      }),
+    );
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok && r.facts.association).toEqual({
+      kind: "unavailable",
+      reason: "service_page_unparseable",
+    });
+  });
+
+  it("an entry that is not an object fails closed too", async () => {
+    stubFetch(
+      ownedThen({
+        status: 200,
+        json: { services: [{ sid: MG("b") }, "not-an-object"], meta: { next_page_url: null } },
+      }),
+    );
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok && r.facts.association.kind).toBe("unavailable");
+  });
+
+  it("a missing SID fails closed", async () => {
+    stubFetch(
+      ownedThen({
+        status: 200,
+        json: { services: [{ sid: MG("b") }, { friendly_name: "no sid here" }], meta: { next_page_url: null } },
+      }),
+    );
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok && r.facts.association.kind).toBe("unavailable");
+  });
+
+  it("A MALFORMED ENTRY NEVER YIELDS not_associated", async () => {
+    // The malformed entry is the holder. This is the exact misclassification.
+    stubFetch(
+      ownedThen({
+        status: 200,
+        json: { services: [{ sid: "garbage" }], meta: { next_page_url: null } },
+      }),
+    );
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok && r.facts.association.kind).not.toBe("not_associated");
+    expect(r.ok && r.facts.association.kind).toBe("unavailable");
+  });
+
+  it("a failed services page is a PROVIDER FAILURE, and never absence", async () => {
+    // SUPERSEDED SHAPE, SAME PROPERTY. This once asserted `unavailable`, because
+    // the census swallowed HTTP failures. A 500 is a provider failure and now
+    // keeps that classification -- what must never happen, and still cannot, is
+    // the page failing and the number reading as `not_associated`.
+    stubFetch(ownedThen({ status: 500, json: {} }));
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.code).toBe("provider_unavailable");
+  });
+
+  it("an unreadable pagination cursor is UNAVAILABLE, never absence", async () => {
+    // Only an EXPLICIT null ends the walk; a cursor we cannot read is not proof
+    // that no further pages exist.
+    stubFetch(
+      ownedThen({ status: 200, json: { services: [], meta: { next_page_url: 12345 } } }),
+    );
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok && r.facts.association).toEqual({
+      kind: "unavailable",
+      reason: "service_pagination_unreadable",
+    });
+  });
+
+  it("NOT_ASSOCIATED only after a complete, fully-readable census", async () => {
+    stubFetch(
+      ownedThen(
+        { status: 200, json: { services: [{ sid: MG("b") }], meta: { next_page_url: null } } },
+        { status: 404, json: {} },
+      ),
+    );
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok && r.facts.association).toEqual({ kind: "not_associated" });
+  });
+
+  it("a number this account does not own reports no SID", async () => {
+    stubFetch([{ status: 200, json: { incoming_phone_numbers: [] } }]);
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok && r.facts.phoneNumberSid).toBeNull();
+  });
+});
+
+describe("readMessagingServiceConfig: read-only", () => {
+  it("issues a GET and returns the current URLs without writing", async () => {
+    stubFetch([
+      { status: 200, json: { inbound_request_url: "https://hone.care/in", status_callback: "https://hone.care/st" } },
+    ]);
+    const r = await (await adapter()).readMessagingServiceConfig({ messagingServiceSid: MG("b") });
+    expect(calls.every((c) => c.method === "GET")).toBe(true);
+    expect(r.ok && r.config).toEqual({
+      inboundRequestUrl: "https://hone.care/in",
+      statusCallbackUrl: "https://hone.care/st",
+    });
+  });
+});
+
+describe("sendProvisioningTest: naming the sender on the wire (WILLOW ADOPTION)", () => {
+  it("sends BOTH MessagingServiceSid and From when a sender is named", async () => {
+    stubFetch([{ status: 201, json: { sid: "SM1", from: NUMBER } }]);
+    await (await adapter()).sendProvisioningTest({
+      messagingServiceSid: MG("b"),
+      to: "+14165559999",
+      body: "test",
+      fromPhoneNumber: NUMBER,
+    });
+    const body = new URLSearchParams(calls[0].body ?? "");
+    expect(body.get("MessagingServiceSid")).toBe(MG("b"));
+    expect(body.get("From")).toBe(NUMBER);
+    expect(body.get("To")).toBe("+14165559999");
+    expect(calls[0].method).toBe("POST");
+  });
+
+  it("OMITS From entirely when no sender is named — the purchase path", async () => {
+    // The purchase path's service holds exactly one number, so it has nothing to
+    // disambiguate and its request grammar must not change.
+    stubFetch([{ status: 201, json: { sid: "SM1", from: NUMBER } }]);
+    await (await adapter()).sendProvisioningTest({
+      messagingServiceSid: MG("b"),
+      to: "+14165559999",
+      body: "test",
+    });
+    const body = new URLSearchParams(calls[0].body ?? "");
+    expect(body.has("From")).toBe(false);
+    expect(body.get("MessagingServiceSid")).toBe(MG("b"));
+  });
+
+  it("a provider rejection of the named From surfaces as a failure", async () => {
+    // Twilio refuses a From that is not in the service's sender pool.
+    stubFetch([{ status: 400, json: { code: 21606, message: "From not in pool" } }]);
+    const r = await (await adapter()).sendProvisioningTest({
+      messagingServiceSid: MG("b"),
+      to: "+14165559999",
+      body: "test",
+      fromPhoneNumber: NUMBER,
+    });
+    expect(r.ok).toBe(false);
+  });
+});
+
+describe("sendProvisioningTest: the reported sender is secondary", () => {
+  it("returns the sender Twilio reports, so exact-number proof needs no second send", async () => {
+    stubFetch([{ status: 201, json: { sid: "SM1", from: NUMBER } }]);
+    const r = await (await adapter()).sendProvisioningTest({
+      messagingServiceSid: MG("b"),
+      to: "+14165559999",
+      body: "test",
+    });
+    expect(r.ok && r.sentFrom).toBe(NUMBER);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("reports a DIFFERENT pool sender truthfully rather than echoing the request", async () => {
+    stubFetch([{ status: 201, json: { sid: "SM1", from: "+14165550777" } }]);
+    const r = await (await adapter()).sendProvisioningTest({
+      messagingServiceSid: MG("b"),
+      to: "+14165559999",
+      body: "test",
+    });
+    expect(r.ok && r.sentFrom).toBe("+14165550777");
+  });
+
+  it("an absent or unparseable sender is null, never invented", async () => {
+    for (const from of [undefined, null, "", "not-a-number", 42]) {
+      stubFetch([{ status: 201, json: { sid: "SM1", from } }]);
+      const r = await (await adapter()).sendProvisioningTest({
+        messagingServiceSid: MG("b"),
+        to: "+14165559999",
+        body: "test",
+      });
+      expect(r.ok && r.sentFrom, String(from)).toBeNull();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CODEX P2 — the census must not launder a provider failure into "unavailable"
+// ---------------------------------------------------------------------------
+//
+// "The census could not be completed" and "the provider refused our credentials"
+// are different facts with different consequences. The first invites a retry;
+// the second is non-retryable and needs an operator. Collapsing 401/403 into an
+// incomplete-census result told adoption to persist provider_unavailable and
+// call it retryable, discarding a classification httpError already made
+// correctly.
+
+describe("lookupOwnedNumber: provider failures keep their classification", () => {
+  const ownedOk = { status: 200, json: { incoming_phone_numbers: [{ sid: PN("a"), phone_number: NUMBER }] } };
+
+  for (const status of [401, 403] as const) {
+    it(`service-list ${status} -> provider_unauthorized, NON-retryable`, async () => {
+      stubFetch([ownedOk, { status, json: {} }]);
+      const r = await (await adapter()).lookupOwnedNumber({
+        phoneNumber: NUMBER,
+        expectedMessagingServiceSid: MG("b"),
+      });
+      expect(r.ok).toBe(false);
+      expect(!r.ok && r.code).toBe("provider_unauthorized");
+      expect(!r.ok && r.retryable).toBe(false);
+    });
+
+    it(`membership-probe ${status} -> provider_unauthorized, NON-retryable`, async () => {
+      stubFetch([
+        ownedOk,
+        { status: 200, json: { services: [{ sid: MG("b") }], meta: { next_page_url: null } } },
+        { status, json: {} },
+      ]);
+      const r = await (await adapter()).lookupOwnedNumber({
+        phoneNumber: NUMBER,
+        expectedMessagingServiceSid: MG("b"),
+      });
+      expect(r.ok).toBe(false);
+      expect(!r.ok && r.code).toBe("provider_unauthorized");
+      expect(!r.ok && r.retryable).toBe(false);
+    });
+  }
+
+  it("service-list 500 keeps its transport classification (retryable)", async () => {
+    stubFetch([ownedOk, { status: 500, json: {} }]);
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.code).toBe("provider_unavailable");
+    expect(!r.ok && r.retryable).toBe(true);
+  });
+
+  it("service-list 429 stays rate-limited, not an incomplete census", async () => {
+    stubFetch([ownedOk, { status: 429, json: {} }]);
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(!r.ok && r.code).toBe("provider_rate_limited");
+  });
+
+  it("a 404 membership probe still means 'not in this service'", async () => {
+    // The one status whose absence-meaning the endpoint genuinely defines.
+    stubFetch([
+      ownedOk,
+      { status: 200, json: { services: [{ sid: MG("b") }], meta: { next_page_url: null } } },
+      { status: 404, json: {} },
+    ]);
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok && r.facts.association).toEqual({ kind: "not_associated" });
+  });
+
+  it("a SUCCESSFUL but incomplete census is still unavailable", async () => {
+    // The distinction that must survive: 200 with unreadable pagination is a
+    // genuine census gap, not a provider failure.
+    stubFetch([ownedOk, { status: 200, json: { services: [], meta: { next_page_url: 7 } } }]);
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok && r.facts.association).toEqual({
+      kind: "unavailable",
+      reason: "service_pagination_unreadable",
+    });
+  });
+
+  it("a malformed entry on a 200 page is still unavailable, not a provider error", async () => {
+    stubFetch([
+      ownedOk,
+      { status: 200, json: { services: [{ sid: "garbage" }], meta: { next_page_url: null } } },
+    ]);
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok && r.facts.association.kind).toBe("unavailable");
+  });
+});

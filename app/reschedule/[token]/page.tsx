@@ -5,6 +5,12 @@ import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { PublicPolicyReminderCard } from "@/app/_components/PublicPolicyReminderCard";
 import { hasAnyPolicy } from "@/lib/booking/policy-acknowledgement";
+import {
+  FREE_CONSULT_WAITLIST_ONLY_BODY,
+  FREE_CONSULT_WAITLIST_ONLY_CODE,
+  FREE_CONSULT_WAITLIST_ONLY_EYEBROW,
+  FREE_CONSULT_WAITLIST_ONLY_HEADLINE,
+} from "@/lib/booking/free-consult-reschedule-policy";
 import { fetchAppointmentForRescheduleAction } from "./actions";
 import { RescheduleForm } from "./RescheduleForm";
 
@@ -40,6 +46,21 @@ export default async function ReschedulePage({
     result.ok &&
     result.summary.status === "confirmed" &&
     new Date(result.summary.startsAt).getTime() > Date.now();
+
+  // EMERG-01. The one refusal that is NOT a collapse.
+  //
+  // The action attaches this code only after the token genuinely resolved to a
+  // confirmed, future appointment whose server-resolved service and studio
+  // prove the policy, so rendering a specific surface here discloses nothing a
+  // token holder does not already hold. Every other refusal keeps the generic
+  // "unavailable" render below, unchanged.
+  //
+  // WHAT THIS BRANCH MUST NOT DO, and does not: fetch slots, ask for the next
+  // available date, or render RescheduleForm. Nothing on this page mutates —
+  // the appointment stays confirmed, its reservation and its token untouched —
+  // and the only way forward the visitor is offered is one they have to choose.
+  const waitlistOnly =
+    !result.ok && result.code === FREE_CONSULT_WAITLIST_ONLY_CODE;
 
   return (
     <main
@@ -131,6 +152,58 @@ export default async function ReschedulePage({
                 presentedPolicyHash={result.summary.presentedPolicyHash}
               />
             </>
+          ) : waitlistOnly ? (
+            // EMERG-01 policy surface. Deliberate, not apologetic: the
+            // appointment is fine, it simply cannot be moved from here.
+            <div>
+              <EyebrowCaption>
+                {FREE_CONSULT_WAITLIST_ONLY_EYEBROW}
+              </EyebrowCaption>
+              <h1
+                className="font-[var(--font-fraunces)] mt-8 text-[28px] font-bold leading-tight md:text-[36px]"
+                style={{ letterSpacing: "-0.02em" }}
+              >
+                {FREE_CONSULT_WAITLIST_ONLY_HEADLINE}
+              </h1>
+              <p className="mt-4 text-[16px] leading-relaxed text-[#0A0A0A]">
+                {FREE_CONSULT_WAITLIST_ONLY_BODY}
+              </p>
+
+              {/* Plain anchors, not <Link>. A token-bearing URL should not be
+                  prefetched into a client-side router cache, and neither of
+                  these navigations mutates anything: /cancel renders its own
+                  read-only summary and still requires an explicit submit. The
+                  SAME token is carried through, so the visitor never has to
+                  find another link. */}
+              <div className="mt-10 flex flex-col gap-3 sm:flex-row sm:items-center">
+                <a
+                  href={`/cancel/${encodeURIComponent(token)}`}
+                  className="px-8 py-4 text-center text-[14px] font-medium uppercase"
+                  style={{
+                    backgroundColor: "#0A0A0A",
+                    color: "#FAFAF7",
+                    letterSpacing: "0.1em",
+                  }}
+                >
+                  Cancel appointment
+                </a>
+                {/* The genuine no-op exit. /portal owns its own session check
+                    and redirects to /portal/login when there is none, so this
+                    promises the visitor nothing about being signed in — the
+                    same stance the cancel and manage surfaces already take. */}
+                <a
+                  href="/portal"
+                  className="px-8 py-4 text-center text-[14px] font-medium uppercase"
+                  style={{
+                    border: "1px solid #0A0A0A",
+                    color: "#0A0A0A",
+                    letterSpacing: "0.1em",
+                  }}
+                >
+                  Keep my appointment
+                </a>
+              </div>
+            </div>
           ) : (
             // Collapsed unavailable surface. Identical render for
             // every non-reschedulable case. Does NOT expose whether

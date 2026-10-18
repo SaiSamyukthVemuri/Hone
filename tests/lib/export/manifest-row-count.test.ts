@@ -135,7 +135,7 @@ describe("the export derives manifest counts from rows, never from bytes", () =>
   // what this file exists to protect.
   it("every CSV written goes through the counting wrapper", () => {
     const writes = ACTIONS.match(/\bwriteCsv\(\n?\s*"[a-z_]+"/g) ?? [];
-    expect(writes.length).toBe(15);
+    expect(writes.length).toBe(20);
     // Exactly one place puts a CSV into the archive, and it is the wrapper.
     const zipWrites = ACTIONS.match(/zip\.file\(/g) ?? [];
     expect(zipWrites.length).toBe(3); // the wrapper, manifest.json, README.txt

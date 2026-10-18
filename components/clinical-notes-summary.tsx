@@ -52,7 +52,7 @@ export function ClinicalNotesSummary({
         </h2>
         <Link
           href={`/clients/${clientId}?tab=consultation`}
-          className="text-xs font-medium text-neutral-600 underline dark:text-neutral-300"
+          className="inline-flex items-center min-h-[44px] min-w-[44px] text-xs font-medium text-neutral-600 underline dark:text-neutral-300"
         >
           View / edit
         </Link>

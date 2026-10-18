@@ -1,0 +1,562 @@
+// ===========================================================================
+// NEW-CLIENT WAITLIST — THE LIFECYCLE A STUDIO CAN ACTUALLY DRIVE TODAY
+// ===========================================================================
+//
+// PURE. No database, no server action, no `server-only` marker — this module is
+// consumed by a server component and by tests, and it performs no I/O. It
+// decides what the operator surface may OFFER and what it must SAY when it
+// offers nothing. It never performs, and never authorises, a mutation.
+//
+// EVERY ACTION HERE IS WIRED. The five below — claim, expire, release, requeue,
+// remove — each reach a shipped command through
+// app/(app)/settings/waitlist/actions.ts, and /settings/waitlist is the one
+// importer of this module. That is the boundary this file is drawn on: an
+// action a studio cannot yet perform does not belong in it.
+//
+// WIRED IS NOT THE SAME AS OFFERED. `claim` is still wired, still tested and
+// still reachable through its server action — but it is NOT rendered on the
+// practitioner surface any more. Claiming is an internal transition that moves
+// an entry out of general contention; it is not a job a studio owner sets out to
+// do, and putting it on screen described the mechanism rather than the work.
+// This module therefore keeps deciding claim's availability, and the page simply
+// does not ask for it. Nothing was removed from the database, the commands or
+// the actions, so restoring the control is a rendering change and nothing more.
+//
+// INVITING IS NOT HERE, AND IS NOT IN THIS REPOSITORY STATE AT ALL.
+// `issue_new_client_waitlist_invitation` mints a token that has to reach a real
+// recipient, which is B1/B1.5c + B2 work. Invite, reinvite, the TTL bounds and
+// the whole invitation-draft apparatus were removed from this module and now
+// live on the WAIT-03 B4 prototype branch (`feat/wait03-b4-admission-prototype`,
+// draft PR #683) as `lib/waitlist/b4-invitation-draft.ts`. Do not look for that
+// file here — it is deliberately absent, so an unwired action cannot be offered
+// by a surface that has no way to name it. Keeping the two halves together made
+// every review round spend itself on staged code while the live surface waited.
+//
+// THE VOCABULARY IS THE DATABASE'S, NOT THE BRIEF'S. The seven states below are
+// copied from migration 0188's own CHECK constraint. Where the brief's words and
+// the database's disagree, the database wins. The map between the two is a
+// prototype design artifact, so it left with the prototype; nothing on this
+// surface consults it, because this surface renders the database's own words.
+//
+// DISCLOSURE, NOT JUST DISABLEMENT. Every unavailable action returns its REASON
+// from the same function that decides availability, so a greyed control can
+// never hide its own prerequisite. That is the EMERG-02 rule applied here: one
+// function, one call site, the button state and the sentence beside it derived
+// together so they cannot drift.
+// ===========================================================================
+
+// --- 1. THE LIFECYCLE, AS THE DATABASE DEFINES IT --------------------------
+//
+// Verbatim from 0188:
+//   check (status in ('waiting','claimed','invited','converted','expired',
+//                     'released','removed'))
+//
+// Seven states. Two of them — `converted` and `removed` — are terminal, and the
+// availability rules below refuse every action on both.
+
+export const WAITLIST_ENTRY_STATUSES = [
+  "waiting",
+  "claimed",
+  "invited",
+  "converted",
+  "expired",
+  "released",
+  "removed",
+] as const;
+
+export type WaitlistEntryStatus = (typeof WAITLIST_ENTRY_STATUSES)[number];
+
+/**
+ * What a PRACTITIONER calls each shipped state.
+ *
+ * THE DATABASE'S WORD IS NOT ALWAYS THE PRACTITIONER'S. `claimed` is an
+ * internal transition — it records that an entry has been taken out of general
+ * contention and is ready for an invitation. The word "claimed" describes the
+ * mechanism, not anything a studio owner is trying to do, and shipping it made
+ * the queue read like an implementation detail. The state keeps its database
+ * name everywhere in code; only what is SHOWN changes.
+ *
+ * These labels are the single source of the practitioner's vocabulary — the
+ * section headings on /settings/waitlist read from here, so a state cannot be
+ * called one thing in a heading and another on a row.
+ */
+export const STATUS_LABEL: Record<WaitlistEntryStatus, string> = {
+  waiting: "Waiting",
+  claimed: "Ready to invite",
+  invited: "Invited",
+  converted: "Booked",
+  expired: "Expired",
+  released: "Released",
+  removed: "Removed",
+};
+
+/** One line explaining what the state MEANS operationally. Shown beside the
+ *  status so a practitioner never has to infer the difference between
+ *  `Ready to invite` and `Invited`, or between `Released` and `Removed`.
+ *
+ *  NO INTERNAL VOCABULARY HERE. These sentences are read by a practitioner, so
+ *  they describe where the person stands, never which transition put them
+ *  there. */
+export const STATUS_MEANING: Record<WaitlistEntryStatus, string> = {
+  waiting: "On the waitlist, in the order they joined.",
+  claimed: "Ready for an invitation. Nothing has been sent to them yet.",
+  // For an `invited` entry the page may know MORE than the status does — see
+  // `statusMeaning` below. This sentence is only the no-context default.
+  invited: "An invitation has been created for them.",
+  converted: "They booked. This entry is closed.",
+  expired: "The invitation ran out before it was used.",
+  // NEUTRAL, AND FOR THE SAME REASON `invited` IS. This sentence is rendered as
+  // the SECTION description, above a group that can now hold two different
+  // kinds of released entry: one set aside, which can be returned to the
+  // waitlist, and one whose used invitation was closed, which cannot. An
+  // instruction here is therefore wrong for half the section whenever both are
+  // present, and it contradicted the row's own sentence directly beneath it.
+  // The instruction moved to `statusMeaning`, where the facts are known.
+  released: "Off the waitlist for now.",
+  removed: "Taken off the waitlist by the studio. Terminal.",
+};
+
+// --- 2. ACTIONS --------------------------------------------------------------
+
+export const ADMISSION_ACTIONS = [
+  "claim",
+  "expire",
+  "release",
+  "requeue",
+  "remove",
+  "close",
+] as const;
+
+export type AdmissionAction = (typeof ADMISSION_ACTIONS)[number];
+
+/**
+ * The DEFAULT label for each action, by the command's own name.
+ *
+ * `claim` and `release` are internal words. The surface must not render either
+ * of these entries directly — it calls `actionLabel` below, which knows what the
+ * practitioner is actually being offered.
+ */
+export const ACTION_LABEL: Record<AdmissionAction, string> = {
+  claim: "Claim",
+  expire: "Record expired",
+  release: "Release",
+  requeue: "Return to waitlist",
+  remove: "Remove from waitlist",
+  // WAIT-P1-EXIT. The verb is "close", not "cancel": by the time this control
+  // is offered the invitation has ALREADY been used, so there is nothing left
+  // to cancel — what is being ended is a cycle that reached someone and
+  // produced no booking. "without booking" is the whole reason the control
+  // exists and is the fact the operator is acting on.
+  close: "Close without booking",
+};
+
+/**
+ * WHAT EACH COMMAND DOES TO THE ENTRY'S STATUS.
+ *
+ * Copied from the shipped SQL, and load-bearing rather than documentary: a label
+ * may only promise the outcome named here, and two controls may share a label
+ * ONLY when they land the entry in the same state. A test derives both facts
+ * from the migrations so this table cannot drift away from them.
+ *
+ * `release` is the one that has already misled once. It does NOT return anyone
+ * to the waitlist — `0189` sets `status = 'released'`, and reaching `waiting`
+ * needs the separate `requeue` transition (`0188`, `set status = 'waiting'`).
+ */
+export const ACTION_RESULT_STATUS: Record<AdmissionAction, WaitlistEntryStatus> = {
+  claim: "claimed",
+  expire: "expired",
+  release: "released",
+  requeue: "waiting",
+  remove: "removed",
+  // 0200 `close_unbooked_new_client_waitlist_invitation`:
+  //   update ... set status = 'released', released_at = v_decision_at
+  // The SAME landing state as release, reached from the one lifecycle position
+  // release refuses. Two controls sharing a landing state is permitted; sharing
+  // a LABEL is not, and these two do not.
+  close: "released",
+};
+
+/**
+ * ONE COMMAND, TWO MEANINGS — and the label has to say which.
+ *
+ * `release_new_client_waitlist_entry` is a single command, but what it ends
+ * depends entirely on what the entry was doing. On a `claimed` entry it gives up
+ * a hold nobody outside the studio ever saw. On an `invited` entry it ends an
+ * invitation that has ALREADY REACHED SOMEONE — a materially different act, and
+ * one an owner deserves to be warned about by the button itself. Labelling both
+ * "Release" made the more consequential of the two look like filing.
+ *
+ * NEITHER OF THEM RETURNS ANYONE TO THE WAITLIST, and an earlier revision of
+ * this file said one of them did. "Return to waitlist" on a `claimed` row was a
+ * promise the command cannot keep: release lands the entry in `released`, where
+ * a SECOND control — requeue, which genuinely is "Return to waitlist" — is what
+ * reaches `waiting`. An owner could press it, watch the person leave this
+ * section, and reasonably conclude they were back in the queue while they had in
+ * fact been dropped out of it. "Set aside" says only what release actually does.
+ */
+const RELEASE_LABEL: Partial<Record<WaitlistEntryStatus, string>> = {
+  claimed: "Set aside",
+  invited: "Cancel invitation",
+};
+
+/**
+ * A sentence beside a control whose consequence is not obvious from its verb.
+ *
+ * "Set aside" is honest but terse, and the round trip back to the waitlist is
+ * two steps rather than one. Saying so beside the button is the difference
+ * between a short label and a misleading one.
+ */
+const ACTION_HELP: Partial<Record<string, string>> = {
+  "release:claimed":
+    "Move this person out of Ready to invite. You can return them to the waitlist later.",
+  // THE VERB SAYS WHAT ENDS; THIS SAYS WHAT FOLLOWS -- and the first version of
+  // it promised the one thing this command makes impossible.
+  //
+  // It read "...moves them to Released, where you can return them to the
+  // waitlist or remove them." Whenever this help is shown the invitation is
+  // REDEEMED, so after Close the requeue guard answers `already_redeemed` and
+  // the control is withheld. The sentence was therefore misstating an
+  // IRREVERSIBLE consequence in the moment before the operator committed to it
+  // -- the worst possible place for a label to over-promise, and the same
+  // defect as "Return to waitlist" on a control that lands in `released`.
+  //
+  // IT ALSO DISCLOSES THE OTHER OUTCOME. If an appointment from this cycle
+  // already exists, 0200 records the missing conversion instead of closing. An
+  // operator who presses this must know both things can happen before they
+  // press it, not after.
+  // THE SECOND SENTENCE WAS RETIRED BY 0201, AND THIS IS WHY IT HAD TO GO.
+  //
+  // It used to end: "If an appointment from this invitation already exists,
+  // their booking is recorded instead." That described 0200's repair path,
+  // which `0201_waitlist_exit_authority_contraction.sql` REMOVED -- Close no
+  // longer reads `public.appointments` at all and can never answer
+  // `converted_instead`. A redeemed `invited` entry is now closed and released
+  // even when an ordinary appointment exists.
+  //
+  // Leaving it would promise an outcome the deployed command cannot produce, in
+  // the sentence an owner reads immediately before an IRREVERSIBLE close. That
+  // is the label-promise rule failing in the rarer direction: not a missing
+  // consequence, but an advertised capability that no longer exists.
+  "close:invited":
+    "They opened this invitation and never booked. This ends it and moves them to Released, where you can remove them — they cannot be put back on the waitlist, though they can join again themselves. If they have already booked, record that booking instead of closing this.",
+};
+
+/** Help text for a control, or null where the verb speaks for itself. */
+export function actionHelp(
+  action: AdmissionAction,
+  status: WaitlistEntryStatus,
+): string | null {
+  return ACTION_HELP[`${action}:${status}`] ?? null;
+}
+
+/**
+ * What the control SAYS, given the row it sits on.
+ *
+ * Every rendered action label must come from here rather than from
+ * `ACTION_LABEL`, so a status-dependent verb cannot be rendered by its
+ * status-independent default.
+ */
+export function actionLabel(
+  action: AdmissionAction,
+  status: WaitlistEntryStatus,
+): string {
+  if (action === "release") return RELEASE_LABEL[status] ?? ACTION_LABEL.release;
+  return ACTION_LABEL[action];
+}
+
+/**
+ * Whether an action may be offered, and if not, WHY — from one function, so the
+ * control and its explanation cannot disagree.
+ *
+ * `reason` is written for a practitioner, not a developer: it names the current
+ * state and the next thing they could do, never a status code.
+ */
+export type ActionAvailability =
+  | { available: true }
+  | { available: false; reason: string };
+
+/**
+ * Facts beyond the entry's status that an availability ruling needs.
+ *
+ * Only ONE exists, and it is load-bearing: whether a live invitation's window
+ * has already run out. `expire` is NOT a cancel button — see the case below —
+ * so it cannot be decided from `status` alone.
+ */
+export type AdmissionContext = {
+  /** True only when the CURRENT invitation's `expires_at` is in the past and it
+   *  carries no terminal stamp. Unknown or absent is treated as NOT elapsed,
+   *  which withholds the control rather than offering one the DB would refuse. */
+  invitationElapsed?: boolean;
+  /**
+   * True when the current invitation has been REDEEMED.
+   *
+   * Redemption does not move the entry: `redeem_new_client_waitlist_invitation`
+   * stamps `redeemed_at` and leaves the entry at `invited` until a conversion is
+   * recorded. So `status === "invited"` alone cannot tell a live invitation from
+   * a used one, and every control that a used one forbids has to be told.
+   */
+  invitationRedeemed?: boolean;
+  /**
+   * True when the invitation facts could NOT be read at all.
+   *
+   * Distinct from `invitationRedeemed: false`, and the distinction is the whole
+   * point: an unread invitation might be redeemed, and `release` would then
+   * answer `already_redeemed`. Treating unknown as "not redeemed" fails OPEN and
+   * offers a control that cannot succeed, so every control that depends on the
+   * invitation is withheld while this is true.
+   */
+  invitationFactsUnknown?: boolean;
+};
+
+export function actionAvailability(
+  action: AdmissionAction,
+  status: WaitlistEntryStatus,
+  context: AdmissionContext = {},
+): ActionAvailability {
+  const label = STATUS_LABEL[status].toLowerCase();
+
+  if (status === "converted") {
+    return {
+      available: false,
+      reason: "They have already booked. Nothing further is needed here.",
+    };
+  }
+  if (status === "removed") {
+    return {
+      available: false,
+      reason: "This entry was removed from the waitlist and cannot be reopened.",
+    };
+  }
+
+  switch (action) {
+    case "claim":
+      if (status === "waiting") return { available: true };
+      return {
+        available: false,
+        reason: `Only a waiting entry can be claimed — this one is ${label}.`,
+      };
+
+    case "release":
+      // The operator's way to END something early, and the only one. It is
+      // offered on `claimed` (give the hold back) and on `invited` (end a live
+      // invitation before its window runs out).
+      //
+      // NOT ON A REDEEMED ONE. Redemption leaves the entry at `invited` until a
+      // conversion is recorded, so status alone would keep offering Release for
+      // that whole interval — and `release_new_client_waitlist_entry` guards on
+      // `redeemed_at is null`, so the control is guaranteed to return
+      // `already_redeemed`. Offering a control that cannot succeed is exactly
+      // what deriving availability from stored state is meant to prevent.
+      if (status === "invited" && context.invitationFactsUnknown) {
+        // FAIL CLOSED. The invitation could not be read, so whether it has been
+        // used is unknown — and a used one can only answer `already_redeemed`.
+        return {
+          available: false,
+          reason:
+            "This invitation could not be checked just now, so it cannot be released safely. Try again shortly.",
+        };
+      }
+      if (status === "invited" && context.invitationRedeemed) {
+        return {
+          available: false,
+          reason: "That invitation has already been used. It can no longer be released.",
+        };
+      }
+      if (status === "claimed" || status === "invited") return { available: true };
+      return {
+        available: false,
+        reason: `There is nothing to release — this entry is ${label}.`,
+      };
+
+    case "expire":
+      // EXPIRE IS NOT CANCELLATION. It records a fact the clock has already
+      // established; it does not cause it. Offering it on a live invitation
+      // would present "end this early" twice under two names, and one of them
+      // would be a lie about what the command does.
+      if (status !== "invited") {
+        return {
+          available: false,
+          reason: "There is no invitation on that entry to record as expired.",
+        };
+      }
+      if (context.invitationRedeemed) {
+        // A used invitation is terminal; the command answers `already_redeemed`.
+        return {
+          available: false,
+          reason: "That invitation has already been used, so it cannot expire.",
+        };
+      }
+      if (!context.invitationElapsed) {
+        return {
+          available: false,
+          // Names the control by what it SAYS on this row — an `invited` row
+          // offers "Cancel invitation", so pointing at "Release" would send an
+          // owner looking for a button that is not there.
+          reason: `This invitation has not run out yet. Use “${actionLabel("release", status)}” to end it early.`,
+        };
+      }
+      return { available: true };
+
+    case "requeue":
+      // WAIT-P1-EXIT NARROWED THIS, AND THE NARROWING IS NOT COSMETIC.
+      //
+      // 0200 refuses to requeue an entry holding a REDEEMED invitation, with
+      // `already_redeemed`. Returning it to the active set would let ONE entry
+      // acquire a SECOND redeemed invitation, and five shipped consumers read
+      // "any redeemed invitation for this entry" as "the current one" — the
+      // booking command would answer `scope_ambiguous` and the prospect could
+      // never book again.
+      //
+      // Before 0200 no requeueable entry could hold a redeemed invitation at
+      // all, because release and expire both refuse one. So this branch
+      // describes exactly the state `close` creates, and nothing older.
+      if (status === "released" && context.invitationFactsUnknown) {
+        // FAIL CLOSED, as release and close both do. An unread invitation might
+        // be redeemed, and the command would then answer `already_redeemed`.
+        return {
+          available: false,
+          reason:
+            "This entry's invitation could not be checked just now, so it cannot be returned to the waitlist safely. Try again shortly.",
+        };
+      }
+      if (status === "released" && context.invitationRedeemed) {
+        return {
+          available: false,
+          reason:
+            "They already used an invitation, so this entry cannot go back on the waitlist. Remove it — they can join again themselves.",
+        };
+      }
+      if (status === "released" || status === "expired") return { available: true };
+      if (status === "waiting") {
+        return { available: false, reason: "They are already in the queue." };
+      }
+      return {
+        available: false,
+        reason: `Release the invitation first, then return them to the queue.`,
+      };
+
+    case "close":
+      // WAIT-P1-EXIT. THE ONLY CONTROL OFFERED ON A REDEEMED-BUT-UNBOOKED ROW,
+      // and it is offered on NOTHING ELSE.
+      //
+      // This is the exact inverse of the release rule above. Release is
+      // withheld once the invitation has been used, because
+      // `release_new_client_waitlist_entry` can then only answer
+      // `already_redeemed`. So is expire, so is requeue, and so is remove —
+      // which left this row with no control at all and a sentence saying it
+      // would stay put until a booking was recorded. That is the dead end this
+      // action closes.
+      //
+      // `close_unbooked_new_client_waitlist_invitation` refuses everything the
+      // other five accept: an unredeemed invitation is `not_redeemed`, a
+      // converted entry is `already_booked`, and any other state is
+      // `not_invited`. Availability is derived from the same two facts the
+      // command decides on, so the control is never rendered where it would be
+      // refused.
+      if (status !== "invited") {
+        return {
+          available: false,
+          reason: `There is no used invitation to close — this entry is ${label}.`,
+        };
+      }
+      if (context.invitationFactsUnknown) {
+        // FAIL CLOSED, the same way release does. An unread invitation might
+        // never have been used, and the command answers `not_redeemed` for one
+        // that was not.
+        return {
+          available: false,
+          reason:
+            "This invitation could not be checked just now, so it cannot be closed safely. Try again shortly.",
+        };
+      }
+      if (!context.invitationRedeemed) {
+        return {
+          available: false,
+          // Names the control by what it SAYS on this row, exactly as the
+          // expire branch does — an `invited` row offers "Cancel invitation".
+          reason: `This invitation has not been used yet. Use “${actionLabel("release", status)}” to end it early.`,
+        };
+      }
+      return { available: true };
+
+    case "remove":
+      // NOT while the entry is held or invited. `remove_new_client_waitlist_entry`
+      // answers `release_required` for both, changing nothing — so an owner who
+      // opened the confirm disclosure and pressed it would get an avoidable
+      // error. The remedy is named instead.
+      if (status === "claimed" || status === "invited") {
+        return {
+          available: false,
+          reason: `This entry is ${label}. Release it first, then it can be removed.`,
+        };
+      }
+      return { available: true };
+  }
+}
+
+/**
+ * The status sentence, refined by whatever the caller actually knows.
+ *
+ * NONE OF THESE SENTENCES MAY CLAIM AN EMAIL ARRIVED. "An invitation is out"
+ * read as "it went out to them", and whether a provider accepted the message is
+ * not recorded on the row — so after any refresh the surface would be asserting
+ * something it can no longer check. These describe the INVITATION LIFECYCLE,
+ * which the row does prove.
+ *
+ * `redeem_new_client_waitlist_invitation` stamps the invitation and LEAVES the
+ * entry at `invited` until a conversion is recorded, so a status-only sentence
+ * describes a live invitation while the page's own
+ * controls have already recognised it as used. Where the invitation facts are
+ * loaded, the description has to agree with them — a surface that contradicts
+ * its own buttons teaches an operator to distrust both.
+ */
+export function statusMeaning(
+  status: WaitlistEntryStatus,
+  context: AdmissionContext = {},
+): string {
+  if (status === "invited") {
+    if (context.invitationFactsUnknown) {
+      return "An invitation exists. Its current state could not be checked just now.";
+    }
+    if (context.invitationRedeemed) {
+      // WAIT-P1-EXIT CORRECTED THIS SENTENCE, AND THE CORRECTION IS THE POINT.
+      // It used to end "this entry stays here until the booking is recorded",
+      // which described the dead end as though it were the design: if the
+      // booking never came, nothing the operator could do would move the row.
+      // Now `close` is offered right beside this line, so a sentence claiming
+      // the entry is stuck would contradict the control next to it — the same
+      // drift the release copy was repaired for.
+      return "The invitation has been used, but no booking has been recorded yet.";
+    }
+    if (context.invitationElapsed) {
+      return "The invitation ran out and has not been recorded as expired yet.";
+    }
+    return "Their invitation is active and has not been used yet.";
+  }
+  // WAIT-P1-EXIT. `released` NOW HAS A SECOND MEANING, AND THE DEFAULT PROMISES
+  // SOMETHING IT CANNOT KEEP FOR IT.
+  //
+  // STATUS_MEANING.released says "Return them to it to put them back in line."
+  // That is true of a set-aside entry and FALSE of one whose used invitation
+  // was closed: 0200 refuses to requeue an entry holding a redeemed invitation,
+  // so the row would read as a promise beside a control that is not there.
+  //
+  // This is the label-promise rule applied to the sentence rather than the
+  // button — the same defect as "Return to waitlist" on a control that lands
+  // the entry in `released`, and it has to be caught in the same place: one
+  // function, derived alongside the availability verdict so the two cannot
+  // drift.
+  if (status === "released") {
+    if (context.invitationFactsUnknown) {
+      return "Off the waitlist for now. Whether their invitation was used could not be checked just now.";
+    }
+    if (context.invitationRedeemed) {
+      return "They used their invitation without booking. This entry cannot go back on the waitlist — remove it, and they can join again themselves.";
+    }
+    // THE ORDINARY CASE, AND THE INSTRUCTION LIVES HERE NOW rather than in the
+    // status default above: a set-aside entry genuinely can be returned, and
+    // this is the only place that knows this row is one.
+    return "Off the waitlist for now. Return them to it to put them back in line.";
+  }
+  return STATUS_MEANING[status];
+}

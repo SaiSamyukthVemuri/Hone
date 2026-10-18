@@ -27,6 +27,21 @@ restated here**. Follow it.
 
 ---
 
+## Design — the product contract
+
+[DESIGN.md](./DESIGN.md) is canonical for design decisions and is **not restated
+here**. Follow it. It is subordinate to ENGINEERING_STANDARDS.md; where they
+disagree, the standards win.
+
+It distinguishes **LAW** (durable design outcomes, always binding) from
+**CONTRACT** (the current mechanism satisfying a law, replaceable), **PILOT**
+(bounded experiments with a stated question) and **PRODUCT AUTHORITY REQUIRED**
+(undecided — propose, never implement). The supporting measurements live in
+`docs/reviews/product-wide-design-audit-2026-09.md`, which is **evidence and
+proposal, never authority**.
+
+---
+
 ## 1. The delivery sequence — verify the COMMITTED tree, not the working tree
 
 **"Typecheck passed" is a claim about your working tree, not about what you pushed.**
@@ -47,7 +62,7 @@ git add -A                     # 1. stage everything, including new files
 git diff --cached --check      # 2. whitespace / conflict markers
 git status --porcelain         # 3. confirm no untracked file was omitted
 git commit -m "..."            # 4. commit
-git status --porcelain         # 5. must be empty (bar the allowlist below)
+git status --porcelain         # 5. must be empty
 git diff HEAD --exit-code      # 6. must be empty — commit == tree
 npm run verify:prepush         # 7. all of the above, mechanically
 git push                       # 8. push
@@ -63,8 +78,12 @@ git push                       # 8. push
 
 It installs no Git hook and mutates nothing. Run it explicitly.
 
-**Documented local-only allowlist** (never commit these):
-`supabase/config.toml` — local E2E stack config, untracked by CLI convention.
+**`supabase/config.toml` is tracked** (on production since `b2f20466`, 2026-08-02)
+and is not a local-only file. Preserve the tracked production config; never edit
+it, or `e2e/helpers/local-env.ts` ports, for a test run. Local test-stack
+overrides belong in an owned separate workdir, with the run-scoped pair
+`E2E_SUPABASE_URL` + `HONE_LOCAL_DB_URL` (#879, #885; see §5 *Local test-stack
+isolation*).
 
 ---
 
@@ -215,6 +234,45 @@ Confirm `has_table_privilege(...)` before trusting a failing lane.
   containment, deployment success where applicable, and a clean tree.
 - **Green CI is not merge authorization.**
 
+### ENG-LOOP shepherd — advisory and read-only
+
+`npm run --silent eng -- shepherd <pr> --json` reads one PR at its exact head
+and returns one advisory decision (`scripts/eng/v2/README.md`). It never writes
+to GitHub and never merges. Run it:
+
+- after pushing a PR head;
+- after that head's CI run or a requested review settles — wait with the single
+  watcher above, never a new loop;
+- before asking for human merge authorization, quoting its `decision`,
+  `headSha` and `evidenceHash`.
+
+Act only on its bounded `nextAction`, inside your own task's authorization:
+
+| Decision | Do |
+|---|---|
+| `NOT_OPEN` | nothing: the PR is closed or merged |
+| `DRAFT_HOLD` | nothing until the author marks it ready |
+| `CI_PENDING`, `CI_NOT_STARTED`, `EXTERNAL_PENDING` | wait, then re-run once |
+| `NEEDS_REFRESH` | normal-merge production |
+| `CI_FAILED`, `CI_INCOMPLETE`, `FINDINGS_OPEN` | fix |
+| `EXTERNAL_BLOCKED` | inspect the failing external check; fix it or escalate |
+| `REVIEW_MISSING` | request a review of the exact head |
+| `UNKNOWN` | follow its `nextAction` when that is a step inside your authorization (retarget, a new branch, split the PR); otherwise escalate with the reason — never read it as green |
+| `CANDIDATE_READY_FOR_HUMAN_REVIEW` | present the exact head to the human; it is **not** merge permission |
+
+**Codex review comments and threads are evidence, not workspace** (operator
+policy, 2026-10-08). Agents never edit, delete, conceal, minimize or otherwise
+manipulate a Codex comment or review thread. Resolving any specific thread
+requires the operator's explicit authorization for that thread. The limitation
+behind this (SPEC-05A §7, R5-DELETE): the shepherd cannot see a deleted finding
+— a thread whose Codex comment was deleted disappears from FINDINGS_OPEN — and
+it cannot tell an agent using the operator's credential from the operator.
+
+It needs the dedicated read-only token in `HONE_ENG_READ_TOKEN`; without it,
+every answer is `UNKNOWN(read_failed)`. Until ENG-LOOP V1 is declared LIVE, its
+output is shadow evidence beside the existing checks, never a replacement for
+them.
+
 **A hard timeout must always EXCEED its performance target.** Run
 `30767725631` set both to 10 minutes, so two extended shards were *cancelled*
 at exactly their target — shard 2 had completed 72/90 tests with **zero
@@ -248,7 +306,7 @@ before assuming the diff broke something.**
 | changed-path detection | 2 min |
 | validate (typecheck/lint/build/unit) | 8 min |
 | db integration | 8 min |
-| targeted browser lane | target ~6 min · **hard timeout 15 min** |
+| targeted browser shard (×3) | target ~6 min · **hard timeout 15 min** |
 | extended browser shard (×4) | target <10 min · **hard timeout 18 min** |
 | nightly browser shard (×4) | hard timeout 15 min |
 | payment browser e2e (fake stripe) | target ~10 min · **hard timeout 18 min** |
@@ -257,6 +315,27 @@ before assuming the diff broke something.**
 ---
 
 ## 5. Production safety
+
+### Local test-stack isolation
+
+Before mutating DB/browser tests, verify one run-scoped target: source SHA,
+Supabase project/container, API and SQL endpoints, and the existing app/mail
+and outbound guards. Read back the CLI/container mapping; adjacent port numbers
+alone do not establish that two services belong to the same stack.
+
+Use the current paired-target guard in `e2e/helpers/local-env.ts` (#879).
+`vitest.db.config.ts` imports it before test collection, including for SQL-only
+suites. Set `E2E_SUPABASE_URL` and `HONE_LOCAL_DB_URL` together for an owned
+isolated stack. Do not rewrite tracked helper ports, skip the guard, or use a
+stale branch that lacks it. Raw GoTrue admin `fetch` calls are writes too.
+
+The config guard checks startup endpoints; it does not sandbox arbitrary test
+code or prove physical container identity. For a containment repair, prove
+API-only/SQL-only/cross-stack refusal and a valid owned pair, then compare the
+frozen shared stack before/after the affected run and require zero delta.
+One named owner controls resets. Shared-stack cleanup uses a verified exact-ID
+manifest, preserved evidence, rollback dry run and measured execution receipt;
+never a blanket reset or email-domain deletion.
 
 - No production write or migration without explicit, per-change authorization.
 - Read-only production SQL is `supabase db query --linked`. Never `db execute`.
@@ -271,3 +350,30 @@ before assuming the diff broke something.**
   authenticated-only command must revoke from **all three** explicitly, by name.
   Missed once in 0129 (`anon`) and again in 0164 (`service_role`); now pinned by
   `tests/security/clinical-rpc-grant-guard.test.ts`.
+
+### CI supply chain
+
+- Every action in `.github/workflows/**` is pinned to a **commit SHA** with a
+  trailing `# vX.Y.Z` comment. A tag is mutable, and `supabase/setup-cli@v1` was
+  a **branch** (`refs/heads/v1`), so every DB-touching job ran whatever that
+  branch pointed at. Closes the pinning half of HNE-CI-001; the register row is
+  referenced, never rewritten.
+- `supabase/setup-cli` stays on the **v1** line. v3 is a composite action that
+  installs the CLI from npm via Bun, and `version: 2.102.0` above is a
+  grants-parity invariant — a major bump is its own ticket with its own grants
+  re-verification and a fresh `db reset` proof.
+- Both workflows declare `permissions: contents: read` at the top level and every
+  checkout sets `persist-credentials: false`. No workflow holds write
+  credentials. A new workflow that genuinely needs one declares **job-level**
+  `permissions:` rather than widening the top-level block.
+- Codex exact-head review (`npm run eng -- status <pr>`) is **operator-side**. Do
+  not wire it into a workflow: it needs a GitHub API credential, which is exactly
+  what the posture above removes.
+
+<!-- OPENWIKI:START -->
+
+## OpenWiki
+
+@AGENTS.md
+
+<!-- OPENWIKI:END -->

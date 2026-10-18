@@ -94,9 +94,15 @@ describe("Today appointment card shows the memory lines in full", () => {
 });
 
 describe("nothing else on the dashboard changed", () => {
-  it("the page-local truncate helper survives for the Pinned-note line", () => {
-    expect(PAGE).toMatch(/function truncate\(text: string, max: number\): string/);
-    expect(PAGE).toMatch(/\{truncate\(pinnedNoteText, 50\)\}/);
+  it("pinned notes are rendered WHOLE and in full — never truncated to one line", () => {
+    // THIS TEST PREVIOUSLY PINNED THE DEFECT. It asserted
+    // `{truncate(pinnedNoteText, 50)}`, which is exactly the behaviour Chloe
+    // reported: multiple pinned notes collapsed to one 50-character line. The
+    // roster now renders every note, wrapping instead of slicing.
+    expect(PAGE).not.toMatch(/truncate\(pinnedNote/);
+    expect(PAGE).toMatch(/pinnedNotes\.map\(/);
+    expect(PAGE).toMatch(/whitespace-pre-wrap/);
+    expect(PAGE).not.toMatch(/line-clamp[^\s"']*[^\s"']*/);
   });
 
   it("the combined workflow model carries the memory notes uncapped", () => {
@@ -137,7 +143,17 @@ describe("nothing else on the dashboard changed", () => {
     // The action footer tightened to `gap-1 self-start`: on a phone this
     // column wraps onto its own full-width line, where centring it against a
     // tall text column opened dead space with nothing in it.
-    expect(PAGE).toMatch(/flex flex-col items-end gap-1 self-start/);
+    //
+    // MOBILE-UI-01 made the ALIGNMENT of that wrapped column responsive. The
+    // claim this line exists for — a column, tight gap, top-aligned, never
+    // centred — is unchanged and still pinned below. What changed is that
+    // `items-end` was right-aligning variable-width controls inside a
+    // left-aligned card, so each one's LEFT edge landed at
+    // `rightEdge - itsOwnWidth`: measured x=107 and x=37 against a body at 109.
+    // Phone width now aligns them to the body; `sm:` restores the right-aligned
+    // desktop footer. The geometry itself is proved in e2e/mobile-ux.spec.ts.
+    expect(PAGE).toMatch(/flex w-full flex-col items-start gap-1 self-start/);
+    expect(PAGE).toMatch(/sm:w-auto sm:items-end sm:pl-0/);
     expect(PAGE).toMatch(/className="min-w-0 flex-1"/);
   });
 });
