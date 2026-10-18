@@ -238,3 +238,65 @@ describe("URL-shaped values and decode-first decisions", () => {
     expect(p.distinct_id).toBe(own);
   });
 });
+
+// ===========================================================================
+// Codex 4309131383 (review of 0d12a8ab): a URL under a scheme other than
+// http(s) is handled by what it IS, never by the shape of its text: a URL
+// INSTANCE is checked before toJSON, and a non-http(s) URL string anywhere
+// (any key, encoded or not) becomes the fixed "[url]" placeholder.
+// ===========================================================================
+describe("non-http(s) URLs fail closed to [url]", () => {
+  const schemes = [
+    `ftp://files.example/clients/${CLIENT}?email=patient@example.com#x`,
+    "mailto:patient@example.com?subject=hi",
+    `data:text/plain,client%20${CLIENT}%20patient@example.com`,
+    `javascript:alert('${CLIENT}')`,
+    `hone-app://open/clients/${CLIENT}?email=patient@example.com`,
+    `file:///Users/x/clients/${CLIENT}.pdf`,
+  ];
+  const clean = (v: unknown) => {
+    const text = oracleDecode(JSON.stringify(v));
+    expect(UUID_ANYWHERE.test(text)).toBe(false);
+    expect(text).not.toMatch(/@|email|subject|alert/);
+  };
+
+  it.each(schemes)("URL instance %s → [url] (checked before toJSON)", (raw) => {
+    const out = pageview({ link: new URL(raw) });
+    expect((out.properties as Record<string, unknown>).link).toBe("[url]");
+    clean(out.properties);
+  });
+
+  it.each(schemes)("string %s under a non-URL key → [url]", (raw) => {
+    const out = pageview({ note: raw });
+    expect((out.properties as Record<string, unknown>).note).toBe("[url]");
+    clean(out.properties);
+  });
+
+  it.each(schemes)("string %s under a URL key ($referrer) → [url]", (raw) => {
+    const out = pageview({ $referrer: raw });
+    expect((out.properties as Record<string, unknown>).$referrer).toBe("[url]");
+    clean(out.properties);
+  });
+
+  it("an ENCODED non-http URL string → [url]", () => {
+    const out = pageview({ note: encodeURIComponent("mailto:patient@example.com") });
+    expect((out.properties as Record<string, unknown>).note).toBe("[url]");
+  });
+
+  it("ordinary values are not mistaken for URLs; http(s) URL instances still keep their shape", () => {
+    const own = "01928f3a-7b2c-7d4e-8f00-123456789abc";
+    const out = pageview({
+      $title: "Pricing: Hone",
+      $session_id: own,
+      $raw_user_agent: "Mozilla/5.0 (X11; Linux x86_64)",
+      when: "2026-10-18T00:00:00.000Z",
+      link: new URL(`${HOST}/clients/${CLIENT}?email=x@y.z`),
+    });
+    const p = out.properties as Record<string, string>;
+    expect(p.$title).toBe("Pricing: Hone");
+    expect(p.$session_id).toBe(own);
+    expect(p.$raw_user_agent).toBe("Mozilla/5.0 (X11; Linux x86_64)");
+    expect(p.when).toBe("2026-10-18T00:00:00.000Z");
+    expect(p.link).toBe(`${HOST}/clients/[id]`);
+  });
+});

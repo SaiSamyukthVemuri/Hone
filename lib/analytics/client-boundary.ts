@@ -217,6 +217,24 @@ function looksLikeUrl(value: string): boolean {
   return /^https?:\/\//i.test(decoded) || decoded.startsWith("/");
 }
 
+// A value that is a URL under ANY scheme other than http(s) (ftp:, mailto:,
+// data:, javascript:, file:, a custom app scheme, ...) is replaced by a fixed
+// placeholder, never its text (Codex 4309131383): there is no reviewed way to
+// keep part of it. Decided on the decoded text. A scheme must be followed
+// directly by a non-space character, so ordinary prose such as a page title
+// "Pricing: Hone" is not mistaken for a URL.
+const NON_HTTP_URL_PLACEHOLDER = "[url]";
+function isNonHttpUrl(value: string): boolean {
+  const decoded = (decodeBounded(value) ?? value).trim();
+  if (!/^[a-z][a-z0-9+.-]*:\S/i.test(decoded)) return false;
+  try {
+    const u = new URL(decoded);
+    return u.protocol !== "http:" && u.protocol !== "https:";
+  } catch {
+    return false;
+  }
+}
+
 /** Object keys lose record ids too (decoded first, unconditionally); a
  *  collision gets a numeric suffix so no value is silently dropped. */
 function sanitizeKey(key: string, taken: Record<string, unknown>): string {
@@ -233,7 +251,10 @@ function sanitizeKey(key: string, taken: Record<string, unknown>): string {
  *   * strings: URL keys as URLs, campaign keys by value, path-like strings
  *     lose ids, all lose token paths; over the depth limit, "[redacted]";
  *   * containers over the depth limit: "[depth-limited]", never the original;
- *   * objects with toJSON (Date, URL, ...): sanitized as what they serialize to;
+ *   * URL instances: by what they ARE, before toJSON: http(s) sanitized as a
+ *     URL, any other scheme "[url]"; non-http(s) URL strings likewise "[url]";
+ *   * other objects with toJSON (Date, custom): sanitized as what they
+ *     serialize to, through these same rules;
  *   * Map / Set / other non-plain objects: "[unsupported]";
  *   * arrays and plain objects: element by element, keys included;
  *   * number / boolean / null / undefined: as is (no text to carry an id);
@@ -244,6 +265,7 @@ function sanitizeProps(value: unknown, key: string, depth: number): unknown {
   if (typeof value === "number" || typeof value === "boolean") return value;
   if (typeof value === "string") {
     if (depth > MAX_DEPTH) return "[redacted]";
+    if (isNonHttpUrl(value)) return NON_HTTP_URL_PLACEHOLDER;
     if (isUrlPropKey(key)) return sanitizeMarketingUrl(value);
     // A URL-shaped value under any other key: sanitized as the URL it decodes
     // to, so an encoded "%2Fclients%2F…%3F…" loses its query too.
@@ -253,6 +275,14 @@ function sanitizeProps(value: unknown, key: string, depth: number): unknown {
   }
   if (typeof value !== "object") return undefined;
   if (depth > MAX_DEPTH) return "[depth-limited]";
+  // A URL INSTANCE is handled as a URL by what it IS, before toJSON, whatever
+  // its scheme (Codex 4309131383): http(s) is sanitized as a marketing URL,
+  // every other scheme becomes the fixed placeholder.
+  if (value instanceof URL) {
+    return value.protocol === "http:" || value.protocol === "https:"
+      ? sanitizeMarketingUrl(value.href)
+      : NON_HTTP_URL_PLACEHOLDER;
+  }
   const toJSON = (value as { toJSON?: unknown }).toJSON;
   if (typeof toJSON === "function") {
     let serialized: unknown;
