@@ -627,6 +627,7 @@ export function TreatmentImagesManager({
                     cell over. Availability still keys off the ORIGINAL. */}
                 <GridPhoto
                   key={`${img.id}:${img.previewUrl ?? ""}:${img.thumbUrl ?? ""}`}
+                  clientId={clientId}
                   imageId={img.id}
                   previewUrl={img.previewUrl}
                   thumbUrl={img.thumbUrl}
