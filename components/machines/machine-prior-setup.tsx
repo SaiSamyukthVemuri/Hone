@@ -5,7 +5,11 @@ import {
 } from "@/lib/machines/charting";
 import type { RecordedReading } from "@/lib/machines/machine-queries";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
-import { findMode, modeFields } from "@/lib/machines/profile-contract";
+import {
+  currentProfile,
+  findMode,
+  modeFields,
+} from "@/lib/machines/profile-contract";
 
 // MPX-03 — the next-visit payoff.
 //
@@ -129,7 +133,7 @@ export function MachinePriorSetup({
   if (readings.length === 0) return null;
 
   const first = readings[0]!;
-  const profile = catalogue.find((p) => p.profileId === first.profileId);
+  const profile = currentProfile(catalogue, first.profileId);
   const historical = profile ? first.profileVersion !== profile.version : true;
   const mode = profile ? findMode(profile, first.modeKey) : undefined;
 

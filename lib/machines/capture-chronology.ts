@@ -67,10 +67,32 @@ export type ChronologyEntry = {
  * another and show a setup that never existed, which is the defect
  * `latest_setup_for_client` was repaired for.
  *
- * ORDERED BY INSTANT, then by group and revision as a stable tiebreak. Two
- * captures can share a timestamp - the same save's groups often do, to the
- * precision stored - and an unstable order would make the same data render
- * differently on two loads.
+ * ORDERED SO A SERIES READS IN REVISION ORDER, and so the whole list is
+ * stable (Codex, #860 4307914915).
+ *
+ * THE DEFECT. This led on `recordedAt`, which is the TRANSACTION-START
+ * `now()` - so a long transaction can start first and commit second, and two
+ * captures of the SAME group can carry timestamps that run opposite to their
+ * revisions. "Recorded this treatment" then showed capture 2 above capture 1:
+ * a chronology asserting an order the record contradicts. Exactly the fault
+ * the change series had at 4307735447, on the surface a practitioner actually
+ * reads.
+ *
+ * WHY REVISION CANNOT SIMPLY LEAD. Revisions are allocated PER (block, group,
+ * machine, profile, version, mode), so revision 1 of one group and revision 1
+ * of another are not comparable - leading on it would interleave unrelated
+ * series arbitrarily.
+ *
+ * SO THE SORT KEY IS (when the SERIES began, the series, the revision). Each
+ * series is placed by its own EARLIEST capture, which is a real instant and
+ * the one timestamp an inversion cannot move - the first capture of a series
+ * is by definition the one with no earlier sibling to swap with. Within a
+ * series, revision is authoritative and total. Across series, chronology is
+ * preserved to the precision that is actually trustworthy.
+ *
+ * STILL STABLE, which the previous wording promised and this keeps: two
+ * captures sharing a timestamp are separated by series key and then revision,
+ * so the same data cannot render two ways on two loads.
  */
 export function chronology(
   readings: readonly RecordedReading[],
@@ -106,12 +128,37 @@ export function chronology(
   for (const e of entries) {
     e.readings.sort((a, b) => a.fieldKey.localeCompare(b.fieldKey));
   }
-  entries.sort(
-    (a, b) =>
-      a.recordedAt.localeCompare(b.recordedAt) ||
-      a.groupKey.localeCompare(b.groupKey) ||
-      a.revision - b.revision,
-  );
+
+  // THE SERIES AN ENTRY BELONGS TO. The same scope the revision is allocated
+  // in, and the same one `changesWithin` and `groupsFromRecorded` use:
+  // identity is (device, profile, version, mode) plus the group key, never the
+  // key alone. Two rooms holding one model both mint `g1`.
+  const seriesOf = (e: ChronologyEntry) =>
+    [e.deviceId, e.profileId, String(e.profileVersion), e.modeKey, e.groupKey].join(
+      "::",
+    );
+
+  // WHEN EACH SERIES BEGAN, which is the one instant an inversion cannot move:
+  // a series' earliest capture has no earlier sibling to swap with.
+  const began = new Map<string, string>();
+  for (const e of entries) {
+    const k = seriesOf(e);
+    const seen = began.get(k);
+    if (seen === undefined || e.recordedAt < seen) began.set(k, e.recordedAt);
+  }
+
+  entries.sort((a, b) => {
+    const ka = seriesOf(a);
+    const kb = seriesOf(b);
+    return (
+      // Series in the order they began...
+      (began.get(ka) ?? a.recordedAt).localeCompare(began.get(kb) ?? b.recordedAt) ||
+      // ...ties broken by the series itself, so the order is stable...
+      ka.localeCompare(kb) ||
+      // ...and WITHIN a series, by revision, which is authoritative.
+      a.revision - b.revision
+    );
+  });
   return entries;
 }
 
