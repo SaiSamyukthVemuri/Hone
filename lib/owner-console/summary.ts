@@ -138,9 +138,25 @@ export function paymentsPanel(
     return { ...connect, tone: "attention", status: "Charges blocked", detail: `${country.heading}. ${country.detail}` };
   }
   if (country.tone === "unknown") {
-    return connect.tone === "attention"
-      ? { ...connect, detail: `${connect.detail} ${country.detail}` }
-      : { ...connect, tone: "unknown", status: "Unknown", detail: country.detail };
+    // NO CHARGEABILITY CLAIM WHILE THE COUNTRY IS UNREAD, and the reason is the
+    // charge path itself: `session-payment-charge` refuses when
+    // `getStudioPaymentJurisdiction` returns `read_failed` or `missing`, so
+    // money does NOT move in this state. Appending the read failure to
+    // `charges_enabled_payouts_pending`'s "Cards can be charged" left the panel
+    // asserting something the gates would refuse.
+    //
+    // THE PAYOUT WARNING IS RETAINED, because it is independent of the country
+    // read: payouts are pending whatever the jurisdiction says. Only the
+    // chargeability sentence is dropped, and the tone is left alone so an
+    // `attention` state does not quietly downgrade.
+    if (connect.tone === "attention") {
+      const payoutWarning =
+        capability === "charges_enabled_payouts_pending"
+          ? " Payouts are not enabled yet."
+          : "";
+      return { ...connect, detail: `${country.detail}${payoutWarning}` };
+    }
+    return { ...connect, tone: "unknown", status: "Unknown", detail: country.detail };
   }
   if (country.tone === "attention") {
     return {

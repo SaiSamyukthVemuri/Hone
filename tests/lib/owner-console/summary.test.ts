@@ -89,6 +89,26 @@ describe("the three-state rule", () => {
     }
   });
 
+  it("payments: an UNREAD country never claims cards can be charged", () => {
+    // The charge path refuses when the jurisdiction read is `read_failed` or
+    // `missing` (session-payment-charge's country check), so money does not
+    // move while the country is unread. The panel must not say otherwise.
+    const panel = paymentsPanel("charges_enabled_payouts_pending", "live", country("unknown"));
+    expect(panel.detail, "no chargeability claim while the country is unread").not.toMatch(
+      /cards can be charged/i,
+    );
+    // The payout warning is INDEPENDENT of the country read and is retained.
+    expect(panel.detail).toMatch(/payouts are not enabled yet/i);
+    // The tone is not quietly downgraded away from attention.
+    expect(panel.tone).toBe("attention");
+
+    // CONTROL: with a readable country the chargeability copy is still there,
+    // so the assertion above is about the UNREAD state and not about the copy
+    // having been deleted outright.
+    const readable = paymentsPanel("charges_enabled_payouts_pending", "live", country("ok"));
+    expect(readable.detail).toMatch(/cards can be charged/i);
+  });
+
   it("payments: the payment COUNTRY gates Connect (PAY-CCY): blocked or unread can never read ready", () => {
     const live = paymentsPanel("ready", "live", country("ok"));
     expect(live).toMatchObject({ tone: "ready", status: "Live payments ready" });
