@@ -142,3 +142,85 @@ test("no derivative: the ORIGINAL renders; no original either: 'Image not availa
   await expect(page.getByText("Image not available")).toHaveCount(1, { timeout: T });
   await expect(page.locator(CELL)).toHaveCount(0);
 });
+
+// ---------------------------------------------------------------------------
+// BOUNDED PENDING (deterministic; needs no race). The derivative's first signed
+// token is refused on every request (true expiry), so the cell must re-mint;
+// the re-mint server action (Next-Action POST) is then HELD OPEN, as one that
+// never settles. Before bounded pending, a held re-mint stranded the cell on a
+// dead URL forever.
+// ---------------------------------------------------------------------------
+
+/** Refuse every request carrying the FIRST signed token seen (true expiry). */
+async function expireFirstToken(page: Page) {
+  let expired: string | null = null;
+  await page.route(/\/storage\/v1\/object\/sign\/treatment-images\//, async (route) => {
+    const token = new URL(route.request().url()).searchParams.get("token") ?? "";
+    if (expired === null) expired = token;
+    if (token === expired) return route.fulfill({ status: 400, body: "expired" });
+    return route.continue();
+  });
+}
+
+/** Hold the first `n` server-action POSTs open (never answered); let the rest through. */
+async function holdServerActions(page: Page, n: number) {
+  const held: Array<() => void> = [];
+  let seen = 0;
+  await page.route(
+    (url) => url.pathname.startsWith("/clients/"),
+    async (route) => {
+      const req = route.request();
+      if (req.method() !== "POST" || !req.headers()["next-action"]) return route.fallback();
+      seen += 1;
+      if (seen <= n) {
+        // Never answered while the test runs; aborted at teardown.
+        await new Promise<void>((resolve) => held.push(resolve));
+        return route.abort().catch(() => undefined);
+      }
+      return route.continue();
+    },
+  );
+  return {
+    count: () => seen,
+    release: () => held.forEach((r) => r()),
+  };
+}
+
+test("a re-mint that NEVER settles is retried after the timeout, and the cell recovers", async ({ page }) => {
+  test.setTimeout(120_000);
+  const seed = await seedE2eStudio();
+  const { clientId } = await seedE2eClient(seed);
+  await loginAsOwner(page, seed);
+  await uploadPhotos(page, clientId, 1);
+
+  await expireFirstToken(page);
+  const actions = await holdServerActions(page, 1); // attempt 1 hangs; attempt 2 goes through
+  await page.reload();
+  try {
+    // 8 s timeout + the retry's round trip.
+    await expect.poll(async () => cells(page), { timeout: 20_000 }).toEqual([{ stage: "thumb", rendered: true }]);
+    expect(actions.count()).toBeGreaterThanOrEqual(2);
+  } finally {
+    actions.release();
+  }
+});
+
+test("re-mints that NEVER settle twice give up on the derivative: the ORIGINAL renders, never a stuck cell", async ({ page }) => {
+  test.setTimeout(120_000);
+  const seed = await seedE2eStudio();
+  const { clientId } = await seedE2eClient(seed);
+  await loginAsOwner(page, seed);
+  await uploadPhotos(page, clientId, 1);
+
+  await expireFirstToken(page);
+  const actions = await holdServerActions(page, 2); // both derivative attempts hang
+  await page.reload();
+  try {
+    // Two 8 s timeouts, then the server-signed original (a different, valid token).
+    await expect.poll(async () => cells(page), { timeout: 30_000 }).toEqual([{ stage: "original", rendered: true }]);
+    expect(actions.count()).toBe(2);
+    await expect(page.getByText("Image not available")).toHaveCount(0);
+  } finally {
+    actions.release();
+  }
+});

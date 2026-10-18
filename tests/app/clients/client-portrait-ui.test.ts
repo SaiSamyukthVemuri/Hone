@@ -99,15 +99,14 @@ describe("0231 portrait in the profile header: the Photos-tab trust boundary", (
   it("the header avatar loads the derivative first, demotes to the original, and re-mints an EXPIRED URL once per variant", () => {
     const comp = readFileSync(join(ROOT, "app/(app)/clients/[id]/ClientPortrait.tsx"), "utf8");
     expect(comp).toMatch(/^"use client";/);
-    // The SAME bounded transitions as the Photos-tab grid (#913): no retry loop.
-    expect(comp).toMatch(/from "@\/lib\/images\/grid-photo-recovery"/);
-    expect(comp).toMatch(/initialGridPhoto\(\{ previewUrl: url, thumbUrl \}\)/);
-    expect(comp).toMatch(/getTreatmentImageSignedUrlAction\(\{ imageId, variant \}\)/);
-    // Pre-hydration failure check, and transitions never inside a state updater.
-    expect(comp).toMatch(/if \(el\.complete && el\.naturalWidth === 0\) \{\s*handleError\(\);\s*return;\s*\}/);
-    expect(comp).toMatch(/el\.addEventListener\("error", onNativeError\);/);
-    expect(comp).toMatch(/return \(\) => el\.removeEventListener\("error", onNativeError\);/);
-    expect(comp).not.toMatch(/setState\(\(current\) =>/);
+    // The SHARED bounded recovery (#929 hook): timeout → one retry → terminal,
+    // the hydration-window check, no retry loop. Pinned once, in
+    // tests/app/clients/treatment-photo-thumbnail-recovery.test.ts.
+    expect(comp).toMatch(/import \{ useGridPhotoRecovery \} from "@\/lib\/images\/use-grid-photo-recovery";/);
+    expect(comp).toMatch(/useGridPhotoRecovery\(\{ previewUrl: url, thumbUrl, remint \}\)/);
+    expect(comp).toMatch(/getTreatmentImageSignedUrlAction\(\{ imageId, variant \}\)\.then\(\(res\) => \(res\.ok \? res\.url : null\)\)/);
+    expect(comp).toMatch(/ref=\{imgRef\}/);
+    expect(comp).toMatch(/onError=\{onError\}/);
     expect(comp).toMatch(/if \(state\.stage === "broken" \|\| !state\.src\) return null;/);
     expect(comp).toMatch(/alt=\{`ID photo of \$\{clientName\}`\}/);
   });
