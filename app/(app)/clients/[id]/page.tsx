@@ -922,12 +922,27 @@ export default async function ClientCheatSheetPage({
               </p>
             )}
           </div>
-          <Link
-            href={`/clients/${client.id}/edit`}
-            className="shrink-0 rounded-md border border-neutral-300 px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
-          >
-            Edit
-          </Link>
+          <div className="flex shrink-0 flex-col items-end gap-2 sm:flex-row sm:items-center">
+            {/* HON-46: print one treatment date's records. OWNER ONLY (the
+                export refuses anyone else) and a PLAIN <a>, never next/link:
+                the export must be entered by a full document load so this
+                page's analytics never runs inside it (#828 G-26). */}
+            {practitioner.role === "owner" && (
+              <a
+                href={`/clients/${client.id}/records/export`}
+                data-testid="client-print-records"
+                className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+              >
+                Print treatment records
+              </a>
+            )}
+            <Link
+              href={`/clients/${client.id}/edit`}
+              className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+            >
+              Edit
+            </Link>
+          </div>
         </div>
         <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
           {/* RESP-CLIENT-INTAKE-01 RANK 1. The entry to charting, and the

@@ -6,6 +6,7 @@ import type {
 import type { TreatmentParams } from "@/lib/supabase/queries";
 import { ELECTROLYSIS_MODES, apilusModalityLabel } from "@/lib/constants";
 import { formatSeconds } from "@/lib/sessions/format-seconds";
+import { hasStructuredReadings } from "@/lib/sessions/structured-readings";
 import { resolveDisplayChips } from "@/lib/observation-chips";
 
 function modeLabel(value: ElectrolysisEntry["mode"]): string | null {
@@ -136,7 +137,11 @@ export function ElectrolysisEntryRow({
     if (pulseDelayLabel) thermoParts.push(pulseDelayLabel);
   }
 
-  const hasStructured = galvanicParts.length > 0 || thermoParts.length > 0;
+  // The ONE shared rule (lib/sessions/structured-readings.ts), also used by
+  // the HON-46 printout, so screen and paper suppress the same legacy pair
+  // (Codex P1 4304983088). Equivalent to "galvanicParts or thermoParts is
+  // non-empty" above.
+  const hasStructured = hasStructuredReadings(entry);
 
   // Primary meta line: probe size · mode · modality · pulses · intensity · duration
   const meta: string[] = [];

@@ -10,6 +10,18 @@ import {
   scrubTransactionEvent,
   tracesSampleRate,
 } from "@/lib/observability/sentry-scrub";
+import { isRecordsExportPath } from "@/lib/clinical-records/route";
+
+// HON-46 (Codex P1 4303921817). NO client telemetry starts on the
+// clinical-records export document. Its URL carries a client id and the
+// selected dates, and merely INITIALIZING an SDK makes requests from the page
+// (PostHog's /flags call to /ingest, Sentry's session update to /monitoring)
+// that carry that URL. The export is only ever entered by a full document
+// load (a plain <a>; guarded in tests/app/clinical-records-export-contract),
+// so this document-load check covers its whole lifetime. Server-side Sentry
+// still drops any event naming the route (lib/observability/sentry-scrub.ts).
+const TELEMETRY_OFF =
+  typeof window !== "undefined" && isRecordsExportPath(window.location.pathname);
 
 // --- Sentry ---
 //   * sendDefaultPii: false , no IPs, cookies, headers, request bodies or
@@ -24,7 +36,7 @@ import {
 //     permits them and no ingest host is added to the policy. The route
 //     forwards only the envelope body for Hone's own DSN, never the browser's
 //     Referer, Cookie or IP (#828 G-07/G-26).
-Sentry.init({
+if (!TELEMETRY_OFF) Sentry.init({
   dsn: "https://83582fd24c2d75b0a2ada024251147bc@o4511758551941120.ingest.us.sentry.io/4511758557839360",
 
   sendDefaultPii: false,
@@ -56,7 +68,7 @@ import {
   guardBrowserEvent,
 } from "@/lib/analytics/client-boundary";
 
-posthog.init(process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN!, {
+if (!TELEMETRY_OFF) posthog.init(process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN!, {
   api_host: "/ingest",
   ui_host: "https://us.posthog.com",
   defaults: "2026-01-30",

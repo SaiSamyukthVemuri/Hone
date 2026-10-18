@@ -129,3 +129,27 @@ export function hasAnyReaction(
 ): boolean {
   return unifiedReactionLabels(reactionType, observationChipsList).length > 0;
 }
+
+// The LEGACY block-level reaction to show BESIDE the unified response chips, or
+// null. ONE rule for every surface that renders a saved block (the session
+// view and the HON-46 clinical-records printout), so screen and paper cannot
+// drift (Codex P1 4304382927):
+//   * a reaction_type that a live entry already records as a chip is MIGRATED
+//     and is shown only as that chip, never twice;
+//   * a stale "No visible reaction" never appears beside a REAL recorded
+//     response (the same contradiction rule as effectiveReactionLabel);
+//   * anything else is un-migrated history, which the caller labels as LEGACY.
+export function legacyBlockReactionLabel(
+  reactionType: string | null | undefined,
+  observationChipsList: ReadonlyArray<unknown>,
+): string | null {
+  if (!reactionType || !isReactionType(reactionType)) return null;
+  const label = reactionTypeLabel(reactionType as ReactionType);
+  const chipLabels = observationChipsList
+    .flatMap((c) => reactionLabelsFromChips(c))
+    .map((l) => l.toLowerCase());
+  if (chipLabels.includes(label.toLowerCase())) return null;
+  const noneLabel = reactionTypeLabel("none").toLowerCase();
+  if (label.toLowerCase() === noneLabel && chipLabels.some((l) => l !== noneLabel)) return null;
+  return label;
+}

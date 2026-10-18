@@ -37,11 +37,12 @@ const FN = "clients_sms_permission_guard";
 describe("0211 sits correctly in the migration sequence", () => {
   it("is no longer the repository maximum", () => {
     // HANDED OFF, per CLAUDE.md §2: only the CURRENT max may assert
-    // `isRepoMax`. It reached this file from 0210's test and left for 0214's
-    // own test when production (carrying 0211) was merged into PAY-CCY-02.
+    // `isRepoMax`. It reached this file from 0210's test and left for 0233's
+    // own test (tests/migrations/0233-clinical-records-audit-command.test.ts)
+    // on the HON-46 branch.
     expect(isRepoMax(VERSION)).toBe(false);
     // DERIVED, NOT PINNED: something sits above it, and everything above it is
-    // greater. A literal list would be the forbidden pin in other clothes.
+    // greater.
     const above = versionsAbove(VERSION);
     expect(above.length, "nothing sits above this older migration").toBeGreaterThan(0);
     expect(
