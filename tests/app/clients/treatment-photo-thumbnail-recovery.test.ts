@@ -196,7 +196,9 @@ describe("source contract: the shared recovery hook (abortable re-mint + hydrati
   it("a timeout ABORTS the attempt before the failed path; requests and timers end on unmount and when nothing is pending", () => {
     expect(ctl).toMatch(/a\.timer = setTimeout\(\(\) => \{\s*a\.ac\.abort\(\);\s*fail\(\);\s*\}, timeoutMs\);/);
     expect(ctl).toMatch(/timeoutMs = deps\.timeoutMs \?\? GRID_PHOTO_REMINT_TIMEOUT_MS/);
-    expect(hook).toMatch(/return \(\) => controller\.dispose\(\);/);
+    expect(hook).toMatch(/controller\.activate\(\);\s*return \(\) => controller\.dispose\(\);/);
+    // StrictMode's replay (dispose → activate) re-issues a stranded attempt (Codex 4308035620).
+    expect(ctl).toMatch(/activate\(\) \{[\s\S]{0,800}?const p = read\(\)\.pending;\s*if \(p && attempts\.size === 0\) issue\(p\);/);
     expect(hook).toMatch(/if \(!state\.pending\) controller\.settle\(\);/);
     // ...and settle is gated on the LIVE state, so a stale render's effect can
     // never cancel a re-mint an earlier effect just started (Codex P2 4307931365).
@@ -208,6 +210,11 @@ describe("source contract: the shared recovery hook (abortable re-mint + hydrati
     expect(hook).toMatch(/el\.addEventListener\("error", onNativeError\);/);
     expect(hook).toMatch(/return \(\) => el\.removeEventListener\("error", onNativeError\);/);
     expect(hook).toMatch(/\}, \[state\.src, handleError\]\);/);
+    // React's onError and the native listener get the SAME event: one
+    // delivery path per event (Codex 4308035614).
+    expect(hook).toMatch(/const handleError = useMemo\(\(\) => oncePerErrorEvent\(\(\) => controller\.onImageError\(\)\), \[controller\]\);/);
+    expect(hook).toMatch(/const onNativeError = \(e: Event\) => handleError\(e\);/);
+    expect(hook).toMatch(/return \{ state, imgRef, onError: handleError \};/);
   });
 
   it("transitions never run inside a state updater (no duplicate re-mint)", () => {
