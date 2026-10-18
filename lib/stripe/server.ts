@@ -121,13 +121,10 @@ export function inferStripeLivemode(): boolean {
   return key.startsWith("sk_live_");
 }
 
-/**
- * Country for Express connected-account creation. Hardcoded to Canada
- * for the current single-country rollout. To generalize, plumb a
- * per-studio `country` column into the schema and read it here.
- */
-export const STRIPE_CONNECT_COUNTRY: string =
-  process.env.STRIPE_CONNECT_COUNTRY ?? "CA";
+// PAY-CCY-03 (#824): there is no deployment-wide Connect country. An Express
+// account is created in its studio's verified payment country
+// (studio_payment_jurisdictions, 0214); see lib/stripe/account.ts. The
+// STRIPE_CONNECT_COUNTRY environment variable is no longer read.
 
 // ---------------------------------------------------------------------------
 // App-origin resolution

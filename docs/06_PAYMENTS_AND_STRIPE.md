@@ -182,7 +182,7 @@ What the row carries vs leaves null:
 | `session_id` | from URL path; required by `reason_shape_check` |
 | `created_by_practitioner_id` | server-resolved |
 | `amount_cents` | practitioner-confirmed; bounded `> 0 AND <= 200000` |
-| `currency` | `'cad'` |
+| `currency` | the studio's charge currency from `studio_payment_jurisdictions` (`'cad'` or `'usd'`, migration 0214); the insert guard refuses any other, and it never changes after preparation |
 | `status` | `'ready'` |
 | `client_payment_method_id` | from active card row |
 | `card_authorization_signature_id` | from `signed_current` |

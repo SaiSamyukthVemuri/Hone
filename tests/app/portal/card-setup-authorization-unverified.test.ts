@@ -41,6 +41,15 @@ vi.mock("@/lib/portal/session", () => ({
 }));
 
 vi.mock("@/lib/stripe/server", () => ({ inferStripeLivemode: () => false }));
+// PAY-CCY-03: the action also checks the account country. This suite is about
+// the card AUTHORIZATION gate, on a Canadian studio whose account country is
+// unobserved (legacy CA, accepted); the country gate has its own tests.
+vi.mock("@/lib/billing/payment-jurisdiction-server", () => ({
+  getStudioPaymentJurisdiction: async () => ({
+    ok: true,
+    jurisdiction: { country: "CA", currency: "cad" },
+  }),
+}));
 
 vi.mock("@/lib/stripe/setup-intent", () => ({
   createCardOnFileSetupIntent: async () => {
