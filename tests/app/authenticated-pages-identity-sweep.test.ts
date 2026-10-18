@@ -3,6 +3,7 @@ import { readdirSync } from "node:fs";
 import path from "node:path";
 import { isRedirectError } from "next/dist/client/components/redirect-error";
 import { getURLFromRedirectError } from "next/dist/client/components/redirect";
+import { createClient } from "@/lib/supabase/server";
 import {
   getAccessFallbackHTTPStatus,
   isHTTPAccessFallbackError,
@@ -231,6 +232,36 @@ describe.each([...PAGES, ...LAYOUTS])("%s", (rel) => {
     onlyTheIdentityRead();
   });
 
+  // STUDIO-READY — THE REASON-PIN FOR A RECEPTIONIST IDENTITY.
+  //
+  // Today this state is INDISTINGUISHABLE from the case above: a receptionist
+  // has a `studio_receptionists` row and NO `practitioners` row (the DB forbids
+  // one — receptionist-foundation.db.test.ts:159, and the dual-membership guard
+  // at :486), so `rows: []` IS the receptionist, and the redirect is the same.
+  // That is exactly why this exists. The case above passes because the row set
+  // is empty; this one pins WHY it must stay empty-handed — the guard must
+  // never consult a studio MEMBERSHIP at all.
+  //
+  // What it catches: a future change that makes membership sufficient (reading
+  // `studio_receptionists`, or widening the identity read to any membership
+  // table) would admit a receptionist to a clinical or financial page. RLS
+  // would not save it — several of these pages read through the SERVICE-ROLE
+  // client, which bypasses RLS entirely, so this guard is the only boundary.
+  // Any such read lands in `touched` and reds this test.
+  //
+  // A selected studio is set deliberately: the receptionist's OWN studio, so
+  // the refusal cannot be credited to a missing or foreign selection.
+  it("a RECEPTIONIST-shaped identity is refused, and no membership is consulted", async () => {
+    state.rows = [];
+    state.selectedStudioId = ANY_ID;
+    expect(await render(rel)).toEqual({ kind: "redirect", url: "/no-access" });
+    expect(
+      state.touched,
+      "the practitioner boundary must not read a receptionist membership",
+    ).not.toContain("studio_receptionists");
+    onlyTheIdentityRead();
+  });
+
   it("2+ memberships with no selection -> the chooser, never an auto-picked studio", async () => {
     state.rows = [membership("s1"), membership("s2", "practitioner")];
     expect(await render(rel)).toEqual({
@@ -262,6 +293,31 @@ describe("the E2E fault fixture without its activation marker", () => {
     state.rows = [];
     expect(await render(E2E_FIXTURE)).toEqual({ kind: "notFound" });
     expect(state.touched).toEqual([]);
+  });
+});
+
+describe("anti-vacuity: the receptionist reason-pin can fail", () => {
+  // Without these two the pin above is worth nothing: the first shows the
+  // instrument CAN see the read it forbids, and the second shows the sweep can
+  // tell admission from refusal at all, so "/no-access" is a measured outcome
+  // rather than the only thing this harness is able to produce.
+  it("a studio_receptionists read WOULD be visible to the pin", async () => {
+    const client = await createClient();
+    await client.from("studio_receptionists").select("id");
+    expect(
+      state.touched,
+      "if the guard ever read this table, the pin must notice",
+    ).toContain("studio_receptionists");
+  });
+
+  it("the shell layout ADMITS the same identity once a practitioner row exists", async () => {
+    state.rows = [membership(ANY_ID)];
+    state.selectedStudioId = ANY_ID;
+    const outcome = await render("app/(app)/layout.tsx");
+    expect(
+      outcome,
+      "a usable identity must NOT be redirected to /no-access",
+    ).not.toEqual({ kind: "redirect", url: "/no-access" });
   });
 });
 
