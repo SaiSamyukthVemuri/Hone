@@ -25,6 +25,26 @@ export type StructuredReadingFields = {
   pulse_count?: number | null;
 };
 
+/**
+ * Whether the saved-record view shows an entry's PULSE count and pulse delay
+ * (Codex P1 4305560955). Pulses are a THERMOLYSIS setting: a thermo/blend entry
+ * shows them; a structured galvanic entry does NOT, because the area-first
+ * writer stores a default pulse count of 1 for galvanic passes too
+ * (clampPulseCount), and printing "Pulses: 1" would report an irrelevant
+ * machine setting as active. A legacy entry with no structured readings keeps
+ * its recorded count, as the view's legacy line does. The delay shows only
+ * with the count, for more than one pulse, when recorded. Exactly entry-row's
+ * three display sites (thermo line, legacy meta line, legacy readings line).
+ */
+export function pulseReadingsShown(
+  entry: StructuredReadingFields & { pulse_delay_seconds?: number | string | null },
+): { pulses: boolean; delay: boolean } {
+  const thermoish = entry.mode === "thermo" || entry.mode === "blend";
+  const pulses = entry.pulse_count != null && (thermoish || !hasStructuredReadings(entry));
+  const delay = pulses && (entry.pulse_count as number) > 1 && entry.pulse_delay_seconds != null;
+  return { pulses, delay };
+}
+
 export function hasStructuredReadings(entry: StructuredReadingFields): boolean {
   if (entry.units_of_lye != null || entry.galvanic_duration_seconds != null || entry.galvanic_ma != null) {
     return true;

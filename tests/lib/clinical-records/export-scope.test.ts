@@ -229,7 +229,7 @@ describe("buildClinicalRecordsDocument is an allow-list", () => {
     minutes_performed: null,
     pulse_count: 120,
     hairs_treated: 60,
-    observation_chips: ["good release", "minimal heat"],
+    observation_chips: ["Coarse hair", "Client tolerated well"],
     comments: "Good response.",
     created_at: "2026-10-01T15:10:00Z",
     private_warnings: PRIVATE,
@@ -310,7 +310,7 @@ describe("buildClinicalRecordsDocument is an allow-list", () => {
         { label: "Hairs treated", value: "60" },
       ]),
     );
-    expect(e.observations).toEqual(["good release", "minimal heat"]);
+    expect(e.observations).toEqual(["Coarse hair", "Client tolerated well"]);
     expect(e.comments).toBe("Good response.");
     // Absent values are not emitted as empty labels.
     expect(e.readings.map((r) => r.label)).not.toContain("Units of lye");
@@ -559,11 +559,104 @@ describe("structured readings suppress the stale legacy pair, by the saved view'
     const { readFileSync } = await import("node:fs");
     const scope = readFileSync("lib/clinical-records/export-scope.ts", "utf8");
     const view = readFileSync("components/entry-row.tsx", "utf8");
-    for (const src of [scope, view]) {
-      expect(src).toContain('import { hasStructuredReadings } from "@/lib/sessions/structured-readings";');
-    }
+    expect(view).toContain('import { hasStructuredReadings } from "@/lib/sessions/structured-readings";');
+    expect(scope).toContain('import { hasStructuredReadings, pulseReadingsShown } from "@/lib/sessions/structured-readings";');
     expect(view).toContain("const hasStructured = hasStructuredReadings(entry);");
     expect(scope).toContain("const legacyPair = !hasStructuredReadings(e);");
+  });
+});
+
+describe("pulses print only where the saved view shows them (Codex P1 4305560955)", () => {
+  const one = (over: Record<string, unknown>) =>
+    buildClinicalRecordsDocument({
+      sessions: [
+        {
+          id: "s4",
+          started_at: "2026-10-01T15:00:00Z",
+          ended_at: null,
+          modality: "electrolysis",
+          session_notes: null,
+          performed_by_practitioner_id: null,
+          practitioner_id: null,
+          record_status: null,
+          finalized_at: null,
+          aftercare_and_risks_explained_at: null,
+        },
+      ],
+      entries: [
+        {
+          id: "e4",
+          session_id: "s4",
+          block_id: null,
+          area: "chin",
+          created_at: "2026-10-01T15:01:00Z",
+          ...over,
+        } as unknown as ExportEntrySource,
+      ],
+      notes: [],
+      practitionerNameById: new Map(),
+    }).sessions[0].entries[0].readings.map((r) => r.label);
+
+  it("a current GALVANIC entry's stored default pulse count (1) is NOT printed", () => {
+    const labels = one({ mode: "galvanic", galvanic_ma: 0.3, pulse_count: 1, pulse_delay_seconds: 0.5 });
+    expect(labels).not.toContain("Pulses");
+    expect(labels).not.toContain("Pulse delay");
+  });
+  it("a THERMO or BLEND entry prints its pulses, and the delay only for more than one pulse", () => {
+    expect(one({ mode: "thermo", thermolysis_intensity_percent: 20, pulse_count: 3, pulse_delay_seconds: 0.5 })).toEqual(
+      expect.arrayContaining(["Pulses", "Pulse delay"]),
+    );
+    const single = one({ mode: "blend", galvanic_ma: 0.3, pulse_count: 1, pulse_delay_seconds: 0.5 });
+    expect(single).toContain("Pulses");
+    expect(single).not.toContain("Pulse delay");
+  });
+  it("a LEGACY entry with no structured readings keeps its recorded pulse count", () => {
+    expect(one({ mode: null, intensity: 40, pulse_count: 2 })).toContain("Pulses");
+  });
+});
+
+describe("legacy observations are hydrated from comments, as the saved view does (Codex P2 4305560961)", () => {
+  const entryOf = (over: Record<string, unknown>) =>
+    buildClinicalRecordsDocument({
+      sessions: [
+        {
+          id: "s5",
+          started_at: "2026-10-01T15:00:00Z",
+          ended_at: null,
+          modality: "electrolysis",
+          session_notes: null,
+          performed_by_practitioner_id: null,
+          practitioner_id: null,
+          record_status: null,
+          finalized_at: null,
+          aftercare_and_risks_explained_at: null,
+        },
+      ],
+      entries: [
+        { id: "e5", session_id: "s5", block_id: null, area: "chin", created_at: "2026-10-01T15:01:00Z", ...over } as unknown as ExportEntrySource,
+      ],
+      notes: [],
+      practitionerNameById: new Map(),
+    }).sessions[0].entries[0];
+
+  it("a pre-0108 entry's chips stored in comments print as observations, not as comment text", () => {
+    const e = entryOf({ observation_chips: [], comments: "Coarse hair, Client tolerated well" });
+    expect(e.observations).toEqual(["Coarse hair", "Client tolerated well"]);
+    expect(e.comments).toBeNull();
+  });
+  it("matches the shared resolver exactly, chips and remaining narrative", async () => {
+    const { resolveDisplayChips } = await import("@/lib/observation-chips");
+    for (const comments of ["Coarse hair, Client tolerated well\nGood response.", "Free narrative only.", ""]) {
+      const e = entryOf({ observation_chips: [], comments });
+      const r = resolveDisplayChips([], comments);
+      expect(e.observations).toEqual(r.chips);
+      expect(e.comments).toBe(r.note.length > 0 ? r.note : null);
+    }
+  });
+  it("a current entry keeps its structured chips and its comment", () => {
+    const e = entryOf({ observation_chips: ["Coarse hair"], comments: "Good response." });
+    expect(e.observations).toEqual(["Coarse hair"]);
+    expect(e.comments).toBe("Good response.");
   });
 });
 

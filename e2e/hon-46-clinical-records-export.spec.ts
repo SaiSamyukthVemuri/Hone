@@ -140,7 +140,7 @@ test.beforeAll(async () => {
   await sql(
     `insert into public.electrolysis_entries
        (session_id, block_id, area, thermolysis_intensity_percent, pulse_delay_seconds, observation_chips, comments)
-     values ($1, $2, 'upper lip', 22, 1.5, '["good release"]'::jsonb, $3)`,
+     values ($1, $2, 'upper lip', 22, 1.5, '["Coarse hair"]'::jsonb, $3)`,
     [inScope.id, block.id, sentinel.entry],
   );
   // A laser treatment pass on the same session (Codex P1 4301153312).
@@ -255,7 +255,7 @@ test("owner: the day's records appear; every excluded sentinel is absent from pa
   await expect(blockEl).toContainText(fx.sentinel.block);
   await expect(blockEl).toContainText("Thermolysis intensity: 22 %");
   await expect(blockEl).toContainText("Pulse delay: 1.5 s");
-  await expect(blockEl).toContainText("Observed: good release");
+  await expect(blockEl).toContainText("Observed: Coarse hair");
   // A flag-only caution is exported (Codex P2 4302644062).
   await expect(blockEl).toContainText("Caution for next session: Yes");
   // The day's clinical note is in, dated as its CIVIL date; the next day's is

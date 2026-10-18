@@ -1,7 +1,8 @@
 import { addDays, utcInstantFromLocal } from "@/lib/booking/tz";
 import { blockAreasLabel, type BlockArea } from "@/lib/sessions/block-areas";
 import { legacyBlockReactionLabel } from "@/lib/sessions/reaction-unified";
-import { hasStructuredReadings } from "@/lib/sessions/structured-readings";
+import { hasStructuredReadings, pulseReadingsShown } from "@/lib/sessions/structured-readings";
+import { resolveDisplayChips } from "@/lib/observation-chips";
 
 // ===========================================================================
 // HON-46 — what a per-client clinical-records export contains, as pure code.
@@ -310,6 +311,14 @@ function exportEntry(e: ExportEntrySource): ExportedEntry {
   // the new fields. Suppressed by the SAME rule as the saved-record view
   // (lib/sessions/structured-readings.ts; Codex P1 4304983088).
   const legacyPair = !hasStructuredReadings(e);
+  // PULSES are a thermolysis setting: shown by the SAME rule as the saved view
+  // (pulseReadingsShown; Codex P1 4305560955), so a galvanic pass's stored
+  // default "1" is never printed as an active setting.
+  const pulse = pulseReadingsShown(e);
+  // OBSERVATIONS through the saved view's resolver (Codex P2 4305560961): a
+  // pre-0108 entry stored its chips inside `comments`, so they are hydrated
+  // out of it, and only the remaining narrative prints as the comment.
+  const display = resolveDisplayChips(e.observation_chips, e.comments);
   return {
     id: e.id,
     areas: e.areas && e.areas.length > 0 ? [...e.areas] : e.area ? [e.area] : [],
@@ -324,17 +333,15 @@ function exportEntry(e: ExportEntrySource): ExportedEntry {
       ["Galvanic current", e.galvanic_ma, "mA"],
       ["Galvanic duration", e.galvanic_duration_seconds, "s"],
       ["Units of lye", e.units_of_lye],
-      ["Pulse delay", e.pulse_delay_seconds, "s"],
+      ["Pulse delay", pulse.delay ? e.pulse_delay_seconds : null, "s"],
       ["Intensity", legacyPair ? e.intensity : null],
       ["Duration", legacyPair ? e.duration_seconds : null, "s"],
       ["Minutes performed", e.minutes_performed, "min"],
-      ["Pulses", e.pulse_count],
+      ["Pulses", pulse.pulses ? e.pulse_count : null],
       ["Hairs treated", e.hairs_treated],
     ]),
-    observations: Array.isArray(e.observation_chips)
-      ? (e.observation_chips as unknown[]).filter((c): c is string => typeof c === "string" && c.trim().length > 0)
-      : [],
-    comments: e.comments,
+    observations: display.chips,
+    comments: display.note.length > 0 ? display.note : null,
   };
 }
 
