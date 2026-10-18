@@ -15,6 +15,7 @@ import { describe, expect, it } from "vitest";
 
 const ROOT = path.resolve(__dirname, "../..");
 const DIR = "app/(records-export)/clients/[id]/records/export";
+const SESSION_TREATMENTS = "app/(records-export)/clients/[id]/records/export/session-treatments.tsx";
 const FILES = {
   queries: "lib/clinical-records/export-queries.ts",
   scope: "lib/clinical-records/export-scope.ts",
@@ -136,11 +137,13 @@ describe("HON-46 export reads exclude private and payment data", () => {
   });
 
   it("reactions go through the SAME shared rule as the saved-record view (Codex P1 4304382927)", () => {
-    const scope = code(FILES.scope);
-    expect(scope).toContain('import { legacyBlockReactionLabel } from "@/lib/sessions/reaction-unified";');
-    expect(scope).not.toMatch(/\["Reaction", b\.reaction_type\]/);
+    // STRUCTURAL since #896: the printout renders the view's own
+    // SavedAreaRecord, which applies legacyBlockReactionLabel; the export keeps
+    // no presenter of its own that could print a raw reaction_type.
     const view = code("app/(app)/clients/[id]/sessions/[sessionId]/session-blocks-view.tsx");
     expect(view).toContain("legacyBlockReactionLabel(");
+    expect(code(SESSION_TREATMENTS)).toContain("<SavedAreaRecord block={b.record} />");
+    expect(code(FILES.scope)).not.toMatch(/reaction_type\]|"Reaction"|legacyBlockReactionLabel/);
   });
 
   it("selects the probe-lot confirmation (Codex P2 4302799069)", () => {
@@ -165,7 +168,17 @@ describe("HON-46 export reads exclude private and payment data", () => {
 
   it("loads the authoritative multi-area rows through the shared loader (Codex P1 4301307238)", () => {
     expect(code(FILES.queries)).toContain("getSessionBlockAreasByBlockIds(");
-    expect(code(FILES.scope)).toContain("blockAreasLabel(");
+    // ...and hands them to the view's own title rule (SavedAreaRecord's areaTitle).
+    expect(code(FILES.scope)).toContain("structured_areas: areas ? areas.map((a) => ({ area: a.area, laterality: a.laterality })) : [],");
+  });
+
+  it("the printout renders the saved view's OWN components, with no presenter of its own (#896)", () => {
+    const treatments = code(SESSION_TREATMENTS);
+    expect(treatments).toContain('import { SavedAreaRecord } from "@/app/(app)/clients/[id]/sessions/[sessionId]/session-blocks-view";');
+    expect(treatments).toContain('import { ElectrolysisEntryRow, LaserEntryRow } from "@/components/entry-row";');
+    expect(code(FILES.page)).toContain("<ExportSessionTreatments session={s} />");
+    // The deleted second presenter stays deleted.
+    expect(code(FILES.scope)).not.toMatch(/function exportEntry|function exportLaser|function blockTitle/);
   });
 
   it("reads the CURRENT charting fields as well as the legacy ones (Codex P1 4301165385)", () => {
