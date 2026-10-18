@@ -11,6 +11,14 @@ import {
   FREE_CONSULT_WAITLIST_ONLY_EYEBROW,
   FREE_CONSULT_WAITLIST_ONLY_HEADLINE,
 } from "@/lib/booking/free-consult-reschedule-policy";
+// HON-47. The studio switched client rescheduling off. Its own explained
+// surface, on the EMERG-01 pattern, from the shared strings.
+import {
+  CLIENT_RESCHEDULE_DISABLED_BODY,
+  CLIENT_RESCHEDULE_DISABLED_CODE,
+  CLIENT_RESCHEDULE_DISABLED_EYEBROW,
+  CLIENT_RESCHEDULE_DISABLED_HEADLINE,
+} from "@/lib/booking/client-self-service-policy";
 import { fetchAppointmentForRescheduleAction } from "./actions";
 import { RescheduleForm } from "./RescheduleForm";
 
@@ -61,6 +69,15 @@ export default async function ReschedulePage({
   // and the only way forward the visitor is offered is one they have to choose.
   const waitlistOnly =
     !result.ok && result.code === FREE_CONSULT_WAITLIST_ONLY_CODE;
+
+  // HON-47. Same stance as the branch above and the same guarantees: nothing
+  // is fetched, nothing is mutated, no slot picker is rendered, and the
+  // appointment keeps its time, its reservation and its token. The gate in
+  // `assertReschedulableOriginal` returns this code only once a valid token
+  // has resolved to a FUTURE CONFIRMED appointment, so this page cannot be
+  // used to read a studio's policy without already holding that token.
+  const rescheduleDisabled =
+    !result.ok && result.code === CLIENT_RESCHEDULE_DISABLED_CODE;
 
   return (
     <main
@@ -191,6 +208,49 @@ export default async function ReschedulePage({
                     and redirects to /portal/login when there is none, so this
                     promises the visitor nothing about being signed in — the
                     same stance the cancel and manage surfaces already take. */}
+                <a
+                  href="/portal"
+                  className="px-8 py-4 text-center text-[14px] font-medium uppercase"
+                  style={{
+                    border: "1px solid #0A0A0A",
+                    color: "#0A0A0A",
+                    letterSpacing: "0.1em",
+                  }}
+                >
+                  Keep my appointment
+                </a>
+              </div>
+            </div>
+          ) : rescheduleDisabled ? (
+            // HON-47 policy surface. Not apologetic, and not a dead end: the
+            // appointment is intact and the client is told who can move it.
+            //
+            // DELIBERATELY NO "Cancel appointment" CTA, unlike EMERG-01's
+            // branch above. There the waitlist route REQUIRES cancelling, so
+            // the link is the way forward. Here cancellation is a separate
+            // switch this refusal does not carry, so a cancel button could
+            // land on a second refusal — the exact dead end this work removes.
+            // The approved copy points at the studio instead, and /portal
+            // remains for a client who wants to see their appointments.
+            <div>
+              <EyebrowCaption>
+                {CLIENT_RESCHEDULE_DISABLED_EYEBROW}
+              </EyebrowCaption>
+              <h1
+                className="font-[var(--font-fraunces)] mt-8 text-[28px] font-bold leading-tight md:text-[36px]"
+                style={{ letterSpacing: "-0.02em" }}
+              >
+                {CLIENT_RESCHEDULE_DISABLED_HEADLINE}
+              </h1>
+              <p className="mt-4 text-[16px] leading-relaxed text-[#0A0A0A]">
+                {CLIENT_RESCHEDULE_DISABLED_BODY}
+              </p>
+
+              {/* Plain anchor, not <Link>: a token-bearing URL must not be
+                  prefetched into the client-side router cache. /portal owns
+                  its own session check, so this promises nothing about being
+                  signed in. */}
+              <div className="mt-10 flex flex-col gap-3 sm:flex-row sm:items-center">
                 <a
                   href="/portal"
                   className="px-8 py-4 text-center text-[14px] font-medium uppercase"

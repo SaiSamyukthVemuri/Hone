@@ -45,6 +45,16 @@ import {
   isFreeConsultWaitlistOnlyReschedule,
   type FreeConsultWaitlistOnlyCode,
 } from "@/lib/booking/free-consult-reschedule-policy";
+// HON-47. The studio-level switch. Imported at the same place and used in the
+// same shared gate, so all four public reschedule entry points — including the
+// two that fetch SLOTS — refuse on exactly the same facts. A studio that has
+// switched rescheduling off must not have its availability computed and handed
+// to a browser that is then told no.
+import {
+  CLIENT_RESCHEDULE_DISABLED_CODE,
+  CLIENT_RESCHEDULE_DISABLED_ERROR,
+  clientRescheduleAllowed,
+} from "@/lib/booking/client-self-service-policy";
 
 const POLICY_ACK_REQUIRED_ERROR =
   "Please review and acknowledge the appointment policies before rescheduling.";
@@ -228,7 +238,7 @@ type ReschedulableOriginal = {
 export type RescheduleRefusal = {
   ok: false;
   error: string;
-  code?: FreeConsultWaitlistOnlyCode;
+  code?: FreeConsultWaitlistOnlyCode | typeof CLIENT_RESCHEDULE_DISABLED_CODE;
 };
 
 // The joined shape the policy needs. PostgREST types an embedded relation as
@@ -237,15 +247,31 @@ export type RescheduleRefusal = {
 type EmbeddedPolicyRow = {
   service:
     | { modality: string | null; name: string; price_cents: number | null }
-    | Array<{ modality: string | null; name: string; price_cents: number | null }>
+    | Array<{
+        modality: string | null;
+        name: string;
+        price_cents: number | null;
+      }>
     | null;
   // `id` is projected alongside `slug` because other reads in this file use it.
   // The free-consult policy takes the SLUG and consults EMERG-01's own env list:
   // it deliberately does not resolve the new-client admission mode, so an owner
   // changing that mode cannot move a confirmed appointment's rights.
+  // HON-47's `client_reschedule_enabled` rides the same embed. Typed nullable
+  // although 0234 makes it `not null`: this is a PROJECTION, not the table, so
+  // if a future edit drops it from the select the helper's `?? true` leaves
+  // rescheduling OPEN rather than refusing every studio silently.
   studio:
-    | { id: string; slug: string | null }
-    | Array<{ id: string; slug: string | null }>
+    | {
+        id: string;
+        slug: string | null;
+        client_reschedule_enabled: boolean | null;
+      }
+    | Array<{
+        id: string;
+        slug: string | null;
+        client_reschedule_enabled: boolean | null;
+      }>
     | null;
 };
 
@@ -268,7 +294,10 @@ async function assertReschedulableOriginal(
       // EMERG-01 embeds the service and the studio slug in the statement that
       // already proves the appointment's state, so the policy costs no extra
       // round trip and cannot read a different row than the one it gated.
-      "id, studio_id, client_id, practitioner_id, status, starts_at, duration_minutes, service:services(modality, name, price_cents), studio:studios(id, slug)",
+      // HON-47 adds `client_reschedule_enabled` to the studio embed that is
+      // already here, so the studio-level switch is read from the same row, in
+      // the same statement, as the appointment state it gates.
+      "id, studio_id, client_id, practitioner_id, status, starts_at, duration_minutes, service:services(modality, name, price_cents), studio:studios(id, slug, client_reschedule_enabled)",
     )
     .eq("id", resolved.appointment_id)
     .maybeSingle();
@@ -306,6 +335,23 @@ async function assertReschedulableOriginal(
       ok: false,
       error: FREE_CONSULT_WAITLIST_ONLY_ERROR,
       code: FREE_CONSULT_WAITLIST_ONLY_CODE,
+    };
+  }
+
+  // HON-47 / 0234. The studio handles date changes itself. Checked here, in
+  // the gate every reschedule entry point already passes through, so the two
+  // slot-fetching actions refuse BEFORE computing availability and the submit
+  // action refuses before spending a reservation attempt. 0234 refuses the
+  // command too, so this is defence in depth and not the authority.
+  //
+  // AFTER the state checks above, deliberately: a caller without a valid token
+  // for a future confirmed appointment learns nothing about the studio's
+  // policy, exactly as with EMERG-01.
+  if (!clientRescheduleAllowed(firstEmbedded(embedded.studio))) {
+    return {
+      ok: false,
+      error: CLIENT_RESCHEDULE_DISABLED_ERROR,
+      code: CLIENT_RESCHEDULE_DISABLED_CODE,
     };
   }
 
@@ -709,11 +755,18 @@ export type RescheduleResult =
   // EMERG-01 adds one more bounded code. A refusal carrying it means the
   // command was NEVER called: no cancellation of the original, no successor, no
   // reservation change, no token rotation.
-  | { ok: false; error: string; code?: "slot_taken" | FreeConsultWaitlistOnlyCode };
+  | {
+      ok: false;
+      error: string;
+      code?:
+        | "slot_taken"
+        | FreeConsultWaitlistOnlyCode
+        | typeof CLIENT_RESCHEDULE_DISABLED_CODE;
+    };
 
-export async function rescheduleAppointmentViaTokenAction(formData: FormData): Promise<
-  RescheduleResult
-> {
+export async function rescheduleAppointmentViaTokenAction(
+  formData: FormData,
+): Promise<RescheduleResult> {
   const token = stringOrEmpty(formData.get("token"));
   const newStartsAt = stringOrEmpty(formData.get("starts_at"));
   // PR #132 / #133. The acknowledgement field is read up front but

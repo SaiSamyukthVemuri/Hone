@@ -31,58 +31,23 @@ import "server-only";
 // narrower rule, and disabling client cancellation must not touch Willow's
 // admission behaviour.
 
-/** The command's refusal word when cancellation is switched off. */
-export const CLIENT_CANCELLATION_DISABLED_CODE = "cancellation_disabled" as const;
-
-/** The command's refusal word when rescheduling is switched off. */
-export const CLIENT_RESCHEDULE_DISABLED_CODE = "reschedule_disabled" as const;
-
-export type ClientSelfServiceDisabledCode =
-  | typeof CLIENT_CANCELLATION_DISABLED_CODE
-  | typeof CLIENT_RESCHEDULE_DISABLED_CODE;
-
-// --- public copy, defined once ---------------------------------------------
-//
-// Deliberately NOT interpolating the studio's name: these strings are shown on
-// surfaces that already name the studio, and a template that silently renders
-// an empty name is worse than a sentence that never needed one.
-//
-// Each pair says the same two things, in the order a worried client needs
-// them: your appointment has NOT changed, and here is who can change it.
-
-/** Eyebrow above the cancellation refusal. */
-export const CLIENT_CANCELLATION_DISABLED_EYEBROW = "Cancel appointment";
-
-/** The single sentence every surface uses to name the cancellation rule. */
-export const CLIENT_CANCELLATION_DISABLED_HEADLINE =
-  "This studio handles cancellations directly";
-
-/** What is true right now, and what the client can do about it. */
-export const CLIENT_CANCELLATION_DISABLED_BODY =
-  "Your appointment is still booked and has not been changed. To cancel it, please contact the studio and they'll take care of it.";
-
-/**
- * The server action's refusal string. Distinct from the page copy because this
- * outcome is NOT "we can't tell you anything": the appointment is real,
- * confirmed, and staying exactly where it is.
- */
-export const CLIENT_CANCELLATION_DISABLED_ERROR =
-  "This studio handles cancellations directly. Your appointment hasn't changed — please contact the studio to cancel it.";
-
-/** Eyebrow above the reschedule refusal. */
-export const CLIENT_RESCHEDULE_DISABLED_EYEBROW = "Reschedule appointment";
-
-/** The single sentence every surface uses to name the reschedule rule. */
-export const CLIENT_RESCHEDULE_DISABLED_HEADLINE =
-  "This studio handles date changes directly";
-
-/** What is true right now, and what the client can do about it. */
-export const CLIENT_RESCHEDULE_DISABLED_BODY =
-  "Your appointment is still booked at its original time. To move it, please contact the studio and they'll find you a new time.";
-
-/** The server actions' refusal string. */
-export const CLIENT_RESCHEDULE_DISABLED_ERROR =
-  "This studio handles date changes directly. Your appointment hasn't changed — please contact the studio to move it.";
+// The codes and the copy live in a non-server-only sibling so the CLIENT
+// component `app/cancel/[token]/CancelForm.tsx` can share them instead of
+// re-typing the sentences as literals. Re-exported here so server-side callers
+// have one import, and so this module remains the single name to reach for.
+export {
+  CLIENT_CANCELLATION_DISABLED_CODE,
+  CLIENT_CANCELLATION_DISABLED_EYEBROW,
+  CLIENT_CANCELLATION_DISABLED_HEADLINE,
+  CLIENT_CANCELLATION_DISABLED_BODY,
+  CLIENT_CANCELLATION_DISABLED_ERROR,
+  CLIENT_RESCHEDULE_DISABLED_CODE,
+  CLIENT_RESCHEDULE_DISABLED_EYEBROW,
+  CLIENT_RESCHEDULE_DISABLED_HEADLINE,
+  CLIENT_RESCHEDULE_DISABLED_BODY,
+  CLIENT_RESCHEDULE_DISABLED_ERROR,
+  type ClientSelfServiceDisabledCode,
+} from "./client-self-service-copy";
 
 /**
  * The studio fields this decision reads, and the only ones it may read.
