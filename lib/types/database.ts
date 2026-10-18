@@ -162,6 +162,19 @@ export type Studio = {
   // is enforced by CHECK (0..20000) at the column level.
   late_cancel_fee_cents: number | null;
   no_show_fee_cents: number | null;
+  // Migration 0234 (HON-47): whether CLIENTS may cancel or reschedule
+  // themselves. `not null default true`, so an existing studio is unchanged
+  // and no code may treat absence as "disabled". Enforced inside the two
+  // client-only commands (public_cancel_appointment_with_token,
+  // reschedule_appointment_v2), so staff scheduling is unaffected: it uses
+  // move_or_reassign_appointment and the receptionist_* commands.
+  //
+  // These are their OWN flags. Never derive them from, and never fold them
+  // into, new_client_admission_mode — EMERG-01's free-consultation rule reads
+  // that, and conflating the two would make disabling client cancellation
+  // silently change Willow's admission behaviour.
+  client_cancellation_enabled: boolean;
+  client_reschedule_enabled: boolean;
   // Migration 0049: per-studio SMS toggles. All default false. SMS
   // only goes out when the matching toggle is on AND the client has
   // explicit consent AND the client is not opted out AND Twilio is
