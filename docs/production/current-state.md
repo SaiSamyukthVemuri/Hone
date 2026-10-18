@@ -1477,12 +1477,16 @@ trigger that freezes identity columns after insert — are unaffected and remain
   Authorization, client IP or User-Agent, and return only `content-type`, `cache-control`,
   `x-sentry-rate-limits` and `retry-after`. **Not a BAA; production requests were not
   measured.**
-- **PostHog URL properties lose record ids, and `/flags` is off** (PR #918, #828 G-07/G-26,
+- **PostHog URL properties lose record ids from their path segments, and `/flags` is off** (PR #918, #828 G-07/G-26,
   merge `aaf3042b`, deployed 2026-10-18, no migration). `guardBrowserEvent`
   (`lib/analytics/client-boundary.ts`) treats every named URL key, and any key ending in `_url`,
-  `_referrer` or `_pathname`, as a URL in `properties`, `$set` and `$set_once`, and rewrites it
-  with the segment rules Vercel Analytics uses (`lib/analytics/path-ids.ts`): id-bearing
-  segments become `[id]` or `[token]`, and decoded URL syntax is never emitted from them.
+  `_referrer` or `_pathname`, as a URL in `properties`, `$set` and `$set_once`, and rewrites its
+  **path** with the segment rules Vercel Analytics uses (`lib/analytics/path-ids.ts`):
+  id-bearing path segments become `[id]` or `[token]`, and decoded URL syntax is never emitted
+  from them. Query parameters not on the attribution allowlist are dropped, and so is the
+  fragment. The allowlisted marketing attribution values (`utm_source`, `utm_medium`,
+  `utm_campaign`, `utm_term`, `utm_content`) are retained **verbatim and are NOT scrubbed**.
+  **Known gap:** record ids inside retained `utm_*` values are not redacted; fix tracked separately (Privacy lane).
   `instrumentation-client.ts` sets `advanced_disable_flags: true`, so no `/flags` request (whose
   body carried the first page the browser loaded) is sent. **Not a BAA; production events were
   not measured.**
