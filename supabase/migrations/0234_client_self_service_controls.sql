@@ -143,27 +143,6 @@ begin
     return;
   end if;
 
-  -- HON-47 — CLIENT SELF-SERVICE CANCELLATION MAY BE DISABLED BY THE STUDIO.
-  --
-  -- Enforced HERE, inside the command, so no caller can bypass it: the only
-  -- caller today is app/cancel/[token]/actions.ts, and the 5-argument overload
-  -- below delegates to this function, so it inherits the refusal. A future
-  -- entry point inherits it too, which is the whole reason it is not in the
-  -- action.
-  --
-  -- Refused BEFORE any mutation and before any acknowledgement is recorded: a
-  -- disabled studio must leave no trace of the attempt. `studio_id` is returned
-  -- so the caller can present studio-specific contact copy, exactly as the
-  -- `ack_required` refusal already does.
-  --
-  -- This flag is its OWN control. It is never derived from, and never folded
-  -- into, `new_client_admission_mode` — that would make disabling client
-  -- cancellation silently change Willow's admission behaviour.
-  if not v_cancel_allowed then
-    return query select 'cancellation_disabled'::text, null::uuid, v_studio_id, null::uuid;
-    return;
-  end if;
-
   -- LOCK 2 — the appointment, re-found by token under the studio lock.
   select * into v_appt
     from public.appointments a
@@ -185,6 +164,43 @@ begin
   end if;
   if v_appt.starts_at <= now() then
     return query select 'not_cancelable'::text, v_appt.id, v_appt.studio_id, null::uuid;
+    return;
+  end if;
+
+  -- HON-47 — CLIENT SELF-SERVICE CANCELLATION MAY BE DISABLED BY THE STUDIO.
+  --
+  -- Enforced HERE, inside the command, so no caller can bypass it: the only
+  -- caller today is app/cancel/[token]/actions.ts, and the 5-argument overload
+  -- below delegates to this function, so it inherits the refusal. A future
+  -- entry point inherits it too, which is the whole reason it is not in the
+  -- action.
+  --
+  -- ORDERING IS PART OF THE CONTRACT, and an earlier revision had it wrong
+  -- (Codex P1 4308948303). This check sat immediately after the studio lock,
+  -- BEFORE the token and state checks above — so a cancelled, completed or
+  -- past appointment at a disabled studio was answered `cancellation_disabled`,
+  -- and the surface then told the client "your appointment is still booked and
+  -- has not been changed". That sentence was FALSE for a cancelled appointment,
+  -- and it distinguished a studio's policy on a token state that the public
+  -- collapse rule above deliberately refuses to distinguish.
+  --
+  -- So the flag speaks only about an appointment that could otherwise have been
+  -- cancelled. An ineligible one keeps its existing generic answer —
+  -- `invalid_token`, `already_cancelled` or `not_cancelable` — whatever the
+  -- flag says. The flag VALUE is still read under the studio lock far above, so
+  -- the decision stays linearizable against a concurrent policy change; only
+  -- the refusal moved.
+  --
+  -- Refused BEFORE any mutation and before any acknowledgement is recorded: a
+  -- disabled studio leaves no trace of the attempt. `appointment_id` and
+  -- `studio_id` are both returned, as every other post-validation refusal here
+  -- does, so the caller can present studio-specific contact copy.
+  --
+  -- This flag is its OWN control. It is never derived from, and never folded
+  -- into, `new_client_admission_mode` — that would make disabling client
+  -- cancellation silently change Willow's admission behaviour.
+  if not v_cancel_allowed then
+    return query select 'cancellation_disabled'::text, v_appt.id, v_appt.studio_id, null::uuid;
     return;
   end if;
 
@@ -396,24 +412,6 @@ begin
                         null::timestamptz, null::uuid;
     return;
   end if;
-  -- HON-47 — CLIENT SELF-SERVICE RESCHEDULING MAY BE DISABLED BY THE STUDIO.
-  --
-  -- Refused here: after the studio row is locked (so the decision is
-  -- linearizable) and BEFORE the capacity advisory lock, so a disabled studio
-  -- pays nothing and contends with nobody. Nothing is mutated on this path.
-  --
-  -- Its own control, never derived from `new_client_admission_mode`. EMERG-01's
-  -- free-consultation rule is a SEPARATE, narrower refusal and keeps its own
-  -- code: this one does not replace it, and a studio with rescheduling enabled
-  -- still gets that rule.
-  if not v_reschedule_allowed then
-    return query select 'reschedule_disabled'::text, null::uuid, null::uuid, null::uuid,
-                        null::uuid, null::uuid, null::uuid, null::timestamptz,
-                        null::timestamptz, null::timestamptz, null::integer,
-                        null::timestamptz, null::uuid;
-    return;
-  end if;
-
   perform public.acquire_studio_capacity_lock(v_studio_id);
 
   -- SERIALIZE AGAINST APPOINTMENT-SOURCE MUTATION (the candidate-set race, and
@@ -508,6 +506,35 @@ begin
   -- code. This is also the arm that refuses the LOSER of a duplicate submit.
   if v_orig.status <> 'confirmed' or v_orig.starts_at <= v_now then
     return query select 'appointment_not_reschedulable'::text, null::uuid, null::uuid, null::uuid,
+                        null::uuid, null::uuid, null::uuid, null::timestamptz,
+                        null::timestamptz, null::timestamptz, null::integer,
+                        null::timestamptz, null::uuid;
+    return;
+  end if;
+
+  -- HON-47 — CLIENT SELF-SERVICE RESCHEDULING MAY BE DISABLED BY THE STUDIO.
+  --
+  -- SAME ORDERING DEFECT AS THE CANCEL PATH, fixed the same way. Codex raised
+  -- it against the cancel command (P1 4308948303); it was true here too, and
+  -- for the identical reason: this check sat right after the studio lock, so a
+  -- cancelled or past appointment at a disabled studio was answered
+  -- `reschedule_disabled` and the page said "your appointment is still booked
+  -- at its original time" — false, and a state distinction the collapse rule
+  -- above exists to prevent. It was not in the report; it is the same class.
+  --
+  -- THE COST, stated because it is a real trade: a disabled studio now reaches
+  -- the capacity advisory lock and the row locks before being refused, where
+  -- before it paid nothing. Correct, truthful copy on a path that mutates
+  -- nothing is worth more than saving a lock on a request that is about to be
+  -- refused either way. The flag VALUE is still read under the studio lock, so
+  -- the decision remains linearizable; only the refusal moved.
+  --
+  -- Its own control, never derived from `new_client_admission_mode`. EMERG-01's
+  -- free-consultation rule is a SEPARATE, narrower refusal and keeps its own
+  -- code: this one does not replace it, and a studio with rescheduling enabled
+  -- still gets that rule.
+  if not v_reschedule_allowed then
+    return query select 'reschedule_disabled'::text, null::uuid, null::uuid, null::uuid,
                         null::uuid, null::uuid, null::uuid, null::timestamptz,
                         null::timestamptz, null::timestamptz, null::integer,
                         null::timestamptz, null::uuid;

@@ -269,6 +269,138 @@ describe("HON-47 rescheduling", () => {
   });
 });
 
+// ===========================================================================
+// THE FLAG SPEAKS ONLY ABOUT AN APPOINTMENT THAT COULD OTHERWISE HAVE BEEN
+// CHANGED — Codex P1 4308948303.
+// ===========================================================================
+//
+// The first version of 0234 refused on the flag immediately after taking the
+// studio lock, BEFORE the token and state checks. So a cancelled, completed or
+// past appointment at a disabled studio was answered `cancellation_disabled`,
+// and the surface then told the client "Your appointment is still booked and
+// has not been changed" — FALSE for a cancelled appointment, and a distinction
+// the public collapse rule deliberately refuses to make, since it reveals the
+// studio's policy on a token state the surface otherwise flattens.
+//
+// WHY MY ORIGINAL TESTS MISSED IT, which is the part worth keeping: every
+// disabled case used a CONFIRMED FUTURE appointment. The flag and the state
+// were never varied together, so the ordering was untested in both directions
+// and a refusal that arrived too early looked identical to one that arrived at
+// the right time.
+describe("HON-47 ordering: an INELIGIBLE appointment keeps its generic result", () => {
+  it("CANCELLED + cancellation disabled -> already_cancelled, NOT cancellation_disabled", async () => {
+    const f = await seed("order-cancelled");
+    await setFlags(f.studioId, false, false);
+    await adminQuery(
+      `update public.appointments set status = 'cancelled' where id = $1`,
+      [f.apptId],
+    );
+    expect(await cancel7(f)).toBe("already_cancelled");
+  });
+
+  it("PAST + cancellation disabled -> not_cancelable, NOT cancellation_disabled", async () => {
+    const f = await seed("order-past");
+    await setFlags(f.studioId, false, false);
+    // Moved into the past directly: the command compares starts_at to now(),
+    // and the insert carries no future constraint.
+    await adminQuery(
+      `update public.appointments
+          set starts_at = now() - interval '2 hours',
+              ends_at = now() - interval '75 minutes'
+        where id = $1`,
+      [f.apptId],
+    );
+    expect(await cancel7(f)).toBe("not_cancelable");
+  });
+
+  it("COMPLETED + cancellation disabled -> not_cancelable", async () => {
+    const f = await seed("order-completed");
+    await setFlags(f.studioId, false, false);
+    await adminQuery(
+      `update public.appointments set status = 'completed' where id = $1`,
+      [f.apptId],
+    );
+    expect(await cancel7(f)).toBe("not_cancelable");
+  });
+
+  it("an UNKNOWN token at a disabled studio stays invalid_token", async () => {
+    // The strongest form of the leak: the flag must not be readable by someone
+    // holding no valid token at all.
+    const f = await seed("order-unknown");
+    await setFlags(f.studioId, false, false);
+    const r = await adminQuery(
+      `select result from public.public_cancel_appointment_with_token($1,$2,$3,$4,$5,$6,$7)`,
+      [hash64(), "other", "Other", null, false, false, await currentPolicyHash(f.studioId)],
+    );
+    expect(r.rows[0]!.result).toBe("invalid_token");
+  });
+
+  it("the 5-ARGUMENT overload inherits the ordering too", async () => {
+    const f = await seed("order-cancel5");
+    await setFlags(f.studioId, false, false);
+    await adminQuery(
+      `update public.appointments set status = 'cancelled' where id = $1`,
+      [f.apptId],
+    );
+    expect(await cancel5(f)).toBe("already_cancelled");
+  });
+
+  // THE SAME DEFECT WAS ON THE RESCHEDULE PATH, and was not in the report.
+  // Codex raised the cancel command; `reschedule_appointment_v2` refused on its
+  // flag right after the studio lock as well, so a cancelled or past
+  // appointment at a reschedule-disabled studio was told "your appointment is
+  // still booked at its original time".
+  it("CANCELLED + reschedule disabled -> appointment_not_reschedulable", async () => {
+    const f = await seed("order-res-cancelled");
+    await setFlags(f.studioId, false, false);
+    await adminQuery(
+      `update public.appointments set status = 'cancelled' where id = $1`,
+      [f.apptId],
+    );
+    expect(await reschedule(f, at(12, 15, 0))).toBe(
+      "appointment_not_reschedulable",
+    );
+  });
+
+  it("PAST + reschedule disabled -> appointment_not_reschedulable", async () => {
+    const f = await seed("order-res-past");
+    await setFlags(f.studioId, false, false);
+    await adminQuery(
+      `update public.appointments
+          set starts_at = now() - interval '2 hours',
+              ends_at = now() - interval '75 minutes'
+        where id = $1`,
+      [f.apptId],
+    );
+    expect(await reschedule(f, at(12, 15, 0))).toBe(
+      "appointment_not_reschedulable",
+    );
+  });
+
+  it("a WRONG token at a reschedule-disabled studio stays appointment_not_found", async () => {
+    const f = await seed("order-res-token");
+    await setFlags(f.studioId, false, false);
+    const r = await adminQuery(
+      `select result from public.reschedule_appointment_v2($1,$2,$3,$4,$5,$6)`,
+      [f.apptId, hash64(), at(12, 15, 0), hash64(), true, null],
+    );
+    expect(r.rows[0]!.result).toBe("appointment_not_found");
+  });
+
+  // AND THE CONTROLS, so none of the above can pass because the flag stopped
+  // working altogether: with the SAME flags off and an ELIGIBLE appointment,
+  // both commands still refuse on the flag.
+  it("CONTROL — eligible + disabled still refuses on the FLAG, both commands", async () => {
+    const a = await seed("order-ctl-cancel");
+    await setFlags(a.studioId, false, false);
+    expect(await cancel7(a)).toBe("cancellation_disabled");
+
+    const b = await seed("order-ctl-res");
+    await setFlags(b.studioId, false, false);
+    expect(await reschedule(b, at(12, 15, 0))).toBe("reschedule_disabled");
+  });
+});
+
 describe("HON-47 does not touch STAFF scheduling", () => {
   it("staff CANCEL still works with BOTH flags false", async () => {
     // practitioner_cancel_appointment is a different command with different

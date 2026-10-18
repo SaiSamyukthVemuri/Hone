@@ -14,6 +14,7 @@ import {
 // HON-47. The studio switched client rescheduling off. Its own explained
 // surface, on the EMERG-01 pattern, from the shared strings.
 import {
+  CLIENT_CANCELLATION_DISABLED_HEADLINE,
   CLIENT_RESCHEDULE_DISABLED_BODY,
   CLIENT_RESCHEDULE_DISABLED_CODE,
   CLIENT_RESCHEDULE_DISABLED_EYEBROW,
@@ -78,6 +79,17 @@ export default async function ReschedulePage({
   // used to read a studio's policy without already holding that token.
   const rescheduleDisabled =
     !result.ok && result.code === CLIENT_RESCHEDULE_DISABLED_CODE;
+
+  // HON-47 (Codex P2 4308948301). The EMERG-01 branch below offers "Cancel
+  // appointment" as the way forward, because the waitlist route requires
+  // cancelling. That is only true if the studio still lets clients cancel — so
+  // the refusal carries the answer and the CTA is withdrawn when it is false.
+  //
+  // `=== false`, NOT falsy: the field is absent on the collapse refusals that
+  // never read a studio row, and absent means "not known here", not "no". The
+  // branch that uses it always sets it.
+  const cancelWouldBeRefused =
+    !result.ok && result.cancellationAllowed === false;
 
   return (
     <main
@@ -186,6 +198,18 @@ export default async function ReschedulePage({
                 {FREE_CONSULT_WAITLIST_ONLY_BODY}
               </p>
 
+              {/* HON-47. When the studio ALSO has client cancellation off,
+                  this sentence replaces the cancel CTA: the waitlist route
+                  requires cancelling, and if the client cannot cancel either
+                  then the honest answer is that the studio has to do it. No
+                  link, because both destinations would refuse. */}
+              {cancelWouldBeRefused && (
+                <p className="mt-4 text-[16px] leading-relaxed text-[#0A0A0A]">
+                  {CLIENT_CANCELLATION_DISABLED_HEADLINE}, so please contact
+                  them to cancel this appointment or to join the waitlist.
+                </p>
+              )}
+
               {/* Plain anchors, not <Link>. A token-bearing URL should not be
                   prefetched into a client-side router cache, and neither of
                   these navigations mutates anything: /cancel renders its own
@@ -193,6 +217,7 @@ export default async function ReschedulePage({
                   SAME token is carried through, so the visitor never has to
                   find another link. */}
               <div className="mt-10 flex flex-col gap-3 sm:flex-row sm:items-center">
+                {!cancelWouldBeRefused && (
                 <a
                   href={`/cancel/${encodeURIComponent(token)}`}
                   className="px-8 py-4 text-center text-[14px] font-medium uppercase"
@@ -204,6 +229,7 @@ export default async function ReschedulePage({
                 >
                   Cancel appointment
                 </a>
+                )}
                 {/* The genuine no-op exit. /portal owns its own session check
                     and redirects to /portal/login when there is none, so this
                     promises the visitor nothing about being signed in — the

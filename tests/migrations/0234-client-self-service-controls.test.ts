@@ -149,6 +149,71 @@ describe("0234 gates the two CLIENT-ONLY commands, and nothing else", () => {
   });
 });
 
+describe("0234 refuses on the flag only AFTER the state checks (Codex P1 4308948303)", () => {
+  // THE DEFECT THIS PINS. The first revision refused on the flag immediately
+  // after the studio lock, BEFORE token and state validation — so a cancelled,
+  // completed or past appointment at a disabled studio was answered
+  // `cancellation_disabled`, and the surface said "your appointment is still
+  // booked and has not been changed". False, and it distinguished the studio's
+  // policy on a token state the public collapse rule flattens on purpose.
+  //
+  // ASSERTED HERE, not only in the DB suite, because the DB suite needs a
+  // database and this lane does not: a reordering regression reds in validate.
+  const bodies = CODE.split("create or replace function").slice(1);
+
+  it("the CANCEL command's flag refusal comes after already_cancelled and not_cancelable", () => {
+    const cancel = bodies.find((b) => b.includes("not_cancelable"))!;
+    expect(cancel).toBeTruthy();
+    const refusal = cancel.indexOf("'cancellation_disabled'::text");
+    const alreadyCancelled = cancel.indexOf("'already_cancelled'::text");
+    const notCancelable = cancel.indexOf("'not_cancelable'::text");
+    expect(refusal).toBeGreaterThan(-1);
+    expect(alreadyCancelled).toBeGreaterThan(-1);
+    expect(notCancelable).toBeGreaterThan(-1);
+    expect(
+      refusal,
+      "the flag refusal must come AFTER already_cancelled",
+    ).toBeGreaterThan(alreadyCancelled);
+    expect(
+      refusal,
+      "the flag refusal must come AFTER the not_cancelable state checks",
+    ).toBeGreaterThan(notCancelable);
+  });
+
+  it("the RESCHEDULE command's flag refusal comes after appointment_not_reschedulable", () => {
+    // Not in the report: the same ordering defect was on this path, for the
+    // same reason, and is fixed the same way.
+    const res = bodies.find((b) =>
+      b.includes("appointment_not_reschedulable"),
+    )!;
+    expect(res).toBeTruthy();
+    const refusal = res.indexOf("'reschedule_disabled'::text");
+    const notReschedulable = res.indexOf(
+      "'appointment_not_reschedulable'::text",
+    );
+    expect(refusal).toBeGreaterThan(-1);
+    expect(notReschedulable).toBeGreaterThan(-1);
+    expect(refusal).toBeGreaterThan(notReschedulable);
+  });
+
+  it("both flag VALUES are still read under the studio's FOR UPDATE lock", () => {
+    // Only the refusal moved. The read must stay inside the locked studio
+    // select, or the decision stops being linearizable against a concurrent
+    // policy change — which was the one thing the original ordering got right.
+    for (const column of [
+      "client_cancellation_enabled",
+      "client_reschedule_enabled",
+    ]) {
+      const read = CODE.indexOf(`coalesce(s.${column}, true)`);
+      expect(read, `${column} must be read from the studio row`).toBeGreaterThan(-1);
+      const lockAfter = CODE.indexOf("for update", read);
+      expect(lockAfter, `${column}'s select must take FOR UPDATE`).toBeGreaterThan(read);
+      // and nothing re-reads it from an unlocked statement afterwards
+      expect(CODE.indexOf(`coalesce(s.${column}, true)`, read + 1)).toBe(-1);
+    }
+  });
+});
+
 describe("0234: EXECUTE is revoked from every default-granted role BY NAME", () => {
   // Supabase's ALTER DEFAULT PRIVILEGES grants EXECUTE to anon, authenticated
   // AND service_role at function-create time, and `create or replace` re-runs

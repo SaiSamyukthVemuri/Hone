@@ -232,13 +232,15 @@ describe("the shipped column comments are what the catalog actually holds", () =
   // digest records the debt and stops it drifting further.
   //
   // HON-47 / 0234 adds the two client self-service switches, BY NAME, because
-  // both carry a COMMENT and this pin is the exact set. Their digests were
-  // derived from 0234's own concatenated string literals rather than read back
-  // from a live catalog (this lane held no database slot), and the derivation
-  // was validated by reproducing SIX of the digests already pinned below from
-  // the migrations that authored them — 0159, 0204, 0110, 0186 and 0109 — all
-  // six exact. If either still fails on a fresh chain, read the digest back
-  // with the query above and correct it here; do not loosen the assertion.
+  // both carry a COMMENT and this pin is the exact set.
+  //
+  // READ BACK FROM A LIVE CATALOG, not derived: an isolated stack reset to
+  // 0234 with the pinned CLI (233 migrations, head 0234) returns all TEN
+  // digests below, these two included, byte-exact. They were first derived
+  // from 0234's own concatenated string literals, and that derivation agreed
+  // with the catalog on every one — but the catalog is the authority, and it
+  // has now spoken. 55 tests passed on that stack; the shared stack's census
+  // was unchanged across the run.
   const COMMENT_INVENTORY: Readonly<Record<string, string>> = {
     client_cancellation_enabled:
       "c6cd2ae72320a7a98f58950cea9556614703294df8439225a448b3d755477673",

@@ -53,6 +53,7 @@ import {
 import {
   CLIENT_RESCHEDULE_DISABLED_CODE,
   CLIENT_RESCHEDULE_DISABLED_ERROR,
+  clientCancellationAllowed,
   clientRescheduleAllowed,
 } from "@/lib/booking/client-self-service-policy";
 
@@ -239,6 +240,18 @@ export type RescheduleRefusal = {
   ok: false;
   error: string;
   code?: FreeConsultWaitlistOnlyCode | typeof CLIENT_RESCHEDULE_DISABLED_CODE;
+  /**
+   * HON-47. Whether the studio still permits CLIENT cancellation, carried on a
+   * refusal so a page rendering one knows whether offering "Cancel
+   * appointment" would land on a second refusal (Codex P2 4308948301).
+   *
+   * Set only on the refusals raised AFTER the studio row has been read, which
+   * is why it is optional: the collapse refusals above it have no studio and
+   * must not acquire one just to answer this. `undefined` therefore means "not
+   * known here", and a page must treat it as such rather than as `false` — the
+   * surfaces that need it are the ones that do get it.
+   */
+  cancellationAllowed?: boolean;
 };
 
 // The joined shape the policy needs. PostgREST types an embedded relation as
@@ -297,7 +310,7 @@ async function assertReschedulableOriginal(
       // HON-47 adds `client_reschedule_enabled` to the studio embed that is
       // already here, so the studio-level switch is read from the same row, in
       // the same statement, as the appointment state it gates.
-      "id, studio_id, client_id, practitioner_id, status, starts_at, duration_minutes, service:services(modality, name, price_cents), studio:studios(id, slug, client_reschedule_enabled)",
+      "id, studio_id, client_id, practitioner_id, status, starts_at, duration_minutes, service:services(modality, name, price_cents), studio:studios(id, slug, client_reschedule_enabled, client_cancellation_enabled)",
     )
     .eq("id", resolved.appointment_id)
     .maybeSingle();
@@ -335,6 +348,13 @@ async function assertReschedulableOriginal(
       ok: false,
       error: FREE_CONSULT_WAITLIST_ONLY_ERROR,
       code: FREE_CONSULT_WAITLIST_ONLY_CODE,
+      // HON-47 (Codex P2 4308948301). This branch returns BEFORE the HON-47
+      // gate below, so without this the page's waitlist-only surface offered
+      // "Cancel appointment" to a studio that has cancellation switched off —
+      // one dead end replacing another.
+      cancellationAllowed: clientCancellationAllowed(
+        firstEmbedded(embedded.studio),
+      ),
     };
   }
 
@@ -352,6 +372,9 @@ async function assertReschedulableOriginal(
       ok: false,
       error: CLIENT_RESCHEDULE_DISABLED_ERROR,
       code: CLIENT_RESCHEDULE_DISABLED_CODE,
+      cancellationAllowed: clientCancellationAllowed(
+        firstEmbedded(embedded.studio),
+      ),
     };
   }
 
@@ -975,6 +998,20 @@ export async function rescheduleAppointmentViaTokenAction(
       case "appointment_not_found":
       case "appointment_not_reschedulable":
         return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+      // HON-47. THE RACE, and the reason this case has to exist even though
+      // `assertReschedulableOriginal` already refused once: the studio can
+      // switch rescheduling off BETWEEN that read and this call. 0234 then
+      // refuses under the studio lock, and without this arm the verdict fell
+      // through to `default` and the client was told the link was invalid.
+      // Mapped to the same code and sentence the gate uses, so the two paths
+      // are indistinguishable to the surface — which is the point: the client
+      // should not be able to tell whether they lost a race.
+      case CLIENT_RESCHEDULE_DISABLED_CODE:
+        return {
+          ok: false,
+          error: CLIENT_RESCHEDULE_DISABLED_ERROR,
+          code: CLIENT_RESCHEDULE_DISABLED_CODE,
+        };
       case "policy_ack_required":
         return { ok: false, error: POLICY_ACK_REQUIRED_ERROR };
       case "policy_changed":

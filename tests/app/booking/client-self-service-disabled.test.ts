@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NEW_CLIENT_WAITLIST_SLUGS_ENV } from "@/lib/booking/new-client-waitlist";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ReactElement, ReactNode } from "react";
@@ -40,12 +41,20 @@ const APPT_ID = "11111111-1111-4111-8111-111111111111";
 const rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
 const writes: Array<{ table: string; op: string }> = [];
 
+const WAITLISTED_SLUG = "e2e-waitlist-p0";
+const OPEN_SLUG = "e2e-open-studio";
+
 const scenario = {
   cancellationEnabled: true,
   rescheduleEnabled: true,
   status: "confirmed" as string,
   startsAt: new Date(Date.now() + 86_400_000).toISOString(),
   cancelResult: "cancelled" as string,
+  // The COMMAND's verdict, which can disagree with the flag the gate read a
+  // moment earlier — that race is the whole point of one of the cases below.
+  rescheduleResult: "reschedule_disabled" as string,
+  studioSlug: OPEN_SLUG as string | null,
+  freeConsult: false,
 };
 
 // A TREATMENT at a studio with no waitlist slug, so EMERG-01 never fires here
@@ -58,11 +67,20 @@ const SERVICE = {
   default_duration_minutes: 45,
 };
 
+// EMERG-01 matches a FREE consultation at a waitlisted studio. Used by one
+// case, to prove the two policies compose.
+const FREE_CONSULT = {
+  ...SERVICE,
+  name: "New Client Consultation",
+  modality: "consultation",
+  price_cents: 0,
+};
+
 function studioRow() {
   return {
     id: STUDIO_ID,
     name: "Test Studio",
-    slug: "e2e-open-studio",
+    slug: scenario.studioSlug,
     timezone: "UTC",
     public_booking_horizon_months: 3,
     cancellation_policy_text: null,
@@ -98,13 +116,29 @@ function makeQuery(table: string) {
             service_id: SERVICE.id,
             cancellation_token_hash: "a".repeat(64),
             studio: studioRow(),
-            service: SERVICE,
+            service: scenario.freeConsult ? FREE_CONSULT : SERVICE,
             client: { name: "Test Client" },
           },
           error: null,
         };
       }
       if (table === "studios") return { data: studioRow(), error: null };
+      // The submit path refuses BEFORE the command when it cannot resolve a
+      // client with an email (the token-delivery gate), so the race case below
+      // would never reach the RPC switch without this row. Found by that case
+      // failing with `code: undefined`.
+      if (table === "clients") {
+        return {
+          data: {
+            name: "Synthetic Client",
+            email: "client@synthetic.test",
+            phone: null,
+            sms_consent_at: null,
+            sms_opted_out_at: null,
+          },
+          error: null,
+        };
+      }
       return { data: null, error: null };
     },
     async single() {
@@ -121,7 +155,10 @@ const admin = {
   from: (table: string) => makeQuery(table),
   async rpc(fn: string, args: Record<string, unknown>) {
     rpcCalls.push({ fn, args });
-    return { data: [{ result: scenario.cancelResult }], error: null };
+    const result = fn.includes("reschedule")
+      ? scenario.rescheduleResult
+      : scenario.cancelResult;
+    return { data: [{ result }], error: null };
   },
 };
 
@@ -135,6 +172,9 @@ vi.mock("@/lib/rate-limit/public", () => ({
 }));
 vi.mock("@/lib/booking/appointment-token", () => ({
   hashAppointmentToken: () => "a".repeat(64),
+  // The submit path mints the SUCCESSOR token before calling the command, so
+  // this export is required even by a case that never reaches a success.
+  generateAppointmentToken: () => "successor-raw-token",
 }));
 vi.mock("@/lib/booking/tokens", () => ({
   verifyCancellationToken: () => ({ ok: false, error: "invalid" }),
@@ -165,6 +205,7 @@ const {
   fetchAppointmentForRescheduleAction,
   fetchRescheduleSlotsAction,
   fetchNextAvailableDateForRescheduleAction,
+  rescheduleAppointmentViaTokenAction,
 } = await import("@/app/reschedule/[token]/actions");
 const ReschedulePage = (await import("@/app/reschedule/[token]/page")).default;
 const { fetchAppointmentForManageAction } =
@@ -173,6 +214,10 @@ const ManagePage = (await import("@/app/manage/[token]/page")).default;
 const { createElement } = await import("react");
 const { renderToStaticMarkup } = await import("react-dom/server");
 const COPY = await import("@/lib/booking/client-self-service-copy");
+const { CLIENT_RESCHEDULE_DISABLED_CODE } = COPY;
+const { FREE_CONSULT_WAITLIST_ONLY_CODE } = await import(
+  "@/lib/booking/free-consult-reschedule-policy"
+);
 
 // react-dom escapes ' and " in text nodes, so assertions written in the copy's
 // own punctuation would never match the raw markup.
@@ -207,7 +252,15 @@ beforeEach(() => {
     status: "confirmed",
     startsAt: new Date(Date.now() + 86_400_000).toISOString(),
     cancelResult: "cancelled",
+    rescheduleResult: "reschedule_disabled",
+    studioSlug: OPEN_SLUG,
+    freeConsult: false,
   });
+  process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = WAITLISTED_SLUG;
+});
+
+afterEach(() => {
+  delete process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV];
 });
 
 describe("HON-47 /cancel", () => {
@@ -358,6 +411,90 @@ describe("HON-47 /reschedule", () => {
     // collapse page, so it would not prove the enabled path works at all.
     expect(html).toContain("Choose a new time that works better for you.");
     expect(html).not.toContain(COPY.CLIENT_RESCHEDULE_DISABLED_HEADLINE);
+  });
+});
+
+describe("HON-47 the RACE: the COMMAND refuses after the gate allowed it", () => {
+  // Codex P2 4308948307. `assertReschedulableOriginal` reads the flag, then the
+  // studio switches rescheduling off, then 0234 refuses under the studio lock.
+  // Without an explicit arm the verdict fell through to `default` and the
+  // client was told the LINK was invalid — wrong, and alarming, for someone
+  // whose appointment is intact.
+  it("maps the command's reschedule_disabled to the approved copy, not 'invalid link'", async () => {
+    scenario.rescheduleEnabled = true; // the GATE allows it...
+    scenario.rescheduleResult = CLIENT_RESCHEDULE_DISABLED_CODE; // ...the COMMAND does not
+    const fd = new FormData();
+    fd.set("token", TOKEN);
+    fd.set("starts_at", new Date(Date.now() + 172_800_000).toISOString());
+    const r = await rescheduleAppointmentViaTokenAction(fd);
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.code).toBe(CLIENT_RESCHEDULE_DISABLED_CODE);
+    expect(r.error).toBe(COPY.CLIENT_RESCHEDULE_DISABLED_ERROR);
+    // The two paths must be indistinguishable: a client should not be able to
+    // tell that they lost a race.
+    expect(r.error).not.toContain("can't be used right now");
+  });
+
+  it("CONTROL — the command's own generic refusals still collapse", async () => {
+    scenario.rescheduleEnabled = true;
+    scenario.rescheduleResult = "appointment_not_reschedulable";
+    const fd = new FormData();
+    fd.set("token", TOKEN);
+    fd.set("starts_at", new Date(Date.now() + 172_800_000).toISOString());
+    const r = await rescheduleAppointmentViaTokenAction(fd);
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.code).toBeUndefined();
+    expect(r.error).not.toBe(COPY.CLIENT_RESCHEDULE_DISABLED_ERROR);
+  });
+});
+
+describe("HON-47 composes with EMERG-01 rather than overriding it", () => {
+  // Codex P2 4308948301. The free-consult branch returns BEFORE HON-47's gate,
+  // and its page surface offers "Cancel appointment" as the way forward —
+  // which is a second dead end when the studio has cancellation off too.
+  const freeConsultAtWaitlistedStudio = () => {
+    scenario.freeConsult = true;
+    scenario.studioSlug = WAITLISTED_SLUG;
+  };
+
+  it("waitlist-only + CANCELLATION DISABLED: no cancel CTA, and it says why", async () => {
+    freeConsultAtWaitlistedStudio();
+    scenario.cancellationEnabled = false;
+    const html = await render(ReschedulePage);
+    // Still EMERG-01's surface: its headline, not HON-47's.
+    expect(html).toContain(COPY.CLIENT_CANCELLATION_DISABLED_HEADLINE);
+    expect(html).not.toContain(`/cancel/${TOKEN}`);
+    expect(html).not.toContain("Cancel appointment");
+    expect(html).toContain("/portal");
+  });
+
+  it("CONTROL — waitlist-only + cancellation ALLOWED: the cancel CTA stays", async () => {
+    freeConsultAtWaitlistedStudio();
+    scenario.cancellationEnabled = true;
+    const html = await render(ReschedulePage);
+    expect(html).toContain(`/cancel/${TOKEN}`);
+    expect(html).toContain("Cancel appointment");
+    expect(html).not.toContain(COPY.CLIENT_CANCELLATION_DISABLED_HEADLINE);
+  });
+
+  it("the refusal CARRIES the cancellation answer, and omits it when no studio was read", async () => {
+    freeConsultAtWaitlistedStudio();
+    scenario.cancellationEnabled = false;
+    const r = await fetchAppointmentForRescheduleAction(TOKEN);
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.code).toBe(FREE_CONSULT_WAITLIST_ONLY_CODE);
+    expect(r.cancellationAllowed).toBe(false);
+
+    // A collapse refusal reads no studio row, so the field is ABSENT rather
+    // than false — the page treats absent as "not known", never as "no".
+    scenario.status = "cancelled";
+    const collapsed = await fetchAppointmentForRescheduleAction(TOKEN);
+    expect(collapsed.ok).toBe(false);
+    if (collapsed.ok) throw new Error("unreachable");
+    expect(collapsed.cancellationAllowed).toBeUndefined();
   });
 });
 
