@@ -438,6 +438,8 @@ describe("SOURCE CONTRACT: the derivative introduces no public surface", () => {
     "lib/images/treatment-images.ts",
     "lib/images/treatment-image-sanitize.ts",
     "app/(app)/clients/[id]/images/actions.ts",
+    "app/(app)/clients/[id]/images/sign-treatment-image.ts",
+    "app/api/clients/[clientId]/images/[imageId]/signed-url/route.ts",
     "app/(app)/clients/[id]/images/page.tsx",
     "app/(app)/clients/[id]/images/TreatmentImagesManager.tsx",
   ];
@@ -458,8 +460,10 @@ describe("SOURCE CONTRACT: the derivative introduces no public surface", () => {
   it("every signed URL on this path uses the SHORT shared TTL, never a longer one", () => {
     // A derivative signed for longer than the original would outlive the
     // authorization that produced it. Both signers must use the one constant.
+    // The action and the re-mint route share sign-treatment-image.ts (Codex
+    // P1 4307807754 moved the re-mint off server actions).
     for (const rel of [
-      "app/(app)/clients/[id]/images/actions.ts",
+      "app/(app)/clients/[id]/images/sign-treatment-image.ts",
       "app/(app)/clients/[id]/images/page.tsx",
     ]) {
       const src = readFileSync(rel, "utf8");
@@ -473,15 +477,17 @@ describe("SOURCE CONTRACT: the derivative introduces no public surface", () => {
   it("the MODAL signer still signs the ROW's own path, not a derivative", () => {
     // Clinical fidelity: the inspection surface must never be handed a
     // downscaled image. This pins the modal action to row.storage_path.
-    const src = readFileSync("app/(app)/clients/[id]/images/actions.ts", "utf8");
+    const src = readFileSync("app/(app)/clients/[id]/images/sign-treatment-image.ts", "utf8");
     expect(src).toMatch(/createSignedUrl\(\s*row\.storage_path/);
+    // ...and the modal action still reaches that signer with NO variant forced.
+    expect(readFileSync("app/(app)/clients/[id]/images/actions.ts", "utf8")).toMatch(
+      /signTreatmentImageUrl\(studio\.id, \{ imageId: input\.imageId, variant: input\.variant \}\)/,
+    );
     // FETT thumbnail recovery added an opt-in `variant: "thumb"` for the GRID's
     // re-mint. The thumb key may be derived ONLY inside that branch; the
     // default (no variant) path signs the row's own path.
-    const signer = src.slice(
-      src.indexOf("export async function getTreatmentImageSignedUrlAction"),
-      src.indexOf("export async function updateTreatmentImageNoteAction"),
-    );
+    const signer = src.slice(src.indexOf("export async function signTreatmentImageUrl"));
+    expect(signer.length).toBeGreaterThan(0);
     const thumbBranch = signer.slice(
       signer.indexOf('if (input.variant === "thumb") {'),
       signer.indexOf("return { ok: true, url: thumb.signedUrl };"),
