@@ -3,7 +3,7 @@ import { blockAreasLabel, type BlockArea } from "@/lib/sessions/block-areas";
 import { legacyBlockReactionLabel } from "@/lib/sessions/reaction-unified";
 import { hasStructuredReadings, pulseReadingsShown } from "@/lib/sessions/structured-readings";
 import { resolveDisplayChips } from "@/lib/observation-chips";
-import { numbingDisplay } from "@/lib/sessions/clinical-response";
+import { numbingDisplay, toleranceLabel } from "@/lib/sessions/clinical-response";
 
 // ===========================================================================
 // HON-46 — what a per-client clinical-records export contains, as pure code.
@@ -452,7 +452,10 @@ export function buildClinicalRecordsDocument(input: {
             // its practitioner-facing label, and a note only when numbing was
             // USED, so a stray note on "none" never implies numbing.
             ["Numbing", numbingDisplay(b.numbing_status, b.numbing_notes)?.label ?? null],
-            ["Tolerance", b.tolerance_rating],
+            // TOLERANCE as the saved view words it (Codex P2 4307190165): the
+            // stored 1-5 integer's direction is not self-evident, so the
+            // printout carries the practitioner-facing label, never the number.
+            ["Client tolerance", b.tolerance_rating != null ? toleranceLabel(b.tolerance_rating) : null],
           ]),
           notes: readings([
             ["Numbing notes", numbingDisplay(b.numbing_status, b.numbing_notes)?.note ?? null],

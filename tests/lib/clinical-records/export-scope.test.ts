@@ -16,7 +16,7 @@ import {
 import { guardBrowserEvent } from "@/lib/analytics/client-boundary";
 import { EXPORT_MAX_PAGES, EXPORT_PAGE_SIZE, readAllPages } from "@/lib/clinical-records/export-queries";
 import { PRINT_GATE_CSS } from "@/lib/clinical-records/print-gate";
-import { numbingDisplay } from "@/lib/sessions/clinical-response";
+import { numbingDisplay, toleranceLabel } from "@/lib/sessions/clinical-response";
 import { readFileSync } from "node:fs";
 
 // HON-46 — the pure half of the per-client clinical-records export: which
@@ -288,7 +288,7 @@ describe("buildClinicalRecordsDocument is an allow-list", () => {
         { label: "Minutes performed", value: "15 min" },
         { label: "Probe", value: "Ballet F3 gold" },
         { label: "Probe lot", value: "LOT-7" },
-        { label: "Tolerance", value: "4" },
+        { label: "Client tolerance", value: "Mild discomfort" },
       ]),
     );
     expect(s.blocks[0].readings.map((r) => r.label)).not.toContain("Reaction");
@@ -493,6 +493,54 @@ describe("legacy comment chips count when classifying the block reaction (Codex 
   it("the saved view classifies against the same displayed chips (source parity)", () => {
     const view = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/session-blocks-view.tsx", "utf8");
     expect(view).toContain("(e) => resolveDisplayChips(e.observation_chips, e.comments).chips,");
+  });
+});
+
+describe("tolerance prints the saved view's label, never the stored integer (Codex P2 4307190165)", () => {
+  const toleranceOf = (tolerance_rating: number | null) =>
+    buildClinicalRecordsDocument({
+      sessions: [
+        {
+          id: "s9",
+          started_at: "2026-10-01T15:00:00Z",
+          ended_at: null,
+          modality: "electrolysis",
+          session_notes: null,
+          performed_by_practitioner_id: null,
+          practitioner_id: null,
+          record_status: null,
+          finalized_at: null,
+          aftercare_and_risks_explained_at: null,
+        },
+      ],
+      blocks: [
+        {
+          id: "b9",
+          session_id: "s9",
+          sort_order: 0,
+          primary_area: "chin",
+          side: null,
+          created_at: "2026-10-01T15:01:00Z",
+          tolerance_rating,
+        } as unknown as ExportBlockSource,
+      ],
+      entries: [],
+      notes: [],
+      practitionerNameById: new Map(),
+    }).sessions[0].blocks[0].readings.filter((r) => /tolerance/i.test(r.label));
+
+  it("every stored rating prints exactly toleranceLabel's wording", () => {
+    for (const rating of [1, 2, 3, 4, 5]) {
+      expect(toleranceOf(rating)).toEqual([{ label: "Client tolerance", value: toleranceLabel(rating) }]);
+    }
+    expect(toleranceOf(1)).toEqual([{ label: "Client tolerance", value: "Needed pause / stopped early" }]);
+  });
+  it("an unrecorded rating prints nothing", () => {
+    expect(toleranceOf(null)).toEqual([]);
+  });
+  it("the saved view uses the same presenter (source parity)", () => {
+    const view = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/session-blocks-view.tsx", "utf8");
+    expect(view).toContain("toleranceLabel(block.tolerance_rating)");
   });
 });
 
