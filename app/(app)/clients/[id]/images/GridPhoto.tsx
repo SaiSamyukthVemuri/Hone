@@ -1,20 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback } from "react";
 import { getTreatmentImageSignedUrlAction } from "./actions";
-import {
-  initialGridPhoto,
-  onGridPhotoError,
-  onGridPhotoRemint,
-  type GridPhotoState,
-} from "@/lib/images/grid-photo-recovery";
+import type { GridPhotoVariant } from "@/lib/images/grid-photo-recovery";
+import { useGridPhotoRecovery } from "@/lib/images/use-grid-photo-recovery";
 
 // FETT photos (HON-43): one Photos-tab grid cell. It renders the derivative,
-// demotes to the original, and, when a signed URL has EXPIRED before the lazy
-// image was requested, re-mints a fresh URL ONCE per variant through the same
-// server action "View larger" uses (lib/images/grid-photo-recovery.ts holds the
-// bounded transitions). The parent keys this component by the server URLs, so
-// fresh URLs from router.refresh() remount it and clear any failure.
+// demotes to the original, and re-mints an EXPIRED signed URL through the same
+// server action "View larger" uses. The bounded recovery (one retry on a
+// timed-out or rejected re-mint, then terminal; the hydration-window check) is
+// lib/images/use-grid-photo-recovery.ts, shared with the profile ID photo and
+// the visit chart. The parent keys this component by the server URLs, so fresh
+// URLs from router.refresh() remount it and clear any failure.
 export function GridPhoto({
   imageId,
   previewUrl,
@@ -26,44 +23,12 @@ export function GridPhoto({
   thumbUrl: string | null;
   onOpen: () => void;
 }) {
-  const urls = { previewUrl, thumbUrl };
-  const [state, setState] = useState<GridPhotoState>(() => initialGridPhoto(urls));
-  const imgRef = useRef<HTMLImageElement | null>(null);
-  const alive = useRef(true);
-  useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-    };
-  }, []);
-
-  // Transitions run against a ref, never inside a state updater, so React may
-  // re-run an updater without issuing a second re-mint request.
-  const stateRef = useRef(state);
-  stateRef.current = state;
-  const handleError = useCallback(() => {
-    const next = onGridPhotoError(stateRef.current, { previewUrl, thumbUrl });
-    stateRef.current = next.state;
-    setState(next.state);
-    if (!next.remint) return;
-    const variant = next.remint;
-    void getTreatmentImageSignedUrlAction({ imageId, variant })
-      .then((res) => (res.ok ? res.url : null))
-      .catch(() => null)
-      .then((url) => {
-        if (!alive.current) return;
-        const landed = onGridPhotoRemint(stateRef.current, { previewUrl, thumbUrl }, variant, url);
-        stateRef.current = landed;
-        setState(landed);
-      });
-  }, [imageId, previewUrl, thumbUrl]);
-
-  // An image that failed BEFORE hydration never reached React's onError. Check
-  // once per src after mount; a lazy image not yet requested is not `complete`.
-  useEffect(() => {
-    const el = imgRef.current;
-    if (el && el.complete && el.naturalWidth === 0 && el.getAttribute("src")) handleError();
-  }, [state.src, handleError]);
+  const remint = useCallback(
+    (variant: GridPhotoVariant) =>
+      getTreatmentImageSignedUrlAction({ imageId, variant }).then((res) => (res.ok ? res.url : null)),
+    [imageId],
+  );
+  const { state, imgRef, onError } = useGridPhotoRecovery({ previewUrl, thumbUrl, remint });
 
   if (state.stage === "broken" || !state.src) {
     return (
@@ -85,7 +50,7 @@ export function GridPhoto({
         src={state.src}
         alt="Treatment photo"
         loading="lazy"
-        onError={handleError}
+        onError={onError}
         data-stage={state.stage}
         className="aspect-square w-full object-cover transition hover:opacity-90"
       />
