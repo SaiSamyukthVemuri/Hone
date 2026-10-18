@@ -137,6 +137,75 @@ export const INITIAL_SAVE_UNRESOLVED =
   "this save carries a retry key, so if it did save you will get that same " +
   "area back rather than a second copy of it.";
 
+/**
+ * The resumed save DID commit, and she is simply told so.
+ *
+ * NOTHING IS RE-ENTERED and nothing is retried (A1b, Codex #922
+ * 4305312331). After a reload the retry key survives in the URL but the
+ * payload does not, so the honest move is to answer the question the reload
+ * actually raises — "did my save go through?" — by reading the claim, rather
+ * than asking her to reconstruct a payload that would have to match a stored
+ * digest byte for byte.
+ */
+export const INITIAL_SAVE_ALREADY_SAVED =
+  "This treatment area was already saved — the connection dropped before the " +
+  "confirmation reached you, but the save itself completed. It is on the " +
+  "chart below, and nothing was duplicated.";
+
+/**
+ * The resumed save could not be CHECKED, which is not the same as not saved.
+ *
+ * FAILS SAFE. It does not claim the save completed and it does not quietly
+ * invite a second one: a duplicate clinical record is the cost of guessing
+ * wrong in either direction, so she is told what is unknown and left the
+ * choice.
+ */
+export const INITIAL_SAVE_RESUME_UNKNOWN =
+  "Whether this treatment area was already saved could not be checked just " +
+  "now. Look at the chart below before saving again: if the area is already " +
+  "there, close this form instead of saving.";
+
+/**
+ * A resumed save whose SETTINGS did not survive the reload.
+ *
+ * WHY SAVE IS HELD (A1b, Codex #922 4305550889). The retry key travels to
+ * `create_block_with_initial_setup` only inside `initialSetup`, so a save with
+ * an empty machine draft sends NO key, takes the ordinary create path, and
+ * creates a SECOND treatment area. An `area_op` is only ever minted for a save
+ * that HAD settings, so a bare save in a resumed form is definitionally a
+ * different save — and the one thing that must not proceed unkeyed while the
+ * original may still be committing.
+ *
+ * So she is told what is missing and what to do, rather than being given a
+ * button that would duplicate her treatment.
+ */
+export const INITIAL_SAVE_RESUME_NEEDS_SETTINGS =
+  "The machine settings for this area were entered before the page reloaded, " +
+  "so they are not on screen any more. Re-enter them to save this area, or " +
+  "close this form to abandon it — the area may already be on the chart " +
+  "below, so check there before adding another.";
+
+/**
+ * THE RECORDED GROUPS MOVED WHILE THIS FORM WAS OPEN.
+ *
+ * WHY THIS REFUSES RATHER THAN SAVES (Codex, #860 4305780322). Group
+ * identities are derived from the recorded snapshot this form loaded, so two
+ * page loads that both add a group both pick the SAME next key - and
+ * `record_setup_group_in_scope` then takes the second as the next REVISION of
+ * the first. Two distinct probe sets merge into one timeline and only the
+ * second one's values read as current: a silent loss of what she recorded
+ * first.
+ *
+ * `setting-groups.ts` already names this outcome for a sibling case and says
+ * it sits "one guard away from a corrupt clinical record". This is that guard
+ * for the case that is actually reachable - a second tab, or a draft left open
+ * while another save landed.
+ */
+export const SETUP_GROUPS_MOVED =
+  "Another save added or changed the settings groups for this treatment " +
+  "while this form was open, so saving now could overwrite them. Reload the " +
+  "chart and enter these settings again - nothing here has been recorded.";
+
 export const WRONG_BLOCK =
   "These settings were entered for a different treatment area and cannot be " +
   "recorded against this one.";

@@ -60,7 +60,16 @@ describe("a fresh save", () => {
   it("can be submitted and edited", () => {
     const s = initialSaveState();
     expect(canSubmit(s)).toBe(true);
-    expect(canEditDraft(s)).toBe(true);
+    expect(canEditDraft(s, false)).toBe(true);
+  });
+
+  it("but NOT while its own request is in flight", () => {
+    // THE SIXTH CONTROL (Codex, #860 4305022472/4305022475). The payload is
+    // snapshotted at submit, so the request's own duration is part of the
+    // freeze: a success would discard an edit made during it silently, and a
+    // LOST response would retry the retained key against a payload that no
+    // longer matches its digest.
+    expect(canEditDraft(initialSaveState(), true)).toBe(false);
   });
 });
 
@@ -90,12 +99,27 @@ describe("a save that is ACKNOWLEDGED", () => {
     expect(saved.unresolved).toBe(false);
   });
 
+  it("does NOT hold the surrounding form, which protects a KEY it no longer has", () => {
+    // THE DISTINCTION (Codex, #860 4305364945). `canEditDraft` is false for an
+    // acknowledged save, which is right for the entry's own fields. The host's
+    // machine picker, mode picker and Cancel are frozen for a different
+    // reason — each can discard this save's RETRY KEY — so they must be free
+    // once there is no key at risk. Reporting `canEditDraft` upward left them
+    // disabled after every successful capture.
+    expect(canEditDraft(saved, false), "the entry's own fields").toBe(false);
+    // What the host is told, as the entry computes it.
+    const transportHold = false || saved.unresolved;
+    expect(transportHold, "an acknowledged save held the host's controls").toBe(
+      false,
+    );
+  });
+
   it("refuses another save of the same draft", () => {
     // Recording it again is a second capture of settings entered once, which
     // is indistinguishable in the record from a genuine mid-treatment change.
     // She records a change explicitly instead.
     expect(canSubmit(saved)).toBe(false);
-    expect(canEditDraft(saved)).toBe(false);
+    expect(canEditDraft(saved, false)).toBe(false);
   });
 });
 
@@ -172,7 +196,7 @@ describe("a save whose outcome is UNKNOWN", () => {
   it("holds the draft, because editing it would mint a new key", () => {
     // The one case where editing is unsafe: if the unresolved attempt DID
     // commit, a changed draft becomes a second save and records twice.
-    expect(canEditDraft(unknown)).toBe(false);
+    expect(canEditDraft(unknown, false)).toBe(false);
     expect(afterDraftChanged(unknown)).toBe(unknown);
   });
 
@@ -220,7 +244,12 @@ describe("recording a deliberate SECOND capture", () => {
     expect(again.recorded).toBe(false);
     expect(again.message).toBeNull();
     expect(canSubmit(again)).toBe(true);
-    expect(canEditDraft(again)).toBe(true);
+    expect(canEditDraft(again, false)).toBe(true);
+  });
+
+  it("and is held again the moment the NEXT request is in flight", () => {
+    // The freeze is not a one-shot: a fresh save re-enters the window.
+    expect(canEditDraft(again, true)).toBe(false);
   });
 
   it("KEEPS the capture count, which belongs to the treatment", () => {

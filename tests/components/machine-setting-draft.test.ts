@@ -76,6 +76,21 @@ const html = renderToStaticMarkup(
   }),
 );
 
+/**
+ * The expression a `const <name> = ...;` is assigned, with comments already
+ * stripped by `read`.
+ *
+ * Guards below assert what a freeze is DERIVED FROM rather than how it is
+ * spelled. Matching the literal expression is what made four guards in this
+ * file go red on the fix for #860 4305022475 while staying green on the
+ * defect: they pinned the exact text that was missing the in-flight window.
+ */
+function assignedExpression(src: string, name: string): string {
+  const m = new RegExp(`const ${name}\\s*=\\s*([^;]+);`).exec(src);
+  if (!m) throw new Error(`no 'const ${name} = ...;' in source`);
+  return m[1]!;
+}
+
 describe("the create-mode collector", () => {
   it("renders the machine's own fields", () => {
     // THE SAME COMPONENT the entry form uses, which is the point of having
@@ -229,7 +244,18 @@ describe("the handoff's shape, pinned on source", () => {
     // except while an attempt is unresolved, where dropping it would turn the
     // retry into a second treatment area. A remount reporting an empty draft
     // is exactly such a change.
-    expect(read(FORM)).toMatch(/if \(!saveUnresolved\) setPendingSaveKey\(null\)/);
+    // THE RESUME READ OWNS THE KEY WHILE IT IS IN FLIGHT (A1b). The
+    // collector reports an EMPTY draft on mount, which arrives before the
+    // claim read resolves, so this drop is held for the width of that round
+    // trip -- otherwise the parameter would leave the URL and a reload inside
+    // the window would lose the save's identity. Asserted on both terms
+    // rather than on the exact expression.
+    const drop = read(FORM).match(/if \(([^)]*)\) setPendingSaveKey\(null\)/);
+    expect(drop, "the draft-change drop site was not found").toBeTruthy();
+    expect(drop![1]).toContain("!saveUnresolved");
+    // AND NOT WHILE THE RESUMED OPERATION OWNS IT — in flight, or failed and
+    // therefore unanswerable (A1b, Codex #922 4305431332).
+    expect(drop![1]).toContain("!resumeOwnsKey");
   });
 
   it("the FORM computes the settings ONCE per attempt", () => {
@@ -412,8 +438,42 @@ describe("switching machine or mode clears the collected draft", () => {
     // editing again mints a new key, appending a second capture of settings
     // entered once.
     const src = read(ENTRY_SRC);
-    expect(src).toMatch(/const frozen = !canEditDraft\(save\)/);
+    // PINNED ON THE PROPERTY, NOT THE CALL SHAPE. The previous version of
+    // this guard matched `!canEditDraft(save)` literally, so it described the
+    // exact expression that was MISSING the in-flight argument and would have
+    // gone red on the fix while staying green on the defect
+    // (Codex, #860 4305022472). What matters is that the freeze is computed
+    // from the save state AND the request's own duration, and that the
+    // reading grid receives it.
+    expect(src).toMatch(/const frozen = !canEditDraft\(\s*save\s*,\s*pending\s*\)/);
     expect(src).toMatch(/frozen=\{frozen\}/);
+  });
+
+  it("and what it reports to the PANEL is the TRANSPORT hold, not the whole freeze", () => {
+    // TWO DEFECTS, ONE LINE, IN OPPOSITE DIRECTIONS. Reporting only the
+    // settled `save.unresolved` left the host's controls live through the
+    // request itself (4305022472); reporting the whole `frozen` left them
+    // DEAD after an acknowledged save, because `frozen` also covers
+    // `recorded` (4305364945). The host freezes those controls for exactly
+    // one reason — each can discard this save's retry key — so what it needs
+    // is the window in which a key is at risk, and nothing wider.
+    const src = read(ENTRY_SRC);
+    expect(src).toMatch(/onUnresolvedChange\?\.\(transportHold\)/);
+    expect(src).not.toMatch(/onUnresolvedChange\?\.\(frozen\)/);
+    expect(src).not.toMatch(/onUnresolvedChange\?\.\(save\.unresolved\)/);
+    // And the hold itself must not consult the acknowledged state.
+    const hold = assignedExpression(src, "transportHold");
+    expect(hold, "an acknowledged save still holds the host's controls").not.toMatch(
+      /recorded|canEditDraft/,
+    );
+  });
+
+  it("while the ENTRY's own fields stay frozen after an acknowledged save", () => {
+    // The other half, and it is not symmetrical: after a recorded save she
+    // starts a new capture rather than editing the one in the record, so
+    // `frozen` keeps `recorded` while the reported hold does not.
+    const src = read(ENTRY_SRC);
+    expect(assignedExpression(src, "frozen")).toMatch(/canEditDraft\(/);
   });
 
   it("and refuses the edit at the HANDLER, not only at the controls", () => {
@@ -465,7 +525,21 @@ describe("switching machine or mode clears the collected draft", () => {
     // per-control list goes stale the next time a field is added — and a
     // missed one is a duplicated clinical record.
     const src = read(FORM_SRC);
-    expect(src).toMatch(/const draftFrozen = saveUnresolved/);
+    // THE FREEZE COVERS BOTH WINDOWS (Codex, #860 4305022475): the request's
+    // own duration AND the unresolved aftermath. Asserted on what the flag is
+    // derived from, not on how the expression is written — the previous
+    // version of this guard matched `const draftFrozen = saveUnresolved`
+    // literally, which is precisely the spelling that omitted the in-flight
+    // window.
+    const frozenExpr = assignedExpression(src, "draftFrozen");
+    expect(
+      frozenExpr,
+      "the freeze does not cover the request's own duration",
+    ).toContain("pending");
+    expect(
+      frozenExpr,
+      "the freeze does not cover the unresolved aftermath",
+    ).toContain("saveUnresolved");
     expect(src).toMatch(
       /const setDraft: typeof setDraftRaw = \(\.\.\.args\) => \{\s*if \(draftFrozen\) return;/,
     );
@@ -527,7 +601,180 @@ describe("switching machine or mode clears the collected draft", () => {
     // the practitioner and must be.
     const src = read(FORM_SRC);
     expect(src).toMatch(/if \("unresolved" in res && res\.unresolved\) setSaveUnresolved\(true\)/);
-    expect(src).toMatch(/const draftFrozen = saveUnresolved/);
+    expect(assignedExpression(src, "draftFrozen")).toContain("saveUnresolved");
+  });
+
+  it("the stale-group refusal REACHES the action, hop by hop", () => {
+    // ASSERTED AT EVERY HOP, because this lane's most repeated defect is a
+    // value that exists, is correct, and never arrives. The rule itself is
+    // proved behaviourally in tests/lib/machines/stale-setting-groups.test.ts;
+    // what this pins is that the action is given something to compare
+    // (Codex, #860 4305780322).
+    const entry = read(ENTRY_SRC);
+    // 1/3 the entry captures the set AT DRAFT BUILD, not at submit — the
+    // identity it will mint is a function of exactly that snapshot.
+    expect(entry, "1/3 the entry does not capture the recorded set").toMatch(
+      /const \[expectedGroupKeys\] = useState<string\[\]>\(\(\) =>/,
+    );
+    // 2/3 and sends it with the save.
+    expect(entry, "2/3 the captured set never leaves the entry").toMatch(
+      /idempotencyKey: key,\s*groups: submissions,\s*expectedGroupKeys,/,
+    );
+
+    // 3/3 the action compares it BEFORE the write, and the comparison IS the
+    // guard's condition.
+    //
+    // PINNED WITH NO GAP, because the first spelling of this asserted only
+    // that the call's TEXT appeared before the write — which a dead
+    // `if (false && recordedGroupsMoved(...))` satisfies perfectly. The
+    // negative control caught it. `read()` strips comment lines, so a
+    // zero-gap match is reliable here and a `{0,N}` gap is not.
+    const actions = read(SETUP_ACTIONS_SRC);
+    expect(
+      actions,
+      "3/3 the comparison is not the condition that refuses",
+    ).toMatch(
+      /if \(recordedGroupsMoved\(input\.expectedGroupKeys, seen\)\) \{\s*return \{ ok: false, code: "rejected", error: SETUP_GROUPS_MOVED \};\s*\}/,
+    );
+    const i = actions.indexOf("recordedGroupsMoved(input.expectedGroupKeys");
+    const j = actions.indexOf("const out = await recordSetupSubmission(db, {");
+    expect(
+      i,
+      "3/3 the comparison happens AFTER the write, which is no guard at all",
+    ).toBeLessThan(j);
+  });
+
+  it("and a FAILED read of the recorded groups refuses, rather than skipping the guard", () => {
+    // The direction that matters: treating an unreadable set as "no change"
+    // would disable the guard exactly when the database is unhappy, which is
+    // when a concurrent save is most likely to be in flight.
+    const actions = read(SETUP_ACTIONS_SRC);
+    const i = actions.indexOf("if (input.expectedGroupKeys) {");
+    expect(i, "the staleness block is gone").toBeGreaterThan(-1);
+    const block = actions.slice(i, actions.indexOf("const out = await recordSetupSubmission", i));
+    // ZERO GAP, for the same reason as above: a `{0,400}` window reached the
+    // NEXT refusal return eight lines down, so emptying this branch still
+    // matched. Comment lines are already stripped by `read()`.
+    expect(
+      block,
+      "an unreadable recorded set no longer refuses, so the guard is skipped exactly when it matters",
+    ).toMatch(
+      /if \(!current\.ok\) \{\s*return \{ ok: false, code: "rejected", error: SETUP_GROUPS_MOVED \};\s*\}/,
+    );
+  });
+
+  it("and the claim is OPTIONAL, so an older caller is not silently blocked", () => {
+    // The per-group action and other callers do not send the set. Absent must
+    // mean "no claim" and skip the check, not "nothing was recorded" — which
+    // would refuse every save those callers make.
+    const actions = read(SETUP_ACTIONS_SRC);
+    expect(actions).toMatch(/expectedGroupKeys\?: string\[\];/);
+    expect(actions).toMatch(/if \(input\.expectedGroupKeys\) \{/);
+  });
+
+  it("a malformed CREATE success is unresolved, exactly like the read-back failure", () => {
+    // THE DEFECT (Codex, #860 4305702528). `create_block_with_initial_setup`
+    // returns no RPC error and no `block_id` — the stale-function or
+    // unexpected-shape case the check exists for — so the command MAY already
+    // have committed the area and its settings. Reporting a plain failure left
+    // the form editable and dismissible, so an edit or a remount discarded the
+    // held key and a later save created a DUPLICATE area.
+    //
+    // The sibling case above (4296709051) is a post-commit READ failure and
+    // was already handled. This is the same fact arriving one line earlier,
+    // and the two must agree.
+    // SCOPED TO THE BRANCH ITSELF, because the first spelling of this guard
+    // was MATCHED BY PROXIMITY: a lazy gap reached past the end of this branch
+    // into the read-back block below, which also returns
+    // `unresolved: true as const` - so the guard passed with this branch
+    // reverted to a plain failure. The negative control caught it, and the
+    // lesson is the recurring one: bound an extraction to the thing it is
+    // about, never to a window that can leave it.
+    const src = read(ACTIONS_SRC);
+    const i = src.indexOf("if (!createdBlockId)");
+    expect(i, "the malformed-success branch is gone").toBeGreaterThan(-1);
+    const j = src.indexOf("const { data: blockRow", i);
+    expect(j, "the read-back that bounds this branch is gone").toBeGreaterThan(i);
+    const branch = src.slice(i, j);
+    expect(branch).toMatch(/return withSetup/);
+    expect(
+      branch,
+      "a malformed create success is still reported as a definitive failure",
+    ).toMatch(/unresolved: true as const/);
+    expect(branch).toMatch(/INITIAL_SAVE_UNRESOLVED/);
+  });
+
+  it("a PRE-WRITE lineage refusal on the CREATE path is rejected, not unresolved", () => {
+    // THE DEFECT (Codex, #860 4305702526), and the twin of the setup action's
+    // below. The create form's catch labels anything thrown as unresolved
+    // whenever settings are attached, so a stale session froze the draft, the
+    // machine controls and Cancel — and every retry repeated the same error,
+    // with nothing written and no way out.
+    const src = read(ACTIONS_SRC);
+    // Scoped to the create action, so the setup action's own catch cannot
+    // satisfy this.
+    const i = src.indexOf("export async function createTreatmentAreaWithEntryAction");
+    expect(i, "the create action is gone").toBeGreaterThan(-1);
+    const after = src.slice(i);
+    const body = after.slice(0, after.indexOf("export async function", 1));
+    expect(
+      body,
+      "the create action must catch the lineage refusal rather than let it reach the form's catch",
+    ).toMatch(/catch \(cause\) \{[\s\S]{0,400}?cause instanceof SessionLineageError/);
+    // Reported as a DEFINITE non-write: no `unresolved` on this result.
+    const lineage = /cause instanceof SessionLineageError\) \{\s*return \{([\s\S]{0,400}?)\};/.exec(
+      body,
+    );
+    expect(lineage, "the lineage refusal's result was not found").toBeTruthy();
+    expect(lineage![1]).toContain("ok: false");
+    expect(
+      lineage![1],
+      "a pre-write refusal was reported as possibly-committed",
+    ).not.toContain("unresolved");
+
+    // AND THE REDIRECT MUST STILL PROPAGATE. `getCurrentPractitionerWithStudio`
+    // calls Next's `redirect()` for an anonymous session, which throws;
+    // swallowing that to report a definitive failure would leave her on a dead
+    // form instead of the login page.
+    expect(
+      body,
+      "a non-lineage throw is swallowed, which would eat Next's redirect",
+    ).toMatch(/throw cause;/);
+  });
+
+  it("a PRE-WRITE lineage refusal is rejected, not unresolved", () => {
+    // THE P2 (Codex, #860 4304930968). `assertSessionForClient` throws
+    // before anything is written, and the entry maps a throw to the
+    // UNRESOLVED state — which keeps the retry key and freezes the draft,
+    // the machine and mode pickers, and the host's Cancel button. Nothing
+    // had been written, so there was nothing ambiguous to protect: she was
+    // left with a form she could neither save nor dismiss, where every
+    // retry repeated the same refusal and the state could never settle.
+    //
+    // A DEADLOCK CREATED BY ROUNDS 14 AND 20. Each control was frozen
+    // correctly for a genuinely unresolved save; nothing distinguished that
+    // from a refusal that merely arrived the same way.
+    const src = read(SETUP_ACTIONS_SRC);
+    expect(
+      src,
+      "the recorder must catch the lineage refusal rather than let it reach the entry's catch",
+    ).toMatch(/catch \(e\) \{[\s\S]{0,400}?e instanceof SessionLineageError/);
+    expect(
+      src,
+      "and report it as a definite non-write",
+    ).toMatch(/e instanceof SessionLineageError[\s\S]{0,300}?code: "rejected"/);
+
+    // CAUGHT BY TYPE, NOT BLANKET. Reporting a genuinely ambiguous write as
+    // rejected unfreezes the draft and releases the key — the opposite
+    // error, and the one that costs a duplicate clinical record.
+    // ANCHORED ON THE CODE, not the comment beside it: `read()` replaces
+    // every comment line with a space, so a regex pinned to prose can never
+    // match. That is the third time tonight — it is a property of the
+    // helper, not an accident.
+    expect(
+      src,
+      "an unrecognised failure must keep its throw, so it still reaches the unknown path",
+    ).toMatch(/catch \(e\) \{[\s\S]{0,700}?throw e;\s*\}/);
   });
 
   it("the owners of \"a save is unresolved\" are ENUMERATED, so a fourth is loud", () => {
@@ -585,7 +832,9 @@ describe("switching machine or mode clears the collected draft", () => {
     // records directly, Cancel stayed live through an unresolved revision
     // save — and unmounting the entry is what discards the retry key.
     const form = read(FORM_SRC);
-    const cancel = form.match(/onClick=\{onCancel\}\s*\n(?:\s*\/\/[^\n]*\n)*\s*disabled=\{([^}]*)\}/);
+    const cancel = form.match(
+      /disabled=\{([^}]*)\}\s*\n\s*data-testid="cancel-treatment-area"/,
+    );
     expect(
       cancel,
       "the Cancel button's disabled expression was not found — this guard would be blind",
@@ -612,8 +861,20 @@ describe("switching machine or mode clears the collected draft", () => {
     // defect: a value that exists, is correct, and never arrives. Five
     // instances so far, and this value crosses FOUR components.
     const entry = read(ENTRY_SRC);
-    expect(entry, "1/4 the entry reports its unresolved save").toMatch(
-      /onUnresolvedChange\?\.\(save\.unresolved\)/,
+    // It reports the TRANSPORT hold, which covers the request's own duration
+    // as well as an unknown outcome — the host's identity controls can
+    // discard the retry key in both windows (Codex, #860 4305022472) — but
+    // NOT an acknowledged save, which has no key left to protect
+    // (4305364945).
+    expect(entry, "1/4 the entry reports its transport hold").toMatch(
+      /onUnresolvedChange\?\.\(transportHold\)/,
+    );
+    const hold = assignedExpression(entry, "transportHold");
+    expect(hold, "1/4 the reported hold misses the in-flight window").toContain(
+      "pending",
+    );
+    expect(hold, "1/4 the reported hold misses an unknown outcome").toContain(
+      "save.unresolved",
     );
 
     const panel = read(PANEL_SRC);
@@ -822,7 +1083,7 @@ describe("switching machine or mode clears the collected draft", () => {
     // guards fail on changes that strengthened them.
     const src = read(FORM_SRC);
     const cancel = src.match(
-      /onClick=\{onCancel\}\s*\n\s*disabled=\{([^}]*)\}/,
+      /disabled=\{([^}]*)\}\s*\n\s*data-testid="cancel-treatment-area"/,
     );
     expect(
       cancel,
@@ -1175,7 +1436,7 @@ describe("switching machine or mode clears the collected draft", () => {
     expect(
       entry,
       "the entry must report BOTH edges, or the freeze never lifts",
-    ).toMatch(/onUnresolvedChange\?\.\(save\.unresolved\)/);
+    ).toMatch(/onUnresolvedChange\?\.\(transportHold\)/);
 
     const panel = read(PANEL_SRC);
     expect(panel).toMatch(/onUnresolvedChange=\{setRevisionUnresolved\}/);
@@ -1361,7 +1622,21 @@ describe("every block/capture consumer is bound to the authorized route", () => 
   /** Exported functions, split out of a module's source by their own header. */
   function exportedFunctions(src: string): Array<{ name: string; body: string }> {
     const out: Array<{ name: string; body: string }> = [];
-    const parts = src.split(/\n(?=export (?:async )?function )/);
+    // SPLIT ON ANY TOP-LEVEL `export`, not only on an exported FUNCTION.
+    //
+    // Splitting on functions alone gave each one a body running to the next
+    // FUNCTION, so anything between them -- an exported type, a constant --
+    // was attributed to the function ABOVE it. That made this guard wrong in
+    // both directions: `listSelectableForCaller`, which takes no arguments
+    // and touches no block id, was flagged the moment an exported type
+    // mentioning `blockId` was declared below it; and before that, the LAST
+    // function in the file was credited with every binding in the trailing
+    // text, so it could have passed on a predicate it never ran.
+    //
+    // Ending a body at the next `export` of any kind is what "this function's
+    // code" actually means. It is strictly tighter, and the discovery test
+    // below is the tripwire against tightening it into blindness.
+    const parts = src.split(/\n(?=export )/);
     for (const part of parts) {
       const m = /^export (?:async )?function (\w+)/.exec(part);
       if (m) out.push({ name: m[1]!, body: part });

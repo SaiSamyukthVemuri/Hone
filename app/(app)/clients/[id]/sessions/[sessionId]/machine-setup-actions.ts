@@ -1,6 +1,9 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { isAreaOperationId } from "@/lib/machines/area-operation";
+import { SETUP_GROUPS_MOVED } from "@/lib/machines/pending-setup";
+import { recordedGroupsMoved } from "@/lib/machines/setting-groups";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { activeModes, type MachineProfile } from "@/lib/machines/profile-contract";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
@@ -40,7 +43,10 @@ import {
   listStudioDevices,
 } from "@/lib/machines/studio-devices";
 import { machinesByIds } from "@/lib/machines/machine-queries";
-import { assertSessionForClient } from "@/lib/sessions/session-lineage";
+import {
+  assertSessionForClient,
+  SessionLineageError,
+} from "@/lib/sessions/session-lineage";
 
 // MPX-03 — the machine workflow's server surface.
 //
@@ -693,6 +699,16 @@ export async function recordSetupSubmissionAction(input: {
   blockId: string;
   machineId: string;
   modeKey: string;
+  /**
+   * The recorded group keys the caller's draft was built from (Codex, #860
+   * 4305780322).
+   *
+   * OPTIONAL, AND THAT IS DELIBERATE: the per-group action and older callers
+   * do not send it, and a caller that cannot say what it saw must not be
+   * silently blocked from saving. Absent means "no claim", and the check below
+   * is skipped. What it buys when present is the staleness refusal.
+   */
+  expectedGroupKeys?: string[];
   idempotencyKey: string;
   groups: Array<{
     groupKey: string;
@@ -738,7 +754,39 @@ export async function recordSetupSubmissionAction(input: {
   // resolves the session against the SERVER-DERIVED studio and this client,
   // so a block id from another client's chart cannot be smuggled in by a
   // stale page or a crafted call.
-  await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
+  //
+  // AND A REFUSAL HERE IS A REFUSAL, NOT AN UNKNOWN OUTCOME (Codex, #860
+  // 4304930968). This throws, and the entry's `catch` maps a throw to the
+  // unresolved state — which keeps the retry key and freezes the draft, the
+  // machine and mode pickers, and the host's Cancel button. Nothing has been
+  // written at this point, so there is nothing ambiguous to protect: she was
+  // left with a form she could neither save nor dismiss, in which every
+  // retry repeats the same lineage refusal and the state can never settle.
+  //
+  // That deadlock is a consequence of rounds 14 and 20 freezing each control
+  // correctly for a genuinely unresolved save, with nothing distinguishing
+  // that from a refusal that merely arrived the same way.
+  //
+  // CAUGHT BY TYPE, not with a blanket try/catch. Reporting a genuinely
+  // ambiguous write as `rejected` is the opposite error, and it unfreezes
+  // the draft and releases the key — the duplicate-capture defect rounds 16
+  // and 17 closed.
+  try {
+    await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
+  } catch (e) {
+    if (e instanceof SessionLineageError) {
+      return {
+        ok: false,
+        code: "rejected",
+        error:
+          "This treatment could not be confirmed as this client's. Reload the chart before saving again — nothing was recorded.",
+      };
+    }
+    // ANYTHING ELSE KEEPS ITS THROW. An unrecognised failure here has not
+    // been shown to be a non-write, and guessing in the unfreezing direction
+    // is the direction that costs a duplicate clinical record.
+    throw e;
+  }
 
   const db = await machineDb();
   const inventory = await listStudioDevices(db, scope.studioId);
@@ -788,6 +836,37 @@ export async function recordSetupSubmissionAction(input: {
   // process is bypassed by anything calling the RPC directly, and a check in
   // both is two definitions of one rule. The form warns before the round trip
   // through `settingGroupIssues`; this relies on the database.
+  // THE RECORDED GROUPS MUST NOT HAVE MOVED (Codex, #860 4305780322).
+  //
+  // Group identities are derived from the snapshot the caller's draft was
+  // built from, so two page loads that both add a group both pick the SAME
+  // next key - and `record_setup_group_in_scope` takes the second as the next
+  // REVISION of the first. Two distinct probe sets merge into one timeline and
+  // only the second's values read as current: a silent loss of what she
+  // recorded first. `setting-groups.ts` already names that outcome for a
+  // sibling case and calls it "one guard away from a corrupt clinical
+  // record"; this is the guard, for the case that is actually reachable.
+  //
+  // COMPARED HERE RATHER THAN IN THE FORM, so the read and the write are one
+  // request: the window is this function's own microseconds instead of a
+  // user-visible round trip. It is still DETECTION - durable allocation of the
+  // identity is the real fix and needs the command, which is 0223's to make.
+  //
+  // BLOCK-WIDE, not scope-wide, because revisions are allocated per (block,
+  // group_key): a collision does not care which device or mode produced it.
+  if (input.expectedGroupKeys) {
+    const current = await readingsForBlock(db, input.blockId, input.sessionId);
+    if (!current.ok) {
+      // A READ THAT FAILED IS NOT A SET THAT MATCHES. Treating it as "no
+      // change" would skip the guard exactly when the database is unhappy.
+      return { ok: false, code: "rejected", error: SETUP_GROUPS_MOVED };
+    }
+    const seen = current.value.map((r) => r.groupKey);
+    if (recordedGroupsMoved(input.expectedGroupKeys, seen)) {
+      return { ok: false, code: "rejected", error: SETUP_GROUPS_MOVED };
+    }
+  }
+
   const out = await recordSetupSubmission(db, {
     blockId: input.blockId,
     machineId: input.machineId,
@@ -926,4 +1005,105 @@ export async function listSelectableForCaller(): Promise<
       modes: activeModes(profile).map((m) => m.key),
     }),
   );
+}
+
+// ---------------------------------------------------------------------------
+// A1b — DID MY SAVE COMMIT? The reconciliation read.
+// ---------------------------------------------------------------------------
+
+/**
+ * What a resumed `area_op` resolves to.
+ *
+ * THREE OUTCOMES, NOT TWO, and the third is the point. "Found" and "not
+ * found" are both ANSWERS; a read that failed is not an answer, and
+ * collapsing it into "not found" would tell her nothing was saved when the
+ * truth is unknown — the exact conflation that produces a duplicate clinical
+ * record.
+ */
+export type AreaCreateClaimLookup =
+  | { ok: true; found: true; blockId: string }
+  | { ok: true; found: false }
+  | { ok: false; error: string };
+
+/**
+ * Did the initial save carrying this key commit?
+ *
+ * WHY A READ AND NOT A RETRY (Codex, #922 4305312331, and the same gap found
+ * independently while writing the e2e). After a reload the retry key survives
+ * in the URL but the PAYLOAD does not — `draft` and `machineDraft` initialise
+ * from fresh defaults. The key only ever reaches
+ * `create_block_with_initial_setup` inside `initialSetup`, so a save with an
+ * empty draft sends NO key at all, takes the ordinary create path, and makes
+ * the duplicate the whole mechanism exists to prevent. And a hand-reconstructed
+ * payload would have to match the stored digest BYTE FOR BYTE or 0223 refuses
+ * it as a reused key — which is the "alter a clinical value to get past
+ * suppression" shape, arriving from the other side.
+ *
+ * So the question after a reload is not "retry the save". It is "did my save
+ * commit?", and the claim row answers that directly without a payload.
+ *
+ * THE GRANT FOR THIS ALREADY EXISTED. 0223 wrote
+ * `grant select on public.treatment_area_create_claims to authenticated` with
+ * `treatment_area_create_claims_member_select using (is_studio_member(studio_id))`,
+ * and no application code read the table until now.
+ *
+ * IT READS THROUGH THE AUTHENTICATED CLIENT, never the service role, so that
+ * policy is what scopes the row — the lookup cannot become a cross-studio
+ * oracle for "does this session hold a claim under this key". The route's own
+ * lineage is checked too, so a key cannot be probed against another client's
+ * chart inside the same studio.
+ */
+export async function lookupAreaCreateClaimAction(input: {
+  clientId: string;
+  sessionId: string;
+  idempotencyKey: string;
+}): Promise<AreaCreateClaimLookup> {
+  const { clientId, sessionId, idempotencyKey } = input;
+  const scope = await identity();
+  if (!scope) {
+    return { ok: false, error: "Sign in to check whether that save completed." };
+  }
+
+  // A KEY WE DID NOT MINT IS NOT ANSWERED EITHER WAY. The client only ever
+  // sends a value `readAreaOperationId` accepted, so a malformed one here
+  // means the URL was crafted or corrupted. Returning "not found" would
+  // invite a fresh save under a key whose history we cannot see; refusing
+  // leaves her the choice, which is the safe direction.
+  if (!isAreaOperationId(idempotencyKey)) {
+    return { ok: false, error: "That save could not be identified." };
+  }
+
+  try {
+    // The session must belong to BOTH this studio AND this route client, or
+    // this would be reading another client's chart. Throws.
+    await assertSessionForClient(scope.studioId, clientId, sessionId);
+  } catch (cause) {
+    if (cause instanceof SessionLineageError) {
+      return {
+        ok: false,
+        error: "This treatment could not be confirmed as this client's.",
+      };
+    }
+    throw cause;
+  }
+
+  const db = await createClient();
+  const { data, error } = await db
+    .from("treatment_area_create_claims")
+    .select("block_id")
+    // THE SESSION PREDICATE IS THE ROUTE BINDING, in the query rather than
+    // in a separate check — the same shape every other consumer of a block id
+    // here uses, and what machine-setting-draft.test.ts polices.
+    .eq("session_id", sessionId)
+    .eq("idempotency_key", idempotencyKey)
+    .maybeSingle();
+
+  // A FAILED READ IS NOT AN EMPTY RESULT. PostgREST reports both as a falsy
+  // `data`, and treating them alike is how "we could not check" becomes
+  // "nothing was saved".
+  if (error) {
+    return { ok: false, error: "That save could not be checked just now." };
+  }
+  if (!data) return { ok: true, found: false };
+  return { ok: true, found: true, blockId: data.block_id as string };
 }
