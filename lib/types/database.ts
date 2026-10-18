@@ -791,12 +791,13 @@ export type Practitioner = {
   // seeds NEW treatment-area drafts. UI default only; the value
   // actually used stays on session_blocks.machine_frequency.
   default_machine_frequency: MachineFrequency | null;
-  // Migration 0222: when public booking last SUCCESSFULLY assigned this
-  // practitioner. Advanced only by create_public_appointment_v2 on a CREATED
-  // capacity-ON assignment, inside that command's studio transaction; refusals
-  // never advance it. NULL means never recorded, which sorts FIRST among equal
-  // loads in the fair-assignment ordering, and is never backfilled because
-  // history carries no such fact.
+  // Migration 0222 (THIS PR's amended revision, blob c27d9480 — the original
+  // 0222 on #868 does not add it): when public booking last SUCCESSFULLY
+  // assigned this practitioner. Advanced only by create_public_appointment_v2
+  // on a CREATED capacity-ON assignment, inside that command's studio
+  // transaction; refusals never advance it. NULL means never recorded, which
+  // sorts FIRST among equal loads in the fair-assignment ordering, and is never
+  // backfilled because history carries no such fact.
   last_public_assignment_at: string | null;
   created_at: string;
 };
