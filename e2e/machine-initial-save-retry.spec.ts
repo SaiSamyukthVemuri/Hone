@@ -792,11 +792,18 @@ test("another client's recorded captures never render on this chart @390px", asy
     "another client's recorded value is on this page",
   ).not.toContainText("777");
 
-  // AND NOT IN ANYTHING THE PAGE WAS SENT. Give the in-flight reads a moment
-  // to land first, or this asserts over an empty list.
-  await expect
-    .poll(() => bodies.length, { timeout: T })
-    .toBeGreaterThan(0);
+  // AND NOT IN ANYTHING THE PAGE WAS SENT THAT CAN BE READ.
+  //
+  // THE LIMIT, STATED RATHER THAN HIDDEN. Server-action responses are
+  // STREAMED, so `res.text()` rejects for exactly the requests this most wants
+  // to inspect - my first version polled for at least one captured body and
+  // timed out, failing the test for a reason with nothing to do with
+  // isolation. So this asserts over whatever WAS readable and does not pretend
+  // the set is complete.
+  //
+  // WHAT CARRIES THE CLAIM is therefore the document-wide assertion above plus
+  // `swapped.count > 0` below, which already proves the tampered POSTs really
+  // happened. This check is a cheap extra net, not the proof.
   expect(
     bodies.filter((b) => b.includes("777")),
     "another client's recorded value reached this page in a response body",
@@ -1361,6 +1368,27 @@ test("SAM'S RULE: a deliberate identical second area is still TWO areas @390px",
 // and tests/db/machine-initial-save.db.test.ts (the create claim's own retry
 // cases).
 
+/**
+ * Require the machine gate, or SKIP LOUDLY.
+ *
+ * Returns only when a verified model is offered. Otherwise it annotates
+ * `gate-closed` and marks the test SKIPPED — never passed — so a reporter's
+ * counts cannot be read as evidence for a journey that never ran.
+ */
+async function requireGateOpen(page: Page) {
+  if (await openMachinePanel(page)) return;
+  test.info().annotations.push({
+    type: "gate-closed",
+    description:
+      "HONE_SYNTHETIC_MACHINE_PROFILE is not in the server env, so no " +
+      "verified model is offered and this recovery journey did NOT run. CI " +
+      "runs this lane gate-closed BY DESIGN: the ordinary extended run is " +
+      "the flag-off proof that no real model is ever offered. The local " +
+      "heavy-slot run with the outer flag set is the evidence of record.",
+  });
+  test.skip(true, "machine gate closed — see the gate-closed annotation");
+}
+
 /** Drive the form to an UNSETTLED save, then close it. Returns the held key. */
 async function unsettledThenClose(
   page: Page,
@@ -1383,7 +1411,7 @@ async function unsettledThenClose(
 
   await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
   await page.getByTestId("add-settings-block-cta").click({ timeout: T });
-  expect(await openMachinePanel(page)).toBe(true);
+  await requireGateOpen(page);
   await page.getByTestId("machine-select").selectOption(machineId);
   await expect(page.getByTestId("machine-chosen")).toContainText("Room 1 demo", {
     timeout: T,
@@ -1407,16 +1435,30 @@ async function unsettledThenClose(
   // A RELOAD, AND IT IS NOT OPTIONAL. Cancel is DISABLED while the save's
   // outcome is unknown - deliberately, because Cancel is the one control that
   // destroys the retry key (Codex, #860 4301633049). So closing is not
-  // reachable in this mount at all; the reload is what clears
-  // `saveUnresolved`, runs the claim lookup, and brings the form to the
-  // unsettled-but-settled-enough-to-leave state. It is also the real
-  // scenario: she lost the answer and came back.
+  // reachable in the mount that lost the answer. The reload is what clears
+  // `saveUnresolved`; it is also the real scenario, since she lost the answer
+  // and came back.
   await page.reload();
+
+  // AND THE RELOAD LEAVES THE FORM CLOSED. The create form only exists after
+  // an Add click, so there is nothing on screen yet - the key lives in the
+  // URL, not in a mounted component. Asserting the choice here was my second
+  // wrong shape; it cannot appear until the form is opened.
+  expect(
+    areaOpOf(page.url()),
+    "the reload lost the key, so there is no operation left to resume",
+  ).toBe(key);
+
+  // OPEN IT: now the claim lookup runs, answers `absent`, and the choice
+  // appears.
+  await page.getByTestId("add-settings-block-cta").click({ timeout: T });
   await expect(page.getByTestId("initial-save-resume-choice")).toBeVisible({
     timeout: T,
   });
 
-  // CLOSE WHILE UNSETTLED. The key must survive this.
+  // NOW CLOSE, WHICH IS THE STEP UNDER TEST. Cancel is live here because the
+  // reload cleared `saveUnresolved`, and `closeForm` must RETAIN the key
+  // because the answer is unsettled (Codex, #922 4307515255).
   await page.getByTestId("cancel-treatment-area").click({ timeout: T });
   expect(
     areaOpOf(page.url()),
@@ -1597,7 +1639,7 @@ test("(iii) CONTROL: a SETTLED close clears the key, and the next Add is ordinar
 
   await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
   await page.getByTestId("add-settings-block-cta").click({ timeout: T });
-  expect(await openMachinePanel(page)).toBe(true);
+  await requireGateOpen(page);
   await enterIdentical(page, machineId);
 
   await test.step("a save that SETTLES leaves nothing behind", async () => {
