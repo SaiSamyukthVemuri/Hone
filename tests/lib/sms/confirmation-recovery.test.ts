@@ -8,6 +8,8 @@ import {
   isOwedConfirmation,
   recoverOwedConfirmations,
   type OwedConfirmationRow,
+  recoveryFirstStudioIndex,
+  RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN,
 } from "@/lib/sms/confirmation-recovery";
 import { STUDIO_ROUTING_ENV, type SendTimeRouteRead } from "@/lib/sms/send-time-route";
 import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
@@ -1057,6 +1059,54 @@ describe("the first studio rotates per 15-minute slot", () => {
     }
     const reached = new Set(db.filter((x) => x.sms_confirmation_sent_at).map((x) => x.studio_id));
     expect(reached.size).toBe(149);
+  });
+});
+
+// Codex P2 4305313120: a stride sharing a factor with the studio count only
+// ever started at a few indices (100 studios, stride 50: indices 0 and 50), so
+// studios behind a time-budget-exhausting start were never examined.
+describe("the rotation reaches EVERY studio as a starting point", () => {
+  const capacityFor = (n: number) => {
+    const per = Math.max(1, Math.floor(RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN / n));
+    return Math.floor(RECOVERY_MAX_PROVIDER_ATTEMPTS_PER_RUN / per);
+  };
+
+  it("for every studio count 1..300, `count` consecutive slots start at every index exactly once", () => {
+    for (let n = 1; n <= 300; n += 1) {
+      const starts = new Set(Array.from({ length: n }, (_, slot) => recoveryFirstStudioIndex(slot, n, capacityFor(n))));
+      expect(starts.size, `n=${n}`).toBe(n);
+    }
+  });
+
+  it("the reported case: 100 studios, capacity 50, no longer alternates between 0 and 50", () => {
+    expect(capacityFor(100)).toBe(50);
+    const firstTwenty = new Set(Array.from({ length: 20 }, (_, slot) => recoveryFirstStudioIndex(slot, 100, 50)));
+    expect(firstTwenty.size).toBe(20);
+  });
+
+  it("the stride stays as close to the capacity as the count allows (successive runs barely overlap)", () => {
+    // 100 studios: 49 is the largest stride <= 50 coprime with 100.
+    expect(recoveryFirstStudioIndex(1, 100, 50)).toBe(49);
+    // 149 studios: 50 is already coprime, unchanged.
+    expect(recoveryFirstStudioIndex(1, 149, 50)).toBe(50);
+    // Everything fits in one run: start rotates by one.
+    expect(recoveryFirstStudioIndex(3, 7, 50)).toBe(3);
+  });
+
+  it("100 routed studios with backlogs: every one is reached within 3 slots (with stride 50 it was 2 starts forever)", async () => {
+    const ids = Array.from({ length: 100 }, (_, i) => `studio-q${String(i).padStart(3, "0")}`);
+    const list = ids.join(",");
+    const env = { [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: list };
+    process.env[STUDIO_ROUTING_ENV] = list;
+    snapshot = (studioId) => readySnap(studioId, `sender-${studioId}`);
+    db = ids.flatMap((sid) => [0, 1].map((k) => appt({ id: `${sid}-${k}`, studio_id: sid, created_at: iso(NOW - HOUR - k * 60_000), starts_at: iso(NOW + 48 * HOUR) })));
+    const slot0 = Math.floor(NOW / (15 * 60_000)) * 15 * 60_000;
+    for (const k of [0, 1, 2]) {
+      const at = slot0 + k * 15 * 60_000 + 60_000;
+      await recoverOwedConfirmations({ admin: admin(), nowMs: at, env, clock: () => at, manageUrlFor: () => "https://app.example/manage/x" });
+    }
+    const reached = new Set(db.filter((x) => x.sms_confirmation_sent_at).map((x) => x.studio_id));
+    expect(reached.size).toBe(100);
   });
 });
 
