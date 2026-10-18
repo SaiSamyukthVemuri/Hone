@@ -396,13 +396,64 @@ describe("the create form carries the key in the URL", () => {
     expect(src).toMatch(/setResume\(\{ state: "unknown" \}\)/);
   });
 
-  it("holds Save while the question is open, and once it is answered 'saved'", () => {
-    // Committing a second save before the read lands is the one outcome this
-    // must not allow.
+  it("holds Save for every state that must not commit", () => {
+    // Asserted on the TERMS, not the expression, because this list has grown
+    // twice and pinning its exact text is how a guard reds on a change that
+    // strengthens it.
+    //
+    //   pending   — a save already in flight;
+    //   checking  — the claim read has not landed, and committing before it
+    //               does is the one outcome that must not happen;
+    //   saved     — positively answered, so there is nothing left to save;
+    //   resumedNeedsSettings — a resumed save with an EMPTY draft would send
+    //               NO key and duplicate (Codex, #922 4305550889).
     const src = read(FORM_SRC);
-    expect(src).toMatch(
-      /disabled=\{pending \|\| resume\.state === "checking" \|\| resume\.state === "saved"\}/,
+    const save = /onClick=\{submit\}[\s\S]{0,400}?disabled=\{([\s\S]*?)\}\s*\n\s*data-testid="save-treatment-area"/.exec(
+      src,
     );
+    expect(save, "the Save button's disabled expression was not found").toBeTruthy();
+    for (const term of [
+      "pending",
+      'resume.state === "checking"',
+      'resume.state === "saved"',
+      "resumedNeedsSettings",
+    ]) {
+      expect(save![1], `Save is not held for ${term}`).toContain(term);
+    }
+  });
+
+  it("and a resumed save with NO settings cannot be committed", () => {
+    // THE P1 ITSELF (Codex, #922 4305550889). The retry key only reaches
+    // `create_block_with_initial_setup` inside `initialSetup`, so a bare save
+    // from a freshly reloaded form sent no key, took the ordinary create path
+    // and made a second area. Keeping the key through draft changes — the
+    // previous round's fix — cannot help when there is no `initialSetup` for
+    // it to travel in.
+    //
+    // Requiring settings follows from what the parameter MEANS: `area_op` is
+    // only ever minted inside `machineSetupForSave`, so a resumed operation
+    // always had settings, and a bare save in that state is a different save.
+    const src = read(FORM_SRC);
+    const expr = /const resumedNeedsSettings =\s*([^;]*);/.exec(src);
+    expect(expr, "the resumed-needs-settings rule was not found").toBeTruthy();
+    expect(expr![1]).toContain('"absent"');
+    expect(
+      expr![1],
+      "an unanswerable read still allowed a bare save",
+    ).toContain('"unknown"');
+    expect(expr![1]).toContain("!hasSettingsToSend");
+
+    // Derived from the draft, NOT from `machineSetupForSave()` — that
+    // function mints and stores a key, so calling it during render would set
+    // state from a render pass.
+    const has = /const hasSettingsToSend =\s*([^;]*);/.exec(src);
+    expect(has, "the settings predicate was not found").toBeTruthy();
+    expect(has![1]).toContain("machineDraft");
+    expect(has![1]).not.toContain("machineSetupForSave");
+
+    // And she is told why, rather than facing a dead button.
+    expect(src).toMatch(/INITIAL_SAVE_RESUME_NEEDS_SETTINGS/);
+    expect(src).toMatch(/data-testid="initial-save-resume-needs-settings"/);
   });
 
   it("clears the parameter on EVERY exit, and never in edit mode", () => {

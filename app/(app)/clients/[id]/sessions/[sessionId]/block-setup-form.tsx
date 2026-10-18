@@ -98,6 +98,7 @@ import { READING_INPUT_CLS } from "@/lib/sessions/charting-input-styles";
 import { resolveModeSections } from "@/lib/sessions/mode-sections";
 import {
   INITIAL_SAVE_ALREADY_SAVED,
+  INITIAL_SAVE_RESUME_NEEDS_SETTINGS,
   INITIAL_SAVE_RESUME_UNKNOWN,
   INITIAL_SAVE_UNRESOLVED,
   prepareHandoff,
@@ -573,6 +574,7 @@ export function BlockSetupForm({
    */
   const resumeOwnsKey = resume.state !== "idle" && resume.state !== "saved";
 
+
   /**
    * A REVISION save inside the machine panel has an unknown outcome.
    *
@@ -791,6 +793,33 @@ export function BlockSetupForm({
    * instead: that key is the retry's safety, and dropping it because a
    * remount reported an empty draft would turn the retry into a second area.
    */
+  /**
+   * A RESUMED SAVE WITH NOTHING TO SEND (Codex, #922 4305550889, P1).
+   *
+   * The retry key reaches `create_block_with_initial_setup` only inside
+   * `initialSetup`, and a freshly reloaded form has an EMPTY machine draft —
+   * so pressing Save here sent no key at all, took the ordinary
+   * `create_block_with_entry` path, and created the second area this whole
+   * mechanism exists to prevent. Keeping the key through draft changes, which
+   * is what the previous round fixed, does not help when there is no
+   * `initialSetup` for it to travel in.
+   *
+   * REQUIRING SETTINGS IS NOT A CONVENIENCE, it follows from what the
+   * parameter means: `area_op` is only ever minted inside
+   * `machineSetupForSave`, so a resumed operation ALWAYS had settings. A bare
+   * save in this state is therefore a DIFFERENT save, and it is the one that
+   * must not proceed unkeyed while the original may still be committing.
+   *
+   * Derived from `machineDraft` directly rather than from
+   * `machineSetupForSave()`, because that function MINTS AND STORES a key —
+   * calling it during render would set state from a render pass.
+   */
+  const hasSettingsToSend =
+    machineDraft !== null && machineDraft.groups.length > 0;
+  const resumedNeedsSettings =
+    (resume.state === "absent" || resume.state === "unknown") &&
+    !hasSettingsToSend;
+
   const onSettingDraftChanged = (
     next: {
       groups: GroupSubmission[];
@@ -1966,6 +1995,16 @@ export function BlockSetupForm({
         </div>
       )}
 
+      {resumedNeedsSettings && (
+        <p
+          className="text-sm text-neutral-700 dark:text-neutral-300"
+          role="status"
+          data-testid="initial-save-resume-needs-settings"
+        >
+          {INITIAL_SAVE_RESUME_NEEDS_SETTINGS}
+        </p>
+      )}
+
       {resume.state === "checking" && (
         <p
           className="text-sm text-neutral-600 dark:text-neutral-400"
@@ -1989,7 +2028,12 @@ export function BlockSetupForm({
           // HELD WHILE THE RESUMED QUESTION IS OPEN. Committing a second save
           // before the claim read lands is the one outcome this must not
           // allow, and once the answer is "saved" there is nothing to save.
-          disabled={pending || resume.state === "checking" || resume.state === "saved"}
+          disabled={
+            pending ||
+            resume.state === "checking" ||
+            resume.state === "saved" ||
+            resumedNeedsSettings
+          }
           data-testid="save-treatment-area"
           className="rounded-md bg-neutral-900 px-5 py-3 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
         >

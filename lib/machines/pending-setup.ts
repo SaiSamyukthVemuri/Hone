@@ -165,6 +165,25 @@ export const INITIAL_SAVE_RESUME_UNKNOWN =
   "now. Look at the chart below before saving again: if the area is already " +
   "there, close this form instead of saving.";
 
+/**
+ * A resumed save whose SETTINGS did not survive the reload.
+ *
+ * WHY SAVE IS HELD (A1b, Codex #922 4305550889). The retry key travels to
+ * `create_block_with_initial_setup` only inside `initialSetup`, so a save with
+ * an empty machine draft sends NO key, takes the ordinary create path, and
+ * creates a SECOND treatment area. An `area_op` is only ever minted for a save
+ * that HAD settings, so a bare save in a resumed form is definitionally a
+ * different save — and the one thing that must not proceed unkeyed while the
+ * original may still be committing.
+ *
+ * So she is told what is missing and what to do, rather than being given a
+ * button that would duplicate her treatment.
+ */
+export const INITIAL_SAVE_RESUME_NEEDS_SETTINGS =
+  "The machine settings for this area were entered before the page reloaded, " +
+  "so they are not on screen any more. Re-enter them to save this area, or " +
+  "close this form — saving without them would record a second area.";
+
 export const WRONG_BLOCK =
   "These settings were entered for a different treatment area and cannot be " +
   "recorded against this one.";
