@@ -1,3 +1,11 @@
+// NEW BY REF THROUGHOUT (Codex, #860 4305780322). A settings-group identity
+// is ISSUED by the database now: a caller sends `newGroupRef` - its own local
+// placeholder - and may use `groupKey` only for a group already on the block.
+// Every per-group save in this file is the FIRST on its own freshly seeded
+// block, including the four cases that save twice, which use two DISTINCT
+// blocks (two visits, a studio-mate's, a soft-deleted one). So every call here
+// asks for an identity rather than naming one.
+
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 
@@ -145,7 +153,18 @@ function pgMachineDb(q: UserQuery): MachineDb {
       const r = await q(sql, params);
       return { data: r.rows, error: null };
     } catch (e) {
-      return { data: null, error: { message: (e as Error).message } };
+      // THE SQLSTATE COMES TOO. supabase-js supplies `code` for anything that
+      // reached PostgREST or Postgres, and `MachineDbError.code` is how a
+      // caller tells a DEFINITIVE answer from a transport failure. Dropping it
+      // made every refusal here look like a transport failure.
+      const err = e as Error & { code?: unknown };
+      return {
+        data: null,
+        error: {
+          message: err.message,
+          ...(typeof err.code === "string" ? { code: err.code } : {}),
+        },
+      };
     }
   };
 
@@ -605,7 +624,8 @@ describe("MPX-03 · readings SAVE and are RETRIEVED for the chart", () => {
         blockId,
         machineId: id,
         modeKey: "galvanic",
-        groupKey: "g1",
+        groupKey: null,
+        newGroupRef: "g1",
         channels: [1, 2],
         readings: READINGS,
       }),
@@ -636,7 +656,8 @@ describe("MPX-03 · readings SAVE and are RETRIEVED for the chart", () => {
         blockId,
         machineId: id,
         modeKey: "galvanic",
-        groupKey: "g1",
+        groupKey: null,
+        newGroupRef: "g1",
         channels: [],
         readings: [
           {
@@ -679,7 +700,8 @@ describe("MPX-03 · readings SAVE and are RETRIEVED for the chart", () => {
         blockId,
         machineId: id,
         modeKey: "galvanic",
-        groupKey: "g1",
+        groupKey: null,
+        newGroupRef: "g1",
         channels: [],
         readings: [
           {
@@ -730,7 +752,8 @@ describe("MPX-03 · readings SAVE and are RETRIEVED for the chart", () => {
           blockId,
           machineId: id,
           modeKey: "galvanic",
-          groupKey: group,
+          groupKey: null,
+          newGroupRef: group,
           channels: [...channels],
           readings: [
             {
@@ -786,7 +809,8 @@ describe("MPX-03 · readings SAVE and are RETRIEVED for the chart", () => {
         blockId,
         machineId: id,
         modeKey: "galvanic",
-        groupKey: "g1",
+        groupKey: null,
+        newGroupRef: "g1",
         channels: [],
         readings: READINGS,
       }),
@@ -835,7 +859,8 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
         blockId: ana.blockId,
         machineId,
         modeKey: "galvanic",
-        groupKey: "g1",
+        groupKey: null,
+        newGroupRef: "g1",
         channels: [],
         readings: [
           {
@@ -890,7 +915,8 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
         blockId: beaBlockId,
         machineId,
         modeKey: "galvanic",
-        groupKey: "g1",
+        groupKey: null,
+        newGroupRef: "g1",
         channels: [],
         readings: [
           {
@@ -976,7 +1002,8 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
         blockId: kept.blockId,
         machineId,
         modeKey: "galvanic",
-        groupKey: "g1",
+        groupKey: null,
+        newGroupRef: "g1",
         channels: [],
         readings: [
           {
@@ -1014,7 +1041,8 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
         blockId: removed.blockId,
         machineId,
         modeKey: "galvanic",
-        groupKey: "g1",
+        groupKey: null,
+        newGroupRef: "g1",
         channels: [],
         readings: [
           {
@@ -1092,7 +1120,8 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
         blockId: block.blockId,
         machineId,
         modeKey: "galvanic",
-        groupKey: "g1",
+        groupKey: null,
+        newGroupRef: "g1",
         channels: [],
         readings: READINGS,
       }),
@@ -1120,7 +1149,8 @@ describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", 
         blockId: block.blockId,
         machineId,
         modeKey: "galvanic",
-        groupKey: "g1",
+        groupKey: null,
+        newGroupRef: "g1",
         channels: [],
         readings: READINGS,
       }),
@@ -1148,7 +1178,8 @@ describe("MPX-03 · NEXT-VISIT retrieval returns one coherent prior setup", () =
         blockId: first.blockId,
         machineId: id,
         modeKey: "galvanic",
-        groupKey: "g1",
+        groupKey: null,
+        newGroupRef: "g1",
         channels: [],
         readings: [
           {
@@ -1185,7 +1216,8 @@ describe("MPX-03 · NEXT-VISIT retrieval returns one coherent prior setup", () =
         blockId: second.blockId,
         machineId: id,
         modeKey: "galvanic",
-        groupKey: "g1",
+        groupKey: null,
+        newGroupRef: "g1",
         channels: [],
         readings: READINGS,
       }),
@@ -1229,7 +1261,8 @@ describe("MPX-03 · NEXT-VISIT retrieval returns one coherent prior setup", () =
         blockId,
         machineId: id,
         modeKey: "galvanic",
-        groupKey: "g1",
+        groupKey: null,
+        newGroupRef: "g1",
         channels: [2],
         readings: READINGS,
       }),
@@ -1305,7 +1338,8 @@ describe("MPX-03 · the adapter itself is not lying", () => {
         blockId,
         machineId: "00000000-0000-0000-0000-000000000000",
         modeKey: "galvanic",
-        groupKey: "g1",
+        groupKey: null,
+        newGroupRef: "g1",
         channels: [],
         readings: READINGS,
       }),
@@ -1449,7 +1483,8 @@ describe("0223 · guidance never offers the session on screen back as history", 
         blockId: first.blockId,
         machineId,
         modeKey: "galvanic",
-        groupKey: "g1",
+        groupKey: null,
+        newGroupRef: "g1",
         channels: [],
         readings: [
           {
@@ -1504,7 +1539,8 @@ describe("0223 · guidance never offers the session on screen back as history", 
         blockId: todayBlockId,
         machineId,
         modeKey: "galvanic",
-        groupKey: "g1",
+        groupKey: null,
+        newGroupRef: "g1",
         channels: [],
         readings: [
           {
@@ -1583,7 +1619,8 @@ describe("0223 · guidance never offers the session on screen back as history", 
         blockId: only.blockId,
         machineId,
         modeKey: "galvanic",
-        groupKey: "g1",
+        groupKey: null,
+        newGroupRef: "g1",
         channels: [],
         readings: [
           {

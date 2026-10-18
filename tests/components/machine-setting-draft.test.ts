@@ -649,7 +649,9 @@ describe("switching machine or mode clears the collected draft", () => {
     // would disable the guard exactly when the database is unhappy, which is
     // when a concurrent save is most likely to be in flight.
     const actions = read(SETUP_ACTIONS_SRC);
-    const i = actions.indexOf("if (input.expectedGroupKeys) {");
+    const i = actions.indexOf(
+      'if (input.expectedGroupKeys && groups.some((g) => g.groupKey !== null)) {',
+    );
     expect(i, "the staleness block is gone").toBeGreaterThan(-1);
     const block = actions.slice(i, actions.indexOf("const out = await recordSetupSubmission", i));
     // ZERO GAP, for the same reason as above: a `{0,400}` window reached the
@@ -663,13 +665,26 @@ describe("switching machine or mode clears the collected draft", () => {
     );
   });
 
+  it("and it only applies to a REVISE, because a new group cannot collide", () => {
+    // ops01's ruling after the identity moved into the database. A save made
+    // entirely of new groups is issued its own keys under a block-wide lock,
+    // so a stale draft still lands as a distinct group - refusing it would
+    // cost a reload for nothing. A revise from a moved snapshot is the case
+    // that still means her baseline has shifted.
+    const actions = read(SETUP_ACTIONS_SRC);
+    expect(
+      actions,
+      "the staleness refusal applies to new groups too, which can no longer collide",
+    ).toContain("groups.some((g) => g.groupKey !== null)");
+  });
+
   it("and the claim is OPTIONAL, so an older caller is not silently blocked", () => {
     // The per-group action and other callers do not send the set. Absent must
     // mean "no claim" and skip the check, not "nothing was recorded" — which
     // would refuse every save those callers make.
     const actions = read(SETUP_ACTIONS_SRC);
     expect(actions).toMatch(/expectedGroupKeys\?: string\[\];/);
-    expect(actions).toMatch(/if \(input\.expectedGroupKeys\) \{/);
+    expect(actions).toMatch(/if \(input\.expectedGroupKeys &&/);
   });
 
   it("a malformed CREATE success is unresolved, exactly like the read-back failure", () => {
@@ -1229,7 +1244,14 @@ describe("switching machine or mode clears the collected draft", () => {
       /export async function readingsForBlock\([\s\S]{0,2600}?sessionId: string,\s*\n\):/,
     );
     expect(src).toMatch(
-      /\.from\("session_blocks"\)[\s\S]{0,200}?\.eq\("id", blockId\)[\s\S]{0,80}?\.eq\("session_id", sessionId\)/,
+      // THE BINDING MOVED INTO THE FUNCTION (Codex, #860 4305555264). It was
+      // a bounded `.from("session_blocks").eq(id).eq(session_id)` lookup here,
+      // followed by a read filtered on the block alone - sound only because
+      // `session_blocks.session_id` is immutable, which is a property of a
+      // trigger in another file. `setup_readings_for_block` JOINS the session,
+      // so the binding is a predicate on the read itself and the session id
+      // has to reach it.
+      /db\.rpc\("setup_readings_for_block", \{\s*p_block_id: blockId,\s*p_session_id: sessionId,\s*\}\)/,
     );
   });
 

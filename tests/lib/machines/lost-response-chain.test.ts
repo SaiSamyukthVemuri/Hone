@@ -85,6 +85,7 @@ const INPUT = {
   groups: [
     {
       groupKey: "g1",
+      newGroupRef: null,
       channels: [1],
       readings: [
         {
