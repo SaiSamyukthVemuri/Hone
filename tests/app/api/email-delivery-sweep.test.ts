@@ -109,6 +109,87 @@ describe("a healthy run", () => {
   });
 });
 
+describe("a failed run is reported as failed (Codex P2 4307534331, 4307534335)", () => {
+  it("a HEARTBEAT write failure alone raises the alert and fails the run", async () => {
+    // The whole point of the heartbeat is to notice silence, so its own write
+    // failing must not be the one failure that goes unreported. Before the fix
+    // this returned ok:true with 200 and raised nothing.
+    h.rpc = {
+      claim_email_provider_events: [ok([])],
+      record_email_sweep_run: [{ data: null, error: { message: "write failed" } }],
+      email_delivery_health: [healthRow()],
+    };
+    const res = await call("Bearer sweep-test-secret");
+    const body = await res.json();
+    expect(res.status, "a failed run must not answer 2xx").toBe(500);
+    expect(body).toMatchObject({ ok: false, heartbeat: false });
+    expect(body.raised).toContain("email_delivery_sweep_failing");
+    // The alert must say WHICH write failed, or an operator cannot tell a
+    // heartbeat failure from a sweep or health failure.
+    expect(h.alerts[0]).toMatchObject({
+      event: "email_delivery_sweep_failing",
+      safeDetails: { sweep_ran: true, heartbeat_written: false, health_read: true },
+    });
+  });
+
+  it("and the health findings are STILL evaluated on a heartbeat failure", async () => {
+    // Decoupled deliberately: one failure must not suppress the other signal.
+    // An `else` here would have cost this run its health findings.
+    h.rpc = {
+      claim_email_provider_events: [ok([])],
+      record_email_sweep_run: [{ data: null, error: { message: "write failed" } }],
+      // Real columns that really do produce a finding. My first version used an
+      // invented field name, so the row was HEALTHY and the test failed on its
+      // own fixture rather than on the product — the assertion below is what
+      // caught it.
+      email_delivery_health: [healthRow({ pending_receipts: 3, oldest_pending_seconds: 3600 })],
+    };
+    const res = await call("Bearer sweep-test-secret");
+    const body = await res.json();
+    expect(res.status).toBe(500);
+    expect(body.raised).toContain("email_delivery_sweep_failing");
+    expect(
+      body.raised,
+      "the data finding must be raised alongside the run failure",
+    ).toContain("email_delivery_backlog_stale");
+    expect(body.raised.length).toBeGreaterThan(1);
+  });
+
+  it("a failed SWEEP answers 500 too", async () => {
+    h.rpc = {
+      claim_email_provider_events: [{ data: null, error: { message: "down" } }],
+      email_delivery_health: [healthRow()],
+    };
+    const res = await call("Bearer sweep-test-secret");
+    expect(res.status).toBe(500);
+    expect((await res.json())).toMatchObject({ ok: false, heartbeat: false });
+  });
+
+  it("a failed HEALTH read answers 500 too", async () => {
+    h.rpc = {
+      claim_email_provider_events: [ok([])],
+      record_email_sweep_run: [ok("recorded")],
+      email_delivery_health: [{ data: null, error: { message: "down" } }],
+    };
+    const res = await call("Bearer sweep-test-secret");
+    expect(res.status).toBe(500);
+    expect((await res.json())).toMatchObject({ ok: false, heartbeat: true });
+  });
+
+  it("CONTROL: the healthy run still answers 200", async () => {
+    // So the 500s above are a measured distinction, not this route answering
+    // 500 for everything.
+    h.rpc = {
+      claim_email_provider_events: [ok([])],
+      record_email_sweep_run: [ok("recorded")],
+      email_delivery_health: [healthRow()],
+    };
+    const res = await call("Bearer sweep-test-secret");
+    expect(res.status).toBe(200);
+    expect((await res.json())).toMatchObject({ ok: true, heartbeat: true, raised: [] });
+  });
+});
+
 describe("findings become DEDUPED ops alerts", () => {
   it("raises each finding once while an unresolved alert for it is open", async () => {
     h.rpc = {
