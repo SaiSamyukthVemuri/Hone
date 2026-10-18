@@ -359,6 +359,11 @@ export const BROWSER_GROUPS = {
       // extended fallback), and it is owner records administration, not
       // charting, so it does not join the cost-pinned `sessions` selection.
       "hon-46-clinical-records-export.spec.ts",
+      // FETT photos (#892): the photo surface's mounted 44px floor at phone width
+      // and the deactivated-practitioner denial. Filed here for the same two
+      // reasons as UI-04 above: /clients/** has no PATH_TO_GROUP pattern, so a
+      // photo diff already runs extended, and `sessions` carries a cost pin.
+      "fett-photos-touch-floor.spec.ts",
       "new-studio-wizard.spec.ts",
       "onboarding.spec.ts",
       "quick-import.spec.ts",

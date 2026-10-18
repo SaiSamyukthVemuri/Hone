@@ -16,23 +16,65 @@ const rpcCalls: Array<{ name: string; params: Record<string, unknown> }> = [];
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: vi.fn(async () => undefined) }));
-vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: vi.fn() }));
+vi.mock("@/lib/supabase/admin-server", () => ({
+  createAdminClient: vi.fn(() => ({
+    storage: {
+      from: vi.fn(() => ({
+        upload: vi.fn(async () => ({ error: null })),
+        remove: vi.fn(async () => ({ error: null })),
+      })),
+    },
+  })),
+}));
+vi.mock("@/lib/images/treatment-image-sanitize", () => ({
+  sanitizeTreatmentImage: vi.fn(async () => ({
+    ok: true,
+    bytes: Buffer.from("sanitized"),
+    contentType: "image/jpeg",
+    thumbBytes: null,
+  })),
+}));
+const STUDIO = "11111111-1111-1111-1111-111111111111";
+const CLIENT = "22222222-2222-2222-2222-222222222222";
+const SESSION = "33333333-3333-3333-3333-333333333333";
 vi.mock("@/lib/supabase/queries", () => ({
   getCurrentPractitionerWithStudio: vi.fn(async () => ({
     practitioner: { id: "p", active: true },
-    studio: { id: "s" },
+    studio: { id: STUDIO },
   })),
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: vi.fn(async () => ({
+    // Ownership lookups the upload action makes: the client, and the visit.
+    from: vi.fn((table: string) => {
+      const row = table === "clients" ? { id: CLIENT } : table === "sessions" ? { id: SESSION } : null;
+      const chain: Record<string, unknown> = {};
+      chain.select = vi.fn(() => chain);
+      chain.eq = vi.fn(() => chain);
+      chain.is = vi.fn(() => chain);
+      chain.maybeSingle = vi.fn(async () => ({ data: row, error: null }));
+      return chain;
+    }),
     rpc: vi.fn(async (name: string, params: Record<string, unknown>) => {
       rpcCalls.push({ name, params });
+      if (name === "create_treatment_image_metadata") return { data: params.p_id, error: null };
       return rpcResult;
     }),
   })),
 }));
 
-import { setTreatmentImageCaptureStageAction } from "@/app/(app)/clients/[id]/images/actions";
+import {
+  setTreatmentImageCaptureStageAction,
+  uploadTreatmentImageAction,
+} from "@/app/(app)/clients/[id]/images/actions";
+
+function uploadForm(extra: Record<string, string>): FormData {
+  const fd = new FormData();
+  fd.set("clientId", CLIENT);
+  for (const [k, v] of Object.entries(extra)) fd.set(k, v);
+  fd.set("file", new File([Buffer.from("jpeg-bytes")], "synthetic.jpg", { type: "image/jpeg" }));
+  return fd;
+}
 
 beforeEach(() => {
   rpcResult = { data: "img-1", error: null };
@@ -105,5 +147,56 @@ describe("0232 UI: the tile control", () => {
 
   it("states the interim behaviour: label right after attach, until the upload choice ships", () => {
     expect(ctl).toMatch(/Until the upload choice ships \(after #892\), a photo is labelled right\s+\/\/ after it is attached, from here\./);
+  });
+});
+
+describe("0232 at upload: the chosen stage is applied right after the photo is recorded", () => {
+  const stageCalls = () => rpcCalls.filter((c) => c.name === "set_treatment_image_capture_stage");
+
+  it("a VISIT photo uploaded with 'before' is created, THEN labelled", async () => {
+    const res = await uploadTreatmentImageAction(uploadForm({ sessionId: SESSION, captureStage: "before" }));
+    expect(res).toEqual({ ok: true });
+    const names = rpcCalls.map((c) => c.name);
+    expect(names).toEqual(["create_treatment_image_metadata", "set_treatment_image_capture_stage"]);
+    const created = rpcCalls[0].params.p_id;
+    expect(stageCalls()[0].params).toEqual({ p_image_id: created, p_client_id: CLIENT, p_stage: "before" });
+  });
+
+  it("a failed label NEVER fails the upload: stored, UNLABELLED, and the result says so", async () => {
+    rpcResult = { data: null, error: { message: "anything" } };
+    expect(await uploadTreatmentImageAction(uploadForm({ sessionId: SESSION, captureStage: "after" }))).toEqual({
+      ok: true,
+      labelNotSaved: true,
+    });
+    rpcResult = { data: null, error: null };
+    expect(await uploadTreatmentImageAction(uploadForm({ sessionId: SESSION, captureStage: "after" }))).toEqual({
+      ok: true,
+      labelNotSaved: true,
+    });
+  });
+
+  it("no label call for a CLIENT photo, for 'not labelled', or for any other value", async () => {
+    await uploadTreatmentImageAction(uploadForm({ captureStage: "before" }));
+    await uploadTreatmentImageAction(uploadForm({ sessionId: SESSION }));
+    await uploadTreatmentImageAction(uploadForm({ sessionId: SESSION, captureStage: "during" }));
+    expect(stageCalls()).toHaveLength(0);
+    expect(rpcCalls.filter((c) => c.name === "create_treatment_image_metadata")).toHaveLength(3);
+  });
+});
+
+describe("0232 at upload: the panel choice", () => {
+  const mgr = read("TreatmentImagesManager.tsx");
+
+  it("is offered only when attaching to a visit, with no default label, on the 44px floor", () => {
+    expect(mgr).toMatch(/\{\(contextKind === "session" \|\| contextKind === "block"\) && \(\s*<div\s+role="radiogroup"\s+aria-label="Taken before or after treatment"/);
+    expect(mgr).toMatch(/\["", "Not labelled"\],\s*\["before", "Before treatment"\],\s*\["after", "After treatment"\],/);
+    expect(mgr).toMatch(/useState<"" \| "before" \| "after">\(""\)/);
+    expect(mgr).toMatch(/className="flex min-h-\[44px\] items-center gap-2 text-sm text-neutral-700 dark:text-neutral-200"\s*>\s*<input\s+type="radio"\s+name="captureStage"/);
+  });
+
+  it("sends the stage only for a visit photo, and reports an unsaved label honestly", () => {
+    expect(mgr).toMatch(/if \(contextKind !== "client" && captureStage\) fd\.set\("captureStage", captureStage\);/);
+    expect(mgr).toMatch(/"label not saved; set it on the photo"/);
+    expect(mgr).toMatch(/f\.note \? `✓ Uploaded \(\$\{f\.note\}\)` : "✓ Uploaded"/);
   });
 });

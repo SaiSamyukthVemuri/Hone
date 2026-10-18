@@ -45,7 +45,18 @@ describe("styled upload UI", () => {
   it("shows the selected count and disables Attach until files are chosen", () => {
     expect(MANAGER).toMatch(/\{selectedFiles\.length\} image/);
     expect(MANAGER).toMatch(/selected/);
-    expect(MANAGER).toMatch(/disabled=\{uploading \|\| selectedFiles\.length === 0\}/);
+    // UI-01J: the two reasons Attach is unavailable are now expressed
+    // separately — `disabled` for "no files chosen", `pending` for "upload in
+    // flight" — and the Button primitive folds them back together as
+    // `disabled={disabled || pending}` while adding aria-busy. Both halves are
+    // still asserted, and the composition is asserted against the primitive.
+    expect(MANAGER).toMatch(/disabled=\{selectedFiles\.length === 0\}/);
+    expect(MANAGER).toMatch(/pending=\{uploading\}/);
+    const BUTTON = readFileSync(
+      join(process.cwd(), "components/ui/button.tsx"),
+      "utf8",
+    );
+    expect(BUTTON).toMatch(/disabled=\{disabled \|\| pending\}/);
   });
 });
 

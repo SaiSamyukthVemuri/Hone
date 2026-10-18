@@ -112,6 +112,30 @@ describe("scope: no annotation/OCR/AI/AR assets/comparison/export", () => {
 // 2026-06-27), and a COMPARISON feature is still deferred. So the label
 // control is scanned too: it may use the label vocabulary (the two values and
 // their "Before"/"After" text), and nothing else in this family.
+// 0232 (option A): the visit chart GROUPS photos by label in STACKED sections
+// (Before, After, Other). That is grouping, not the deferred comparison: no
+// paired side-by-side view, no slider, no compare. Scanned here so a later
+// edit cannot turn the grouping into a comparison without meeting this guard.
+describe("scope: the 0232 session grouping is stacked sections, never a comparison", () => {
+  const SECTION = readFileSync(
+    join(process.cwd(), "app/(app)/clients/[id]/sessions/[sessionId]/SessionPhotos.tsx"),
+    "utf8",
+  );
+  const EXEC = SECTION.split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
+
+  it("has no comparison UI in its code", () => {
+    expect(EXEC).not.toMatch(/side-by-side|\bcompar(e|es|ed|ing|ison)\b|slider|<input[^>]*type="range"|<canvas/i);
+    expect(EXEC).not.toMatch(/before\s*[\/-]\s*after/i);
+    expect(EXEC).not.toMatch(/annotat|sketch|drawing|\bOCR\b/i);
+  });
+
+  it("its label vocabulary is exactly the three section headings", () => {
+    expect(SECTION).toMatch(/\{ key: "before", heading: "Before" \},\s*\{ key: "after", heading: "After" \},\s*\{ key: null, heading: "Other" \},/);
+    // Sections are stacked (column flex), not laid out as paired columns.
+    expect(EXEC).not.toMatch(/grid-cols-2[^"]*">\s*\{GROUPS/);
+  });
+});
+
 describe("scope: the 0232 capture-stage control is a LABEL, never a comparison", () => {
   const CONTROL = readFileSync(
     join(process.cwd(), "app/(app)/clients/[id]/images/CaptureStageControl.tsx"),
