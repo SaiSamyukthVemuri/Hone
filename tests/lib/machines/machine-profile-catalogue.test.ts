@@ -2254,3 +2254,237 @@ describe("a malformed numeric range is an integrity violation", () => {
     ).toContain("field m.current range is malformed: min 10 exceeds max 2");
   });
 });
+
+// ===========================================================================
+// MPX-01 — the two RUNTIME findings from the cfd6fdb8 review
+//
+// The other three (channel count, frequency values, an active mode with no
+// fields) are deferred to a follow-up whose job is the CLASS rather than the
+// members: adversarial inputs driving the "every offered profile has a usable
+// mode" property above. No data that exists can trigger them — nothing in
+// MACHINE_CATALOGUE is active — and both findings below act on every reading
+// today.
+// ===========================================================================
+
+describe("a step with no evidenced origin is advisory, not enforced", () => {
+  // THE DEFECT (Codex, #855 4305466522). The step check read `r.min ?? 0` and
+  // so assumed every stepped control starts at zero. A control documented only
+  // as `max: 9, step: 2` may expose 1, 3, 5, 7, 9 — and it refused EVERY one.
+  // An increment on its own does not establish its phase.
+  //
+  // Refusing a value the machine can actually produce is the specific failure
+  // the range-class design exists to prevent, which `ConstraintClass` states
+  // outright: treating published wording as a hardware bound "would refuse a
+  // true observation — which is a clinical record defect, not a safety
+  // feature". An unenforced step is a gap; a wrongly enforced one falsifies
+  // the record.
+  const withRange = (range: Record<string, unknown>): MachineProfile => {
+    const b = offered();
+    return {
+      ...b,
+      modes: [
+        {
+          ...b.modes[0]!,
+          fields: [{ ...b.modes[0]!.fields[0]!, decimals: 0, ranges: [range] as never }],
+        },
+      ],
+    };
+  };
+
+  const read = (prof: MachineProfile, value: number) =>
+    validateReading(
+      {
+        profileId: prof.profileId,
+        version: prof.version,
+        modeKey: "m",
+        fieldKey: "current",
+        source: "practitioner-entered",
+        value: { kind: "value", value },
+      },
+      { catalogue: [prof] },
+    );
+
+  // The exact contract from the finding: an increment and a ceiling, no origin.
+  const NO_ORIGIN = { max: 9, step: 2, class: "hardware-enforced", evidence: "fx" };
+
+  for (const value of [1, 3, 5, 7, 9]) {
+    it(`accepts ${value} on a documented max:9 step:2 control`, () => {
+      const out = read(withRange(NO_ORIGIN), value);
+      expect(
+        out.ok,
+        `${value} is reachable on a 1,3,5,7,9 control and was refused`,
+      ).toBe(true);
+    });
+  }
+
+  it("and does not refuse the even values either — ADVISORY means no refusal", () => {
+    // The honest consequence of an unknown origin: the step cannot refuse in
+    // either direction. Asserting only the odd values would leave the rule
+    // looking like a phase guess in the other direction.
+    for (const value of [2, 4, 6, 8]) {
+      expect(read(withRange(NO_ORIGIN), value).ok).toBe(true);
+    }
+  });
+
+  it("CONTROL: the MAXIMUM is still enforced, so the range is not inert", () => {
+    expect(read(withRange(NO_ORIGIN), 11).ok).toBe(false);
+  });
+
+  it("CONTROL: WITH an evidenced origin the step still refuses", () => {
+    // The enforcement did not go away; it now requires the one fact it needs.
+    const anchored = { min: 1, max: 9, step: 2, class: "hardware-enforced", evidence: "fx" };
+    expect(read(withRange(anchored), 3).ok).toBe(true);
+    const out = read(withRange(anchored), 4);
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("expected a refusal");
+    expect(out.message).toContain("steps of 2 from 1");
+  });
+});
+
+describe("an installed option gates NEW capture only", () => {
+  // THE DEFECT (Codex, #855 4305466521). The gate ran unconditionally, and
+  // `installedOptions ?? []` means an absent inventory refuses everything — so
+  // a stored reading from an option-gated mode stopped rendering when the
+  // inventory was unavailable, or when the option was later removed from the
+  // machine. The reading was true when it was taken.
+  //
+  // THE FOURTH GATE `allowNonOffered` GOVERNS. The previous three were
+  // enumerated one at a time, which is exactly how this one was missed.
+  const gated = (): MachineProfile => {
+    const b = offered();
+    return {
+      ...b,
+      modes: [{ ...b.modes[0]!, requiresInstalledOption: "fancy-probe" }],
+    };
+  };
+
+  const read = (historical: boolean, installedOptions?: string[]) =>
+    validateReading(
+      {
+        profileId: "fixture:round2",
+        version: 1,
+        modeKey: "m",
+        fieldKey: "current",
+        source: "practitioner-entered",
+        value: { kind: "value", value: 1.2 },
+      },
+      { catalogue: [gated()], allowNonOffered: historical, installedOptions },
+    );
+
+  it("a HISTORICAL reading renders when the inventory is unavailable", () => {
+    expect(read(true).ok, "a stored reading stopped rendering").toBe(true);
+  });
+
+  it("and renders when the option has since been REMOVED from the device", () => {
+    expect(read(true, ["some-other-option"]).ok).toBe(true);
+  });
+
+  it("CONTROL: NEW capture is still refused without the option", () => {
+    const out = read(false);
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("expected a refusal");
+    expect(out.code).toBe("mode_requires_installed_option");
+  });
+
+  it("CONTROL: new capture is accepted WITH the option installed", () => {
+    expect(read(false, ["fancy-probe"]).ok).toBe(true);
+  });
+});
+
+describe("readiness assesses the modes being PROPOSED, not every mode", () => {
+  // THE DEFECT (Codex, #855 4305466530). `activationReadiness` promoted EVERY
+  // mode to active, which contradicted the model the integrity rules now
+  // describe: only ONE active mode is required and non-active modes are
+  // explicitly permitted to stay. So a profile holding one verified mode
+  // beside a deliberately retained one had the retained mode's evidence gaps
+  // reported as activation blockers, falsely withholding a model that was
+  // ready.
+  //
+  // THE CANDIDATE SET COMES FROM THE TYPE'S OWN MEANINGS. `blocked` is
+  // "deliberately NOT offered: evidence incomplete for this exact model" — a
+  // candidate under review. `legacy-only` is "kept so historical rows still
+  // render, never offered for new capture" — deliberately never a candidate.
+
+  /** A fully evidenced mode, under a key of its own. */
+  const goodMode = (key: string) => {
+    const proto = base().modes[0]!;
+    return { ...proto, key, availability: "active" as const };
+  };
+
+  /** A mode that WOULD produce blockers if it were promoted. */
+  const incompleteMode = (
+    key: string,
+    availability: "blocked" | "legacy-only",
+  ) => {
+    const proto = base().modes[0]!;
+    return {
+      ...proto,
+      key,
+      availability,
+      // Its own identity is not source-backed, so promoting it reports a
+      // blocker naming this key.
+      verification: "unverified" as const,
+    };
+  };
+
+  it("a LEGACY-ONLY incomplete mode contributes no blockers", () => {
+    // The finding, as an assertion. The legacy mode is retained so historical
+    // rows still render; it is not being offered, so its gaps are not this
+    // activation's business.
+    const review = activationReadiness({
+      ...base(),
+      modes: [goodMode("good"), incompleteMode("old", "legacy-only")],
+    });
+    expect(
+      review.blockers.join(" | "),
+      "a deliberately retained mode's gaps blocked a verified model",
+    ).not.toContain("old");
+    expect(review.ready, "the verified mode could not be offered").toBe(true);
+  });
+
+  it("CONTROL: the same mode BLOCKED is a candidate and does contribute", () => {
+    // `blocked` means "evidence incomplete", which is exactly what a reviewer
+    // is asking about — so it must still be assessed. Without this control the
+    // test above would also pass if readiness had simply stopped promoting
+    // anything.
+    const review = activationReadiness({
+      ...base(),
+      modes: [incompleteMode("under-review", "blocked")],
+    });
+    expect(review.blockers.join(" | ")).toContain("under-review");
+    expect(review.ready).toBe(false);
+  });
+
+  it("CONTROL: a profile whose only mode is legacy-only has nothing to offer", () => {
+    const review = activationReadiness({
+      ...base(),
+      modes: [incompleteMode("old", "legacy-only")],
+    });
+    expect(review.ready).toBe(false);
+    expect(review.blockers).toContain("profile is active but none of its modes is");
+  });
+
+  it("and a REAL blocked model still reports its own gaps, unchanged", () => {
+    // THE OTHER HALF, pinned explicitly rather than left incidental. Every
+    // real model's modes are blocked, so promoting nothing would have stopped
+    // the field and mode-identity gates running and readiness would have gone
+    // silent about exactly the models under review. This couples that
+    // behaviour to the candidate-set rule.
+    for (const id of [
+      "silhouettone:evolution-st-350",
+      "silhouettone:evolution-5hd",
+    ]) {
+      const review = activationReadiness(profileById(id)!);
+      expect(review.ready, `${id} should not be ready`).toBe(false);
+      expect(
+        review.blockers.length,
+        `${id}: readiness went silent about a blocked model`,
+      ).toBeGreaterThan(0);
+      // And the gaps are the model's OWN fields, not a bare "no active mode".
+      expect(
+        review.blockers.join(" | "),
+        `${id}: readiness stopped naming the field gaps`,
+      ).toMatch(/required field|unverified|precision|identity/i);
+    }
+  });
+});

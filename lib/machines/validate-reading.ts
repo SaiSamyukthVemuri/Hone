@@ -305,7 +305,20 @@ export function validateReading(
     };
   }
 
-  if (mode.requiresInstalledOption) {
+  // A PHYSICAL OPTION IS A FACT ABOUT TODAY'S DEVICE, so it gates NEW capture
+  // only (Codex, #855 4305466521). This ran unconditionally, and
+  // `installedOptions ?? []` means an absent inventory refuses everything — so
+  // a stored reading from an option-gated mode stopped rendering when the
+  // inventory was unavailable, or when the option was later removed from the
+  // machine. The reading was true when it was taken; the option having since
+  // gone does not make it false.
+  //
+  // THIS IS THE FOURTH GATE `allowNonOffered` GOVERNS, and the previous three
+  // were enumerated here one at a time — profile availability, mode
+  // availability, version currency — which is exactly how this one was
+  // missed. The question each asks is "may this be recorded NOW?", and the
+  // answer is irrelevant to a reading already on the record.
+  if (!options.allowNonOffered && mode.requiresInstalledOption) {
     const installed = options.installedOptions ?? [];
     if (!installed.includes(mode.requiresInstalledOption)) {
       return {
@@ -453,8 +466,22 @@ export function validateReading(
     // It refuses under exactly the same conditions as min/max, which is why it
     // sits in this loop rather than its own: hardware-enforced AND undisputed.
     // An advisory range's step stays advisory.
-    if (r.step !== undefined && r.step > 0) {
-      const base = r.min ?? 0;
+    //
+    // AND IT NEEDS AN EVIDENCED ORIGIN, which `min` is (Codex, #855
+    // 4305466522). This read `r.min ?? 0` and so assumed every stepped control
+    // starts at zero. A control documented only as `max: 9, step: 2` may
+    // expose 1, 3, 5, 7, 9 — and that code refused EVERY ONE of them. An
+    // increment on its own does not establish its phase.
+    //
+    // So with no minimum the step is ADVISORY: no refusal. Refusing a value
+    // the machine can actually produce is the specific failure this whole
+    // range-class design exists to prevent — `ConstraintClass` says it in as
+    // many words, that treating published wording as a hardware bound "would
+    // refuse a true observation — which is a clinical record defect, not a
+    // safety feature". An unenforced step is a gap; a wrongly enforced one
+    // falsifies the record.
+    if (r.step !== undefined && r.step > 0 && r.min !== undefined) {
+      const base = r.min;
       const steps = (value - base) / r.step;
       // A RELATIVE EPSILON, because binary floating point cannot hold a
       // decimal step: 0.3 against step 0.1 gives 2.9999999999999996, and an
@@ -464,9 +491,7 @@ export function validateReading(
         return {
           ok: false,
           code: "outside_hardware_limit",
-          message: `Field '${field.key}': the machine moves in steps of ${r.step}${
-            r.min !== undefined ? ` from ${r.min}` : ""
-          }, so it cannot be set to ${value} (evidence ${r.evidence}).`,
+          message: `Field '${field.key}': the machine moves in steps of ${r.step} from ${base}, so it cannot be set to ${value} (evidence ${r.evidence}).`,
         };
       }
     }
