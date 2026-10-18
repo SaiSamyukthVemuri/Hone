@@ -23,8 +23,9 @@ import {
 //                  even from a superseded attempt (a request that ignored its
 //                  abort); the machine ignores it once the cell has moved on.
 // `dispose` (unmount, or new server URLs) aborts everything and clears every
-// timer; nothing commits after it. `settle` (nothing pending any more) aborts
-// whatever is still in flight.
+// timer; nothing commits after it. `settle` aborts whatever is still in flight
+// ONLY when the live state has nothing pending (a stale caller cannot cancel a
+// live re-mint).
 
 export type RemintFetch = (variant: GridPhotoVariant, signal: AbortSignal) => Promise<string | null>;
 
@@ -96,6 +97,12 @@ export function createRemintController(deps: {
       if (next.remint) issue(next.remint);
     },
     settle() {
+      // Gated on LIVE state, never on the caller's render (Codex P2
+      // 4307931365): an image that failed before hydration starts a re-mint
+      // from an effect, and a later effect in the SAME commit still holds the
+      // render's `pending === null`. Aborting then would strand the cell on
+      // its dead URL. Only a cell that is really waiting on nothing settles.
+      if (read().pending) return;
       for (const a of [...attempts]) {
         a.failed = true;
         end(a);
