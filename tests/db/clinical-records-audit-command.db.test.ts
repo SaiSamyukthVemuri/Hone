@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { adminQuery, asRole, asUser, closePool, seedMember, seedSession, seedStudio } from "./helpers/harness";
+import { countVersion } from "../migrations/helpers/migration-state";
 
 // 0233 (HON-46, Codex P1 4304545551): the clinical-records audit is
 // ACTOR-BOUND. A studio member can no longer write clinical_records_* rows
@@ -13,6 +14,20 @@ afterAll(() => closePool());
 
 const meta = { scope: "day", day: "2026-09-15" };
 const refused = (e: unknown) => (e as { code?: string }).code;
+
+// CANDIDATE-COMPOSITION cases need a command a LATER migration adds. They RUN
+// on a chain that has it (the composed candidate, 0213-0233) and SKIP, by
+// name, on one that does not (#896 alone). Detected from the live catalog,
+// never assumed from a file list.
+async function hasFunction(name: string): Promise<boolean> {
+  const r = await adminQuery(
+    `select exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                     where n.nspname = 'public' and p.proname = $1) as ok`,
+    [name],
+  );
+  return r.rows[0].ok === true;
+}
+const HAS_RECEPTIONISTS = await hasFunction("add_studio_receptionist"); // 0216
 
 async function rowsFor(clientId: string) {
   return (
@@ -395,6 +410,48 @@ describe("0233: clinical-records audit rows are actor-bound", () => {
       "clinical_records_printed",
     ]);
     expect(await rowsFor(other.clientId)).toEqual([]);
+  });
+
+  // NOT GREEN-BY-SKIP: on a tree that CARRIES 0216 the gate must be open, so
+  // the receptionist case below can only skip where 0216 truly is absent.
+  it("the receptionist gate is open wherever the tree carries 0216", () => {
+    if (countVersion("0216") > 0) expect(HAS_RECEPTIONISTS, "0216 is in the tree but add_studio_receptionist is not in the catalog").toBe(true);
+  });
+
+  it.runIf(HAS_RECEPTIONISTS)("a 0216 RECEPTIONIST is refused the command and cannot write an audit row (candidate composition; skips without add_studio_receptionist from 0216)", async () => {
+    const s = await seedStudio("aud0233rc");
+    // Through the real authority command (0216), with a real auth user.
+    const userId = randomUUID();
+    const email = `aud0233rc-${userId.slice(0, 8)}@harness.local`;
+    await adminQuery(`insert into auth.users (id, email) values ($1, $2)`, [userId, email]);
+    const added = await adminQuery(`select public.add_studio_receptionist($1, $2, $3, $4, $5) as id`, [
+      s.studioId,
+      s.practitionerId,
+      userId,
+      "Front desk",
+      email,
+    ]);
+    expect(added.rows[0].id).toBeTruthy();
+    // The command: the actor must be the studio's active OWNER practitioner.
+    for (const m of [meta, { scope: "session", session_id: (await seedSession(s)).sessionId }]) {
+      await expect(
+        asUser(userId, (q) => q(`select public.record_clinical_records_audit($1, 'clinical_records_previewed', $2)`, [s.clientId, m])),
+      ).rejects.toSatisfy((e) => refused(e) === "42501");
+    }
+    // The narrowed member-insert path: neither a clinical_records_* row nor an
+    // ordinary row naming the owner as actor.
+    for (const action of ["clinical_records_previewed", "client_archived"]) {
+      await expect(
+        asUser(userId, (q) =>
+          q(
+            `insert into public.audit_logs (studio_id, actor_id, action, entity_type, entity_id, metadata)
+             values ($1, $2, $3, 'client', $4, '{}'::jsonb)`,
+            [s.studioId, s.practitionerId, action, s.clientId],
+          ),
+        ),
+      ).rejects.toBeTruthy();
+    }
+    expect(await rowsFor(s.clientId)).toEqual([]);
   });
 
   it("EXECUTE: authenticated only; revoked from anon and service_role by name", async () => {
