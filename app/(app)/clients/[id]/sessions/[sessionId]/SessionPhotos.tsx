@@ -83,10 +83,20 @@ function SessionPhotoCell({ photo: p }: { photo: SessionPhoto }) {
       });
   }, [p.id, p.url, p.thumbUrl]);
 
-  // An image that failed BEFORE hydration never reached React's onError.
+  // An image that fails AROUND hydration can be missed by React's onError (the
+  // same race fixed in GridPhoto). Per src: already failed -> handle now;
+  // otherwise a NATIVE error listener catches any later failure. A duplicate
+  // signal is a no-op (the machine ignores errors while a re-mint is pending).
   useEffect(() => {
     const el = imgRef.current;
-    if (el && el.complete && el.naturalWidth === 0 && el.getAttribute("src")) handleError();
+    if (!el || !el.getAttribute("src")) return;
+    if (el.complete && el.naturalWidth === 0) {
+      handleError();
+      return;
+    }
+    const onNativeError = () => handleError();
+    el.addEventListener("error", onNativeError);
+    return () => el.removeEventListener("error", onNativeError);
   }, [state.src, handleError]);
 
   const area = p.areaLabel;

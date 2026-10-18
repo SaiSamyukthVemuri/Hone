@@ -93,7 +93,9 @@ describe("session photos: Codex P1 4301862700 / P2 4301862702", () => {
     // derivative, then original, re-minting an expired URL once per variant.
     expect(section).toMatch(/initialGridPhoto\(\{ previewUrl: p\.url, thumbUrl: p\.thumbUrl \}\)/);
     expect(section).toMatch(/getTreatmentImageSignedUrlAction\(\{ imageId: p\.id, variant \}\)/);
-    expect(section).toMatch(/el\.complete && el\.naturalWidth === 0/);
+    expect(section).toMatch(/if \(el\.complete && el\.naturalWidth === 0\) \{\s*handleError\(\);\s*return;\s*\}/);
+    expect(section).toMatch(/el\.addEventListener\("error", onNativeError\);/);
+    expect(section).toMatch(/return \(\) => el\.removeEventListener\("error", onNativeError\);/);
     expect(section).toMatch(/state\.stage === "broken" \|\| !state\.src/);
     expect(section).not.toMatch(/loading="lazy"/);
   });
