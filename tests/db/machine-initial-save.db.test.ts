@@ -1160,6 +1160,7 @@ describe("0234 · a new key with the same payload is answered, not duplicated", 
     const { sessionId } = await seedSession(studio);
     const machineId = await registerMachine(studio);
 
+    const before = await sessionTotals(sessionId);
     const first = await initialSave(studio, sessionId, {
       machine: machineId,
       groups: JSON.stringify([group("g1", [1], "120")]),
@@ -1170,10 +1171,16 @@ describe("0234 · a new key with the same payload is answered, not duplicated", 
       groups: JSON.stringify([group("g1", [1], "140")]),
       key: "digest-diff-second-01",
     });
+    const after = await sessionTotals(sessionId);
 
     expect(second.block_id).not.toBe(first.block_id);
     expect(second.reused).toBe(false);
-    expect((await sessionTotals(sessionId)).blocks).toBe(2);
+    // MEASURED AS A DELTA. `seedSession` already seeds a block, so an
+    // absolute count asserts something about the FIXTURE rather than about
+    // these two saves — it read 3 and expected 2. This is the SAME mistake
+    // round 13 made in this file, and I wrote the delta fix for it earlier
+    // tonight before repeating it here.
+    expect(after.blocks - before.blocks, "two distinct payloads must create two areas").toBe(2);
   });
 
   it("CONTROL: a different payload differing only in AREA still creates", async () => {
