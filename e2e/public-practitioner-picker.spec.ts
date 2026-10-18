@@ -347,8 +347,6 @@ async function holdNextServerAction(page: Page): Promise<{
 
 test("the picker offers only active, service-eligible practitioners", async ({ page }) => {
   await page.goto(`/book/${seed.slug}`);
-  await page.getByRole("button", { name: /new client/i }).first().click();
-  await page.getByLabel("Date").fill(bookDate);
   // WAIT FOR THE SERVICE-SCOPED OPTIONS FETCH, which this test did not do and
   // which practitioner D exposed. The options are loaded by an effect keyed on
   // the service, so reading them straight after `selectOption` returns the
@@ -356,6 +354,16 @@ test("the picker offers only active, service-eligible practitioners", async ({ p
   // service_practitioners filtering. Inactive C is excluded by the RPC itself
   // whatever the service, so the old assertion held on that stale list; D is
   // excluded ONLY by the service filter, so it needs the scoped answer.
+  //
+  // ARMED BEFORE THE FORM OPENS (Codex 4307203944). This fixture has exactly
+  // ONE service and PublicBookForm selects it by default, so opening the form
+  // ALREADY starts the service-scoped request. Registering the wait afterwards
+  // races it, and if it lands while the date is being filled then
+  // `selectOption(serviceId)` sets the value it already holds — React's state
+  // does not change, no replacement request is made, and the wait times out
+  // while the product behaved correctly. So the wait goes first and the
+  // selectOption below is left as an explicit assertion of intent that nothing
+  // depends on.
   const scopedOptions = page.waitForResponse(
     (r) =>
       r.request().method() === "POST" &&
@@ -363,6 +371,8 @@ test("the picker offers only active, service-eligible practitioners", async ({ p
       (r.request().postData() ?? "").includes(serviceId),
     { timeout: 20_000 },
   );
+  await page.getByRole("button", { name: /new client/i }).first().click();
+  await page.getByLabel("Date").fill(bookDate);
   await page.getByLabel("Service").selectOption(serviceId);
   await scopedOptions;
 
