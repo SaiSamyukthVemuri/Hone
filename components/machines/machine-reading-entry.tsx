@@ -90,10 +90,23 @@ export type MachineReadingEntryProps = {
     modeKey: string;
     idempotencyKey: string;
     groups: Array<{
-      groupKey: string;
+      /**
+       * EXACTLY ONE OF THE TWO (Codex, #860 4305780322). `groupKey` revises a
+       * group the database already holds; `newGroupRef` is this form's own
+       * local placeholder for one it does not, and the database issues the
+       * real key. The form no longer mints identities.
+       */
+      groupKey: string | null;
+      newGroupRef: string | null;
       channels: number[];
       readings: ReadingSubmission[];
     }>;
+    /**
+     * The recorded group keys this draft was built from, for the staleness
+     * refusal (Codex, #860 4305780322). The action compares them; this form
+     * only reports what it saw.
+     */
+    expectedGroupKeys?: string[];
   }) => Promise<{
     ok: boolean;
     error?: string;
@@ -179,6 +192,23 @@ export function MachineReadingEntry({
   // arriving through its repair, which is why it is read from the seed once
   // rather than tracked separately.
   const [groupOrdinal, setGroupOrdinal] = useState(() => highestOrdinal(groups));
+  /**
+   * THE RECORDED GROUP KEYS THIS DRAFT WAS BUILT FROM (Codex, #860
+   * 4305780322).
+   *
+   * Captured ONCE, at the same moment `groupOrdinal` is seeded from them,
+   * because the two are the same fact: the next identity this form will mint
+   * is a function of exactly this set. If the set has moved by the time she
+   * saves, the identity it produced is no longer the next one, and the command
+   * would file her new group as a REVISION of someone else's.
+   *
+   * Sent with the save and compared SERVER-SIDE rather than re-read here: the
+   * comparison then happens in the same request as the write, so the window is
+   * the action's own microseconds instead of a user-visible round trip.
+   */
+  const [expectedGroupKeys] = useState<string[]>(() =>
+    [...new Set(recordedGroups.map((g) => g.groupKey))].sort(),
+  );
   // THE WHOLE SAVE, as one state machine.
   //
   // THIS REPLACED FIVE PIECES OF PER-GROUP BOOKKEEPING - a saved-group set, an
@@ -228,18 +258,43 @@ export function MachineReadingEntry({
   // key, which appends a second capture of settings entered once. The
   // promise "press Save again" is only honest while the thing being saved
   // cannot change underneath it.
-  const frozen = !canEditDraft(save);
+  // THE FREEZE STARTS AT SUBMIT, not when the answer comes back (Codex,
+  // #860 4305022472). `pending` is the request's own duration, and the
+  // payload was already snapshotted when it began.
+  const frozen = !canEditDraft(save, pending);
 
   // TOLD TO THE PANEL, because the controls that can destroy this save's
   // retry key are not in this component. Reported on every change of the
   // flag, including back to false when the retry settles, so the freeze
   // lifts rather than sticking.
+  //
+  /**
+   * WHAT THE HOST HAS TO FREEZE, which is NOT the same as what this form has
+   * to freeze (Codex, #860 4305364945).
+   *
+   * The last round reported `frozen` upward, and `frozen` is
+   * `!canEditDraft(save, pending)` — which is also false once a save is
+   * ACKNOWLEDGED. So after an ordinary successful capture the host's machine
+   * picker, mode picker and Cancel stayed disabled until she pressed "record
+   * a setting change". A confirmed save should release the form, not hold it.
+   *
+   * The host's controls are frozen for exactly one reason: each of them can
+   * DISCARD THIS SAVE'S RETRY KEY, and that only matters while a key is at
+   * risk — the request is in flight, or its outcome is unknown. An
+   * acknowledged save has no key left to protect.
+   *
+   * `frozen` keeps `recorded` for the entry's OWN fields, which is right:
+   * after a recorded save she starts a new capture rather than editing the
+   * one in the record.
+   */
+  const transportHold = pending || save.unresolved;
+
   const reportedUnresolved = useRef<boolean | null>(null);
   useEffect(() => {
-    if (reportedUnresolved.current === save.unresolved) return;
-    reportedUnresolved.current = save.unresolved;
-    onUnresolvedChange?.(save.unresolved);
-  }, [save.unresolved, onUnresolvedChange]);
+    if (reportedUnresolved.current === transportHold) return;
+    reportedUnresolved.current = transportHold;
+    onUnresolvedChange?.(transportHold);
+  }, [transportHold, onUnresolvedChange]);
 
   // EVERY DRAFT CHANGE CLOSES THE OPEN SAVE, which is how the retry key keeps
   // meaning what it says: a changed draft is a DIFFERENT save and must mint a
@@ -290,6 +345,7 @@ export function MachineReadingEntry({
         modeKey: mode.key,
         idempotencyKey: key,
         groups: submissions,
+        expectedGroupKeys,
       });
       // THE MAPPING LIVES IN `save-attempt`, not here, so a test can drive
       // it: this component cannot be mounted in this repository.

@@ -50,6 +50,7 @@ const IDENTITY: PendingSetupIdentity = {
 const groups = (...keys: string[]): GroupSubmission[] =>
   keys.map((k, i) => ({
     groupKey: k,
+    newGroupRef: null,
     channels: [i + 1],
     readings: [
       {
@@ -78,13 +79,13 @@ describe("preparing a handoff", () => {
     // Failure 1. The command refuses an empty save, but reaching it at all
     // means the create form believed it had something to store.
     expect(prepareHandoff(IDENTITY, [], mint("k1"))).toBeNull();
-    const empty: GroupSubmission[] = [{ groupKey: "g1", channels: [1], readings: [] }];
+    const empty: GroupSubmission[] = [{ groupKey: "g1", newGroupRef: null, channels: [1], readings: [] }];
     expect(prepareHandoff(IDENTITY, empty, mint("k1"))).toBeNull();
   });
 
   it("drops the groups that have nothing, and keeps the ones that do", () => {
     const mixed: GroupSubmission[] = [
-      { groupKey: "g1", channels: [1], readings: [] },
+      { groupKey: "g1", newGroupRef: null, channels: [1], readings: [] },
       ...groups("g2"),
     ];
     const pending = prepareHandoff(IDENTITY, mixed, mint("k1"));

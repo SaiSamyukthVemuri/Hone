@@ -106,7 +106,12 @@ async function registerMachine(studio: SeededStudio): Promise<string> {
 }
 
 const group = (key: string, channels: number[], current: string) => ({
-  group_key: key,
+  // NEW BY REF, NOT BY KEY (Codex, #860 4305780322). A group identity is
+  // ISSUED by the database now; a caller names `new_group_ref`, its own local
+  // placeholder, and may only use `group_key` for a group that already exists
+  // on the block. Every save in this file is an INITIAL one - the command
+  // creates the block - so nothing can pre-exist and every group is new.
+  new_group_ref: key,
   channels,
   readings: [
     {
@@ -463,7 +468,7 @@ describe("0223 · a refused settings payload takes the area with it", () => {
         machine: machineId,
         groups: JSON.stringify([
           {
-            group_key: "g1",
+            new_group_ref: "g1",
             channels: [1],
             readings: [
               {

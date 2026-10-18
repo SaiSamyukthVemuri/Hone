@@ -46,7 +46,9 @@ const COMMANDS = [
   "public.register_studio_machine(uuid, text, integer, text, text[])",
   "public.retire_studio_machine(uuid)",
   "public.set_own_default_machine(uuid, uuid, text)",
-  "public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb, uuid, uuid)",
+  // +text: `p_new_group_ref`, the caller's own placeholder for a group it
+  // is creating. Identities are ISSUED (Codex, #860 4305780322).
+  "public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb, uuid, uuid, text)",
   // ONE SAVE of every settings group, atomically. An ENTRY POINT - granted to
   // `authenticated` - so every posture rule below applies to it unchanged.
   "public.record_treatment_setup_submission(uuid, uuid, text, text, jsonb, uuid, uuid)",
@@ -70,7 +72,9 @@ const COMMANDS = [
 // not absent: all four roles revoked, and granted back to NOTHING.
 const INTERNALS = [
   "public.assert_setup_scope(uuid, uuid, uuid, uuid)",
-  "public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid, text[])",
+  // +boolean: `p_group_is_new`, REQUIRED, so both doors must state whether
+  // the key they pass is a new identity or one being revised.
+  "public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid, text[], boolean)",
 ] as const;
 
 /**
@@ -554,14 +558,20 @@ describe("0223 makes the commands the only write path", () => {
 
   it("every command is SECURITY DEFINER with a pinned search_path", () => {
     const defs = CODE.match(/create or replace function[\s\S]*?\$\$;/g) ?? [];
-    // Thirteen routines now:
+    // Fifteen routines now:
     //   6 inventory/recording write commands (the INITIAL SAVE joined)
     //   1 contract publication command (deployment authority)
     //   1 shared scope assertion      - internal, definer, takes the locks
     //   1 shared per-group writer     - internal, INVOKER on purpose
+    //   1 group-key mint              - internal, INVOKER on purpose
     //   2 immutability trigger functions (readings, captures)
-    //   2 read queries (the latest setup's groups, block history)
-    expect(defs.length).toBe(13);
+    //   3 read queries (the latest setup's groups, block history, and a
+    //                   block's readings in ONE statement)
+    //
+    // BOTH NEW ONES ARE INVOKER, so the definer count below is unchanged: the
+    // mint must not carry the definer's privileges, and a READ made definer is
+    // how a read becomes a leak (Codex, #860 4305780322 and 4305555264).
+    expect(defs.length).toBe(15);
     // Every routine pins its search_path, definer or not.
     for (const d of defs) {
       expect(d).toMatch(/set search_path = pg_catalog, pg_temp/);
@@ -602,17 +612,32 @@ describe("0223 makes the commands the only write path", () => {
       ).toBe(true);
     }
     const invoker = defs.filter((d) => !/security definer/.test(d));
-    expect(invoker).toHaveLength(5);
+    // SEVEN, with the mint and the block reader (Codex, #860 4305780322 and
+    // 4305555264). Both are invoker on purpose and for different reasons:
+    //   * `mint_setup_group_keys` issues an identity INSIDE a scope its caller
+    //     has already proved. Carrying the definer's privileges would make it
+    //     usable on its own, and a caller able to issue its own keys could
+    //     issue one that collides - the whole defect restated. Invoker means
+    //     it also fails at the table privilege layer, independently of its
+    //     EXECUTE revoke;
+    //   * `setup_readings_for_block` is a READ, and a read made definer is how
+    //     a read becomes a leak - see the note below, which now covers three.
+    expect(invoker).toHaveLength(7);
     for (const d of invoker) {
       expect(d).toMatch(
-        /refuse_treatment_setup_reading_update|refuse_treatment_setup_capture_update|latest_setup_for_client|setup_capture_history_for_block|record_setup_group_in_scope/,
+        /refuse_treatment_setup_reading_update|refuse_treatment_setup_capture_update|latest_setup_for_client|setup_capture_history_for_block|setup_readings_for_block|record_setup_group_in_scope|mint_setup_group_keys/,
       );
     }
-    // Both READS are invoker by deliberate choice: they return only what the
-    // caller may already read, so RLS must stay in force rather than be
+    // ALL THREE READS are invoker by deliberate choice: they return only what
+    // the caller may already read, so RLS must stay in force rather than be
     // bypassed and re-implemented. Making a read definer is how a read becomes
-    // a leak.
-    for (const name of ["latest_setup_for_client", "setup_capture_history_for_block"]) {
+    // a leak - and `setup_readings_for_block` carries a second, independent
+    // limb besides RLS, the block-in-session JOIN predicate.
+    for (const name of [
+      "latest_setup_for_client",
+      "setup_capture_history_for_block",
+      "setup_readings_for_block",
+    ]) {
       const read = defs.find((d) => d.includes(name))!;
       expect(read, `${name} must be explicit about being invoker`).toMatch(
         /security invoker/,
@@ -621,6 +646,222 @@ describe("0223 makes the commands the only write path", () => {
     // And the read is explicit about it rather than defaulting.
     const read = defs.find((d) => d.includes("latest_setup_for_client"))!;
     expect(read).toMatch(/security invoker/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A GROUP IDENTITY IS ISSUED, AND A BLOCK'S READINGS ARE ONE STATEMENT
+// (Codex, #860 4305780322 and 4305555264)
+// ---------------------------------------------------------------------------
+//
+// THESE ARE SOURCE CONTRACTS AND THEY PROVE NO BEHAVIOUR. 0204 shipped a
+// command writing to a column that did not exist: it applied clean, passed its
+// source test, and had never once succeeded. The behaviour lives in
+// tests/db/machine-group-identity.db.test.ts, which needs a database.
+//
+// WHAT THEY DO EARN is the claim made in tests/security/entry-direct-dml-guard
+// case 10, where `setup_readings_for_block` is excluded by exact name as
+// "reviewed here". An exclusion that cites a review which does not exist is
+// worse than no exclusion at all.
+describe("0223 issues group identities rather than accepting them", () => {
+  const fn = (name: string) => {
+    const at = CODE.indexOf(`create or replace function public.${name}(`);
+    expect(at, `${name} is not in the migration`).toBeGreaterThan(-1);
+    return CODE.slice(at, CODE.indexOf("$$;", at));
+  };
+
+  it("the mint allocates above the highest NUMERIC key on the block", () => {
+    const body = fn("mint_setup_group_keys");
+    // BLOCK-WIDE, not per setup identity: the key's uniqueness widens even
+    // though the revision sequence stays scoped to the unit, profile, version
+    // and mode.
+    expect(body).toContain("where c.session_block_id = p_block_id");
+    expect(body).toMatch(/regexp_match\(btrim\(c\.group_key\), '\^g\(\[0-9\]\+\)\$'\)/);
+    // NON-CONFORMING KEYS CANNOT RAISE THE CEILING but must not break the
+    // allocation either - `group_key` is free text and nothing guarantees the
+    // shape.
+    expect(body).toContain("coalesce(");
+  });
+
+  it("and it does so under a BLOCK-WIDE lock, or the arithmetic is a race", () => {
+    const body = fn("mint_setup_group_keys");
+    expect(
+      body,
+      "without a lock, two transactions read the same max and issue the same key",
+    ).toMatch(/pg_advisory_xact_lock\(/);
+    // KEYED ON A COMPOSITE, not a ':'-joined string. The string form is
+    // ambiguous when its parts are free text, which 0223 already learned once
+    // for the identity lock (Codex, #860 4302093849).
+    expect(body).toMatch(/row\('setup_group_keys', p_block_id\)::text/);
+  });
+
+  it("COARSE BEFORE FINE: the mint lock is taken before the other two", () => {
+    // THE ACQUISITION ORDER MUST BE TOTAL or the three locks can cycle. The
+    // mint lock is block-wide, the identity lock scopes by unit/profile/
+    // version/mode, and the group lock is per (block, group) - so the mint
+    // must come first. In the save command that means before the write loop;
+    // in the per-group door it means after the scope is PROVEN and before the
+    // writer is called.
+    const save = fn("record_treatment_setup_submission");
+    const mintAt = save.indexOf("public.mint_setup_group_keys(p_block_id, v_new_count)");
+    const loopAt = save.indexOf("for v_group_item in");
+    expect(mintAt, "the save command never mints").toBeGreaterThan(-1);
+    expect(
+      mintAt,
+      "the mint happens inside or after the write loop, so its lock is taken after the finer ones",
+    ).toBeLessThan(loopAt);
+
+    const door = fn("record_treatment_setup_group");
+    const scopeAt = door.indexOf("from public.assert_setup_scope(");
+    const doorMintAt = door.indexOf("public.mint_setup_group_keys(p_block_id, 1)");
+    expect(scopeAt).toBeGreaterThan(-1);
+    expect(
+      scopeAt,
+      "the door mints BEFORE proving the scope, so it locks a block the caller may not own",
+    ).toBeLessThan(doorMintAt);
+  });
+
+  it("the mint is reachable by NO role, revoked from all four by name", () => {
+    const sig = "public.mint_setup_group_keys(uuid, integer)";
+    for (const role of ["public", "anon", "authenticated", "service_role"]) {
+      // ALL FOUR BY NAME, because Supabase's ALTER DEFAULT PRIVILEGES grants
+      // EXECUTE to anon, authenticated AND service_role at create time. 0129
+      // missed `anon`; 0164 missed `service_role`.
+      expect(
+        CODE,
+        `the mint is still reachable by ${role}`,
+      ).toContain(`revoke execute on function ${sig} from ${role};`);
+    }
+    expect(CODE).not.toContain(`grant execute on function ${sig}`);
+  });
+
+  it("the shared writer REQUIRES the new-or-existing answer, with no default", () => {
+    const body = fn("record_setup_group_in_scope");
+    // NO DEFAULT. A defaulted flag is a flag callers forget, and "whichever
+    // meaning was convenient" is exactly the ambiguity the defect lived in.
+    expect(body).toMatch(/p_group_is_new boolean\n\)/);
+    expect(body).not.toMatch(/p_group_is_new boolean default/);
+  });
+
+  it("and checks it BOTH WAYS, under the per-group lock", () => {
+    const body = fn("record_setup_group_in_scope");
+    const lockAt = body.indexOf("hashtextextended(p_block_id::text || ':' || v_group, 0)");
+    const checkAt = body.indexOf("if p_group_is_new and v_group_exists then");
+    const reviseAt = body.indexOf("if not p_group_is_new and not v_group_exists then");
+    expect(lockAt).toBeGreaterThan(-1);
+    // UNDER THE LOCK, because an existence test taken outside it is a
+    // check-then-write race - the shape that let two saves claim one channel.
+    expect(
+      lockAt,
+      "the existence test runs before the per-group lock, so it is a race",
+    ).toBeLessThan(checkAt);
+    expect(checkAt).toBeGreaterThan(-1);
+    expect(reviseAt).toBeGreaterThan(-1);
+    // An issued key that already exists is an INTERNAL error: it means the
+    // mint's lock or arithmetic is wrong, not that the user did anything.
+    expect(body).toContain("errcode = 'internal_error'");
+    expect(body).toContain("so it cannot be revised");
+  });
+
+  it("both granted doors take EITHER a key OR a placeholder, never both", () => {
+    const save = fn("record_treatment_setup_submission");
+    // `(a) = (b)` is true when NEITHER is present, so one test covers
+    // both-present and both-absent.
+    expect(save).toContain(
+      "where (g.value ? 'group_key') = (g.value ? 'new_group_ref')",
+    );
+    const door = fn("record_treatment_setup_group");
+    expect(door).toMatch(/\(btrim\(coalesce\(p_group_key, ''\)\) <> ''\)\s*=\s*\(btrim\(coalesce\(p_new_group_ref, ''\)\) <> ''\)/);
+  });
+
+  it("the placeholder is never stored - only the issued key is", () => {
+    const save = fn("record_treatment_setup_submission");
+    // The resolved payload drops the placeholder and carries the issued key,
+    // so nothing downstream can mistake one for the other.
+    expect(save).toContain("(g.value - 'new_group_ref')");
+    expect(save).toContain("'group_key', v_new_keys[n.rk]");
+  });
+});
+
+describe("0223 reads a block's settings in ONE statement", () => {
+  const reader = () => {
+    const at = CODE.indexOf(
+      "create or replace function public.setup_readings_for_block(",
+    );
+    expect(at, "the reader function is not in the migration").toBeGreaterThan(-1);
+    return CODE.slice(at, CODE.indexOf("$$;", at));
+  };
+
+  it("binds the block to the session as a JOIN PREDICATE, not a precheck", () => {
+    const body = reader();
+    // The read returns NOTHING unless the block belongs to the session given.
+    // As a precheck it was sound only because `session_blocks.session_id` is
+    // immutable - a property of a trigger in another file (Codex, #860
+    // 4298457378).
+    expect(body).toMatch(/join public\.session_blocks b\s*\n\s*on b\.id = r\.session_block_id\s*\n\s*and b\.session_id = p_session_id/);
+    expect(body).toContain("where r.session_block_id = p_block_id");
+  });
+
+  it("reads in ONE statement, with no cursor, window or page ceiling", () => {
+    const body = reader();
+    // ONE STATEMENT IS ONE SNAPSHOT, which is the entire reason this exists:
+    // a keyset loop over random UUIDs across separate requests could let a
+    // concurrent capture sort either side of the cursor, so part of a new
+    // capture came back as a complete setup. A page loop can only detect that.
+    expect(body).not.toMatch(/\blimit\b/i);
+    expect(body).not.toMatch(/\boffset\b/i);
+    expect(body).toMatch(/^\s*select coalesce\(/m);
+    // EXACTLY ONE `select` over the readings. The visibility check above it is
+    // an `exists`, which is a different claim from assembling the data.
+    expect(
+      (body.match(/from public\.treatment_setup_readings/g) ?? []).length,
+      "the readings are read more than once, so they are not one snapshot",
+    ).toBe(1);
+  });
+
+  it("is STABLE, so the visibility check and the read share ONE snapshot", () => {
+    // NOT DECORATION. Under READ COMMITTED a VOLATILE plpgsql function takes a
+    // FRESH snapshot for every statement it runs, so the `exists` check and
+    // the read would see two different moments - reopening exactly the
+    // check-then-read window this function closed. STABLE pins one snapshot
+    // for the whole call, so the block proven visible is the block whose
+    // readings come back.
+    const body = reader();
+    expect(body).toMatch(/\nstable\n/);
+    expect(body).not.toMatch(/\nvolatile\n/);
+  });
+
+  it("REFUSES a block it cannot see, identically to one that does not exist", () => {
+    const body = reader();
+    // A foreign studio is refused rather than answered with an empty list -
+    // the decision the TypeScript read already encoded, which returning [] for
+    // everything would have quietly reversed. Non-disclosure survives because
+    // both cases raise the SAME sentence; what stays distinguishable is a
+    // block the caller legitimately holds with no readings yet, which is the
+    // ordinary state of every new treatment area.
+    expect(body).toContain("Unknown treatment block for this session.");
+    expect(body).toMatch(/if not exists \(/);
+    // AND THE JOIN STAYS as a second, independent limb: it BINDS the rows to
+    // the session rather than merely having asked about it.
+    expect(body).toMatch(/and b\.session_id = p_session_id/);
+  });
+
+  it("emits value_numeric AS TEXT, so a clinical value cannot lose precision", () => {
+    // numeric serialises to a JSON STRING precisely so a value survives the
+    // trip; a JSON number makes doubles the ceiling. `toReading`'s Number()
+    // absorbs either, so nothing would have looked broken. Caught by the first
+    // DB run of this work, not by review.
+    expect(reader()).toContain("'value_numeric',           r.value_numeric::text");
+  });
+
+  it("is granted to authenticated ONLY, after being revoked from all four", () => {
+    const sig = "public.setup_readings_for_block(uuid, uuid)";
+    for (const role of ["public", "anon", "authenticated", "service_role"]) {
+      expect(CODE).toContain(`revoke execute on function ${sig} from ${role};`);
+    }
+    expect(CODE).toContain(`grant execute on function ${sig} to authenticated;`);
+    expect(CODE).not.toContain(`grant execute on function ${sig} to anon`);
+    expect(CODE).not.toContain(`grant execute on function ${sig} to service_role`);
   });
 });
 
@@ -766,10 +1007,19 @@ describe("0223 enforces ownership in the database, not only in the server", () =
     // error (Codex, db3373bc P2).
     expect(save).toMatch(/payload_digest <> v_digest/);
     expect(save).toMatch(/used for a save with different settings/);
-    // COMPUTED OVER A CANONICAL FORM, ordered by group key, so the same save
-    // listed in a different order is not mistaken for a different one.
-    expect(save).toMatch(
-      /jsonb_agg\(g\.value order by btrim\(coalesce\(g\.value->>'group_key', ''\)\)\)/,
+    // COMPUTED OVER A CANONICAL FORM, ordered so the same save listed in a
+    // different order is not mistaken for a different one.
+    //
+    // AND THE ORDER IS TOTAL ACROSS BOTH GROUP FORMS (Codex, #860
+    // 4305780322). A new group carries the caller's placeholder and has no
+    // `group_key` yet, so sorting on `group_key` alone collapsed every new
+    // group to '' and left their relative order to the aggregate - the same
+    // save could then digest two ways and a legitimate retry be refused. The
+    // '0'/'1' tag also keeps the two namespaces from interleaving, so a
+    // placeholder that happens to equal an existing key cannot reorder the
+    // payload.
+    expect(save).toContain(
+      "jsonb_agg(g.value order by (case when g.value ? 'group_key' then '0' else '1' end) || btrim(coalesce(g.value->>'group_key', g.value->>'new_group_ref', '')))",
     );
     // AND THE DIGEST BINDS THE IDENTITY TOO, not only the groups. The first
     // version hashed the payload alone and left the setup identity to four
@@ -1278,8 +1528,11 @@ describe("0223's INITIAL SAVE is idempotent through a session-scoped claim", () 
   it("canonicalises the setup groups the same way the save command does", () => {
     // Otherwise the same save listed in a different order would be refused by
     // one command and absorbed by the other.
+    // THE SAME TOTAL ORDER, including the new-group form: an initial save is
+    // the case where EVERY group is new, so any difference here would refuse
+    // the retry of a first save rather than absorb it.
     expect(digestExpr()).toContain(
-      "jsonb_agg(g.value order by btrim(coalesce(g.value->>'group_key', '')))",
+      "jsonb_agg(g.value order by (case when g.value ? 'group_key' then '0' else '1' end) || btrim(coalesce(g.value->>'group_key', g.value->>'new_group_ref', '')))",
     );
   });
 

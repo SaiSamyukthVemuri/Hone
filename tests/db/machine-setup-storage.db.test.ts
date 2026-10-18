@@ -4,6 +4,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import {
   adminQuery,
+  RECORD_GROUP_SQL,
   asUser,
   closePool,
   seedMember,
@@ -394,7 +395,7 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
 
     const wrote = await asUser(studio.userId, (q) =>
       q(
-        `select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid) as n`,
+        RECORD_GROUP_SQL,
         [
           blockId,
           machineId,
@@ -439,7 +440,7 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
     const { blockId, sessionId } = await seedSession(studio);
     const machineId = await registerMachine(studio, "Room 1");
     await asUser(studio.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
+      q(RECORD_GROUP_SQL, [
         blockId,
         machineId,
         "galvanic",
@@ -486,7 +487,7 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
     const machineId = await registerMachine(studio, "Room 1");
     await expect(
       asUser(studio.userId, (q) =>
-        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
+        q(RECORD_GROUP_SQL, [
           blockId,
           machineId,
           "galvanic",
@@ -520,7 +521,7 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
       ["g2", [3], "90"],
     ] as const) {
       await asUser(studio.userId, (q) =>
-        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
+        q(RECORD_GROUP_SQL, [
           blockId,
           machineId,
           "galvanic",
@@ -559,7 +560,7 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
     const { blockId, sessionId } = await seedSession(studio);
     const machineId = await registerMachine(studio, "Room 1");
     await asUser(studio.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
+      q(RECORD_GROUP_SQL, [
         blockId,
         machineId,
         "galvanic",
@@ -603,7 +604,7 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
     const machineId = await registerMachine(studio, "Room 1");
     const record = (readings: unknown) =>
       asUser(studio.userId, (q) =>
-        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
+        q(RECORD_GROUP_SQL, [
           blockId,
           machineId,
           "galvanic",
@@ -661,7 +662,7 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
     const { blockId, sessionId } = await seedSession(studio);
     const machineId = await registerMachine(studio, "Room 1");
     await asUser(studio.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
+      q(RECORD_GROUP_SQL, [
         blockId, machineId, "galvanic", "g1", [], JSON.stringify(READINGS),
         sessionId,
         studio.clientId,
@@ -699,7 +700,7 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
     const { blockId, sessionId } = await seedSession(studio);
     const machineId = await registerMachine(studio, "Room 1");
     await asUser(studio.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
+      q(RECORD_GROUP_SQL, [
         blockId, machineId, "galvanic", "g1", [], JSON.stringify(READINGS),
         sessionId,
         studio.clientId,
@@ -718,7 +719,7 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
 
     // A SECOND call is a second capture, with its own identity.
     await asUser(studio.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
+      q(RECORD_GROUP_SQL, [
         blockId, machineId, "galvanic", "g1", [],
         JSON.stringify([
           {
@@ -773,7 +774,7 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
 
     await expect(
       asUser(studio.userId, (q) =>
-        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
+        q(RECORD_GROUP_SQL, [
           blockId, machineId, "galvanic", "g1", [], JSON.stringify(READINGS),
           sessionId,
           studio.clientId,
@@ -789,7 +790,7 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
     const { blockId, sessionId } = await seedSession(studio);
     const machineId = await registerMachine(studio, "Room 1");
     await asUser(studio.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
+      q(RECORD_GROUP_SQL, [
         blockId, machineId, "galvanic", "g1", [],
         JSON.stringify([
           {
@@ -820,7 +821,7 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
     const machineId = await registerMachine(studio, "Room 1");
     await expect(
       asUser(studio.userId, (q) =>
-        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
+        q(RECORD_GROUP_SQL, [
           blockId, machineId, "galvanic", "g1", [],
           JSON.stringify([
             { field_key: "invented", value: "1", observation_source: "practitioner-entered" },
@@ -877,7 +878,7 @@ describe("0223 · cross-studio refusal on the reading path", () => {
     const myMachine = await registerMachine(mine, "My room");
     await expect(
       asUser(mine.userId, (q) =>
-        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
+        q(RECORD_GROUP_SQL, [
           theirBlock,
           myMachine,
           "galvanic",
@@ -898,7 +899,7 @@ describe("0223 · cross-studio refusal on the reading path", () => {
     const theirMachine = await registerMachine(theirs, "Their room");
     await expect(
       asUser(mine.userId, (q) =>
-        q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
+        q(RECORD_GROUP_SQL, [
           myBlock,
           theirMachine,
           "galvanic",
@@ -936,7 +937,7 @@ describe("0223 · cross-studio refusal on the reading path", () => {
     const { blockId, sessionId } = await seedSession(mine);
     const machineId = await registerMachine(mine, "Room 1");
     await asUser(mine.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
+      q(RECORD_GROUP_SQL, [
         blockId,
         machineId,
         "galvanic",
@@ -985,7 +986,7 @@ describe("0223 · next-visit retrieval returns the prior setup accurately", () =
     // Two visits. The earlier one is backdated so ordering is unambiguous.
     const first = await seedSession(studio);
     await asUser(studio.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
+      q(RECORD_GROUP_SQL, [
         first.blockId,
         machineId,
         "galvanic",
@@ -1019,7 +1020,7 @@ describe("0223 · next-visit retrieval returns the prior setup accurately", () =
 
     const second = await seedSession(studio);
     await asUser(studio.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
+      q(RECORD_GROUP_SQL, [
         second.blockId,
         machineId,
         "galvanic",
@@ -1067,7 +1068,7 @@ describe("0223 · next-visit retrieval returns the prior setup accurately", () =
     const machineId = await registerMachine(studio, "Room 1");
     const first = await seedSession(studio);
     await asUser(studio.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
+      q(RECORD_GROUP_SQL, [
         first.blockId,
         machineId,
         "galvanic",
@@ -1088,7 +1089,7 @@ describe("0223 · next-visit retrieval returns the prior setup accurately", () =
     );
     const second = await seedSession(studio);
     await asUser(studio.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
+      q(RECORD_GROUP_SQL, [
         second.blockId,
         machineId,
         "galvanic",
@@ -1121,7 +1122,7 @@ describe("0223 · next-visit retrieval returns the prior setup accurately", () =
     const { blockId, sessionId } = await seedSession(studio);
     const machineId = await registerMachine(studio, "Room 1");
     await asUser(studio.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
+      q(RECORD_GROUP_SQL, [
         blockId,
         machineId,
         "galvanic",
@@ -1164,7 +1165,7 @@ describe("0223 · existing historical values are untouched", () => {
     );
     const machineId = await registerMachine(studio, "Room 1");
     await asUser(studio.userId, (q) =>
-      q(`select public.record_treatment_setup_group($1, $2, $3, $4, $5, $6::jsonb,$7::uuid,$8::uuid)`, [
+      q(RECORD_GROUP_SQL, [
         blockId,
         machineId,
         "galvanic",
@@ -1241,7 +1242,7 @@ describe("0223 · setup writes are bound to the authorized route", () => {
     await expect(
       asUser(studio.userId, (q) =>
         q(
-          `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid)`,
+          RECORD_GROUP_SQL,
           [
             beaBlockId,
             machineId,
@@ -1281,7 +1282,7 @@ describe("0223 · setup writes are bound to the authorized route", () => {
     await expect(
       asUser(studio.userId, (q) =>
         q(
-          `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid)`,
+          RECORD_GROUP_SQL,
           [
             ana.blockId,
             machineId,
@@ -1308,7 +1309,7 @@ describe("0223 · setup writes are bound to the authorized route", () => {
     await expect(
       asUser(studio.userId, (q) =>
         q(
-          `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid)`,
+          RECORD_GROUP_SQL,
           [
             first.blockId,
             machineId,
@@ -1350,7 +1351,7 @@ describe("0223 · setup writes are bound to the authorized route", () => {
 
     const wrote = await asUser(studio.userId, (q) =>
       q(
-        `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid) as n`,
+        RECORD_GROUP_SQL,
         [
           blockId,
           machineId,
@@ -1385,7 +1386,9 @@ describe("0223 · setup writes are bound to the authorized route", () => {
             "galvanic",
             "route-key-0001",
             JSON.stringify([
-              { group_key: "g1", channels: [], readings: READINGS },
+              // NEW BY REF: identities are issued, not chosen
+              // (Codex, #860 4305780322).
+              { new_group_ref: "g1", channels: [], readings: READINGS },
             ]),
             other.sessionId,
             studio.clientId,
@@ -1468,7 +1471,7 @@ describe("0223 · a capture must carry every required field", () => {
     await expect(
       asUser(studio.userId, (q) =>
         q(
-          `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid)`,
+          RECORD_GROUP_SQL,
           [
             blockId,
             machineId,
@@ -1504,7 +1507,7 @@ describe("0223 · a capture must carry every required field", () => {
 
     const wrote = await asUser(studio.userId, (q) =>
       q(
-        `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid) as n`,
+        RECORD_GROUP_SQL,
         [
           blockId,
           machineId,
@@ -1533,7 +1536,7 @@ describe("0223 · a capture must carry every required field", () => {
 
     const wrote = await asUser(studio.userId, (q) =>
       q(
-        `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid) as n`,
+        RECORD_GROUP_SQL,
         [
           blockId,
           machineId,
@@ -1576,7 +1579,7 @@ describe("0223 · a capture must carry every required field", () => {
             "req-key-0001",
             JSON.stringify([
               {
-                group_key: "g1",
+                new_group_ref: "g1",
                 channels: [],
                 readings: [
                   reading("current", "120", "µA", 0),
@@ -1585,7 +1588,7 @@ describe("0223 · a capture must carry every required field", () => {
               },
               // INCOMPLETE, and second: the first group has already been
               // written when this one is refused.
-              { group_key: "g2", channels: [], readings: [reading("current", "80", "µA", 0)] },
+              { new_group_ref: "g2", channels: [], readings: [reading("current", "80", "µA", 0)] },
             ]),
             sessionId,
             studio.clientId,
@@ -1676,7 +1679,7 @@ describe("0223 · revisions are scoped to the setup identity", () => {
     ] as const) {
       await asUser(studio.userId, (q) =>
         q(
-          `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid)`,
+          RECORD_GROUP_SQL,
           [blockId, machineId, "galvanic", "g1", [], one(value), sessionId, studio.clientId],
         ),
       );
@@ -1709,7 +1712,7 @@ describe("0223 · revisions are scoped to the setup identity", () => {
     for (const value of ["120", "150"]) {
       await asUser(studio.userId, (q) =>
         q(
-          `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid)`,
+          RECORD_GROUP_SQL,
           [blockId, roomOne, "galvanic", "g1", [], one(value), sessionId, studio.clientId],
         ),
       );

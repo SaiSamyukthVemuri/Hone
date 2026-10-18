@@ -1,43 +1,53 @@
+import { readFileSync } from "node:fs";
+import nodePath from "node:path";
+
 import { describe, expect, it } from "vitest";
 
-import {
-  BLOCK_READING_MAX_PAGES,
-  BLOCK_READING_PAGE_SIZE,
-  readingsForBlock,
-  type MachineDb,
-} from "@/lib/machines/machine-queries";
+import { readingsForBlock, type MachineDb } from "@/lib/machines/machine-queries";
 
 // ===========================================================================
 // A BLOCK'S READINGS ARE READ COMPLETELY, OR THE READ FAILS
-// (Codex, #860 4288424513)
+// (Codex, #860 4288424513, then 4305555264)
 // ===========================================================================
 //
-// The version this covers asked for `.order("field_key").limit(500)`. Two
-// faults compounded:
+// ROUND ONE. The read asked for `.order("field_key").limit(500)`. Two faults
+// compounded: a block CAN exceed the cap, and ordered by `field_key` ALONE the
+// cap does not cut at a capture boundary - it cuts mid-alphabet across every
+// capture at once, so the surface rendered captures MISSING SOME FIELDS. A
+// complete-looking record of a treatment that never happened. Raising the
+// limit would only have moved the cliff, because PostgREST answers a read past
+// `max_rows` with 200, the first window and no error.
 //
-//   1. a block CAN exceed the cap - one row per field per capture, one capture
-//      per settings group per save, so a four-channel unit re-read through a
-//      long treatment reaches several hundred rows without anything unusual;
-//   2. ordered by `field_key` ALONE, the cap does not cut at a capture
-//      boundary. It cuts mid-alphabet across every capture at once, so the
-//      surface that groups these rows renders captures MISSING SOME FIELDS - a
-//      complete-looking record of a treatment that never happened. A current
-//      without its duration is not a setting anyone can reproduce.
+// ROUND TWO, AND WHY THIS FILE LOOKS DIFFERENT NOW. The keyset pagination that
+// replaced it paged over `id`, and those ids are random UUIDs across SEPARATE
+// requests - so a capture committed to this block mid-loop could sort either
+// side of the cursor. Rows before it were never seen, rows after it were
+// included, and part of a new capture could come back as a complete setup.
 //
-// AND RAISING THE LIMIT WOULD HAVE MOVED THE CLIFF. PostgREST answers a read
-// past `max_rows` with 200, the first window and NO error, so `.limit(5000)`
-// just relocates the silent truncation to 1,000. That is why the fake below
-// caps pages BELOW the requested limit: it is modelling the thing that makes
-// the naive fix wrong, and a fake that always honours the requested limit
-// cannot fail on case 2.
+// A PAGE LOOP CAN ONLY DETECT THAT; IT CANNOT AVOID IT. So the loop is gone:
+// `setup_readings_for_block` is ONE STATEMENT, and one statement is one MVCC
+// snapshot - a concurrent commit is either wholly in it or wholly out.
+//
+// SIX CASES WERE DELETED HERE, DELIBERATELY, and they are named so nobody
+// looks for them: "returns rows from BEYOND the first page", "does NOT trust a
+// short page to be the last one", "never splits a capture, however the cap
+// falls", "refuses when the keyset does not advance", "refuses when a row
+// carries no id to page by", and "refuses at the page ceiling instead of
+// truncating". Every one of them asserted that the loop NOTICED its own
+// incoherence. There is no loop to notice anything, and a test that pins a
+// mechanism after the mechanism is gone is a test that passes for ever.
+//
+// WHAT REPLACES THEM is the property they were approximating: the read is a
+// single call, it is not assembled from windows, and the application cannot
+// reintroduce one without the source contract at the bottom of this file going
+// red.
 // ===========================================================================
 
 type Row = Record<string, unknown>;
 
-/** One reading row, shaped as the query selects it. */
+/** One reading row, shaped as the function returns it. */
 function row(id: string, o: Partial<Row> = {}): Row {
   return {
-    id,
     session_block_id: "block-1",
     machine_profile_id: "fixture:paging",
     machine_profile_version: 1,
@@ -51,7 +61,7 @@ function row(id: string, o: Partial<Row> = {}): Row {
     native_unit: "µA",
     decimals: 0,
     revision: 1,
-    capture_id: "cap-1",
+    capture_id: `cap-${id}`,
     studio_machine_id: "dev-1",
     observation_source: "machine-displayed",
     recorded_at: "2026-10-15T10:00:00Z",
@@ -60,239 +70,182 @@ function row(id: string, o: Partial<Row> = {}): Row {
 }
 
 type FakeOptions = {
-  /** The server's OWN ceiling, applied regardless of the requested limit. */
-  serverMaxRows?: number;
-  /** Answer every page with these rows, ignoring the keyset. */
-  stuck?: boolean;
-  error?: { message: string };
+  error?: { message: string; code?: string };
   /** Hand back something that is not an array, as a broken client would. */
   notAnArray?: boolean;
 };
 
 function fakeDb(rows: Row[], opts: FakeOptions = {}) {
-  const calls: Array<{ after: string | null; limit: number }> = [];
-  // THE COLUMNS THE READER ASKED FOR. Captured because one of the defects
-  // here was an omission from the SELECT list itself, which a mapping-only
-  // assertion passes straight over: the fake hands back whatever the fixture
-  // holds regardless of what was requested.
-  const selected: string[] = [];
-  const page = (after: string | null) => (limit: number) => {
-    calls.push({ after, limit });
-    if (opts.error) return Promise.resolve({ data: null, error: opts.error });
-    if (opts.notAnArray) return Promise.resolve({ data: {}, error: null });
-    // ORDERED BY id, as the query asks. The first spelling of this fake
-    // filtered but did not sort, so a page handed back rows in insert order
-    // and the cursor took the LAST of those rather than the greatest id - the
-    // next page then re-served a row it had already given. The fake was wrong
-    // and the reader caught it, which is the right way round.
-    const source = opts.stuck
-      ? rows
-      : rows
-          .filter((r) => after === null || String(r.id) > after)
-          .sort((a, b) => String(a.id).localeCompare(String(b.id)));
-    const cap = Math.min(limit, opts.serverMaxRows ?? limit);
-    return Promise.resolve({ data: source.slice(0, cap), error: null });
-  };
+  // EVERY RPC CALL, so "exactly one" is provable rather than assumed.
+  const calls: Array<{ fn: string; args: Record<string, unknown> }> = [];
   const db = {
-    rpc: async () => ({ data: null, error: null }),
-    from: () => ({
-      select: (columns: string) => {
-        selected.push(columns);
-        return {
-        eq: () => ({
-          // THE ROUTE BINDING'S OWN QUERY: `.eq(id).eq(session_id).limit(1)`.
-          // The fake answers it with one row, because every case in this file
-          // is about PAGINATION and assumes the block is the route's. The
-          // binding has its own tests; what matters here is that the fake
-          // models the call so these cases still exercise the reader.
-          eq: () => ({
-            limit: async () => ({ data: [{ id: "block-1" }], error: null }),
-          }),
-          is: () => ({ order: async () => ({ data: [], error: null }) }),
-          order: () => ({ limit: page(null) }),
-          gt: (_c: string, after: string) => ({
-            order: () => ({ limit: page(after) }),
-          }),
-          in: () => ({ limit: async () => ({ data: [], error: null }) }),
-        }),
-        };
-      },
-    }),
+    rpc: (fn: string, args: Record<string, unknown>) => {
+      calls.push({ fn, args });
+      if (opts.error) return Promise.resolve({ data: null, error: opts.error });
+      if (opts.notAnArray) return Promise.resolve({ data: {}, error: null });
+      return Promise.resolve({ data: rows, error: null });
+    },
+    from: () => {
+      throw new Error(
+        "the read must not touch a table directly - it goes through the RPC",
+      );
+    },
   } as unknown as MachineDb;
-  return { db, calls, selected };
+  return { db, calls };
 }
 
-describe("readingsForBlock reads every page", () => {
-  it("returns rows from BEYOND the first page", async () => {
-    // 1,500 rows against a 1,000-row page: the old read would have answered
-    // with 500 and called itself successful.
-    const rows = Array.from({ length: 1500 }, (_, i) =>
-      row(`r-${String(i).padStart(5, "0")}`),
+describe("readingsForBlock is ONE statement, so it cannot return half a block", () => {
+  it("makes exactly one call, and it is the reader function", async () => {
+    // THE WHOLE POINT. More than one request is more than one snapshot, which
+    // is the defect; a single call is what makes the result coherent.
+    const { db, calls } = fakeDb([row("r1"), row("r2")]);
+
+    const out = await readingsForBlock(db, "block-1", "session-1");
+
+    expect(out.ok).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.fn).toBe("setup_readings_for_block");
+  });
+
+  it("binds the block to the session IN the call, not before it", async () => {
+    // The lineage used to be a separate bounded lookup HERE, sound only
+    // because `session_blocks.session_id` is immutable - a property of a
+    // trigger in another file. It lives in the function now, as both an
+    // `exists` refusal and a join predicate, so the session id has to reach it
+    // or the read cannot be bound at all (Codex, #860 4298457378).
+    const { db, calls } = fakeDb([row("r1")]);
+
+    await readingsForBlock(db, "block-7", "session-9");
+
+    expect(calls[0]!.args).toEqual({
+      p_block_id: "block-7",
+      p_session_id: "session-9",
+    });
+  });
+
+  it("returns a large block WHOLE, with no cap to fall under", async () => {
+    // The number is deliberately past both the old 500 limit and the 1,000
+    // page size: neither is a boundary any more, and a result that came back
+    // short here would mean a window had reappeared somewhere.
+    const many = Array.from({ length: 2500 }, (_, i) =>
+      row(`r${String(i).padStart(4, "0")}`),
     );
-    const { db, calls } = fakeDb(rows);
+    const { db, calls } = fakeDb(many);
 
     const out = await readingsForBlock(db, "block-1", "session-1");
 
     expect(out.ok).toBe(true);
     if (!out.ok) return;
-    expect(out.value).toHaveLength(1500);
-    // Three calls: a full page, a short page, then the empty one that ends it.
-    expect(calls).toHaveLength(3);
-    expect(calls[0]!.after).toBeNull();
-    expect(calls[0]!.limit).toBe(BLOCK_READING_PAGE_SIZE);
-    expect(calls[1]!.after).toBe("r-00999");
+    expect(out.value).toHaveLength(2500);
+    expect(calls).toHaveLength(1);
   });
 
-  it("does NOT trust a short page to be the last one", async () => {
-    // THE CASE THAT MAKES THE NAIVE FIX WRONG. The server caps every response
-    // at 400 whatever this asks for, exactly as PostgREST's max_rows does -
-    // and answers 200 with no error. A reader that stops when a page comes
-    // back shorter than requested would return 400 of 900 rows and report
-    // success.
-    const rows = Array.from({ length: 900 }, (_, i) =>
-      row(`r-${String(i).padStart(5, "0")}`),
-    );
-    const { db, calls } = fakeDb(rows, { serverMaxRows: 400 });
-
-    const out = await readingsForBlock(db, "block-1", "session-1");
-
-    expect(out.ok).toBe(true);
-    if (!out.ok) return;
-    expect(out.value, "a short page ended the read early").toHaveLength(900);
-    expect(calls).toHaveLength(4); // 400, 400, 100, 0
-  });
-
-  it("never splits a capture, however the cap falls", async () => {
-    // THE CLINICAL POINT, and the reason the old ordering was worse than the
-    // old limit. 300 captures of three fields each, with the server cutting
-    // every 400 rows - mid-capture by construction. Every capture must come
-    // back whole.
-    const rows: Row[] = [];
-    for (let c = 0; c < 300; c += 1) {
-      const capture = `cap-${String(c).padStart(4, "0")}`;
-      for (const field of ["current", "duration", "energy_shown"]) {
-        rows.push(
-          row(`r-${String(rows.length).padStart(5, "0")}`, {
-            capture_id: capture,
-            field_key: field,
-            revision: c + 1,
-          }),
-        );
-      }
-    }
-    const { db } = fakeDb(rows, { serverMaxRows: 400 });
-
-    const out = await readingsForBlock(db, "block-1", "session-1");
-
-    expect(out.ok).toBe(true);
-    if (!out.ok) return;
-    expect(out.value).toHaveLength(900);
-    const byCapture = new Map<string, number>();
-    for (const r of out.value) {
-      byCapture.set(r.captureId ?? "", (byCapture.get(r.captureId ?? "") ?? 0) + 1);
-    }
-    expect(byCapture.size).toBe(300);
-    const short = [...byCapture.entries()].filter(([, n]) => n !== 3);
-    expect(short, "a capture came back with some of its fields").toEqual([]);
-  });
-
-  it("keeps the field_key ordering the surface has always had", async () => {
-    // The repair reads by `id` because that is the only stable keyset, but the
-    // ORDER it hands back is unchanged, so no rendering contract moves with it.
+  it("does not sort in memory - the ORDER is the database's", async () => {
+    // Ordering is part of what makes a retrieved setup reproducible, so it
+    // belongs with the read. Re-sorting here would also hide a function that
+    // had stopped ordering at all.
     const { db } = fakeDb([
-      row("r-3", { field_key: "energy_shown" }),
-      row("r-1", { field_key: "current" }),
-      row("r-2", { field_key: "duration" }),
+      row("r1", { field_key: "duration" }),
+      row("r2", { field_key: "current" }),
     ]);
 
     const out = await readingsForBlock(db, "block-1", "session-1");
 
     expect(out.ok).toBe(true);
     if (!out.ok) return;
-    expect(out.value.map((r) => r.fieldKey)).toEqual([
-      "current",
-      "duration",
-      "energy_shown",
-    ]);
+    expect(out.value.map((r) => r.fieldKey)).toEqual(["duration", "current"]);
   });
 });
 
 describe("readingsForBlock fails CLOSED rather than returning part of a block", () => {
-  it("refuses when the keyset does not advance", async () => {
-    // A server answering every page with the same rows would otherwise spin
-    // until the ceiling and then return 50,000 duplicates.
-    const { db, calls } = fakeDb([row("r-1"), row("r-2")], { stuck: true });
+  it("refuses on a failed read, and passes the server's own words through", async () => {
+    const { db } = fakeDb([], { error: { message: "connection reset" } });
 
     const out = await readingsForBlock(db, "block-1", "session-1");
 
-    expect(out.ok).toBe(false);
-    expect(calls.length, "it must notice on the SECOND page, not at the ceiling")
-      .toBe(2);
-  });
-
-  it("refuses when a row carries no id to page by", async () => {
-    // Without a cursor the read cannot be shown complete. Guessing - stopping
-    // and calling it done - is the defect being repaired, one layer down.
-    const { db } = fakeDb([{ ...row("x"), id: undefined }]);
-
-    const out = await readingsForBlock(db, "block-1", "session-1");
-
-    expect(out.ok).toBe(false);
-  });
-
-  it("refuses at the page ceiling instead of truncating", async () => {
-    // More rows than the bound allows is still an incomplete read, and the
-    // caller must not be handed a prefix wearing ok:true.
-    const rows = Array.from(
-      { length: BLOCK_READING_PAGE_SIZE * (BLOCK_READING_MAX_PAGES + 2) },
-      (_, i) => row(`r-${String(i).padStart(7, "0")}`),
-    );
-    const { db, calls } = fakeDb(rows);
-
-    const out = await readingsForBlock(db, "block-1", "session-1");
-
-    expect(out.ok).toBe(false);
-    expect(calls).toHaveLength(BLOCK_READING_MAX_PAGES);
-  });
-
-  it("refuses on a failed page, and passes the server's own words through", async () => {
-    // `fail()` returns a STRING and prefers the database's message to the
-    // fallback. My first spelling here asserted `out.error.message` against
-    // the fallback and was wrong twice over - the shape and the precedence.
-    const { db } = fakeDb([row("r-1")], { error: { message: "boom" } });
-    const out = await readingsForBlock(db, "block-1", "session-1");
     expect(out.ok).toBe(false);
     if (out.ok) return;
-    expect(out.error).toBe("boom");
+    expect(out.error).toContain("connection reset");
   });
 
   it("uses the fallback sentence when the failure carries no message", async () => {
-    // The keyset, ceiling and not-a-list refusals have no server error to
-    // quote, so the caller still gets a sentence rather than an empty string.
-    const { db } = fakeDb([row("r-1")], { notAnArray: true });
+    const { db } = fakeDb([], { error: { message: "" } });
+
     const out = await readingsForBlock(db, "block-1", "session-1");
+
     expect(out.ok).toBe(false);
     if (out.ok) return;
-    expect(out.error).toMatch(/could not read settings/i);
+    expect(out.error).toBe("Could not read settings.");
   });
 
   it("refuses when the client hands back something that is not a list", async () => {
-    const { db } = fakeDb([row("r-1")], { notAnArray: true });
+    const { db } = fakeDb([], { notAnArray: true });
+
     const out = await readingsForBlock(db, "block-1", "session-1");
+
     expect(out.ok).toBe(false);
   });
 
   it("CONTROL: an empty block is an ordinary EMPTY success, not a refusal", async () => {
-    // Fail-closed must not swallow the commonest case: a treatment area with
-    // no machine settings recorded on it yet.
-    const { db, calls } = fakeDb([]);
+    // Without this the refusals above would also pass if the read refused
+    // everything, and a treatment with no settings yet is the ordinary case
+    // on every new area.
+    const { db } = fakeDb([]);
 
     const out = await readingsForBlock(db, "block-1", "session-1");
 
     expect(out.ok).toBe(true);
     if (!out.ok) return;
     expect(out.value).toEqual([]);
-    expect(calls).toHaveLength(1);
+  });
+
+  it("a block in another session arrives as a REFUSAL, not an empty success", async () => {
+    // The function RAISES for a block it cannot see or that is not in the
+    // given session, identically to one that does not exist - so it reaches
+    // here as an ordinary RPC error. Answering `[]` would have rendered "no
+    // settings recorded" to someone with no business there, reversing a
+    // decision the paginated read already encoded.
+    const { db } = fakeDb([], {
+      error: { message: "Unknown treatment block for this session.", code: "P0002" },
+    });
+
+    const out = await readingsForBlock(db, "someone-elses-block", "session-1");
+
+    expect(out.ok).toBe(false);
+  });
+
+  it("and the practitioner is shown the GENERIC sentence, not the precise one", async () => {
+    // THE TWO CASES MUST READ ALIKE. A practitioner cannot tell "not yours"
+    // from "the database is unhappy", so neither can anyone probing with
+    // someone else's block id. The database keeps the precise sentence
+    // because a refusal has to be provable; this is where it stops.
+    const { db } = fakeDb([], {
+      error: { message: "Unknown treatment block for this session.", code: "P0002" },
+    });
+
+    const out = await readingsForBlock(db, "someone-elses-block", "session-1");
+
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.error).toBe("Could not read settings.");
+    expect(
+      out.error,
+      "the database's precise sentence reached the practitioner",
+    ).not.toContain("Unknown treatment block");
+  });
+
+  it("CONTROL: a failure with ANOTHER code still passes its words through", async () => {
+    // Without this the mapping above would also pass if it swallowed every
+    // message, and "connection reset" is exactly the detail worth keeping.
+    const { db } = fakeDb([], {
+      error: { message: "connection reset", code: "08006" },
+    });
+
+    const out = await readingsForBlock(db, "block-1", "session-1");
+
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.error).toContain("connection reset");
   });
 });
 
@@ -324,20 +277,37 @@ describe("retrieved readings keep their observation provenance", () => {
     ]);
   });
 
-  it("asks the database for the column at all", async () => {
+  it("the FUNCTION emits the column, so a mapping test cannot pass alone", async () => {
     // The omission was in the SELECT list, so a mapping test alone would have
-    // passed against a query that never requested it.
-    const { db, selected } = fakeDb([row("r1")]);
-
-    await readingsForBlock(db, "block-1", "session-1");
-
-    // ANY of the selects, not the first: the route binding now issues its
-    // own `select("id")` on session_blocks before the readings are read, so
-    // pinning index 0 asserted against the wrong query.
-    expect(
-      selected.some((cols) => cols.includes("observation_source")),
-      "no query asked for observation_source",
-    ).toBe(true);
+    // passed against a query that never requested it. The list lives in SQL
+    // now, which is where this has to be checked - there is no client-side
+    // column string left to inspect.
+    const sql = readFileSync(
+      nodePath.resolve(
+        __dirname,
+        "../../..",
+        "supabase/migrations/0223_machine_inventory_and_setup_readings.sql",
+      ),
+      "utf8",
+    );
+    const at = sql.indexOf(
+      "create or replace function public.setup_readings_for_block(",
+    );
+    expect(at, "the reader function is gone").toBeGreaterThan(-1);
+    const body = sql.slice(at, sql.indexOf("$$;", at));
+    for (const col of [
+      "observation_source",
+      "native_unit",
+      "decimals",
+      "revision",
+      "capture_id",
+      "group_key",
+      "channels",
+      "stage_key",
+      "absence_reason",
+    ]) {
+      expect(body, `the reader does not emit ${col}`).toContain(`'${col}',`);
+    }
   });
 
   it("a row written before the column existed reads as UNKNOWN, not assumed", async () => {
@@ -360,5 +330,42 @@ describe("retrieved readings keep their observation provenance", () => {
     expect(out.ok).toBe(true);
     if (!out.ok) return;
     expect(out.value[0]!.observationSource).toBeNull();
+  });
+});
+
+describe("the page loop cannot come back", () => {
+  it("the reader holds no cursor, no page size and no page ceiling", () => {
+    // WHY A SOURCE CONTRACT. Everything above runs against a fake that serves
+    // one call; none of it would fail if someone reintroduced a loop that
+    // happened to finish in one iteration against that fake. This is the
+    // assertion that notices.
+    const src = readFileSync(
+      nodePath.resolve(__dirname, "../../..", "lib/machines/machine-queries.ts"),
+      "utf8",
+    );
+    const at = src.indexOf("export async function readingsForBlock(");
+    expect(at).toBeGreaterThan(-1);
+    const body = src.slice(at, src.indexOf("\nexport ", at + 1));
+    // Comments are NOT stripped here on purpose: the body's own comments
+    // explain the defect and name these very words, so stripping them would
+    // be the only way to keep the assertion honest... which is why each check
+    // targets a code form rather than a word.
+    expect(body, "a keyset cursor is back").not.toMatch(/\.gt\(/);
+    expect(body, "a page loop is back").not.toMatch(/for \(let page/);
+    expect(body, "a row limit is back").not.toMatch(/\.limit\(/);
+    expect(body, "the read goes through the RPC").toContain(
+      'db.rpc("setup_readings_for_block"',
+    );
+  });
+
+  it("and the pagination constants are gone with it", () => {
+    // Left exported, they read as a supported knob and invite a caller to
+    // page again somewhere else.
+    const src = readFileSync(
+      nodePath.resolve(__dirname, "../../..", "lib/machines/machine-queries.ts"),
+      "utf8",
+    );
+    expect(src).not.toContain("BLOCK_READING_PAGE_SIZE");
+    expect(src).not.toContain("BLOCK_READING_MAX_PAGES");
   });
 });

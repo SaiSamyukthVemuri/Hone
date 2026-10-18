@@ -1770,6 +1770,50 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     };
   }
 
+  // P3 — A STALE SLOT ON THE NEW-CLIENT PATH NOW ARRIVES PRE-INSERT.
+  //
+  // 0225's gate validates the SELECTED practitioner's slot before the
+  // resolve-or-create, so `time_unavailable` can come back with a NULL
+  // client_id. The missing-client guard below would read that as "the command
+  // resolved nobody" and return the generic error, leaving the retryable copy
+  // unreachable for the primary new-client case.
+  //
+  // DELIBERATELY NARROW: only when no client was resolved. An EXISTING client
+  // reaching `time_unavailable` is the later SLOT_TAKEN_CODES mapping's
+  // business and must keep flowing there — it already answers with the same
+  // copy AND the `slot_taken` code, which an early return here would have
+  // dropped. Measured: broadening this to every non-invitation booking broke
+  // "leaves the ordinary non-invitation booking path untouched", which asserts
+  // exactly that code.
+  if (
+    !rpcErr &&
+    !consumedInvitationId &&
+    resolvedClientId === null &&
+    rawCommandResult === "time_unavailable"
+  ) {
+    console.error(
+      JSON.stringify({
+        event: "booking_slot_rejected",
+        studioId: studio.id,
+        code: rawCommandResult,
+        source: "public_booking_pre_insert",
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    // The LATER mapping's exact answer, not PUBLIC_BOOKING_SLOT_TAKEN_ERROR.
+    // This branch exists only to make that answer REACHABLE when the client
+    // was never resolved, so the two must be indistinguishable to the caller —
+    // same copy, same code. Measured: the other constant reads "has just been
+    // taken", which does not match the retryable copy the tests pin
+    // (/choose another time|no longer available/i), so using it here would
+    // silently give new clients different wording from existing ones.
+    return {
+      ok: false,
+      error: "That time is no longer available. Please choose another time.",
+      code: "slot_taken",
+    };
+  }
+
   // The id the COMMAND used - resolved under the lock, or created by it. For an
   // existing client it is the one this action already resolved.
   //
