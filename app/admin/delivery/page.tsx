@@ -71,6 +71,11 @@ export default async function DeliveryQueuePage() {
     outcomesRes.error || !Array.isArray(outcomesRes.data) ? null : (outcomesRes.data as ReceiptOutcome[]);
   const findings = health ? healthFindings(health) : [];
   const concerns = (concernsRes.data ?? []) as SupportConcern[];
+  // The concerns read is capped the same way — `support_delivery_concerns`
+  // applies `limit 300` (0221:394) — so its count is also a count of what is
+  // SHOWN. Same reasoning, separate number, separate section.
+  const SUPPORT_CONCERN_CAP = 300;
+  const concernsTruncated = concerns.length >= SUPPORT_CONCERN_CAP;
 
   return (
     <div className="flex flex-col gap-8">
@@ -190,7 +195,12 @@ export default async function DeliveryQueuePage() {
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">Client says not received ({concerns.length} open)</h2>
+        <h2 className="text-lg font-medium">Client says not received ({concerns.length} shown)</h2>
+        {concernsTruncated && (
+          <p className="text-sm text-amber-800 dark:text-amber-300">
+            Showing the most recent {SUPPORT_CONCERN_CAP} concerns. Older concerns are not listed.
+          </p>
+        )}
         {concernsRes.error ? (
           <p className="text-sm text-red-800 dark:text-red-300">Concerns could not be loaded. Treat them as unknown.</p>
         ) : concerns.length === 0 ? (
