@@ -57,7 +57,12 @@
  * `discrepancy`, and `validateReading` refuses on neither.
  */
 
-import type { EvidenceRef, MachineProfile, OpenQuestion } from "./profile-contract";
+import type {
+  EvidenceRef,
+  MachineProfile,
+  OpenQuestion,
+  VerificationState,
+} from "./profile-contract";
 
 // ---------------------------------------------------------------------------
 // Shared evidence — the source ledger from #829, by family
@@ -897,14 +902,145 @@ export function catalogueIntegrity(
   const seen = new Set<string>();
 
   for (const p of profiles) {
-    if (seen.has(p.profileId)) {
-      out.push({ profileId: p.profileId, problem: "duplicate profileId" });
+    // IDENTITY IS (profileId, VERSION), not profileId (Codex, #855
+    // 4304921305). Keyed on the id alone, this rule made it impossible to
+    // keep v1 beside v2 — so a republished contract had to REPLACE its
+    // predecessor, and every reading captured under the old version stopped
+    // validating. Two entries for one id at one version are still a
+    // duplicate; two versions of one id are the point.
+    const identity = `${p.profileId}@${p.version}`;
+    if (seen.has(identity)) {
+      out.push({
+        profileId: p.profileId,
+        problem: `duplicate profileId at version ${p.version}`,
+      });
     }
-    seen.add(p.profileId);
+    seen.add(identity);
 
     const evidenceIds = new Set(p.evidence.map((e) => e.id));
     const blockedKeys = new Set(p.openQuestions.flatMap((q) => q.blocks));
     const blocksEverything = blockedKeys.has("*");
+
+    // EVERY CONTRACT THAT CITES EVIDENCE IS CHECKED THE SAME WAY (Codex, #855
+    // 4305019848). This was inline in the field loop and nowhere else, so a
+    // mode, a channel structure or a frequency could cite an id that does not
+    // exist in the profile's own ledger — or cite nothing at all — and still
+    // be reported as documented. One helper now, used by all four surfaces,
+    // because a second copy is how the field rule came to be the only one.
+    const cites = (what: string, ids: readonly string[]) => {
+      for (const id of ids) {
+        if (!evidenceIds.has(id)) {
+          out.push({
+            profileId: p.profileId,
+            problem: `${what} cites unknown evidence '${id}'`,
+          });
+        }
+      }
+      if (ids.length === 0) {
+        out.push({
+          profileId: p.profileId,
+          problem: `${what} cites no evidence at all`,
+        });
+      }
+    };
+
+    if (p.channels) cites("channel structure", p.channels.evidence);
+    if (p.frequency.kind === "fixed" || p.frequency.kind === "selectable") {
+      cites(`frequency (${p.frequency.kind})`, p.frequency.evidence);
+    }
+
+    // STORAGE IDENTITIES MUST BE UNIQUE WITHIN THEIR OWN SCOPE (Codex, #855
+    // 4305019857). Lookup is `.find()` — `findMode` by mode key, and the field
+    // search by (mode, stageKey, fieldKey) — so a repeated key makes the later
+    // contract UNREACHABLE and array order silently decides which labels,
+    // units and limits apply. The scope is exactly the lookup's own key: mode
+    // keys per profile, stage keys per mode, and field keys per (mode, stage).
+    // A field key shared by two different stages is legitimate and common —
+    // MultiPlex stages each carry their own duration — so scoping this any
+    // wider would reject honest profiles.
+    const modeKeys = new Set<string>();
+    for (const mode of p.modes) {
+      if (modeKeys.has(mode.key)) {
+        out.push({
+          profileId: p.profileId,
+          problem: `duplicate mode key '${mode.key}'`,
+        });
+      }
+      modeKeys.add(mode.key);
+
+      const stageKeys = new Set<string>();
+      for (const stage of mode.stages) {
+        if (stageKeys.has(stage.key)) {
+          out.push({
+            profileId: p.profileId,
+            problem: `mode ${mode.key} has duplicate stage key '${stage.key}'`,
+          });
+        }
+        stageKeys.add(stage.key);
+      }
+
+      const scopes = [
+        { stage: null as string | null, fields: mode.fields },
+        ...mode.stages.map((st) => ({ stage: st.key, fields: st.fields })),
+      ];
+      for (const scope of scopes) {
+        const fieldKeys = new Set<string>();
+        for (const f of scope.fields) {
+          if (fieldKeys.has(f.key)) {
+            out.push({
+              profileId: p.profileId,
+              problem: `mode ${mode.key}${
+                scope.stage ? ` stage ${scope.stage}` : ""
+              } has duplicate field key '${f.key}'`,
+            });
+          }
+          fieldKeys.add(f.key);
+        }
+      }
+    }
+
+    // AN OPEN QUESTION THAT NAMES NOTHING REAL HOLDS NOTHING (Codex, #855
+    // 4305019844). `OpenQuestion.blocks` documents this rule in its own type
+    // — "A target naming nothing real holds nothing, which is worse than no
+    // question at all — the integrity guard rejects that" — and the guard did
+    // not implement it. A misspelled qualifier such as `wrong-mode.duration`,
+    // where `duration` exists under a DIFFERENT mode, matched none of the
+    // `held` forms below, so the question silently held nothing and
+    // `activationReadiness` approved the profile with the question still open.
+    //
+    // The accepted forms are enumerated here in the same three shapes `held`
+    // tests for, plus the two sentinels. Changing one without the other
+    // reintroduces exactly this defect.
+    const validTargets = new Set<string>(["*", "@frequency"]);
+    for (const mode of p.modes) {
+      for (const f of mode.fields) {
+        validTargets.add(f.key);
+        validTargets.add(`${mode.key}.${f.key}`);
+      }
+      for (const stage of mode.stages) {
+        for (const f of stage.fields) {
+          validTargets.add(f.key);
+          validTargets.add(`${mode.key}.${f.key}`);
+          validTargets.add(`${stage.key}.${f.key}`);
+        }
+      }
+    }
+    for (const q of p.openQuestions) {
+      for (const target of q.blocks) {
+        if (!validTargets.has(target)) {
+          out.push({
+            profileId: p.profileId,
+            problem: `open question '${q.id}' blocks '${target}', which names no field, mode.field, stage.field or profile-level sentinel`,
+          });
+        }
+      }
+      if (q.blocks.length === 0) {
+        out.push({
+          profileId: p.profileId,
+          problem: `open question '${q.id}' blocks nothing at all`,
+        });
+      }
+    }
 
     if (p.availability !== "active" && !p.availabilityReason) {
       out.push({
@@ -919,21 +1055,44 @@ export function catalogueIntegrity(
         ...mode.stages.flatMap((s) => s.fields.map((f) => ({ f, stage: s.key }))),
       ];
 
+      // The mode's own identity is a cited contract too, and was never
+      // checked (Codex, #855 4305019848).
+      cites(`mode ${mode.key}`, mode.evidence);
+
       for (const { f, stage } of fields) {
-        for (const id of f.evidence) {
-          if (!evidenceIds.has(id)) {
+        cites(`field ${mode.key}.${f.key}`, f.evidence);
+        // A RANGE'S NUMBERS HAVE TO BE A RANGE (Codex, #855 4305364906).
+        // Checked for every range regardless of class or availability,
+        // because a non-finite bound, an inverted pair or a nonpositive step
+        // is a data error rather than a policy question — and each one fails
+        // in a different, quiet direction: an inverted HARDWARE range refuses
+        // every value a practitioner could enter, while a nonpositive step is
+        // skipped by the step check's own `step > 0` guard, so the contract
+        // declares an increment it never enforces.
+        for (const r of f.ranges ?? []) {
+          const bad: string[] = [];
+          if (r.min !== undefined && !Number.isFinite(r.min)) bad.push("min is not finite");
+          if (r.max !== undefined && !Number.isFinite(r.max)) bad.push("max is not finite");
+          if (
+            r.min !== undefined &&
+            r.max !== undefined &&
+            Number.isFinite(r.min) &&
+            Number.isFinite(r.max) &&
+            r.min > r.max
+          ) {
+            bad.push(`min ${r.min} exceeds max ${r.max}`);
+          }
+          if (r.step !== undefined && (!Number.isFinite(r.step) || r.step <= 0)) {
+            bad.push(`step ${r.step} is not a positive increment`);
+          }
+          for (const problem of bad) {
             out.push({
               profileId: p.profileId,
-              problem: `field ${mode.key}.${f.key} cites unknown evidence '${id}'`,
+              problem: `field ${mode.key}.${f.key} range is malformed: ${problem}`,
             });
           }
         }
-        if (f.evidence.length === 0) {
-          out.push({
-            profileId: p.profileId,
-            problem: `field ${mode.key}.${f.key} cites no evidence at all`,
-          });
-        }
+
         // A range may only refuse input when it is hardware-enforced AND
         // undisputed. Anything else is advisory by construction.
         for (const r of f.ranges ?? []) {
@@ -1002,10 +1161,105 @@ export function catalogueIntegrity(
       }
     }
 
+    // AN ACTIVE PROFILE'S OWN IDENTITY MUST BE SOURCE-BACKED (Codex, #855
+    // 4305243749). Every gate here tested the modes and the fields; the
+    // PROFILE's own `verification` was never consulted, so a model whose
+    // identity is explicitly `unverified` or `pending-evidence` could be
+    // offered as a verified named choice as long as its modes and fields were
+    // documented. That is the same defect the mode-identity gate below exists
+    // for — the ST 350 review found a placeholder "Treatment" on a mode marked
+    // documented — one level up, and `active` means "verified named choice" or
+    // it means nothing.
+    // SOURCE-BACKED MEANS ONE THING, SO IT IS WRITTEN ONCE. Rounds 3 and 4
+    // each found another contract whose own `verification` nobody consulted —
+    // the profile's identity (4305243749), then its channel structure and its
+    // frequency (4305364897) — after the field and mode gates had been there
+    // from the start. Enumerating contracts one review at a time is what made
+    // that a series, so this says what "qualifies" means and then names every
+    // contract that has to.
+    const qualifies = (v: VerificationState) =>
+      v === "manufacturer-documented" || v === "device-confirmed";
+
+    if (p.availability === "active") {
+      if (!qualifies(p.verification)) {
+        out.push({
+          profileId: p.profileId,
+          problem: `profile is active but its own identity is ${p.verification}`,
+        });
+      }
+      // THE CHANNEL COUNT IS ENFORCED, so an unverified one produces real
+      // refusals: `validateReading` rejects a channel above `channels.count`
+      // and requires an association when `associationRequired` says so. An
+      // unverified structure therefore refuses true observations.
+      if (p.channels && !qualifies(p.channels.verification)) {
+        out.push({
+          profileId: p.profileId,
+          problem: `profile is active but its channel structure is ${p.channels.verification}`,
+        });
+      }
+      // The frequency is PRESENTED to the practitioner as fact, and on a few
+      // models it is a selectable control, so an unverified value is either a
+      // displayed claim nobody checked or an invented choice.
+      if (
+        (p.frequency.kind === "fixed" || p.frequency.kind === "selectable") &&
+        !qualifies(p.frequency.verification)
+      ) {
+        out.push({
+          profileId: p.profileId,
+          problem: `profile is active but its ${p.frequency.kind} frequency is ${p.frequency.verification}`,
+        });
+      }
+    }
+
+    // AN ACTIVE PROFILE WITH NO MODES AT ALL (Codex, #855 4305243750). There
+    // is no `modeKey` any reading could name, so every capture against it is
+    // refused with `unknown_mode` — it is offered and unusable. This was
+    // caught only by an extra boolean inside `activationReadiness`, which left
+    // its `blockers` EMPTY (so readiness could not say why) and left
+    // `catalogueIntegrity` accepting the same profile if someone set
+    // `availability` to active by hand. Two paths, two different answers.
+    if (p.availability === "active" && p.modes.length === 0) {
+      out.push({
+        profileId: p.profileId,
+        problem: "profile is active but carries no modes at all",
+      });
+    } else if (
+      p.availability === "active" &&
+      !p.modes.some((m) => m.availability === "active")
+    ) {
+      // AN INVENTORY IS NOT AN OFFER (Codex, #855 4305364901). The rule above
+      // tested only that the list was non-empty, so a profile whose every
+      // mode is `blocked` or `legacy-only` passed — and then `activeProfiles`
+      // offered it while `activeModes` returned nothing and `validateReading`
+      // refused every possible mode with `mode_not_offered`. That is the same
+      // unusable picker the no-modes rule exists to prevent, reached by a
+      // different route. `else if` because "no modes at all" is the more
+      // specific complaint and saying both would be noise.
+      out.push({
+        profileId: p.profileId,
+        problem: "profile is active but none of its modes is",
+      });
+    }
+
     if (p.availability === "active" && blocksEverything) {
       out.push({
         profileId: p.profileId,
         problem: "profile is active while an open question blocks everything",
+      });
+    }
+
+    // "@frequency" HOLDS ACTIVATION TOO (Codex, #855 4304921316). The gate
+    // above tested only "*", so a profile whose FREQUENCY contract is
+    // explicitly held could be activated the moment its fields and mode
+    // identity were documented — the Senior 3G frequency conflict is exactly
+    // such a question, and it is one of two live uses of this sentinel.
+    // `ProfileLevelBlock` declares the value; honouring it is what makes the
+    // declaration mean anything.
+    if (p.availability === "active" && blockedKeys.has("@frequency")) {
+      out.push({
+        profileId: p.profileId,
+        problem:
+          "profile is active while an open question holds its frequency contract",
       });
     }
   }
@@ -1025,22 +1279,99 @@ export function catalogueIntegrity(
 export function activationReadiness(
   profile: MachineProfile,
 ): { ready: boolean; blockers: string[] } {
+  // WHICH MODES ARE ACTUALLY BEING PROPOSED (Codex, #855 4305466530).
+  //
+  // This promoted EVERY mode, which contradicted the model the integrity
+  // rules now describe: only ONE active mode is required, and non-active
+  // modes are explicitly permitted to stay. So a profile holding one verified
+  // mode beside a deliberately retained one had the retained mode's evidence
+  // gaps reported as activation blockers, falsely withholding a model that
+  // was ready.
+  //
+  // THE CANDIDATE SET COMES FROM THE TYPE'S OWN MEANINGS, not from a guess:
+  // `blocked` is "deliberately NOT offered: evidence incomplete for this
+  // exact model", which is a candidate under review; `legacy-only` is "kept
+  // so historical rows still render, never offered for new capture", which is
+  // deliberately never a candidate. So the candidates are the ACTIVE modes
+  // if any, otherwise the BLOCKED ones, and never the legacy-only ones.
+  //
+  // Promoting NOTHING would have been the simpler change and a worse one:
+  // every real model's modes are blocked today, so the field and mode-identity
+  // gates — which only run for an active mode — would stop running, and
+  // readiness would stop telling a reviewer why the ST 350 and the 5HD are not
+  // ready. That is the only thing it currently tells them.
+  const hasActiveMode = profile.modes.some((m) => m.availability === "active");
+  const isCandidate = (m: MachineProfile["modes"][number]) =>
+    hasActiveMode ? m.availability === "active" : m.availability === "blocked";
   const candidate: MachineProfile = {
     ...profile,
     availability: "active",
-    modes: profile.modes.map((m) => ({ ...m, availability: "active" as const })),
+    modes: profile.modes.map((m) =>
+      isCandidate(m) ? { ...m, availability: "active" as const } : m,
+    ),
   };
   // Reuse the real gate rather than restating it, so the two can never drift.
   const blockers = catalogueIntegrity([candidate]).map((v) => v.problem);
-  return { ready: blockers.length === 0 && profile.modes.length > 0, blockers };
+  // DERIVED ENTIRELY FROM THE BLOCKERS (Codex, #855 4305243750). The
+  // `profile.modes.length > 0` term used to sit here as a second, separate
+  // rule — so a profile with no modes was reported `ready: false` with an
+  // EMPTY blocker list, which cannot be acted on, while the gate it claims to
+  // reuse would have accepted that same profile. The missing-mode condition is
+  // an integrity violation now, so this reads it from there and the two paths
+  // cannot disagree again.
+  return { ready: blockers.length === 0, blockers };
 }
 
 /** Profiles by id, for render-time lookup of a historical reading's profile. */
+/**
+ * The CURRENT contract for a model — its highest catalogue version.
+ *
+ * WHY "HIGHEST" AND NOT "FIRST" (Codex, #855 4304921305). A profile's
+ * identity is (profileId, VERSION): a republished contract is a new version
+ * and the old one must survive, because a reading captured under v1 has to
+ * keep rendering and validating against v1 for as long as the record exists.
+ * With several versions present, "the profile for this id" can only
+ * sensibly mean the current one, so this is explicit rather than incidental
+ * on array order.
+ *
+ * NEW capture resolves through here, so it always gets the current contract.
+ * A HISTORICAL reading must use `profileAtVersion` with the version it was
+ * captured under.
+ */
 export function profileById(
   profileId: string,
   profiles: readonly MachineProfile[] = MACHINE_CATALOGUE,
 ): MachineProfile | undefined {
-  return profiles.find((p) => p.profileId === profileId);
+  let best: MachineProfile | undefined;
+  for (const p of profiles) {
+    if (p.profileId !== profileId) continue;
+    if (!best || p.version > best.version) best = p;
+  }
+  return best;
+}
+
+/**
+ * The EXACT contract a reading was captured under.
+ *
+ * THE GUARANTEE THIS EXISTS FOR, which the version-blind lookup broke
+ * (Codex, #855 4304921305). `validateReading` refused a v1 reading once the
+ * catalogue advanced to v2 — with a message that itself promised "a
+ * historical reading keeps rendering against the version it was captured
+ * under". The message asserted the guarantee the code contradicted, and the
+ * duplicate-profileId integrity rule made holding both versions impossible,
+ * so there was no arrangement in which the promise could have been kept.
+ *
+ * Returns undefined when that version is not in the catalogue at all, which
+ * is a different fact from "the model is unknown" and is reported as such.
+ */
+export function profileAtVersion(
+  profileId: string,
+  version: number,
+  profiles: readonly MachineProfile[] = MACHINE_CATALOGUE,
+): MachineProfile | undefined {
+  return profiles.find(
+    (p) => p.profileId === profileId && p.version === version,
+  );
 }
 
 /** Every unresolved question across the catalogue, for the evidence checklist. */

@@ -102,13 +102,17 @@ const withValues = (
   id: string,
   values: Record<string, string>,
   channels: number[] = [],
+  // RECORDED BY DEFAULT: this suite is mostly about drafts restored from what
+  // the database holds. The new-group case is named explicitly where it is
+  // the thing under test (Codex, #860 4305780322).
+  recorded = true,
 ): SettingGroupDraft => {
   const out: Record<string, string> = {};
   for (const f of FIELDS.fields) {
     const v = values[f.key];
     if (v !== undefined) out[draftKey(FIELDS.key, f)] = v;
   }
-  return { id, channels, values: out };
+  return { id, recorded, channels, values: out };
 };
 
 describe("the CONTRACT decides which channel identities exist", () => {
@@ -153,7 +157,12 @@ describe("the CONTRACT decides whether distinct groups are offered", () => {
 
 describe("group identity is STABLE and never reused", () => {
   it("starts with exactly one group", () => {
-    expect(firstGroup()).toEqual([{ id: "g1", channels: [], values: {} }]);
+    expect(firstGroup()).toEqual([
+      // NOT RECORDED, and that is the whole meaning of a first group: the
+      // database has never seen it, so a save of it asks for an identity
+      // rather than naming one (Codex, #860 4305780322).
+      { id: "g1", recorded: false, channels: [], values: {} },
+    ]);
   });
 
   it("takes its ordinal from the caller, so a retired id is never reissued", () => {
@@ -417,8 +426,8 @@ describe("the next capture keeps the groups she actually has", () => {
 
   it("preserves every group id", () => {
     const after = clearedForNextCapture([
-      { id: "g1", channels: [1], values: { "probe::::current": "120" } },
-      { id: "g2", channels: [2], values: { "probe::::current": "80" } },
+      { id: "g1", recorded: true, channels: [1], values: { "probe::::current": "120" } },
+      { id: "g2", recorded: true, channels: [2], values: { "probe::::current": "80" } },
     ]);
     expect(after.map((g) => g.id)).toEqual(["g1", "g2"]);
   });
@@ -428,7 +437,7 @@ describe("the next capture keeps the groups she actually has", () => {
     // submit settings she has not re-read, or to assert she ran the same
     // probes. The identity is not an observation; these are.
     const after = clearedForNextCapture([
-      { id: "g1", channels: [1, 2], values: { "probe::::current": "120" } },
+      { id: "g1", recorded: true, channels: [1, 2], values: { "probe::::current": "120" } },
     ]);
     expect(after[0]!.values).toEqual({});
     expect(after[0]!.channels).toEqual([]);
@@ -436,9 +445,9 @@ describe("the next capture keeps the groups she actually has", () => {
 
   it("keeps a THIRD group too, not just the first two", () => {
     const after = clearedForNextCapture([
-      { id: "g1", channels: [], values: {} },
-      { id: "g2", channels: [], values: {} },
-      { id: "g3", channels: [], values: {} },
+      { id: "g1", recorded: true, channels: [], values: {} },
+      { id: "g2", recorded: true, channels: [], values: {} },
+      { id: "g3", recorded: true, channels: [], values: {} },
     ]);
     expect(after.map((g) => g.id)).toEqual(["g1", "g2", "g3"]);
   });
@@ -448,15 +457,17 @@ describe("the next capture keeps the groups she actually has", () => {
     // removed g2 and added g3, the next capture must still offer g1 and g3 -
     // renumbering g3 to g2 would append to the removed group's history.
     const after = clearedForNextCapture([
-      { id: "g1", channels: [], values: {} },
-      { id: "g3", channels: [], values: {} },
+      { id: "g1", recorded: true, channels: [], values: {} },
+      { id: "g3", recorded: true, channels: [], values: {} },
     ]);
     expect(after.map((g) => g.id)).toEqual(["g1", "g3"]);
   });
 
   it("falls back to one fresh group when there is nothing to keep", () => {
+    // FRESH MEANS NOT RECORDED. There is nothing to revise, so this group
+    // must ask for an identity.
     expect(clearedForNextCapture([])).toEqual([
-      { id: "g1", channels: [], values: {} },
+      { id: "g1", recorded: false, channels: [], values: {} },
     ]);
   });
 
@@ -464,8 +475,8 @@ describe("the next capture keeps the groups she actually has", () => {
     // This is what makes offering every prior group safe rather than noisy:
     // she changes g2 alone, leaves g1 blank, and exactly one group is sent.
     const cleared = clearedForNextCapture([
-      { id: "g1", channels: [1], values: { "probe::::current": "120" } },
-      { id: "g2", channels: [2], values: { "probe::::current": "80" } },
+      { id: "g1", recorded: true, channels: [1], values: { "probe::::current": "120" } },
+      { id: "g2", recorded: true, channels: [2], values: { "probe::::current": "80" } },
     ]);
     const changed = cleared.map((g) =>
       g.id === "g2"
@@ -506,7 +517,9 @@ describe("groupsFromRecorded — identity survives a RELOAD", () => {
     // has not re-read off the machine is not a reading, and a restored channel
     // set would assert she ran the same probes.
     const groups = groupsFromRecorded([rec({ groupKey: "g1" })], SCOPE);
-    expect(groups).toEqual([{ id: "g1", channels: [], values: {} }]);
+    // RECORDED, because this key came out of the database - which is what
+    // makes a save of it a revision rather than a request for a new identity.
+    expect(groups).toEqual([{ id: "g1", recorded: true, channels: [], values: {} }]);
   });
 
   it("orders by the ordinal the key carries, not by row arrival", () => {
@@ -542,7 +555,9 @@ describe("groupsFromRecorded — identity survives a RELOAD", () => {
 
   it("falls back to one fresh group when this scope has nothing", () => {
     expect(groupsFromRecorded([], SCOPE)).toEqual([
-      { id: "g1", channels: [], values: {} },
+      // FRESH, so NOT recorded: nothing in this scope has ever been saved,
+      // and a save of this group asks for an identity rather than naming one.
+      { id: "g1", recorded: false, channels: [], values: {} },
     ]);
   });
 
@@ -567,8 +582,8 @@ describe("highestOrdinal — a restored draft cannot reissue an identity", () =>
   it("reads the highest ordinal the seed already carries", () => {
     expect(
       highestOrdinal([
-        { id: "g1", channels: [], values: {} },
-        { id: "g2", channels: [], values: {} },
+        { id: "g1", recorded: true, channels: [], values: {} },
+        { id: "g2", recorded: true, channels: [], values: {} },
       ]),
     ).toBe(2);
   });
@@ -578,8 +593,8 @@ describe("highestOrdinal — a restored draft cannot reissue an identity", () =>
     // would mint a second g2, collapsing two probes into one revision history
     // — the defect this path exists to prevent, arriving through its repair.
     const restored: SettingGroupDraft[] = [
-      { id: "g1", channels: [], values: {} },
-      { id: "g2", channels: [], values: {} },
+      { id: "g1", recorded: true, channels: [], values: {} },
+      { id: "g2", recorded: true, channels: [], values: {} },
     ];
     const added = addGroup(restored, highestOrdinal(restored) + 1);
     expect(added.map((g) => g.id)).toEqual(["g1", "g2", "g3"]);
@@ -593,8 +608,8 @@ describe("highestOrdinal — a restored draft cannot reissue an identity", () =>
   it("a key that is not g<n> contributes nothing — it cannot collide", () => {
     expect(
       highestOrdinal([
-        { id: "probe-left", channels: [], values: {} },
-        { id: "g4", channels: [], values: {} },
+        { id: "probe-left", recorded: true, channels: [], values: {} },
+        { id: "g4", recorded: true, channels: [], values: {} },
       ]),
     ).toBe(4);
   });

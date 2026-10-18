@@ -511,7 +511,31 @@ describe("L18 Phase 4 — command-bound table direct DML guard", () => {
         //
         // Excluded by exact name, like the entry above, so any OTHER new
         // block-ish command still trips this guard.
-        c !== "create_block_with_initial_setup",
+        c !== "create_block_with_initial_setup" &&
+        // MPX-03 (0223). `setup_readings_for_block` READS one block's
+        // settings readings. It writes nothing at all - no DML of any kind,
+        // and none of this guard's six command-bound tables - so it is not a
+        // block/entry command in the sense this guard polices. It is caught
+        // only by the substring heuristic above, exactly as
+        // `appointment_has_blocking_dependents` is.
+        //
+        // WHY IT EXISTS. The read used to be keyset pagination over `id` in
+        // TypeScript, and those ids are random UUIDs across separate
+        // requests - so a capture committed mid-read could sort either side
+        // of the cursor and part of a new capture could return as a complete
+        // setup (Codex, #860 4305555264). One statement is one MVCC snapshot,
+        // which a page loop can only ever detect it has failed to be.
+        //
+        // IT CARRIES ITS OWN AUTHORIZATION, which is the part worth
+        // reviewing: the block-in-session lineage is a JOIN PREDICATE rather
+        // than a precheck, and it is SECURITY INVOKER so the studio-member
+        // policies remain the second, independent limb. Reviewed in
+        // tests/lib/machines/readings-complete-read.test.ts and
+        // tests/migrations/0223-machine-inventory-and-setup-readings.test.ts.
+        //
+        // Excluded by exact name, so any OTHER new block-ish command still
+        // trips this guard.
+        c !== "setup_readings_for_block",
     );
     expect(unknown, "an unreviewed block/entry command appeared").toEqual([]);
   });

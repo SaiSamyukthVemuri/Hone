@@ -99,12 +99,36 @@ export function assembleReadings(
 /** One setting group as the practitioner is building it. */
 export type SettingGroupDraft = {
   /**
-   * The group's identity, which becomes `group_key`. STABLE for the life of
-   * the draft and never renumbered: the database allocates revisions per
-   * (block, group), so a key that shifted would append to the wrong group's
-   * history.
+   * STABLE for the life of the draft and never renumbered. What it MEANS
+   * depends on `recorded`:
+   *
+   *   * `recorded: true`  - this IS the group's `group_key`, restored from
+   *     what the database holds, and a save revises that group;
+   *   * `recorded: false` - this is a LOCAL PLACEHOLDER only, sent as
+   *     `new_group_ref`, and the database ISSUES the real key.
+   *
+   * IT IS NO LONGER AN IDENTITY THE CLIENT MINTS (Codex, #860 4305780322).
+   * It used to be: the next key was `highestOrdinal(recorded) + 1` over the
+   * snapshot a form had loaded, so two page loads that both added a group both
+   * chose the same key and the second capture became a REVISION of the first -
+   * two probe sets merged into one timeline and only the second read as
+   * current. `mint_setup_group_keys` issues keys under a block-wide lock now,
+   * so a placeholder cannot collide with anything.
+   *
+   * Renumbering is still forbidden, for the unchanged reason on the recorded
+   * side: revisions are allocated per (block, group), so a key that shifted
+   * would append to the wrong group's history (Codex, #860 4290452715).
    */
   id: string;
+  /**
+   * Does `id` name a group the DATABASE already holds?
+   *
+   * REQUIRED, with no default, for the reason `canEditDraft`'s `inFlight` is:
+   * a defaulted flag is a flag callers forget, and the two meanings of `id`
+   * are exactly the ambiguity this field exists to remove. The compiler asks
+   * every construction site which kind of group it is making.
+   */
+  recorded: boolean;
   /** Channel identities this group's settings applied to. Empty is legal. */
   channels: number[];
   /** Typed values, keyed exactly as the entry form keys its inputs. */
@@ -134,28 +158,38 @@ export function supportsDistinctGroups(profile: MachineProfile): boolean {
 /**
  * A fresh group, empty: settings are never copied from a sibling.
  *
- * THE ORDINAL IS PASSED IN, NOT DERIVED FROM THE LIST, and the difference is
- * load-bearing. My first version took the highest id present, which means
- * removing `g2` lets the next group BE `g2` - and the database allocates
- * revisions per (block, group), so that second group's capture would append
- * revision 2 to the first one's history and merge two different probe sets
- * into one timeline.
+ * THE ORDINAL IS PASSED IN, NOT DERIVED FROM THE LIST, and it is now a
+ * LOCAL placeholder rather than an identity.
  *
- * It happens to be unreachable today, because removal is only offered for a
- * group with nothing entered and such a group was never saved. That is one
- * guard away from a corrupt clinical record, which is not where this
- * invariant should live. The caller keeps a monotonic counter instead; a
- * retired identity is never reissued.
+ * WHAT THIS USED TO GUARD, and where that guard moved. Deriving from the
+ * highest id present means removing `g2` lets the next group BE `g2`, and
+ * revisions are allocated per (block, group) - so that second group's capture
+ * would have appended revision 2 to the first one's history and merged two
+ * probe sets into one timeline. This comment then said the case "happens to be
+ * unreachable today" and that it was "one guard away from a corrupt clinical
+ * record, which is not where this invariant should live".
+ *
+ * It no longer lives here. `mint_setup_group_keys` issues every new key
+ * server-side under a block-wide lock, so no client arithmetic can collide
+ * with anything - including the case this comment could not reach, which was
+ * a SECOND TAB rather than a removal (Codex, #860 4305780322).
+ *
+ * THE MONOTONIC COUNTER STAYS ANYWAY, for two smaller reasons that are still
+ * true: a placeholder must be unique within one save, and a reused React key
+ * makes the form re-mount a different group's inputs.
  */
 export function addGroup(
   existing: readonly SettingGroupDraft[],
   ordinal: number,
 ): SettingGroupDraft[] {
-  return [...existing, { id: `g${ordinal}`, channels: [], values: {} }];
+  return [
+    ...existing,
+    { id: `g${ordinal}`, recorded: false, channels: [], values: {} },
+  ];
 }
 
 export function firstGroup(): SettingGroupDraft[] {
-  return [{ id: "g1", channels: [], values: {} }];
+  return [{ id: "g1", recorded: false, channels: [], values: {} }];
 }
 
 /**
@@ -192,7 +226,15 @@ export function clearedForNextCapture(
   // A draft with no groups cannot happen through the UI, but a surface that
   // returned an empty list here would have no box to type in at all.
   if (groups.length === 0) return firstGroup();
-  return groups.map((g) => ({ id: g.id, channels: [], values: {} }));
+  // `recorded` IS CARRIED, not reset. These groups have been saved - that is
+  // what makes this the next CAPTURE rather than a first one - so each must
+  // still revise its own group and not ask for a new identity.
+  return groups.map((g) => ({
+    id: g.id,
+    recorded: g.recorded,
+    channels: [],
+    values: {},
+  }));
 }
 
 /**
@@ -263,7 +305,9 @@ export function groupsFromRecorded(
   // order is whatever the query's sort happened to be.
   return [...keys]
     .sort((a, b) => (ordinalOf(a) ?? 0) - (ordinalOf(b) ?? 0) || a.localeCompare(b))
-    .map((id) => ({ id, channels: [], values: {} }));
+    // RECORDED, BY CONSTRUCTION: every key here came out of the database, so
+    // each of these groups revises rather than asking for a new identity.
+    .map((id) => ({ id, recorded: true, channels: [], values: {} }));
 }
 
 /** The number in a `g<n>` key, or null for a key not of that shape. */
@@ -291,6 +335,38 @@ export function highestOrdinal(groups: readonly SettingGroupDraft[]): number {
     if (o !== null && o > n) n = o;
   }
   return n;
+}
+
+/**
+ * Have the recorded group identities moved since a draft was built?
+ *
+ * THE DEFECT THIS ANSWERS (Codex, #860 4305780322). The next identity a form
+ * mints is a function of the recorded set it loaded - `highestOrdinal` over
+ * exactly that snapshot. So two page loads that both add a group both pick the
+ * SAME next key, and `record_setup_group_in_scope` takes the second as the
+ * next REVISION of the first: two distinct probe sets merge into one timeline
+ * and only the second's values read as current. `addGroup` above already
+ * names this outcome for a sibling case and calls it "one guard away from a
+ * corrupt clinical record"; this is the guard, for the case that is reachable
+ * - a second tab, or a draft left open while another save landed.
+ *
+ * COMPARED AS A SET, not a list: order and duplicates are not facts about the
+ * record, and treating them as changes would refuse saves that are fine.
+ *
+ * BLOCK-WIDE, because revisions are allocated per (block, group_key). A
+ * collision does not care which device or mode produced it, so neither does
+ * this.
+ *
+ * IT IS DETECTION, NOT PREVENTION, and deliberately so for now: allocating
+ * the identity durably is the real fix and belongs to the command.
+ */
+export function recordedGroupsMoved(
+  expected: readonly string[],
+  current: readonly string[],
+): boolean {
+  const a = [...new Set(expected)].sort();
+  const b = [...new Set(current)].sort();
+  return a.length !== b.length || a.some((k, i) => k !== b[i]);
 }
 
 /** Add or remove one channel from one group. Contract-declared ids only. */
@@ -403,7 +479,25 @@ export function draftBlocking(
 }
 
 export type GroupSubmission = {
-  groupKey: string;
+  /**
+   * The existing group this revises, or null for a new group.
+   *
+   * EXACTLY ONE OF THESE TWO IS SET. The command refuses both-present and
+   * both-absent with one test, so a caller cannot send a group that says
+   * nothing about which kind it is (Codex, #860 4305780322).
+   */
+  groupKey: string | null;
+  /**
+   * This caller's own LOCAL placeholder for a group it is creating. Never an
+   * identity: the database issues that, and the placeholder exists only so
+   * one save can talk about a group that has no name yet.
+   *
+   * IT IS WHAT THE RETRY DIGEST IS TAKEN OVER, which is why it must be stable
+   * across a retry of the same save. The digest cannot use the issued key -
+   * a retry would mint a different one, digest differently and append a
+   * duplicate instead of being absorbed.
+   */
+  newGroupRef: string | null;
   channels: number[];
   readings: ReadingSubmission[];
 };
@@ -442,7 +536,12 @@ export function assembleGroupSubmissions(
   for (const g of groups) {
     const readings = assembleReadings(fieldGroups, g.values);
     if (readings.length === 0) continue;
-    out.push({ groupKey: g.id, channels: g.channels, readings });
+    out.push({
+      groupKey: g.recorded ? g.id : null,
+      newGroupRef: g.recorded ? null : g.id,
+      channels: g.channels,
+      readings,
+    });
   }
   return out;
 }

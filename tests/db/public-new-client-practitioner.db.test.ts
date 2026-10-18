@@ -61,13 +61,13 @@ async function setAdmission(
 async function bookAsNewClient(
   fett: FettStudio,
   practitionerId: string | null,
-  opts: { email?: string; startsAtSql?: string } = {},
+  opts: { email?: string; startsAtSql?: string; consentAt?: string } = {},
 ) {
   const email = opts.email ?? `g1-nc-${randomUUID().slice(0, 8)}@synth.local`;
   const startsAtSql = opts.startsAtSql ?? FETT_DEMO_SLOT_SQL;
   const r = await adminQuery(
     `select * from public.create_public_appointment_for_new_client_v2(
-       $1, null, $2, $3, null, null, $4, ${startsAtSql}, $5, false, null, null, null, $6)`,
+       $1, null, $2, $3, null, $7, $4, ${startsAtSql}, $5, false, null, null, null, $6)`,
     [
       fett.studioId,
       `SYNTH-FETT new client ${email.slice(0, 12)}`,
@@ -75,6 +75,7 @@ async function bookAsNewClient(
       fett.services.treatmentId,
       tok(),
       practitionerId,
+      opts.consentAt ?? null,
     ],
   );
   return r.rows[0] as {
@@ -95,6 +96,18 @@ async function countAppointments(studioId: string) {
       )
     ).rows[0].n,
   );
+}
+
+/** The refused booking's own client row, if the wrapper left one behind.
+ *  Counting APPOINTMENTS cannot see an orphan client, which is precisely how
+ *  this gap survived: the refusal writes no appointment either way. */
+async function clientByEmail(studioId: string, email: string) {
+  const r = await adminQuery(
+    `select id, phone, sms_consent_at from public.clients
+      where studio_id = $1 and lower(email) = lower($2)`,
+    [studioId, email],
+  );
+  return (r.rows[0] as { id: string; phone: string | null; sms_consent_at: Date | null }) ?? null;
 }
 
 describe("0225 — the chosen practitioner reaches the delegate", () => {
@@ -221,10 +234,24 @@ describe("0225 — capacity decides parallelism on the new-client path too", () 
       const p1 = fett.treating[0].practitionerId;
       const first = await bookAsNewClient(fett, p1);
       expect(first.result).toBe("created");
-      const second = await bookAsNewClient(fett, p1);
+      // A GENUINELY NEW email, and SMS consent offered with it, so the
+      // wrapper would have to create a client row to proceed.
+      const orphanEmail = `g1-orphan-${randomUUID().slice(0, 8)}@synth.local`;
+      const second = await bookAsNewClient(fett, p1, {
+        email: orphanEmail,
+        consentAt: "2026-01-01T00:00:00Z",
+      });
       expect(second.result).not.toBe("created");
       expect(second.appointment_id).toBeNull();
       expect(await countAppointments(fett.studioId)).toBe(1);
+
+      // P3 — NO ORPHAN. Counting appointments is not enough and never was: the
+      // refusal writes no appointment on either side of the fix, so the only
+      // way to see the defect is to look for the CLIENT the refused attempt
+      // would have created. Before 0225's scoped-slot pre-check this committed
+      // the row, its contact details and this SMS consent, with no appointment.
+      expect(second.client_id).toBeNull();
+      expect(await clientByEmail(fett.studioId, orphanEmail)).toBeNull();
     } finally {
       await dropFettStudio(fett);
     }

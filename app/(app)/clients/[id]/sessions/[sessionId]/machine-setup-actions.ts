@@ -1,6 +1,8 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { SETUP_GROUPS_MOVED } from "@/lib/machines/pending-setup";
+import { recordedGroupsMoved } from "@/lib/machines/setting-groups";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { activeModes, type MachineProfile } from "@/lib/machines/profile-contract";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
@@ -40,7 +42,10 @@ import {
   listStudioDevices,
 } from "@/lib/machines/studio-devices";
 import { machinesByIds } from "@/lib/machines/machine-queries";
-import { assertSessionForClient } from "@/lib/sessions/session-lineage";
+import {
+  assertSessionForClient,
+  SessionLineageError,
+} from "@/lib/sessions/session-lineage";
 
 // MPX-03 — the machine workflow's server surface.
 //
@@ -560,7 +565,13 @@ export async function recordReadingsAction(input: {
   blockId: string;
   machineId: string;
   modeKey: string;
-  groupKey: string;
+  /**
+   * EXACTLY ONE OF THE TWO (Codex, #860 4305780322). This door revises the
+   * group `groupKey` names, or asks for a new one under the caller's own
+   * placeholder - it never chooses an identity.
+   */
+  groupKey: string | null;
+  newGroupRef: string | null;
   channels: number[];
   readings: ReadingSubmission[];
   /**
@@ -658,6 +669,7 @@ export async function recordReadingsAction(input: {
     machineId: input.machineId,
     modeKey: input.modeKey,
     groupKey: input.groupKey,
+    newGroupRef: input.newGroupRef,
     sessionId: input.sessionId,
     clientId: input.clientId,
     channels: input.channels,
@@ -693,9 +705,26 @@ export async function recordSetupSubmissionAction(input: {
   blockId: string;
   machineId: string;
   modeKey: string;
+  /**
+   * The recorded group keys the caller's draft was built from (Codex, #860
+   * 4305780322).
+   *
+   * OPTIONAL, AND THAT IS DELIBERATE: the per-group action and older callers
+   * do not send it, and a caller that cannot say what it saw must not be
+   * silently blocked from saving. Absent means "no claim", and the check below
+   * is skipped. What it buys when present is the staleness refusal.
+   */
+  expectedGroupKeys?: string[];
   idempotencyKey: string;
   groups: Array<{
-    groupKey: string;
+    /**
+     * EXACTLY ONE OF THE TWO (Codex, #860 4305780322). `groupKey` revises the
+     * group it names; `newGroupRef` is the form's own local placeholder for a
+     * group the DATABASE will name. The action does not reinterpret which is
+     * which - it validates readings and passes identity through.
+     */
+    groupKey: string | null;
+    newGroupRef: string | null;
     channels: number[];
     readings: ReadingSubmission[];
   }>;
@@ -738,7 +767,39 @@ export async function recordSetupSubmissionAction(input: {
   // resolves the session against the SERVER-DERIVED studio and this client,
   // so a block id from another client's chart cannot be smuggled in by a
   // stale page or a crafted call.
-  await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
+  //
+  // AND A REFUSAL HERE IS A REFUSAL, NOT AN UNKNOWN OUTCOME (Codex, #860
+  // 4304930968). This throws, and the entry's `catch` maps a throw to the
+  // unresolved state — which keeps the retry key and freezes the draft, the
+  // machine and mode pickers, and the host's Cancel button. Nothing has been
+  // written at this point, so there is nothing ambiguous to protect: she was
+  // left with a form she could neither save nor dismiss, in which every
+  // retry repeats the same lineage refusal and the state can never settle.
+  //
+  // That deadlock is a consequence of rounds 14 and 20 freezing each control
+  // correctly for a genuinely unresolved save, with nothing distinguishing
+  // that from a refusal that merely arrived the same way.
+  //
+  // CAUGHT BY TYPE, not with a blanket try/catch. Reporting a genuinely
+  // ambiguous write as `rejected` is the opposite error, and it unfreezes
+  // the draft and releases the key — the duplicate-capture defect rounds 16
+  // and 17 closed.
+  try {
+    await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
+  } catch (e) {
+    if (e instanceof SessionLineageError) {
+      return {
+        ok: false,
+        code: "rejected",
+        error:
+          "This treatment could not be confirmed as this client's. Reload the chart before saving again — nothing was recorded.",
+      };
+    }
+    // ANYTHING ELSE KEEPS ITS THROW. An unrecognised failure here has not
+    // been shown to be a non-write, and guessing in the unfreezing direction
+    // is the direction that costs a duplicate clinical record.
+    throw e;
+  }
 
   const db = await machineDb();
   const inventory = await listStudioDevices(db, scope.studioId);
@@ -778,6 +839,7 @@ export async function recordSetupSubmissionAction(input: {
     }
     groups.push({
       groupKey: g.groupKey,
+      newGroupRef: g.newGroupRef,
       channels: g.channels,
       readings: checked.rows,
     });
@@ -788,6 +850,50 @@ export async function recordSetupSubmissionAction(input: {
   // process is bypassed by anything calling the RPC directly, and a check in
   // both is two definitions of one rule. The form warns before the round trip
   // through `settingGroupIssues`; this relies on the database.
+  // THE RECORDED GROUPS MUST NOT HAVE MOVED (Codex, #860 4305780322).
+  //
+  // Group identities are derived from the snapshot the caller's draft was
+  // built from, so two page loads that both add a group both pick the SAME
+  // next key - and `record_setup_group_in_scope` takes the second as the next
+  // REVISION of the first. Two distinct probe sets merge into one timeline and
+  // only the second's values read as current: a silent loss of what she
+  // recorded first. `setting-groups.ts` already names that outcome for a
+  // sibling case and calls it "one guard away from a corrupt clinical
+  // record"; this is the guard, for the case that is actually reachable.
+  //
+  // COMPARED HERE RATHER THAN IN THE FORM, so the read and the write are one
+  // request: the window is this function's own microseconds instead of a
+  // user-visible round trip. It is still DETECTION - durable allocation of the
+  // identity is the real fix and needs the command, which is 0223's to make.
+  //
+  // BLOCK-WIDE, not scope-wide, because revisions are allocated per (block,
+  // group_key): a collision does not care which device or mode produced it.
+  //
+  // NARROWED TO THE REVISE PATH, now that identities are server-issued.
+  //
+  // A save made entirely of NEW groups cannot collide any more: the database
+  // issues each key under a block-wide lock, so a draft built from a stale
+  // snapshot still lands as its own distinct group. Refusing it would cost a
+  // practitioner a reload in a case where nothing can go wrong, and a guard
+  // that cries wolf gets ignored.
+  //
+  // A REVISE is still worth refusing. She decided to record a change relative
+  // to the setup she was looking at; if that set has moved, her baseline has
+  // moved with it. Nothing is lost either way - captures are append-only - but
+  // being told to look again is the honest answer to a stale picture.
+  if (input.expectedGroupKeys && groups.some((g) => g.groupKey !== null)) {
+    const current = await readingsForBlock(db, input.blockId, input.sessionId);
+    if (!current.ok) {
+      // A READ THAT FAILED IS NOT A SET THAT MATCHES. Treating it as "no
+      // change" would skip the guard exactly when the database is unhappy.
+      return { ok: false, code: "rejected", error: SETUP_GROUPS_MOVED };
+    }
+    const seen = current.value.map((r) => r.groupKey);
+    if (recordedGroupsMoved(input.expectedGroupKeys, seen)) {
+      return { ok: false, code: "rejected", error: SETUP_GROUPS_MOVED };
+    }
+  }
+
   const out = await recordSetupSubmission(db, {
     blockId: input.blockId,
     machineId: input.machineId,
