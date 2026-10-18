@@ -83,43 +83,53 @@ function logLedger(event: string, fields: Record<string, unknown>): void {
   console.error(JSON.stringify({ event, ...fields, timestamp: new Date().toISOString() }));
 }
 
-// LEDGER BOOKKEEPING IS BOUNDED (Codex P2 4307424676).
+// LEDGER BOOKKEEPING IS BOUNDED, AND THE BOUND REALLY CANCELS THE REQUEST
+// (Codex P2 4307424676, then 4307698578).
 //
-// Both wrappers below already return null when the RPC REJECTS. They did not
-// cover the RPC that STALLS -- a degraded Supabase connection that neither
-// answers nor errors. The await was unbounded, and the surrounding try/catch
-// only ever covered client construction, so the documented fail-soft behaviour
-// did not apply: `sendEmailSafely` was never reached, and because every booking
-// flow awaits its sender AFTER committing the appointment, the request could
-// exhaust its runtime having written an appointment and sent NO confirmation.
+// Both wrappers return null when the RPC rejects. The first version of this
+// bound raced the RPC against a timer — which stopped the WAIT but not the
+// REQUEST, so losing the race left the worst of both: the email went out
+// UNTAGGED while the RPC ran on and committed a `claimed` row that nothing
+// would ever settle. Two inconsistent outcomes from one send.
 //
-// A timeout is therefore treated exactly as a write failure already is: return
-// null, log it, and let the caller send UNTAGGED. Losing the ledger row costs
-// attribution; losing the confirmation costs the client their email.
+// `@supabase/postgrest-js` supports a real `.abortSignal()` on the builder
+// (2.105.4), so the bound is `AbortSignal.timeout(...)` and the HTTP request is
+// genuinely cancelled. PostgREST then cancels the statement, so in the ordinary
+// case no row lands at all and the outcome matches the untagged send.
 //
-// 2s follows the precedent for non-critical bookkeeping in this repository
-// (`DISPATCH_TIMEOUT_MS`, lib/analytics/server.ts) and sits far below any
-// serverless request budget. The timer is ALWAYS cleared: a pending timer keeps
-// Node's event loop alive, so leaking one would delay the very response this
-// bound exists to protect.
+// RESIDUAL, stated rather than implied away: if the server has already
+// COMMITTED when the abort arrives, a `claimed` row exists and this call never
+// learns its id, so it cannot settle it. Nothing currently reports a row left
+// in `claimed`, which is a gap for a health measure or a server-side reclaim —
+// a separate ticket, not something this client can close.
+//
+// A timeout is treated exactly as a write failure already was: log it, return
+// null, and let the caller send UNTAGGED. Losing the row costs attribution;
+// losing the confirmation costs the client their email. The send is never
+// retried, so it cannot happen twice.
 const LEDGER_RPC_TIMEOUT_MS = 2_000;
 
-const LEDGER_TIMED_OUT = Symbol("ledger_rpc_timeout");
+/** A bound that cancels the request, not merely the wait. */
+function ledgerTimeout(): AbortSignal {
+  return AbortSignal.timeout(LEDGER_RPC_TIMEOUT_MS);
+}
 
-async function withLedgerTimeout<T>(
-  work: PromiseLike<T>,
-): Promise<T | typeof LEDGER_TIMED_OUT> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race<T | typeof LEDGER_TIMED_OUT>([
-      work,
-      new Promise<typeof LEDGER_TIMED_OUT>((resolve) => {
-        timer = setTimeout(() => resolve(LEDGER_TIMED_OUT), LEDGER_RPC_TIMEOUT_MS);
-      }),
-    ]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
+/**
+ * Did this failure come from our own bound rather than from the database?
+ *
+ * Logged distinctly because the two call for different responses: a timeout is
+ * a slow or unreachable database, an rpc_error is a statement that ran and was
+ * refused. DOMException's AbortError carries code 20; the message wording
+ * differs between runtimes, so both are checked.
+ */
+function looksAborted(err: { message?: string | null; code?: string | null } | null): boolean {
+  const message = (err?.message ?? "").toLowerCase();
+  return (
+    err?.code === "20" ||
+    message.includes("abort") ||
+    message.includes("timeout") ||
+    message.includes("timed out")
+  );
 }
 
 /**
@@ -132,20 +142,18 @@ export async function beginAppointmentEmailMessage(
   input: { studioId: string; appointmentId: string; purpose: AppointmentEmailPurpose },
 ): Promise<string | null> {
   try {
-    const raced = await withLedgerTimeout(
-      admin.rpc("begin_appointment_email_message", {
+    const { data, error } = await admin
+      .rpc("begin_appointment_email_message", {
         p_studio_id: input.studioId,
         p_appointment_id: input.appointmentId,
         p_purpose: input.purpose,
-      }),
-    );
-    if (raced === LEDGER_TIMED_OUT) {
-      logLedger("email_ledger_begin_failed", { purpose: input.purpose, shape: "timeout" });
-      return null;
-    }
-    const { data, error } = raced;
+      })
+      .abortSignal(ledgerTimeout());
     if (error) {
-      logLedger("email_ledger_begin_failed", { purpose: input.purpose, shape: "rpc_error" });
+      logLedger("email_ledger_begin_failed", {
+        purpose: input.purpose,
+        shape: looksAborted(error) ? "timeout" : "rpc_error",
+      });
       return null;
     }
     return isEmailLedgerId(data) ? data : null;
@@ -182,26 +190,24 @@ export async function settleEmailMessage(
   settle: EmailSettleOutcome,
 ): Promise<EmailSettleResult | null> {
   try {
-    // Bounded for the same reason, and it matters even more here: the send this
+    // Bounded the same way, and it matters even more here: the send this
     // describes has ALREADY happened, so stalling on the bookkeeping would
     // delay a response that has nothing left to decide.
-    const raced = await withLedgerTimeout(
-      admin.rpc("settle_email_message", {
+    const { data, error } = await admin
+      .rpc("settle_email_message", {
         p_message_id: messageId,
         p_outcome: settle.outcome,
         p_provider_email_id: settle.outcome === "accepted" ? settle.providerEmailId : null,
         p_provider_error:
           settle.outcome === "refused" || settle.outcome === "unknown" ? settle.providerError : null,
         p_skip_reason: settle.outcome === "skipped" ? settle.skipReason : null,
-      }),
-    );
-    if (raced === LEDGER_TIMED_OUT) {
-      logLedger("email_ledger_settle_failed", { outcome: settle.outcome, shape: "timeout" });
-      return null;
-    }
-    const { data, error } = raced;
+      })
+      .abortSignal(ledgerTimeout());
     if (error) {
-      logLedger("email_ledger_settle_failed", { outcome: settle.outcome, shape: "rpc_error" });
+      logLedger("email_ledger_settle_failed", {
+        outcome: settle.outcome,
+        shape: looksAborted(error) ? "timeout" : "rpc_error",
+      });
       return null;
     }
     if (typeof data === "string" && SETTLE_RESULTS.has(data)) {

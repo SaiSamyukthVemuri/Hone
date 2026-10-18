@@ -72,7 +72,22 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
 
   const rows = data as OwnerIncident[];
   const open = rows.filter((r) => r.resolved_at === null);
-  const openConcerns = (concerns ?? []).filter((c) => c.state === "open");
+  const allConcerns = concerns ?? [];
+  const openConcerns = allConcerns.filter((c) => c.state === "open");
+  // A CLOSED CONCERN WAS STILL A REPORTED PROBLEM (Codex P2 4307695801).
+  // `owner_delivery_concerns` returns the last 14 days, so a concern the studio
+  // raised and then closed was dropped from every count — and the card then said
+  // "No delivery problems reported in the last 14 days" about a fortnight that
+  // held one. I had previously PINNED that as a deliberate asymmetry, on the
+  // reasoning that the card does not LIST closed concerns so counting them would
+  // reference something invisible. The reviewer is right that denying the report
+  // is the worse error: the fix is to acknowledge it in words, not to leave the
+  // denial standing.
+  const closedConcerns = allConcerns.filter((c) => c.state !== "open");
+  // Capped the same way as the incidents read — `owner_delivery_concerns`
+  // applies `limit 200` (0221:357) — so its counts are counts of what is SHOWN.
+  const OWNER_CONCERN_CAP = 200;
+  const concernsTruncated = allConcerns.length >= OWNER_CONCERN_CAP;
   const resolvedCount = rows.length - open.length;
 
   // EVERY CATEGORY THIS CARD CAN REPORT, IN ONE PLACE, and the summary claim is
@@ -90,9 +105,31 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
     openIncidents: open.length,
     resolvedIncidents: resolvedCount,
     openConcerns: openConcerns.length,
+    // The fourth category, added exactly where the comment above said a fourth
+    // would go (Codex P2 4307695801).
+    closedConcerns: closedConcerns.length,
   };
   const anythingReported = Object.values(reportedCounts).some((n) => n > 0);
   const anythingOpen = reportedCounts.openIncidents + reportedCounts.openConcerns > 0;
+
+  // THIS READ IS CAPPED, SO ITS COUNTS DESCRIBE WHAT IS SHOWN (Codex P2
+  // 4307695060). `owner_delivery_incidents` applies `limit 200`
+  // (supabase/migrations/0215_delivery_incidents.sql:314) after ordering open
+  // incidents first, so a studio at the cap sees a SLICE: older open incidents
+  // are absent, and because resolved rows sort LAST they are the first thing
+  // the cap removes — which would also distort `resolvedCount` silently.
+  //
+  // The cap is mirrored here rather than derived, because the function does not
+  // report it; the test pins this exact number so a divergence from 0215 fails
+  // rather than drifts.
+  const OWNER_INCIDENT_CAP = 200;
+  const incidentsTruncated = rows.length >= OWNER_INCIDENT_CAP;
+  // Mirrors `resolvedNote` for concerns, so a fortnight holding only a CLOSED
+  // concern says what happened instead of denying it.
+  const closedConcernNote =
+    closedConcerns.length === 0
+      ? ""
+      : ` ${closedConcerns.length} ${closedConcerns.length === 1 ? "report" : "reports"} from your studio ${closedConcerns.length === 1 ? "was" : "were"} closed in the last 14 days.`;
   const resolvedNote =
     resolvedCount === 0
       ? ""
@@ -111,11 +148,16 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
           {!anythingReported
             ? "No delivery problems reported in the last 14 days."
             : !anythingOpen
-              ? `No open delivery problems.${resolvedNote}`
+              ? `No open delivery problems.${resolvedNote}${closedConcernNote}`
               : open.length === 0
                 ? `${openConcerns.length} open ${openConcerns.length === 1 ? "report" : "reports"} from your studio.${resolvedNote}`
-                : `${open.length} open delivery ${open.length === 1 ? "problem" : "problems"}. Repeats of the same problem are counted, not listed again.${resolvedNote}`}
+                : `${open.length} open delivery ${open.length === 1 ? "problem" : "problems"} shown. Repeats of the same problem are counted, not listed again.${resolvedNote}`}
         </p>
+        {incidentsTruncated && (
+          <p className="text-xs text-amber-800 dark:text-amber-300">
+            Showing the most recent {OWNER_INCIDENT_CAP} incidents. Older incidents are not listed.
+          </p>
+        )}
         <p className="text-xs text-neutral-500">
           {/* Never infers that bounce reporting is live: a stored signing secret is
               not a configured, tested endpoint (Codex P2 4253217747), and the
@@ -127,6 +169,12 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
           client&apos;s mail server or carrier took it, not that it was read.
         </p>
       </header>
+
+      {concernsTruncated && (
+        <p className="text-xs text-amber-800 dark:text-amber-300">
+          Showing the most recent {OWNER_CONCERN_CAP} reports. Older reports are not listed.
+        </p>
+      )}
 
       {openConcerns.length > 0 && (
         <div className="flex flex-col gap-1">

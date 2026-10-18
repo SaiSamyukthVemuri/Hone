@@ -130,7 +130,7 @@ describe("OwnerDeliveryCard", () => {
       error: null,
     };
     const html = await render();
-    expect(html).toContain("1 open delivery problem.");
+    expect(html).toContain("1 open delivery problem shown.");
     expect(html).toContain("1 problem was reported in the last 14 days and since resolved.");
     expect(html).toContain("24-hour reminder email not delivered");
     expect(html).toContain("3 times");
@@ -205,7 +205,7 @@ describe("the summary claim is derived from EVERY category (Codex P2 4307428928)
     c.answer = { data: [], error: null };
     const html = await render();
     expect(html).not.toContain(NONE_REPORTED);
-    expect(html).toContain("1 open delivery problem.");
+    expect(html).toContain("1 open delivery problem shown.");
   });
 
   it("RESOLVED INCIDENT ONLY: no OPEN problems, but not 'none reported'", async () => {
@@ -220,21 +220,42 @@ describe("the summary claim is derived from EVERY category (Codex P2 4307428928)
     h.answer = { data: [incident()], error: null };
     c.answer = { data: [concern()], error: null };
     const html = await render();
-    expect(html).toContain("1 open delivery problem.");
+    expect(html).toContain("1 open delivery problem shown.");
     expect(html).toContain("client says they did not receive it (1 open)");
     expect(html).not.toContain(NONE_REPORTED);
   });
 
-  it("a CLOSED concern alone still reads as nothing reported — stated, not accidental", async () => {
-    // DELIBERATE ASYMMETRY, pinned so it is a decision rather than a drift: a
-    // closed concern is not DISPLAYED by this card (the existing case above
-    // asserts the closed one is absent), so counting it would make the summary
-    // reference something the owner cannot see. Resolved INCIDENTS differ
-    // because the card does acknowledge them, via `resolvedNote`. If closed
-    // concerns are ever shown, they belong in `reportedCounts` and this case
-    // should flip.
+  it("a CLOSED concern is ACKNOWLEDGED, never denied (Codex P2 4307695801)", async () => {
+    // THIS CASE IS INVERTED FROM ITS PREVIOUS FORM, deliberately. I had pinned
+    // the old behaviour — a closed concern reading as "nothing reported" — as a
+    // considered asymmetry, on the grounds that the card does not LIST closed
+    // concerns so counting them would reference something invisible. The
+    // reviewer was right that denying a report the studio actually made is the
+    // worse error. So the count now includes it and the words say what happened.
     h.answer = { data: [], error: null };
     c.answer = { data: [concern({ state: "closed" })], error: null };
+    const html = await render();
+    expect(html).not.toContain(NONE_REPORTED);
+    expect(html).toContain("No open delivery problems.");
+    expect(html).toContain("1 report from your studio was closed in the last 14 days.");
+  });
+
+  it("several closed concerns are pluralised", async () => {
+    h.answer = { data: [], error: null };
+    c.answer = {
+      data: [
+        concern({ concern_id: "k1", state: "closed" }),
+        concern({ concern_id: "k2", state: "closed" }),
+      ],
+      error: null,
+    };
+    expect(await render()).toContain("2 reports from your studio were closed in the last 14 days.");
+  });
+
+  it("CONTROL: a genuinely empty fortnight still says nothing was reported", async () => {
+    // So the inversion above has not simply made the denial unreachable.
+    h.answer = { data: [], error: null };
+    c.answer = { data: [], error: null };
     expect(await render()).toContain(NONE_REPORTED);
   });
 });
@@ -262,6 +283,49 @@ describe("concern attribution (Codex P2 4307428933)", () => {
     const html = await render();
     expect(html).not.toContain("Reported by you:");
     expect(html).toContain("Reported by your studio:");
+  });
+});
+
+describe("the owner card's capped read is not a total (Codex P2 4307695060)", () => {
+  // `owner_delivery_incidents` applies `limit 200` (0215:314) after ordering
+  // open incidents first, so a studio at the cap sees a SLICE — and because
+  // resolved rows sort LAST they are the first thing the cap removes, which
+  // would distort the resolved note silently as well.
+  const CAP = 200;
+  const INDICATOR = "Showing the most recent 200 incidents. Older incidents are not listed.";
+
+  it("AT the cap: says so, and the count reads as SHOWN", async () => {
+    h.answer = {
+      data: Array.from({ length: CAP }, (_, i) =>
+        incident({ incident_id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}` }),
+      ),
+      error: null,
+    };
+    const html = await render();
+    expect(html).toContain(INDICATOR);
+    expect(html).toContain("shown");
+    // The bare "N open delivery problems." form is what read as a total.
+    expect(html).not.toMatch(/open delivery problems\. Repeats/);
+  });
+
+  it("BELOW the cap: no indicator, because nothing is hidden", async () => {
+    h.answer = {
+      data: Array.from({ length: CAP - 1 }, (_, i) =>
+        incident({ incident_id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}` }),
+      ),
+      error: null,
+    };
+    const html = await render();
+    expect(html).not.toContain("Older incidents are not listed");
+    // ...and it still reports the incidents it does have.
+    expect(html).toContain("shown");
+  });
+
+  it("an empty studio says neither", async () => {
+    h.answer = { data: [], error: null };
+    const html = await render();
+    expect(html).not.toContain("Older incidents are not listed");
+    expect(html).toContain("No delivery problems reported in the last 14 days.");
   });
 });
 

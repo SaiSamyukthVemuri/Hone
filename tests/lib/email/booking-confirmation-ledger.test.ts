@@ -38,9 +38,29 @@ vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => {
     if (h.adminThrows) throw new Error("SUPABASE_SERVICE_ROLE_KEY missing");
     return {
+      // CHAINABLE, like the real postgrest builder: the ledger wrappers now
+      // bound their RPCs with `.abortSignal()` (#843, Codex P2 4307698578), so a
+      // fake whose `rpc` returns a bare Promise makes that call throw and every
+      // ledger row silently vanish. Honouring the signal keeps this suite
+      // testing the CONFIRMATION path rather than the shape of its own stub.
       rpc: (fn: string, args: Record<string, unknown>) => {
         h.rpc.push([fn, args]);
-        return Promise.resolve(fn === "begin_appointment_email_message" ? h.begin : { data: "settled", error: null });
+        const answer =
+          fn === "begin_appointment_email_message" ? h.begin : { data: "settled", error: null };
+        let signal: AbortSignal | undefined;
+        const chain = {
+          abortSignal(s: AbortSignal) {
+            signal = s;
+            return chain;
+          },
+          then(res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) {
+            return new Promise<unknown>((resolve, reject) => {
+              if (signal?.aborted) reject(signal.reason ?? new Error("aborted"));
+              else resolve(answer);
+            }).then(res, rej);
+          },
+        };
+        return chain;
       },
     };
   },
