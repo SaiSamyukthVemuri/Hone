@@ -295,6 +295,13 @@ Token storage: the DB only ever holds `hashToken(rawToken)`. A DB compromise doe
   - **`/flags`:** posthog-js 1.404.1 sends the person properties, including the first page that browser loaded, in every `/flags` request body. `before_send` never sees that request. Hone uses no feature flags, so `advanced_disable_flags: true` stops the request entirely.
   - **Tests:** `tests/lib/analytics/posthog-url-ids.test.ts` pins both, including the SDK's own gate on that option name.
   - **Not a BAA.**
+- **Server-side PostHog events are checked by key AND value (#828 G-26 row 18).** `captureServerEvent` (`lib/analytics/server.ts`) already allowed only six property keys. Each now also has a value shape:
+  - `studio_id` must be a UUID;
+  - `modality`, `source` and `provider` must come from closed enums;
+  - `is_new_session` and `livemode` must be booleans;
+  - the event name must be a short snake_case constant.
+
+  A mismatch drops the whole event, fail closed, and only the property name is logged. `distinctId` identity (raw practitioner UUID or `studio:<uuid>`) is unchanged; that is an identity decision for Sam. `tests/lib/analytics/server-property-shapes.test.ts` checks what the real posthog-node client puts on the wire, with zero network.
 - **Why a pathname denylist is not enough:** the analytics script can already have loaded on a previous safe page in the same SPA navigation. By the time a runtime denylist runs, the script is already in the document and ready to observe the new URL.
 
 ## 7. Production config fail-closed (PR #143)
