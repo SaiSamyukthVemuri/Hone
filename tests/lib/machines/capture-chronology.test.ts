@@ -316,6 +316,66 @@ describe("what counts as a CHANGE of setting", () => {
   });
 });
 
+describe("an INVERTED timestamp cannot reverse a change", () => {
+  // THE DEFECT (Codex, #860 4307735447). `recorded_at` is the TRANSACTION-START
+  // `now()`, so a long transaction can start first and commit second - leaving
+  // two captures whose timestamps run opposite to their revisions. The series
+  // took its order from `recordedAt`, so an inversion swapped a change's FROM
+  // and TO and the line reported the adjustment backwards: a clinical record
+  // asserting the opposite of what happened.
+  //
+  // REVISION IS THE AUTHORITY WITHIN A SERIES, because every reading in one
+  // shares a single identity and 0223 allocates the revision per capture under
+  // a lock. `recordedAt` is left to display.
+
+  it("pairs by REVISION, so 120 -> 130 reads that way even inverted", () => {
+    // Revision 2 carries the EARLIER timestamp: the inversion this closes.
+    const changes = changesWithin(
+      chronology([
+        reading({ captureId: "cap-1", revision: 1, recordedAt: "2026-10-15T10:05:00Z", value: 120 }),
+        reading({ captureId: "cap-2", revision: 2, recordedAt: "2026-10-15T10:00:00Z", value: 130 }),
+      ]),
+    );
+    expect(changes).toHaveLength(1);
+    expect(
+      [changes[0]!.from.value, changes[0]!.to.value],
+      "the change was reported backwards, which is the defect",
+    ).toEqual([
+      { kind: "value", value: 120 },
+      { kind: "value", value: 130 },
+    ]);
+  });
+
+  it("CONTROL: an ordinary ascending pair is unchanged", () => {
+    // Without this the fix would also pass if it reversed everything.
+    const changes = changesWithin(
+      chronology([
+        reading({ captureId: "cap-1", revision: 1, recordedAt: "2026-10-15T10:00:00Z", value: 120 }),
+        reading({ captureId: "cap-2", revision: 2, recordedAt: "2026-10-15T10:05:00Z", value: 130 }),
+      ]),
+    );
+    expect(changes).toHaveLength(1);
+    expect([changes[0]!.from.value, changes[0]!.to.value]).toEqual([
+      { kind: "value", value: 120 },
+      { kind: "value", value: 130 },
+    ]);
+  });
+
+  it("and ADJACENCY still follows what was handed in, not revision arithmetic", () => {
+    // The docblock promises this and the fix must not quietly change it: a
+    // missing revision 2 leaves 1 and 3 adjacent, which is honest about what
+    // is known rather than asserting a step nobody read.
+    const changes = changesWithin(
+      chronology([
+        reading({ captureId: "cap-1", revision: 1, recordedAt: "2026-10-15T10:00:00Z", value: 120 }),
+        reading({ captureId: "cap-3", revision: 3, recordedAt: "2026-10-15T10:10:00Z", value: 140 }),
+      ]),
+    );
+    expect(changes).toHaveLength(1);
+    expect([changes[0]!.from.revision, changes[0]!.to.revision]).toEqual([1, 3]);
+  });
+});
+
 describe("a change series never crosses physical units", () => {
   it("does NOT pair Room 1's value with Room 2's", () => {
     // THE DEFECT (Codex, #860 4294673734). Two rooms holding the same model

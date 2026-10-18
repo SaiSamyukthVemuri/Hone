@@ -7,6 +7,8 @@ import {
   RESUME_CHOICE_NEW,
   RESUME_CHOICE_PROMPT,
   RESUME_CHOICE_RESUME,
+  RESUME_RECONSTRUCT_CONFIRM,
+  RESUME_RECONSTRUCT_NOTICE,
 } from "@/lib/machines/pending-setup";
 
 // ===========================================================================
@@ -124,7 +126,11 @@ describe("2 · a RESUMED save that never committed creates ONCE", () => {
     expect(FORM).toMatch(
       /const resumedNeedsSettings =\s*\n?\s*resumeUnsettled && resumeChoice === "resume" && !hasSettingsToSend;/,
     );
-    expect(FORM).toMatch(/resumedNeedsSettings\n/);
+    // AND IT IS NOT THE ONLY HOLD ANY MORE (Codex, #922 4307763145). A reload
+    // resets the WHOLE draft, so re-entering one machine group is not
+    // reconstruction - she also affirms that everything else is back.
+    expect(FORM).toMatch(/resumedNeedsSettings \|\|/);
+    expect(FORM).toMatch(/resumedUnconfirmed/);
   });
 });
 
@@ -170,6 +176,98 @@ describe("4 · START NEW creates a SECOND, identical area", () => {
   });
 });
 
+describe("6 · a RESUME saves nothing she did not re-enter", () => {
+  // THE DEFECT (Codex, #922 4307763145). A reload resets the ENTIRE draft -
+  // treatment area, minutes, entry readings, observations, numbing details and
+  // notes - not only the machine setup. The recovery gate treated just
+  // `machineDraft.groups` as the lost payload, so Save enabled as soon as ONE
+  // machine group was re-entered. If the original never committed, the save
+  // then recorded null and default values for every field she had filled in
+  // before the reload: a clinical record quietly thinner than the treatment it
+  // describes.
+  //
+  // A CONFIRMATION, NOT A VALIDATION RULE, and that choice is deliberate. A
+  // treatment area with blank notes, no observations and no numbing detail is
+  // LEGAL - she may genuinely have none - so there is no existing notion of
+  // "required" to lean on, and inventing one would be deciding a clinical
+  // completeness rule that does not belong in this file. What is wrong is not
+  // that the fields are empty; it is that they are empty BY ACCIDENT while she
+  // believes she is restoring an earlier save. So the emptiness is made
+  // deliberate instead of silent.
+
+  it("SAVE STAYS HELD on a resume with only a machine group re-entered", () => {
+    // The exact case the finding describes: settings back, everything else at
+    // its post-reload default, and Save must not be reachable.
+    expect(FORM).toMatch(
+      /const resumedUnconfirmed =\s*\n\s*resumeUnsettled && resumeChoice === "resume" && !resumedReconstructed;/,
+    );
+    // IN THE DISABLED LIST, which is the only thing that actually holds it.
+    const disabled = FORM.slice(
+      FORM.indexOf("onClick={submit}"),
+      FORM.indexOf('data-testid="save-treatment-area"'),
+    );
+    expect(
+      disabled,
+      "the whole-draft hold is not in the save button's disabled list",
+    ).toContain("resumedUnconfirmed");
+    // AND THE SETTINGS HOLD IS STILL THERE: both apply, because re-entering
+    // the settings is necessary and not sufficient.
+    expect(disabled).toContain("resumedNeedsSettings");
+  });
+
+  it("she is TOLD what was lost, not just blocked", () => {
+    // A dead button teaches nothing. The notice names what the reload cleared
+    // and says plainly that only what is on screen will be saved.
+    expect(FORM).toMatch(/RESUME_RECONSTRUCT_NOTICE/);
+    expect(FORM).toMatch(/data-testid="initial-save-resume-reconstruct"/);
+    expect(FORM).toMatch(/data-testid="initial-save-resume-reconstructed"/);
+    expect(RESUME_RECONSTRUCT_NOTICE).toContain("not just the machine settings");
+    expect(RESUME_RECONSTRUCT_NOTICE).toContain("Only what is on screen");
+  });
+
+  it("and the copy never asks her to CHANGE a value", () => {
+    // Sam's rule, on this path too: recovery may ask her to re-enter, never to
+    // alter.
+    for (const copy of [RESUME_RECONSTRUCT_NOTICE, RESUME_RECONSTRUCT_CONFIRM]) {
+      expect(copy.toLowerCase()).not.toMatch(/different|change|alter|adjust/);
+    }
+  });
+
+  it("CONTROL: an ordinary create is NOT held by any of this", () => {
+    // Without this the fix would also pass if it held every save. An ordinary
+    // create never had anything to lose, and "start a new area" is authoring a
+    // fresh one and already knows it.
+    expect(FORM).toMatch(/resumeUnsettled && resumeChoice === "resume" &&/);
+    const unconfirmed = FORM.slice(
+      FORM.indexOf("const resumedUnconfirmed ="),
+      FORM.indexOf(";", FORM.indexOf("const resumedUnconfirmed =")),
+    );
+    expect(
+      unconfirmed,
+      "the hold is not scoped to a chosen RESUME, so it blocks ordinary saves",
+    ).toContain('resumeChoice === "resume"');
+  });
+});
+
+describe("7 · START NEW ends the resumed operation's claim on the key", () => {
+  it("ownership stops, not just the key value", () => {
+    // THE DEFECT (Codex, #922 4307763147). `chooseStartNew` released the
+    // retained key, but the resumed operation still OWNED the slot - so the
+    // fresh key minted for the new area inherited that protection and survived
+    // Cancel after a definitive error. The next Add then resumed an operation
+    // already abandoned, which is 4305701038's trap from the other side.
+    expect(FORM).toMatch(/resumeChoice !== "new";/);
+  });
+
+  it("CONTROL: ownership still holds while the answer is unsettled and unchosen", () => {
+    // Without this, "release on start-new" could be satisfied by releasing
+    // always - which is the defect this whole thread began with.
+    expect(FORM).toMatch(
+      /const resumeOwnsKey =\s*\n\s*resume\.state !== "idle" &&\s*\n\s*resume\.state !== "saved" &&/,
+    );
+  });
+});
+
 describe("5 · a SETTLED close clears the key", () => {
   it("clears on every settled state and retains only while unsettled", () => {
     // `resumeOwnsKey` is true for `checking`, `absent` and `unknown`, and
@@ -188,9 +286,15 @@ describe("5 · a SETTLED close clears the key", () => {
     // THE GAP THAT CAUSED THIS FINDING. The constant's own comment claimed
     // both paths deferred to it; the draft-change rule did and the exit rule
     // kept its own narrower test. One rule, one definition.
+    // IT GAINED A THIRD LIMB (Codex, #922 4307763147): ownership also ends
+    // once she has STARTED A NEW AREA. Releasing the retained key was not
+    // enough - the resumed operation still owned the slot, so the freshly
+    // minted key inherited that protection and survived Cancel after a
+    // definitive error.
     expect(FORM).toMatch(
-      /const resumeOwnsKey = resume\.state !== "idle" && resume\.state !== "saved";/,
+      /const resumeOwnsKey =\s*\n\s*resume\.state !== "idle" &&\s*\n\s*resume\.state !== "saved" &&/,
     );
+    expect(FORM).toMatch(/resumeChoice !== "new";/);
     const uses = FORM.match(/resumeOwnsKey/g) ?? [];
     expect(
       uses.length,
