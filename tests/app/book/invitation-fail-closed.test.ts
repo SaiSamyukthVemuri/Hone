@@ -93,14 +93,14 @@ const admin = {
     // `create_public_appointment` stays for EXISTING clients, unchanged.
     if (
       fn === "create_public_appointment" ||
-      (fn === "create_public_appointment_for_new_client" && args.p_entry_id == null)
+      (fn === "create_public_appointment_for_new_client_v2" && args.p_entry_id == null)
     ) {
       return { data: [{ result: "created",
             client_id: (args.p_client_id as string | null) ?? CLIENT_ID, appointment_id: APPT_ID, created_at: new Date().toISOString() }], error: null };
     }
     // WAIT-03. An INVITATION booking commits through 0195, which answers with
     // its own success word. Nothing else about these journeys changed.
-    if (fn === "create_public_appointment_for_new_client" && args.p_entry_id != null) {
+    if (fn === "create_public_appointment_for_new_client_v2" && args.p_entry_id != null) {
       return { data: [{ result: "created_and_converted",
             client_id: (args.p_client_id as string | null) ?? CLIENT_ID, appointment_id: APPT_ID, created_at: new Date().toISOString() }], error: null };
     }
@@ -164,7 +164,7 @@ type BookResult = Awaited<ReturnType<typeof publicBookAppointmentAction>>;
 function expectBookedThroughInvitation(out: BookResult) {
   expect(out.ok).toBe(true);
   expect(
-    rpcArgs.some((c) => c.fn === "create_public_appointment_for_new_client" && c.args.p_entry_id != null),
+    rpcArgs.some((c) => c.fn === "create_public_appointment_for_new_client_v2" && c.args.p_entry_id != null),
     "the invited path must carry the entry id",
   ).toBe(true);
 }
@@ -175,7 +175,7 @@ function expectBookedThroughInvitation(out: BookResult) {
 function expectRefusedByInvitationAuthority(out: BookResult) {
   expect(out).toMatchObject({ ok: false, code: "invitation_refused" });
   expect(rpcCalls).not.toContain("redeem_new_client_waitlist_invitation_verified");
-  expect(rpcCalls).not.toContain("create_public_appointment_for_new_client");
+  expect(rpcCalls).not.toContain("create_public_appointment_for_new_client_v2");
 }
 
 beforeEach(() => {
@@ -309,7 +309,7 @@ describe("P3-A — a refused consume must leave no newly-created client row", ()
     // booked-but-still-invited state 0195 exists to remove. The composed command
     // is one name for both, so the ENTRY ID is what distinguishes them now.
     const invitedCall = rpcArgs.find(
-      (c) => c.fn === "create_public_appointment_for_new_client" && c.args.p_entry_id != null,
+      (c) => c.fn === "create_public_appointment_for_new_client_v2" && c.args.p_entry_id != null,
     );
     expect(invitedCall, "the invited path must carry the entry id").toBeDefined();
     expect(rpcCalls).not.toContain("create_public_appointment");
@@ -322,7 +322,7 @@ describe("P3-A — a refused consume must leave no newly-created client row", ()
       const out = await publicBookAppointmentAction(form({ invitation_token: TOKEN, invitation_capability: CAP }));
       expect(out.ok).toBe(false);
       expect(rpcCalls).not.toContain("create_public_appointment");
-      expect(rpcCalls).not.toContain("create_public_appointment_for_new_client");
+      expect(rpcCalls).not.toContain("create_public_appointment_for_new_client_v2");
       expect(clientRowsCreated(), "a refused consume must not leave a client row").toBe(0);
     },
   );

@@ -278,7 +278,7 @@ const admin = {
     // still reaches it directly and consults no admission authority.
     if (
       fn === "create_public_appointment" ||
-      (fn === "create_public_appointment_for_new_client" && args.p_entry_id == null)
+      (fn === "create_public_appointment_for_new_client_v2" && args.p_entry_id == null)
     ) {
       if (scenario.bookingError) return { data: null, error: scenario.bookingError };
       return {
@@ -302,7 +302,7 @@ const admin = {
         error: null,
       };
     }
-    if (fn === "create_public_appointment_for_new_client" && args.p_entry_id != null) {
+    if (fn === "create_public_appointment_for_new_client_v2" && args.p_entry_id != null) {
       if (scenario.bookingError) return { data: null, error: scenario.bookingError };
       const empty = {
         client_id: (args.p_client_id as string | null) ?? NEW_CLIENT_ID,
@@ -493,7 +493,7 @@ const conversions = () => rpcCalls.filter((c) => c.fn === "record_new_client_wai
  */
 const atomicBookings = () =>
   rpcCalls.filter(
-    (c) => c.fn === "create_public_appointment_for_new_client" && c.args.p_entry_id != null,
+    (c) => c.fn === "create_public_appointment_for_new_client_v2" && c.args.p_entry_id != null,
   );
 /**
  * Calls to an ordinary, non-invitation booking — a NEW client through the
@@ -504,7 +504,7 @@ const ordinaryBookings = () =>
   rpcCalls.filter(
     (c) =>
       c.fn === "create_public_appointment" ||
-      (c.fn === "create_public_appointment_for_new_client" && c.args.p_entry_id == null),
+      (c.fn === "create_public_appointment_for_new_client_v2" && c.args.p_entry_id == null),
   );
 const indexOfCall = (fn: string) => rpcCalls.findIndex((c) => c.fn === fn);
 
@@ -607,7 +607,7 @@ describe("A — a successful invitation booking converts the entry, atomically",
   it("redeems BEFORE it books, and books once", async () => {
     await publicBookAppointmentAction(invited());
     const redeem = indexOfCall("redeem_new_client_waitlist_invitation_verified");
-    const book = indexOfCall("create_public_appointment_for_new_client");
+    const book = indexOfCall("create_public_appointment_for_new_client_v2");
     expect(redeem).toBeGreaterThan(-1);
     expect(book).toBeGreaterThan(redeem);
   });
@@ -748,7 +748,7 @@ describe("the OUTER post-commit guard is still load-bearing", () => {
     const out = await publicBookAppointmentAction(form());
 
     expect(out.ok, "a post-commit throw flipped a durable booking to a failure").toBe(true);
-    expect(indexOfCall("create_public_appointment_for_new_client")).toBeGreaterThanOrEqual(0);
+    expect(indexOfCall("create_public_appointment_for_new_client_v2")).toBeGreaterThanOrEqual(0);
   });
 });
 
@@ -763,7 +763,7 @@ describe("D — ordinary public booking is untouched", () => {
     expect(conversions()).toHaveLength(0);
     expect(queue.status).toBe("invited");
     // Non-vacuity: the booking really did happen on this path.
-    expect(indexOfCall("create_public_appointment_for_new_client")).toBeGreaterThanOrEqual(0);
+    expect(indexOfCall("create_public_appointment_for_new_client_v2")).toBeGreaterThanOrEqual(0);
   });
 
   it("an EXISTING client booking without an invitation issues ZERO conversions", async () => {

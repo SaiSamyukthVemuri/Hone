@@ -14,14 +14,46 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-12, post-0211 apply; hosted `0211`; `0212`-`0218` AUTHORED AND PENDING, contiguous, in that order)
+## Current state (verified 2026-10-15 on `feat/g1-public-booking-picker`, post-0211 apply; hosted `0211` DECLARED; repo max `0228`; `0212`–`0222`, `0225`, `0228` AUTHORED AND PENDING — **NOT contiguous on this branch**)
 
-<!-- sync 2026-10-17: production c901be08 merged in, merge-only. Production wins on the
-     DECLARED HOSTED FACTS (hosted max 0211, its row carried verbatim below) and its 0211
-     apply record is preserved verbatim. The repo/pending/next-free rows are DERIVED from
-     `npm run migration:state -- --json` on the merged tree. 0212 is NOT written as hosted:
-     that apply is recorded through #832's own lane and record, not by this sync. The
-     integration composition markers and lane prose below are carried verbatim. -->
+> **The `post-0211 apply` phrasing is load-bearing, not decoration.** It is the
+> apply receipt this block carries forward, and
+> `tests/migrations/0177-postcare-write-boundary.test.ts` reads it to confirm
+> that 0177's apply is still RECORDED rather than silently dropped by a later
+> rewrite of this header. An earlier revision of this block restated the state
+> accurately and lost that phrase, which is exactly the receipt-discarding the
+> guard exists to catch. `0211` is the hosted figure DECLARED in
+> `docs/production/migration-state.json` on this branch, so the phrase is true
+> as written; re-derive it from that file rather than editing it by hand.
+
+> **THIS BRANCH IS NOT AT PARITY, and the production copy of this block says it
+> is.** That line is correct on production and false here, which is why it is
+> restated rather than inherited: syncing production brought its "repo == hosted"
+> header onto a branch that carries twelve pending migrations, and the canonical
+> docs guard caught it.
+>
+> **Hosted `0211` is the DECLARED figure in
+> `docs/production/migration-state.json` on this branch.** The composed branch
+> records hosted `0212` from the #832 apply, and #832 is unmerged, so production's
+> own file lags it. A branch's copy of a declared-state file is a snapshot, not
+> the authority — quote hosted state as "N per the <PR> apply record", and read it
+> from the production branch plus the newest apply record on any unmerged PR that
+> applied.
+>
+> **PENDING ON THIS BRANCH:** `0212`, `0213`, `0214`, `0215`, `0216`, `0217`,
+> `0218`, `0219`, `0220`, `0221`, `0222`, `0225`, `0228`.
+>
+> **THE GAPS ARE OTHER LANES', NOT LOST WORK.** `0223` and `0224` belong to the
+> MPX and Audit lanes and `0226`/`0227` to the SMS and delivery lanes; all four
+> exist on the composed branch. So the pending suffix here has holes by
+> construction, the contiguity guard reds while this branch is viewed alone, and
+> it resolves on composition. That red is an isolation artifact, not a defect.
+>
+> **`0228` IS A FORWARD-ONLY REPAIR of the applied, frozen `0204`** — it
+> redefines `create_public_appointment_for_new_client` and nothing else, restates
+> its grants by name, and writes no rows. `0204`'s bytes are unchanged and pinned
+> by hash in `tests/migrations/0228-*.test.ts`. Same shape as `0227` against the
+> applied `0212`.
 
 > **0211 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #827 HEAD, BEFORE ANY MERGE.**
 > `0211_client_sms_permission_guard.sql` was applied to production on
@@ -104,49 +136,15 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0211** (`0211_client_sms_permission_guard.sql`), applied 2026-10-12 from #827's reviewed head. |
-| **Repo migration max** | **0222** — `0222_public_practitioner_booking_command.sql` (G1 write side, #824 DB/WAIT): the practitioner-scoped public booking validator and command. Above it sits nothing. This tree is the isolated synthetic integration of eleven lanes' pending migrations `0211`–`0221`, each carried byte-identical to its own PR head, plus `0219` and `0222` from this lane. Additive: four functions in total across 0219/0222, no data, no existing object altered, and 0170's own command and validator left in place unchanged. |
-| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **`0212`**-**`0222`** (`0212`, `0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`), **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING, and the suffix is CONTIGUOUS. Derived by `npm run migration:state -- --json` on this merged tree. |
-| **Next free migration** | Next free number is **0223**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** here — availability is not allocation. The shared register (`~/hone-migration-coordination.md`) is the authority for in-flight claims. |
-| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. |
+| **Repo migration max** | **0228** on this branch — `0228_legacy_new_client_refusal_atomicity.sql`, a FORWARD-ONLY repair of the applied, frozen `0204`. Repo and hosted are NOT equal here: this is the MIGRATION-FIRST PENDING shape, and the production copy of this block says PARITY because it is correct there and not here. |
+| **Remote-only migrations** | **none**: no migration exists on production that this branch lacks. (Other lanes' pending numbers are absent here, which is the reverse case and is covered under Pending migrations.) |
+| **Pending migrations** | `0212`, `0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0225`, `0228` — thirteen, and **NOT a contiguous suffix**: `0223`/`0224` (MPX, Audit) and `0226`/`0227` (SMS, delivery) belong to other lanes and exist on the composed branch, not here. The contiguity guard therefore reds while this branch is viewed alone and resolves on composition. |
+| **Next free migration** | Next free number is **0229**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. `0228` was taken as the lowest number free across every visible ref at authoring time; a number is only free relative to the tree it lands on, so the landing tree is re-derived before any apply. |
+| **Project ref** | `alhhybgqdmcdyzpybykj`, the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
 | **Reviewed release head** | `481e60c60ae8c873a2e1b6e2a0ccc5b9dc0b8c11` (PR #827): CI green (run `38164242975`), 0 review threads, migration bytes reviewed byte-identical inside #831. The shepherd was UNKNOWN (`read_failed`), and that was accepted by the operator for this migration-only apply. |
 | **Production application SHA at apply time** | `6c5eac80` (the #821 merge). **No application behaviour was deployed by this apply.** |
 
-## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, repo == hosted)
-> **0215 IS AUTHORED AND PENDING, on the DELIVERY-VISIBILITY-01 branch `feat/delivery-visibility-01` only.**
-> `0215_delivery_incidents.sql` adds:
-> - `delivery_incidents`: one open incident per studio, channel, purpose and failure class, opened or extended by an AFTER trigger on each delivery ledger in the same transaction as the failure;
-> - `delivery_sweep_heartbeat`;
-> - `record_email_sweep_run`, `email_delivery_health`, `resolve_delivery_incident`, `support_delivery_incidents` and `support_email_receipt_outcomes` (all `service_role` only), and `owner_delivery_incidents` (authenticated, owner of that studio only).
->
-> It writes no data and redefines no existing function. It adds one trigger to `sms_outbound_messages` and one to `email_outbound_messages`.
->
-> **NUMBERING, from a fresh full census (2026-10-12, recorded in `/home/sam/hone-migration-coordination.md`):** 0211 = #827, 0212 = #832, 0213 = #831, 0214 = #833, **0215 = this lane**, 0216 = #838. This branch carries 0211 and 0212 and not 0213 or 0214, so its pending suffix has a hole at `0213`-`0214`. The contiguity rule in `tests/docs/canonical-production-facts.test.ts` is red on this branch for exactly that reason, by construction, until it is stacked behind #831 and #833 or integrated after them. Apply order is 0211 → 0212 → 0213 → 0214 → 0215 → 0216.
->
-> **NOT APPLIED, NOT MERGED.**
-> **THIS TREE IS AN ISOLATED SYNTHETIC INTEGRATION BRANCH** (`integration/fett-synthetic-824`),
-> built for #824 to prove a higher migration locally against a coherent chain. It is NOT a
-> release candidate and nothing here is applied. Each number is carried **byte-identical** to
-> its own PR head and every reviewed branch is **unmodified**; the integration is by normal
-> merge into this branch only:
->
-> * `0211` G3 — PR #827
-> * `0212` DELIVERY-EVENTS-01 — PR #832 (stacked on #827)
-> * `0213` LEAD-ALERT-01 — PR #831
-> * `0214` PAY-CCY-02 — PR #833
->
-> The pending suffix above hosted `0210` is therefore **contiguous** on this branch:
-> `0211`, `0212`, `0213`, `0214`. Each lane's own branch states its own contiguity position
-> honestly and those statements are preserved below; on a single lane's branch the suffix
-> has holes, and that is correct for that branch. **No contiguity guard is weakened** —
-> the chain is made coherent by carrying the numbers beneath, never by relaxing
-> `tests/docs/canonical-production-facts.test.ts`.
->
-> Apply order is lexical and strictly `0211` → `0212` → `0213` → `0214`, each
-> migration-first under its own approval **from its own reviewed head, not from this
-> branch**. Coordinated through `~/hone-migration-coordination.md`.
-
-### Pending `0211` — G3 client SMS permission guard (PR #827)
+## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, `0211` AUTHORED AND PENDING on the G3 branch)
 
 > **0211 IS AUTHORED AND PENDING (added after the 0210 apply), on the draft G3 branch `fix/g3-client-sms-field-guard` only.**
 > `0211_client_sms_permission_guard.sql` closes finding G3: studio members could rewrite a client's SMS consent and opt-out through the database API. It adds ONE `SECURITY INVOKER` trigger function and ONE trigger on `public.clients`, nothing else:

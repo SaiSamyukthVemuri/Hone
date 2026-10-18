@@ -346,7 +346,7 @@ describe("public booking — new-client waitlist admission gate", () => {
     // decision, so a refused request cannot leave an orphan behind. The
     // positive control is therefore that the command RAN - the inverse of the
     // negative assertions above, which require that it did not.
-    expect(rpcCalls).toContain("create_public_appointment_for_new_client");
+    expect(rpcCalls).toContain("create_public_appointment_for_new_client_v2");
     expect(rpcCalls.length).toBeGreaterThan(0);
   });
 
@@ -359,7 +359,7 @@ describe("public booking — new-client waitlist admission gate", () => {
     // decision, so a refused request cannot leave an orphan behind. The
     // positive control is therefore that the command RAN - the inverse of the
     // negative assertions above, which require that it did not.
-    expect(rpcCalls).toContain("create_public_appointment_for_new_client");
+    expect(rpcCalls).toContain("create_public_appointment_for_new_client_v2");
     expect(rpcCalls.length).toBeGreaterThan(0);
   });
 
@@ -421,7 +421,7 @@ describe("NEW-CLIENT-MODE-01 — the four admission states are distinct", () => 
     // decision, so a refused request cannot leave an orphan behind. The
     // positive control is therefore that the command RAN - the inverse of the
     // negative assertions above, which require that it did not.
-    expect(rpcCalls).toContain("create_public_appointment_for_new_client");
+    expect(rpcCalls).toContain("create_public_appointment_for_new_client_v2");
     expect(rpcCalls.length).toBeGreaterThan(0);
     // No credentials were presented, so the invitation authority is not consulted.
     expect(authorizeCalls).toEqual([]);
