@@ -98,9 +98,12 @@ test("a practitioner labels a visit photo at upload, relabels and clears it by k
   for (const r of await choice.getByRole("radio").all()) {
     expect((await r.locator("xpath=..").boundingBox())!.height).toBeGreaterThanOrEqual(44);
   }
-  await expect(page.getByText(/Will attach as: Session photo: Session on .*\.$/)).toBeVisible();
+  // The summary is located by its testid: a text match also hits the ancestor
+  // whose text contains it (Playwright strict mode, round-9 a9545589).
+  const summary = page.getByTestId("upload-attach-summary");
+  await expect(summary).toHaveText(/^Will attach as: Session photo: Session on [^.]+\.$/);
   await choice.getByRole("radio", { name: "Before treatment" }).check();
-  await expect(page.getByText(/Will attach as: Session photo: Session on .*\. Labelled: Before treatment\.$/)).toBeVisible();
+  await expect(summary).toHaveText(/^Will attach as: Session photo: Session on [^.]+\. Labelled: Before treatment\.$/);
   await page
     .locator('input[type="file"][name="file"]')
     .setInputFiles({ name: "synthetic.png", mimeType: "image/png", buffer: await syntheticPng() });

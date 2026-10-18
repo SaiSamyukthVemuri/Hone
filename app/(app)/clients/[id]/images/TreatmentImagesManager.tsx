@@ -519,7 +519,7 @@ export function TreatmentImagesManager({
                 </div>
               )}
 
-              <p className="text-xs text-neutral-400">
+              <p className="text-xs text-neutral-400" data-testid="upload-attach-summary">
                 {contextKind === "client"
                   ? "Will attach as: Client photo."
                   : contextKind === "session"
