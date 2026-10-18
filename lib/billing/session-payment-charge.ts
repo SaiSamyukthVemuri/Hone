@@ -396,27 +396,33 @@ async function loadCardAndVerifyLineage(args: {
       // AN UNCONFIGURED JURISDICTION IS NOT A MISMATCH, and treating it as one
       // blocked every charge in the product.
       //
-      // The first version of this block refused whenever
-      // `getStudioPaymentJurisdiction` returned `!ok` — and `missing`, meaning
-      // "this studio has no jurisdiction row yet", is EVERY studio today. Every
-      // reason pushed here lands in `loadCardAndVerifyLineage`'s list, so the
-      // charge came back `lineage_mismatch` before Stripe was called at all. It
-      // surfaced only when production's money-mismatch suite arrived in a sync:
-      // 29 of its cases refused with zero provider calls.
+      // `missing` IS FAIL-CLOSED AGAIN, and the history is worth keeping
+      // because the reasoning that exempted it was once true.
       //
-      // `accountCountryVerdict` already encodes the correct answer for a studio
-      // whose account country has never been observed — `unobserved_legacy_ca`
-      // is chargeable — but that path was unreachable because this returned
-      // first. So `missing` now falls through to today's behaviour: there is no
-      // configured country to disagree with.
+      // This block briefly treated `missing` as chargeable. The justification
+      // was that "this studio has no jurisdiction row yet" described EVERY
+      // studio, so refusing on it blocked every charge — which surfaced when
+      // production's money-mismatch suite arrived in a sync and 29 of its cases
+      // refused with zero provider calls.
       //
-      // STILL FAIL-CLOSED WHERE #824 REQUIRES IT. A CONFIGURED jurisdiction
-      // whose verdict is not chargeable refuses, which is the real mismatch
-      // case; `invalid` (a row that exists and cannot be parsed) and
-      // `read_failed` (an unreadable state) also refuse, because those are
-      // configured-but-unknown rather than not-configured.
+      // THAT PREMISE IS NO LONGER TRUE, AND 0214 IS WHY.
+      // `0214_studio_payment_jurisdiction.sql` BACKFILLS a row for every
+      // existing studio (:147) and installs an `after insert on public.studios`
+      // trigger that writes one for every new studio (:164-175). With 0214 in
+      // the chain a missing row is an INTEGRITY ANOMALY, not a supported
+      // legacy state, so exempting it would move money through a country and
+      // currency configuration nobody has verified.
+      //
+      // The 29 refusals were a FIXTURE problem, not a product one: those two
+      // suites omitted the row 0214 guarantees. They seed it now, which is
+      // what makes this safe to close.
+      //
+      // So every `!ok` reason refuses: `missing` (the row that must exist does
+      // not), `invalid` (it exists and cannot be parsed) and `read_failed` (it
+      // cannot be read). A CONFIGURED jurisdiction whose verdict is not
+      // chargeable also refuses, which is the ordinary mismatch case.
       const jurisdictionRead = await getStudioPaymentJurisdiction(args.studioId);
-      if (!jurisdictionRead.ok && jurisdictionRead.reason !== "missing") {
+      if (!jurisdictionRead.ok) {
         reasons.push("Studio payment country could not be verified.");
       } else if (
         jurisdictionRead.ok &&
