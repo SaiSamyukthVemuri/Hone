@@ -208,6 +208,15 @@ export const BROWSER_GROUPS = {
       // /book/[slug], so a diff to app/book/** selects the group that can
       // break it.
       "public-practitioner-picker.spec.ts",
+      // #824 ACCEPTANCE: the operator's multi-practitioner journey walked once
+      // end to end — pick A, pick B, reschedule one, then read the owner's
+      // calendar. Registered HERE, with the picker, because its dominant
+      // surface is /book/[slug] and that is the diff most likely to break it.
+      // It also asserts attribution on /calendar/[id], which the `calendar`
+      // group owns; a spec may appear in only one group, so a calendar-only
+      // diff selects `calendar` and not this journey. That is the deliberate
+      // trade, not an oversight.
+      "multi-practitioner-acceptance.spec.ts",
     ],
   },
   calendar: {
