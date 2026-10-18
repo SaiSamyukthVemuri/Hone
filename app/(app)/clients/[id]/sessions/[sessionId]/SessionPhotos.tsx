@@ -1,10 +1,7 @@
 "use client";
 
-import { useCallback } from "react";
 import Link from "next/link";
 import type { SessionPhoto } from "./session-photos";
-import { getTreatmentImageSignedUrlAction } from "../../images/actions";
-import type { GridPhotoVariant } from "@/lib/images/grid-photo-recovery";
 import { useGridPhotoRecovery } from "@/lib/images/use-grid-photo-recovery";
 
 // FETT photos (HON-43): the photos attached to this visit, on the visit's own
@@ -39,23 +36,24 @@ export function SessionPhotos({ clientId, photos }: { clientId: string; photos: 
       </div>
       <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         {photos.map((p) => (
-          <SessionPhotoCell key={`${p.id}:${p.url}:${p.thumbUrl ?? ""}`} photo={p} />
+          <SessionPhotoCell key={`${p.id}:${p.url}:${p.thumbUrl ?? ""}`} clientId={clientId} photo={p} />
         ))}
       </ul>
     </section>
   );
 }
 
-function SessionPhotoCell({ photo: p }: { photo: SessionPhoto }) {
-  // The SHARED bounded recovery (lib/images/use-grid-photo-recovery.ts): one
-  // retry on a timed-out or rejected re-mint, then terminal; the
-  // hydration-window check. Identical to the Photos grid and the ID photo.
-  const remint = useCallback(
-    (variant: GridPhotoVariant) =>
-      getTreatmentImageSignedUrlAction({ imageId: p.id, variant }).then((res) => (res.ok ? res.url : null)),
-    [p.id],
-  );
-  const { state, imgRef, onError } = useGridPhotoRecovery({ previewUrl: p.url, thumbUrl: p.thumbUrl, remint });
+function SessionPhotoCell({ clientId, photo: p }: { clientId: string; photo: SessionPhoto }) {
+  // The SHARED bounded recovery (lib/images/use-grid-photo-recovery.ts): an
+  // abortable GET to the signed-url route (never a server action), one retry
+  // on a timed-out or rejected re-mint, then terminal; the hydration-window
+  // check. Identical to the Photos grid and the ID photo.
+  const { state, imgRef, onError } = useGridPhotoRecovery({
+    previewUrl: p.url,
+    thumbUrl: p.thumbUrl,
+    clientId,
+    imageId: p.id,
+  });
 
   const area = p.areaLabel;
   return (
