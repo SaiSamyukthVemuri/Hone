@@ -104,7 +104,9 @@ describe("0231 portrait in the profile header: the Photos-tab trust boundary", (
     expect(comp).toMatch(/initialGridPhoto\(\{ previewUrl: url, thumbUrl \}\)/);
     expect(comp).toMatch(/getTreatmentImageSignedUrlAction\(\{ imageId, variant \}\)/);
     // Pre-hydration failure check, and transitions never inside a state updater.
-    expect(comp).toMatch(/el\.complete && el\.naturalWidth === 0/);
+    expect(comp).toMatch(/if \(el\.complete && el\.naturalWidth === 0\) \{\s*handleError\(\);\s*return;\s*\}/);
+    expect(comp).toMatch(/el\.addEventListener\("error", onNativeError\);/);
+    expect(comp).toMatch(/return \(\) => el\.removeEventListener\("error", onNativeError\);/);
     expect(comp).not.toMatch(/setState\(\(current\) =>/);
     expect(comp).toMatch(/if \(state\.stage === "broken" \|\| !state\.src\) return null;/);
     expect(comp).toMatch(/alt=\{`ID photo of \$\{clientName\}`\}/);
