@@ -219,6 +219,7 @@ describe("0232 at upload: the panel choice", () => {
     // The "Will attach as" summary names the chosen label (approved copy);
     // nothing when Not labelled, never on a client photo.
     expect(mgr).toMatch(/before: "Labelled: Before treatment\.",\s+after: "Labelled: After treatment\.",/);
+    expect(mgr).toContain('<p className="text-xs text-neutral-400" data-testid="upload-attach-summary">');
     expect(mgr).toMatch(/\{contextKind !== "client" && captureStage\s+\? ` \$\{CAPTURE_STAGE_SUMMARY\[captureStage\]\}`\s+: null\}/);
     expect(mgr).toMatch(/useState<"" \| "before" \| "after">\(""\)/);
     expect(mgr).toMatch(/className="flex min-h-\[44px\] items-center gap-2 text-sm text-neutral-700 dark:text-neutral-200"\s*>\s*<input\s+type="radio"\s+name="captureStage"/);
