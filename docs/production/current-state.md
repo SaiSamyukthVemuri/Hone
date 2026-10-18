@@ -1477,19 +1477,11 @@ trigger that freezes identity columns after insert — are unaffected and remain
   Authorization, client IP or User-Agent, and return only `content-type`, `cache-control`,
   `x-sentry-rate-limits` and `retry-after`. **Not a BAA; production requests were not
   measured.**
-- **PostHog URL properties lose record ids from their path segments, and `/flags` is off** (PR #918, #828 G-07/G-26,
-  merge `aaf3042b`, deployed 2026-10-18, no migration). `guardBrowserEvent`
-  (`lib/analytics/client-boundary.ts`) treats every named URL key, and any key ending in `_url`,
-  `_referrer` or `_pathname`, as a URL in `properties`, `$set` and `$set_once`, and rewrites its
-  **path** with the segment rules Vercel Analytics uses (`lib/analytics/path-ids.ts`):
-  id-bearing path segments become `[id]` or `[token]`, and decoded URL syntax is never emitted
-  from them. Query parameters not on the attribution allowlist are dropped, and so is the
-  fragment. The allowlisted marketing attribution values (`utm_source`, `utm_medium`,
-  `utm_campaign`, `utm_term`, `utm_content`) are retained **verbatim and are NOT scrubbed**.
-  **Known gap:** record ids inside retained `utm_*` values are not redacted; fix tracked separately (Privacy lane).
-  `instrumentation-client.ts` sets `advanced_disable_flags: true`, so no `/flags` request (whose
-  body carried the first page the browser loaded) is sent. **Not a BAA; production events were
-  not measured.**
+- **PostHog: path-segment id redaction for URL properties (depth ≤ 8), and `/flags` off** (PR #918,
+  #828 G-07/G-26, merge `aaf3042b`, deployed 2026-10-18, no migration). This is a set of
+  mechanisms, **not a guarantee that record ids never reach PostHog.** `guardBrowserEvent` (`lib/analytics/client-boundary.ts`) passes only allowed marketing events from canonical marketing pages, then runs `sanitizeProps` over `properties`, `$set` and `$set_once`. A string value whose key is a named URL key (`$current_url`, `$referrer`, `$initial_*`, `$session_entry_*`, ...) or ends in `_url`, `_referrer` or `_pathname`, at nesting depth 8 or less, is rebuilt by `sanitizeMarketingUrl`: its path, unless it is a token route (`<prefix>[token]`) or a canonical marketing path (kept), goes through the segment rules in `lib/analytics/path-ids.ts` shared with `vercel-url-redaction.ts`, so an id-bearing path segment becomes `[id]` or `[token]` (percent-decoded first; a redacted segment that would still contain `?`, `#`, `@`, `%` or a space becomes `[token]`); query parameters not on the attribution allowlist are dropped; the fragment is dropped. Other string values get only token-route redaction (`sanitizeTokenPaths`), not id redaction. A string at depth 9 becomes `[redacted]`. `instrumentation-client.ts` sets `advanced_disable_flags: true`, which in posthog-js 1.404.1 stops the `/flags` request (whose body carried the first page the browser loaded and, per #918's own analysis, does not pass through `before_send`); pinned by `tests/lib/analytics/posthog-url-ids.test.ts`, including the SDK's gate on that option name.
+  **Known gaps (Privacy lane fix in progress):** (1) record ids inside retained allowlisted `utm_*` values (`utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`) are not redacted: those values are copied verbatim; (2) properties nested deeper than 8 levels are passed through unsanitised: a non-string value (object, array, number, boolean, null) reached at depth 9 is returned unchanged, so every string inside it is sent as is.
+  **Not a BAA; production events were not measured.**
 - Rate limiting via Upstash **fails OPEN** — if it is down or unset, portal and booking rate
   limits bypass.
 
