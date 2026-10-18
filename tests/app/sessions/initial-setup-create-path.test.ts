@@ -79,14 +79,45 @@ describe("the block arguments are built ONCE for both commands", () => {
 });
 
 describe("the UNEXECUTED command is not on the default path", () => {
-  it("is taken only when there are settings to record", () => {
-    // 0223 is pending and no database has run it. A twenty-six parameter
-    // forwarding wrapper is exactly the class where one wrong parameter name
-    // fails only at runtime, so routing EVERY treatment-area creation through
-    // it would put the whole charting flow behind unexecuted SQL.
+  it("is taken when there are settings to record OR a key to reconcile", () => {
+    // 0223 is pending and no database has run the whole of it. A twenty-six
+    // parameter forwarding wrapper is exactly the class where one wrong
+    // parameter name fails only at runtime, so routing EVERY treatment-area
+    // creation through it would put the whole charting flow behind SQL that
+    // has not been exercised. The proven path stays the default.
+    //
+    // ONE BOOLEAN BECAME TWO (ops01's ruling on #922 4307515255), because two
+    // different questions were being answered by one:
+    //
+    //   * are there SETTINGS to validate and record?  -> `withSettings`
+    //   * is there a KEY that has to be reconciled?   -> `withClaim`
+    //
+    // A RESUMED SETTINGS-FREE SAVE answers no to the first and yes to the
+    // second. Sent through the ordinary create path it carried NO key, took
+    // the unkeyed route, and created a SECOND area the moment the original
+    // transaction committed - which is why closing used to discard the key
+    // instead, and discarding it was the other half of the same defect.
+    //
+    // 0223 ANTICIPATED IT: the settings half is nullable and declared
+    // "Null/empty means 'no settings to record', which is a valid save", and
+    // the claim is written whenever a key is supplied. No migration change.
     expect(createBody).toMatch(
-      /const withSetup\s*=\s*\n?\s*input\.initialSetup != null && input\.initialSetup\.groups\.length > 0;/,
+      /const withSettings\s*=\s*\n?\s*input\.initialSetup != null && input\.initialSetup\.groups\.length > 0;/,
     );
+    expect(createBody).toMatch(/const withClaim\s*=/);
+    expect(createBody).toMatch(
+      /const withSetup = withSettings \|\| withClaim;/,
+    );
+    // THE KEY MUST BE SUBSTANTIAL OR ABSENT: 0223 refuses one under eight
+    // characters, so an empty string must not reach it as a claim.
+    expect(createBody).toMatch(/idempotencyKey\.trim\(\)\.length > 0/);
+    // AND ONLY A SAVE WITH SETTINGS RESOLVES A MACHINE. Validating readings
+    // needs a device; a claim-only save has none and must not invent one.
+    expect(createBody).toMatch(/if \(withSettings\) \{/);
+    expect(
+      createBody,
+      "a claim-only save would try to resolve a machine it does not have",
+    ).not.toMatch(/if \(withSetup\) \{\s*\n\s*const setup = /);
     const branchAt = createBody.indexOf("withSetup");
     const newAt = createBody.indexOf('"create_block_with_initial_setup"');
     const oldAt = createBody.indexOf('"create_block_with_entry"');

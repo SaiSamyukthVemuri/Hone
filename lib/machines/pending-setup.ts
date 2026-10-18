@@ -206,6 +206,39 @@ export const SETUP_GROUPS_MOVED =
   "while this form was open, so saving now could overwrite them. Reload the " +
   "chart and enter these settings again - nothing here has been recorded.";
 
+/**
+ * AN EARLIER SAVE MAY STILL BE FINISHING, and she has to say which this is.
+ *
+ * WHY SHE IS ASKED RATHER THAN GUESSED AT (ops01's ruling on #922
+ * 4307515255). The retained retry key is what lets a resumed save be absorbed
+ * instead of duplicated. Absorption is only correct if this IS the same save:
+ * if she has returned to create a genuinely second area with the same values,
+ * absorbing it suppresses an area she meant to make. Sam's standing
+ * requirement is that recovery preserve the ability to create an identical
+ * second area deliberately, so the ambiguity is resolved by asking.
+ *
+ * PLAIN AND FACTUAL. It says what is uncertain - the earlier save MAY still
+ * be finishing - without implying either that it failed or that it worked,
+ * because neither is known. And it never asks her to change a value.
+ *
+ * PRODUCT WORDING, flagged for Sam's packet rather than settled here.
+ */
+export const RESUME_CHOICE_PROMPT =
+  "An earlier save of this treatment area may still be finishing. Choose " +
+  "whether this is that same save, or a new area you want as well.";
+
+/** Keep the earlier save's identity, so it cannot be recorded twice. */
+export const RESUME_CHOICE_RESUME = "Resume that save";
+
+/**
+ * A SECOND AREA, DELIBERATELY, with no value changed to get it.
+ *
+ * The label says "as well" rather than "instead" because nothing is being
+ * replaced: if the earlier save did commit, both areas exist, which is what
+ * she asked for.
+ */
+export const RESUME_CHOICE_NEW = "Start a new area as well";
+
 export const WRONG_BLOCK =
   "These settings were entered for a different treatment area and cannot be " +
   "recorded against this one.";

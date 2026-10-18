@@ -1102,8 +1102,15 @@ export type CreateAreaWithEntryInput = {
  * does.
  */
 export type InitialSetupInput = {
-  machineId: string;
-  modeKey: string;
+  /**
+   * NULL FOR A RESUMED SETTINGS-FREE SAVE, which carries this input for its
+   * KEY alone (ops01's ruling on #922 4307515255). 0223 declares the settings
+   * half nullable - "Null/empty means 'no settings to record', which is a
+   * valid save" - and still writes the claim, so the reconciliation works
+   * without a machine. Naming one she does not have would be an invention.
+   */
+  machineId: string | null;
+  modeKey: string | null;
   /**
    * The retry key for this save, minted ONCE by
    * `lib/machines/pending-setup.ts` and reused by every retry of it. That is
@@ -1350,8 +1357,14 @@ export async function createTreatmentAreaWithEntryAction(
   // the default and the new command is taken ONLY when there are settings to
   // record with the area - which is the case it exists for, and the case that
   // did not work at all before.
-  const withSetup =
+  const withSettings =
     input.initialSetup != null && input.initialSetup.groups.length > 0;
+  // THE KEY IS SUBSTANTIAL OR IT IS NOT THERE. 0223 refuses a key under 8
+  // characters, so an empty string must not reach it as a claim.
+  const withClaim =
+    input.initialSetup != null &&
+    input.initialSetup.idempotencyKey.trim().length > 0;
+  const withSetup = withSettings || withClaim;
 
   // EVERY READING IS VALIDATED BEFORE ANY OF IT IS SENT, through the SAME
   // validator the other two recording paths use.
@@ -1365,8 +1378,22 @@ export async function createTreatmentAreaWithEntryAction(
   // database constraint), unknown fields, channel bounds and the mode's
   // installed-option requirement.
   const setupGroups: SetupSubmissionGroup[] = [];
-  if (withSetup) {
+  if (withSettings) {
     const setup = input.initialSetup!;
+    // SETTINGS REQUIRE A MACHINE AND A MODE, and this refuses rather than
+    // narrowing with a cast. The two are nullable only for a resumed
+    // SETTINGS-FREE save, which cannot reach here - `withSettings` is false
+    // for it. A payload that has groups but no machine is a caller that has
+    // lost track of what it is sending, and recording readings under an
+    // invented identity is exactly the permanent mislabelling this block's
+    // validation exists to prevent.
+    if (setup.machineId === null || setup.modeKey === null) {
+      return {
+        ok: false,
+        error: "Choose the machine these settings were read from.",
+      };
+    }
+    const modeKey = setup.modeKey;
     // THE SAME AUTHENTICATED CLIENT this action already holds, narrowed to
     // the two capabilities the machine queries use rather than passed whole.
     // One cast, at the seam, exactly as machine-setup-actions does it.
@@ -1389,7 +1416,7 @@ export async function createTreatmentAreaWithEntryAction(
       const checked = validateSubmittedReadings(
         device,
         profile,
-        setup.modeKey,
+        modeKey,
         g.readings,
       );
       if ("error" in checked) return { ok: false, error: checked.error };
@@ -1408,8 +1435,13 @@ export async function createTreatmentAreaWithEntryAction(
   const { data: createdRows, error: cmdErr } = withSetup
     ? await supabase.rpc("create_block_with_initial_setup", {
         ...blockArgs,
-        p_studio_machine_id: input.initialSetup!.machineId,
-        p_setup_mode_key: input.initialSetup!.modeKey,
+        // NULL WHEN THERE ARE NO SETTINGS, which 0223 declares valid. A
+        // resumed settings-free save reaches here for its KEY alone, so
+        // naming a machine it does not have would be an invention.
+        p_studio_machine_id: withSettings
+          ? input.initialSetup!.machineId
+          : null,
+        p_setup_mode_key: withSettings ? input.initialSetup!.modeKey : null,
         p_setup_idempotency_key: input.initialSetup!.idempotencyKey,
         // THE DERIVED ROWS, never the caller's: unit and precision come from
         // the contract the validator resolved.
