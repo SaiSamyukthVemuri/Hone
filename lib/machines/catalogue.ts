@@ -1279,10 +1279,36 @@ export function catalogueIntegrity(
 export function activationReadiness(
   profile: MachineProfile,
 ): { ready: boolean; blockers: string[] } {
+  // WHICH MODES ARE ACTUALLY BEING PROPOSED (Codex, #855 4305466530).
+  //
+  // This promoted EVERY mode, which contradicted the model the integrity
+  // rules now describe: only ONE active mode is required, and non-active
+  // modes are explicitly permitted to stay. So a profile holding one verified
+  // mode beside a deliberately retained one had the retained mode's evidence
+  // gaps reported as activation blockers, falsely withholding a model that
+  // was ready.
+  //
+  // THE CANDIDATE SET COMES FROM THE TYPE'S OWN MEANINGS, not from a guess:
+  // `blocked` is "deliberately NOT offered: evidence incomplete for this
+  // exact model", which is a candidate under review; `legacy-only` is "kept
+  // so historical rows still render, never offered for new capture", which is
+  // deliberately never a candidate. So the candidates are the ACTIVE modes
+  // if any, otherwise the BLOCKED ones, and never the legacy-only ones.
+  //
+  // Promoting NOTHING would have been the simpler change and a worse one:
+  // every real model's modes are blocked today, so the field and mode-identity
+  // gates — which only run for an active mode — would stop running, and
+  // readiness would stop telling a reviewer why the ST 350 and the 5HD are not
+  // ready. That is the only thing it currently tells them.
+  const hasActiveMode = profile.modes.some((m) => m.availability === "active");
+  const isCandidate = (m: MachineProfile["modes"][number]) =>
+    hasActiveMode ? m.availability === "active" : m.availability === "blocked";
   const candidate: MachineProfile = {
     ...profile,
     availability: "active",
-    modes: profile.modes.map((m) => ({ ...m, availability: "active" as const })),
+    modes: profile.modes.map((m) =>
+      isCandidate(m) ? { ...m, availability: "active" as const } : m,
+    ),
   };
   // Reuse the real gate rather than restating it, so the two can never drift.
   const blockers = catalogueIntegrity([candidate]).map((v) => v.problem);
