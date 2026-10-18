@@ -9,7 +9,9 @@
 //   * an archived photo, another client's id pairing, another studio, a
 //     DEACTIVATED practitioner and a RECEPTIONIST all get NULL and change
 //     nothing; anon cannot call it (EXECUTE revoked);
-//   * the new column never blocks the existing create / note / archive path.
+//   * the new column never blocks the existing create / note / archive path;
+//   * a photo on a LEGACY finalized or void session (0159) gets NULL before any
+//     write, never the finalized guard's raise.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -17,6 +19,7 @@ import {
   adminQuery,
   asRole,
   closePool,
+  seedLegacyRecordStatus,
   seedMember,
   seedSession,
   seedStudio,
@@ -214,6 +217,22 @@ describe("0232: every wrong target or actor gets NULL and changes nothing", () =
     const r = await refusal(asRole("anon", (q) => q(STAGE, [randomUUID(), randomUUID(), null])));
     expect(r.code).toBe(INSUFFICIENT_PRIVILEGE);
   });
+});
+
+describe("0232: a LEGACY finalized or void session refuses cleanly (0159 retired finalization)", () => {
+  for (const status of ["finalized", "void"] as const) {
+    it(`a photo on a ${status} session gets NULL, unchanged, and never raises`, async () => {
+      const visit = await seedSession(A);
+      const img = await image(A, A.clientId, { sessionId: visit.sessionId });
+      // Positive control: labelable while the session is an ordinary record.
+      expect((await userQuery(A.userId, STAGE, [img, A.clientId, "before"])).rows[0].id).toBe(img);
+      await seedLegacyRecordStatus(visit.sessionId, status);
+      // Now immutable: the command refuses BEFORE the finalized guard can raise.
+      expect((await userQuery(A.userId, STAGE, [img, A.clientId, "after"])).rows[0].id).toBeNull();
+      expect((await userQuery(A.userId, STAGE, [img, A.clientId, null])).rows[0].id).toBeNull();
+      expect(await stageOf(img)).toBe("before");
+    });
+  }
 });
 
 describe("0232: privilege matrix", () => {

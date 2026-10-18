@@ -87,6 +87,16 @@ describe("0232's command", () => {
     expect(body).toMatch(/'Only a photo from a visit can be marked before or after\.'/);
   });
 
+  it("refuses a photo on a legacy finalized/void session BEFORE any write, and revives no retired path (0159)", () => {
+    const retired = body.indexOf("if v_record in ('finalized', 'void') then");
+    expect(retired).toBeGreaterThan(body.indexOf("treatment_image_actor(v_studio)"));
+    expect(retired).toBeLessThan(body.indexOf("update public.treatment_images t"));
+    expect(body.slice(retired, retired + 80)).toMatch(/return null;/);
+    for (const r of ["build_session_snapshot", "_apply_image_correction", "amend_finalized_session", "correct_finalized_session"]) {
+      expect(EXECUTABLE, r).not.toMatch(new RegExp(r));
+    }
+  });
+
   it("writes only capture_stage, on the same scoped row", () => {
     expect(body).toMatch(
       /update public\.treatment_images t\s+set capture_stage = p_stage\s+where t\.id = p_image_id\s+and t\.studio_id = v_studio\s+and t\.client_id = p_client_id\s+and t\.deleted_at is null/,

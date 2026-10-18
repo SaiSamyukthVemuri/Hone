@@ -23,6 +23,10 @@
 --     set_treatment_image_note (non-disclosing).
 --   * Deliberately NO trigger on treatment_images: its trigger set is pinned
 --     by the 0093/0168 and 0169 guards.
+--   * A photo on a LEGACY finalized or void session (0159 retired the signed
+--     record system; the one surviving artifact stays immutable) gets NULL
+--     before any write. Neither the retired snapshot builder nor the retired
+--     correction appliers are extended to carry the label.
 
 begin;
 
@@ -54,6 +58,7 @@ as $$
 declare
   v_studio  uuid;
   v_session uuid;
+  v_record  text;
   v_pract   uuid;
   v_id      uuid;
 begin
@@ -76,6 +81,19 @@ begin
     from public.treatment_image_actor(v_studio) a;
   if v_pract is null then
     return null;
+  end if;
+
+  -- RETIRED FINALIZATION (0159): a photo on a legacy finalized or void session
+  -- is immutable (treatment_images_guard_finalized). Refuse it the same
+  -- non-disclosing way BEFORE any write, instead of letting the guard raise.
+  -- The retired correction paths are deliberately NOT extended to carry this.
+  if v_session is not null then
+    select s.record_status into v_record
+      from public.sessions s
+     where s.id = v_session;
+    if v_record in ('finalized', 'void') then
+      return null;
+    end if;
   end if;
 
   -- Only now, with the actor proven, is the photo's scope disclosed.

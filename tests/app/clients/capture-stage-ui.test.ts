@@ -92,8 +92,11 @@ describe("0232 UI: the tile control", () => {
   });
 
   it("the page marks visit photos from session_id and passes the label; the tile renders the control", () => {
-    expect(page).toMatch(/practitioner_note, capture_stage, sessions/);
-    expect(page).toMatch(/visitPhoto: m\.session_id != null,/);
+    expect(page).toMatch(/practitioner_note, capture_stage, sessions \( started_at, record_status \)/);
+    // Never on a LEGACY finalized/void session (0159): no control that can never work.
+    expect(page).toMatch(
+      /visitPhoto:\s+m\.session_id != null &&\s+session\?\.record_status !== "finalized" &&\s+session\?\.record_status !== "void",/,
+    );
     expect(page).toMatch(/captureStage: m\.capture_stage \?\? null,/);
     expect(mgr).toMatch(
       /<CaptureStageControl clientId=\{clientId\} imageId=\{img\.id\} visitPhoto=\{img\.visitPhoto\} stage=\{img\.captureStage\} \/>/,

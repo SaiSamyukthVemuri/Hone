@@ -60,7 +60,7 @@ export default async function ClientImagesPage({
       // sessions ( started_at ) is a read-only embed (via the session_id FK)
       // so the gallery can title a photo with its SESSION date instead of the
       // raw filename. Display-only; no schema/security change.
-      "id, original_filename, created_at, storage_bucket, storage_path, session_id, session_block_id, practitioner_note, capture_stage, sessions ( started_at ), session_blocks ( primary_area, side, custom_area_detail )",
+      "id, original_filename, created_at, storage_bucket, storage_path, session_id, session_block_id, practitioner_note, capture_stage, sessions ( started_at, record_status ), session_blocks ( primary_area, side, custom_area_detail )",
     )
     .eq("studio_id", studio.id)
     .eq("client_id", id)
@@ -84,7 +84,10 @@ export default async function ClientImagesPage({
     session_block_id: string | null;
     practitioner_note: string | null;
     capture_stage: "before" | "after" | null;
-    sessions: { started_at: string } | { started_at: string }[] | null;
+    sessions:
+      | { started_at: string; record_status: string | null }
+      | { started_at: string; record_status: string | null }[]
+      | null;
     session_blocks: SessionBlockAreaInput | SessionBlockAreaInput[];
   }>;
   // Migration 0128: batch-load the structured areas for every attached block so
@@ -176,8 +179,13 @@ export default async function ClientImagesPage({
       return {
         id: m.id,
         clientScope: m.session_id == null && m.session_block_id == null,
-        // 0232: only a photo linked to a visit can carry a capture-stage label.
-        visitPhoto: m.session_id != null,
+        // 0232: only a photo linked to a visit can carry a capture-stage label,
+        // and never one on a LEGACY finalized/void session (0159 retired the
+        // signed-record system; that artifact stays immutable).
+        visitPhoto:
+          m.session_id != null &&
+          session?.record_status !== "finalized" &&
+          session?.record_status !== "void",
         captureStage: m.capture_stage ?? null,
         // Session date of the attached session (null for client-scope photos),
         // used as the human card title in place of the raw filename.
