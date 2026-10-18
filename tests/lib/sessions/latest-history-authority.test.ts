@@ -45,7 +45,8 @@ const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
 type Row = {
   id: string;
   started_at: string;
-  record_status?: string | null;
+  // Required: pickLastTreatment's candidate type requires it (HON-10 row 1).
+  record_status: string | null;
   deleted_at?: string | null;
   created_at?: string;
   next_session_note?: string | null;
@@ -440,5 +441,61 @@ describe("F — CLIN-BEFORE-TODAY-F2 fail-closed behaviour is unchanged", () => 
     // recency rule cannot turn that into a clinical absence.
     expect(pickLastTreatment([], new Map())).toBeNull();
     expect(pickNewestChartedSession([], new Map())).toBeNull();
+  });
+});
+
+describe("G — HON-10 row 1: a void session is never the last treatment", () => {
+  // The newest session is void but carries a live block. The prep card's
+  // selector (and 0157's SQL) skip it; the Client Profile / Before-today
+  // selector used to name it. Both must now name the older live session.
+  const rows = [
+    row("void-newest", "2026-03-10T10:00:00Z", { record_status: "void" }),
+    row("live-older", "2026-01-10T10:00:00Z"),
+  ];
+  const map = blocks({ "void-newest": CHARTED, "live-older": CHARTED });
+
+  it("both selectors skip the void session, from any input order", () => {
+    expect(answersAcrossOrders(rows, (r) => pickLastTreatment(r, map))).toEqual(
+      new Set(["live-older"]),
+    );
+    expect(
+      answersAcrossOrders(rows, (r) => pickNewestChartedSession(r, map)),
+    ).toEqual(new Set(["live-older"]));
+  });
+
+  it("control: the pre-row-1 rule (no void check) names the void session", () => {
+    const unfiltered = <T extends Row>(xs: ReadonlyArray<T>) =>
+      orderByRecency(xs).find(
+        (s) =>
+          (map.get(s.id)?.length ?? 0) > 0 ||
+          s.electrolysis_entries.length > 0 ||
+          s.laser_entries.length > 0,
+      ) ?? null;
+    expect(unfiltered(rows)?.id).toBe("void-newest");
+  });
+
+  it("only void sessions → no last treatment; a null status is not void", () => {
+    expect(pickLastTreatment([rows[0]], map)).toBeNull();
+    const legacy = row("legacy-null", "2026-02-10T10:00:00Z", { record_status: null });
+    expect(
+      pickLastTreatment([...rows, legacy], blocks({ "legacy-null": CHARTED }))?.id,
+    ).toBe("legacy-null");
+  });
+
+  it("finalized is a real treatment (only void is excluded)", () => {
+    const fin = row("finalized", "2026-04-10T10:00:00Z", { record_status: "finalized" });
+    expect(
+      pickLastTreatment([...rows, fin], blocks({ ...Object.fromEntries(map), finalized: CHARTED }))?.id,
+    ).toBe("finalized");
+  });
+
+  it("both callers select record_status, so the filter is never fed undefined", () => {
+    expect(read("lib/dashboard/before-today-previews.ts")).toMatch(
+      /"id, client_id, started_at, record_status, /,
+    );
+    // The Client Profile reads sessions through getClientById's `select("*")`.
+    expect(read("lib/supabase/queries.ts")).toMatch(
+      /from\("sessions"\)\s*\.select\("\*, electrolysis_entries\(\*\), laser_entries\(\*\)"\)/,
+    );
   });
 });
