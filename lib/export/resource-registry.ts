@@ -311,6 +311,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "normalized_email", reason: "internal_state", note: "Generated from email, which is exported; a second copy carries no new fact." },
       { column: "sms_phone", reason: "internal_state", note: "Generated from exported `phone`; carries no additional customer fact and exists to support canonical SMS routing/eligibility. Same call as normalized_email: the export preserves the AUTHORED customer value, never a second generated copy of it. Migration 0199 added the column as `generated always as (public.sms_normalized_phone(phone)) stored`." },
       { column: "archived_by", reason: "pending_review", note: "Archive attribution; see archived_at." },
+      { column: "portrait_image_id", reason: "pending_review", note: "0231 identification-portrait pointer to one of the client's own treatment_images rows; it travels with the treatment-photo export decision, not as a bare id." },
     ],
     sourceCountCheck: { kind: "studio_scoped" },
     rowScope: "Every client row this studio holds is exported, archived clients included — the read does not filter on archived_at — and archived_at IS emitted, so archived state stays distinguishable from active.",

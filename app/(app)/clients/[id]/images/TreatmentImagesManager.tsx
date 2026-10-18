@@ -16,6 +16,8 @@ import {
   updateTreatmentImageNoteAction,
 } from "./actions";
 import { TREATMENT_NOTE_MAX_LENGTH } from "./note-constants";
+import { PortraitControl } from "./PortraitControl";
+import { CaptureStageControl } from "./CaptureStageControl";
 import {
   validateTreatmentImageUpload,
 } from "@/lib/images/treatment-images";
@@ -40,6 +42,13 @@ type UploadFileResult = {
 
 type Row = {
   id: string;
+  // 0231: true only for a client-scoped photo (no session, no treatment area);
+  // only those can be the client's identification portrait.
+  clientScope: boolean;
+  // 0232: linked to a visit, so it may carry a capture-stage label; and its
+  // current label (null = not labelled).
+  visitPhoto: boolean;
+  captureStage: "before" | "after" | null;
   // Session date of the attached session (null for client-scope photos). Shown
   // as the human card title instead of the raw .jpg filename (Chloe feedback).
   sessionDate: string | null;
@@ -201,10 +210,12 @@ export function TreatmentImagesManager({
   clientId,
   images,
   sessionOptions = [],
+  portraitImageId = null,
 }: {
   clientId: string;
   images: Row[];
   sessionOptions?: SessionAttachOption[];
+  portraitImageId?: string | null;
 }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -601,6 +612,8 @@ export function TreatmentImagesManager({
                   clientId={clientId}
                   note={img.note}
                 />
+                <PortraitControl clientId={clientId} imageId={img.id} clientScope={img.clientScope} isPortrait={img.id === portraitImageId} />
+                <CaptureStageControl clientId={clientId} imageId={img.id} visitPhoto={img.visitPhoto} stage={img.captureStage} />
                 <div className="flex gap-3 text-xs">
                   <button
                     type="button"

@@ -14,7 +14,19 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-15, post-0212 apply; hosted `0212`; `0213`–`0228` AUTHORED AND PENDING, contiguous, in that order)
+## Current state (verified 2026-10-15, post-0212 apply; hosted `0212`; `0213`–`0228` AUTHORED AND PENDING, contiguous, in that order; `0231` and `0232` AUTHORED AND PENDING above an allocated, absent `0229`/`0230`)
+
+> **0232 IS AUTHORED AND PENDING, on `feat/fett-capture-stage` only** (FETT photos, HON-43), stacked on `feat/fett-client-portrait` (0231). It applies after `0231`.
+> `0232_treatment_image_capture_stage.sql` adds ONE nullable column, `treatment_images.capture_stage` (`check (capture_stage in ('before', 'after'))`, NULL = unlabelled, no backfill), and ONE new command; it writes no rows and adds no trigger.
+> - **The command:** `set_treatment_image_capture_stage(uuid, uuid, text)`. The actor is resolved by `treatment_image_actor(studio)`; a wrong studio, client, archived photo, deactivated practitioner or receptionist gets NULL (non-disclosing, like `set_treatment_image_note`). Only a photo linked to a session can carry a stage. EXECUTE is revoked from `public`, `anon`, `authenticated` and `service_role` by name, then granted to `authenticated` only.
+> - **The pinned 0168 commands are untouched:** a separate command instead of a tenth argument on `create_treatment_image_metadata`.
+> - **Allocation:** `0232` allocated by the coordinator (#825). It inherits 0231's by-construction `0229`/`0230` hole.
+
+> **0231 IS AUTHORED AND PENDING, on `feat/fett-client-portrait` only** (FETT photos, HON-43), stacked on `integration/fett-composed-824` @ `380f2ab1`.
+> `0231_client_identification_portrait.sql` adds ONE nullable column, `clients.portrait_image_id` → `treatment_images(id)` (`on delete set null`), one trigger (on `clients`), ONE new command, one partial index, and a redefinition of `archive_treatment_image` (clears the pointer); it writes no rows.
+> - **Integrity, in the database:** the portrait must be the same client and studio, client-scoped and not archived (`clients_portrait_integrity`, which takes `FOR SHARE` on the photo so a concurrent archive waits). Archiving clears the pointer atomically: `archive_treatment_image` is redefined with 0178's body plus one scoped UPDATE, grants restated by name. No trigger is added to `treatment_images` (its trigger set is pinned by the 0093/0168/0169 guards). One partial index on the pointer.
+> - **The command:** `set_client_portrait(uuid, uuid)`, actor resolved by `treatment_image_actor(studio)` (an ACTIVE practitioner of the client's studio). EXECUTE revoked from `public`, `anon`, `authenticated` and `service_role` by name, then granted to `authenticated` only. The trigger function is never granted back.
+> - **Allocation:** `0231` allocated by the coordinator (#825). `0229` (General) and `0230` (Willow) are allocated to other lanes and are NOT in this tree, so the parity guard reports a hole **by construction** until this branch integrates after them, in order. It renumbers if that order changes.
 
 > **0230 IS AUTHORED AND PENDING, on `wip/hon-50-g6g7` (#916) only**, stacked on #902 (`0229`). Reserved for HON-50 G6 by the migration coordinator.
 > `0230_studio_sms_sender_stop_preflights.sql` adds one table (`studio_sms_sender_stop_preflights`), one service_role-only writer (`record_studio_sms_stop_preflight`), and REPLACES `0229`'s body of `get_live_studio_sms_sender_registration_state` (0229's body verbatim plus `stop_preflights`).
@@ -177,10 +189,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0212** (`0212_email_delivery_events.sql`), applied 2026-10-12 from #832's reviewed head. |
-| **Repo migration max** | **0228**: `0228_legacy_new_client_refusal_atomicity.sql` (#874), a FORWARD-ONLY repair of the applied, frozen `0204`, above `0227_email_receipt_quarantine_bound.sql` (#876) and `0226_studio_sms_sender_unpurchased_release.sql` (#863). Derived by `npm run migration:state` on this tree. |
+| **Repo migration max** | **0232**: `0232_treatment_image_capture_stage.sql` (FETT photos), above `0231_client_identification_portrait.sql`, both above the absent, allocated `0229`/`0230` and `0228_legacy_new_client_refusal_atomicity.sql` (#874). Derived by `npm run migration:state` on this tree. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **`0213`–`0228`** (`0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`), contiguous from hosted + 1, all **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING. `0211` and `0212` are APPLIED and FROZEN and carried byte-identical. Each pending migration applies from its own reviewed head, never from this branch. |
-| **Next free migration** | Next free number is **0229**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** here: availability is not allocation. |
+| **Pending migrations** | **`0213`–`0228`** (`0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`), contiguous from hosted + 1, and **`0231`**, **`0232`** above an absent, allocated `0229`/`0230` (a hole **by construction** until integration), all **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING. `0211` and `0212` are APPLIED and FROZEN and carried byte-identical. Each pending migration applies from its own reviewed head, never from this branch. |
+| **Next free migration** | Next free number is **0233**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** here: availability is not allocation, and `0229`/`0230` are allocated elsewhere though absent from this tree. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. |
 
 ## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, repo == hosted)
