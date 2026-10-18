@@ -129,6 +129,75 @@ describe("the ledger wrappers are fail-soft", () => {
     expect(await settleEmailMessage(throwing, ROW, { outcome: "unknown", providerError: "timeout" })).toBeNull();
   });
 
+  it("a STALLED begin returns null instead of hanging, so the send still happens", async () => {
+    // Codex P2 4307424676. The wrappers already handled a REJECTING rpc; this
+    // is the one that neither answers nor errors. Unbounded, `sendEmailSafely`
+    // was never reached — and every booking flow awaits its sender AFTER the
+    // appointment is committed, so the request could exhaust its runtime having
+    // written an appointment and sent NO confirmation.
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.useFakeTimers();
+    try {
+      // An rpc that never settles. If the bound regresses, this test HANGS
+      // rather than failing cleanly, which is itself the signal.
+      const stalled = admin(() => new Promise<unknown>(() => {}));
+      const pending = beginAppointmentEmailMessage(stalled, {
+        studioId: ROW,
+        appointmentId: ROW,
+        purpose: "appointment_reminder_24h",
+      });
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(await pending).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a STALLED settle returns null too, and never delays a send that already happened", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.useFakeTimers();
+    try {
+      const stalled = admin(() => new Promise<unknown>(() => {}));
+      const pending = settleEmailMessage(stalled, ROW, {
+        outcome: "accepted",
+        providerEmailId: ROW,
+      });
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(await pending).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("and the CONFIRMATION still sends when the ledger stalls", async () => {
+    // The end-to-end consequence, which is the thing that actually matters:
+    // a stalled ledger must cost the TAG, never the EMAIL. Drives the real
+    // `sendEmailSafely` with the null row id a stalled begin now returns.
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    sent.length = 0;
+    vi.useFakeTimers();
+    let ledgerMessageId: string | null = "unset";
+    try {
+      const stalled = admin(() => new Promise<unknown>(() => {}));
+      const pending = beginAppointmentEmailMessage(stalled, {
+        studioId: ROW,
+        appointmentId: ROW,
+        purpose: "appointment_reminder_24h",
+      });
+      await vi.advanceTimersByTimeAsync(2_000);
+      ledgerMessageId = await pending;
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(ledgerMessageId).toBeNull();
+
+    const result = await sendEmailSafely({ ...base, ledgerMessageId });
+    expect(result.ok, "the send must happen even with no ledger row").toBe(true);
+    expect(sent.length, "exactly one email, untagged").toBe(1);
+    // UNTAGGED, not tagged with a bogus id: the tag is what was lost.
+    expect(sent[0]).not.toHaveProperty("tags");
+  });
+
   it("sends each outcome's fields and only those", async () => {
     const calls: Array<Record<string, unknown>> = [];
     const spy = admin(async (_fn, args) => {
