@@ -376,3 +376,63 @@ describe("0231: a concurrent studio move WAITS for the setter's client lock (Cod
     expect(await portraitOf(c)).toBeNull();
   });
 });
+
+describe("0231: archive and setter take locks in the SAME order (Codex P2 4305077733)", () => {
+  it("a setter holding the client lock makes the archive WAIT on the client, never deadlock", async () => {
+    // The deadlock shape: the setter holds the CLIENT row, then its integrity
+    // trigger wants FOR SHARE on the IMAGE. If the archive had already locked
+    // the image (old order: image, then client), each waits on the other and
+    // Postgres aborts one with 40P01. With the client locked first, the
+    // archive waits on the client and never touches the image until then.
+    const c = randomUUID();
+    await adminQuery(`insert into public.clients (id, studio_id, name) values ($1, $2, 'Client lock-order')`, [
+      c,
+      A.studioId,
+    ]);
+    const img = await image(A, c);
+
+    let releaseSetter!: () => void;
+    const setterMayFinish = new Promise<void>((r) => (releaseSetter = r));
+    let setterHolds!: () => void;
+    const setterHolding = new Promise<void>((r) => (setterHolds = r));
+
+    // Connection S: the setter's FIRST lock (the client row), then hold.
+    const setter = adminTx(async (q) => {
+      await q(`select 1 from public.clients where id = $1 for update`, [c]);
+      setterHolds();
+      await setterMayFinish;
+      // The setter's SECOND step: the pointer write, whose trigger takes FOR
+      // SHARE on the image. Deadlocks only if the archive locked the image.
+      await q(`update public.clients set portrait_image_id = $2 where id = $1`, [c, img]);
+    }).then(
+      () => ({ ok: true as const }),
+      (e: { code?: string }) => ({ ok: false as const, code: e.code }),
+    );
+    await setterHolding;
+
+    // Connection R: archive the same photo while the setter holds the client.
+    const archive = userQuery(A.userId, ARCHIVE, [img, c]).then(
+      (r) => ({ ok: true as const, id: r.rows[0].id as string | null }),
+      (e: { code?: string }) => ({ ok: false as const, code: e.code }),
+    );
+    try {
+      let blocked = false;
+      for (let i = 0; i < 100 && !blocked; i++) {
+        const r = await adminQuery(
+          `select count(*)::int n from pg_stat_activity
+            where wait_event_type = 'Lock' and query like '%archive_treatment_image%'`,
+        );
+        blocked = (r.rows[0].n as number) > 0;
+        if (!blocked) await new Promise((r) => setImmediate(r));
+      }
+      expect(blocked, "the archive must wait on the setter's client lock").toBe(true);
+    } finally {
+      releaseSetter();
+    }
+    const [s, a] = await Promise.all([setter, archive]);
+    expect(s, "the setter never dies of a deadlock").toEqual({ ok: true });
+    expect(a, "the archive never dies of a deadlock").toEqual({ ok: true, id: img });
+    // The archive ran after the setter committed, so it cleared the pointer.
+    expect(await portraitOf(c)).toBeNull();
+  });
+});
