@@ -31,6 +31,8 @@ type UploadFileResult = {
   name: string;
   status: UploadFileStatus;
   error?: string;
+  // 0232: stored, but the chosen capture-stage label was not saved.
+  note?: string;
 };
 
 // PR #271 / #272 / #273. Practitioner-only "Treatment Photos" UI.
@@ -232,6 +234,9 @@ export function TreatmentImagesManager({
   const hasSessions = sessionOptions.length > 0;
   const [contextKind, setContextKind] = useState<PhotoContextKind>("client");
   const [ctxSessionId, setCtxSessionId] = useState<string>("");
+  // 0232: the capture stage chosen at upload ("" = not labelled). Offered only
+  // for a visit photo; the action labels right after the photo is recorded.
+  const [captureStage, setCaptureStage] = useState<"" | "before" | "after">("");
   const [ctxBlockId, setCtxBlockId] = useState<string>("");
   const ctxSession = sessionOptions.find((s) => s.id === ctxSessionId) ?? null;
   const ctxBlocks = ctxSession?.blocks ?? [];
@@ -299,8 +304,8 @@ export function TreatmentImagesManager({
     }));
     setFileResults([...results]);
     setUploading(true);
-    const update = (i: number, status: UploadFileStatus, err?: string) => {
-      results[i] = { ...results[i], status, error: err };
+    const update = (i: number, status: UploadFileStatus, err?: string, note?: string) => {
+      results[i] = { ...results[i], status, error: err, note };
       setFileResults([...results]);
     };
 
@@ -322,10 +327,18 @@ export function TreatmentImagesManager({
       try {
         const fd = new FormData();
         for (const [k, val] of Object.entries(context)) fd.set(k, val);
+        if (contextKind !== "client" && captureStage) fd.set("captureStage", captureStage);
         fd.set("file", file);
         const res = await uploadTreatmentImageAction(fd);
         if (res.ok) {
-          update(i, "uploaded");
+          update(
+            i,
+            "uploaded",
+            undefined,
+            "labelNotSaved" in res && res.labelNotSaved
+              ? "label not saved; set it on the photo"
+              : undefined,
+          );
           anyOk = true;
         } else {
           update(i, "failed", res.error);
@@ -343,6 +356,7 @@ export function TreatmentImagesManager({
       setContextKind("client");
       setCtxSessionId("");
       setCtxBlockId("");
+      setCaptureStage("");
     }
     if (anyOk) router.refresh();
   }
@@ -468,6 +482,37 @@ export function TreatmentImagesManager({
                   </p>
                 ))}
 
+              {(contextKind === "session" || contextKind === "block") && (
+                <div
+                  role="radiogroup"
+                  aria-label="Taken before or after treatment"
+                  className="flex flex-wrap gap-x-4"
+                  data-testid="upload-capture-stage"
+                >
+                  {(
+                    [
+                      ["", "Not labelled"],
+                      ["before", "Before treatment"],
+                      ["after", "After treatment"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <label
+                      key={value || "none"}
+                      className="flex min-h-[44px] items-center gap-2 text-sm text-neutral-700 dark:text-neutral-200"
+                    >
+                      <input
+                        type="radio"
+                        name="captureStage"
+                        value={value}
+                        checked={captureStage === value}
+                        onChange={() => setCaptureStage(value)}
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+              )}
+
               <p className="text-xs text-neutral-400">
                 {contextKind === "client"
                   ? "Will attach as: Client photo."
@@ -544,7 +589,7 @@ export function TreatmentImagesManager({
                   >
                     {f.status === "pending" && "Waiting"}
                     {f.status === "uploading" && "Uploading…"}
-                    {f.status === "uploaded" && "✓ Uploaded"}
+                    {f.status === "uploaded" && (f.note ? `✓ Uploaded (${f.note})` : "✓ Uploaded")}
                     {f.status === "failed" && `✗ ${f.error ?? "Failed"}`}
                   </span>
                 </li>

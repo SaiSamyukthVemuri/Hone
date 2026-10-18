@@ -98,3 +98,21 @@ describe("session photos: Codex P1 4301862700 / P2 4301862702", () => {
     expect(section).not.toMatch(/loading="lazy"/);
   });
 });
+
+describe("0232: visit photos are grouped by capture stage in STACKED sections", () => {
+  const helper = read("session-photos.ts");
+  const section = read("SessionPhotos.tsx");
+
+  it("the read carries capture_stage, normalised to before | after | null", () => {
+    expect(helper).toMatch(/practitioner_note, capture_stage, session_blocks/);
+    expect(helper).toMatch(/r\.capture_stage === "before" \|\| r\.capture_stage === "after" \? r\.capture_stage : null/);
+  });
+
+  it("groups Before, After, Other in that order, hides empty groups, and keeps one grid when nothing is labelled", () => {
+    expect(section).toMatch(/\{ key: "before", heading: "Before" \},\s*\{ key: "after", heading: "After" \},\s*\{ key: null, heading: "Other" \},/);
+    expect(section).toMatch(/if \(inGroup\.length === 0\) return null;/);
+    expect(section).toMatch(/photos\.some\(\(p\) => p\.captureStage\) \?/);
+    // Stacked: each group is a column-flex block with its own grid.
+    expect(section).toMatch(/<div key=\{g\.heading\} className="flex flex-col gap-2"/);
+  });
+});
