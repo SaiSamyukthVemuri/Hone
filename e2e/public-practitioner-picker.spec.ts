@@ -54,6 +54,11 @@ let bookDate: string;
 let A: { email: string; displayName: string; practitionerId: string };
 let B: { email: string; displayName: string; practitionerId: string };
 let C: { email: string; displayName: string; practitionerId: string };
+/** ACTIVE but NOT pinned to the service. Without D the eligibility half of the
+ *  options assertion is VACUOUS: C is inactive, so excluding it proves only the
+ *  ACTIVE filter, and an active-but-ineligible practitioner — the case the
+ *  0170/0222/0225 optional-list rule exists for — went untested. */
+let D: { email: string; displayName: string; practitionerId: string };
 let clientOne: { name: string; email: string };
 let clientTwo: { name: string; email: string };
 
@@ -88,6 +93,7 @@ test.beforeAll(async () => {
   A = await seedE2eMember(seed);
   B = await seedE2eMember(seed);
   C = await seedE2eMember(seed);
+  D = await seedE2eMember(seed);
   // Inactive: must never appear in the picker, and must never be bookable.
   await setPractitionerActive(C.practitionerId, false);
 
@@ -100,6 +106,9 @@ test.beforeAll(async () => {
   // must be made eligible explicitly or the picker correctly hides them.
   await seedServiceEligibility(seed.studioId, serviceId, A.practitionerId);
   await seedServiceEligibility(seed.studioId, serviceId, B.practitionerId);
+  // D is deliberately left OUT of service_practitioners while staying ACTIVE.
+  // The service therefore HAS a list, which is the only state in which 0170's
+  // optional-list rule bites.
 
   for (let d = 0; d <= 6; d++) {
     await seedStudioWideDefault(seed.studioId, d, true, "06:00", "22:00");
@@ -317,6 +326,15 @@ test("the picker offers only active, service-eligible practitioners", async ({ p
   expect(labels).toContain(B.displayName);
   // Inactive C is absent, and so is anyone not eligible for this service.
   expect(labels).not.toContain(C.displayName);
+  // AND THE ELIGIBILITY HALF, which C cannot prove: D is ACTIVE and passes
+  // every other filter, so its absence is attributable to service_practitioners
+  // alone. loadEligiblePractitioners applies 0170's rule — the list exists, so
+  // membership is required — and fails CLOSED if the eligibility read errors.
+  expect(labels).not.toContain(D.displayName);
+  // Non-vacuity for D itself: it really is a seeded, ACTIVE member of this
+  // studio, so the exclusion above is a filter and not a missing fixture.
+  expect(D.displayName).toBeTruthy();
+  expect(D.practitionerId).not.toBe(A.practitionerId);
 });
 
 test("the public-assignment kill switch hides the picker entirely", async ({ page }) => {

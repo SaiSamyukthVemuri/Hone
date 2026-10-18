@@ -145,6 +145,12 @@ declare
   v_starts        timestamptz;
   v_ends          timestamptz;
   v_dur           integer;
+  -- PRE-INSERT availability check only. Deliberately NOT v_starts/v_ends/v_dur:
+  -- those three are the DELEGATE'S OUTPUT, written by the `into` clauses below,
+  -- and must not hold a value before it runs.
+  v_pre_dur       integer;
+  v_pre_ends      timestamptz;
+  v_pre_avail     text;
   v_pract         uuid;
   v_appt_created  timestamptz;
 begin
@@ -243,6 +249,42 @@ begin
                           null::integer, null::uuid, null::timestamptz, null::uuid,
                           null::text, null::text, null::timestamptz, null::timestamptz;
       return;
+    end if;
+
+    -- P3, THE ORPHAN CLIENT FROM AN UNAVAILABLE SLOT.
+    --
+    -- The three checks above prove the practitioner is ASSIGNABLE. None of them
+    -- says their slot is still FREE. If it is taken between the action's
+    -- re-verification and this transaction winning the studio lock, the
+    -- delegate answers `time_unavailable` — RETURNED, not raised — so the
+    -- insert below would already have committed a client row with its contact
+    -- details and any SMS consent, and no appointment would exist. That is the
+    -- same orphan the P2 gate closed for identity and eligibility, reached
+    -- through availability instead.
+    --
+    -- The authority is the delegate's OWN validator, duplicated here exactly as
+    -- the identity and eligibility checks are, and the end instant is derived
+    -- the way the command derives it: the service's duration from p_starts_at.
+    -- A missing or non-positive duration is left to the delegate rather than
+    -- invented into a refusal here.
+    select sv.default_duration_minutes
+      into v_pre_dur
+      from public.services sv
+     where sv.id = p_service_id
+       and sv.studio_id = p_studio_id;
+
+    if v_pre_dur is not null and v_pre_dur > 0 then
+      v_pre_ends := p_starts_at + make_interval(mins => v_pre_dur);
+      v_pre_avail := public.validate_public_booking_slot_v2(
+        p_studio_id, p_practitioner_id, p_service_id, p_starts_at, v_pre_ends
+      );
+      if v_pre_avail is distinct from 'ok' then
+        return query select v_pre_avail,
+                            null::uuid, null::timestamptz, null::timestamptz,
+                            null::integer, null::uuid, null::timestamptz, null::uuid,
+                            null::text, null::text, null::timestamptz, null::timestamptz;
+        return;
+      end if;
     end if;
   elsif p_entry_id is null
     and coalesce(
