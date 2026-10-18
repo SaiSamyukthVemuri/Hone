@@ -179,6 +179,13 @@ export function ElectrolysisEntryRow({
   // non-empty" above.
   const hasStructured = hasStructuredReadings(entry);
 
+  // PULSES ARE A THERMOLYSIS SETTING (Codex P1 4307447121). A galvanic pass
+  // saved with no readings still stores the default count of 1
+  // (clampPulseCount), and with nothing structured it reaches the legacy line
+  // below, so the legacy line shows a count only for a pass whose mode is not
+  // galvanic. Shared by the saved view and the HON-46 printout (one render).
+  const legacyPulses = entry.pulse_count != null && entry.mode !== "galv";
+
   // Primary meta line: probe size · mode · modality · pulses · intensity · duration
   const meta: string[] = [];
   if (params.probe_size) meta.push(params.probe_size);
@@ -186,7 +193,7 @@ export function ElectrolysisEntryRow({
   if (mLabel) meta.push(mLabel);
   if (params.apilus_modality) meta.push(apilusModalityLabel(params.apilus_modality));
   if (!hasStructured) {
-    if (entry.pulse_count != null) {
+    if (legacyPulses) {
       meta.push(
         `${entry.pulse_count} ${entry.pulse_count === 1 ? "pulse" : "pulses"}`,
       );
@@ -227,7 +234,7 @@ export function ElectrolysisEntryRow({
         : entry.area;
     const legacyReadings: string[] = [];
     if (!hasStructured) {
-      if (entry.pulse_count != null) {
+      if (legacyPulses) {
         legacyReadings.push(
           `${entry.pulse_count} ${entry.pulse_count === 1 ? "pulse" : "pulses"}`,
         );

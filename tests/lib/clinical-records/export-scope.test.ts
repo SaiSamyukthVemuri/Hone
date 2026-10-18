@@ -584,6 +584,28 @@ describe("laser treatment passes are exported (Codex P1 4301153312)", () => {
   });
 });
 
+describe("the retired draft status is never printed (Codex P2 4307447128)", () => {
+  const statusOf = (record_status: string | null) =>
+    buildClinicalRecordsDocument({
+      sessions: [{ ...BASE_SESSION, record_status }],
+      entries: [],
+      notes: [],
+      practitionerNameById: new Map(),
+    }).sessions[0].recordStatus;
+  it("draft prints nothing; a preserved legacy finalized or void status still shows", () => {
+    expect(statusOf("draft")).toBeNull();
+    expect(statusOf("finalized")).toBe("finalized");
+    expect(statusOf("void")).toBe("void");
+    expect(statusOf(null)).toBeNull();
+  });
+});
+
+describe("a galvanic pass never prints the writer's default pulse (Codex P1 4307447121)", () => {
+  it("a reading-less galv pass stored with pulse_count 1 shows no pulses, on paper as on screen", () => {
+    expect(printed({ entries: [entryOf({ mode: "galv", pulse_count: 1 })] })).not.toMatch(/pulse/i);
+  });
+});
+
 describe("the aftercare disclosure is attributed to whoever recorded it (Codex P2 4307259896)", () => {
   const docWith = (by: string | null, at: string | null) =>
     buildClinicalRecordsDocument({
