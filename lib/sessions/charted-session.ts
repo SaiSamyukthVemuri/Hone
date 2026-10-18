@@ -111,6 +111,19 @@ function liveCount(
 // used to trust its caller's order instead, which meant PostgREST's unspecified
 // order among equal `started_at` values reached the screen. Two callers need
 // this exact rule, which is the whole reason it is shared rather than inlined.
+// The fraction of a second BELOW the millisecond, as an integer count of
+// nanoseconds (0..999999). `Date` truncates `timestamptz` text to whole
+// milliseconds, but Postgres stores microseconds (`now()` fills them in), and
+// the SQL rule compares them. Without this, two sessions a few microseconds
+// apart read as tied here and the id tie-break could pick the OLDER one, the
+// reverse of the database's own `order by started_at desc` (Codex 4307093242).
+// The fraction is independent of the zone offset, so comparing it after equal
+// milliseconds is exact.
+function subMillisecond(startedAt: string): number {
+  const frac = /T\d{2}:\d{2}:\d{2}\.(\d+)/.exec(startedAt)?.[1] ?? "";
+  return Number(frac.slice(3, 9).padEnd(6, "0"));
+}
+
 export function compareChartedRecency(
   a: Pick<ChartedSessionCandidate, "id" | "started_at">,
   b: Pick<ChartedSessionCandidate, "id" | "started_at">,
@@ -128,6 +141,11 @@ export function compareChartedRecency(
   if (aTimed && bTimed && bt !== at) return bt - at;
   // A row we can place in time always outranks one we cannot.
   if (aTimed !== bTimed) return aTimed ? -1 : 1;
+  if (aTimed) {
+    const as = subMillisecond(a.started_at);
+    const bs = subMillisecond(b.started_at);
+    if (as !== bs) return bs - as;
+  }
   return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
 }
 

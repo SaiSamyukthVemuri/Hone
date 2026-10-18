@@ -442,3 +442,40 @@ describe("F — CLIN-BEFORE-TODAY-F2 fail-closed behaviour is unchanged", () => 
     expect(pickNewestChartedSession([], new Map())).toBeNull();
   });
 });
+
+describe("H — sub-millisecond precision is honoured (Codex 4307093242)", () => {
+  // Postgres timestamptz keeps microseconds; `Date` keeps milliseconds. Two
+  // sessions 1µs apart must still resolve to the NEWER one, as SQL's
+  // `order by started_at desc` does, not to whichever id sorts higher.
+  const rows = [
+    row("z-older", "2026-03-10T10:00:00.123456+00:00"),
+    row("a-newer", "2026-03-10T10:00:00.123457+00:00"),
+  ];
+  const map = blocks({ "z-older": CHARTED, "a-newer": CHARTED });
+
+  it("both selectors pick the microsecond-newer session, from any input order", () => {
+    expect(answersAcrossOrders(rows, (r) => pickLastTreatment(r, map))).toEqual(
+      new Set(["a-newer"]),
+    );
+    expect(
+      answersAcrossOrders(rows, (r) => pickNewestChartedSession(r, map)),
+    ).toEqual(new Set(["a-newer"]));
+  });
+
+  it("control: compared at millisecond precision they tie, and the id would pick the older", () => {
+    expect(Date.parse(rows[0].started_at)).toBe(Date.parse(rows[1].started_at));
+    expect(rows[0].id > rows[1].id).toBe(true);
+  });
+
+  it("offsets, missing fractions and short fractions compare exactly", () => {
+    const cmp = (x: string, y: string) =>
+      Math.sign(compareChartedRecency({ id: "a", started_at: x }, { id: "a", started_at: y }));
+    // Same instant, different offsets: equal.
+    expect(cmp("2026-03-10T10:00:00.5+00:00", "2026-03-10T05:00:00.500000-05:00")).toBe(0);
+    // No fraction vs .000001: the latter is newer, so it sorts first.
+    expect(cmp("2026-03-10T10:00:00Z", "2026-03-10T10:00:00.000001Z")).toBe(1);
+    // Millisecond difference still decides before the sub-millisecond part.
+    expect(cmp("2026-03-10T10:00:00.002000Z", "2026-03-10T10:00:00.001999Z")).toBe(-1);
+  });
+});
+
