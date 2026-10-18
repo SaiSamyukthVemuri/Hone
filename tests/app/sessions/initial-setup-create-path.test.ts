@@ -149,6 +149,34 @@ describe("the settings payload keeps the rules the other write paths use", () =>
     expect(createBody).toMatch(/readings: checked\.rows,/);
   });
 
+  it("asks for an IDENTITY for every group, because on this path all are new", () => {
+    // THE DEFECT THIS CATCHES broke the entire create journey for a
+    // machine-charted area (Codex, #860 4307426212).
+    //
+    // On this path the block does not exist yet, so EVERY group is new:
+    // `assembleGroupSubmissions` sets `groupKey: null` and a non-null
+    // `newGroupRef`. Emitting `group_key: g.groupKey` therefore sent
+    // `{"group_key": null}` - and a JSON null is PRESENT to the `?` operator,
+    // so the command's exactly-one check passed and the group then fell
+    // through to "A settings group must be named.", because `->>'group_key'`
+    // on a JSON null is SQL NULL. The command refused and the atomic create
+    // rolled the area back with it.
+    //
+    // WHY NOTHING ELSE CAUGHT IT. `machine-initial-save.db.test.ts` calls the
+    // command DIRECTLY with `new_group_ref`; it never goes through this
+    // serialisation. The one path where every group is necessarily new had its
+    // payload shape covered by nothing at all.
+    expect(createBody).toMatch(
+      /\.\.\.\(g\.groupKey === null\s*\?\s*\{ new_group_ref: g\.newGroupRef \}\s*:\s*\{ group_key: g\.groupKey \}\),/,
+    );
+    // AND THE UNCONDITIONAL FORM IS BANNED, which is the half that actually
+    // fails: the spread can be added while the old line stays.
+    expect(
+      createBody,
+      "a bare group_key still reaches the command, so a new group sends a JSON null",
+    ).not.toMatch(/^\s*group_key: g\.groupKey,$/m);
+  });
+
   it("sends a value as a STRING, so a recorded zero survives JSON", () => {
     // Identical to `recordSetupGroup` and `recordSetupSubmission`, because it
     // is the same rule and not a new one: a bare 0 is indistinguishable from
