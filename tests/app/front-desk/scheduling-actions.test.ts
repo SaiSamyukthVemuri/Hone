@@ -237,6 +237,12 @@ describe("cancelling", () => {
       actorRole: "receptionist",
       actorName: "Front Desk",
       rebookUrl: "https://app.test/book/studio",
+      // sendCancellationEmail records and TAGS a cancellation only when
+      // `ledger` is supplied. Omitting it left front-desk cancellations
+      // invisible to the delivery ledger, concern and incident surfaces while
+      // practitioner cancellations were visible, so the ref is asserted and
+      // not merely the copy.
+      ledger: { studioId: STUDIO.id, appointmentId: APPT },
     });
   });
 
