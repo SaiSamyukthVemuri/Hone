@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { Service } from "@/lib/types/database";
 import {
   formatServiceLabel,
@@ -23,6 +23,7 @@ import {
 } from "@/lib/booking/confirmation-presentation";
 import {
   fetchNextAvailableDateAction,
+  fetchPublicPractitionerOptionsAction,
   fetchPublicSlotsAction,
   publicBookAppointmentAction,
 } from "./actions";
@@ -167,6 +168,12 @@ export function PublicBookForm({
   const existingClientServices = services;
 
   const [clientType, setClientType] = useState<ClientType>(null);
+  // G1 — the practitioner picker. "" is "any available" and is the DEFAULT, so
+  // a client who ignores it books exactly as they do today.
+  const [practitionerId, setPractitionerId] = useState<string>("");
+  const [practitionerOptions, setPractitionerOptions] = useState<
+    { id: string; displayName: string; isOwner: boolean }[]
+  >([]);
 
   // P0 new-client waitlist. TRUE only for a NEW client at a studio the SERVER
   // put in waitlist mode. When the flag is off this is always false and every
@@ -179,6 +186,111 @@ export function PublicBookForm({
   const waitlistNewClient = isNewClient && newClientAdmission === "waitlist";
   const closedToNewClient = isNewClient && newClientAdmission === "closed";
   const unknownForNewClient = isNewClient && newClientAdmission === "unknown";
+  // G1 — WHERE A PRACTITIONER CHOICE IS REAL, and therefore where the picker is
+  // offered. The ORDINARY new-client path on an OPEN studio, and nowhere else:
+  //   * the existing-client branch of this form is intentionally unreachable;
+  //   * WAITLIST and CLOSED render their own surfaces, never a slot grid;
+  //   * an INVITED booking posts from app/invitation/[token] rather than here,
+  //     redeems an offer that named no practitioner, and its command takes
+  //     none — so a choice there would be silently discarded.
+  // Offering a choice the commit ignores is worse than offering none.
+  const pickerApplies = isNewClient && newClientAdmission === "open";
+
+  // G1 — THE STUDIO-WIDE JUMP IS NOT OFFERED ONCE A PRACTITIONER IS CHOSEN.
+  //
+  // `fetchNextAvailableDateAction` answers studio-wide, by construction: it
+  // hands the window to `loadPublicSlotsByDate`, whose `PublicRangeContext`
+  // has no practitioner field and whose reservation read filters on
+  // `studio_id` alone. So with a practitioner selected it would answer a
+  // DIFFERENT question than the grid beneath it — skipping a date they are
+  // free on (every other practitioner's booking counts as a conflict) and
+  // landing on dates whose scoped grid is empty.
+  //
+  // Scoping the jump properly means making the BULK pass practitioner-aware.
+  // It must stay one bulk pass: `tests/app/book/next-available-bounded.test.ts`
+  // forbids `getAvailableSlots` in that action, requires
+  // `loadPublicSlotsByDate`, and forbids awaiting inside a loop — the
+  // BOOK-NEXT-FAST-01 contract. Doing that needs practitioner-aware variants
+  // of `getStudioWide{Overrides,Defaults}Safe` (both hard-code
+  // `.is("practitioner_id", null)`) plus the per-date precedence rule that
+  // `lib/booking/slots.ts` already owns. Re-implementing that precedence in a
+  // second engine is the drift this module's own comments exist to prevent, so
+  // it belongs in its own slice with its own proof, not here.
+  //
+  // Until then the honest move is to withdraw the affordance rather than ship a
+  // button that confidently answers the wrong question.
+  //
+  // THE `practitionerOptions.length > 1` TERM IS LOAD-BEARING, AND ITS ABSENCE
+  // WAS A REGRESSION I SHIPPED. The first version of this gate read
+  // `!(pickerApplies && practitionerId)`, and I argued it changed nothing for
+  // any studio today because "Any available" is the default. That was wrong,
+  // because it ignored the sibling fix twenty lines up: a SOLE eligible
+  // practitioner is now AUTO-ASSIGNED, so `practitionerId` is non-empty on an
+  // ordinary single-practitioner studio where no choice was ever offered. The
+  // gate then hid "Next available" for essentially every studio. Five browser
+  // tests caught it — three in book-next-available-fast.spec.ts and two in
+  // public-booking-error-containment.spec.ts, which presses that button to
+  // drive a Server Action — while the source-contract guards passed, because
+  // they check the shape of each fix and cannot see two correct-looking fixes
+  // interacting.
+  //
+  // So the jump is withdrawn only where a choice was genuinely OFFERED AND
+  // MADE: more than one option, and one of them picked. With a single eligible
+  // practitioner the control is not rendered, nothing was chosen, and the
+  // studio-wide jump is exactly the pre-G1 behaviour — no better, no worse, and
+  // not a regression.
+  // G1 / CODEX P2 — THE LATEST SELECTION, READABLE FROM INSIDE AN IN-FLIGHT
+  // RESPONSE.
+  //
+  // `onFindNext` closes over `practitionerId` at CALL time, which is the wrong
+  // value to compare a response against: the question is what the visitor has
+  // chosen by the time the answer arrives. A ref is the only thing that reads
+  // "now" from inside that closure.
+  const practitionerIdRef = useRef(practitionerId);
+
+  // G1 / CODEX P2 — THE REF MOVES IN THE SAME MUTATION AS THE SELECTION.
+  //
+  // An earlier version mirrored the value in a `useEffect`. That effect is
+  // PASSIVE: React can commit the new selection while it is still pending, so
+  // a lookup completing in that window read the PREVIOUS ref value, passed the
+  // invalidation guard, and applied the stale studio-wide response anyway. The
+  // guard was real and its input was late.
+  //
+  // Every practitioner change therefore goes through this one function, which
+  // writes the ref FIRST and then the state, in one synchronous turn. Funnelled
+  // rather than written at each call site on purpose: there are three (the
+  // picker's onChange, the per-service reset, and the reconcile against
+  // returned options), and "remember to also update the ref" is exactly the
+  // kind of instruction that holds until someone adds a fourth. A guard asserts
+  // that `setPractitionerId` is never called outside this function.
+  const selectPractitioner = (next: string) => {
+    if (practitionerIdRef.current === next) return;
+    practitionerIdRef.current = next;
+    setPractitionerId(next);
+    // G1 / CODEX P2 — THE JUMP HISTORY ANSWERED A DIFFERENT QUESTION.
+    //
+    // `dateHistory` holds dates reached by "Next available", which answers
+    // STUDIO-WIDE. The forward control is hidden once a practitioner is chosen,
+    // but "Back to previous result" is rendered from this stack alone, so it
+    // survived the scope change and could navigate to a studio-wide result the
+    // chosen practitioner has no availability on -- presented as a previous
+    // RESULT, which it was, for a question the visitor is no longer asking.
+    //
+    // This is the same rule the serviceId effect below already applies ("a
+    // prior service's history is meaningless after a switch"), extended to the
+    // other thing that changes what availability MEANS. It is cleared HERE
+    // rather than by adding `practitionerId` to that effect, for two reasons:
+    // an effect is passive, and the previous finding in this file was exactly
+    // about trusting a passive effect to keep up with a selection; and one
+    // writer per concern is why the ref and the state no longer drift.
+    setDateHistory([]);
+  };
+
+  const nextAvailableApplies = !(
+    pickerApplies &&
+    practitionerOptions.length > 1 &&
+    practitionerId
+  );
 
   // THE ONE ORDERING DECISION, taken in `lib/booking/new-client-admission.ts`
   // so the whole cross-product is testable without a renderer (this suite runs
@@ -308,7 +420,18 @@ export function PublicBookForm({
     setNextSearched(false);
     setNoneInHorizon(false);
     startLoading(async () => {
-      const r = await fetchPublicSlotsAction({ slug, serviceId, date });
+      const r = await fetchPublicSlotsAction({
+        slug,
+        serviceId,
+        date,
+        // Scoped only where the choice is honoured at commit.
+        practitionerId: pickerApplies ? practitionerId || null : null,
+        // WHICH COMMAND WILL COMMIT THIS. A new client goes through 0225/0222
+        // and is practitioner-aware; an existing client commits through the
+        // legacy studio-wide command, so it must get the studio-wide grid or
+        // the page offers times that command refuses.
+        newClient: isNewClient,
+      });
       if (cancelled) return;
       if (!r.ok) {
         setError(r.error);
@@ -320,12 +443,111 @@ export function PublicBookForm({
     return () => {
       cancelled = true;
     };
-  }, [slug, serviceId, date, clientType, newClientBlocked]);
+  }, [
+    slug,
+    serviceId,
+    date,
+    clientType,
+    // Derived from `clientType` above, so it never changes independently —
+    // listed because the effect now READS it, and an omitted dependency the
+    // linter can see is how a stale flag reaches a server action.
+    isNewClient,
+    newClientBlocked,
+    pickerApplies,
+    practitionerId,
+  ]);
+
+  // G1 — the picker's options.
+  //
+  // Reset to "any available" whenever the service or the path changes, so a
+  // stale choice cannot be submitted against a service the practitioner is not
+  // eligible for. A failed read leaves the picker ABSENT rather than showing an
+  // error: the page still books through "any available", which is today's
+  // behaviour.
+  useEffect(() => {
+    let cancelled = false;
+    selectPractitioner("");
+    // G1 — CLEAR THE PREVIOUS SERVICE'S OPTIONS BEFORE THE REQUEST, NOT AFTER.
+    //
+    // Resetting only `practitionerId` left the PREVIOUS service's options
+    // rendered for the whole round trip. A visitor who picked one of those
+    // stale names in that window submitted a practitioner who is not offered
+    // for the service now selected — and the response replaced the options
+    // without ever reconciling the id that was already chosen. The server
+    // refuses such an id outright now, but showing a choice that is already
+    // invalid is the page telling the visitor something untrue, so the stale
+    // set goes immediately and the picker is simply absent until the real
+    // options land.
+    setPractitionerOptions([]);
+    if (!pickerApplies || !serviceId) {
+      return;
+    }
+    void (async () => {
+      const r = await fetchPublicPractitionerOptionsAction({ slug, serviceId });
+      if (cancelled) return;
+      const options = r.ok ? r.practitioners : [];
+      setPractitionerOptions(options);
+      // And reconcile any id chosen while the request was in flight against
+      // what actually came back. The clear above makes this hard to reach, but
+      // "hard to reach" is not "impossible", and the cost of being wrong is a
+      // submission the server now rejects outright.
+      // Read the ref, which is now the authoritative synchronous value, rather
+      // than a functional state update -- the two must not disagree.
+      const current = practitionerIdRef.current;
+      if (current && !options.some((o) => o.id === current)) {
+        selectPractitioner("");
+      }
+      // G1 — THE SOLE-ELIGIBLE PRACTITIONER IS **NOT** AUTO-ASSIGNED HERE, and
+      // this is a deliberate retreat from a fix that was already written.
+      //
+      // The defect is real (Codex P2 at 12033879): the control below renders
+      // only when there is more than one option, so with exactly one the
+      // picker is hidden and `practitionerId` stays empty. Submission then
+      // sends NULL, NULL means "any available", and
+      // `create_public_appointment_v2` resolves that down its legacy
+      // ACTIVE-OWNER path — so a service pinned to a single NON-OWNER
+      // practitioner can display that practitioner's slots and then refuse the
+      // booking as `not_eligible`.
+      //
+      // `if (options.length === 1) setPractitionerId(options[0]!.id)` fixes it
+      // and BREAKS ERROR CONTAINMENT. Proved by bisect, not argued: with that
+      // line present, `public-booking-error-containment.spec.ts` fails both of
+      // its cases; with only that line reverted, both pass. The mechanism is
+      // this effect's own error policy. The options read ABSORBS failure by
+      // design (`r.ok ? r.practitioners : []`, so a failed read leaves the
+      // picker absent rather than erroring). Assigning the sole option makes
+      // this action the FIRST `next-action` POST after the client-type choice,
+      // and that spec breaks exactly the first such POST — so the injected
+      // failure is swallowed here and the error boundary the spec requires
+      // never renders.
+      //
+      // Both behaviours are correct in isolation and cannot both live on this
+      // effect. The fix therefore belongs SERVER-SIDE, where no ordering is
+      // involved: resolve an unspecified practitioner to the sole eligible one
+      // at commit, in the action that already calls `loadEligiblePractitioners`.
+      // That also fixes clients that never ran this effect at all. It is not
+      // done here because it changes what NULL MEANS for a legacy studio —
+      // attribution would move from the active owner to the pinned
+      // practitioner — and this lane's standing contract is that NULL
+      // reproduces 0204 exactly. That is a product decision, not a refactor.
+      //
+      // Recorded as a gap rather than bypassed. See the PR description.
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [slug, serviceId, pickerApplies]);
 
   // Availability is service-specific, so a prior service's "next available"
   // history is meaningless after a service switch: reset it. (Runs on mount
   // too, which is a no-op since it starts empty.) Not tied to `date`, so a
   // normal next/previous jump never wipes the stack.
+  //
+  // PRACTITIONER scope is NOT handled here. It invalidates this stack for the
+  // same reason, but `selectPractitioner` clears it synchronously instead --
+  // see the comment there. Adding `practitionerId` to this dep array would make
+  // two writers for one piece of state, and the passive one would be the slower
+  // of the two.
   useEffect(() => {
     setDateHistory([]);
   }, [serviceId]);
@@ -374,12 +596,42 @@ export function PublicBookForm({
     // calendar date and then clicking starts the next search from
     // that manual date.
     const startFrom = addOneDayLocal(date);
+    // The selection this lookup is being made UNDER. `fetchNextAvailableDateAction`
+    // answers STUDIO-WIDE, so its answer is only meaningful while the visitor
+    // has not narrowed to a practitioner.
+    const requestedUnder = practitionerId;
     startFindingNext(async () => {
       const r = await fetchNextAvailableDateAction({
         slug,
         serviceId,
         fromDate: startFrom,
+        // Same discriminator the grid and the commit use: a new client is
+        // assigned by 0225/0222 and so wants the eligible-practitioner union;
+        // an existing client commits studio-wide and must get the studio-wide
+        // jump, or the jump and the commit disagree.
+        newClient: isNewClient,
       });
+      // G1 / CODEX P2 — DISCARD A STUDIO-WIDE ANSWER THE VISITOR HAS SINCE
+      // NARROWED AWAY FROM.
+      //
+      // The picker stays enabled while this is pending, deliberately: blocking
+      // the control during a network call is a worse surface than letting the
+      // choice win. But the outstanding lookup is studio-wide, so if the
+      // visitor picks a practitioner before it returns, its answer is about a
+      // DIFFERENT question — and it would still have run `setDate(r.date)`,
+      // jumping the page to a date that practitioner may have no slots on,
+      // after the button that started it had already disappeared.
+      //
+      // The whole response is dropped, not just the date: `setNextSearched`,
+      // `setError` and `setNoneInHorizon` are equally wrong to apply from a
+      // lookup the visitor has moved past. Bailing before any of them is why
+      // this sits above `setNextSearched` rather than next to `setDate`.
+      //
+      // Disabling the picker was the other option Codex offered. Invalidation
+      // is strictly better: it costs the visitor nothing, and it also covers a
+      // selection change this component does not control, where a disabled
+      // attribute would not have helped.
+      if (practitionerIdRef.current !== requestedUnder) return;
       setNextSearched(true);
       if (!r.ok) {
         setError(r.error);
@@ -427,6 +679,11 @@ export function PublicBookForm({
     const fd = new FormData();
     fd.set("slug", slug);
     fd.set("client_type", clientType);
+    // G1. Posted only where the commit honours it; "" and absent are identical
+    // server-side, so an older cached form submits the legacy shape.
+    if (pickerApplies && practitionerId) {
+      fd.set("practitioner_id", practitionerId);
+    }
     fd.set("service_id", serviceId);
     fd.set("starts_at", picked.start);
     fd.set("name", name);
@@ -751,6 +1008,28 @@ export function PublicBookForm({
             )}
           </select>
         </Field>
+        {/* G1 — offered only when the choice is real, and only when there is
+             more than one eligible practitioner: a picker with a single option
+             is noise. "Any available" is first and is the default. */}
+        {pickerApplies && practitionerOptions.length > 1 ? (
+          <Field label="Practitioner">
+            <select
+              aria-label="Practitioner"
+              data-testid="practitioner-picker"
+              value={practitionerId}
+              onChange={(e) => selectPractitioner(e.target.value)}
+              className="w-full bg-transparent py-2 text-[16px] outline-none"
+              style={{ borderBottom: "1px solid #0A0A0A" }}
+            >
+              <option value="">Any available</option>
+              {practitionerOptions.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.displayName}
+                </option>
+              ))}
+            </select>
+          </Field>
+        ) : null}
         <Field label="Date" required>
           <input
             type="date"
@@ -778,7 +1057,7 @@ export function PublicBookForm({
             <p className="text-sm text-[#6B6B6B]">
               {`No availability on ${formatLocalDate(date)}.`}
             </p>
-            {noneInHorizon ? (
+            {!nextAvailableApplies ? null : noneInHorizon ? (
               <p className="text-sm text-[#6B6B6B]">
                 No availability within the current booking window. Please
                 check back later or contact the studio.
@@ -862,7 +1141,7 @@ export function PublicBookForm({
                 below is the spec's "No later availability is
                 currently published. Please contact the studio." line
                 shown when the server returns date: null. */}
-            {noneInHorizon ? (
+            {!nextAvailableApplies ? null : noneInHorizon ? (
               <p className="text-sm text-[#6B6B6B]">
                 No later availability is currently published. Please
                 contact the studio.

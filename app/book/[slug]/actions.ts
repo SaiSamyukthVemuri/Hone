@@ -118,6 +118,29 @@ const EXISTING_CLIENT_NO_MATCH_ERROR =
 // Returned when client_type=new attempts to book a service that is
 // not a consultation. Explicit phrasing so the visitor understands
 // the constraint without exposing any record state.
+// G1. Shown when an explicitly chosen practitioner cannot be honoured: the
+// studio's public-assignment flag is off, or the choice no longer validates
+// (deactivated, unpinned from the service, or the eligibility read failed).
+// It names no practitioner and leaks no studio configuration, and it asks for
+// a retry rather than silently booking someone else.
+// G1 / CODEX P2 4264946618. A NORMAL stale-slot refusal, in the visitor's
+// language: somebody took the time between the grid being rendered and the
+// command taking its locks. Named rather than inlined because it is now
+// returned from TWO boundaries -- the pre-insert guard for a new client, and
+// the later result mapping for an existing one -- and two copies of one
+// sentence is how they drift.
+//
+// It is deliberately the same wording for both the "this practitioner is now
+// busy" and "nobody eligible is free" cases: the visitor's action is identical
+// (choose another time) and distinguishing them would leak which practitioners
+// a studio has and how booked they are. The DISTINCTION survives for the
+// operator, in the log event, which is where it belongs.
+const PUBLIC_BOOKING_SLOT_TAKEN_ERROR =
+  "That time has just been taken. Please choose another.";
+
+const PRACTITIONER_CHOICE_UNAVAILABLE_ERROR =
+  "That practitioner is no longer available for this service. Please choose a time again.";
+
 const NEW_CLIENT_MUST_BOOK_CONSULTATION_ERROR =
   "New clients must book a consultation first.";
 
@@ -150,10 +173,208 @@ function normalizeEmail(raw: string): string | null {
   return norm.length === 0 ? null : norm;
 }
 
+export type PublicPractitionerOption = {
+  id: string;
+  displayName: string;
+  isOwner: boolean;
+};
+
+/**
+ * G1 — the practitioner options the public page may offer, and the one
+ * server-side eligibility rule the picker and the slot loader both obey.
+ *
+ * AUTHORITY, not a reimplementation. The list comes from
+ * `public_booking_practitioner_options` (0219), which already filters to this
+ * studio's ACTIVE, treating practitioners and excludes receptionists twice over
+ * (the role filter, and a receptionist not being a `practitioners` row at all).
+ *
+ * The SERVICE filter mirrors `validate_public_booking_slot`'s rule exactly
+ * (0170): if a service has ANY `service_practitioners` rows the practitioner
+ * must be among them, and a studio that never configured that table keeps
+ * working. Mirrored here ONLY so the picker cannot OFFER someone the command
+ * would refuse with `not_eligible`. The database stays the authority — a stale
+ * page is still refused at commit.
+ */
+async function loadEligiblePractitioners(
+  admin: ReturnType<typeof createAdminClient>,
+  studioId: string,
+  serviceId: string | null,
+): Promise<PublicPractitionerOption[]> {
+  const { data: rows, error } = await admin.rpc(
+    "public_booking_practitioner_options",
+    { p_studio_id: studioId },
+  );
+  if (error) {
+    // NO RAW DB ERROR TEXT. tests/app/book/pii-log-minimization.test.ts
+    // allowlists the payload keys for public booking logs and forbids
+    // message/details/hint outright — a Postgres message can carry row values.
+    // `code` is the sqlstate: low-cardinality and non-identifying.
+    logInternalBookingError("public_practitioner_options_failed", {
+      studioId,
+      code: error.code ?? null,
+    });
+    return [];
+  }
+  const options: PublicPractitionerOption[] = (rows ?? []).map(
+    (r: { practitioner_id: string; display_name: string; is_owner: boolean }) => ({
+      id: r.practitioner_id,
+      displayName: r.display_name,
+      isOwner: r.is_owner === true,
+    }),
+  );
+  if (!serviceId || options.length === 0) return options;
+
+  const { data: pins, error: pinErr } = await admin
+    .from("service_practitioners")
+    .select("practitioner_id")
+    .eq("service_id", serviceId);
+  if (pinErr) {
+    // Fail CLOSED on the eligibility read: an unfiltered list would offer
+    // someone the command then refuses.
+    logInternalBookingError("public_practitioner_eligibility_failed", {
+      studioId,
+      code: pinErr.code ?? null,
+    });
+    return [];
+  }
+  if (!pins || pins.length === 0) return options; // 0170's rule
+  const allowed = new Set(pins.map((r) => r.practitioner_id as string));
+  return options.filter((o) => allowed.has(o.id));
+}
+
+/**
+ * G1 / CODEX P1 — "ANY AVAILABLE" IS THE UNION OVER ELIGIBLE PRACTITIONERS.
+ *
+ * `getAvailableSlots` derives `capacityOn` from `flag && practitionerId != null`
+ * (lib/booking/slots.ts:353-356), so passing NULL for "Any available" took the
+ * STUDIO-WIDE branch — and under capacity-ON that is wrong in BOTH directions,
+ * not merely approximate:
+ *
+ *   FALSE NEGATIVE. Capacity-ON fans a studio-wide closure out to one
+ *   reservation row PER practitioner, so the studio-wide reservation filter
+ *   (`.eq("studio_id", …)`, lib/booking/slots.ts:492-494) collects EVERY
+ *   practitioner's conflicts. One practitioner being booked at 10:00 therefore
+ *   hid 10:00 from the grid even when four others were free.
+ *
+ *   FALSE POSITIVE. The studio-wide branch reads the studio fallback
+ *   availability, so a time every eligible practitioner has individually closed
+ *   was still offered — and the command then refused it.
+ *
+ * NO NEW SLOT RULES ARE INTRODUCED HERE. This asks the EXISTING,
+ * already-proven per-practitioner question once per eligible practitioner and
+ * unions the starts, so "available" cannot come to mean two things. That is the
+ * whole reason it is a union of `getAvailableSlots` calls rather than a widened
+ * query: a widened query is the tempting shape and it is wrong —
+ * `.in("resource_key", ids)` collects the conflicts of ALL of them, which is
+ * MORE conflicts, not the union of each one's free time.
+ *
+ * The reads are independent, so they run concurrently: N× queries for ONE day,
+ * not a serial walk. The horizon scan is deliberately NOT routed through here —
+ * see `fetchNextAvailableDateAction` and BOOK-NEXT-FAST-01.
+ */
+async function unionEligibleSlots(
+  admin: ReturnType<typeof createAdminClient>,
+  studioRow: Parameters<typeof getAvailableSlots>[1],
+  dateStr: string,
+  durationMinutes: number | undefined,
+  practitionerIds: readonly string[],
+): Promise<Slot[]> {
+  const perPractitioner = await Promise.all(
+    practitionerIds.map((id) =>
+      getAvailableSlots(
+        admin,
+        studioRow,
+        dateStr,
+        durationMinutes,
+        undefined,
+        id,
+      ),
+    ),
+  );
+  // Keyed by the start INSTANT, not the rendered string: two practitioners free
+  // at the same moment are one offer to the visitor.
+  const byStart = new Map<number, Slot>();
+  for (const slots of perPractitioner) {
+    for (const slot of slots) {
+      const key = new Date(slot.start).getTime();
+      if (!byStart.has(key)) byStart.set(key, slot);
+    }
+  }
+  return [...byStart.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([, slot]) => slot);
+}
+
+/** The picker's options for one studio + service. Public surface, so it returns
+ *  a display name and an id — never an email. */
+export async function fetchPublicPractitionerOptionsAction(params: {
+  slug: string;
+  serviceId: string | null;
+}): Promise<
+  { ok: true; practitioners: PublicPractitionerOption[] } | { ok: false; error: string }
+> {
+  const studio = await getStudioBySlug(params.slug);
+  if (!studio) return { ok: false, error: "Studio not found." };
+  const admin = createAdminClient();
+  const ready = await loadPublicReadiness(admin, studio.id);
+  if (!ready.bookable) {
+    return { ok: false, error: UNAVAILABLE_PUBLIC_BOOKING_MESSAGE };
+  }
+  // G1 — THE PUBLIC-ASSIGNMENT KILL SWITCH, AND THE WHOLE SURFACE HANGS OFF IT.
+  //
+  // `practitioner_capacity_booking_enabled` (0136) is the operator's control
+  // over whether the PUBLIC path may assign a practitioner at all. It defaults
+  // FALSE, and `capacity=false + booking=true` is rejected by a CHECK
+  // (0136:52), so this one flag is the strictest correct gate: booking implies
+  // capacity.
+  //
+  // Returning NO OPTIONS when it is off is what disables the picker, because
+  // the control renders only when there is more than one option. The gate lives
+  // HERE, server-side, and not only in the form: a client cannot grant itself
+  // the surface, and `submitPublicBookingAction` enforces the same flag again
+  // at commit.
+  //
+  // Without this, deploying G1 would have ACTIVATED public practitioner
+  // selection on every open new-client studio — including every LEGACY studio,
+  // where both flags are false — which is exactly the activation this lane was
+  // told not to perform. Caught in review, not by a test.
+  if (studio.practitioner_capacity_booking_enabled !== true) {
+    return { ok: true, practitioners: [] };
+  }
+  return {
+    ok: true,
+    practitioners: await loadEligiblePractitioners(admin, studio.id, params.serviceId),
+  };
+}
+
 export async function fetchPublicSlotsAction(params: {
   slug: string;
   serviceId: string;
   date: string;
+  /** G1. Absent / NULL is "any available" and reproduces today's behaviour
+   *  exactly: getAvailableSlots consults the per-practitioner columns only when
+   *  given BOTH the 0134 studio flag and an explicit id. */
+  practitionerId?: string | null;
+  /**
+   * G1 / CODEX P1 4265796478 — WHICH COMMAND THIS GRID IS FOR.
+   *
+   * The grid must answer the question the COMMIT will ask, and which command
+   * commits is decided by the client type: a NEW client goes through
+   * `create_public_appointment_for_new_client_v2` -> 0222's
+   * `create_public_appointment_v2`, which is practitioner-aware, while an
+   * EXISTING client still commits through the legacy `create_public_appointment`,
+   * whose availability authority is STUDIO-WIDE.
+   *
+   * So the eligible-practitioner union is correct for one of them and wrong for
+   * the other. Unioning for an existing client offered a slot only practitioner
+   * B was free for and then had the legacy command refuse it — the page/command
+   * mismatch this lane exists to remove, reintroduced one branch over.
+   *
+   * ABSENT MEANS LEGACY, deliberately: an omitted flag gets the studio-wide
+   * answer, which is pre-G1 behaviour and the one the legacy command shares. The
+   * union is opt-in and never inferred.
+   */
+  newClient?: boolean;
 }): Promise<{ ok: true; slots: Slot[] } | { ok: false; error: string }> {
   // Rate limit (v1) before any DB read or the heavy getAvailableSlots call.
   // Generous per (IP, slug). Fails open when Upstash is unconfigured or down.
@@ -210,18 +431,148 @@ export async function fetchPublicSlotsAction(params: {
   }
   if (!service) return { ok: false, error: "Service not found." };
 
-  const slots = await getAvailableSlots(
-    admin,
-    {
-      id: studio.id,
-      timezone: studio.timezone,
-      default_appointment_duration_minutes:
-        studio.default_appointment_duration_minutes,
-      buffer_minutes: studio.buffer_minutes,
-    },
-    params.date,
-    service.default_duration_minutes,
-  );
+  // G1. A submitted practitioner is NEVER trusted: it must still be one of the
+  // options this studio+service would offer. An unknown or ineligible id falls
+  // back to "any available" rather than erroring — the picker refines a page
+  // that must keep working, and the command refuses independently at commit.
+  // G1 / CODEX P2 — A SUBMITTED PRACTITIONER THAT CANNOT BE HONOURED REFUSES
+  // THE GRID; IT DOES NOT QUIETLY BECOME "ANY AVAILABLE".
+  //
+  // THE THIRD TIME IN THIS LANE I FIXED ONE SIDE AND LEFT THE OTHER. The
+  // earlier version validated the id and, on failure, left
+  // `scopedPractitionerId` null and returned STUDIO-WIDE slots -- while the
+  // picker on screen still named the chosen practitioner. After the commit path
+  // was taught to refuse (P1), that made the grid and the commit disagree
+  // outright: the visitor is offered times, picks one, and is then told the
+  // practitioner is unavailable. Offering a time the commit will refuse is the
+  // exact defect this lane exists to remove.
+  //
+  // So the three outcomes mirror the commit path, in the same order and for the
+  // same reasons, and the studio-wide path is reserved for a request that
+  // genuinely OMITTED a practitioner:
+  //
+  //   no id submitted        -> studio-wide grid, unchanged pre-G1 behaviour
+  //   id + assignment off    -> refuse
+  //   id + cannot validate   -> refuse (deactivated, unpinned, or a transient
+  //                             failure of the eligibility read)
+  //   id + valid             -> practitioner-scoped grid
+  //
+  // The copy is the SAME constant the commit path returns, so the page and the
+  // command say one thing rather than two. An empty scoped grid was the other
+  // option Codex offered; it is worse here, because "no availability" tells the
+  // visitor the practitioner is busy when the truth is that the choice is no
+  // longer offerable.
+  // G1 / CODEX P1 4265796478. Which command this grid is for -- see `newClient`
+  // on the parameter object. Absent means the LEGACY studio-wide command.
+  const forNewClient = params.newClient === true;
+  let scopedPractitionerId: string | null = null;
+  if (params.practitionerId) {
+    // THE PICKER IS NEW-CLIENT ONLY, so a practitioner on any other path is a
+    // call the UI cannot make (`pickerApplies` in PublicBookForm requires a new
+    // client on an OPEN studio). Scoping it would offer a practitioner-scoped
+    // grid for a booking the legacy studio-wide command then decides -- the same
+    // mismatch as the union, by a different route. Refused rather than widened.
+    if (!forNewClient) {
+      logInternalBookingError("public_slots_practitioner_not_new_client", {
+        studioId: studio.id,
+      });
+      return { ok: false, error: PRACTITIONER_CHOICE_UNAVAILABLE_ERROR };
+    }
+    if (studio.practitioner_capacity_booking_enabled !== true) {
+      logInternalBookingError("public_slots_practitioner_assignment_disabled", {
+        studioId: studio.id,
+      });
+      return { ok: false, error: PRACTITIONER_CHOICE_UNAVAILABLE_ERROR };
+    }
+    const eligible = await loadEligiblePractitioners(
+      admin,
+      studio.id,
+      params.serviceId,
+    );
+    if (!eligible.some((o) => o.id === params.practitionerId)) {
+      logInternalBookingError("public_slots_practitioner_not_offered", {
+        studioId: studio.id,
+      });
+      return { ok: false, error: PRACTITIONER_CHOICE_UNAVAILABLE_ERROR };
+    }
+    scopedPractitionerId = params.practitionerId;
+  }
+
+  const studioRowForSlots = {
+    id: studio.id,
+    timezone: studio.timezone,
+    default_appointment_duration_minutes:
+      studio.default_appointment_duration_minutes,
+    buffer_minutes: studio.buffer_minutes,
+    // G1 — REQUIRED FOR SCOPING, AND ITS ABSENCE IS SILENT.
+    //
+    // getAvailableSlots computes `capacityOn` from the StudioRow it is GIVEN:
+    // `studio.practitioner_capacity_enabled === true && practitionerId != null`
+    // (lib/booking/slots.ts:353-356). This object is hand-built, so omitting
+    // the flag made `capacityOn` false and sent every request down the
+    // studio-wide path — WITH a practitioner id in hand, and with no error.
+    //
+    // The browser proof is what caught it: the write scoped correctly
+    // (resource_key = the practitioner, verified in the DB) while the page
+    // still hid a slot that practitioner was free for. A page and a command
+    // disagreeing is the exact defect 0222 exists to prevent, reappearing one
+    // layer up in TypeScript.
+    practitioner_capacity_enabled: studio.practitioner_capacity_enabled,
+  };
+
+  // THREE QUESTIONS, NOT TWO. The scoped case and the legacy studio-wide case
+  // were already distinct; "Any available" under an ENABLED assignment switch
+  // is a third, and it was the one silently answered by the legacy branch.
+  let slots: Slot[];
+  if (scopedPractitionerId) {
+    slots = await getAvailableSlots(
+      admin,
+      studioRowForSlots,
+      params.date,
+      service.default_duration_minutes,
+      undefined,
+      scopedPractitionerId,
+    );
+  } else if (forNewClient && studio.practitioner_capacity_booking_enabled === true) {
+    const eligible = await loadEligiblePractitioners(
+      admin,
+      studio.id,
+      params.serviceId,
+    );
+    if (eligible.length === 0) {
+      // NOBODY CAN BE ASSIGNED, so there is nothing to offer. An empty GRID
+      // would have said "fully booked" and a studio-wide grid would have
+      // offered times `create_public_appointment_v2` answers
+      // `no_practitioner_available`. `loadEligiblePractitioners` already fails
+      // CLOSED on a read error, so this covers the transient case too.
+      logInternalBookingError("public_slots_no_eligible_practitioner", {
+        studioId: studio.id,
+      });
+      return { ok: false, error: UNAVAILABLE_PUBLIC_BOOKING_MESSAGE };
+    }
+    slots = await unionEligibleSlots(
+      admin,
+      studioRowForSlots,
+      params.date,
+      service.default_duration_minutes,
+      eligible.map((o) => o.id),
+    );
+  } else {
+    // LEGACY, AND UNCHANGED BY CONSTRUCTION: the sixth argument is NULL exactly
+    // as it was pre-G1, so this is byte-for-byte today's studio-wide behaviour.
+    // Reached by an EXISTING client (which commits through the legacy
+    // studio-wide `create_public_appointment`) and by any studio with the
+    // assignment switch off -- in both cases the studio-wide answer is the one
+    // the commit will agree with.
+    slots = await getAvailableSlots(
+      admin,
+      studioRowForSlots,
+      params.date,
+      service.default_duration_minutes,
+      undefined,
+      null,
+    );
+  }
   // Public-only past-time guard: never offer a slot whose start instant is
   // already in the past (today's earlier hours). Shared helper in
   // lib/booking/slots.ts so public booking + public reschedule cannot
@@ -295,6 +646,13 @@ export async function fetchNextAvailableDateAction(params: {
   slug: string;
   serviceId: string;
   fromDate: string;
+  /**
+   * G1 / CODEX P2 4265796486 — which command this jump is for, same contract as
+   * `fetchPublicSlotsAction`. Absent means the LEGACY studio-wide answer, which
+   * is what an EXISTING client commits through and what every studio with the
+   * assignment switch off must get.
+   */
+  newClient?: boolean;
 }): Promise<
   { ok: true; date: string | null } | { ok: false; error: string }
 > {
@@ -368,6 +726,35 @@ export async function fetchNextAvailableDateAction(params: {
   // iterations (shared helper in lib/booking/slots.ts, PR #149).
   const nowRef = new Date();
 
+  // G1 / CODEX P2 4265796486 — THE JUMP MUST ASK THE SAME QUESTION AS THE GRID.
+  //
+  // It used to be studio-wide by construction, so with the assignment switch ON
+  // it could skip the earliest date another eligible practitioner was free on
+  // (capacity-ON fans studio-wide closures out per practitioner, so a
+  // studio-wide reservation filter collects everyone's conflicts), and could
+  // land on a date whose union grid is empty (the studio fallback window can be
+  // open where every eligible practitioner is closed). Either way the control
+  // took the visitor somewhere the grid beneath it disagreed with.
+  //
+  // Scoped on the SAME condition as the grid: the new-client path with the
+  // switch on. `loadPublicSlotsByDate` unions in memory from reservations it
+  // already loads, adding two bulk queries for the whole window and none per
+  // day, so BOOK-NEXT-FAST-01's bound is intact.
+  const scopedJump =
+    params.newClient === true &&
+    studio.practitioner_capacity_booking_enabled === true;
+  const eligibleForJump = scopedJump
+    ? (await loadEligiblePractitioners(admin, studio.id, params.serviceId)).map(
+        (o) => o.id,
+      )
+    : [];
+
+  // An empty list means studio-wide to the range loader. A scoped request
+  // must instead refuse when eligibility is empty or its reads fail.
+  if (scopedJump && eligibleForJump.length === 0) {
+    return { ok: false, error: UNAVAILABLE_PUBLIC_BOOKING_MESSAGE };
+  }
+
   const range = await loadPublicSlotsByDate(
     admin,
     {
@@ -376,6 +763,7 @@ export async function fetchNextAvailableDateAction(params: {
       publicBookingHorizonMonths: studio.public_booking_horizon_months,
       bufferMinutes: studio.buffer_minutes,
       serviceDurationMinutes: service.default_duration_minutes,
+      practitionerIds: eligibleForJump,
     },
     dates,
     nowRef,
@@ -505,6 +893,9 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // is generic so a probing visitor cannot tell which field was
   // missing.
   const rawClientType = trimmed(formData.get("client_type"));
+  // G1. Empty and absent are identical, so an older cached form submits the
+  // legacy shape and books exactly as it does today.
+  const submittedPractitionerId = nullable(formData.get("practitioner_id"));
   const clientType: "new" | "existing" | null =
     rawClientType === "new"
       ? "new"
@@ -751,22 +1142,127 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     return { ok: false, error: NEW_CLIENT_MUST_BOOK_CONSULTATION_ERROR };
   }
 
+  // G1 — RESOLVE THE CHOSEN PRACTITIONER BEFORE THE RE-VERIFICATION BELOW.
+  //
+  // It has to happen here rather than at commit time, because the re-verify
+  // must ask the SAME question the page asked and the command will ask. A
+  // submitted id is never trusted: it must still be one of the options this
+  // studio+service would offer, and an unknown or ineligible one falls back to
+  // "any available" exactly as an unpicked booking behaves.
+  //
+  // TWO P1s FROM REVIEW CHANGED THIS BLOCK, and both were about what happens
+  // when the submitted id does not validate.
+  //
+  // (1) THE KILL SWITCH. If `practitioner_capacity_booking_enabled` (0136) is
+  //     off, the public path may not assign a practitioner at all, so a
+  //     submitted id is refused outright rather than committed. The options
+  //     action returns nothing in that state, so a well-behaved form cannot
+  //     submit one — which is precisely why the server must check too.
+  //
+  // (2) A STALE CHOICE IS NOW AN ERROR, NOT A SILENT DOWNGRADE. This used to
+  //     fall back to "any available", which reads as forgiving and is worse:
+  //     the visitor EXPLICITLY picked someone, and the fallback let the
+  //     booking succeed with a DIFFERENT practitioner — the active owner —
+  //     without telling them. A deactivated or unpinned practitioner, or a
+  //     transient failure of the eligibility query, both land here. Refusing
+  //     lets them choose again; substituting silently books the wrong person.
+  //     An ABSENT id still means "any available", which is untouched.
+  let chosenPractitionerId: string | null = null;
+  if (clientType === "new" && submittedPractitionerId) {
+    if (studio.practitioner_capacity_booking_enabled !== true) {
+      logInternalBookingError("public_booking_practitioner_assignment_disabled", {
+        studioId: studio.id,
+        serviceId,
+      });
+      return { ok: false, error: PRACTITIONER_CHOICE_UNAVAILABLE_ERROR };
+    }
+    const eligible = await loadEligiblePractitioners(admin, studio.id, serviceId);
+    if (eligible.some((o) => o.id === submittedPractitionerId)) {
+      chosenPractitionerId = submittedPractitionerId;
+    } else {
+      logInternalBookingError("public_booking_practitioner_not_offered", {
+        studioId: studio.id,
+        serviceId,
+      });
+      return { ok: false, error: PRACTITIONER_CHOICE_UNAVAILABLE_ERROR };
+    }
+  }
+
   // Re-verify slot is free. Use the studio's local date, not the
   // UTC date: a 10pm Toronto booking would otherwise look up slots
   // for the next calendar day.
+  //
+  // G1 — THE FIRST DEMONSTRATED MISMATCH IN THE CHAIN, AND THE REASON THIS
+  // BLOCK CHANGED. This re-verification used to ask a STUDIO-WIDE question: it
+  // passed no practitioner and a StudioRow without
+  // `practitioner_capacity_enabled`, so `getAvailableSlots` took the
+  // studio-wide path. Once the page became practitioner-aware, two clients
+  // choosing DIFFERENT practitioners for the same instant were refused HERE —
+  // before the command — with "That time is no longer available", while the
+  // page had correctly offered the slot and the command (proved separately)
+  // would have accepted it. The page and the command agreed; the action
+  // between them did not.
+  //
+  // Measured end to end in the browser: the refusal reached the client, no
+  // appointment was written, and no command was ever called — which is why it
+  // looked like a conflict and was not one.
   const dateStr = localDateString(start, studio.timezone);
-  const slots = await getAvailableSlots(
-    admin,
-    {
-      id: studio.id,
-      timezone: studio.timezone,
-      default_appointment_duration_minutes:
-        studio.default_appointment_duration_minutes,
-      buffer_minutes: studio.buffer_minutes,
-    },
-    dateStr,
-    service.default_duration_minutes,
-  );
+  const reverifyStudioRow = {
+    id: studio.id,
+    timezone: studio.timezone,
+    default_appointment_duration_minutes:
+      studio.default_appointment_duration_minutes,
+    buffer_minutes: studio.buffer_minutes,
+    // Required for scoping, and silent if omitted: getAvailableSlots derives
+    // `capacityOn` from the row it is GIVEN (lib/booking/slots.ts:353-356).
+    practitioner_capacity_enabled: studio.practitioner_capacity_enabled,
+  };
+  // G1 / CODEX P1 — THE RE-VERIFICATION ASKS THE SAME QUESTION THE GRID ASKED.
+  //
+  // It has to, or it becomes a second availability authority that disagrees
+  // with the first. With "Any available" this used to repeat the NULL-scoped
+  // studio-wide lookup, so a visitor was refused here — before the command ran
+  // at all — the moment ANY practitioner became busy at that instant, even
+  // though an eligible one was still free and `create_public_appointment_v2`
+  // would have assigned them. Same union, same inputs, same answer.
+  //
+  // CODEX P1 4265796478 — "THE SAME QUESTION" IS PER CLIENT TYPE, and omitting
+  // that is how the first version of this reintroduced the mismatch one branch
+  // over. A NEW client commits through
+  // `create_public_appointment_for_new_client_v2` -> 0222's
+  // `create_public_appointment_v2`, which is practitioner-aware; an EXISTING
+  // client still commits through the legacy `create_public_appointment` below,
+  // whose authority is STUDIO-WIDE. So unioning for an existing client made
+  // this re-verification MORE permissive than the command it hands off to: the
+  // slot passed here and the legacy command refused it. `clientType` is the
+  // same discriminator the commit uses, read from the same submission.
+  let slots: Slot[];
+  if (
+    !chosenPractitionerId &&
+    clientType === "new" &&
+    studio.practitioner_capacity_booking_enabled === true
+  ) {
+    const eligible = await loadEligiblePractitioners(admin, studio.id, serviceId);
+    slots =
+      eligible.length === 0
+        ? []
+        : await unionEligibleSlots(
+            admin,
+            reverifyStudioRow,
+            dateStr,
+            service.default_duration_minutes,
+            eligible.map((o) => o.id),
+          );
+  } else {
+    slots = await getAvailableSlots(
+      admin,
+      reverifyStudioRow,
+      dateStr,
+      service.default_duration_minutes,
+      undefined,
+      chosenPractitionerId,
+    );
+  }
   const free = slots.some((s) => new Date(s.start).getTime() === start.getTime());
   if (!free) {
     return {
@@ -1118,6 +1614,16 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // `create_public_appointment` with exactly the arguments it always had; the
   // branch is on the server-derived `redeemedEntryId`, never on anything
   // submitted.
+  // G1 — THE INVITED BRANCH NEVER CARRIES A CHOICE.
+  //
+  // `chosenPractitionerId` was resolved above (it had to be, for the
+  // re-verification). An INVITED booking redeems an offer that named no
+  // practitioner and commits through `create_waitlist_public_appointment`,
+  // which takes none — so a choice there would be silently discarded. The form
+  // does not offer the picker on that path, and this is the server-side half of
+  // the same rule. Recorded as a product gap rather than faked.
+  const practitionerForCommit = redeemedEntryId ? null : chosenPractitionerId;
+
   const commitArgs = {
     p_studio_id: studio.id,
     p_client_id: resolvedClientId,
@@ -1144,7 +1650,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // existing-client path reaches the same commands it always did with the same
   // arguments, consulting no admission authority at any point.
   const { data: rpcRows, error: rpcErr } = clientType === "new"
-    ? await admin.rpc("create_public_appointment_for_new_client", {
+    ? await admin.rpc("create_public_appointment_for_new_client_v2", {
         ...commitArgs,
         p_client_name: clientName,
         p_client_email: email,
@@ -1157,6 +1663,10 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
         p_legacy_bridge_waitlist: newClientAdmissionLegacyBridgeWaitlist(studio.slug),
         // NULL is the ordinary path; non-null composes 0195's conversion.
         p_entry_id: atomicEntryId,
+        // G1. NULL reproduces 0204 exactly — the delegate derives assignment
+        // from the active-owner count. Ignored on the invited branch by
+        // construction, and never set there by the block above.
+        p_practitioner_id: practitionerForCommit,
       })
     : atomicEntryId
     ? await admin.rpc("create_waitlist_public_appointment", {
@@ -1194,6 +1704,70 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       return invitationConsumedWithoutBooking("client_identity_collision");
     }
     return { ok: false, error: archivedClientCollisionError(studio.name) };
+  }
+
+  // G1 / CODEX P2 — THE PRE-INSERT PRACTITIONER REFUSALS BELONG HERE, beside
+  // the other refusals that legitimately produce NO client row.
+  //
+  // 0225's practitioner gate now runs BEFORE the resolve-or-create (that is the
+  // P2 orphan fix), so these three results come back with `client_id` NULL BY
+  // DESIGN. The missing-client guard immediately below treats a null client as
+  // "the command did not resolve one" and returns the generic error, which made
+  // the actionable practitioner message I added further down UNREACHABLE for
+  // the primary new-client case — a new email has no `resolvedClientId` to fall
+  // back on. The mapping was dead code exactly where it mattered most.
+  //
+  // So they are answered before that guard, which is the same placement
+  // `new_client_admission_refused` and `archived_client_collision` already use
+  // for the same reason. The later mapping is KEPT, not moved: on the
+  // EXISTING-client path `resolvedClientId` is non-null, the guard never fires,
+  // and that is the branch it serves.
+  //
+  // An invitation cannot reach here: 0225's gate only fires for a NON-NULL
+  // practitioner, and the action nulls the practitioner on an invited booking
+  // (an offer already names its clinician). The `consumedInvitationId` check is
+  // retained anyway so that if that ever changes, the invitation accounting
+  // keeps its existing path instead of being silently bypassed.
+  if (
+    !rpcErr &&
+    !consumedInvitationId &&
+    (rawCommandResult === "practitioner_assignment_disabled" ||
+      rawCommandResult === "invalid_practitioner" ||
+      rawCommandResult === "not_eligible" ||
+      // G1 / CODEX P2. "Any available" found nobody eligible free at this
+      // instant. 0225 answers this BEFORE the resolve-or-create, so like the
+      // others it legitimately carries a null client_id and must be handled
+      // above the missing-client guard.
+      rawCommandResult === "no_practitioner_available")
+  ) {
+    logInternalBookingError("public_booking_practitioner_refused_pre_insert", {
+      code: rawCommandResult,
+      studioId: studio.id,
+    });
+    // Only the switch case is the visitor's to act on — choose again, or take
+    // "any available". A practitioner who is no longer valid, or not eligible
+    // for this service, is an operator-visible state and keeps the generic
+    // copy, exactly as it does in the later group.
+    return {
+      ok: false,
+      // THE EARLY BOUNDARY IS THE REACHABLE ONE, and this is the third time in
+      // this PR that a message I added sat behind a guard that returns first.
+      // `no_practitioner_available` is an ORDINARY stale-slot outcome on the
+      // new-client path -- the page offered a time and somebody took it -- so
+      // it gets the slot-taken copy here rather than the generic error, and
+      // the later mapping is kept for the existing-client path where this
+      // guard does not fire.
+      //
+      // invalid_practitioner / not_eligible stay GENERIC on purpose: they are
+      // operator-visible configuration states, not something a visitor can act
+      // on, and saying more would describe the studio's roster.
+      error:
+        rawCommandResult === "practitioner_assignment_disabled"
+          ? PRACTITIONER_CHOICE_UNAVAILABLE_ERROR
+          : rawCommandResult === "no_practitioner_available"
+            ? PUBLIC_BOOKING_SLOT_TAKEN_ERROR
+            : PUBLIC_BOOKING_GENERIC_ERROR,
+    };
   }
 
   // The id the COMMAND used - resolved under the lock, or created by it. For an
@@ -1349,6 +1923,28 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     }
     if (commandResult === "invalid_service") {
       return { ok: false, error: "Service no longer available." };
+    }
+    // G1 / CODEX P1. The command refused a practitioner-scoped booking because
+    // the studio's public-assignment switch was off when it took the studio
+    // row lock -- i.e. the switch was flipped between this action's check and
+    // the commit. That is the one refusal in this group the visitor CAN act on
+    // (choose again, or take "any available"), so it gets the practitioner
+    // copy rather than the generic error. It is still logged, because an
+    // operator flipping the switch mid-booking is worth seeing.
+    if (commandResult === "no_practitioner_available") {
+      // Nobody eligible is free at the instant the page offered. The page and
+      // the chain disagreed, which is worth seeing: the grid is built from the
+      // same availability the command re-checks under its locks.
+      logInternalBookingError("public_booking_no_practitioner_available", {
+        studioId: studio.id,
+      });
+      return { ok: false, error: PUBLIC_BOOKING_SLOT_TAKEN_ERROR };
+    }
+    if (commandResult === "practitioner_assignment_disabled") {
+      logInternalBookingError("public_booking_practitioner_assignment_disabled_at_commit", {
+        studioId: studio.id,
+      });
+      return { ok: false, error: PRACTITIONER_CHOICE_UNAVAILABLE_ERROR };
     }
     // invalid_client / invalid_practitioner / no_practitioner / not_eligible /
     // studio_not_found are all operator-visible states, never the visitor's
