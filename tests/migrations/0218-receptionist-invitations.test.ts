@@ -34,10 +34,19 @@ function bodyOf(sql: string, fn: string): string {
 }
 
 describe("0218 sits correctly in the migration sequence", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    // Only the CURRENT maximum migration's own test may assert this (CLAUDE.md §2).
-    expect(isRepoMax(VERSION), "0218 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
+  it("is no longer the repo max — it handed off to 0219", () => {
+    // CLAUDE.md §2 HANDOFF, performed on the G1 branch ONLY. Only the CURRENT
+    // maximum migration's own test may assert isRepoMax, and 0219 (public
+    // practitioner selection) now sits above 0218. #850's own branch is
+    // unmodified; there it is still the max and still asserts it.
+    expect(isRepoMax(VERSION)).toBe(false);
+    // DERIVED, not pinned: something is above, and everything above is greater.
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above 0218").toBeGreaterThan(0);
+    expect(
+      above.every((v) => Number(v) > Number(VERSION)),
+      "versionsAbove returned a version at or below its own",
+    ).toBe(true);
   });
 
   it("is allocated exactly once", () => {

@@ -90,10 +90,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0211** (`0211_client_sms_permission_guard.sql`), applied 2026-10-12 from #827's reviewed head. |
-| **Repo migration max** | **0218** — `0218_receptionist_invitations.sql`. This tree is the ISOLATED SYNTHETIC INTEGRATION of eight lanes' pending migrations, `0211`–`0218`, each carried byte-identical to its own PR head. No data; no existing object altered by the integration itself. |
-| **Remote-only migrations** | **none**: no migration exists on production that this branch lacks. |
-| **Pending migrations** | **`0212`**-**`0218`** (`0212`, `0213`, `0214`, `0215`, `0216`, `0217`, `0218`), **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING, and the suffix is CONTIGUOUS. Derived by `npm run migration:state -- --json` on this merged tree, not written by hand. |
-| **Next free migration** | Next free number is **0219**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** in this tree — availability is not allocation. The shared register (`~/hone-migration-coordination.md`) records `0219` as ALLOCATED to the DB/WAIT G1 lane, which is a reservation elsewhere and not a file here. |
+| **Repo migration max** | **0219** — `0219_public_practitioner_selection.sql` (G1 public practitioner selection, #824 DB/WAIT), above the isolated synthetic integration of eight lanes' pending migrations `0211`–`0218`, each byte-identical to its own PR head. Additive: two read-only functions, no data, no existing object altered. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **`0212`**-**`0219`** (`0212`, `0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`), **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING, and the suffix is CONTIGUOUS. Derived by `npm run migration:state -- --json` on this merged tree. |
+| **Next free migration** | Next free number is **0220**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** here — availability is not allocation. The shared register records `0220` as held by the receptionist-scheduling lane and `0221` as allocated to DELIVERY-VISIBILITY-04. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. |
 | **Reviewed release head** | `481e60c60ae8c873a2e1b6e2a0ccc5b9dc0b8c11` (PR #827): CI green (run `38164242975`), 0 review threads, migration bytes reviewed byte-identical inside #831. The shepherd was UNKNOWN (`read_failed`), and that was accepted by the operator for this migration-only apply. |
 | **Production application SHA at apply time** | `6c5eac80` (the #821 merge). **No application behaviour was deployed by this apply.** |
