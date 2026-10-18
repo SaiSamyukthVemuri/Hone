@@ -409,11 +409,19 @@ describe("the create form carries the key in the URL", () => {
     // Cancel on a definitive error used to leave `area_op` behind, so the next
     // Add treated an abandoned attempt as an open save (Codex, #922
     // 4305312340). In edit mode it clears nothing, because the parameter is
-    // not this form's to discard.
+    // not this form's to discard — and nor does it while the resumed
+    // operation still owns the key, because that identity is the only thing
+    // that can reconcile a save which may have committed (4305431336).
     const src = read(FORM_SRC);
-    expect(src).toMatch(
-      /const closeForm = \(\) => \{\s*if \(!isEdit\) syncAreaOperationParam\(null\);\s*onCancel\(\);\s*\}/,
+    const close = /if \(([^)]*)\) syncAreaOperationParam\(null\);\s*\n\s*onCancel\(\);/.exec(
+      src,
     );
+    expect(close, "the form's exit path was not found").toBeTruthy();
+    expect(close![1]).toContain("!isEdit");
+    expect(
+      close![1],
+      "closing mid-resume discards the only identity that can reconcile",
+    ).toContain("!resumeOwnsKey");
     expect(
       (src.match(/onCancel\(\)/g) ?? []).length,
       "an exit path still calls onCancel directly, bypassing the parameter clear",
@@ -421,15 +429,47 @@ describe("the create form carries the key in the URL", () => {
     expect((src.match(/closeForm\b/g) ?? []).length).toBeGreaterThanOrEqual(4);
   });
 
-  it("does not drop the key while the claim read is still in flight", () => {
-    // The collector reports an EMPTY draft on mount, which arrives BEFORE the
-    // read resolves — so without this the mount report would clear the
-    // parameter for the width of the round trip, and a reload in that window
-    // would lose the save's identity.
+  it("does not drop the key while the RESUMED OPERATION owns it", () => {
+    // Two paths threw the resumed key away, and both read the UNKNOWN state
+    // as settled when it is the least settled state there is.
+    //
+    //   * the collector reports an EMPTY draft on mount, which arrives before
+    //     the read resolves, so the drop would clear the parameter for the
+    //     width of the round trip;
+    //   * entering any machine reading after a FAILED read fired the same drop
+    //     and cleared the key that had just been adopted so a later save could
+    //     not silently duplicate — the reconstructed save then minted a fresh
+    //     uuid and bypassed the claim entirely (Codex, #922 4305431332, P1).
     const src = read(FORM_SRC);
-    expect(src).toMatch(
-      /if \(!saveUnresolved && resume\.state !== "checking"\) setPendingSaveKey\(null\)/,
+    const drop = /if \(([^)]*)\) setPendingSaveKey\(null\)/.exec(src);
+    expect(drop, "the draft-change drop site was not found").toBeTruthy();
+    expect(drop![1]).toContain("!saveUnresolved");
+    expect(drop![1]).toContain("!resumeOwnsKey");
+  });
+
+  it("and OWNERSHIP covers the unknown outcome, not only the in-flight one", () => {
+    // THE P1'S SUBSTANCE. Adopting the key on a failed read is worthless if
+    // the next keystroke discards it, so what counts as "still open" has to
+    // include the state that cannot be answered.
+    const src = read(FORM_SRC);
+    const owns = /const resumeOwnsKey =\s*([^;]*);/.exec(src);
+    expect(owns, "the resumed-ownership rule was not found").toBeTruthy();
+    expect(owns![1]).toContain('"checking"');
+    expect(
+      owns![1],
+      "an unanswerable read was treated as settled, so the adopted key is discarded",
+    ).toContain('"unknown"');
+  });
+
+  it("and Cancel waits for a lookup that is already in flight", () => {
+    // Dismissing the form mid-read discards the answer; the read is one round
+    // trip (Codex, #922 4305431336).
+    const src = read(FORM_SRC);
+    const cancel = /disabled=\{([^}]*)\}\s*\n\s*data-testid="cancel-treatment-area"/.exec(
+      src,
     );
+    expect(cancel, "the Cancel button's disabled expression was not found").toBeTruthy();
+    expect(cancel![1]).toContain('resume.state === "checking"');
   });
 
   it("and mirrors it back AT THE SETTER, not at the call sites", () => {

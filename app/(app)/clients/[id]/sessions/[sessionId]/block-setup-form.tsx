@@ -529,6 +529,27 @@ export function BlockSetupForm({
   >(() => (resumedSaveKey === null ? { state: "idle" } : { state: "checking" }));
 
   /**
+   * THE RESUMED OPERATION STILL OWNS THE KEY, and nothing else may discard it.
+   *
+   * True while the claim read is in flight, and true when it FAILED — because
+   * an unanswerable question is not a settled one. Last round adopted the key
+   * on a failed read precisely so a later save could not silently duplicate an
+   * operation that may have committed, and then two paths undid that:
+   *
+   *   * entering any machine reading fires `onSettingDraftChanged`, whose drop
+   *     rule saw an ordinary completed draft change and cleared the key — so
+   *     the reconstructed save minted a fresh uuid, bypassed the claim, and
+   *     duplicated if the original had committed (4305431332, P1);
+   *   * Cancel was live while the lookup was still in flight, and clearing the
+   *     parameter discarded the answer before it arrived, leaving the next Add
+   *     with nothing to reconcile against (4305431336).
+   *
+   * So the ownership is named once here and both paths defer to it, rather
+   * than each re-deriving which states count as open.
+   */
+  const resumeOwnsKey = resume.state === "checking" || resume.state === "unknown";
+
+  /**
    * A REVISION save inside the machine panel has an unknown outcome.
    *
    * SEPARATE FROM `saveUnresolved`, which is THIS form's own create-mode
@@ -593,7 +614,13 @@ export function BlockSetupForm({
    * a genuine unresolved create must survive her editing another area.
    */
   const closeForm = () => {
-    if (!isEdit) syncAreaOperationParam(null);
+    // IN EDIT MODE the parameter is not this form's to discard, and while the
+    // resumed operation still owns the key, clearing it would throw away the
+    // only thing that can reconcile a save that may have committed. Closing
+    // the form is allowed in that state — she must be able to leave — but it
+    // leaves the identity behind so reopening Add can still answer the
+    // question (Codex, #922 4305431336).
+    if (!isEdit && !resumeOwnsKey) syncAreaOperationParam(null);
     onCancel();
   };
 
@@ -745,7 +772,7 @@ export function BlockSetupForm({
     // for the width of the round trip, and a reload inside that window would
     // lose the save's identity. The in-flight read owns the key until it has
     // an answer.
-    if (!saveUnresolved && resume.state !== "checking") setPendingSaveKey(null);
+    if (!saveUnresolved && !resumeOwnsKey) setPendingSaveKey(null);
   };
 
   /**
@@ -1963,7 +1990,16 @@ export function BlockSetupForm({
           // existing block, where the panel records directly, Cancel stayed
           // live through an unresolved REVISION save and unmounting the
           // entry discarded its retry key (Codex, #860 4302176844).
-          disabled={pending || saveUnresolved || revisionUnresolved}
+          // AND IT WAITS FOR A LOOKUP THAT IS ALREADY IN FLIGHT. Dismissing
+          // the form mid-read would discard the answer; the read is one round
+          // trip, so waiting costs her nothing and protects the identity
+          // (Codex, #922 4305431336).
+          disabled={
+            pending ||
+            saveUnresolved ||
+            revisionUnresolved ||
+            resume.state === "checking"
+          }
           data-testid="cancel-treatment-area"
           className="rounded-md border border-neutral-300 px-5 py-3 text-sm hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
         >

@@ -253,7 +253,9 @@ describe("the handoff's shape, pinned on source", () => {
     const drop = read(FORM).match(/if \(([^)]*)\) setPendingSaveKey\(null\)/);
     expect(drop, "the draft-change drop site was not found").toBeTruthy();
     expect(drop![1]).toContain("!saveUnresolved");
-    expect(drop![1]).toContain('resume.state !== "checking"');
+    // AND NOT WHILE THE RESUMED OPERATION OWNS IT — in flight, or failed and
+    // therefore unanswerable (A1b, Codex #922 4305431332).
+    expect(drop![1]).toContain("!resumeOwnsKey");
   });
 
   it("the FORM computes the settings ONCE per attempt", () => {
