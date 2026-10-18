@@ -228,18 +228,26 @@ export function MachineReadingEntry({
   // key, which appends a second capture of settings entered once. The
   // promise "press Save again" is only honest while the thing being saved
   // cannot change underneath it.
-  const frozen = !canEditDraft(save);
+  // THE FREEZE STARTS AT SUBMIT, not when the answer comes back (Codex,
+  // #860 4305022472). `pending` is the request's own duration, and the
+  // payload was already snapshotted when it began.
+  const frozen = !canEditDraft(save, pending);
 
   // TOLD TO THE PANEL, because the controls that can destroy this save's
   // retry key are not in this component. Reported on every change of the
   // flag, including back to false when the retry settles, so the freeze
   // lifts rather than sticking.
+  //
+  // IT REPORTS THE SAME `frozen`, not `save.unresolved`. The host freezes its
+  // machine picker, mode picker and Cancel from this flag, and each of those
+  // can discard this save's retry key — so they have to be frozen for the
+  // in-flight window too, or the defect simply moves one component out.
   const reportedUnresolved = useRef<boolean | null>(null);
   useEffect(() => {
-    if (reportedUnresolved.current === save.unresolved) return;
-    reportedUnresolved.current = save.unresolved;
-    onUnresolvedChange?.(save.unresolved);
-  }, [save.unresolved, onUnresolvedChange]);
+    if (reportedUnresolved.current === frozen) return;
+    reportedUnresolved.current = frozen;
+    onUnresolvedChange?.(frozen);
+  }, [frozen, onUnresolvedChange]);
 
   // EVERY DRAFT CHANGE CLOSES THE OPEN SAVE, which is how the retry key keeps
   // meaning what it says: a changed draft is a DIFFERENT save and must mint a

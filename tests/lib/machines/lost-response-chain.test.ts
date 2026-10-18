@@ -111,7 +111,7 @@ describe("a dropped connection reaches the practitioner as UNKNOWN", () => {
     const key = keyForSave(initialSaveState(), () => "retry-key-00000001");
     const state = afterOutcome(initialSaveState(), key, await chain(DROPPED_CONNECTION));
 
-    expect(canEditDraft(state), "the draft stayed editable").toBe(false);
+    expect(canEditDraft(state, false), "the draft stayed editable").toBe(false);
     expect(state.unresolved).toBe(true);
     expect(
       state.key,
@@ -128,9 +128,20 @@ describe("a dropped connection reaches the practitioner as UNKNOWN", () => {
 
     const key = keyForSave(initialSaveState(), () => "retry-key-00000001");
     const state = afterOutcome(initialSaveState(), key, outcome);
-    expect(canEditDraft(state), "a refusal must leave her able to fix it").toBe(
-      true,
-    );
+    expect(
+      canEditDraft(state, false),
+      "a refusal must leave her able to fix it",
+    ).toBe(true);
     expect(state.unresolved).toBe(false);
+  });
+
+  it("but a refusal she has NOT yet received still holds the draft", async () => {
+    // The in-flight window does not care which answer is coming: until one
+    // arrives, the payload the request carries is the payload that must not
+    // move (Codex, #860 4305022472).
+    const outcome = await chain(REAL_REFUSAL);
+    const key = keyForSave(initialSaveState(), () => "retry-key-00000001");
+    const state = afterOutcome(initialSaveState(), key, outcome);
+    expect(canEditDraft(state, true)).toBe(false);
   });
 });

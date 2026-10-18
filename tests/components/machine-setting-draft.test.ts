@@ -76,6 +76,21 @@ const html = renderToStaticMarkup(
   }),
 );
 
+/**
+ * The expression a `const <name> = ...;` is assigned, with comments already
+ * stripped by `read`.
+ *
+ * Guards below assert what a freeze is DERIVED FROM rather than how it is
+ * spelled. Matching the literal expression is what made four guards in this
+ * file go red on the fix for #860 4305022475 while staying green on the
+ * defect: they pinned the exact text that was missing the in-flight window.
+ */
+function assignedExpression(src: string, name: string): string {
+  const m = new RegExp(`const ${name}\\s*=\\s*([^;]+);`).exec(src);
+  if (!m) throw new Error(`no 'const ${name} = ...;' in source`);
+  return m[1]!;
+}
+
 describe("the create-mode collector", () => {
   it("renders the machine's own fields", () => {
     // THE SAME COMPONENT the entry form uses, which is the point of having
@@ -412,8 +427,26 @@ describe("switching machine or mode clears the collected draft", () => {
     // editing again mints a new key, appending a second capture of settings
     // entered once.
     const src = read(ENTRY_SRC);
-    expect(src).toMatch(/const frozen = !canEditDraft\(save\)/);
+    // PINNED ON THE PROPERTY, NOT THE CALL SHAPE. The previous version of
+    // this guard matched `!canEditDraft(save)` literally, so it described the
+    // exact expression that was MISSING the in-flight argument and would have
+    // gone red on the fix while staying green on the defect
+    // (Codex, #860 4305022472). What matters is that the freeze is computed
+    // from the save state AND the request's own duration, and that the
+    // reading grid receives it.
+    expect(src).toMatch(/const frozen = !canEditDraft\(\s*save\s*,\s*pending\s*\)/);
     expect(src).toMatch(/frozen=\{frozen\}/);
+  });
+
+  it("and the freeze it reports to the PANEL covers the in-flight window too", () => {
+    // The host freezes its machine picker, mode picker and Cancel from this
+    // callback, and every one of them can discard this save's retry key. If
+    // the entry reported only the settled `unresolved` flag, the defect would
+    // move one component out rather than being fixed
+    // (Codex, #860 4305022472).
+    const src = read(ENTRY_SRC);
+    expect(src).toMatch(/onUnresolvedChange\?\.\(frozen\)/);
+    expect(src).not.toMatch(/onUnresolvedChange\?\.\(save\.unresolved\)/);
   });
 
   it("and refuses the edit at the HANDLER, not only at the controls", () => {
@@ -465,7 +498,21 @@ describe("switching machine or mode clears the collected draft", () => {
     // per-control list goes stale the next time a field is added — and a
     // missed one is a duplicated clinical record.
     const src = read(FORM_SRC);
-    expect(src).toMatch(/const draftFrozen = saveUnresolved/);
+    // THE FREEZE COVERS BOTH WINDOWS (Codex, #860 4305022475): the request's
+    // own duration AND the unresolved aftermath. Asserted on what the flag is
+    // derived from, not on how the expression is written — the previous
+    // version of this guard matched `const draftFrozen = saveUnresolved`
+    // literally, which is precisely the spelling that omitted the in-flight
+    // window.
+    const frozenExpr = assignedExpression(src, "draftFrozen");
+    expect(
+      frozenExpr,
+      "the freeze does not cover the request's own duration",
+    ).toContain("pending");
+    expect(
+      frozenExpr,
+      "the freeze does not cover the unresolved aftermath",
+    ).toContain("saveUnresolved");
     expect(src).toMatch(
       /const setDraft: typeof setDraftRaw = \(\.\.\.args\) => \{\s*if \(draftFrozen\) return;/,
     );
@@ -527,7 +574,7 @@ describe("switching machine or mode clears the collected draft", () => {
     // the practitioner and must be.
     const src = read(FORM_SRC);
     expect(src).toMatch(/if \("unresolved" in res && res\.unresolved\) setSaveUnresolved\(true\)/);
-    expect(src).toMatch(/const draftFrozen = saveUnresolved/);
+    expect(assignedExpression(src, "draftFrozen")).toContain("saveUnresolved");
   });
 
   it("a PRE-WRITE lineage refusal is rejected, not unresolved", () => {
@@ -647,9 +694,16 @@ describe("switching machine or mode clears the collected draft", () => {
     // defect: a value that exists, is correct, and never arrives. Five
     // instances so far, and this value crosses FOUR components.
     const entry = read(ENTRY_SRC);
-    expect(entry, "1/4 the entry reports its unresolved save").toMatch(
-      /onUnresolvedChange\?\.\(save\.unresolved\)/,
+    // It reports `frozen`, the composite that also covers the request's own
+    // duration — the host's identity controls can discard the retry key in
+    // that window too (Codex, #860 4305022472).
+    expect(entry, "1/4 the entry reports its frozen save").toMatch(
+      /onUnresolvedChange\?\.\(frozen\)/,
     );
+    expect(
+      assignedExpression(entry, "frozen"),
+      "1/4 the reported freeze does not cover the in-flight window",
+    ).toContain("pending");
 
     const panel = read(PANEL_SRC);
     expect(panel, "2/4 the panel subscribes to the entry").toMatch(
@@ -1210,7 +1264,7 @@ describe("switching machine or mode clears the collected draft", () => {
     expect(
       entry,
       "the entry must report BOTH edges, or the freeze never lifts",
-    ).toMatch(/onUnresolvedChange\?\.\(save\.unresolved\)/);
+    ).toMatch(/onUnresolvedChange\?\.\(frozen\)/);
 
     const panel = read(PANEL_SRC);
     expect(panel).toMatch(/onUnresolvedChange=\{setRevisionUnresolved\}/);
