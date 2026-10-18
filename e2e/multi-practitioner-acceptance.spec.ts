@@ -16,7 +16,7 @@ import {
   getSourceReservationKeys,
   type E2eSeed,
 } from "./helpers/seed";
-import { loginAsOwner } from "./helpers/flows";
+import { loginAsOwner, loginByMagicLink } from "./helpers/flows";
 
 // ===========================================================================
 // #824 MULTI-PRACTITIONER ACCEPTANCE — the operator's sequence, walked once.
@@ -74,13 +74,37 @@ let ownerPractitionerId: string;
 /** The booked service's length. "Inside the window" is a claim about the whole
  *  appointment, so the duration is part of every window assertion below. */
 let serviceMinutes: number;
-let A: { email: string; displayName: string; practitionerId: string };
-let B: { email: string; displayName: string; practitionerId: string };
+type Member = { email: string; displayName: string; practitionerId: string };
+let A: Member;
+let B: Member;
+/** C and D take the journey from three practitioners to five (owner + four
+ *  members), which is the acceptance scope the operator asked for. */
+let C: Member;
+let D: Member;
+/** The owner, shaped like a member so the booking helper can take it. */
+let OWNER: { displayName: string; practitionerId: string };
 
-/** A's window and B's window are DISJOINT, so a slot proves which practitioner
- *  the grid is for. 12:00 is the boundary: A ends at it, B starts after it. */
-const A_WINDOW = { start: "06:00", end: "12:00" } as const;
-const B_WINDOW = { start: "13:00", end: "22:00" } as const;
+/** FIVE DISJOINT WINDOWS, one per practitioner, so a slot label alone proves
+ *  which practitioner a grid belongs to.
+ *
+ *  Narrowed from the original two (A 06:00-12:00, B 13:00-22:00) to make room
+ *  for five inside the studio-wide 06:00-22:00 row. Every window assertion in
+ *  this file derives from these constants rather than from literals, so the
+ *  journey below is unchanged by the narrowing — and each window still holds
+ *  FOUR bookable slots at the fixture service's 30 minutes, which the
+ *  reschedule step needs (it must find a DIFFERENT time inside A's window).
+ *
+ *  One-hour gaps between them, deliberately: adjacent windows would make an
+ *  off-by-one boundary slot look like a correct one. */
+const A_WINDOW = { start: "06:00", end: "08:00" } as const;
+const B_WINDOW = { start: "09:00", end: "11:00" } as const;
+const C_WINDOW = { start: "12:00", end: "14:00" } as const;
+const D_WINDOW = { start: "15:00", end: "17:00" } as const;
+/** The OWNER is a bookable practitioner too, and is the fifth. Without a scoped
+ *  row the owner would inherit the studio-wide 06:00-22:00 window, which
+ *  overlaps all four others — and then a slot label would no longer identify
+ *  the practitioner, which is the property every assertion here rests on. */
+const OWNER_WINDOW = { start: "18:00", end: "20:00" } as const;
 
 function newClientIdentity(runId: string, label: string): { name: string; email: string } {
   const uniq = randomUUID().slice(0, 8);
@@ -120,23 +144,45 @@ test.beforeAll(async () => {
 
   A = await seedE2eMember(live);
   B = await seedE2eMember(live);
+  C = await seedE2eMember(live);
+  D = await seedE2eMember(live);
 
   await setStudioCapacityEnabled(live.studioId, true);
   await setStudioCapacityBookingEnabled(live.studioId, true);
 
   // The service-insert trigger seeds only the OWNER as eligible, so A and B
   // must be made eligible explicitly or the picker correctly hides them.
-  await seedServiceEligibility(live.studioId, liveService, A.practitionerId);
-  await seedServiceEligibility(live.studioId, liveService, B.practitionerId);
+  // 0134's trigger pins only the OWNER to a newly inserted service, so every
+  // member must be made eligible explicitly or the picker correctly hides it.
+  for (const m of [A, B, C, D]) {
+    await seedServiceEligibility(live.studioId, liveService, m.practitionerId);
+  }
 
   for (let d = 0; d <= 6; d++) {
     // The studio-wide row SPANS both windows. If it did not, a scoped window
     // could be passing because the studio-wide row already excluded the other
     // practitioner's hours, and the precedence rule would be untested.
     await seedStudioWideDefault(live.studioId, d, true, "06:00", "22:00");
-    await seedPractitionerDefault(live.studioId, A.practitionerId, d, true, A_WINDOW.start, A_WINDOW.end);
-    await seedPractitionerDefault(live.studioId, B.practitionerId, d, true, B_WINDOW.start, B_WINDOW.end);
+    for (const [who, w] of [
+      [A.practitionerId, A_WINDOW],
+      [B.practitionerId, B_WINDOW],
+      [C.practitionerId, C_WINDOW],
+      [D.practitionerId, D_WINDOW],
+      [ownerPractitionerId, OWNER_WINDOW],
+    ] as const) {
+      await seedPractitionerDefault(live.studioId, who, d, true, w.start, w.end);
+    }
   }
+
+  OWNER = {
+    displayName: (
+      await sql<{ display_name: string }>(
+        `select display_name from public.practitioners where id = $1`,
+        [ownerPractitionerId],
+      )
+    )[0].display_name,
+    practitionerId: ownerPractitionerId,
+  };
 
   serviceMinutes = (
     await sql<{ m: number }>(
@@ -681,6 +727,238 @@ test("ACCEPTANCE: pick A, pick B, reschedule one, and the owner's calendar attri
 // The LEGACY mode, pinned as INTENDED behaviour rather than left to be
 // rediscovered as a bug.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// (5) FIVE PRACTITIONERS — booking and access, for every one of them.
+// ---------------------------------------------------------------------------
+//
+// The journey above proves the mechanism with two members. Five is the scope
+// the operator asked to accept, and it is not the same claim: three of the
+// bugs this spec exists to catch are COLLAPSES — every booking attributed to
+// the active owner, every grid showing the studio-wide window, one
+// practitioner's reservation blocking another's. A collapse is hard to see
+// with two subjects and obvious with five, because a two-subject test passes
+// whenever the two happen to differ, while five must all differ pairwise.
+//
+// SELF-CONTAINED, deliberately. It books all five itself rather than reusing
+// the journey's A and B bookings, so `-g` on this test alone still proves
+// something. The file is serial, so sharing state WOULD have worked in a full
+// run and failed in a targeted one — the kind of coupling that turns into a
+// confusing red weeks later.
+
+/** The five, in grid order, each with the window only they work. */
+function allFive(): Array<{
+  who: { displayName: string; practitionerId: string };
+  window: { start: string; end: string };
+  label: string;
+}> {
+  return [
+    { who: OWNER, window: OWNER_WINDOW, label: "the owner" },
+    { who: A, window: A_WINDOW, label: "A" },
+    { who: B, window: B_WINDOW, label: "B" },
+    { who: C, window: C_WINDOW, label: "C" },
+    { who: D, window: D_WINDOW, label: "D" },
+  ];
+}
+
+test("ACCEPTANCE (5): all five practitioners are offered, book, and are attributed", async ({
+  page,
+}) => {
+  // THE FILE-WIDE 120s TIMEOUT CANNOT HOLD THIS TEST, and that is a statement
+  // about the test rather than about the host: it drives FIVE complete bookings
+  // through the real public form — each one a page load, a practitioner
+  // selection with its scoped slot fetch, a slot click and a submit — and then
+  // walks the owner's calendar five times, clicking through the grid entry, the
+  // preview dialog and the detail page for each. That is the cost of proving
+  // five practitioners instead of two, and raising the budget is the honest
+  // response; trimming the bookings to fit would remove the only thing the test
+  // adds. Raised HERE, in the spec, because CI's per-test timeout is the same
+  // 120s — a local-only workaround would have passed here and failed there.
+  test.setTimeout(900_000);
+  const runId = live.runId;
+
+  // --- every one of the five is OFFERED ----------------------------------
+  await openNewClientForm(page, live.slug, liveService, bookDate);
+  const picker = page.getByTestId("practitioner-picker");
+  await expect(picker).toBeVisible();
+  const optionLabels = (await picker.locator("option").allTextContents())
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+  for (const { who, label } of allFive()) {
+    expect(
+      optionLabels,
+      `${label} (${who.displayName}) must be offered in the public picker`,
+    ).toContain(who.displayName);
+  }
+  // EXACTLY THESE FIVE AND NOBODY ELSE. PublicBookForm renders one
+  // `<option value="">Any available</option>` ahead of the eligible
+  // practitioners, so six options is five people. Stated as a count because
+  // the five `toContain` assertions above are all satisfied by a picker that
+  // ALSO offers somebody it should not — a receptionist, or a duplicate row —
+  // and this fixture controls its roster completely: owner + A + B + C + D.
+  expect(
+    optionLabels.length,
+    `the picker must offer "Any available" plus exactly five practitioners, got: ${optionLabels.join(", ")}`,
+  ).toBe(6);
+
+  // NON-VACUITY: five DISTINCT names and five DISTINCT ids. Two members
+  // sharing a display name would make the five assertions above satisfiable by
+  // fewer than five people, and `seedE2eMember` derives the name from a random
+  // suffix, so this is a real thing to check rather than a formality.
+  expect(new Set(allFive().map((f) => f.who.displayName)).size).toBe(5);
+  expect(new Set(allFive().map((f) => f.who.practitionerId)).size).toBe(5);
+
+  // --- each of the five BOOKS, into their own window ----------------------
+  const booked: Array<{
+    label: string;
+    who: { displayName: string; practitionerId: string };
+    window: { start: string; end: string };
+    client: { name: string; email: string };
+    slotLabel: string;
+    appointmentId: string;
+  }> = [];
+
+  for (const { who, window, label } of allFive()) {
+    const client = newClientIdentity(runId, `P${booked.length + 1}`);
+    const { slotLabel } = await bookWithPractitioner(page, client, who, window);
+    // NO CONFIRMATION-COPY ASSERTION HERE, on purpose. An earlier draft of this
+    // loop waited for a "you're booked" string I had not verified existed —
+    // the journey above asserts no such copy, it polls for the ROW. Copy that
+    // says "booked" is also true of a booking attributed to the wrong
+    // practitioner, so it is the weakest evidence for the only claim this test
+    // makes; and an invented regex fails for a reason that has nothing to do
+    // with the product. The row appearing IS the success signal, and
+    // `waitForClientAppointments` prints the page text when it does not.
+    const rows = await waitForClientAppointments(live.studioId, client.email, 1, page);
+    expect(rows.length, `${label}'s booking must exist`).toBe(1);
+    // ATTRIBUTION FROM THE DATABASE, never from confirmation copy: copy that
+    // says "booked" is equally true of a booking attributed to the wrong
+    // practitioner, which is the one thing this test is about.
+    expect(
+      rows[0].practitioner_id,
+      `${label}'s booking must be attributed to ${who.displayName}`,
+    ).toBe(who.practitionerId);
+    await expectCommittedWithinWindow(rows[0].id, window, `${label}'s committed booking`);
+
+    booked.push({ label, who, window, client, slotLabel, appointmentId: rows[0].id });
+  }
+
+  expect(booked.length, "all five must have booked").toBe(5);
+
+  // --- THE COLLAPSE CONTROLS ---------------------------------------------
+  //
+  // Each of these fails loudly under exactly one historical defect, which is
+  // why they are stated separately rather than folded into the loop.
+
+  // (a) NOT ALL THE OWNER. Pre-G1 the public path assigned the active owner
+  // whatever the visitor chose, so four of these five would still have been
+  // "correct" by accident.
+  expect(
+    new Set(booked.map((b) => b.who.practitionerId)).size,
+    "the five bookings must be attributed to five DIFFERENT practitioners",
+  ).toBe(5);
+  expect(
+    booked.filter((b) => b.who.practitionerId === ownerPractitionerId).length,
+    "exactly one of the five is the owner's own booking",
+  ).toBe(1);
+
+  // (b) NOT ALL THE SAME TIME, and not the studio-wide window. Five disjoint
+  // windows mean five distinct slot labels; a grid that collapsed to the
+  // studio-wide row would have offered the same earliest slot to everyone.
+  expect(
+    new Set(booked.map((b) => b.slotLabel)).size,
+    "each practitioner's grid must offer its OWN window, so the five slots differ",
+  ).toBe(5);
+
+  // (c) NO PARALLELISM LOST. Capacity is ON, so reservations are
+  // practitioner-keyed: five bookings on ONE date must all hold live
+  // reservations at the same time. A studio-keyed reservation would have let
+  // the first booking block the rest, and the later bookings would have been
+  // refused rather than mis-attributed.
+  for (const b of booked) {
+    expect(
+      await getSourceReservationKeys("appointment", b.appointmentId),
+      `${b.label}'s booking must hold its own reservation`,
+    ).not.toEqual([]);
+  }
+
+  // --- ACCESS (a): the OWNER's calendar shows and attributes all five ------
+  await loginAsOwner(page, live);
+  for (const b of booked) {
+    await page.goto(`/calendar?week=${bookDate}`);
+    const entry = page.locator("main").getByRole("button").filter({ hasText: b.client.name });
+    await expect(
+      entry,
+      `${b.label}'s booking must appear as exactly one entry in the owner's grid`,
+    ).toHaveCount(1);
+    await entry.click();
+
+    const drawer = page.getByRole("dialog", { name: /appointment preview/i });
+    await expect(drawer).toBeVisible({ timeout: 20_000 });
+    await drawer.getByRole("link", { name: /open full details/i }).click();
+    // The id is the assertion, not the route: it proves the entry the owner
+    // clicked IS the row the database attributed.
+    await expect(
+      page,
+      `${b.label}'s grid entry must lead to its own detail page`,
+    ).toHaveURL(new RegExp(`/calendar/${b.appointmentId}(\\?|$)`));
+    // `main header`, not `header` — the app shell renders its own nav <header>.
+    await expect(
+      page.locator("main header").first().getByText(b.who.displayName, { exact: false }),
+      `${b.label}'s booking must be attributed to ${b.who.displayName} on the calendar`,
+    ).toBeVisible({ timeout: 20_000 });
+  }
+});
+
+test("ACCEPTANCE (5): every practitioner can sign in and sees the whole studio's day", async ({
+  page,
+}) => {
+  // Four separate magic-link sign-ins, each followed by a calendar load and a
+  // five-booking read. Same reasoning as above.
+  test.setTimeout(600_000);
+  // THE ACCESS HALF, and it is a different claim from attribution. The
+  // calendar loads through `getAppointmentsForRange(studio.id, ...)`, i.e.
+  // STUDIO-WIDE, so a member must see their colleagues' bookings too. The
+  // failure this catches is the plausible-looking opposite — a change that
+  // scoped the grid to the signed-in practitioner would leave the owner's view
+  // (asserted above) perfectly green while every member saw a near-empty day.
+  //
+  // It also proves each member can get in AT ALL: four separate magic-link
+  // sign-ins, which is the half no SQL assertion can stand in for.
+  const onDate = await sql<{ client_name: string; display_name: string | null }>(
+    `select c.name as client_name, p.display_name
+       from public.appointments a
+       join public.clients c on c.id = a.client_id
+       left join public.practitioners p on p.id = a.practitioner_id
+      where a.studio_id = $1
+        and (a.starts_at at time zone (select timezone from public.studios where id = $1))::date = $2::date
+        and a.status <> 'cancelled'
+      order by a.starts_at`,
+    [live.studioId, bookDate],
+  );
+  // The fixture for this claim is the previous test's five bookings, so state
+  // the precondition rather than assuming it: a thin day would make every
+  // assertion below trivially true.
+  expect(
+    onDate.length,
+    "the studio's day must already hold the five bookings this test reads",
+  ).toBeGreaterThanOrEqual(5);
+  const everyClientName = onDate.map((r) => r.client_name);
+
+  for (const member of [A, B, C, D]) {
+    await loginByMagicLink(page, member.email);
+    await page.goto(`/calendar?week=${bookDate}`);
+    const main = page.locator("main");
+    // EVERY booking on the day, not just this member's own. Scoped to main so
+    // navigation chrome cannot satisfy it.
+    for (const clientName of everyClientName) {
+      await expect(
+        main.getByRole("button").filter({ hasText: clientName }),
+        `${member.displayName} must see ${clientName}'s booking in the studio's day`,
+      ).toHaveCount(1, { timeout: 20_000 });
+    }
+  }
+});
 
 test("LEGACY capacity-OFF, BY DESIGN: one booking blocks the instant for everyone", async ({
   page,
