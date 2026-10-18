@@ -255,3 +255,52 @@ describe("0232: privilege matrix", () => {
     });
   });
 });
+
+// Codex 4308037526: hard-deleting a visit runs 0092's ON DELETE SET NULL on
+// session_id. The photo becomes client-scoped, so its before/after label must
+// go too, and the delete must still SUCCEED (a CHECK would make the cascade
+// throw). Negative control: a photo of a visit that is NOT deleted keeps its
+// label and its session.
+describe("0232: a photo that loses its visit loses its label (and the visit delete succeeds)", () => {
+  it("label → hard-delete the session → session_id and capture_stage are both NULL; the other visit's photo is untouched", async () => {
+    const doomed = await seedSession(A);
+    const kept = await seedSession(A);
+    const goes = await image(A, A.clientId, doomed);
+    const stays = await image(A, A.clientId, kept);
+    expect((await userQuery(A.userId, STAGE, [goes, A.clientId, "before"])).rows[0].id).toBe(goes);
+    expect((await userQuery(A.userId, STAGE, [stays, A.clientId, "after"])).rows[0].id).toBe(stays);
+    expect(await stageOf(goes)).toBe("before");
+
+    await adminQuery("delete from public.sessions where id = $1", [doomed.sessionId]); // must not throw
+
+    expect((await adminQuery("select count(*)::int n from public.sessions where id = $1", [doomed.sessionId])).rows[0].n).toBe(0);
+    const after = (
+      await adminQuery(`select session_id, capture_stage, deleted_at from public.treatment_images where id = $1`, [goes])
+    ).rows[0];
+    expect(after).toEqual({ session_id: null, capture_stage: null, deleted_at: null });
+    // NEGATIVE CONTROL: the surviving visit's photo keeps both.
+    const control = (
+      await adminQuery(`select session_id, capture_stage from public.treatment_images where id = $1`, [stays])
+    ).rows[0];
+    expect(control).toEqual({ session_id: kept.sessionId, capture_stage: "after" });
+  });
+
+  it("an unlabelled photo of a deleted visit is simply client-scoped (nothing to clear, nothing refused)", async () => {
+    const doomed = await seedSession(A);
+    const plain = await image(A, A.clientId, doomed);
+    await adminQuery("delete from public.sessions where id = $1", [doomed.sessionId]);
+    const row = (await adminQuery(`select session_id, capture_stage from public.treatment_images where id = $1`, [plain])).rows[0];
+    expect(row).toEqual({ session_id: null, capture_stage: null });
+  });
+
+  it("the trigger function is not callable by any API role", async () => {
+    const r = await adminQuery(
+      `select has_function_privilege('authenticated', p.oid, 'EXECUTE') auth_x,
+              has_function_privilege('anon', p.oid, 'EXECUTE') anon_x,
+              has_function_privilege('service_role', p.oid, 'EXECUTE') svc_x
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public' and p.proname = 'treatment_images_clear_stage_without_session'`,
+    );
+    expect(r.rows).toEqual([{ auth_x: false, anon_x: false, svc_x: false }]);
+  });
+});
