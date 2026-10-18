@@ -3,6 +3,7 @@ import { blockAreasLabel, type BlockArea } from "@/lib/sessions/block-areas";
 import { legacyBlockReactionLabel } from "@/lib/sessions/reaction-unified";
 import { hasStructuredReadings, pulseReadingsShown } from "@/lib/sessions/structured-readings";
 import { resolveDisplayChips } from "@/lib/observation-chips";
+import { numbingDisplay } from "@/lib/sessions/clinical-response";
 
 // ===========================================================================
 // HON-46 — what a per-client clinical-records export contains, as pure code.
@@ -447,11 +448,14 @@ export function buildClinicalRecordsDocument(input: {
             // The confirmation travels with the lot (Codex P2 4302799069), worded
             // as the live chart words it (session-blocks-view.tsx).
             ["Probe lot", present(b.probe_lot_number) ? `${b.probe_lot_number.trim()}${b.probe_lot_confirmed ? " (confirmed)" : ""}` : null],
-            ["Numbing", b.numbing_status],
+            // NUMBING through the saved view's presenter (Codex P2 4305737602):
+            // its practitioner-facing label, and a note only when numbing was
+            // USED, so a stray note on "none" never implies numbing.
+            ["Numbing", numbingDisplay(b.numbing_status, b.numbing_notes)?.label ?? null],
             ["Tolerance", b.tolerance_rating],
           ]),
           notes: readings([
-            ["Numbing notes", b.numbing_notes],
+            ["Numbing notes", numbingDisplay(b.numbing_status, b.numbing_notes)?.note ?? null],
             // REACTIONS through the SAME rule as the saved-record view
             // (legacyBlockReactionLabel; Codex P1 4304382927). Current
             // responses print as the entries' chips ("Observed: ..."); a
@@ -460,9 +464,11 @@ export function buildClinicalRecordsDocument(input: {
             // twice, and never "none" beside a real response.
             [
               "Legacy skin response",
+              // Classified against the entries' chips as DISPLAYED, legacy
+              // comment chips hydrated (Codex P1 4305737599), as the view does.
               legacyBlockReactionLabel(
                 b.reaction_type,
-                (entriesByBlock.get(b.id) ?? []).map((e) => e.observation_chips),
+                (entriesByBlock.get(b.id) ?? []).map((e) => resolveDisplayChips(e.observation_chips, e.comments).chips),
               ),
             ],
             ["Legacy response note", b.reaction_notes],

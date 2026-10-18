@@ -16,6 +16,8 @@ import {
 import { guardBrowserEvent } from "@/lib/analytics/client-boundary";
 import { EXPORT_MAX_PAGES, EXPORT_PAGE_SIZE, readAllPages } from "@/lib/clinical-records/export-queries";
 import { PRINT_GATE_CSS } from "@/lib/clinical-records/print-gate";
+import { numbingDisplay } from "@/lib/sessions/clinical-response";
+import { readFileSync } from "node:fs";
 
 // HON-46 — the pure half of the per-client clinical-records export: which
 // scopes parse, how a local day becomes UTC bounds, that the document is an
@@ -437,6 +439,116 @@ describe("reactions print through the saved-record view's rule (Codex P1 4304382
   it('reaction_type "none" beside a real response chip prints no "none"', () => {
     const b = notesFor("none", [["Mild redness"]]);
     expect(JSON.stringify(b)).not.toMatch(/No visible reaction|"none"/);
+  });
+});
+
+describe("legacy comment chips count when classifying the block reaction (Codex P1 4305737599)", () => {
+  const blockWith = (reactionType: string, entry: Record<string, unknown>) =>
+    buildClinicalRecordsDocument({
+      sessions: [
+        {
+          id: "s7",
+          started_at: "2026-10-01T15:00:00Z",
+          ended_at: null,
+          modality: "electrolysis",
+          session_notes: null,
+          performed_by_practitioner_id: null,
+          practitioner_id: null,
+          record_status: null,
+          finalized_at: null,
+          aftercare_and_risks_explained_at: null,
+        },
+      ],
+      blocks: [
+        {
+          id: "b7",
+          session_id: "s7",
+          sort_order: 0,
+          primary_area: "chin",
+          side: null,
+          created_at: "2026-10-01T15:01:00Z",
+          reaction_type: reactionType,
+        } as unknown as ExportBlockSource,
+      ],
+      entries: [
+        {
+          id: "e7",
+          session_id: "s7",
+          block_id: "b7",
+          area: "chin",
+          created_at: "2026-10-01T15:02:00Z",
+          ...entry,
+        } as unknown as ExportEntrySource,
+      ],
+      notes: [],
+      practitionerNameById: new Map(),
+    }).sessions[0].blocks[0];
+
+  it('a stale "none" is not printed beside a response hydrated from a pre-0108 comment', () => {
+    const b = blockWith("none", { observation_chips: [], comments: "Redness (erythema)" });
+    expect(b.entries[0].observations).toEqual(["Redness (erythema)"]);
+    expect(b.notes.map((n) => n.label)).not.toContain("Legacy skin response");
+    expect(JSON.stringify(b)).not.toMatch(/No visible reaction/);
+  });
+  it("the saved view classifies against the same displayed chips (source parity)", () => {
+    const view = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/session-blocks-view.tsx", "utf8");
+    expect(view).toContain("(e) => resolveDisplayChips(e.observation_chips, e.comments).chips,");
+  });
+});
+
+describe("numbing prints through the saved view's presenter (Codex P2 4305737602)", () => {
+  const blockOf = (numbing_status: unknown, numbing_notes: string | null) =>
+    buildClinicalRecordsDocument({
+      sessions: [
+        {
+          id: "s7",
+          started_at: "2026-10-01T15:00:00Z",
+          ended_at: null,
+          modality: "electrolysis",
+          session_notes: null,
+          performed_by_practitioner_id: null,
+          practitioner_id: null,
+          record_status: null,
+          finalized_at: null,
+          aftercare_and_risks_explained_at: null,
+        },
+      ],
+      blocks: [
+        {
+          id: "b8",
+          session_id: "s7",
+          sort_order: 0,
+          primary_area: "chin",
+          side: null,
+          created_at: "2026-10-01T15:01:00Z",
+          numbing_status,
+          numbing_notes,
+        } as unknown as ExportBlockSource,
+      ],
+      entries: [],
+      notes: [],
+      practitionerNameById: new Map(),
+    }).sessions[0].blocks[0];
+  const numbingOf = (b: ReturnType<typeof blockOf>) => ({
+    label: b.readings.find((r) => r.label === "Numbing")?.value ?? null,
+    note: b.notes.find((n) => n.label === "Numbing notes")?.value ?? null,
+  });
+
+  it('"none" prints its label, and a stray note is NOT printed', () => {
+    expect(numbingOf(blockOf("none", "lidocaine 5%"))).toEqual({ label: "No numbing used", note: null });
+  });
+  it('"used" prints its label and its note', () => {
+    expect(numbingOf(blockOf("used", "lidocaine 5%"))).toEqual({ label: "Numbing used", note: "lidocaine 5%" });
+  });
+  it("unrecorded or invalid status prints nothing, note included", () => {
+    expect(numbingOf(blockOf(null, "lidocaine 5%"))).toEqual({ label: null, note: null });
+    expect(numbingOf(blockOf("bogus", "lidocaine 5%"))).toEqual({ label: null, note: null });
+  });
+  it("matches numbingDisplay exactly", () => {
+    for (const status of ["none", "used", null, "bogus"]) {
+      const d = numbingDisplay(status, " note ");
+      expect(numbingOf(blockOf(status, " note "))).toEqual({ label: d?.label ?? null, note: d?.note ?? null });
+    }
   });
 });
 
