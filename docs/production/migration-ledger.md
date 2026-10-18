@@ -14,7 +14,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-12, post-`0211` apply; hosted `0211`; `0212`-`0222` AUTHORED AND PENDING, contiguous, in that order)
+## Current state (verified 2026-10-12, post-0211 apply; hosted `0211`; `0212`-`0218` AUTHORED AND PENDING, contiguous, in that order)
 
 <!-- sync 2026-10-17: production c901be08 merged in, merge-only. Production wins on the
      DECLARED HOSTED FACTS (hosted max 0211, its row carried verbatim below) and its 0211
