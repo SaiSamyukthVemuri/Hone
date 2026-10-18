@@ -477,7 +477,23 @@ export function BlockSetupForm({
    * The SAVE button stays live: pressing it again, unchanged, is the whole
    * recovery.
    */
-  const draftFrozen = saveUnresolved;
+  const [pending, startTransition] = useTransition();
+  /**
+   * THE FREEZE COVERS THE REQUEST ITSELF, NOT ONLY ITS AFTERMATH
+   * (Codex, #860 4305022475).
+   *
+   * `saveUnresolved` alone starts the freeze when the answer comes back, and
+   * the whole payload — `attachedSetup` and every other action input — was
+   * snapshotted before `startTransition`. So an edit made during a slow save
+   * was already outside the thing being saved: a success discarded it
+   * silently and showed a confirmation for values she had changed, and a lost
+   * response retried the retained key with the NEW payload, which the create
+   * claim refuses as a digest mismatch.
+   *
+   * `pending` is why the transition is declared here rather than beside the
+   * other submit state below.
+   */
+  const draftFrozen = pending || saveUnresolved;
   const setDraft: typeof setDraftRaw = (...args) => {
     if (draftFrozen) return;
     setDraftRaw(...args);
@@ -564,7 +580,6 @@ export function BlockSetupForm({
   // PR #191: inline feedback after "Copy settings" so the
   // practitioner knows what was copied and from where.
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
   // 0156: stable id so the numbing-notes helper text is programmatically
   // connected to the textarea via aria-describedby.
   const numbingNotesHelpId = useId();

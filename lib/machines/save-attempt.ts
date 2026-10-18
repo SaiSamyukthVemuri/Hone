@@ -112,9 +112,30 @@ export function keyForSave(state: SaveState, mint: () => string): string {
   return state.key ?? mint();
 }
 
-/** May the practitioner still change what she is about to save? */
-export function canEditDraft(state: SaveState): boolean {
-  return !state.unresolved && !state.recorded;
+/**
+ * May the practitioner still change what she is about to save?
+ *
+ * `inFlight` IS REQUIRED, and that is the point (Codex, #860 4305022472 and
+ * 4305022475). This function has been the single authority on "may the draft
+ * move" since the state machine was written, and it answered from the SETTLED
+ * state alone — so every caller had to remember to add `pending ||` itself,
+ * and the one production caller did not.
+ *
+ * The window it missed is the request's own duration. The payload is
+ * snapshotted at submit; if she edits while the request is outstanding then a
+ * success silently discards what she typed, and a LOST response is worse — the
+ * retained key is bound to a digest of the OLD payload, so the retry the
+ * screen advertises is refused as a mismatch, with nothing left but
+ * cancel-and-recreate: a duplicate clinical record.
+ *
+ * This is the same invariant as the five controls before it — a control that
+ * can discard the retry key belongs inside the freeze the key depends on —
+ * and it had recurred often enough that a convention was the wrong mechanism.
+ * A required parameter makes the compiler ask the question instead, so a
+ * caller cannot silently omit it.
+ */
+export function canEditDraft(state: SaveState, inFlight: boolean): boolean {
+  return !inFlight && !state.unresolved && !state.recorded;
 }
 
 /** May she press Save? */

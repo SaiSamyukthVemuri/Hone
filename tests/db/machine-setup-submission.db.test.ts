@@ -3,6 +3,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import {
   adminQuery,
+  RECORD_GROUP_SQL,
   asRole,
   asUser,
   closePool,
@@ -126,6 +127,90 @@ const group = (key: string, channels: number[], current: string): Group => ({
   readings: [reading("current", current)],
 });
 
+/**
+ * A group asking for a NEW identity, under the caller's own placeholder.
+ *
+ * FOR THE CONCURRENCY CASES, which drive raw connections and so cannot go
+ * through `resolveGroups`: this file already records why an admin query inside
+ * `asUser` is wrong here - it holds one pool's connection while waiting for
+ * another, and stalled a test for five seconds. They are all FIRST saves on a
+ * freshly seeded block, so they say "new" directly rather than resolving
+ * (Codex, #860 4305780322).
+ */
+const newGroup = (ref: string, channels: number[], current: string) => ({
+  new_group_ref: ref,
+  channels,
+  readings: [reading("current", current)],
+});
+
+
+/**
+ * RESOLVE EACH GROUP TO THE VOCABULARY THE COMMAND NOW TAKES, from what the
+ * block actually holds (Codex, #860 4305780322).
+ *
+ * `group_key` means "revise the group I am naming"; `new_group_ref` means "a
+ * new group, here is my own local placeholder" and the DATABASE issues the
+ * key. Naming a key that does not exist is refused, because a caller choosing
+ * its own identity is how two page loads came to pick the same key and merge
+ * two probe sets into one timeline.
+ *
+ * THIS IS WHAT THE CLIENT DOES, not a convenience. `groupsFromRecorded` marks
+ * a draft group `recorded: true` precisely when it was restored from the
+ * block's readings, and `assembleGroupSubmissions` then sends `group_key` for
+ * those and `new_group_ref` for the rest. Resolving from the same fact keeps
+ * every case in this file saying what it already said - a first save creates,
+ * a later save of the same group revises - instead of restating it at 35 call
+ * sites where it could also drift.
+ *
+ * RESOLVED ONCE PER RETRY KEY, AND THAT IS THE LOAD-BEARING PART. A retry must
+ * resend the SAME payload or its digest differs and the command correctly
+ * refuses it as a different save. Re-resolving after the first save committed
+ * would see the group as existing and switch `new_group_ref` to `group_key` -
+ * a different payload under the same key, so every retry case in this file
+ * would fail on a trap of the harness's own making.
+ *
+ * The client cannot drift that way because its DRAFT is built once and carries
+ * `recorded` from the snapshot it loaded; a retry reuses that same draft and
+ * therefore the same placeholders. This cache is that draft.
+ *
+ * CASES THAT ARE ABOUT THE REFUSAL ITSELF do not come through here: they call
+ * the command directly with a key of their own choosing, which is the only way
+ * to assert that choosing one is refused.
+ */
+const knownAtFirstUse = new Map<string, Set<string>>();
+
+async function resolveGroups(blockId: string, key: string, groups: Group[]) {
+  // THE DECISION IS CACHED, NOT THE PAYLOAD - and that distinction cost a DB
+  // run to learn. Caching the resolved payload made the five "a retry key
+  // cannot absorb a DIFFERENT payload" cases pass by identity: they call this
+  // twice with ONE key and deliberately different groups, and a payload cache
+  // handed back the first one, so the command answered reused:true and the
+  // tests reported "resolved instead of rejecting". A harness that discards
+  // what the caller sent cannot test what the caller sent.
+  //
+  // What must be stable across a retry is which groups were NEW when the save
+  // was first attempted, because that is what the digest was taken over. The
+  // groups themselves come from the caller, every time.
+  const cacheKey = `${blockId}:${key}`;
+  let known = knownAtFirstUse.get(cacheKey);
+  if (!known) {
+    const existing = await adminQuery(
+      `select distinct btrim(group_key) as k
+         from public.treatment_setup_captures
+        where session_block_id = $1`,
+      [blockId],
+    );
+    known = new Set(existing.rows.map((r) => r.k as string));
+    knownAtFirstUse.set(cacheKey, known);
+  }
+  return groups.map((g) => {
+    const { group_key: groupKey, ...rest } = g;
+    return known.has(groupKey.trim())
+      ? { group_key: groupKey, ...rest }
+      : { new_group_ref: groupKey, ...rest };
+  });
+}
+
 type SaveResult = {
   submission_id: string;
   groups: number;
@@ -156,7 +241,7 @@ async function save(
         machineId,
         "galvanic",
         key,
-        JSON.stringify(groups),
+        JSON.stringify(await resolveGroups(blockId, key, groups)),
         route.sessionId,
         route.clientId,
       ],
@@ -296,7 +381,7 @@ describe("0223 · one Save records every group as one submission", () => {
 
     await asUser(studio.userId, (q) =>
       q(
-        `select public.record_treatment_setup_group($1,$2,$3,$4,$5::smallint[],$6::jsonb,$7::uuid,$8::uuid)`,
+        RECORD_GROUP_SQL,
         [
           blockId,
           machineId,
@@ -570,7 +655,7 @@ describe("0223 · two concurrent saves of the same groups do not deadlock", () =
           machineId,
           "galvanic",
           "save-key-concur-a",
-          JSON.stringify([group("g1", [1], "120"), group("g2", [2], "80")]),
+          JSON.stringify([newGroup("g1", [1], "120"), newGroup("g2", [2], "80")]),
           sessionId,
           studio.clientId,
         ],
@@ -696,7 +781,7 @@ describe("0223 · two concurrent retries of ONE save resolve to one submission",
     const { blockId, sessionId } = await seedSession(studio);
     const machineId = await registerMachine(studio);
     const key = "save-key-concurrent-retry";
-    const groups = JSON.stringify([group("g1", [1], "120"), group("g2", [2], "80")]);
+    const groups = JSON.stringify([newGroup("g1", [1], "120"), newGroup("g2", [2], "80")]);
 
     const a = await beginAsUser(studio.userId);
     const b = await beginAsUser(studio.userId);
@@ -880,9 +965,14 @@ describe("0223 · the shared internals cannot be called directly", () => {
             // exist", and only because the assertion below pins
             // /permission denied/i did that show up as a failure instead
             // of a pass on the wrong error.
+            // AND A FOURTEENTH, `p_group_is_new`, added when group
+            // identities became server-issued (Codex, #860 4305780322). The
+            // warning above came true a second time: a 13-argument call
+            // raised "function does not exist" and three grant tests stopped
+            // proving the revoke until this was updated.
             `select public.record_setup_group_in_scope(
                $1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7::text[],$8,$9,
-               $10::smallint[],$11::jsonb,null,$12::text[])`,
+               $10::smallint[],$11::jsonb,null,$12::text[],false)`,
             [
               "00000000-0000-0000-0000-000000000001",
               "00000000-0000-0000-0000-000000000002",
@@ -1350,8 +1440,7 @@ describe("0223 · channel exclusivity holds through the single-group door", () =
     await expect(
       asUser(studio.userId, (q) =>
         q(
-          `select public.record_treatment_setup_group(
-             $1::uuid,$2::uuid,$3,$4,$5::smallint[],$6::jsonb,$7::uuid,$8::uuid)`,
+          RECORD_GROUP_SQL,
           [
             blockId,
             machineId,
@@ -1385,8 +1474,7 @@ describe("0223 · channel exclusivity holds through the single-group door", () =
 
     const written = await asUser(studio.userId, (q) =>
       q(
-        `select public.record_treatment_setup_group(
-           $1::uuid,$2::uuid,$3,$4,$5::smallint[],$6::jsonb,$7::uuid,$8::uuid) as n`,
+        RECORD_GROUP_SQL,
         [
           blockId,
           machineId,
@@ -1415,8 +1503,7 @@ describe("0223 · channel exclusivity holds through the single-group door", () =
 
     const again = await asUser(studio.userId, (q) =>
       q(
-        `select public.record_treatment_setup_group(
-           $1::uuid,$2::uuid,$3,$4,$5::smallint[],$6::jsonb,$7::uuid,$8::uuid) as n`,
+        RECORD_GROUP_SQL,
         [
           blockId,
           machineId,
@@ -1459,7 +1546,7 @@ describe("0223 · channel exclusivity is SERIALISED, not just checked", () => {
           machineId,
           "galvanic",
           "serial-key-a",
-          JSON.stringify([group("g2", [3], "120")]),
+          JSON.stringify([newGroup("g2", [3], "120")]),
           sessionId,
           studio.clientId,
         ],

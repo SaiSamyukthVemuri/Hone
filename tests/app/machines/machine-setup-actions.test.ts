@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
+import { SETUP_GROUPS_MOVED } from "@/lib/machines/pending-setup";
+
 // ===========================================================================
 // MPX-03 — the server surface: identity is derived, ownership is never
 // submitted, and the synthetic demo profile cannot reach production.
@@ -73,48 +75,47 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
     rpc: async (fn: string, args: Record<string, unknown>) => {
       DB.calls.push({ fn, args });
+      // THE BLOCK'S READINGS COME FROM A FUNCTION NOW (Codex, #860
+      // 4305555264). `readingsForBlock` was a paginated table read; it is one
+      // call to `setup_readings_for_block`, which is one statement and so one
+      // MVCC snapshot.
+      //
+      // ANSWERED FROM THE SAME PER-TABLE FIELDS the cases already set, rather
+      // than from a new one: it is still the readings read, and migrating
+      // every case to a differently-named fixture would have changed what
+      // those cases say while claiming only to move a fake.
+      if (fn === "setup_readings_for_block") {
+        const err = DB.errorFor.treatment_setup_readings ?? null;
+        if (err) return { data: null, error: err };
+        return {
+          data: DB.rowsFor.treatment_setup_readings ?? [],
+          error: null,
+        };
+      }
       return { data: DB.rpcResult, error: DB.rpcError };
     },
     from: (table: string) => {
       const error = DB.errorFor[table] ?? DB.selectError;
       const rows = DB.rowsFor[table] ?? DB.rows;
       const result = async () => ({ data: error ? null : rows, error });
-      /**
-       * A KEYSET PAGE, MODELLED RATHER THAN IGNORED.
-       *
-       * `readingsForBlock` reads a block's readings COMPLETELY now - pages by
-       * `id`, each after the last one seen, until a page comes back EMPTY -
-       * because `.limit(500)` silently truncated and could cut a capture in
-       * half (Codex, #860 4288424513). A fake that answered every page with
-       * the same rows would loop or look complete when it was not, so it
-       * filters here exactly as the database does. The rows it serves need an
-       * `id` for the same reason.
-       */
-      const pageAfter = (cursor: string) => async () => ({
-        data: error
-          ? null
-          : (rows as Array<{ id?: unknown }>).filter(
-              (r) => typeof r.id === "string" && r.id > cursor,
-            ),
-        error,
-      });
+      // NO KEYSET MODELLING ANY MORE. This fake used to filter pages by `id`
+      // exactly as the database does, because `readingsForBlock` paged over
+      // it. That read is a single function call now, answered in `rpc` above,
+      // so a page-filtering branch here would model a mechanism that no
+      // longer exists.
       return {
         select: () => ({
           eq: () => ({
-            // THE ROUTE BINDING'S QUERY: `.eq(id).eq(session_id).limit(1)`,
-            // which the reader now issues before it reads any readings
-            // (Codex, #860 4298457378). Answered with one row, because the
-            // cases in this file supply a block that IS the route's; the
-            // refusal has its own tests, in the DB suite and in a mounted
-            // payload-swap case.
+            // THE ROUTE BINDING IS NO LONGER A QUERY HERE. It was
+            // `.eq(id).eq(session_id).limit(1)` issued before the readings
+            // (Codex, #860 4298457378); `setup_readings_for_block` joins the
+            // session instead, so the binding is a predicate on the read
+            // itself. This branch stays for the other tables that use it.
             eq: () => ({
               limit: async () => ({ data: [{ id: "block-1" }], error: null }),
             }),
             is: () => ({ order: result }),
             order: () => ({ limit: result }),
-            gt: (_column: string, value: string) => ({
-              order: () => ({ limit: pageAfter(value) }),
-            }),
             in: () => ({ limit: result }),
             maybeSingle: result,
             limit: result,
@@ -476,8 +477,8 @@ describe("recordSetupSubmissionAction sends ONE call for the whole save", () => 
       modeKey: "galvanic",
       idempotencyKey: "save-key-0001",
       groups: [
-        { groupKey: "g1", channels: [1, 2], readings: [READING(120)] },
-        { groupKey: "g2", channels: [3], readings: [READING(80)] },
+        { groupKey: "g1", newGroupRef: null, channels: [1, 2], readings: [READING(120)] },
+        { groupKey: "g2", newGroupRef: null, channels: [3], readings: [READING(80)] },
       ],
     });
     expect(out.ok, out.ok ? "" : out.error).toBe(true);
@@ -518,7 +519,7 @@ describe("recordSetupSubmissionAction sends ONE call for the whole save", () => 
       machineId: "dev-1",
       modeKey: "galvanic",
       idempotencyKey: "save-key-0002",
-      groups: [{ groupKey: "g1", channels: [1], readings: [READING(120)] }],
+      groups: [{ groupKey: "g1", newGroupRef: null, channels: [1], readings: [READING(120)] }],
     });
     const args = DB.calls.find(
       (c) => c.fn === "record_treatment_setup_submission",
@@ -546,9 +547,10 @@ describe("recordSetupSubmissionAction sends ONE call for the whole save", () => 
       modeKey: "galvanic",
       idempotencyKey: "save-key-0003",
       groups: [
-        { groupKey: "g1", channels: [1], readings: [READING(120)] },
+        { groupKey: "g1", newGroupRef: null, channels: [1], readings: [READING(120)] },
         {
           groupKey: "g2",
+          newGroupRef: null,
           channels: [2],
           readings: [
             {
@@ -586,7 +588,7 @@ describe("recordSetupSubmissionAction sends ONE call for the whole save", () => 
       machineId: "dev-1",
       modeKey: "galvanic",
       idempotencyKey: "save-key-0004",
-      groups: [{ groupKey: "g1", channels: [1], readings: [READING(120)] }],
+      groups: [{ groupKey: "g1", newGroupRef: null, channels: [1], readings: [READING(120)] }],
     });
     expect(out.ok).toBe(true);
     expect(out.reused).toBe(true);
@@ -608,7 +610,7 @@ describe("recordSetupSubmissionAction sends ONE call for the whole save", () => 
       machineId: "dev-1",
       modeKey: "galvanic",
       idempotencyKey: "save-key-0005",
-      groups: [{ groupKey: "g1", channels: [1], readings: [READING(120)] }],
+      groups: [{ groupKey: "g1", newGroupRef: null, channels: [1], readings: [READING(120)] }],
     });
     expect(out.ok).toBe(false);
     expect(out.ok ? "" : out.error).toMatch(/cannot be confirmed/i);
@@ -636,7 +638,7 @@ describe("recordSetupSubmissionAction sends ONE call for the whole save", () => 
           machineId: "dev-1",
           modeKey: "galvanic",
           idempotencyKey: "save-key-0007",
-          groups: [{ groupKey: "g1", channels: [], readings: [] }],
+          groups: [{ groupKey: "g1", newGroupRef: null, channels: [], readings: [] }],
         })
       ).ok,
     ).toBe(false);
@@ -650,7 +652,7 @@ describe("recordSetupSubmissionAction sends ONE call for the whole save", () => 
       machineId: "dev-1",
       modeKey: "galvanic",
       idempotencyKey: "save-key-0008",
-      groups: [{ groupKey: "g1", channels: [], readings: [READING(1)] }],
+      groups: [{ groupKey: "g1", newGroupRef: null, channels: [], readings: [READING(1)] }],
     });
     expect(out.ok).toBe(false);
     expect(out.ok ? "" : out.code).toBe("unauthenticated");
@@ -859,6 +861,7 @@ describe("reading metadata is DERIVED from the profile, never accepted", () => {
       machineId: "dev-1",
       modeKey: "galvanic",
       groupKey: "g1",
+      newGroupRef: null,
       channels: [],
       readings: [
         {
@@ -1591,5 +1594,177 @@ describe("loadMachineSetupContext reads the block's recorded captures", () => {
       (src.match(/mod\.readingsForBlockAction\(/g) ?? []).length,
       "exactly one read outside the loader: the post-save refresh",
     ).toBe(1);
+  });
+});
+
+
+const STALE_ROW = {
+  session_block_id: "block-1",
+  capture_id: "cap-1",
+  revision: 1,
+  studio_machine_id: "dev-1",
+  machine_profile_id: "synthetic:demo-multineedle",
+  machine_profile_version: 2,
+  mode_key: "galvanic",
+  group_key: "g1",
+  channels: [],
+  stage_key: null,
+  field_key: "current",
+  value_numeric: "120",
+  absence_reason: null,
+  native_unit: "µA",
+  decimals: 0,
+  observation_source: "practitioner-entered",
+  recorded_at: "2026-10-15T10:00:00Z",
+};
+
+// ---------------------------------------------------------------------------
+// THE STALENESS REFUSAL APPLIES TO A REVISE, NOT TO A NEW GROUP
+// (Codex, #860 4305780322; narrowed by ops01 once identities became
+// server-issued)
+// ---------------------------------------------------------------------------
+//
+// THE ORIGINAL DEFECT. A form minted the next group key from the snapshot it
+// had loaded, so two page loads that both added a group both chose the same
+// key and the second capture became a REVISION of the first - two probe sets
+// merged into one timeline, only the second reading as current.
+//
+// THE REFUSAL SHIPPED FIRST, as detection: capture the recorded set at draft
+// build, re-read at submit, refuse if it moved. Then `mint_setup_group_keys`
+// made the collision impossible, and that changed what the refusal is FOR.
+//
+// A NEW GROUP CAN NO LONGER COLLIDE. Its key is issued by the database under
+// a block-wide lock, so a draft built from a stale snapshot still lands as its
+// own distinct group. Refusing it would cost a practitioner a reload in a case
+// where nothing can go wrong, and a guard that cries wolf gets ignored.
+//
+// A REVISE FROM A MOVED SNAPSHOT STILL MEANS SOMETHING. She decided to record
+// a change relative to the setup she was looking at; if that set has moved,
+// her baseline moved with it. Nothing is lost either way - captures are
+// append-only - but being told to look again is the honest answer.
+describe("the staleness refusal, narrowed to the revise path", () => {
+  it("a NEW group from a stale draft is ACCEPTED, and reaches the database", async () => {
+    synthDevice();
+    // The draft was built when only g1 existed; g2 has landed since.
+    DB.rowsFor.treatment_setup_readings = [
+      { ...STALE_ROW, group_key: "g1" },
+      { ...STALE_ROW, group_key: "g2" },
+    ];
+    DB.rpcResult = {
+      submission_id: "sub-new",
+      groups: 1,
+      readings: 1,
+      reused: false,
+    };
+
+    const out = await actions.recordSetupSubmissionAction({
+      ...ROUTE,
+      blockId: "block-1",
+      machineId: "dev-1",
+      modeKey: "galvanic",
+      idempotencyKey: "save-key-stale-new",
+      expectedGroupKeys: ["g1"],
+      groups: [
+        {
+          groupKey: null,
+          newGroupRef: "g2",
+          channels: [1],
+          readings: [READING(120)],
+        },
+      ],
+    });
+
+    expect(out.ok, out.ok ? "" : out.error).toBe(true);
+    const calls = DB.calls.filter(
+      (c) => c.fn === "record_treatment_setup_submission",
+    );
+    expect(calls, "the save was refused, or never reached the command").toHaveLength(1);
+    // AND IT ASKED FOR AN IDENTITY rather than naming one. The placeholder
+    // collides with the key another tab has already used - which is exactly
+    // the case that used to merge two probe sets - and it is now harmless
+    // precisely because the database will not take it as a name.
+    const groups = (calls[0]!.args as Record<string, unknown>)
+      .p_groups as Array<Record<string, unknown>>;
+    expect(groups[0]!.new_group_ref).toBe("g2");
+    expect(
+      "group_key" in groups[0]!,
+      "a new group must not carry a group_key at all - a JSON null still counts as present",
+    ).toBe(false);
+  });
+
+  it("a REVISE from a moved snapshot is still REFUSED, and writes nothing", async () => {
+    synthDevice();
+    DB.rowsFor.treatment_setup_readings = [
+      { ...STALE_ROW, group_key: "g1" },
+      { ...STALE_ROW, group_key: "g2" },
+    ];
+    DB.rpcResult = {
+      submission_id: "sub-should-not-happen",
+      groups: 1,
+      readings: 1,
+      reused: false,
+    };
+
+    const out = await actions.recordSetupSubmissionAction({
+      ...ROUTE,
+      blockId: "block-1",
+      machineId: "dev-1",
+      modeKey: "galvanic",
+      idempotencyKey: "save-key-stale-revise",
+      expectedGroupKeys: ["g1"],
+      groups: [
+        {
+          groupKey: "g1",
+          newGroupRef: null,
+          channels: [1],
+          readings: [READING(120)],
+        },
+      ],
+    });
+
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.error).toBe(SETUP_GROUPS_MOVED);
+    // REFUSED BEFORE THE WRITE. A refusal that still called the command would
+    // be a message, not a guard.
+    expect(
+      DB.calls.filter((c) => c.fn === "record_treatment_setup_submission"),
+      "the command ran anyway",
+    ).toHaveLength(0);
+  });
+
+  it("CONTROL: an UNCHANGED snapshot lets a revise through", async () => {
+    // Without this the refusal above would also pass if every revise were
+    // refused, which would block the ordinary case of correcting a setting.
+    synthDevice();
+    DB.rowsFor.treatment_setup_readings = [{ ...STALE_ROW, group_key: "g1" }];
+    DB.rpcResult = {
+      submission_id: "sub-revise",
+      groups: 1,
+      readings: 1,
+      reused: false,
+    };
+
+    const out = await actions.recordSetupSubmissionAction({
+      ...ROUTE,
+      blockId: "block-1",
+      machineId: "dev-1",
+      modeKey: "galvanic",
+      idempotencyKey: "save-key-fresh-revise",
+      expectedGroupKeys: ["g1"],
+      groups: [
+        {
+          groupKey: "g1",
+          newGroupRef: null,
+          channels: [1],
+          readings: [READING(120)],
+        },
+      ],
+    });
+
+    expect(out.ok, out.ok ? "" : out.error).toBe(true);
+    expect(
+      DB.calls.filter((c) => c.fn === "record_treatment_setup_submission"),
+    ).toHaveLength(1);
   });
 });
