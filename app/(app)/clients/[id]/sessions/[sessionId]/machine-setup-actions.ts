@@ -4,7 +4,11 @@ import { createClient } from "@/lib/supabase/server";
 import { SETUP_GROUPS_MOVED } from "@/lib/machines/pending-setup";
 import { recordedGroupsMoved } from "@/lib/machines/setting-groups";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import { activeModes, type MachineProfile } from "@/lib/machines/profile-contract";
+import {
+  activeModes,
+  currentProfile,
+  type MachineProfile,
+} from "@/lib/machines/profile-contract";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import {
@@ -472,9 +476,19 @@ export async function registerMachineAction(input: {
     return { ok: false, code: "unauthenticated", error: "Sign in first." };
   }
 
-  const profile = catalogueForRuntime().find(
-    (p) => p.profileId === input.profileId,
-  );
+  // THE CURRENT VERSION, not the first one listed (Codex, #860 4308488012).
+  //
+  // `find` took the FIRST entry with this id, which with two versions present
+  // can be v1 while v2 is current - so the device row stored a superseded
+  // version and every charting surface then treated the unit's own readings as
+  // historical, leaving it effectively unselectable with no way out but
+  // deleting and re-registering.
+  //
+  // THE AVAILABILITY CHECK STAYS HERE, and that is why the resolver does not
+  // do it: requiring the CURRENT version to be active is what makes a model
+  // withdrawn at v2 unregisterable. A resolver that filtered availability
+  // itself would have handed back the still-active v1 instead.
+  const profile = currentProfile(catalogueForRuntime(), input.profileId);
   if (!profile || profile.availability !== "active") {
     return {
       ok: false,
@@ -616,9 +630,10 @@ export async function recordReadingsAction(input: {
     };
   }
 
-  const profile = catalogueForRuntime().find(
-    (p) => p.profileId === device.profileId,
-  );
+  // THE CURRENT VERSION (Codex, #860 4308488012): `activeModes` below reads
+  // the modes OFF this profile, so a first-match v1 offers a superseded
+  // mode list for a unit whose contract has moved on.
+  const profile = currentProfile(catalogueForRuntime(), device.profileId);
   const mode = profile
     ? activeModes(profile).find((m) => m.key === input.modeKey)
     : undefined;
@@ -812,9 +827,10 @@ export async function recordSetupSubmissionAction(input: {
     };
   }
 
-  const profile = catalogueForRuntime().find(
-    (p) => p.profileId === device.profileId,
-  );
+  // THE CURRENT VERSION (Codex, #860 4308488012): `activeModes` below reads
+  // the modes OFF this profile, so a first-match v1 offers a superseded
+  // mode list for a unit whose contract has moved on.
+  const profile = currentProfile(catalogueForRuntime(), device.profileId);
   const mode = profile
     ? activeModes(profile).find((m) => m.key === input.modeKey)
     : undefined;
