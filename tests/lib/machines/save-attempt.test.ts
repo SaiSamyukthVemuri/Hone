@@ -99,6 +99,21 @@ describe("a save that is ACKNOWLEDGED", () => {
     expect(saved.unresolved).toBe(false);
   });
 
+  it("does NOT hold the surrounding form, which protects a KEY it no longer has", () => {
+    // THE DISTINCTION (Codex, #860 4305364945). `canEditDraft` is false for an
+    // acknowledged save, which is right for the entry's own fields. The host's
+    // machine picker, mode picker and Cancel are frozen for a different
+    // reason — each can discard this save's RETRY KEY — so they must be free
+    // once there is no key at risk. Reporting `canEditDraft` upward left them
+    // disabled after every successful capture.
+    expect(canEditDraft(saved, false), "the entry's own fields").toBe(false);
+    // What the host is told, as the entry computes it.
+    const transportHold = false || saved.unresolved;
+    expect(transportHold, "an acknowledged save held the host's controls").toBe(
+      false,
+    );
+  });
+
   it("refuses another save of the same draft", () => {
     // Recording it again is a second capture of settings entered once, which
     // is indistinguishable in the record from a genuine mid-treatment change.

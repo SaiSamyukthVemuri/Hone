@@ -447,15 +447,31 @@ describe("switching machine or mode clears the collected draft", () => {
     expect(src).toMatch(/frozen=\{frozen\}/);
   });
 
-  it("and the freeze it reports to the PANEL covers the in-flight window too", () => {
-    // The host freezes its machine picker, mode picker and Cancel from this
-    // callback, and every one of them can discard this save's retry key. If
-    // the entry reported only the settled `unresolved` flag, the defect would
-    // move one component out rather than being fixed
-    // (Codex, #860 4305022472).
+  it("and what it reports to the PANEL is the TRANSPORT hold, not the whole freeze", () => {
+    // TWO DEFECTS, ONE LINE, IN OPPOSITE DIRECTIONS. Reporting only the
+    // settled `save.unresolved` left the host's controls live through the
+    // request itself (4305022472); reporting the whole `frozen` left them
+    // DEAD after an acknowledged save, because `frozen` also covers
+    // `recorded` (4305364945). The host freezes those controls for exactly
+    // one reason — each can discard this save's retry key — so what it needs
+    // is the window in which a key is at risk, and nothing wider.
     const src = read(ENTRY_SRC);
-    expect(src).toMatch(/onUnresolvedChange\?\.\(frozen\)/);
+    expect(src).toMatch(/onUnresolvedChange\?\.\(transportHold\)/);
+    expect(src).not.toMatch(/onUnresolvedChange\?\.\(frozen\)/);
     expect(src).not.toMatch(/onUnresolvedChange\?\.\(save\.unresolved\)/);
+    // And the hold itself must not consult the acknowledged state.
+    const hold = assignedExpression(src, "transportHold");
+    expect(hold, "an acknowledged save still holds the host's controls").not.toMatch(
+      /recorded|canEditDraft/,
+    );
+  });
+
+  it("while the ENTRY's own fields stay frozen after an acknowledged save", () => {
+    // The other half, and it is not symmetrical: after a recorded save she
+    // starts a new capture rather than editing the one in the record, so
+    // `frozen` keeps `recorded` while the reported hold does not.
+    const src = read(ENTRY_SRC);
+    expect(assignedExpression(src, "frozen")).toMatch(/canEditDraft\(/);
   });
 
   it("and refuses the edit at the HANDLER, not only at the controls", () => {
@@ -705,16 +721,21 @@ describe("switching machine or mode clears the collected draft", () => {
     // defect: a value that exists, is correct, and never arrives. Five
     // instances so far, and this value crosses FOUR components.
     const entry = read(ENTRY_SRC);
-    // It reports `frozen`, the composite that also covers the request's own
-    // duration — the host's identity controls can discard the retry key in
-    // that window too (Codex, #860 4305022472).
-    expect(entry, "1/4 the entry reports its frozen save").toMatch(
-      /onUnresolvedChange\?\.\(frozen\)/,
+    // It reports the TRANSPORT hold, which covers the request's own duration
+    // as well as an unknown outcome — the host's identity controls can
+    // discard the retry key in both windows (Codex, #860 4305022472) — but
+    // NOT an acknowledged save, which has no key left to protect
+    // (4305364945).
+    expect(entry, "1/4 the entry reports its transport hold").toMatch(
+      /onUnresolvedChange\?\.\(transportHold\)/,
     );
-    expect(
-      assignedExpression(entry, "frozen"),
-      "1/4 the reported freeze does not cover the in-flight window",
-    ).toContain("pending");
+    const hold = assignedExpression(entry, "transportHold");
+    expect(hold, "1/4 the reported hold misses the in-flight window").toContain(
+      "pending",
+    );
+    expect(hold, "1/4 the reported hold misses an unknown outcome").toContain(
+      "save.unresolved",
+    );
 
     const panel = read(PANEL_SRC);
     expect(panel, "2/4 the panel subscribes to the entry").toMatch(
@@ -1275,7 +1296,7 @@ describe("switching machine or mode clears the collected draft", () => {
     expect(
       entry,
       "the entry must report BOTH edges, or the freeze never lifts",
-    ).toMatch(/onUnresolvedChange\?\.\(frozen\)/);
+    ).toMatch(/onUnresolvedChange\?\.\(transportHold\)/);
 
     const panel = read(PANEL_SRC);
     expect(panel).toMatch(/onUnresolvedChange=\{setRevisionUnresolved\}/);

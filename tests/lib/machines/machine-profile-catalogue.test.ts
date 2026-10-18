@@ -1998,3 +1998,259 @@ describe("a hardware step is a reachability constraint", () => {
     expect(read(withRange(noStep), 11).ok).toBe(false);
   });
 });
+
+// ===========================================================================
+// MPX-01 — the three findings from the 568df459 review
+// ===========================================================================
+
+describe("every contract's own verification is gated, not just some", () => {
+  // THE CLASS, NOT THE INSTANCE (Codex, #855 4305364897). Three rounds found
+  // one member each: the profile's identity (4305243749), then its channel
+  // structure and its frequency, after the field and mode gates had been
+  // there from the start. The rule is written once in the guard now, and this
+  // asserts it for each contract that carries a `verification`.
+  const CHANNELS = {
+    count: 4,
+    nativeLabel: "Probe",
+    associationRequired: true,
+    supportsDistinctSettingGroups: true,
+    evidence: ["fx"],
+  };
+
+  for (const weak of ["unverified", "pending-evidence"] as const) {
+    it(`rejects an active profile whose CHANNEL STRUCTURE is ${weak}`, () => {
+      // The count is ENFORCED: `validateReading` refuses a channel above it
+      // and requires an association when the contract says so. An unverified
+      // structure therefore refuses true observations.
+      expect(
+        problems([offered({ channels: { ...CHANNELS, verification: weak } })]),
+      ).toContain(`profile is active but its channel structure is ${weak}`);
+    });
+
+    it(`rejects an active profile whose FIXED FREQUENCY is ${weak}`, () => {
+      expect(
+        problems([
+          offered({
+            frequency: { kind: "fixed", mhz: 13.56, verification: weak, evidence: ["fx"] },
+          }),
+        ]),
+      ).toContain(`profile is active but its fixed frequency is ${weak}`);
+    });
+  }
+
+  it("rejects an active profile whose SELECTABLE frequency is unverified", () => {
+    expect(
+      problems([
+        offered({
+          frequency: {
+            kind: "selectable",
+            mhz: [13.56, 27.12],
+            verification: "unverified",
+            evidence: ["fx"],
+          },
+        }),
+      ]),
+    ).toContain("profile is active but its selectable frequency is unverified");
+  });
+
+  it("CONTROL: a documented channel structure and frequency qualify", () => {
+    expect(
+      problems([
+        offered({
+          channels: { ...CHANNELS, verification: "device-confirmed" },
+          frequency: {
+            kind: "fixed",
+            mhz: 13.56,
+            verification: "manufacturer-documented",
+            evidence: ["fx"],
+          },
+        }),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("CONTROL: a BLOCKED profile's unverified contracts are fine — it is not offered", () => {
+    expect(
+      problems([base({ channels: { ...CHANNELS, verification: "unverified" } })]),
+    ).toEqual([]);
+  });
+
+  it("CONTROL: a not-applicable frequency has no verification to gate", () => {
+    // Demanding one would invent a source for the absence of a control.
+    expect(problems([offered()])).toEqual([]);
+  });
+});
+
+describe("an active profile must offer a mode she can actually use", () => {
+  // THE DEFECT (Codex, #855 4305364901). The no-modes rule tested only that
+  // the list was NON-EMPTY, so a profile whose every mode is blocked passed —
+  // and `activeProfiles` offered it while `activeModes` returned nothing and
+  // `validateReading` refused every possible mode. The same unusable picker,
+  // reached by a different route.
+  /**
+   * An ACTIVE profile carrying modes with exactly these availabilities.
+   *
+   * Applied AFTER `offered()`, not through it: `offered` maps every mode to
+   * active, so passing blocked modes into it produced active ones and the
+   * first version of these three tests asserted against a fixture that had
+   * quietly repaired the very condition under test.
+   */
+  const activeWithModes = (
+    ...availabilities: Array<"active" | "blocked" | "legacy-only">
+  ): MachineProfile => {
+    const proto = base().modes[0]!;
+    return {
+      ...offered(),
+      modes: availabilities.map((availability, i) => ({
+        ...proto,
+        key: `m${i}`,
+        availability,
+      })),
+    };
+  };
+
+  it("rejects an active profile whose every mode is blocked", () => {
+    expect(problems([activeWithModes("blocked", "blocked")])).toContain(
+      "profile is active but none of its modes is",
+    );
+  });
+
+  it("rejects one whose only mode is legacy-only", () => {
+    expect(problems([activeWithModes("legacy-only")])).toContain(
+      "profile is active but none of its modes is",
+    );
+  });
+
+  it("CONTROL: one active mode among blocked ones is enough", () => {
+    expect(
+      problems([activeWithModes("blocked", "active")]).filter((x) =>
+        x.includes("none of its modes"),
+      ),
+    ).toEqual([]);
+  });
+
+  it("CONTROL: no modes AT ALL gets the more specific complaint, not both", () => {
+    // Saying both would be noise, and "carries no modes at all" is the one a
+    // reviewer can act on.
+    const out = problems([offered({ modes: [] })]);
+    expect(out).toContain("profile is active but carries no modes at all");
+    expect(out).not.toContain("profile is active but none of its modes is");
+  });
+});
+
+describe("EVERY offered profile has a mode a reading is accepted against", () => {
+  // THE PROPERTY, RATHER THAN THE NEXT INSTANCE. Two rounds have now found a
+  // different way for the picker to offer something unusable — a superseded
+  // version (4305243747) and a profile with no ACTIVE mode (4305364901) —
+  // and both were found by review rather than by a test. This asserts the
+  // guarantee `activeProfiles` is for, by composition with the validator, so
+  // the next route to the same state fails here instead.
+  const readAgainst = (prof: MachineProfile, modeKey: string, catalogue: MachineProfile[]) =>
+    validateReading(
+      {
+        profileId: prof.profileId,
+        version: prof.version,
+        modeKey,
+        fieldKey: "current",
+        source: "practitioner-entered",
+        value: { kind: "value", value: 1.2 },
+      },
+      { catalogue },
+    );
+
+  const usable = (catalogue: MachineProfile[]) =>
+    activeProfiles(catalogue).every((prof) =>
+      prof.modes.some((m) => readAgainst(prof, m.key, catalogue).ok),
+    );
+
+  it("holds for a plain active profile", () => {
+    expect(usable([offered()])).toBe(true);
+  });
+
+  it("holds when an older version is retained beside the current one", () => {
+    expect(usable([offered(), offered({ version: 2 })])).toBe(true);
+  });
+
+  it("holds when every mode is blocked, because nothing is offered at all", () => {
+    const allBlocked: MachineProfile = {
+      ...offered(),
+      modes: base().modes.map((m) => ({ ...m, availability: "blocked" as const })),
+    };
+    // The integrity gate rejects this profile, so it must never be offered —
+    // and if it ever were, this property is what would catch it.
+    expect(problems([allBlocked])).toContain(
+      "profile is active but none of its modes is",
+    );
+    expect(usable([allBlocked])).toBe(false);
+  });
+
+  it("and the real catalogue satisfies it", () => {
+    // Vacuous today, because nothing in MACHINE_CATALOGUE is active — which is
+    // itself asserted elsewhere. It stops being vacuous the day a model ships,
+    // which is exactly when it matters.
+    expect(usable([...MACHINE_CATALOGUE])).toBe(true);
+  });
+});
+
+describe("a malformed numeric range is an integrity violation", () => {
+  // THE DEFECT (Codex, #855 4305364906). Each malformed shape fails quietly
+  // and differently: an inverted HARDWARE range refuses every value a
+  // practitioner could enter, and a nonpositive step is skipped by the step
+  // check's own `step > 0` guard, so the contract declares an increment it
+  // never enforces.
+  const withRange = (range: Record<string, unknown>): MachineProfile => {
+    const b = offered();
+    return {
+      ...b,
+      modes: [
+        {
+          ...b.modes[0]!,
+          fields: [{ ...b.modes[0]!.fields[0]!, ranges: [range] as never }],
+        },
+      ],
+    };
+  };
+  const HARD = { class: "hardware-enforced", evidence: "fx" };
+
+  it("rejects an INVERTED range", () => {
+    expect(problems([withRange({ ...HARD, min: 10, max: 2 })])).toContain(
+      "field m.current range is malformed: min 10 exceeds max 2",
+    );
+  });
+
+  it("rejects a non-finite bound", () => {
+    expect(
+      problems([withRange({ ...HARD, min: Number.POSITIVE_INFINITY, max: 10 })]),
+    ).toContain("field m.current range is malformed: min is not finite");
+    expect(problems([withRange({ ...HARD, min: 0, max: Number.NaN })])).toContain(
+      "field m.current range is malformed: max is not finite",
+    );
+  });
+
+  it("rejects a nonpositive or non-finite step", () => {
+    for (const step of [0, -2]) {
+      expect(problems([withRange({ ...HARD, min: 0, max: 10, step })])).toContain(
+        `field m.current range is malformed: step ${step} is not a positive increment`,
+      );
+    }
+    expect(
+      problems([withRange({ ...HARD, min: 0, max: 10, step: Number.NaN })]),
+    ).toContain("field m.current range is malformed: step NaN is not a positive increment");
+  });
+
+  it("CONTROL: a well-formed range is clean, including one-sided ones", () => {
+    expect(problems([withRange({ ...HARD, min: 0, max: 10, step: 2 })])).toEqual([]);
+    expect(problems([withRange({ ...HARD, max: 10 })])).toEqual([]);
+    expect(problems([withRange({ ...HARD, min: 0 })])).toEqual([]);
+    // min === max is a single reachable setting, not an inversion.
+    expect(problems([withRange({ ...HARD, min: 5, max: 5 })])).toEqual([]);
+  });
+
+  it("and it is checked for an ADVISORY range too, because the numbers are still wrong", () => {
+    expect(
+      problems([
+        withRange({ class: "published-specification", evidence: "fx", min: 10, max: 2 }),
+      ]),
+    ).toContain("field m.current range is malformed: min 10 exceeds max 2");
+  });
+});
