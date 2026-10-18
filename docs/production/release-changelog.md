@@ -33,12 +33,13 @@ This section previously carried a "(through 2026-07-27)" heading while containin
 
 **Coverage gap, stated rather than hidden:** this table covers PRs **#357–#479**, **#601**,
 **#629**, **#630**, and — added by the 2026-08-26 reconciliation and kept current through each
-production refresh since — **every** first-parent merge in `b9e0003f..6acea261`, all
-**160** PR merges among them (**#632–#913**, plus **#631**, whose number sits below that floor but
+production refresh since — **every** first-parent merge in `b9e0003f..aaf3042b`, all
+**163** PR merges among them (**#632–#919**, plus **#631**, whose number sits below that floor but
 whose merge does not — see below). ⚠️ **EXTENDED 2026-10-12 by CANON-REFRESH-2026-10-12:**
 the range previously ended at `410e5039` (81 merges, the 2026-09-21 extension described next);
 **56** rows were backfilled from the first-parent graph and each merge's own diff, and the
-pre-existing `#773` row was moved, unchanged, to its first-parent position. ⚠️ **EXTENDED 2026-10-17 by CANON-REFRESH-2026-10-17c:** 3 rows added, `#911`, `#913`, `#912`,
+pre-existing `#773` row was moved, unchanged, to its first-parent position. ⚠️ **EXTENDED 2026-10-18 by CANON-REFRESH-2026-10-18:** 3 rows added, `#915`, `#919`, `#918`,
+taking the range through `aaf3042b` (163 merges); only `#918` is runtime-bearing (`#919` is CI only). ⚠️ **EXTENDED 2026-10-17 by CANON-REFRESH-2026-10-17c:** 3 rows added, `#911`, `#913`, `#912`,
 taking the range through `6acea261` (160 merges); `#913` and `#912` are runtime-bearing. ⚠️ **EXTENDED 2026-10-17 by CANON-REFRESH-2026-10-17b:** 3 rows added, `#909`, `#842`, `#891`,
 taking the range through `62ff27b2` (157 merges); `#842` and `#891` are runtime-bearing. ⚠️ **EXTENDED 2026-10-17 by CANON-REFRESH-2026-10-17:** 2 rows added, `#889`, `#898`,
 taking the range through `b08845ce` (154 merges); `#898` is runtime-bearing. ⚠️ **EXTENDED 2026-10-16 by CANON-REFRESH-2026-10-16b:** 2 rows added, `#886`, `#887`,
@@ -68,7 +69,7 @@ historical completeness. Do not read a missing row as "not shipped".
 
 **The block is complete, not sampled — and completeness is over the GIT RANGE, not over a
 span of PR numbers.** It was enumerated mechanically
-(`git log --merges --first-parent b9e0003f..6acea261`, 160 merges; 157 through `62ff27b2`; 154 through `b08845ce`; 152 through `0ae33bd3`; 150 through `1ae096e2`; 145 through `ce133c18` on 2026-10-14; 140 through `6f7281bb` on 2026-10-13; 138 through `d5efa20a` on 2026-10-12; it was `b9e0003f..410e5039`, 81 merges, at the 2026-09-21 extension) rather than recalled, so the
+(`git log --merges --first-parent b9e0003f..aaf3042b`, 163 merges; 160 through `6acea261`; 157 through `62ff27b2`; 154 through `b08845ce`; 152 through `0ae33bd3`; 150 through `1ae096e2`; 145 through `ce133c18` on 2026-10-14; 140 through `6f7281bb` on 2026-10-13; 138 through `d5efa20a` on 2026-10-12; it was `b9e0003f..410e5039`, 81 merges, at the 2026-09-21 extension) rather than recalled, so the
 current state can be reconstructed from shipped history without a gap. Each row records whether
 the merge was **runtime-bearing**, decided by changed-path analysis rather than by the PR title.
 
@@ -81,6 +82,9 @@ enumeration of `b9e0003f..bf6f09c4` while omitting `#631` entirely.
 
 | PR | Migration | Status | What shipped | Notes |
 |---|---|---|---|---|
+| **#918** | none | **Runtime-bearing** | fix(privacy): PostHog URL properties lose record ids; /flags off (#828 G-07/G-26) | Merged `aaf3042b` on `2026-10-18T21:49:36Z` from head `40ae08ed`. 6 files: 4 shipping (`instrumentation-client.ts`, `lib/analytics/client-boundary.ts`, `lib/analytics/path-ids.ts` (new), `lib/analytics/vercel-url-redaction.ts`), `docs/03_SECURITY_AND_PRIVACY.md` and one test; no migration. `scripts/classify-changes.mjs`: `application=true`, T1. PostHog URL-valued properties get the same id/token segment rules as Vercel Analytics, and `advanced_disable_flags: true` stops the `/flags` request. Vercel deployment `dpl_2fomfoKM5oVUixiH2kDJvZ4XiJ4C` READY `2026-10-18T21:52:04Z`, production, aliased to `hone.care`. Production push CI `39169537877`: browser shards 1–4 and aggregator success; db, payment, Google, mobile and docs-only lanes skipped (not executed); validate failed only canonical-production-facts A3/A5 (stale record). |
+| **#919** | none | **CI only — NOT runtime-bearing** | fix(ci): production pushes classify what the merge SHIPPED, not its combined diff | Merged `32023620` on `2026-10-18T21:48:21Z` from head `c9409bfc`. 2 files: `.github/workflows/ci.yml` and `tests/ci/push-changed-files.test.ts` (new); 0 shipping files, no migration. `scripts/classify-changes.mjs`: `ci_workflows=true`, `full_matrix_required=true`, T2 (CI control system, not runtime). The push diff now fails closed when `before` is not a usable ancestor. Vercel deployment `dpl_3KHc6myVfZy2HWcDDrLPt6yR7g96` success `2026-10-18T21:50:18Z`, with no runtime change, superseded on `hone.care` by `aaf3042b`. Production push CI `39169449159` **cancelled**, superseded by `aaf3042b`'s run. |
+| **#915** | none | **Documentation only — NOT runtime-bearing** | docs(production): record #913 and #912 at 6acea261 (CANON-REFRESH-2026-10-17c) | Merged `c901be08` on `2026-10-17T22:46:48Z`. 3 files under `docs/production/`; no migration. `scripts/classify-changes.mjs`: `docs_only=true`, T0. Vercel deployment `GZB2QY9H8zragquuc1rUUSjDYBZ2` success `2026-10-17T22:48:53Z`, with no runtime change. Production push CI `39076439741` success. |
 | **#912** | none | **Runtime-bearing** | fix(privacy): /ingest and /monitoring forward only allowlisted headers (#828 G-07/G-26) | Merged `6acea261` on `2026-10-17T19:55:12Z` from head `c146004a`. 11 files: 5 shipping (`app/ingest/[...path]/route.ts`, `app/monitoring/route.ts`, `instrumentation-client.ts`, `lib/observability/egress-proxy.ts`, `next.config.ts`), a doc, two e2e specs and tests; no migration. The two proxies forward only allowlisted request and response headers. Vercel deployment `dpl_LbwCQZX6F1T7cdpo6tgGeayuyqQN` READY `2026-10-17T19:57:42Z`, production, aliased to `hone.care`. |
 | **#913** | none | **Runtime-bearing** | FETT photos: grid thumbnails recover after the 60 s signed URL expires (HON-43) | Merged `4ae19a41` on `2026-10-17T19:37:16Z` from head `be1c94b9`. 11 files: 4 shipping (`GridPhoto.tsx` (new), `TreatmentImagesManager.tsx`, `actions.ts`, `lib/images/grid-photo-recovery.ts` (new)), docs, an e2e spec, `scripts/browser-groups.mjs` and tests; no migration. Vercel deployment `dpl_Gz7vPNNsPvZWgRR2d3ZbTSh2r3cj` READY `2026-10-17T19:39:24Z`, superseded on `hone.care` by `6acea261`. Production push CI `39063253755` failed only canonical-production-facts A3/A5 (stale record). |
 | **#911** | none | **Documentation only — NOT runtime-bearing** | docs(production): record #842 and #891 at 62ff27b2 (CANON-REFRESH-2026-10-17b) | Merged `c0982d63` on `2026-10-17T18:07:11Z`. 3 files under `docs/production/`; no migration. Vercel deployment `4Jz6qWXig6ciQ1Qh3QHvZUYehMQa` success `2026-10-17T18:08:59Z`, with no runtime change. |
