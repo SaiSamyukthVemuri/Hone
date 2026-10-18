@@ -254,6 +254,9 @@ test("owner: the day's records appear; every excluded sentinel is absent from pa
   await expect(blockEl).not.toContainText("Reaction: mild_redness");
   await expect(blockEl).toContainText(fx.sentinel.block);
   await expect(blockEl).toContainText("Thermolysis intensity: 22 %");
+  // Tolerance as the saved view words it, never the stored 4 (Codex P2 4307190165).
+  await expect(blockEl).toContainText("Client tolerance: Mild discomfort");
+  await expect(blockEl).not.toContainText("Tolerance: 4");
   // A blend pass with three pulses: the saved view shows its pulses AND its
   // delay, so the printout does too (pulseReadingsShown, Codex P1 4305560955).
   await expect(blockEl).toContainText("Pulses: 3");
