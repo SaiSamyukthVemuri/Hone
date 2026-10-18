@@ -677,17 +677,22 @@ describe("FAIRNESS: rows that keep refusing never starve the rest", () => {
         : readySnap(B2, "sender-b2");
     process.env[STUDIO_ROUTING_ENV] = `${A},${B2}`;
     const r = await run({ [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: `${A},${B2}` }, 50);
-    expect(r).toMatchObject({ ran: true, sent: 1, skipped: { sms_route_no_active_sender: 60 } });
+    // A studio-wide refusal ENDS A's visit (Codex P2 4305390797), so A's
+    // backlog is neither skipped row by row nor paged through.
+    expect(r).toMatchObject({ ran: true, sent: 1, skipped: { sms_route_no_active_sender: 1 } });
     expect(db.find((x) => x.id === "b-1")!.sms_confirmation_sent_at).not.toBeNull();
     expect(events.filter((e) => e === SNAPSHOT_RPC)).toHaveLength(2);
+    expect(events.filter((e) => e === "select_owed")).toHaveLength(2);
     expect(db.filter((x) => x.studio_id === A).every((x) => x.sms_confirmation_send_attempts === 0)).toBe(true);
   });
 
   it("an unreadable snapshot costs one row's looks per run (3), not looks per row", async () => {
     db = Array.from({ length: 5 }, (_, i) => appt({ id: `r-${i}`, created_at: iso(NOW - (60 + i) * 60_000) }));
     snapshot = { data: null, error: { code: "PGRST202" } };
-    expect(await run()).toMatchObject({ sent: 0, skipped: { sms_route_sender_read_failed: 5 } });
+    // Studio-wide: the first row's three looks, then the studio's visit ends.
+    expect(await run()).toMatchObject({ sent: 0, skipped: { sms_route_sender_read_failed: 1 } });
     expect(events.filter((e) => e === SNAPSHOT_RPC)).toHaveLength(3);
+    expect(db.every((x) => x.sms_confirmation_send_attempts === 0)).toBe(true);
   });
 });
 
@@ -883,7 +888,7 @@ describe("FRESHNESS: an approval is never reused, and a STOP mid-run is honoured
       reads += 1;
       return { data: { senders: [], registrations: [] }, error: null };
     };
-    expect(await run()).toMatchObject({ sent: 0, skipped: { sms_route_no_active_sender: 2 } });
+    expect(await run()).toMatchObject({ sent: 0, skipped: { sms_route_no_active_sender: 1 } });
     expect(reads).toBe(1);
     reads = 0;
     events = [];
@@ -1068,6 +1073,40 @@ describe("the first studio rotates per 15-minute slot", () => {
 // General's P3: recovery took opts.env for the switch and the routing list,
 // but the per-row send read process.env, so an injected env could select a
 // row as studio-routed and then send it on the PLATFORM route.
+// Codex P2 4305390797: a rotation can only promise every studio a START
+// within the 24-hour lifetime if refusals cannot eat the run. With a
+// studio-wide refusal ending the visit, one run reaches every studio.
+describe("refused studios cannot consume the run: every studio is reached in ONE run", () => {
+  it("100 routed studios, 99 with no usable sender: one run reads every studio once, and the last one sends", async () => {
+    const ids = Array.from({ length: 100 }, (_, i) => `studio-w${String(i).padStart(3, "0")}`);
+    const list = ids.join(",");
+    process.env[STUDIO_ROUTING_ENV] = list;
+    const ready = ids[99];
+    snapshot = (studioId) => (studioId === ready ? readySnap(ready, "sender-ready") : { data: { senders: [], registrations: [] }, error: null });
+    // Every refused studio has a three-page backlog; the ready one has one row.
+    db = [
+      ...ids.slice(0, 99).flatMap((sid) =>
+        Array.from({ length: 3 }, (_, k) => appt({ id: `${sid}-${k}`, studio_id: sid, created_at: iso(NOW - HOUR - k * 60_000), starts_at: iso(NOW + 48 * HOUR) })),
+      ),
+      appt({ id: "ready-1", studio_id: ready, created_at: iso(NOW - HOUR), starts_at: iso(NOW + 48 * HOUR) }),
+    ];
+    const r = await recoverOwedConfirmations({
+      admin: admin(),
+      nowMs: NOW,
+      env: { [CONFIRMATION_RECOVERY_ENV]: "on", [STUDIO_ROUTING_ENV]: list },
+      clock: () => NOW,
+      pageSize: 1,
+      manageUrlFor: () => "https://app.example/manage/x",
+    });
+    expect(r).toMatchObject({ ran: true, sent: 1, skipped: { sms_route_no_active_sender: 99 } });
+    // Each refused studio reads ONE page and stops (not three). The ready
+    // studio reads two: its one-row page is full at pageSize 1, so the empty
+    // next page confirms the end. 99 + 2 = 101.
+    expect(events.filter((e) => e === "select_owed")).toHaveLength(101);
+    expect(db.find((x) => x.id === "ready-1")!.sms_confirmation_sent_at).not.toBeNull();
+  });
+});
+
 describe("the injected env's routing list governs the per-row send", () => {
   it("process.env lists NO studio, the injected env lists A: the row is still sent on A's own route", async () => {
     delete process.env[STUDIO_ROUTING_ENV];

@@ -316,7 +316,14 @@ export async function recoverOwedConfirmations(opts: {
             continue;
           }
           const destKey = destinationKey(studioId, row.client.phone);
-          const refused = studioRefusal.get(studioId) ?? (destKey ? destinationRefusal.get(destKey) : undefined);
+          // A studio-wide refusal ends the studio's visit (below), so it is
+          // never found here; a destination refusal skips just this row.
+          const studioWide = studioRefusal.get(studioId);
+          if (studioWide) {
+            skip(studioWide);
+            continue studios;
+          }
+          const refused = destKey ? destinationRefusal.get(destKey) : undefined;
           if (refused) {
             skip(refused);
             continue;
@@ -375,8 +382,15 @@ export async function recoverOwedConfirmations(opts: {
           }
           else if (result.skipped) {
             skip(result.reason);
-            if (STUDIO_WIDE_REFUSALS.has(result.reason)) studioRefusal.set(studioId, result.reason);
-            else if (result.reason === "sms_route_destination_not_ready" && destKey) {
+            if (STUDIO_WIDE_REFUSALS.has(result.reason)) {
+              studioRefusal.set(studioId, result.reason);
+              // Every remaining row of this studio would get the same refusal,
+              // so stop paging through them (Codex P2 4305390797, and #916's
+              // 4305191997): a studio whose sender is unusable must not spend
+              // the run's four-minute budget before later studios are visited.
+              // The rows stay owed for the next run.
+              continue studios;
+            } else if (result.reason === "sms_route_destination_not_ready" && destKey) {
               destinationRefusal.set(destKey, result.reason);
             }
           } else run.failed += 1;
