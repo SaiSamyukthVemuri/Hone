@@ -168,3 +168,48 @@ describe("zero network", () => {
     networkCalls.length = 0;
   });
 });
+
+describe("encoded separators (Codex P1 4305142681): every decoded part is judged", () => {
+  // Imported lazily so the describe above stays the file's primary story.
+  const cases: Array<[string, string, string]> = [
+    ["Codex example 1, %2F", "/calendar%2F42", "/calendar/[id]"],
+    ["Codex example 2, %2F before an opaque token", "/x%2FAbCdEf0123456789_-AbCdEf", "/x/[token]"],
+    ["lower-case %2f", `/clients%2f${CLIENT}`, "/clients/[id]"],
+    ["backslash %5C", `/clients%5C${CLIENT}`, "/clients/[id]"],
+    ["double-encoded %252F", "/calendar%252F42", "/calendar/[id]"],
+    ["mixed /clients%2F<uuid>%2Fsessions", `/clients%2F${CLIENT}%2Fsessions`, "/clients/[id]/sessions"],
+  ];
+
+  it.each(cases)("%s: redactIdsInPath", async (_label, input, expected) => {
+    const { redactIdsInPath } = await import("@/lib/analytics/path-ids");
+    const out = redactIdsInPath(input);
+    expect(out).toBe(expected);
+    expect(UUID_ANYWHERE.test(oracleDecode(out))).toBe(false);
+    expect(oracleDecode(out)).not.toMatch(/\/42(\/|$)/);
+  });
+
+  it.each(cases)("%s: the Vercel Analytics boundary (shared rules)", async (_label, input, expected) => {
+    const { redactVercelAnalyticsUrl } = await import("@/lib/analytics/vercel-url-redaction");
+    expect(redactVercelAnalyticsUrl(`${HOST}${input}`)).toBe(`${HOST}${expected}`);
+  });
+
+  it.each(cases)("%s: a PostHog marketing event's $referrer", (_label, input, expected) => {
+    const out = guardBrowserEvent({
+      event: "$pageview",
+      properties: { $current_url: `${HOST}/pricing`, $referrer: `${HOST}${input}` },
+    })!;
+    expect((out.properties as Record<string, string>).$referrer).toBe(`${HOST}${expected}`);
+  });
+
+  it("an undecodable or still-encoded-after-the-bound segment fails closed to [token]", async () => {
+    const { redactIdsInPath } = await import("@/lib/analytics/path-ids");
+    expect(redactIdsInPath("/clients/%E0%A4%A")).toBe("/clients/[token]");
+    expect(redactIdsInPath("/clients/%2525252525252F42")).toBe("/clients/[token]");
+  });
+
+  it("ordinary segments with no id are returned exactly as they came", async () => {
+    const { redactIdsInPath } = await import("@/lib/analytics/path-ids");
+    expect(redactIdsInPath("/settings/charting-records")).toBe("/settings/charting-records");
+    expect(redactIdsInPath("/a%20b")).toBe("/a%20b");
+  });
+});

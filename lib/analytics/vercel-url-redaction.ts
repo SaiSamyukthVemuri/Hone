@@ -25,7 +25,7 @@ import {
   sanitizeMarketingUrl,
 } from "@/lib/analytics/client-boundary";
 import { TOKEN_ROUTE_PREFIXES } from "@/lib/security/token-routes";
-import { redactIdSegment as redactSegment } from "@/lib/analytics/path-ids";
+import { redactEncodedSegment } from "@/lib/analytics/path-ids";
 
 // UUID / digit / opaque segment rules: lib/analytics/path-ids.ts, shared with
 // the PostHog boundary (#828 G-07/G-26).
@@ -61,13 +61,9 @@ export function redactVercelAnalyticsUrl(raw: string): string | null {
     if (segment === "") return segment;
     // segments[0] is "" for an absolute path, so /book/<slug> is index 2.
     if (i === 2 && segments[1] === "book") return "[studio]";
-    let decoded = segment;
-    try {
-      decoded = decodeURIComponent(segment);
-    } catch {
-      return "[token]";
-    }
-    return redactSegment(decoded);
+    // Decoded to a fixed point and split on encoded separators before it is
+    // judged (Codex P1 4305142681): "calendar%2F42" is calendar/42.
+    return redactEncodedSegment(segment);
   });
   return `${u.origin}${out.join("/")}`;
 }
