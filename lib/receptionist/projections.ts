@@ -82,3 +82,30 @@ export async function searchFrontDeskContacts(
   if (error) fail("contacts", error.code);
   return (data ?? []) as FrontDeskContact[];
 }
+
+export type FrontDeskBookingOptions = {
+  services: Array<{ id: string; name: string; durationMinutes: number }>;
+  practitioners: Array<{ id: string; name: string; color: string | null }>;
+};
+
+/** The booking form's choices (0220): active services and bookable practitioners. */
+export async function getFrontDeskBookingOptions(studioId: string): Promise<FrontDeskBookingOptions> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("receptionist_booking_options", { p_studio_id: studioId });
+  if (error) fail("booking_options", error.code);
+  const rows = (data ?? []) as Array<{
+    kind: string;
+    id: string;
+    name: string | null;
+    duration_minutes: number | null;
+    color: string | null;
+  }>;
+  return {
+    services: rows
+      .filter((r) => r.kind === "service")
+      .map((r) => ({ id: r.id, name: r.name ?? "Service", durationMinutes: r.duration_minutes ?? 0 })),
+    practitioners: rows
+      .filter((r) => r.kind === "practitioner")
+      .map((r) => ({ id: r.id, name: r.name ?? "Practitioner", color: r.color })),
+  };
+}

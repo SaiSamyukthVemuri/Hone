@@ -33,6 +33,7 @@ const RAW = /\bcancellation_token\b/;
 
 const FILES_NO_RAW = [
   "app/(app)/calendar/actions.ts",
+  "lib/booking/booking-notifications.ts",
   "app/api/cron/appointment-reminders/route.ts",
   "app/book/[slug]/actions.ts",
   "app/cancel/[token]/actions.ts",
@@ -72,7 +73,9 @@ describe("public token routes still look up the canonical hash column", () => {
   });
 
   it("link-rebuild surfaces mint the stateless HMAC token", () => {
-    expect(read("app/(app)/calendar/actions.ts")).toMatch(
+    // STUDIO-READY-02c: the internal booking dispatch moved verbatim into a
+    // shared module used by the calendar and the front desk.
+    expect(read("lib/booking/booking-notifications.ts")).toMatch(
       /generateCancellationToken\(/,
     );
     expect(read("app/api/cron/appointment-reminders/route.ts")).toMatch(

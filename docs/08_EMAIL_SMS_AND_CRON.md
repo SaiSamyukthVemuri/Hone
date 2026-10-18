@@ -86,7 +86,7 @@ The double-send gap is closed. The reminder cron now claims each row via `claim_
 
 ### Email delivery events (DELIVERY-EVENTS-01, migration 0212)
 
-> **THE RECEIVING HALF, INERT UNTIL ACTIVATED.** This adds the signed Resend webhook, the receipts and an email delivery ledger. **Ledgered so far:** the 24h and 2h reminder window emails (DELIVERY-VISIBILITY-01, below). Every other email path is still unledgered, so its events stay unattributed and platform-only. Until `RESEND_WEBHOOK_SECRET` is set and the endpoint is configured in Resend (a separately authorized activation), nothing arrives at all.
+> **THE RECEIVING HALF, INERT UNTIL ACTIVATED.** This adds the signed Resend webhook, the receipts and an email delivery ledger. **Ledgered so far:** the 24h and 2h reminder window emails (DELIVERY-VISIBILITY-01) and the client booking confirmation from every caller: public booking, portal rebook, calendar and public reschedule (DELIVERY-VISIBILITY-03, joined once inside `sendBookingConfirmationToClient`). Every other email path is still unledgered, so its events stay unattributed and platform-only. Until `RESEND_WEBHOOK_SECRET` is set and the endpoint is configured in Resend (a separately authorized activation), nothing arrives at all.
 
 **Route: `POST /api/resend/webhook`** (`app/api/resend/webhook/route.ts`, exact-path middleware exemption). It reads the raw body, then verifies the Svix signature (`svix-id`, `svix-timestamp`, `svix-signature`) with `RESEND_WEBHOOK_SECRET` in `lib/email/resend-webhook.ts`. The check is hand-rolled on `node:crypto`, like the Twilio check, and is held to the official Resend SDK verifier on the same fixtures. Refusals:
 - missing secret: 500, nothing written;
@@ -97,7 +97,8 @@ A captured request therefore cannot be replayed later. A replay inside the windo
 
 **Durable before acknowledged.** `record_email_provider_event` writes one receipt per delivery, unique on `(provider, svix-id)`. Resend keeps that id across every retry of an event.
 - If the receipt cannot be written, the route answers **500** and Resend retries on its own schedule (roughly 27 hours, after which it may disable the endpoint).
-- Once the receipt is written, the answer is **200**, whatever happens to processing. A poison event must never keep the provider retrying until it disables the endpoint.
+- If the receipt is written but is **still pending after this request**, the answer is also **500**, so Resend's retry recovers it (Codex P2 4244387538, 4244798597). That covers this request's own processing failing, and a claim (a failed attempt's, not yet expired) keeping it from trying. A retry that lands inside the two-minute claim answers 500 again, so the provider keeps retrying until one lands after it expires. The recovery does not depend on another webhook or a scheduled sweep. Attempts are bounded in the database: after five the receipt is quarantined and the retry that follows gets **200**, so a poison event cannot keep the provider retrying until it disables the endpoint.
+- Every other outcome is acknowledged with **200**: applied, stale, unmatched, ignored or quarantined.
 - A retried delivery whose receipt is still **pending** is processed again; one already processed is acknowledged as-is.
 
 **Exactly-once processing and crash recovery.**
@@ -155,7 +156,7 @@ Pinned by `tests/db/email-delivery-events.db.test.ts` (replay, order permutation
 2. sends through the one Resend path with the tag `hone_m = <row id>` (`sendEmailSafely({ ledgerMessageId })`);
 3. settles the row (`settleOutcomeForEmailSend`) before recording the claim result.
 
-`sendEmailSafely` now classifies each failure as `none` (no request made), `refused` (a 4xx) or `ambiguous` (5xx, timeout, network). An acceptance without a recognisable provider id settles `unknown`. Ambiguity is never recorded as a refusal, and no free-text provider message is kept. The join is fail-soft: a ledger that cannot be written sends exactly as before, untagged. The 0080 claim stays the send authority, and nothing here resends. Other email paths (booking confirmation, cancellation, postcare, receipts, LEAD-ALERT-01's operator email) join in later slices.
+`sendEmailSafely` now classifies each failure as `none` (no request made), `refused` (a 4xx) or `ambiguous` (5xx, timeout, network). An acceptance without a recognisable provider id settles `unknown`. Ambiguity is never recorded as a refusal, and no free-text provider message is kept. The join is fail-soft: a ledger that cannot be written sends exactly as before, untagged. The 0080 claim stays the send authority, and nothing here resends. The booking confirmation joins inside its one sender, so none of its four callers changes, and it is just as fail-soft: no service-role configuration or no ledger row means the same email, untagged. Cancellation, postcare and receipts need new ledger purposes (a migration), and LEAD-ALERT-01's operator email needs a platform purpose; both are later slices.
 
 **Incidents: one per failure class, not one per failure.** `delivery_incidents` keeps one OPEN incident per (studio, channel, purpose, failure class), with occurrences, first and last seen, the latest attempt and appointment, and the latest reason slug.
 - An AFTER trigger on each ledger opens or extends it in the **same transaction** as the failure. For email that covers refused, bounced, failed and suppressed (settle or signed event). For SMS it covers refused, undelivered and failed (settle or Twilio callback, with no change to the Twilio route).
@@ -173,7 +174,24 @@ Pinned by `tests/db/email-delivery-events.db.test.ts` (replay, order permutation
 
 Findings (`lib/email/delivery-health.ts`) have purpose-specific thresholds: a backlog older than 15 minutes is a warning and older than 6 hours is critical; exhausted, quarantined, unreported and sweep failures are warnings. Each finding is raised as an ops alert **at most once while an unresolved alert for that event is open**. A sweep or health read that fails is itself a finding, never a healthy run. **The route is not registered in `vercel.json`**: scheduling it belongs to the delivery-events activation.
 
-**Not yet:** an owner-facing screen, a support queue UI, emailed owner/support notifications (the HIPAA routing gate #828 applies to any patient-related email: Resend cannot sign a BAA), and producers beyond the reminder window.
+**Where people see it (DELIVERY-VISIBILITY-02).**
+- **Owner:** a "Message delivery" card on Settings → Launch (`components/delivery/OwnerDeliveryCard.tsx`, mounted by one line; it moves into the owner console when that lands). It reads `owner_delivery_incidents` with the owner's own session and renders **nothing** for anyone the database refuses. Each open incident shows once, with:
+  - a count and its first and last occurrence;
+  - a plain-English meaning and the next step (`lib/delivery/incidents.ts`), with a link to the latest appointment.
+
+  A bounce is the studio's to fix (check the address); a provider failure or refusal is Hone's. Until the Resend webhook is activated, the card says plainly that a bounce after sending cannot appear.
+- **Platform support:** `/admin/delivery`. It shows the delivery health (an unreadable row is shown as unknown, never healthy), Resend receipt outcomes and the cross-studio incident queue. Resolve is an admin-only server action, audited as `delivery_incident_resolved` (blocked attempts included).
+
+**Cancellation and postcare emails, and "client says they didn't receive it" (DELIVERY-VISIBILITY-04, migration 0221).**
+- The client's **cancellation notice** (practitioner cancel) and the **postcare email** now go through the same begin/tag/settle join, as `appointment_cancellation` and `appointment_postcare`. The join lives in one helper in `lib/email/send-appointment.ts`, and the callers pass only `ledger: { studioId, appointmentId }`. The studio's own copy of a cancellation is Hone talking to its customer, so it is **not** ledgered.
+- On an appointment page the **owner** can report "Client says they didn't receive a message", choosing one message from a closed list. `report_delivery_concern` records:
+  - who reported it and when, on the server's clock;
+  - **what the ledger said at that moment** (the latest attempt's status, or `no_record`).
+
+  It changes no delivery status, infers nothing, resends nothing and stores no free text. At most one concern is open per appointment, channel and purpose.
+- The owner's open concerns appear on the delivery card. Support sees them in `/admin/delivery` with the ledger status **then and now**, and closes them as explained, resent by the studio, provider issue or not actionable. The close is audited as `delivery_concern_closed`. The database refuses practitioners, front desk, other studios, anon and service_role.
+
+**Not yet:** emailed owner or support notifications (the HIPAA routing gate #828 applies to any patient-related email: Resend cannot sign a BAA), and producers beyond the reminder window.
 
 Pinned by `tests/db/delivery-incidents.db.test.ts`, `tests/migrations/0215-delivery-incidents.test.ts`, `tests/lib/email/delivery-ledger.test.ts`, `tests/lib/email/delivery-health.test.ts`, `tests/app/api/email-delivery-sweep.test.ts` and `tests/app/api/cron/reminder-email-ledger.test.ts`.
 

@@ -673,6 +673,8 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "capacity_enabled", reason: "internal_state", note: "Feature-state snapshot at booking time." },
       { column: "created_by_practitioner_id", reason: "pending_review", note: "Booking attribution (migration 0174)." },
       { column: "cancelled_by_practitioner_id", reason: "pending_review", note: "Cancellation attribution (migration 0174)." },
+      { column: "created_by_receptionist_id", reason: "pending_review", note: "Front-desk booking attribution (migration 0220)." },
+      { column: "cancelled_by_receptionist_id", reason: "pending_review", note: "Front-desk cancellation attribution (migration 0220)." },
       { column: "outside_availability_authorized_by_practitioner_id", reason: "pending_review", note: "Override authorization (migration 0174)." },
       { column: "outside_availability_authorized_role", reason: "pending_review", note: "Override authorization (migration 0174)." },
       { column: "outside_availability_authorized_at", reason: "pending_review", note: "Override authorization (migration 0174)." },
@@ -1685,6 +1687,13 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     fieldReviewRequired: true,
     reason:
       "The outbound SMS delivery ledger, live since migration 0206 (SMS-00): one row per appointment or waitlist-invitation text attempt, with its purpose, status, skip reason and timestamps. It holds no message body and no phone number. Studio-scoped operational history, so PENDING rather than EXCLUDED, and field-review-required for the same reason as studio_sms_senders: provider_message_sid is Hone's provider identifier for one message and carries no customer meaning, while the status history is what a studio would recognise (whether a reminder reached a client). No export surface ships in SMS-00.",
+  },
+  delivery_concerns: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "Owner-reported \"client says they did not receive it\" records, live since migration 0221 (DELIVERY-VISIBILITY-04). Studio-scoped operational history the owner created themselves: which message, which appointment, when, and what the delivery ledger said at that moment. It holds no free text, no client address and no provider payload, so it needs no field review. It is PENDING rather than EXCLUDED because the studio authored it, and it is decided with email_outbound_messages, whose attempts it refers to. No export surface ships in DELIVERY-VISIBILITY-04.",
   },
   email_outbound_messages: {
     kind: "pending",
