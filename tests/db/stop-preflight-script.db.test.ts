@@ -54,6 +54,8 @@ const readyFacts = (number: string, service: string) => ({
   signatureProof: { lastVerifiedCallbackAt: "2026-10-12T10:00:00Z", credentialsActiveSince: "2026-10-01T00:00:00Z" },
   endpointProbe: { status: 405, redirectedTo: null },
   service: {
+    sid: service,
+    checkedNumber: number,
     inboundRequestUrl: `${BASE}/api/twilio/inbound-sms#ct=1000&rt=5000&tt=15000&rc=2&rp=4xx,5xx,ct,rt&e=ashburn,umatilla`,
     inboundMethod: "POST",
     useInboundWebhookOnNumber: false,

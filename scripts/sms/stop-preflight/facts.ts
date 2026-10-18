@@ -29,6 +29,12 @@ export type SanitizedFacts = {
   malformed: string[];
   /** Paths of identity fields the file supplied and the script ignored. */
   ignored: string[];
+  /**
+   * The Messaging Service and number the file's `service.*` facts were READ
+   * FROM (Codex P2 4305512201). Never used as identity: run.ts requires both to
+   * equal the database sender's, or it drops every service fact.
+   */
+  serviceEvidence: { sid: string | undefined; checkedNumber: string | undefined };
 };
 
 export type FactsRefusal = { refused: "not_an_object" | "wrong_facts_version" | "secret_in_facts" };
@@ -61,6 +67,7 @@ export function sanitizeFacts(raw: unknown, nowMs: number): SanitizedFacts | Fac
 
   const malformed: string[] = [];
   const ignored: string[] = [];
+  const serviceEvidence: SanitizedFacts["serviceEvidence"] = { sid: undefined, checkedNumber: undefined };
 
   // Field readers: each returns the value, or undefined (and records why).
   const at = (o: Obj | undefined, key: string, path: string) => {
@@ -161,7 +168,10 @@ export function sanitizeFacts(raw: unknown, nowMs: number): SanitizedFacts | Fac
     const sv = isObj(raw.service) ? raw.service : undefined;
     if (!sv) malformed.push("service");
     else {
-      for (const k of ["sid", "checkedNumber"]) if (k in sv) ignored.push(`service.${k}`);
+      // The service and number these facts describe: an evidence label, checked
+      // against the database by run.ts, never adopted as identity.
+      serviceEvidence.sid = read(sv, "sid", "service", sidMG);
+      serviceEvidence.checkedNumber = read(sv, "checkedNumber", "service", e164);
       const service: NonNullable<InboundStopFacts["service"]> = {};
       const set = <K extends keyof typeof service>(k: K, v: (typeof service)[K] | undefined) => {
         if (v !== undefined) service[k] = v;
@@ -298,5 +308,5 @@ export function sanitizeFacts(raw: unknown, nowMs: number): SanitizedFacts | Fac
     }
   }
 
-  return { facts, malformed, ignored };
+  return { facts, malformed, ignored, serviceEvidence };
 }

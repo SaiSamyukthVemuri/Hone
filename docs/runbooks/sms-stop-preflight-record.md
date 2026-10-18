@@ -6,15 +6,25 @@ The script never decides a check itself. It validates the facts you gather, runs
 
 ## When this is allowed
 
-- **Local and staging stacks:** any time, for testing.
-- **Production (hosted):** only for a cutover Sam has approved. The script refuses a hosted Supabase unless you pass `--allow-hosted` **and** set `HONE_STOP_PREFLIGHT_HOSTED_APPROVED=yes`. Production is never targeted as part of engineering work.
+- **A local Supabase (loopback address):** any time, for testing.
+- **Any non-local target, staging included:** the script treats every non-loopback Supabase as hosted. It refuses unless you pass `--allow-hosted` **and** set `HONE_STOP_PREFLIGHT_HOSTED_APPROVED=yes`. Setting those is an explicit statement that this run is approved:
+  - by Sam, for the production cutover;
+  - by the migration coordinator, for a named staging stack.
+- **Production** is never targeted as part of engineering work.
 - **Prerequisite:** `0229` and `0230` are applied to the target database. Before that, the snapshot has no `stop_preflights` and every studio-routed send refuses.
 
 ## 1. Gather the facts (read-only)
 
 Write a JSON file. **Never put a secret in it.** The auth token is reported only as `authTokenSet: true/false`. A file carrying anything that looks like a token, secret, password or API key is refused outright.
 
-**Identity comes from the database, never from this file.** The script reads the studio's single active sender (its number and Messaging Service), the routed From, and the service-to-studio mapping. If the file carries `service.sid`, `service.checkedNumber`, `routedFromNumber`, `mappedStudioId` or `expectedStudioId`, they are ignored and listed as `ignored`.
+**Identity comes from the database, never from this file.** The script reads the studio's single active sender (its number and Messaging Service), the routed From, and the service-to-studio mapping. If the file carries `routedFromNumber`, `mappedStudioId` or `expectedStudioId`, they are ignored and listed as `ignored`.
+
+**The service facts must say which service and number they describe.** `service.sid` and `service.checkedNumber` label the Messaging Service and number you read them from, and both must equal the database sender's. If either label is missing or names another service or number, every `service.*` fact and the `optOutConfiguration` (also a per-service setting) are dropped:
+- the checks they feed are `unknown`;
+- the run is not ready;
+- `malformed` lists `service_evidence_unlabelled` or `service_evidence_for_another_sender`.
+
+This stops facts copied from another studio's service from certifying this one.
 
 | Fact | Where it comes from |
 |---|---|
@@ -24,7 +34,8 @@ Write a JSON file. **Never put a secret in it.** The auth token is reported only
 | `deployment.accountSid` | The Twilio account whose token production holds. |
 | `signatureProof` | The newest signature-verified delivery callback time, and when the current token and base became active. |
 | `endpointProbe` | A GET of `<base>/api/twilio/inbound-sms` from outside: `{ "status": 405, "redirectedTo": null }` is the route. |
-| `service.*` | The studio's Messaging Service and number as Twilio reports them: inbound URL and method, the number-level webhook flag, number webhook, application, fallbacks, account, and (number-level mode only) the sender pool. |
+| `service.sid`, `service.checkedNumber` | The Messaging Service (`MG…`) and number (E.164) the facts below were read from. Both must equal the studio's live sender. |
+| `service.*` | That Messaging Service and number as Twilio reports them: inbound URL and method, the number-level webhook flag, number webhook, application, fallbacks, account, and (number-level mode only) the sender pool. |
 | `webhookRules`, `webhookPropagation`, `staticProxyEnabled`, `edgeZoneCatalog` | The account's Webhooks configuration (Rules and Settings, including each Setting's `settingType` SYSTEM/CUSTOMER), Rule Operations, Static Proxy, edge zones. |
 | `liveStopObservation` | One approved live STOP texted **to the studio's number**: whether it reached the route, the route's status, whether the phone-wide opt-out was stamped, its time, and the signed request's `To` (E.164) and `MessagingServiceSid` (`MG…`). |
 | `optOutConfiguration` | Whether the service drops opt-out keyword messages, and when that setting last changed. |
@@ -45,7 +56,7 @@ Template (fill in every value; this one is illustrative only):
   "deployment": { "webhookBaseUrl": "https://<production-origin>", "authTokenSet": true, "appOrigin": "https://<production-origin>", "accountSid": "AC<32 hex>" },
   "signatureProof": { "lastVerifiedCallbackAt": "<ISO>", "credentialsActiveSince": "<ISO>" },
   "endpointProbe": { "status": 405, "redirectedTo": null },
-  "service": { "inboundRequestUrl": "https://<origin>/api/twilio/inbound-sms#<overrides>", "inboundMethod": "POST", "useInboundWebhookOnNumber": false, "numberSmsUrl": null, "numberSmsApplicationSid": null, "accountSid": "AC<32 hex>", "fallbackUrl": null, "fallbackMethod": null },
+  "service": { "sid": "MG<32 hex, the studio's service>", "checkedNumber": "+1<the studio's number>", "inboundRequestUrl": "https://<origin>/api/twilio/inbound-sms#<overrides>", "inboundMethod": "POST", "useInboundWebhookOnNumber": false, "numberSmsUrl": null, "numberSmsApplicationSid": null, "accountSid": "AC<32 hex>", "fallbackUrl": null, "fallbackMethod": null },
   "webhookRules": { "matched": false },
   "staticProxyEnabled": false,
   "webhookPropagation": { "ruleOperationStatuses": ["COMPLETED"], "secondsSinceLastConfigChange": 3600 },

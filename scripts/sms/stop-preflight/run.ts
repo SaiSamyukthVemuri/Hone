@@ -110,9 +110,37 @@ export async function runStopPreflight(input: RunInput): Promise<RunResult> {
     mappedStudioId = undefined;
   }
 
+  // SERVICE EVIDENCE MUST BE THIS SENDER'S (Codex P2 4305512201). The database
+  // is the identity authority, but facts copied from another Messaging Service
+  // or number must not be combined with this sender's identity: unless the
+  // file names this sender's service AND number, every service fact is dropped,
+  // so the checks they feed are unknown and nothing can pass on them.
+  const fileService = sanitized.facts.service;
+  const serviceMatches =
+    sanitized.serviceEvidence.sid === sender.messaging_service_sid &&
+    sanitized.serviceEvidence.checkedNumber === sender.phone_number;
+  const dropped: string[] = [];
+  const hasServiceEvidence =
+    (fileService !== undefined && Object.keys(fileService).length > 0) || sanitized.facts.optOutConfiguration !== undefined;
+  if (hasServiceEvidence && !serviceMatches) {
+    dropped.push(
+      sanitized.serviceEvidence.sid === undefined || sanitized.serviceEvidence.checkedNumber === undefined
+        ? "service_evidence_unlabelled"
+        : "service_evidence_for_another_sender",
+    );
+  }
   const facts: InboundStopFacts = {
     ...sanitized.facts,
-    service: { ...(sanitized.facts.service ?? {}), sid: sender.messaging_service_sid, checkedNumber: sender.phone_number },
+    // The opt-out setting belongs to the Messaging Service too, so it is bound
+    // with the other service facts. Account-wide facts (Webhook Rules, Static
+    // Proxy, edge zones, propagation) and deployment facts are not per sender,
+    // and the live STOP is bound to this sender by the evaluator itself.
+    optOutConfiguration: serviceMatches ? sanitized.facts.optOutConfiguration : undefined,
+    service: {
+      ...(serviceMatches ? (fileService ?? {}) : {}),
+      sid: sender.messaging_service_sid,
+      checkedNumber: sender.phone_number,
+    },
     // Routed sends pin the checked sender's own number as From (#858).
     routedFromNumber: sender.phone_number,
     mappedStudioId,
@@ -126,7 +154,7 @@ export async function runStopPreflight(input: RunInput): Promise<RunResult> {
     ready: evaluation.ready,
     checks,
     blockers: evaluation.blockers,
-    malformed: sanitized.malformed,
+    malformed: [...sanitized.malformed, ...dropped],
     ignored: sanitized.ignored,
   };
   if (input.mode === "dry_run") return base;

@@ -28,7 +28,8 @@ const readyFacts = (): Record<string, unknown> => ({
   deployment: { webhookBaseUrl: BASE, authTokenSet: true, appOrigin: BASE, accountSid: ACCOUNT },
   signatureProof: { lastVerifiedCallbackAt: "2026-10-12T10:00:00Z", credentialsActiveSince: "2026-10-01T00:00:00Z" },
   endpointProbe: { status: 405, redirectedTo: null },
-  service: { inboundRequestUrl: URL_RETRY, inboundMethod: "POST", useInboundWebhookOnNumber: false, numberSmsUrl: null, numberSmsApplicationSid: null, accountSid: ACCOUNT },
+  // The service and number these facts were read from: must be this sender's.
+  service: { sid: MSID, checkedNumber: NUMBER, inboundRequestUrl: URL_RETRY, inboundMethod: "POST", useInboundWebhookOnNumber: false, numberSmsUrl: null, numberSmsApplicationSid: null, accountSid: ACCOUNT },
   webhookRules: { matched: false },
   staticProxyEnabled: false,
   webhookPropagation: { ruleOperationStatuses: ["COMPLETED"], secondsSinceLastConfigChange: 3600 },
@@ -155,14 +156,39 @@ describe("--record writes EXACTLY the evaluator's v1 output, guarded by the CAS"
 });
 
 describe("identity comes from the DATABASE, never the facts file", () => {
-  it("the file's service.sid, checkedNumber, routedFromNumber and studio ids are ignored and reported", async () => {
+  it("the file's routedFromNumber and studio ids are ignored and reported (the database decides them)", async () => {
     const facts: Record<string, unknown> = { ...readyFacts(), routedFromNumber: "+14165550199", mappedStudioId: STUDIO, expectedStudioId: STUDIO };
-    (facts.service as Record<string, unknown>).sid = `MG${"d".repeat(32)}`;
-    (facts.service as Record<string, unknown>).checkedNumber = "+14165550199";
     const { admin } = fakeAdmin();
     const r = await run(admin, facts);
     expect(r).toMatchObject({ result: "evaluated", ready: true });
-    expect(r.ignored?.sort()).toEqual(["expectedStudioId", "mappedStudioId", "routedFromNumber", "service.checkedNumber", "service.sid"]);
+    expect(r.ignored?.sort()).toEqual(["expectedStudioId", "mappedStudioId", "routedFromNumber"]);
+  });
+
+  // Codex P2 4305512201: service facts copied from ANOTHER Messaging Service
+  // or number must never be combined with this sender's identity.
+  it.each<[string, Record<string, unknown>, string]>([
+    ["read from another Messaging Service", { sid: `MG${"d".repeat(32)}` }, "service_evidence_for_another_sender"],
+    ["read from another number", { checkedNumber: "+14165550199" }, "service_evidence_for_another_sender"],
+    ["not labelled with the service it describes", { sid: undefined }, "service_evidence_unlabelled"],
+    ["not labelled with the number it describes", { checkedNumber: undefined }, "service_evidence_unlabelled"],
+  ])("service facts %s: every service fact and the opt-out setting are dropped, so nothing passes on them", async (_n, change, code) => {
+    const facts = readyFacts();
+    const svc = facts.service as Record<string, unknown>;
+    for (const [k, v] of Object.entries(change)) {
+      if (v === undefined) delete svc[k];
+      else svc[k] = v;
+    }
+    const { admin, calls } = fakeAdmin();
+    const r = await run(admin, facts, "record");
+    expect(r.malformed).toContain(code);
+    expect(r.ready).toBe(false);
+    for (const id of ["inbound_reaches", "stop_redelivery", "signing_account"]) {
+      expect(r.checks?.find((c) => c.id === id)?.status, id).not.toBe("pass");
+    }
+    // The opt-out setting is per service: unbound, so stop_forwarded cannot pass.
+    expect(r.checks?.find((c) => c.id === "stop_forwarded")?.status).not.toBe("pass");
+    // A not-ready record is still a truthful record.
+    expect((calls.find((c) => c.fn === "record_studio_sms_stop_preflight")!.args.p_checks as Array<{ status: string }>).some((c) => c.status !== "pass")).toBe(true);
   });
 
   it("the service mapped to ANOTHER studio fails studio_mapping", async () => {
@@ -344,6 +370,10 @@ describe("output and reach", () => {
     expect(lastRecord).toBeGreaterThan(-1);
     expect(unset).toBeGreaterThan(lastRecord);
     expect(rb.match(/unset HONE_STOP_PREFLIGHT_HOSTED_APPROVED/g)).toHaveLength(1);
+    // Codex P2 4305512205: the script treats every non-loopback target as
+    // hosted, so the runbook may not promise staging "any time" without gates.
+    expect(rb).not.toMatch(/staging[^.\n]*any time/i);
+    expect(rb).toMatch(/Any non-local target, staging included/);
   });
 
   it("the CLI defaults to DRY RUN and records only with an explicit --record", () => {
