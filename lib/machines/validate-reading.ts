@@ -66,6 +66,10 @@ export type RefusalCode =
   | "mode_not_offered"
   | "unknown_field"
   | "stale_profile_version"
+  // The version exists but has been SUPERSEDED, and this is new capture
+  // (Codex, #855 4305019839). Distinct from `stale_profile_version`, which
+  // means the catalogue carries no such version at all.
+  | "superseded_profile_version"
   | "mode_requires_installed_option"
   | "malformed_value"
   // The contract declares the association mandatory and none was given
@@ -104,9 +108,15 @@ export type ValidateOptions = {
    */
   installedOptions?: readonly string[];
   /**
-   * Allow capture against a non-active profile. Used when re-rendering or
-   * re-validating a HISTORICAL reading, which must keep working after its
-   * profile is blocked or retired.
+   * This is NOT new capture: a HISTORICAL reading being re-rendered or
+   * re-validated, which must keep working after its profile is blocked or
+   * retired.
+   *
+   * It governs three gates, not one: profile offered-ness, mode offered-ness,
+   * and — since Codex #855 4305019839 — whether the reading's contract version
+   * must still be the CURRENT one. All three are the same question asked of
+   * different fields ("may this be recorded now?"), which is why they share a
+   * flag rather than accumulating three.
    */
   allowNonOffered?: boolean;
   catalogue?: readonly MachineProfile[];
@@ -182,6 +192,28 @@ export function validateReading(
       code: "stale_profile_version",
       message: `Reading was captured against contract version ${input.version}; the catalogue carries ${anyVersion.profileId} at version ${anyVersion.version} and no contract for version ${input.version}. A historical reading can only render against the version it was captured under, so that version must stay in the catalogue.`,
     };
+  }
+
+  // NEW CAPTURE MUST USE THE CURRENT CONTRACT (Codex, #855 4305019839).
+  // Resolving the exact version fixed the historical-rendering defect and
+  // opened this one: with v1 and v2 both retained — which is now the whole
+  // point of versioned identity — a stale client posting version 1 was
+  // validated against v1's labels, precision and ranges and stored as a NEW
+  // reading under a superseded contract. `stale_profile_version` could not
+  // catch it, since that fires only when the version is ABSENT.
+  //
+  // `profileById` returns the highest version, and its own documentation
+  // already promised "NEW capture resolves through here, so it always gets
+  // the current contract" — a promise this function did not keep.
+  if (!options.allowNonOffered) {
+    const current = profileById(input.profileId, catalogue);
+    if (current && current.version !== profile.version) {
+      return {
+        ok: false,
+        code: "superseded_profile_version",
+        message: `'${profile.profileId}' contract version ${input.version} has been superseded by version ${current.version}. A new reading records against the current contract — reload before recording. The existing version ${input.version} readings keep rendering against version ${input.version}.`,
+      };
+    }
   }
 
   // Historical rendering must survive a profile being blocked later, so the

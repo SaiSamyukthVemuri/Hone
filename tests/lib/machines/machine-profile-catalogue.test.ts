@@ -746,24 +746,355 @@ describe("activation readiness is derived, and no model passes it yet", () => {
   });
 
   it("every open question blocks a field that actually exists, or everything", () => {
-    // A question whose `blocks` names a typo holds nothing, which is worse than
-    // no question at all: the gate would pass while the gap remained.
-    for (const p of MACHINE_CATALOGUE) {
-      const keys = new Set(
-        p.modes.flatMap((m) => modeFields(m).map(({ field }) => field.key)),
-      );
-      for (const q of p.openQuestions) {
-        for (const b of q.blocks) {
-          // "*" holds the whole profile; "@"-prefixed targets are
-          // profile-level (e.g. the FrequencyContract), not field keys.
-          if (b === "*" || b.startsWith("@")) continue;
-          const bare = b.includes(".") ? b.split(".").pop()! : b;
-          expect(keys, `${p.profileId}: question ${q.id} blocks unknown '${b}'`).toContain(
-            bare,
-          );
-        }
-      }
+    // ASK THE REAL GUARD, do not restate it (Codex, #855 4305019844). The
+    // previous version of this test reimplemented the rule and then stripped
+    // the qualifier off a target before checking it existed — so
+    // `wrong-mode.duration` passed whenever `duration` existed under ANY
+    // mode, and `@frequncy` passed because anything `@`-prefixed was skipped
+    // outright. It agreed with a guard that did not enforce the rule, which
+    // is the only way both could be wrong at once.
+    expect(
+      catalogueIntegrity(MACHINE_CATALOGUE)
+        .filter((v) => v.problem.includes("blocks"))
+        .map((v) => `${v.profileId}: ${v.problem}`),
+    ).toEqual([]);
+  });
+});
+
+// ===========================================================================
+// MPX-01 — the four findings from the 82b5f0fb review
+// ===========================================================================
+
+describe("the integrity guard rejects a question that holds nothing", () => {
+  // THE DEFECT (Codex, #855 4305019844). `OpenQuestion.blocks` has always
+  // documented this — "A target naming nothing real holds nothing, which is
+  // worse than no question at all — the integrity guard rejects that" — and
+  // the guard did not implement it. The consequence is not a cosmetic one:
+  // `activationReadiness` reuses this guard, so an unresolved question that
+  // named nothing real let a profile be approved as READY.
+  const base = (): MachineProfile => ({
+    profileId: "fixture:blockers",
+    version: 1,
+    family: "Silhouet-Tone",
+    manufacturer: "Fixture",
+    model: "Blockers",
+    availability: "blocked",
+    availabilityReason: "a fixture, never offered",
+    verification: "device-confirmed",
+    frequency: { kind: "not-applicable" },
+    evidence: [
+      {
+        id: "fx",
+        kind: "studio-device-photo",
+        consultedOn: "2026-10-18",
+        establishes: "Nothing about a real machine.",
+      },
+    ],
+    openQuestions: [],
+    modes: [
+      {
+        key: "m",
+        nativeLabel: "M",
+        family: "thermolysis",
+        availability: "blocked",
+        verification: "device-confirmed",
+        evidence: ["fx"],
+        stages: [
+          {
+            key: "st",
+            nativeLabel: "St",
+            fields: [
+              {
+                key: "staged",
+                nativeLabel: "Staged",
+                quantity: "duration",
+                unit: "s",
+                decimals: 1,
+                optional: false,
+                expectedSource: "practitioner-entered",
+                editable: true,
+                verification: "device-confirmed",
+                evidence: ["fx"],
+              },
+            ],
+          },
+        ],
+        fields: [
+          {
+            key: "duration",
+            nativeLabel: "Duration",
+            quantity: "duration",
+            unit: "s",
+            decimals: 1,
+            optional: false,
+            expectedSource: "practitioner-entered",
+            editable: true,
+            verification: "device-confirmed",
+            evidence: ["fx"],
+          },
+        ],
+      },
+    ],
+  });
+
+  const withBlocks = (...blocks: string[]): MachineProfile => ({
+    ...base(),
+    openQuestions: [
+      { id: "q1", question: "?", resolvedBy: "a manual page", blocks },
+    ],
+  });
+
+  const problems = (p: MachineProfile) =>
+    catalogueIntegrity([p]).map((v) => v.problem);
+
+  it("rejects a MISSPELLED QUALIFIER even when the bare field exists", () => {
+    // The exact case the old test could not see: `duration` is a real field
+    // under mode `m`, but there is no mode `wrong-mode`.
+    expect(problems(withBlocks("wrong-mode.duration"))).toContain(
+      "open question 'q1' blocks 'wrong-mode.duration', which names no field, mode.field, stage.field or profile-level sentinel",
+    );
+  });
+
+  it("rejects a misspelled profile-level sentinel", () => {
+    expect(
+      problems(withBlocks("@frequncy")).some((x) => x.includes("@frequncy")),
+      "an '@'-prefixed typo was treated as a valid profile-level target",
+    ).toBe(true);
+  });
+
+  it("rejects a question that blocks nothing at all", () => {
+    expect(problems(withBlocks())).toContain(
+      "open question 'q1' blocks nothing at all",
+    );
+  });
+
+  it("CONTROL: each of the four legitimate target shapes is accepted", () => {
+    for (const target of ["duration", "m.duration", "st.staged", "*"]) {
+      expect(
+        problems(withBlocks(target)).filter((x) => x.includes("blocks")),
+        `the legitimate target '${target}' was rejected`,
+      ).toEqual([]);
     }
+  });
+
+  it("CONTROL: the base fixture is otherwise clean, so nothing above passes by accident", () => {
+    expect(problems(base())).toEqual([]);
+  });
+});
+
+describe("a repeated structural key is an integrity violation, not array order", () => {
+  // THE DEFECT (Codex, #855 4305019857). Lookup is `.find()`, so the later
+  // contract is UNREACHABLE and whichever entry comes first decides the
+  // labels, units and limits a practitioner sees.
+  const base = (): MachineProfile => ({
+    profileId: "fixture:dupes",
+    version: 1,
+    family: "Silhouet-Tone",
+    manufacturer: "Fixture",
+    model: "Dupes",
+    availability: "blocked",
+    availabilityReason: "a fixture, never offered",
+    verification: "device-confirmed",
+    frequency: { kind: "not-applicable" },
+    evidence: [
+      {
+        id: "fx",
+        kind: "studio-device-photo",
+        consultedOn: "2026-10-18",
+        establishes: "Nothing about a real machine.",
+      },
+    ],
+    openQuestions: [],
+    modes: [],
+  });
+
+  const field = (key: string) => ({
+    key,
+    nativeLabel: key,
+    quantity: "duration" as const,
+    unit: "s" as const,
+    decimals: 1,
+    optional: false,
+    expectedSource: "practitioner-entered" as const,
+    editable: true,
+    verification: "device-confirmed" as const,
+    evidence: ["fx"],
+  });
+
+  const mode = (key: string, fields: string[], stages: Array<[string, string[]]> = []) => ({
+    key,
+    nativeLabel: key,
+    family: "thermolysis" as const,
+    availability: "blocked" as const,
+    verification: "device-confirmed" as const,
+    evidence: ["fx"],
+    fields: fields.map(field),
+    stages: stages.map(([sk, fs]) => ({
+      key: sk,
+      nativeLabel: sk,
+      fields: fs.map(field),
+    })),
+  });
+
+  const problems = (modes: MachineProfile["modes"]) =>
+    catalogueIntegrity([{ ...base(), modes }]).map((v) => v.problem);
+
+  it("catches a repeated MODE key", () => {
+    expect(problems([mode("m", ["a"]), mode("m", ["b"])])).toContain(
+      "duplicate mode key 'm'",
+    );
+  });
+
+  it("catches a repeated STAGE key within one mode", () => {
+    expect(
+      problems([mode("m", ["a"], [["st", ["x"]], ["st", ["y"]]])]),
+    ).toContain("mode m has duplicate stage key 'st'");
+  });
+
+  it("catches a repeated FIELD key at mode level", () => {
+    expect(problems([mode("m", ["a", "a"])])).toContain(
+      "mode m has duplicate field key 'a'",
+    );
+  });
+
+  it("catches a repeated FIELD key within one stage", () => {
+    expect(problems([mode("m", ["a"], [["st", ["x", "x"]]])])).toContain(
+      "mode m stage st has duplicate field key 'x'",
+    );
+  });
+
+  it("CONTROL: the SAME field key in two different stages is legitimate", () => {
+    // Field lookup is keyed on (mode, stageKey, fieldKey), and a MultiPlex
+    // mode genuinely carries its own duration per stage. A rule scoped any
+    // wider than the lookup's own key would reject honest profiles.
+    expect(
+      problems([mode("m", [], [["slow", ["duration"]], ["snap", ["duration"]]])]),
+    ).toEqual([]);
+  });
+
+  it("CONTROL: the same mode key in two different PROFILES is legitimate", () => {
+    expect(
+      catalogueIntegrity([
+        { ...base(), modes: [mode("native", ["a"])] },
+        { ...base(), profileId: "fixture:dupes-2", modes: [mode("native", ["a"])] },
+      ]).map((v) => v.problem),
+    ).toEqual([]);
+  });
+});
+
+describe("evidence is validated everywhere it is cited, not only on fields", () => {
+  // THE DEFECT (Codex, #855 4305019848). The membership and non-empty checks
+  // lived inline in the field loop, so a mode, a channel structure or a
+  // frequency could cite an id absent from the profile's own ledger — or cite
+  // nothing — and still be reported as documented.
+  const base = (): MachineProfile => ({
+    profileId: "fixture:evidence",
+    version: 1,
+    family: "Silhouet-Tone",
+    manufacturer: "Fixture",
+    model: "Evidence",
+    availability: "blocked",
+    availabilityReason: "a fixture, never offered",
+    verification: "device-confirmed",
+    frequency: { kind: "not-applicable" },
+    evidence: [
+      {
+        id: "fx",
+        kind: "studio-device-photo",
+        consultedOn: "2026-10-18",
+        establishes: "Nothing about a real machine.",
+      },
+    ],
+    openQuestions: [],
+    modes: [
+      {
+        key: "m",
+        nativeLabel: "M",
+        family: "thermolysis",
+        availability: "blocked",
+        verification: "device-confirmed",
+        evidence: ["fx"],
+        stages: [],
+        fields: [
+          {
+            key: "d",
+            nativeLabel: "D",
+            quantity: "duration",
+            unit: "s",
+            decimals: 1,
+            optional: false,
+            expectedSource: "practitioner-entered",
+            editable: true,
+            verification: "device-confirmed",
+            evidence: ["fx"],
+          },
+        ],
+      },
+    ],
+  });
+
+  const problems = (over: Partial<MachineProfile>) =>
+    catalogueIntegrity([{ ...base(), ...over }]).map((v) => v.problem);
+
+  it("catches a MODE citing evidence the profile does not carry", () => {
+    const b = base();
+    expect(
+      problems({ modes: [{ ...b.modes[0]!, evidence: ["nope"] }] }),
+    ).toContain("mode m cites unknown evidence 'nope'");
+  });
+
+  it("catches a MODE citing no evidence at all", () => {
+    const b = base();
+    expect(problems({ modes: [{ ...b.modes[0]!, evidence: [] }] })).toContain(
+      "mode m cites no evidence at all",
+    );
+  });
+
+  it("catches a CHANNEL STRUCTURE citing unknown evidence", () => {
+    expect(
+      problems({
+        channels: {
+          count: 2,
+          nativeLabel: "Channel",
+          associationRequired: false,
+          supportsDistinctSettingGroups: false,
+          verification: "device-confirmed",
+          evidence: ["nope"],
+        },
+      }),
+    ).toContain("channel structure cites unknown evidence 'nope'");
+  });
+
+  it("catches a FIXED FREQUENCY citing unknown evidence", () => {
+    expect(
+      problems({
+        frequency: {
+          kind: "fixed",
+          mhz: 13.56,
+          verification: "device-confirmed",
+          evidence: ["nope"],
+        },
+      }),
+    ).toContain("frequency (fixed) cites unknown evidence 'nope'");
+  });
+
+  it("catches a SELECTABLE FREQUENCY citing nothing at all", () => {
+    expect(
+      problems({
+        frequency: {
+          kind: "selectable",
+          mhz: [13.56, 27.12],
+          verification: "device-confirmed",
+          evidence: [],
+        },
+      }),
+    ).toContain("frequency (selectable) cites no evidence at all");
+  });
+
+  it("CONTROL: a not-applicable frequency cites nothing and that is correct", () => {
+    // It has no evidence array at all; demanding one would invent a source
+    // for the absence of a control.
+    expect(problems({})).toEqual([]);
   });
 });
 
@@ -855,7 +1186,8 @@ describe("a reading validates against the version it was CAPTURED under", () => 
   const V1: MachineProfile = {
     profileId: "fixture:versioned",
     version: 1,
-    family: "Synthetic/Demo",
+    // Any curated family; nothing under test reads it. NOT a real machine.
+    family: "Dectro/Apilus",
     manufacturer: "Fixture",
     model: "Versioned",
     availability: "active",
@@ -895,7 +1227,7 @@ describe("a reading validates against the version it was CAPTURED under", () => 
         ],
       },
     ],
-  } as MachineProfile;
+  };
 
   // SAME id, LATER version, DIFFERENT precision — which is why a v1 reading
   // must not be validated against it.
@@ -908,11 +1240,13 @@ describe("a reading validates against the version it was CAPTURED under", () => 
         fields: [{ ...V1.modes[0]!.fields[0]!, decimals: 2 }],
       },
     ],
-  } as MachineProfile;
+  };
 
   const BOTH = [V1, V2];
 
-  const read = (version: number, value: number) =>
+  // `historical` is the caller saying this is not new capture — a reading
+  // already on the record being re-rendered or re-validated.
+  const read = (version: number, value: number, historical = false) =>
     validateReading(
       {
         profileId: "fixture:versioned",
@@ -922,14 +1256,17 @@ describe("a reading validates against the version it was CAPTURED under", () => 
         source: "practitioner-entered",
         value: { kind: "value", value },
       },
-      { catalogue: BOTH },
+      { catalogue: BOTH, allowNonOffered: historical },
     );
 
-  it("accepts a v1 reading while the catalogue also carries v2", () => {
-    // Before the fix this returned `stale_profile_version`, making every
-    // historical reading invalid the moment a contract was republished.
-    const out = read(1, 1.2);
-    expect(out.ok, "a v1 reading was refused against a catalogue holding v1").toBe(
+  it("renders a HISTORICAL v1 reading while the catalogue also carries v2", () => {
+    // Before the P1 fix this returned `stale_profile_version`, making every
+    // historical reading invalid the moment a contract was republished. This
+    // is the path that defect broke, and it is the historical one — the first
+    // version of this test asserted it on the NEW-CAPTURE path instead, which
+    // is how it came to assert the very thing 4305019839 then reported.
+    const out = read(1, 1.2, true);
+    expect(out.ok, "a historical v1 reading was refused against a catalogue holding v1").toBe(
       true,
     );
   });
@@ -938,21 +1275,64 @@ describe("a reading validates against the version it was CAPTURED under", () => 
     // The point of resolving the captured version: v1 allows 1 decimal and
     // v2 allows 2. A v1 reading of 1.25 carries more precision than its own
     // contract and must be noted as such, not silently accepted as v2.
-    const out = read(1, 1.25);
-    if (out.ok) {
-      expect(
-        out.notes.map((n) => n.code),
-        "v1's 1-decimal contract was not the one applied",
-      ).toContain("precision_beyond_contract");
-    }
+    //
+    // ASSERTED UNCONDITIONALLY. Wrapping these in `if (out.ok)` made the test
+    // pass by SKIP the moment the reading was refused for any reason — which
+    // is exactly what happened when the superseded-version gate landed: the
+    // refusal satisfied the test rather than failing it.
+    const out = read(1, 1.25, true);
+    expect(out.ok, "the v1 reading was refused outright").toBe(true);
+    if (!out.ok) throw new Error(out.code);
+    expect(
+      out.notes.map((n) => n.code),
+      "v1's 1-decimal contract was not the one applied",
+    ).toContain("precision_beyond_contract");
+
     // And the same value under v2 is exactly within contract.
     const v2 = read(2, 1.25);
     expect(v2.ok).toBe(true);
-    if (v2.ok) {
-      expect(v2.notes.map((n) => n.code)).not.toContain(
-        "precision_beyond_contract",
-      );
-    }
+    if (!v2.ok) throw new Error(v2.code);
+    expect(v2.notes.map((n) => n.code)).not.toContain(
+      "precision_beyond_contract",
+    );
+  });
+
+  it("REFUSES NEW CAPTURE against a superseded version, naming both", () => {
+    // THE DEFECT (Codex, #855 4305019839). Retaining v1 beside v2 is the
+    // whole point of versioned identity, and it opened this: a stale client
+    // posting version 1 was validated against v1's laxer precision and stored
+    // as a NEW reading under a contract that is no longer current.
+    // `stale_profile_version` cannot catch it — that fires only when the
+    // version is ABSENT.
+    const out = read(1, 1.2);
+    expect(out.ok, "new capture was accepted against the superseded v1").toBe(
+      false,
+    );
+    if (out.ok) throw new Error("expected a refusal");
+    expect(out.code).toBe("superseded_profile_version");
+    // The message must name the current version, or she cannot act on it.
+    expect(out.message).toContain("version 2");
+  });
+
+  it("CONTROL: new capture against the CURRENT version is accepted", () => {
+    expect(read(2, 1.2).ok).toBe(true);
+  });
+
+  it("CONTROL: with only v1 in the catalogue, v1 IS current and new capture works", () => {
+    // The gate compares against the highest version present, so a catalogue
+    // that has not republished anything must be unaffected.
+    const only = validateReading(
+      {
+        profileId: "fixture:versioned",
+        version: 1,
+        modeKey: "m",
+        fieldKey: "current",
+        source: "practitioner-entered",
+        value: { kind: "value", value: 1.2 },
+      },
+      { catalogue: [V1] },
+    );
+    expect(only.ok).toBe(true);
   });
 
   it("two versions of one id are NOT an integrity duplicate", () => {
@@ -1036,7 +1416,8 @@ function fxProfile(over: Record<string, unknown> = {}): MachineProfile {
   return {
     profileId: "fixture:rules",
     version: 1,
-    family: "Synthetic/Demo",
+    // Any curated family; nothing under test reads it. NOT a real machine.
+    family: "Dectro/Apilus",
     manufacturer: "Fixture",
     model: "Rules",
     availability: "active",
