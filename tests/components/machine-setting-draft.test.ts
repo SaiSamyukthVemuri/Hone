@@ -380,10 +380,14 @@ describe("switching machine or mode clears the collected draft", () => {
     // original claim - after a save of g1 and g2 the form still offers two
     // groups - and strengthens it, because the keys are now the ones the
     // database issued rather than the ones this mount invented.
+    // THROUGH `reseedFromRecord` NOW, not inline (Codex, #860 4307735441 and
+    // 4307735445). The draft is one of THREE values derived from the recorded
+    // set, and setting it alone left the ordinal and the staleness baseline at
+    // their mount values. The property this test states is unchanged; the
+    // single function is what keeps its two siblings honest.
     const src = read(ENTRY_SRC);
-    expect(src).toMatch(
-      /setGroups\(\s*groupsFromRecorded\(recordedGroups, \{/,
-    );
+    expect(src).toMatch(/reseedFromRecord\(\);/);
+    expect(src).toMatch(/const reseedFromRecord = \(\) => \{/);
     expect(
       src,
       "resetting to firstGroup() is what renumbered her groups",
@@ -621,7 +625,10 @@ describe("switching machine or mode clears the collected draft", () => {
     // 1/3 the entry captures the set AT DRAFT BUILD, not at submit — the
     // identity it will mint is a function of exactly that snapshot.
     expect(entry, "1/3 the entry does not capture the recorded set").toMatch(
-      /const \[expectedGroupKeys\] = useState<string\[\]>\(\(\) =>/,
+      // IT HAS A SETTER NOW, because the re-seed has to move it too - a
+      // baseline frozen at the mount made the next capture trip the very
+      // refusal it was meant to satisfy (Codex, #860 4307735441).
+      /const \[expectedGroupKeys, setExpectedGroupKeys\] = useState<string\[\]>\(\(\) =>/,
     );
     // 2/3 and sends it with the save.
     expect(entry, "2/3 the captured set never leaves the entry").toMatch(
@@ -1429,6 +1436,59 @@ describe("switching machine or mode clears the collected draft", () => {
     expect(panel).toMatch(
       /blockId && recordAndCount && mode && !recordedSetupUnavailable \?/,
     );
+  });
+
+  it("the re-seed moves ALL THREE derived values, not just the groups", () => {
+    // TWO DEFECTS, ONE CAUSE (Codex, #860 4307735441 and 4307735445). The
+    // draft, the monotonic ordinal and the staleness baseline are all
+    // functions of the recorded set - the docblock on the baseline says so
+    // outright, "the same moment `groupOrdinal` is seeded from them, because
+    // the two are the same fact". Re-seeding the next capture moved ONE of the
+    // three and left the other two at their MOUNT values:
+    //
+    //   * the baseline stayed `[]` from the empty-scope mount, so the next
+    //     capture sent an EXISTING key with an empty expected set and tripped
+    //     the staleness refusal it was meant to satisfy;
+    //   * the ordinal stayed at 1 beside a re-seeded `g2`, so "Add setting
+    //     group" minted a SECOND `g2` - duplicate React keys, and the
+    //     collapsed revision history this whole path exists to prevent.
+    //
+    // SO IT IS ONE FUNCTION. Three setters at a call site is the shape that
+    // produced this; `reseedFromRecord` is the shape that cannot.
+    const entry = read(ENTRY_SRC);
+    expect(entry).toMatch(/const reseedFromRecord = \(\) => \{/);
+    const at = entry.indexOf("const reseedFromRecord = () => {");
+    const body = entry.slice(at, entry.indexOf("\n  };", at));
+    expect(body, "the re-seed does not set the draft").toMatch(
+      /setGroups\(seeded\)/,
+    );
+    expect(body, "the re-seed leaves the ordinal behind").toMatch(
+      /setGroupOrdinal\(/,
+    );
+    expect(body, "the re-seed leaves the staleness baseline behind").toMatch(
+      /setExpectedGroupKeys\(/,
+    );
+    // THE ORDINAL NEVER GOES BACKWARDS: it is monotonic for the life of the
+    // mount, so a removed group's identity is never reissued.
+    expect(body).toMatch(/Math\.max\(prev, highestOrdinal\(seeded\)\)/);
+    // AND THE CALL SITE DEFERS to it rather than re-deriving.
+    expect(entry).toMatch(/reseedFromRecord\(\);/);
+    expect(
+      entry,
+      "the next capture sets the draft directly again, so the siblings can drift",
+    ).not.toMatch(/setGroups\(\s*groupsFromRecorded/);
+  });
+
+  it("and the recorded key set is projected ONCE, not spelled twice", () => {
+    // Two spellings of "the set this draft was built from" is how a staleness
+    // comparison comes to be made against the wrong baseline.
+    const entry = read(ENTRY_SRC);
+    expect(entry).toMatch(/function recordedKeysOf\(/);
+    const uses = entry.match(/recordedKeysOf\(recordedGroups\)/g) ?? [];
+    expect(
+      uses.length,
+      "the mount and the re-seed must share one projection",
+    ).toBe(2);
   });
 
   it("the SEED SOURCES are enumerated, and every one is current", () => {

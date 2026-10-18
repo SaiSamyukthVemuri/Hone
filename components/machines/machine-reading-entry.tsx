@@ -146,6 +146,19 @@ export type MachineReadingEntryProps = {
   onUnresolvedChange?: (unresolved: boolean) => void;
 };
 
+/**
+ * The recorded group keys, deduplicated and ordered.
+ *
+ * NAMED ONCE because it is read at mount AND at every re-seed, and two
+ * spellings of "the set this draft was built from" is how a staleness
+ * comparison comes to be made against the wrong baseline.
+ */
+function recordedKeysOf(
+  recorded: readonly RecordedGroupIdentity[],
+): string[] {
+  return [...new Set(recorded.map((g) => g.groupKey))].sort();
+}
+
 export function MachineReadingEntry({
   profile,
   mode,
@@ -205,9 +218,33 @@ export function MachineReadingEntry({
    * comparison then happens in the same request as the write, so the window is
    * the action's own microseconds instead of a user-visible round trip.
    */
-  const [expectedGroupKeys] = useState<string[]>(() =>
-    [...new Set(recordedGroups.map((g) => g.groupKey))].sort(),
+  const [expectedGroupKeys, setExpectedGroupKeys] = useState<string[]>(() =>
+    recordedKeysOf(recordedGroups),
   );
+
+  /**
+   * RE-SEED ALL THREE FROM THE RECORD, together.
+   *
+   * THE ONLY LEGITIMATE WAY TO OPEN THE NEXT CAPTURE (Codex, #860 4307735441,
+   * 4307735445). Each of the three is a function of the recorded set, so
+   * moving one alone leaves the form reasoning from two different snapshots -
+   * which is exactly what shipped and what those two findings caught.
+   *
+   * THE ORDINAL NEVER GOES BACKWARDS. It is monotonic for the life of the
+   * mount: a removed group's identity must never be reissued, so this takes
+   * the HIGHER of what it already was and what the record now needs.
+   */
+  const reseedFromRecord = () => {
+    const seeded = groupsFromRecorded(recordedGroups, {
+      deviceId,
+      profileId: profile.profileId,
+      profileVersion: profile.version,
+      modeKey: mode.key,
+    });
+    setGroups(seeded);
+    setGroupOrdinal((prev) => Math.max(prev, highestOrdinal(seeded)));
+    setExpectedGroupKeys(recordedKeysOf(recordedGroups));
+  };
   // THE WHOLE SAVE, as one state machine.
   //
   // THIS REPLACED FIVE PIECES OF PER-GROUP BOOKKEEPING - a saved-group set, an
@@ -434,14 +471,7 @@ export function MachineReadingEntry({
               // form still offers two - but under the keys the database
               // actually holds rather than the placeholders this mount
               // invented.
-              setGroups(
-                groupsFromRecorded(recordedGroups, {
-                  deviceId,
-                  profileId: profile.profileId,
-                  profileVersion: profile.version,
-                  modeKey: mode.key,
-                }),
-              );
+              reseedFromRecord();
               // THE ORDINAL IS NOT RESET, and must not be: it is monotonic so
               // a removed group's id is never reused. Resetting it to 1 while
               // g1 and g2 are still on screen would mint a SECOND g2 on the
