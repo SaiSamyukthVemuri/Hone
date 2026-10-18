@@ -174,6 +174,50 @@ describe("G-08: the serialized Sentry envelopes carry no record id", () => {
     await client.close();
   });
 
+  // A FETT treatment photo is shown through a Supabase Storage SIGNED URL: its
+  // path names the studio, client and image, and its `token` is a JWT. The
+  // browser's resource-timing span for that <img> carries the full URL.
+  const SIGNED_IMAGE_URL =
+    `https://abcdefghijklmnopqrst.supabase.example.invalid/storage/v1/object/sign/treatment-images/${STUDIO}/${CLIENT}/${SESSION}.webp` +
+    "?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmwiOiJ0cmVhdG1lbnQtaW1hZ2VzL3N5bnRoZXRpYyIsImlhdCI6MTcwMDAwMDAwMH0.c3ludGhldGljLXNpZ25hdHVyZS1ub3QtcmVhbA";
+
+  async function driveImageSpan(client: ServerRuntimeClient): Promise<void> {
+    await startSpan(
+      { name: "GET /clients/[id]/sessions/[id]", forceTransaction: true, op: "pageload", attributes: { "sentry.source": "route" } },
+      async () => {
+        await startSpan(
+          { name: SIGNED_IMAGE_URL, op: "resource.img", attributes: { "http.url": SIGNED_IMAGE_URL, url: SIGNED_IMAGE_URL } },
+          async () => undefined,
+        );
+      },
+    );
+    await client.flush(2000);
+  }
+
+  it("a Supabase signed treatment-image URL in a resource.img span: path ids become [id], the token [Redacted]", async () => {
+    const { client, sent } = makeClient(true);
+    await driveImageSpan(client);
+    const tx = sent.find((e) => e.includes('"type":"transaction"'));
+    expect(tx, "no transaction envelope was produced").toBeDefined();
+    const decoded = oracleDecode(tx!);
+    expect(decoded).toContain('"op":"resource.img"');
+    expect(decoded).toContain("/storage/v1/object/sign/treatment-images/[id]/[id]/[id].webp?token=[Redacted]");
+    expect(UUID_ANYWHERE.test(decoded), decoded.slice(0, 1500)).toBe(false);
+    expect(decoded).not.toMatch(/eyJ[A-Za-z0-9_-]{10,}/);
+    expect(networkCalls).toEqual([]);
+    await client.close();
+  });
+
+  it("NEGATIVE CONTROL: unscrubbed, the same image span carries the path ids and the token", async () => {
+    const { client, sent } = makeClient(false);
+    await driveImageSpan(client);
+    const decoded = oracleDecode(sent.join("\n"));
+    for (const id of [STUDIO, CLIENT, SESSION]) expect(decoded.toLowerCase()).toContain(id.toLowerCase());
+    expect(decoded).toMatch(/token=eyJ[A-Za-z0-9_-]{10,}/);
+    expect(networkCalls).toEqual([]);
+    await client.close();
+  });
+
   it("the dummy DSN is not Hone's, and the network trap really traps (positive control)", () => {
     expect(DUMMY_DSN).toMatch(/\.invalid\//);
     const before = networkCalls.length;
