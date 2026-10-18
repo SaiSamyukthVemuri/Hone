@@ -5,6 +5,7 @@ import {
   compareChartedRecency,
   orderByRecency,
   pickNewestChartedSession,
+  type ChartedBlockRow,
 } from "@/lib/sessions/charted-session";
 import {
   pickLastTreatment,
@@ -65,7 +66,8 @@ function row(id: string, started_at: string, extra: Partial<Row> = {}): Row {
 }
 
 const CHARTED = [{ deleted_at: null }];
-const blocks = (o: Record<string, ReadonlyArray<unknown>>) =>
+// Typed as production's ChartedBlockRow so both selectors accept the map.
+const blocks = (o: Record<string, ReadonlyArray<ChartedBlockRow>>) =>
   new Map(Object.entries(o));
 
 /** Every ordering of `xs`. The selectors must not care which one they get. */
@@ -265,7 +267,7 @@ describe("C — an exact started_at tie resolves deterministically", () => {
 // ---------------------------------------------------------------------------
 
 describe("D — SQL-rule and JS selectors agree on one winner", () => {
-  const cases: Array<[string, Row[], Record<string, ReadonlyArray<unknown>>]> = [
+  const cases: Array<[string, Row[], Record<string, ReadonlyArray<ChartedBlockRow>>]> = [
     [
       "distinct occurrence times",
       [row("a", "2026-01-01T10:00:00Z"), row("b", "2026-05-01T10:00:00Z")],
