@@ -80,6 +80,9 @@ export type RefusalCode =
   | "outside_hardware_limit";
 
 export type NoteCode =
+  // A channel above a count NO SOURCE ESTABLISHES (Codex, #855 4305551166).
+  // Recorded as observed, with the gap named, rather than refused.
+  | "channel_beyond_unverified_count"
   | "outside_published_specification"
   | "recommended_protocol_only"
   | "documentation_discrepancy"
@@ -325,11 +328,36 @@ export function validateReading(
         message: `'${profile.profileId}' has no independently controlled channels. A probe-holder outlet is not a channel.`,
       };
     }
-    if (
-      !Number.isInteger(input.channel) ||
-      input.channel < 1 ||
-      input.channel > profile.channels.count
-    ) {
+    // MALFORMED IS MALFORMED, whatever the evidence says. A non-integer or a
+    // channel below 1 is not a possible observation on any machine, so these
+    // refuse unconditionally and are not an evidence question.
+    if (!Number.isInteger(input.channel) || input.channel < 1) {
+      return {
+        ok: false,
+        code: "channel_out_of_range",
+        message: `Channel ${input.channel} is not a possible channel number.`,
+      };
+    }
+    // THE UPPER BOUND IS ONLY AS GOOD AS ITS SOURCE (Codex, #855 4305551166).
+    //
+    // `channels.count` is enforced here on every path, including the
+    // historical one — so a count that no source establishes REFUSES A REAL
+    // OBSERVATION on the strength of a model name. The GEMM-16 ledger is the
+    // live example: the designer account does not establish the channel count
+    // for the regional variant, and the product entry records only that it is
+    // a multiple-needle machine.
+    //
+    // WHETHER 16 IS RIGHT IS A SOURCE QUESTION, escalated to Sam and NOT
+    // changed here. What is a code question is whether an unverified number
+    // may refuse, and the answer is the same one `ConstraintClass` already
+    // gives for ranges: only a constraint that is both established and
+    // undisputed may refuse input; everything else is advisory, because
+    // refusing a true observation is a clinical record defect rather than a
+    // safety feature.
+    const countQualifies =
+      profile.channels.verification === "manufacturer-documented" ||
+      profile.channels.verification === "device-confirmed";
+    if (input.channel > profile.channels.count && countQualifies) {
       return {
         ok: false,
         code: "channel_out_of_range",
@@ -339,6 +367,19 @@ export function validateReading(
   }
 
   const notes: ValidationNote[] = [];
+
+  // The advisory half of the rule above: recorded as observed, with the gap
+  // named, so the reading is kept and the weakness is visible.
+  if (
+    input.channel != null &&
+    profile.channels &&
+    input.channel > profile.channels.count
+  ) {
+    notes.push({
+      code: "channel_beyond_unverified_count",
+      message: `Channel ${input.channel} is above the ${profile.channels.count} this profile records, and that count is ${profile.channels.verification} — no source establishes it. Recorded as observed; the channel count is the finding.`,
+    });
+  }
 
   if (
     field.verification === "unverified" ||
