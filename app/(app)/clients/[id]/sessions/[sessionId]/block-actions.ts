@@ -16,6 +16,7 @@ import { isDefinitiveDatabaseAnswer } from "@/lib/machines/save-attempt";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import { currentProfile } from "@/lib/machines/profile-contract";
+import { resolveWritingIdentity } from "@/lib/supabase/writing-identity";
 import { listStudioDevices } from "@/lib/machines/studio-devices";
 import type {
   MachineDb,
@@ -1141,7 +1142,17 @@ export type InitialSetupInput = {
 export async function createTreatmentAreaWithEntryAction(
   input: CreateAreaWithEntryInput & { initialSetup?: InitialSetupInput | null },
 ): Promise<BlockResult & { setup?: unknown }> {
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // AN IDENTITY REFUSAL IS A REFUSAL TOO (Codex, #860 4308620484). This call
+  // THROWS on a removed membership or an invalid studio selection, before any
+  // RPC, and the throw escaped the action — so the form's catch called it
+  // `unresolved`, froze everything and kept a key whose every retry meets the
+  // same pre-write refusal. `resolveWritingIdentity` converts exactly that one
+  // error TYPE and re-throws everything else, so redirect signals still work.
+  const who = await resolveWritingIdentity();
+  if (!who.ok) {
+    return { ok: false, error: who.error, unresolved: false };
+  }
+  const { practitioner, studio } = who.value;
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot log sessions." };
   }
