@@ -159,7 +159,11 @@ describe("source contract: the grid recovers through GridPhoto", () => {
   it("the cell stays lazy, re-mints through the shared action, and checks for a pre-hydration failure", () => {
     expect(cell).toMatch(/loading="lazy"/);
     expect(cell).toMatch(/getTreatmentImageSignedUrlAction\(\{ imageId, variant \}\)/);
-    expect(cell).toMatch(/el\.complete && el\.naturalWidth === 0/);
+    expect(cell).toMatch(/if \(el\.complete && el\.naturalWidth === 0\) \{\s*handleError\(\);\s*return;\s*\}/);
+    // The hydration-window race: a NATIVE error listener per src, removed on cleanup.
+    expect(cell).toMatch(/el\.addEventListener\("error", onNativeError\);/);
+    expect(cell).toMatch(/return \(\) => el\.removeEventListener\("error", onNativeError\);/);
+    expect(cell).toMatch(/\}, \[state\.src, handleError\]\);/);
     // Transitions never run inside a state updater (no duplicate re-mint).
     expect(cell).not.toMatch(/setState\(\(current\) =>/);
   });
