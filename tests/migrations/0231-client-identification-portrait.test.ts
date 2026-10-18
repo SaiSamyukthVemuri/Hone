@@ -75,6 +75,15 @@ describe("0231's transaction and shape", () => {
     expect(TOP_LEVEL).not.toMatch(/on public\.treatment_images/);
   });
 
+  it("archive locks the CLIENT before the image, the setter's order, so they cannot deadlock (Codex P2 4305077733)", () => {
+    const start = sql.indexOf("create or replace function public.archive_treatment_image");
+    const body = sql.slice(start, sql.indexOf("$$;", start));
+    const clientLock = body.search(/from public\.clients c\s+where c\.id = p_client_id\s+and c\.studio_id = v_studio\s+for update;/);
+    const imageWrite = body.indexOf("update public.treatment_images t");
+    expect(clientLock).toBeGreaterThan(-1);
+    expect(imageWrite).toBeGreaterThan(clientLock);
+  });
+
   it("archive clears the portrait ATOMICALLY in the archive command (Codex P2 4302494067)", () => {
     const body = sql.slice(sql.indexOf("create or replace function public.archive_treatment_image"));
     expect(body).toMatch(/security definer\s+set search_path = ''/);

@@ -120,6 +120,16 @@ begin
     return null;
   end if;
 
+  -- LOCK ORDER (Codex P2 4305077733): the CLIENT row first, then the image,
+  -- the same order as set_client_portrait (client FOR UPDATE, then the
+  -- integrity trigger's FOR SHARE on the image). Taking the image first here
+  -- let an archive and a setter racing on the same photo deadlock.
+  perform 1
+    from public.clients c
+   where c.id = p_client_id
+     and c.studio_id = v_studio
+     for update;
+
   update public.treatment_images t
      set deleted_at = now(),
          deleted_by = v_pract
