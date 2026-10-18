@@ -337,6 +337,13 @@ describe("output and reach", () => {
     expect(rb).toMatch(/export HONE_STOP_PREFLIGHT_HOSTED_APPROVED=yes/);
     expect(rb).toMatch(/--record --context cutover --allow-hosted/);
     expect(rb).not.toMatch(/^NEXT_PUBLIC_SUPABASE_URL=\S+ SUPABASE_SERVICE_ROLE_KEY=/m);
+    // Codex P2 4305485849: the credentials are cleared only AFTER the last
+    // record command, never between the dry run and the record step.
+    const lastRecord = rb.lastIndexOf("--record --context cutover");
+    const unset = rb.indexOf("unset HONE_STOP_PREFLIGHT_HOSTED_APPROVED");
+    expect(lastRecord).toBeGreaterThan(-1);
+    expect(unset).toBeGreaterThan(lastRecord);
+    expect(rb.match(/unset HONE_STOP_PREFLIGHT_HOSTED_APPROVED/g)).toHaveLength(1);
   });
 
   it("the CLI defaults to DRY RUN and records only with an explicit --record", () => {

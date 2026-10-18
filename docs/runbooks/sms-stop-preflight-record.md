@@ -72,7 +72,7 @@ export HONE_STOP_PREFLIGHT_HOSTED_APPROVED=yes
 node scripts/sms/record-stop-preflight.mjs --studio <studio uuid> --facts ./stop-facts.json --allow-hosted
 ```
 
-Unset it afterwards (`unset HONE_STOP_PREFLIGHT_HOSTED_APPROVED SUPABASE_SERVICE_ROLE_KEY`).
+Keep these exported until the record step in section 3 is done; the clean-up comes after it.
 
 The output is one JSON line with codes and ids only:
 - `result`, `ready` and `blockers`;
@@ -110,6 +110,12 @@ node scripts/sms/record-stop-preflight.mjs --studio <studio uuid> --facts ./stop
 | `cannot_record_without_webhook_base` | `deployment.webhookBaseUrl` is missing or malformed. |
 | `snapshot_unreadable`, `no_active_sender`, `ambiguous_active_sender`, `sender_identity_missing` | Nothing was evaluated or recorded. |
 | `facts_refused`, `target_refused`, `invalid_arguments` | Nothing was read or written. |
+
+**Clean up, only once recording is finished:**
+
+```sh
+unset HONE_STOP_PREFLIGHT_HOSTED_APPROVED SUPABASE_SERVICE_ROLE_KEY NEXT_PUBLIC_SUPABASE_URL
+```
 
 ## Afterwards
 
