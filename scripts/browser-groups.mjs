@@ -312,6 +312,12 @@ export const BROWSER_GROUPS = {
       // extended to one group, and that is a coverage decision for every client
       // diff in the repository, not a presentation slice's to take in passing.
       "ui04-unarchive-pending.spec.ts",
+      // HON-46: the owner-only per-client clinical-records export. Filed here
+      // for the UI-04 reasons above: it lives under app/(app)/clients/**, which
+      // matches no PATH_TO_GROUP pattern (so a diff to it already runs via the
+      // extended fallback), and it is owner records administration, not
+      // charting, so it does not join the cost-pinned `sessions` selection.
+      "hon-46-clinical-records-export.spec.ts",
       "new-studio-wizard.spec.ts",
       "onboarding.spec.ts",
       "quick-import.spec.ts",

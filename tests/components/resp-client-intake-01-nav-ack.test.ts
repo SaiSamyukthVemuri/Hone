@@ -81,6 +81,14 @@ describe("RESP-CLIENT-INTAKE-01: every converted control uses the shipped leaf",
   });
 });
 
+// HON-46 EXCEPTION, exactly one href. The clinical-records export must be
+// entered by a FULL document load, so that this page's analytics never runs in
+// the export's document (#828 G-26; Codex P1 4301165382 / 4302941126). A
+// replaced document is the intended behaviour there, not the defect this slice
+// fixed. Only this exact href is exempt; any other raw internal anchor still
+// fails below.
+const RECORDS_EXPORT_ANCHOR = "<a\n                href={`/clients/${client.id}/records/export";
+
 describe("RESP-CLIENT-INTAKE-01: the two raw anchors are gone", () => {
   it("neither converted file routes an in-app URL through a raw <a>", () => {
     // The defect: a raw <a> to an in-app URL leaves the client router, so the
@@ -90,19 +98,23 @@ describe("RESP-CLIENT-INTAKE-01: the two raw anchors are gone", () => {
       const code = codeOnly(read(file));
       const rawInternal = [
         ...code.matchAll(/<a\b[^>]*?href=\{?[`"]\/[^`"]*/g),
-      ].map((m) => m[0]);
+      ]
+        .map((m) => m[0])
+        .filter((m) => !(file === PROFILE && m === RECORDS_EXPORT_ANCHOR));
       expect(rawInternal, `${file} still has a raw internal <a>`).toEqual([]);
     }
   });
 
-  it("the client profile keeps its ONE legitimate raw anchor — tel:", () => {
+  it("the client profile keeps its TWO legitimate raw anchors: tel: and the HON-46 records export", () => {
     // Anti-overreach. `telHref(...)` is not an in-app navigation and must NOT
     // become a <Link>; a guard that simply banned every <a> would have deleted
-    // a working phone link and called it a fix.
+    // a working phone link and called it a fix. The records-export entry must
+    // stay a full document load (see RECORDS_EXPORT_ANCHOR).
     const code = codeOnly(read(PROFILE));
     expect(code).toContain("telHref(");
+    expect(code).toContain(RECORDS_EXPORT_ANCHOR);
     const anchors = code.match(/<a\b/g) ?? [];
-    expect(anchors).toHaveLength(1);
+    expect(anchors).toHaveLength(2);
   });
 
   it("both converted hrefs are preserved byte-for-byte", () => {
