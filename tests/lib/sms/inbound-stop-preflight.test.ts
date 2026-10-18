@@ -450,7 +450,7 @@ describe("evaluateInboundStopPreflight", () => {
       const ruleSetting = (totalTimeoutMs: number | null | undefined) => ({
         matched: true as const,
         settings: [
-          { percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY, totalTimeoutMs },
+          { settingType: "CUSTOMER" as const, percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY, totalTimeoutMs },
         ],
       });
 
@@ -478,7 +478,7 @@ describe("evaluateInboundStopPreflight", () => {
 
     describe("account Webhook Rules take precedence and decide signing (Codex P1s 4254537039, 4254655904; P2 4254655911)", () => {
       type Setting = {
-        percentage: number | null;
+        settingType?: "SYSTEM" | "CUSTOMER" | null; percentage: number | null;
         authScheme: string | null;
         signatureType: string | null;
         signatureAlgorithm: string | null;
@@ -489,7 +489,7 @@ describe("evaluateInboundStopPreflight", () => {
         edgeZones: "omitted" | { zones: readonly string[]; allowZoneFallback?: boolean | null } | null;
       };
       const setting = (over: Partial<Setting> = {}): Setting => ({
-        percentage: 100,
+        settingType: "CUSTOMER" as const, percentage: 100,
         authScheme: "NONE",
         signatureType: "ACCOUNT_AUTH_TOKEN",
         signatureAlgorithm: "HMAC_SHA1",
@@ -560,9 +560,9 @@ describe("evaluateInboundStopPreflight", () => {
       it("a live traffic split: EVERY Setting with traffic must sign correctly and retry 5xx", () => {
         const f = allProven();
         Object.assign(f.service!, { fallbackUrl: null, fallbackMethod: null });
-        f.webhookRules = { matched: true, settings: [setting({ percentage: 70 }), setting({ percentage: 30, retryOn: ["HTTP_4XX"] })] };
+        f.webhookRules = { matched: true, settings: [setting({ settingType: "CUSTOMER" as const, percentage: 70 }), setting({ settingType: "CUSTOMER" as const, percentage: 30, retryOn: ["HTTP_4XX"] })] };
         expect(redelivery(f)?.status).toBe("fail");
-        f.webhookRules = { matched: true, settings: [setting({ percentage: 70 }), setting({ percentage: 30, signatureType: "NONE" })] };
+        f.webhookRules = { matched: true, settings: [setting({ settingType: "CUSTOMER" as const, percentage: 70 }), setting({ settingType: "CUSTOMER" as const, percentage: 30, signatureType: "NONE" })] };
         expect(rulesCheck(f)?.status).toBe("fail");
       });
 
@@ -572,8 +572,8 @@ describe("evaluateInboundStopPreflight", () => {
         f.webhookRules = {
           matched: true,
           settings: [
-            setting({ percentage: 0, signatureType: "SHARED_KEY", retryOn: [], retryCount: 0 }),
-            setting({ percentage: 100 }),
+            setting({ settingType: "CUSTOMER" as const, percentage: 0, signatureType: "SHARED_KEY", retryOn: [], retryCount: 0 }),
+            setting({ settingType: "CUSTOMER" as const, percentage: 100 }),
           ],
         };
         expect(evaluateInboundStopPreflight(f).blockers).toEqual([]);
@@ -581,7 +581,7 @@ describe("evaluateInboundStopPreflight", () => {
 
       it("shares not reported: unknown, never assumed", () => {
         const f = allProven();
-        f.webhookRules = { matched: true, settings: [setting({ percentage: null })] };
+        f.webhookRules = { matched: true, settings: [setting({ settingType: "CUSTOMER" as const, percentage: null })] };
         expect(rulesCheck(f)?.status).toBe("unknown");
         expect(redelivery(f)?.status).toBe("unknown");
       });
@@ -897,7 +897,7 @@ describe("stop_forwarded requires OBSERVED suppression, not mere forwarding (Cod
 describe("a matching Setting must authenticate with scheme NONE (Codex P1 4264160015)", () => {
   type MatchedSetting = Extract<NonNullable<InboundStopFacts["webhookRules"]>, { matched: true }>["settings"][number];
   const setting = (over: Partial<MatchedSetting> = {}): MatchedSetting => ({
-    percentage: 100,
+    settingType: "CUSTOMER" as const, percentage: 100,
     authScheme: "NONE",
     signatureType: "ACCOUNT_AUTH_TOKEN",
     signatureAlgorithm: "HMAC_SHA1",
@@ -939,11 +939,11 @@ describe("a matching Setting must authenticate with scheme NONE (Codex P1 426416
   }
 
   it("a 30% OAUTH2 share beside a 70% NONE share: refused", () => {
-    expect(rulesCheck(withRule(setting({ percentage: 70 }), setting({ percentage: 30, authScheme: "OAUTH2" })))?.status).toBe("fail");
+    expect(rulesCheck(withRule(setting({ settingType: "CUSTOMER" as const, percentage: 70 }), setting({ settingType: "CUSTOMER" as const, percentage: 30, authScheme: "OAUTH2" })))?.status).toBe("fail");
   });
 
   it("an OAUTH2 Setting with a 0% share receives no traffic: not counted", () => {
-    expect(rulesCheck(withRule(setting({ percentage: 100 }), setting({ percentage: 0, authScheme: "OAUTH2" })))?.status).toBe("pass");
+    expect(rulesCheck(withRule(setting({ settingType: "CUSTOMER" as const, percentage: 100 }), setting({ settingType: "CUSTOMER" as const, percentage: 0, authScheme: "OAUTH2" })))?.status).toBe("pass");
   });
 
   it("an unsupported scheme is reported as such even when the signing is also wrong", () => {
@@ -967,7 +967,7 @@ describe("a matching Setting must authenticate with scheme NONE (Codex P1 426416
 
 type LiveSetting = Extract<NonNullable<InboundStopFacts["webhookRules"]>, { matched: true }>["settings"][number];
 const liveSetting = (over: Partial<LiveSetting> = {}): LiveSetting => ({
-  percentage: 100,
+  settingType: "CUSTOMER" as const, percentage: 100,
   authScheme: "NONE",
   signatureType: "ACCOUNT_AUTH_TOKEN",
   signatureAlgorithm: "HMAC_SHA1",
@@ -1049,8 +1049,8 @@ describe("a live Setting's retries must recover EVERY delivery failure (Codex P1
   });
 
   it("SPLIT: every non-zero share must recover; a zero share is ignored", () => {
-    expect(checkOf(underRule(liveSetting({ percentage: 70 }), liveSetting({ percentage: 30, retryOn: ["HTTP_5XX"] })), "stop_redelivery")?.status).toBe("fail");
-    expect(checkOf(underRule(liveSetting({ percentage: 100 }), liveSetting({ percentage: 0, retryOn: ["HTTP_5XX"] })), "stop_redelivery")?.status).toBe("pass");
+    expect(checkOf(underRule(liveSetting({ settingType: "CUSTOMER" as const, percentage: 70 }), liveSetting({ settingType: "CUSTOMER" as const, percentage: 30, retryOn: ["HTTP_5XX"] })), "stop_redelivery")?.status).toBe("fail");
+    expect(checkOf(underRule(liveSetting({ settingType: "CUSTOMER" as const, percentage: 100 }), liveSetting({ settingType: "CUSTOMER" as const, percentage: 0, retryOn: ["HTTP_5XX"] })), "stop_redelivery")?.status).toBe("pass");
   });
 
   it("under a Rule the fallback runs on the SAME Setting: a non-recovering Setting is not rescued by it (Codex P1 4269949178)", () => {
@@ -1148,10 +1148,10 @@ describe("a live Setting's edge zones must not drop a STOP on one zone's outage 
   }
 
   it("SPLIT: a 30% single-zone share without fallback is refused; at 0% it is ignored", () => {
-    const f = underRule(liveSetting({ percentage: 70 }), liveSetting({ percentage: 30, edgeZones: { zones: ["zone-a"] } }));
+    const f = underRule(liveSetting({ settingType: "CUSTOMER" as const, percentage: 70 }), liveSetting({ settingType: "CUSTOMER" as const, percentage: 30, edgeZones: { zones: ["zone-a"] } }));
     f.edgeZoneCatalog = CATALOG;
     expect(zones(f)).toBe("fail");
-    const g = underRule(liveSetting({ percentage: 100 }), liveSetting({ percentage: 0, edgeZones: { zones: ["zone-a"] } }));
+    const g = underRule(liveSetting({ settingType: "CUSTOMER" as const, percentage: 100 }), liveSetting({ settingType: "CUSTOMER" as const, percentage: 0, edgeZones: { zones: ["zone-a"] } }));
     expect(zones(g)).toBe("pass");
   });
 
@@ -1221,7 +1221,7 @@ describe("URL overrides that defeat their own retries (Codex P1 4265363596, P2 4
     const f = noFallback(`${URL_RETRY_NO_EDGES}&e=ashburn`);
     f.webhookRules = {
       matched: true,
-      settings: [{ percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY }],
+      settings: [{ settingType: "CUSTOMER" as const, percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY }],
     };
     expect(redelivery(f)).toBe("pass");
   });
@@ -1304,7 +1304,7 @@ describe("the FALLBACK's transport is judged like the primary's (Codex P1 426552
     const ruled = (fallbackUrl: string, primary = PRIMARY_NO_RECOVERY, ...settings: Array<Record<string, unknown>>) => {
       const f = withFallback(fallbackUrl);
       f.service!.inboundRequestUrl = primary;
-      const base = { percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY };
+      const base = { settingType: "CUSTOMER" as const, percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY };
       f.webhookRules = {
         matched: true,
         settings: (settings.length ? settings : [{ retryOn: ["HTTP_5XX"] }]).map((o) => ({ ...base, ...o })) as never,
@@ -1327,9 +1327,9 @@ describe("the FALLBACK's transport is judged like the primary's (Codex P1 426552
     });
 
     it("SPLIT: a 30% share without recovery is not rescued by any fallback (the fallback lands on the same split)", () => {
-      const split = [{ percentage: 70 }, { percentage: 30, retryOn: ["HTTP_5XX"] }];
+      const split = [{ settingType: "CUSTOMER" as const, percentage: 70 }, { settingType: "CUSTOMER" as const, percentage: 30, retryOn: ["HTTP_5XX"] }];
       expect(status(ruled(URL_EDGES, PRIMARY_NO_RECOVERY, ...split), "stop_redelivery")).toBe("fail");
-      expect(status(ruled(URL_EDGES, PRIMARY_NO_RECOVERY, { percentage: 100 }, { percentage: 0, retryOn: ["HTTP_5XX"] }), "stop_redelivery")).toBe("pass");
+      expect(status(ruled(URL_EDGES, PRIMARY_NO_RECOVERY, { settingType: "CUSTOMER" as const, percentage: 100 }, { settingType: "CUSTOMER" as const, percentage: 0, retryOn: ["HTTP_5XX"] }), "stop_redelivery")).toBe("pass");
     });
   });
 
@@ -1423,7 +1423,7 @@ describe("an OMITTED edge list is Twilio's single default edge, ashburn (Codex P
     Object.assign(f.service!, { inboundRequestUrl: URL_OK, fallbackUrl: null, fallbackMethod: null });
     f.webhookRules = {
       matched: true,
-      settings: [{ percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY }],
+      settings: [{ settingType: "CUSTOMER" as const, percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY }],
     };
     expect(status(f)).toBe("pass");
   });
@@ -1473,7 +1473,7 @@ describe("the fallback must have budget for one whole attempt, tt >= ct + rt (Co
       const f = viaFallback(fallbackUrl);
       f.webhookRules = {
         matched: true,
-        settings: [{ percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY, retryOn: ["HTTP_5XX"], ...over }] as never,
+        settings: [{ settingType: "CUSTOMER" as const, percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY, retryOn: ["HTTP_5XX"], ...over }] as never,
       };
       return f;
     };
@@ -1532,7 +1532,7 @@ describe("Static Proxy makes Twilio ignore e=, so an edge list proves nothing un
     f.staticProxyEnabled = true;
     f.webhookRules = {
       matched: true,
-      settings: [{ percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY }],
+      settings: [{ settingType: "CUSTOMER" as const, percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY }],
     };
     expect(status(f)).toBe("pass");
   });
@@ -1604,7 +1604,7 @@ describe("NEGATIVE CONTROLS — a fallback certifies only by recovering its OWN 
       verdict(URL_EDGES, (f) => {
         f.webhookRules = {
           matched: true,
-          settings: [{ percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY, retryOn: null }],
+          settings: [{ settingType: "CUSTOMER" as const, percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY, retryOn: null }],
         };
       }),
     ).toEqual({ status: "unknown", ready: false });
@@ -1690,7 +1690,7 @@ describe("NEGATIVE CONTROLS — the route's transient 400 must be retried too (C
       Object.assign(f.service!, { inboundRequestUrl: URL_OK, fallbackUrl: null, fallbackMethod: null });
       f.webhookRules = {
         matched: true,
-        settings: [{ percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY, retryOn }],
+        settings: [{ settingType: "CUSTOMER" as const, percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY, retryOn }],
       };
       return evaluateInboundStopPreflight(f).checks.find((c) => c.id === "stop_redelivery")?.status;
     };
@@ -1739,7 +1739,7 @@ describe("the operator guidance names the FOUR implemented classes and is itself
       redelivery(URL_OK, (f) => {
         f.webhookRules = {
           matched: true,
-          settings: [{ percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY }],
+          settings: [{ settingType: "CUSTOMER" as const, percentage: 100, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY }],
         };
       }),
     );
@@ -1758,7 +1758,7 @@ describe("the operator guidance names the FOUR implemented classes and is itself
   for (const [why, mutate, blocker] of [
     ["the Rules unread", (f: InboundStopFacts) => (f.webhookRules = undefined), "webhook_rules"],
     ["the signing account unconfirmed", (f: InboundStopFacts) => (f.honeAccountSid = null), "signing_account"],
-    ["a SHARED_KEY Setting", (f: InboundStopFacts) => (f.webhookRules = { matched: true, settings: [{ percentage: 100, authScheme: "NONE", signatureType: "SHARED_KEY", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY }] }), "webhook_rules"],
+    ["a SHARED_KEY Setting", (f: InboundStopFacts) => (f.webhookRules = { matched: true, settings: [{ settingType: "CUSTOMER" as const, percentage: 100, authScheme: "NONE", signatureType: "SHARED_KEY", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY }] }), "webhook_rules"],
     ["signing not proven under the current credentials", (f: InboundStopFacts) => (f.signatureProof = { lastVerifiedCallbackAt: null, credentialsActiveSince: null }), "signing_proven"],
     ["no live STOP observed", (f: InboundStopFacts) => (f.liveStopObservation = undefined), "stop_forwarded"],
     ["the opt-out flag absent", (f: InboundStopFacts) => (f.optOutConfiguration = { lastChangedAt: "2026-10-01T00:00:00Z" } as never), "stop_forwarded"],
@@ -1868,9 +1868,48 @@ describe("the live STOP is bound to the sender being certified", () => {
   });
 });
 
+// Codex P2 4305024182: a Rule pointing at Twilio's SYSTEM Setting (the first
+// step of migrating an existing webhook) keeps reading connection overrides
+// from the webhook URL, so that share is judged by the URL's own retries and
+// transport, never by the Setting's retry fields. CUSTOMER shares keep the
+// Setting's policy; an unread type is unknown.
+describe("a SYSTEM Setting's share is judged by the webhook URL's overrides", () => {
+  const NO_RETRIES = { retryOn: [], retryCount: 0, totalTimeoutMs: undefined, connectTimeoutMs: undefined, readTimeoutMs: undefined };
+  const share = (settingType: unknown, percentage: number, recovery: object) =>
+    ({ settingType, percentage, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", edgeZones: "omitted", ...recovery }) as never;
+  const redelivery = (url: string, settings: unknown[]) => {
+    const f = allProven();
+    Object.assign(f.service!, { inboundRequestUrl: url, fallbackUrl: null, fallbackMethod: null });
+    f.webhookRules = { matched: true, settings: settings as never };
+    return evaluateInboundStopPreflight(f).checks.find((c) => c.id === "stop_redelivery")?.status;
+  };
+
+  it("SYSTEM at 100 with a recovering URL: passes, though the Setting itself carries no retries", () => {
+    expect(redelivery(URL_RETRY, [share("SYSTEM", 100, NO_RETRIES)])).toBe("pass");
+  });
+
+  it("control: the SAME Setting typed CUSTOMER is judged by its own (absent) retries and fails", () => {
+    expect(redelivery(URL_RETRY, [share("CUSTOMER", 100, NO_RETRIES)])).toBe("fail");
+  });
+
+  it("SYSTEM at 100 with a URL that does not recover, and no fallback: fails, whatever the Setting's fields say", () => {
+    expect(redelivery(URL_OK, [share("SYSTEM", 100, SETTING_RECOVERY)])).toBe("fail");
+  });
+
+  it("a mixed SYSTEM/CUSTOMER rollout: every share must recover on its own terms", () => {
+    expect(redelivery(URL_RETRY, [share("SYSTEM", 70, NO_RETRIES), share("CUSTOMER", 30, SETTING_RECOVERY)])).toBe("pass");
+    expect(redelivery(URL_RETRY, [share("SYSTEM", 70, NO_RETRIES), share("CUSTOMER", 30, NO_RETRIES)])).toBe("fail");
+    expect(redelivery(URL_OK, [share("SYSTEM", 70, SETTING_RECOVERY), share("CUSTOMER", 30, SETTING_RECOVERY)])).toBe("fail");
+  });
+
+  it.each([[undefined], [null], ["OTHER"]])("a Setting type of %s is unknown, never ready", (t) => {
+    expect(redelivery(URL_RETRY, [share(t, 100, SETTING_RECOVERY)])).toBe("unknown");
+  });
+});
+
 describe("NEGATIVE CONTROLS — a Rule's split must be COMPLETE before any Setting is certified (Codex P1 4274472921)", () => {
   const healthy = (percentage: unknown) =>
-    ({ percentage, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY }) as never;
+    ({ settingType: "CUSTOMER", percentage, authScheme: "NONE", signatureType: "ACCOUNT_AUTH_TOKEN", signatureAlgorithm: "HMAC_SHA1", ...SETTING_RECOVERY }) as never;
   const run = (percentages: unknown[]) => {
     const f = allProven();
     Object.assign(f.service!, { inboundRequestUrl: URL_OK, fallbackUrl: null, fallbackMethod: null });

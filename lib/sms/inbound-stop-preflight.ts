@@ -376,6 +376,15 @@ export type InboundStopFacts = {
          * means NO retries: pass retryOn [] and retryCount 0.
          */
         settings: Array<{
+          /**
+           * The Setting's type (Codex P2 4305024182; Webhooks configuration
+           * FAQ): "SYSTEM" is Twilio's built-in Setting, the documented first
+           * step of migrating an existing webhook, and it keeps reading
+           * connection overrides from the webhook URL, so its share is judged
+           * by the URL's own retries and transport. "CUSTOMER" uses this
+           * Setting's retryPolicy and timeouts. Undefined/null = not read.
+           */
+          settingType?: "SYSTEM" | "CUSTOMER" | null;
           /** The Setting's share of matching traffic, 0-100; only non-zero shares are ever used. */
           percentage: number | null;
           /**
@@ -816,12 +825,31 @@ export function evaluateInboundStopPreflight(f: InboundStopFacts): PreflightResu
    * just another request, and the same database-backed route can answer it
    * 500 again, so endpoint, method and edges alone never certify it.
    */
+  const combine = (retries: "yes" | "no" | "unknown", transport: Transport): "yes" | "no" | "unknown" =>
+    retries === "no" || transport === "unsafe" ? "no" : retries === "unknown" || transport === "unknown" ? "unknown" : "yes";
+  // The URL's own overrides: the whole verdict with no matching Rule, and a
+  // SYSTEM Setting's share under one (Codex P2 4305024182).
+  const urlRecovers = (u: string | null | undefined) =>
+    combine(retriesRecoverDelivery(u, false) ? "yes" : "no", urlTransport(u, "none", { staticProxyEnabled: f.staticProxyEnabled }));
   const recovers = (u: string | null | undefined): "yes" | "no" | "unknown" => {
-    const transport = urlTransport(u, ruleState, { staticProxyEnabled: f.staticProxyEnabled });
-    const retries = ruleRetries === "n/a" ? (retriesRecoverDelivery(u, false) ? "yes" : "no") : ruleRetries;
-    if (retries === "no" || transport === "unsafe") return "no";
-    if (retries === "unknown" || transport === "unknown") return "unknown";
-    return "yes";
+    if (ruleState === "none") return urlRecovers(u);
+    if (ruleState === "unknown" || !rules?.matched || !sharesKnown || live.length === 0) {
+      return combine("unknown", urlTransport(u, "unknown", { staticProxyEnabled: f.staticProxyEnabled }));
+    }
+    // Under a matching Rule EVERY live share must recover on its own terms.
+    const matchedTransport = urlTransport(u, "matched", { staticProxyEnabled: f.staticProxyEnabled });
+    return live
+      .map((x): "yes" | "no" | "unknown" =>
+        x.settingType === "SYSTEM"
+          ? urlRecovers(u)
+          : x.settingType === "CUSTOMER"
+            ? combine(settingRecovers(x), matchedTransport)
+            : "unknown",
+      )
+      .reduce<"yes" | "no" | "unknown">(
+        (acc, v) => (acc === "no" || v === "no" ? "no" : acc === "unknown" || v === "unknown" ? "unknown" : "yes"),
+        "yes",
+      );
   };
   const redelivers = (url: string | null | undefined, fbUrl: string | null | undefined, fbMethod: string | null | undefined) => {
     const primary = recovers(url);
