@@ -213,3 +213,51 @@ describe("encoded separators (Codex P1 4305142681): every decoded part is judged
     expect(redactIdsInPath("/a%20b")).toBe("/a%20b");
   });
 });
+
+describe("decoded URL syntax is never emitted (Codex P1 4305158024)", () => {
+  // A segment with an id PLUS encoded URL syntax must not come back decoded:
+  // that would rebuild a query or fragment and carry the text (an email) out.
+  const cases: Array<[string, string, string]> = [
+    ["Codex example: an id, then an encoded ?email=…@…", `/clients/${CLIENT}%3Femail%3Dpatient%40example.com`, "/clients/[token]"],
+    ["an encoded # fragment after an id", "/calendar/42%23notes", "/calendar/[token]"],
+    ["encoded = and & after an id", `/clients/${CLIENT}%26x%3D1`, "/clients/[token]"],
+    ["an encoded id joined to text with an encoded space", `/clients/client_%36${CLIENT.slice(1)}%20notes`, "/clients/[token]"],
+    ["an encoded id joined to unreserved text (one opaque run)", `/clients/client_%36${CLIENT.slice(1)}`, "/clients/[token]"],
+    ["a raw id hidden behind literal syntax", "/calendar/42;v=1", "/calendar/[token]"],
+  ];
+  const noSyntax = (out: string) => {
+    const path = new URL(out, HOST).pathname;
+    expect(out).not.toMatch(/[?#@%=&;\s]/);
+    expect(path).not.toMatch(/@|email/i);
+    expect(UUID_ANYWHERE.test(oracleDecode(out))).toBe(false);
+  };
+
+  it.each(cases)("%s: redactIdsInPath", async (_label, input, expected) => {
+    const { redactIdsInPath } = await import("@/lib/analytics/path-ids");
+    const out = redactIdsInPath(input);
+    expect(out).toBe(expected);
+    noSyntax(out);
+  });
+
+  it.each(cases)("%s: Vercel Analytics", async (_label, input, expected) => {
+    const { redactVercelAnalyticsUrl } = await import("@/lib/analytics/vercel-url-redaction");
+    const out = redactVercelAnalyticsUrl(`${HOST}${input}`)!;
+    expect(out).toBe(`${HOST}${expected}`);
+    noSyntax(out.slice(HOST.length));
+  });
+
+  it.each(cases)("%s: PostHog $referrer", (_label, input, expected) => {
+    const out = guardBrowserEvent({
+      event: "$pageview",
+      properties: { $current_url: `${HOST}/pricing`, $referrer: `${HOST}${input}` },
+    })!;
+    const ref = (out.properties as Record<string, string>).$referrer;
+    expect(ref).toBe(`${HOST}${expected}`);
+    noSyntax(ref.slice(HOST.length));
+  });
+
+  it("a segment with encoding but no id is returned exactly as it came, never decoded", async () => {
+    const { redactIdsInPath } = await import("@/lib/analytics/path-ids");
+    expect(redactIdsInPath("/settings/a%3Fb%3Dc")).toBe("/settings/a%3Fb%3Dc");
+  });
+});

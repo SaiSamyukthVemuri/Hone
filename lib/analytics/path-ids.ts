@@ -30,20 +30,42 @@ function redactOnePart(part: string): string {
   return part.replace(EMBEDDED_UUID, "[id]");
 }
 
+// What a part may contain once emitted: RFC 3986 unreserved characters only
+// (plus the [id] placeholder). Anything else (? # @ = & % space, control
+// characters, non-ASCII) could rebuild URL syntax or carry text such as an
+// email, so the part becomes [token] (Codex P1 4305158024).
+const SAFE_PART = /^[A-Za-z0-9._~-]*$/;
+
+function emitPart(part: string): string {
+  const redacted = redactOnePart(part);
+  if (redacted === "[id]" || redacted === "[token]") return redacted;
+  return SAFE_PART.test(redacted.replace(/\[id\]/g, "")) ? redacted : "[token]";
+}
+
+// URL syntax can HIDE an id inside a part ("42#notes", "<uuid>?email=…"), so a
+// part is also judged by its unreserved runs.
+const NON_UNRESERVED = /[^A-Za-z0-9._~-]+/;
+function holdsId(part: string): boolean {
+  if (part === "") return false;
+  if (redactOnePart(part) !== part) return true;
+  return part.split(NON_UNRESERVED).some((run) => run !== "" && redactOnePart(run) !== run);
+}
+
 /** One already-decoded path segment, with any id replaced. A decoded segment
- *  that contains `/` or `\` is split and each part judged separately. */
+ *  that contains `/` or `\` is split and each part judged separately; every
+ *  emitted part is a placeholder or unreserved-only text. */
 export function redactIdSegment(segment: string): string {
-  if (!SEPARATOR.test(segment)) return redactOnePart(segment);
   return segment
     .split(SEPARATOR)
-    .map((part) => (part === "" ? part : redactOnePart(part)))
+    .map((part) => (part === "" ? part : emitPart(part)))
     .join("/");
 }
 
 /** One RAW path segment: percent-decoded to a fixed point (bounded), then
- *  judged part by part. Fail closed: a segment that cannot be decoded, or is
- *  still encoded after the bound, becomes [token]. Unchanged segments are
- *  returned exactly as they came. */
+ *  judged part by part. Returned unchanged (still encoded) when no decoded
+ *  part holds an id or token; otherwise the output is placeholders and
+ *  unreserved text only, so no decoded `?`, `#`, `@`, `%` or other syntax is ever
+ *  emitted. Fail closed: an undecodable or still-encoded segment is [token]. */
 export function redactEncodedSegment(segment: string): string {
   if (segment === "") return segment;
   let decoded = segment;
@@ -58,8 +80,14 @@ export function redactEncodedSegment(segment: string): string {
     decoded = next;
   }
   if (ENCODED.test(decoded)) return "[token]";
-  const redacted = redactIdSegment(decoded);
-  return redacted === decoded ? segment : redacted;
+  // No id or token in any decoded part: the segment is returned EXACTLY as it
+  // came (still encoded, never decoded bytes), as before this boundary.
+  if (!decoded.split(SEPARATOR).some(holdsId)) {
+    return segment;
+  }
+  const out = redactIdSegment(decoded);
+  // Post-check: a changed segment may never carry URL syntax or escapes.
+  return /[?#@%\s]/.test(out) ? "[token]" : out;
 }
 
 /** A URL pathname with every id-bearing segment replaced. */
