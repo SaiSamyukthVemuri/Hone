@@ -500,7 +500,24 @@ export async function sendBookingConfirmationToClient(params: {
   // ledger HERE, once, so every caller (public booking, portal rebook,
   // calendar, public reschedule) is covered without touching any of them.
   return sendLedgeredAppointmentEmail(
-    { studioId: params.appointment.studio_id, appointmentId: params.appointment.id },
+    // THE STUDIO COMES FROM THE STUDIO ARGUMENT, NOT THE APPOINTMENT ROW
+    // (Codex P2 4307335313, fixed on #849 and carried here through 04's
+    // refactor). The three PUBLIC callers hand this function a PARTIAL
+    // appointment — `{ id, starts_at, ends_at, duration_minutes, created_at }`
+    // cast `as unknown as Appointment` (app/book/[slug]/actions.ts:1425,
+    // app/reschedule/[token]/actions.ts:1046, app/portal/rebook-actions.ts:668)
+    // — so `studio_id` is UNDEFINED on exactly the flows this ledger exists to
+    // observe, and the fail-soft path sent the confirmation untagged: no row,
+    // no attribution, no incident, nothing red to show it.
+    //
+    // `params.studio` is a FULL `Studio`, so `.id` is always present. The cast
+    // is why the compiler never objected.
+    //
+    // THE REF IS WHERE THE STUDIO IS CHOSEN. `sendLedgeredAppointmentEmail`
+    // itself correctly uses whatever `ref` it is handed, so the fix belongs
+    // here and not inside the helper — which is exactly what the merge of
+    // #849 into this branch had to decide.
+    { studioId: params.studio.id, appointmentId: params.appointment.id },
     "appointment_confirmation",
     (ledgerMessageId) =>
       sendEmailSafely({
