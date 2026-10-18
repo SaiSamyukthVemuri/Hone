@@ -1,8 +1,9 @@
 import { test, expect, type Page } from "@playwright/test";
 import sharp from "sharp";
 import { seedE2eStudio, seedE2eClient, seedNoStudioAuthUser, sql } from "./helpers/seed";
-import { loginAsOwner, loginByMagicLink } from "./helpers/flows";
-import { E2E_SERVICE_ROLE_KEY, E2E_SUPABASE_URL } from "./helpers/local-env";
+import { loginAsOwner } from "./helpers/flows";
+import { listMessageIds, waitForMagicLink } from "./helpers/mail";
+import { E2E_APP_ORIGIN, E2E_SERVICE_ROLE_KEY, E2E_SUPABASE_URL } from "./helpers/local-env";
 
 // FETT photos (HON-43): Photos-tab grid thumbnails survive a reload AND the
 // 60 s signed-URL expiry, with the original-file fallback intact.
@@ -269,6 +270,22 @@ test("PAGE-WIDE: while a re-mint hangs, a note save on the same page still compl
 // handler runs; the response must carry no signed URL anywhere.
 // ---------------------------------------------------------------------------
 
+/**
+ * Real magic-link sign-in for an account with NO active practitioner. It lands
+ * on /no-access, never /dashboard (as e2e/invite-only.spec.ts asserts), so the
+ * shared loginByMagicLink, which waits for /dashboard, cannot be used here.
+ */
+async function loginWithoutPractitioner(page: Page, email: string) {
+  await page.goto("/login");
+  await page.getByLabel("I am using my invited email address").check();
+  await page.locator("#login-email").fill(email);
+  const seen = await listMessageIds(email);
+  await page.getByRole("button", { name: /send magic link/i }).click();
+  const link = await waitForMagicLink(email, E2E_APP_ORIGIN, { excludeIds: seen });
+  await page.goto(link);
+  await page.waitForURL(/\/no-access/, { timeout: 30_000 });
+}
+
 function expectNoSignedUrl(body: string, location: string | undefined) {
   for (const s of [body, location ?? ""]) {
     expect(s).not.toMatch(/\/storage\/v1\/object\/sign\/|token=/);
@@ -311,7 +328,7 @@ test("re-mint route via the middleware: owner 200 (control); logged-out 307 /log
   const other = await browser.newContext();
   try {
     const p2 = await other.newPage();
-    await loginByMagicLink(p2, email);
+    await loginWithoutPractitioner(p2, email);
     const r = await p2.request.get(path, { maxRedirects: 0 });
     expect(r.status()).toBe(307);
     expect(new URL(r.headers()["location"]!, "http://x").pathname).toBe("/no-access");

@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { initialGridPhoto, type GridPhotoState } from "./grid-photo-recovery";
-import { createRemintController, type RemintController } from "./remint-controller";
+import { createRemintController, oncePerErrorEvent, type RemintController } from "./remint-controller";
 import { fetchSignedImageUrl } from "./remint-request";
 
 // FETT photos (HON-43): the ONE client-side driver for every photo cell (the
@@ -24,8 +24,10 @@ import { fetchSignedImageUrl } from "./remint-request";
 //   flight is aborted too.
 // * An image that fails AROUND hydration can be missed by React's onError.
 //   Per src: an image that has already failed (`complete`, no pixels) is
-//   handled now; otherwise a NATIVE error listener catches a later failure. A
-//   duplicate signal is a no-op (errors are ignored while a re-mint is pending).
+//   handled now; otherwise a NATIVE error listener catches a later failure.
+//   React's onError and that listener receive the SAME event, which is
+//   handled once (oncePerErrorEvent); a duplicate signal for an earlier event
+//   is a no-op too (errors are ignored while a re-mint is pending).
 export function useGridPhotoRecovery(input: {
   previewUrl: string | null;
   thumbUrl: string | null;
@@ -64,7 +66,9 @@ export function useGridPhotoRecovery(input: {
     return () => controller.dispose();
   }, [controller]);
 
-  const handleError = useCallback(() => controller.onImageError(), [controller]);
+  // React's onError and the native listener both receive each error event;
+  // it is handled once (Codex 4308035614).
+  const handleError = useMemo(() => oncePerErrorEvent(() => controller.onImageError()), [controller]);
 
   // Per src: catch an image that already failed, and listen natively for a
   // later failure. The listener is removed when the src changes or on unmount.
@@ -75,7 +79,7 @@ export function useGridPhotoRecovery(input: {
       handleError();
       return;
     }
-    const onNativeError = () => handleError();
+    const onNativeError = (e: Event) => handleError(e);
     el.addEventListener("error", onNativeError);
     return () => el.removeEventListener("error", onNativeError);
   }, [state.src, handleError]);

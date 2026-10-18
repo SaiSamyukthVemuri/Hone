@@ -23,7 +23,8 @@ import {
 //                  even from a superseded attempt (a request that ignored its
 //                  abort); the machine ignores it once the cell has moved on.
 // `dispose` (unmount, or new server URLs) aborts everything and clears every
-// timer; nothing commits after it. `settle` aborts whatever is still in flight
+// timer; nothing commits after it. `activate` (mount, or StrictMode's replay)
+// re-issues a pending attempt that has nothing in flight. `settle` aborts whatever is still in flight
 // ONLY when the live state has nothing pending (a stale caller cannot cancel a
 // live re-mint).
 
@@ -119,7 +120,36 @@ export function createRemintController(deps: {
     },
     activate() {
       disposed = false;
+      // React StrictMode replays effects (dispose, then activate) in dev
+      // (Codex 4308035620 / 4308034872): dispose aborted the in-flight attempt
+      // but the LIVE state is still pending, so later errors are ignored and
+      // settle() declines. Re-issue that same attempt (same variant, same
+      // attempt number, so the bound of four is unchanged) whenever nothing
+      // is in flight for it; the state machine never depends on the replay.
+      const p = read().pending;
+      if (p && attempts.size === 0) issue(p);
     },
     inFlight: () => attempts.size,
+  };
+}
+
+/**
+ * One delivery per image error EVENT (Codex 4308035614). A cell hears an
+ * error twice once its native listener is live: React's onError and the
+ * native listener receive the SAME DOM Event (React's synthetic event carries
+ * it as `nativeEvent`). Without this, one failure was handled twice: the
+ * derivative was demoted to the original, and the same event then counted as
+ * a failure of the ORIGINAL before it had loaded. A call without an event
+ * (the already-failed check) always passes.
+ */
+export function oncePerErrorEvent(handle: () => void): (e?: Event | { nativeEvent: Event }) => void {
+  const seen = new WeakSet<Event>();
+  return (e) => {
+    const ev = e ? ("nativeEvent" in e ? e.nativeEvent : e) : null;
+    if (ev) {
+      if (seen.has(ev)) return;
+      seen.add(ev);
+    }
+    handle();
   };
 }

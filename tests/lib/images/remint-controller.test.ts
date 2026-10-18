@@ -6,7 +6,7 @@ import {
   type GridPhotoUrls,
   type GridPhotoVariant,
 } from "@/lib/images/grid-photo-recovery";
-import { createRemintController } from "@/lib/images/remint-controller";
+import { createRemintController, oncePerErrorEvent } from "@/lib/images/remint-controller";
 
 // FETT photos (HON-43), Codex P1 4307807754: a re-mint is an ABORTABLE request.
 // A timed-out attempt is aborted before the retry is sent, so the retry is a
@@ -252,5 +252,70 @@ describe("lifetime", () => {
     h.c.activate();
     h.c.onImageError();
     expect(h.calls).toHaveLength(1);
+  });
+
+  it("Codex 4308035620: a StrictMode replay (start → dispose → activate) RE-ISSUES the pending attempt, and the cell recovers", async () => {
+    const h = harness();
+    h.c.onImageError(); // attempt 1 in flight, state pending
+    h.c.dispose(); // StrictMode's simulated unmount aborts it...
+    expect(h.calls[0].signal.aborted).toBe(true);
+    expect(h.state.pending).toEqual({ variant: "thumb", attempt: 1 });
+    h.c.activate(); // ...and the re-mount must not leave it stranded
+    expect(h.calls).toHaveLength(2);
+    expect(h.calls[1].signal.aborted).toBe(false);
+    expect(h.c.inFlight()).toBe(1);
+    expect(vi.getTimerCount()).toBe(1);
+    h.calls[1].resolve("thumb-fresh");
+    await flush();
+    expect(h.state).toMatchObject({ stage: "thumb", src: "thumb-fresh", pending: null });
+  });
+
+  it("activate re-issues the SAME attempt (the bound of four is unchanged) and nothing when an attempt is in flight", async () => {
+    const h = harness();
+    h.c.onImageError();
+    h.c.activate(); // a plain mount with attempt 1 already in flight: nothing new
+    expect(h.calls).toHaveLength(1);
+    h.c.dispose();
+    h.c.activate();
+    vi.advanceTimersByTime(T); // the re-issued attempt 1 times out → attempt 2
+    await flush();
+    expect(h.calls).toHaveLength(3);
+    expect(h.state.pending).toEqual({ variant: "thumb", attempt: 2 });
+  });
+});
+
+describe("oncePerErrorEvent (Codex 4308035614): one error EVENT, one transition", () => {
+  it("the same DOM event via React's onError (nativeEvent) AND the native listener → handled ONCE", () => {
+    const h = harness();
+    const onError = oncePerErrorEvent(() => h.c.onImageError());
+    const ev = new Event("error");
+    onError({ nativeEvent: ev }); // React's synthetic event
+    onError(ev); // the native listener, same event
+    expect(h.calls).toHaveLength(1);
+    expect(h.writes).toHaveLength(1);
+  });
+
+  it("the double delivery used to demote AND fail the original from one event; now the original is untouched", async () => {
+    const h = harness();
+    h.c.onImageError();
+    h.calls[0].resolve(null); // the derivative refused → demoted to the original
+    await flush();
+    expect(h.state.stage).toBe("original");
+    const onError = oncePerErrorEvent(() => h.c.onImageError());
+    const lateDuplicate = new Event("error");
+    onError({ nativeEvent: lateDuplicate });
+    const before = h.calls.length;
+    onError(lateDuplicate); // same event again, through the other path
+    expect(h.calls.length).toBe(before);
+  });
+
+  it("DIFFERENT events are each handled; a call with no event (the already-failed check) always passes", () => {
+    let n = 0;
+    const onError = oncePerErrorEvent(() => n++);
+    onError(new Event("error"));
+    onError(new Event("error"));
+    onError();
+    onError();
+    expect(n).toBe(4);
   });
 });
