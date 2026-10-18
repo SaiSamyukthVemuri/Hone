@@ -379,12 +379,30 @@ describe("switching machine or mode clears the collected draft", () => {
     // PINNED ON SOURCE because it is an onClick handler, which this repo has
     // no jsdom to exercise; the behaviour itself is proved by the pure
     // function's tests and MOUNTED in the multi-group revision journey.
+    // THE MECHANISM CHANGED AND THE PROPERTY DID NOT (Codex, #860
+    // 4307523224). Carrying the draft's own groups forward kept their
+    // `recorded` flag, so in a previously EMPTY scope every group still
+    // claimed to be NEW after the first save - and the next change was issued
+    // ANOTHER key at revision 1 instead of revising. The identity survived the
+    // reset and then never settled, which guidance renders the same way: two
+    // separate probes.
+    //
+    // So the next capture re-seeds from the RECORD. That keeps this test's
+    // original claim - after a save of g1 and g2 the form still offers two
+    // groups - and strengthens it, because the keys are now the ones the
+    // database issued rather than the ones this mount invented.
     const src = read(ENTRY_SRC);
-    expect(src).toMatch(/setGroups\(clearedForNextCapture\)/);
+    expect(src).toMatch(
+      /setGroups\(\s*groupsFromRecorded\(recordedGroups, \{/,
+    );
     expect(
       src,
       "resetting to firstGroup() is what renumbered her groups",
     ).not.toMatch(/setGroups\(firstGroup\(\)\)/);
+    expect(
+      src,
+      "carrying the draft forward preserves `recorded: false` on a saved group",
+    ).not.toMatch(/setGroups\(clearedForNextCapture\)/);
   });
 
   it("the ENTRY form SEEDS its draft from what is already recorded", () => {
@@ -1403,21 +1421,61 @@ describe("switching machine or mode clears the collected draft", () => {
     ).toMatch(/\} catch \{\s*fresh = \{ ok: false \};/);
   });
 
+  it("an UNAVAILABLE identity read refuses to drive a write at all", () => {
+    // THE DEFECT (Codex, #860 4307523228). When the block-history read failed,
+    // `recordedSetupUnavailable` changed only the warning renderer while the
+    // entry still received `recordedSetup` as an EMPTY array - so it seeded a
+    // fresh unrecorded group and stayed saveable. A mid-treatment change then
+    // asked the database for a NEW key rather than revising the group whose
+    // identity could not be loaded, and guidance kept both the stale and the
+    // changed setting as separate probes.
+    //
+    // MY CHANGE MADE THIS WORSE, which is why it is fixed here rather than
+    // carried. While the client named groups, an empty snapshot produced `g1`
+    // and a save would have landed on the existing g1. Now an empty snapshot
+    // means "ask for a new key", so the collision became a certainty instead
+    // of a possibility.
+    //
+    // FAIL CLOSED: no identities, no recording. The warning still renders -
+    // she is told why - and the history below is unaffected.
+    const panel = read(PANEL_SRC);
+    expect(panel).toMatch(
+      /blockId && recordAndCount && mode && !recordedSetupUnavailable \?/,
+    );
+  });
+
   it("the SEED SOURCES are enumerated, and every one is current", () => {
     // ops01 asked for this path to join the enumeration. The draft's
     // identities can come from exactly two places, and both must be
     // current at the moment they are read:
     //
-    //   1. WITHIN a mount, from the previous capture — `clearedForNextCapture`,
-    //      which keeps identities and clears observations;
-    //   2. ACROSS a mount, from the record — `groupsFromRecorded`, scoped to
-    //      the mount's (device, profile, version, mode).
+    // THERE IS NOW EXACTLY ONE SOURCE, which is the simplification the
+    // identity change bought (Codex, #860 4307523224). It used to be two:
     //
-    // Source 2 is only as good as `recordedSetup`, which is why the refresh
-    // above is part of the invariant rather than a nicety.
+    //   1. WITHIN a mount, from the previous capture - `clearedForNextCapture`;
+    //   2. ACROSS a mount, from the record - `groupsFromRecorded`.
+    //
+    // Source 1 is GONE, and its helper with it. Once the database issues the
+    // keys, a draft carried forward from the previous capture holds
+    // PLACEHOLDERS, not identities - so after the first save in an empty scope
+    // every group still claimed to be new and the next change was issued
+    // another key. The record is the only thing that knows what a group is
+    // called, so it is the only legitimate seed.
+    //
+    // Both the mount and the next capture therefore read the SAME source, and
+    // it is only as good as `recordedSetup` - which is why the awaited refresh
+    // above is part of the invariant rather than a nicety, and why the panel
+    // refuses to render this form at all when that read failed.
     const entry = read(ENTRY_SRC);
-    expect(entry).toMatch(/setGroups\(clearedForNextCapture\)/);
-    expect(entry).toMatch(/groupsFromRecorded\(recordedGroups, \{/);
+    const fromRecord = entry.match(/groupsFromRecorded\(recordedGroups, \{/g) ?? [];
+    expect(
+      fromRecord.length,
+      "the mount and the next capture must seed from the same place",
+    ).toBe(2);
+    expect(
+      entry,
+      "the retired within-mount source is back, carrying placeholders forward",
+    ).not.toMatch(/clearedForNextCapture/);
     // No THIRD source may appear without this guard being updated: a seed
     // that came from anywhere else would not be covered by either rule.
     const seeds = entry.match(/useState<SettingGroupDraft\[\]>\(/g) ?? [];

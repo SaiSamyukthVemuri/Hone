@@ -193,49 +193,22 @@ export function firstGroup(): SettingGroupDraft[] {
 }
 
 /**
- * The draft for the NEXT capture on a treatment that already has one.
+ * `clearedForNextCapture` WAS HERE, and it is deliberately gone
+ * (Codex, #860 4307523224).
  *
- * KEEPS EVERY GROUP'S IDENTITY and clears everything else. The entry surface
- * used to reset to `firstGroup()` here, which renumbered her groups: after a
- * save of g1 and g2 the form offered a single fresh g1, so a change to what
- * had been g2 was submitted as a revision of g1 (Codex, #860 4290452715).
+ * It carried a draft's group identities into the next capture while clearing
+ * values and channels, which was the right repair while the CLIENT named
+ * groups (4290452715). The database issues those names now, so what it
+ * carried forward were PLACEHOLDERS: after the first save in a previously
+ * empty scope every group still read as new, the next change asked for
+ * another key, and `latest_setup_for_client` then offered both as separate
+ * probes - the same corruption by the opposite route.
  *
- * WHAT THAT DID TO THE RECORD, which is worse than the form being wrong.
- * `latest_setup_for_client` returns the newest capture PER GROUP KEY, so it
- * then combined the repurposed g1 with the stale g2 and offered them as one
- * setup: two settings for one probe, and the channel g1 originally described
- * dropped out of the guidance entirely. The field that carries this is
- * documented as "STABLE for the life of the draft and never renumbered:
- * the database allocates revisions per (block, group), so a key that shifted
- * would append to the wrong group's history" - the rule was written down and
- * the reset broke it.
- *
- * VALUES AND CHANNELS ARE STILL CLEARED, which is the part the old reset had
- * right and this keeps: pre-filling either would invite her to submit settings
- * she has not re-read off the machine, or to assert she ran the same probes.
- * The identity is not an observation; the values and the channels are.
- *
- * AN EMPTY GROUP COSTS NOTHING AT SAVE. `assembleGroupSubmissions` drops any
- * group with no readings, and `draftBlocking` only refuses a PARTIAL one, so
- * a practitioner changing g2 alone leaves g1 untouched and saves exactly one
- * group - which is what makes offering both safe rather than noisy.
+ * `groupsFromRecorded` is the only legitimate seed, because the record is the
+ * only thing that knows what a group is called. Removed rather than left
+ * deprecated: its docblock described a repair that now lives elsewhere, and
+ * reaching for it again would reintroduce the defect.
  */
-export function clearedForNextCapture(
-  groups: readonly SettingGroupDraft[],
-): SettingGroupDraft[] {
-  // A draft with no groups cannot happen through the UI, but a surface that
-  // returned an empty list here would have no box to type in at all.
-  if (groups.length === 0) return firstGroup();
-  // `recorded` IS CARRIED, not reset. These groups have been saved - that is
-  // what makes this the next CAPTURE rather than a first one - so each must
-  // still revise its own group and not ask for a new identity.
-  return groups.map((g) => ({
-    id: g.id,
-    recorded: g.recorded,
-    channels: [],
-    values: {},
-  }));
-}
 
 /**
  * The scope a group identity is meaningful in. A `group_key` says WHICH probe

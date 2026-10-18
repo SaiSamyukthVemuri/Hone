@@ -4,7 +4,6 @@ import type { FieldGroup } from "@/lib/machines/charting";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
 import {
   addGroup,
-  clearedForNextCapture,
   groupIssues,
   groupsFromRecorded,
   highestOrdinal,
@@ -412,82 +411,33 @@ describe("draftBlocking", () => {
   });
 });
 
-describe("the next capture keeps the groups she actually has", () => {
-  // THE DEFECT (Codex, #860 4290452715). "Record a setting change" reset the
-  // draft to `firstGroup()`, so after a save of g1 AND g2 the form offered a
-  // single fresh g1. A practitioner changing what had been g2 then submitted
-  // it as a revision of g1 - and because `latest_setup_for_client` returns the
-  // newest capture PER GROUP KEY, guidance combined the repurposed g1 with the
-  // stale g2: two settings for one probe, and the channel g1 originally
-  // described dropped out entirely.
-  //
-  // The id's own docblock already said identities are "STABLE for the life of
-  // the draft and never renumbered". The rule was written; the reset broke it.
-
-  it("preserves every group id", () => {
-    const after = clearedForNextCapture([
-      { id: "g1", recorded: true, channels: [1], values: { "probe::::current": "120" } },
-      { id: "g2", recorded: true, channels: [2], values: { "probe::::current": "80" } },
-    ]);
-    expect(after.map((g) => g.id)).toEqual(["g1", "g2"]);
-  });
-
-  it("clears the values and the channels, which ARE observations", () => {
-    // The half the old reset had right: pre-filling either would invite her to
-    // submit settings she has not re-read, or to assert she ran the same
-    // probes. The identity is not an observation; these are.
-    const after = clearedForNextCapture([
-      { id: "g1", recorded: true, channels: [1, 2], values: { "probe::::current": "120" } },
-    ]);
-    expect(after[0]!.values).toEqual({});
-    expect(after[0]!.channels).toEqual([]);
-  });
-
-  it("keeps a THIRD group too, not just the first two", () => {
-    const after = clearedForNextCapture([
-      { id: "g1", recorded: true, channels: [], values: {} },
-      { id: "g2", recorded: true, channels: [], values: {} },
-      { id: "g3", recorded: true, channels: [], values: {} },
-    ]);
-    expect(after.map((g) => g.id)).toEqual(["g1", "g2", "g3"]);
-  });
-
-  it("keeps a RETIRED id's successor, so revision history cannot cross", () => {
-    // Ids are monotonic and a removed group's id is never reused. If she
-    // removed g2 and added g3, the next capture must still offer g1 and g3 -
-    // renumbering g3 to g2 would append to the removed group's history.
-    const after = clearedForNextCapture([
-      { id: "g1", recorded: true, channels: [], values: {} },
-      { id: "g3", recorded: true, channels: [], values: {} },
-    ]);
-    expect(after.map((g) => g.id)).toEqual(["g1", "g3"]);
-  });
-
-  it("falls back to one fresh group when there is nothing to keep", () => {
-    // FRESH MEANS NOT RECORDED. There is nothing to revise, so this group
-    // must ask for an identity.
-    expect(clearedForNextCapture([])).toEqual([
-      { id: "g1", recorded: false, channels: [], values: {} },
-    ]);
-  });
-
-  it("CONTROL: an untouched group contributes NOTHING to the save", () => {
-    // This is what makes offering every prior group safe rather than noisy:
-    // she changes g2 alone, leaves g1 blank, and exactly one group is sent.
-    const cleared = clearedForNextCapture([
-      { id: "g1", recorded: true, channels: [1], values: { "probe::::current": "120" } },
-      { id: "g2", recorded: true, channels: [2], values: { "probe::::current": "80" } },
-    ]);
-    const changed = cleared.map((g) =>
-      g.id === "g2"
-        ? { ...g, channels: [2], values: { "probe::::current": "95" } }
-        : g,
-    );
-    const subs = assembleGroupSubmissions([FIELDS], changed);
-    expect(subs.map((o) => o.groupKey)).toEqual(["g2"]);
-    expect(subs[0]!.readings[0]!.value).toEqual({ kind: "value", value: 95 });
-  });
-});
+// ===========================================================================
+// `clearedForNextCapture`'s SUITE WAS HERE, and went with the function
+// (Codex, #860 4307523224)
+// ===========================================================================
+//
+// It proved that the next capture kept every group id and cleared only the
+// observations - the right repair while the CLIENT named groups
+// (4290452715). The database issues those names now, so a draft carried
+// forward holds PLACEHOLDERS: after the first save in a previously empty
+// scope every group still read as new, the next change was issued another
+// key at revision 1, and `latest_setup_for_client` offered both as separate
+// probes. Same corruption, opposite route.
+//
+// WHAT STILL PROVES THE PROPERTY, which has not changed - a group identity
+// must survive every way the form can be mounted:
+//
+//   * `groupsFromRecorded` below, which is now the ONLY seed, for the mount
+//     AND for the next capture;
+//   * the source contract in tests/components/machine-setting-draft.test.ts,
+//     which pins both call sites and bans the retired helper by name;
+//   * the DB proof in tests/db/machine-group-identity.db.test.ts, where
+//     naming an existing key revises it at the next revision with both
+//     values surviving.
+//
+// The cases are not restated here, because a test of a deleted function is a
+// test that passes for ever.
+// ===========================================================================
 
 describe("groupsFromRecorded — identity survives a RELOAD", () => {
   const SCOPE = {

@@ -7,7 +7,6 @@ import { nativeFieldGroups } from "@/lib/machines/charting";
 import { SettingDraftFields } from "./setting-draft-fields";
 import {
   assembleGroupSubmissions,
-  clearedForNextCapture,
   groupIssues,
   groupReadiness,
   groupsFromRecorded,
@@ -407,13 +406,42 @@ export function MachineReadingEntry({
               // ran the same probes, which is the opposite of what a reading
               // is.
               //
-              // THE GROUP IDENTITIES SURVIVE, and that is the repair. This
-              // reset to `firstGroup()`, so after a save of g1 and g2 the form
-              // offered one fresh g1 - and a change to what had been g2 was
-              // submitted as a revision of g1, which guidance then combined
-              // with the stale g2 (Codex, #860 4290452715). See
-              // `clearedForNextCapture`.
-              setGroups(clearedForNextCapture);
+              // THE IDENTITIES ARE RE-SEEDED FROM THE DATABASE, not carried
+              // over from the draft (Codex, #860 4307523224).
+              //
+              // THE DEFECT. `clearedForNextCapture` preserves each group's
+              // `recorded` flag, and in a previously EMPTY scope every group
+              // is `recorded: false`. The database issues the real keys and
+              // the command's result carries no placeholder-to-key mapping, so
+              // after the first save the draft still held groups claiming to
+              // be NEW. The next "Record a setting change" therefore sent
+              // `new_group_ref` again and was issued ANOTHER key at revision
+              // 1 - and `latest_setup_for_client` returns the newest capture
+              // PER GROUP KEY, so guidance then offered both as separate
+              // probes. The same corruption as 4290452715, reached from the
+              // other end: there the identity shifted, here it never settled.
+              //
+              // WHY THE PROP IS TRUSTWORTHY HERE. `recordAndCount` in
+              // machine-first-setup-connected AWAITS `readingsForBlockAction`
+              // and updates `recordedSetup` BEFORE returning this call's
+              // result, so by the time this button can be clicked the prop
+              // already carries the issued keys. It is not a `router.refresh`
+              // race.
+              //
+              // AND THE 4290452715 REPAIR IS KEPT, more strongly than before:
+              // `groupsFromRecorded` returns one group per RECORDED key with
+              // values and channels cleared, so after a save of two groups the
+              // form still offers two - but under the keys the database
+              // actually holds rather than the placeholders this mount
+              // invented.
+              setGroups(
+                groupsFromRecorded(recordedGroups, {
+                  deviceId,
+                  profileId: profile.profileId,
+                  profileVersion: profile.version,
+                  modeKey: mode.key,
+                }),
+              );
               // THE ORDINAL IS NOT RESET, and must not be: it is monotonic so
               // a removed group's id is never reused. Resetting it to 1 while
               // g1 and g2 are still on screen would mint a SECOND g2 on the
