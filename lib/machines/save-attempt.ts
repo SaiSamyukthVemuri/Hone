@@ -189,7 +189,22 @@ export function outcomeFromRecordResult(
   return { kind: "refused", error: out.error };
 }
 
-/** The state after an attempt made with `key` returns `outcome`. */
+/**
+ * The state after an attempt made with `key` returns `outcome`.
+ *
+ * ONE LAW GOVERNS `unresolved` HERE, and it is worth stating once rather than
+ * leaving it implicit in three branches (Codex, #860 4308887493):
+ *
+ *   **`unresolved` is MONOTONIC except under `saved`.** A `refused` or
+ *   `unknown` outcome may SET it or carry it, never clear it. Only `saved`
+ *   clears it, because only an authoritative response for the SAME key answers
+ *   the question "did the original commit?" - and `reused: true` is exactly
+ *   that answer arriving late.
+ *
+ * The reason is asymmetric cost. Wrongly keeping the flag holds a draft she
+ * must reconcile by reloading; wrongly clearing it appends a second immutable
+ * capture of settings recorded once, which cannot be edited or withdrawn.
+ */
 export function afterOutcome(
   state: SaveState,
   key: string,
@@ -213,11 +228,30 @@ export function afterOutcome(
       return {
         // KEPT. A refusal is an acknowledged non-write, so retrying under the
         // same key is correct - and if she edits to fix what was refused, the
-        // draft change clears it.
+        // draft change clears it. While `unresolved` stands, `afterDraftChanged`
+        // keeps it instead, which is what stops the key being dropped between a
+        // refused retry and a later successful one.
         key,
         captures: state.captures,
         recorded: state.recorded,
-        unresolved: false,
+        // CARRIED, NEVER CLEARED (Codex, #860 4308887493).
+        //
+        // A refusal proves THIS attempt wrote nothing. It proves nothing about
+        // an EARLIER attempt whose answer was lost, so it cannot answer that
+        // attempt's question. Hardcoding `false` here applied round 6's
+        // pre-write-refusal reasoning - "nothing was written, so nothing is
+        // ambiguous" - to the one state where something ambiguous already
+        // existed: it re-enabled editing, `afterDraftChanged` then dropped the
+        // retained key, and a later save once access recovered minted a fresh
+        // one and appended a SECOND IMMUTABLE CAPTURE of settings recorded
+        // once.
+        //
+        // So the refusal's MESSAGE is surfaced without the refusal unfreezing
+        // anything: she is told why the retry was refused and the draft stays
+        // held, because the original's outcome is still unknown. The way out is
+        // reconciliation - a reload, where the recorded-setups panel shows what
+        // actually committed - not an edit.
+        unresolved: state.unresolved,
         message: outcome.error ?? REFUSED_NOTE,
       };
     case "unknown":

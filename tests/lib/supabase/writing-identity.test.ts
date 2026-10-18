@@ -59,8 +59,12 @@ const {
   IDENTITY_NOT_SIGNED_IN,
 } = await import("@/lib/supabase/writing-identity");
 
-const { outcomeFromRecordResult, afterOutcome, afterDraftChanged } =
-  await import("@/lib/machines/save-attempt");
+const {
+  outcomeFromRecordResult,
+  afterOutcome,
+  afterDraftChanged,
+  initialSaveState,
+} = await import("@/lib/machines/save-attempt");
 
 beforeEach(() => {
   getCurrentPractitionerWithStudio.mockReset();
@@ -201,9 +205,37 @@ describe("and everything else is re-thrown UNCHANGED", () => {
 });
 
 describe("what the REVISION entry then does with it", () => {
-  const held = { key: "key-1", captures: 1, recorded: true, unresolved: true, message: null };
+  // THESE CASES ASSERTED THE DEFECT, and that is worth recording rather than
+  // quietly rewriting (Codex, #860 4308887493).
+  //
+  // Round 6's fixture was `{ ..., recorded: true, unresolved: true }` and it
+  // asserted that a definitive refusal CLEARED `unresolved`. Two things were
+  // wrong with it:
+  //
+  //   1. THE STATE IS NOT REACHABLE. `recorded` only becomes true on a `saved`
+  //      outcome, which also sets `unresolved: false` - so no run of the
+  //      machine can be in `recorded && unresolved`. The test was asserting a
+  //      transition out of a state that cannot exist.
+  //   2. THE CLAIM WAS WRONG FROM AN UNRESOLVED STATE. A refusal proves THIS
+  //      attempt wrote nothing; it cannot answer whether an EARLIER attempt
+  //      committed. Clearing the flag re-enabled editing, `afterDraftChanged`
+  //      dropped the retained key, and a later save appended a SECOND
+  //      IMMUTABLE CAPTURE.
+  //
+  // The property round 6 meant to prove is true and is kept - from a SETTLED
+  // state, which is where its reasoning applied. The unresolved case now
+  // asserts the law instead. Both fixtures below are built by RUNNING the
+  // machine, so neither can describe a state it cannot reach.
 
-  it("a rejected result UNFREEZES the controls", () => {
+  /** Settled: a fresh draft, nothing outstanding. */
+  const settled = initialSaveState();
+  /** Unresolved: the first attempt's answer was lost, holding its key. */
+  const lost = afterOutcome(settled, "key-1", { kind: "unknown" });
+
+  it("FROM A SETTLED STATE a rejected result is definitive and unfreezes", () => {
+    // Round 6's actual property, on the state it belongs to: nothing was
+    // written, nothing was ambiguous beforehand, so holding the draft would be
+    // the deadlock round 6 removed.
     const outcome = outcomeFromRecordResult(
       { ok: false, code: "rejected", error: IDENTITY_REFUSED_NO_MEMBERSHIP },
       1,
@@ -212,26 +244,32 @@ describe("what the REVISION entry then does with it", () => {
       kind: "refused",
       error: IDENTITY_REFUSED_NO_MEMBERSHIP,
     });
-    const next = afterOutcome(held, "key-1", outcome);
+    const next = afterOutcome(settled, "key-1", outcome);
     expect(
       next.unresolved,
-      "a definitive refusal still froze the draft and the mode buttons",
+      "a definitive refusal froze a draft that had nothing outstanding",
     ).toBe(false);
     expect(next.message).toBe(IDENTITY_REFUSED_NO_MEMBERSHIP);
+    expect(next.key).toBe("key-1");
+    expect(afterDraftChanged(next).key, "an edit could not drop a settled key").toBeNull();
   });
 
-  it("the key is retained BY DESIGN, and the next edit drops it", () => {
-    // NOT A RELEASED KEY, and the brief's wording is worth correcting here: a
-    // refusal is an acknowledged NON-write, so retrying under the same key is
-    // right. What ends the deadlock is `unresolved: false` — which is what
-    // lets `afterDraftChanged` drop the key at all, since it refuses to touch
-    // an unresolved attempt.
-    const next = afterOutcome(held, "key-1", {
+  it("FROM AN UNRESOLVED STATE the same result may NOT unfreeze", () => {
+    // The correction. The refusal is still definitive about ITSELF, and says
+    // nothing about the attempt whose answer was lost.
+    expect(lost.unresolved).toBe(true);
+    const next = afterOutcome(lost, "key-1", {
       kind: "refused",
       error: IDENTITY_REFUSED_NO_MEMBERSHIP,
     });
+    expect(
+      next.unresolved,
+      "a refusal answered a question it cannot answer, so an edit can now drop the key",
+    ).toBe(true);
     expect(next.key).toBe("key-1");
-    expect(afterDraftChanged(next).key, "she is still stuck with the old key").toBeNull();
+    expect(afterDraftChanged(next).key).toBe("key-1");
+    // And she is still told WHY, which is what keeping the freeze must not cost.
+    expect(next.message).toBe(IDENTITY_REFUSED_NO_MEMBERSHIP);
   });
 
   it("CONTROL: an UNKNOWN result still freezes, and still holds the key", () => {
@@ -240,7 +278,7 @@ describe("what the REVISION entry then does with it", () => {
     // safety is that key.
     const outcome = outcomeFromRecordResult({ ok: false, code: "unknown" }, 1);
     expect(outcome).toEqual({ kind: "unknown" });
-    const next = afterOutcome(held, "key-1", outcome);
+    const next = afterOutcome(lost, "key-1", outcome);
     expect(next.unresolved).toBe(true);
     expect(next.key).toBe("key-1");
     expect(
