@@ -342,10 +342,17 @@ describe("an INVERTED timestamp cannot reorder the CHRONOLOGY either", () => {
     expect(out.map((e) => e.revision)).toEqual([1, 2]);
   });
 
-  it("and two SERIES stay in the order they began", () => {
-    // Revision cannot lead globally: revisions are allocated per group, so
-    // revision 1 of one series and revision 1 of another are not comparable.
-    // Each series is placed by its own earliest capture.
+  it("and two series that do NOT overlap stay in their own order", () => {
+    // RE-NAMED, because the rule it used to state was the defect (Codex, #860
+    // 4308767071). It said "each series is placed by its own earliest
+    // capture", which is exactly what grouped whole series together. This
+    // fixture has no overlap - every g1 capture precedes the g2 one - so the
+    // expectation is the same under either rule, and it is the INTERLEAVED
+    // case below that tells them apart.
+    //
+    // Revision still cannot lead globally: revisions are allocated per group,
+    // so revision 1 of one series and revision 1 of another are not
+    // comparable.
     const out = chronology([
       reading({ captureId: "b1", groupKey: "g2", revision: 1, recordedAt: "2026-10-15T11:00:00Z", value: 80 }),
       reading({ captureId: "a1", groupKey: "g1", revision: 1, recordedAt: "2026-10-15T10:00:00Z", value: 120 }),
@@ -513,5 +520,174 @@ describe("a change series never crosses physical units", () => {
     expect(out[0]!.to.deviceId).toBe("dev-1");
     expect(out[0]!.from.value).toEqual({ kind: "value", value: 120 });
     expect(out[0]!.to.value).toEqual({ kind: "value", value: 150 });
+  });
+});
+
+describe("THE CHRONOLOGY IS A MERGE, not a grouping", () => {
+  // THE DEFECT, AND IT WAS MINE (Codex, #860 4308767071). Round 4 fixed a real
+  // problem - a transaction-start `recordedAt` can invert against `revision`,
+  // so sorting on the event's own time could report an adjustment backwards -
+  // and fixed it by sorting every entry by its SERIES' START time. That groups
+  // whole series together, so interleaved captures render out of order. One
+  // true property traded for another.
+  //
+  // THE TWO PROPERTIES ARE NOT IN CONFLICT, and these cases hold them
+  // TOGETHER, which is the point: each is satisfiable alone by the rule that
+  // breaks the other.
+
+  it("CODEX'S EXAMPLE: interleaved captures render interleaved", () => {
+    // g1 r1 10:00 · g2 r1 10:10 · g1 r2 10:20
+    // was rendered g1:1, g1:2, g2:1 - the 10:20 adjustment placed BEFORE the
+    // 10:10 capture it followed.
+    const out = chronology([
+      reading({ captureId: "a1", groupKey: "g1", revision: 1, recordedAt: "2026-10-15T10:00:00Z", value: 120 }),
+      reading({ captureId: "b1", groupKey: "g2", revision: 1, recordedAt: "2026-10-15T10:10:00Z", value: 80 }),
+      reading({ captureId: "a2", groupKey: "g1", revision: 2, recordedAt: "2026-10-15T10:20:00Z", value: 130 }),
+    ]);
+    expect(
+      out.map((e) => `${e.groupKey}:${e.revision}`),
+      "the series were grouped instead of merged, so an adjustment is shown before the capture it followed",
+    ).toEqual(["g1:1", "g2:1", "g1:2"]);
+  });
+
+  it("and the ORDER OF THE INPUT does not change the answer", () => {
+    // A merge driven by the instant must not inherit the bucket map's order.
+    const rows = [
+      reading({ captureId: "a2", groupKey: "g1", revision: 2, recordedAt: "2026-10-15T10:20:00Z", value: 130 }),
+      reading({ captureId: "b1", groupKey: "g2", revision: 1, recordedAt: "2026-10-15T10:10:00Z", value: 80 }),
+      reading({ captureId: "a1", groupKey: "g1", revision: 1, recordedAt: "2026-10-15T10:00:00Z", value: 120 }),
+    ];
+    expect(chronology(rows).map((e) => `${e.groupKey}:${e.revision}`)).toEqual([
+      "g1:1",
+      "g2:1",
+      "g1:2",
+    ]);
+    expect(
+      chronology([...rows].reverse()).map((e) => `${e.groupKey}:${e.revision}`),
+    ).toEqual(["g1:1", "g2:1", "g1:2"]);
+  });
+
+  it("BOTH PROPERTIES AT ONCE: an inverted series, interleaved with another", () => {
+    // THE CASE THAT TELLS THE TWO RULES APART, and the one neither earlier fix
+    // could pass:
+    //
+    //   g1 r1 @ 10:20   <- a long transaction: started first, committed second
+    //   g1 r2 @ 10:00
+    //   g2 r1 @ 10:10
+    //
+    // Sorting on the raw instant gives g1:2 before g1:1 - a series reported
+    // BACKWARDS, which is a clinical record asserting the opposite of what
+    // happened. Sorting by series start gives g1:1, g1:2, g2:1 - the grouping
+    // defect. The clamp gives g2 at its own 10:10, and the inverted pair tied
+    // at 10:20 where revision settles them.
+    const out = chronology([
+      reading({ captureId: "a1", groupKey: "g1", revision: 1, recordedAt: "2026-10-15T10:20:00Z", value: 120 }),
+      reading({ captureId: "a2", groupKey: "g1", revision: 2, recordedAt: "2026-10-15T10:00:00Z", value: 130 }),
+      reading({ captureId: "b1", groupKey: "g2", revision: 1, recordedAt: "2026-10-15T10:10:00Z", value: 80 }),
+    ]);
+    expect(out.map((e) => `${e.groupKey}:${e.revision}`)).toEqual([
+      "g2:1",
+      "g1:1",
+      "g1:2",
+    ]);
+  });
+
+  it("a series is never backwards even when another capture falls between the inverted pair", () => {
+    const out = chronology([
+      reading({ captureId: "a1", groupKey: "g1", revision: 1, recordedAt: "2026-10-15T10:30:00Z", value: 120 }),
+      reading({ captureId: "a2", groupKey: "g1", revision: 2, recordedAt: "2026-10-15T10:00:00Z", value: 130 }),
+      reading({ captureId: "b1", groupKey: "g2", revision: 1, recordedAt: "2026-10-15T10:15:00Z", value: 80 }),
+    ]);
+    const order = out.map((e) => `${e.groupKey}:${e.revision}`);
+    expect(order.indexOf("g1:1")).toBeLessThan(order.indexOf("g1:2"));
+    expect(order).toEqual(["g2:1", "g1:1", "g1:2"]);
+  });
+
+  it("three series interleaving, none of them grouped", () => {
+    const out = chronology([
+      reading({ captureId: "c1", groupKey: "g3", revision: 1, recordedAt: "2026-10-15T10:05:00Z", value: 60 }),
+      reading({ captureId: "a1", groupKey: "g1", revision: 1, recordedAt: "2026-10-15T10:00:00Z", value: 120 }),
+      reading({ captureId: "b1", groupKey: "g2", revision: 1, recordedAt: "2026-10-15T10:10:00Z", value: 80 }),
+      reading({ captureId: "a2", groupKey: "g1", revision: 2, recordedAt: "2026-10-15T10:15:00Z", value: 130 }),
+      reading({ captureId: "c2", groupKey: "g3", revision: 2, recordedAt: "2026-10-15T10:20:00Z", value: 65 }),
+    ]);
+    expect(out.map((e) => `${e.groupKey}:${e.revision}`)).toEqual([
+      "g1:1",
+      "g3:1",
+      "g2:1",
+      "g1:2",
+      "g3:2",
+    ]);
+  });
+
+  it("and a DIFFERENT UNIT's identical group key is still its own series", () => {
+    // Two rooms holding one model both mint `g1`, so the clamp must run per
+    // SERIES - (device, profile, version, mode) plus the key - and not per
+    // group key, or one room's capture floats on the other's instants.
+    //
+    // THE FIXTURE IS BUILT TO MAKE THE WRONG KEYING VISIBLE, and an earlier
+    // version of it was not: with timestamps that happened to ascend, clamping
+    // by group key changed nothing and the negative control reported NOT
+    // CAUGHT. Here dev-2's only capture is EARLIER than dev-1's first, so a
+    // shared bucket would floor it forward onto dev-1's instant.
+    //
+    // ASSERTED IN BOTH INPUT ORDERS, because the wrong keying is order
+    // dependent: the clamp walks a bucket in revision order, two revision-1
+    // captures tie, and which one sets the floor then decides whether the
+    // wrong answer appears at all. One order would pass by luck.
+    const rows = [
+      reading({ captureId: "r1a", deviceId: "dev-1", groupKey: "g1", revision: 1, recordedAt: "2026-10-15T10:20:00Z", value: 120 }),
+      reading({ captureId: "r1b", deviceId: "dev-1", groupKey: "g1", revision: 2, recordedAt: "2026-10-15T10:30:00Z", value: 130 }),
+      reading({ captureId: "r2a", deviceId: "dev-2", groupKey: "g1", revision: 1, recordedAt: "2026-10-15T10:00:00Z", value: 90 }),
+    ];
+    const expected = ["dev-2:1", "dev-1:1", "dev-1:2"];
+    expect(
+      chronology(rows).map((e) => `${e.deviceId}:${e.revision}`),
+      "one unit's capture was floated onto the other unit's instants",
+    ).toEqual(expected);
+    expect(
+      chronology([...rows].reverse()).map((e) => `${e.deviceId}:${e.revision}`),
+      "the answer depends on the input order, so the series keying is wrong",
+    ).toEqual(expected);
+  });
+});
+
+describe("the CHANGE SUMMARY is merged by the same rule", () => {
+  // NOT NAMED BY 4308767071, and fixed with it because it is the same defect
+  // for the same reason: the list led on `to.recordedAt` with revision as a
+  // TIEBREAK, and an inverted transaction-start timestamp is not a tie. Fixing
+  // the captures and leaving the changes would ship half the property.
+
+  it("interleaved changes render interleaved", () => {
+    const out = changesWithin(
+      chronology([
+        reading({ captureId: "a1", groupKey: "g1", revision: 1, recordedAt: "2026-10-15T10:00:00Z", value: 120 }),
+        reading({ captureId: "b1", groupKey: "g2", revision: 1, recordedAt: "2026-10-15T10:05:00Z", value: 80 }),
+        reading({ captureId: "a2", groupKey: "g1", revision: 2, recordedAt: "2026-10-15T10:10:00Z", value: 130 }),
+        reading({ captureId: "b2", groupKey: "g2", revision: 2, recordedAt: "2026-10-15T10:15:00Z", value: 85 }),
+      ]),
+    );
+    expect(out.map((c) => `${c.groupKey}:${c.to.revision}`)).toEqual([
+      "g1:2",
+      "g2:2",
+    ]);
+  });
+
+  it("and two changes in ONE series are never reported out of order when the times invert", () => {
+    // r1 @ 10:30, r2 @ 10:00, r3 @ 10:10 - the pairing is by revision, so the
+    // changes are 1->2 and 2->3; their `to` instants are 10:00 and 10:10, so
+    // a raw sort would read them 1->2 then 2->3 by luck. Make r3 the inverted
+    // one so the raw order is WRONG.
+    const out = changesWithin(
+      chronology([
+        reading({ captureId: "a1", groupKey: "g1", revision: 1, recordedAt: "2026-10-15T10:00:00Z", value: 120 }),
+        reading({ captureId: "a2", groupKey: "g1", revision: 2, recordedAt: "2026-10-15T10:30:00Z", value: 130 }),
+        reading({ captureId: "a3", groupKey: "g1", revision: 3, recordedAt: "2026-10-15T10:10:00Z", value: 140 }),
+      ]),
+    );
+    expect(
+      out.map((c) => `${c.from.value.kind === "value" ? c.from.value.value : "?"}->${c.to.value.kind === "value" ? c.to.value.value : "?"}`),
+      "the later adjustment was listed before the earlier one",
+    ).toEqual(["120->130", "130->140"]);
   });
 });
