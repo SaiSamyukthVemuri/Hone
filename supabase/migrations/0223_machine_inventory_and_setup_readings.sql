@@ -1260,6 +1260,89 @@ comment on function public.assert_setup_scope(uuid, uuid, uuid, uuid) is
 -- it fails closed at the privilege layer even if the revoke below is ever
 -- lost. The revoke is still written, by name, for all four roles. Two locks,
 -- not one.
+-- ===========================================================================
+-- A GROUP IDENTITY IS ISSUED BY THE SERVER, NOT CHOSEN BY A CALLER
+-- (Codex, #860 4305780322)
+-- ===========================================================================
+--
+-- THE DEFECT THIS CLOSES. Group keys used to be minted client-side as
+-- `highestOrdinal(recorded) + 1` over the snapshot a form had loaded. Two page
+-- loads that both added a group therefore both picked the SAME next key, and
+-- the revision allocation below then correctly treated the second as the next
+-- REVISION of the first. Two distinct probe sets merged into one group's
+-- timeline and only the second one's values read as current: a silent loss of
+-- what the practitioner recorded first. Reachable by a reload, a second tab,
+-- or a draft left open while another save landed.
+--
+-- The application-side detection that shipped first (`SETUP_GROUPS_MOVED`)
+-- refuses such a save and tells her to reload. It stays, as the backstop for
+-- anything that still names a key. This makes the collision impossible
+-- instead: a caller that wants a NEW group says so and is ISSUED a key it
+-- could not have guessed, so two concurrent new groups cannot share one.
+--
+-- BLOCK-WIDE, not per setup identity. The revision sequence is scoped to
+-- (block, group, machine, profile, version, mode) and stays that way - only
+-- the KEY's uniqueness widens. So the first group on a newly mounted unit may
+-- now be `g2` rather than `g1` while still being revision 1, which is
+-- invisible: the key is never displayed. `setting-draft-fields.tsx` labels
+-- groups by POSITION ("Setting group 2"), and deliberately shows no label at
+-- all when there is only one.
+--
+-- UNDER A BLOCK-WIDE LOCK, taken BEFORE the identity-wide and per-group locks
+-- that `record_setup_group_in_scope` takes. Coarse before fine, so the
+-- acquisition order across all three stays total and nothing deadlocks. Two
+-- concurrent saves on one block serialise here, read different maxima, and get
+-- disjoint keys - the arithmetic is only sound because of this lock.
+--
+-- NON-CONFORMING KEYS ARE IGNORED, not rejected. `group_key` is free text
+-- (1..40 chars) and nothing guarantees the `g<n>` shape; a row that does not
+-- match simply does not raise the ceiling. Issuing above the highest NUMERIC
+-- key is what has to hold, and the existence check in the writer refuses a
+-- collision regardless.
+create or replace function public.mint_setup_group_keys(
+  p_block_id uuid,
+  p_count integer
+)
+returns text[]
+language plpgsql
+security invoker
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_max integer;
+  v_keys text[];
+begin
+  if p_count is null or p_count < 1 then
+    raise exception 'A group-key allocation must be for at least one group.'
+      using errcode = 'check_violation';
+  end if;
+
+  perform pg_advisory_xact_lock(
+    hashtextextended(
+      row('setup_group_keys', p_block_id)::text,
+      0
+    )
+  );
+
+  select coalesce(
+           max((regexp_match(btrim(c.group_key), '^g([0-9]+)$'))[1]::integer),
+           0
+         )
+    into v_max
+    from public.treatment_setup_captures c
+   where c.session_block_id = p_block_id;
+
+  select array_agg('g' || (v_max + i)::text order by i)
+    into v_keys
+    from generate_series(1, p_count) i;
+
+  return v_keys;
+end;
+$$;
+
+comment on function public.mint_setup_group_keys(uuid, integer) is
+  '0223. Issues N new settings-group keys for one treatment block, block-unique, under a block-wide advisory lock taken BEFORE the identity-wide and per-group locks so the acquisition order stays total. Group identities are ISSUED, never chosen by a caller: client-side allocation from a loaded snapshot let two page loads pick the same next key, and the second capture then became a REVISION of the first - two probe sets merged into one timeline, silently losing the first (Codex, #860 4305780322). Only the key uniqueness is block-wide; the revision sequence is still scoped per (block, group, machine, profile, version, mode).';
+
 create or replace function public.record_setup_group_in_scope(
   p_block_id uuid,
   p_studio_machine_id uuid,
@@ -1284,7 +1367,22 @@ create or replace function public.record_setup_group_in_scope(
    * The single-group command passes just its own key, which is what gives
    * that door the same protection the submission has.
    */
-  p_participating_groups text[]
+  p_participating_groups text[],
+  /**
+   * Is this group key a NEWLY ISSUED identity, or an existing one being
+   * revised? (Codex, #860 4305780322)
+   *
+   * REQUIRED, with no default, deliberately. This is the rule that makes a
+   * group key un-guessable, and a default would let a caller omit it and get
+   * whichever meaning happened to be convenient - which is exactly the
+   * ambiguity the defect lived in. Both doors must state their intent.
+   *
+   * IT IS CHECKED HERE because this is the shared writer, and round 18 taught
+   * that lesson the expensive way: a cross-cutting rule placed in the
+   * submission command alone was delegated straight past by
+   * `record_treatment_setup_group`. One rule, one place, both doors.
+   */
+  p_group_is_new boolean
 )
 returns integer
 language plpgsql
@@ -1314,6 +1412,7 @@ declare
   v_group text;
   v_mode text;
   v_channel smallint;
+  v_group_exists boolean;
 begin
   -- A NON-EMPTY array, and the emptiness check is not cosmetic.
   --
@@ -1485,6 +1584,44 @@ begin
   perform pg_advisory_xact_lock(
     hashtextextended(p_block_id::text || ':' || v_group, 0)
   );
+
+  -- NEW MEANS NEW, AND EXISTING MEANS EXISTING (Codex, #860 4305780322).
+  --
+  -- UNDER THE PER-GROUP LOCK, because an existence test taken outside it is a
+  -- check-then-write race - the same shape that let two saves claim one
+  -- channel at 4302093849. Inside the lock, two concurrent calls naming this
+  -- group serialise and the second sees the first's capture.
+  --
+  -- BLOCK-WIDE, matching how `mint_setup_group_keys` issues. A key scoped
+  -- test would let a caller name a key that exists under ANOTHER unit or mode
+  -- as though it were new, and the whole point is that a caller cannot
+  -- introduce a key at all.
+  select exists (
+    select 1
+      from public.treatment_setup_captures c
+     where c.session_block_id = p_block_id
+       and btrim(c.group_key) = v_group
+  ) into v_group_exists;
+
+  if p_group_is_new and v_group_exists then
+    -- NOT A USER ERROR - an issued key collided with one already on the
+    -- block, which means the mint's lock or its arithmetic is wrong. Refusing
+    -- loudly is the only honest outcome: appending here would file a new probe
+    -- set as a revision of an existing one, the exact defect being closed.
+    raise exception
+      'Issued settings group "%" already exists on this treatment.', v_group
+      using errcode = 'internal_error';
+  end if;
+
+  if not p_group_is_new and not v_group_exists then
+    -- A CALLER CANNOT INTRODUCE A KEY. Naming one that has never been
+    -- recorded is either a stale draft or an attempt to choose an identity;
+    -- both are refused, and a new group is asked for as a new group.
+    raise exception
+      'Settings group "%" is not on this treatment, so it cannot be revised. Add it as a new group instead.',
+      v_group
+      using errcode = 'check_violation';
+  end if;
 
   -- THE REVISION SEQUENCE BELONGS TO A SETUP IDENTITY, not to a group key.
   --
@@ -1702,7 +1839,7 @@ begin
 end;
 $$;
 
-comment on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid, text[]) is
+comment on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid, text[], boolean) is
   '0223. INTERNAL. Writes ONE settings group inside an already-asserted scope: validates the mode contract, the installed-option requirement, the channel bounds and every per-field value rule, derives unit, precision and quantity FROM THE PUBLISHED CONTRACT, allocates one capture at the next revision and inserts its readings. The single definition of what gets stored for a group, shared by record_treatment_setup_group and record_treatment_setup_submission so a clinical rule cannot hold on one path and not the other. SECURITY INVOKER ON PURPOSE: it trusts the scope its caller proved, so it must not carry the definer''s privileges - called directly by a runtime role it fails at the table privilege layer, independently of its EXECUTE revoke. Not granted to any role.';
 
 -- PART 3 COMMAND — record one settings group
@@ -1730,7 +1867,21 @@ create or replace function public.record_treatment_setup_group(
   -- stale or tampered request append immutable readings to ANOTHER CLIENT'S
   -- treatment (Codex, #860 4297032712).
   p_session_id uuid,
-  p_client_id uuid
+  p_client_id uuid,
+  /**
+   * A caller's own LOCAL placeholder for a group it is creating, instead of
+   * `p_group_key` (Codex, #860 4305780322).
+   *
+   * EXACTLY ONE OF THE TWO, like the save command. `p_group_key` revises an
+   * existing group; this asks for a new one and the server issues the
+   * identity. The placeholder is never stored - it exists so a caller can
+   * talk about a group it does not yet have a name for.
+   *
+   * DEFAULTED TO NULL so that `p_group_key`-only calls read unchanged, which
+   * is every revision. The both-absent and both-present cases are refused
+   * below, so the default cannot be used to avoid stating intent.
+   */
+  p_new_group_ref text default null
 )
 returns integer
 language plpgsql
@@ -1739,7 +1890,19 @@ set search_path = pg_catalog, pg_temp
 as $$
 declare
   v_scope record;
+  v_group text;
+  v_is_new boolean;
 begin
+  -- EXACTLY ONE OF THE TWO, and both-absent fails the same test as
+  -- both-present: a group that names neither is the ambiguity this closes.
+  if (btrim(coalesce(p_group_key, '')) <> '')
+     = (btrim(coalesce(p_new_group_ref, '')) <> '') then
+    raise exception
+      'Name either the existing settings group to revise or a new group, and not both.'
+      using errcode = 'check_violation';
+  end if;
+
+  v_is_new := btrim(coalesce(p_new_group_ref, '')) <> '';
   -- THIS COMMAND'S BEHAVIOUR IS UNCHANGED. Every check it used to perform
   -- inline it still performs, in the same order, with the same messages and
   -- the same error codes - they moved into `assert_setup_scope` and
@@ -1758,6 +1921,15 @@ begin
     from public.assert_setup_scope(
       p_block_id, p_studio_machine_id, p_session_id, p_client_id);
 
+  -- ISSUED AFTER THE SCOPE IS PROVEN, never before. Minting takes a
+  -- block-wide lock, and taking a lock on a block the caller has no right to
+  -- would be both a disclosure and a denial-of-service surface.
+  if v_is_new then
+    v_group := (public.mint_setup_group_keys(p_block_id, 1))[1];
+  else
+    v_group := p_group_key;
+  end if;
+
   return public.record_setup_group_in_scope(
     p_block_id,
     p_studio_machine_id,
@@ -1767,19 +1939,20 @@ begin
     v_scope.o_profile_version,
     v_scope.o_installed_options,
     p_mode_key,
-    p_group_key,
+    v_group,
     p_channels,
     p_readings,
     null,
     -- ONLY THIS GROUP participates: a single-group save moves one group, so
     -- every other group's channels are still held and must be respected.
-    array[p_group_key]
+    array[v_group],
+    v_is_new
   );
 end;
 $$;
 
-comment on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb, uuid, uuid) is
-  '0223. Records ONE settings group for one treatment block. The block determines the studio and the caller must be an active member of it, so a block or machine in another studio is refused. The machine is required and its profile identity is copied at record time. Readings are append-only; recording again for the same field raises a unique violation rather than overwriting.';
+comment on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb, uuid, uuid, text) is
+  '0223. Records ONE settings group for one treatment block. The block determines the studio and the caller must be an active member of it, so a block or machine in another studio is refused. The machine is required and its profile identity is copied at record time. Readings are append-only; recording again for the same field raises a unique violation rather than overwriting. A caller names EITHER the existing group it revises (p_group_key) OR a new group by its own local placeholder (p_new_group_ref), never both and never neither: group identities are ISSUED by mint_setup_group_keys, because client-side allocation from a loaded snapshot let two page loads pick the same key and merged two probe sets into one timeline (Codex, #860 4305780322).';
 
 -- ---------------------------------------------------------------------------
 -- PART 6 COMMAND — record ONE SAVE: every settings group, atomically
@@ -1846,6 +2019,11 @@ declare
   v_dup_channel smallint;
   v_dup_group text;
   v_digest text;
+  -- The payload with every new group's ISSUED key filled in. The digest is
+  -- taken over `p_groups` as SENT, never over this.
+  v_resolved jsonb;
+  v_new_keys text[];
+  v_new_count integer;
 begin
   -- PAYLOAD SHAPE FIRST, because it costs no I/O and a malformed call should
   -- not take locks on its way to being refused.
@@ -1939,8 +2117,25 @@ begin
              -- and its ORDER BY on separate lines so the guard stopped
              -- matching. A guard that a reformat can switch off is worth
              -- keeping matchable.
+             --
+             -- OVER THE PAYLOAD AS SENT, WHICH IS WHY A RETRY STILL MATCHES
+             -- (Codex, #860 4305780322). A new group is digested under the
+             -- caller's own placeholder, not under the key the server is about
+             -- to issue - the placeholder is stable across a retry of the same
+             -- save, so the retry digests identically and is absorbed. Digest
+             -- over the issued key instead and every retry would mint a new
+             -- one, digest differently, and append a duplicate: the opposite
+             -- of what the key is for.
+             --
+             -- THE SORT KEY IS TOTAL ACROSS BOTH FORMS. Sorting on
+             -- `group_key` alone collapsed every new group to '' and left
+             -- their order to the aggregate, so the same save could digest two
+             -- ways and a legitimate retry would be refused. The '0'/'1' tag
+             -- also keeps the two namespaces from interleaving, so a
+             -- placeholder that happens to equal an existing key cannot
+             -- reorder the payload.
              'groups',  coalesce(
-               (select jsonb_agg(g.value order by btrim(coalesce(g.value->>'group_key', ''))) from jsonb_array_elements(p_groups) g),
+               (select jsonb_agg(g.value order by (case when g.value ? 'group_key' then '0' else '1' end) || btrim(coalesce(g.value->>'group_key', g.value->>'new_group_ref', ''))) from jsonb_array_elements(p_groups) g),
                '[]'::jsonb
              )
            )::text
@@ -2005,12 +2200,49 @@ begin
     );
   end if;
 
+  -- EVERY GROUP SAYS WHICH OF THE TWO THINGS IT IS (Codex, #860 4305780322).
+  --
+  -- `group_key` means "the next revision of this existing group".
+  -- `new_group_ref` means "a new group" and carries the caller's own LOCAL
+  -- placeholder for it - never an identity. The server issues the identity.
+  --
+  -- EXACTLY ONE, and both-absent is refused by the same test as both-present:
+  -- `(a) = (b)` is true when neither is there, and a group that says nothing
+  -- is precisely the ambiguity this closes.
+  if exists (
+    select 1
+      from jsonb_array_elements(p_groups) g
+     where (g.value ? 'group_key') = (g.value ? 'new_group_ref')
+  ) then
+    raise exception
+      'Each settings group must either name the existing group it revises or be marked as a new group, and not both.'
+      using errcode = 'check_violation';
+  end if;
+
+  if exists (
+    select 1
+      from jsonb_array_elements(p_groups) g
+     where btrim(coalesce(g.value->>'group_key',
+                          g.value->>'new_group_ref', '')) = ''
+  ) then
+    raise exception 'A settings group must be named.'
+      using errcode = 'check_violation';
+  end if;
+
   -- GROUP IDENTITY MUST BE UNAMBIGUOUS WITHIN ONE SAVE. Two groups under one
   -- key are not two groups; they are a caller that has lost track of which is
   -- which, and each would silently become a separate revision of the other.
-  select btrim(coalesce(g.value->>'group_key', '')) into v_dup_group
+  --
+  -- THE PLACEHOLDER COUNTS AS AN IDENTITY HERE, and the two namespaces are
+  -- kept apart by the `new:` prefix: two new groups sharing one placeholder is
+  -- the same lost-track-of-which-is-which bug as two sharing a key, and it
+  -- would also make the retry digest ambiguous about which is which.
+  select btrim(coalesce(g.value->>'group_key',
+                        'new:' || (g.value->>'new_group_ref'), ''))
+    into v_dup_group
     from jsonb_array_elements(p_groups) g
-   group by btrim(coalesce(g.value->>'group_key', ''))
+   group by btrim(coalesce(g.value->>'group_key',
+                           'new:' || (g.value->>'new_group_ref'), ''))
   having count(*) > 1
    limit 1;
 
@@ -2099,6 +2331,51 @@ begin
   )
   returning id into v_submission;
 
+  -- ISSUE AN IDENTITY FOR EVERY NEW GROUP (Codex, #860 4305780322).
+  --
+  -- AFTER the idempotency check, so an absorbed retry mints nothing at all,
+  -- and BEFORE the write loop, so the loop can still sort by a final key and
+  -- keep the deadlock ordering it relies on.
+  --
+  -- THE BLOCK-WIDE MINT LOCK IS TAKEN HERE, which is coarser than the
+  -- identity-wide and per-group locks the writer takes inside the loop.
+  -- Coarse before fine, so the acquisition order across all three is total.
+  select count(*) into v_new_count
+    from jsonb_array_elements(p_groups) g
+   where not (g.value ? 'group_key');
+
+  if v_new_count > 0 then
+    v_new_keys := public.mint_setup_group_keys(p_block_id, v_new_count);
+  end if;
+
+  -- PLACEHOLDERS TAKE KEYS IN SORTED PLACEHOLDER ORDER, so which issued key
+  -- lands on which new group is a function of the payload alone. Nothing
+  -- depends on it today - the keys are interchangeable and never displayed -
+  -- but a deterministic mapping is what makes the DB proof reproducible.
+  with new_ranked as (
+    select g.ord,
+           row_number() over (
+             order by btrim(g.value->>'new_group_ref')
+           ) as rk
+      from jsonb_array_elements(p_groups) with ordinality as g(value, ord)
+     where not (g.value ? 'group_key')
+  )
+  select jsonb_agg(
+           case
+             when g.value ? 'group_key'
+               then g.value || jsonb_build_object('is_new', false)
+             else (g.value - 'new_group_ref')
+                    || jsonb_build_object(
+                         'group_key', v_new_keys[n.rk],
+                         'is_new', true
+                       )
+           end
+           order by g.ord
+         )
+    into v_resolved
+    from jsonb_array_elements(p_groups) with ordinality as g(value, ord)
+    left join new_ranked n on n.ord = g.ord;
+
   -- IN SORTED GROUP ORDER, AND THAT IS A DEADLOCK FIX, NOT TIDINESS.
   --
   -- The shared writer takes `pg_advisory_xact_lock` on (block, group) to
@@ -2109,7 +2386,7 @@ begin
   -- group key gives every caller the same total order, so they queue instead.
   for v_group_item in
     select g.value
-      from jsonb_array_elements(p_groups) g
+      from jsonb_array_elements(v_resolved) g
      order by btrim(coalesce(g.value->>'group_key', ''))
   loop
     -- INPUT ORDER IS PRESERVED INSIDE a group's channel list. The array is
@@ -2140,8 +2417,13 @@ begin
       v_submission,
       -- EVERY GROUP IN THIS SAVE, so a swap within one save is allowed while
       -- a group left untouched still holds its channel.
+      --
+      -- FROM THE RESOLVED PAYLOAD, so a newly issued group is in the
+      -- participating set too. Reading `p_groups` here would have left every
+      -- new group out of it, since they have no key yet.
       (select array_agg(btrim(coalesce(g.value->>'group_key', '')))
-         from jsonb_array_elements(p_groups) g)
+         from jsonb_array_elements(v_resolved) g),
+      (v_group_item->>'is_new')::boolean
     );
     v_groups := v_groups + 1;
   end loop;
@@ -2393,6 +2675,136 @@ comment on function public.sync_machine_profile_contract(text, integer, text, sm
 -- only what the caller may already read, so RLS must stay in force rather than
 -- be bypassed and re-implemented. The membership check below is a fail-closed
 -- second lock, not the only one.
+-- ===========================================================================
+-- ONE BLOCK'S READINGS, IN ONE STATEMENT (Codex, #860 4305555264)
+-- ===========================================================================
+--
+-- THE DEFECT THIS CLOSES. `readingsForBlock` paged by keyset over `id`, and
+-- those ids are random UUIDs fetched in separate PostgREST requests. A capture
+-- committed to the same block while a read was mid-loop could sort either side
+-- of the cursor: rows landing before it were never seen, rows after it were
+-- included. So part of a new capture could come back, with `ok: true`, as a
+-- complete setup - a partial clinical record presented as whole.
+--
+-- A SINGLE STATEMENT IS A SNAPSHOT. One statement sees one MVCC snapshot, so
+-- a concurrent commit is either wholly in it or wholly out. There is no cursor
+-- to straddle and no page ceiling to refuse at, which is why this replaces the
+-- pagination rather than fixing it: the page loop could only ever DETECT its
+-- own incoherence, never avoid it.
+--
+-- THE BINDING IS A PREDICATE, NOT A PRECHECK. `p_session_id` is joined, not
+-- verified-then-trusted: the read returns nothing at all unless the block is
+-- in that session. The TypeScript it replaces did a bounded lookup first and
+-- then filtered the readings on the block alone - sound only because
+-- `session_blocks.session_id` is immutable, which is a property of a trigger
+-- somewhere else. Here it is one join and needs no such argument.
+--
+-- SECURITY INVOKER, so the studio-member SELECT policies still apply and a
+-- block outside the caller's studio stays invisible. The lineage predicate is
+-- the second, independent limb - RLS alone admitted another client's captures
+-- in the same studio, which is the hole 4298457378 closed on the read path.
+--
+-- ORDERED IN SQL, by the same key the caller used to sort in memory. Ordering
+-- is part of what makes a retrieved setup reproducible, so it belongs with the
+-- read rather than with whoever happens to call it.
+--
+-- AND IT REFUSES A BLOCK IT CANNOT SEE, rather than answering with nothing.
+--
+-- The TypeScript this replaces did a bounded block-in-session lookup first and
+-- returned a refusal when RLS hid the block, so a foreign studio was REFUSED.
+-- Returning `[]` instead would have turned that into an empty SUCCESS - no
+-- leak, since empty discloses nothing, but a deliberate decision quietly
+-- reversed, and the chart would render "no settings recorded" to someone with
+-- no business there. The existing assertion in
+-- tests/db/machine-workflow-end-to-end.db.test.ts says a foreign studio must
+-- be refused, not answered, and it stands.
+--
+-- NON-DISCLOSURE IS PRESERVED because the two cases raise IDENTICALLY: a block
+-- that does not exist and a block the caller may not see give the same
+-- sentence. What the caller can still tell apart is a block it legitimately
+-- holds with no readings yet, which returns `[]` - the ordinary state of every
+-- new treatment area.
+--
+-- STABLE, AND THAT IS LOAD-BEARING, not a decoration (ops01's point, and a
+-- good one). Under READ COMMITTED a VOLATILE plpgsql function takes a FRESH
+-- snapshot for each statement it runs, so the visibility check and the read
+-- would see two different moments - reopening exactly the check-then-read
+-- window this function exists to close. STABLE pins one snapshot for the whole
+-- call, so the block proven visible is the block whose readings are returned.
+create or replace function public.setup_readings_for_block(
+  p_block_id uuid,
+  p_session_id uuid
+)
+returns jsonb
+language plpgsql
+stable
+security invoker
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_rows jsonb;
+begin
+  -- VISIBLE AND IN THIS SESSION, or nothing is disclosed at all. RLS scopes
+  -- `session_blocks` to the caller's studio, so a block outside it is invisible
+  -- here and takes the same path as one that was never created.
+  if not exists (
+    select 1
+      from public.session_blocks b
+     where b.id = p_block_id
+       and b.session_id = p_session_id
+  ) then
+    raise exception 'Unknown treatment block for this session.'
+      using errcode = 'no_data_found';
+  end if;
+
+  select coalesce(
+           jsonb_agg(
+             jsonb_build_object(
+               'session_block_id',        r.session_block_id,
+               'machine_profile_id',      r.machine_profile_id,
+               'machine_profile_version', r.machine_profile_version,
+               'mode_key',                r.mode_key,
+               'group_key',               r.group_key,
+               'channels',                r.channels,
+               'stage_key',               r.stage_key,
+               'field_key',               r.field_key,
+               -- AS TEXT, exactly as PostgREST served it. numeric
+               -- serialises to a JSON string so a value cannot lose
+               -- precision in transit; emitting a JSON number makes
+               -- doubles the ceiling for a clinical reading, and
+               -- `toReading`'s Number() would hide it.
+               'value_numeric',           r.value_numeric::text,
+               'absence_reason',          r.absence_reason,
+               'native_unit',             r.native_unit,
+               'decimals',                r.decimals,
+               'revision',                r.revision,
+               'capture_id',              r.capture_id,
+               'studio_machine_id',       r.studio_machine_id,
+               'observation_source',      r.observation_source,
+               'recorded_at',             r.recorded_at
+             )
+             order by r.field_key, r.group_key, r.revision, r.id
+           ),
+           '[]'::jsonb
+         )
+    into v_rows
+    from public.treatment_setup_readings r
+    -- THE JOIN STAYS, even with the check above. It is the predicate that
+    -- BINDS the rows to the session rather than merely having asked about it,
+    -- so the read cannot return another session's readings even if the check
+    -- were removed or reordered. Two independent limbs, deliberately.
+    join public.session_blocks b
+      on b.id = r.session_block_id
+     and b.session_id = p_session_id
+   where r.session_block_id = p_block_id;
+
+  return v_rows;
+end;
+$$;
+
+comment on function public.setup_readings_for_block(uuid, uuid) is
+  '0223. Every reading of one treatment block, as ONE STATEMENT and therefore one MVCC snapshot. Replaces a keyset-paginated read whose cursor ran over random UUIDs across separate requests, so a capture committed mid-read could sort either side of it and part of a new capture could return as a complete setup (Codex, #860 4305555264). The block-in-session lineage is a JOIN PREDICATE, not a precheck, so the read returns nothing unless the block belongs to the given session; SECURITY INVOKER keeps the studio-member policies as the second, independent limb. Ordered in SQL because ordering is part of what makes a retrieved setup reproducible. REFUSES a block it cannot see or that is not in the given session, identically to one that does not exist, so a foreign studio is refused rather than answered with an empty list - while a block the caller legitimately holds with no readings returns []. STABLE so the visibility check and the read share ONE snapshot: a VOLATILE function would take a fresh snapshot per statement under READ COMMITTED and reopen the check-then-read window.';
+
 create or replace function public.latest_setup_for_client(
   p_studio_id uuid,
   p_client_id uuid,
@@ -2941,7 +3353,7 @@ begin
         'p_studio_machine_id', p_studio_machine_id::text,
         'p_setup_mode_key', p_setup_mode_key,
         'p_setup_groups', coalesce(
-          (select jsonb_agg(g.value order by btrim(coalesce(g.value->>'group_key', ''))) from jsonb_array_elements(case when jsonb_typeof(p_setup_groups) = 'array' then p_setup_groups else '[]'::jsonb end) g),
+          (select jsonb_agg(g.value order by (case when g.value ? 'group_key' then '0' else '1' end) || btrim(coalesce(g.value->>'group_key', g.value->>'new_group_ref', ''))) from jsonb_array_elements(case when jsonb_typeof(p_setup_groups) = 'array' then p_setup_groups else '[]'::jsonb end) g),
           '[]'::jsonb
         )
       )::text
@@ -3146,11 +3558,34 @@ revoke execute on function public.set_own_default_machine(uuid, uuid, text) from
 revoke execute on function public.set_own_default_machine(uuid, uuid, text) from service_role;
 grant execute on function public.set_own_default_machine(uuid, uuid, text) to authenticated;
 
-revoke execute on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb, uuid, uuid) from public;
-revoke execute on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb, uuid, uuid) from anon;
-revoke execute on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb, uuid, uuid) from authenticated;
-revoke execute on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb, uuid, uuid) from service_role;
-grant execute on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb, uuid, uuid) to authenticated;
+revoke execute on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb, uuid, uuid, text) from public;
+revoke execute on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb, uuid, uuid, text) from anon;
+revoke execute on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb, uuid, uuid, text) from authenticated;
+revoke execute on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb, uuid, uuid, text) from service_role;
+grant execute on function public.record_treatment_setup_group(uuid, uuid, text, text, smallint[], jsonb, uuid, uuid, text) to authenticated;
+
+-- THE MINT IS NOT A CALLER'S TO CALL.
+--
+-- REVOKED FROM ALL FOUR BY NAME, because Supabase's ALTER DEFAULT PRIVILEGES
+-- grants EXECUTE to anon, authenticated AND service_role at create time. 0129
+-- missed `anon` and 0164 missed `service_role`; the guard at
+-- tests/security/clinical-rpc-grant-guard.test.ts exists because of those two.
+--
+-- Nothing outside these commands has any business issuing a group identity:
+-- a caller that could mint its own keys could mint one that collides, which is
+-- the whole defect restated. It is SECURITY INVOKER so a runtime role that
+-- somehow reached it would still fail at the table privilege layer, which is
+-- the second independent reason it cannot be abused.
+revoke execute on function public.mint_setup_group_keys(uuid, integer) from public;
+revoke execute on function public.mint_setup_group_keys(uuid, integer) from anon;
+revoke execute on function public.mint_setup_group_keys(uuid, integer) from authenticated;
+revoke execute on function public.mint_setup_group_keys(uuid, integer) from service_role;
+
+revoke execute on function public.setup_readings_for_block(uuid, uuid) from public;
+revoke execute on function public.setup_readings_for_block(uuid, uuid) from anon;
+revoke execute on function public.setup_readings_for_block(uuid, uuid) from authenticated;
+revoke execute on function public.setup_readings_for_block(uuid, uuid) from service_role;
+grant execute on function public.setup_readings_for_block(uuid, uuid) to authenticated;
 
 -- THE TWO SHARED BUILDING BLOCKS ARE NOT ENTRY POINTS, and their revokes are
 -- the load-bearing half of that sentence.
@@ -3170,10 +3605,10 @@ revoke execute on function public.assert_setup_scope(uuid, uuid, uuid, uuid) fro
 revoke execute on function public.assert_setup_scope(uuid, uuid, uuid, uuid) from authenticated;
 revoke execute on function public.assert_setup_scope(uuid, uuid, uuid, uuid) from service_role;
 
-revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid, text[]) from public;
-revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid, text[]) from anon;
-revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid, text[]) from authenticated;
-revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid, text[]) from service_role;
+revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid, text[], boolean) from public;
+revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid, text[], boolean) from anon;
+revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid, text[], boolean) from authenticated;
+revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid, text[], boolean) from service_role;
 
 -- The whole-save command IS an entry point: it is what the treatment form
 -- calls.

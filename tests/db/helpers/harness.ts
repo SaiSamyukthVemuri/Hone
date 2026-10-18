@@ -414,6 +414,52 @@ export async function purgeAppointmentAudit(studioId: string): Promise<void> {
  *
  * Tests that DO exercise the binding pass a deliberately wrong route instead.
  */
+/**
+ * THE PER-GROUP DOOR, with new-vs-revise RESOLVED FROM THE BLOCK.
+ *
+ * `record_treatment_setup_group` takes EITHER `p_group_key` - the existing
+ * group it revises - OR `p_new_group_ref`, the caller's own local placeholder
+ * for a group the DATABASE will name. Never both, never neither. Group
+ * identities are issued, because client-side allocation from a loaded
+ * snapshot let two page loads pick the same key and merge two probe sets into
+ * one group's timeline (Codex, #860 4305780322).
+ *
+ * WHY A SHARED SQL CONSTANT. Thirty-seven call sites across three suites pass
+ * the group key as `$4` on a block in `$1`, and nearly all of them are the
+ * FIRST save on a freshly seeded block - so each would now be refused as a
+ * revise of nothing. Rewriting each by hand would state the new-vs-revise rule
+ * thirty-seven times in places that can drift from it; this states it once.
+ *
+ * IT RESOLVES THE WAY THE CLIENT DOES, which is what makes it honest rather
+ * than a convenience: `groupsFromRecorded` marks a draft group `recorded:
+ * true` exactly when it was restored from the block's readings, and
+ * `assembleGroupSubmissions` then sends `group_key` for those and
+ * `new_group_ref` for the rest. Same fact, same decision.
+ *
+ * PARAMETERS ARE UNCHANGED, deliberately: `$4` still carries the key, so no
+ * call site's argument array moves. `$1` is read twice, which is why the block
+ * id must be the first parameter.
+ *
+ * CASES THAT ARE ABOUT THE REFUSAL ITSELF must NOT use this - they name a key
+ * of their own choosing on purpose, and a resolver would decide the thing
+ * under test. tests/db/machine-group-identity.db.test.ts calls the command
+ * directly for that reason.
+ */
+export const RECORD_GROUP_SQL = `select public.record_treatment_setup_group(
+  $1::uuid, $2::uuid, $3,
+  (select btrim(c.group_key)
+     from public.treatment_setup_captures c
+    where c.session_block_id = $1::uuid
+      and btrim(c.group_key) = btrim($4)
+    limit 1),
+  $5::smallint[], $6::jsonb, $7::uuid, $8::uuid,
+  case when exists (select 1
+                      from public.treatment_setup_captures c
+                     where c.session_block_id = $1::uuid
+                       and btrim(c.group_key) = btrim($4))
+       then null else $4 end
+) as n`;
+
 export async function routeFor(
   blockId: string,
 ): Promise<{ sessionId: string; clientId: string }> {

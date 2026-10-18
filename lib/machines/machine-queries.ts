@@ -405,7 +405,13 @@ export async function recordSetupGroup(
     blockId: string;
     machineId: string;
     modeKey: string;
-    groupKey: string;
+    /** The existing group to revise, or null to ask for a new one. */
+    groupKey: string | null;
+    /**
+     * A local placeholder when creating, or null when revising. Exactly one
+     * of the two (Codex, #860 4305780322).
+     */
+    newGroupRef: string | null;
     channels: number[];
     readings: ReadingInputRow[];
   /**
@@ -436,7 +442,11 @@ export async function recordSetupGroup(
     p_block_id: input.blockId,
     p_studio_machine_id: input.machineId,
     p_mode_key: input.modeKey,
+    // EXACTLY ONE, as above. This door takes text rather than JSON, so the
+    // command's test is on emptiness rather than key presence - but sending
+    // both would still be refused, and sending neither likewise.
     p_group_key: input.groupKey,
+    p_new_group_ref: input.newGroupRef,
     p_channels: input.channels,
     p_readings: payload,
     p_session_id: input.sessionId,
@@ -450,7 +460,14 @@ export async function recordSetupGroup(
 
 /** One settings group of a whole-save submission. */
 export type SetupSubmissionGroup = {
-  groupKey: string;
+  /** The existing group this revises, or null for a new one. */
+  groupKey: string | null;
+  /**
+   * The caller's own LOCAL placeholder for a group it is creating, or null
+   * when revising. Exactly one of the two is set; the command refuses
+   * both-present and both-absent (Codex, #860 4305780322).
+   */
+  newGroupRef: string | null;
   channels: number[];
   readings: ReadingInputRow[];
 };
@@ -512,7 +529,14 @@ export async function recordSetupSubmission(
     p_mode_key: input.modeKey,
     p_idempotency_key: input.idempotencyKey,
     p_groups: input.groups.map((g) => ({
-      group_key: g.groupKey,
+      // SPREAD, NOT BOTH KEYS WITH A NULL. The command's "exactly one of the
+      // two" test is `(value ? 'group_key') = (value ? 'new_group_ref')`,
+      // which asks whether the KEY IS PRESENT - and a JSON null is present.
+      // Sending `group_key: null` alongside a ref would therefore be refused
+      // as naming both (Codex, #860 4305780322).
+      ...(g.groupKey === null
+        ? { new_group_ref: g.newGroupRef }
+        : { group_key: g.groupKey }),
       channels: g.channels,
       readings: g.readings.map((r) => ({
         stage_key: r.stageKey,
@@ -692,12 +716,6 @@ function toReading(r: ReadingRow): RecordedReading {
   };
 }
 
-const READING_COLUMNS =
-  "session_block_id, machine_profile_id, machine_profile_version, mode_key, " +
-  "group_key, channels, stage_key, field_key, value_numeric, absence_reason, " +
-  "native_unit, decimals, revision, capture_id, studio_machine_id, " +
-  "observation_source, recorded_at";
-
 /**
  * Is a contract PUBLISHED for this (profile, version)? Used to refuse
  * registering a unit the studio could not then record against.
@@ -813,11 +831,6 @@ export async function publishMachineContract(
   return { ok: true, value: Number(data ?? 0) };
 }
 
-/** One keyset page of this read. 1,000 is PostgREST's own ceiling on Hone. */
-export const BLOCK_READING_PAGE_SIZE = 1000;
-/** 50 pages: past this the read is bounded out and fails closed. */
-export const BLOCK_READING_MAX_PAGES = 50;
-
 /**
  * Every reading recorded against one block, for the chart being edited.
  *
@@ -885,69 +898,64 @@ export async function readingsForBlock(
    */
   sessionId: string,
 ): Promise<MachineOutcome<RecordedReading[]>> {
-  // THE BINDING, AS A QUERY. Two predicates: this block, in this session.
-  // RLS still scopes the row to the caller's studio, so a block outside it
-  // is invisible here regardless.
-  const bound = await db
-    .from("session_blocks")
-    .select("id")
-    .eq("id", blockId)
-    .eq("session_id", sessionId)
-    .limit(1);
-  if (bound.error) {
-    return { ok: false, error: fail(bound.error, "Could not read settings.") };
-  }
-  if (!Array.isArray(bound.data) || bound.data.length === 0) {
-    // DELIBERATELY THE SAME MESSAGE a missing block would give. Confirming
-    // that the block exists but belongs to someone else is the fact this
-    // check exists to withhold.
-    return { ok: false, error: "Could not read settings." };
-  }
-
-  const rows: ReadingRow[] = [];
-  let after: string | null = null;
-
-  for (let page = 0; page < BLOCK_READING_MAX_PAGES; page += 1) {
-    const base = db
-      .from("treatment_setup_readings")
-      .select(`id, ${READING_COLUMNS}`)
-      .eq("session_block_id", blockId);
-    // THE KEYSET PREDICATE applies only after the first page. Written as two
-    // whole chains rather than a reassigned builder: `gt` narrows the shape,
-    // so a `let` holding the pre-`gt` type cannot hold the post-`gt` one.
-    const { data, error } = await (after === null
-      ? base.order("id", { ascending: true }).limit(BLOCK_READING_PAGE_SIZE)
-      : base
-          .gt("id", after)
-          .order("id", { ascending: true })
-          .limit(BLOCK_READING_PAGE_SIZE));
-
-    if (error) return { ok: false, error: fail(error, "Could not read settings.") };
-    if (!Array.isArray(data)) {
-      return { ok: false, error: fail(null, "Could not read settings.") };
+  // ONE STATEMENT, ONE SNAPSHOT (Codex, #860 4305555264).
+  //
+  // WHAT THIS REPLACES. The read paged by keyset over `id` across separate
+  // PostgREST requests, and those ids are random UUIDs - so a capture
+  // committed to this block while the loop was mid-read could sort either
+  // side of the cursor. Rows landing before it were never seen, rows after it
+  // were included, and part of a new capture could therefore come back with
+  // `ok: true` as a complete setup: a partial clinical record presented as
+  // whole. A page loop can only ever DETECT that; it cannot avoid it.
+  //
+  // `setup_readings_for_block` is a single statement, so a concurrent commit
+  // is either wholly in its snapshot or wholly out. The page ceiling and its
+  // "cannot be shown complete" refusal are gone with it - there is nothing
+  // left for them to guard.
+  //
+  // THE LINEAGE CHECK WENT INTO THE QUERY TOO. It used to be a bounded
+  // lookup here, followed by a read filtered on the block alone - sound only
+  // because `session_blocks.session_id` is immutable, which is a property of
+  // a trigger in another file. The function joins the session instead, so the
+  // binding is a predicate on the read itself and needs no such argument
+  // (Codex, #860 4298457378 closed the hole; this removes the reasoning the
+  // fix depended on).
+  const { data, error } = await db.rpc("setup_readings_for_block", {
+    p_block_id: blockId,
+    p_session_id: sessionId,
+  });
+  if (error) {
+    // A BLOCK WE WILL NOT SHOW GETS THE SAME SENTENCE AS A FAILED READ, and
+    // that is a deliberate choice rather than laziness: the practitioner
+    // cannot tell "not yours" from "the database is unhappy", so neither can
+    // anyone probing with someone else's block id.
+    //
+    // THE DATABASE STILL SAYS EXACTLY WHAT HAPPENED. `setup_readings_for_block`
+    // raises "Unknown treatment block for this session." with P0002, which is
+    // what the DB tests assert against - a refusal has to be provable. The
+    // mapping lives here because the precision is useful to a test and not to
+    // a practitioner.
+    //
+    // P0002 IS THIS REPOSITORY'S CODE FOR NOT-FOUND, used 104 times across the
+    // migrations, and this read calls exactly one function - so a P0002 here
+    // is that refusal and nothing else.
+    if (error.code === "P0002") {
+      return { ok: false, error: "Could not read settings." };
     }
-    // AN EMPTY PAGE ENDS THE READ. A short one does not: that is the whole
-    // difference between this and the version it replaces.
-    if (data.length === 0) break;
-
-    const keyed = data as Array<ReadingRow & { id?: unknown }>;
-    rows.push(...keyed);
-    const last = keyed[keyed.length - 1]!.id;
-    // The keyset must move forward, or the loop could re-read a page for ever.
-    if (typeof last !== "string" || (after !== null && last <= after)) {
-      return { ok: false, error: fail(null, "Could not read settings.") };
-    }
-    after = last;
-
-    if (page === BLOCK_READING_MAX_PAGES - 1) {
-      // The ceiling was reached with a full page still arriving, so this read
-      // cannot be shown complete. Refusing is the only honest answer.
-      return { ok: false, error: fail(null, "Could not read settings.") };
-    }
+    return { ok: false, error: fail(error, "Could not read settings.") };
   }
-
-  rows.sort((a, b) => a.field_key.localeCompare(b.field_key));
-  return { ok: true, value: rows.map(toReading) };
+  if (!Array.isArray(data)) {
+    // A SHAPE THE CLIENT SHOULD NEVER PRODUCE, so it fails closed rather than
+    // being coerced. It is NOT the not-yours case: the function RAISES for a
+    // block it cannot see or that is not in the given session, so that arrives
+    // above as an ordinary error - identically to a block that does not exist,
+    // which is what withholds whether it exists at all.
+    //
+    // AN EMPTY ARRAY IS A LEGITIMATE ANSWER and must stay one: it is the
+    // ordinary state of every new treatment area.
+    return { ok: false, error: fail(null, "Could not read settings.") };
+  }
+  return { ok: true, value: (data as ReadingRow[]).map(toReading) };
 }
 
 /**

@@ -565,7 +565,13 @@ export async function recordReadingsAction(input: {
   blockId: string;
   machineId: string;
   modeKey: string;
-  groupKey: string;
+  /**
+   * EXACTLY ONE OF THE TWO (Codex, #860 4305780322). This door revises the
+   * group `groupKey` names, or asks for a new one under the caller's own
+   * placeholder - it never chooses an identity.
+   */
+  groupKey: string | null;
+  newGroupRef: string | null;
   channels: number[];
   readings: ReadingSubmission[];
   /**
@@ -663,6 +669,7 @@ export async function recordReadingsAction(input: {
     machineId: input.machineId,
     modeKey: input.modeKey,
     groupKey: input.groupKey,
+    newGroupRef: input.newGroupRef,
     sessionId: input.sessionId,
     clientId: input.clientId,
     channels: input.channels,
@@ -710,7 +717,14 @@ export async function recordSetupSubmissionAction(input: {
   expectedGroupKeys?: string[];
   idempotencyKey: string;
   groups: Array<{
-    groupKey: string;
+    /**
+     * EXACTLY ONE OF THE TWO (Codex, #860 4305780322). `groupKey` revises the
+     * group it names; `newGroupRef` is the form's own local placeholder for a
+     * group the DATABASE will name. The action does not reinterpret which is
+     * which - it validates readings and passes identity through.
+     */
+    groupKey: string | null;
+    newGroupRef: string | null;
     channels: number[];
     readings: ReadingSubmission[];
   }>;
@@ -825,6 +839,7 @@ export async function recordSetupSubmissionAction(input: {
     }
     groups.push({
       groupKey: g.groupKey,
+      newGroupRef: g.newGroupRef,
       channels: g.channels,
       readings: checked.rows,
     });
@@ -853,7 +868,20 @@ export async function recordSetupSubmissionAction(input: {
   //
   // BLOCK-WIDE, not scope-wide, because revisions are allocated per (block,
   // group_key): a collision does not care which device or mode produced it.
-  if (input.expectedGroupKeys) {
+  //
+  // NARROWED TO THE REVISE PATH, now that identities are server-issued.
+  //
+  // A save made entirely of NEW groups cannot collide any more: the database
+  // issues each key under a block-wide lock, so a draft built from a stale
+  // snapshot still lands as its own distinct group. Refusing it would cost a
+  // practitioner a reload in a case where nothing can go wrong, and a guard
+  // that cries wolf gets ignored.
+  //
+  // A REVISE is still worth refusing. She decided to record a change relative
+  // to the setup she was looking at; if that set has moved, her baseline has
+  // moved with it. Nothing is lost either way - captures are append-only - but
+  // being told to look again is the honest answer to a stale picture.
+  if (input.expectedGroupKeys && groups.some((g) => g.groupKey !== null)) {
     const current = await readingsForBlock(db, input.blockId, input.sessionId);
     if (!current.ok) {
       // A READ THAT FAILED IS NOT A SET THAT MATCHES. Treating it as "no

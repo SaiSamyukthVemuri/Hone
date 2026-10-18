@@ -90,7 +90,14 @@ export type MachineReadingEntryProps = {
     modeKey: string;
     idempotencyKey: string;
     groups: Array<{
-      groupKey: string;
+      /**
+       * EXACTLY ONE OF THE TWO (Codex, #860 4305780322). `groupKey` revises a
+       * group the database already holds; `newGroupRef` is this form's own
+       * local placeholder for one it does not, and the database issues the
+       * real key. The form no longer mints identities.
+       */
+      groupKey: string | null;
+      newGroupRef: string | null;
       channels: number[];
       readings: ReadingSubmission[];
     }>;
