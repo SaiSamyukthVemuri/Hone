@@ -104,11 +104,47 @@ function isVerificationStep(s: Step): boolean {
   );
 }
 
+/**
+ * Does `success()` appear as a REQUIREMENT in this expression?
+ *
+ * Codex P2 4307482784. `success()` is FALSE once an earlier step in the job has
+ * failed, so `${{ success() && !cancelled() }}` is skipped exactly as an absent
+ * `if:` would be — while containing the token this file used to accept. Matching
+ * `!cancelled()` as a substring was therefore adjacent to the property, not the
+ * property: the suite would have stayed green while the failure-hiding it
+ * exists to prevent was reintroduced verbatim.
+ *
+ * `!success()` is not a requirement of success, so the negative form is
+ * excluded.
+ */
+function requiresSuccess(normalized: string): boolean {
+  return /(?:^|[^!A-Za-z0-9_])success\(\)/.test(normalized);
+}
+
 /** Does this condition still run when an earlier step has failed? */
 function survivesFailure(cond: string | undefined): boolean {
   if (!cond) return false;
   const c = cond.replace(/\s+/g, "");
-  return c.includes("!cancelled()") || c.includes("always()");
+  if (!c.includes("!cancelled()") && !c.includes("always()")) return false;
+  // ...and it must not re-impose the very gate it just lifted.
+  return !requiresSuccess(c);
+}
+
+/**
+ * Is `id`'s outcome required to be SUCCESS by this condition?
+ *
+ * Codex P2 4307482788. Asserting only that a condition MENTIONS the reset step
+ * is satisfied by `steps.db_chain.outcome == 'failure'`, which would run the
+ * drift check against a FAILED reset and skip it after a successful one — the
+ * inversion of the production fix, with the fence still green. So the
+ * comparison itself is read, not merely the step name.
+ */
+function requiresStepSuccess(cond: string | undefined, id: string): boolean {
+  if (!cond) return false;
+  const c = cond.replace(/\s+/g, "");
+  return new RegExp(
+    `steps\\.${id}\\.(?:outcome|conclusion)==(?:'success'|"success")`,
+  ).test(c);
 }
 
 /** The step ids a condition reads, e.g. `steps.db_chain.outcome`. */
@@ -341,6 +377,15 @@ describe("ci.yml: no verification step is hidden behind an earlier failure", () 
       prereqs.some((s) => /db reset --local/.test(s?.run ?? "")),
       "the gate must be the migration-chain step",
     ).toBe(true);
+    // AND THE COMPARISON MUST REQUIRE SUCCESS (Codex P2 4307482788). Naming the
+    // step is not enough: `outcome == 'failure'` names it too, and inverts the
+    // fix while leaving this fence green.
+    for (const id of ids) {
+      expect(
+        requiresStepSuccess(drift?.if, id),
+        `steps.${id} must be required to have SUCCEEDED, not merely mentioned: ${drift?.if}`,
+      ).toBe(true);
+    }
     // ...and that prerequisite must NOT itself be a verification or a test, or
     // we are back to one check hiding another.
     for (const s of prereqs) {
@@ -447,6 +492,58 @@ describe("ci.yml: no verification step is hidden behind an earlier failure", () 
     const dbTests = (job.steps ?? []).find((s) => s.name === "DB tests");
     expect(survivesFailure(dbTests?.if), "it looks guarded...").toBe(true);
     expect(gatesOnAVerificationStep(job, dbTests?.if), "...but it is not").toBe(true);
+  });
+
+  it("EVERY gated step requires its prerequisite to have SUCCEEDED", () => {
+    // The general form of 4307482788, so the drift check is not the only step
+    // protected from an inverted comparison.
+    const offenders: string[] = [];
+    for (const [jobId, job] of jobs(CI_BODY)) {
+      const steps = job.steps ?? [];
+      const firstTest = steps.findIndex(isTestStep);
+      for (const s of steps) {
+        const isPostTestCheck =
+          firstTest >= 0 && steps.indexOf(s) > firstTest && isVerificationStep(s);
+        const isGatedTest = isTestStep(s) && s.if;
+        if (!isPostTestCheck && !isGatedTest) continue;
+        for (const id of referencedStepIds(s.if)) {
+          if (!requiresStepSuccess(s.if, id)) {
+            offenders.push(`${jobId}: ${s.name} -> steps.${id}`);
+          }
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("CONTROL: `success() && !cancelled()` is NOT guarded", () => {
+    // Codex P2 4307482784. GitHub skips this exactly as an absent `if:` does,
+    // because `success()` is false after an earlier failure — yet it contains
+    // the token the old predicate matched on.
+    expect(survivesFailure("${{ success() && !cancelled() }}")).toBe(false);
+    expect(survivesFailure("${{ !cancelled() && success() }}")).toBe(false);
+    // The forms that really do survive:
+    expect(survivesFailure("${{ !cancelled() }}")).toBe(true);
+    expect(survivesFailure("${{ always() }}")).toBe(true);
+    expect(survivesFailure("${{ !cancelled() && steps.db_chain.outcome == 'success' }}")).toBe(true);
+    // ...and `steps.<id>.outcome == 'success'` must NOT be mistaken for the
+    // `success()` function, or every prerequisite gate would read as unguarded.
+    expect(requiresSuccess("!cancelled()&&steps.db_chain.outcome=='success'")).toBe(false);
+    expect(requiresSuccess("success()&&!cancelled()")).toBe(true);
+  });
+
+  it("CONTROL: an INVERTED prerequisite is rejected", () => {
+    // Codex P2 4307482788: this names the reset step, so a mention-only check
+    // passes it, while the drift check would run after a FAILED reset and skip
+    // after a successful one.
+    const inverted = "${{ !cancelled() && steps.db_chain.outcome == 'failure' }}";
+    expect(survivesFailure(inverted), "it does survive a test failure...").toBe(true);
+    expect(referencedStepIds(inverted), "...and it does name the step...").toEqual(["db_chain"]);
+    expect(requiresStepSuccess(inverted, "db_chain"), "...but it is still rejected").toBe(false);
+    // The real form passes.
+    expect(
+      requiresStepSuccess("${{ !cancelled() && steps.db_chain.outcome == 'success' }}", "db_chain"),
+    ).toBe(true);
   });
 
   it("artifact, diagnostic and cleanup steps are left alone", () => {
