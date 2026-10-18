@@ -1123,7 +1123,15 @@ export type InitialSetupInput = {
    * commit.
    */
   groups: Array<{
-    groupKey: string;
+    /**
+     * EXACTLY ONE OF THE TWO IS SET (Codex, #860 4305780322). `groupKey`
+     * revises the group it names; `newGroupRef` is the caller's own local
+     * placeholder for a group the DATABASE will name. A caller cannot choose
+     * a new identity, because two callers choosing independently is how two
+     * probe sets came to merge into one timeline.
+     */
+    groupKey: string | null;
+    newGroupRef: string | null;
     channels: number[];
     readings: ReadingSubmission[];
   }>;
@@ -1386,7 +1394,11 @@ export async function createTreatmentAreaWithEntryAction(
       );
       if ("error" in checked) return { ok: false, error: checked.error };
       setupGroups.push({
+        // PASSED THROUGH, NOT RE-DERIVED. Which kind of group this is was
+        // decided by the form that built the draft; this action validates
+        // readings and must not reinterpret identity.
         groupKey: g.groupKey,
+        newGroupRef: g.newGroupRef,
         channels: g.channels,
         readings: checked.rows,
       });

@@ -6,6 +6,7 @@ import { Client } from "pg";
 
 import {
   adminQuery,
+  RECORD_GROUP_SQL,
   asUser,
   closePool,
   resolveLocalDbUrl,
@@ -144,7 +145,7 @@ const recordAs = (
   // published field contract, not the binding (Codex, #860 4297032712).
   routeFor(blockId).then((route) =>
     asUser(userId, (q) =>
-      q(`select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid) as n`, [
+      q(RECORD_GROUP_SQL, [
       blockId,
       machineId,
       "galvanic",
@@ -192,7 +193,10 @@ const recordOn = (
   clientId: string,
 ) =>
   c.query(
-    `select public.record_treatment_setup_group($1,$2,'galvanic','g','{}'::smallint[],$3::jsonb,$4::uuid,$5::uuid) as n`,
+    // NEW BY REF: 'g' is this caller's own placeholder, not a key it is
+    // choosing. Identities are issued by the database, and every caller of
+    // this helper records the FIRST capture on its own block.
+    `select public.record_treatment_setup_group($1,$2,'galvanic',null,'{}'::smallint[],$3::jsonb,$4::uuid,$5::uuid,'g') as n`,
     [blockId, machineId, JSON.stringify([ok("current", value)]), sessionId, clientId],
   );
 
@@ -828,7 +832,7 @@ describe("0223 · republish compares field IDENTITIES, not counts", () => {
 
 // ---------------------------------------------------------------------------
 describe("0223 · concurrent captures stay DISTINCT and COHERENT", () => {
-  it("four simultaneous captures get consecutive revisions and never interleave", async () => {
+  it("four simultaneous REVISIONS get consecutive numbers and never interleave", async () => {
     // THE RACE THE ADVISORY LOCK EXISTS FOR. Without it, concurrent callers
     // read the same max(revision) and either collide on the unique constraint
     // or share a number, which would make two different settings look like one
@@ -836,14 +840,40 @@ describe("0223 · concurrent captures stay DISTINCT and COHERENT", () => {
     //
     // Four, because the harness pool is max 4 - so these are genuinely
     // simultaneous rather than queued.
+    //
+    // RESTRUCTURED, because group identities are ISSUED now (Codex, #860
+    // 4305780322). Four concurrent requests for a NEW group correctly get four
+    // DISTINCT groups at revision 1 each - that is the collision fix working,
+    // and it has its own proof in tests/db/machine-group-identity.db.test.ts.
+    // So the REVISION race has to be run the only way it is still reachable:
+    // create the group, read back the key the database issued, then have all
+    // four callers revise THAT key. The claim is unchanged; its setup is not.
     const studio = await seedStudio("race");
     const { blockId } = await seedSession(studio);
     await publish(30);
     const machineId = await register(studio, 30);
 
+    // Revision 1, created by asking for an identity. `recordAs` resolves
+    // new-vs-revise from the block, so a label the block has never seen is
+    // sent as a placeholder.
+    await recordAs(studio.userId, blockId, machineId, "seed", [
+      ok("current", "5"),
+      ok("duration", "1.0"),
+    ]);
+    const issued = await adminQuery(
+      `select btrim(group_key) as k from public.treatment_setup_captures
+        where session_block_id = $1`,
+      [blockId],
+    );
+    expect(
+      issued.rows,
+      "the group was not created, so there is nothing to revise",
+    ).toHaveLength(1);
+    const groupKey = issued.rows[0].k as string;
+
     await Promise.all(
       ["10", "20", "30", "40"].map((v) =>
-        recordAs(studio.userId, blockId, machineId, "g", [
+        recordAs(studio.userId, blockId, machineId, groupKey, [
           ok("current", v),
           ok("duration", "1.0"),
         ]),
@@ -857,12 +887,17 @@ describe("0223 · concurrent captures stay DISTINCT and COHERENT", () => {
               (select count(distinct r.revision)::int from public.treatment_setup_readings r
                 where r.capture_id = c.id) as revisions
          from public.treatment_setup_captures c
-        where c.session_block_id = $1 and c.group_key = 'g'
+        where c.session_block_id = $1 and btrim(c.group_key) = $2
         order by c.revision`,
-      [blockId],
+      [blockId, groupKey],
     );
 
-    expect(caps.rows.map((r: { revision: number }) => r.revision)).toEqual([1, 2, 3, 4]);
+    // FIVE, not four: revision 1 is the creation above and the four racing
+    // revisions take 2..5. A gap or a repeat here is the collision the lock
+    // exists to prevent.
+    expect(caps.rows.map((r: { revision: number }) => r.revision)).toEqual([
+      1, 2, 3, 4, 5,
+    ]);
     // Each capture holds its OWN two fields, at ONE revision. A capture with
     // three fields, or two revisions, would mean two callers' readings mixed.
     for (const row of caps.rows as Array<{ fields: number; revisions: number }>) {
@@ -880,7 +915,14 @@ describe("0223 · concurrent captures stay DISTINCT and COHERENT", () => {
         order by v`,
       [blockId],
     );
-    expect(vals.rows.map((r: { v: string }) => r.v)).toEqual(["10", "20", "30", "40"]);
+    // ORDERED BY THE VALUE AS TEXT, so the seed's "5" sorts after "40".
+    expect(vals.rows.map((r: { v: string }) => r.v)).toEqual([
+      "10",
+      "20",
+      "30",
+      "40",
+      "5",
+    ]);
   });
 });
 
@@ -1145,8 +1187,32 @@ describe("0223 · retrieval returns ONE coherent capture, never a composite", ()
     const { blockId } = await seedSession(studio);
     await publish(50);
     const machineId = await register(studio, 50);
-    await recordAs(studio.userId, blockId, machineId, "g", [ok("current", "100")]);
-    await recordAs(studio.userId, blockId, machineId, "g", [ok("current", "150")]);
+    // THE SECOND CAPTURE NAMES THE KEY THE DATABASE ISSUED, not the label
+    // this test used for the first one (Codex, #860 4305780322).
+    //
+    // `recordAs` resolves new-vs-revise from the block, but it can only match
+    // what is STORED - and what is stored is the ISSUED key, not the
+    // placeholder. Passing "g" twice therefore creates TWO groups at revision
+    // 1 each rather than revising one, which is what this test caught.
+    //
+    // THE CLIENT HAS THE SAME TWO STEPS. After a save it re-reads the block
+    // and `groupsFromRecorded` hands it the issued keys; the draft's local ids
+    // are replaced by them. So reading the key back here is not harness
+    // ceremony - it is what the application does.
+    await recordAs(studio.userId, blockId, machineId, "first", [ok("current", "100")]);
+    const issued = await adminQuery(
+      `select btrim(group_key) as k from public.treatment_setup_captures
+        where session_block_id = $1`,
+      [blockId],
+    );
+    expect(issued.rows, "the first capture did not land").toHaveLength(1);
+    await recordAs(
+      studio.userId,
+      blockId,
+      machineId,
+      issued.rows[0].k as string,
+      [ok("current", "150")],
+    );
 
     const out = await asUser(studio.userId, (q) =>
       q(`select public.setup_capture_history_for_block($1) as r`, [blockId]),
@@ -2051,7 +2117,7 @@ describe("0223 - two setting groups in one block stay distinct", () => {
     routeFor(blockId).then((route) =>
       asUser(userId, (q) =>
         q(
-          `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid) as n`,
+          RECORD_GROUP_SQL,
           [
           blockId,
           machineId,
@@ -2178,7 +2244,7 @@ describe("0223 - invalid channel and group combinations are refused BY THE DATAB
     routeFor(blockId).then((route) =>
       asUser(userId, (q) =>
         q(
-          `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid) as n`,
+          RECORD_GROUP_SQL,
           [
           blockId,
           machineId,
@@ -2208,10 +2274,19 @@ describe("0223 - invalid channel and group combinations are refused BY THE DATAB
   });
 
   it("refuses an EMPTY group key, which no stable identity can be", async () => {
+    // REFUSED ONE CHECK EARLIER NOW (Codex, #860 4305780322). A blank key
+    // trims to '' and the resolver finds nothing to match, so it is sent as a
+    // placeholder - which also trims to ''. Both halves of the exactly-one
+    // rule therefore read as ABSENT, and that rule runs above
+    // `assert_setup_scope`, so the sentence is its own rather than the
+    // mode-and-group one.
+    //
+    // THE CLAIM IS UNCHANGED and arguably better served: whitespace is not an
+    // identity, and now it is not a request for one either.
     const { studio, blockId, machineId } = await scene("groups-bad-key", 136);
     await expect(
       tryGroup(studio.userId, blockId, machineId, "   ", [1]),
-    ).rejects.toThrow(/mode and a settings group are required/i);
+    ).rejects.toThrow(/name the existing settings group|and not both/i);
   });
 
   it("refuses ANOTHER TENANT's member recording into this block", async () => {
@@ -2264,7 +2339,7 @@ describe("0223 - the latest setup includes every group, coherently", () => {
     routeFor(blockId).then((route) =>
       asUser(userId, (q) =>
         q(
-          `select public.record_treatment_setup_group($1,$2,$3,$4,$5,$6::jsonb,$7::uuid,$8::uuid) as n`,
+          RECORD_GROUP_SQL,
           [
           blockId,
           machineId,

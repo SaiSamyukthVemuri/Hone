@@ -34,8 +34,8 @@ describe("the second tab's collision, step by step", () => {
   it("both tabs independently derive the SAME next identity", () => {
     // The setup as it actually happens: one recorded group, two page loads.
     const recorded = ["g1"];
-    const tabOneDraft = recorded.map((id) => ({ id, channels: [], values: {} }));
-    const tabTwoDraft = recorded.map((id) => ({ id, channels: [], values: {} }));
+    const tabOneDraft = recorded.map((id) => ({ id, recorded: true, channels: [], values: {} }));
+    const tabTwoDraft = recorded.map((id) => ({ id, recorded: true, channels: [], values: {} }));
 
     // Each tab adds a group, each counting from its own snapshot.
     const tabOne = addGroup(tabOneDraft, highestOrdinal(tabOneDraft) + 1);
