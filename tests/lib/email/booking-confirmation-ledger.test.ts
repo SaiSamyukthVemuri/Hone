@@ -122,6 +122,69 @@ describe("sendBookingConfirmationToClient joins the ledger", () => {
     expect(h.rpc).toEqual([]);
   });
 
+  // WHY THE CASE ABOVE DID NOT CATCH 4307335313, which is the part worth
+  // keeping: `params()` builds a COMPLETE appointment, including
+  // `studio_id: STUDIO_ID`. No real public caller does. The fixture was more
+  // complete than production, so the happy path read `appointment.studio_id`
+  // successfully here and `undefined` in the three flows that matter — the
+  // same shape of mistake as a fixture asserting a state it never built.
+  it("the PARTIAL appointment the public callers really pass still joins the ledger", async () => {
+    // THE EXACT OBJECT the three public flows construct and cast
+    // `as unknown as Appointment`:
+    //   app/book/[slug]/actions.ts:1425
+    //   app/reschedule/[token]/actions.ts:1046
+    //   app/portal/rebook-actions.ts:668
+    // No `studio_id`, and the cast is why `tsc` never objected.
+    const partial = {
+      id: APPT_ID,
+      starts_at: "2026-10-16T17:00:00.000Z",
+      ends_at: "2026-10-16T17:45:00.000Z",
+      duration_minutes: 45,
+      created_at: "2026-10-15T12:00:00.000Z",
+    };
+    // THE FIXTURE'S OWN DISCRIMINATOR. If `studio_id` ever creeps back into
+    // this object the test below passes for the wrong reason and stops
+    // guarding anything.
+    expect(Object.keys(partial)).not.toContain("studio_id");
+
+    h.begin = { data: ROW, error: null };
+    const result = await sendBookingConfirmationToClient(params({ appointment: partial }));
+
+    expect(result).toEqual({ ok: true, messageId: EMAIL_ID });
+    // Keyed to the STUDIO ARGUMENT. Before the fix this row was never begun:
+    // `p_studio_id` arrived undefined, the helper failed soft, and the
+    // confirmation went out untagged with no row, no attribution and no
+    // incident — on exactly the flows the ledger exists to observe.
+    expect(h.rpc[0]).toEqual([
+      "begin_appointment_email_message",
+      { p_studio_id: STUDIO_ID, p_appointment_id: APPT_ID, p_purpose: "appointment_confirmation" },
+    ]);
+    // And the email is tagged, which is the observable consequence of the row
+    // existing — asserting the RPC args alone would not prove the send was
+    // actually attributed.
+    expect(h.sent[0]!.tags).toEqual([{ name: "hone_m", value: ROW }]);
+    expect(h.rpc[1]?.[0]).toBe("settle_email_message");
+  });
+
+  it("CONTROL: a partial appointment never sends `undefined` as the studio", async () => {
+    const partial = {
+      id: APPT_ID,
+      starts_at: "2026-10-16T17:00:00.000Z",
+      ends_at: "2026-10-16T17:45:00.000Z",
+      duration_minutes: 45,
+      created_at: "2026-10-15T12:00:00.000Z",
+    };
+    h.begin = { data: ROW, error: null };
+    await sendBookingConfirmationToClient(params({ appointment: partial }));
+    const args = h.rpc[0]![1];
+    // Stated separately from the equality above because this is the FAILURE
+    // MODE, not the happy value: `beginAppointmentEmailMessage` types
+    // `studioId: string`, so an undefined here is a type lie that only the
+    // upstream cast made possible.
+    expect(args.p_studio_id).toBeDefined();
+    expect(typeof args.p_studio_id).toBe("string");
+  });
+
   it("begins nothing when there is no recipient", async () => {
     const result = await sendBookingConfirmationToClient(params({ clientEmail: "" }));
     expect(result).toMatchObject({ ok: false, attempt: "none" });

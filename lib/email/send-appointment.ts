@@ -510,7 +510,26 @@ export async function sendBookingConfirmationToClient(params: {
   }
   const ledgerMessageId = admin
     ? await beginAppointmentEmailMessage(admin, {
-        studioId: params.appointment.studio_id,
+        // THE STUDIO COMES FROM THE STUDIO ARGUMENT, NOT THE APPOINTMENT ROW
+        // (Codex P2 4307335313). The three PUBLIC callers hand this function a
+        // PARTIAL appointment — `{ id, starts_at, ends_at, duration_minutes,
+        // created_at }` cast `as unknown as Appointment`
+        // (app/book/[slug]/actions.ts:1425, app/reschedule/[token]/actions.ts:1046,
+        // app/portal/rebook-actions.ts:668) — so `studio_id` is UNDEFINED on
+        // exactly the flows this ledger exists to observe. The fail-soft path
+        // then sent the confirmation untagged: no ledger row, no provider
+        // attribution, no delivery incident, and nothing red to show it.
+        //
+        // `params.studio` is a FULL `Studio`, so `.id` is always present for
+        // every caller. Reading it here fixes all of them at once; making three
+        // callers populate `studio_id` would fix the same bug four times and
+        // leave the fifth caller to rediscover it.
+        //
+        // The cast is why the compiler never objected: `as unknown as
+        // Appointment` lets a partial object satisfy a type that requires
+        // `studio_id`, so this was invisible to `tsc` and could only be caught
+        // by reading the callers or by noticing the missing rows.
+        studioId: params.studio.id,
         appointmentId: params.appointment.id,
         purpose: "appointment_confirmation",
       })
