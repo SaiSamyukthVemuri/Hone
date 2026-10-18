@@ -176,16 +176,21 @@ function expectSlotFitsWindow(
  *  the thing the window claim is ultimately about. */
 async function committedBounds(
   appointmentId: string,
-): Promise<{ startMin: number; endMin: number }> {
-  const rows = await sql<{ s: string; e: string }>(
+): Promise<{ startMin: number; endMin: number; localDate: string }> {
+  const rows = await sql<{ s: string; e: string; d: string }>(
     `select to_char((a.starts_at at time zone st.timezone), 'HH24:MI') as s,
-            to_char((a.ends_at   at time zone st.timezone), 'HH24:MI') as e
+            to_char((a.ends_at   at time zone st.timezone), 'HH24:MI') as e,
+            to_char((a.starts_at at time zone st.timezone), 'YYYY-MM-DD') as d
        from public.appointments a
        join public.studios st on st.id = a.studio_id
       where a.id = $1`,
     [appointmentId],
   );
-  return { startMin: windowToMinutes(rows[0].s), endMin: windowToMinutes(rows[0].e) };
+  return {
+    startMin: windowToMinutes(rows[0].s),
+    endMin: windowToMinutes(rows[0].e),
+    localDate: rows[0].d,
+  };
 }
 
 async function expectCommittedWithinWindow(
@@ -509,6 +514,21 @@ test("ACCEPTANCE: pick A, pick B, reschedule one, and the owner's calendar attri
     "the reschedule must PRESERVE A's assignment, not re-attribute to the owner",
   ).toBe(A.practitionerId);
   expect(successors[0].starts_at, "the successor must be at a NEW time").not.toBe(originalStart);
+
+  // THE SELECTED DATE, NOT JUST A DIFFERENT INSTANT (Codex, this head). Every
+  // other check here is satisfied by a successor on ANOTHER DAY of the same
+  // week: the request wait proves only that `bookDate` was SENT, "not the
+  // original instant" proves only that it moved, the window helper compares
+  // TIME-OF-DAY alone, and the week view would still show a misplaced
+  // appointment. So the committed date is compared with the date chosen.
+  const successorBounds = await committedBounds(successors[0].id);
+  expect(
+    successorBounds.localDate,
+    `the reschedule must honour the selected date ${bookDate}, not merely move the time`,
+  ).toBe(bookDate);
+  // Non-vacuity: the ORIGINAL was on that date too, so this assertion is about
+  // the successor keeping it rather than about the fixture's only possible day.
+  expect((await committedBounds(originalId)).localDate).toBe(bookDate);
   // The RESCHEDULED appointment must also fit whole — this is the second half
   // of "both the initial booking and the reschedule".
   await expectCommittedWithinWindow(successors[0].id, A_WINDOW, "A's rescheduled booking");
