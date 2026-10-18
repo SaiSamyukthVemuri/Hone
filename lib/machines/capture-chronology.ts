@@ -200,17 +200,44 @@ export function changesWithin(
 
   const out: SettingChange[] = [];
   for (const list of series.values()) {
-    for (let i = 1; i < list.length; i += 1) {
-      const from = list[i - 1]!;
-      const to = list[i]!;
+    // ORDERED BY REVISION, NOT BY `recordedAt` (Codex, #860 4307735447).
+    //
+    // THE DEFECT. `recorded_at` is the TRANSACTION-START `now()`, so two
+    // captures can carry timestamps that invert against their revisions - a
+    // long transaction starting first and committing second. The series
+    // inherited its order from `entries`, which sorts on `recordedAt` first,
+    // so an inversion SWAPPED a change's from and to: the line then reported
+    // 130 -> 120 for an adjustment that went 120 -> 130. A clinical record
+    // asserting the opposite of what happened.
+    //
+    // REVISION IS AUTHORITATIVE HERE and total: every reading in a series
+    // shares one identity - device, group, mode, profile, version, stage and
+    // field - and 0223 allocates the revision per capture under a lock. So
+    // within a series it IS the sequence, and `recordedAt` is left to display.
+    //
+    // ADJACENCY IS UNCHANGED, which the docblock above promises: this orders
+    // the series, it does not interpolate. If revision 2 was not handed in, 1
+    // and 3 are still adjacent and still pair - honest about what is known
+    // rather than asserting a step nobody read.
+    const ordered = [...list].sort((a, b) => a.revision - b.revision);
+    for (let i = 1; i < ordered.length; i += 1) {
+      const from = ordered[i - 1]!;
+      const to = ordered[i]!;
       if (sameValue(from, to)) continue;
       out.push({ groupKey: to.groupKey, fieldKey: to.fieldKey, from, to });
     }
   }
   // Oldest change first, matching the chronology it was derived from.
+  //
+  // `recordedAt` LEADS HERE BECAUSE IT IS ALL THERE IS ACROSS SERIES: two
+  // different fields' revisions are not comparable. Revision breaks the tie,
+  // which is what two captures sharing a transaction-start timestamp need -
+  // and WITHIN a series the pairing above has already used revision as the
+  // authority, so a display tie cannot reorder a from/to pair.
   out.sort(
     (a, b) =>
       a.to.recordedAt.localeCompare(b.to.recordedAt) ||
+      a.to.revision - b.to.revision ||
       a.groupKey.localeCompare(b.groupKey) ||
       a.fieldKey.localeCompare(b.fieldKey),
   );
