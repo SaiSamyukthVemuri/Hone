@@ -29,6 +29,9 @@ import { resolveBlockAreas, type BlockArea } from "@/lib/sessions/block-areas";
 export type IntelligenceSessionInput = {
   id: string;
   started_at: string;
+  // HON-10 row 1: required so every caller selects it; void sessions and every
+  // block keyed to them are dropped before anything is counted.
+  record_status: string | null;
   next_session_note?: string | null;
   electrolysis_entries: ReadonlyArray<{ hairs_treated: number | null }>;
   laser_entries: ReadonlyArray<unknown>;
@@ -190,7 +193,21 @@ export function buildTreatmentIntelligence(input: {
   sessionsNewestFirst: ReadonlyArray<IntelligenceSessionInput>;
   blocks: ReadonlyArray<IntelligenceBlockInput>;
 }): TreatmentIntelligence {
-  const { sessionsNewestFirst, blocks } = input;
+  // HON-10 row 1 (Sam): a void session contributes NOTHING — not as a charted
+  // session, not through its blocks, not through its entries. The blocks are
+  // read by session id from the caller's window, so a void session in that
+  // window would otherwise feed its blocks straight into the totals, the area
+  // cards and the "latest" fields. Same exclusion as pickLastTreatment,
+  // pickNewestChartedSession and 0157's SQL.
+  const voidIds = new Set(
+    input.sessionsNewestFirst
+      .filter((s) => s.record_status === "void")
+      .map((s) => s.id),
+  );
+  const sessionsNewestFirst = input.sessionsNewestFirst.filter(
+    (s) => !voidIds.has(s.id),
+  );
+  const blocks = input.blocks.filter((b) => !voidIds.has(b.session_id));
   const sessionsOldestFirst = [...sessionsNewestFirst].reverse();
   const sessionDate = new Map(
     sessionsNewestFirst.map((s) => [s.id, s.started_at]),

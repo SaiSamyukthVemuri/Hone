@@ -26,6 +26,7 @@ function session(
   return {
     id,
     started_at: startedAt,
+    record_status: "draft",
     next_session_note: null,
     electrolysis_entries: [],
     laser_entries: [],

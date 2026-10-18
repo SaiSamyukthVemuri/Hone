@@ -361,6 +361,7 @@ describe("E — the controls are not vacuous", () => {
       {
         id: "s1",
         started_at: "2026-03-04T10:00:00Z",
+        record_status: "draft",
         electrolysis_entries: [],
         laser_entries: [],
       },

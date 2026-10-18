@@ -238,6 +238,10 @@ export function pickLastTreatment<T extends LastTreatmentCandidate>(
 export type WatchPlanCandidate = {
   id: string;
   started_at: string;
+  // HON-10 row 1 (Sam): a void session is never the Watch/Plan source either.
+  // This is ONLY the void exclusion; which content qualifies (note OR caution)
+  // is HON-10 row 2 and is unchanged.
+  record_status: string | null;
   next_session_note?: string | null;
 };
 
@@ -252,6 +256,7 @@ export function pickPreClientWatchPlanSource<T extends WatchPlanCandidate>(
 ): T | null {
   return (
     orderByRecency(sessions).find((s) => {
+      if (s.record_status === "void") return false;
       if (s.next_session_note?.trim()) return true;
       const blocks = blocksBySession.get(s.id) ?? [];
       return blocks.some(
