@@ -91,7 +91,7 @@ describe("0231 portrait in the profile header: the Photos-tab trust boundary", (
     // Keyed by the server URLs (fresh URLs remount it) and given the image id it
     // re-mints through.
     expect(page).toMatch(
-      /<ClientPortrait key=\{`\$\{portraitUrl\.url\}:\$\{portraitUrl\.thumbUrl \?\? ""\}`\} imageId=\{client\.portrait_image_id!\} url=\{portraitUrl\.url\} thumbUrl=\{portraitUrl\.thumbUrl\} clientName=\{client\.name\} \/>/,
+      /<ClientPortrait key=\{`\$\{portraitUrl\.url\}:\$\{portraitUrl\.thumbUrl \?\? ""\}`\} clientId=\{client\.id\} imageId=\{client\.portrait_image_id!\} url=\{portraitUrl\.url\} thumbUrl=\{portraitUrl\.thumbUrl\} clientName=\{client\.name\} \/>/,
     );
     expect(page).not.toMatch(/src=\{portraitUrl\}/);
   });
@@ -103,8 +103,9 @@ describe("0231 portrait in the profile header: the Photos-tab trust boundary", (
     // the hydration-window check, no retry loop. Pinned once, in
     // tests/app/clients/treatment-photo-thumbnail-recovery.test.ts.
     expect(comp).toMatch(/import \{ useGridPhotoRecovery \} from "@\/lib\/images\/use-grid-photo-recovery";/);
-    expect(comp).toMatch(/useGridPhotoRecovery\(\{ previewUrl: url, thumbUrl, remint \}\)/);
-    expect(comp).toMatch(/getTreatmentImageSignedUrlAction\(\{ imageId, variant \}\)\.then\(\(res\) => \(res\.ok \? res\.url : null\)\)/);
+    expect(comp).toMatch(/useGridPhotoRecovery\(\{ previewUrl: url, thumbUrl, clientId, imageId \}\)/);
+    // The re-mint is the hook's abortable GET, never a server action (Codex P1 4307807754).
+    expect(comp).not.toMatch(/getTreatmentImageSignedUrlAction|from "\.\/images\/actions"/);
     expect(comp).toMatch(/ref=\{imgRef\}/);
     expect(comp).toMatch(/onError=\{onError\}/);
     expect(comp).toMatch(/if \(state\.stage === "broken" \|\| !state\.src\) return null;/);
