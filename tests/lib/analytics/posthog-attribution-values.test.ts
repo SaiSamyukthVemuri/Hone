@@ -190,3 +190,51 @@ describe("no custom browser PostHog properties exist (the premise of keeping bar
     expect(hits).toEqual([]);
   });
 });
+
+// ===========================================================================
+// Codex 4309069519 / 4309069522 (review of b9eabedd): URL-shaped values are
+// sanitized AS URLs whatever their key (query and fragment dropped), and keys
+// and values are judged on their DECODED text, never on a raw-text signal.
+// ===========================================================================
+describe("URL-shaped values and decode-first decisions", () => {
+  const ENC = `%36${CLIENT.slice(1)}`; // the first hex digit percent-encoded
+  // A hex digit encoded MID-UUID: no raw-text UUID survives in the key.
+  const ENC_MID = CLIENT.replace("-4a5b-", "-%34a5b-");
+
+  it("a URL INSTANCE under a non-URL key: no query, no fragment, id redacted", () => {
+    const out = pageview({ link: new URL(`${HOST}/clients/${CLIENT}?email=patient@example.com#notes`) });
+    const link = (out.properties as Record<string, string>).link;
+    expect(link).toBe(`${HOST}/clients/[id]`);
+    expect(link).not.toMatch(/[?#@]|email/);
+  });
+
+  it.each([
+    ["an absolute URL string", `${HOST}/clients/${CLIENT}?email=patient@example.com#x`, `${HOST}/clients/[id]`],
+    ["an app-relative path string", `/clients/${CLIENT}?email=patient@example.com`, "/clients/[id]"],
+    ["a protocol-relative string", `//hone.care/clients/${CLIENT}?email=patient@example.com`, "/clients/[id]"],
+    ["an encoded app path", `%2Fclients%2F${CLIENT}%3Femail%3Dp%40e.com`, "/clients/[id]"],
+  ])("%s under a non-URL key is sanitized as a URL", (_label, input, expected) => {
+    const out = pageview({ note: input });
+    const v = (out.properties as Record<string, string>).note;
+    expect(v).toBe(expected);
+    expect(v).not.toMatch(/[?#@]|email/);
+  });
+
+  it("a KEY with an encoded hex digit in its UUID loses the id", () => {
+    const out = pageview({ nested: { [`/clients/${ENC_MID}`]: 1, [ENC_MID]: 2 } });
+    const keys = Object.keys((out.properties as unknown as Record<string, Record<string, number>>).nested);
+    expect(UUID_ANYWHERE.test(oracleDecode(JSON.stringify(keys)))).toBe(false);
+  });
+
+  it("a VALUE with a double-encoded slash or an encoded hex digit loses the id", () => {
+    const out = pageview({ a: `x%252Fclients%252F${CLIENT}`, b: `ref ${ENC}`, c: `ref ${ENC_MID}` });
+    expect(UUID_ANYWHERE.test(oracleDecode(JSON.stringify(out.properties)))).toBe(false);
+  });
+
+  it("bare unencoded PostHog ids are still kept", () => {
+    const own = "01928f3a-7b2c-7d4e-8f00-123456789abc";
+    const p = pageview({ $session_id: own, distinct_id: own }).properties as Record<string, string>;
+    expect(p.$session_id).toBe(own);
+    expect(p.distinct_id).toBe(own);
+  });
+});

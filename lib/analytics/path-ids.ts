@@ -99,19 +99,27 @@ export function redactEncodedSegment(segment: string): string {
  *  Hone's record ids are UUIDs. Fail closed: an undecodable or still-encoded
  *  value becomes [token]. The caller re-encodes the result, so decoded text
  *  never rebuilds URL syntax. */
-export function redactIdsInValue(value: string): string {
+/** Percent-decode to a fixed point (bounded); null when undecodable or still
+ *  encoded after the bound. Decide on the DECODED value, never on a raw-text
+ *  signal (Codex 4309069522: "%36f1…" hid a UUID from a raw check). */
+export function decodeBounded(value: string): string | null {
   let decoded = value;
   for (let i = 0; i < MAX_DECODE_ROUNDS && ENCODED.test(decoded); i += 1) {
     let next: string;
     try {
       next = decodeURIComponent(decoded);
     } catch {
-      return "[token]";
+      return null;
     }
     if (next === decoded) break;
     decoded = next;
   }
-  if (ENCODED.test(decoded)) return "[token]";
+  return ENCODED.test(decoded) ? null : decoded;
+}
+
+export function redactIdsInValue(value: string): string {
+  const decoded = decodeBounded(value);
+  if (decoded === null) return "[token]";
   // replace() (not .test() on the global regex, whose lastIndex would carry
   // over between calls and skip a match).
   const redacted = decoded.replace(EMBEDDED_UUID, "[id]");

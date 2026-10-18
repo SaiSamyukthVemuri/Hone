@@ -30,7 +30,7 @@
 // Pure module (no posthog-js import); unit-tested against event-shaped payloads.
 
 import { MARKETING_PAGES } from "@/lib/marketing/content";
-import { redactIdsInPath, redactIdsInValue } from "@/lib/analytics/path-ids";
+import { decodeBounded, redactIdsInPath, redactIdsInValue } from "@/lib/analytics/path-ids";
 import { TOKEN_ROUTE_PREFIXES } from "@/lib/security/token-routes";
 
 // The exact canonical marketing surfaces, derived from the single registry the
@@ -199,15 +199,28 @@ const CAMPAIGN_PROP = new RegExp(
 // UUIDs are PostHog's OWN ids ($session_id, distinct_id, $device_id, uuid:
 // UUIDv7) and are kept; any id inside a path-like string is replaced, whatever
 // the key (Codex P2/P1 audit, 4309044244).
-const UUID_ANYWHERE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+// Decided on the DECODED text (Codex 4309069522), never on a raw signal: an
+// encoded string (it decodes to something else) or one that contains "/" is
+// redacted; a bare, unencoded UUID (PostHog's own id) is kept. Undecodable or
+// over-encoded text fails closed to [token].
 function redactPathLikeIds(value: string): string {
-  return value.includes("/") || /%2f/i.test(value) ? redactIdsInValue(value) : value;
+  const decoded = decodeBounded(value);
+  if (decoded === null) return "[token]";
+  return decoded !== value || decoded.includes("/") ? redactIdsInValue(value) : value;
 }
 
-/** Object keys lose record ids too; a collision gets a numeric suffix so no
- *  value is silently dropped. */
+// A string that IS a URL, absolute (http/https) or app-relative ("/…"), is
+// sanitized AS a URL whatever its key (Codex 4309069519): query and fragment
+// dropped, path ids redacted. Decided on the decoded text.
+function looksLikeUrl(value: string): boolean {
+  const decoded = decodeBounded(value) ?? value;
+  return /^https?:\/\//i.test(decoded) || decoded.startsWith("/");
+}
+
+/** Object keys lose record ids too (decoded first, unconditionally); a
+ *  collision gets a numeric suffix so no value is silently dropped. */
 function sanitizeKey(key: string, taken: Record<string, unknown>): string {
-  const base = UUID_ANYWHERE.test(key) || /%2d/i.test(key) ? redactIdsInValue(key) : key;
+  const base = redactIdsInValue(key);
   if (!Object.hasOwn(taken, base)) return base;
   let n = 2;
   while (Object.hasOwn(taken, `${base}#${n}`)) n += 1;
@@ -232,6 +245,9 @@ function sanitizeProps(value: unknown, key: string, depth: number): unknown {
   if (typeof value === "string") {
     if (depth > MAX_DEPTH) return "[redacted]";
     if (isUrlPropKey(key)) return sanitizeMarketingUrl(value);
+    // A URL-shaped value under any other key: sanitized as the URL it decodes
+    // to, so an encoded "%2Fclients%2F…%3F…" loses its query too.
+    if (looksLikeUrl(value)) return sanitizeMarketingUrl(decodeBounded(value) ?? "[redacted]");
     if (CAMPAIGN_PROP.test(key)) return redactIdsInValue(sanitizeTokenPaths(value));
     return redactPathLikeIds(sanitizeTokenPaths(value));
   }
