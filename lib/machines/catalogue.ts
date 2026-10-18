@@ -916,6 +916,127 @@ export function catalogueIntegrity(
     const blockedKeys = new Set(p.openQuestions.flatMap((q) => q.blocks));
     const blocksEverything = blockedKeys.has("*");
 
+    // EVERY CONTRACT THAT CITES EVIDENCE IS CHECKED THE SAME WAY (Codex, #855
+    // 4305019848). This was inline in the field loop and nowhere else, so a
+    // mode, a channel structure or a frequency could cite an id that does not
+    // exist in the profile's own ledger — or cite nothing at all — and still
+    // be reported as documented. One helper now, used by all four surfaces,
+    // because a second copy is how the field rule came to be the only one.
+    const cites = (what: string, ids: readonly string[]) => {
+      for (const id of ids) {
+        if (!evidenceIds.has(id)) {
+          out.push({
+            profileId: p.profileId,
+            problem: `${what} cites unknown evidence '${id}'`,
+          });
+        }
+      }
+      if (ids.length === 0) {
+        out.push({
+          profileId: p.profileId,
+          problem: `${what} cites no evidence at all`,
+        });
+      }
+    };
+
+    if (p.channels) cites("channel structure", p.channels.evidence);
+    if (p.frequency.kind === "fixed" || p.frequency.kind === "selectable") {
+      cites(`frequency (${p.frequency.kind})`, p.frequency.evidence);
+    }
+
+    // STORAGE IDENTITIES MUST BE UNIQUE WITHIN THEIR OWN SCOPE (Codex, #855
+    // 4305019857). Lookup is `.find()` — `findMode` by mode key, and the field
+    // search by (mode, stageKey, fieldKey) — so a repeated key makes the later
+    // contract UNREACHABLE and array order silently decides which labels,
+    // units and limits apply. The scope is exactly the lookup's own key: mode
+    // keys per profile, stage keys per mode, and field keys per (mode, stage).
+    // A field key shared by two different stages is legitimate and common —
+    // MultiPlex stages each carry their own duration — so scoping this any
+    // wider would reject honest profiles.
+    const modeKeys = new Set<string>();
+    for (const mode of p.modes) {
+      if (modeKeys.has(mode.key)) {
+        out.push({
+          profileId: p.profileId,
+          problem: `duplicate mode key '${mode.key}'`,
+        });
+      }
+      modeKeys.add(mode.key);
+
+      const stageKeys = new Set<string>();
+      for (const stage of mode.stages) {
+        if (stageKeys.has(stage.key)) {
+          out.push({
+            profileId: p.profileId,
+            problem: `mode ${mode.key} has duplicate stage key '${stage.key}'`,
+          });
+        }
+        stageKeys.add(stage.key);
+      }
+
+      const scopes = [
+        { stage: null as string | null, fields: mode.fields },
+        ...mode.stages.map((st) => ({ stage: st.key, fields: st.fields })),
+      ];
+      for (const scope of scopes) {
+        const fieldKeys = new Set<string>();
+        for (const f of scope.fields) {
+          if (fieldKeys.has(f.key)) {
+            out.push({
+              profileId: p.profileId,
+              problem: `mode ${mode.key}${
+                scope.stage ? ` stage ${scope.stage}` : ""
+              } has duplicate field key '${f.key}'`,
+            });
+          }
+          fieldKeys.add(f.key);
+        }
+      }
+    }
+
+    // AN OPEN QUESTION THAT NAMES NOTHING REAL HOLDS NOTHING (Codex, #855
+    // 4305019844). `OpenQuestion.blocks` documents this rule in its own type
+    // — "A target naming nothing real holds nothing, which is worse than no
+    // question at all — the integrity guard rejects that" — and the guard did
+    // not implement it. A misspelled qualifier such as `wrong-mode.duration`,
+    // where `duration` exists under a DIFFERENT mode, matched none of the
+    // `held` forms below, so the question silently held nothing and
+    // `activationReadiness` approved the profile with the question still open.
+    //
+    // The accepted forms are enumerated here in the same three shapes `held`
+    // tests for, plus the two sentinels. Changing one without the other
+    // reintroduces exactly this defect.
+    const validTargets = new Set<string>(["*", "@frequency"]);
+    for (const mode of p.modes) {
+      for (const f of mode.fields) {
+        validTargets.add(f.key);
+        validTargets.add(`${mode.key}.${f.key}`);
+      }
+      for (const stage of mode.stages) {
+        for (const f of stage.fields) {
+          validTargets.add(f.key);
+          validTargets.add(`${mode.key}.${f.key}`);
+          validTargets.add(`${stage.key}.${f.key}`);
+        }
+      }
+    }
+    for (const q of p.openQuestions) {
+      for (const target of q.blocks) {
+        if (!validTargets.has(target)) {
+          out.push({
+            profileId: p.profileId,
+            problem: `open question '${q.id}' blocks '${target}', which names no field, mode.field, stage.field or profile-level sentinel`,
+          });
+        }
+      }
+      if (q.blocks.length === 0) {
+        out.push({
+          profileId: p.profileId,
+          problem: `open question '${q.id}' blocks nothing at all`,
+        });
+      }
+    }
+
     if (p.availability !== "active" && !p.availabilityReason) {
       out.push({
         profileId: p.profileId,
@@ -929,21 +1050,12 @@ export function catalogueIntegrity(
         ...mode.stages.flatMap((s) => s.fields.map((f) => ({ f, stage: s.key }))),
       ];
 
+      // The mode's own identity is a cited contract too, and was never
+      // checked (Codex, #855 4305019848).
+      cites(`mode ${mode.key}`, mode.evidence);
+
       for (const { f, stage } of fields) {
-        for (const id of f.evidence) {
-          if (!evidenceIds.has(id)) {
-            out.push({
-              profileId: p.profileId,
-              problem: `field ${mode.key}.${f.key} cites unknown evidence '${id}'`,
-            });
-          }
-        }
-        if (f.evidence.length === 0) {
-          out.push({
-            profileId: p.profileId,
-            problem: `field ${mode.key}.${f.key} cites no evidence at all`,
-          });
-        }
+        cites(`field ${mode.key}.${f.key}`, f.evidence);
         // A range may only refuse input when it is hardware-enforced AND
         // undisputed. Anything else is advisory by construction.
         for (const r of f.ranges ?? []) {
