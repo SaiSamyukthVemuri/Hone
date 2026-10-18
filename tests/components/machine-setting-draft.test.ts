@@ -593,6 +593,76 @@ describe("switching machine or mode clears the collected draft", () => {
     expect(assignedExpression(src, "draftFrozen")).toContain("saveUnresolved");
   });
 
+  it("a malformed CREATE success is unresolved, exactly like the read-back failure", () => {
+    // THE DEFECT (Codex, #860 4305702528). `create_block_with_initial_setup`
+    // returns no RPC error and no `block_id` — the stale-function or
+    // unexpected-shape case the check exists for — so the command MAY already
+    // have committed the area and its settings. Reporting a plain failure left
+    // the form editable and dismissible, so an edit or a remount discarded the
+    // held key and a later save created a DUPLICATE area.
+    //
+    // The sibling case above (4296709051) is a post-commit READ failure and
+    // was already handled. This is the same fact arriving one line earlier,
+    // and the two must agree.
+    // SCOPED TO THE BRANCH ITSELF, because the first spelling of this guard
+    // was MATCHED BY PROXIMITY: a lazy gap reached past the end of this branch
+    // into the read-back block below, which also returns
+    // `unresolved: true as const` - so the guard passed with this branch
+    // reverted to a plain failure. The negative control caught it, and the
+    // lesson is the recurring one: bound an extraction to the thing it is
+    // about, never to a window that can leave it.
+    const src = read(ACTIONS_SRC);
+    const i = src.indexOf("if (!createdBlockId)");
+    expect(i, "the malformed-success branch is gone").toBeGreaterThan(-1);
+    const j = src.indexOf("const { data: blockRow", i);
+    expect(j, "the read-back that bounds this branch is gone").toBeGreaterThan(i);
+    const branch = src.slice(i, j);
+    expect(branch).toMatch(/return withSetup/);
+    expect(
+      branch,
+      "a malformed create success is still reported as a definitive failure",
+    ).toMatch(/unresolved: true as const/);
+    expect(branch).toMatch(/INITIAL_SAVE_UNRESOLVED/);
+  });
+
+  it("a PRE-WRITE lineage refusal on the CREATE path is rejected, not unresolved", () => {
+    // THE DEFECT (Codex, #860 4305702526), and the twin of the setup action's
+    // below. The create form's catch labels anything thrown as unresolved
+    // whenever settings are attached, so a stale session froze the draft, the
+    // machine controls and Cancel — and every retry repeated the same error,
+    // with nothing written and no way out.
+    const src = read(ACTIONS_SRC);
+    // Scoped to the create action, so the setup action's own catch cannot
+    // satisfy this.
+    const i = src.indexOf("export async function createTreatmentAreaWithEntryAction");
+    expect(i, "the create action is gone").toBeGreaterThan(-1);
+    const after = src.slice(i);
+    const body = after.slice(0, after.indexOf("export async function", 1));
+    expect(
+      body,
+      "the create action must catch the lineage refusal rather than let it reach the form's catch",
+    ).toMatch(/catch \(cause\) \{[\s\S]{0,400}?cause instanceof SessionLineageError/);
+    // Reported as a DEFINITE non-write: no `unresolved` on this result.
+    const lineage = /cause instanceof SessionLineageError\) \{\s*return \{([\s\S]{0,400}?)\};/.exec(
+      body,
+    );
+    expect(lineage, "the lineage refusal's result was not found").toBeTruthy();
+    expect(lineage![1]).toContain("ok: false");
+    expect(
+      lineage![1],
+      "a pre-write refusal was reported as possibly-committed",
+    ).not.toContain("unresolved");
+
+    // AND THE REDIRECT MUST STILL PROPAGATE. `getCurrentPractitionerWithStudio`
+    // calls Next's `redirect()` for an anonymous session, which throws;
+    // swallowing that to report a definitive failure would leave her on a dead
+    // form instead of the login page.
+    expect(
+      body,
+      "a non-lineage throw is swallowed, which would eat Next's redirect",
+    ).toMatch(/throw cause;/);
+  });
+
   it("a PRE-WRITE lineage refusal is rejected, not unresolved", () => {
     // THE P2 (Codex, #860 4304930968). `assertSessionForClient` throws
     // before anything is written, and the entry maps a throw to the
