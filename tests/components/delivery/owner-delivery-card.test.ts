@@ -165,6 +165,106 @@ describe("owner-reported concerns on the card (DELIVERY-VISIBILITY-04)", () => {
   });
 });
 
+describe("the summary claim is derived from EVERY category (Codex P2 4307428928)", () => {
+  // This claim has been wrong twice for the same reason — it read fewer
+  // categories than the card displays. One case per category, so the next
+  // category cannot be added without a visible gap here.
+  const concern = (over: Record<string, unknown> = {}) => ({
+    concern_id: "k1",
+    appointment_id: APPT,
+    channel: "email",
+    purpose: "appointment_postcare",
+    ledger_status_at_report: "delivered",
+    reported_at: "2026-10-12T16:00:00Z",
+    state: "open",
+    ...over,
+  });
+  const NONE_REPORTED = "No delivery problems reported in the last 14 days.";
+
+  it("nothing in any category: claims no problems", async () => {
+    h.answer = { data: [], error: null };
+    c.answer = { data: [], error: null };
+    expect(await render()).toContain(NONE_REPORTED);
+  });
+
+  it("CONCERN ONLY: never claims 'no delivery problems reported'", async () => {
+    // THE REGRESSION ITSELF. Zero incidents plus one open concern printed the
+    // no-problems sentence directly above the list of that very concern.
+    h.answer = { data: [], error: null };
+    c.answer = { data: [concern()], error: null };
+    const html = await render();
+    expect(html).not.toContain(NONE_REPORTED);
+    expect(html).not.toContain("No open delivery problems");
+    // ...and it says something true instead, while the concern is still listed.
+    expect(html).toContain("1 open report from your studio.");
+    expect(html).toContain("client says they did not receive it (1 open)");
+  });
+
+  it("OPEN INCIDENT ONLY: counts the incidents", async () => {
+    h.answer = { data: [incident()], error: null };
+    c.answer = { data: [], error: null };
+    const html = await render();
+    expect(html).not.toContain(NONE_REPORTED);
+    expect(html).toContain("1 open delivery problem.");
+  });
+
+  it("RESOLVED INCIDENT ONLY: no OPEN problems, but not 'none reported'", async () => {
+    h.answer = { data: [incident({ resolved_at: "2026-10-13T10:00:00Z", resolution: "fixed" })], error: null };
+    c.answer = { data: [], error: null };
+    const html = await render();
+    expect(html).not.toContain(NONE_REPORTED);
+    expect(html).toContain("No open delivery problems.");
+  });
+
+  it("BOTH an open incident and an open concern: the incident count stands and the concern is still listed", async () => {
+    h.answer = { data: [incident()], error: null };
+    c.answer = { data: [concern()], error: null };
+    const html = await render();
+    expect(html).toContain("1 open delivery problem.");
+    expect(html).toContain("client says they did not receive it (1 open)");
+    expect(html).not.toContain(NONE_REPORTED);
+  });
+
+  it("a CLOSED concern alone still reads as nothing reported — stated, not accidental", async () => {
+    // DELIBERATE ASYMMETRY, pinned so it is a decision rather than a drift: a
+    // closed concern is not DISPLAYED by this card (the existing case above
+    // asserts the closed one is absent), so counting it would make the summary
+    // reference something the owner cannot see. Resolved INCIDENTS differ
+    // because the card does acknowledge them, via `resolvedNote`. If closed
+    // concerns are ever shown, they belong in `reportedCounts` and this case
+    // should flip.
+    h.answer = { data: [], error: null };
+    c.answer = { data: [concern({ state: "closed" })], error: null };
+    expect(await render()).toContain(NONE_REPORTED);
+  });
+});
+
+describe("concern attribution (Codex P2 4307428933)", () => {
+  it("never claims the viewing owner reported it", async () => {
+    // `owner_delivery_concerns` returns every concern for the STUDIO with no
+    // reporter filter, so "Reported by you" was false for every co-owner but
+    // the one who filed it.
+    h.answer = { data: [], error: null };
+    c.answer = {
+      data: [
+        {
+          concern_id: "k1",
+          appointment_id: APPT,
+          channel: "email",
+          purpose: "appointment_postcare",
+          ledger_status_at_report: "delivered",
+          reported_at: "2026-10-12T16:00:00Z",
+          state: "open",
+        },
+      ],
+      error: null,
+    };
+    const html = await render();
+    expect(html).not.toContain("Reported by you:");
+    expect(html).toContain("Reported by your studio:");
+  });
+});
+
 describe("describeIncident", () => {
   it("gives every failure class a meaning, a next step and who acts, without claiming a read or a loss", () => {
     const classes: Array<[string, string]> = [
