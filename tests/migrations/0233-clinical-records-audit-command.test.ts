@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
+import { countVersion } from "./helpers/migration-state";
 
 // 0233 — HON-46: the clinical-records audit is ACTOR-BOUND (Codex P1
 // 4304545551). Source contract; the behaviour is proven against a real
@@ -13,12 +13,13 @@ const SQL = readFileSync(FILE, "utf8");
 const CODE = SQL.replace(/^\s*--.*$/gm, " ").replace(/\s+--.*$/gm, " ");
 
 describe("0233 sits correctly in the migration sequence", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    // Only the CURRENT maximum migration's own test may assert this — see
-    // CLAUDE.md §2. It reached this file from 0211's test.
-    expect(isRepoMax(VERSION), "0233 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION), "something was added above 0233").toEqual([]);
-  });
+  // THE REPO-MAX ASSERTION HAS MOVED ON, to
+  // tests/migrations/0234-client-self-service-controls.test.ts (Codex P2
+  // 4308819830). Only the CURRENT maximum migration's own test may assert
+  // isRepoMax — CLAUDE.md §2 — because otherwise every new migration means a
+  // mechanical sweep of the older per-migration tests, which is exactly how
+  // 0163, 0164 and 0165 each went red after push. The "nothing above me"
+  // tripwire is served centrally now.
 
   it("is allocated exactly once", () => {
     expect(countVersion(VERSION)).toBe(1);
