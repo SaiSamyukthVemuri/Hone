@@ -200,7 +200,11 @@ select conname from pg_constraint where conname = 'appointments_id_studio_id_uni
 ```
 
 **After either apply:**
-- `node scripts/verify-production.mjs` passes, or reports only the known local Upstash INCOMPLETE;
+- `node scripts/verify-production.mjs` reports **10 PASS, 1 FAIL, 1 INCOMPLETE**. That is **not a clean pass**, and it is the expected result — do not record this step as successful without saying so:
+  - the **FAIL** is "Critical payment ops alerts": the two historical `session_payment_succeeded_write_zero_rows` alerts raised **2026-09-17** and **2026-09-27**, carried as a **pre-existing accepted exception** and verified identical **by id** before and after the apply (`docs/production/migration-ledger.md:67`). It is not a failure of this apply.
+  - **TODO (Sam):** every record in this repository says these two alerts are *accepted*, but none names **who accepted them or when**. Record that here, so an auditor can tell an authorised exception from an unexamined one. Until then the acceptance is traceable only to the ledger entries above.
+  - the **INCOMPLETE** is the scheduler heartbeat, with no Upstash env on the apply host.
+  - **STOP conditions that distinguish this exception from a real failure:** a FAIL naming any OTHER event, a count other than two, or an id that differs from the two recorded in the ledger. Equally, a CLEAN PASS here means those two alerts have been resolved since — reconcile the record before continuing, rather than treating a better result as nothing to note;
 - `node scripts/check-stripe-gates.mjs` gives 15 PASS;
 - no new `ops_alerts` at critical or error in the last hour.
 
