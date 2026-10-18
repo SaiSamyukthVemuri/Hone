@@ -145,6 +145,18 @@ begin
      and (not (p_metadata ? 'session_id') or p_metadata ?| array['day', 'from', 'to']) then
     raise exception 'scope session requires session_id and nothing else' using errcode = '22023';
   end if;
+  -- A RANGE IS ORDERED AND BOUNDED (Codex P2 4305625196): from <= to, and
+  -- at most 366 days inclusive, the same limit the page enforces
+  -- (lib/clinical-records/export-scope.ts MAX_RANGE_DAYS). The dates are
+  -- already proven real calendar dates above, so the casts cannot fail.
+  if (p_metadata ->> 'scope') = 'range' then
+    if (p_metadata ->> 'from')::date > (p_metadata ->> 'to')::date then
+      raise exception 'metadata range from must not be after to' using errcode = '22023';
+    end if;
+    if (p_metadata ->> 'to')::date - (p_metadata ->> 'from')::date + 1 > 366 then
+      raise exception 'metadata range must span at most 366 days' using errcode = '22023';
+    end if;
+  end if;
   if p_action = 'clinical_records_previewed' and p_metadata ? 'preview_audit_id' then
     raise exception 'a preview does not reference a preview' using errcode = '22023';
   end if;
@@ -179,6 +191,17 @@ begin
      and p.role = 'owner';
   if v_actor is null then
     raise exception 'only the studio owner can record a clinical-records export' using errcode = '42501';
+  end if;
+  -- A SESSION SCOPE NAMES THIS CLIENT'S SESSION (Codex P1 4305625192): the
+  -- session must belong to p_client_id in the client's own studio, so an
+  -- audit row can never pair one client with another client's session.
+  if (v_meta ->> 'scope') = 'session' and not exists (
+    select 1 from public.sessions se
+     where se.id = (v_meta ->> 'session_id')::uuid
+       and se.client_id = p_client_id
+       and se.studio_id = v_studio
+  ) then
+    raise exception 'the session is not this client''s session' using errcode = '22023';
   end if;
   -- A PRINT CITES A REAL PREVIEW (HIPAA review F3): an existing
   -- clinical_records_previewed row for the SAME client, actor and studio,

@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { adminQuery, asRole, asUser, closePool, seedMember, seedStudio } from "./helpers/harness";
+import { adminQuery, asRole, asUser, closePool, seedMember, seedSession, seedStudio } from "./helpers/harness";
 
 // 0233 (HON-46, Codex P1 4304545551): the clinical-records audit is
 // ACTOR-BOUND. A studio member can no longer write clinical_records_* rows
@@ -25,7 +25,9 @@ async function rowsFor(clientId: string) {
 describe("0233: a print's scope must EQUAL its preview's, compared NORMALIZED (Codex P1 4304947291)", () => {
   it("mismatched scopes are refused; an equivalent scope (key order, id case) is accepted", async () => {
     const s = await seedStudio("aud0233n");
-    const SESSION = randomUUID();
+    // Real sessions of THIS client: a session scope must name one (Codex P1 4305625192).
+    const SESSION = (await seedSession(s)).sessionId;
+    const SECOND_SESSION = (await seedSession(s)).sessionId;
     const preview = (m: unknown) =>
       asUser(s.userId, (q) =>
         q(`select public.record_clinical_records_audit($1, 'clinical_records_previewed', $2) as id`, [s.clientId, m]),
@@ -43,7 +45,7 @@ describe("0233: a print's scope must EQUAL its preview's, compared NORMALIZED (C
       ["range print citing a day preview", { scope: "range", from: "2026-09-15", to: "2026-09-15", preview_audit_id: dayPreview }],
       ["a different day", { scope: "day", day: "2026-09-16", preview_audit_id: dayPreview }],
       ["a different range", { scope: "range", from: "2026-09-01", to: "2026-09-29", preview_audit_id: rangePreview }],
-      ["a different session", { scope: "session", session_id: randomUUID(), preview_audit_id: sessionPreview }],
+      ["a different session", { scope: "session", session_id: SECOND_SESSION, preview_audit_id: sessionPreview }],
     ] as const) {
       await expect(print(m), why).rejects.toSatisfy((e) => refused(e) === "22023");
     }
@@ -253,7 +255,7 @@ describe("0233: clinical-records audit rows are actor-bound", () => {
     for (const m of [
       { scope: "day", day: "2026-09-15" },
       { scope: "range", from: "2026-09-01", to: "2026-09-30" },
-      { scope: "session", session_id: randomUUID() },
+      { scope: "session", session_id: (await seedSession(s)).sessionId },
     ]) {
       await asUser(s.userId, (q) =>
         q(`select public.record_clinical_records_audit($1, 'clinical_records_previewed', $2)`, [s.clientId, m]),
@@ -320,6 +322,79 @@ describe("0233: clinical-records audit rows are actor-bound", () => {
       "clinical_records_previewed",
       "clinical_records_printed",
     ]);
+  });
+
+  it("a RANGE is ordered and spans at most 366 days (Codex P2 4305625196)", async () => {
+    const s = await seedStudio("aud0233r");
+    const call = (from: string, to: string) =>
+      asUser(s.userId, (q) =>
+        q(`select public.record_clinical_records_audit($1, 'clinical_records_previewed', $2)`, [
+          s.clientId,
+          { scope: "range", from, to },
+        ]),
+      );
+    // Refused: reversed, and one day over the page's MAX_RANGE_DAYS (366).
+    await expect(call("2026-09-30", "2026-09-01"), "from after to").rejects.toSatisfy((e) => refused(e) === "22023");
+    await expect(call("2026-01-01", "2027-01-02"), "367 days inclusive").rejects.toSatisfy((e) => refused(e) === "22023");
+    // Accepted: a single day (from = to) and exactly 366 days inclusive.
+    await call("2026-09-15", "2026-09-15");
+    await call("2026-01-01", "2027-01-01");
+    expect((await rowsFor(s.clientId)).length).toBe(2);
+  });
+
+  it("a SESSION scope must name this client's own session (Codex P1 4305625192)", async () => {
+    const s = await seedStudio("aud0233s");
+    const other = await seedStudio("aud0233s-o");
+    const second = await adminQuery(`insert into public.clients (studio_id, name) values ($1, 'Second') returning id`, [
+      s.studioId,
+    ]);
+    const secondClientId = second.rows[0].id as string;
+    const own = (await seedSession(s)).sessionId;
+    // Another client's session in the SAME studio, and another studio's session.
+    const sameStudioOtherClient = (await seedSession({ ...s, clientId: secondClientId })).sessionId;
+    const otherStudio = (await seedSession(other)).sessionId;
+    const call = (action: string, m: unknown) =>
+      asUser(s.userId, (q) =>
+        q(`select public.record_clinical_records_audit($1, $2, $3) as id`, [s.clientId, action, m]),
+      );
+
+    // PREVIEW: refused for another client's session, another studio's
+    // session, and an id that names no session.
+    for (const [why, sessionId] of [
+      ["another client's session, same studio", sameStudioOtherClient],
+      ["another studio's session", otherStudio],
+      ["a nonexistent session", randomUUID()],
+    ] as const) {
+      await expect(call("clinical_records_previewed", { scope: "session", session_id: sessionId }), why).rejects.toSatisfy(
+        (e) => refused(e) === "22023",
+      );
+    }
+
+    // PRINT, end to end through the print path: a preview row of THIS client
+    // scoped to ANOTHER client's session cannot be made through the command,
+    // so it is forged directly (as the database owner, bypassing the command).
+    // A print citing it, with the scope copied exactly, is still refused.
+    const forged = await adminQuery(
+      `insert into public.audit_logs (studio_id, actor_id, action, entity_type, entity_id, metadata)
+       values ($1, $2, 'clinical_records_previewed', 'client', $3, $4) returning id`,
+      [s.studioId, s.practitionerId, s.clientId, { scope: "session", session_id: sameStudioOtherClient }],
+    );
+    const forgedId = forged.rows[0].id as string;
+    await expect(
+      call("clinical_records_printed", { scope: "session", session_id: sameStudioOtherClient, preview_audit_id: forgedId }),
+      "a print citing a preview of another client's session",
+    ).rejects.toSatisfy((e) => refused(e) === "22023");
+
+    // The honest session preview and its print are accepted.
+    const ok = await call("clinical_records_previewed", { scope: "session", session_id: own });
+    await call("clinical_records_printed", { scope: "session", session_id: own, preview_audit_id: ok.rows[0].id });
+    // The forged row, then the honest preview and print: no refused call wrote anything.
+    expect((await rowsFor(s.clientId)).map((r) => r.action)).toEqual([
+      "clinical_records_previewed",
+      "clinical_records_previewed",
+      "clinical_records_printed",
+    ]);
+    expect(await rowsFor(other.clientId)).toEqual([]);
   });
 
   it("EXECUTE: authenticated only; revoked from anon and service_role by name", async () => {

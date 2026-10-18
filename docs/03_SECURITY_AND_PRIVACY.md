@@ -232,7 +232,7 @@ The owner-only export at `/clients/<id>/records/export` records its own use in `
 
 It is never "every print is audited".
 
-Both events are written only through `record_clinical_records_audit` (migration `0233`, **pending, not applied**). The database derives the studio from the client and the actor from `auth.uid()` as the studio's active owner. It allow-lists and shape-checks the scope metadata, and a print must cite that owner's own preview of that client. Direct member inserts of `clinical_records_*`, or of any other practitioner's actor id, are refused. No client telemetry starts on the export document, and it is served with `Referrer-Policy: no-referrer`.
+Both events are written only through `record_clinical_records_audit` (migration `0233`, **pending, not applied**). The database derives the studio from the client and the actor from `auth.uid()` as the studio's active owner. It allow-lists and shape-checks the scope metadata: a session scope must name that client's own session, and a range must run forward and span at most 366 days. A print must cite that owner's own preview of that client. Direct member inserts of `clinical_records_*`, or of any other practitioner's actor id, are refused. No client telemetry starts on the export document, and it is served with `Referrer-Policy: no-referrer`.
 
 ## 3. Portal session model
 
