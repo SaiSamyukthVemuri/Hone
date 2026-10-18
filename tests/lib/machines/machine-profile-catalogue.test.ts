@@ -1680,3 +1680,321 @@ describe("carry-forward verifies the target against the catalogue", () => {
     );
   });
 });
+
+// ===========================================================================
+// MPX-01 — the four findings from the 10de30e4 review
+// ===========================================================================
+
+/** A complete, fully evidenced single-field profile, blocked by default. */
+function base(over: Partial<MachineProfile> = {}): MachineProfile {
+  return {
+    profileId: "fixture:round2",
+    version: 1,
+    family: "Silhouet-Tone",
+    manufacturer: "Fixture",
+    model: "Round2",
+    availability: "blocked",
+    availabilityReason: "a fixture, never offered",
+    verification: "device-confirmed",
+    frequency: { kind: "not-applicable" },
+    evidence: [
+      {
+        id: "fx",
+        kind: "studio-device-photo",
+        consultedOn: "2026-10-18",
+        establishes: "Nothing about a real machine.",
+      },
+    ],
+    openQuestions: [],
+    modes: [
+      {
+        key: "m",
+        nativeLabel: "M",
+        family: "thermolysis",
+        availability: "blocked",
+        verification: "device-confirmed",
+        evidence: ["fx"],
+        stages: [],
+        fields: [
+          {
+            key: "current",
+            nativeLabel: "Current",
+            quantity: "current",
+            unit: "mA",
+            decimals: 1,
+            optional: false,
+            expectedSource: "practitioner-entered",
+            editable: true,
+            verification: "device-confirmed",
+            evidence: ["fx"],
+          },
+        ],
+      },
+    ],
+    ...over,
+  };
+}
+
+/** The same profile, offered. */
+const offered = (over: Partial<MachineProfile> = {}): MachineProfile => {
+  const b = base(over);
+  return {
+    ...b,
+    availability: "active",
+    availabilityReason: undefined,
+    modes: b.modes.map((m) => ({
+      ...m,
+      availability: "active" as const,
+      availabilityReason: undefined,
+    })),
+  };
+};
+
+const problems = (ps: MachineProfile[]) =>
+  catalogueIntegrity(ps).map((v) => v.problem);
+
+describe("the picker never offers a contract that cannot be recorded against", () => {
+  // THE DEFECT (Codex, #855 4305243747). Retaining v1 beside v2 is the point
+  // of versioned identity, and `activeProfiles` filtered on availability
+  // alone — so it offered v1 while `validateReading` refuses new capture
+  // against it with `superseded_profile_version`. She picks it, enters a full
+  // set of readings, and is refused at save for a reason she cannot act on.
+  const v1 = offered();
+  const v2 = offered({ version: 2 });
+
+  const canRecord = (prof: MachineProfile, catalogue: MachineProfile[]) =>
+    validateReading(
+      {
+        profileId: prof.profileId,
+        version: prof.version,
+        modeKey: "m",
+        fieldKey: "current",
+        source: "practitioner-entered",
+        value: { kind: "value", value: 1.2 },
+      },
+      { catalogue },
+    ).ok;
+
+  it("offers ONE entry per model — its current contract", () => {
+    const offeredNow = activeProfiles([v1, v2]);
+    expect(offeredNow.map((p) => p.version)).toEqual([2]);
+  });
+
+  it("and EVERY entry it offers can actually be recorded against", () => {
+    // The property worth having, asserted as the composition rather than as a
+    // restatement of the filter. An offered option that cannot be saved is
+    // worse than an absent one.
+    const catalogue = [v1, v2];
+    for (const prof of activeProfiles(catalogue)) {
+      expect(
+        canRecord(prof, catalogue),
+        `${prof.profileId}@${prof.version} was offered but cannot be recorded against`,
+      ).toBe(true);
+    }
+  });
+
+  it("CONTROL: the version it dropped really is unrecordable", () => {
+    // Without this the test above would also pass if `activeProfiles` were
+    // simply returning everything and every version happened to be valid.
+    expect(canRecord(v1, [v1, v2])).toBe(false);
+  });
+
+  it("offers NOTHING when the current version is not active, even if an older one is", () => {
+    // THE CASE A "HIGHEST ACTIVE VERSION" RULE WOULD HAVE MISSED. New capture
+    // resolves through `profileById`, which is the highest version REGARDLESS
+    // of availability — so with v2 blocked, v1 is unrecordable too, and
+    // offering it would reproduce the same defect one case over.
+    const blockedV2 = base({ version: 2 });
+    expect(activeProfiles([v1, blockedV2])).toEqual([]);
+    expect(canRecord(v1, [v1, blockedV2])).toBe(false);
+  });
+
+  it("CONTROL: a single active version is still offered", () => {
+    expect(activeProfiles([v1]).map((p) => p.version)).toEqual([1]);
+    expect(canRecord(v1, [v1])).toBe(true);
+  });
+
+  it("CONTROL: two different models are both offered", () => {
+    const other = offered({ profileId: "fixture:round2-other" });
+    expect(activeProfiles([v1, other]).map((p) => p.profileId).sort()).toEqual([
+      "fixture:round2",
+      "fixture:round2-other",
+    ]);
+  });
+});
+
+describe("an active profile's own identity must be source-backed", () => {
+  // THE DEFECT (Codex, #855 4305243749). Every gate inspected the modes and
+  // the fields; the PROFILE's own `verification` was never consulted, so a
+  // model whose identity is explicitly unverified could be offered as a
+  // verified named choice. `active` means "verified named choice" or nothing.
+  for (const weak of ["unverified", "pending-evidence"] as const) {
+    it(`rejects an active profile whose identity is ${weak}`, () => {
+      expect(problems([offered({ verification: weak })])).toContain(
+        `profile is active but its own identity is ${weak}`,
+      );
+    });
+  }
+
+  for (const strong of ["manufacturer-documented", "device-confirmed"] as const) {
+    it(`CONTROL: ${strong} qualifies`, () => {
+      expect(problems([offered({ verification: strong })])).toEqual([]);
+    });
+  }
+
+  it("and a BLOCKED profile with a weak identity is fine — it is not offered", () => {
+    expect(problems([base({ verification: "unverified" })])).toEqual([]);
+  });
+});
+
+describe("an active profile with no modes is an integrity violation", () => {
+  // THE DEFECT (Codex, #855 4305243750). There is no `modeKey` any reading
+  // could name, so every capture is refused with `unknown_mode` — offered and
+  // unusable. It was caught only by an extra boolean inside
+  // `activationReadiness`, which left `blockers` EMPTY so readiness could not
+  // say why, while `catalogueIntegrity` would have accepted the same profile
+  // if someone set `availability` to active by hand.
+  it("the integrity gate rejects it", () => {
+    expect(problems([offered({ modes: [] })])).toContain(
+      "profile is active but carries no modes at all",
+    );
+  });
+
+  it("and readiness now EXPLAINS it instead of just saying no", () => {
+    const r = activationReadiness(base({ modes: [] }));
+    expect(r.ready).toBe(false);
+    expect(
+      r.blockers,
+      "readiness refused with an empty blocker list, which cannot be acted on",
+    ).toContain("profile is active but carries no modes at all");
+  });
+
+  it("so both paths agree, which is what the extra boolean prevented", () => {
+    // `ready` is derived purely from the blockers now. A profile the gate
+    // accepts is ready; one it rejects is not. There is no second rule to
+    // disagree with.
+    const r = activationReadiness(base({ modes: [] }));
+    expect(r.ready).toBe(r.blockers.length === 0);
+  });
+
+  it("CONTROL: a profile WITH a documented mode is ready", () => {
+    const r = activationReadiness(base());
+    expect(r.blockers).toEqual([]);
+    expect(r.ready).toBe(true);
+  });
+});
+
+describe("a hardware step is a reachability constraint", () => {
+  // THE DEFECT (Codex, #855 4305243752). `step` is documented as "the
+  // smallest increment the machine's control actually moves in", so a value
+  // inside the bounds but off the step is as unreachable as one past the
+  // maximum — a 0..10 control with step 2 accepted 3. Checking only the
+  // endpoints made the step decoration.
+  const withRange = (range: Record<string, unknown>): MachineProfile => {
+    const b = offered();
+    return {
+      ...b,
+      modes: [
+        {
+          ...b.modes[0]!,
+          fields: [{ ...b.modes[0]!.fields[0]!, ranges: [range] as never }],
+        },
+      ],
+    };
+  };
+
+  const read = (prof: MachineProfile, value: number) =>
+    validateReading(
+      {
+        profileId: prof.profileId,
+        version: prof.version,
+        modeKey: "m",
+        fieldKey: "current",
+        source: "practitioner-entered",
+        value: { kind: "value", value },
+      },
+      { catalogue: [prof] },
+    );
+
+  const HARD = {
+    min: 0,
+    max: 10,
+    step: 2,
+    class: "hardware-enforced",
+    evidence: "fx",
+  };
+
+  it("refuses a value between the bounds that the control cannot reach", () => {
+    const out = read(withRange(HARD), 3);
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("expected a refusal");
+    expect(out.code).toBe("outside_hardware_limit");
+    expect(out.message, "the refusal did not name the step").toContain("steps of 2");
+  });
+
+  it("CONTROL: an ON-step value inside the bounds is accepted", () => {
+    expect(read(withRange(HARD), 4).ok).toBe(true);
+    expect(read(withRange(HARD), 0).ok).toBe(true);
+    expect(read(withRange(HARD), 10).ok).toBe(true);
+  });
+
+  it("counts the step FROM the minimum, not from zero", () => {
+    // A 1..9 control moving in 2s reaches 1, 3, 5 — not 2.
+    const odd = { ...HARD, min: 1, max: 9 };
+    expect(read(withRange(odd), 3).ok).toBe(true);
+    expect(read(withRange(odd), 4).ok).toBe(false);
+  });
+
+  it("a DECIMAL step accepts a value binary floating point cannot represent", () => {
+    // 0.3 / 0.1 is 2.9999999999999996. An exact test would refuse a value the
+    // machine obviously reaches, so this is the trap the epsilon exists for.
+    const tenths = { min: 0, max: 1, step: 0.1, class: "hardware-enforced", evidence: "fx" };
+    expect(read(withRange(tenths), 0.3).ok).toBe(true);
+    expect(read(withRange(tenths), 0.7).ok).toBe(true);
+  });
+
+  it("and still refuses an off-step value at decimal scale", () => {
+    // THE OFF-STEP VALUE MUST BE WITHIN THE FIELD'S PRECISION, or the step is
+    // not what refuses it. This is the merge resolution between the two
+    // stacked branches: on #855 `precision_beyond_contract` is a NOTE, so a
+    // 2-decimal value against a 1-decimal contract reached the step check and
+    // 0.35-against-step-0.1 proved enforcement there. On #860 the same code
+    // refuses that value for PRECISION (4289974660), so the assertion passed
+    // without the step being consulted at all — removing step enforcement
+    // entirely left it green, which the negative control caught.
+    //
+    // A coarser step than the contract's precision gives a value only the step
+    // can reject: 0.3 is one decimal, so it is within contract, and off a
+    // 0.5 step.
+    const halves = { min: 0, max: 1, step: 0.5, class: "hardware-enforced", evidence: "fx" };
+    const out = read(withRange(halves), 0.3);
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("expected a refusal");
+    expect(out.code).toBe("outside_hardware_limit");
+    expect(out.message, "something other than the step refused it").toContain(
+      "steps of 0.5",
+    );
+    // CONTROL: the on-step values at that scale are accepted.
+    expect(read(withRange(halves), 0.5).ok).toBe(true);
+    expect(read(withRange(halves), 1).ok).toBe(true);
+  });
+
+  it("CONTROL: an ADVISORY range's step never refuses", () => {
+    // Only a hardware-enforced, undisputed constraint may refuse. A published
+    // specification's step is guidance, and refusing on it would reject a true
+    // observation — a clinical record defect, not a safety feature.
+    const published = { ...HARD, class: "published-specification" };
+    expect(read(withRange(published), 3).ok).toBe(true);
+  });
+
+  it("CONTROL: a DISPUTED hardware step never refuses", () => {
+    const disputed = { ...HARD, discrepancy: "two manuals disagree about the step" };
+    expect(read(withRange(disputed), 3).ok).toBe(true);
+  });
+
+  it("CONTROL: a range with no step still refuses only outside the bounds", () => {
+    const noStep = { min: 0, max: 10, class: "hardware-enforced", evidence: "fx" };
+    expect(read(withRange(noStep), 3).ok).toBe(true);
+    expect(read(withRange(noStep), 11).ok).toBe(false);
+  });
+});

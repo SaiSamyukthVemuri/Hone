@@ -1124,6 +1124,39 @@ export function catalogueIntegrity(
       }
     }
 
+    // AN ACTIVE PROFILE'S OWN IDENTITY MUST BE SOURCE-BACKED (Codex, #855
+    // 4305243749). Every gate here tested the modes and the fields; the
+    // PROFILE's own `verification` was never consulted, so a model whose
+    // identity is explicitly `unverified` or `pending-evidence` could be
+    // offered as a verified named choice as long as its modes and fields were
+    // documented. That is the same defect the mode-identity gate below exists
+    // for — the ST 350 review found a placeholder "Treatment" on a mode marked
+    // documented — one level up, and `active` means "verified named choice" or
+    // it means nothing.
+    const profileQualifies =
+      p.verification === "manufacturer-documented" ||
+      p.verification === "device-confirmed";
+    if (p.availability === "active" && !profileQualifies) {
+      out.push({
+        profileId: p.profileId,
+        problem: `profile is active but its own identity is ${p.verification}`,
+      });
+    }
+
+    // AN ACTIVE PROFILE WITH NO MODES AT ALL (Codex, #855 4305243750). There
+    // is no `modeKey` any reading could name, so every capture against it is
+    // refused with `unknown_mode` — it is offered and unusable. This was
+    // caught only by an extra boolean inside `activationReadiness`, which left
+    // its `blockers` EMPTY (so readiness could not say why) and left
+    // `catalogueIntegrity` accepting the same profile if someone set
+    // `availability` to active by hand. Two paths, two different answers.
+    if (p.availability === "active" && p.modes.length === 0) {
+      out.push({
+        profileId: p.profileId,
+        problem: "profile is active but carries no modes at all",
+      });
+    }
+
     if (p.availability === "active" && blocksEverything) {
       out.push({
         profileId: p.profileId,
@@ -1169,7 +1202,14 @@ export function activationReadiness(
   };
   // Reuse the real gate rather than restating it, so the two can never drift.
   const blockers = catalogueIntegrity([candidate]).map((v) => v.problem);
-  return { ready: blockers.length === 0 && profile.modes.length > 0, blockers };
+  // DERIVED ENTIRELY FROM THE BLOCKERS (Codex, #855 4305243750). The
+  // `profile.modes.length > 0` term used to sit here as a second, separate
+  // rule — so a profile with no modes was reported `ready: false` with an
+  // EMPTY blocker list, which cannot be acted on, while the gate it claims to
+  // reuse would have accepted that same profile. The missing-mode condition is
+  // an integrity violation now, so this reads it from there and the two paths
+  // cannot disagree again.
+  return { ready: blockers.length === 0, blockers };
 }
 
 /** Profiles by id, for render-time lookup of a historical reading's profile. */

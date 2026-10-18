@@ -443,6 +443,33 @@ export function validateReading(
         }, evidence ${r.evidence}).`,
       };
     }
+
+    // A STEP IS PART OF THE SAME CONSTRAINT (Codex, #855 4305243752). `step`
+    // is documented as "the smallest increment the machine's control actually
+    // moves in", so a value inside the bounds but off the step is just as
+    // unreachable as one past the maximum — a 0..10 control with step 2
+    // accepted 3. Checking only the endpoints made the step decoration.
+    //
+    // It refuses under exactly the same conditions as min/max, which is why it
+    // sits in this loop rather than its own: hardware-enforced AND undisputed.
+    // An advisory range's step stays advisory.
+    if (r.step !== undefined && r.step > 0) {
+      const base = r.min ?? 0;
+      const steps = (value - base) / r.step;
+      // A RELATIVE EPSILON, because binary floating point cannot hold a
+      // decimal step: 0.3 against step 0.1 gives 2.9999999999999996, and an
+      // exact test would refuse a value the machine can obviously reach.
+      const drift = Math.abs(steps - Math.round(steps));
+      if (drift > 1e-9 * Math.max(1, Math.abs(steps))) {
+        return {
+          ok: false,
+          code: "outside_hardware_limit",
+          message: `Field '${field.key}': the machine moves in steps of ${r.step}${
+            r.min !== undefined ? ` from ${r.min}` : ""
+          }, so it cannot be set to ${value} (evidence ${r.evidence}).`,
+        };
+      }
+    }
   }
 
   // Everything else that falls outside a documented range becomes a note.
