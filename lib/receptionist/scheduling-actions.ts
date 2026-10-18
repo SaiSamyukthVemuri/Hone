@@ -318,5 +318,10 @@ async function notifyCancelled(
     reason,
     isClient: true,
     rebookUrl: `${getRequiredAppOrigin()}/book/${row.studio.slug}`,
+    // DELIVERY-VISIBILITY: sendCancellationEmail only records and tags a
+    // cancellation when `ledger` is supplied, so omitting it left FRONT-DESK
+    // cancellations invisible to the ledger, concern and incident surfaces
+    // while practitioner cancellations were visible.
+    ledger: { studioId, appointmentId },
   });
 }

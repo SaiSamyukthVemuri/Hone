@@ -54,6 +54,11 @@ let bookDate: string;
 let A: { email: string; displayName: string; practitionerId: string };
 let B: { email: string; displayName: string; practitionerId: string };
 let C: { email: string; displayName: string; practitionerId: string };
+/** ACTIVE but NOT pinned to the service. Without D the eligibility half of the
+ *  options assertion is VACUOUS: C is inactive, so excluding it proves only the
+ *  ACTIVE filter, and an active-but-ineligible practitioner — the case the
+ *  0170/0222/0225 optional-list rule exists for — went untested. */
+let D: { email: string; displayName: string; practitionerId: string };
 let clientOne: { name: string; email: string };
 let clientTwo: { name: string; email: string };
 
@@ -88,6 +93,7 @@ test.beforeAll(async () => {
   A = await seedE2eMember(seed);
   B = await seedE2eMember(seed);
   C = await seedE2eMember(seed);
+  D = await seedE2eMember(seed);
   // Inactive: must never appear in the picker, and must never be bookable.
   await setPractitionerActive(C.practitionerId, false);
 
@@ -96,10 +102,51 @@ test.beforeAll(async () => {
   await setStudioCapacityEnabled(seed.studioId, true);
   await setStudioCapacityBookingEnabled(seed.studioId, true);
 
-  // The service-insert trigger seeds only the OWNER as eligible, so A and B
-  // must be made eligible explicitly or the picker correctly hides them.
+  // ELIGIBILITY IS SEEDED BY A TRIGGER, NOT BY THESE CALLS — and the first
+  // version of this fixture had it backwards. 0134's
+  // `default_eligibility_for_practitioner` fires AFTER INSERT (and on UPDATE OF
+  // active) and pins the practitioner to EVERY service the studio already has,
+  // so `seedE2eMember` alone made A, B, C and D eligible and both calls below
+  // are no-ops. The old comment here claimed the service-insert trigger pinned
+  // only the OWNER; on that false premise the picker listing D looked like a
+  // defect, when the state the assertion needed had never been built.
+  //
+  // Kept regardless: they state the intent, they are idempotent, and they keep
+  // this fixture correct if that default ever changes.
   await seedServiceEligibility(seed.studioId, serviceId, A.practitionerId);
   await seedServiceEligibility(seed.studioId, serviceId, B.practitionerId);
+
+  // D IS UN-PINNED EXPLICITLY, which is the ONLY way to reach "active, but not
+  // eligible for THIS service" — the state 0170's optional-list rule exists
+  // for — and it is what the operator's own surface does when a practitioner is
+  // unassigned from a service. D's `active` must not be touched after this, or
+  // the trigger pins it straight back. Spec-local on purpose: e2e/helpers/seed.ts
+  // is shared across lanes and editing it forces extended browser coverage.
+  await sql(
+    `delete from public.service_practitioners
+      where service_id = $1 and practitioner_id = $2`,
+    [serviceId, D.practitionerId],
+  );
+
+  // THE PRECONDITION IS ASSERTED, NOT ASSUMED — this is the check whose absence
+  // let the fixture claim a state it did not have. The list must be NON-EMPTY,
+  // because an empty list sends `loadEligiblePractitioners` down 0170's
+  // optional-list escape and returns every option unfiltered, so the filter
+  // under test would never run; and it must EXCLUDE D, or the assertion below
+  // is measuring the trigger rather than the filter.
+  const pinned = new Set(
+    (
+      await sql<{ practitioner_id: string }>(
+        `select practitioner_id::text as practitioner_id
+           from public.service_practitioners where service_id = $1`,
+        [serviceId],
+      )
+    ).map((r) => r.practitioner_id),
+  );
+  expect(pinned.size).toBeGreaterThan(0);
+  expect(pinned.has(A.practitionerId)).toBe(true);
+  expect(pinned.has(B.practitionerId)).toBe(true);
+  expect(pinned.has(D.practitionerId)).toBe(false);
 
   for (let d = 0; d <= 6; d++) {
     await seedStudioWideDefault(seed.studioId, d, true, "06:00", "22:00");
@@ -302,11 +349,44 @@ test("the picker offers only active, service-eligible practitioners", async ({ p
   await page.goto(`/book/${seed.slug}`);
   await page.getByRole("button", { name: /new client/i }).first().click();
   await page.getByLabel("Date").fill(bookDate);
+  // WAIT FOR THE SERVICE-SCOPED OPTIONS FETCH, which this test did not do and
+  // which practitioner D exposed. The options are loaded by an effect keyed on
+  // the service, so reading them straight after `selectOption` returns the
+  // PREVIOUS list — the one fetched with a null serviceId, before any
+  // service_practitioners filtering. Inactive C is excluded by the RPC itself
+  // whatever the service, so the old assertion held on that stale list; D is
+  // excluded ONLY by the service filter, so it needs the scoped answer.
+  const scopedOptions = page.waitForResponse(
+    (r) =>
+      r.request().method() === "POST" &&
+      Boolean(r.request().headers()["next-action"]) &&
+      (r.request().postData() ?? "").includes(serviceId),
+    { timeout: 20_000 },
+  );
   await page.getByLabel("Service").selectOption(serviceId);
+  await scopedOptions;
 
   const picker = page.getByTestId("practitioner-picker");
   await expect(picker).toBeVisible();
-  const labels = await picker.locator("option").allTextContents();
+  // Settle on CONTENT STABILITY, not on a count and not on the answer I want:
+  // the response above proves the fetch replied, not that React has
+  // re-rendered. Polling for "the list stopped changing" bakes in no
+  // conclusion — a picker that wrongly keeps D settles too, and the assertions
+  // below then fail, which is the behaviour a real defect should produce.
+  const readLabels = () => picker.locator("option").allTextContents();
+  let previous = "";
+  await expect
+    .poll(
+      async () => {
+        const now = (await readLabels()).join("|");
+        const stable = now === previous;
+        previous = now;
+        return stable;
+      },
+      { timeout: 20_000, intervals: [250, 250, 500] },
+    )
+    .toBe(true);
+  const labels = await readLabels();
 
   // "Any available" is first and is the DEFAULT, so ignoring the picker books
   // exactly as the page did before G1.
@@ -317,6 +397,15 @@ test("the picker offers only active, service-eligible practitioners", async ({ p
   expect(labels).toContain(B.displayName);
   // Inactive C is absent, and so is anyone not eligible for this service.
   expect(labels).not.toContain(C.displayName);
+  // AND THE ELIGIBILITY HALF, which C cannot prove: D is ACTIVE and passes
+  // every other filter, so its absence is attributable to service_practitioners
+  // alone. loadEligiblePractitioners applies 0170's rule — the list exists, so
+  // membership is required — and fails CLOSED if the eligibility read errors.
+  expect(labels).not.toContain(D.displayName);
+  // Non-vacuity for D itself: it really is a seeded, ACTIVE member of this
+  // studio, so the exclusion above is a filter and not a missing fixture.
+  expect(D.displayName).toBeTruthy();
+  expect(D.practitionerId).not.toBe(A.practitionerId);
 });
 
 test("the public-assignment kill switch hides the picker entirely", async ({ page }) => {
