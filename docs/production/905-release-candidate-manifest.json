@@ -1,0 +1,383 @@
+{
+  "title": "#905 narrow production-based release candidate source manifest",
+  "production_base": "102faf94fc573c724d73419bc9e8a6262ac1a247",
+  "portrait_source": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
+  "hosted_anchor": {
+    "version": "0212",
+    "owner_pr": 832,
+    "owner_head": "7116c66848574b0e02e7c2b8f500a6d3198edb58",
+    "path": "supabase/migrations/0212_email_delivery_events.sql",
+    "sha256": "cc2abfa3059157b841c1c1c095a84045410121be13d96ff93e34f8332f81d6d1",
+    "status": "already applied; carried byte-identical for canonical repository provenance; never reapply"
+  },
+  "pending_migrations": [
+    {
+      "version": "0213",
+      "owner_pr": 831,
+      "owner_head": "4f1b20b85cc0346cac24b3d1d002525217551126",
+      "path": "supabase/migrations/0213_platform_lead_alerts.sql",
+      "raw_sha256": "5186bca250713e8db8eb17dc6a354202f98ea00388d489fb9f7d74d93c960d2b",
+      "application_order_contract": "After #827/#832 lineage; migration-first; old app compatible during apply/deploy interval.",
+      "candidate_sha256": "5186bca250713e8db8eb17dc6a354202f98ea00388d489fb9f7d74d93c960d2b",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0214",
+      "owner_pr": 833,
+      "owner_head": "b59c4d021981a01c7627df7ee7f2cad485a06b06",
+      "path": "supabase/migrations/0214_studio_payment_jurisdiction.sql",
+      "raw_sha256": "25da63b7bdacefa44e12c2357c85cb8b814cd7be4d25dfb8dbf8cf151e1ab65f",
+      "application_order_contract": "After0213; migration-first; US studio activation waits for currency UI.",
+      "candidate_sha256": "25da63b7bdacefa44e12c2357c85cb8b814cd7be4d25dfb8dbf8cf151e1ab65f",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0215",
+      "owner_pr": 843,
+      "owner_head": "6b2d9c02f52c55eceaaf045c37cacce00f7f300d",
+      "path": "supabase/migrations/0215_delivery_incidents.sql",
+      "raw_sha256": "612f98fe62b9bb7113e32956a46eaeab07238fbf94cb305f6c1ab6ddaa2ec168",
+      "application_order_contract": "After0214; migration-first; ledger producers deploy only after schema.",
+      "candidate_sha256": "612f98fe62b9bb7113e32956a46eaeab07238fbf94cb305f6c1ab6ddaa2ec168",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0216",
+      "owner_pr": 838,
+      "owner_head": "7c8758ff71c921f0365dbc9bb23c9a14842ad49f",
+      "path": "supabase/migrations/0216_receptionist_membership_foundation.sql",
+      "raw_sha256": "1039bd49ab49849f2e0632aa896961572b4598ab46786fa194866730de10563e",
+      "application_order_contract": "After0215; migration-first; receptionist app follows foundation.",
+      "candidate_sha256": "1039bd49ab49849f2e0632aa896961572b4598ab46786fa194866730de10563e",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0217",
+      "owner_pr": 844,
+      "owner_head": "8187e59668e5003cf4fe615757b3ebb94dfadf3a",
+      "path": "supabase/migrations/0217_studio_sms_sender_registrations.sql",
+      "raw_sha256": "beda95b6594c01da4f5b1eb9d52bbd5838991a51526874cfac41e18f9ccbb1f6",
+      "application_order_contract": "After0216; migration-first; evidence SQL does not activate provider.",
+      "candidate_sha256": "beda95b6594c01da4f5b1eb9d52bbd5838991a51526874cfac41e18f9ccbb1f6",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0218",
+      "owner_pr": 850,
+      "owner_head": "41ea94b984426d4fc39a9531ae656c41e04d1b32",
+      "path": "supabase/migrations/0218_receptionist_invitations.sql",
+      "raw_sha256": "58ad44c705797f3d5c48b9cea1fadcef2da23ab46a41ec41cc67ea7dcf0c3a7a",
+      "application_order_contract": "After0217; migration-first; invitation app follows tables.",
+      "candidate_sha256": "58ad44c705797f3d5c48b9cea1fadcef2da23ab46a41ec41cc67ea7dcf0c3a7a",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0219",
+      "owner_pr": 864,
+      "owner_head": "15a604838e52009bdec5d91eb6d7d9871861632e",
+      "path": "supabase/migrations/0219_public_practitioner_selection.sql",
+      "raw_sha256": "4d44fc6603301ad1b94d7af9ecd56f1d28cd798742271bd6b1b0cd25b3bd69fe",
+      "application_order_contract": "After0218; migration-first; read-side selection alone is not complete picker.",
+      "candidate_sha256": "4d44fc6603301ad1b94d7af9ecd56f1d28cd798742271bd6b1b0cd25b3bd69fe",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0220",
+      "owner_pr": 862,
+      "owner_head": "de68b7c70d1bfb4a945afb0437ffd52d705285f1",
+      "path": "supabase/migrations/0220_receptionist_scheduling.sql",
+      "raw_sha256": "329d70744996abe73a24c836e87e10bd842e9ba9f124940f9c95a5338fa4b0e2",
+      "application_order_contract": "After0219; migration-first; scheduling follows shared core.",
+      "candidate_sha256": "329d70744996abe73a24c836e87e10bd842e9ba9f124940f9c95a5338fa4b0e2",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0221",
+      "owner_pr": 865,
+      "owner_head": "d2e3bd64895bef3b142be928b0b21c243e74ef06",
+      "path": "supabase/migrations/0221_delivery_concerns_and_purposes.sql",
+      "raw_sha256": "b881fa9052edabee0af3140ee8b7e09108b2013b16268dce894003f5bec4e19a",
+      "application_order_contract": "After0220; migration-first; delivery app follows schema.",
+      "candidate_sha256": "b881fa9052edabee0af3140ee8b7e09108b2013b16268dce894003f5bec4e19a",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0222",
+      "owner_pr": 868,
+      "owner_head": "2e9f47dd922a942199c75419b3219ab650efe821",
+      "path": "supabase/migrations/0222_public_practitioner_booking_command.sql",
+      "raw_sha256": "9d85ba09f8ddcd308848a5c8711b7e8da5b58e7c707f040a6b69cf0333a6b798",
+      "application_order_contract": "After0221; migration-first; routes use v2 command only after apply.",
+      "candidate_sha256": "9d85ba09f8ddcd308848a5c8711b7e8da5b58e7c707f040a6b69cf0333a6b798",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0223",
+      "owner_pr": 860,
+      "owner_head": "e928c11f844922c7f40cf48598223407299e2644",
+      "path": "supabase/migrations/0223_machine_inventory_and_setup_readings.sql",
+      "raw_sha256": "12038b1eab95d84f0ed84b235f0bf00641f6e06007e6ba5008066fc0d852b948",
+      "application_order_contract": "After0222; migration-first; frozen bytes; separate model activation hold.",
+      "candidate_sha256": "12038b1eab95d84f0ed84b235f0bf00641f6e06007e6ba5008066fc0d852b948",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      },
+      "frozen_source_sha256": "12038b1eab95d84f0ed84b235f0bf00641f6e06007e6ba5008066fc0d852b948"
+    },
+    {
+      "version": "0224",
+      "owner_pr": 872,
+      "owner_head": "ccc4be50024e017092cad2171a7d39017eb623ad",
+      "path": "supabase/migrations/0224_us_settlement_method_guard.sql",
+      "raw_sha256": "761a76fbb04adc03f13b82d1e7e22594d688a7ba9d7bf53ae6fe742f83003246",
+      "application_order_contract": "After0223; migration-first; US settlement app follows apply.",
+      "candidate_sha256": "761a76fbb04adc03f13b82d1e7e22594d688a7ba9d7bf53ae6fe742f83003246",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0225",
+      "owner_pr": 874,
+      "owner_head": "2e9f47dd922a942199c75419b3219ab650efe821",
+      "path": "supabase/migrations/0225_public_new_client_practitioner_selection.sql",
+      "raw_sha256": "61d69c6f50ea66963298ff44ad27f21a8cef640e81f1f428b9c778d29a5892ab",
+      "application_order_contract": "After0224; migration-first; picker ships only with0222 v2 route.",
+      "candidate_sha256": "61d69c6f50ea66963298ff44ad27f21a8cef640e81f1f428b9c778d29a5892ab",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0226",
+      "owner_pr": 863,
+      "owner_head": "1f813dfa843471b086678953754613a4460c733f",
+      "path": "supabase/migrations/0226_studio_sms_sender_unpurchased_release.sql",
+      "raw_sha256": "1ee108d11c2ce3ffe7bcd7baa9a44082c6c6d5369bfb7f3ca1d80489fd9ca0e4",
+      "application_order_contract": "After0225; migration-first; no provider purchase/provision/send.",
+      "candidate_sha256": "1ee108d11c2ce3ffe7bcd7baa9a44082c6c6d5369bfb7f3ca1d80489fd9ca0e4",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0227",
+      "owner_pr": 876,
+      "owner_head": "92fcdcccc4543b433827e44754f08f0078852505",
+      "path": "supabase/migrations/0227_email_receipt_quarantine_bound.sql",
+      "raw_sha256": "8b62d4d8b9c32608a0d2c9884184752068c64679eab2f913b04de9ba3a7e0313",
+      "application_order_contract": "After0226; migration-first; per-change apply approval.",
+      "candidate_sha256": "8b62d4d8b9c32608a0d2c9884184752068c64679eab2f913b04de9ba3a7e0313",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0228",
+      "owner_pr": 874,
+      "owner_head": "2e9f47dd922a942199c75419b3219ab650efe821",
+      "path": "supabase/migrations/0228_legacy_new_client_refusal_atomicity.sql",
+      "raw_sha256": "0d43f23e16ec67a54cbe7df98e5c1a09f66321149ded4f43062fd2baae4841a3",
+      "application_order_contract": "After0227; migration-first.",
+      "candidate_sha256": "0d43f23e16ec67a54cbe7df98e5c1a09f66321149ded4f43062fd2baae4841a3",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0229",
+      "owner_pr": 901,
+      "owner_head": "b290d12591cccbd268f947384e8462db50c297d1",
+      "path": "supabase/migrations/0229_studio_sms_sender_campaign_bindings.sql",
+      "raw_sha256": "fe1499a590a90ad13597627c186010aaf0a486be7e2c3890cd31264d97d96f86",
+      "application_order_contract": "After0228; migration-first; additive campaign-binding snapshot.",
+      "candidate_sha256": "fe1499a590a90ad13597627c186010aaf0a486be7e2c3890cd31264d97d96f86",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0230",
+      "owner_pr": 916,
+      "owner_head": "e61e5e6611ac48af0ba094ea1bf91934c84d44d2",
+      "path": "supabase/migrations/0230_studio_sms_sender_stop_preflights.sql",
+      "raw_sha256": "6fd46332f04a463890350041005626ffc7977751fd2e6c976c5530a8812aceaa",
+      "application_order_contract": "After0229; migration-first; STOP-preflight extension replaces0229 snapshot.",
+      "candidate_sha256": "6fd46332f04a463890350041005626ffc7977751fd2e6c976c5530a8812aceaa",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0231",
+      "owner_pr": 905,
+      "owner_head": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
+      "path": "supabase/migrations/0231_client_identification_portrait.sql",
+      "raw_sha256": "e0368d9029b513d6de952c58aadddfbd67a8c07b3e0dc9c2b95c06eadef4c375",
+      "application_order_contract": "After0230; STRICT apply-before-deploy: portrait app selects new client portrait column.",
+      "candidate_sha256": "e0368d9029b513d6de952c58aadddfbd67a8c07b3e0dc9c2b95c06eadef4c375",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    }
+  ],
+  "included_portrait_sources": [
+    {
+      "path": "app/(app)/clients/[id]/ClientPortrait.tsx",
+      "source_blob": "fb4e065e3c960cc13770392137aa343729c43ec9",
+      "sha256": "8a8603169a1c6440950075c8f7c6e5aa6a9773fb8ddf108d01c840f63733c36f"
+    },
+    {
+      "path": "app/(app)/clients/[id]/images/PortraitControl.tsx",
+      "source_blob": "14986258d4c67d72215c674331a98cfa6834990e",
+      "sha256": "984681b2617dbb39cb2a7fb5a3b70a7ecd617144649c1123d940f9356504d376"
+    },
+    {
+      "path": "app/(app)/clients/[id]/images/TreatmentImagesManager.tsx",
+      "source_blob": "1140fd15478a8f5db7b495771876e89e179c7f83",
+      "sha256": "88e3306d82a772b97ddc535bec8ff5ae7f4257a41d352fb66635d0e900ee887f"
+    },
+    {
+      "path": "app/(app)/clients/[id]/images/actions.ts",
+      "source_blob": "3cab803506033f6cc174bbebab4a885c0aceb789",
+      "sha256": "f1ad12b728d5559b32f23e4a99d3903076cf9b2e7171d691b5b94a5f2f1f90b2"
+    },
+    {
+      "path": "app/(app)/clients/[id]/images/page.tsx",
+      "source_blob": "6ccc26c2ece05a167bcddbefbcf5ea2f0ad502c2",
+      "sha256": "4836cb8d6ce16de819b3d58abe97df384e6a7ed6ee3e9f6a0aec890200991313"
+    },
+    {
+      "path": "app/(app)/clients/[id]/page.tsx",
+      "source_blob": "20ea9fe0da25ae10411e8aa65b3d16c535e6897d",
+      "sha256": "725a62f5785d648910054c373685187ecc892dc1304ddab8d41db91eb88bcd4f"
+    },
+    {
+      "path": "lib/images/client-portrait.ts",
+      "source_blob": "76ece26a2ae41e4b3896c02d9267afa173d17f47",
+      "sha256": "2d4f79da1569af758f5ecd4aae46a9165c18a0a0428a279e193030b9ab9edaa7"
+    },
+    {
+      "path": "tests/app/clients/client-portrait-ui.test.ts",
+      "source_blob": "de7c6abd0da11e846abe3cb9b83df598c1228dc6",
+      "sha256": "645c74507f5371835b0625d5d21bb6ca10c57fee5c25f9ccf30c2623218fe19c"
+    },
+    {
+      "path": "tests/db/client-identification-portrait.db.test.ts",
+      "source_blob": "ec31269097bb1d209ddd6eb2c8b0ceae77095fc4",
+      "sha256": "4e2e2f32d77379c6d1ce59c32778a539f2026b582b416dcf720ab0404dc71f83"
+    },
+    {
+      "path": "tests/migrations/0231-client-identification-portrait.test.ts",
+      "source_blob": "4628a2414821e25383b5a7b2daa7fddfdd2964ba",
+      "sha256": "9d53a8c461f102ff87e1f88aa6a6563d9e47b18ceb4f074c22afc968aefbf343"
+    },
+    {
+      "path": "e2e/fett-client-portrait.spec.ts",
+      "source_blob": "1845b6a18ba91cb2c938c88ec23887ab0238c8df",
+      "sha256": "54ea01d023dcda6deeae8ba867901bfa254fe46a353b4410cfe171f365b9da67"
+    },
+    {
+      "path": "supabase/migrations/0231_client_identification_portrait.sql",
+      "source_blob": "affbd2a4ddb5c34d6a786bdca0fa3a1de22e42f6",
+      "sha256": "e0368d9029b513d6de952c58aadddfbd67a8c07b3e0dc9c2b95c06eadef4c375"
+    }
+  ],
+  "additional_owner_verification_source": {
+    "path": "tests/migrations/0221-delivery-concerns-and-purposes.test.ts",
+    "owner_pr": 865,
+    "owner_head": "d2e3bd64895bef3b142be928b0b21c243e74ef06",
+    "sha256": "26e101c41aaaf1fb860f7d63884d3cfd849cc944494a96b94700d632b9249257",
+    "purpose": "pins the reconciled 0212 and current #843 0215 exact source bytes"
+  },
+  "scope": {
+    "included_versions": [
+      "0213",
+      "0214",
+      "0215",
+      "0216",
+      "0217",
+      "0218",
+      "0219",
+      "0220",
+      "0221",
+      "0222",
+      "0223",
+      "0224",
+      "0225",
+      "0226",
+      "0227",
+      "0228",
+      "0229",
+      "0230",
+      "0231"
+    ],
+    "excluded": [
+      "0232 (separately allocated to #908)",
+      "0233",
+      "0234 (held Machines #920 / Team allocation)",
+      "0235"
+    ],
+    "frozen_0223_sha256": "12038b1eab95d84f0ed84b235f0bf00641f6e06007e6ba5008066fc0d852b948",
+    "production_907_session_photo_files_preserved": true
+  },
+  "order_contract": "Apply pending migrations strictly in ascending order 0213 through 0231, each with the owning migration's transaction and SET LOCAL lock_timeout = 5s contract. Apply through 0231 and verify before deploying portrait application code. No provider activation is implied."
+}
