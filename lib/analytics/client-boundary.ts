@@ -296,12 +296,12 @@ function sanitizeProps(value: unknown, key: string, depth: number): unknown {
   if (typeof value === "string") {
     if (depth > MAX_DEPTH) return "[redacted]";
     if (STRUCTURAL_KEYS.has(key)) return redactIdsInValue(sanitizeTokenPaths(value));
+    if (CAMPAIGN_PROP.test(key)) return redactIdsInValue(sanitizeTokenPaths(value));
     if (isNonHttpUrl(value)) return NON_HTTP_URL_PLACEHOLDER;
     if (isUrlPropKey(key)) return sanitizeMarketingUrl(value);
     // A URL-shaped value under any other key: sanitized as the URL it decodes
     // to, so an encoded "%2Fclients%2F…%3F…" loses its query too.
     if (looksLikeUrl(value)) return sanitizeMarketingUrl(decodeBounded(value) ?? "[redacted]");
-    if (CAMPAIGN_PROP.test(key)) return redactIdsInValue(sanitizeTokenPaths(value));
     return redactPathLikeIds(sanitizeTokenPaths(value));
   }
   if (typeof value !== "object") return undefined;
@@ -312,6 +312,10 @@ function sanitizeProps(value: unknown, key: string, depth: number): unknown {
   if (value instanceof URL) {
     const href = Object.getOwnPropertyDescriptor(URL.prototype, "href")!.get!.call(value) as string;
     const url = new URL(href);
+    // URL objects previously exposed no fields. Do not introduce email-bearing
+    // paths, including encoded forms; uncertain decoding also fails closed.
+    const path = decodeBounded(url.pathname);
+    if (path === null || path.includes("@")) return NON_HTTP_URL_PLACEHOLDER;
     return url.protocol === "http:" || url.protocol === "https:"
       ? sanitizeMarketingUrl(url.href)
       : NON_HTTP_URL_PLACEHOLDER;

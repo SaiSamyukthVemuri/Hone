@@ -54,6 +54,26 @@ describe("utm_* values inside retained URLs", () => {
 });
 
 describe("standalone campaign properties posthog-js copies into the event", () => {
+  it.each(["/offer?variant=A", "https://example.com/offer?variant=A#hero", `/offer/${CLIENT}?variant=A`])(
+    "keeps campaign value semantics consistently across URL and standalone copies: %s", (value) => {
+      const event = guardBrowserEvent({
+        event: "$pageview",
+        properties: { $current_url: `${HOST}/pricing?utm_campaign=${encodeURIComponent(value)}`, utm_campaign: value },
+        $set: { $initial_utm_campaign: value },
+        $set_once: { $session_entry_utm_campaign: value },
+      })!;
+      const retained = new URL(event.properties.$current_url).searchParams.get("utm_campaign");
+      expect(event.properties.utm_campaign).toBe(retained);
+      expect(event.$set.$initial_utm_campaign).toBe(retained);
+      expect(event.$set_once.$session_entry_utm_campaign).toBe(retained);
+      if (value.includes(CLIENT)) expect(retained).toBe("/offer/[id]?variant=A");
+      else expect(retained).toBe(value);
+    },
+  );
+  it("still redacts token paths in standalone campaign values", () => {
+    expect((pageview({ utm_campaign: "/portal/verify/synthetic-secret?variant=A" }).properties as Record<string, unknown>).utm_campaign)
+      .toBe("/portal/verify/[token]?variant=A");
+  });
   const keys = [
     ...UTM_KEYS,
     ...UTM_KEYS.map((k) => `$initial_${k}`),
@@ -197,6 +217,13 @@ describe("no custom browser PostHog properties exist (the premise of keeping bar
 // and values are judged on their DECODED text, never on a raw-text signal.
 // ===========================================================================
 describe("URL-shaped values and decode-first decisions", () => {
+  it.each(["patient@example.com", "patient%40example.com", "patient%2540example.com", "%252525252540"])(
+    "fails closed on URL-object sensitive or uncertain paths: %s", (path) => {
+      const out = pageview({ link: new URL(`${HOST}/${path}`), nested: [new URL(`${HOST}/${path}`)] });
+      expect(out.properties).toMatchObject({ link: "[url]", nested: ["[url]"] });
+      expect(JSON.stringify(out)).not.toContain("patient");
+    },
+  );
   const ENC = `%36${CLIENT.slice(1)}`; // the first hex digit percent-encoded
   // A hex digit encoded MID-UUID: no raw-text UUID survives in the key.
   const ENC_MID = CLIENT.replace("-4a5b-", "-%34a5b-");
