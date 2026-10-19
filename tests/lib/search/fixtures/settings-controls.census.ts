@@ -522,6 +522,30 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
     decision: "searchable",
     entryId: "settings-google-calendar",
   },
+  {
+    page: "/settings/integrations",
+    label: "Find a number",
+    role: "owner",
+    decision: "excluded",
+    reason:
+      "Rendered only where provisioning is armed (HONE_SMS_PROVISIONING_LIVE), which is nowhere today, so no deployment shows this control and advertising it would send an owner to a fragment that is not on the page. It was registered as searchable in the first revision of this slice and that was the defect: global-search visibility reads owner role and the Google Calendar flag, neither of which can express the arming gate. When provisioning is armed and the control renders, the slice that arms it registers the entry and flips this row -- the same posture as the pilot-gated waitlist controls above.",
+  },
+  {
+    page: "/settings/integrations",
+    label: "Country",
+    role: "owner",
+    decision: "excluded",
+    reason:
+      "Two-letter input inside the Find a number control, not a stored studio setting -- nothing is persisted and there is no value to return to. It is also only rendered where provisioning is armed, so it has no destination to advertise.",
+  },
+  {
+    page: "/settings/integrations",
+    label: "Area code",
+    role: "owner",
+    decision: "excluded",
+    reason:
+      "Optional input inside the Find a number control, scoping one read-only lookup. It configures nothing, persists nothing, and is only rendered where provisioning is armed.",
+  },
 
   // --------------------------------------------------------------- tracking
   {
