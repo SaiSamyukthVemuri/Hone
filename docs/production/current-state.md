@@ -24,6 +24,44 @@ not a PR diary — per-capability evidence lives in
 
 | Field | Value |
 |---|---|
+| **Reconciliation date** | **2026-10-19 UTC source sync** (CANON-REFRESH-2026-10-19, 1 merge after the `f9cd9013` record, runtime-bearing; the earlier record was never merged before production moved and is preserved below as history). Earlier syncs are preserved below as history. Production-data counts elsewhere retain their own older measurement dates. |
+| **Production branch** | `claude/build-hone-saas-hOex7` |
+| **Current Git branch HEAD at this sync** | **`34f4800a4adda2c7efa4d2f6479a9543c175e840` — merge of #929.** Re-read GitHub before any production action; this is a dated sync value, not a perpetual pointer. |
+| **Last runtime-bearing application HEAD at this sync** | **`34f4800a4adda2c7efa4d2f6479a9543c175e840` (#929).** Also the branch HEAD above. The merge’s own first-parent diff has 26 files, including 9 shipping files under `app/` and `lib/`, and no migration. `scripts/classify-changes.mjs`: `application=true`, `database=true`, `security=true`, `browser_core=true`, baseline T3 (DB test and security surfaces); this is runtime-bearing. The re-mint path uses an abortable signed-URL route and recovers image failures around hydration. With this pin A3’s runtime residue is zero files. |
+| **Current Vercel Production deployment evidence** | `34f4800a` (#929, merged `2026-10-19T00:47:56Z` from head `7afdb443`) has Vercel commit status **success**, updated `2026-10-19T00:50:07Z`, target [Aoqji68MVSiqp3vTC9eLQme7pcTs](https://vercel.com/samyukthssv-4841s-projects/hone-z2uf/Aoqji68MVSiqp3vTC9eLQme7pcTs). Sam reports deployment completed; this sync read the GitHub status but did **not** independently read Vercel target/aliases or probe the live recovery workflow. Production push CI `39182395633`: changed-path detection, DB integration, all four extended browser shards and browser aggregator **passed**; docs-only, payment, Google and mobile lanes **skipped**, not executed. Validate **failed only** canonical-production-facts A3/A5 against the stale `6acea261` record. This docs refresh repairs that record; it does not retroactively turn the failed run green. |
+| **Migration state** | **This document deliberately states no migration number.** Hosted max is declared once, machine-readably, in [`migration-state.json`](./migration-state.json). Repository max, total applied and the next free number are **derived** — run `npm run migration:state`. The current reconciled position, with checksums and apply evidence, is [migration-ledger.md](./migration-ledger.md) under *Current state*. A number copied into this table is a number that goes stale on the next apply; that is how the `0160`/`0163`/`0165` divergence happened. |
+| **Database vs. application skew** | **This document asserts no parity, pending or remote-only claim of its own.** It previously declared the two states equal and the pending set empty, and went stale the moment a reviewed migration was authored above hosted — the same second-copy failure this table already avoids for migration NUMBERS. Derive the relationship with `npm run migration:state`; hosted state is declared once in [`migration-state.json`](./migration-state.json); the reconciled position with apply evidence is [migration-ledger.md](./migration-ledger.md) under *Current state*. **A repository maximum ABOVE hosted is the normal state of an authorized migration-first apply** — reviewed migration authored, production not yet advanced — and is not by itself skew. What would be skew is a **remote-only** migration (hosted above repo), which the derivation reports and the canonical guard forbids. |
+| **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
+| **Health** | **Status-code probe, 2026-10-17T17:05Z** (unauthenticated GET, redirects not followed): `hone.care` **200** · `/login` **200** · `/dashboard`, `/clients`, `/calendar` and `/api/health` **307 → /login**, all non-5xx. This is a reachability reading only. ⚠️ `ops_alerts` was **not** re-read at this sync. Earlier probes are preserved below as dated readings. These are dated observations, not current health. |
+| **Tenant posture** | **Six studios in three classes — one real-customer, one controlled test, one synthetic, three empty.** Real-customer activity is **Willow Electrolysis only**. See **§0**, which is the canonical tenant register; do not restate its counts elsewhere. ⚠️ **Every tenant count in §0 was measured 2026-08-23 and was NOT re-measured on 2026-08-26** — see *What this reconciliation did and did not measure* below. |
+| **Next operational gate** | The **deep production / security / code audit** (still not performed against this baseline). **Chloe's human acceptance testing** remains outstanding and is **independent** — see §15. |
+
+### Re-derived at this reconciliation
+
+**Re-derived on 2026-10-19 (CANON-REFRESH-2026-10-19), from `34f4800a`:**
+
+- The production branch head and the full merge ancestry back to `b9e0003f` (165 merges),
+  from `git rev-list --first-parent --merges --count b9e0003f..34f4800a`;
+  136 merges follow `bf6f09c4`.
+- One merge since the prior unmerged record `f9cd9013`: #929 at `34f4800a`,
+  classified over its own first-parent diff (26 files, 9 shipping, no migration).
+- GitHub merge record, Vercel commit status and production CI `39182395633`, job by job.
+- Migration files are unchanged by #929. Hosted state remains declared only in
+  `migration-state.json`; no hosted query, apply or provider/customer-data write occurred.
+
+**Not re-measured:** Vercel deployment target/aliases, live photo recovery, health,
+tenant counts, `ops_alerts`, provider state, payment counts or customer acceptance.
+Those facts keep their original dates and scopes. Other open-PR rows below remain
+dated history, not a fresh census. Dependent releases stay held pending this
+record repair's exact-head review, applicable CI and Sam's release authorization.
+
+### Historical preceding baseline from the 2026-10-18 `f9cd9013` reconciliation
+
+<!-- canonical-facts:ignore-start reason=preserves-the-f9cd9013-unmerged-record-as-dated-history -->
+#### Prior reconciliation header
+
+| Field | Value |
+|---|---|
 | **Reconciliation date** | **2026-10-18 UTC source sync** (CANON-REFRESH-2026-10-18b, 1 merge after the `aaf3042b` record, runtime-bearing; the `aaf3042b` record itself was never merged before production moved, so it is preserved below as history). Earlier syncs are preserved below as history. Production-data counts elsewhere retain their own older measurement dates. |
 | **Production branch** | `claude/build-hone-saas-hOex7` |
 | **Current Git branch HEAD at this sync** | **`f9cd9013b011752a751b84e6b28eb509033155d4` — merge of #894.** Re-read GitHub before any production action; this is a dated sync value, not a perpetual pointer. |
@@ -58,6 +96,8 @@ dated 2026-10-17T17:05Z reading), tenant counts (§0), `ops_alerts`, provider st
 counts (§7), the open-PR table (last re-read 2026-10-18 at the `aaf3042b` derivation), whether
 the pinned-note editor behaves as described in production, and any capability's production
 exercise. Their own measurement dates stand.
+
+<!-- canonical-facts:ignore-end -->
 
 ### Historical preceding baseline from the 2026-10-18 `aaf3042b` reconciliation
 
@@ -615,7 +655,7 @@ surfaces then made affirmative clinical statements nobody had read: *Last visit*
 Intelligence* reported every stat as a known zero, and *Before today* reported no watch or plan
 notes and a complete procedure record.
 
-At `f9cd9013` all four check `unavailable` **before** `hasHistory`, and
+At `34f4800a` all four check `unavailable` **before** `hasHistory`, and
 `session_blocks.caution_for_next_session` / `caution_note` — which reach the practitioner only
 through the Watch/Plan band built from that same read — are protected on both the Overview and
 Sessions tabs. Read failure now renders *clinical history could not be loaded*. **Re-run on
