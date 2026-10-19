@@ -297,6 +297,35 @@ export async function seedFettStudio(
     [consultationId, studioId, treatmentId],
   );
 
+  // SERVICE ELIGIBILITY, AND IT IS NOT OPTIONAL FOR THE INTERNAL COMMAND.
+  //
+  // `create_internal_appointment_v2` (0152:92-96) refuses with `not_eligible`
+  // whenever capacity is LIVE and no `service_practitioners` row matches the
+  // service and target practitioner. That check has NO optional-list escape —
+  // unlike `create_public_appointment` (0170:447-461), which enforces
+  // eligibility only when the service HAS a list.
+  //
+  // This fixture defaults to capacity LIVE, so without these rows every
+  // `bookFettInternal` on a default fixture returned `not_eligible` and the
+  // LIVE booking and practitioner-slot tests never reached the behaviour they
+  // exist to prove. They stayed GREEN while doing it, which is why nothing
+  // caught it: a refusal satisfies an assertion that only counts rows.
+  //
+  // EVERY practitioner is pinned to BOTH services on purpose. The public
+  // command's optional-list rule now sees a list, so pinning all of them keeps
+  // the public path's behaviour identical (everyone still eligible) while
+  // unblocking the internal one. A test that wants an INELIGIBLE practitioner
+  // should delete a row, which is explicit, rather than rely on the absence of
+  // the whole table.
+  for (const p of [owner, ...treating]) {
+    await adminQuery(
+      `insert into public.service_practitioners (studio_id, service_id, practitioner_id)
+       values ($4, $1, $3), ($4, $2, $3)
+       on conflict do nothing`,
+      [consultationId, treatmentId, p.practitionerId, studioId],
+    );
+  }
+
   await seedFettAvailability(studioId, { open, close, days });
 
   // Both flags default FALSE (LEGACY = one studio-wide resource), so this is

@@ -3,7 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+// TWO STATEMENTS, AND THE FIRST ONE'S SHAPE IS PINNED. PR #286's lineage
+// guard matches `import { assertSessionForClient } from ".../session-lineage"`
+// as a single line, so folding these together — the tidier spelling — silently
+// breaks a security guard. Left split deliberately; do not merge them.
 import { assertSessionForClient } from "@/lib/sessions/session-lineage";
+import { SessionLineageError } from "@/lib/sessions/session-lineage";
 import { findProbeOptionByKey } from "@/lib/probes";
 import { normalizeChips } from "@/lib/observation-chips";
 import { INITIAL_SAVE_UNRESOLVED } from "@/lib/machines/pending-setup";
@@ -1118,7 +1123,15 @@ export type InitialSetupInput = {
    * commit.
    */
   groups: Array<{
-    groupKey: string;
+    /**
+     * EXACTLY ONE OF THE TWO IS SET (Codex, #860 4305780322). `groupKey`
+     * revises the group it names; `newGroupRef` is the caller's own local
+     * placeholder for a group the DATABASE will name. A caller cannot choose
+     * a new identity, because two callers choosing independently is how two
+     * probe sets came to merge into one timeline.
+     */
+    groupKey: string | null;
+    newGroupRef: string | null;
     channels: number[];
     readings: ReadingSubmission[];
   }>;
@@ -1131,7 +1144,39 @@ export async function createTreatmentAreaWithEntryAction(
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot log sessions." };
   }
-  await assertSessionForClient(studio.id, input.clientId, input.sessionId);
+  // A pre-write refusal is a refusal, not an unknown outcome (Codex, #860
+  // 4305702526). Full reasoning below the catch — it is kept there so this
+  // assertion stays inside the 1400-character window PR #286's lineage guard
+  // slices from the start of each action.
+  try {
+    await assertSessionForClient(studio.id, input.clientId, input.sessionId);
+  } catch (cause) {
+    if (cause instanceof SessionLineageError) {
+      return {
+        ok: false,
+        error:
+          "This treatment could not be confirmed as this client's. Reload " +
+          "the chart before saving again - nothing was recorded.",
+      };
+    }
+    throw cause;
+  }
+  // WHY THAT CATCH EXISTS (Codex, #860 4305702526). `assertSessionForClient`
+  // THROWS, and the create form's catch labels anything thrown as unresolved
+  // whenever settings are attached - so a stale session froze the draft, the
+  // machine controls and Cancel, and every retry repeated the same error.
+  // Nothing had been written, so there was nothing ambiguous to protect and
+  // she had no way out.
+  //
+  // Converted HERE rather than in the form, because only this side knows the
+  // RPC was never reached. Same fix as the setup action's (4304930968), which
+  // is the other half of this pair.
+  //
+  // ONLY `SessionLineageError` IS CONVERTED; anything else is rethrown.
+  // `getCurrentPractitionerWithStudio` above calls Next's `redirect()` for an
+  // anonymous session, and a redirect PROPAGATES BY THROWING - swallowing it
+  // to report a "definitive failure" would leave her on a dead form instead of
+  // the login page.
 
   const areaCheck = normalizeStructuredArea({
     primaryArea: input.primaryArea ?? null,
@@ -1349,7 +1394,11 @@ export async function createTreatmentAreaWithEntryAction(
       );
       if ("error" in checked) return { ok: false, error: checked.error };
       setupGroups.push({
+        // PASSED THROUGH, NOT RE-DERIVED. Which kind of group this is was
+        // decided by the form that built the draft; this action validates
+        // readings and must not reinterpret identity.
         groupKey: g.groupKey,
+        newGroupRef: g.newGroupRef,
         channels: g.channels,
         readings: checked.rows,
       });
@@ -1419,7 +1468,26 @@ export async function createTreatmentAreaWithEntryAction(
   const setupResult = Array.isArray(createdRows)
     ? undefined
     : (createdRows as { setup?: unknown } | null)?.setup;
-  if (!createdBlockId) return { ok: false, error: GENERIC_BLOCK_COMMAND_ERROR };
+  if (!createdBlockId) {
+    // THE COMMAND REPORTED NO ERROR AND NO BLOCK (Codex, #860 4305702528).
+    // It may already have committed the area and its settings: nothing in this
+    // response says otherwise, and the shape check exists precisely because a
+    // stale function or an unexpected reply is possible. Reporting a plain
+    // failure left the form editable and dismissible, so an edit or a remount
+    // discarded the held key and a later save created a DUPLICATE area.
+    //
+    // Treated exactly like the failed read-back below, and for the same
+    // reason: this is the `withSetup` path's retry key that makes pressing
+    // Save again safe, and `create_block_with_entry` binds none, so it keeps
+    // the plain failure it had.
+    return withSetup
+      ? {
+          ok: false as const,
+          error: INITIAL_SAVE_UNRESOLVED,
+          unresolved: true as const,
+        }
+      : { ok: false, error: GENERIC_BLOCK_COMMAND_ERROR };
+  }
 
   const { data: blockRow, error: blockReadErr } = await supabase
     .from("session_blocks")

@@ -206,10 +206,22 @@ export type MachineFirstSetupPanelProps = {
     modeKey: string;
     idempotencyKey: string;
     groups: Array<{
-      groupKey: string;
+      /**
+       * EXACTLY ONE OF THE TWO (Codex, #860 4305780322). Forwarded unchanged:
+       * the entry decided which kind of group each one is, and this panel has
+       * no business reinterpreting an identity on its way through.
+       */
+      groupKey: string | null;
+      newGroupRef: string | null;
       channels: number[];
       readings: ReadingSubmission[];
     }>;
+    /**
+     * The recorded group keys the entry's draft was built from, for the
+     * staleness refusal (Codex, #860 4305780322). Forwarded unchanged; the
+     * comparison is the action's.
+     */
+    expectedGroupKeys?: string[];
   }) => Promise<{
     ok: boolean;
     error?: string;

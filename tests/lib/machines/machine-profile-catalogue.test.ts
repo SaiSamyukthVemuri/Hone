@@ -6,6 +6,7 @@ import {
   catalogueIntegrity,
   openEvidenceChecklist,
   profileById,
+  profileAtVersion,
 } from "@/lib/machines/catalogue";
 import {
   activeModes,
@@ -774,24 +775,355 @@ describe("activation readiness is derived, and no model passes it yet", () => {
   });
 
   it("every open question blocks a field that actually exists, or everything", () => {
-    // A question whose `blocks` names a typo holds nothing, which is worse than
-    // no question at all: the gate would pass while the gap remained.
-    for (const p of MACHINE_CATALOGUE) {
-      const keys = new Set(
-        p.modes.flatMap((m) => modeFields(m).map(({ field }) => field.key)),
-      );
-      for (const q of p.openQuestions) {
-        for (const b of q.blocks) {
-          // "*" holds the whole profile; "@"-prefixed targets are
-          // profile-level (e.g. the FrequencyContract), not field keys.
-          if (b === "*" || b.startsWith("@")) continue;
-          const bare = b.includes(".") ? b.split(".").pop()! : b;
-          expect(keys, `${p.profileId}: question ${q.id} blocks unknown '${b}'`).toContain(
-            bare,
-          );
-        }
-      }
+    // ASK THE REAL GUARD, do not restate it (Codex, #855 4305019844). The
+    // previous version of this test reimplemented the rule and then stripped
+    // the qualifier off a target before checking it existed — so
+    // `wrong-mode.duration` passed whenever `duration` existed under ANY
+    // mode, and `@frequncy` passed because anything `@`-prefixed was skipped
+    // outright. It agreed with a guard that did not enforce the rule, which
+    // is the only way both could be wrong at once.
+    expect(
+      catalogueIntegrity(MACHINE_CATALOGUE)
+        .filter((v) => v.problem.includes("blocks"))
+        .map((v) => `${v.profileId}: ${v.problem}`),
+    ).toEqual([]);
+  });
+});
+
+// ===========================================================================
+// MPX-01 — the four findings from the 82b5f0fb review
+// ===========================================================================
+
+describe("the integrity guard rejects a question that holds nothing", () => {
+  // THE DEFECT (Codex, #855 4305019844). `OpenQuestion.blocks` has always
+  // documented this — "A target naming nothing real holds nothing, which is
+  // worse than no question at all — the integrity guard rejects that" — and
+  // the guard did not implement it. The consequence is not a cosmetic one:
+  // `activationReadiness` reuses this guard, so an unresolved question that
+  // named nothing real let a profile be approved as READY.
+  const base = (): MachineProfile => ({
+    profileId: "fixture:blockers",
+    version: 1,
+    family: "Silhouet-Tone",
+    manufacturer: "Fixture",
+    model: "Blockers",
+    availability: "blocked",
+    availabilityReason: "a fixture, never offered",
+    verification: "device-confirmed",
+    frequency: { kind: "not-applicable" },
+    evidence: [
+      {
+        id: "fx",
+        kind: "studio-device-photo",
+        consultedOn: "2026-10-18",
+        establishes: "Nothing about a real machine.",
+      },
+    ],
+    openQuestions: [],
+    modes: [
+      {
+        key: "m",
+        nativeLabel: "M",
+        family: "thermolysis",
+        availability: "blocked",
+        verification: "device-confirmed",
+        evidence: ["fx"],
+        stages: [
+          {
+            key: "st",
+            nativeLabel: "St",
+            fields: [
+              {
+                key: "staged",
+                nativeLabel: "Staged",
+                quantity: "duration",
+                unit: "s",
+                decimals: 1,
+                optional: false,
+                expectedSource: "practitioner-entered",
+                editable: true,
+                verification: "device-confirmed",
+                evidence: ["fx"],
+              },
+            ],
+          },
+        ],
+        fields: [
+          {
+            key: "duration",
+            nativeLabel: "Duration",
+            quantity: "duration",
+            unit: "s",
+            decimals: 1,
+            optional: false,
+            expectedSource: "practitioner-entered",
+            editable: true,
+            verification: "device-confirmed",
+            evidence: ["fx"],
+          },
+        ],
+      },
+    ],
+  });
+
+  const withBlocks = (...blocks: string[]): MachineProfile => ({
+    ...base(),
+    openQuestions: [
+      { id: "q1", question: "?", resolvedBy: "a manual page", blocks },
+    ],
+  });
+
+  const problems = (p: MachineProfile) =>
+    catalogueIntegrity([p]).map((v) => v.problem);
+
+  it("rejects a MISSPELLED QUALIFIER even when the bare field exists", () => {
+    // The exact case the old test could not see: `duration` is a real field
+    // under mode `m`, but there is no mode `wrong-mode`.
+    expect(problems(withBlocks("wrong-mode.duration"))).toContain(
+      "open question 'q1' blocks 'wrong-mode.duration', which names no field, mode.field, stage.field or profile-level sentinel",
+    );
+  });
+
+  it("rejects a misspelled profile-level sentinel", () => {
+    expect(
+      problems(withBlocks("@frequncy")).some((x) => x.includes("@frequncy")),
+      "an '@'-prefixed typo was treated as a valid profile-level target",
+    ).toBe(true);
+  });
+
+  it("rejects a question that blocks nothing at all", () => {
+    expect(problems(withBlocks())).toContain(
+      "open question 'q1' blocks nothing at all",
+    );
+  });
+
+  it("CONTROL: each of the four legitimate target shapes is accepted", () => {
+    for (const target of ["duration", "m.duration", "st.staged", "*"]) {
+      expect(
+        problems(withBlocks(target)).filter((x) => x.includes("blocks")),
+        `the legitimate target '${target}' was rejected`,
+      ).toEqual([]);
     }
+  });
+
+  it("CONTROL: the base fixture is otherwise clean, so nothing above passes by accident", () => {
+    expect(problems(base())).toEqual([]);
+  });
+});
+
+describe("a repeated structural key is an integrity violation, not array order", () => {
+  // THE DEFECT (Codex, #855 4305019857). Lookup is `.find()`, so the later
+  // contract is UNREACHABLE and whichever entry comes first decides the
+  // labels, units and limits a practitioner sees.
+  const base = (): MachineProfile => ({
+    profileId: "fixture:dupes",
+    version: 1,
+    family: "Silhouet-Tone",
+    manufacturer: "Fixture",
+    model: "Dupes",
+    availability: "blocked",
+    availabilityReason: "a fixture, never offered",
+    verification: "device-confirmed",
+    frequency: { kind: "not-applicable" },
+    evidence: [
+      {
+        id: "fx",
+        kind: "studio-device-photo",
+        consultedOn: "2026-10-18",
+        establishes: "Nothing about a real machine.",
+      },
+    ],
+    openQuestions: [],
+    modes: [],
+  });
+
+  const field = (key: string) => ({
+    key,
+    nativeLabel: key,
+    quantity: "duration" as const,
+    unit: "s" as const,
+    decimals: 1,
+    optional: false,
+    expectedSource: "practitioner-entered" as const,
+    editable: true,
+    verification: "device-confirmed" as const,
+    evidence: ["fx"],
+  });
+
+  const mode = (key: string, fields: string[], stages: Array<[string, string[]]> = []) => ({
+    key,
+    nativeLabel: key,
+    family: "thermolysis" as const,
+    availability: "blocked" as const,
+    verification: "device-confirmed" as const,
+    evidence: ["fx"],
+    fields: fields.map(field),
+    stages: stages.map(([sk, fs]) => ({
+      key: sk,
+      nativeLabel: sk,
+      fields: fs.map(field),
+    })),
+  });
+
+  const problems = (modes: MachineProfile["modes"]) =>
+    catalogueIntegrity([{ ...base(), modes }]).map((v) => v.problem);
+
+  it("catches a repeated MODE key", () => {
+    expect(problems([mode("m", ["a"]), mode("m", ["b"])])).toContain(
+      "duplicate mode key 'm'",
+    );
+  });
+
+  it("catches a repeated STAGE key within one mode", () => {
+    expect(
+      problems([mode("m", ["a"], [["st", ["x"]], ["st", ["y"]]])]),
+    ).toContain("mode m has duplicate stage key 'st'");
+  });
+
+  it("catches a repeated FIELD key at mode level", () => {
+    expect(problems([mode("m", ["a", "a"])])).toContain(
+      "mode m has duplicate field key 'a'",
+    );
+  });
+
+  it("catches a repeated FIELD key within one stage", () => {
+    expect(problems([mode("m", ["a"], [["st", ["x", "x"]]])])).toContain(
+      "mode m stage st has duplicate field key 'x'",
+    );
+  });
+
+  it("CONTROL: the SAME field key in two different stages is legitimate", () => {
+    // Field lookup is keyed on (mode, stageKey, fieldKey), and a MultiPlex
+    // mode genuinely carries its own duration per stage. A rule scoped any
+    // wider than the lookup's own key would reject honest profiles.
+    expect(
+      problems([mode("m", [], [["slow", ["duration"]], ["snap", ["duration"]]])]),
+    ).toEqual([]);
+  });
+
+  it("CONTROL: the same mode key in two different PROFILES is legitimate", () => {
+    expect(
+      catalogueIntegrity([
+        { ...base(), modes: [mode("native", ["a"])] },
+        { ...base(), profileId: "fixture:dupes-2", modes: [mode("native", ["a"])] },
+      ]).map((v) => v.problem),
+    ).toEqual([]);
+  });
+});
+
+describe("evidence is validated everywhere it is cited, not only on fields", () => {
+  // THE DEFECT (Codex, #855 4305019848). The membership and non-empty checks
+  // lived inline in the field loop, so a mode, a channel structure or a
+  // frequency could cite an id absent from the profile's own ledger — or cite
+  // nothing — and still be reported as documented.
+  const base = (): MachineProfile => ({
+    profileId: "fixture:evidence",
+    version: 1,
+    family: "Silhouet-Tone",
+    manufacturer: "Fixture",
+    model: "Evidence",
+    availability: "blocked",
+    availabilityReason: "a fixture, never offered",
+    verification: "device-confirmed",
+    frequency: { kind: "not-applicable" },
+    evidence: [
+      {
+        id: "fx",
+        kind: "studio-device-photo",
+        consultedOn: "2026-10-18",
+        establishes: "Nothing about a real machine.",
+      },
+    ],
+    openQuestions: [],
+    modes: [
+      {
+        key: "m",
+        nativeLabel: "M",
+        family: "thermolysis",
+        availability: "blocked",
+        verification: "device-confirmed",
+        evidence: ["fx"],
+        stages: [],
+        fields: [
+          {
+            key: "d",
+            nativeLabel: "D",
+            quantity: "duration",
+            unit: "s",
+            decimals: 1,
+            optional: false,
+            expectedSource: "practitioner-entered",
+            editable: true,
+            verification: "device-confirmed",
+            evidence: ["fx"],
+          },
+        ],
+      },
+    ],
+  });
+
+  const problems = (over: Partial<MachineProfile>) =>
+    catalogueIntegrity([{ ...base(), ...over }]).map((v) => v.problem);
+
+  it("catches a MODE citing evidence the profile does not carry", () => {
+    const b = base();
+    expect(
+      problems({ modes: [{ ...b.modes[0]!, evidence: ["nope"] }] }),
+    ).toContain("mode m cites unknown evidence 'nope'");
+  });
+
+  it("catches a MODE citing no evidence at all", () => {
+    const b = base();
+    expect(problems({ modes: [{ ...b.modes[0]!, evidence: [] }] })).toContain(
+      "mode m cites no evidence at all",
+    );
+  });
+
+  it("catches a CHANNEL STRUCTURE citing unknown evidence", () => {
+    expect(
+      problems({
+        channels: {
+          count: 2,
+          nativeLabel: "Channel",
+          associationRequired: false,
+          supportsDistinctSettingGroups: false,
+          verification: "device-confirmed",
+          evidence: ["nope"],
+        },
+      }),
+    ).toContain("channel structure cites unknown evidence 'nope'");
+  });
+
+  it("catches a FIXED FREQUENCY citing unknown evidence", () => {
+    expect(
+      problems({
+        frequency: {
+          kind: "fixed",
+          mhz: 13.56,
+          verification: "device-confirmed",
+          evidence: ["nope"],
+        },
+      }),
+    ).toContain("frequency (fixed) cites unknown evidence 'nope'");
+  });
+
+  it("catches a SELECTABLE FREQUENCY citing nothing at all", () => {
+    expect(
+      problems({
+        frequency: {
+          kind: "selectable",
+          mhz: [13.56, 27.12],
+          verification: "device-confirmed",
+          evidence: [],
+        },
+      }),
+    ).toContain("frequency (selectable) cites no evidence at all");
+  });
+
+  it("CONTROL: a not-applicable frequency cites nothing and that is correct", () => {
+    // It has no evidence array at all; demanding one would invent a source
+    // for the absence of a control.
+    expect(problems({})).toEqual([]);
   });
 });
 
@@ -866,5 +1198,1492 @@ describe("the two new gate limbs bite", () => {
     p.modes[0]!.verification = "pending-evidence";
     const problems = catalogueIntegrity([p]).map((v) => v.problem).join(" ");
     expect(problems).toContain("its own identity is pending-evidence");
+  });
+});
+
+// ===========================================================================
+// MPX-01 — the five findings from the f4dface3 review
+// ===========================================================================
+
+describe("a reading validates against the version it was CAPTURED under", () => {
+  // THE P1 (Codex, #855 4304921305). The lookup resolved by profileId alone
+  // and then refused the reading for not matching whatever version the
+  // catalogue currently held — with a message promising the opposite:
+  // "a historical reading keeps rendering against the version it was
+  // captured under". The duplicate-profileId rule also made holding v1 beside
+  // v2 impossible, so there was no arrangement in which the promise held.
+  const V1: MachineProfile = {
+    profileId: "fixture:versioned",
+    version: 1,
+    // Any curated family; nothing under test reads it. NOT a real machine.
+    family: "Dectro/Apilus",
+    manufacturer: "Fixture",
+    model: "Versioned",
+    availability: "active",
+    verification: "device-confirmed",
+    frequency: { kind: "not-applicable" },
+    evidence: [
+      {
+        id: "fx",
+        kind: "studio-device-photo",
+        consultedOn: "2026-10-17",
+        establishes: "Nothing about a real machine; it carries two versions.",
+      },
+    ],
+    openQuestions: [],
+    modes: [
+      {
+        key: "m",
+        nativeLabel: "M",
+        family: "thermolysis",
+        availability: "active",
+        verification: "device-confirmed",
+        evidence: ["fx"],
+        stages: [],
+        fields: [
+          {
+            key: "current",
+            nativeLabel: "Current",
+            quantity: "current",
+            unit: "mA",
+            decimals: 1,
+            optional: false,
+            expectedSource: "practitioner-entered",
+            editable: true,
+            verification: "device-confirmed",
+            evidence: ["fx"],
+          },
+        ],
+      },
+    ],
+  };
+
+  // SAME id, LATER version, DIFFERENT precision — which is why a v1 reading
+  // must not be validated against it.
+  const V2: MachineProfile = {
+    ...V1,
+    version: 2,
+    modes: [
+      {
+        ...V1.modes[0]!,
+        fields: [{ ...V1.modes[0]!.fields[0]!, decimals: 2 }],
+      },
+    ],
+  };
+
+  const BOTH = [V1, V2];
+
+  // `historical` is the caller saying this is not new capture — a reading
+  // already on the record being re-rendered or re-validated.
+  const read = (version: number, value: number, historical = false) =>
+    validateReading(
+      {
+        profileId: "fixture:versioned",
+        version,
+        modeKey: "m",
+        fieldKey: "current",
+        source: "practitioner-entered",
+        value: { kind: "value", value },
+      },
+      { catalogue: BOTH, allowNonOffered: historical },
+    );
+
+  it("renders a HISTORICAL v1 reading while the catalogue also carries v2", () => {
+    // Before the P1 fix this returned `stale_profile_version`, making every
+    // historical reading invalid the moment a contract was republished. This
+    // is the path that defect broke, and it is the historical one — the first
+    // version of this test asserted it on the NEW-CAPTURE path instead, which
+    // is how it came to assert the very thing 4305019839 then reported.
+    const out = read(1, 1.2, true);
+    expect(out.ok, "a historical v1 reading was refused against a catalogue holding v1").toBe(
+      true,
+    );
+  });
+
+  it("validates it against v1's precision, not v2's", () => {
+    // The point of resolving the captured version: v1 allows 1 decimal and v2
+    // allows 2, so the SAME value of 1.25 is beyond contract under v1 and
+    // exactly within it under v2. That asymmetry is the whole proof — it can
+    // only hold if the version a reading was captured under is the one being
+    // applied to it.
+    //
+    // THIS IS THE MERGE RESOLUTION BETWEEN THE TWO STACKED BRANCHES, and the
+    // compiler decided it. On #855 `precision_beyond_contract` is a NOTE, so
+    // the version of this test written there asserts `ok` with the code among
+    // `notes`. #860 promoted it to a REFUSAL (4289974660), because the app was
+    // promising "stored exactly as entered" for a value 0223's recording
+    // command refuses outright. An attempt to write this agnostically — "a
+    // refusal OR a note" — does not typecheck on this branch: TS2367, because
+    // `precision_beyond_contract` is no longer a member of `NoteCode` and the
+    // note half is unreachable. So the refusal form is the only honest one
+    // here, and the classification is additionally pinned on its own terms
+    // further up this file where `r.code` is asserted directly.
+    //
+    // ASSERTED UNCONDITIONALLY. The first version of this test wrapped its
+    // assertions in `if (out.ok)`, so it passed by SKIP the moment the reading
+    // was refused for any reason — which is exactly what happened when the
+    // superseded-version gate landed: the refusal satisfied the test rather
+    // than failing it.
+    const v1 = read(1, 1.25, true);
+    expect(v1.ok, "1.25 is beyond v1's 1-decimal contract").toBe(false);
+    if (v1.ok) throw new Error("expected a refusal");
+    expect(
+      v1.code,
+      "v1's 1-decimal contract was not the one applied",
+    ).toBe("precision_beyond_contract");
+
+    // The same value under v2 is exactly within contract and is accepted
+    // outright. Under v1's contract this call would be refused, so acceptance
+    // here is what proves v2's own contract was applied to a v2 reading.
+    expect(
+      read(2, 1.25).ok,
+      "v2 allows 2 decimals and must accept 1.25",
+    ).toBe(true);
+  });
+
+  it("REFUSES NEW CAPTURE against a superseded version, naming both", () => {
+    // THE DEFECT (Codex, #855 4305019839). Retaining v1 beside v2 is the
+    // whole point of versioned identity, and it opened this: a stale client
+    // posting version 1 was validated against v1's laxer precision and stored
+    // as a NEW reading under a contract that is no longer current.
+    // `stale_profile_version` cannot catch it — that fires only when the
+    // version is ABSENT.
+    const out = read(1, 1.2);
+    expect(out.ok, "new capture was accepted against the superseded v1").toBe(
+      false,
+    );
+    if (out.ok) throw new Error("expected a refusal");
+    expect(out.code).toBe("superseded_profile_version");
+    // The message must name the current version, or she cannot act on it.
+    expect(out.message).toContain("version 2");
+  });
+
+  it("CONTROL: new capture against the CURRENT version is accepted", () => {
+    expect(read(2, 1.2).ok).toBe(true);
+  });
+
+  it("CONTROL: with only v1 in the catalogue, v1 IS current and new capture works", () => {
+    // The gate compares against the highest version present, so a catalogue
+    // that has not republished anything must be unaffected.
+    const only = validateReading(
+      {
+        profileId: "fixture:versioned",
+        version: 1,
+        modeKey: "m",
+        fieldKey: "current",
+        source: "practitioner-entered",
+        value: { kind: "value", value: 1.2 },
+      },
+      { catalogue: [V1] },
+    );
+    expect(only.ok).toBe(true);
+  });
+
+  it("two versions of one id are NOT an integrity duplicate", () => {
+    expect(
+      catalogueIntegrity(BOTH).filter((v) => v.problem.includes("duplicate")),
+      "keeping v1 beside v2 was reported as a duplicate, which is what forced the replacement",
+    ).toEqual([]);
+  });
+
+  it("but two entries at the SAME version still are", () => {
+    expect(
+      catalogueIntegrity([V1, { ...V1 }]).map((v) => v.problem),
+    ).toContain("duplicate profileId at version 1");
+  });
+
+  it("a version the catalogue does not carry is refused, and says which it has", () => {
+    const out = read(99, 1.2);
+    expect(out.ok).toBe(false);
+    if (!out.ok) {
+      expect(out.code).toBe("stale_profile_version");
+      expect(out.message).toMatch(/no contract for version 99/i);
+    }
+  });
+
+  it("an unknown model is still a different refusal from an unknown version", () => {
+    const out = validateReading(
+      {
+        profileId: "fixture:nope",
+        version: 1,
+        modeKey: "m",
+        fieldKey: "current",
+        source: "practitioner-entered",
+        value: { kind: "value", value: 1 },
+      },
+      { catalogue: BOTH },
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.code).toBe("unknown_profile");
+  });
+
+  it("profileById resolves the CURRENT version, explicitly", () => {
+    // Not array order: with several versions present "the profile for this
+    // id" can only mean the current one, and new capture resolves here.
+    expect(profileById("fixture:versioned", BOTH)!.version).toBe(2);
+    expect(profileById("fixture:versioned", [V2, V1])!.version).toBe(2);
+    expect(profileAtVersion("fixture:versioned", 1, BOTH)!.version).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The other four findings from the f4dface3 review. Each fixture is local:
+// these are rules about the contract, and borrowing the real catalogue would
+// make the test depend on a profile someone may legitimately change.
+// ---------------------------------------------------------------------------
+const FX_EVIDENCE = [
+  {
+    id: "fx",
+    kind: "studio-device-photo" as const,
+    consultedOn: "2026-10-17",
+    establishes: "Nothing about a real machine.",
+  },
+];
+
+function fxField(over: Record<string, unknown> = {}) {
+  return {
+    key: "current",
+    nativeLabel: "Current",
+    quantity: "current" as const,
+    unit: "mA" as const,
+    decimals: 1,
+    optional: false,
+    expectedSource: "practitioner-entered" as const,
+    editable: true,
+    verification: "device-confirmed" as const,
+    evidence: ["fx"],
+    ...over,
+  };
+}
+
+function fxProfile(over: Record<string, unknown> = {}): MachineProfile {
+  return {
+    profileId: "fixture:rules",
+    version: 1,
+    // Any curated family; nothing under test reads it. NOT a real machine.
+    family: "Dectro/Apilus",
+    manufacturer: "Fixture",
+    model: "Rules",
+    availability: "active",
+    verification: "device-confirmed",
+    frequency: { kind: "not-applicable" },
+    evidence: FX_EVIDENCE,
+    openQuestions: [],
+    modes: [
+      {
+        key: "m",
+        nativeLabel: "M",
+        family: "thermolysis",
+        availability: "active",
+        verification: "device-confirmed",
+        evidence: ["fx"],
+        stages: [],
+        fields: [fxField()],
+      },
+    ],
+    ...over,
+  } as MachineProfile;
+}
+
+const fxRead = (profile: MachineProfile, over: Record<string, unknown> = {}) =>
+  validateReading(
+    {
+      profileId: profile.profileId,
+      version: profile.version,
+      modeKey: "m",
+      fieldKey: "current",
+      source: "practitioner-entered",
+      value: { kind: "value", value: 1.2 },
+      ...over,
+    } as never,
+    { catalogue: [profile] },
+  );
+
+describe("a BLOCKED mode is not offered for new capture", () => {
+  // Codex #855 4304921312. `activeModes` hid it from the picker; validation
+  // checked only the PROFILE's availability, so a stale client or a direct
+  // action call could record against a mode the catalogue says is not ready.
+  const blockedMode = fxProfile({
+    modes: [
+      {
+        key: "m",
+        nativeLabel: "M",
+        family: "thermolysis",
+        availability: "blocked",
+        availabilityReason: "units unconfirmed",
+        verification: "device-confirmed",
+        evidence: ["fx"],
+        stages: [],
+        fields: [fxField()],
+      },
+    ],
+  });
+
+  it("is refused", () => {
+    const out = fxRead(blockedMode);
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.code).toBe("mode_not_offered");
+  });
+
+  it("but a HISTORICAL reading against it still renders", () => {
+    // `allowNonOffered` is the caller saying this is not new capture. A mode
+    // blocked after the fact must not invalidate what was already recorded.
+    const out = validateReading(
+      {
+        profileId: "fixture:rules",
+        version: 1,
+        modeKey: "m",
+        fieldKey: "current",
+        source: "practitioner-entered",
+        value: { kind: "value", value: 1.2 },
+      },
+      { catalogue: [blockedMode], allowNonOffered: true },
+    );
+    expect(out.ok, "a historical reading was invalidated by a later block").toBe(
+      true,
+    );
+  });
+});
+
+describe("a MANDATORY channel association cannot be omitted", () => {
+  // Codex #855 4304921322. Every channel check sat inside
+  // `input.channel != null`, so a contract declaring the association
+  // mandatory accepted a reading that named no channel at all.
+  const needsChannel = fxProfile({
+    channels: {
+      count: 4,
+      nativeLabel: "Channel",
+      associationRequired: true,
+      supportsDistinctSettingGroups: true,
+      verification: "device-confirmed",
+      evidence: ["fx"],
+    },
+  });
+
+  it("is refused when no channel is given", () => {
+    const out = fxRead(needsChannel);
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.code).toBe("channel_required");
+  });
+
+  it("is accepted when one is", () => {
+    expect(fxRead(needsChannel, { channel: 2 }).ok).toBe(true);
+  });
+
+  it("CONTROL: a profile that does NOT require it is unaffected", () => {
+    const optional = fxProfile({
+      channels: {
+        count: 4,
+        nativeLabel: "Channel",
+        associationRequired: false,
+        supportsDistinctSettingGroups: true,
+        verification: "device-confirmed",
+        evidence: ["fx"],
+      },
+    });
+    expect(fxRead(optional).ok).toBe(true);
+  });
+
+  it("CONTROL: an ABSENT reading is not forced to name a channel", () => {
+    // "Not recorded" is a fact about a field, not a setting on a probe.
+    // Demanding a channel for it would make absence unrecordable.
+    const out = fxRead(needsChannel, {
+      value: { kind: "absent", reason: "not-recorded" },
+    });
+    expect(out.ok).toBe(true);
+  });
+});
+
+describe('the "@frequency" blocker holds activation', () => {
+  // Codex #855 4304921316. The profile-level gate tested only "*", so a
+  // profile whose frequency contract is explicitly held could be activated
+  // once its fields and mode identity were documented. `ProfileLevelBlock`
+  // declares this value; honouring it is what makes the declaration mean
+  // anything. Two live open questions use it.
+  const heldFrequency = fxProfile({
+    frequency: { kind: "unverified", note: "sources conflict" },
+    openQuestions: [
+      {
+        id: "freq",
+        question: "Which RF frequency applies to this unit?",
+        resolvedBy: "A settings-screen photograph.",
+        blocks: ["@frequency"],
+      },
+    ],
+  });
+
+  it("an ACTIVE profile with a held frequency is an integrity violation", () => {
+    expect(
+      catalogueIntegrity([heldFrequency]).map((v) => v.problem),
+    ).toContain(
+      "profile is active while an open question holds its frequency contract",
+    );
+  });
+
+  it("CONTROL: the same question on a BLOCKED profile is fine", () => {
+    const blocked = fxProfile({
+      availability: "blocked",
+      availabilityReason: "frequency unresolved",
+      frequency: { kind: "unverified", note: "sources conflict" },
+      openQuestions: heldFrequency.openQuestions,
+      modes: [
+        {
+          ...fxProfile().modes[0]!,
+          availability: "blocked",
+          availabilityReason: "frequency unresolved",
+        },
+      ],
+    });
+    expect(
+      catalogueIntegrity([blocked]).map((v) => v.problem),
+    ).not.toContain(
+      "profile is active while an open question holds its frequency contract",
+    );
+  });
+
+  it("CONTROL: an active profile with no blockers is still clean", () => {
+    expect(catalogueIntegrity([fxProfile()])).toEqual([]);
+  });
+});
+
+describe("carry-forward verifies the target against the catalogue", () => {
+  // Codex #855 4304921325. The checks compared the two INPUTS with each
+  // other, so a pair agreeing on a version and mode that do not exist
+  // authorised carrying readings into a contract nobody has. Agreement
+  // between two untrusted inputs is not verification.
+  const target = fxProfile();
+  const at = (version: number, modeKey: string) => ({
+    profileId: "fixture:rules",
+    version,
+    modeKey,
+  });
+
+  it("refuses a version the catalogue has never heard of", () => {
+    const r = carryForwardCompatibility(at(99, "m"), at(99, "m"), [target]);
+    expect(r.carry).toBe(false);
+    if (!r.carry) expect(r.reason).toBe("version");
+  });
+
+  it("refuses a mode that does not exist on the model", () => {
+    const r = carryForwardCompatibility(
+      at(1, "missing"),
+      at(1, "missing"),
+      [target],
+    );
+    expect(r.carry).toBe(false);
+    if (!r.carry) expect(r.reason).toBe("mode");
+  });
+
+  it("CONTROL: a real, matching target still carries", () => {
+    expect(carryForwardCompatibility(at(1, "m"), at(1, "m"), [target]).carry).toBe(
+      true,
+    );
+  });
+});
+
+// ===========================================================================
+// MPX-01 — the four findings from the 10de30e4 review
+// ===========================================================================
+
+/** A complete, fully evidenced single-field profile, blocked by default. */
+function base(over: Partial<MachineProfile> = {}): MachineProfile {
+  return {
+    profileId: "fixture:round2",
+    version: 1,
+    family: "Silhouet-Tone",
+    manufacturer: "Fixture",
+    model: "Round2",
+    availability: "blocked",
+    availabilityReason: "a fixture, never offered",
+    verification: "device-confirmed",
+    frequency: { kind: "not-applicable" },
+    evidence: [
+      {
+        id: "fx",
+        kind: "studio-device-photo",
+        consultedOn: "2026-10-18",
+        establishes: "Nothing about a real machine.",
+      },
+    ],
+    openQuestions: [],
+    modes: [
+      {
+        key: "m",
+        nativeLabel: "M",
+        family: "thermolysis",
+        availability: "blocked",
+        verification: "device-confirmed",
+        evidence: ["fx"],
+        stages: [],
+        fields: [
+          {
+            key: "current",
+            nativeLabel: "Current",
+            quantity: "current",
+            unit: "mA",
+            decimals: 1,
+            optional: false,
+            expectedSource: "practitioner-entered",
+            editable: true,
+            verification: "device-confirmed",
+            evidence: ["fx"],
+          },
+        ],
+      },
+    ],
+    ...over,
+  };
+}
+
+/** The same profile, offered. */
+const offered = (over: Partial<MachineProfile> = {}): MachineProfile => {
+  const b = base(over);
+  return {
+    ...b,
+    availability: "active",
+    availabilityReason: undefined,
+    modes: b.modes.map((m) => ({
+      ...m,
+      availability: "active" as const,
+      availabilityReason: undefined,
+    })),
+  };
+};
+
+const problems = (ps: MachineProfile[]) =>
+  catalogueIntegrity(ps).map((v) => v.problem);
+
+describe("the picker never offers a contract that cannot be recorded against", () => {
+  // THE DEFECT (Codex, #855 4305243747). Retaining v1 beside v2 is the point
+  // of versioned identity, and `activeProfiles` filtered on availability
+  // alone — so it offered v1 while `validateReading` refuses new capture
+  // against it with `superseded_profile_version`. She picks it, enters a full
+  // set of readings, and is refused at save for a reason she cannot act on.
+  const v1 = offered();
+  const v2 = offered({ version: 2 });
+
+  const canRecord = (prof: MachineProfile, catalogue: MachineProfile[]) =>
+    validateReading(
+      {
+        profileId: prof.profileId,
+        version: prof.version,
+        modeKey: "m",
+        fieldKey: "current",
+        source: "practitioner-entered",
+        value: { kind: "value", value: 1.2 },
+      },
+      { catalogue },
+    ).ok;
+
+  it("offers ONE entry per model — its current contract", () => {
+    const offeredNow = activeProfiles([v1, v2]);
+    expect(offeredNow.map((p) => p.version)).toEqual([2]);
+  });
+
+  it("and EVERY entry it offers can actually be recorded against", () => {
+    // The property worth having, asserted as the composition rather than as a
+    // restatement of the filter. An offered option that cannot be saved is
+    // worse than an absent one.
+    const catalogue = [v1, v2];
+    for (const prof of activeProfiles(catalogue)) {
+      expect(
+        canRecord(prof, catalogue),
+        `${prof.profileId}@${prof.version} was offered but cannot be recorded against`,
+      ).toBe(true);
+    }
+  });
+
+  it("CONTROL: the version it dropped really is unrecordable", () => {
+    // Without this the test above would also pass if `activeProfiles` were
+    // simply returning everything and every version happened to be valid.
+    expect(canRecord(v1, [v1, v2])).toBe(false);
+  });
+
+  it("offers NOTHING when the current version is not active, even if an older one is", () => {
+    // THE CASE A "HIGHEST ACTIVE VERSION" RULE WOULD HAVE MISSED. New capture
+    // resolves through `profileById`, which is the highest version REGARDLESS
+    // of availability — so with v2 blocked, v1 is unrecordable too, and
+    // offering it would reproduce the same defect one case over.
+    const blockedV2 = base({ version: 2 });
+    expect(activeProfiles([v1, blockedV2])).toEqual([]);
+    expect(canRecord(v1, [v1, blockedV2])).toBe(false);
+  });
+
+  it("CONTROL: a single active version is still offered", () => {
+    expect(activeProfiles([v1]).map((p) => p.version)).toEqual([1]);
+    expect(canRecord(v1, [v1])).toBe(true);
+  });
+
+  it("CONTROL: two different models are both offered", () => {
+    const other = offered({ profileId: "fixture:round2-other" });
+    expect(activeProfiles([v1, other]).map((p) => p.profileId).sort()).toEqual([
+      "fixture:round2",
+      "fixture:round2-other",
+    ]);
+  });
+});
+
+describe("an active profile's own identity must be source-backed", () => {
+  // THE DEFECT (Codex, #855 4305243749). Every gate inspected the modes and
+  // the fields; the PROFILE's own `verification` was never consulted, so a
+  // model whose identity is explicitly unverified could be offered as a
+  // verified named choice. `active` means "verified named choice" or nothing.
+  for (const weak of ["unverified", "pending-evidence"] as const) {
+    it(`rejects an active profile whose identity is ${weak}`, () => {
+      expect(problems([offered({ verification: weak })])).toContain(
+        `profile is active but its own identity is ${weak}`,
+      );
+    });
+  }
+
+  for (const strong of ["manufacturer-documented", "device-confirmed"] as const) {
+    it(`CONTROL: ${strong} qualifies`, () => {
+      expect(problems([offered({ verification: strong })])).toEqual([]);
+    });
+  }
+
+  it("and a BLOCKED profile with a weak identity is fine — it is not offered", () => {
+    expect(problems([base({ verification: "unverified" })])).toEqual([]);
+  });
+});
+
+describe("an active profile with no modes is an integrity violation", () => {
+  // THE DEFECT (Codex, #855 4305243750). There is no `modeKey` any reading
+  // could name, so every capture is refused with `unknown_mode` — offered and
+  // unusable. It was caught only by an extra boolean inside
+  // `activationReadiness`, which left `blockers` EMPTY so readiness could not
+  // say why, while `catalogueIntegrity` would have accepted the same profile
+  // if someone set `availability` to active by hand.
+  it("the integrity gate rejects it", () => {
+    expect(problems([offered({ modes: [] })])).toContain(
+      "profile is active but carries no modes at all",
+    );
+  });
+
+  it("and readiness now EXPLAINS it instead of just saying no", () => {
+    const r = activationReadiness(base({ modes: [] }));
+    expect(r.ready).toBe(false);
+    expect(
+      r.blockers,
+      "readiness refused with an empty blocker list, which cannot be acted on",
+    ).toContain("profile is active but carries no modes at all");
+  });
+
+  it("so both paths agree, which is what the extra boolean prevented", () => {
+    // `ready` is derived purely from the blockers now. A profile the gate
+    // accepts is ready; one it rejects is not. There is no second rule to
+    // disagree with.
+    const r = activationReadiness(base({ modes: [] }));
+    expect(r.ready).toBe(r.blockers.length === 0);
+  });
+
+  it("CONTROL: a profile WITH a documented mode is ready", () => {
+    const r = activationReadiness(base());
+    expect(r.blockers).toEqual([]);
+    expect(r.ready).toBe(true);
+  });
+});
+
+describe("a hardware step is a reachability constraint", () => {
+  // THE DEFECT (Codex, #855 4305243752). `step` is documented as "the
+  // smallest increment the machine's control actually moves in", so a value
+  // inside the bounds but off the step is as unreachable as one past the
+  // maximum — a 0..10 control with step 2 accepted 3. Checking only the
+  // endpoints made the step decoration.
+  const withRange = (range: Record<string, unknown>): MachineProfile => {
+    const b = offered();
+    return {
+      ...b,
+      modes: [
+        {
+          ...b.modes[0]!,
+          fields: [{ ...b.modes[0]!.fields[0]!, ranges: [range] as never }],
+        },
+      ],
+    };
+  };
+
+  const read = (prof: MachineProfile, value: number) =>
+    validateReading(
+      {
+        profileId: prof.profileId,
+        version: prof.version,
+        modeKey: "m",
+        fieldKey: "current",
+        source: "practitioner-entered",
+        value: { kind: "value", value },
+      },
+      { catalogue: [prof] },
+    );
+
+  const HARD = {
+    min: 0,
+    max: 10,
+    step: 2,
+    class: "hardware-enforced",
+    evidence: "fx",
+  };
+
+  it("refuses a value between the bounds that the control cannot reach", () => {
+    const out = read(withRange(HARD), 3);
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("expected a refusal");
+    expect(out.code).toBe("outside_hardware_limit");
+    expect(out.message, "the refusal did not name the step").toContain("steps of 2");
+  });
+
+  it("CONTROL: an ON-step value inside the bounds is accepted", () => {
+    expect(read(withRange(HARD), 4).ok).toBe(true);
+    expect(read(withRange(HARD), 0).ok).toBe(true);
+    expect(read(withRange(HARD), 10).ok).toBe(true);
+  });
+
+  it("counts the step FROM the minimum, not from zero", () => {
+    // A 1..9 control moving in 2s reaches 1, 3, 5 — not 2.
+    const odd = { ...HARD, min: 1, max: 9 };
+    expect(read(withRange(odd), 3).ok).toBe(true);
+    expect(read(withRange(odd), 4).ok).toBe(false);
+  });
+
+  it("a DECIMAL step accepts a value binary floating point cannot represent", () => {
+    // 0.3 / 0.1 is 2.9999999999999996. An exact test would refuse a value the
+    // machine obviously reaches, so this is the trap the epsilon exists for.
+    const tenths = { min: 0, max: 1, step: 0.1, class: "hardware-enforced", evidence: "fx" };
+    expect(read(withRange(tenths), 0.3).ok).toBe(true);
+    expect(read(withRange(tenths), 0.7).ok).toBe(true);
+  });
+
+  it("and still refuses an off-step value at decimal scale", () => {
+    // THE OFF-STEP VALUE MUST BE WITHIN THE FIELD'S PRECISION, or the step is
+    // not what refuses it. This is the merge resolution between the two
+    // stacked branches: on #855 `precision_beyond_contract` is a NOTE, so a
+    // 2-decimal value against a 1-decimal contract reached the step check and
+    // 0.35-against-step-0.1 proved enforcement there. On #860 the same code
+    // refuses that value for PRECISION (4289974660), so the assertion passed
+    // without the step being consulted at all — removing step enforcement
+    // entirely left it green, which the negative control caught.
+    //
+    // A coarser step than the contract's precision gives a value only the step
+    // can reject: 0.3 is one decimal, so it is within contract, and off a
+    // 0.5 step.
+    const halves = { min: 0, max: 1, step: 0.5, class: "hardware-enforced", evidence: "fx" };
+    const out = read(withRange(halves), 0.3);
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("expected a refusal");
+    expect(out.code).toBe("outside_hardware_limit");
+    expect(out.message, "something other than the step refused it").toContain(
+      "steps of 0.5",
+    );
+    // CONTROL: the on-step values at that scale are accepted.
+    expect(read(withRange(halves), 0.5).ok).toBe(true);
+    expect(read(withRange(halves), 1).ok).toBe(true);
+  });
+
+  it("CONTROL: an ADVISORY range's step never refuses", () => {
+    // Only a hardware-enforced, undisputed constraint may refuse. A published
+    // specification's step is guidance, and refusing on it would reject a true
+    // observation — a clinical record defect, not a safety feature.
+    const published = { ...HARD, class: "published-specification" };
+    expect(read(withRange(published), 3).ok).toBe(true);
+  });
+
+  it("CONTROL: a DISPUTED hardware step never refuses", () => {
+    const disputed = { ...HARD, discrepancy: "two manuals disagree about the step" };
+    expect(read(withRange(disputed), 3).ok).toBe(true);
+  });
+
+  it("CONTROL: a range with no step still refuses only outside the bounds", () => {
+    const noStep = { min: 0, max: 10, class: "hardware-enforced", evidence: "fx" };
+    expect(read(withRange(noStep), 3).ok).toBe(true);
+    expect(read(withRange(noStep), 11).ok).toBe(false);
+  });
+});
+
+// ===========================================================================
+// MPX-01 — the three findings from the 568df459 review
+// ===========================================================================
+
+describe("every contract's own verification is gated, not just some", () => {
+  // THE CLASS, NOT THE INSTANCE (Codex, #855 4305364897). Three rounds found
+  // one member each: the profile's identity (4305243749), then its channel
+  // structure and its frequency, after the field and mode gates had been
+  // there from the start. The rule is written once in the guard now, and this
+  // asserts it for each contract that carries a `verification`.
+  const CHANNELS = {
+    count: 4,
+    nativeLabel: "Probe",
+    associationRequired: true,
+    supportsDistinctSettingGroups: true,
+    evidence: ["fx"],
+  };
+
+  for (const weak of ["unverified", "pending-evidence"] as const) {
+    it(`rejects an active profile whose CHANNEL STRUCTURE is ${weak}`, () => {
+      // The count is ENFORCED: `validateReading` refuses a channel above it
+      // and requires an association when the contract says so. An unverified
+      // structure therefore refuses true observations.
+      expect(
+        problems([offered({ channels: { ...CHANNELS, verification: weak } })]),
+      ).toContain(`profile is active but its channel structure is ${weak}`);
+    });
+
+    it(`rejects an active profile whose FIXED FREQUENCY is ${weak}`, () => {
+      expect(
+        problems([
+          offered({
+            frequency: { kind: "fixed", mhz: 13.56, verification: weak, evidence: ["fx"] },
+          }),
+        ]),
+      ).toContain(`profile is active but its fixed frequency is ${weak}`);
+    });
+  }
+
+  it("rejects an active profile whose SELECTABLE frequency is unverified", () => {
+    expect(
+      problems([
+        offered({
+          frequency: {
+            kind: "selectable",
+            mhz: [13.56, 27.12],
+            verification: "unverified",
+            evidence: ["fx"],
+          },
+        }),
+      ]),
+    ).toContain("profile is active but its selectable frequency is unverified");
+  });
+
+  it("CONTROL: a documented channel structure and frequency qualify", () => {
+    expect(
+      problems([
+        offered({
+          channels: { ...CHANNELS, verification: "device-confirmed" },
+          frequency: {
+            kind: "fixed",
+            mhz: 13.56,
+            verification: "manufacturer-documented",
+            evidence: ["fx"],
+          },
+        }),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("CONTROL: a BLOCKED profile's unverified contracts are fine — it is not offered", () => {
+    expect(
+      problems([base({ channels: { ...CHANNELS, verification: "unverified" } })]),
+    ).toEqual([]);
+  });
+
+  it("CONTROL: a not-applicable frequency has no verification to gate", () => {
+    // Demanding one would invent a source for the absence of a control.
+    expect(problems([offered()])).toEqual([]);
+  });
+});
+
+describe("an active profile must offer a mode she can actually use", () => {
+  // THE DEFECT (Codex, #855 4305364901). The no-modes rule tested only that
+  // the list was NON-EMPTY, so a profile whose every mode is blocked passed —
+  // and `activeProfiles` offered it while `activeModes` returned nothing and
+  // `validateReading` refused every possible mode. The same unusable picker,
+  // reached by a different route.
+  /**
+   * An ACTIVE profile carrying modes with exactly these availabilities.
+   *
+   * Applied AFTER `offered()`, not through it: `offered` maps every mode to
+   * active, so passing blocked modes into it produced active ones and the
+   * first version of these three tests asserted against a fixture that had
+   * quietly repaired the very condition under test.
+   */
+  const activeWithModes = (
+    ...availabilities: Array<"active" | "blocked" | "legacy-only">
+  ): MachineProfile => {
+    const proto = base().modes[0]!;
+    return {
+      ...offered(),
+      modes: availabilities.map((availability, i) => ({
+        ...proto,
+        key: `m${i}`,
+        availability,
+      })),
+    };
+  };
+
+  it("rejects an active profile whose every mode is blocked", () => {
+    expect(problems([activeWithModes("blocked", "blocked")])).toContain(
+      "profile is active but none of its modes is",
+    );
+  });
+
+  it("rejects one whose only mode is legacy-only", () => {
+    expect(problems([activeWithModes("legacy-only")])).toContain(
+      "profile is active but none of its modes is",
+    );
+  });
+
+  it("CONTROL: one active mode among blocked ones is enough", () => {
+    expect(
+      problems([activeWithModes("blocked", "active")]).filter((x) =>
+        x.includes("none of its modes"),
+      ),
+    ).toEqual([]);
+  });
+
+  it("CONTROL: no modes AT ALL gets the more specific complaint, not both", () => {
+    // Saying both would be noise, and "carries no modes at all" is the one a
+    // reviewer can act on.
+    const out = problems([offered({ modes: [] })]);
+    expect(out).toContain("profile is active but carries no modes at all");
+    expect(out).not.toContain("profile is active but none of its modes is");
+  });
+});
+
+describe("EVERY offered profile has a mode a reading is accepted against", () => {
+  // THE PROPERTY, RATHER THAN THE NEXT INSTANCE. Two rounds have now found a
+  // different way for the picker to offer something unusable — a superseded
+  // version (4305243747) and a profile with no ACTIVE mode (4305364901) —
+  // and both were found by review rather than by a test. This asserts the
+  // guarantee `activeProfiles` is for, by composition with the validator, so
+  // the next route to the same state fails here instead.
+  const readAgainst = (prof: MachineProfile, modeKey: string, catalogue: MachineProfile[]) =>
+    validateReading(
+      {
+        profileId: prof.profileId,
+        version: prof.version,
+        modeKey,
+        fieldKey: "current",
+        source: "practitioner-entered",
+        value: { kind: "value", value: 1.2 },
+      },
+      { catalogue },
+    );
+
+  const usable = (catalogue: MachineProfile[]) =>
+    activeProfiles(catalogue).every((prof) =>
+      prof.modes.some((m) => readAgainst(prof, m.key, catalogue).ok),
+    );
+
+  it("holds for a plain active profile", () => {
+    expect(usable([offered()])).toBe(true);
+  });
+
+  it("holds when an older version is retained beside the current one", () => {
+    expect(usable([offered(), offered({ version: 2 })])).toBe(true);
+  });
+
+  it("holds when every mode is blocked, because nothing is offered at all", () => {
+    const allBlocked: MachineProfile = {
+      ...offered(),
+      modes: base().modes.map((m) => ({ ...m, availability: "blocked" as const })),
+    };
+    // The integrity gate rejects this profile, so it must never be offered —
+    // and if it ever were, this property is what would catch it.
+    expect(problems([allBlocked])).toContain(
+      "profile is active but none of its modes is",
+    );
+    expect(usable([allBlocked])).toBe(false);
+  });
+
+  it("and the real catalogue satisfies it", () => {
+    // Vacuous today, because nothing in MACHINE_CATALOGUE is active — which is
+    // itself asserted elsewhere. It stops being vacuous the day a model ships,
+    // which is exactly when it matters.
+    expect(usable([...MACHINE_CATALOGUE])).toBe(true);
+  });
+});
+
+describe("a malformed numeric range is an integrity violation", () => {
+  // THE DEFECT (Codex, #855 4305364906). Each malformed shape fails quietly
+  // and differently: an inverted HARDWARE range refuses every value a
+  // practitioner could enter, and a nonpositive step is skipped by the step
+  // check's own `step > 0` guard, so the contract declares an increment it
+  // never enforces.
+  const withRange = (range: Record<string, unknown>): MachineProfile => {
+    const b = offered();
+    return {
+      ...b,
+      modes: [
+        {
+          ...b.modes[0]!,
+          fields: [{ ...b.modes[0]!.fields[0]!, ranges: [range] as never }],
+        },
+      ],
+    };
+  };
+  const HARD = { class: "hardware-enforced", evidence: "fx" };
+
+  it("rejects an INVERTED range", () => {
+    expect(problems([withRange({ ...HARD, min: 10, max: 2 })])).toContain(
+      "field m.current range is malformed: min 10 exceeds max 2",
+    );
+  });
+
+  it("rejects a non-finite bound", () => {
+    expect(
+      problems([withRange({ ...HARD, min: Number.POSITIVE_INFINITY, max: 10 })]),
+    ).toContain("field m.current range is malformed: min is not finite");
+    expect(problems([withRange({ ...HARD, min: 0, max: Number.NaN })])).toContain(
+      "field m.current range is malformed: max is not finite",
+    );
+  });
+
+  it("rejects a nonpositive or non-finite step", () => {
+    for (const step of [0, -2]) {
+      expect(problems([withRange({ ...HARD, min: 0, max: 10, step })])).toContain(
+        `field m.current range is malformed: step ${step} is not a positive increment`,
+      );
+    }
+    expect(
+      problems([withRange({ ...HARD, min: 0, max: 10, step: Number.NaN })]),
+    ).toContain("field m.current range is malformed: step NaN is not a positive increment");
+  });
+
+  it("CONTROL: a well-formed range is clean, including one-sided ones", () => {
+    expect(problems([withRange({ ...HARD, min: 0, max: 10, step: 2 })])).toEqual([]);
+    expect(problems([withRange({ ...HARD, max: 10 })])).toEqual([]);
+    expect(problems([withRange({ ...HARD, min: 0 })])).toEqual([]);
+    // min === max is a single reachable setting, not an inversion.
+    expect(problems([withRange({ ...HARD, min: 5, max: 5 })])).toEqual([]);
+  });
+
+  it("and it is checked for an ADVISORY range too, because the numbers are still wrong", () => {
+    expect(
+      problems([
+        withRange({ class: "published-specification", evidence: "fx", min: 10, max: 2 }),
+      ]),
+    ).toContain("field m.current range is malformed: min 10 exceeds max 2");
+  });
+});
+
+// ===========================================================================
+// MPX-01 — the two RUNTIME findings from the cfd6fdb8 review
+//
+// The other three (channel count, frequency values, an active mode with no
+// fields) are deferred to a follow-up whose job is the CLASS rather than the
+// members: adversarial inputs driving the "every offered profile has a usable
+// mode" property above. No data that exists can trigger them — nothing in
+// MACHINE_CATALOGUE is active — and both findings below act on every reading
+// today.
+// ===========================================================================
+
+describe("a step with no evidenced origin is advisory, not enforced", () => {
+  // THE DEFECT (Codex, #855 4305466522). The step check read `r.min ?? 0` and
+  // so assumed every stepped control starts at zero. A control documented only
+  // as `max: 9, step: 2` may expose 1, 3, 5, 7, 9 — and it refused EVERY one.
+  // An increment on its own does not establish its phase.
+  //
+  // Refusing a value the machine can actually produce is the specific failure
+  // the range-class design exists to prevent, which `ConstraintClass` states
+  // outright: treating published wording as a hardware bound "would refuse a
+  // true observation — which is a clinical record defect, not a safety
+  // feature". An unenforced step is a gap; a wrongly enforced one falsifies
+  // the record.
+  const withRange = (range: Record<string, unknown>): MachineProfile => {
+    const b = offered();
+    return {
+      ...b,
+      modes: [
+        {
+          ...b.modes[0]!,
+          fields: [{ ...b.modes[0]!.fields[0]!, decimals: 0, ranges: [range] as never }],
+        },
+      ],
+    };
+  };
+
+  const read = (prof: MachineProfile, value: number) =>
+    validateReading(
+      {
+        profileId: prof.profileId,
+        version: prof.version,
+        modeKey: "m",
+        fieldKey: "current",
+        source: "practitioner-entered",
+        value: { kind: "value", value },
+      },
+      { catalogue: [prof] },
+    );
+
+  // The exact contract from the finding: an increment and a ceiling, no origin.
+  const NO_ORIGIN = { max: 9, step: 2, class: "hardware-enforced", evidence: "fx" };
+
+  for (const value of [1, 3, 5, 7, 9]) {
+    it(`accepts ${value} on a documented max:9 step:2 control`, () => {
+      const out = read(withRange(NO_ORIGIN), value);
+      expect(
+        out.ok,
+        `${value} is reachable on a 1,3,5,7,9 control and was refused`,
+      ).toBe(true);
+    });
+  }
+
+  it("and does not refuse the even values either — ADVISORY means no refusal", () => {
+    // The honest consequence of an unknown origin: the step cannot refuse in
+    // either direction. Asserting only the odd values would leave the rule
+    // looking like a phase guess in the other direction.
+    for (const value of [2, 4, 6, 8]) {
+      expect(read(withRange(NO_ORIGIN), value).ok).toBe(true);
+    }
+  });
+
+  it("CONTROL: the MAXIMUM is still enforced, so the range is not inert", () => {
+    expect(read(withRange(NO_ORIGIN), 11).ok).toBe(false);
+  });
+
+  it("CONTROL: WITH an evidenced origin the step still refuses", () => {
+    // The enforcement did not go away; it now requires the one fact it needs.
+    const anchored = { min: 1, max: 9, step: 2, class: "hardware-enforced", evidence: "fx" };
+    expect(read(withRange(anchored), 3).ok).toBe(true);
+    const out = read(withRange(anchored), 4);
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("expected a refusal");
+    expect(out.message).toContain("steps of 2 from 1");
+  });
+});
+
+describe("an installed option gates NEW capture only", () => {
+  // THE DEFECT (Codex, #855 4305466521). The gate ran unconditionally, and
+  // `installedOptions ?? []` means an absent inventory refuses everything — so
+  // a stored reading from an option-gated mode stopped rendering when the
+  // inventory was unavailable, or when the option was later removed from the
+  // machine. The reading was true when it was taken.
+  //
+  // THE FOURTH GATE `allowNonOffered` GOVERNS. The previous three were
+  // enumerated one at a time, which is exactly how this one was missed.
+  const gated = (): MachineProfile => {
+    const b = offered();
+    return {
+      ...b,
+      modes: [{ ...b.modes[0]!, requiresInstalledOption: "fancy-probe" }],
+    };
+  };
+
+  const read = (historical: boolean, installedOptions?: string[]) =>
+    validateReading(
+      {
+        profileId: "fixture:round2",
+        version: 1,
+        modeKey: "m",
+        fieldKey: "current",
+        source: "practitioner-entered",
+        value: { kind: "value", value: 1.2 },
+      },
+      { catalogue: [gated()], allowNonOffered: historical, installedOptions },
+    );
+
+  it("a HISTORICAL reading renders when the inventory is unavailable", () => {
+    expect(read(true).ok, "a stored reading stopped rendering").toBe(true);
+  });
+
+  it("and renders when the option has since been REMOVED from the device", () => {
+    expect(read(true, ["some-other-option"]).ok).toBe(true);
+  });
+
+  it("CONTROL: NEW capture is still refused without the option", () => {
+    const out = read(false);
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("expected a refusal");
+    expect(out.code).toBe("mode_requires_installed_option");
+  });
+
+  it("CONTROL: new capture is accepted WITH the option installed", () => {
+    expect(read(false, ["fancy-probe"]).ok).toBe(true);
+  });
+});
+
+describe("readiness assesses the modes being PROPOSED, not every mode", () => {
+  // THE DEFECT (Codex, #855 4305466530). `activationReadiness` promoted EVERY
+  // mode to active, which contradicted the model the integrity rules now
+  // describe: only ONE active mode is required and non-active modes are
+  // explicitly permitted to stay. So a profile holding one verified mode
+  // beside a deliberately retained one had the retained mode's evidence gaps
+  // reported as activation blockers, falsely withholding a model that was
+  // ready.
+  //
+  // THE CANDIDATE SET COMES FROM THE TYPE'S OWN MEANINGS. `blocked` is
+  // "deliberately NOT offered: evidence incomplete for this exact model" — a
+  // candidate under review. `legacy-only` is "kept so historical rows still
+  // render, never offered for new capture" — deliberately never a candidate.
+
+  /** A fully evidenced mode, under a key of its own. */
+  const goodMode = (key: string) => {
+    const proto = base().modes[0]!;
+    return { ...proto, key, availability: "active" as const };
+  };
+
+  /** A mode that WOULD produce blockers if it were promoted. */
+  const incompleteMode = (
+    key: string,
+    availability: "blocked" | "legacy-only",
+  ) => {
+    const proto = base().modes[0]!;
+    return {
+      ...proto,
+      key,
+      availability,
+      // Its own identity is not source-backed, so promoting it reports a
+      // blocker naming this key.
+      verification: "unverified" as const,
+    };
+  };
+
+  it("a LEGACY-ONLY incomplete mode contributes no blockers", () => {
+    // The finding, as an assertion. The legacy mode is retained so historical
+    // rows still render; it is not being offered, so its gaps are not this
+    // activation's business.
+    const review = activationReadiness({
+      ...base(),
+      modes: [goodMode("good"), incompleteMode("old", "legacy-only")],
+    });
+    expect(
+      review.blockers.join(" | "),
+      "a deliberately retained mode's gaps blocked a verified model",
+    ).not.toContain("old");
+    expect(review.ready, "the verified mode could not be offered").toBe(true);
+  });
+
+  it("CONTROL: the same mode BLOCKED is a candidate and does contribute", () => {
+    // `blocked` means "evidence incomplete", which is exactly what a reviewer
+    // is asking about — so it must still be assessed. Without this control the
+    // test above would also pass if readiness had simply stopped promoting
+    // anything.
+    const review = activationReadiness({
+      ...base(),
+      modes: [incompleteMode("under-review", "blocked")],
+    });
+    expect(review.blockers.join(" | ")).toContain("under-review");
+    expect(review.ready).toBe(false);
+  });
+
+  it("CONTROL: a profile whose only mode is legacy-only has nothing to offer", () => {
+    const review = activationReadiness({
+      ...base(),
+      modes: [incompleteMode("old", "legacy-only")],
+    });
+    expect(review.ready).toBe(false);
+    expect(review.blockers).toContain("profile is active but none of its modes is");
+  });
+
+  it("and a REAL blocked model still reports its own gaps, unchanged", () => {
+    // THE OTHER HALF, pinned explicitly rather than left incidental. Every
+    // real model's modes are blocked, so promoting nothing would have stopped
+    // the field and mode-identity gates running and readiness would have gone
+    // silent about exactly the models under review. This couples that
+    // behaviour to the candidate-set rule.
+    for (const id of [
+      "silhouettone:evolution-st-350",
+      "silhouettone:evolution-5hd",
+    ]) {
+      const review = activationReadiness(profileById(id)!);
+      expect(review.ready, `${id} should not be ready`).toBe(false);
+      expect(
+        review.blockers.length,
+        `${id}: readiness went silent about a blocked model`,
+      ).toBeGreaterThan(0);
+      // And the gaps are the model's OWN fields, not a bare "no active mode".
+      expect(
+        review.blockers.join(" | "),
+        `${id}: readiness stopped naming the field gaps`,
+      ).toMatch(/required field|unverified|precision|identity/i);
+    }
+  });
+});
+
+describe("an unsourced channel count is advisory, never refusing", () => {
+  // THE CODE HALF of Codex #855 4305551166. `channels.count` is enforced on
+  // every path, including the historical one, so a count no source
+  // establishes REFUSES A REAL OBSERVATION on the strength of a model name.
+  // The answer is the one `ConstraintClass` already gives for ranges: only a
+  // constraint that is established AND undisputed may refuse input, because
+  // refusing a true observation is a clinical record defect rather than a
+  // safety feature.
+  //
+  // WHAT THIS DOES NOT DO. It does not change the GEMM-16 contract, which
+  // declares its 16 channels `manufacturer-documented` and therefore still
+  // refuses. Whether that declaration overclaims its sources — the finding's
+  // actual complaint — is a SOURCE-EVIDENCE question escalated to Sam, not a
+  // code decision, and it is deliberately untouched here.
+  const withChannels = (
+    verification: "unverified" | "pending-evidence" | "manufacturer-documented" | "device-confirmed",
+    count = 4,
+  ): MachineProfile => ({
+    ...offered(),
+    channels: {
+      count,
+      nativeLabel: "Probe",
+      associationRequired: false,
+      supportsDistinctSettingGroups: true,
+      verification,
+      evidence: ["fx"],
+    },
+  });
+
+  const readChannel = (prof: MachineProfile, channel: number) =>
+    validateReading(
+      {
+        profileId: prof.profileId,
+        version: prof.version,
+        modeKey: "m",
+        fieldKey: "current",
+        source: "practitioner-entered",
+        value: { kind: "value", value: 1.2 },
+        channel,
+      },
+      { catalogue: [prof] },
+    );
+
+  for (const weak of ["unverified", "pending-evidence"] as const) {
+    it(`ACCEPTS a channel above a ${weak} count, and names the gap`, () => {
+      const out = readChannel(withChannels(weak), 7);
+      expect(
+        out.ok,
+        "a true observation was refused on the strength of an unsourced count",
+      ).toBe(true);
+      if (!out.ok) throw new Error(out.code);
+      expect(out.notes.map((n) => n.code)).toContain(
+        "channel_beyond_unverified_count",
+      );
+      // The note has to say WHY it is only a note, or it is unactionable.
+      expect(out.notes.map((n) => n.message).join(" ")).toContain(weak);
+    });
+  }
+
+  for (const strong of ["manufacturer-documented", "device-confirmed"] as const) {
+    it(`CONTROL: a ${strong} count still REFUSES — this is GEMM's case, unchanged`, () => {
+      const out = readChannel(withChannels(strong), 7);
+      expect(out.ok).toBe(false);
+      if (out.ok) throw new Error("expected a refusal");
+      expect(out.code).toBe("channel_out_of_range");
+    });
+  }
+
+  it("CONTROL: a MALFORMED channel refuses whatever the evidence says", () => {
+    // Not an evidence question: no machine has a channel 0 or a channel 1.5.
+    for (const verification of ["unverified", "device-confirmed"] as const) {
+      for (const channel of [0, -1, 1.5]) {
+        const out = readChannel(withChannels(verification), channel);
+        expect(out.ok, `channel ${channel} was accepted`).toBe(false);
+        if (out.ok) throw new Error("expected a refusal");
+        expect(out.code).toBe("channel_out_of_range");
+      }
+    }
+  });
+
+  it("CONTROL: a channel WITHIN an unverified count carries no note", () => {
+    // The note marks the gap, not the channel structure's existence.
+    const out = readChannel(withChannels("unverified"), 3);
+    expect(out.ok).toBe(true);
+    if (!out.ok) throw new Error(out.code);
+    expect(out.notes.map((n) => n.code)).not.toContain(
+      "channel_beyond_unverified_count",
+    );
+  });
+
+  it("and the real catalogue is UNAFFECTED by this change", () => {
+    // Stated as a test because it is the honest scope of the fix: exactly one
+    // profile carries a channel structure, and it declares itself documented,
+    // so nothing in MACHINE_CATALOGUE behaves differently today. This is a
+    // rule for future contracts and for the historical path, not a change to
+    // shipped data.
+    const withChannelStructures = MACHINE_CATALOGUE.filter((p) => p.channels);
+    expect(withChannelStructures).toHaveLength(1);
+    expect(withChannelStructures[0]!.channels!.verification).toBe(
+      "manufacturer-documented",
+    );
+  });
+});
+
+describe("an INFERRED precision makes no precision claim", () => {
+  // THE DEFECT (Codex, #855 4305642899). `MachineField.unverified` exists to
+  // say which aspects the evidence does not cover, and the ST 350 and the 5HD
+  // both declare `["decimals", "editability"]` — their precision was inferred
+  // from a manual mirror that establishes labels and units only. The check
+  // compared against that inferred number anyway and said the field "is
+  // documented to N decimal place(s)", asserting exactly what the ledger
+  // disclaims.
+  //
+  // SEVERITY DIFFERS BY BRANCH, and this file lives on the lower one. Here
+  // `precision_beyond_contract` is a NOTE, so the harm is a false annotation
+  // on a clinical record. On #860 it is a REFUSAL, so there the same defect
+  // refuses a TRUE OBSERVATION and a stored reading with an extra decimal
+  // stops rendering on the historical path.
+  const field = (over: Record<string, unknown>): MachineProfile => {
+    const b = offered();
+    return {
+      ...b,
+      modes: [{ ...b.modes[0]!, fields: [{ ...b.modes[0]!.fields[0]!, ...over }] }],
+    } as MachineProfile;
+  };
+
+  /** Did the outcome make a precision claim, as a note OR as a refusal? */
+  const flagged = (prof: MachineProfile, value: number) => {
+    const out = validateReading(
+      {
+        profileId: prof.profileId,
+        version: prof.version,
+        modeKey: "m",
+        fieldKey: "current",
+        source: "practitioner-entered",
+        value: { kind: "value", value },
+      },
+      { catalogue: [prof] },
+    );
+    // WIDENED TO `string` DELIBERATELY, so this compiles on BOTH stacked
+    // branches. `precision_beyond_contract` is a NoteCode here and a
+    // RefusalCode on #860, so a typed comparison is impossible on one tree or
+    // the other — TS2367 — and an earlier test in this file needed a merge
+    // resolution every round for exactly that reason. The question being
+    // asked is the same on both: did the outcome make a precision claim.
+    const codes = out.ok ? out.notes.map((n) => String(n.code)) : [String(out.code)];
+    return codes.includes("precision_beyond_contract");
+  };
+
+  it("makes NO precision claim when decimals are unverified", () => {
+    expect(
+      flagged(field({ decimals: 1, unverified: ["decimals"] }), 1.234),
+      "an inferred precision was asserted as documented",
+    ).toBe(false);
+  });
+
+  it("nor when decimals sit among other unverified aspects", () => {
+    // The shipped shape: ST 350 and 5HD both declare both aspects.
+    expect(
+      flagged(field({ decimals: 1, unverified: ["decimals", "editability"] }), 1.234),
+    ).toBe(false);
+  });
+
+  it("CONTROL: an ESTABLISHED precision still speaks", () => {
+    // Without this the rule above would also pass if the check had simply
+    // been deleted.
+    expect(flagged(field({ decimals: 1 }), 1.234)).toBe(true);
+    expect(flagged(field({ decimals: 1, unverified: [] }), 1.234)).toBe(true);
+  });
+
+  it("CONTROL: an UNRELATED unverified aspect does not silence precision", () => {
+    // `editability` says nothing about decimals, so the claim still holds.
+    expect(
+      flagged(field({ decimals: 1, unverified: ["editability"] }), 1.234),
+      "an unrelated unverified aspect silenced the precision claim",
+    ).toBe(true);
+  });
+
+  it("CONTROL: a value within the precision is unremarkable either way", () => {
+    expect(flagged(field({ decimals: 1, unverified: ["decimals"] }), 1.2)).toBe(false);
+    expect(flagged(field({ decimals: 1 }), 1.2)).toBe(false);
+  });
+
+  it("and the SHIPPED ST 350 and 5HD fields are the real subject", () => {
+    // Pins that this is about data that exists rather than a hypothetical:
+    // both models declare the decimals aspect unverified on display fields.
+    for (const id of ["silhouettone:evolution-st-350", "silhouettone:evolution-5hd"]) {
+      const prof = profileById(id)!;
+      const declared = prof.modes.flatMap((m) =>
+        modeFields(m).map(({ field: f }) => f.unverified ?? []),
+      );
+      expect(
+        declared.some((aspects) => aspects.includes("decimals")),
+        `${id} no longer declares an unverified precision`,
+      ).toBe(true);
+    }
   });
 });
