@@ -25,6 +25,7 @@ import {
   seedStudio,
   userQuery,
   type SeededStudio,
+  type UserQuery,
 } from "./helpers/harness";
 
 const CHECK_VIOLATION = "23514";
@@ -254,6 +255,51 @@ describe("0232: privilege matrix", () => {
       cfg: 'search_path=""',
     });
   });
+});
+
+// Codex 4309998087: privileged table INSERT is an allowed writer (0092).
+// Source tests pin event wiring; these cases must prove actual row behaviour
+// on a granted local DB slot, including a visit-linked positive control.
+describe("0232: direct INSERT cannot retain a label without a visit", () => {
+  for (const role of ["postgres", "service_role"] as const) {
+    for (const stage of ["before", "after"] as const) {
+      it(`${role}: normalises a sessionless ${stage} INSERT, preserves a visit label, and still cleans UPDATE`, async () => {
+        const probe = async (query: UserQuery) => {
+          async function insert(sessionId: string | null) {
+            const id = randomUUID();
+            const result = await query(
+              `insert into public.treatment_images
+                 (id, studio_id, client_id, session_id, storage_bucket,
+                  storage_path, content_type, size_bytes, uploaded_by, capture_stage)
+               values ($1,$2,$3,$4,'treatment-images',$5,'image/jpeg',1024,$6,$7)
+               returning id, session_id, capture_stage`,
+              [id, A.studioId, A.clientId, sessionId,
+                `${A.studioId}/${A.clientId}/${id}.jpg`, A.practitionerId, stage],
+            );
+            expect(result.rowCount).toBe(1);
+            return result.rows[0];
+          }
+
+          const client = await insert(null);
+          expect(client).toEqual({ id: client.id, session_id: null, capture_stage: null });
+          // A trigger that clears EVERY label would falsely satisfy the first
+          // assertion. A real visit's label must survive the very same INSERT.
+          const visit = await insert(visitA.sessionId);
+          expect(visit).toEqual({ id: visit.id, session_id: visitA.sessionId, capture_stage: stage });
+          const updated = await query(
+            `update public.treatment_images set capture_stage = $1 where id = $2
+             returning session_id, capture_stage`, [stage, client.id],
+          );
+          expect(updated.rows).toEqual([{ session_id: null, capture_stage: null }]);
+        };
+        if (role === "service_role") {
+          await asRole("service_role", probe); // existing helper rolls this probe back
+        } else {
+          await probe(adminQuery);
+        }
+      });
+    }
+  }
 });
 
 // Codex 4308037526: hard-deleting a visit runs 0092's ON DELETE SET NULL on
