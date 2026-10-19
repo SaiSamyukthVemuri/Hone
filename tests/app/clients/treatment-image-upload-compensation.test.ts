@@ -188,10 +188,12 @@ describe("upload: compensation when the planes disagree", () => {
 });
 
 describe("upload source shape: the boundary is documented and intact", () => {
-  const ACTIONS = readFileSync(
-    join(process.cwd(), "app/(app)/clients/[id]/images/actions.ts"),
-    "utf8",
-  );
+  // The signer moved into sign-treatment-image.ts (shared with the re-mint
+  // route, Codex P1 4307807754); the surface is both files together.
+  const ACTIONS =
+    readFileSync(join(process.cwd(), "app/(app)/clients/[id]/images/actions.ts"), "utf8") +
+    "\n" +
+    readFileSync(join(process.cwd(), "app/(app)/clients/[id]/images/sign-treatment-image.ts"), "utf8");
 
   it("keeps sanitization, size validation and the service-role upload", () => {
     expect(ACTIONS).toMatch(/sanitizeTreatmentImage/);
