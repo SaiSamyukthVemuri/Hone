@@ -375,6 +375,16 @@ describe("ci.yml: no verification step is hidden behind an earlier failure", () 
     }
   });
 
+  it("CONTROL: positive cancelled() is outside the routine-check grammar", () => {
+    for (const condition of [
+      "${{ always() && cancelled() }}",
+      "${{ !cancelled() && cancelled() }}",
+    ]) {
+      expect(guardConjuncts(condition), condition).toBeNull();
+      expect(survivesFailure(condition), condition).toBe(false);
+    }
+  });
+
   it("standalone verification checks do not depend on npm ci", () => {
     const steps = jobs(CI_BODY).find(([id]) => id === "validate")?.[1].steps ?? [];
     for (const command of [
