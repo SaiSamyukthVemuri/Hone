@@ -1110,40 +1110,47 @@ describe("the synthetic demo profile cannot reach production", () => {
     }
   });
 
-  it("the runtime catalogue adds it only when enabled, and never alters a real profile", () => {
-    const off = synthetic.catalogueForRuntime({} as unknown as NodeJS.ProcessEnv);
+  it("the runtime catalogue exposes exactly four synthetic identities only gate-open and preserves real profiles", async () => {
+    const { MACHINE_CATALOGUE } = await import("@/lib/machines/catalogue");
+    const realBefore = structuredClone(MACHINE_CATALOGUE);
+    const expectedSyntheticIds = [
+      "synthetic:demo-multineedle",
+      "synthetic:demo-single-probe",
+      "synthetic:native-senior-3g",
+      "synthetic:native-junior-3g",
+    ].sort();
     const on = synthetic.catalogueForRuntime(base);
-    expect(off.some((p) => p.profileId === synthetic.SYNTHETIC_PROFILE_ID)).toBe(false);
-    expect(on.some((p) => p.profileId === synthetic.SYNTHETIC_PROFILE_ID)).toBe(true);
-    expect(
-      on.some((p) => p.profileId === synthetic.SYNTHETIC_SINGLE_PROBE_PROFILE_ID),
-      "the second synthetic model is gated identically",
-    ).toBe(true);
-    expect(
-      off.some((p) => p.profileId === synthetic.SYNTHETIC_SINGLE_PROBE_PROFILE_ID),
-    ).toBe(false);
-    expect(on).toHaveLength(off.length + 2);
+    const fixtures = on.filter((p) => p.profileId.startsWith("synthetic:"));
+    expect(fixtures.map((p) => p.profileId).sort()).toEqual(expectedSyntheticIds);
+    expect(fixtures.every((p) => p.availability === "active")).toBe(true);
+    // Exact real entries, not merely an ID prefix or a catalogue length:
+    // no replacement, mutation, dropped profile or extra active real profile.
+    const realOn = on.filter((p) => !p.profileId.startsWith("synthetic:"));
+    expect(realOn).toEqual(realBefore);
+    realOn.forEach((profile, index) => expect(profile).toBe(MACHINE_CATALOGUE[index]));
+    expect(on.filter((p) => p.availability === "active").map((p) => p.profileId).sort())
+      .toEqual(expectedSyntheticIds);
 
-    // Every real profile is still exactly as the curated catalogue states it.
-    expect(off.filter((p) => p.availability === "active")).toEqual([]);
-
-    // NOTHING REAL IS EVER ACTIVATED, stated as the rule rather than as a list
-    // of ids.
-    //
-    // This used to assert the active set EQUALLED [SYNTHETIC_PROFILE_ID], which
-    // had to be edited the moment a second synthetic fixture appeared - and an
-    // assertion that needs editing whenever a fixture is added is one someone
-    // will eventually "fix" by appending the new id without checking what the
-    // test was for. The rule is that activation is confined to synthetic
-    // profiles, and the product rule behind it is that an unverified
-    // manufacturer profile is never activated to make a dropdown look fuller.
-    const active = on.filter((p) => p.availability === "active");
-    expect(active.length).toBeGreaterThan(0);
-    for (const p of active) {
-      expect(p.profileId, `${p.profileId} is active but not synthetic`).toMatch(
-        /^synthetic:/,
-      );
+    const closedEnvironments = [
+      ["absent flag", {}],
+      ["disabled flag", { ...base, HONE_SYNTHETIC_MACHINE_PROFILE: "0" }],
+      ["non-exact flag", { ...base, HONE_SYNTHETIC_MACHINE_PROFILE: "true" }],
+      ["missing local target", { HONE_SYNTHETIC_MACHINE_PROFILE: "1" }],
+      ["hosted target", { ...base, NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co" }],
+      ["Vercel", { ...base, VERCEL: "1" }],
+      ["Vercel preview", { ...base, VERCEL_ENV: "preview" }],
+      ["AWS region", { ...base, AWS_REGION: "eu-west-1" }],
+      ["AWS runtime", { ...base, AWS_EXECUTION_ENV: "AWS_Lambda_nodejs" }],
+      ["Kubernetes", { ...base, KUBERNETES_SERVICE_HOST: "10.0.0.1" }],
+    ] as const;
+    for (const [label, env] of closedEnvironments) {
+      const off = synthetic.catalogueForRuntime(env as NodeJS.ProcessEnv);
+      expect(off, label).toEqual(realBefore);
+      expect(off.some((p) => p.profileId.startsWith("synthetic:")), label).toBe(false);
+      expect(off.filter((p) => p.availability === "active"), label).toEqual([]);
+      off.forEach((profile, index) => expect(profile, label).toBe(MACHINE_CATALOGUE[index]));
     }
+    expect(MACHINE_CATALOGUE).toEqual(realBefore);
   });
 
   it("the second model DISAGREES with the first, which is its whole purpose", () => {
