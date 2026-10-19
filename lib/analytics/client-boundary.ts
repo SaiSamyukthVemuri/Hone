@@ -30,6 +30,7 @@
 // Pure module (no posthog-js import); unit-tested against event-shaped payloads.
 
 import { MARKETING_PAGES } from "@/lib/marketing/content";
+import { redactIdsInPath } from "@/lib/analytics/path-ids";
 import { TOKEN_ROUTE_PREFIXES } from "@/lib/security/token-routes";
 
 // The exact canonical marketing surfaces, derived from the single registry the
@@ -75,7 +76,20 @@ const URL_PROP_KEYS = new Set([
   "$initial_current_url",
   "$initial_referrer",
   "attr__href",
+  "$pathname",
+  "$initial_pathname",
+  "$session_entry_url",
+  "$session_entry_referrer",
+  "$session_entry_pathname",
 ]);
+
+/** A URL- or path-valued property (#828 G-07/G-26). Beyond the named keys,
+ *  ANY key ending in _url, _referrer or _pathname is treated as one, so a URL
+ *  property posthog-js adds later ($prev_pageview_pathname, ...) is sanitized
+ *  rather than passed through. */
+function isUrlPropKey(key: string): boolean {
+  return URL_PROP_KEYS.has(key) || /(?:_url|_referrer|_pathname)$/.test(key);
+}
 
 const MAX_DEPTH = 8;
 
@@ -142,12 +156,20 @@ export function sanitizeMarketingUrl(raw: string): string {
     }
   }
   let pathname = u.pathname;
+  let tokenRoute = false;
   for (const prefix of TOKEN_PATH_PREFIXES) {
     if (pathname.startsWith(prefix)) {
       pathname = `${prefix}[token]`;
+      tokenRoute = true;
       break;
     }
   }
+  // Record ids in an app path never leave (#828 G-07/G-26): a $referrer or
+  // $initial_current_url can name /clients/<uuid>/sessions/<uuid> even on a
+  // marketing-page event. Same rules as the Vercel Analytics boundary (#842).
+  // Canonical marketing paths carry no ids (and long slugs such as
+  // "electrolysis-treatment-record-checklist" must not read as tokens).
+  if (!tokenRoute && !isMarketingPath(pathname)) pathname = redactIdsInPath(pathname);
   const params = new URLSearchParams();
   for (const [k, v] of u.searchParams) {
     if (ATTRIBUTION_PARAMS.has(k)) params.set(k, v);
@@ -167,7 +189,7 @@ function sanitizeProps(value: unknown, key: string, depth: number): unknown {
     return typeof value === "string" ? "[redacted]" : value;
   }
   if (typeof value === "string") {
-    return URL_PROP_KEYS.has(key)
+    return isUrlPropKey(key)
       ? sanitizeMarketingUrl(value)
       : sanitizeTokenPaths(value);
   }
@@ -189,6 +211,8 @@ function sanitizeProps(value: unknown, key: string, depth: number): unknown {
 type OutgoingEventShape = {
   event?: string;
   properties?: Record<string, unknown>;
+  $set?: Record<string, unknown>;
+  $set_once?: Record<string, unknown>;
 };
 
 /**
@@ -223,6 +247,14 @@ export function guardBrowserEvent<T extends OutgoingEventShape | null>(
 
   if (props) {
     event.properties = sanitizeProps(props, "", 0) as Record<string, unknown>;
+  }
+  // Person properties travel beside `properties` and carry the same URL keys
+  // ($set_once.$initial_current_url, ...): sanitized the same way.
+  if (event.$set && typeof event.$set === "object") {
+    event.$set = sanitizeProps(event.$set, "", 0) as Record<string, unknown>;
+  }
+  if (event.$set_once && typeof event.$set_once === "object") {
+    event.$set_once = sanitizeProps(event.$set_once, "", 0) as Record<string, unknown>;
   }
   return event;
 }
