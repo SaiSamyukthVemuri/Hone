@@ -13,6 +13,7 @@ import {
   createLocalAuthUser,
   type E2eSeed,
 } from "./helpers/seed";
+import { loginAsOwner } from "./helpers/flows";
 import { listMessageIds, waitForMagicLink } from "./helpers/mail";
 import { E2E_APP_ORIGIN } from "./helpers/local-env";
 
@@ -30,6 +31,7 @@ let clientName: string;
 let A: { email: string; displayName: string; practitionerId: string };
 let deskEmail: string;
 let deskId: string;
+let deskUserId: string;
 let tz: string;
 let appointmentId: string;
 
@@ -39,7 +41,7 @@ function tomorrowLocal(timeZone: string): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
 }
 
-async function loginAsReceptionist(page: Page, email: string): Promise<void> {
+async function loginAsReceptionist(page: Page, email: string, awaitFrontDesk = true): Promise<void> {
   await page.goto("/login");
   await page.getByLabel("I am using my invited email address").check();
   await page.locator("#login-email").fill(email);
@@ -49,7 +51,7 @@ async function loginAsReceptionist(page: Page, email: string): Promise<void> {
   await page.goto(link);
   // A receptionist has no practitioners row: the middleware sends every app
   // route, /dashboard included, to the front desk.
-  await page.waitForURL(/\/front-desk/, { timeout: 30_000 });
+  if (awaitFrontDesk) await page.waitForURL(/\/front-desk/, { timeout: 30_000 });
 }
 
 test.beforeAll(async () => {
@@ -66,21 +68,58 @@ test.beforeAll(async () => {
   }
   tz = await getStudioTimezone(seed.studioId);
 
-  // The receptionist: a real auth user whose ONLY membership is a
-  // studio_receptionists row, created by the owner command (0216).
+  // HON-44: provision only an auth identity. The first test must create the
+  // invitation through the owner UI and accept it with explicit consent;
+  // pre-creating membership would bypass the boundary this journey proves.
   deskEmail = `e2e-desk-${seed.runId}@harness.local`;
-  const userId = await createLocalAuthUser(deskEmail);
-  const owner = (
-    await sql<{ id: string }>(`select id from public.practitioners where studio_id = $1 and role = 'owner'`, [seed.studioId])
-  )[0].id;
-  deskId = (
-    await sql<{ id: string }>(`select public.add_studio_receptionist($1, $2, $3, 'Front Desk E2E', $4) as id`, [
-      seed.studioId,
-      owner,
-      userId,
-      deskEmail,
-    ])
-  )[0].id;
+  deskUserId = await createLocalAuthUser(deskEmail);
+});
+
+test("owner invites a receptionist who explicitly accepts before receiving front-desk access", async ({ page }) => {
+  await loginAsOwner(page, seed);
+  await page.goto("/settings/team");
+  await page.getByRole("textbox", { name: /^Email/ }).fill(deskEmail);
+  await page.getByLabel("Display name", { exact: true }).fill("Front Desk E2E");
+  await page.getByLabel("Role", { exact: true }).selectOption("receptionist");
+  await page.getByRole("button", { name: "Create invite", exact: true }).click();
+  await expect(page.getByText(`Invite created for ${deskEmail}.`, { exact: true })).toBeVisible();
+
+  const pending = await sql<{ role: string; status: string }>(
+    `select role, status from public.pending_invitations where studio_id = $1 and email = $2`,
+    [seed.studioId, deskEmail],
+  );
+  expect(pending).toEqual([{ role: "receptionist", status: "pending" }]);
+
+  // Separate sessions: an owner's existing cookie must never satisfy the
+  // invitee's authorization or the acceptance route.
+  await page.context().clearCookies();
+  await loginAsReceptionist(page, deskEmail, false);
+  await page.waitForURL(/\/accept-invitation(?:\?|$)/, { timeout: 30_000 });
+  const join = page.getByRole("button", { name: /Join .* as/ });
+  await expect(join).toBeDisabled();
+  const before = await sql<{ n: number }>(
+    `select count(*)::int as n from public.studio_receptionists
+      where studio_id = $1 and user_id = $2 and active`, [seed.studioId, deskUserId],
+  );
+  expect(before).toEqual([{ n: 0 }]);
+
+  await page.getByLabel(/I agree to the current/).check();
+  await join.click();
+  await page.waitForURL(/\/front-desk$/, { timeout: 30_000 });
+  const memberships = await sql<{ id: string; terms_accepted_at: string | null; privacy_accepted_at: string | null }>(
+    `select id, terms_accepted_at::text, privacy_accepted_at::text
+       from public.studio_receptionists where studio_id = $1 and user_id = $2 and active`,
+    [seed.studioId, deskUserId],
+  );
+  expect(memberships).toHaveLength(1);
+  expect(memberships[0].terms_accepted_at).not.toBeNull();
+  expect(memberships[0].privacy_accepted_at).not.toBeNull();
+  deskId = memberships[0].id;
+  const treatingRows = await sql<{ n: number }>(
+    `select count(*)::int as n from public.practitioners where studio_id = $1 and user_id = $2`,
+    [seed.studioId, deskUserId],
+  );
+  expect(treatingRows).toEqual([{ n: 0 }]);
 });
 
 test("a receptionist books for a treating practitioner, attributed to the receptionist", async ({ page }) => {

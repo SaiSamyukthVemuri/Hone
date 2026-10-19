@@ -68,7 +68,7 @@ export function buildInvitationEmail(params: {
             </tr>
             <tr>
               <td style="padding-bottom:32px; font-family:-apple-system, system-ui, sans-serif; font-size:16px; line-height:1.6; color:#0A0A0A;">
-                To join the team, sign in at hone.care using <strong>${safeEmail}</strong>. You'll be added to ${safeStudio} automatically.
+                To join the team, sign in at hone.care using <strong>${safeEmail}</strong>. Complete the joining steps shown after signing in.
               </td>
             </tr>
             <tr>
@@ -102,7 +102,7 @@ export function buildInvitationEmail(params: {
 
 ${inviterName} invited you to join ${studioName} on Hone, the charting tool for electrolysis and laser practitioners.
 
-To join the team, sign in at hone.care using ${inviteeEmail}. You'll be added to ${studioName} automatically.
+To join the team, sign in at hone.care using ${inviteeEmail}. Complete the joining steps shown after signing in.
 
 Sign in: ${SIGN_IN_URL}
 
