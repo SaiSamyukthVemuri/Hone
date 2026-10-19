@@ -37,6 +37,7 @@ import { recordOpsAlert } from "@/lib/ops/alerts";
 import { reminderWindowIso } from "@/lib/cron/reminder-schedule";
 import { recordReminderRunSuccess } from "@/lib/cron/reminder-heartbeat";
 import { recoverLeadAlertsOnReminderTrigger } from "@/lib/platform-leads/alert-delivery";
+import { clientSelfServiceLinks } from "@/lib/booking/client-self-service-policy";
 
 const PER_RUN_LIMIT = 50;
 const MAX_ATTEMPTS = 3;
@@ -375,8 +376,12 @@ async function sendReminderPass(opts: {
         stats.failed += 1;
         continue;
       }
-      const cancellationUrl = `${appOrigin}/cancel/${token}`;
-      const rescheduleUrl = `${appOrigin}/reschedule/${token}`;
+  // HON-47. One policy-aware helper for all three links: a studio that has
+  // switched an action off must not have that link SENT, in any channel.
+  // `/manage` is never suppressed — it is the honest fallback. The flags come
+  // from the studio row already read server-side.
+      const { cancelUrl: cancellationUrl, rescheduleUrl } =
+        clientSelfServiceLinks({ origin: appOrigin, token, studio: appt.studio });
       const practitionerName =
         appt.practitioner?.display_name?.trim() ||
         appt.practitioner?.email ||
@@ -574,7 +579,15 @@ async function sendSmsReminderPass(opts: {
       } catch {
         manageToken = null;
       }
-      return manageToken ? `${smsAppOrigin}/manage/${manageToken}` : null;
+      // /manage is never suppressed, so this stays a plain build — but it goes
+      // through the helper so there is ONE place that decides these URLs.
+      return manageToken
+        ? clientSelfServiceLinks({
+            origin: smsAppOrigin,
+            token: manageToken,
+            studio: null,
+          }).manageUrl
+        : null;
     };
 
     const sendFn =

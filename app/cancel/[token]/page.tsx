@@ -12,6 +12,14 @@ import {
   FREE_CONSULT_WAITLIST_ONLY_CANCEL_HEADING,
   FREE_CONSULT_WAITLIST_ONLY_CANCEL_WARNING,
 } from "@/lib/booking/free-consult-reschedule-policy";
+// HON-47. The studio switched client cancellation off, so 0234 refuses the
+// command and this page must not render a form that cannot succeed.
+import {
+  CLIENT_CANCELLATION_DISABLED_BODY,
+  CLIENT_CANCELLATION_DISABLED_CODE,
+  CLIENT_CANCELLATION_DISABLED_EYEBROW,
+  CLIENT_CANCELLATION_DISABLED_HEADLINE,
+} from "@/lib/booking/client-self-service-policy";
 import { fetchAppointmentForCancelAction } from "./actions";
 import { CancelForm } from "./CancelForm";
 
@@ -28,6 +36,14 @@ export default async function CancelAppointmentPage({
 }) {
   const { token } = await params;
   const result = await fetchAppointmentForCancelAction(token);
+
+  // HON-47. The fetch action returns this code INSTEAD of a summary when the
+  // studio handles cancellations itself, so there is no state in which this
+  // page holds the data to render the form and merely chooses not to. The code
+  // is only ever set once a valid token has resolved to a future confirmed
+  // appointment, so the studio's policy is not readable without one.
+  const cancellationDisabled =
+    !result.ok && result.code === CLIENT_CANCELLATION_DISABLED_CODE;
 
   return (
     <main
@@ -166,8 +182,25 @@ export default async function CancelAppointmentPage({
                   result.summary.freeConsultationWaitlistOnly
                 }
                 waitlistBookingSlug={result.summary.waitlistBookingSlug}
+                // HON-47. Server-derived, same contract as the two props
+                // above: it decides what the form OFFERS, never what it may
+                // do. False withdraws the "Reschedule instead" pivot, because
+                // /reschedule would refuse it.
+                clientRescheduleAllowed={result.summary.clientRescheduleAllowed}
               />
             </>
+          ) : cancellationDisabled ? (
+            // HON-47 policy surface. The SAME component as the collapse
+            // message below, with the approved strings: the appointment is
+            // real and unchanged, and the client is told who can cancel it.
+            // Reusing the component rather than hand-rolling a block keeps the
+            // two refusals visually identical, which is the honest outcome —
+            // neither is an error, and this one is not a failure at all.
+            <UnavailableMessage
+              eyebrow={CLIENT_CANCELLATION_DISABLED_EYEBROW}
+              headline={CLIENT_CANCELLATION_DISABLED_HEADLINE}
+              body={CLIENT_CANCELLATION_DISABLED_BODY}
+            />
           ) : (
             // Public collapse surface: a single generic message is
             // shown for unknown / expired / cancelled / completed /

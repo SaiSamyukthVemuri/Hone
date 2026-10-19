@@ -6,6 +6,13 @@ import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { PublicPolicyReminderCard } from "@/app/_components/PublicPolicyReminderCard";
 import { FREE_CONSULT_WAITLIST_ONLY_HEADLINE } from "@/lib/booking/free-consult-reschedule-policy";
+// HON-47. The studio-level switches. This hub offers both actions, so it is
+// the one surface that has to say something sensible about all FOUR
+// combinations rather than a single refusal.
+import {
+  CLIENT_CANCELLATION_DISABLED_HEADLINE,
+  CLIENT_RESCHEDULE_DISABLED_HEADLINE,
+} from "@/lib/booking/client-self-service-policy";
 import { fetchAppointmentForManageAction } from "./actions";
 
 // PR #142. Token-bearing route. See
@@ -37,6 +44,15 @@ export default async function ManageAppointmentPage({
   const { token } = await params;
   const result = await fetchAppointmentForManageAction(token);
 
+  // HON-47 + EMERG-01. Both capabilities resolved once, from the server-derived
+  // summary, so the intro sentence, the note and the buttons below cannot
+  // disagree with each other. `false` whenever the destination would refuse.
+  const canReschedule =
+    result.ok &&
+    result.summary.clientRescheduleAllowed &&
+    !result.summary.freeConsultationWaitlistOnly;
+  const canCancel = result.ok && result.summary.clientCancellationAllowed;
+
   return (
     <main
       style={{
@@ -59,11 +75,16 @@ export default async function ManageAppointmentPage({
                   Manage appointment
                 </h1>
                 <p className="mt-4 text-[16px] leading-relaxed text-[#0A0A0A]">
-                  {result.summary.freeConsultationWaitlistOnly
-                    ? // EMERG-01. The intro must not promise an action the
-                      // page below no longer offers.
-                      "Review your appointment below. You can cancel from here."
-                    : "Review your appointment below. You can reschedule or cancel from here."}
+                  {/* The intro must not promise an action the page below no
+                      longer offers (EMERG-01's rule, now with four outcomes
+                      because HON-47 can withdraw either action or both). */}
+                  {canReschedule && canCancel
+                    ? "Review your appointment below. You can reschedule or cancel from here."
+                    : canCancel
+                      ? "Review your appointment below. You can cancel from here."
+                      : canReschedule
+                        ? "Review your appointment below. You can reschedule from here."
+                        : "Review your appointment below. To change it, please contact the studio."}
                 </p>
               </div>
 
@@ -110,40 +131,71 @@ export default async function ManageAppointmentPage({
                   the CTA is withdrawn rather than pointed at a refusal, and
                   the reason is stated once from the shared string. Cancel
                   stays exactly where it was, for every studio. */}
-              {result.summary.freeConsultationWaitlistOnly && (
+              {/* ONE note, chosen by what is actually unavailable. Composed
+                  from the shared headlines rather than new sentences, which is
+                  the pattern EMERG-01 set here. Ordered most-specific first:
+                  the free-consultation case can name the waitlist as the way
+                  back, and the HON-47 cases cannot. */}
+              {result.summary.freeConsultationWaitlistOnly && canCancel ? (
                 <p className="text-[15px] leading-relaxed text-[#0A0A0A]">
                   {FREE_CONSULT_WAITLIST_ONLY_HEADLINE}. You can cancel this
                   appointment below, then join the waitlist for the next
                   available consultation.
                 </p>
-              )}
+              ) : !canReschedule && !canCancel ? (
+                <p className="text-[15px] leading-relaxed text-[#0A0A0A]">
+                  This studio handles cancellations and date changes directly.
+                  Your appointment is unchanged — please contact the studio to
+                  change it.
+                </p>
+              ) : !canReschedule ? (
+                <p className="text-[15px] leading-relaxed text-[#0A0A0A]">
+                  {CLIENT_RESCHEDULE_DISABLED_HEADLINE}. You can cancel this
+                  appointment below.
+                </p>
+              ) : !canCancel ? (
+                <p className="text-[15px] leading-relaxed text-[#0A0A0A]">
+                  {CLIENT_CANCELLATION_DISABLED_HEADLINE}. You can reschedule
+                  this appointment below.
+                </p>
+              ) : null}
 
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                {!result.summary.freeConsultationWaitlistOnly && (
-                  <Link
-                    href={`/reschedule/${token}`}
-                    className="px-8 py-4 text-center text-[14px] font-medium uppercase"
-                    style={{
-                      backgroundColor: "#0A0A0A",
-                      color: "#FAFAF7",
-                      letterSpacing: "0.1em",
-                    }}
-                  >
-                    Reschedule appointment
-                  </Link>
-                )}
-                <Link
-                  href={`/cancel/${token}`}
-                  className="px-8 py-4 text-center text-[14px] font-medium uppercase"
-                  style={{
-                    border: "1px solid #0A0A0A",
-                    color: "#0A0A0A",
-                    letterSpacing: "0.1em",
-                  }}
-                >
-                  Cancel appointment
-                </Link>
-              </div>
+              {/* The two follow-on actions. Each is rendered ONLY when its
+                  destination will accept it: an offered button that lands on a
+                  refusal is the dead end this surface exists to prevent. When
+                  neither is available the row is not rendered at all, rather
+                  than rendered empty — the note above has already explained
+                  why, and the portal link below is still a way onward. */}
+              {(canReschedule || canCancel) && (
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                  {canReschedule && (
+                    <Link
+                      href={`/reschedule/${token}`}
+                      className="px-8 py-4 text-center text-[14px] font-medium uppercase"
+                      style={{
+                        backgroundColor: "#0A0A0A",
+                        color: "#FAFAF7",
+                        letterSpacing: "0.1em",
+                      }}
+                    >
+                      Reschedule appointment
+                    </Link>
+                  )}
+                  {canCancel && (
+                    <Link
+                      href={`/cancel/${token}`}
+                      className="px-8 py-4 text-center text-[14px] font-medium uppercase"
+                      style={{
+                        border: "1px solid #0A0A0A",
+                        color: "#0A0A0A",
+                        letterSpacing: "0.1em",
+                      }}
+                    >
+                      Cancel appointment
+                    </Link>
+                  )}
+                </div>
+              )}
 
               {/* Back-to-portal escape hatch (PR #127). When the
                   client arrives here from the secure client portal

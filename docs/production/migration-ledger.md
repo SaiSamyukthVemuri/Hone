@@ -14,7 +14,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-15, post-0212 apply; hosted `0212`; `0213`–`0233` AUTHORED AND PENDING, contiguous, in that order)
+## Current state (verified 2026-10-18, post-0212 apply; hosted `0212`; `0213`–`0234` AUTHORED AND PENDING, contiguous, in that order)
 
 > **0232 IS AUTHORED AND PENDING, on `feat/fett-capture-stage` only** (FETT photos, HON-43), stacked on `feat/fett-client-portrait` (0231). It applies after `0231`.
 > `0232_treatment_image_capture_stage.sql` adds ONE nullable column, `treatment_images.capture_stage` (`check (capture_stage in ('before', 'after'))`, NULL = unlabelled, no backfill), ONE new command, and ONE trigger on `treatment_images`; it writes no rows.
@@ -190,10 +190,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0212** (`0212_email_delivery_events.sql`), applied 2026-10-12 from #832's reviewed head. |
-| **Repo migration max** | **0233**: `0233_clinical_records_audit_command.sql` (HON-46, #896), above `0232_treatment_image_capture_stage.sql` and `0231_client_identification_portrait.sql` (FETT photos), `0230_studio_sms_sender_stop_preflights.sql` and `0229_studio_sms_sender_campaign_bindings.sql` (HON-50) and `0228_legacy_new_client_refusal_atomicity.sql` (#874). Derived by `npm run migration:state` on this tree. |
+| **Repo migration max** | **0234**: `0234_client_self_service_controls.sql` (HON-47, #930), above `0233_clinical_records_audit_command.sql` (HON-46, #896) and `0232_treatment_image_capture_stage.sql` and `0231_client_identification_portrait.sql` (FETT photos), `0230_studio_sms_sender_stop_preflights.sql` and `0229_studio_sms_sender_campaign_bindings.sql` (HON-50) and `0228_legacy_new_client_refusal_atomicity.sql` (#874). Derived by `npm run migration:state` on this tree. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **`0213`–`0233`** (`0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`, `0229`, `0230`, `0231`, `0232`, `0233`), contiguous from hosted + 1, all **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING. `0211` and `0212` are APPLIED and FROZEN and carried byte-identical. Each pending migration applies from its own reviewed head, never from this branch. `0233` (`0233_clinical_records_audit_command.sql`, HON-46 #896) is **PENDING, NOT APPLIED**; applying it needs Sam's separate per-change authorization. |
-| **Next free migration** | Next free number is **0234**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** here: availability is not allocation. |
+| **Pending migrations** | **`0213`–`0234`** (`0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`, `0229`, `0230`, `0231`, `0232`, `0233`, `0234`), contiguous from hosted + 1, all **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING. `0211` and `0212` are APPLIED and FROZEN and carried byte-identical. Each pending migration applies from its own reviewed head, never from this branch. `0233` (`0233_clinical_records_audit_command.sql`, HON-46 #896) and `0234` (`0234_client_self_service_controls.sql`, HON-47 #930) are **PENDING, NOT APPLIED**; applying either needs Sam's separate per-change authorization. `0234` adds `studios.client_cancellation_enabled` and `client_reschedule_enabled`, both `not null default true`, so applying it changes no existing studio's behaviour; the switches are set afterwards, as their own authorized write. |
+| **Next free migration** | Next free number is **0235**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** here: availability is not allocation. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. |
 
 ## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, repo == hosted)
