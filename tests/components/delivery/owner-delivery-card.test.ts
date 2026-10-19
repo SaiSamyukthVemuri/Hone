@@ -142,7 +142,7 @@ describe("the owner card's capped read is not a total (Codex P2 4307695060)", ()
   // resolved rows sort LAST they are the first thing the cap removes, which
   // would distort the resolved note silently as well.
   const CAP = 200;
-  const INDICATOR = "Showing the most recent 200 incidents. Older incidents, if any, are not listed.";
+  const INDICATOR = "Showing up to 200 incidents, with open incidents first, newest activity first within each group. Other incidents, if any, are not listed.";
 
   it("AT the cap: says so, and the count reads as SHOWN", async () => {
     h.answer = {
@@ -166,7 +166,7 @@ describe("the owner card's capped read is not a total (Codex P2 4307695060)", ()
       error: null,
     };
     const html = await render();
-    expect(html).not.toContain("Older incidents, if any, are not listed");
+    expect(html).not.toContain("Other incidents, if any, are not listed");
     // ...and it still reports the incidents it does have.
     expect(html).toContain("shown");
   });
@@ -174,7 +174,7 @@ describe("the owner card's capped read is not a total (Codex P2 4307695060)", ()
   it("an empty studio says neither", async () => {
     h.answer = { data: [], error: null };
     const html = await render();
-    expect(html).not.toContain("Older incidents, if any, are not listed");
+    expect(html).not.toContain("Other incidents, if any, are not listed");
     expect(html).toContain("No delivery problems reported in the last 14 days.");
   });
 });
