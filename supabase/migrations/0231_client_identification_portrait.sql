@@ -159,7 +159,8 @@ $$;
 -- ---------------------------------------------------------------------------
 create or replace function public.set_client_portrait(
   p_client_id uuid,
-  p_image_id  uuid
+  p_image_id  uuid,
+  p_expected_image_id uuid default null
 )
 returns uuid
 language plpgsql
@@ -170,11 +171,12 @@ declare
   v_studio uuid;
   v_pract  uuid;
   v_id     uuid;
+  v_current_image_id uuid;
 begin
   -- FOR UPDATE (Codex P2 4302682030): the studio the actor is authorized
   -- against cannot change under us. A concurrent move waits for this
   -- transaction, or this waits for it and then authorizes the NEW studio.
-  select c.studio_id into v_studio
+  select c.studio_id, c.portrait_image_id into v_studio, v_current_image_id
     from public.clients c
    where c.id = p_client_id
      for update;
@@ -187,6 +189,15 @@ begin
   if v_studio is null or v_pract is null then
     raise exception 'That client is not available.'
       using errcode = 'check_violation';
+  end if;
+
+  -- A stale Remove must not clear another practitioner's newer choice.
+  -- Both the observation and comparison are inside the client row lock.
+  -- Two-argument setters remain valid; clearing always needs a non-null
+  -- expected image, so omitting the precondition cannot bypass the guard.
+  if p_image_id is null and (p_expected_image_id is null or v_current_image_id is distinct from p_expected_image_id) then
+    raise exception 'The ID photo changed. Reload and try again.'
+      using errcode = 'P0231';
   end if;
 
   update public.clients c
@@ -205,8 +216,8 @@ begin
 end;
 $$;
 
-comment on function public.set_client_portrait(uuid, uuid) is
-  '0231. Sets (or, with null, clears) a client''s identification portrait. Actor: an ACTIVE practitioner of the client''s studio (treatment_image_actor). Integrity: clients_portrait_integrity.';
+comment on function public.set_client_portrait(uuid, uuid, uuid) is
+  '0231. Sets (or, with null and an expected current image, compare-and-clears) a client''s identification portrait. Actor: an ACTIVE practitioner of the client''s studio (treatment_image_actor). Integrity: clients_portrait_integrity.';
 
 -- ---------------------------------------------------------------------------
 -- PRIVILEGES. Supabase's ALTER DEFAULT PRIVILEGES grants EXECUTE to anon,
@@ -215,11 +226,11 @@ comment on function public.set_client_portrait(uuid, uuid) is
 -- The command is then granted to authenticated only; the trigger functions are
 -- never granted back.
 -- ---------------------------------------------------------------------------
-revoke execute on function public.set_client_portrait(uuid, uuid) from public;
-revoke execute on function public.set_client_portrait(uuid, uuid) from anon;
-revoke execute on function public.set_client_portrait(uuid, uuid) from authenticated;
-revoke execute on function public.set_client_portrait(uuid, uuid) from service_role;
-grant execute on function public.set_client_portrait(uuid, uuid) to authenticated;
+revoke execute on function public.set_client_portrait(uuid, uuid, uuid) from public;
+revoke execute on function public.set_client_portrait(uuid, uuid, uuid) from anon;
+revoke execute on function public.set_client_portrait(uuid, uuid, uuid) from authenticated;
+revoke execute on function public.set_client_portrait(uuid, uuid, uuid) from service_role;
+grant execute on function public.set_client_portrait(uuid, uuid, uuid) to authenticated;
 
 revoke execute on function public.archive_treatment_image(uuid, uuid) from public;
 revoke execute on function public.archive_treatment_image(uuid, uuid) from anon;

@@ -35,6 +35,7 @@ const INSUFFICIENT_PRIVILEGE = "42501";
 const CREATE = `select public.create_treatment_image_metadata($1,$2,$3,$4,$5,$6,$7,$8,$9) id`;
 const ARCHIVE = `select public.archive_treatment_image($1,$2) id`;
 const SET = `select public.set_client_portrait($1,$2) id`;
+const CLEAR = `select public.set_client_portrait($1,null,$2) id`;
 
 let A: SeededStudio;
 let B: SeededStudio;
@@ -100,9 +101,26 @@ describe("0231: setting and clearing a portrait", () => {
     expect(res.rows[0].id).toBe(img);
     expect(await portraitOf(A.clientId)).toBe(img);
 
-    await userQuery(A.userId, SET, [A.clientId, null]);
+    await userQuery(A.userId, CLEAR, [A.clientId, img]);
     expect(await portraitOf(A.clientId)).toBeNull();
   });
+
+  it("rejects stale removal of X after replacement with Y, then clears only Y", async () => {
+    const x = await image(A, A.clientId);
+    const y = await image(A, A.clientId);
+    await userQuery(A.userId, SET, [A.clientId, x]);
+    await userQuery(A.userId, SET, [A.clientId, y]);
+    const stale = await refusal(userQuery(A.userId, CLEAR, [A.clientId, x]));
+    expect(stale.code).toBe("P0231");
+    expect(await portraitOf(A.clientId)).toBe(y);
+    // Old callers cannot omit the precondition to clear a newer choice.
+    const missing = await refusal(userQuery(A.userId, SET, [A.clientId, null]));
+    expect(missing.code).toBe("P0231");
+    expect(await portraitOf(A.clientId)).toBe(y);
+    await userQuery(A.userId, CLEAR, [A.clientId, y]);
+    expect(await portraitOf(A.clientId)).toBeNull();
+  });
+
 });
 
 describe("0231: the DATABASE refuses every wrong photo", () => {
@@ -222,7 +240,7 @@ describe("0231: archiving the portrait photo clears it, atomically", () => {
     await userQuery(A.userId, SET, [A.clientId, portrait]);
     await userQuery(A.userId, ARCHIVE, [other, A.clientId]);
     expect(await portraitOf(A.clientId)).toBe(portrait);
-    await userQuery(A.userId, SET, [A.clientId, null]);
+    await userQuery(A.userId, CLEAR, [A.clientId, portrait]);
   });
 });
 

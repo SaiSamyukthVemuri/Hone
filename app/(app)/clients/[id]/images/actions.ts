@@ -394,6 +394,7 @@ export async function archiveTreatmentImageAction(input: {
 export async function setClientPortraitAction(input: {
   clientId: string;
   imageId: string | null;
+  expectedImageId?: string | null;
 }): Promise<ImageActionResult> {
   await getCurrentPractitionerWithStudio();
   try {
@@ -401,8 +402,12 @@ export async function setClientPortraitAction(input: {
     const { error } = await supabase.rpc("set_client_portrait", {
       p_client_id: input.clientId,
       p_image_id: input.imageId,
+      p_expected_image_id: input.expectedImageId ?? null,
     });
     if (error) {
+      if (error.code === "P0231") {
+        return { ok: false, error: "The ID photo changed. Reload and try again." };
+      }
       return { ok: false, error: "Could not update the ID photo." };
     }
     revalidatePath(`/clients/${input.clientId}/images`);
