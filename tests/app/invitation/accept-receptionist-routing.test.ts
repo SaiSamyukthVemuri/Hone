@@ -7,7 +7,13 @@ import path from "node:path";
 // second desk studio goes through the receptionist chooser, never a stale
 // selection.
 
-const ctx = vi.hoisted(() => ({ result: {} as Record<string, unknown>, cleared: 0, adminCleared: 0, fulfilled: 0 }));
+const ctx = vi.hoisted(() => ({
+  result: {} as Record<string, unknown>,
+  user: { id: "user-1" } as { id: string } | null,
+  rpc: vi.fn(),
+  rpcError: null as { code: string; message: string } | null,
+  cleared: 0, adminCleared: 0, fulfilled: 0,
+}));
 
 vi.mock("next/navigation", () => ({
   redirect: (to: string) => {
@@ -15,10 +21,10 @@ vi.mock("next/navigation", () => ({
   },
 }));
 vi.mock("@/lib/supabase/server", () => ({
-  createClient: async () => ({ auth: { getUser: async () => ({ data: { user: { id: "user-1" } } }) } }),
+  createClient: async () => ({ auth: { getUser: async () => ({ data: { user: ctx.user } }) } }),
 }));
 vi.mock("@/lib/supabase/admin-server", () => ({
-  createAdminClient: () => ({ rpc: async () => ({ data: ctx.result, error: null }) }),
+  createAdminClient: () => ({ rpc: ctx.rpc }),
 }));
 vi.mock("@/lib/supabase/selected-studio", () => ({
   clearSelectedStudioId: async () => {
@@ -49,6 +55,10 @@ const destination = (result: Record<string, unknown>) => {
 };
 
 beforeEach(() => {
+  ctx.user = { id: "user-1" };
+  ctx.rpcError = null;
+  ctx.rpc.mockReset();
+  ctx.rpc.mockImplementation(async () => ({ data: ctx.result, error: ctx.rpcError }));
   ctx.cleared = 0;
   ctx.adminCleared = 0;
   ctx.fulfilled = 0;
@@ -86,5 +96,45 @@ describe("the auth callback routes a reconciled receptionist the same way", () =
     expect(desk).toBeGreaterThan(-1);
     expect(ROUTE).toMatch(/dest = status\.choose_studio === true \? "\/front-desk\/select" : "\/front-desk";/);
     expect(desk).toBeLessThan(ROUTE.indexOf("Newly a multi-studio user"));
+  });
+});
+
+
+describe("HON-44 invitation acceptance authority", () => {
+  it("ignores forged identity, role and studio; acceptance receives only the authenticated user", async () => {
+    ctx.result = { status: "linked", role: "receptionist", choose_studio: false };
+    const fd = consented();
+    for (const [key, value] of Object.entries({ user_id: "foreign-user", email: "forged@harness.local", studio_id: "foreign-studio", role: "owner" })) fd.set(key, value);
+    await expect(acceptInvitationAction(null, fd)).rejects.toThrow("REDIRECT:/front-desk");
+    expect(ctx.rpc).toHaveBeenCalledTimes(1);
+    expect(ctx.rpc).toHaveBeenCalledWith("admin_accept_pending_invitation", { p_user_id: "user-1" });
+    expect(ctx.fulfilled).toBe(0);
+  });
+
+  it("requires explicit consent before any privileged acceptance call", async () => {
+    const result = await acceptInvitationAction(null, new FormData());
+    expect(result?.error).toContain("Please confirm");
+    expect(ctx.rpc).not.toHaveBeenCalled();
+  });
+
+  it("a signed-out request cannot accept an invitation or supply its own user", async () => {
+    ctx.user = null;
+    const fd = consented();
+    fd.set("user_id", "foreign-user");
+    await expect(acceptInvitationAction(null, fd)).rejects.toThrow("REDIRECT:/login");
+    expect(ctx.rpc).not.toHaveBeenCalled();
+  });
+
+  it("a failed acceptance never redirects on returned role data or echoes database details", async () => {
+    ctx.result = { status: "linked", role: "owner" };
+    ctx.rpcError = { code: "42501", message: "private database detail" };
+    expect(await acceptInvitationAction(null, consented())).toEqual({ error: "Something went wrong. Please try again." });
+    expect(ctx.fulfilled).toBe(0);
+  });
+
+  it.each([ ["no_invitation", "/no-access"], ["ambiguous", "/no-access?reason=invite-ambiguous"] ])("refuses %s even if a role is returned", async (status, expected) => {
+    expect(await destination({ status, role: "owner" })).toBe(expected);
+    expect(ctx.adminCleared).toBe(1);
+    expect(ctx.fulfilled).toBe(0);
   });
 });
