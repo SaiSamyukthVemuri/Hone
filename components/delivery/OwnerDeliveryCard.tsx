@@ -160,7 +160,7 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
         </p>
         {incidentsTruncated && (
           <p className="text-xs text-amber-800 dark:text-amber-300">
-            Showing the most recent {OWNER_INCIDENT_CAP} incidents. Older incidents, if any, are not listed.
+            Showing up to {OWNER_INCIDENT_CAP} incidents, with open incidents first, newest activity first within each group. Other incidents, if any, are not listed.
           </p>
         )}
         <p className="text-xs text-neutral-500">
@@ -177,7 +177,7 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
 
       {concernsTruncated && (
         <p className="text-xs text-amber-800 dark:text-amber-300">
-          Showing the most recent {OWNER_CONCERN_CAP} reports. Older reports, if any, are not listed.
+          Showing up to {OWNER_CONCERN_CAP} reports, with open reports first, newest reports first within each group. Other reports, if any, are not listed.
         </p>
       )}
 
