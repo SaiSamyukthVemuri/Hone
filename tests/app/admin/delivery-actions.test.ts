@@ -50,6 +50,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
     // The conflicting-resolution path reads the STORED resolution, because the
     // command returns only a result word and never says what is on record.
     from: (table: string) => {
+      if (table === "delivery_concerns") throw new Error("42501: service_role SELECT is revoked");
       h.tableReads.push(table);
       const chain = {
         select: () => chain,
@@ -332,10 +333,14 @@ describe("repeat concern closure is verified, never mis-audited (4307824368)", (
   it("a different recorded resolution is non-success and not-applied", async () => {
     h.email = "support@hone.test";
     h.answer = { data: "already_closed", error: null };
-    h.storedResolution = { resolution: "explained" };
+    h.byFn.support_delivery_concerns = { data: [
+      { concern_id: "another-id", state: "closed", resolution: "provider_issue" },
+      { concern_id: ID, state: "closed", resolution: "explained" },
+    ], error: null };
     await expect(closeDeliveryConcernAction(form({ concern_id: ID, resolution: "provider_issue" })))
       .rejects.toThrow('Already closed as "explained". Your resolution was not applied.');
-    expect(h.tableReads).toEqual(["delivery_concerns"]);
+    expect(h.tableReads).toEqual([]);
+    expect(h.rpcCalls).toContainEqual(["support_delivery_concerns", { p_include_closed: true }]);
     expect(h.audits[0]).toMatchObject({ outcome: "failed", metadata: {
       result: "already_closed_not_applied", applied: false, recorded_resolution: "explained",
     } });
@@ -344,16 +349,37 @@ describe("repeat concern closure is verified, never mis-audited (4307824368)", (
   it("the same recorded resolution stays idempotent success", async () => {
     h.email = "support@hone.test";
     h.answer = { data: "already_closed", error: null };
-    h.storedResolution = { resolution: "provider_issue" };
+    h.byFn.support_delivery_concerns = { data: [{ concern_id: ID, state: "closed", resolution: "provider_issue" }], error: null };
     await closeDeliveryConcernAction(form({ concern_id: ID, resolution: "provider_issue" }));
     expect(h.audits[0]).toMatchObject({ outcome: "succeeded" });
   });
   it("an unreadable recorded resolution cannot prove success", async () => {
     h.email = "support@hone.test";
     h.answer = { data: "already_closed", error: null };
-    h.storedResolution = null;
+    h.byFn.support_delivery_concerns = { data: null, error: { code: "42501" } };
     await expect(closeDeliveryConcernAction(form({ concern_id: ID, resolution: "provider_issue" })))
       .rejects.toThrow("could not be verified");
     expect(h.audits[0]).toMatchObject({ outcome: "failed", metadata: { applied: false, recorded_resolution: null } });
   });
 });
+
+
+it.each(["omitted", "wrong-id", "open", "bad-shape", "error-with-row"])(
+  "the granted concern support read %s cannot prove idempotent closure (4310061418)", async (mode) => {
+    h.email = "support@hone.test";
+    h.answer = { data: "already_closed", error: null };
+    const row = { concern_id: mode === "wrong-id" ? "another-id" : ID,
+      state: mode === "open" ? "open" : "closed", resolution: "provider_issue" };
+    h.byFn.support_delivery_concerns = {
+      data: mode === "omitted" ? [] : mode === "bad-shape" ? { unexpected: true } : [row],
+      error: mode === "error-with-row" ? { code: "42501" } : null,
+    };
+    await expect(closeDeliveryConcernAction(form({ concern_id: ID, resolution: "provider_issue" })))
+      .rejects.toThrow("could not be verified");
+    expect(h.tableReads).toEqual([]);
+    expect(h.audits[0]).toMatchObject({ outcome: "failed", metadata: {
+      applied: false, recorded_resolution: null,
+    } });
+    expect(h.audits[0]!.metadata).not.toHaveProperty("resolution");
+  },
+);

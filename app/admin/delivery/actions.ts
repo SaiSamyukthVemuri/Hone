@@ -169,12 +169,22 @@ export async function closeDeliveryConcernAction(formData: FormData): Promise<vo
   const result = typeof data === "string" ? data : null;
   let recordedResolution: string | null = null;
   if (!error && result === "already_closed") {
-    const { data: row, error: readError } = await admin
-      .from("delivery_concerns")
-      .select("resolution")
-      .eq("id", concernId)
-      .maybeSingle();
-    if (!readError && typeof row?.resolution === "string") recordedResolution = row.resolution;
+    // 0221 revokes direct service-role SELECT. Reuse the granted support read;
+    // its 300-row/30-day window may omit this concern, which stays unverified.
+    try {
+      const { data: rows, error: readError } = await admin.rpc("support_delivery_concerns", {
+        p_include_closed: true,
+      });
+      const matches = Array.isArray(rows)
+        ? rows.filter((row) => row?.concern_id === concernId && row.state === "closed")
+        : [];
+      if (!readError && matches.length === 1 && typeof matches[0].resolution === "string" &&
+          CONCERN_RESOLUTIONS.has(matches[0].resolution)) {
+        recordedResolution = matches[0].resolution;
+      }
+    } catch {
+      // Read failure cannot prove that the requested resolution is on record.
+    }
   }
   const repeatNotApplied = !error && result === "already_closed" && recordedResolution !== resolution;
   const succeeded = !error && (result === "closed" || (result === "already_closed" && !repeatNotApplied));
