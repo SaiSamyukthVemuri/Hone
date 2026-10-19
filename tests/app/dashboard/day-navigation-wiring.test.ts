@@ -130,7 +130,7 @@ describe("OFF TODAY THE PAGE ASKS NO HISTORY QUESTION — the load-bearing rule"
     for (const claim of [
       "New client · No charted history yet",
       "Remember: {workflow.remember}",
-      "Latest setup:",
+      "Latest recorded setup:",
       "workflow.missingRecords.length > 0",
     ]) {
       expect(block, claim).toContain(claim);

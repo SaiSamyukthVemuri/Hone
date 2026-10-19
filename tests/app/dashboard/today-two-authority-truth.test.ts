@@ -83,7 +83,7 @@ describe("Today never contradicts itself about the relationship", () => {
 
   it("the whole chain is ordered unavailable -> new -> silent -> history", () => {
     // ONE regex over the real chain, so the absence copy in the last arm
-    // ("No watch/plan note.", "Latest setup: ...") is provably unreachable
+    // ("No watch/plan note.", "Latest recorded setup: ...") is provably unreachable
     // while `workflow.unavailable` is true.
     expect(CODE).toMatch(
       /\{workflow\.unavailable \? \([\s\S]*?\) : !workflow\.hasHistory &&\s*!prepSummary\.hasTreatment &&\s*!prepSummary\.unavailable \? \([\s\S]*?\) : !workflow\.hasHistory \? \(\s*null\s*\) : \(/,
@@ -91,7 +91,7 @@ describe("Today never contradicts itself about the relationship", () => {
     const chain = CODE.slice(CODE.indexOf("{workflow.unavailable ? ("));
     const historyArm = chain.indexOf(") : !workflow.hasHistory ? (");
     expect(historyArm).toBeGreaterThan(-1);
-    for (const claim of ["No watch/plan note.", "Latest setup:"]) {
+    for (const claim of ["No watch/plan note.", "Latest recorded setup:"]) {
       expect(chain.indexOf(claim)).toBeGreaterThan(historyArm);
     }
   });

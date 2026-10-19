@@ -642,7 +642,7 @@ export default async function ClientCheatSheetPage({
         const { data: intelBlocks, error: intelBlocksError } = await supabaseForIntel
           .from("session_blocks")
           .select(
-            "id, session_id, primary_area, side, block_name, mode, apilus_modality, energy_level, machine_frequency, probe_label, minutes_performed, tolerance_rating, reaction_type, caution_for_next_session, caution_note, electrolysis_entries(hairs_treated, observation_chips, deleted_at)",
+            "id, session_id, sort_order, primary_area, side, block_name, mode, apilus_modality, energy_level, machine_frequency, probe_label, probe_lot_number, probe_lot_confirmed, minutes_performed, tolerance_rating, reaction_type, caution_for_next_session, caution_note, electrolysis_entries(hairs_treated, observation_chips, deleted_at)",
           )
           .eq("studio_id", studio.id)
           .in(

@@ -121,7 +121,7 @@ function runSuite(label: string, viewport: { width: number; height: number }, is
 
       await test.step("4+6. latest setup once; intake and charting stated once", async () => {
         await expect(
-          page.locator("span").filter({ hasText: /^Latest setup: / }),
+          page.locator("span").filter({ hasText: /^Latest recorded setup: / }),
         ).toHaveCount(1);
         // No generic record-count line beside the specific chips.
         await expect(page.getByText(/^Records: \d+ reminder/)).toHaveCount(0);

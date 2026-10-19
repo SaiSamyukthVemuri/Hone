@@ -208,11 +208,23 @@ function injectReadError(target: { summary?: boolean; intel?: boolean }): () => 
           : (input as Request).url;
     if (url.includes("/rest/v1/session_blocks")) {
       const dec = decodeURIComponent(url);
-      // The two reads are told apart by their select list.
-      const hit = dec.includes("sort_order")
-        ? target.summary
-        : dec.includes("machine_frequency")
-          ? target.intel
+      // The two reads are told apart by a column UNIQUE to each select, and
+      // the intelligence one is tested FIRST.
+      //
+      // `sort_order` used to stand for "summary" and no longer discriminates:
+      // the intelligence read now selects it too, as the deterministic
+      // intra-session tiebreak for choosing an area's latest block. While it was
+      // the first branch, the intelligence read matched "summary", so targeting
+      // the summary failed BOTH reads and targeting the intelligence read failed
+      // neither — the fault injector silently stopped injecting what it named.
+      //
+      // `machine_frequency` appears only in the intelligence select and
+      // `custom_area_detail` only in the summary select, so each branch now
+      // keys on a column the other read does not ask for.
+      const hit = dec.includes("machine_frequency")
+        ? target.intel
+        : dec.includes("custom_area_detail")
+          ? target.summary
           : false;
       if (hit) {
         return new Response(

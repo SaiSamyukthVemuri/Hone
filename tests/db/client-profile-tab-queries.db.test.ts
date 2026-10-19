@@ -201,7 +201,7 @@ const TAB_EXCLUSIVE: Record<string, string> = {
 
 const SESSION_BLOCK_PROJECTIONS = [
   "id,session_id,sort_order,block_name,primary_area,side,custom_area_detail,mode,apilus_modality,energy_level,minutes_performed,probe_label,probe_lot_number,tolerance_rating,reaction_type,reaction_notes,caution_for_next_session,caution_note,electrolysis_entries(observation_chips,deleted_at)",
-  "id,session_id,primary_area,side,block_name,mode,apilus_modality,energy_level,machine_frequency,probe_label,minutes_performed,tolerance_rating,reaction_type,caution_for_next_session,caution_note,electrolysis_entries(hairs_treated,observation_chips,deleted_at)",
+  "id,session_id,sort_order,primary_area,side,block_name,mode,apilus_modality,energy_level,machine_frequency,probe_label,probe_lot_number,probe_lot_confirmed,minutes_performed,tolerance_rating,reaction_type,caution_for_next_session,caution_note,electrolysis_entries(hairs_treated,observation_chips,deleted_at)",
 ];
 
 let clientId = "";
