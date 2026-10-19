@@ -53,6 +53,7 @@ const incident = (over: Record<string, unknown> = {}) => ({
   last_appointment_id: APPT,
   resolved_at: null,
   resolution: null,
+  retained_failed_appointments: over.resolved_at ? [] : [{ appointment_id: APPT, last_reason: null, claimed_at: "2026-10-12T15:00:00Z" }],
   ...over,
 });
 
@@ -411,5 +412,54 @@ describe("confirmed invalid-number refusal needs studio correction (4310343000)"
         expect(describeIncident({ ...row, last_reason: "twilio_21211" })).toEqual(describeIncident({ ...row, last_reason: null }));
       }
     }
+  });
+});
+
+
+describe("retained-only partial appointment projection", () => {
+  const second = "11111111-1111-4111-8111-111111111111";
+  const link = (appointment_id = APPT, last_reason: string | null = null) => ({ appointment_id, last_reason, claimed_at: "2026-10-12T15:00:00Z" });
+  it("reaches both appointments with each attempt's own classification, not the latest aggregate reason", async () => {
+    h.answer = { data: [incident({ channel: "sms", failure_class: "refused", last_reason: null,
+      retained_failed_appointments: [link(APPT, "twilio_21211"), link(second)] })], error: null };
+    const html = await render();
+    expect(html).toContain(`/calendar/${APPT}`);
+    expect(html).toContain(`/calendar/${second}`);
+    expect(html).toContain("invalid mobile number");
+    expect(html).toContain("Nothing to change on your side");
+    expect(html).toContain("Partial view: up to 200 appointment links");
+    expect(html).toContain("not a complete delivery history");
+    expect(html).toContain("for open problems only");
+    expect(html).toContain("Resolved problems have no links in this view");
+    expect(html).toContain("Latest retained failed attempt");
+    expect(html.match(/href=/g)).toHaveLength(2);
+  });
+  it("does not add the aggregate latest appointment outside the bounded projection", async () => {
+    h.answer = { data: [incident({ last_appointment_id: second, retained_failed_appointments: [link()] })], error: null };
+    expect(await render()).not.toContain(`/calendar/${second}`);
+    h.answer = { data: [incident({ retained_failed_appointments: [] })], error: null };
+    const html = await render();
+    expect(html).toContain("No retained appointment links are included");
+    expect(html).not.toContain("href=");
+    expect(html).toContain("1 open delivery problem shown.");
+  });
+  it.each([undefined, null, {}, [link("invalid")], [link(), link()], [{ ...link(), claimed_at: "bad" }], [{ ...link(), last_reason: "raw provider text" }]])("fails closed on missing or malformed projection %j", async (projection) => {
+    h.answer = { data: [incident({ retained_failed_appointments: projection })], error: null };
+    expect(await render()).toContain("Delivery status is unavailable");
+  });
+  it("enforces the global 200-link bound across groups", async () => {
+    h.answer = { data: Array.from({ length: 201 }, (_, i) => incident({ incident_id: String(i) })), error: null };
+    expect(await render()).toContain("Delivery status is unavailable");
+  });
+});
+
+
+describe("retained reason classification never displays provider text", () => {
+  it.each(["provider_refused", "twilio_21211_extra", "raw provider text: +15555550123"])("uses safe generic copy for unknown/raw %s", (last_reason) => {
+    const row = { channel: "sms" as const, purpose: "appointment_confirmation", failure_class: "refused" as const, last_reason };
+    const result = describeIncident(row);
+    expect(result).toEqual(describeIncident({ ...row, last_reason: null }));
+    expect(result.owner).toBe("hone");
+    expect(JSON.stringify(result)).not.toContain(last_reason);
   });
 });

@@ -14,6 +14,25 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
+## Current state (verified 2026-10-19, post-0212 apply; hosted `0212`; repo `0236`; `0213`–`0236` AUTHORED AND PENDING, contiguous, in that order)
+
+> **CURRENT RELATIONSHIP: repo > hosted.** Hosted migration history remains recorded through `0212`; the repository/evidence candidate contains the contiguous pending train `0213`–`0236`. Historical apply entries remain intact below and are not rewritten by this current relationship.
+>
+> **0236 IS AUTHORED AND PENDING on Team #846**, branch `feat/delivery-visibility-02`, published code at `84ff6ba905fedf5eb2ea1de0312856a4196ff325` (includes `a9fd08f98c61b93347b9e5445ef62d9cd6ad095b`). Its retained-failure view returns up to 200 still-retained failed appointment links with reason classifications through the existing owner RPC and studio authorization. It is partial history, not a reconstruction. It is not applied, merged, or release authorization.
+>
+> **INTEGRATED EVIDENCE CANDIDATE:** this existing candidate composes #846 `0215` and `0236` with the existing authorized dependency train `0213`–`0235`. `0234_client_self_service_controls.sql` is Team HON-47; held Machines #920's alternative claim remains excluded. Frozen `0223` remains unchanged. No migration was fabricated and hosted state did not change.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0212** (`0212_email_delivery_events.sql`), applied 2026-10-12; history preserved. |
+| **Repo migration max** | **0236** (`0236_delivery_incident_retained_failures.sql`), source-only and pending. |
+| **Remote-only migrations** | **None recorded** by canonical hosted migration state. |
+| **Pending migrations** | **0213–0236** (`0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`, `0229`, `0230`, `0231`, `0232`, `0233`, `0234`, `0235`, `0236`), contiguous in the integrated candidate; not applied. |
+| **Next free number** | Next free number is **0237** (based on integrated candidate filenames; not claimed). |
+| **Project ref** | `alhhybgqdmcdyzpybykj` (Hone production project). |
+
+## Previous state (historical records follow; individual apply evidence is preserved)
+
 ## 0235 — Machines finite readings (pending hosted apply, 2026-10-19)
 
 OPS allocated 0235 after a fresh cross-ref/worktree/open-PR census. It promotes
@@ -28,7 +47,7 @@ full-chain reset or browser proof; no migration-history entry was fabricated.
 See [the scoped proof](../reviews/hon8-0235-db-proof-2026-10-19.md). Full train order
 remains the existing pending train, HON-47 0234, then 0235; it is not apply authority.
 
-## Current state (verified 2026-10-18, post-0212 apply; hosted `0212`; `0213`–`0235` AUTHORED AND PENDING, contiguous, in that order)
+## Previous state (verified 2026-10-18, post-0212 apply; hosted `0212`; `0213`–`0235` AUTHORED AND PENDING, contiguous, in that order)
 
 > **0232 IS AUTHORED AND PENDING, on `feat/fett-capture-stage` only** (FETT photos, HON-43), stacked on `feat/fett-client-portrait` (0231). It applies after `0231`.
 > `0232_treatment_image_capture_stage.sql` adds ONE nullable column, `treatment_images.capture_stage` (`check (capture_stage in ('before', 'after'))`, NULL = unlabelled, no backfill), ONE new command, and ONE trigger on `treatment_images`; it writes no rows.
