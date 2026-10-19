@@ -293,7 +293,7 @@ describe("the capped incident list is not presented as a total (Codex P2 4307533
     };
     const { default: Page } = await import("@/app/admin/delivery/page");
     const html = renderToStaticMarkup(await Page());
-    expect(html).toContain("Showing the most recent 300 concerns. Older concerns are not listed.");
+    expect(html).toContain("Showing the most recent 300 concerns. Older concerns, if any, are not listed.");
     expect(html).toContain("shown");
     expect(html).not.toMatch(/Client says not received \(\d+ open\)/);
   });
@@ -324,5 +324,36 @@ describe("the support queue page", () => {
     expect(PAGE).toMatch(/outcomesRes\.error \|\| !Array\.isArray\(outcomesRes\.data\) \? null/);
     expect(PAGE).toContain("Treat it as unknown, not as no events.");
     expect(PAGE).not.toContain("outcomesRes.data ?? []");
+  });
+});
+
+
+describe("repeat concern closure is verified, never mis-audited (4307824368)", () => {
+  it("a different recorded resolution is non-success and not-applied", async () => {
+    h.email = "support@hone.test";
+    h.answer = { data: "already_closed", error: null };
+    h.storedResolution = { resolution: "explained" };
+    await expect(closeDeliveryConcernAction(form({ concern_id: ID, resolution: "provider_issue" })))
+      .rejects.toThrow('Already closed as "explained". Your resolution was not applied.');
+    expect(h.tableReads).toEqual(["delivery_concerns"]);
+    expect(h.audits[0]).toMatchObject({ outcome: "failed", metadata: {
+      result: "already_closed_not_applied", applied: false, recorded_resolution: "explained",
+    } });
+    expect(h.audits[0]!.metadata).not.toHaveProperty("resolution");
+  });
+  it("the same recorded resolution stays idempotent success", async () => {
+    h.email = "support@hone.test";
+    h.answer = { data: "already_closed", error: null };
+    h.storedResolution = { resolution: "provider_issue" };
+    await closeDeliveryConcernAction(form({ concern_id: ID, resolution: "provider_issue" }));
+    expect(h.audits[0]).toMatchObject({ outcome: "succeeded" });
+  });
+  it("an unreadable recorded resolution cannot prove success", async () => {
+    h.email = "support@hone.test";
+    h.answer = { data: "already_closed", error: null };
+    h.storedResolution = null;
+    await expect(closeDeliveryConcernAction(form({ concern_id: ID, resolution: "provider_issue" })))
+      .rejects.toThrow("could not be verified");
+    expect(h.audits[0]).toMatchObject({ outcome: "failed", metadata: { applied: false, recorded_resolution: null } });
   });
 });

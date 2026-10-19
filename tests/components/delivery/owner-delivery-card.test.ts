@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { describeIncident, purposeLabel } from "@/lib/delivery/incidents";
@@ -56,7 +56,10 @@ const incident = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+beforeEach(() => { vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-19T12:00:00Z")); });
+
 afterEach(() => {
+  vi.restoreAllMocks();
   h.answer = { data: [], error: null };
   c.answer = { data: [], error: null };
   h.calls = [];
@@ -177,6 +180,7 @@ describe("the summary claim is derived from EVERY category (Codex P2 4307428928)
     ledger_status_at_report: "delivered",
     reported_at: "2026-10-12T16:00:00Z",
     state: "open",
+    closed_at: "2026-10-12T16:00:00Z",
     ...over,
   });
   const NONE_REPORTED = "No delivery problems reported in the last 14 days.";
@@ -250,6 +254,19 @@ describe("the summary claim is derived from EVERY category (Codex P2 4307428928)
       error: null,
     };
     expect(await render()).toContain("2 reports from your studio were closed in the last 14 days.");
+  });
+
+  it("counts only recent closed_at values in the 14-day note (4307824374)", async () => {
+    h.answer = { data: [], error: null };
+    c.answer = { data: [
+      concern({ state: "closed", closed_at: "2026-10-19T11:00:00Z" }),
+      concern({ concern_id: "older", state: "closed", closed_at: "2026-09-29T12:00:00Z" }),
+      concern({ concern_id: "boundary", state: "closed", closed_at: "2026-10-05T12:00:00Z" }),
+      concern({ concern_id: "unknown", state: "closed", closed_at: null }),
+    ], error: null };
+    const html = await render();
+    expect(html).toContain("1 report from your studio was closed in the last 14 days.");
+    expect(html).not.toContain("4 reports");
   });
 
   it("CONTROL: a genuinely empty fortnight still says nothing was reported", async () => {

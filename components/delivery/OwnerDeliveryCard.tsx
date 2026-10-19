@@ -11,6 +11,7 @@ type OwnerConcern = {
   ledger_status_at_report: string;
   reported_at: string;
   state: string;
+  closed_at: string | null;
 };
 
 // DELIVERY-VISIBILITY-02 — the studio owner's "Message delivery" card.
@@ -126,10 +127,14 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
   const incidentsTruncated = rows.length >= OWNER_INCIDENT_CAP;
   // Mirrors `resolvedNote` for concerns, so a fortnight holding only a CLOSED
   // concern says what happened instead of denying it.
+  // The RPC retains 30 days; only closures within this note's 14-day window count.
+  const recentClosedConcerns = closedConcerns.filter((c) =>
+    c.closed_at !== null && Date.parse(c.closed_at) > Date.now() - 14 * 24 * 60 * 60 * 1000,
+  );
   const closedConcernNote =
-    closedConcerns.length === 0
+    recentClosedConcerns.length === 0
       ? ""
-      : ` ${closedConcerns.length} ${closedConcerns.length === 1 ? "report" : "reports"} from your studio ${closedConcerns.length === 1 ? "was" : "were"} closed in the last 14 days.`;
+      : ` ${recentClosedConcerns.length} ${recentClosedConcerns.length === 1 ? "report" : "reports"} from your studio ${recentClosedConcerns.length === 1 ? "was" : "were"} closed in the last 14 days.`;
   const resolvedNote =
     resolvedCount === 0
       ? ""
@@ -172,7 +177,7 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
 
       {concernsTruncated && (
         <p className="text-xs text-amber-800 dark:text-amber-300">
-          Showing the most recent {OWNER_CONCERN_CAP} reports. Older reports are not listed.
+          Showing the most recent {OWNER_CONCERN_CAP} reports. Older reports, if any, are not listed.
         </p>
       )}
 
