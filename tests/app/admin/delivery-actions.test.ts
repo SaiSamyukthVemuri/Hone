@@ -49,21 +49,19 @@ vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ({
     rpc: (fn: string, args: unknown) => {
       h.rpcCalls.push([fn, args]);
+      if (fn === "support_delivery_incidents" && h.answer.data === "already_resolved" && !h.byFn[fn]) {
+        if (h.readThrows) throw new Error("fake read failure");
+        return Promise.resolve({
+          data: h.storedResolution ? [{ incident_id: ID, resolved_at: "2026-10-19T00:00:00Z", ...h.storedResolution }] : [],
+          error: h.readError,
+        });
+      }
       return Promise.resolve(h.byFn[fn] ?? h.answer);
     },
-    // The conflicting-resolution path reads the STORED resolution, because the
-    // command returns only a result word and never says what is on record.
+    // Match SQL's service-role table boundary; support RPCs are the read seam.
     from: (table: string) => {
       h.tableReads.push(table);
-      const chain = {
-        select: () => chain,
-        eq: () => chain,
-        maybeSingle: async () => {
-          if (h.readThrows) throw new Error("fake read failure");
-          return { data: h.storedResolution, error: h.readError };
-        },
-      };
-      return chain;
+      throw new Error("42501: direct delivery table SELECT is revoked");
     },
   }),
 }));
@@ -149,7 +147,8 @@ describe("a conflicting second resolution is not a success (Codex P2 4307695064)
       resolveDeliveryIncidentAction(form({ incident_id: ID, resolution: "fixed" })),
     ).rejects.toThrow(/already resolved as "acknowledged"/i);
 
-    expect(h.tableReads, "it must read what IS recorded").toContain("delivery_incidents");
+    expect(h.tableReads).toEqual([]);
+    expect(h.rpcCalls).toContainEqual(["support_delivery_incidents", { p_include_resolved: true }]);
     const audit = h.audits[0]!;
     expect(audit).toMatchObject({
       outcome: "failed",
@@ -286,3 +285,18 @@ it.each(["missing", "read-error", "throw", "invalid-resolution"])(
     expect(h.audits[0]!.metadata).not.toHaveProperty("resolution");
   },
 );
+
+
+it.each(["wrong-id", "open", "bad-shape"])("support incident read %s is unverified", async (mode) => {
+  h.email = "support@hone.test";
+  h.answer = { data: "already_resolved", error: null };
+  h.byFn.support_delivery_incidents = { data: mode === "bad-shape" ? {} : [{
+    incident_id: mode === "wrong-id" ? "another-id" : ID,
+    resolved_at: mode === "open" ? null : "2026-10-19T00:00:00Z", resolution: "fixed",
+  }], error: null };
+  await expect(resolveDeliveryIncidentAction(form({ incident_id: ID, resolution: "fixed" })))
+    .rejects.toThrow("could not be verified");
+  expect(h.audits[0]).toMatchObject({ outcome: "failed", metadata: { applied: false, recorded_resolution: null } });
+  expect(h.audits[0]!.metadata).not.toHaveProperty("resolution");
+  expect(h.tableReads).toEqual([]);
+});
