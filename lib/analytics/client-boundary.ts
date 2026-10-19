@@ -280,8 +280,8 @@ function sanitizeKey(key: string, taken: Record<string, unknown>): string {
  *   * strings: URL keys as URLs, campaign keys by value, path-like strings
  *     lose ids, all lose token paths; over the depth limit, "[redacted]";
  *   * containers over the depth limit: "[depth-limited]", never the original;
- *   * URL instances: by what they ARE, before toJSON: http(s) sanitized as a
- *     URL, any other scheme "[url]"; non-http(s) URL strings likewise "[url]";
+ *   * URL instances: withheld as "[url]" without reading their properties;
+ *     non-http(s) URL strings likewise "[url]";
  *   * Date: sanitized as its ISO string through intrinsic methods only;
  *   * every other object with a toJSON, and Map / Set / class instances /
  *     any non-plain prototype: "[unsupported]", WITHOUT calling toJSON
@@ -306,23 +306,10 @@ function sanitizeProps(value: unknown, key: string, depth: number): unknown {
   }
   if (typeof value !== "object") return undefined;
   if (depth > MAX_DEPTH) return "[depth-limited]";
-  // A URL INSTANCE is handled as a URL by what it IS, before toJSON, whatever
-  // its scheme (Codex 4309131383): http(s) is sanitized as a marketing URL,
-  // every other scheme becomes the fixed placeholder.
-  if (value instanceof URL) {
-    const href = Object.getOwnPropertyDescriptor(URL.prototype, "href")!.get!.call(value) as string;
-    const url = new URL(href);
-    // The marketing URL builder retains origin verbatim. Withhold objects
-    // whose parsed hostname carries a record id rather than serializing it.
-    if (redactIdsInValue(url.hostname) !== url.hostname) return NON_HTTP_URL_PLACEHOLDER;
-    // URL objects previously exposed no fields. Do not introduce email-bearing
-    // paths, including encoded forms; uncertain decoding also fails closed.
-    const path = decodeBounded(url.pathname);
-    if (path === null || path.includes("@")) return NON_HTTP_URL_PLACEHOLDER;
-    return url.protocol === "http:" || url.protocol === "https:"
-      ? sanitizeMarketingUrl(url.href)
-      : NON_HTTP_URL_PLACEHOLDER;
-  }
+  // URL objects previously exposed no fields. Do not introduce serialization
+  // of arbitrary hidden PII in their origin, path or retained attribution.
+  // SDK string URLs retain the separately reviewed URL/campaign rules.
+  if (value instanceof URL) return NON_HTTP_URL_PLACEHOLDER;
   // Never dispatch through instance methods: even intrinsic toJSON calls an
   // overridable toISOString. Read the internal time and serialize a fresh Date.
   if (value instanceof Date) {

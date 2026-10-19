@@ -146,7 +146,7 @@ describe("sanitizeProps fails closed on every branch", () => {
     leakFree(out.properties);
   });
 
-  it("Date and URL are serialized; a custom toJSON object is not (see 4309252682 below)", () => {
+  it("Date is serialized; URL and custom toJSON objects are withheld", () => {
     const out = pageview({
       when: new Date("2026-10-18T00:00:00.000Z"),
       link: new URL(`${HOST}/clients/${CLIENT}`),
@@ -217,6 +217,30 @@ describe("no custom browser PostHog properties exist (the premise of keeping bar
 // and values are judged on their DECODED text, never on a raw-text signal.
 // ===========================================================================
 describe("URL-shaped values and decode-first decisions", () => {
+  it.each(UTM_KEYS)("withholds URL-object attribution under %s without exposing hidden PII", (key) => {
+    const link = new URL(`${HOST}/pricing?${key}=patient%40example.com`);
+    const out = guardBrowserEvent({
+      event: "$pageview",
+      properties: { $current_url: `${HOST}/pricing`, link, nested: [link] },
+      $set: { link },
+      $set_once: { link },
+    })!;
+    expect(out.properties).toMatchObject({ link: "[url]", nested: ["[url]"] });
+    expect(out.$set.link).toBe("[url]");
+    expect(out.$set_once.link).toBe("[url]");
+    expect(oracleDecode(JSON.stringify(out))).not.toContain("patient@example.com");
+  });
+
+  it("preserves legitimate freeform string campaign attribution", () => {
+    const campaign = "spring sale /offer?variant=A#hero";
+    const p = pageview({
+      $current_url: `${HOST}/pricing?utm_campaign=${encodeURIComponent(campaign)}`,
+      utm_campaign: campaign,
+    }).properties as Record<string, string>;
+    expect(p.utm_campaign).toBe(campaign);
+    expect(new URL(p.$current_url).searchParams.get("utm_campaign")).toBe(campaign);
+  });
+
   it.each([CLIENT, CLIENT.toUpperCase(), `prefix${CLIENT}suffix`, CLIENT.replace(/-/g, "%2D"), `%36${CLIENT.slice(1)}`])(
     "withholds URL objects with a record id in the parsed hostname: %s", (host) => {
       const link = new URL(`https://${host}.example.com/pricing?utm_campaign=summer#hero`);
@@ -233,9 +257,9 @@ describe("URL-shaped values and decode-first decisions", () => {
     },
   );
 
-  it("retains an id-free external URL origin while scrubbing its path and query", () => {
+  it("withholds even an id-free external URL object", () => {
     const p = pageview({ link: new URL(`https://docs.example.com:8443/clients/${CLIENT}?email=patient@example.com#notes`) }).properties as Record<string, unknown>;
-    expect(p.link).toBe("https://docs.example.com:8443/clients/[id]");
+    expect(p.link).toBe("[url]");
   });
 
   it.each(["patient@example.com", "patient%40example.com", "patient%2540example.com", "%252525252540"])(
@@ -249,10 +273,10 @@ describe("URL-shaped values and decode-first decisions", () => {
   // A hex digit encoded MID-UUID: no raw-text UUID survives in the key.
   const ENC_MID = CLIENT.replace("-4a5b-", "-%34a5b-");
 
-  it("a URL INSTANCE under a non-URL key: no query, no fragment, id redacted", () => {
+  it("a URL INSTANCE under a non-URL key is withheld", () => {
     const out = pageview({ link: new URL(`${HOST}/clients/${CLIENT}?email=patient@example.com#notes`) });
     const link = (out.properties as Record<string, string>).link;
-    expect(link).toBe(`${HOST}/clients/[id]`);
+    expect(link).toBe("[url]");
     expect(link).not.toMatch(/[?#@]|email/);
   });
 
@@ -331,7 +355,7 @@ describe("non-http(s) URLs fail closed to [url]", () => {
     expect((out.properties as Record<string, unknown>).note).toBe("[url]");
   });
 
-  it("ordinary values are not mistaken for URLs; http(s) URL instances still keep their shape", () => {
+  it("ordinary string values are kept; http(s) URL instances are withheld", () => {
     const own = "01928f3a-7b2c-7d4e-8f00-123456789abc";
     const out = pageview({
       $title: "Pricing: Hone",
@@ -345,7 +369,7 @@ describe("non-http(s) URLs fail closed to [url]", () => {
     expect(p.$session_id).toBe(own);
     expect(p.$raw_user_agent).toBe("Mozilla/5.0 (X11; Linux x86_64)");
     expect(p.when).toBe("2026-10-18T00:00:00.000Z");
-    expect(p.link).toBe(`${HOST}/clients/[id]`);
+    expect(p.link).toBe("[url]");
   });
 });
 
@@ -452,7 +476,7 @@ describe("http(s) URL strings are classified by parsing, not by prefix", () => {
 });
 
 // ===========================================================================
-// Codex 4309252682 (review of 0f1aa9f1): only Date and URL are serialized. An
+// Codex 4309252682 (review of 0f1aa9f1): only Date is serialized. An
 // unknown class or object with a toJSON can serialize hidden state, so it
 // becomes [unsupported] and its toJSON is never invoked.
 // ===========================================================================
@@ -494,7 +518,7 @@ describe("object serialization avoids overridden methods", () => {
     expect(override).not.toHaveBeenCalled();
   });
 
-  it("reads URL internal state without own or subclass accessors", () => {
+  it("withholds URL objects without calling own or subclass accessors", () => {
     const href = vi.fn(() => `${HOST}/patient@example.com`);
     const protocol = vi.fn(() => "mailto:");
     const raw = `${HOST}/clients/${CLIENT}?email=patient@example.com#notes`;
@@ -505,7 +529,7 @@ describe("object serialization avoids overridden methods", () => {
       get protocol() { return protocol(); }
     }
     const p = pageview({ own, subclass: new CustomURL(raw), nonHttp: new CustomURL("mailto:patient@example.com") }).properties;
-    expect(p).toMatchObject({ own: `${HOST}/clients/[id]`, subclass: `${HOST}/clients/[id]`, nonHttp: "[url]" });
+    expect(p).toMatchObject({ own: "[url]", subclass: "[url]", nonHttp: "[url]" });
     expect(href).not.toHaveBeenCalled();
     expect(protocol).not.toHaveBeenCalled();
   });
