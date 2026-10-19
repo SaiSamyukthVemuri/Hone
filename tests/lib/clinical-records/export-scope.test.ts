@@ -615,6 +615,16 @@ describe("the retired draft status is never printed (Codex P2 4307447128)", () =
 });
 
 describe("a galvanic pass never prints the writer's default pulse (Codex P1 4307447121)", () => {
+  it("a backfilled null-mode entry inherits galvanic suppression from its block (4309769366)", () => {
+    const out = (mode: "galv" | "thermo") => printed({
+      blocks: [blockOf({ mode })],
+      entries: [entryOf({ block_id: "b", mode: null, pulse_count: 1 })],
+    });
+    expect(out("galv")).toContain("Galvanic");
+    expect(out("galv")).not.toMatch(/pulse/i);
+    expect(out("thermo")).toContain("1 pulse");
+  });
+
   it("a reading-less galv pass stored with pulse_count 1 shows no pulses, on paper as on screen", () => {
     expect(printed({ entries: [entryOf({ mode: "galv", pulse_count: 1 })] })).not.toMatch(/pulse/i);
   });
