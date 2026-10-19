@@ -3,15 +3,16 @@ import { isLoopbackUrl } from "@/lib/net/loopback";
 
 import type { MachineProfile } from "./profile-contract";
 import { MACHINE_CATALOGUE } from "./catalogue";
+import { APILUS_3G_NATIVE_FIXTURES } from "./apilus-3g-fixtures";
 
 /**
- * MPX-03 — the one ACTIVE profile a demo may use, and why it cannot reach
+ * MPX-03 — local synthetic profiles for workflow proof, and why they cannot reach
  * production.
  *
  * WHY A SYNTHETIC PROFILE EXISTS AT ALL. Every real profile in the catalogue is
  * `blocked`, because no exact model's evidence is complete. A correct selection
  * UI with an empty picker cannot be demonstrated or acceptance-tested, so the
- * workflow needs exactly one profile that is active by construction rather than
+ * workflow needs synthetic profiles that are active by construction rather than
  * by an evidence review it has not passed.
  *
  * IT IS NOT A REAL MACHINE AND SAYS SO. Manufacturer "Synthetic", model "Demo
@@ -428,7 +429,7 @@ export function catalogueForRuntime(
   env: NodeJS.ProcessEnv = process.env,
 ): readonly MachineProfile[] {
   return syntheticProfileEnabled(env)
-    ? [...MACHINE_CATALOGUE, SYNTHETIC_DEMO_PROFILE, SYNTHETIC_SINGLE_PROBE]
+    ? [...MACHINE_CATALOGUE, SYNTHETIC_DEMO_PROFILE, SYNTHETIC_SINGLE_PROBE, ...APILUS_3G_NATIVE_FIXTURES]
     : MACHINE_CATALOGUE;
 }
 
