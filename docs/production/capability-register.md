@@ -247,7 +247,8 @@ currently dormant.** Do not describe it as active, syncing, or enabled.
 |---|---|---|---|---|---|---|---|---|---|
 | Photos | Private `treatment-images` bucket, service-role signed URLs, EXIF stripping (0092/0093) | Merged | ✅ applied | Deployed | Enabled | ✅ **3 `treatment_images`** all-tenant *(2026-08-23)* — 1 Willow, 2 controlled test, **0 synthetic** | ✅ | production row count | Objects are **service-role only**; no public URLs |
 | Photos | Multi-file upload + per-file validation | Merged | no migration | Deployed | Enabled | ✅ | ✅ | PR #368 | — |
-| Photos | Grid thumbnail recovery after the 60 s signed-URL expiry (FETT, HON-43, PR #929, merge `34f4800a`, deployed 2026-10-19; supersedes #913) | Merged | no migration | Deployed | Enabled | ⚠️ **not measured** | — | `GridPhoto.tsx` + `lib/images/{use-grid-photo-recovery,grid-photo-recovery,remint-controller,remint-request}.ts`: an image failure around hydration or after signed-URL expiry uses an **abortable GET** to `/api/clients/[clientId]/images/[imageId]/signed-url`, not a queued server action. A timed-out/rejected re-mint retries once per variant (thumb, then original), at most **four** requests per recovery cycle; each attempt is bounded by 8 s and aborted before retry. A definitive no-URL response ends that variant without retry. Exhaustion shows "Image not available"; late failures cannot cancel a newer attempt. The shared signer binds the image to the requested client/studio and validates the stored original path; TTL unchanged. | Storage-dependent browser proof self-skips in CI without storage-api; scoped local storage proof is recorded on #929. Passing production DB/ordinary browser jobs do not turn skipped storage cases into executed proof. Live recovery was not re-probed by this record refresh. Profile ID-photo and session-photo adoption remain unmerged train work, not deployed merely because the recovery helper supports them |
+| Photos | Ungrouped visit gallery (#907, `78c1d640`) | Merged | no migration | Deployed | Enabled | not measured live | — | Session page loads only its visit’s authorized photos. Local standalone B3 storage proof 1/1 passed at `ec6d4fea`; Vercel production Ready with hone.care alias confirmed read-only. | Human acceptance outstanding. Portrait #905 and capture-stage #908 remain unmerged; their migrations are not implied by this release. |
+| Photos | Grid thumbnail recovery after the 60 s signed-URL expiry (FETT, HON-43, PR #929, merge `34f4800a`, deployed 2026-10-19; supersedes #913) | Merged | no migration | Deployed | Enabled | ⚠️ **not measured** | — | `GridPhoto.tsx` + `lib/images/{use-grid-photo-recovery,grid-photo-recovery,remint-controller,remint-request}.ts`: an image failure around hydration or after signed-URL expiry uses an **abortable GET** to `/api/clients/[clientId]/images/[imageId]/signed-url`, not a queued server action. A timed-out/rejected re-mint retries once per variant (thumb, then original), at most **four** requests per recovery cycle; each attempt is bounded by 8 s and aborted before retry. A definitive no-URL response ends that variant without retry. Exhaustion shows "Image not available"; late failures cannot cancel a newer attempt. The shared signer binds the image to the requested client/studio and validates the stored original path; TTL unchanged. | Storage-dependent browser proof self-skips in CI without storage-api; scoped local storage proof is recorded on #929. Passing production DB/ordinary browser jobs do not turn skipped storage cases into executed proof. Live recovery was not re-probed by this record refresh. Profile ID-photo and capture-stage grouping remain unmerged train work; the ungrouped visit gallery #907 is deployed at `78c1d640`, not deployed merely because the recovery helper supports them |
 | Photos | Finalized-record photo **content** immutability | Never built | — | — | — | — | — | 0119 header | **RETIRED with finalization — see §3.** Not a later phase |
 | Exports | Per-client procedure record pull with filtered print | Merged | — | Deployed | Enabled | ⚠️ not instrumented | ✅ | PR #223 | — |
 
@@ -320,23 +321,23 @@ prospects at every measured instant.
 
 ## 15. Capabilities added since the 2026-08-23 reconciliation
 
-**165** production merges landed between `b9e0003f` and the current branch head (2026-10-19 sync, `34f4800a`; it was 164 at the 2026-10-18 sync through `f9cd9013`; it was 163 at the 2026-10-18 sync through `aaf3042b`; it was 160 at the 2026-10-17 sync through `6acea261`; it was 157 at the 2026-10-17 sync through `62ff27b2`; it was 154 at the 2026-10-17 sync through `b08845ce`; it was 152 at the 2026-10-16 sync through `0ae33bd3`; it was 150 at the 2026-10-16 sync through `1ae096e2`; it was 145 at the 2026-10-14 sync through `ce133c18`; it was 140 at the 2026-10-13 sync through `6f7281bb`, 138 at the 2026-10-12 sync through `d5efa20a`, and eighty-one at the 2026-09-21 sync through `410e5039`). That is
+**167** production merges landed between `b9e0003f` and the current branch head (2026-10-19 sync, `78c1d640`; it was 164 at the 2026-10-18 sync through `f9cd9013`; it was 163 at the 2026-10-18 sync through `aaf3042b`; it was 160 at the 2026-10-17 sync through `6acea261`; it was 157 at the 2026-10-17 sync through `62ff27b2`; it was 154 at the 2026-10-17 sync through `b08845ce`; it was 152 at the 2026-10-16 sync through `0ae33bd3`; it was 150 at the 2026-10-16 sync through `1ae096e2`; it was 145 at the 2026-10-14 sync through `ce133c18`; it was 140 at the 2026-10-13 sync through `6f7281bb`, 138 at the 2026-10-12 sync through `d5efa20a`, and eighty-one at the 2026-09-21 sync through `410e5039`). That is
 the current ancestry count and nothing more — capability was **not** re-derived over it.
 
 Over the **twenty-nine** merges through `bf6f09c4`, derived on **2026-08-30**, **Ten**
-carry a capability that belongs in this register. The other 136 merges are recorded in
+carry a capability that belongs in this register. The other 138 merges are recorded in
 [release-changelog.md](./release-changelog.md) and are **not** enumerated for capability here.
 
 **THOSE TWO NUMBERS ARE DERIVED OVER DIFFERENT SPANS, AND SAYING SO IS THE POINT.** The
-**165** is the merge ancestry through the *current* branch head, `34f4800a`. The **ten**
+**167** is the merge ancestry through the *current* branch head, `78c1d640`. The **ten**
 is **not** derived over it: it is the **2026-08-30** derivation over the twenty-nine merges
 through `bf6f09c4`, and it has not been re-run since.
 
 **This section is scoped to that dated derivation and must not be read as a current capability
-count.** The 136 merges between `bf6f09c4` and `34f4800a` are recorded row by row in
+count.** The 138 merges between `bf6f09c4` and `78c1d640` are recorded row by row in
 [release-changelog.md](./release-changelog.md), and several of them plainly ship capability —
 `#702`'s automatic card receipts and `#745`'s next-setup-step checklist among them. This register
-has **not** re-enumerated them. Re-running the capability derivation across all 165 merges
+has **not** re-enumerated them. Re-running the capability derivation across all 167 merges
 is its own lane with its own evidence; raising the number here without doing that work would
 manufacture a figure nobody derived, which is the precise failure this document exists to
 prevent.
