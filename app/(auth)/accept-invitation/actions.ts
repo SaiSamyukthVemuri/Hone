@@ -59,7 +59,11 @@ export async function acceptInvitationAction(
   if (res.status === "ambiguous") redirect("/no-access?reason=invite-ambiguous");
   if (res.status === "no_invitation") redirect("/no-access");
 
-  // A front-desk acceptance lands on the front desk, whatever other
+  if (res.status !== "linked" && res.status !== "already_linked") {
+    return { error: "Something went wrong. Please try again." };
+  }
+
+  // A front-desk acceptance defaults to the front desk, whatever other
   // memberships the person holds (STUDIO-READY-02b, Codex P2 4243953164 on
   // #850). The middleware only reroutes users with NO practitioner membership,
   // so a practitioner elsewhere would otherwise stay in the practitioner app.
@@ -68,7 +72,8 @@ export async function acceptInvitationAction(
       await clearSelectedStudioId();
       redirect("/front-desk/select");
     }
-    redirect("/front-desk");
+    // Acceptance is complete; only an allowlisted operator may use the target.
+    redirect((await fulfilAdminReturn(user.email)) ?? "/front-desk");
   }
 
   // linked / already_linked. Force the chooser for a newly multi-studio user:

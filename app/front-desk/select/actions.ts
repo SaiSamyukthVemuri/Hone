@@ -1,6 +1,8 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
+import { fulfilAdminReturn } from "@/lib/auth/admin-return";
 import { isOwnFrontDeskStudio } from "@/lib/receptionist/identity";
 import { setSelectedStudioId } from "@/lib/supabase/selected-studio";
 
@@ -12,6 +14,10 @@ export async function selectFrontDeskStudioAction(formData: FormData): Promise<v
   const studioId = formData.get("studio_id");
   if (typeof studioId !== "string" || !studioId) redirect("/front-desk/select");
   if (!(await isOwnFrontDeskStudio(studioId))) redirect("/front-desk/select");
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
   await setSelectedStudioId(studioId);
-  redirect("/front-desk");
+  // The required choice is verified and persisted before consuming the target.
+  redirect((await fulfilAdminReturn(user.email)) ?? "/front-desk");
 }

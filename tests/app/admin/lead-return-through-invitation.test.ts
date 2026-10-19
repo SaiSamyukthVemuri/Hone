@@ -17,9 +17,14 @@ const h = vi.hoisted(() => ({
   reconcile: { status: "none" } as Record<string, unknown>,
   accept: { status: "linked" } as Record<string, unknown>,
   member: true,
+  signedIn: true,
+  frontDeskRows: [] as Array<{ id: string; studio_id: string; display_name: string }>,
+  frontDeskError: false,
+  membershipFilters: [] as Array<[string, unknown]>,
   memberships: [] as Array<{ studio_id: string }>,
   jar: new Map<string, string>(),
   selectionCleared: 0,
+  selectionFails: false,
   selected: null as string | null,
   signedOut: 0,
 }));
@@ -52,6 +57,7 @@ vi.mock("@/lib/supabase/selected-studio", () => ({
     h.selectionCleared += 1;
   },
   setSelectedStudioId: async (id: string) => {
+    if (h.selectionFails) throw new Error("selection_write_failed");
     h.selected = id;
   },
 }));
@@ -59,16 +65,23 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
     auth: {
       exchangeCodeForSession: async () => ({ data: { user: { id: "u1", email: h.email } }, error: null }),
-      getUser: async () => ({ data: { user: { id: "u1", email: h.email } } }),
+      getUser: async () => ({ data: { user: h.signedIn ? { id: "u1", email: h.email } : null } }),
       signOut: async () => {
         h.signedOut += 1;
       },
     },
     rpc: async () => ({ data: h.reconcile }),
-    from: () => ({
-      select: () => ({
-        eq: () => ({ eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: h.member ? { id: "p1" } : null }) }) }) }),
-      }),
+    from: (table: string) => ({
+      select: () => {
+        const result = Object.assign(Promise.resolve({
+          data: table === "studio_receptionists" ? h.frontDeskRows : [],
+          error: table === "studio_receptionists" && h.frontDeskError ? { code: "test" } : null,
+        }), {
+          eq: (key: string, value: unknown): unknown => { h.membershipFilters.push([key, value]); return result; },
+          maybeSingle: async () => ({ data: h.member ? { id: "p1" } : null }),
+        });
+        return result;
+      },
     }),
   }),
 }));
@@ -93,7 +106,8 @@ import { GET as callback } from "@/app/(auth)/auth/callback/route";
 import { acceptInvitationAction } from "@/app/(auth)/accept-invitation/actions";
 import { signOutFromGate, switchStudioAction } from "@/app/(auth)/no-access/actions";
 import { updateSession } from "@/lib/supabase/middleware";
-import { ADMIN_RETURN_COOKIE } from "@/lib/auth/return-path";
+import { selectFrontDeskStudioAction } from "@/app/front-desk/select/actions";
+import { ADMIN_RETURN_COOKIE, ADMIN_RETURN_MAX_AGE_SECONDS } from "@/lib/auth/return-path";
 
 const ORIGIN = "https://hone.example";
 
@@ -105,9 +119,14 @@ beforeEach(() => {
   h.reconcile = { status: "none" };
   h.accept = { status: "linked" };
   h.member = true;
+  h.signedIn = true;
+  h.frontDeskRows = [{ id: "r1", studio_id: "s1", display_name: "Desk" }, { id: "r2", studio_id: "s2", display_name: "Desk" }];
+  h.frontDeskError = false;
+  h.membershipFilters = [];
   h.memberships = [];
   h.jar.clear();
   h.selectionCleared = 0;
+  h.selectionFails = false;
   h.selected = null;
   h.signedOut = 0;
 });
@@ -289,5 +308,125 @@ describe("the invitation and no-access flows are unchanged without a target", ()
     expect(await choose("s1")).toBe("/dashboard");
     h.member = false;
     expect(await choose("s9")).toBe("/no-access?reason=multiple-studios");
+  });
+});
+
+
+describe("receptionist acceptance preserves the operator's return target", () => {
+  it.each(["linked", "already_linked"])("single-desk %s consumes the target after acceptance", async (status) => {
+    h.jar.set(ADMIN_RETURN_COOKIE, LEAD);
+    h.accept = { status, role: "receptionist", choose_studio: false };
+    expect(await accept()).toBe(LEAD);
+    expect(h.jar.has(ADMIN_RETURN_COOKIE)).toBe(false);
+  });
+
+  it("multi-desk acceptance requires the desk chooser and carries the target", async () => {
+    h.jar.set(ADMIN_RETURN_COOKIE, LEAD);
+    h.accept = { status: "linked", role: "receptionist", choose_studio: true };
+    expect(await accept()).toBe("/front-desk/select");
+    expect(h.selectionCleared).toBe(1);
+    expect(h.jar.get(ADMIN_RETURN_COOKIE)).toBe(LEAD);
+  });
+
+  it("single-desk non-operator with a planted target stays on the front desk", async () => {
+    h.email = PERSON;
+    h.jar.set(ADMIN_RETURN_COOKIE, LEAD);
+    h.accept = { status: "linked", role: "receptionist", choose_studio: false };
+    expect(await accept()).toBe("/front-desk");
+    expect(h.jar.has(ADMIN_RETURN_COOKIE)).toBe(false);
+  });
+
+  it.each(["//evil.example/admin", "/settings", "/admin@evil.example"])("single-desk unsafe target %s is discarded", async (bad) => {
+    h.jar.set(ADMIN_RETURN_COOKIE, bad);
+    h.accept = { status: "linked", role: "receptionist", choose_studio: false };
+    expect(await accept()).toBe("/front-desk");
+    expect(h.jar.has(ADMIN_RETURN_COOKIE)).toBe(false);
+  });
+});
+
+
+const chooseDesk = (studioId = "s2") => {
+  const form = new FormData();
+  form.set("studio_id", studioId);
+  return redirectOf(() => selectFrontDeskStudioAction(form));
+};
+
+describe("verified front-desk choice fulfils the remembered operator target", () => {
+  it("multi-desk acceptance carries the cookie until verified choice consumes it", async () => {
+    h.jar.set(ADMIN_RETURN_COOKIE, LEAD);
+    h.accept = { status: "linked", role: "receptionist", choose_studio: true };
+    expect(await accept()).toBe("/front-desk/select");
+    expect(h.jar.get(ADMIN_RETURN_COOKIE)).toBe(LEAD);
+    expect(await chooseDesk()).toBe(LEAD);
+    expect(h.selected).toBe("s2");
+    expect(h.jar.has(ADMIN_RETURN_COOKIE)).toBe(false);
+    expect(h.membershipFilters).toContainEqual(["user_id", "u1"]);
+    expect(h.membershipFilters).toContainEqual(["active", true]);
+    expect(ADMIN_RETURN_MAX_AGE_SECONDS).toBe(900);
+  });
+
+  it("selection persistence failure keeps the target for retry", async () => {
+    h.jar.set(ADMIN_RETURN_COOKIE, LEAD);
+    h.selectionFails = true;
+    await expect(chooseDesk()).rejects.toThrow("selection_write_failed");
+    expect(h.selected).toBeNull();
+    expect(h.jar.get(ADMIN_RETURN_COOKIE)).toBe(LEAD);
+  });
+
+  it("non-member choice cannot set a studio or consume the target", async () => {
+    h.jar.set(ADMIN_RETURN_COOKIE, LEAD);
+    expect(await chooseDesk("foreign-studio")).toBe("/front-desk/select");
+    expect(h.selected).toBeNull();
+    expect(h.jar.get(ADMIN_RETURN_COOKIE)).toBe(LEAD);
+  });
+
+  it("membership read failure cannot set a studio or consume the target", async () => {
+    h.frontDeskError = true;
+    h.jar.set(ADMIN_RETURN_COOKIE, LEAD);
+    await expect(chooseDesk()).rejects.toThrow("receptionist_membership_read_failed");
+    expect(h.selected).toBeNull();
+    expect(h.jar.get(ADMIN_RETURN_COOKIE)).toBe(LEAD);
+  });
+
+  it("signed-out choice cannot consume the target or select a studio", async () => {
+    h.signedIn = false;
+    h.jar.set(ADMIN_RETURN_COOKIE, LEAD);
+    expect(await chooseDesk()).toBe("/front-desk/select");
+    expect(h.selected).toBeNull();
+    expect(h.jar.get(ADMIN_RETURN_COOKIE)).toBe(LEAD);
+  });
+
+  it("missing choice keeps the target and selection untouched", async () => {
+    h.jar.set(ADMIN_RETURN_COOKIE, LEAD);
+    expect(await redirectOf(() => selectFrontDeskStudioAction(new FormData()))).toBe("/front-desk/select");
+    expect(h.selected).toBeNull();
+    expect(h.jar.get(ADMIN_RETURN_COOKIE)).toBe(LEAD);
+  });
+
+  it("non-operator completes verified choice at the front desk, never admin", async () => {
+    h.email = PERSON;
+    h.jar.set(ADMIN_RETURN_COOKIE, LEAD);
+    expect(await chooseDesk()).toBe("/front-desk");
+    expect(h.selected).toBe("s2");
+    expect(h.jar.has(ADMIN_RETURN_COOKIE)).toBe(false);
+  });
+
+  it.each(["//evil.example/admin", "/settings", "/admin@evil.example"])("unsafe chooser target %s is discarded after valid membership", async bad => {
+    h.jar.set(ADMIN_RETURN_COOKIE, bad);
+    expect(await chooseDesk()).toBe("/front-desk");
+    expect(h.selected).toBe("s2");
+    expect(h.jar.has(ADMIN_RETURN_COOKIE)).toBe(false);
+  });
+});
+
+
+describe("unverified acceptance does not fulfil an operator return", () => {
+  it.each([{}, { status: "unknown", role: "receptionist" }])("unrecognised acceptance %j preserves the cookie", async result => {
+    h.accept = result;
+    h.jar.set(ADMIN_RETURN_COOKIE, LEAD);
+    const form = new FormData(); form.set("consent", "on");
+    expect(await acceptInvitationAction(null, form)).toMatchObject({ error: expect.any(String) });
+    expect(h.jar.get(ADMIN_RETURN_COOKIE)).toBe(LEAD);
+    expect(h.selected).toBeNull();
   });
 });
