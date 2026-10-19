@@ -380,5 +380,19 @@
     "frozen_0223_sha256": "12038b1eab95d84f0ed84b235f0bf00641f6e06007e6ba5008066fc0d852b948",
     "production_907_session_photo_files_preserved": true
   },
-  "order_contract": "Apply pending migrations strictly in ascending order 0213 through 0231, each with the owning migration's transaction and SET LOCAL lock_timeout = 5s contract. Apply through 0231 and verify before deploying portrait application code. No provider activation is implied."
+  "order_contract": "Apply pending migrations strictly in ascending order 0213 through 0231, each with the owning migration's transaction and SET LOCAL lock_timeout = 5s contract. Apply through 0231 and verify before deploying portrait application code. No provider activation is implied.",
+  "candidate_test_support_files": [
+    {
+      "path": "tests/migrations/helpers/grant-posture.ts",
+      "sha256": "96eb3d31cea075960c94e8d825495418a6af4db60a54f88c75742951dc616171",
+      "source_head": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
+      "purpose": "shared exact-role grant/revoke assertions required by 0231 source test"
+    },
+    {
+      "path": "tests/migrations/0211-client-sms-permission-guard.test.ts",
+      "sha256": "dedf935a3e36e5c3a5f174a70c94bc73bc8899c19622f80a6d26bb9ae14072e2",
+      "source_head": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
+      "purpose": "transfers the obsolete repo-maximum assertion to a derived non-maximum contract while preserving 0211 allocation and behavior coverage"
+    }
+  ]
 }

@@ -14,7 +14,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (hosted state verified 2026-10-19; `0212` APPLIED; release candidate `0213`–`0231` pending)
+## Current state (verified 2026-10-19, post-0212 apply; hosted 0212, repo 0231; MIGRATION-FIRST PENDING)
 
 > **0212 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #832 HEAD, BEFORE ANY MERGE.**
 > `0212_email_delivery_events.sql` was applied to production on 2026-10-12 under explicit
@@ -68,10 +68,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0212** (`0212_email_delivery_events.sql`), applied 2026-10-12 from #832's reviewed head; corroborated by read-only history on 2026-10-19. |
-| **Repo migration max** | **0231** (`0231_client_identification_portrait.sql`) on the narrowly composed production-based release candidate. |
+| **Repo migration max** | **0231** (`0231_client_identification_portrait.sql`) on the narrowly composed production-based release candidate; repo > hosted is the normal migration-first pending shape. |
 | **Remote-only migrations** | **none** in the read-only hosted-history reconciliation; hosted history has one 0212 row and no higher row. |
-| **Pending migrations** | **`0213`–`0231`**, strictly contiguous and unapplied on the candidate; apply order is numeric. |
-| **Next free migration** | Next free number is **0232**, derived from this tree; it is not included or claimed by this candidate and remains separately allocated to #908. |
+| **Pending migrations** | **MIGRATION-FIRST PENDING**: `0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`, `0229`, `0230`, `0231` — strictly contiguous and unapplied on the candidate; apply in this order. |
+| **Next free migration** | Next free number is **0232**, derived from this tree; it is not included and is **not claimed by this candidate** (separately allocated to #908). |
 | **Project ref** | `alhhybgqdmcdyzpybykj`, the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
 | **Reviewed release head** | Candidate review and required CI are pending; historical #832 evidence applies only to the 0212 migration source/apply record. |
 | **Production application SHA at apply time** | `6c5eac80` (the #821 merge). **No application behaviour was deployed by this apply.** |
