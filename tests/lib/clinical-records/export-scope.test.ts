@@ -111,6 +111,20 @@ describe("parseExportScope", () => {
 });
 
 describe("localDayBounds", () => {
+  it.each([
+    ["2026-03-08", "2026-03-08T05:00:00.000Z", "2026-03-09T04:00:00.000Z", 23],
+    ["2026-11-01", "2026-11-01T04:00:00.000Z", "2026-11-02T05:00:00.000Z", 25],
+  ])("keeps all of the studio-local DST day %s, with an exclusive end", (day, fromUtc, toUtcExclusive, hours) => {
+    const bounds = localDayBounds(day, day, "America/Toronto");
+    expect(bounds).toEqual({ fromUtc, toUtcExclusive });
+    expect((Date.parse(bounds.toUtcExclusive) - Date.parse(bounds.fromUtc)) / 3_600_000).toBe(hours);
+    const includes = (instant: number) => instant >= Date.parse(bounds.fromUtc) && instant < Date.parse(bounds.toUtcExclusive);
+    expect(includes(Date.parse(fromUtc) - 1)).toBe(false);
+    expect(includes(Date.parse(fromUtc))).toBe(true);
+    expect(includes(Date.parse(toUtcExclusive) - 1)).toBe(true);
+    expect(includes(Date.parse(toUtcExclusive))).toBe(false);
+  });
+
   it("is the studio-local day, in UTC, end-exclusive", () => {
     expect(localDayBounds("2026-01-15", "2026-01-15", "America/Toronto")).toEqual({
       fromUtc: "2026-01-15T05:00:00.000Z",
