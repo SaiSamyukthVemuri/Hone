@@ -80,17 +80,24 @@ export async function resolveDeliveryIncidentAction(formData: FormData): Promise
   let recordedResolution: string | null = null;
   let conflicted = false;
   if (!error && result === "already_resolved") {
-    const { data: row } = await admin
-      .from("delivery_incidents")
-      .select("resolution")
-      .eq("id", incidentId)
-      .maybeSingle();
-    recordedResolution = (row?.resolution as string | null) ?? null;
+    try {
+      const { data: row, error: readError } = await admin
+        .from("delivery_incidents")
+        .select("resolution")
+        .eq("id", incidentId)
+        .maybeSingle();
+      if (!readError && typeof row?.resolution === "string" && RESOLUTIONS.has(row.resolution)) {
+        recordedResolution = row.resolution;
+      }
+    } catch {
+      // Unknown is not idempotent success; still audit the command outcome.
+    }
     conflicted = recordedResolution !== null && recordedResolution !== resolution;
   }
 
+  const repeatUnverified = !error && result === "already_resolved" && recordedResolution === null;
   const succeeded =
-    !error && (result === "resolved" || (result === "already_resolved" && !conflicted));
+    !error && (result === "resolved" || (result === "already_resolved" && !conflicted && !repeatUnverified));
 
   await logAdminAction({
     actorUserId: user.id,
@@ -99,12 +106,12 @@ export async function resolveDeliveryIncidentAction(formData: FormData): Promise
     targetId: incidentId,
     action: "delivery_incident_resolved",
     outcome: succeeded ? "succeeded" : "failed",
-    // On a conflict the submitted word is DELIBERATELY ABSENT: it was not
+    // On a conflicting or unverified repeat the submitted word is ABSENT: it was not
     // applied, and recording it is what made the old audit misleading. What is
     // recorded instead is the stored resolution and the fact that nothing moved.
-    metadata: conflicted
+    metadata: conflicted || repeatUnverified
       ? {
-          result: "already_resolved_conflict",
+          result: repeatUnverified ? "already_resolved_unknown" : "already_resolved_conflict",
           applied: false,
           recorded_resolution: recordedResolution,
         }
@@ -112,9 +119,11 @@ export async function resolveDeliveryIncidentAction(formData: FormData): Promise
   });
   if (!succeeded) {
     throw new Error(
-      conflicted
-        ? `Already resolved as "${recordedResolution}". Your resolution was not applied.`
-        : "Failed to resolve the incident.",
+      repeatUnverified
+        ? "Already resolved; the recorded resolution could not be verified. Your resolution was not applied."
+        : conflicted
+          ? `Already resolved as "${recordedResolution}". Your resolution was not applied.`
+          : "Failed to resolve the incident.",
     );
   }
 

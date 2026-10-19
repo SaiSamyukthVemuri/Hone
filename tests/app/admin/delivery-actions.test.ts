@@ -19,6 +19,8 @@ const h: {
   /** What `delivery_incidents.resolution` holds, for the conflict path. */
   storedResolution: { resolution: string } | null;
   tableReads: string[];
+  readError: { message: string } | null;
+  readThrows: boolean;
 } = {
   email: null,
   audits: [],
@@ -27,6 +29,8 @@ const h: {
   byFn: {},
   storedResolution: null,
   tableReads: [],
+  readError: null,
+  readThrows: false,
 };
 
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
@@ -54,7 +58,10 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       const chain = {
         select: () => chain,
         eq: () => chain,
-        maybeSingle: async () => ({ data: h.storedResolution, error: null }),
+        maybeSingle: async () => {
+          if (h.readThrows) throw new Error("fake read failure");
+          return { data: h.storedResolution, error: h.readError };
+        },
       };
       return chain;
     },
@@ -78,6 +85,8 @@ beforeEach(() => {
   h.byFn = {};
   h.storedResolution = null;
   h.tableReads = [];
+  h.readError = null;
+  h.readThrows = false;
 });
 
 describe("resolveDeliveryIncidentAction", () => {
@@ -259,3 +268,21 @@ describe("the support queue page", () => {
     expect(PAGE).not.toContain("outcomesRes.data ?? []");
   });
 });
+
+
+it.each(["missing", "read-error", "throw", "invalid-resolution"])(
+  "already_resolved %s is failed/unknown without claiming the submitted resolution (4310059463)", async (mode) => {
+    h.email = "support@hone.test";
+    h.answer = { data: "already_resolved", error: null };
+    h.storedResolution = mode === "missing" ? null : { resolution: mode === "invalid-resolution" ? "invalid" : "fixed" };
+    if (mode === "read-error") h.readError = { message: "fake permission/read failure" };
+    if (mode === "throw") h.readThrows = true;
+    await expect(resolveDeliveryIncidentAction(form({ incident_id: ID, resolution: "fixed" })))
+      .rejects.toThrow("could not be verified");
+    expect(h.audits).toHaveLength(1);
+    expect(h.audits[0]).toMatchObject({ outcome: "failed", metadata: {
+      result: "already_resolved_unknown", applied: false, recorded_resolution: null,
+    } });
+    expect(h.audits[0]!.metadata).not.toHaveProperty("resolution");
+  },
+);
