@@ -256,3 +256,13 @@ describe("0232 at upload: the panel choice", () => {
     expect(mgr).toMatch(/f\.note \? `✓ Uploaded \(\$\{f\.note\}\)` : "✓ Uploaded"/);
   });
 });
+
+
+describe("0232 full-size phone photo labelling", () => {
+  it("offers the same visit-only label control in preview using refreshed photo state", () => {
+    const mgr = read("TreatmentImagesManager.tsx");
+    expect(mgr).toMatch(/const modalPhoto = modal \? images.find\(\(image\) => image.id === modal.id\) \?\? null : null;/);
+    const preview = mgr.slice(mgr.indexOf('aria-label="Treatment photo preview"'));
+    expect(preview).toMatch(/\{modalPhoto && \(\s*<CaptureStageControl[\s\S]*?imageId=\{modalPhoto.id\}[\s\S]*?visitPhoto=\{modalPhoto.visitPhoto\}[\s\S]*?stage=\{modalPhoto.captureStage\}/);
+  });
+});
