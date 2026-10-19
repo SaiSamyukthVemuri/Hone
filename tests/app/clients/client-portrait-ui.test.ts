@@ -23,6 +23,15 @@ describe("0231 portrait UI", () => {
     expect(src).toMatch(/save\(imageId\)/);
   });
 
+  it("sends the displayed image as the clear precondition and reports a conflict", () => {
+    expect(read("PortraitControl.tsx")).toMatch(/expectedImageId: next === null \? imageId : null/);
+    const actions = read("actions.ts");
+    const fn = actions.slice(actions.indexOf("export async function setClientPortraitAction"));
+    expect(fn).toMatch(/p_expected_image_id: input.expectedImageId \?\? null/);
+    expect(fn).toMatch(/error.code === "P0231"/);
+    expect(fn).toContain("The ID photo changed. Reload and try again.");
+  });
+
   it("the page marks client scope from BOTH links being empty, and passes the pointer", () => {
     const page = read("page.tsx");
     expect(page).toMatch(/\.select\("id, name, portrait_image_id"\)/);
