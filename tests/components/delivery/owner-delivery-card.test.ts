@@ -114,7 +114,7 @@ describe("OwnerDeliveryCard", () => {
     };
     const html = await render();
     expect(html).not.toContain("No delivery problems reported");
-    expect(html).toContain("No open delivery problems. 2 problems were reported in the last 14 days and since resolved.");
+    expect(html).toContain("No open delivery problems. 2 problems were resolved in the last 14 days.");
     expect(html).not.toContain("not delivered");
   });
 
@@ -125,7 +125,7 @@ describe("OwnerDeliveryCard", () => {
     };
     const html = await render();
     expect(html).toContain("1 open delivery problem shown.");
-    expect(html).toContain("1 problem was reported in the last 14 days and since resolved.");
+    expect(html).toContain("1 problem was resolved in the last 14 days.");
     expect(html).toContain("24-hour reminder email not delivered");
     expect(html).toContain("3 times");
     expect(html).toContain("The client&#x27;s mail server rejected the email.");
@@ -142,7 +142,7 @@ describe("the owner card's capped read is not a total (Codex P2 4307695060)", ()
   // resolved rows sort LAST they are the first thing the cap removes, which
   // would distort the resolved note silently as well.
   const CAP = 200;
-  const INDICATOR = "Showing the most recent 200 incidents. Older incidents are not listed.";
+  const INDICATOR = "Showing the most recent 200 incidents. Older incidents, if any, are not listed.";
 
   it("AT the cap: says so, and the count reads as SHOWN", async () => {
     h.answer = {
@@ -166,7 +166,7 @@ describe("the owner card's capped read is not a total (Codex P2 4307695060)", ()
       error: null,
     };
     const html = await render();
-    expect(html).not.toContain("Older incidents are not listed");
+    expect(html).not.toContain("Older incidents, if any, are not listed");
     // ...and it still reports the incidents it does have.
     expect(html).toContain("shown");
   });
@@ -174,7 +174,7 @@ describe("the owner card's capped read is not a total (Codex P2 4307695060)", ()
   it("an empty studio says neither", async () => {
     h.answer = { data: [], error: null };
     const html = await render();
-    expect(html).not.toContain("Older incidents are not listed");
+    expect(html).not.toContain("Older incidents, if any, are not listed");
     expect(html).toContain("No delivery problems reported in the last 14 days.");
   });
 });
@@ -202,4 +202,15 @@ describe("describeIncident", () => {
     expect(purposeLabel("waitlist_invitation")).toBe("Waitlist invitation");
     expect(purposeLabel("future_purpose")).toBe("Future purpose");
   });
+});
+
+
+it("assigns only invalid-address refusals to studio data correction (4307826148)", () => {
+  const row = { channel: "email" as const, purpose: "appointment_reminder_24h", failure_class: "refused" as const };
+  expect(describeIncident({ ...row, last_reason: "invalid_to_address" })).toMatchObject({
+    owner: "studio", nextStep: "Check the client's email address with them and update it.",
+  });
+  for (const last_reason of [null, "provider_refused", "invalid_api_key"]) {
+    expect(describeIncident({ ...row, last_reason }).owner).toBe("hone");
+  }
 });
