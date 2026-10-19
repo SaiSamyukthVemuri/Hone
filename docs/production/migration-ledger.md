@@ -27,7 +27,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | **Hosted (production) migration max** | **0212** (`0212_email_delivery_events.sql`), applied 2026-10-12; history preserved. |
 | **Repo migration max** | **0236** (`0236_delivery_incident_retained_failures.sql`), source-only and pending. |
 | **Remote-only migrations** | **None recorded** by canonical hosted migration state. |
-| **Pending migrations** | **0213–0236** (`0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`, `0229`, `0230`, `0231`, `0232`, `0233`, `0234`, `0235`, `0236`), contiguous in the integrated candidate; not applied. |
+| **Pending migrations** | PENDING, NOT APPLIED: **0213–0236** (`0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`, `0229`, `0230`, `0231`, `0232`, `0233`, `0234`, `0235`, `0236`), contiguous in the integrated candidate; not applied. |
 | **Next free number** | Next free number is **0237** (based on integrated candidate filenames; not claimed). |
 | **Project ref** | `alhhybgqdmcdyzpybykj` (Hone production project). |
 
