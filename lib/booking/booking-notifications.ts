@@ -73,12 +73,14 @@ export async function dispatchBookingNotifications(p: DispatchParams) {
   });
   const appointmentUrl = `${appOrigin}/calendar`;
 
+  let intakeUrl: string | null = null;
   if (p.clientEmail && p.studio.send_confirmation_emails) {
     const intake = await ensureIntakeForClient({
       studioId: p.studio.id,
       clientId: p.appointment.client_id,
       appOrigin,
     });
+    intakeUrl = intake?.url ?? null;
     const treatmentTimeLine = p.studio.show_treatment_time_to_clients
       ? buildTreatmentTimeLine({
           enabled: true,
@@ -101,7 +103,7 @@ export async function dispatchBookingNotifications(p: DispatchParams) {
       clientEmail: p.clientEmail,
       cancellationUrl: cancelUrl,
       rescheduleUrl,
-      intakeUrl: intake?.url ?? null,
+      intakeUrl,
       treatmentTimeLine,
       appBaseUrl: appOrigin,
     });
@@ -117,7 +119,14 @@ export async function dispatchBookingNotifications(p: DispatchParams) {
         attemptNumber: 1,
       });
     }
+  }
 
+  // SMS has its own delivery decision. Email being off or absent must not
+  // suppress it. Reuse an intake URL prepared for email, when available;
+  // SMS-only dispatch does not create a new intake row.
+  if (p.clientPhone && p.studio.send_confirmation_sms) {
+    const { createAdminClient } = await import("@/lib/supabase/admin-server");
+    const admin = createAdminClient();
     // SMS confirmation for the internal booking surface. We deliberately
     // do NOT modify SMS consent here (consent is collected on the
     // public booking surface or by a practitioner action that this PR
@@ -135,7 +144,7 @@ export async function dispatchBookingNotifications(p: DispatchParams) {
         sms_consent_at: p.clientSmsConsentAt ?? null,
         sms_opted_out_at: p.clientSmsOptedOutAt ?? null,
       },
-      intakeUrl: intake?.url ?? null,
+      intakeUrl,
       manageUrl,
     });
   }
