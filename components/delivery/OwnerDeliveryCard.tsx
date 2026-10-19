@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { describeIncident, type OwnerIncident } from "@/lib/delivery/incidents";
+import { describeIncident, hasRetainedFailureProjection } from "@/lib/delivery/incidents";
 
 // DELIVERY-VISIBILITY-02 — the studio owner's "Message delivery" card.
 //
@@ -12,7 +12,7 @@ import { describeIncident, type OwnerIncident } from "@/lib/delivery/incidents";
 // failed must never look like "no problems". It makes no provider call.
 //
 // It shows operational metadata only: which kind of message, how often, when,
-// the latest appointment and what to do next. No client name, address, phone or
+// retained failed appointment links and what to do next. No client name, address, phone or
 // message content, which the read does not return in the first place.
 
 type Props = {
@@ -52,7 +52,11 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
   if (errorCode === "42501") return null;
   if (failed || !Array.isArray(data)) return <DeliveryStatusUnavailable />;
 
-  const rows = data as OwnerIncident[];
+  if (!data.every(hasRetainedFailureProjection)
+    || data.reduce((count, row) => count + row.retained_failed_appointments.length, 0) > 200) {
+    return <DeliveryStatusUnavailable />;
+  }
+  const rows = data;
   const open = rows.filter((r) => r.resolved_at === null);
   // A resolved incident was still reported: never claim "no problems" while the
   // window holds one (Codex P2 4244957358).
@@ -97,6 +101,10 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
           </p>
         )}
         <p className="text-xs text-neutral-500">
+          Partial view: up to 200 appointment links from still-retained failed attempts for open problems only.
+          Resolved problems have no links in this view. This is not a complete delivery history; other failures may be absent.
+        </p>
+        <p className="text-xs text-neutral-500">
           {/* Never infers that bounce reporting is live: a stored signing secret is
               not a configured, tested endpoint (Codex P2 4253217747), and the
               owner session can read no receipt evidence. So the condition is
@@ -123,21 +131,32 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
                     {row.occurrences === 1 ? "once" : `${row.occurrences} times`}
                   </span>
                 </p>
-                <p className="text-xs text-amber-900/90 dark:text-amber-100/90">{d.meaning}</p>
-                <p className="text-xs text-amber-900/90 dark:text-amber-100/90">
-                  <span className="font-medium">Next step:</span> {d.nextStep}
-                </p>
+                {row.retained_failed_appointments.length === 0 && (
+                  <>
+                    <p className="text-xs text-amber-900/90 dark:text-amber-100/90">{d.meaning}</p>
+                    <p className="text-xs text-amber-900/90 dark:text-amber-100/90">
+                      <span className="font-medium">Next step:</span> {d.nextStep}
+                    </p>
+                  </>
+                )}
+                {row.retained_failed_appointments.length === 0 ? (
+                  <p className="text-xs">No retained appointment links are included for this problem in this partial view.</p>
+                ) : (
+                  <ul aria-label="Retained failed appointments for this message type" className="flex flex-col gap-2">
+                    {row.retained_failed_appointments.map((link) => {
+                      const reading = describeIncident({ ...row, last_reason: link.last_reason });
+                      return <li key={link.appointment_id} className="text-xs">
+                        <Link href={`/calendar/${link.appointment_id}`} className="underline">Open appointment</Link>
+                        <p>Latest retained failed attempt {formatWhen(link.claimed_at, timezone)}</p>
+                        <p>{reading.meaning}</p>
+                        <p><span className="font-medium">Next step:</span> {reading.nextStep}</p>
+                      </li>;
+                    })}
+                  </ul>
+                )}
                 <p className="text-xs text-neutral-600 dark:text-neutral-400">
                   Last {formatWhen(row.last_seen_at, timezone)}
                   {row.occurrences > 1 ? ` · first ${formatWhen(row.first_seen_at, timezone)}` : ""}
-                  {row.last_appointment_id ? (
-                    <>
-                      {" · "}
-                      <Link href={`/calendar/${row.last_appointment_id}`} className="underline">
-                        latest appointment
-                      </Link>
-                    </>
-                  ) : null}
                 </p>
               </li>
             );

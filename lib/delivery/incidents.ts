@@ -25,6 +25,35 @@ export type OwnerIncident = {
   resolution: string | null;
 };
 
+/** Owner-only RPC projection. Support's existing incident contract is unchanged. */
+export type RetainedFailedAppointment = {
+  appointment_id: string;
+  last_reason: string | null;
+  claimed_at: string;
+};
+export type OwnerIncidentProjection = OwnerIncident & {
+  retained_failed_appointments: RetainedFailedAppointment[];
+};
+
+/** Missing new RPC fields fail closed during an app/database rollout mismatch. */
+export function hasRetainedFailureProjection(value: unknown): value is OwnerIncidentProjection {
+  if (!value || typeof value !== "object") return false;
+  const links = (value as OwnerIncidentProjection).retained_failed_appointments;
+  if (!Array.isArray(links) || links.length > 200) return false;
+  const ids = new Set<string>();
+  return links.every((link) => {
+    if (!link || typeof link !== "object"
+      || typeof link.appointment_id !== "string"
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(link.appointment_id)
+      || ids.has(link.appointment_id)
+      || !(link.last_reason === null || (typeof link.last_reason === "string"
+        && /^[a-z][a-z0-9_]{1,63}$/.test(link.last_reason)))
+      || typeof link.claimed_at !== "string" || !Number.isFinite(Date.parse(link.claimed_at))) return false;
+    ids.add(link.appointment_id);
+    return true;
+  });
+}
+
 const PURPOSE_LABEL: Readonly<Record<string, string>> = {
   appointment_confirmation: "Booking confirmation",
   appointment_reminder_24h: "24-hour reminder",

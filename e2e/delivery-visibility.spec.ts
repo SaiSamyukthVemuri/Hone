@@ -102,6 +102,10 @@ test.describe("owner delivery card", () => {
     await expect(card.getByText("2-hour reminder email not delivered")).toBeVisible();
     await expect(card.getByText("The client's mail server rejected the email.")).toBeVisible();
     await expect(card.getByText("Check the client's email address with them and update it.")).toBeVisible();
+    await expect(card.getByText(/Partial view: up to 200 appointment links from still-retained failed attempts for open problems only/)).toBeVisible();
+    await expect(card.getByText(/Resolved problems have no links in this view/)).toBeVisible();
+    await expect(card.getByText(/This is not a complete delivery history; other failures may be absent/)).toBeVisible();
+    await expect(card.getByRole("link", { name: "Open appointment" })).toHaveCount(2);
     // Truthful about what it cannot see yet (no webhook secret in this lane).
     await expect(card.getByText(/appears here only once Hone is receiving the email provider's delivery reports/)).toBeVisible();
     const text = await card.innerText();

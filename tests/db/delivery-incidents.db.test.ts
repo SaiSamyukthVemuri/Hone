@@ -279,7 +279,7 @@ describe("OWNER-ONLY READ", () => {
     expect(Object.keys(rows[0]!).sort()).toEqual(
       [
         "channel", "failure_class", "first_seen_at", "incident_id", "last_appointment_id", "last_reason",
-        "last_seen_at", "occurrences", "purpose", "resolution", "resolved_at",
+        "last_seen_at", "occurrences", "purpose", "resolution", "resolved_at", "retained_failed_appointments",
       ].sort(),
     );
   });
@@ -443,5 +443,92 @@ describe("AGED CLAIM HEALTH — no inference of provider acceptance (4310259234)
       expect(row!.status).toBe(status);
       if (status === "claimed") expect(row!.provider_email_id).toBeNull();
     });
+  });
+});
+
+
+// 0236: prepared for the existing contained DB protocol; no separate harness.
+describe("OWNER retained-only partial appointment projection", () => {
+  const readOwner = async (studio: SeededStudio) => (await asUser(studio.userId,
+    (query) => query(`select * from public.owner_delivery_incidents($1)`, [studio.studioId]))).rows;
+
+  it("retains both clients' links with per-attempt reasons, deduplicates repeats, and excludes other studios", async () => {
+    const studio = await seedStudio("retained-links");
+    const first = await seedAppointment(studio);
+    const clientId = randomUUID();
+    await q(`insert into public.clients (id, studio_id, name) values ($1, $2, $3)`, [clientId, studio.studioId, "Retained synthetic client"]);
+    const second = await seedAppointment({ ...studio, clientId });
+    await settleEmail(await beginEmail(studio, first), "refused", null, "invalid_to_address");
+    await settleEmail(await beginEmail(studio, first), "refused", null, "validation_error");
+    await settleEmail(await beginEmail(studio, second), "refused", null, "validation_error");
+    const rows = await readOwner(studio);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].occurrences).toBe(3);
+    expect(rows[0].retained_failed_appointments).toEqual([
+      expect.objectContaining({ appointment_id: second, last_reason: "validation_error" }),
+      expect.objectContaining({ appointment_id: first, last_reason: "validation_error" }),
+    ]);
+    expect(JSON.stringify(rows)).not.toContain(apptB);
+    expect(await incidents(studio.studioId)).toHaveLength(1);
+  });
+
+  it("projects SMS reasons independently of email and keeps the existing studio boundary", async () => {
+    const studio = await seedStudio("retained-sms");
+    const first = await seedAppointment(studio);
+    const second = await seedAppointment(studio);
+    const sms1 = await beginSms(studio, first);
+    const sms2 = await beginSms(studio, second);
+    await q(`select public.settle_sms_message($1, 'refused', null, 21211, null)`, [sms1]);
+    await q(`select public.settle_sms_message($1, 'refused', null, null, null)`, [sms2]);
+    const rows = await readOwner(studio);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].channel).toBe("sms");
+    expect(rows[0].retained_failed_appointments).toEqual([
+      expect.objectContaining({ appointment_id: second, last_reason: null }),
+      expect.objectContaining({ appointment_id: first, last_reason: "twilio_21211" }),
+    ]);
+    await expect(asUser(B.userId, (query) => query(
+      `select * from public.owner_delivery_incidents($1)`, [studio.studioId],
+    ))).rejects.toMatchObject({ code: "42501" });
+  });
+
+  it("does not reconstruct deleted appointments or links for resolved incidents", async () => {
+    const studio = await seedStudio("retained-delete");
+    const appointment = await seedAppointment(studio);
+    await settleEmail(await beginEmail(studio, appointment), "refused", null, "validation_error");
+    expect((await readOwner(studio))[0].retained_failed_appointments).toEqual([
+      expect.objectContaining({ appointment_id: appointment }),
+    ]);
+    await resolveAll(studio.studioId);
+    // A retained failure still exists, but resolved groups intentionally have no projection.
+    expect((await readOwner(studio))[0].retained_failed_appointments).toEqual([]);
+    await q(`delete from public.appointments where id = $1 and studio_id = $2`, [appointment, studio.studioId]);
+    expect((await readOwner(studio))[0].retained_failed_appointments).toEqual([]);
+  });
+
+  it("excludes non-failure statuses even when a matching incident exists", async () => {
+    const studio = await seedStudio("retained-status");
+    const failed = await seedAppointment(studio);
+    const accepted = await seedAppointment(studio);
+    const claimed = await seedAppointment(studio);
+    await settleEmail(await beginEmail(studio, failed), "refused", null, "validation_error");
+    await settleEmail(await beginEmail(studio, accepted), "accepted", randomUUID());
+    await beginEmail(studio, claimed);
+    expect((await readOwner(studio))[0].retained_failed_appointments).toEqual([
+      expect.objectContaining({ appointment_id: failed }),
+    ]);
+  });
+
+  it("caps all returned links together at 200, retaining newest matching evidence", async () => {
+    const studio = await seedStudio("retained-cap");
+    const ids: string[] = [];
+    for (let i = 0; i < 201; i++) {
+      const appointment = await seedAppointment(studio);
+      ids.push(appointment);
+      await settleEmail(await beginEmail(studio, appointment, i % 2 ? "appointment_confirmation" : "appointment_reminder_24h"), "refused", null, "validation_error");
+    }
+    const links = (await readOwner(studio)).flatMap((row) => row.retained_failed_appointments);
+    expect(links).toHaveLength(200);
+    expect(links.map((link) => link.appointment_id).sort()).toEqual(ids.slice(1).sort());
   });
 });
