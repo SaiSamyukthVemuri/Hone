@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { adminQuery, closePool, seedStudio } from "./helpers/harness";
+import { adminQuery, asUser, closePool, seedStudio } from "./helpers/harness";
 import { randomUUID } from "node:crypto";
 import { buildPolicySnapshot } from "@/lib/booking/policy-acknowledgement";
 
@@ -38,6 +38,7 @@ function at(days: number, hh: number, mm = 0): string {
 
 type Fixture = {
   studioId: string;
+  userId: string;
   ownerId: string;
   clientId: string;
   serviceId: string;
@@ -85,7 +86,19 @@ async function seed(label: string): Promise<Fixture> {
     [apptId, studioId, ownerId, clientId, serviceId, startsAt, tokenHash],
   );
 
-  return { studioId, ownerId, clientId, serviceId, apptId, tokenHash, startsAt };
+  return { studioId, userId: base.userId, ownerId, clientId, serviceId, apptId, tokenHash, startsAt };
+}
+
+/** Exercise the admission authority as the fixture's owner, without bypassing its guard. */
+async function chooseAdmissionMode(f: Fixture, mode: "open" | "waitlist" | "closed") {
+  const { rows } = await asUser(f.userId, (query) =>
+    query("select * from public.set_new_client_admission_mode($1, $2)", [
+      f.studioId,
+      mode,
+    ]),
+  );
+  expect(rows[0].outcome, "the owner must establish the admission-mode precondition").toBe("ok");
+  expect(rows[0].mode).toBe(mode);
 }
 
 const setFlags = (
@@ -166,12 +179,25 @@ async function cancel5(f: Fixture): Promise<string> {
   return r.rows[0]!.result as string;
 }
 
+/** The v2 WRAPPER — the name an older app build still calls. */
 async function reschedule(f: Fixture, newStart: string): Promise<string> {
   const r = await adminQuery(
     `select result from public.reschedule_appointment_v2($1,$2,$3,$4,$5,$6)`,
     [f.apptId, f.tokenHash, newStart, hash64(), true, null],
   );
   return r.rows[0]!.result as string;
+}
+
+/** v3 — the implementation, and the one the application calls. */
+async function rescheduleV3(
+  f: Fixture,
+  newStart: string,
+): Promise<Record<string, unknown>> {
+  const r = await adminQuery(
+    `select * from public.reschedule_appointment_v3($1,$2,$3,$4,$5,$6)`,
+    [f.apptId, f.tokenHash, newStart, hash64(), true, null],
+  );
+  return r.rows[0]! as Record<string, unknown>;
 }
 
 afterAll(async () => {
@@ -398,6 +424,195 @@ describe("HON-47 ordering: an INELIGIBLE appointment keeps its generic result", 
     const b = await seed("order-ctl-res");
     await setFlags(b.studioId, false, false);
     expect(await reschedule(b, at(12, 15, 0))).toBe("reschedule_disabled");
+  });
+});
+
+// ===========================================================================
+// v3 RETURNS THE FLAGS IT READ UNDER THE LOCK — Codex P2 4309167887.
+// ===========================================================================
+//
+// The action used to build the SUCCESSOR's links from a studio row read BEFORE
+// the command. A flag flipped in between produced a confirmation carrying a
+// fresh cancel link that refused on first use. v3 returns what it read under
+// the studio lock, which is the only read that cannot be stale.
+describe("HON-47 v3's success payload carries both flags", () => {
+  it("both ON: the payload reports both as true", async () => {
+    const f = await seed("v3-both-on");
+    await setFlags(f.studioId, true, true);
+    const row = await rescheduleV3(f, at(12, 15, 0));
+    expect(row.result).toBe("success");
+    expect(row.client_cancellation_enabled).toBe(true);
+    expect(row.client_reschedule_enabled).toBe(true);
+  });
+
+  it("CANCELLATION OFF, rescheduling ON: it succeeds AND reports cancellation false", async () => {
+    // THE CASE THAT MATTERS. The reschedule must still work — cancellation
+    // being off is not a reason to refuse a move — and the payload must carry
+    // the false so the caller withholds the successor's cancel link.
+    const f = await seed("v3-cancel-off");
+    await setFlags(f.studioId, false, true);
+    const row = await rescheduleV3(f, at(12, 15, 0));
+    expect(row.result).toBe("success");
+    expect(
+      row.client_cancellation_enabled,
+      "the successor's cancel link depends on this value",
+    ).toBe(false);
+    expect(row.client_reschedule_enabled).toBe(true);
+  });
+
+  it("a REFUSAL carries nulls, not a stale or invented value", async () => {
+    const f = await seed("v3-refusal-nulls");
+    await setFlags(f.studioId, true, false);
+    const row = await rescheduleV3(f, at(12, 15, 0));
+    expect(row.result).toBe("reschedule_disabled");
+    // There is no successor on a refusal, so there is nothing to link and the
+    // flags must not be reported as though there were.
+    expect(row.client_cancellation_enabled).toBeNull();
+    expect(row.client_reschedule_enabled).toBeNull();
+  });
+});
+
+// ===========================================================================
+// THE v2 WRAPPER — the DEPLOY-SKEW promise.
+// ===========================================================================
+//
+// 0234 is applied BEFORE the build that calls v3 goes live (migration-first),
+// so there is a window in which the running app still calls v2. These cases are
+// that window: v2 must keep its original shape and still inherit the gate.
+describe("HON-47 v2 remains a faithful wrapper over v3", () => {
+  it("returns EXACTLY the original thirteen columns, by name", async () => {
+    const f = await seed("v2-shape");
+    await setFlags(f.studioId, true, true);
+    const r = await adminQuery(
+      `select * from public.reschedule_appointment_v2($1,$2,$3,$4,$5,$6)`,
+      [f.apptId, f.tokenHash, at(12, 15, 0), hash64(), true, null],
+    );
+    expect(Object.keys(r.rows[0]!)).toEqual([
+      "result",
+      "original_appointment_id",
+      "new_appointment_id",
+      "studio_id",
+      "client_id",
+      "service_id",
+      "practitioner_id",
+      "original_starts_at",
+      "starts_at",
+      "ends_at",
+      "duration_minutes",
+      "created_at",
+      "policy_acknowledgement_id",
+    ]);
+    // The two columns v3 added must NOT leak through: an old build may well
+    // parse this row strictly.
+    expect(Object.keys(r.rows[0]!)).not.toContain("client_cancellation_enabled");
+    expect(Object.keys(r.rows[0]!)).not.toContain("client_reschedule_enabled");
+  });
+
+  it("still MOVES the appointment through the wrapper", async () => {
+    const f = await seed("v2-works");
+    await setFlags(f.studioId, true, true);
+    const newStart = at(12, 15, 0);
+    expect(await reschedule(f, newStart)).toBe("success");
+    const successors = await adminQuery(
+      `select count(*)::text as n from public.appointments
+        where rescheduled_from_appointment_id = $1`,
+      [f.apptId],
+    );
+    expect(successors.rows[0]!.n, "the wrapper must write the successor").toBe("1");
+  });
+
+  it("INHERITS the HON-47 gate: refuses when the flag is off", async () => {
+    // It has no gate of its own, so this proves delegation rather than a
+    // duplicated check — and it is the case an old build would hit.
+    const f = await seed("v2-gate");
+    await setFlags(f.studioId, true, false);
+    expect(await reschedule(f, at(12, 15, 0))).toBe("reschedule_disabled");
+    expect(await status(f.apptId)).toBe("confirmed");
+    expect(await startOf(f.apptId)).toBe(new Date(f.startsAt).toISOString());
+  });
+
+  it("INHERITS the ordering fix too", async () => {
+    // A cancelled appointment at a reschedule-disabled studio must get the
+    // generic refusal through the wrapper as well, not the flag refusal.
+    const f = await seed("v2-order");
+    await setFlags(f.studioId, false, false);
+    await adminQuery(
+      `update public.appointments set status = 'cancelled' where id = $1`,
+      [f.apptId],
+    );
+    expect(await reschedule(f, at(12, 15, 0))).toBe(
+      "appointment_not_reschedulable",
+    );
+  });
+});
+
+// ===========================================================================
+// THE PILOT STUDIO'S BEHAVIOUR IS UNCHANGED — Sam's condition on approval.
+// ===========================================================================
+//
+// Sam approved HON-47 as INDEPENDENT per-studio switches, BOTH ENABLED by
+// default, on one condition: the live pilot studio's self-service must not
+// change. This is that proof.
+//
+// IT DOES NOT SEED THE PILOT STUDIO, and must not: that is a real tenant with
+// real clients (README names it), and no test may touch it. What it seeds is
+// the CONFIGURATION — a studio whose `new_client_admission_mode` is each of the
+// three legal values, including the waitlisted one the pilot runs, with the two
+// HON-47 columns NEVER SET, so they hold the `default true` the migration gives
+// them. If self-service still works in every mode at the defaults, then
+// applying 0234 changes no existing studio's behaviour, whatever its admission
+// mode.
+//
+// AND IT PROVES THE INDEPENDENCE Sam asked about separately: the flags are not
+// derived from, and do not move with, `new_client_admission_mode`. EMERG-01
+// reads that mode to refuse rescheduling a free consultation at a waitlisted
+// studio; conflating the two would mean disabling client cancellation silently
+// changed the pilot's admission behaviour, which is exactly the coupling this
+// asserts is absent.
+describe("HON-47 changes nothing at the defaults, in ANY admission mode", () => {
+  for (const mode of ["open", "waitlist", "closed"] as const) {
+    it(`admission mode '${mode}': cancellation still works at the DEFAULTS`, async () => {
+      const f = await seed(`default-cancel-${mode}`);
+      // The flags are deliberately NOT SET here — only the admission mode is.
+      await chooseAdmissionMode(f, mode);
+      const flags = await adminQuery(
+        `select client_cancellation_enabled as c, client_reschedule_enabled as s
+           from public.studios where id = $1`,
+        [f.studioId],
+      );
+      // The precondition, stated: changing the admission mode must not have
+      // moved either flag. Without this the case could pass because the mode
+      // change happened to leave them true for some other reason.
+      expect(flags.rows[0], "the admission mode must not move the flags").toEqual({
+        c: true,
+        s: true,
+      });
+      expect(await cancel7(f)).toBe("cancelled");
+    });
+
+    it(`admission mode '${mode}': rescheduling still works at the DEFAULTS`, async () => {
+      const f = await seed(`default-resched-${mode}`);
+      await chooseAdmissionMode(f, mode);
+      expect(await reschedule(f, at(12, 15, 0))).toBe("success");
+    });
+  }
+
+  it("setting a HON-47 flag does not move the admission mode, in either direction", async () => {
+    // The other half of independence. A studio's admission authority is
+    // owner-controlled through its own command (0204/0205); HON-47 must not
+    // touch it, and turning client cancellation off must not quietly waitlist
+    // a studio's new-client intake.
+    const f = await seed("independence");
+    await chooseAdmissionMode(f, "waitlist");
+    await setFlags(f.studioId, false, false);
+    const after = await adminQuery(
+      `select new_client_admission_mode as m,
+              client_cancellation_enabled as c,
+              client_reschedule_enabled as s
+         from public.studios where id = $1`,
+      [f.studioId],
+    );
+    expect(after.rows[0]).toEqual({ m: "waitlist", c: false, s: false });
   });
 });
 

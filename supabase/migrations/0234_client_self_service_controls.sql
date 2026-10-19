@@ -309,7 +309,36 @@ grant execute on function public.public_cancel_appointment_with_token(
 -- The client reschedule command, gated
 -- ---------------------------------------------------------------------------
 
-create or replace function public.reschedule_appointment_v2(
+-- ---------------------------------------------------------------------------
+-- v3 — THE IMPLEMENTATION, and why the name moved (Codex P2 4309167887)
+-- ---------------------------------------------------------------------------
+--
+-- THE DEFECT. The action built the SUCCESSOR's client links from the studio row
+-- it had read BEFORE calling the command. If an owner switched client
+-- cancellation off in between, the confirmation email carried a brand-new
+-- cancel link that refuses the moment the client follows it. Small in impact —
+-- the refusal page is honest — but it is a promise the studio had already
+-- withdrawn.
+--
+-- Re-reading the flags after the command would narrow that window without
+-- closing it. The only read that cannot be stale is the one the command itself
+-- makes UNDER THE STUDIO LOCK, so the command now RETURNS those two values and
+-- the action builds the links from them.
+--
+-- WHY A NEW NAME RATHER THAN A WIDER v2. `RETURNS TABLE` columns are output
+-- parameters, so adding two changes the return type, and PostgreSQL refuses
+-- that in `create or replace function` (42P13, "cannot change return type of
+-- existing function"). 0171 created v2 and production has it. The alternatives
+-- were to DROP a live command inside this migration or to delegate; delegation
+-- drops nothing, keeps ONE implementation, and is the shape this repository
+-- already relies on — the 5-argument cancel command delegates to the 7-argument
+-- one, which is how HON-47's gate reaches it with a byte-identical body.
+--
+-- So: v3 holds the body and returns two more columns; v2 below becomes a thin
+-- wrapper over it with its original 13-column shape, so an OLD APP BUILD
+-- calling v2 keeps working after this migration is applied. Deploy order stays
+-- migration-first: the new app calls v3, which exists only after 0234.
+create or replace function public.reschedule_appointment_v3(
   p_original_appointment_id       uuid,
   p_current_cancellation_token_hash text,
   p_new_starts_at                 timestamptz,
@@ -330,7 +359,12 @@ returns table (
   ends_at                   timestamptz,
   duration_minutes          integer,
   created_at                timestamptz,
-  policy_acknowledgement_id uuid
+  policy_acknowledgement_id uuid,
+  -- HON-47. The flag values READ UNDER THE STUDIO LOCK below, returned so the
+  -- caller's successor links cannot be built from a staler read than the one
+  -- the gate used. Null on every refusal: there is no successor to link.
+  client_cancellation_enabled boolean,
+  client_reschedule_enabled   boolean
 )
 language plpgsql
 volatile
@@ -340,6 +374,7 @@ as $$
 declare
   -- HON-47.
   v_reschedule_allowed boolean;
+  v_cancel_allowed boolean;
   v_studio_id   uuid;
   v_orig        public.appointments%rowtype;
   v_tz          text;
@@ -374,7 +409,8 @@ begin
     return query select 'appointment_not_found'::text, null::uuid, null::uuid, null::uuid,
                         null::uuid, null::uuid, null::uuid, null::timestamptz,
                         null::timestamptz, null::timestamptz, null::integer,
-                        null::timestamptz, null::uuid;
+                        null::timestamptz, null::uuid,
+                        null::boolean, null::boolean;
     return;
   end if;
 
@@ -385,7 +421,8 @@ begin
     return query select 'appointment_not_found'::text, null::uuid, null::uuid, null::uuid,
                         null::uuid, null::uuid, null::uuid, null::timestamptz,
                         null::timestamptz, null::timestamptz, null::integer,
-                        null::timestamptz, null::uuid;
+                        null::timestamptz, null::uuid,
+                        null::boolean, null::boolean;
     return;
   end if;
 
@@ -399,9 +436,13 @@ begin
          s.no_show_policy_text,
          -- HON-47. Read under the studio lock this function already takes, so a
          -- concurrent flag change serializes with the reschedule.
-         coalesce(s.client_reschedule_enabled, true)
+         coalesce(s.client_reschedule_enabled, true),
+         -- HON-47. This function does NOT gate cancellation; it reads the flag
+         -- only to RETURN it, so the caller's successor cancel link follows the
+         -- policy as it stands under this lock rather than an earlier snapshot.
+         coalesce(s.client_cancellation_enabled, true)
     into v_tz, v_horizon, v_cap_flag, v_cancel_text, v_noshow_text,
-         v_reschedule_allowed
+         v_reschedule_allowed, v_cancel_allowed
     from public.studios s
    where s.id = v_studio_id
    for update;
@@ -409,7 +450,8 @@ begin
     return query select 'appointment_not_found'::text, null::uuid, null::uuid, null::uuid,
                         null::uuid, null::uuid, null::uuid, null::timestamptz,
                         null::timestamptz, null::timestamptz, null::integer,
-                        null::timestamptz, null::uuid;
+                        null::timestamptz, null::uuid,
+                        null::boolean, null::boolean;
     return;
   end if;
   perform public.acquire_studio_capacity_lock(v_studio_id);
@@ -482,7 +524,8 @@ begin
     return query select 'appointment_not_found'::text, null::uuid, null::uuid, null::uuid,
                         null::uuid, null::uuid, null::uuid, null::timestamptz,
                         null::timestamptz, null::timestamptz, null::integer,
-                        null::timestamptz, null::uuid;
+                        null::timestamptz, null::uuid,
+                        null::boolean, null::boolean;
     return;
   end if;
 
@@ -498,7 +541,8 @@ begin
     return query select 'appointment_not_found'::text, null::uuid, null::uuid, null::uuid,
                         null::uuid, null::uuid, null::uuid, null::timestamptz,
                         null::timestamptz, null::timestamptz, null::integer,
-                        null::timestamptz, null::uuid;
+                        null::timestamptz, null::uuid,
+                        null::boolean, null::boolean;
     return;
   end if;
 
@@ -508,7 +552,8 @@ begin
     return query select 'appointment_not_reschedulable'::text, null::uuid, null::uuid, null::uuid,
                         null::uuid, null::uuid, null::uuid, null::timestamptz,
                         null::timestamptz, null::timestamptz, null::integer,
-                        null::timestamptz, null::uuid;
+                        null::timestamptz, null::uuid,
+                        null::boolean, null::boolean;
     return;
   end if;
 
@@ -537,7 +582,8 @@ begin
     return query select 'reschedule_disabled'::text, null::uuid, null::uuid, null::uuid,
                         null::uuid, null::uuid, null::uuid, null::timestamptz,
                         null::timestamptz, null::timestamptz, null::integer,
-                        null::timestamptz, null::uuid;
+                        null::timestamptz, null::uuid,
+                        null::boolean, null::boolean;
     return;
   end if;
 
@@ -550,7 +596,8 @@ begin
     return query select 'appointment_not_reschedulable'::text, null::uuid, null::uuid, null::uuid,
                         null::uuid, null::uuid, null::uuid, null::timestamptz,
                         null::timestamptz, null::timestamptz, null::integer,
-                        null::timestamptz, null::uuid;
+                        null::timestamptz, null::uuid,
+                        null::boolean, null::boolean;
     return;
   end if;
 
@@ -566,7 +613,8 @@ begin
     return query select 'appointment_not_reschedulable'::text, null::uuid, null::uuid, null::uuid,
                         null::uuid, null::uuid, null::uuid, null::timestamptz,
                         null::timestamptz, null::timestamptz, null::integer,
-                        null::timestamptz, null::uuid;
+                        null::timestamptz, null::uuid,
+                        null::boolean, null::boolean;
     return;
   end if;
 
@@ -579,7 +627,8 @@ begin
     return query select 'invalid_time'::text, null::uuid, null::uuid, null::uuid,
                         null::uuid, null::uuid, null::uuid, null::timestamptz,
                         null::timestamptz, null::timestamptz, null::integer,
-                        null::timestamptz, null::uuid;
+                        null::timestamptz, null::uuid,
+                        null::boolean, null::boolean;
     return;
   end if;
 
@@ -597,7 +646,8 @@ begin
     return query select 'invalid_time'::text, null::uuid, null::uuid, null::uuid,
                         null::uuid, null::uuid, null::uuid, null::timestamptz,
                         null::timestamptz, null::timestamptz, null::integer,
-                        null::timestamptz, null::uuid;
+                        null::timestamptz, null::uuid,
+                        null::boolean, null::boolean;
     return;
   end if;
   v_new_starts := p_new_starts_at;
@@ -613,7 +663,8 @@ begin
     return query select 'same_time'::text, null::uuid, null::uuid, null::uuid,
                         null::uuid, null::uuid, null::uuid, null::timestamptz,
                         null::timestamptz, null::timestamptz, null::integer,
-                        null::timestamptz, null::uuid;
+                        null::timestamptz, null::uuid,
+                        null::boolean, null::boolean;
     return;
   end if;
 
@@ -621,7 +672,8 @@ begin
     return query select 'invalid_time'::text, null::uuid, null::uuid, null::uuid,
                         null::uuid, null::uuid, null::uuid, null::timestamptz,
                         null::timestamptz, null::timestamptz, null::integer,
-                        null::timestamptz, null::uuid;
+                        null::timestamptz, null::uuid,
+                        null::boolean, null::boolean;
     return;
   end if;
 
@@ -633,7 +685,8 @@ begin
     return query select 'outside_horizon'::text, null::uuid, null::uuid, null::uuid,
                         null::uuid, null::uuid, null::uuid, null::timestamptz,
                         null::timestamptz, null::timestamptz, null::integer,
-                        null::timestamptz, null::uuid;
+                        null::timestamptz, null::uuid,
+                        null::boolean, null::boolean;
     return;
   end if;
 
@@ -676,7 +729,8 @@ begin
       return query select 'policy_ack_required'::text, null::uuid, null::uuid, null::uuid,
                           null::uuid, null::uuid, null::uuid, null::timestamptz,
                           null::timestamptz, null::timestamptz, null::integer,
-                          null::timestamptz, null::uuid;
+                          null::timestamptz, null::uuid,
+                        null::boolean, null::boolean;
       return;
     end if;
 
@@ -701,7 +755,8 @@ begin
       return query select 'policy_changed'::text, null::uuid, null::uuid, null::uuid,
                           null::uuid, null::uuid, null::uuid, null::timestamptz,
                           null::timestamptz, null::timestamptz, null::integer,
-                          null::timestamptz, null::uuid;
+                          null::timestamptz, null::uuid,
+                        null::boolean, null::boolean;
       return;
     end if;
   end if;
@@ -727,7 +782,8 @@ begin
     return query select 'payment_state_requires_studio'::text, null::uuid, null::uuid, null::uuid,
                         null::uuid, null::uuid, null::uuid, null::timestamptz,
                         null::timestamptz, null::timestamptz, null::integer,
-                        null::timestamptz, null::uuid;
+                        null::timestamptz, null::uuid,
+                        null::boolean, null::boolean;
     return;
   end if;
 
@@ -768,7 +824,8 @@ begin
       return query select 'practitioner_unavailable'::text, null::uuid, null::uuid, null::uuid,
                           null::uuid, null::uuid, null::uuid, null::timestamptz,
                           null::timestamptz, null::timestamptz, null::integer,
-                          null::timestamptz, null::uuid;
+                          null::timestamptz, null::uuid,
+                        null::boolean, null::boolean;
       return;
     end if;
 
@@ -789,7 +846,8 @@ begin
       return query select 'practitioner_unavailable'::text, null::uuid, null::uuid, null::uuid,
                           null::uuid, null::uuid, null::uuid, null::timestamptz,
                           null::timestamptz, null::timestamptz, null::integer,
-                          null::timestamptz, null::uuid;
+                          null::timestamptz, null::uuid,
+                        null::boolean, null::boolean;
       return;
     end if;
   end if;
@@ -827,7 +885,8 @@ begin
     return query select v_avail, null::uuid, null::uuid, null::uuid,
                         null::uuid, null::uuid, null::uuid, null::timestamptz,
                         null::timestamptz, null::timestamptz, null::integer,
-                        null::timestamptz, null::uuid;
+                        null::timestamptz, null::uuid,
+                        null::boolean, null::boolean;
     return;
   end if;
 
@@ -965,16 +1024,99 @@ begin
   return query select 'success'::text, v_orig.id, v_new_id, v_studio_id,
                       v_orig.client_id, v_orig.service_id, v_orig.practitioner_id,
                       v_orig.starts_at, v_new_starts, v_new_ends, v_duration,
-                      v_created_at, v_ack_id;
+                      v_created_at, v_ack_id,
+                      v_cancel_allowed, v_reschedule_allowed;
   return;
 end;
 $$;
 
+comment on function public.reschedule_appointment_v3(uuid, text, timestamptz, text, boolean, text) is
+  '0171 body, gated by HON-47/0234, with two added return columns. Atomic '
+  'public reschedule. Refuses reschedule_disabled, after the appointment state '
+  'checks and before any mutation, when the studio has '
+  'client_reschedule_enabled = false. Returns both client self-service flags as '
+  'read UNDER THE STUDIO LOCK, so a caller minting successor links cannot use a '
+  'staler read than the gate did. EMERG-01 free-consultation refusal is '
+  'separate and unchanged.';
+
+revoke execute on function public.reschedule_appointment_v3(uuid, text, timestamptz, text, boolean, text) from public;
+revoke execute on function public.reschedule_appointment_v3(uuid, text, timestamptz, text, boolean, text) from anon;
+revoke execute on function public.reschedule_appointment_v3(uuid, text, timestamptz, text, boolean, text) from authenticated;
+revoke execute on function public.reschedule_appointment_v3(uuid, text, timestamptz, text, boolean, text) from service_role;
+grant execute on function public.reschedule_appointment_v3(uuid, text, timestamptz, text, boolean, text) to service_role;
+
+-- ---------------------------------------------------------------------------
+-- v2 — A THIN WRAPPER, kept for DEPLOY SKEW
+-- ---------------------------------------------------------------------------
+--
+-- Identical signature, identical 13-column return shape in the same order and
+-- types, identical grants. It exists so that an OLD APP BUILD still calling v2
+-- keeps working after this migration is applied — which is required, because
+-- the deploy order is migration-first: 0234 is applied BEFORE the build that
+-- calls v3 is live, so there is a window in which the running app is the old
+-- one.
+--
+-- It is a WRAPPER, not a second implementation: it selects v3's first thirteen
+-- columns, so it inherits the HON-47 gate, the locks, the ordering and every
+-- refusal code automatically. There is nothing here to drift.
+--
+-- `create or replace` is valid for v2 because its return type does NOT change.
+-- That is the whole reason the implementation moved to a new name instead.
+create or replace function public.reschedule_appointment_v2(
+  p_original_appointment_id       uuid,
+  p_current_cancellation_token_hash text,
+  p_new_starts_at                 timestamptz,
+  p_new_cancellation_token_hash   text,
+  p_acknowledged_policy           boolean,
+  p_presented_policy_snapshot_hash text default null
+)
+returns table (
+  result                    text,
+  original_appointment_id   uuid,
+  new_appointment_id        uuid,
+  studio_id                 uuid,
+  client_id                 uuid,
+  service_id                uuid,
+  practitioner_id           uuid,
+  original_starts_at        timestamptz,
+  starts_at                 timestamptz,
+  ends_at                   timestamptz,
+  duration_minutes          integer,
+  created_at                timestamptz,
+  policy_acknowledgement_id uuid
+)
+language sql
+security definer
+set search_path = ''
+as $$
+  select v.result,
+         v.original_appointment_id,
+         v.new_appointment_id,
+         v.studio_id,
+         v.client_id,
+         v.service_id,
+         v.practitioner_id,
+         v.original_starts_at,
+         v.starts_at,
+         v.ends_at,
+         v.duration_minutes,
+         v.created_at,
+         v.policy_acknowledgement_id
+    from public.reschedule_appointment_v3(
+           p_original_appointment_id,
+           p_current_cancellation_token_hash,
+           p_new_starts_at,
+           p_new_cancellation_token_hash,
+           p_acknowledged_policy,
+           p_presented_policy_snapshot_hash
+         ) v;
+$$;
+
 comment on function public.reschedule_appointment_v2(uuid, text, timestamptz, text, boolean, text) is
-  '0171, gated by HON-47/0234. Atomic public reschedule. Refuses '
-  'reschedule_disabled, before the capacity lock and before any mutation, when '
-  'the studio has client_reschedule_enabled = false. EMERG-01''s '
-  'free-consultation refusal is separate and unchanged.';
+  'DEPLOY-SKEW WRAPPER over reschedule_appointment_v3 (HON-47/0234). Identical '
+  'signature and 13-column return shape; it drops only the two flag columns v3 '
+  'added. It inherits every gate, lock and refusal code from v3, so an old app '
+  'build calling this name behaves exactly as before.';
 
 revoke execute on function public.reschedule_appointment_v2(uuid, text, timestamptz, text, boolean, text) from public;
 revoke execute on function public.reschedule_appointment_v2(uuid, text, timestamptz, text, boolean, text) from anon;

@@ -37,6 +37,7 @@ import type { ReactElement, ReactNode } from "react";
 const TOKEN = "raw-url-token";
 const STUDIO_ID = "22222222-2222-4222-8222-222222222222";
 const APPT_ID = "11111111-1111-4111-8111-111111111111";
+const SUCCESSOR_ID = "55555555-5555-4555-8555-555555555555";
 
 const rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
 const writes: Array<{ table: string; op: string }> = [];
@@ -53,6 +54,10 @@ const scenario = {
   // The COMMAND's verdict, which can disagree with the flag the gate read a
   // moment earlier — that race is the whole point of one of the cases below.
   rescheduleResult: "reschedule_disabled" as string,
+  // What the COMMAND returns, as read under the studio lock. Separate from the
+  // snapshot flags above on purpose.
+  returnedCancellationEnabled: true as boolean | null,
+  returnedRescheduleEnabled: true as boolean | null,
   studioSlug: OPEN_SLUG as string | null,
   freeConsult: false,
 };
@@ -87,6 +92,12 @@ function studioRow() {
     no_show_policy_text: null,
     client_cancellation_enabled: scenario.cancellationEnabled,
     client_reschedule_enabled: scenario.rescheduleEnabled,
+    // The reschedule post-commit sends the client confirmation ONLY when the
+    // studio has confirmations on — `disabled` otherwise, which is a
+    // configuration and not a failure. The link assertions below read that
+    // email's arguments, so without this they observed nothing and failed on
+    // their own fixture rather than on the product.
+    send_confirmation_emails: true,
   };
 }
 
@@ -155,10 +166,36 @@ const admin = {
   from: (table: string) => makeQuery(table),
   async rpc(fn: string, args: Record<string, unknown>) {
     rpcCalls.push({ fn, args });
-    const result = fn.includes("reschedule")
-      ? scenario.rescheduleResult
-      : scenario.cancelResult;
-    return { data: [{ result }], error: null };
+    if (fn.includes("reschedule")) {
+      // v3's success payload, including the two flags it read UNDER THE STUDIO
+      // LOCK. `scenario.returnedCancellationEnabled` is deliberately separate
+      // from `scenario.cancellationEnabled` (the studio row the action reads
+      // BEFORE the command) so a test can make them disagree — which is the
+      // race Codex P2 4309167887 is about.
+      return {
+        data: [
+          {
+            result: scenario.rescheduleResult,
+            original_appointment_id: APPT_ID,
+            new_appointment_id: SUCCESSOR_ID,
+            studio_id: STUDIO_ID,
+            client_id: "33333333-3333-4333-8333-333333333333",
+            service_id: SERVICE.id,
+            practitioner_id: null,
+            original_starts_at: scenario.startsAt,
+            starts_at: new Date(Date.now() + 172_800_000).toISOString(),
+            ends_at: new Date(Date.now() + 172_800_000 + 2_700_000).toISOString(),
+            duration_minutes: 45,
+            created_at: new Date().toISOString(),
+            policy_acknowledgement_id: null,
+            client_cancellation_enabled: scenario.returnedCancellationEnabled,
+            client_reschedule_enabled: scenario.returnedRescheduleEnabled,
+          },
+        ],
+        error: null,
+      };
+    }
+    return { data: [{ result: scenario.cancelResult }], error: null };
   },
 };
 
@@ -180,8 +217,26 @@ vi.mock("@/lib/booking/tokens", () => ({
   verifyCancellationToken: () => ({ ok: false, error: "invalid" }),
   issueCancellationToken: () => "new-token",
 }));
+// The successor confirmation is what carries the links, so it is captured
+// rather than stubbed blind: the HON-47 race case below asserts on exactly
+// these two arguments.
+const confirmations: Array<{
+  cancellationUrl: string | null;
+  rescheduleUrl: string | null;
+}> = [];
+
 vi.mock("@/lib/email/send-appointment", () => ({
   sendCancellationEmail: async () => ({ ok: true }),
+  sendBookingConfirmationToClient: async (p: {
+    cancellationUrl: string | null;
+    rescheduleUrl: string | null;
+  }) => {
+    confirmations.push({
+      cancellationUrl: p.cancellationUrl,
+      rescheduleUrl: p.rescheduleUrl,
+    });
+    return { ok: true, messageId: "m1" };
+  },
 }));
 vi.mock("@/lib/notifications/practitioner-notifications", () => ({
   recordPractitionerNotification: () => undefined,
@@ -246,6 +301,7 @@ const render = async (
 beforeEach(() => {
   rpcCalls.length = 0;
   writes.length = 0;
+  confirmations.length = 0;
   Object.assign(scenario, {
     cancellationEnabled: true,
     rescheduleEnabled: true,
@@ -253,6 +309,8 @@ beforeEach(() => {
     startsAt: new Date(Date.now() + 86_400_000).toISOString(),
     cancelResult: "cancelled",
     rescheduleResult: "reschedule_disabled",
+    returnedCancellationEnabled: true,
+    returnedRescheduleEnabled: true,
     studioSlug: OPEN_SLUG,
     freeConsult: false,
   });
@@ -434,6 +492,89 @@ describe("HON-47 the RACE: the COMMAND refuses after the gate allowed it", () =>
     // The two paths must be indistinguishable: a client should not be able to
     // tell that they lost a race.
     expect(r.error).not.toContain("can't be used right now");
+  });
+
+  // -------------------------------------------------------------------------
+  // THE SUCCESSOR'S LINKS FOLLOW THE COMMAND, NOT THE SNAPSHOT.
+  // Codex P2 4309167887.
+  // -------------------------------------------------------------------------
+  //
+  // The action reads the studio row BEFORE calling the command, and used to
+  // build the successor's links from it. An owner switching cancellation off in
+  // between produced a confirmation carrying a brand-new cancel link that
+  // refused on first use. v3 now returns the flags it read UNDER THE STUDIO
+  // LOCK, which is the only read that cannot be stale.
+  //
+  // THE FIXTURE MAKES THE TWO DISAGREE, which is the whole point: the snapshot
+  // says cancellation is ALLOWED and the command says it is NOT. Before the fix
+  // the snapshot won and a cancel link was sent.
+  const submitForm = () => {
+    const fd = new FormData();
+    fd.set("token", TOKEN);
+    fd.set("starts_at", new Date(Date.now() + 172_800_000).toISOString());
+    return rescheduleAppointmentViaTokenAction(fd);
+  };
+
+  it("snapshot ALLOWS cancellation, command REFUSES it: no cancel link is sent", async () => {
+    scenario.rescheduleEnabled = true;
+    scenario.cancellationEnabled = true; // the pre-command snapshot
+    scenario.rescheduleResult = "success";
+    scenario.returnedCancellationEnabled = false; // what the lock actually saw
+    scenario.returnedRescheduleEnabled = true;
+
+    const r = await submitForm();
+    expect(r.ok, "the reschedule itself must still succeed").toBe(true);
+    expect(confirmations.length, "one confirmation must be sent").toBe(1);
+    // THE ASSERTION. A cancel link here is the defect.
+    expect(
+      confirmations[0]!.cancellationUrl,
+      "the successor must carry NO cancel link when the command says cancellation is off",
+    ).toBeNull();
+    // And the reschedule link is untouched, so this is not a blanket suppression.
+    expect(confirmations[0]!.rescheduleUrl).toContain("/reschedule/");
+  });
+
+  it("snapshot REFUSES rescheduling, command ALLOWS it: the link IS sent", async () => {
+    // The mirror, and it matters: the command is the authority in BOTH
+    // directions. Deferring to a stale snapshot would withhold a link the
+    // studio had just re-enabled, which is a quieter failure than sending one
+    // it had withdrawn, and just as wrong.
+    scenario.rescheduleEnabled = true;
+    scenario.cancellationEnabled = false; // stale snapshot
+    scenario.rescheduleResult = "success";
+    scenario.returnedCancellationEnabled = true; // the lock's answer
+    scenario.returnedRescheduleEnabled = true;
+
+    const r = await submitForm();
+    expect(r.ok).toBe(true);
+    expect(confirmations[0]!.cancellationUrl).toContain("/cancel/");
+  });
+
+  it("the command saying NOTHING falls back to the snapshot, never to permissive", async () => {
+    // v3 always reports them, so this is the deploy-skew / malformed-row case.
+    // The fallback must be the OLD behaviour (the snapshot), not `true`: a
+    // default of `true` would silently re-open a studio that switched the
+    // action off, which is the exact defect this field closes.
+    scenario.rescheduleEnabled = true;
+    scenario.cancellationEnabled = false; // snapshot says OFF
+    scenario.rescheduleResult = "success";
+    scenario.returnedCancellationEnabled = null; // command silent
+    scenario.returnedRescheduleEnabled = null;
+
+    const r = await submitForm();
+    expect(r.ok).toBe(true);
+    expect(
+      confirmations[0]!.cancellationUrl,
+      "a silent command must not be read as permission",
+    ).toBeNull();
+  });
+
+  it("the action calls v3", async () => {
+    scenario.rescheduleResult = "success";
+    await submitForm();
+    const names = rpcCalls.map((c) => c.fn);
+    expect(names).toContain("reschedule_appointment_v3");
+    expect(names).not.toContain("reschedule_appointment_v2");
   });
 
   it("CONTROL — the command's own generic refusals still collapse", async () => {

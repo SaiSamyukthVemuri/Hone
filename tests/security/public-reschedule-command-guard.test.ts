@@ -41,9 +41,15 @@ function code(src: string): string {
 const ACTIONS_CODE = code(ACTIONS);
 const MIGRATION_CODE = code(MIGRATION);
 
-describe("public reschedule route — calls v2 and only v2", () => {
-  it("calls reschedule_appointment_v2", () => {
-    expect(ACTIONS_CODE).toContain('"reschedule_appointment_v2"');
+describe("public reschedule route — calls v3", () => {
+  it("calls reschedule_appointment_v3", () => {
+    // RE-POINTED, NOT LOOSENED (HON-47, Codex P2 4309167887). The action now
+    // calls v3, which returns the two client self-service flags as read UNDER
+    // THE STUDIO LOCK, so the successor's links cannot be built from a staler
+    // snapshot. v2 still exists as a deploy-skew wrapper over v3 — an older
+    // build calling it keeps working — but the APP must call v3, and asserting
+    // the name is how a silent revert to the snapshot-era call is caught.
+    expect(ACTIONS_CODE).toContain('"reschedule_appointment_v3"');
   });
 
   it("no longer calls the LEGACY reschedule_appointment RPC", () => {
@@ -163,7 +169,7 @@ describe("public reschedule route — token-delivery gate", () => {
 
   it("calls the command only AFTER the raw token is minted", () => {
     const mint = SUBMIT.indexOf("generateAppointmentToken()");
-    const rpc = SUBMIT.indexOf('"reschedule_appointment_v2"');
+    const rpc = SUBMIT.indexOf('"reschedule_appointment_v3"');
     expect(rpc).toBeGreaterThan(mint);
   });
 
@@ -560,7 +566,7 @@ describe("public reschedule — the success result carries a management path", (
 
   it("resolves the app origin BEFORE the command, and refuses when it cannot", () => {
     const origin = SUBMIT.indexOf("getRequiredAppOrigin()");
-    const rpc = SUBMIT.indexOf('"reschedule_appointment_v2"');
+    const rpc = SUBMIT.indexOf('"reschedule_appointment_v3"');
     expect(origin).toBeGreaterThan(-1);
     expect(rpc).toBeGreaterThan(origin);
     expect(SUBMIT).toContain("public_reschedule_app_origin_unresolved");
@@ -572,7 +578,7 @@ describe("public reschedule — the success result carries a management path", (
     // now destructured together from `clientSelfServiceLinks(...)`, the
     // policy-aware helper that suppresses a link the studio has switched off.
     // The PROPERTY is unchanged and still the point — a management URL must
-    // exist BEFORE `reschedule_appointment_v2` is called, so a committed
+    // exist BEFORE `reschedule_appointment_v3` is called, so a committed
     // success can never be returned without one.
     //
     // Verified before re-pointing: in the current source the destructured
@@ -580,16 +586,22 @@ describe("public reschedule — the success result carries a management path", (
     // `manageUrl` binding it produces, so a future edit that moves the call
     // after the command still fails here — which is the negative control for
     // this assertion, and it was checked by doing exactly that.
-    const binding = SUBMIT.indexOf("manageUrl,");
-    const helper = SUBMIT.indexOf("clientSelfServiceLinks({");
-    const rpc = SUBMIT.indexOf('"reschedule_appointment_v2"');
-    expect(binding, "the submit path must bind manageUrl").toBeGreaterThan(-1);
-    expect(helper, "manageUrl must come from the policy-aware helper").toBeGreaterThan(-1);
-    expect(binding, "the manageUrl binding belongs to the helper call").toBeLessThan(helper);
+    // ONE ANCHOR that is the binding AND the call, so the two cannot drift
+    // apart: the submit path destructures `manageUrl` directly out of the
+    // helper. An earlier version of this assertion looked for "manageUrl," with
+    // a trailing comma, which stopped matching the moment the destructuring
+    // narrowed from three links to one — and then matched a LATER, unrelated
+    // `manageUrl,` in an object literal after the RPC, inverting the check.
+    const built = SUBMIT.indexOf("{ manageUrl } = clientSelfServiceLinks(");
+    const rpc = SUBMIT.indexOf('"reschedule_appointment_v3"');
+    expect(
+      built,
+      "the submit path must build manageUrl from the policy-aware helper",
+    ).toBeGreaterThan(-1);
     expect(
       rpc,
-      "the manage URL must be built BEFORE reschedule_appointment_v2 is called",
-    ).toBeGreaterThan(helper);
+      "the manage URL must be built BEFORE reschedule_appointment_v3 is called",
+    ).toBeGreaterThan(built);
   });
 });
 

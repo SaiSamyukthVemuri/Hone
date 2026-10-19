@@ -940,14 +940,22 @@ export async function rescheduleAppointmentViaTokenAction(
   // `/manage` is never suppressed — it is the honest fallback. The flags come
   // from the studio row already read server-side.
   //
-  // THE SUCCESSOR's links, so they follow the policy as it stands NOW: a studio
-  // that switched cancellation off between the original booking and this
-  // reschedule must not hand the client a fresh cancel link.
-  const {
-    cancelUrl: cancellationUrl,
-    rescheduleUrl,
-    manageUrl,
-  } = clientSelfServiceLinks({
+  // THE SUCCESSOR's MANAGE URL, built BEFORE the command — and only this one.
+  //
+  // A security guard asserts exactly this ordering
+  // (tests/security/public-reschedule-command-guard.test.ts): the management URL
+  // must exist before `reschedule_appointment_v3` is called, so a committed
+  // success can never be returned without one. /manage is also the one link
+  // HON-47 never suppresses, so it depends on no flag and nothing is gained by
+  // waiting for the command.
+  //
+  // THE OTHER TWO MOVED AFTER THE COMMAND (Codex P2 4309167887). They were built
+  // from `studioRow`, a snapshot read BEFORE the command took the studio lock,
+  // so an owner switching cancellation off in between produced a confirmation
+  // carrying a brand-new cancel link that refused on first use. They are now
+  // built from the flags the COMMAND returns, which it read under that lock —
+  // the only read that cannot be stale.
+  const { manageUrl } = clientSelfServiceLinks({
     origin: appOrigin,
     token: newToken,
     studio: studioRow,
@@ -959,7 +967,11 @@ export async function rescheduleAppointmentViaTokenAction(
   // service/practitioner, no status and no lineage id: every one of those is
   // derived from the LOCKED original inside the transaction.
   const { data: rpcData, error: rpcErr } = await admin.rpc(
-    "reschedule_appointment_v2",
+    // v3, not v2. v3 returns the two client self-service flags as read under
+    // the studio lock; v2 remains as a deploy-skew wrapper over it, so an older
+    // build still calling v2 keeps working. Deploy order is migration-first:
+    // 0234 is applied before this build is live.
+    "reschedule_appointment_v3",
     {
       p_original_appointment_id: asserted.original.appointment_id,
       p_current_cancellation_token_hash: asserted.original.rpc_token_hash,
@@ -1080,6 +1092,27 @@ export async function rescheduleAppointmentViaTokenAction(
   // documented fallback, and the independent effects run regardless of each
   // other's outcome.
   const parsed = parseRescheduleSuccessRow(row);
+
+  // HON-47 (Codex P2 4309167887). THE SUCCESSOR'S cancel and reschedule links,
+  // built from what the COMMAND read under the studio lock rather than from the
+  // snapshot taken before it. `??` falls back to the snapshot's own value when
+  // the command did not report one, so this is never more permissive than the
+  // code it replaces.
+  //
+  // `manageUrl` is NOT rebuilt here: it is never suppressed, and a guard
+  // requires it to exist before the command runs.
+  const { cancelUrl: cancellationUrl, rescheduleUrl } = clientSelfServiceLinks({
+    origin: appOrigin,
+    token: newToken,
+    studio: {
+      client_cancellation_enabled:
+        parsed?.clientCancellationEnabled ??
+        studioRow.client_cancellation_enabled,
+      client_reschedule_enabled:
+        parsed?.clientRescheduleEnabled ?? studioRow.client_reschedule_enabled,
+    },
+  });
+
   if (!parsed) {
     // The command said `success`, so the mutation IS committed. This is an
     // internal command-contract violation, not a visitor-facing failure, and it
@@ -1373,6 +1406,14 @@ type RescheduleSuccess = {
   endsAt: string;
   durationMinutes: number;
   createdAt: string;
+  /**
+   * HON-47. The studio's client self-service flags as the COMMAND read them,
+   * under the studio lock. `null` when the command did not report them, which
+   * means the caller falls back to its pre-command snapshot rather than to a
+   * permissive default.
+   */
+  clientCancellationEnabled: boolean | null;
+  clientRescheduleEnabled: boolean | null;
 };
 
 /** Names of the required fields that are missing/blank. Never the values. */
@@ -1408,6 +1449,21 @@ function parseRescheduleSuccessRow(
     endsAt: row.ends_at as string,
     durationMinutes: row.duration_minutes as number,
     createdAt: row.created_at as string,
+    // HON-47 (Codex P2 4309167887). Read UNDER THE STUDIO LOCK by the command.
+    //
+    // NOT defaulted to `true` when absent, deliberately: that is the one value
+    // that would silently re-open a studio that had switched the action off,
+    // which is the defect this field exists to close. `null` means "the command
+    // did not say", and the caller then falls back to the pre-command snapshot —
+    // the old behaviour, never something more permissive than either reading.
+    clientCancellationEnabled:
+      typeof row.client_cancellation_enabled === "boolean"
+        ? row.client_cancellation_enabled
+        : null,
+    clientRescheduleEnabled:
+      typeof row.client_reschedule_enabled === "boolean"
+        ? row.client_reschedule_enabled
+        : null,
   };
 }
 

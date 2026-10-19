@@ -301,7 +301,11 @@ describe("0171 — the reschedule does not commit without a deliverable credenti
     const r = await rescheduleAppointmentViaTokenAction(form());
     expect(r.ok).toBe(true);
     expect(rpcCalls).toHaveLength(1);
-    expect(rpcCalls[0].fn).toBe("reschedule_appointment_v2");
+    // v3 since HON-47: the command returns the two client self-service flags
+    // it read under the studio lock, and the action builds the successor's
+    // links from those rather than from a pre-command snapshot. v2 remains as
+    // a deploy-skew wrapper, but the APP calls v3.
+    expect(rpcCalls[0].fn).toBe("reschedule_appointment_v3");
     // The hash of the freshly-minted raw token, never the raw token itself.
     expect(rpcCalls[0].args.p_new_cancellation_token_hash).toBe("b".repeat(64));
     expect(JSON.stringify(rpcCalls[0].args)).not.toContain("RAW-SUCCESSOR-TOKEN");

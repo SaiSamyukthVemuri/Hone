@@ -28,6 +28,10 @@ const CANCEL7 =
   "public.public_cancel_appointment_with_token( text, text, text, text, boolean, boolean, text )";
 const RESCHEDULE =
   "public.reschedule_appointment_v2(uuid, text, timestamptz, text, boolean, text)";
+// The implementation. Same posture required of it as of the other two: revoked
+// from every default-granted role by name, granted back to service_role only.
+const RESCHEDULE_V3 =
+  "public.reschedule_appointment_v3(uuid, text, timestamptz, text, boolean, text)";
 
 describe("0234 sits correctly in the migration sequence", () => {
   it("is the repository maximum, and nothing sits above it", () => {
@@ -109,18 +113,117 @@ describe("0234 gates the two CLIENT-ONLY commands, and nothing else", () => {
     expect(CODE).toContain("'reschedule_disabled'::text");
   });
 
-  it("re-emits ONLY the two client commands", () => {
+  it("re-emits EXACTLY these three functions and no others", () => {
     const created = [...CODE.matchAll(/create or replace function\s+([\w.]+)/g)]
       .map((m) => m[1])
       .sort();
-    // The 5-ARGUMENT legacy cancel overload is deliberately ABSENT: it
+    // THREE, since Codex P2 4309167887. `reschedule_appointment_v3` holds the
+    // body and returns the two flags it read under the studio lock;
+    // `reschedule_appointment_v2` becomes a thin wrapper over it, kept so an
+    // OLD APP BUILD calling v2 keeps working after this migration is applied
+    // (the deploy order is migration-first, so that window is real). The
+    // implementation had to move to a new name because adding return columns
+    // changes the return type, which `create or replace function` refuses
+    // (42P13) — dropping a live production command was the alternative.
+    //
+    // The 5-ARGUMENT legacy cancel overload is still deliberately ABSENT: it
     // delegates to the 7-argument command and so inherits the refusal. Proven
     // against the deployed body in the DB test (+0/-0), and pinned here so a
     // future edit cannot quietly re-sign it without a gate.
     expect(created).toEqual([
       "public.public_cancel_appointment_with_token",
       "public.reschedule_appointment_v2",
+      "public.reschedule_appointment_v3",
     ]);
+  });
+
+  it("v2 is a WRAPPER over v3, not a second implementation", () => {
+    // The whole safety of keeping v2 rests on it having no body of its own: it
+    // inherits the HON-47 gate, the lock order, the ordering fix and every
+    // refusal code from v3 automatically. A second implementation would be free
+    // to drift, and the drift would be invisible — v2 is the name the OLD build
+    // calls, so nothing in the new app would exercise it.
+    const v2 = CODE.slice(
+      CODE.indexOf("create or replace function public.reschedule_appointment_v2("),
+    );
+    const body = v2.slice(0, v2.indexOf("$$;") + 3);
+    expect(body).toContain("public.reschedule_appointment_v3(");
+    expect(body).toMatch(/language sql/);
+    // It must not re-implement anything: no gate, no locks, no refusal codes.
+    expect(body).not.toContain("for update");
+    expect(body).not.toContain("reschedule_disabled");
+    expect(body).not.toContain("acquire_studio_capacity_lock");
+    expect(body).not.toContain("insert into public.appointments");
+  });
+
+  it("v2 keeps its ORIGINAL 13-column return shape, in order", () => {
+    // The deploy-skew promise: an old build parses these columns positionally
+    // and by name. v3's two extra columns must NOT appear here.
+    const v2 = CODE.slice(
+      CODE.indexOf("create or replace function public.reschedule_appointment_v2("),
+    );
+    const returns = v2.slice(v2.indexOf("returns table ("), v2.indexOf(")\nlanguage"));
+    const cols = [...returns.matchAll(/^\s{2}(\w+)\s+/gm)].map((m) => m[1]);
+    expect(cols).toEqual([
+      "result",
+      "original_appointment_id",
+      "new_appointment_id",
+      "studio_id",
+      "client_id",
+      "service_id",
+      "practitioner_id",
+      "original_starts_at",
+      "starts_at",
+      "ends_at",
+      "duration_minutes",
+      "created_at",
+      "policy_acknowledgement_id",
+    ]);
+    expect(cols).not.toContain("client_cancellation_enabled");
+    expect(cols).not.toContain("client_reschedule_enabled");
+  });
+
+  it("v3 returns the two flags, AFTER the original thirteen", () => {
+    const v3 = CODE.slice(
+      CODE.indexOf("create or replace function public.reschedule_appointment_v3("),
+    );
+    const returns = v3.slice(v3.indexOf("returns table ("), v3.indexOf("language plpgsql"));
+    const cols = [...returns.matchAll(/^\s{2}(\w+)\s+/gm)].map((m) => m[1]);
+    // APPENDED, not inserted: an old build reading v3 positionally would still
+    // find its thirteen in place. (It calls v2, but the ordering claim is what
+    // makes the wrapper's plain column list safe.)
+    expect(cols.slice(0, 13)).toEqual([
+      "result",
+      "original_appointment_id",
+      "new_appointment_id",
+      "studio_id",
+      "client_id",
+      "service_id",
+      "practitioner_id",
+      "original_starts_at",
+      "starts_at",
+      "ends_at",
+      "duration_minutes",
+      "created_at",
+      "policy_acknowledgement_id",
+    ]);
+    expect(cols.slice(13)).toEqual([
+      "client_cancellation_enabled",
+      "client_reschedule_enabled",
+    ]);
+  });
+
+  it("v3 reads the cancellation flag UNDER THE STUDIO LOCK, and gates on neither", () => {
+    // It returns the cancellation flag; it must not start refusing on it. That
+    // is the cancel command's job, and a reschedule that refused because
+    // CANCELLATION was off would be a new defect.
+    const v3 = CODE.slice(
+      CODE.indexOf("create or replace function public.reschedule_appointment_v3("),
+    );
+    const read = v3.indexOf("coalesce(s.client_cancellation_enabled, true)");
+    expect(read, "v3 must read the cancellation flag").toBeGreaterThan(-1);
+    expect(v3.indexOf("for update", read)).toBeGreaterThan(read);
+    expect(v3).not.toContain("'cancellation_disabled'");
   });
 
   it("touches no STAFF scheduling command", () => {
@@ -196,20 +299,37 @@ describe("0234 refuses on the flag only AFTER the state checks (Codex P1 4308948
     expect(refusal).toBeGreaterThan(notReschedulable);
   });
 
-  it("both flag VALUES are still read under the studio's FOR UPDATE lock", () => {
-    // Only the refusal moved. The read must stay inside the locked studio
+  it("EVERY flag read sits inside a studio select that takes FOR UPDATE", () => {
+    // Only the refusal moved. Each read must stay inside the locked studio
     // select, or the decision stops being linearizable against a concurrent
     // policy change — which was the one thing the original ordering got right.
+    //
+    // ASSERTED OVER EVERY OCCURRENCE, not just the first. An earlier version
+    // also required there to be exactly ONE read per column, and that stopped
+    // being true the moment v3 began RETURNING the cancellation flag as well as
+    // the cancel command gating on it (Codex P2 4309167887) — two reads, both
+    // legitimate, both under a lock. "Read once" was never the property; "never
+    // read outside the lock" is.
     for (const column of [
       "client_cancellation_enabled",
       "client_reschedule_enabled",
     ]) {
-      const read = CODE.indexOf(`coalesce(s.${column}, true)`);
-      expect(read, `${column} must be read from the studio row`).toBeGreaterThan(-1);
-      const lockAfter = CODE.indexOf("for update", read);
-      expect(lockAfter, `${column}'s select must take FOR UPDATE`).toBeGreaterThan(read);
-      // and nothing re-reads it from an unlocked statement afterwards
-      expect(CODE.indexOf(`coalesce(s.${column}, true)`, read + 1)).toBe(-1);
+      const needle = `coalesce(s.${column}, true)`;
+      const reads: number[] = [];
+      for (let i = CODE.indexOf(needle); i !== -1; i = CODE.indexOf(needle, i + 1)) {
+        reads.push(i);
+      }
+      expect(reads.length, `${column} must be read from the studio row`).toBeGreaterThan(0);
+      for (const read of reads) {
+        // The enclosing statement ends at the next `;`. FOR UPDATE must appear
+        // inside it, so a read moved into an UNLOCKED select fails here.
+        const stmtEnd = CODE.indexOf(";", read);
+        const lock = CODE.indexOf("for update", read);
+        expect(
+          lock !== -1 && lock < stmtEnd,
+          `${column} is read at ${read} by a select that does not take FOR UPDATE`,
+        ).toBe(true);
+      }
     }
   });
 });
@@ -219,7 +339,7 @@ describe("0234: EXECUTE is revoked from every default-granted role BY NAME", () 
   // AND service_role at function-create time, and `create or replace` re-runs
   // that. Missed once in 0129 (anon) and again in 0164 (service_role).
   // CLAUDE.md §5.
-  for (const sig of [CANCEL7, RESCHEDULE]) {
+  for (const sig of [CANCEL7, RESCHEDULE, RESCHEDULE_V3]) {
     const name = sig.slice(0, sig.indexOf("("));
     it(`${name} revokes from public, anon, authenticated and service_role`, () => {
       for (const role of ["public", "anon", "authenticated", "service_role"]) {
@@ -253,7 +373,7 @@ describe("0234: EXECUTE is revoked from every default-granted role BY NAME", () 
 describe("0234 keeps the hardening both commands already had", () => {
   it("every function is SECURITY DEFINER with a pinned search_path", () => {
     const defs = CODE.split("create or replace function").slice(1);
-    expect(defs.length).toBe(2);
+    expect(defs.length).toBe(3);
     for (const d of defs) {
       const body = d.slice(0, d.indexOf("begin"));
       expect(body).toMatch(/security definer/);
