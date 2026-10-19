@@ -1,12 +1,14 @@
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { countVersion } from "./helpers/migration-state";
+import { countVersion, fileForVersion, isRepoMax } from "./helpers/migration-state";
 
 const sql = readFileSync("supabase/migrations/0236_delivery_incident_retained_failures.sql", "utf8");
 describe("0236 owner retained-failure projection source contract (not DB execution)", () => {
   it("uses its OPS allocation exactly once", () => {
     expect(countVersion("0236")).toBe(1);
+    expect(fileForVersion("0236")).toBe("0236_delivery_incident_retained_failures.sql");
+    expect(isRepoMax("0236")).toBe(true);
   });
   it("atomically replaces only the existing RPC without CASCADE", () => {
     expect(sql).toMatch(/begin;[\s\S]*set local lock_timeout = '5s';/);
