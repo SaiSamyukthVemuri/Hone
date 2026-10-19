@@ -36,6 +36,9 @@ const h = vi.hoisted(() => {
     calls: { begin: 0, settle: 0 },
     rpcs: [] as Array<{ fn: string; args: Record<string, unknown> }>,
     heartbeat: [] as Array<Record<string, unknown>>,
+    emailMode: "off" as "off" | "success" | "token-null" | "token-throw" | "context-throw",
+    emailOrder: [] as string[],
+    emailPayloads: [] as Record<string, unknown>[],
   };
   const appt = (id: string) => ({
     id,
@@ -68,6 +71,16 @@ const h = vi.hoisted(() => {
   function query(table: string) {
     const filters: Filter[] = [];
     const answer = () => {
+      if (table === "appointments" && state.emailMode !== "off" &&
+          filters.some(([op, c]) => op === "is" && c === "reminder_24h_sent_at")) {
+        const row = appt("email-1");
+        return { data: [{ ...row, reminder_24h_send_attempts: 0,
+          client: { ...row.client, email: "client@example.invalid" },
+          studio: { ...row.studio, send_24h_reminders: true,
+            show_treatment_time_to_clients: true, client_cancellation_enabled: false,
+            client_reschedule_enabled: true },
+        }], error: null };
+      }
       const kind = filters.some(([op, c]) => op === "is" && c === "sms_reminder_24h_sent_at")
         ? "24h"
         : filters.some(([op, c]) => op === "is" && c === "sms_reminder_2h_sent_at")
@@ -131,6 +144,47 @@ vi.mock("@/lib/cron/reminder-heartbeat", () => ({
 vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: () => Promise.resolve() }));
 vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => "https://hone.care" }));
 
+
+// Reuse this route's database/network fakes for pre-provider email failures.
+// SMS continues through its real helper; only email transport/preparation is fake.
+vi.mock("@/lib/email/send-appointment", () => ({
+  claimEmailSend: async () => true,
+  recordEmailResult: async () => { h.state.emailOrder.push("record"); },
+  logEmailFailure: () => undefined,
+  send24hReminderToClient: async (payload: Record<string, unknown>) => {
+    h.state.emailOrder.push("send");
+    h.state.emailPayloads.push(payload);
+    return { ok: true, messageId: "fake-provider-id" };
+  },
+  send2hReminderToClient: async () => { throw new Error("unexpected 2h email"); },
+  sendIntakeReminderToClient: async () => { throw new Error("unexpected intake email"); },
+}));
+vi.mock("@/lib/email/delivery-ledger", () => ({
+  beginAppointmentEmailMessage: async () => {
+    h.state.emailOrder.push("begin");
+    return "fake-ledger-id";
+  },
+  settleEmailMessage: async () => { h.state.emailOrder.push("settle"); },
+  settleOutcomeForEmailSend: () => "accepted",
+}));
+vi.mock("@/lib/booking/tokens", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/booking/tokens")>();
+  return { ...actual, generateCancellationToken: (...args: Parameters<typeof actual.generateCancellationToken>) => {
+    if (h.state.emailMode === "off") return actual.generateCancellationToken(...args);
+    h.state.emailOrder.push("token");
+    if (h.state.emailMode === "token-throw") throw new Error("fake token preparation failure");
+    return h.state.emailMode === "token-null" ? null : "fake-token";
+  } };
+});
+vi.mock("@/lib/treatment-time/queries", () => ({
+  getTreatmentTimeContextForEmail: async () => {
+    h.state.emailOrder.push("context");
+    if (h.state.emailMode === "context-throw") throw new Error("fake context preparation failure");
+    return {};
+  },
+  buildTreatmentTimeLine: () => null,
+}));
+
 import { GET } from "@/app/api/cron/appointment-reminders/route";
 import { LEDGER_RUN_BUDGET_MS, LEDGER_STEP_BOUND_MS } from "@/lib/sms/send-appointment";
 
@@ -157,6 +211,9 @@ beforeEach(() => {
   h.state.calls = { begin: 0, settle: 0 };
   h.state.rpcs = [];
   h.state.heartbeat = [];
+  h.state.emailMode = "off";
+  h.state.emailOrder = [];
+  h.state.emailPayloads = [];
   fetchMock = vi.fn(() =>
     Promise.resolve(new Response(JSON.stringify({ sid: `SM${"3c".repeat(16)}` }), { status: 201 })),
   );
@@ -314,5 +371,35 @@ describe("controls: a healthy ledger is untouched", () => {
     expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(fns("begin_appointment_sms_message")).toHaveLength(4);
     expect(fns("settle_sms_message")).toHaveLength(4);
+  });
+});
+
+
+describe("email delivery rows begin only when preparation reaches the send", () => {
+  beforeEach(() => { h.state.rows = { "24h": 0, "2h": 0 }; });
+
+  it.each(["token-null", "token-throw", "context-throw"] as const)(
+    "%s leaves no claimed delivery row or provider request", async (mode) => {
+      h.state.emailMode = mode;
+      const response = await GET(new Request("https://hone.care/api/cron/appointment-reminders"));
+      expect(response.status).toBe(mode === "token-null" ? 200 : 500);
+      expect(h.state.emailOrder).toContain("token");
+      if (mode === "context-throw") expect(h.state.emailOrder).toContain("context");
+      expect(h.state.emailOrder).not.toContain("begin");
+      expect(h.state.emailOrder).not.toContain("send");
+      expect(h.state.emailOrder).not.toContain("settle");
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("prepared reminder begins, tags and settles exactly one send, preserving policy links", async () => {
+    h.state.emailMode = "success";
+    const response = await GET(new Request("https://hone.care/api/cron/appointment-reminders"));
+    expect(response.status).toBe(200);
+    expect(h.state.emailOrder).toEqual(["token", "context", "begin", "send", "settle", "record"]);
+    expect(h.state.emailPayloads).toHaveLength(1);
+    expect(h.state.emailPayloads[0]).toMatchObject({ ledgerMessageId: "fake-ledger-id", cancellationUrl: null });
+    expect(h.state.emailPayloads[0].rescheduleUrl).toContain("fake-token");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
