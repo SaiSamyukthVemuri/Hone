@@ -885,8 +885,16 @@ describe("what is excluded, and on what grounds", () => {
     // change to what Hone tells owners it withholds.
     expect(counts).toEqual({
       security: 5,
-      platform: 4,
-      derived: 6,
+      // 4 -> 5: email_provider_events (0212, DELIVERY-EVENTS-01), Hone's
+      // intake of Resend webhooks. A studio's delivery truth stays on the
+      // pending email_outbound_messages ledger.
+      // INTEGRATION BRANCH: two lanes each add a platform table, and one also
+      // adds a derived table. 5 -> 7 platform: platform_lead_alerts (0213,
+      // LEAD-ALERT-01, no studio_id) and delivery_sweep_heartbeat (0215,
+      // DELIVERY-VISIBILITY-01). 6 -> 7 derived: delivery_incidents (0215),
+      // derived from the two ledgers.
+      platform: 7,
+      derived: 7,
       deliberate_privacy: 2,
     });
   });

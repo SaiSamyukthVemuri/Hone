@@ -1035,6 +1035,8 @@ describe("0171 — the financial census is complete", () => {
         "practitioner_notifications", //   in-app notice, ON DELETE SET NULL
         "sessions", //                     clinical record, ON DELETE SET NULL
         "sms_outbound_messages", //        SMS-00 delivery ledger, ON DELETE CASCADE; no money
+        "email_outbound_messages", //      0212 email delivery ledger, ON DELETE CASCADE; no money
+        "delivery_concerns", //            0221 owner-reported delivery concern, ON DELETE CASCADE; no money
         // APPOINTMENT-BOUND MONEY THAT THIS GATE STRUCTURALLY CANNOT MEET
         // (PAY-SETTLE / 0187):
         "appointment_settlements", //      see the justification below

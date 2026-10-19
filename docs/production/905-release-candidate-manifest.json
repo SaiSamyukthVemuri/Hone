@@ -394,5 +394,75 @@
       "source_head": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
       "purpose": "transfers the obsolete repo-maximum assertion to a derived non-maximum contract while preserving 0211 allocation and behavior coverage"
     }
-  ]
+  ],
+  "candidate_test_compatibility_sources": [
+    {
+      "path": "tests/db/appointment-audit-invariant.db.test.ts",
+      "source_head": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
+      "sha256": "d53b49c8f88acc369f9dc866fcc7f50a8a4111904b564f1640769fcb64debeb1",
+      "reason": "assertions updated for the exact included schema train; no behavior under test removed"
+    },
+    {
+      "path": "tests/db/appointment-boundary-revocation.db.test.ts",
+      "source_head": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
+      "sha256": "368165e6ae93d4eee2d3803f78d9f6995e5c2f78b0572438f91cab3ca45ea722",
+      "reason": "assertions updated for the exact included schema train; no behavior under test removed"
+    },
+    {
+      "path": "tests/db/public-reschedule-command.db.test.ts",
+      "source_head": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
+      "sha256": "646370f36c02312248a16b08cc416b1e12ef6b36abe780a0c00c06e4ca9d383b",
+      "reason": "assertions updated for the exact included schema train; no behavior under test removed"
+    },
+    {
+      "path": "tests/db/studio-sms-sender.db.test.ts",
+      "source_head": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
+      "sha256": "46a6ec8fd3954e6b0fdc6f9985e65af0b810544031a04c1e6b34484de7eaeb26",
+      "reason": "assertions updated for the exact included schema train; no behavior under test removed"
+    },
+    {
+      "path": "tests/db/export-resource-registry.db.test.ts",
+      "source_head": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
+      "sha256": "118204eb9a67d761bf771da24292465ba6ffe3bef5544de2753c1cf75e4cb708",
+      "reason": "assertions updated for the exact included schema train; no behavior under test removed"
+    }
+  ],
+  "schema_export_dispositions": {
+    "source": "existing owner migration/export policy entries, selected by migrated relation; no application implementations imported",
+    "tables": [
+      "platform_lead_alerts",
+      "delivery_incidents",
+      "delivery_sweep_heartbeat",
+      "email_provider_events",
+      "email_outbound_messages",
+      "delivery_concerns",
+      "treatment_setup_captures",
+      "treatment_area_create_claims",
+      "treatment_setup_submissions",
+      "machine_profile_field_contract",
+      "machine_profile_mode_contract",
+      "studio_machines",
+      "treatment_setup_readings",
+      "studio_payment_jurisdictions",
+      "studio_payment_jurisdiction_changes",
+      "studio_receptionists",
+      "studio_sms_sender_registrations",
+      "studio_sms_sender_campaign_bindings",
+      "studio_sms_sender_stop_preflights"
+    ],
+    "columns": {
+      "practitioners": [
+        "default_machine_id",
+        "default_machine_mode",
+        "last_public_assignment_at"
+      ],
+      "appointments": [
+        "created_by_receptionist_id",
+        "cancelled_by_receptionist_id"
+      ],
+      "clients": [
+        "portrait_image_id"
+      ]
+    }
+  }
 }
