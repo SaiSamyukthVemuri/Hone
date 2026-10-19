@@ -29,7 +29,7 @@ export function PortraitControl({
   function save(next: string | null) {
     setError(null);
     startTransition(async () => {
-      const res = await setClientPortraitAction({ clientId, imageId: next });
+      const res = await setClientPortraitAction({ clientId, imageId: next, expectedImageId: next === null ? imageId : null });
       if (!res.ok) {
         setError(res.error);
         return;

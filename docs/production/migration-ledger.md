@@ -73,8 +73,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | **Pending migrations** | **MIGRATION-FIRST PENDING**: `0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`, `0229`, `0230`, `0231` — strictly contiguous and unapplied on the candidate; apply in this order. |
 | **Next free migration** | Next free number is **0232**, derived from this tree; it is not included and is **not claimed by this candidate** (separately allocated to #908). |
 | **Project ref** | `alhhybgqdmcdyzpybykj`, the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
-| **Reviewed release head** | Candidate review and required CI are pending; historical #832 evidence applies only to the 0212 migration source/apply record. |
+| **Reviewed release head** | Exact-head review and CI for candidate PR #939 are tracked on the PR and must be checked against its current head. The Photos owner repair is source `affcb86727324b2c2505f5185b3ba3db3e9f4545`. Historical #832 evidence applies only to the 0212 migration source/apply record. |
 | **Production application SHA at apply time** | `6c5eac80` (the #821 merge). **No application behaviour was deployed by this apply.** |
+
+> **0231 compare-and-clear repair (Photos #905 head `affcb867`).** `set_client_portrait(uuid, uuid, uuid default null)` checks a requested clear against the displayed expected image while holding the client row lock; stale or missing expected IDs raise `P0231` and preserve the newer pointer. The authenticated-only execute boundary is restated for the three-UUID signature. Apply and verify 0231 before deploying app code.
 
 ## Previous state (verified 2026-10-12, post-0211 apply; `0211` APPLIED, `0212` AUTHORED AND PENDING on the DELIVERY-EVENTS-01 branch)
 

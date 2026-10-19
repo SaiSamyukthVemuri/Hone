@@ -21,7 +21,7 @@ const EXECUTABLE = sql.replace(/--[^\n]*/g, " ").replace(/\/\*[\s\S]*?\*\//g, " 
 const TOP_LEVEL = EXECUTABLE.replace(/\$\$[\s\S]*?\$\$/g, " <body> ");
 
 const COMMAND = "set_client_portrait";
-const COMMAND_ARGS = "uuid, uuid";
+const COMMAND_ARGS = "uuid, uuid, uuid";
 const TRIGGER_FNS = ["clients_portrait_integrity"];
 
 describe("0231 sits correctly in the migration sequence", () => {
@@ -104,6 +104,21 @@ describe("0231's transaction and shape", () => {
     expect(body).toMatch(/from public\.treatment_image_actor\(v_studio\) a;/);
     expect(body).toMatch(/'That client is not available\.'/);
     expect(body).toMatch(/security definer\s+set search_path = ''/);
+  });
+
+  it("compare-and-clears the displayed portrait under the client lock (4319379075)", () => {
+    const start = EXECUTABLE.indexOf("create or replace function public.set_client_portrait");
+    const body = EXECUTABLE.slice(start, EXECUTABLE.indexOf("$$;", start));
+    expect(body).toMatch(/p_expected_image_id uuid default null/);
+    const lock = body.indexOf("for update;");
+    const actor = body.indexOf("if v_studio is null or v_pract is null then");
+    const guard = body.indexOf("if p_image_id is null and");
+    const write = body.indexOf("update public.clients c");
+    expect(lock).toBeGreaterThan(-1);
+    expect(actor).toBeGreaterThan(lock);
+    expect(guard).toBeGreaterThan(actor);
+    expect(write).toBeGreaterThan(guard);
+    expect(body).toMatch(/if p_image_id is null and \(p_expected_image_id is null or v_current_image_id is distinct from p_expected_image_id\) then\s+raise exception 'The ID photo changed\. Reload and try again\.'\s+using errcode = 'P0231';\s+end if;/);
   });
 
   it("locks the client while authorizing, and never reports a write that did not happen (Codex P2 4302682030)", () => {

@@ -1,7 +1,7 @@
 {
   "title": "#905 narrow production-based release candidate source manifest",
   "production_base": "102faf94fc573c724d73419bc9e8a6262ac1a247",
-  "portrait_source": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
+  "portrait_source": "affcb86727324b2c2505f5185b3ba3db3e9f4545",
   "hosted_anchor": {
     "version": "0212",
     "owner_pr": 832,
@@ -268,11 +268,11 @@
     {
       "version": "0231",
       "owner_pr": 905,
-      "owner_head": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
+      "owner_head": "affcb86727324b2c2505f5185b3ba3db3e9f4545",
       "path": "supabase/migrations/0231_client_identification_portrait.sql",
-      "raw_sha256": "e0368d9029b513d6de952c58aadddfbd67a8c07b3e0dc9c2b95c06eadef4c375",
-      "application_order_contract": "After0230; STRICT apply-before-deploy: portrait app selects new client portrait column.",
-      "candidate_sha256": "e0368d9029b513d6de952c58aadddfbd67a8c07b3e0dc9c2b95c06eadef4c375",
+      "raw_sha256": "b9ad60aa947cb63a8f4b8c1c5dd273d03d6f58dbaa1bdb8dba895cfce1bcddf1",
+      "application_order_contract": "After0230; STRICT apply-before-deploy. The portrait setter and compare-and-clear use the 3-argument RPC; apply and verify before deploying portrait application code.",
+      "candidate_sha256": "b9ad60aa947cb63a8f4b8c1c5dd273d03d6f58dbaa1bdb8dba895cfce1bcddf1",
       "transaction_contract": {
         "begin": "BEGIN",
         "lock_timeout": "SET LOCAL lock_timeout = 5s",
@@ -288,8 +288,9 @@
     },
     {
       "path": "app/(app)/clients/[id]/images/PortraitControl.tsx",
-      "source_blob": "14986258d4c67d72215c674331a98cfa6834990e",
-      "sha256": "984681b2617dbb39cb2a7fb5a3b70a7ecd617144649c1123d940f9356504d376"
+      "source_blob": "661f769286a94095e74417e00791e0cf19e7fa46",
+      "sha256": "f02cbc4a4dba84a9015d8b65d7935111a75160469a0d9b5020837eb6ddf410a1",
+      "source_head": "affcb86727324b2c2505f5185b3ba3db3e9f4545"
     },
     {
       "path": "app/(app)/clients/[id]/images/TreatmentImagesManager.tsx",
@@ -298,8 +299,9 @@
     },
     {
       "path": "app/(app)/clients/[id]/images/actions.ts",
-      "source_blob": "3cab803506033f6cc174bbebab4a885c0aceb789",
-      "sha256": "f1ad12b728d5559b32f23e4a99d3903076cf9b2e7171d691b5b94a5f2f1f90b2"
+      "source_blob": "28cbf5da6a1bf5ca7d2d5f1cb4dad28bc1b23399",
+      "sha256": "7981c6d440b5dcf622f9c85a7a23a2a3e53f79dd22fe43fd7e98a50c0a693718",
+      "source_head": "affcb86727324b2c2505f5185b3ba3db3e9f4545"
     },
     {
       "path": "app/(app)/clients/[id]/images/page.tsx",
@@ -318,18 +320,21 @@
     },
     {
       "path": "tests/app/clients/client-portrait-ui.test.ts",
-      "source_blob": "de7c6abd0da11e846abe3cb9b83df598c1228dc6",
-      "sha256": "645c74507f5371835b0625d5d21bb6ca10c57fee5c25f9ccf30c2623218fe19c"
+      "source_blob": "67b0a4e4fd3c682b8bd7cd2cfa76bec7bc9c3cd2",
+      "sha256": "e550b79e594f928500fd3ae194b9b19e1dac1863cf9fc9dcc005db1ba23c0698",
+      "source_head": "affcb86727324b2c2505f5185b3ba3db3e9f4545"
     },
     {
       "path": "tests/db/client-identification-portrait.db.test.ts",
-      "source_blob": "ec31269097bb1d209ddd6eb2c8b0ceae77095fc4",
-      "sha256": "4e2e2f32d77379c6d1ce59c32778a539f2026b582b416dcf720ab0404dc71f83"
+      "source_blob": "38e891ecbb6088e2e50e08c47f06a497b8b222e8",
+      "sha256": "cdfad0c22403e72eecb49364245def30bc55e9a114fd3dba119418b66dabceee",
+      "source_head": "affcb86727324b2c2505f5185b3ba3db3e9f4545"
     },
     {
       "path": "tests/migrations/0231-client-identification-portrait.test.ts",
-      "source_blob": "4628a2414821e25383b5a7b2daa7fddfdd2964ba",
-      "sha256": "9d53a8c461f102ff87e1f88aa6a6563d9e47b18ceb4f074c22afc968aefbf343"
+      "source_blob": "2444b957844b2dfde213dbc9279ad034b762ce8c",
+      "sha256": "fa0d09ce8ff8162f21cb079b20c49ba8ac99e5962b968d1af3b1c1ec65bd93ff",
+      "source_head": "affcb86727324b2c2505f5185b3ba3db3e9f4545"
     },
     {
       "path": "e2e/fett-client-portrait.spec.ts",
@@ -338,8 +343,9 @@
     },
     {
       "path": "supabase/migrations/0231_client_identification_portrait.sql",
-      "source_blob": "affbd2a4ddb5c34d6a786bdca0fa3a1de22e42f6",
-      "sha256": "e0368d9029b513d6de952c58aadddfbd67a8c07b3e0dc9c2b95c06eadef4c375"
+      "source_blob": "25afc5abb927c34fa4fff1e90463dff2ed63e263",
+      "sha256": "b9ad60aa947cb63a8f4b8c1c5dd273d03d6f58dbaa1bdb8dba895cfce1bcddf1",
+      "source_head": "affcb86727324b2c2505f5185b3ba3db3e9f4545"
     }
   ],
   "additional_owner_verification_source": {
@@ -471,6 +477,57 @@
       "source_before_sha256": "46a6ec8fd3954e6b0fdc6f9985e65af0b810544031a04c1e6b34484de7eaeb26",
       "candidate_after_sha256": "2eaf69ea7db9c4dac9d902ec4b271ce4a40975b88fabe4ebeb38076092056783",
       "reason": "replace modulo-7000 hash truncation with deterministic per-process unique allocation for each studio/slot key; test-only repair for exact-head Codex P2; no #863 owner branch or SMS behavior changed"
+    },
+    {
+      "finding_id": 4319379075,
+      "source_pr": 905,
+      "source_head": "affcb86727324b2c2505f5185b3ba3db3e9f4545",
+      "path": "supabase/migrations/0231_client_identification_portrait.sql",
+      "before_sha256": "e0368d9029b513d6de952c58aadddfbd67a8c07b3e0dc9c2b95c06eadef4c375",
+      "after_sha256": "b9ad60aa947cb63a8f4b8c1c5dd273d03d6f58dbaa1bdb8dba895cfce1bcddf1",
+      "exact_delta_paths": [
+        {
+          "path": "app/(app)/clients/[id]/images/PortraitControl.tsx",
+          "sha256": "f02cbc4a4dba84a9015d8b65d7935111a75160469a0d9b5020837eb6ddf410a1",
+          "blob": "661f769286a94095e74417e00791e0cf19e7fa46"
+        },
+        {
+          "path": "app/(app)/clients/[id]/images/actions.ts",
+          "sha256": "7981c6d440b5dcf622f9c85a7a23a2a3e53f79dd22fe43fd7e98a50c0a693718",
+          "blob": "28cbf5da6a1bf5ca7d2d5f1cb4dad28bc1b23399"
+        },
+        {
+          "path": "docs/production/migration-ledger.md",
+          "sha256": "5c562ded343b2150ac1b8413e64077f2c390d6116f5ef8f2c9c132ce5e0c4629",
+          "blob": "a56ac05065d9336d2d68851f24b3230d96c079cc"
+        },
+        {
+          "path": "supabase/migrations/0231_client_identification_portrait.sql",
+          "sha256": "b9ad60aa947cb63a8f4b8c1c5dd273d03d6f58dbaa1bdb8dba895cfce1bcddf1",
+          "blob": "25afc5abb927c34fa4fff1e90463dff2ed63e263"
+        },
+        {
+          "path": "tests/app/clients/client-portrait-ui.test.ts",
+          "sha256": "e550b79e594f928500fd3ae194b9b19e1dac1863cf9fc9dcc005db1ba23c0698",
+          "blob": "67b0a4e4fd3c682b8bd7cd2cfa76bec7bc9c3cd2"
+        },
+        {
+          "path": "tests/db/client-identification-portrait.db.test.ts",
+          "sha256": "cdfad0c22403e72eecb49364245def30bc55e9a114fd3dba119418b66dabceee",
+          "blob": "38e891ecbb6088e2e50e08c47f06a497b8b222e8"
+        },
+        {
+          "path": "tests/migrations/0231-client-identification-portrait.test.ts",
+          "sha256": "fa0d09ce8ff8162f21cb079b20c49ba8ac99e5962b968d1af3b1c1ec65bd93ff",
+          "blob": "2444b957844b2dfde213dbc9279ad034b762ce8c"
+        }
+      ],
+      "reason": "expected-current-image compare-and-clear under client row lock; stale removal fails closed and preserves newer portrait; exact seven-file owner delta composed without merging owner branch ancestry"
     }
-  ]
+  ],
+  "review_state": {
+    "previous_review_head": "6f07b7aec16bee0961fe58f4140208d9a2732fd8",
+    "previous_review_finding_id": 4319379075,
+    "status": "repair source and finding linkage recorded; use the current PR #939 head for final review and CI state"
+  }
 }
