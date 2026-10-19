@@ -73,7 +73,7 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
   const resolvedNote =
     resolvedCount === 0
       ? ""
-      : ` ${resolvedCount} ${resolvedCount === 1 ? "problem was" : "problems were"} reported in the last 14 days and since resolved.`;
+      : ` ${resolvedCount} ${resolvedCount === 1 ? "problem was" : "problems were"} resolved in the last 14 days.`;
 
   return (
     <section
@@ -93,7 +93,7 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
         </p>
         {incidentsTruncated && (
           <p className="text-xs text-amber-800 dark:text-amber-300">
-            Showing the most recent {OWNER_INCIDENT_CAP} incidents. Older incidents are not listed.
+            Showing the most recent {OWNER_INCIDENT_CAP} incidents. Older incidents, if any, are not listed.
           </p>
         )}
         <p className="text-xs text-neutral-500">

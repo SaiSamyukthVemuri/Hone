@@ -138,7 +138,7 @@ export default async function DeliveryQueuePage() {
         </h2>
         {truncated && (
           <p className="text-sm text-amber-800 dark:text-amber-300">
-            Showing the most recent {SUPPORT_INCIDENT_CAP} incidents. Older incidents are not listed.
+            Showing the most recent {SUPPORT_INCIDENT_CAP} incidents. Older incidents, if any, are not listed.
           </p>
         )}
         {open.length === 0 ? (
