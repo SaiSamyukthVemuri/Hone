@@ -464,5 +464,13 @@
         "portrait_image_id"
       ]
     }
-  }
+  },
+  "candidate_review_repairs": [
+    {
+      "path": "tests/db/studio-sms-sender.db.test.ts",
+      "source_before_sha256": "46a6ec8fd3954e6b0fdc6f9985e65af0b810544031a04c1e6b34484de7eaeb26",
+      "candidate_after_sha256": "2eaf69ea7db9c4dac9d902ec4b271ce4a40975b88fabe4ebeb38076092056783",
+      "reason": "replace modulo-7000 hash truncation with deterministic per-process unique allocation for each studio/slot key; test-only repair for exact-head Codex P2; no #863 owner branch or SMS behavior changed"
+    }
+  ]
 }
