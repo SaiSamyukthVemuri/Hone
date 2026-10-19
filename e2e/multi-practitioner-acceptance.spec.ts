@@ -859,16 +859,15 @@ test("ACCEPTANCE (5): all five practitioners are offered, book, and are attribut
     "each practitioner's grid must offer its OWN window, so the five slots differ",
   ).toBe(5);
 
-  // (c) NO PARALLELISM LOST. Capacity is ON, so reservations are
-  // practitioner-keyed: five bookings on ONE date must all hold live
-  // reservations at the same time. A studio-keyed reservation would have let
-  // the first booking block the rest, and the later bookings would have been
-  // refused rather than mis-attributed.
+  // (c) EXACT PRACTITIONER KEYS. These bookings use disjoint times, so merely
+  // holding five non-empty reservations would also pass with studio keys.
+  // Read each reservation's actual key and require its assigned practitioner:
+  // a collapse to studio-wide capacity must fail even at non-overlapping times.
   for (const b of booked) {
     expect(
       await getSourceReservationKeys("appointment", b.appointmentId),
-      `${b.label}'s booking must hold its own reservation`,
-    ).not.toEqual([]);
+      `${b.label}'s reservation must be keyed to its assigned practitioner`,
+    ).toEqual([b.who.practitionerId]);
   }
 
   // --- ACCESS (a): the OWNER's calendar shows and attributes all five ------
