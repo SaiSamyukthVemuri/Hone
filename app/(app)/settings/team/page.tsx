@@ -98,9 +98,9 @@ export default async function TeamSettingsPage() {
             Invite a practitioner
           </h2>
           <p className="mt-1 text-sm text-neutral-500">
-            We don&rsquo;t send the email automatically. Share the message we
-            give you with your teammate. They sign in with the same email and
-            join your studio.
+            After creating an invite, you can share the message with your
+            teammate. They sign in with the invited email address and complete
+            the joining steps shown.
           </p>
         </div>
         <InviteForm />

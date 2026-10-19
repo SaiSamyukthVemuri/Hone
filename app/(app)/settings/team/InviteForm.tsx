@@ -10,7 +10,7 @@ type Status =
   | { kind: "success"; email: string; copied: boolean };
 
 function buildShareMessage(email: string): string {
-  return `Tell ${email}: visit hone.care, click Sign in, use ${email}. They will be added to your team automatically.`;
+  return `Tell ${email}: visit hone.care, click Sign in, use ${email}. They should complete the joining steps shown after signing in.`;
 }
 
 export function InviteForm() {

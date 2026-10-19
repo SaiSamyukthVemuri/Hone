@@ -11,6 +11,7 @@ import {
   seedServiceEligibility,
   getE2eServiceId,
   getStudioTimezone,
+  setStudioTimezone,
   getOwnerPractitionerId,
   getCancellationToken,
   getSourceReservationKeys,
@@ -67,6 +68,7 @@ test.describe.configure({ mode: "serial" });
  *  reservations are only practitioner-keyed while it is ON. Everything about
  *  this journey is therefore a capacity-LIVE claim, stated rather than
  *  implied. */
+const ACCEPTANCE_TIMEZONE = "America/Los_Angeles";
 let live: E2eSeed;
 let liveService: string;
 let bookDate: string;
@@ -139,6 +141,11 @@ function windowToMinutes(hhmm: string): number {
 
 test.beforeAll(async () => {
   live = await seedE2eStudio();
+  // HON-48: the actual five-practitioner journey must use Los Angeles, not
+  // the seed helper's dynamically selected local-morning timezone. This is
+  // only the newly created synthetic studio; no existing studio is changed.
+  await setStudioTimezone(live.studioId, ACCEPTANCE_TIMEZONE);
+  expect(await getStudioTimezone(live.studioId)).toBe(ACCEPTANCE_TIMEZONE);
   liveService = await getE2eServiceId(live.studioId);
   ownerPractitionerId = await getOwnerPractitionerId(live.studioId);
 
@@ -540,9 +547,9 @@ test("ACCEPTANCE: pick A, pick B, reschedule one, and the owner's calendar attri
   // recorded because it will mislead the next person to assert here. The SLOT
   // GRID is studio-local, but the "Currently" summary row renders through
   // FormattedDateTime, which calls toLocaleString([]) -- the VIEWER's
-  // timezone. On this fixture (studio Etc/GMT+10, browser UTC) the same
-  // appointment reads 06:00 in the grid and "4:00 PM" in the summary. Compare
-  // slot labels against the seeded window, never against that summary row.
+  // timezone. This fixture uses America/Los_Angeles while the browser may
+  // use another zone; the UTC offset also changes with daylight saving time.
+  // Compare slot labels against the seeded window, never that summary row.
   const newLabel = rescheduleLabels.find((l) => l !== aBooking.slotLabel);
   expect(newLabel, "the reschedule grid must offer an alternative time").toBeTruthy();
   // BOTH EDGES, like the initial grids above. Codex caught this asserting only

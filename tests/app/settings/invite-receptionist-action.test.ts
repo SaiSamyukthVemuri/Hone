@@ -9,6 +9,7 @@ const ctx = vi.hoisted(() => ({
   rows: {} as Record<string, unknown[]>,
   inserted: [] as Array<{ table: string; row: Record<string, unknown> }>,
   sent: 0,
+  messages: [] as Array<{ html: string; text: string }>,
 }));
 
 function builder(table: string) {
@@ -32,7 +33,11 @@ vi.mock("@/lib/supabase/queries", () => ({
   }),
 }));
 vi.mock("@/lib/email/client", () => ({
-  resend: { emails: { send: async () => ((ctx.sent += 1), { data: { id: "m" }, error: null }) } },
+  resend: { emails: { send: async (message: { html: string; text: string }) => {
+    ctx.sent += 1;
+    ctx.messages.push(message);
+    return { data: { id: "m" }, error: null };
+  } } },
   FROM_ADDRESS: "Hone <noreply@example.test>",
 }));
 
@@ -49,6 +54,7 @@ beforeEach(() => {
   ctx.rows = {};
   ctx.inserted = [];
   ctx.sent = 0;
+  ctx.messages = [];
 });
 
 describe("inviting a receptionist", () => {
@@ -70,6 +76,17 @@ describe("inviting a receptionist", () => {
         },
       },
     ]);
+  });
+
+  it("the fake invitation transport describes explicit joining without promising automatic access", async () => {
+    const result = await invitePractitionerAction(form({ email: "desk@harness.local", role: "receptionist" }));
+    expect(result.ok).toBe(true);
+    expect(ctx.messages).toHaveLength(1);
+    for (const body of [ctx.messages[0].html, ctx.messages[0].text]) {
+      expect(body).toContain("desk@harness.local");
+      expect(body).toContain("Complete the joining steps shown after signing in.");
+      expect(body).not.toContain("automatically");
+    }
   });
 
   it("refuses an email already on this studio's front desk", async () => {
