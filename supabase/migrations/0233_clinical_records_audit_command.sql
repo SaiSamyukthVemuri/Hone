@@ -195,11 +195,15 @@ begin
   -- A SESSION SCOPE NAMES THIS CLIENT'S SESSION (Codex P1 4305625192): the
   -- session must belong to p_client_id in the client's own studio, so an
   -- audit row can never pair one client with another client's session.
+  -- It must also remain live, matching the export loader (Codex P2
+  -- 4309703170). Check for BOTH preview and print, including deletion after
+  -- an otherwise valid preview was issued.
   if (v_meta ->> 'scope') = 'session' and not exists (
     select 1 from public.sessions se
      where se.id = (v_meta ->> 'session_id')::uuid
        and se.client_id = p_client_id
        and se.studio_id = v_studio
+       and se.deleted_at is null
   ) then
     raise exception 'the session is not this client''s session' using errcode = '22023';
   end if;

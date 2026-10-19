@@ -48,6 +48,16 @@ describe("0233 is one bounded transaction", () => {
 });
 
 describe("0233: the command derives studio and actor, and allow-lists what it writes", () => {
+  it("rejects a deleted session before either preview or print can write an audit (4309703170)", () => {
+    // Pin the actual unconditional session guard, not an unrelated deleted_at
+    // predicate or a comment. Runtime coverage is in the DB suite (slot required).
+    const guard = CODE.match(/if \(v_meta ->> 'scope'\) = 'session' and not exists \(([\s\S]*?)\) then\s+raise exception 'the session is not this client''s session' using errcode = '22023';\s+end if;/);
+    expect(guard).not.toBeNull();
+    expect(guard?.[1]).toMatch(/from public\.sessions se\s+where se\.id = \(v_meta ->> 'session_id'\)::uuid\s+and se\.client_id = p_client_id\s+and se\.studio_id = v_studio\s+and se\.deleted_at is null\s*$/);
+    expect(CODE.indexOf(guard![0])).toBeLessThan(CODE.indexOf("if p_action = 'clinical_records_printed' and not exists"));
+    expect(CODE.indexOf(guard![0])).toBeLessThan(CODE.indexOf("insert into public.audit_logs"));
+  });
+
   it("is SECURITY DEFINER with a pinned search_path, and refuses a null auth.uid()", () => {
     expect(CODE).toMatch(/function public\.record_clinical_records_audit\([\s\S]*?security definer\s+set search_path = pg_catalog, pg_temp/);
     expect(CODE).toMatch(/if v_uid is null then\s+raise exception 'not authenticated' using errcode = '42501';/);
