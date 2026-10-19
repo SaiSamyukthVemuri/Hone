@@ -282,7 +282,7 @@ function sanitizeKey(key: string, taken: Record<string, unknown>): string {
  *   * containers over the depth limit: "[depth-limited]", never the original;
  *   * URL instances: by what they ARE, before toJSON: http(s) sanitized as a
  *     URL, any other scheme "[url]"; non-http(s) URL strings likewise "[url]";
- *   * Date: sanitized as its ISO string, the ONLY toJSON ever called;
+ *   * Date: sanitized as its ISO string through intrinsic methods only;
  *   * every other object with a toJSON, and Map / Set / class instances /
  *     any non-plain prototype: "[unsupported]", WITHOUT calling toJSON
  *     (Codex 4309252682: a toJSON can serialize hidden state);
@@ -310,17 +310,19 @@ function sanitizeProps(value: unknown, key: string, depth: number): unknown {
   // its scheme (Codex 4309131383): http(s) is sanitized as a marketing URL,
   // every other scheme becomes the fixed placeholder.
   if (value instanceof URL) {
-    return value.protocol === "http:" || value.protocol === "https:"
-      ? sanitizeMarketingUrl(value.href)
+    const href = Object.getOwnPropertyDescriptor(URL.prototype, "href")!.get!.call(value) as string;
+    const url = new URL(href);
+    return url.protocol === "http:" || url.protocol === "https:"
+      ? sanitizeMarketingUrl(url.href)
       : NON_HTTP_URL_PLACEHOLDER;
   }
-  // toJSON is called ONLY for an allowlisted type (Codex 4309252682): an
-  // unknown class's toJSON can serialize hidden state ({ email }). Date's own
-  // implementation is used, never an override on the instance or a subclass.
+  // Never dispatch through instance methods: even intrinsic toJSON calls an
+  // overridable toISOString. Read the internal time and serialize a fresh Date.
   if (value instanceof Date) {
     let iso: unknown;
     try {
-      iso = Date.prototype.toJSON.call(value);
+      const time = Date.prototype.getTime.call(value);
+      iso = Number.isFinite(time) ? new Date(time).toISOString() : null;
     } catch {
       return "[unsupported]";
     }

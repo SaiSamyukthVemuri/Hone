@@ -404,11 +404,42 @@ describe("http(s) URL strings are classified by parsing, not by prefix", () => {
 });
 
 // ===========================================================================
-// Codex 4309252682 (review of 0f1aa9f1): toJSON is called ONLY for Date. An
+// Codex 4309252682 (review of 0f1aa9f1): only Date and URL are serialized. An
 // unknown class or object with a toJSON can serialize hidden state, so it
 // becomes [unsupported] and its toJSON is never invoked.
 // ===========================================================================
-describe("toJSON is called only for an allowlisted type", () => {
+describe("object serialization avoids overridden methods", () => {
+  it("ignores own and subclass Date serialization overrides", () => {
+    const iso = "2026-10-18T00:00:00.000Z";
+    const override = vi.fn(() => "patient@example.com");
+    const own = new Date(iso);
+    own.toISOString = override;
+    own.getTime = override as unknown as () => number;
+    class CustomDate extends Date {
+      toISOString() { return override(); }
+      getTime() { override(); return 0; }
+    }
+    const p = pageview({ own, subclass: new CustomDate(iso), invalid: new Date(NaN) }).properties;
+    expect(p).toMatchObject({ own: iso, subclass: iso, invalid: null });
+    expect(override).not.toHaveBeenCalled();
+  });
+
+  it("reads URL internal state without own or subclass accessors", () => {
+    const href = vi.fn(() => `${HOST}/patient@example.com`);
+    const protocol = vi.fn(() => "mailto:");
+    const raw = `${HOST}/clients/${CLIENT}?email=patient@example.com#notes`;
+    const own = new URL(raw);
+    Object.defineProperties(own, { href: { get: href }, protocol: { get: protocol } });
+    class CustomURL extends URL {
+      get href() { return href(); }
+      get protocol() { return protocol(); }
+    }
+    const p = pageview({ own, subclass: new CustomURL(raw), nonHttp: new CustomURL("mailto:patient@example.com") }).properties;
+    expect(p).toMatchObject({ own: `${HOST}/clients/[id]`, subclass: `${HOST}/clients/[id]`, nonHttp: "[url]" });
+    expect(href).not.toHaveBeenCalled();
+    expect(protocol).not.toHaveBeenCalled();
+  });
+
   it("an unknown class with toJSON over hidden state is [unsupported], toJSON not called", () => {
     const toJSON = vi.fn(function (this: { secret: string }) { return { email: this.secret }; });
     class Hidden {
@@ -437,7 +468,7 @@ describe("toJSON is called only for an allowlisted type", () => {
     expect(toJSON).not.toHaveBeenCalled();
   });
 
-  it("Date is still serialized, with Date's OWN toJSON (an override is ignored)", () => {
+  it("Date is still serialized through intrinsics (a toJSON override is ignored)", () => {
     const d = new Date("2026-10-18T00:00:00.000Z");
     const override = vi.fn(() => "patient@example.com");
     (d as unknown as { toJSON: () => string }).toJSON = override;
