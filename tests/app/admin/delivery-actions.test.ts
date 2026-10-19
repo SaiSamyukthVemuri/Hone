@@ -254,7 +254,7 @@ describe("the capped incident list is not presented as a total (Codex P2 4307533
     return renderToStaticMarkup(await Page());
   };
 
-  const INDICATOR = "Showing the most recent 300 incidents. Older incidents are not listed.";
+  const INDICATOR = "Showing the most recent 300 incidents. Older incidents, if any, are not listed.";
 
   it("AT the cap: says the list is truncated", async () => {
     const html = await renderWith(CAP);
@@ -265,7 +265,7 @@ describe("the capped incident list is not presented as a total (Codex P2 4307533
     // One short of the cap. The boundary is the point: an indicator that is
     // always on is as untrue as one that never is.
     const html = await renderWith(CAP - 1);
-    expect(html).not.toContain("Older incidents are not listed");
+    expect(html).not.toContain("Older incidents, if any, are not listed");
   });
 
   it("the CONCERNS section is capped the same way, and says so", async () => {
