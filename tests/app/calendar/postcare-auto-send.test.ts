@@ -151,6 +151,33 @@ describe("autoSendPostcareOnComplete — governed claim/settle orchestration", (
     }
   });
 
+  it("the AUTOMATIC send is LEDGERED (Codex P2 4307535216)", async () => {
+    // The `ledger` parameter arrived with the MANUAL postcare action and only
+    // the manual action was updated, so this path sent untagged with no
+    // `email_outbound_messages` row. Both production completion entry points
+    // route through here, so postcare delivery visibility was limited to manual
+    // sends — the feature's main path writing nothing the ledger could see.
+    const calls: RpcCall[] = [];
+    const send = okSender();
+    const out = await autoSendPostcareOnComplete(APPT, STUDIO, ACTOR, {
+      admin: fakeAdmin({ calls }),
+      sendPostcare: send as never,
+    });
+
+    expect(out).toBe("sent");
+    expect(send).toHaveBeenCalledTimes(1);
+    // `okSender` is typed with NO parameters, so `mock.calls` infers as an
+    // empty tuple; read it through an explicit shape rather than indexing that.
+    const recorded = send as unknown as {
+      mock: { calls: Array<[Record<string, unknown>]> };
+    };
+    const args = recorded.mock.calls[0]![0];
+    // The REFERENCE ITSELF, not merely that some ledger key is present: a
+    // wrong studio or appointment id would file the row against the wrong
+    // thing, which is worse than filing none.
+    expect(args.ledger).toEqual({ studioId: STUDIO, appointmentId: APPT });
+  });
+
   it("AUTO-3/AUTO-11/AUTO-12 — claim, provider, settle: sequence, actor and token", async () => {
     const calls: RpcCall[] = [];
     const send = okSender();

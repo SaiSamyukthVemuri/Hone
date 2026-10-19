@@ -64,7 +64,16 @@ What this stack adds stays inside the boundary #828 asked for:
    - `unmatched` / `unmatched_email_id`, or `quarantined` / `unknown_event_type`, depending on the test event's shape;
    - **no** ledger row changed, and **no** incident opened.
 
-   A 403 means the secret does not match. A 500 means the secret is absent or the receipt could not be written. Fix before continuing.
+   **Reading a failure.** A **403** means signature verification failed: missing required headers, malformed delivery id, malformed timestamp, a timestamp more than five minutes from the server clock, an unusable base64 secret, or no matching signature. A secret mismatch is one possible cause, not the only one. Check the bounded verification reason before changing configuration.
+
+   A **500 is two different failures**, and the response body tells them apart — check it before changing anything:
+
+   | Response | What happened | Where to look |
+   |---|---|---|
+   | `{"ok":false}` | The secret is absent, or the receipt row could not be WRITTEN. Nothing was recorded. | `RESEND_WEBHOOK_SECRET` in production; the route's logs for the write failure |
+   | `{"ok":false,"recorded":true}` | The receipt WAS written; processing then failed or is held by another claim (`app/api/resend/webhook/route.ts:198`). | the receipt's `processing_state` / `processing_result` in `email_provider_events`; the processing logs. The provider will retry, and a retry landing inside a failed attempt's two-minute claim answers 500 again by design |
+
+   Do not read `recorded: true` as a missing secret or a failed write: the write succeeded, and the failure is in claiming or processing. Fix before continuing.
 4. **Controlled test with a real send to a staff mailbox** (separate approval):
    - book a staff-only appointment in a staff test studio whose client email is the operator's own mailbox;
    - expect the confirmation's ledger row to move `accepted` → `sent` → `delivered`, with the receipts `applied`;
@@ -77,17 +86,19 @@ What this stack adds stays inside the boundary #828 asked for:
 
 - Register `GET /api/cron/email-delivery-sweep` in `vercel.json` (with the existing CRON_SECRET), **once a day**. The Vercel plan caps cron at once a day, as `docs/08_EMAIL_SMS_AND_CRON.md` already records for `calendar-reconcile`. How recovery is layered, with nothing claimed beyond what each layer does:
   - **Primary:** Resend's own retries of the pending delivery. The route answers 500 while that receipt is pending, so the provider re-delivers it.
-  - **Best effort:** after each successful response, the route's post-response drain tries up to five *other* older pending receipts. It runs only when some webhook arrives, and it can fail or find nothing to do. It is an opportunistic helper, not a per-webhook recovery guarantee.
+  - **Best effort:** after each **recorded receipt attempt** — not only the successful ones — the route's post-response drain tries up to five *other* older pending receipts. The drain is registered with `after(...)` **before** the response is returned (`app/api/resend/webhook/route.ts:182`), so it also runs behind the `recorded: true` **500** at `:198`, when the receipt was written but processing failed or was held. It does **not** run for a non-pending duplicate whose receipt is already processed, or for the pre-write 500s at `:121`/`:153`, where nothing was recorded. It runs only when some webhook arrives, and it can fail or find nothing to do: an opportunistic helper, not a per-webhook recovery guarantee. When diagnosing a processing failure, expect a drain to have been attempted after that 500 — its absence is not what made the receipt stick.
   - **Backstop:** the daily sweep. Backlog findings are evaluated **only inside a sweep invocation that actually runs**. At a once-a-day cadence, a stuck backlog can go unreported for up to about a day.
   - **What detects what:**
     - `email_delivery_sweep_failing` is raised only by a sweep that **runs** and finds its own drain or health read failing.
-    - A sweep that **never starts** records nothing. A run can also fail before the heartbeat, or after writing it but before health evaluation and alert handling finish. No time-based stale-sweep finding exists.
+    - A sweep that **never starts** records nothing. A run can also fail before the heartbeat, or after writing it but before health evaluation and alert handling finish. The existing health classifier now warns for a missing/unusable heartbeat or one older than 48 hours (the held daily schedule × 2 margin). No independent scheduled email-health caller is wired; this classification is read-triggered, so it does not by itself detect a sweep that never starts.
     - `last_sweep_at` is written **before** the health read and alert handling. It proves the heartbeat step ran, not that the sweep completed or evaluated the backlog successfully.
     - Check **daily** using the existing Vercel cron invocation/completion logs and result **alongside** `last_sweep_at` on `/admin/delivery` or `public.email_delivery_health()`. Distinguish no invocation, failure before the heartbeat, and failure after it. A fresh heartbeat without successful completion is not a healthy run; an old one alone does not distinguish a missed invocation from an early failure.
 - **Verify:**
   - the existing cron logs show the invocation completed, its result has `ok: true` and `heartbeat: true`, and `select * from public.email_delivery_health()` shows the corresponding `last_sweep_at`; a timestamp alone is insufficient;
   - a deliberately held receipt is finished by the sweep (rehearsed on a local stack: `tests/db/email-delivery-events.db.test.ts`, CRASH RECOVERY);
-  - findings raise at most one unresolved ops alert per event, always at **warning**: the sweep never records a critical alert, because critical ops alerts are emailed to `OPS_ALERT_EMAILS` (#828 gate). A finding assessed critical carries `assessed_severity: "critical"` in its details.
+  - findings are de-duplicated **best-effort**, always at **warning**: the sweep never records a critical alert, because critical ops alerts are emailed to `OPS_ALERT_EMAILS` (#828 gate). A finding assessed critical carries `assessed_severity: "critical"` in its details.
+
+    **Why best-effort and not "at most one".** De-duplication is `hasOpenOpsAlert` followed by an insert — two separate statements — and `ops_alerts` carries no unique constraint for these delivery events (0067 adds CHECK constraints only). Two overlapping invocations can therefore both observe no unresolved alert and both insert, leaving more than one unresolved row for the same event. The daily cadence makes that unlikely rather than impossible, and a manual `workflow_dispatch` alongside a scheduled run is the realistic way to see it. So when auditing, do not treat a second unresolved row for one event as corruption. An atomic guarantee needs a partial unique index on `ops_alerts (event) where resolved_at is null`, which is a migration and is tracked separately.
 - **Rollback:** remove the cron entry. `last_sweep_at` in `email_delivery_health()` then stops advancing. **No health finding reports a stale sweep by time**: the only sweep finding is a failed count. So check `last_sweep_at` directly, or on the support page, after a rollback.
 
 ## 4. Go / no-go for the Friday demo (synthetic only)
@@ -268,7 +279,7 @@ The route already exists and authenticates with the existing `CRON_SECRET`.
 
 **Plan limit, resolved:** the Vercel plan caps cron at **once a day**. `docs/08_EMAIL_SMS_AND_CRON.md` records it for `calendar-reconcile`, and every existing cron is daily. A sub-daily schedule here would fail the deployment.
 - A faster cadence would need an external scheduler calling the route with the `CRON_SECRET` bearer, or a plan change. Either is its own decision.
-- With a daily sweep, the backlog finding (15 minutes, critical at 6 hours, recorded at warning) is evaluated once a day. Recovery is layered as §3 describes. Resend's retries are primary, the post-response drain is best effort, and the sweep is the backstop, with up to about a day of reporting latency at this cadence. A **skipped** run raises nothing; daily review must pair invocation/completion logs and result with `last_sweep_at`, which is written before health evaluation (§3, "What detects what").
+- With a daily sweep, the backlog finding (15 minutes, critical at 6 hours, recorded at warning) is evaluated once a day. Recovery is layered as §3 describes. Resend's retries are primary, the post-response drain is best effort, and the sweep is the backstop, with up to about a day of reporting latency at this cadence. A **skipped** run cannot evaluate itself; the shared classifier warns for missing/unusable or older-than-48-hour heartbeat when read, but no independent scheduled email-health caller is wired. Daily review must pair invocation/completion logs and result with `last_sweep_at`, which is written before health evaluation (§3, "What detects what").
 
 **Validation:**
 - the existing cron logs show a completed invocation and its result has `ok: true` and `heartbeat: true`; pair that with `select last_sweep_at, last_sweep_failed from public.email_delivery_health();`. These fields describe the recorded drain step, not completion of the later health read or alert handling;

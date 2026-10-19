@@ -98,7 +98,7 @@ test.describe("owner delivery card", () => {
 
     const card = CARD()(page);
     await expect(card.getByRole("heading", { name: "Message delivery" })).toBeVisible();
-    await expect(card.getByText("2 open delivery problems.", { exact: false })).toBeVisible();
+    await expect(card.getByText("2 open delivery problems shown.", { exact: false })).toBeVisible();
     await expect(card.getByText("24-hour reminder email not delivered")).toBeVisible();
     await expect(card.getByText("3 times")).toBeVisible();
     await expect(card.getByText("2-hour reminder email not delivered")).toBeVisible();
@@ -215,7 +215,7 @@ test.describe("platform support queue", () => {
 
     // The owner's card follows: one open problem left.
     await ownerPage.goto(OWNER_CONSOLE);
-    await expect(CARD()(ownerPage).getByText("1 open delivery problem.", { exact: false })).toBeVisible();
+    await expect(CARD()(ownerPage).getByText("1 open delivery problem shown.", { exact: false })).toBeVisible();
   });
 });
 

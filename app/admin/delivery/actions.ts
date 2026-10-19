@@ -59,7 +59,38 @@ export async function resolveDeliveryIncidentAction(formData: FormData): Promise
     p_resolution: resolution,
   });
   const result = typeof data === "string" ? data : null;
-  const succeeded = !error && (result === "resolved" || result === "already_resolved");
+
+  // A CONFLICTING SECOND RESOLUTION IS NOT A SUCCESS (Codex P2 4307695064).
+  //
+  // `resolve_delivery_incident` returns `already_resolved` WITHOUT updating
+  // (0215:343), so when a second admin submits a DIFFERENT resolution the row
+  // keeps the first one. This was recorded as `succeeded` with
+  // `metadata.resolution` set to the SUBMITTED word — an audit trail asserting a
+  // resolution that was never committed, which is worse than no record: it is
+  // the one place a reviewer would look to find out what the incident was
+  // closed as.
+  //
+  // The command cannot tell us what IS recorded, so the row is read on this
+  // path only. A direct service-role read in an admin ACTION follows
+  // app/admin/ops-alerts/actions.ts; the no-`.from(` rule is about the admin
+  // PAGE, whose reads must all go through the support commands.
+  //
+  // Same-value `already_resolved` stays idempotent success: the outcome the
+  // caller asked for is the outcome on record.
+  let recordedResolution: string | null = null;
+  let conflicted = false;
+  if (!error && result === "already_resolved") {
+    const { data: row } = await admin
+      .from("delivery_incidents")
+      .select("resolution")
+      .eq("id", incidentId)
+      .maybeSingle();
+    recordedResolution = (row?.resolution as string | null) ?? null;
+    conflicted = recordedResolution !== null && recordedResolution !== resolution;
+  }
+
+  const succeeded =
+    !error && (result === "resolved" || (result === "already_resolved" && !conflicted));
 
   await logAdminAction({
     actorUserId: user.id,
@@ -68,10 +99,23 @@ export async function resolveDeliveryIncidentAction(formData: FormData): Promise
     targetId: incidentId,
     action: "delivery_incident_resolved",
     outcome: succeeded ? "succeeded" : "failed",
-    metadata: { resolution, result: result ?? "error" },
+    // On a conflict the submitted word is DELIBERATELY ABSENT: it was not
+    // applied, and recording it is what made the old audit misleading. What is
+    // recorded instead is the stored resolution and the fact that nothing moved.
+    metadata: conflicted
+      ? {
+          result: "already_resolved_conflict",
+          applied: false,
+          recorded_resolution: recordedResolution,
+        }
+      : { resolution, result: result ?? "error" },
   });
   if (!succeeded) {
-    throw new Error("Failed to resolve the incident.");
+    throw new Error(
+      conflicted
+        ? `Already resolved as "${recordedResolution}". Your resolution was not applied.`
+        : "Failed to resolve the incident.",
+    );
   }
 
   revalidatePath("/admin/delivery");
@@ -123,7 +167,17 @@ export async function closeDeliveryConcernAction(formData: FormData): Promise<vo
     p_resolution: resolution,
   });
   const result = typeof data === "string" ? data : null;
-  const succeeded = !error && (result === "closed" || result === "already_closed");
+  let recordedResolution: string | null = null;
+  if (!error && result === "already_closed") {
+    const { data: row, error: readError } = await admin
+      .from("delivery_concerns")
+      .select("resolution")
+      .eq("id", concernId)
+      .maybeSingle();
+    if (!readError && typeof row?.resolution === "string") recordedResolution = row.resolution;
+  }
+  const repeatNotApplied = !error && result === "already_closed" && recordedResolution !== resolution;
+  const succeeded = !error && (result === "closed" || (result === "already_closed" && !repeatNotApplied));
 
   await logAdminAction({
     actorUserId: user.id,
@@ -132,10 +186,16 @@ export async function closeDeliveryConcernAction(formData: FormData): Promise<vo
     targetId: concernId,
     action: "delivery_concern_closed",
     outcome: succeeded ? "succeeded" : "failed",
-    metadata: { resolution, result: result ?? "error" },
+    metadata: repeatNotApplied
+      ? { result: "already_closed_not_applied", applied: false, recorded_resolution: recordedResolution }
+      : { resolution, result: result ?? "error" },
   });
   if (!succeeded) {
-    throw new Error("Failed to close the concern.");
+    throw new Error(repeatNotApplied
+      ? recordedResolution === null
+        ? "Already closed; the recorded resolution could not be verified. Your resolution was not applied."
+        : `Already closed as "${recordedResolution}". Your resolution was not applied.`
+      : "Failed to close the concern.");
   }
 
   revalidatePath("/admin/delivery");

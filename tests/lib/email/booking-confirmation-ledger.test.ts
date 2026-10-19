@@ -17,7 +17,8 @@ const h: {
   rpc: Array<[string, Record<string, unknown>]>;
   begin: { data: unknown; error: unknown };
   adminThrows: boolean;
-} = { sent: [], rpc: [], begin: { data: null, error: null }, adminThrows: false };
+  signals: Array<[string, AbortSignal]>;
+} = { sent: [], rpc: [], begin: { data: null, error: null }, adminThrows: false, signals: [] };
 
 const ROW = "6e5d4c3b-2a19-4807-a6b5-c4d3e2f1a0b9";
 const EMAIL_ID = "0b8f1c1e-6a52-4c0e-9f3e-2f6c3c1a7d10";
@@ -38,9 +39,30 @@ vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => {
     if (h.adminThrows) throw new Error("SUPABASE_SERVICE_ROLE_KEY missing");
     return {
+      // CHAINABLE, like the real postgrest builder: the ledger wrappers now
+      // bound their RPCs with `.abortSignal()` (#843, Codex P2 4307698578), so a
+      // fake whose `rpc` returns a bare Promise makes that call throw and every
+      // ledger row silently vanish. Honouring the signal keeps this suite
+      // testing the CONFIRMATION path rather than the shape of its own stub.
       rpc: (fn: string, args: Record<string, unknown>) => {
         h.rpc.push([fn, args]);
-        return Promise.resolve(fn === "begin_appointment_email_message" ? h.begin : { data: "settled", error: null });
+        const answer =
+          fn === "begin_appointment_email_message" ? h.begin : { data: "settled", error: null };
+        let signal: AbortSignal | undefined;
+        const chain = {
+          abortSignal(s: AbortSignal) {
+            signal = s;
+            h.signals.push([fn, s]);
+            return chain;
+          },
+          then(res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) {
+            return new Promise<unknown>((resolve, reject) => {
+              if (signal?.aborted) reject(signal.reason ?? new Error("aborted"));
+              else resolve(answer);
+            }).then(res, rej);
+          },
+        };
+        return chain;
       },
     };
   },
@@ -89,6 +111,8 @@ afterEach(() => {
   h.rpc = [];
   h.begin = { data: ROW, error: null };
   h.adminThrows = false;
+  h.signals = [];
+  vi.restoreAllMocks();
 });
 
 describe("sendBookingConfirmationToClient joins the ledger", () => {
@@ -101,6 +125,12 @@ describe("sendBookingConfirmationToClient joins the ledger", () => {
       { p_studio_id: STUDIO_ID, p_appointment_id: APPT_ID, p_purpose: "appointment_confirmation" },
     ]);
     expect(h.sent[0]!.tags).toEqual([{ name: "hone_m", value: ROW }]);
+    expect(h.signals.map(([fn]) => fn)).toEqual(["begin_appointment_email_message", "settle_email_message"]);
+    for (const [, signal] of h.signals) {
+      expect(signal).toBeInstanceOf(AbortSignal);
+      expect(signal.aborted).toBe(false);
+    }
+    expect(h.signals[0]![1]).not.toBe(h.signals[1]![1]);
     expect(h.rpc[1]).toEqual([
       "settle_email_message",
       { p_message_id: ROW, p_outcome: "accepted", p_provider_email_id: EMAIL_ID, p_provider_error: null, p_skip_reason: null },
