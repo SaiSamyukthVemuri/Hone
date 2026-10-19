@@ -182,6 +182,15 @@ function referencedStepIds(cond: string | undefined): string[] {
   return [...cond.matchAll(/steps\.([A-Za-z0-9_-]+)\./g)].map((m) => m[1]!);
 }
 
+/** A prerequisite must identify exactly one earlier step in this job. */
+function isEarlierDeclaredStep(job: Job, guarded: Step, id: string): boolean {
+  const steps = job.steps ?? [];
+  const targets = steps.filter((s) => s.id === id);
+  const guardedIndex = steps.indexOf(guarded);
+  return targets.length === 1 && guardedIndex >= 0 &&
+    steps.indexOf(targets[0]!) < guardedIndex;
+}
+
 /**
  * A condition may require a PREREQUISITE to have succeeded — that is correct,
  * and `check:db-types` needs it. What it must never require is the success of
@@ -611,6 +620,26 @@ describe("ci.yml: no verification step is hidden behind an earlier failure", () 
     expect(gatesOnAVerificationStep(job, dbTests?.if), "...but it is not").toBe(true);
   });
 
+  it("CONTROL: prerequisite references resolve to one earlier declaration in their own job", () => {
+    // Reuse the real workflow's declarations, preserving its mandatory deps gate.
+    const job = jobs(CI_BODY).find(([id]) => id === "validate")![1];
+    const steps = job.steps!;
+    const unit = steps.find((s) => s.run === "npm test")!;
+    expect(unit).toBeTruthy();
+    expect(isEarlierDeclaredStep(job, unit, "deps")).toBe(true);
+    expect(isEarlierDeclaredStep(job, unit, "dep")).toBe(false);
+    // A valid ID in another job is still unknown in this one.
+    expect(isEarlierDeclaredStep(job, unit, "db_chain")).toBe(false);
+    const identifiedUnit = { ...unit, id: "unit" };
+    const selfJob = { steps: steps.map((s) => s === unit ? identifiedUnit : s) };
+    expect(isEarlierDeclaredStep(selfJob, identifiedUnit, "unit")).toBe(false);
+    const deps = steps.find((s) => s.id === "deps")!;
+    const reordered = { steps: [...steps.filter((s) => s !== deps), deps] };
+    expect(isEarlierDeclaredStep(reordered, unit, "deps")).toBe(false);
+    const duplicate = { steps: [...steps, { ...deps }] };
+    expect(isEarlierDeclaredStep(duplicate, unit, "deps")).toBe(false);
+  });
+
   it("EVERY gated step requires its prerequisite to have SUCCEEDED", () => {
     // The general form of 4307482788, so the drift check is not the only step
     // protected from an inverted comparison.
@@ -624,7 +653,7 @@ describe("ci.yml: no verification step is hidden behind an earlier failure", () 
         const isGatedTest = isTestStep(s) && s.if;
         if (!isPostTestCheck && !isGatedTest) continue;
         for (const id of referencedStepIds(s.if)) {
-          if (!requiresStepSuccess(s.if, id)) {
+          if (!isEarlierDeclaredStep(job, s, id) || !requiresStepSuccess(s.if, id)) {
             offenders.push(`${jobId}: ${s.name} -> steps.${id}`);
           }
         }
