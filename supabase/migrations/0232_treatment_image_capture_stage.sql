@@ -10,13 +10,14 @@
 --   * capture_stage is NULL (unlabelled) for every existing row; no backfill.
 --     The CHECK admits only 'before' or 'after'.
 --   * Only a photo linked to a VISIT (session_id not null) can carry a stage.
---     Enforced in the command, not as a table CHECK, so sessions.id's
+--     Enforced by the command and cleanup trigger, not a table CHECK, so sessions.id's
 --     ON DELETE SET NULL can never make a cascade throw.
 --   * ...and KEPT true when the visit goes away (Codex 4308037526). Hard
 --     deleting a session runs 0092's ON DELETE SET NULL on session_id, which
 --     would leave a 'before'/'after' label on a photo that is now
---     client-scoped. One BEFORE UPDATE trigger clears the label whenever a row
---     ends up with no session. It REPAIRS the row instead of refusing it, so
+--     client-scoped. One BEFORE INSERT OR UPDATE trigger clears the label
+--     whenever a row has no session, including direct service_role/postgres
+--     inserts (Codex 4309998087). It REPAIRS the row instead of refusing it, so
 --     the FK cascade (an UPDATE) still succeeds and a session delete is never
 --     blocked; a CHECK here would make that cascade fail.
 --   * The label is set by its own command rather than a tenth argument on
@@ -122,7 +123,8 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
--- A photo that loses its visit loses its before/after label (Codex 4308037526).
+-- No sessionless photo keeps a label: INSERT as well as UPDATE (4309998087).
+-- The original session-delete cascade repair (4308037526) stays unchanged.
 -- ---------------------------------------------------------------------------
 create or replace function public.treatment_images_clear_stage_without_session()
 returns trigger
@@ -142,7 +144,7 @@ revoke execute on function public.treatment_images_clear_stage_without_session()
 
 drop trigger if exists treatment_images_clear_stage_without_session on public.treatment_images;
 create trigger treatment_images_clear_stage_without_session
-  before update on public.treatment_images
+  before insert or update on public.treatment_images
   for each row
   when (new.session_id is null and new.capture_stage is not null)
   execute function public.treatment_images_clear_stage_without_session();
