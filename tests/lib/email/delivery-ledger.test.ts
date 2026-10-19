@@ -114,8 +114,47 @@ describe("settleOutcomeForEmailSend", () => {
 });
 
 describe("the ledger wrappers are fail-soft", () => {
-  const admin = (impl: (fn: string, args: Record<string, unknown>) => Promise<unknown>) =>
-    ({ rpc: impl }) as unknown as Parameters<typeof beginAppointmentEmailMessage>[0];
+  /**
+   * A fake that behaves like the real postgrest builder: `.rpc()` returns a
+   * CHAINABLE object carrying `.abortSignal()`, and awaiting it honours the
+   * signal by rejecting the way an aborted fetch does.
+   *
+   * This shape is load-bearing. With the previous fake — a bare object whose
+   * `rpc` returned a plain Promise — `.abortSignal` was undefined, calling it
+   * threw, and the wrapper's catch returned null. Every timeout case then
+   * PASSED for the wrong reason, testing a missing method instead of a bound,
+   * and the one case asserting a successful row id was the only thing that
+   * noticed.
+   */
+  const admin = (
+    impl: (fn: string, args: Record<string, unknown>) => Promise<unknown>,
+    seen?: { signals: Array<AbortSignal | undefined> },
+  ) =>
+    ({
+      rpc: (fn: string, args: Record<string, unknown>) => {
+        let signal: AbortSignal | undefined;
+        const chain = {
+          abortSignal(s: AbortSignal) {
+            signal = s;
+            seen?.signals.push(s);
+            return chain;
+          },
+          then(res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) {
+            const work = new Promise<unknown>((resolve, reject) => {
+              if (signal) {
+                if (signal.aborted) reject(signal.reason ?? new Error("aborted"));
+                signal.addEventListener("abort", () =>
+                  reject(signal!.reason ?? new Error("aborted")),
+                );
+              }
+              impl(fn, args).then(resolve, reject);
+            });
+            return work.then(res, rej);
+          },
+        };
+        return chain;
+      },
+    }) as unknown as Parameters<typeof beginAppointmentEmailMessage>[0];
 
   it("returns the row id, or null on any failure, never throwing", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -127,6 +166,69 @@ describe("the ledger wrappers are fail-soft", () => {
       throw new Error("reset");
     });
     expect(await settleEmailMessage(throwing, ROW, { outcome: "unknown", providerError: "timeout" })).toBeNull();
+  });
+
+  it("the RPC is genuinely BOUNDED: an AbortSignal is handed to the builder", async () => {
+    // Codex P2 4307698578. The first bound raced a timer, which stopped the
+    // WAIT but not the REQUEST — so losing the race sent an untagged email AND
+    // let the rpc commit a `claimed` row nothing would settle. The fix is a
+    // real `.abortSignal()`, so this asserts the signal is actually passed:
+    // without it there is no cancellation, only a race again.
+    const seen = { signals: [] as Array<AbortSignal | undefined> };
+    const ok = admin(async () => ({ data: ROW, error: null }), seen);
+    expect(
+      await beginAppointmentEmailMessage(ok, {
+        studioId: ROW,
+        appointmentId: ROW,
+        purpose: "appointment_reminder_24h",
+      }),
+    ).toBe(ROW);
+    expect(seen.signals).toHaveLength(1);
+    expect(seen.signals[0]).toBeInstanceOf(AbortSignal);
+  });
+
+  it("settle is bounded too", async () => {
+    const seen = { signals: [] as Array<AbortSignal | undefined> };
+    const ok = admin(async () => ({ data: "settled", error: null }), seen);
+    expect(
+      await settleEmailMessage(ok, ROW, { outcome: "accepted", providerEmailId: ROW }),
+    ).toBe("settled");
+    expect(seen.signals[0]).toBeInstanceOf(AbortSignal);
+  });
+
+  it("an ABORTED begin returns null, so the caller sends untagged", async () => {
+    // The signal firing is simulated rather than waited out: this asserts the
+    // HANDLING of an abort, not the duration of the timer. An already-aborted
+    // signal rejects exactly as the real client's fetch does.
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const stalled = admin(() => new Promise<unknown>(() => {}));
+    const aborted = {
+      ...stalled,
+      rpc: (fn: string, args: Record<string, unknown>) => {
+        const chain = (stalled as unknown as {
+          rpc: (f: string, a: Record<string, unknown>) => { abortSignal(s: AbortSignal): unknown };
+        }).rpc(fn, args);
+        return chain.abortSignal(AbortSignal.abort(new Error("The operation was aborted")));
+      },
+    } as unknown as Parameters<typeof beginAppointmentEmailMessage>[0];
+    expect(
+      await beginAppointmentEmailMessage(aborted, {
+        studioId: ROW,
+        appointmentId: ROW,
+        purpose: "appointment_reminder_24h",
+      }),
+    ).toBeNull();
+  });
+
+  it("and the SEND still happens when the ledger aborts", async () => {
+    // The consequence that matters: a bounded ledger costs the TAG, never the
+    // EMAIL — and never sends twice, because the send is not retried.
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    sent.length = 0;
+    const result = await sendEmailSafely({ ...base, ledgerMessageId: null });
+    expect(result.ok, "the send must happen with no ledger row").toBe(true);
+    expect(sent.length, "exactly one email, untagged").toBe(1);
+    expect(sent[0]).not.toHaveProperty("tags");
   });
 
   it("sends each outcome's fields and only those", async () => {
