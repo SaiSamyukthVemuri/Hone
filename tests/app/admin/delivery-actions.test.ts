@@ -301,7 +301,7 @@ describe("the capped incident list is not presented as a total (Codex P2 4307533
     };
     const { default: Page } = await import("@/app/admin/delivery/page");
     const html = renderToStaticMarkup(await Page());
-    expect(html).toContain("Showing the most recent 300 concerns. Older concerns, if any, are not listed.");
+    expect(html).toContain("Showing up to 300 concerns, with open concerns first, newest concerns first within each group. Other concerns, if any, are not listed.");
     expect(html).toContain("shown");
     expect(html).not.toMatch(/Client says not received \(\d+ open\)/);
   });

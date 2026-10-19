@@ -198,7 +198,7 @@ export default async function DeliveryQueuePage() {
         <h2 className="text-lg font-medium">Client says not received ({concerns.length} shown)</h2>
         {concernsTruncated && (
           <p className="text-sm text-amber-800 dark:text-amber-300">
-            Showing the most recent {SUPPORT_CONCERN_CAP} concerns. Older concerns, if any, are not listed.
+            Showing up to {SUPPORT_CONCERN_CAP} concerns, with open concerns first, newest concerns first within each group. Other concerns, if any, are not listed.
           </p>
         )}
         {concernsRes.error ? (

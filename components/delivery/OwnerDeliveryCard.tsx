@@ -177,7 +177,7 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
 
       {concernsTruncated && (
         <p className="text-xs text-amber-800 dark:text-amber-300">
-          Showing the most recent {OWNER_CONCERN_CAP} reports. Older reports, if any, are not listed.
+          Showing up to {OWNER_CONCERN_CAP} reports, with open reports first, newest reports first within each group. Other reports, if any, are not listed.
         </p>
       )}
 
