@@ -264,6 +264,11 @@ export const BROWSER_GROUPS = {
       // receptionist refusal. Same group and the same reasons as the recovery
       // spec above; it uploads, so it SELF-SKIPS in CI (no storage-api).
       "fett-photo-labels.spec.ts",
+      // ID photo set/replace/remove on the client profile/Photos surface:
+      // same group as thumbnail recovery, with the same real-storage
+      // requirement (self-skips in CI without storage-api). Does not add to
+      // the sessions targeted-lane cost pin.
+      "fett-client-portrait.spec.ts",
       // OWNER-CAP Slice 1: /dashboard/capacity. This group's stated scope is
       // already "owner/admin, onboarding, studio setup AND CAPACITY", and the
       // spec is exactly an owner-authority surface — an owner reaches the
