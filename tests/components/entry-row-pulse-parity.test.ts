@@ -57,6 +57,24 @@ const MATRIX: Array<[string, Record<string, unknown>]> = [
 ];
 
 describe("pulse display: the saved view and the shared rule agree", () => {
+  for (const variant of ["full", "readings"] as const) {
+    it(`inherits galvanic pulse suppression from a backfilled block (${variant}, 4309769366)`, () => {
+      const render = (mode: "galv" | "thermo" | null, blockMode: "galv" | "thermo") =>
+        renderToStaticMarkup(createElement(ElectrolysisEntryRow, {
+          entry: { ...base, mode, pulse_count: 2, pulse_delay_seconds: 0.5 } as unknown as ElectrolysisEntry,
+          block: { mode: blockMode },
+          variant,
+        }));
+      expect(render(null, "galv")).not.toMatch(/\b\d+ pulses?\b|\ds delay\b/);
+      // The same legacy pass retains real pulse readings outside galvanic
+      // mode; an explicit per-pass override wins over its block.
+      expect(render(null, "thermo")).toMatch(/2 pulses/);
+      expect(render(null, "thermo")).toContain("0.50s delay");
+      expect(render("thermo", "galv")).toMatch(/2 pulses/);
+      expect(render("galv", "thermo")).not.toMatch(/\b\d+ pulses?\b/);
+    });
+  }
+
   for (const [name, over] of MATRIX) {
     for (const variant of ["full", "readings"] as const) {
       it(`${name} (${variant})`, () => {

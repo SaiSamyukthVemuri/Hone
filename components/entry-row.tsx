@@ -183,8 +183,11 @@ export function ElectrolysisEntryRow({
   // saved with no readings still stores the default count of 1
   // (clampPulseCount), and with nothing structured it reaches the legacy line
   // below, so the legacy line shows a count only for a pass whose mode is not
-  // galvanic. Shared by the saved view and the HON-46 printout (one render).
-  const legacyPulses = entry.pulse_count != null && entry.mode !== "galv";
+  // galvanic. A backfilled pass may inherit its mode from the block
+  // (4309769366); an explicit entry mode still takes precedence.
+  // Shared by the saved view and the HON-46 printout (one render).
+  const effectiveMode = entry.mode ?? block?.mode;
+  const legacyPulses = entry.pulse_count != null && effectiveMode !== "galv";
 
   // Primary meta line: probe size · mode · modality · pulses · intensity · duration
   const meta: string[] = [];
