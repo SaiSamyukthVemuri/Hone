@@ -784,6 +784,9 @@ export type Practitioner = {
 };
 
 export type Client = {
+  // Migration 0231: the client's identification portrait, a pointer to one of
+  // their own client-scoped, unarchived treatment photos (null = none).
+  portrait_image_id: string | null;
   id: string;
   studio_id: string;
   name: string;

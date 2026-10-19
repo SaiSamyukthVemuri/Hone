@@ -219,6 +219,11 @@ export const BROWSER_GROUPS = {
   owner_admin: {
     description: "owner/admin, onboarding, studio setup and capacity",
     specs: [
+      // ID photo set/replace/remove on the client profile/Photos surface:
+      // same group as thumbnail recovery, with the same real-storage
+      // requirement (self-skips in CI without storage-api). Does not add to
+      // the sessions targeted-lane cost pin.
+      "fett-client-portrait.spec.ts",
       "invitation-reconciliation.spec.ts",
       "invite-only.spec.ts",
       // FETT photos (HON-43): Photos-tab grid thumbnails survive a reload and
