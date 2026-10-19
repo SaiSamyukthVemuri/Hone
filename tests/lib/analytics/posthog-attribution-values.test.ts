@@ -457,6 +457,28 @@ describe("http(s) URL strings are classified by parsing, not by prefix", () => {
 // becomes [unsupported] and its toJSON is never invoked.
 // ===========================================================================
 describe("object serialization avoids overridden methods", () => {
+  it.each(["plain", "null-prototype", "array", "inherited"])(
+    "never invokes a non-enumerable toJSON getter on %s values", (kind) => {
+      const value = kind === "array" ? [] : kind === "null-prototype" ? Object.create(null) : {};
+      const getter = vi.fn(() => {
+        Object.assign(value, { email: "patient@example.com" });
+        return undefined;
+      });
+      if (kind === "inherited") Object.setPrototypeOf(value, Object.defineProperty({}, "toJSON", { get: getter }));
+      else Object.defineProperty(value, "toJSON", { get: getter });
+      const out = pageview({ value });
+      expect((out.properties as Record<string, unknown>).value).toBe("[unsupported]");
+      expect(getter).not.toHaveBeenCalled();
+      expect(Object.hasOwn(value, "email")).toBe(false);
+      expect(JSON.stringify(out)).not.toContain("patient");
+    },
+  );
+
+  it("keeps plain data with a non-callable toJSON field", () => {
+    expect(pageview({ value: { toJSON: "label", count: 2 } }).properties)
+      .toMatchObject({ value: { toJSON: "label", count: 2 } });
+  });
+
   it("ignores own and subclass Date serialization overrides", () => {
     const iso = "2026-10-18T00:00:00.000Z";
     const override = vi.fn(() => "patient@example.com");

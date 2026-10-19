@@ -335,7 +335,14 @@ function sanitizeProps(value: unknown, key: string, depth: number): unknown {
     }
     return sanitizeProps(iso, key, depth + 1);
   }
-  if (typeof (value as { toJSON?: unknown }).toJSON === "function") return "[unsupported]";
+  // Checking a serializer must not execute it: even a non-enumerable getter
+  // can publish hidden state into fields that Object.entries would then send.
+  for (let owner: object | null = value; owner !== null; owner = Object.getPrototypeOf(owner)) {
+    const descriptor = Object.getOwnPropertyDescriptor(owner, "toJSON");
+    if (!descriptor) continue;
+    if (!Object.hasOwn(descriptor, "value") || typeof descriptor.value === "function") return "[unsupported]";
+    break;
+  }
   if (Array.isArray(value)) {
     return value.map((v) => sanitizeProps(v, key, depth + 1));
   }
