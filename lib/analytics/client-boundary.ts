@@ -312,6 +312,9 @@ function sanitizeProps(value: unknown, key: string, depth: number): unknown {
   if (value instanceof URL) {
     const href = Object.getOwnPropertyDescriptor(URL.prototype, "href")!.get!.call(value) as string;
     const url = new URL(href);
+    // The marketing URL builder retains origin verbatim. Withhold objects
+    // whose parsed hostname carries a record id rather than serializing it.
+    if (redactIdsInValue(url.hostname) !== url.hostname) return NON_HTTP_URL_PLACEHOLDER;
     // URL objects previously exposed no fields. Do not introduce email-bearing
     // paths, including encoded forms; uncertain decoding also fails closed.
     const path = decodeBounded(url.pathname);

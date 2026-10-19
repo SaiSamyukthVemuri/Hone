@@ -217,6 +217,27 @@ describe("no custom browser PostHog properties exist (the premise of keeping bar
 // and values are judged on their DECODED text, never on a raw-text signal.
 // ===========================================================================
 describe("URL-shaped values and decode-first decisions", () => {
+  it.each([CLIENT, CLIENT.toUpperCase(), `prefix${CLIENT}suffix`, CLIENT.replace(/-/g, "%2D"), `%36${CLIENT.slice(1)}`])(
+    "withholds URL objects with a record id in the parsed hostname: %s", (host) => {
+      const link = new URL(`https://${host}.example.com/pricing?utm_campaign=summer#hero`);
+      const event = guardBrowserEvent({
+        event: "$pageview",
+        properties: { $current_url: `${HOST}/pricing`, link, nested: [link] },
+        $set: { link },
+        $set_once: { link },
+      })!;
+      expect(event.properties).toMatchObject({ link: "[url]", nested: ["[url]"] });
+      expect(event.$set.link).toBe("[url]");
+      expect(event.$set_once.link).toBe("[url]");
+      expect(UUID_ANYWHERE.test(oracleDecode(JSON.stringify(event)))).toBe(false);
+    },
+  );
+
+  it("retains an id-free external URL origin while scrubbing its path and query", () => {
+    const p = pageview({ link: new URL(`https://docs.example.com:8443/clients/${CLIENT}?email=patient@example.com#notes`) }).properties as Record<string, unknown>;
+    expect(p.link).toBe("https://docs.example.com:8443/clients/[id]");
+  });
+
   it.each(["patient@example.com", "patient%40example.com", "patient%2540example.com", "%252525252540"])(
     "fails closed on URL-object sensitive or uncertain paths: %s", (path) => {
       const out = pageview({ link: new URL(`${HOST}/${path}`), nested: [new URL(`${HOST}/${path}`)] });
