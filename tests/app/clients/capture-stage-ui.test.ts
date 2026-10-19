@@ -65,6 +65,7 @@ vi.mock("@/lib/supabase/server", () => ({
 
 import {
   setTreatmentImageCaptureStageAction,
+  setClientPortraitAction,
   uploadTreatmentImageAction,
 } from "@/app/(app)/clients/[id]/images/actions";
 
@@ -79,6 +80,30 @@ function uploadForm(extra: Record<string, string>): FormData {
 beforeEach(() => {
   rpcResult = { data: "img-1", error: null };
   rpcCalls.length = 0;
+});
+
+describe("0231 portrait removal action: displayed-image precondition", () => {
+  it("passes the displayed photo to the command when clearing", async () => {
+    expect(await setClientPortraitAction({ clientId: CLIENT, imageId: null, expectedImageId: "displayed-photo" })).toEqual({ ok: true });
+    expect(rpcCalls).toEqual([{ name: "set_client_portrait", params: {
+      p_client_id: CLIENT, p_image_id: null, p_expected_image_id: "displayed-photo",
+    } }]);
+  });
+
+  it("reports a stale-removal conflict without claiming success or disclosing DB text", async () => {
+    rpcResult = { data: null, error: { code: "P0231", message: "private database detail" } };
+    expect(await setClientPortraitAction({ clientId: CLIENT, imageId: null, expectedImageId: "stale-photo" })).toEqual({
+      ok: false, error: "The ID photo changed. Reload and try again.",
+    });
+  });
+
+  it("sets a photo without a removal precondition and keeps other errors generic", async () => {
+    rpcResult = { data: null, error: { code: "23514", message: "private database detail" } };
+    expect(await setClientPortraitAction({ clientId: CLIENT, imageId: "new-photo" })).toEqual({
+      ok: false, error: "Could not update the ID photo.",
+    });
+    expect(rpcCalls[0].params).toEqual({ p_client_id: CLIENT, p_image_id: "new-photo", p_expected_image_id: null });
+  });
 });
 
 describe("0232 action: setTreatmentImageCaptureStageAction", () => {
