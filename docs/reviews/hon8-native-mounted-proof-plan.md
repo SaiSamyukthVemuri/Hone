@@ -37,21 +37,33 @@ Use distinct values per field and explicit stage/field assertions, including
 MultiPlex warming fields. Preserve unit, precision, source and version assertions;
 never infer a new unit, rounding rule, mode or categorical encoding.
 
-## Fixture prerequisite — not yet implemented
+## Implemented fixture and executable-case source
 
-Both real profiles remain blocked. The existing server-only
-`lib/machines/synthetic-profile.ts` gate exposes only generic multi-needle and
-single-probe fixtures, whose fields do not match the native contracts. Setting
-`HONE_SYNTHETIC_MACHINE_PROFILE=1` alone therefore cannot run this matrix.
-Before executable native browser cases can work, extend that **existing** local,
-undeployed synthetic fixture path with separately identified Senior and Junior
-native-field fixtures, restricted to the six eligible modes above. Keep the real
-profile IDs blocked and never publish their contracts. Derive fixture fields from
-the reviewed contracts, retain all field evidence restrictions, and test that the
-fixtures are absent when the existing gate is closed or the environment is deployed.
-Do not add a new flag, harness, production picker exception or activation bypass.
-The fixture extension and executable native cases are still outstanding source
-work; this document does not claim they exist or that collection passed.
+`lib/machines/apilus-3g-fixtures.ts` derives separate synthetic Senior and Junior
+identities from the reviewed v2 contracts. Its explicit mode allowlists expose
+only Senior Flash/MicroFlash/MultiPlex/Electrolysis and Junior Flash/Electrolysis.
+Field/stage definitions are deep-cloned, with no invented units or precision.
+It refuses retained held fields or unresolved questions. The real contracts remain
+blocked. `catalogueForRuntime` appends these fixtures only through the existing
+server-only, explicitly enabled, local and undeployed gate; no new flag or harness.
+
+The existing create-mode journey now contains 12 executable native cases: six
+model/mode combinations at each viewport. They publish synthetic contracts through
+the existing command, seed units with existing SQL helpers, save observations
+through the app, compare committed rows using separate SQL calls, reload history,
+check empty observation controls, and create a distinct same-client next visit
+through the app with exact per-field guidance assertions. They preserve the stored
+capture and rows across reload and next visit. They are authored source, **not
+executed browser evidence**. Closed-gate cases explicitly skip as UNRUN; enabled
+cases fail if the server lacks the fixture. Revision/change and retry extensions
+in the assertion checklist below remain additional outstanding coverage; the new
+12 cases cover the initial durable save/reload/next-visit chain.
+
+Targeted gate tests cover disabled/non-exact flags, nonlocal targets and deployed
+signals, native field equality, separate identities and publication eligibility.
+Runtime prerequisites are now a later slot grant, exact-head composed owned stack,
+existing server environment forwarding and the readiness/containment checks below.
+No fixture source extension is still required for the authored 12 cases.
 
 The flag must reach the existing Next server environment through
 `E2E_WEB_SERVER_ENV`, not merely the Playwright process. Keep tracked ports/config
@@ -96,3 +108,12 @@ Physical checks, categorical storage, disputed modes and real activation stay
 held. Frozen 0223 and #920/0234 remain untouched; #926 is evidence-only. #931 is
 resolved at e102d816 and is not a prerequisite. Production, hosted migration,
 provider, customer-data and release holds remain; demo stays off.
+
+## Source-only validation for fixture implementation
+
+Targeted lightweight suite: **165/165 passed in six files** (native fixture gate,
+native contracts/components, existing machine draft and E2E fixture/environment
+guards). The final unit-fixture environment typing correction was followed by an
+additional **11/11 native-fixture tests passed**. Typecheck and focused ESLint **passed**. No Playwright collection/execution,
+build, DB, reset or stack start was performed. The earlier DB10/10 is unchanged
+historical scoped evidence, not a run of these browser cases.
