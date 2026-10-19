@@ -19,13 +19,16 @@ import {
 //   * Sentry Logs: DISABLED: console output routinely contains PII.
 //   * beforeSend / beforeSendTransaction / beforeBreadcrumb run the
 //     deny-by-default scrubbers in lib/observability/sentry-scrub.ts.
-//   * Events reach Sentry via the same-origin tunnel (/monitoring, configured
-//     in next.config.ts), so the strict CSP connect-src 'self' already permits
-//     them and no ingest host is added to the policy.
+//   * Events reach Sentry via the same-origin tunnel /monitoring
+//     (app/monitoring/route.ts), so the strict CSP connect-src 'self' already
+//     permits them and no ingest host is added to the policy. The route
+//     forwards only the envelope body for Hone's own DSN, never the browser's
+//     Referer, Cookie or IP (#828 G-07/G-26).
 Sentry.init({
   dsn: "https://83582fd24c2d75b0a2ada024251147bc@o4511758551941120.ingest.us.sentry.io/4511758557839360",
 
   sendDefaultPii: false,
+  tunnel: "/monitoring",
 
   tracesSampleRate: tracesSampleRate(),
 
@@ -61,6 +64,11 @@ posthog.init(process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN!, {
   // Explicit safety switches (do not rely on SDK defaults):
   disable_session_recording: true, // never record the live DOM
   disable_surveys: true, // no remotely-injected UI in a clinical product
+  // No /flags request at all (#828 G-07/G-26). Hone uses no feature flags, and
+  // posthog-js 1.404.1 sends the first page this browser ever loaded
+  // ($initial_current_url, which can be /clients/<uuid>) in every /flags body,
+  // which before_send never sees. Pinned by tests/lib/analytics/posthog-url-ids.test.ts.
+  advanced_disable_flags: true,
   capture_exceptions: false, // Sentry owns errors, with scrubbing
   capture_heatmaps: false, // no heatmap events
   capture_performance: false, // no $web_vitals (carries URLs)
