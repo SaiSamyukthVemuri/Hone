@@ -51,11 +51,31 @@ export default async function DeliveryQueuePage() {
   const incidents = (incidentsRes.data ?? []) as SupportIncident[];
   const open = incidents.filter((i) => i.resolved_at === null);
   const resolved = incidents.filter((i) => i.resolved_at !== null);
+
+  // THIS LIST IS CAPPED, SO IT IS NOT A TOTAL (Codex P2 4307533285).
+  // `support_delivery_incidents` applies `limit 300` after ordering open
+  // incidents first (supabase/migrations/0215_delivery_incidents.sql:392), so
+  // once the platform holds 300 matching incidents this page receives a SLICE
+  // and the counts below describe what is SHOWN, not what exists. Presented as
+  // a total it silently omitted older open incidents, and could drop the
+  // resolved-history section entirely — the resolved rows sort last, so they
+  // are the first thing the cap removes.
+  //
+  // The cap is mirrored here rather than derived, because the function does not
+  // report it. If 0215's limit changes, this must change with it; the test
+  // pins the indicator at exactly this number.
+  const SUPPORT_INCIDENT_CAP = 300;
+  const truncated = incidents.length >= SUPPORT_INCIDENT_CAP;
   // An unreadable summary is UNKNOWN, never "no recent events" (Codex P2 4244834156).
   const outcomes: ReceiptOutcome[] | null =
     outcomesRes.error || !Array.isArray(outcomesRes.data) ? null : (outcomesRes.data as ReceiptOutcome[]);
   const findings = health ? healthFindings(health) : [];
   const concerns = (concernsRes.data ?? []) as SupportConcern[];
+  // The concerns read is capped the same way — `support_delivery_concerns`
+  // applies `limit 300` (0221:394) — so its count is also a count of what is
+  // SHOWN. Same reasoning, separate number, separate section.
+  const SUPPORT_CONCERN_CAP = 300;
+  const concernsTruncated = concerns.length >= SUPPORT_CONCERN_CAP;
 
   return (
     <div className="flex flex-col gap-8">
@@ -131,7 +151,14 @@ export default async function DeliveryQueuePage() {
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">Open incidents ({open.length})</h2>
+        <h2 className="text-lg font-medium">
+          Open incidents ({open.length} shown)
+        </h2>
+        {truncated && (
+          <p className="text-sm text-amber-800 dark:text-amber-300">
+            Showing the most recent {SUPPORT_INCIDENT_CAP} incidents. Older incidents, if any, are not listed.
+          </p>
+        )}
         {open.length === 0 ? (
           <p className="text-sm text-neutral-500">No open delivery incidents.</p>
         ) : (
@@ -168,7 +195,12 @@ export default async function DeliveryQueuePage() {
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">Client says not received ({concerns.length} open)</h2>
+        <h2 className="text-lg font-medium">Client says not received ({concerns.length} shown)</h2>
+        {concernsTruncated && (
+          <p className="text-sm text-amber-800 dark:text-amber-300">
+            Showing the most recent {SUPPORT_CONCERN_CAP} concerns. Older concerns, if any, are not listed.
+          </p>
+        )}
         {concernsRes.error ? (
           <p className="text-sm text-red-800 dark:text-red-300">Concerns could not be loaded. Treat them as unknown.</p>
         ) : concerns.length === 0 ? (
@@ -204,7 +236,7 @@ export default async function DeliveryQueuePage() {
 
       {resolved.length > 0 && (
         <section className="flex flex-col gap-2">
-          <h2 className="text-lg font-medium">Resolved in the last 14 days</h2>
+          <h2 className="text-lg font-medium">Resolved in the last 14 days ({resolved.length} shown)</h2>
           <ul className="flex flex-col gap-1 text-xs text-neutral-600 dark:text-neutral-400">
             {resolved.map((i) => (
               <li key={i.incident_id}>

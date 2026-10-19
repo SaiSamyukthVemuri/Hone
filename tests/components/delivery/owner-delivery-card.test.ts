@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { describeIncident, purposeLabel } from "@/lib/delivery/incidents";
@@ -56,7 +56,10 @@ const incident = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+beforeEach(() => { vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-19T12:00:00Z")); });
+
 afterEach(() => {
+  vi.restoreAllMocks();
   h.answer = { data: [], error: null };
   c.answer = { data: [], error: null };
   h.calls = [];
@@ -120,7 +123,7 @@ describe("OwnerDeliveryCard", () => {
     };
     const html = await render();
     expect(html).not.toContain("No delivery problems reported");
-    expect(html).toContain("No open delivery problems. 2 problems were reported in the last 14 days and since resolved.");
+    expect(html).toContain("No open delivery problems. 2 problems were resolved in the last 14 days.");
     expect(html).not.toContain("not delivered");
   });
 
@@ -130,8 +133,8 @@ describe("OwnerDeliveryCard", () => {
       error: null,
     };
     const html = await render();
-    expect(html).toContain("1 open delivery problem.");
-    expect(html).toContain("1 problem was reported in the last 14 days and since resolved.");
+    expect(html).toContain("1 open delivery problem shown.");
+    expect(html).toContain("1 problem was resolved in the last 14 days.");
     expect(html).toContain("24-hour reminder email not delivered");
     expect(html).toContain("3 times");
     expect(html).toContain("The client&#x27;s mail server rejected the email.");
@@ -165,6 +168,184 @@ describe("owner-reported concerns on the card (DELIVERY-VISIBILITY-04)", () => {
   });
 });
 
+describe("the summary claim is derived from EVERY category (Codex P2 4307428928)", () => {
+  // This claim has been wrong twice for the same reason — it read fewer
+  // categories than the card displays. One case per category, so the next
+  // category cannot be added without a visible gap here.
+  const concern = (over: Record<string, unknown> = {}) => ({
+    concern_id: "k1",
+    appointment_id: APPT,
+    channel: "email",
+    purpose: "appointment_postcare",
+    ledger_status_at_report: "delivered",
+    reported_at: "2026-10-12T16:00:00Z",
+    state: "open",
+    closed_at: "2026-10-12T16:00:00Z",
+    ...over,
+  });
+  const NONE_REPORTED = "No delivery problems reported in the last 14 days.";
+
+  it("nothing in any category: claims no problems", async () => {
+    h.answer = { data: [], error: null };
+    c.answer = { data: [], error: null };
+    expect(await render()).toContain(NONE_REPORTED);
+  });
+
+  it("CONCERN ONLY: never claims 'no delivery problems reported'", async () => {
+    // THE REGRESSION ITSELF. Zero incidents plus one open concern printed the
+    // no-problems sentence directly above the list of that very concern.
+    h.answer = { data: [], error: null };
+    c.answer = { data: [concern()], error: null };
+    const html = await render();
+    expect(html).not.toContain(NONE_REPORTED);
+    expect(html).not.toContain("No open delivery problems");
+    // ...and it says something true instead, while the concern is still listed.
+    expect(html).toContain("1 open report from your studio.");
+    expect(html).toContain("client says they did not receive it (1 open)");
+  });
+
+  it("OPEN INCIDENT ONLY: counts the incidents", async () => {
+    h.answer = { data: [incident()], error: null };
+    c.answer = { data: [], error: null };
+    const html = await render();
+    expect(html).not.toContain(NONE_REPORTED);
+    expect(html).toContain("1 open delivery problem shown.");
+  });
+
+  it("RESOLVED INCIDENT ONLY: no OPEN problems, but not 'none reported'", async () => {
+    h.answer = { data: [incident({ resolved_at: "2026-10-13T10:00:00Z", resolution: "fixed" })], error: null };
+    c.answer = { data: [], error: null };
+    const html = await render();
+    expect(html).not.toContain(NONE_REPORTED);
+    expect(html).toContain("No open delivery problems.");
+  });
+
+  it("BOTH an open incident and an open concern: the incident count stands and the concern is still listed", async () => {
+    h.answer = { data: [incident()], error: null };
+    c.answer = { data: [concern()], error: null };
+    const html = await render();
+    expect(html).toContain("1 open delivery problem shown.");
+    expect(html).toContain("client says they did not receive it (1 open)");
+    expect(html).not.toContain(NONE_REPORTED);
+  });
+
+  it("a CLOSED concern is ACKNOWLEDGED, never denied (Codex P2 4307695801)", async () => {
+    // THIS CASE IS INVERTED FROM ITS PREVIOUS FORM, deliberately. I had pinned
+    // the old behaviour — a closed concern reading as "nothing reported" — as a
+    // considered asymmetry, on the grounds that the card does not LIST closed
+    // concerns so counting them would reference something invisible. The
+    // reviewer was right that denying a report the studio actually made is the
+    // worse error. So the count now includes it and the words say what happened.
+    h.answer = { data: [], error: null };
+    c.answer = { data: [concern({ state: "closed" })], error: null };
+    const html = await render();
+    expect(html).not.toContain(NONE_REPORTED);
+    expect(html).toContain("No open delivery problems.");
+    expect(html).toContain("1 report from your studio was closed in the last 14 days.");
+  });
+
+  it("several closed concerns are pluralised", async () => {
+    h.answer = { data: [], error: null };
+    c.answer = {
+      data: [
+        concern({ concern_id: "k1", state: "closed" }),
+        concern({ concern_id: "k2", state: "closed" }),
+      ],
+      error: null,
+    };
+    expect(await render()).toContain("2 reports from your studio were closed in the last 14 days.");
+  });
+
+  it("counts only recent closed_at values in the 14-day note (4307824374)", async () => {
+    h.answer = { data: [], error: null };
+    c.answer = { data: [
+      concern({ state: "closed", closed_at: "2026-10-19T11:00:00Z" }),
+      concern({ concern_id: "older", state: "closed", closed_at: "2026-09-29T12:00:00Z" }),
+      concern({ concern_id: "boundary", state: "closed", closed_at: "2026-10-05T12:00:00Z" }),
+      concern({ concern_id: "unknown", state: "closed", closed_at: null }),
+    ], error: null };
+    const html = await render();
+    expect(html).toContain("1 report from your studio was closed in the last 14 days.");
+    expect(html).not.toContain("4 reports");
+  });
+
+  it("CONTROL: a genuinely empty fortnight still says nothing was reported", async () => {
+    // So the inversion above has not simply made the denial unreachable.
+    h.answer = { data: [], error: null };
+    c.answer = { data: [], error: null };
+    expect(await render()).toContain(NONE_REPORTED);
+  });
+});
+
+describe("concern attribution (Codex P2 4307428933)", () => {
+  it("never claims the viewing owner reported it", async () => {
+    // `owner_delivery_concerns` returns every concern for the STUDIO with no
+    // reporter filter, so "Reported by you" was false for every co-owner but
+    // the one who filed it.
+    h.answer = { data: [], error: null };
+    c.answer = {
+      data: [
+        {
+          concern_id: "k1",
+          appointment_id: APPT,
+          channel: "email",
+          purpose: "appointment_postcare",
+          ledger_status_at_report: "delivered",
+          reported_at: "2026-10-12T16:00:00Z",
+          state: "open",
+        },
+      ],
+      error: null,
+    };
+    const html = await render();
+    expect(html).not.toContain("Reported by you:");
+    expect(html).toContain("Reported by your studio:");
+  });
+});
+
+describe("the owner card's capped read is not a total (Codex P2 4307695060)", () => {
+  // `owner_delivery_incidents` applies `limit 200` (0215:314) after ordering
+  // open incidents first, so a studio at the cap sees a SLICE — and because
+  // resolved rows sort LAST they are the first thing the cap removes, which
+  // would distort the resolved note silently as well.
+  const CAP = 200;
+  const INDICATOR = "Showing the most recent 200 incidents. Older incidents, if any, are not listed.";
+
+  it("AT the cap: says so, and the count reads as SHOWN", async () => {
+    h.answer = {
+      data: Array.from({ length: CAP }, (_, i) =>
+        incident({ incident_id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}` }),
+      ),
+      error: null,
+    };
+    const html = await render();
+    expect(html).toContain(INDICATOR);
+    expect(html).toContain("shown");
+    // The bare "N open delivery problems." form is what read as a total.
+    expect(html).not.toMatch(/open delivery problems\. Repeats/);
+  });
+
+  it("BELOW the cap: no indicator, because nothing is hidden", async () => {
+    h.answer = {
+      data: Array.from({ length: CAP - 1 }, (_, i) =>
+        incident({ incident_id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}` }),
+      ),
+      error: null,
+    };
+    const html = await render();
+    expect(html).not.toContain("Older incidents, if any, are not listed");
+    // ...and it still reports the incidents it does have.
+    expect(html).toContain("shown");
+  });
+
+  it("an empty studio says neither", async () => {
+    h.answer = { data: [], error: null };
+    const html = await render();
+    expect(html).not.toContain("Older incidents, if any, are not listed");
+    expect(html).toContain("No delivery problems reported in the last 14 days.");
+  });
+});
+
 describe("describeIncident", () => {
   it("gives every failure class a meaning, a next step and who acts, without claiming a read or a loss", () => {
     const classes: Array<[string, string]> = [
@@ -188,4 +369,15 @@ describe("describeIncident", () => {
     expect(purposeLabel("waitlist_invitation")).toBe("Waitlist invitation");
     expect(purposeLabel("future_purpose")).toBe("Future purpose");
   });
+});
+
+
+it("assigns only invalid-address refusals to studio data correction (4307826148)", () => {
+  const row = { channel: "email" as const, purpose: "appointment_reminder_24h", failure_class: "refused" as const };
+  expect(describeIncident({ ...row, last_reason: "invalid_to_address" })).toMatchObject({
+    owner: "studio", nextStep: "Check the client's email address with them and update it.",
+  });
+  for (const last_reason of [null, "provider_refused", "invalid_api_key"]) {
+    expect(describeIncident({ ...row, last_reason }).owner).toBe("hone");
+  }
 });

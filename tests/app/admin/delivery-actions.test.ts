@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import { renderToStaticMarkup } from "react-dom/server";
 
 // ===========================================================================
 // DELIVERY-VISIBILITY-02 — support resolves a delivery incident from /admin.
@@ -12,7 +13,21 @@ const h: {
   audits: Array<Record<string, unknown>>;
   rpcCalls: Array<[string, unknown]>;
   answer: { data: unknown; error: unknown };
-} = { email: null, audits: [], rpcCalls: [], answer: { data: "resolved", error: null } };
+  // Per-RPC answers for the page render below; `answer` stays the fallback so
+  // the action cases are untouched.
+  byFn: Record<string, { data: unknown; error: unknown }>;
+  /** What `delivery_incidents.resolution` holds, for the conflict path. */
+  storedResolution: { resolution: string } | null;
+  tableReads: string[];
+} = {
+  email: null,
+  audits: [],
+  rpcCalls: [],
+  answer: { data: "resolved", error: null },
+  byFn: {},
+  storedResolution: null,
+  tableReads: [],
+};
 
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
 vi.mock("@/lib/supabase/server", () => ({
@@ -30,7 +45,18 @@ vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ({
     rpc: (fn: string, args: unknown) => {
       h.rpcCalls.push([fn, args]);
-      return Promise.resolve(h.answer);
+      return Promise.resolve(h.byFn[fn] ?? h.answer);
+    },
+    // The conflicting-resolution path reads the STORED resolution, because the
+    // command returns only a result word and never says what is on record.
+    from: (table: string) => {
+      h.tableReads.push(table);
+      const chain = {
+        select: () => chain,
+        eq: () => chain,
+        maybeSingle: async () => ({ data: h.storedResolution, error: null }),
+      };
+      return chain;
     },
   }),
 }));
@@ -49,6 +75,9 @@ beforeEach(() => {
   h.audits = [];
   h.rpcCalls = [];
   h.answer = { data: "resolved", error: null };
+  h.byFn = {};
+  h.storedResolution = null;
+  h.tableReads = [];
 });
 
 describe("resolveDeliveryIncidentAction", () => {
@@ -126,6 +155,157 @@ describe("closeDeliveryConcernAction (DELIVERY-VISIBILITY-04)", () => {
   });
 });
 
+describe("a conflicting second resolution is not a success (Codex P2 4307695064)", () => {
+  it("already_resolved with a DIFFERENT resolution fails, and the audit never shows the submitted word", async () => {
+    // `resolve_delivery_incident` returns already_resolved WITHOUT updating
+    // (0215:343), so the row keeps the FIRST admin's resolution. Recording the
+    // submitted word as a success made the audit assert a resolution that was
+    // never committed — and the audit is the one place a reviewer looks to find
+    // out what an incident was closed as.
+    h.email = "support@hone.test";
+    h.answer = { data: "already_resolved", error: null };
+    h.storedResolution = { resolution: "acknowledged" };
+
+    await expect(
+      resolveDeliveryIncidentAction(form({ incident_id: ID, resolution: "fixed" })),
+    ).rejects.toThrow(/already resolved as "acknowledged"/i);
+
+    expect(h.tableReads, "it must read what IS recorded").toContain("delivery_incidents");
+    const audit = h.audits[0]!;
+    expect(audit).toMatchObject({
+      outcome: "failed",
+      metadata: {
+        result: "already_resolved_conflict",
+        applied: false,
+        recorded_resolution: "acknowledged",
+      },
+    });
+    // THE LOAD-BEARING ABSENCE: the submitted word must not appear anywhere in
+    // the audit, because it was not applied.
+    expect(JSON.stringify(audit)).not.toContain("fixed");
+  });
+
+  it("already_resolved with the SAME resolution stays idempotent success", async () => {
+    // The outcome the caller asked for is the outcome on record, so there is
+    // nothing to warn about and nothing to undo.
+    h.email = "support@hone.test";
+    h.answer = { data: "already_resolved", error: null };
+    h.storedResolution = { resolution: "fixed" };
+
+    await resolveDeliveryIncidentAction(form({ incident_id: ID, resolution: "fixed" }));
+
+    expect(h.audits[0]).toMatchObject({
+      outcome: "succeeded",
+      metadata: { resolution: "fixed", result: "already_resolved" },
+    });
+  });
+
+  it("a first resolution still succeeds, and reads nothing extra", async () => {
+    // CONTROL: the ordinary path must not have grown a read, or every resolve
+    // pays for the conflict case.
+    h.email = "support@hone.test";
+    h.answer = { data: "resolved", error: null };
+
+    await resolveDeliveryIncidentAction(form({ incident_id: ID, resolution: "fixed" }));
+
+    expect(h.audits[0]).toMatchObject({ outcome: "succeeded", metadata: { result: "resolved" } });
+    expect(h.tableReads, "no stored-resolution read on the happy path").toEqual([]);
+  });
+});
+
+describe("the capped incident list is not presented as a total (Codex P2 4307533285)", () => {
+  // RENDERED, not grepped. The sibling cases in this file are source guards,
+  // and a source guard cannot tell whether the indicator actually appears at
+  // the cap — which is the whole property. `support_delivery_incidents` applies
+  // `limit 300` inside 0215, so at 300 rows this page is holding a SLICE.
+  const CAP = 300;
+  const incidentRow = (i: number) => ({
+    incident_id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+    studio_id: "4f0a1b2c-3d4e-4f50-8a6b-7c8d9e0f1a2b",
+    studio_name: "Studio",
+    channel: "email",
+    purpose: "appointment_reminder_24h",
+    failure_class: "bounced",
+    occurrences: 1,
+    first_seen_at: "2026-10-12T15:00:00Z",
+    last_seen_at: "2026-10-12T18:00:00Z",
+    last_reason: "no_email",
+    last_appointment_id: null,
+    resolved_at: null,
+    resolution: null,
+  });
+
+  const renderWith = async (count: number): Promise<string> => {
+    h.byFn = {
+      support_delivery_incidents: {
+        data: Array.from({ length: count }, (_, i) => incidentRow(i)),
+        error: null,
+      },
+      support_email_receipt_outcomes: { data: [], error: null },
+      email_delivery_health: { data: [], error: null },
+      // EVERY rpc this page reads must be answered. Omitting one let it fall
+      // through to the shared `h.answer` ("resolved", a STRING), and the page
+      // died with `concerns.map is not a function` — a test-harness gap, not a
+      // product fault. It only appeared once #865's concerns section merged in,
+      // which is why a merge needs the conflicted file's own suite re-run.
+      support_delivery_concerns: { data: [], error: null },
+    };
+    const { default: Page } = await import("@/app/admin/delivery/page");
+    return renderToStaticMarkup(await Page());
+  };
+
+  const INDICATOR = "Showing the most recent 300 incidents. Older incidents, if any, are not listed.";
+
+  it("AT the cap: says the list is truncated", async () => {
+    const html = await renderWith(CAP);
+    expect(html).toContain(INDICATOR);
+  });
+
+  it("BELOW the cap: no indicator, because nothing is hidden", async () => {
+    // One short of the cap. The boundary is the point: an indicator that is
+    // always on is as untrue as one that never is.
+    const html = await renderWith(CAP - 1);
+    expect(html).not.toContain("Older incidents, if any, are not listed");
+  });
+
+  it("the CONCERNS section is capped the same way, and says so", async () => {
+    // `support_delivery_concerns` also applies `limit 300` (0221:394), and this
+    // page renders its length too — the same false total on a second section.
+    const concernRow = (i: number) => ({
+      concern_id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+      studio_id: "4f0a1b2c-3d4e-4f50-8a6b-7c8d9e0f1a2b",
+      studio_name: "Studio",
+      appointment_id: null,
+      channel: "email",
+      purpose: "appointment_postcare",
+      ledger_status_at_report: "delivered",
+      reported_at: "2026-10-12T16:00:00Z",
+      state: "open",
+    });
+    h.byFn = {
+      support_delivery_incidents: { data: [], error: null },
+      support_email_receipt_outcomes: { data: [], error: null },
+      email_delivery_health: { data: [], error: null },
+      support_delivery_concerns: {
+        data: Array.from({ length: CAP }, (_, i) => concernRow(i)),
+        error: null,
+      },
+    };
+    const { default: Page } = await import("@/app/admin/delivery/page");
+    const html = renderToStaticMarkup(await Page());
+    expect(html).toContain("Showing the most recent 300 concerns. Older concerns, if any, are not listed.");
+    expect(html).toContain("shown");
+    expect(html).not.toMatch(/Client says not received \(\d+ open\)/);
+  });
+
+  it("the counts say SHOWN, never implying a total", async () => {
+    const html = await renderWith(CAP);
+    expect(html).toContain("shown");
+    // The bare "Open incidents (300)" form is what read as authoritative.
+    expect(html).not.toMatch(/Open incidents \(\d+\)</);
+  });
+});
+
 describe("the support queue page", () => {
   const PAGE = readFileSync("app/admin/delivery/page.tsx", "utf8");
 
@@ -144,5 +324,36 @@ describe("the support queue page", () => {
     expect(PAGE).toMatch(/outcomesRes\.error \|\| !Array\.isArray\(outcomesRes\.data\) \? null/);
     expect(PAGE).toContain("Treat it as unknown, not as no events.");
     expect(PAGE).not.toContain("outcomesRes.data ?? []");
+  });
+});
+
+
+describe("repeat concern closure is verified, never mis-audited (4307824368)", () => {
+  it("a different recorded resolution is non-success and not-applied", async () => {
+    h.email = "support@hone.test";
+    h.answer = { data: "already_closed", error: null };
+    h.storedResolution = { resolution: "explained" };
+    await expect(closeDeliveryConcernAction(form({ concern_id: ID, resolution: "provider_issue" })))
+      .rejects.toThrow('Already closed as "explained". Your resolution was not applied.');
+    expect(h.tableReads).toEqual(["delivery_concerns"]);
+    expect(h.audits[0]).toMatchObject({ outcome: "failed", metadata: {
+      result: "already_closed_not_applied", applied: false, recorded_resolution: "explained",
+    } });
+    expect(h.audits[0]!.metadata).not.toHaveProperty("resolution");
+  });
+  it("the same recorded resolution stays idempotent success", async () => {
+    h.email = "support@hone.test";
+    h.answer = { data: "already_closed", error: null };
+    h.storedResolution = { resolution: "provider_issue" };
+    await closeDeliveryConcernAction(form({ concern_id: ID, resolution: "provider_issue" }));
+    expect(h.audits[0]).toMatchObject({ outcome: "succeeded" });
+  });
+  it("an unreadable recorded resolution cannot prove success", async () => {
+    h.email = "support@hone.test";
+    h.answer = { data: "already_closed", error: null };
+    h.storedResolution = null;
+    await expect(closeDeliveryConcernAction(form({ concern_id: ID, resolution: "provider_issue" })))
+      .rejects.toThrow("could not be verified");
+    expect(h.audits[0]).toMatchObject({ outcome: "failed", metadata: { applied: false, recorded_resolution: null } });
   });
 });

@@ -180,7 +180,7 @@ Findings (`lib/email/delivery-health.ts`) have purpose-specific thresholds: a ba
   - a count and its first and last occurrence;
   - a plain-English meaning and the next step (`lib/delivery/incidents.ts`), with a link to the latest appointment.
 
-  A bounce is the studio's to fix (check the address); a provider failure or refusal is Hone's. Until the Resend webhook is activated, the card says plainly that a bounce after sending cannot appear.
+  A bounce or invalid client address is the studio's to fix (check the address); a provider failure or any other refusal is Hone's. Until the Resend webhook is activated, the card says plainly that a bounce after sending cannot appear.
 - **Platform support:** `/admin/delivery`. It shows the delivery health (an unreadable row is shown as unknown, never healthy), Resend receipt outcomes and the cross-studio incident queue. Resolve is an admin-only server action, audited as `delivery_incident_resolved` (blocked attempts included).
 
 **Cancellation and postcare emails, and "client says they didn't receive it" (DELIVERY-VISIBILITY-04, migration 0221).**
