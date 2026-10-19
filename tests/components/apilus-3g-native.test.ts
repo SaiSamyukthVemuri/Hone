@@ -27,6 +27,31 @@ describe.each(APILUS_3G_PROFILES)("$model real component static rendering (not b
     expect(html).not.toContain("device-display");
     if (mode.captureHold) expect(html).toContain('data-testid="native-control-pending"');
   });
+  it.each(profile.modes)("renders $key history and next-visit reference from supplied v2 rows unchanged", (mode) => {
+    // Supplied synthetic rows test display only. No database save, browser
+    // reload or next-session RPC is simulated or claimed here.
+    const readings: RecordedReading[] = modeFields(mode).map(({ field, stageKey }) => ({
+      blockId: "block", deviceId: "device", profileId: profile.profileId,
+      profileVersion: 2, modeKey: mode.key, stageKey, fieldKey: field.key,
+      nativeUnit: field.unit, decimals: field.decimals, captureId: "capture",
+      groupKey: "g1", revision: 1, channels: [], recordedAt: "2026-10-19T00:00:00Z",
+      observationSource: field.expectedSource,
+      value: { kind: "value", value: field.decimals === 3 ? 0.047 : field.decimals === 2 ? 0.27 : field.decimals === 1 ? 1.3 : 7 },
+    }));
+    const original = JSON.stringify(readings);
+    for (const Component of [MachinePriorSetup, MachineRecordedSetups]) {
+      const html = renderToStaticMarkup(createElement(Component, { readings, catalogue: MACHINE_CATALOGUE }));
+      for (const reading of readings) {
+        const field = modeFields(mode).find(({ field }) => field.key === reading.fieldKey)!.field;
+        expect(html).toContain(field.nativeLabel);
+        expect(html).toContain(reading.nativeUnit);
+        expect(html).toContain((reading.value as { kind: "value"; value: number }).value.toFixed(reading.decimals));
+      }
+      for (const stage of mode.stages) expect(html).toContain(stage.nativeLabel);
+      expect(html).toContain("entered by hand");
+    }
+    expect(JSON.stringify(readings)).toBe(original);
+  });
 });
 
 describe("retained Senior v1 next-visit and history rendering", () => {

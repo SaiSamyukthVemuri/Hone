@@ -87,10 +87,24 @@ static output, numeric payload round trips, no copied draft values, and retained
 v1 history/next-visit rendering. JSON round trips and server rendering are not a
 database save, browser reload, mounted interaction or physical-device test.
 
-Executed: 890/890 tests passed across 28 focused unit/component/script files,
-including 32 new native-contract and render cases. Typecheck and focused ESLint
+Executed: 902/902 tests passed across 28 focused unit/component/script files,
+including 44 new native-contract and render cases. Typecheck and focused ESLint
 passed. A deliberate seconds-to-milliseconds mutation failed three native
 contract tests; restoring the exact source returned the suite to green.
+
+| Check | Senior 3G | Junior 3G |
+|---|---|---|
+| Native field component static render | Passed, all 7 modes | Passed, all 5 modes |
+| Numeric payload JSON round trip | Passed, all 7 modes; not a database save | Passed, all 5 modes; not a database save |
+| History and next-visit component static render from supplied v2 rows | Passed, all 7 modes | Passed, all 5 modes |
+| Historical v1 preservation | Passed: original ms value/labels render without conversion | Passed: v1 identity-only contract remains unchanged |
+| Mounted browser UI, desktop/mobile interactions and mode switching | Unrun | Unrun |
+| Actual database save/read-back/history/next-session lookup | Unrun; 4 eligible-mode cases prepared | Unrun; 2 eligible-mode cases prepared |
+| Browser save, refresh, reload and next visit | Unrun | Unrun |
+| Interrupted-save recovery and deliberate identical new area, including mobile | Unrun for these native contracts | Unrun for these native contracts |
+
+Exact-head independent review and new-head CI are pending. Neither profile is
+merged, deployed, physically matched or human accepted by this implementation.
 
 `tests/db/machine-apilus-3g.db.test.ts` adds six real DB cases for the independently
 ready numeric modes (Senior Flash/MicroFlash/MultiPlex/Electrolysis; Junior
