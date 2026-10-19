@@ -256,13 +256,6 @@ describe("the set of installed appointment_audit writers is pinned", () => {
   // asserted over a scope silently stops covering the domain the moment a new
   // writer is installed. This test is the tripwire that makes that visible.
   //
-  // NOTE the ninth entry. The legacy v1 `reschedule_appointment` is still
-  // installed and still service_role-EXECUTABLE (it is deliberately retained,
-  // and pinned as un-dropped / un-revoked by
-  // tests/security/public-reschedule-command-guard.test.ts). B2 does not drive
-  // it: it is superseded by reschedule_appointment_v2 and the app no longer
-  // calls it. Listing it here is the honest alternative to a completeness
-  // claim that quietly excludes it.
   // 0220 (STUDIO-READY-02c): the three internal commands became wrappers over
   // ONE shared core each, so the core is now the function that INSERTs. This is
   // a MOVE of each writer, never an addition: the receptionist commands write
@@ -272,6 +265,9 @@ describe("the set of installed appointment_audit writers is pinned", () => {
     create_appointment_core: "create_internal_appointment_v2",
     move_appointment_core: "move_or_reassign_appointment",
     cancel_appointment_core: "practitioner_cancel_appointment",
+    // HON-47 / 0234 moved the INSERT body to v3. The behavioural cases below
+    // still drive v2, its deploy-skew wrapper, which delegates to that body.
+    reschedule_appointment_v3: "reschedule_appointment_v2",
   };
   const EXPECTED_WRITERS = [
     "cancel_appointment_core",
@@ -285,7 +281,7 @@ describe("the set of installed appointment_audit writers is pinned", () => {
     // three caller-less legacy RPCs were dropped. It is a REMOVAL from the
     // writer census, never a relaxation — the surviving writers are unchanged
     // and the set is still asserted exactly.
-    "reschedule_appointment_v2",
+    "reschedule_appointment_v3",
     // B4 / 0173. The repair commands write audit rows through the shared
     // `write_appointment_audit` helper rather than inlining the INSERT, so the
     // census grows by exactly ONE even though TWO commands landed:
