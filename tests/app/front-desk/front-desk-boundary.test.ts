@@ -47,10 +47,14 @@ describe("front-desk routes", () => {
     for (const f of DESK) expect(code(read(f)), f).toMatch(/await requireReceptionistWithStudio\(\)/);
   });
 
-  it("never import the practitioner guards, query helpers, the admin client or a raw Supabase client", () => {
+  it("ban practitioner/query/admin clients, with a session-only chooser exception", () => {
     for (const f of ALL_DESK) {
       const c = code(read(f));
-      expect(c, f).not.toMatch(/@\/lib\/supabase\/(queries|admin-server|server)"/);
+      expect(c, f).not.toMatch(/@\/lib\/supabase\/(queries|admin-server)"/);
+      if (f !== "app/front-desk/select/actions.ts") {
+        expect(c, f).not.toMatch(/@\/lib\/supabase\/server"/);
+        expect(c, f).not.toMatch(/@\/lib\/auth\/admin-return"/);
+      }
       expect(c, f).not.toMatch(/requirePractitionerWithStudio|getCurrentPractitionerWithStudio/);
       expect(c, f).not.toMatch(/\.from\(|\.rpc\(/);
     }
@@ -74,8 +78,26 @@ describe("front-desk routes", () => {
     expect(action.indexOf("await setSelectedStudioId(studioId)")).toBeGreaterThan(
       action.indexOf("await isOwnFrontDeskStudio(studioId)"),
     );
+    for (const f of SELECT.filter(f => f !== "app/front-desk/select/actions.ts")) {
+      expect(code(read(f)), f).not.toMatch(/@\/lib\/(auth\/admin-return|supabase\/server)"/);
+    }
     const imports = SELECT.flatMap((f) => [...code(read(f)).matchAll(/from "(@\/lib\/[^"]+)"/g)].map((m) => m[1]));
-    expect([...new Set(imports)].sort()).toEqual(["@/lib/receptionist/identity", "@/lib/supabase/selected-studio"]);
+    expect([...new Set(imports)].sort()).toEqual([
+      "@/lib/auth/admin-return", "@/lib/receptionist/identity",
+      "@/lib/supabase/selected-studio", "@/lib/supabase/server",
+    ]);
+    // The sole raw-client exception authenticates only after the own-studio
+    // check; it cannot read tables, call RPCs, or replace the membership guard.
+    expect(action).toMatch(/import \{ createClient \} from "@\/lib\/supabase\/server"/);
+    expect(action).toMatch(/import \{ fulfilAdminReturn \} from "@\/lib\/auth\/admin-return"/);
+    const membership = action.indexOf("await isOwnFrontDeskStudio(studioId)");
+    const authenticate = action.indexOf("await supabase.auth.getUser()");
+    const persist = action.indexOf("await setSelectedStudioId(studioId)");
+    const consume = action.indexOf("await fulfilAdminReturn(user.email)");
+    expect(authenticate).toBeGreaterThan(membership);
+    expect(action.indexOf('if (!user) redirect("/login")')).toBeGreaterThan(authenticate);
+    expect(persist).toBeGreaterThan(authenticate);
+    expect(consume).toBeGreaterThan(persist);
   });
 });
 
