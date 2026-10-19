@@ -509,6 +509,8 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
           reason,
           isClient: true,
           rebookUrl: `${getRequiredAppOrigin()}/book/${studio.slug}`,
+          // DELIVERY-VISIBILITY-04: ledger the client's notice.
+          ledger: { studioId: studio.id, appointmentId },
         });
       } catch (err) {
         console.error("client cancel notification email failed", err);
@@ -1215,6 +1217,8 @@ export async function sendPostcareEmailAction(
       studioRow.postcare_product_recommendations_text ?? null,
     reviewUrl: studioRow.postcare_review_url ?? null,
     reviewPromptText: studioRow.postcare_review_prompt_text ?? null,
+    // DELIVERY-VISIBILITY-04: ledger the postcare email.
+    ledger: { studioId: studio.id, appointmentId },
   });
   if (!result.ok) {
     // PR #311: the provider send FAILED. Record the failure honestly: set

@@ -130,3 +130,93 @@ export async function resolveDeliveryIncidentAction(formData: FormData): Promise
 
   revalidatePath("/admin/delivery");
 }
+
+// DELIVERY-VISIBILITY-04. Support closes an owner-reported delivery concern
+// (0221, close_delivery_concern). Same gate and audit as resolving an
+// incident; only the resolution word and the command's result are logged.
+const CONCERN_RESOLUTIONS = new Set(["explained", "resent_by_studio", "provider_issue", "not_actionable"]);
+
+export async function closeDeliveryConcernAction(formData: FormData): Promise<void> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user || !isAdmin(user.email)) {
+    await logAdminAction({
+      actorUserId: user?.id ?? null,
+      actorEmail: user?.email ?? null,
+      action: "delivery_concern_closed",
+      targetType: "delivery_concern",
+      outcome: "blocked",
+    });
+    throw new Error("Unauthorized.");
+  }
+
+  const concernId = formData.get("concern_id");
+  const resolution = formData.get("resolution");
+  const idOk = typeof concernId === "string" && UUID_RE.test(concernId);
+  const resolutionOk = typeof resolution === "string" && CONCERN_RESOLUTIONS.has(resolution);
+  if (!idOk || !resolutionOk) {
+    // Audited like resolveDeliveryIncidentAction (Codex P2 4244834158): which
+    // field was rejected, never the submitted values.
+    await logAdminAction({
+      actorUserId: user.id,
+      actorEmail: user.email ?? null,
+      targetType: "delivery_concern",
+      targetId: idOk ? (concernId as string) : null,
+      action: "delivery_concern_closed",
+      outcome: "failed",
+      metadata: { result: "invalid_input", invalid: !idOk ? "concern_id" : "resolution" },
+    });
+    throw new Error(!idOk ? "Missing concern id." : "Unknown resolution.");
+  }
+
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("close_delivery_concern", {
+    p_concern_id: concernId,
+    p_resolution: resolution,
+  });
+  const result = typeof data === "string" ? data : null;
+  let recordedResolution: string | null = null;
+  if (!error && result === "already_closed") {
+    // 0221 revokes direct service-role SELECT. Reuse the granted support read;
+    // its 300-row/30-day window may omit this concern, which stays unverified.
+    try {
+      const { data: rows, error: readError } = await admin.rpc("support_delivery_concerns", {
+        p_include_closed: true,
+      });
+      const matches = Array.isArray(rows)
+        ? rows.filter((row) => row?.concern_id === concernId && row.state === "closed")
+        : [];
+      if (!readError && matches.length === 1 && typeof matches[0].resolution === "string" &&
+          CONCERN_RESOLUTIONS.has(matches[0].resolution)) {
+        recordedResolution = matches[0].resolution;
+      }
+    } catch {
+      // Read failure cannot prove that the requested resolution is on record.
+    }
+  }
+  const repeatNotApplied = !error && result === "already_closed" && recordedResolution !== resolution;
+  const succeeded = !error && (result === "closed" || (result === "already_closed" && !repeatNotApplied));
+
+  await logAdminAction({
+    actorUserId: user.id,
+    actorEmail: user.email ?? null,
+    targetType: "delivery_concern",
+    targetId: concernId,
+    action: "delivery_concern_closed",
+    outcome: succeeded ? "succeeded" : "failed",
+    metadata: repeatNotApplied
+      ? { result: "already_closed_not_applied", applied: false, recorded_resolution: recordedResolution }
+      : { resolution, result: result ?? "error" },
+  });
+  if (!succeeded) {
+    throw new Error(repeatNotApplied
+      ? recordedResolution === null
+        ? "Already closed; the recorded resolution could not be verified. Your resolution was not applied."
+        : `Already closed as "${recordedResolution}". Your resolution was not applied.`
+      : "Failed to close the concern.");
+  }
+
+  revalidatePath("/admin/delivery");
+}

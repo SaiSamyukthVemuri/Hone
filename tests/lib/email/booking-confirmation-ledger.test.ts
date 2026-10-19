@@ -17,7 +17,8 @@ const h: {
   rpc: Array<[string, Record<string, unknown>]>;
   begin: { data: unknown; error: unknown };
   adminThrows: boolean;
-} = { sent: [], rpc: [], begin: { data: null, error: null }, adminThrows: false };
+  signals: Array<[string, AbortSignal]>;
+} = { sent: [], rpc: [], begin: { data: null, error: null }, adminThrows: false, signals: [] };
 
 const ROW = "6e5d4c3b-2a19-4807-a6b5-c4d3e2f1a0b9";
 const EMAIL_ID = "0b8f1c1e-6a52-4c0e-9f3e-2f6c3c1a7d10";
@@ -51,6 +52,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         const chain = {
           abortSignal(s: AbortSignal) {
             signal = s;
+            h.signals.push([fn, s]);
             return chain;
           },
           then(res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) {
@@ -66,7 +68,9 @@ vi.mock("@/lib/supabase/admin-server", () => ({
   },
 }));
 
-const { sendBookingConfirmationToClient } = await import("@/lib/email/send-appointment");
+const { sendBookingConfirmationToClient, sendCancellationEmail, sendPostcareToClient } = await import(
+  "@/lib/email/send-appointment"
+);
 
 const STUDIO_ID = "4f0a1b2c-3d4e-4f50-8a6b-7c8d9e0f1a2b";
 const APPT_ID = "9e8d7c6b-5a49-4382-a716-152433221100";
@@ -107,6 +111,8 @@ afterEach(() => {
   h.rpc = [];
   h.begin = { data: ROW, error: null };
   h.adminThrows = false;
+  h.signals = [];
+  vi.restoreAllMocks();
 });
 
 describe("sendBookingConfirmationToClient joins the ledger", () => {
@@ -119,6 +125,12 @@ describe("sendBookingConfirmationToClient joins the ledger", () => {
       { p_studio_id: STUDIO_ID, p_appointment_id: APPT_ID, p_purpose: "appointment_confirmation" },
     ]);
     expect(h.sent[0]!.tags).toEqual([{ name: "hone_m", value: ROW }]);
+    expect(h.signals.map(([fn]) => fn)).toEqual(["begin_appointment_email_message", "settle_email_message"]);
+    for (const [, signal] of h.signals) {
+      expect(signal).toBeInstanceOf(AbortSignal);
+      expect(signal.aborted).toBe(false);
+    }
+    expect(h.signals[0]![1]).not.toBe(h.signals[1]![1]);
     expect(h.rpc[1]).toEqual([
       "settle_email_message",
       { p_message_id: ROW, p_outcome: "accepted", p_provider_email_id: EMAIL_ID, p_provider_error: null, p_skip_reason: null },
@@ -210,5 +222,63 @@ describe("sendBookingConfirmationToClient joins the ledger", () => {
     expect(result).toMatchObject({ ok: false, attempt: "none" });
     expect(h.rpc).toEqual([]);
     expect(h.sent).toEqual([]);
+  });
+});
+
+describe("cancellation and postcare join the ledger when given the appointment (DELIVERY-VISIBILITY-04)", () => {
+  const studio = (params() as unknown as { studio: unknown }).studio as never;
+  const cancel = (isClient: boolean) =>
+    sendCancellationEmail({
+      to: isClient ? "client@synthetic.test" : "owner@synthetic.test",
+      recipientName: "R",
+      clientName: "Synthetic Client",
+      studio,
+      serviceName: "Electrolysis",
+      durationMinutes: 45,
+      startsAt: new Date("2026-10-16T17:00:00.000Z"),
+      actorName: "Owner",
+      actorRole: "owner",
+      reason: null,
+      isClient,
+      ledger: { studioId: STUDIO_ID, appointmentId: APPT_ID },
+    });
+
+  it("ledgers the CLIENT's cancellation notice with its own purpose and tag", async () => {
+    await cancel(true);
+    expect(h.rpc[0]).toEqual([
+      "begin_appointment_email_message",
+      { p_studio_id: STUDIO_ID, p_appointment_id: APPT_ID, p_purpose: "appointment_cancellation" },
+    ]);
+    expect(h.sent[0]!.tags).toEqual([{ name: "hone_m", value: ROW }]);
+    expect(h.rpc[1]![0]).toBe("settle_email_message");
+  });
+
+  it("does not ledger the studio's own copy of a cancellation", async () => {
+    await cancel(false);
+    expect(h.rpc).toEqual([]);
+    expect(h.sent[0]).not.toHaveProperty("tags");
+  });
+
+  it("ledgers the postcare email with its own purpose, and sends untagged without an appointment", async () => {
+    const base = {
+      clientName: "Synthetic Client",
+      clientEmail: "client@synthetic.test",
+      studio,
+      practitionerName: null,
+      serviceName: null,
+      startsAt: null,
+      aftercareText: "Keep the area clean.",
+      warningSignsText: null,
+      productRecommendationsText: null,
+      reviewUrl: null,
+      reviewPromptText: null,
+    };
+    await sendPostcareToClient({ ...base, ledger: { studioId: STUDIO_ID, appointmentId: APPT_ID } });
+    expect(h.rpc[0]![1]).toMatchObject({ p_purpose: "appointment_postcare" });
+    expect(h.sent[0]!.tags).toEqual([{ name: "hone_m", value: ROW }]);
+    h.rpc = [];
+    await sendPostcareToClient(base);
+    expect(h.rpc).toEqual([]);
+    expect(h.sent[1]).not.toHaveProperty("tags");
   });
 });

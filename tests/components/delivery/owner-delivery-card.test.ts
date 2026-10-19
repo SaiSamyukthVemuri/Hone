@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { describeIncident, purposeLabel } from "@/lib/delivery/incidents";
@@ -20,11 +20,13 @@ const h: { answer: { data: unknown; error: unknown }; calls: Array<[string, unkn
   calls: [],
 };
 
+const c: { answer: { data: unknown; error: unknown } } = { answer: { data: [], error: null } };
+
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
     rpc: (fn: string, args: unknown) => {
       h.calls.push([fn, args]);
-      return Promise.resolve(h.answer);
+      return Promise.resolve(fn === "owner_delivery_concerns" ? c.answer : h.answer);
     },
   }),
 }));
@@ -54,8 +56,12 @@ const incident = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+beforeEach(() => { vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-19T12:00:00Z")); });
+
 afterEach(() => {
+  vi.restoreAllMocks();
   h.answer = { data: [], error: null };
+  c.answer = { data: [], error: null };
   h.calls = [];
   delete process.env.RESEND_WEBHOOK_SECRET;
 });
@@ -63,7 +69,10 @@ afterEach(() => {
 describe("OwnerDeliveryCard", () => {
   it("reads its own studio through the owner RPC, with the user's session", async () => {
     await render();
-    expect(h.calls).toEqual([["owner_delivery_incidents", { p_studio_id: STUDIO }]]);
+    expect(h.calls).toEqual([
+      ["owner_delivery_incidents", { p_studio_id: STUDIO }],
+      ["owner_delivery_concerns", { p_studio_id: STUDIO }],
+    ]);
   });
 
   it("renders nothing ONLY when the database refuses the caller", async () => {
@@ -133,6 +142,164 @@ describe("OwnerDeliveryCard", () => {
     expect(html).toContain(`/calendar/${APPT}`);
     // Resolved incidents are not shown as open problems.
     expect(html.match(/not delivered/g)).toHaveLength(1);
+  });
+});
+
+describe("owner-reported concerns on the card (DELIVERY-VISIBILITY-04)", () => {
+  it("lists the owner's open concerns with what the ledger said when reported", async () => {
+    c.answer = {
+      data: [
+        { concern_id: "k1", appointment_id: APPT, channel: "email", purpose: "appointment_postcare", ledger_status_at_report: "delivered", reported_at: "2026-10-12T16:00:00Z", state: "open" },
+        { concern_id: "k2", appointment_id: APPT, channel: "sms", purpose: "appointment_reminder_2h", ledger_status_at_report: "no_record", reported_at: "2026-10-10T16:00:00Z", state: "closed" },
+      ],
+      error: null,
+    };
+    const html = await render();
+    expect(html).toContain("client says they did not receive it (1 open)");
+    expect(html).toContain("Postcare email");
+    expect(html).toContain("not that it was seen");
+    expect(html).not.toContain("2-hour reminder text");
+  });
+
+  it("treats a failed concern read as unknown too, never as healthy", async () => {
+    c.answer = { data: null, error: { message: "network" } };
+    const html = await render();
+    expect(html).toContain("Delivery status is unavailable right now");
+  });
+});
+
+describe("the summary claim is derived from EVERY category (Codex P2 4307428928)", () => {
+  // This claim has been wrong twice for the same reason — it read fewer
+  // categories than the card displays. One case per category, so the next
+  // category cannot be added without a visible gap here.
+  const concern = (over: Record<string, unknown> = {}) => ({
+    concern_id: "k1",
+    appointment_id: APPT,
+    channel: "email",
+    purpose: "appointment_postcare",
+    ledger_status_at_report: "delivered",
+    reported_at: "2026-10-12T16:00:00Z",
+    state: "open",
+    closed_at: "2026-10-12T16:00:00Z",
+    ...over,
+  });
+  const NONE_REPORTED = "No delivery problems reported in the last 14 days.";
+
+  it("nothing in any category: claims no problems", async () => {
+    h.answer = { data: [], error: null };
+    c.answer = { data: [], error: null };
+    expect(await render()).toContain(NONE_REPORTED);
+  });
+
+  it("CONCERN ONLY: never claims 'no delivery problems reported'", async () => {
+    // THE REGRESSION ITSELF. Zero incidents plus one open concern printed the
+    // no-problems sentence directly above the list of that very concern.
+    h.answer = { data: [], error: null };
+    c.answer = { data: [concern()], error: null };
+    const html = await render();
+    expect(html).not.toContain(NONE_REPORTED);
+    expect(html).not.toContain("No open delivery problems");
+    // ...and it says something true instead, while the concern is still listed.
+    expect(html).toContain("1 open report from your studio.");
+    expect(html).toContain("client says they did not receive it (1 open)");
+  });
+
+  it("OPEN INCIDENT ONLY: counts the incidents", async () => {
+    h.answer = { data: [incident()], error: null };
+    c.answer = { data: [], error: null };
+    const html = await render();
+    expect(html).not.toContain(NONE_REPORTED);
+    expect(html).toContain("1 open delivery problem shown.");
+  });
+
+  it("RESOLVED INCIDENT ONLY: no OPEN problems, but not 'none reported'", async () => {
+    h.answer = { data: [incident({ resolved_at: "2026-10-13T10:00:00Z", resolution: "fixed" })], error: null };
+    c.answer = { data: [], error: null };
+    const html = await render();
+    expect(html).not.toContain(NONE_REPORTED);
+    expect(html).toContain("No open delivery problems.");
+  });
+
+  it("BOTH an open incident and an open concern: the incident count stands and the concern is still listed", async () => {
+    h.answer = { data: [incident()], error: null };
+    c.answer = { data: [concern()], error: null };
+    const html = await render();
+    expect(html).toContain("1 open delivery problem shown.");
+    expect(html).toContain("client says they did not receive it (1 open)");
+    expect(html).not.toContain(NONE_REPORTED);
+  });
+
+  it("a CLOSED concern is ACKNOWLEDGED, never denied (Codex P2 4307695801)", async () => {
+    // THIS CASE IS INVERTED FROM ITS PREVIOUS FORM, deliberately. I had pinned
+    // the old behaviour — a closed concern reading as "nothing reported" — as a
+    // considered asymmetry, on the grounds that the card does not LIST closed
+    // concerns so counting them would reference something invisible. The
+    // reviewer was right that denying a report the studio actually made is the
+    // worse error. So the count now includes it and the words say what happened.
+    h.answer = { data: [], error: null };
+    c.answer = { data: [concern({ state: "closed" })], error: null };
+    const html = await render();
+    expect(html).not.toContain(NONE_REPORTED);
+    expect(html).toContain("No open delivery problems.");
+    expect(html).toContain("1 report from your studio was closed in the last 14 days.");
+  });
+
+  it("several closed concerns are pluralised", async () => {
+    h.answer = { data: [], error: null };
+    c.answer = {
+      data: [
+        concern({ concern_id: "k1", state: "closed" }),
+        concern({ concern_id: "k2", state: "closed" }),
+      ],
+      error: null,
+    };
+    expect(await render()).toContain("2 reports from your studio were closed in the last 14 days.");
+  });
+
+  it("counts only recent closed_at values in the 14-day note (4307824374)", async () => {
+    h.answer = { data: [], error: null };
+    c.answer = { data: [
+      concern({ state: "closed", closed_at: "2026-10-19T11:00:00Z" }),
+      concern({ concern_id: "older", state: "closed", closed_at: "2026-09-29T12:00:00Z" }),
+      concern({ concern_id: "boundary", state: "closed", closed_at: "2026-10-05T12:00:00Z" }),
+      concern({ concern_id: "unknown", state: "closed", closed_at: null }),
+    ], error: null };
+    const html = await render();
+    expect(html).toContain("1 report from your studio was closed in the last 14 days.");
+    expect(html).not.toContain("4 reports");
+  });
+
+  it("CONTROL: a genuinely empty fortnight still says nothing was reported", async () => {
+    // So the inversion above has not simply made the denial unreachable.
+    h.answer = { data: [], error: null };
+    c.answer = { data: [], error: null };
+    expect(await render()).toContain(NONE_REPORTED);
+  });
+});
+
+describe("concern attribution (Codex P2 4307428933)", () => {
+  it("never claims the viewing owner reported it", async () => {
+    // `owner_delivery_concerns` returns every concern for the STUDIO with no
+    // reporter filter, so "Reported by you" was false for every co-owner but
+    // the one who filed it.
+    h.answer = { data: [], error: null };
+    c.answer = {
+      data: [
+        {
+          concern_id: "k1",
+          appointment_id: APPT,
+          channel: "email",
+          purpose: "appointment_postcare",
+          ledger_status_at_report: "delivered",
+          reported_at: "2026-10-12T16:00:00Z",
+          state: "open",
+        },
+      ],
+      error: null,
+    };
+    const html = await render();
+    expect(html).not.toContain("Reported by you:");
+    expect(html).toContain("Reported by your studio:");
   });
 });
 

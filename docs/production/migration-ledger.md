@@ -14,7 +14,18 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-12, post-0212 apply; `0212` APPLIED, `0215` AUTHORED AND PENDING on the DELIVERY-VISIBILITY-01 branch)
+## Current state (verified 2026-10-12, post-0212 apply; `0212` APPLIED, `0221` AUTHORED AND PENDING on the DELIVERY-VISIBILITY-04 branch)
+
+> **0221 IS AUTHORED AND PENDING, on the DELIVERY-VISIBILITY-04 branch `feat/delivery-visibility-04` only.**
+> `0221_delivery_concerns_and_purposes.sql`:
+> - widens the email ledger by two purposes (`appointment_cancellation`, `appointment_postcare`): 0212's purpose check and `begin_appointment_email_message` are replaced whole;
+> - adds `delivery_concerns`, the owner-reported "client says they did not receive it", with `report_delivery_concern` and `owner_delivery_concerns` (authenticated, owner of that studio only) and `support_delivery_concerns` and `close_delivery_concern` (`service_role` only).
+>
+> It writes no data.
+>
+> **NUMBERING:** `0221` was allocated by the DB/WAIT lane from a full census (2026-10-12), **provisionally**: it is valid once `0220` (receptionist lane, then uncommitted) is on a ref, and **renumbers DOWN to `0220`** if that lane drops it. Integrated apply order: 0211 → 0212 → 0213 → 0214 → 0215 → 0216 → 0217 → 0218 → 0219 → 0220 → 0221. On this branch the pending suffix has holes at `0213`-`0214` and `0216`-`0220`, so the contiguity rule in `tests/docs/canonical-production-facts.test.ts` is red here by construction until integration. The guard is not weakened.
+>
+> **NOT APPLIED, NOT MERGED.**
 
 > **0215 IS AUTHORED AND PENDING, on the DELIVERY-VISIBILITY-01 branch `feat/delivery-visibility-01` only.**
 > `0215_delivery_incidents.sql` adds:
@@ -83,10 +94,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0212** (`0212_email_delivery_events.sql`), applied 2026-10-12 from #832's reviewed head. |
-| **Repo migration max** | **0215**: `0215_delivery_incidents.sql` (DELIVERY-VISIBILITY-01), stacked on the applied `0212` (#832) and `0211` (#827). |
+| **Repo migration max** | **0221**: `0221_delivery_concerns_and_purposes.sql` (DELIVERY-VISIBILITY-04), stacked on the applied `0212` (#832) and `0211` (#827). |
 | **Remote-only migrations** | **none**: no migration exists on production that this branch lacks. |
-| **Pending migrations** | **`0215`**, **NOT applied**, so `repo > hosted`. Hosted `0212` is the applied prefix: the MIGRATION-FIRST PENDING shape, with a coordinated hole at `0213`-`0214` (#831, #833) on this branch. Apply in number order, under separate approval for each. |
-| **Next free migration** | Next free number is **0216**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
+| **Pending migrations** | **`0215`, `0221`**, **NOT applied**, so `repo > hosted`. Hosted `0212` is the applied prefix: the MIGRATION-FIRST PENDING shape, with coordinated holes at `0213`-`0214` and `0216`-`0220` (other lanes) on this branch. Apply in number order, under separate approval for each. |
+| **Next free migration** | Next free number is **0222**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
 | **Project ref** | `alhhybgqdmcdyzpybykj`, the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
 | **Reviewed release head** | `7116c66848574b0e02e7c2b8f500a6d3198edb58` (PR #832): clean exact-head Codex review (20:15:55Z) and CI `38302868662` 11/11. The shepherd was UNKNOWN (exception 1). |
 | **Production application SHA at apply time** | `6c5eac80` (the #821 merge). **No application behaviour was deployed by this apply.** |
@@ -166,7 +177,18 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | **Reviewed release head** | `481e60c60ae8c873a2e1b6e2a0ccc5b9dc0b8c11` (PR #827): CI green (run `38164242975`), 0 review threads, migration bytes reviewed byte-identical inside #831. The shepherd was UNKNOWN (`read_failed`), and that was accepted by the operator for this migration-only apply. |
 | **Production application SHA at apply time** | `6c5eac80` (the #821 merge). **No application behaviour was deployed by this apply.** |
 
-## Previous state (verified 2026-10-12, post-0210 apply; `0210` APPLIED, `0211`, `0212` AND `0215` AUTHORED AND PENDING: `0215` on the DELIVERY-VISIBILITY-01 branch, stacked on #832 (`0212`) and #827 (`0211`))
+## Previous state (verified 2026-10-12, post-0210 apply; `0210` APPLIED, `0211`, `0212`, `0215` AND `0221` AUTHORED AND PENDING: `0221` on the DELIVERY-VISIBILITY-04 branch, stacked on #849, #846, #843 (`0215`), #832 (`0212`) and #827 (`0211`))
+
+> **0221 IS AUTHORED AND PENDING, on the DELIVERY-VISIBILITY-04 branch `feat/delivery-visibility-04` only.**
+> `0221_delivery_concerns_and_purposes.sql`:
+> - widens the email ledger by two purposes (`appointment_cancellation`, `appointment_postcare`): 0212's purpose check and `begin_appointment_email_message` are replaced whole;
+> - adds `delivery_concerns`, the owner-reported "client says they did not receive it", with `report_delivery_concern` and `owner_delivery_concerns` (authenticated, owner of that studio only) and `support_delivery_concerns` and `close_delivery_concern` (`service_role` only).
+>
+> It writes no data.
+>
+> **NUMBERING:** `0221` was allocated by the DB/WAIT lane from a full census (2026-10-12), **provisionally**: it is valid once `0220` (receptionist lane, then uncommitted) is on a ref, and **renumbers DOWN to `0220`** if that lane drops it. Integrated apply order: 0211 → 0212 → 0213 → 0214 → 0215 → 0216 → 0217 → 0218 → 0219 → 0220 → 0221. On this branch the pending suffix has holes at `0213`-`0214` and `0216`-`0220`, so the contiguity rule in `tests/docs/canonical-production-facts.test.ts` is red here by construction until integration. The guard is not weakened.
+>
+> **NOT APPLIED, NOT MERGED.**
 
 > **0215 IS AUTHORED AND PENDING, on the DELIVERY-VISIBILITY-01 branch `feat/delivery-visibility-01` only.**
 > `0215_delivery_incidents.sql` adds:
@@ -264,10 +286,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0210** (`0210_sms_waitlist_join_acknowledgement.sql`), applied 2026-10-11 from #822's reviewed head. |
-| **Repo migration max** | **0215** — `0215_delivery_incidents.sql` (DELIVERY-VISIBILITY-01), stacked on `0212` (#832) and `0211` (#827). `0209` and `0210` are byte-identical. |
+| **Repo migration max** | **0221** — `0221_delivery_concerns_and_purposes.sql` (DELIVERY-VISIBILITY-04), stacked on `0215` (#843), `0212` (#832) and `0211` (#827). `0209` and `0210` are byte-identical. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **`0211`, `0212`, `0215`**, all **NOT applied**, so `repo > hosted`: the MIGRATION-FIRST PENDING shape, with a coordinated hole at `0213`-`0214` (#831, #833) on this branch. Apply in number order, under separate approval for each. |
-| **Next free migration** | Next free number is **0216**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here (OpenWiki's #838 carries a `0216` of its own). |
+| **Pending migrations** | **`0211`, `0212`, `0215`, `0221`**, all **NOT applied**, so `repo > hosted`: the MIGRATION-FIRST PENDING shape, with coordinated holes at `0213`-`0214` and `0216`-`0220` on this branch. Apply in number order, under separate approval for each. |
+| **Next free migration** | Next free number is **0222**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
 | **Reviewed release head** | `3096e1f41dd00291e14885c16b8061e078b4b05d` (PR #822) — CI green (run 38107988921), explicit exact-head review clean ("Reviewed commit `3096e1f41d`"), 3 of 3 review threads resolved, operator shepherd `CANDIDATE_READY_FOR_HUMAN_REVIEW` (2026-10-11T08:08:55Z). |
 | **Production application SHA at apply time** | `0e16257ed7332d512cc4d500377a790d7c66b9b5` (the #820 merge). **No application behaviour was deployed by this apply.** |

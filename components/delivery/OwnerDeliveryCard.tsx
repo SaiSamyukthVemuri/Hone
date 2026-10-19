@@ -1,6 +1,18 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { describeIncident, type OwnerIncident } from "@/lib/delivery/incidents";
+import { concernLabel, ledgerStatusWords } from "@/lib/delivery/concerns";
+
+type OwnerConcern = {
+  concern_id: string;
+  appointment_id: string;
+  channel: string;
+  purpose: string;
+  ledger_status_at_report: string;
+  reported_at: string;
+  state: string;
+  closed_at: string | null;
+};
 
 // DELIVERY-VISIBILITY-02 — the studio owner's "Message delivery" card.
 //
@@ -37,13 +49,20 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
   let data: unknown = null;
   let errorCode: string | null = null;
   let failed = false;
+  let concerns: OwnerConcern[] | null = null;
   try {
     const supabase = await createClient();
-    const res = await supabase.rpc("owner_delivery_incidents", { p_studio_id: studioId });
+    const [res, concernsRes] = await Promise.all([
+      supabase.rpc("owner_delivery_incidents", { p_studio_id: studioId }),
+      supabase.rpc("owner_delivery_concerns", { p_studio_id: studioId }),
+    ]);
     data = res.data;
+    concerns = Array.isArray(concernsRes.data) ? (concernsRes.data as OwnerConcern[]) : null;
     if (res.error) {
       failed = true;
       errorCode = typeof res.error.code === "string" ? res.error.code : null;
+    } else if (concernsRes.error) {
+      failed = true;
     }
   } catch {
     failed = true;
@@ -54,9 +73,45 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
 
   const rows = data as OwnerIncident[];
   const open = rows.filter((r) => r.resolved_at === null);
-  // A resolved incident was still reported: never claim "no problems" while the
-  // window holds one (Codex P2 4244957358).
+  const allConcerns = concerns ?? [];
+  const openConcerns = allConcerns.filter((c) => c.state === "open");
+  // A CLOSED CONCERN WAS STILL A REPORTED PROBLEM (Codex P2 4307695801).
+  // `owner_delivery_concerns` returns the last 14 days, so a concern the studio
+  // raised and then closed was dropped from every count — and the card then said
+  // "No delivery problems reported in the last 14 days" about a fortnight that
+  // held one. I had previously PINNED that as a deliberate asymmetry, on the
+  // reasoning that the card does not LIST closed concerns so counting them would
+  // reference something invisible. The reviewer is right that denying the report
+  // is the worse error: the fix is to acknowledge it in words, not to leave the
+  // denial standing.
+  const closedConcerns = allConcerns.filter((c) => c.state !== "open");
+  // Capped the same way as the incidents read — `owner_delivery_concerns`
+  // applies `limit 200` (0221:357) — so its counts are counts of what is SHOWN.
+  const OWNER_CONCERN_CAP = 200;
+  const concernsTruncated = allConcerns.length >= OWNER_CONCERN_CAP;
   const resolvedCount = rows.length - open.length;
+
+  // EVERY CATEGORY THIS CARD CAN REPORT, IN ONE PLACE, and the summary claim is
+  // derived from it rather than from a subset.
+  //
+  // That claim has now been wrong TWICE for the same reason: it read fewer
+  // categories than the card displays. First it ignored RESOLVED incidents
+  // (Codex P2 4244957358); then it ignored OPEN CONCERNS and printed "No
+  // delivery problems reported in the last 14 days" directly above a list of
+  // them (Codex P2 4307428928). Adding `openConcerns` to the old condition
+  // would have been the third instance waiting to happen, so the counts are
+  // enumerated here and the sentences below consult ONLY these derived
+  // booleans. A fourth category is added to this object, and the claim follows.
+  const reportedCounts = {
+    openIncidents: open.length,
+    resolvedIncidents: resolvedCount,
+    openConcerns: openConcerns.length,
+    // The fourth category, added exactly where the comment above said a fourth
+    // would go (Codex P2 4307695801).
+    closedConcerns: closedConcerns.length,
+  };
+  const anythingReported = Object.values(reportedCounts).some((n) => n > 0);
+  const anythingOpen = reportedCounts.openIncidents + reportedCounts.openConcerns > 0;
 
   // THIS READ IS CAPPED, SO ITS COUNTS DESCRIBE WHAT IS SHOWN (Codex P2
   // 4307695060). `owner_delivery_incidents` applies `limit 200`
@@ -70,6 +125,16 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
   // rather than drifts.
   const OWNER_INCIDENT_CAP = 200;
   const incidentsTruncated = rows.length >= OWNER_INCIDENT_CAP;
+  // Mirrors `resolvedNote` for concerns, so a fortnight holding only a CLOSED
+  // concern says what happened instead of denying it.
+  // The RPC retains 30 days; only closures within this note's 14-day window count.
+  const recentClosedConcerns = closedConcerns.filter((c) =>
+    c.closed_at !== null && Date.parse(c.closed_at) > Date.now() - 14 * 24 * 60 * 60 * 1000,
+  );
+  const closedConcernNote =
+    recentClosedConcerns.length === 0
+      ? ""
+      : ` ${recentClosedConcerns.length} ${recentClosedConcerns.length === 1 ? "report" : "reports"} from your studio ${recentClosedConcerns.length === 1 ? "was" : "were"} closed in the last 14 days.`;
   const resolvedNote =
     resolvedCount === 0
       ? ""
@@ -85,11 +150,13 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
           Message delivery
         </h3>
         <p className="text-xs text-neutral-600 dark:text-neutral-400">
-          {open.length === 0
-            ? resolvedCount === 0
-              ? "No delivery problems reported in the last 14 days."
-              : `No open delivery problems.${resolvedNote}`
-            : `${open.length} open delivery ${open.length === 1 ? "problem" : "problems"} shown. Repeats of the same problem are counted, not listed again.${resolvedNote}`}
+          {!anythingReported
+            ? "No delivery problems reported in the last 14 days."
+            : !anythingOpen
+              ? `No open delivery problems.${resolvedNote}${closedConcernNote}`
+              : open.length === 0
+                ? `${openConcerns.length} open ${openConcerns.length === 1 ? "report" : "reports"} from your studio.${resolvedNote}`
+                : `${open.length} open delivery ${open.length === 1 ? "problem" : "problems"} shown. Repeats of the same problem are counted, not listed again.${resolvedNote}`}
         </p>
         {incidentsTruncated && (
           <p className="text-xs text-amber-800 dark:text-amber-300">
@@ -107,6 +174,37 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
           client&apos;s mail server or carrier took it, not that it was read.
         </p>
       </header>
+
+      {concernsTruncated && (
+        <p className="text-xs text-amber-800 dark:text-amber-300">
+          Showing up to {OWNER_CONCERN_CAP} reports, with open reports first, newest reports first within each group. Other reports, if any, are not listed.
+        </p>
+      )}
+
+      {openConcerns.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <p className="text-xs font-medium text-neutral-800 dark:text-neutral-200">
+            {/* NOT "Reported by you" (Codex P2 4307428933). `owner_delivery_concerns`
+                returns every concern for the STUDIO with no reporter filter, so a
+                co-owner's report was shown to every other owner as their own.
+                Attributing it to the studio is true for one owner and for five.
+                Per-reporter attribution needs the query to return the reporter
+                and is a separate product question. */}
+            Reported by your studio: client says they did not receive it ({openConcerns.length} open)
+          </p>
+          <ul className="flex flex-col gap-1 text-xs text-neutral-600 dark:text-neutral-400">
+            {openConcerns.map((c) => (
+              <li key={c.concern_id}>
+                {concernLabel(c.channel, c.purpose)} · reported {formatWhen(c.reported_at, timezone)} · when reported,{" "}
+                {ledgerStatusWords(c.ledger_status_at_report)} ·{" "}
+                <Link href={`/calendar/${c.appointment_id}`} className="underline">
+                  appointment
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {open.length > 0 && (
         <ul className="flex flex-col gap-2">

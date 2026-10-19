@@ -1,7 +1,8 @@
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { describeIncident, purposeLabel, type OwnerIncident } from "@/lib/delivery/incidents";
 import { healthFindings, readEmailDeliveryHealth } from "@/lib/email/delivery-health";
-import { resolveDeliveryIncidentAction } from "./actions";
+import { concernLabel, ledgerStatusWords } from "@/lib/delivery/concerns";
+import { closeDeliveryConcernAction, resolveDeliveryIncidentAction } from "./actions";
 
 // DELIVERY-VISIBILITY-02 — platform support's delivery queue.
 //
@@ -15,6 +16,16 @@ import { resolveDeliveryIncidentAction } from "./actions";
 export const dynamic = "force-dynamic";
 
 type SupportIncident = OwnerIncident & { studio_id: string; studio_name: string };
+type SupportConcern = {
+  concern_id: string;
+  studio_name: string;
+  appointment_id: string;
+  channel: string;
+  purpose: string;
+  ledger_status_at_report: string;
+  current_ledger_status: string | null;
+  reported_at: string;
+};
 type ReceiptOutcome = {
   processing_state: string;
   processing_result: string | null;
@@ -28,10 +39,11 @@ function when(iso: string | null): string {
 
 export default async function DeliveryQueuePage() {
   const admin = createAdminClient();
-  const [incidentsRes, outcomesRes, health] = await Promise.all([
+  const [incidentsRes, outcomesRes, health, concernsRes] = await Promise.all([
     admin.rpc("support_delivery_incidents", { p_include_resolved: true }),
     admin.rpc("support_email_receipt_outcomes"),
     readEmailDeliveryHealth(admin),
+    admin.rpc("support_delivery_concerns", { p_include_closed: false }),
   ]);
   if (incidentsRes.error) {
     throw new Error("Failed to load delivery incidents.");
@@ -58,6 +70,12 @@ export default async function DeliveryQueuePage() {
   const outcomes: ReceiptOutcome[] | null =
     outcomesRes.error || !Array.isArray(outcomesRes.data) ? null : (outcomesRes.data as ReceiptOutcome[]);
   const findings = health ? healthFindings(health) : [];
+  const concerns = (concernsRes.data ?? []) as SupportConcern[];
+  // The concerns read is capped the same way — `support_delivery_concerns`
+  // applies `limit 300` (0221:394) — so its count is also a count of what is
+  // SHOWN. Same reasoning, separate number, separate section.
+  const SUPPORT_CONCERN_CAP = 300;
+  const concernsTruncated = concerns.length >= SUPPORT_CONCERN_CAP;
 
   return (
     <div className="flex flex-col gap-8">
@@ -172,6 +190,46 @@ export default async function DeliveryQueuePage() {
                 </li>
               );
             })}
+          </ul>
+        )}
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <h2 className="text-lg font-medium">Client says not received ({concerns.length} shown)</h2>
+        {concernsTruncated && (
+          <p className="text-sm text-amber-800 dark:text-amber-300">
+            Showing up to {SUPPORT_CONCERN_CAP} concerns, with open concerns first, newest concerns first within each group. Other concerns, if any, are not listed.
+          </p>
+        )}
+        {concernsRes.error ? (
+          <p className="text-sm text-red-800 dark:text-red-300">Concerns could not be loaded. Treat them as unknown.</p>
+        ) : concerns.length === 0 ? (
+          <p className="text-sm text-neutral-500">No open concerns.</p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {concerns.map((c) => (
+              <li key={c.concern_id} className="flex flex-col gap-2 rounded-md border border-neutral-200 p-3 text-sm dark:border-neutral-800">
+                <p className="font-medium">
+                  {c.studio_name} · {concernLabel(c.channel, c.purpose)}
+                </p>
+                <p className="text-xs text-neutral-600 dark:text-neutral-400">
+                  Reported {when(c.reported_at)}. When reported, {ledgerStatusWords(c.ledger_status_at_report)}. Now:{" "}
+                  {c.current_ledger_status ? ledgerStatusWords(c.current_ledger_status) : "no tracked record"}.
+                </p>
+                <form action={closeDeliveryConcernAction} className="flex flex-wrap items-center gap-2">
+                  <input type="hidden" name="concern_id" value={c.concern_id} />
+                  <select name="resolution" defaultValue="explained" className="rounded border px-2 py-1 text-xs" aria-label="Concern resolution">
+                    <option value="explained">Explained to the studio</option>
+                    <option value="resent_by_studio">Studio resent it</option>
+                    <option value="provider_issue">Provider issue</option>
+                    <option value="not_actionable">Not actionable</option>
+                  </select>
+                  <button type="submit" className="rounded border px-2 py-1 text-xs">
+                    Close concern
+                  </button>
+                </form>
+              </li>
+            ))}
           </ul>
         )}
       </section>

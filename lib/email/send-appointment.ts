@@ -6,6 +6,7 @@ import {
   beginAppointmentEmailMessage,
   settleEmailMessage,
   settleOutcomeForEmailSend,
+  type AppointmentEmailPurpose,
 } from "@/lib/email/delivery-ledger";
 import {
   buildFromHeader,
@@ -498,10 +499,56 @@ export async function sendBookingConfirmationToClient(params: {
   // DELIVERY-VISIBILITY-03: the booking confirmation joins the email delivery
   // ledger HERE, once, so every caller (public booking, portal rebook,
   // calendar, public reschedule) is covered without touching any of them.
-  // The row is begun only after the cheap no-recipient exit above, so it
-  // describes a send that is about to happen. Fail-soft both ways: no ledger
-  // row means the same send, untagged, and a settle that cannot be written
-  // changes nothing about the result returned to the caller.
+  return sendLedgeredAppointmentEmail(
+    // THE STUDIO COMES FROM THE STUDIO ARGUMENT, NOT THE APPOINTMENT ROW
+    // (Codex P2 4307335313, fixed on #849 and carried here through 04's
+    // refactor). The three PUBLIC callers hand this function a PARTIAL
+    // appointment — `{ id, starts_at, ends_at, duration_minutes, created_at }`
+    // cast `as unknown as Appointment` (app/book/[slug]/actions.ts:1425,
+    // app/reschedule/[token]/actions.ts:1046, app/portal/rebook-actions.ts:668)
+    // — so `studio_id` is UNDEFINED on exactly the flows this ledger exists to
+    // observe, and the fail-soft path sent the confirmation untagged: no row,
+    // no attribution, no incident, nothing red to show it.
+    //
+    // `params.studio` is a FULL `Studio`, so `.id` is always present. The cast
+    // is why the compiler never objected.
+    //
+    // THE REF IS WHERE THE STUDIO IS CHOSEN. `sendLedgeredAppointmentEmail`
+    // itself correctly uses whatever `ref` it is handed, so the fix belongs
+    // here and not inside the helper — which is exactly what the merge of
+    // #849 into this branch had to decide.
+    { studioId: params.studio.id, appointmentId: params.appointment.id },
+    "appointment_confirmation",
+    (ledgerMessageId) =>
+      sendEmailSafely({
+        studioIdentity: identityFor(params.studio),
+        to: params.clientEmail,
+        subject,
+        html,
+        text,
+        icsContent: ics,
+        ledgerMessageId,
+      }),
+  );
+}
+
+/** The appointment an email is about, for the delivery ledger. */
+export type AppointmentLedgerRef = { studioId: string; appointmentId: string };
+
+/**
+ * DELIVERY-VISIBILITY-03/04. Send one appointment email through the delivery
+ * ledger: begin a row for this appointment and purpose, send tagged
+ * `hone_m = <row id>`, settle the provider's answer. Called only once the
+ * caller has decided to send (after any no-recipient exit). Fail-soft both
+ * ways: no service-role configuration or no ledger row means the same email,
+ * untagged; a settle that cannot be written never changes the result.
+ */
+async function sendLedgeredAppointmentEmail(
+  ref: AppointmentLedgerRef | null | undefined,
+  purpose: AppointmentEmailPurpose,
+  send: (ledgerMessageId: string | null) => Promise<EmailSendResult>,
+): Promise<EmailSendResult> {
+  if (!ref) return send(null);
   let admin: ReturnType<typeof createAdminClient> | null = null;
   try {
     admin = createAdminClient();
@@ -510,41 +557,12 @@ export async function sendBookingConfirmationToClient(params: {
   }
   const ledgerMessageId = admin
     ? await beginAppointmentEmailMessage(admin, {
-        // THE STUDIO COMES FROM THE STUDIO ARGUMENT, NOT THE APPOINTMENT ROW
-        // (Codex P2 4307335313). The three PUBLIC callers hand this function a
-        // PARTIAL appointment — `{ id, starts_at, ends_at, duration_minutes,
-        // created_at }` cast `as unknown as Appointment`
-        // (app/book/[slug]/actions.ts:1425, app/reschedule/[token]/actions.ts:1046,
-        // app/portal/rebook-actions.ts:668) — so `studio_id` is UNDEFINED on
-        // exactly the flows this ledger exists to observe. The fail-soft path
-        // then sent the confirmation untagged: no ledger row, no provider
-        // attribution, no delivery incident, and nothing red to show it.
-        //
-        // `params.studio` is a FULL `Studio`, so `.id` is always present for
-        // every caller. Reading it here fixes all of them at once; making three
-        // callers populate `studio_id` would fix the same bug four times and
-        // leave the fifth caller to rediscover it.
-        //
-        // The cast is why the compiler never objected: `as unknown as
-        // Appointment` lets a partial object satisfy a type that requires
-        // `studio_id`, so this was invisible to `tsc` and could only be caught
-        // by reading the callers or by noticing the missing rows.
-        studioId: params.studio.id,
-        appointmentId: params.appointment.id,
-        purpose: "appointment_confirmation",
+        studioId: ref.studioId,
+        appointmentId: ref.appointmentId,
+        purpose,
       })
     : null;
-
-  const result = await sendEmailSafely({
-    studioIdentity: identityFor(params.studio),
-    to: params.clientEmail,
-    subject,
-    html,
-    text,
-    icsContent: ics,
-    ledgerMessageId,
-  });
-
+  const result = await send(ledgerMessageId);
   if (admin && ledgerMessageId) {
     await settleEmailMessage(admin, ledgerMessageId, settleOutcomeForEmailSend(result));
   }
@@ -608,6 +626,12 @@ export async function sendCancellationEmail(params: {
   reason: string | null;
   isClient: boolean;
   rebookUrl?: string;
+  /**
+   * DELIVERY-VISIBILITY-04: the appointment, for the delivery ledger. Only the
+   * CLIENT's notice is ledgered: the studio copy is Hone talking to its own
+   * customer, not a client delivery.
+   */
+  ledger?: AppointmentLedgerRef | null;
 }) {
   if (!params.to) return;
   const { subject, html, text } = buildCancellationEmail({
@@ -624,21 +648,27 @@ export async function sendCancellationEmail(params: {
     isClient: params.isClient,
     rebookUrl: params.rebookUrl,
   });
-  await sendEmailSafely({
-    // ONE helper, TWO recipients. `isClient` decides who is reading:
-    //   true  -> the CLIENT: brand as the studio, reply to the studio.
-    //   false -> the STUDIO OWNER: stay Hone. Branding this would make the
-    //            owner receive mail apparently from their own studio, with
-    //            replies routed to their own postcare inbox.
-    // The recipient decides the identity; the function name never does.
-    studioIdentity: params.isClient
-      ? identityFor(params.studio)
-      : undefined,
-    to: params.to,
-    subject,
-    html,
-    text,
-  });
+  await sendLedgeredAppointmentEmail(
+    params.isClient ? params.ledger : null,
+    "appointment_cancellation",
+    (ledgerMessageId) =>
+      sendEmailSafely({
+        // ONE helper, TWO recipients. `isClient` decides who is reading:
+        //   true  -> the CLIENT: brand as the studio, reply to the studio.
+        //   false -> the STUDIO OWNER: stay Hone. Branding this would make the
+        //            owner receive mail apparently from their own studio, with
+        //            replies routed to their own postcare inbox.
+        // The recipient decides the identity; the function name never does.
+        studioIdentity: params.isClient
+          ? identityFor(params.studio)
+          : undefined,
+        to: params.to,
+        subject,
+        html,
+        text,
+        ledgerMessageId,
+      }),
+  );
 }
 
 type ReminderInput = {
@@ -795,6 +825,8 @@ export async function sendPostcareToClient(params: {
   productRecommendationsText: string | null;
   reviewUrl: string | null;
   reviewPromptText: string | null;
+  /** DELIVERY-VISIBILITY-04: the appointment, for the delivery ledger. */
+  ledger?: AppointmentLedgerRef | null;
 }): Promise<EmailSendResult> {
   if (!params.clientEmail) {
     return { ok: false, error: "No client email on file", retryable: false, attempt: "none" };
@@ -819,7 +851,16 @@ export async function sendPostcareToClient(params: {
     reviewUrl: params.reviewUrl,
     reviewPromptText: params.reviewPromptText,
   });
-  return sendEmailSafely({ studioIdentity: identityFor(params.studio), to: params.clientEmail, subject, html, text });
+  return sendLedgeredAppointmentEmail(params.ledger, "appointment_postcare", (ledgerMessageId) =>
+    sendEmailSafely({
+      studioIdentity: identityFor(params.studio),
+      to: params.clientEmail,
+      subject,
+      html,
+      text,
+      ledgerMessageId,
+    }),
+  );
 }
 
 // Resolve which email to render in the postcare Contact line. The

@@ -1649,6 +1649,13 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "The outbound SMS delivery ledger, live since migration 0206 (SMS-00): one row per appointment or waitlist-invitation text attempt, with its purpose, status, skip reason and timestamps. It holds no message body and no phone number. Studio-scoped operational history, so PENDING rather than EXCLUDED, and field-review-required for the same reason as studio_sms_senders: provider_message_sid is Hone's provider identifier for one message and carries no customer meaning, while the status history is what a studio would recognise (whether a reminder reached a client). No export surface ships in SMS-00.",
   },
+  delivery_concerns: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "Owner-reported \"client says they did not receive it\" records, live since migration 0221 (DELIVERY-VISIBILITY-04). Studio-scoped operational history the owner created themselves: which message, which appointment, when, and what the delivery ledger said at that moment. It holds no free text, no client address and no provider payload, so it needs no field review. It is PENDING rather than EXCLUDED because the studio authored it, and it is decided with email_outbound_messages, whose attempts it refers to. No export surface ships in DELIVERY-VISIBILITY-04.",
+  },
   email_outbound_messages: {
     kind: "pending",
     ticket: "TRUTH-01B",

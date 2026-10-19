@@ -66,7 +66,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
   }),
 }));
 
-const { resolveDeliveryIncidentAction } = await import("@/app/admin/delivery/actions");
+const { resolveDeliveryIncidentAction, closeDeliveryConcernAction } = await import("@/app/admin/delivery/actions");
 
 const ID = "6e5d4c3b-2a19-4807-a6b5-c4d3e2f1a0b9";
 const form = (fields: Record<string, string>) => {
@@ -129,6 +129,36 @@ describe("resolveDeliveryIncidentAction", () => {
     h.answer = { data: null, error: { message: "db down" } };
     await expect(resolveDeliveryIncidentAction(form({ incident_id: ID, resolution: "fixed" }))).rejects.toThrow();
     expect(h.audits[0]).toMatchObject({ outcome: "failed" });
+  });
+});
+
+describe("closeDeliveryConcernAction (DELIVERY-VISIBILITY-04)", () => {
+  it("refuses a non-admin, audited, without reaching the command", async () => {
+    h.email = "owner@studio.test";
+    await expect(closeDeliveryConcernAction(form({ concern_id: ID, resolution: "explained" }))).rejects.toThrow("Unauthorized.");
+    expect(h.audits).toEqual([expect.objectContaining({ action: "delivery_concern_closed", outcome: "blocked" })]);
+    expect(h.rpcCalls).toEqual([]);
+  });
+
+  it("closes through the service-role command and audits the resolution word only", async () => {
+    h.email = "support@hone.test";
+    h.answer = { data: "closed", error: null };
+    await closeDeliveryConcernAction(form({ concern_id: ID, resolution: "provider_issue" }));
+    expect(h.rpcCalls).toEqual([["close_delivery_concern", { p_concern_id: ID, p_resolution: "provider_issue" }]]);
+    expect(h.audits[0]).toMatchObject({ outcome: "succeeded", metadata: { resolution: "provider_issue", result: "closed" } });
+  });
+
+  it("refuses an unknown resolution or a malformed id before any command, and audits both", async () => {
+    h.email = "support@hone.test";
+    await expect(closeDeliveryConcernAction(form({ concern_id: ID, resolution: "deleted" }))).rejects.toThrow();
+    await expect(closeDeliveryConcernAction(form({ concern_id: "1; drop", resolution: "explained" }))).rejects.toThrow();
+    expect(h.rpcCalls).toEqual([]);
+    expect(h.audits).toEqual([
+      expect.objectContaining({ action: "delivery_concern_closed", outcome: "failed", targetId: ID, metadata: { result: "invalid_input", invalid: "resolution" } }),
+      expect.objectContaining({ action: "delivery_concern_closed", outcome: "failed", targetId: null, metadata: { result: "invalid_input", invalid: "concern_id" } }),
+    ]);
+    expect(JSON.stringify(h.audits)).not.toContain("1; drop");
+    expect(JSON.stringify(h.audits)).not.toContain("deleted");
   });
 });
 
@@ -221,6 +251,12 @@ describe("the capped incident list is not presented as a total (Codex P2 4307533
       },
       support_email_receipt_outcomes: { data: [], error: null },
       email_delivery_health: { data: [], error: null },
+      // EVERY rpc this page reads must be answered. Omitting one let it fall
+      // through to the shared `h.answer` ("resolved", a STRING), and the page
+      // died with `concerns.map is not a function` — a test-harness gap, not a
+      // product fault. It only appeared once #865's concerns section merged in,
+      // which is why a merge needs the conflicted file's own suite re-run.
+      support_delivery_concerns: { data: [], error: null },
     };
     const { default: Page } = await import("@/app/admin/delivery/page");
     return renderToStaticMarkup(await Page());
@@ -240,6 +276,36 @@ describe("the capped incident list is not presented as a total (Codex P2 4307533
     expect(html).not.toContain("Other incidents, if any, are not listed");
   });
 
+  it("the CONCERNS section is capped the same way, and says so", async () => {
+    // `support_delivery_concerns` also applies `limit 300` (0221:394), and this
+    // page renders its length too — the same false total on a second section.
+    const concernRow = (i: number) => ({
+      concern_id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+      studio_id: "4f0a1b2c-3d4e-4f50-8a6b-7c8d9e0f1a2b",
+      studio_name: "Studio",
+      appointment_id: null,
+      channel: "email",
+      purpose: "appointment_postcare",
+      ledger_status_at_report: "delivered",
+      reported_at: "2026-10-12T16:00:00Z",
+      state: "open",
+    });
+    h.byFn = {
+      support_delivery_incidents: { data: [], error: null },
+      support_email_receipt_outcomes: { data: [], error: null },
+      email_delivery_health: { data: [], error: null },
+      support_delivery_concerns: {
+        data: Array.from({ length: CAP }, (_, i) => concernRow(i)),
+        error: null,
+      },
+    };
+    const { default: Page } = await import("@/app/admin/delivery/page");
+    const html = renderToStaticMarkup(await Page());
+    expect(html).toContain("Showing up to 300 concerns, with open concerns first, newest concerns first within each group. Other concerns, if any, are not listed.");
+    expect(html).toContain("shown");
+    expect(html).not.toMatch(/Client says not received \(\d+ open\)/);
+  });
+
   it("the counts say SHOWN, never implying a total", async () => {
     const html = await renderWith(CAP);
     expect(html).toContain("shown");
@@ -254,6 +320,7 @@ describe("the support queue page", () => {
   it("reads only through the service-role support commands", () => {
     expect(PAGE).toContain('admin.rpc("support_delivery_incidents"');
     expect(PAGE).toContain('admin.rpc("support_email_receipt_outcomes")');
+    expect(PAGE).toContain('admin.rpc("support_delivery_concerns"');
     expect(PAGE).not.toMatch(/\.from\(/);
   });
 
@@ -267,6 +334,62 @@ describe("the support queue page", () => {
     expect(PAGE).not.toContain("outcomesRes.data ?? []");
   });
 });
+
+
+describe("repeat concern closure is verified, never mis-audited (4307824368)", () => {
+  it("a different recorded resolution is non-success and not-applied", async () => {
+    h.email = "support@hone.test";
+    h.answer = { data: "already_closed", error: null };
+    h.byFn.support_delivery_concerns = { data: [
+      { concern_id: "another-id", state: "closed", resolution: "provider_issue" },
+      { concern_id: ID, state: "closed", resolution: "explained" },
+    ], error: null };
+    await expect(closeDeliveryConcernAction(form({ concern_id: ID, resolution: "provider_issue" })))
+      .rejects.toThrow('Already closed as "explained". Your resolution was not applied.');
+    expect(h.tableReads).toEqual([]);
+    expect(h.rpcCalls).toContainEqual(["support_delivery_concerns", { p_include_closed: true }]);
+    expect(h.audits[0]).toMatchObject({ outcome: "failed", metadata: {
+      result: "already_closed_not_applied", applied: false, recorded_resolution: "explained",
+    } });
+    expect(h.audits[0]!.metadata).not.toHaveProperty("resolution");
+  });
+  it("the same recorded resolution stays idempotent success", async () => {
+    h.email = "support@hone.test";
+    h.answer = { data: "already_closed", error: null };
+    h.byFn.support_delivery_concerns = { data: [{ concern_id: ID, state: "closed", resolution: "provider_issue" }], error: null };
+    await closeDeliveryConcernAction(form({ concern_id: ID, resolution: "provider_issue" }));
+    expect(h.audits[0]).toMatchObject({ outcome: "succeeded" });
+  });
+  it("an unreadable recorded resolution cannot prove success", async () => {
+    h.email = "support@hone.test";
+    h.answer = { data: "already_closed", error: null };
+    h.byFn.support_delivery_concerns = { data: null, error: { code: "42501" } };
+    await expect(closeDeliveryConcernAction(form({ concern_id: ID, resolution: "provider_issue" })))
+      .rejects.toThrow("could not be verified");
+    expect(h.audits[0]).toMatchObject({ outcome: "failed", metadata: { applied: false, recorded_resolution: null } });
+  });
+});
+
+
+it.each(["omitted", "wrong-id", "open", "bad-shape", "error-with-row"])(
+  "the granted concern support read %s cannot prove idempotent closure (4310061418)", async (mode) => {
+    h.email = "support@hone.test";
+    h.answer = { data: "already_closed", error: null };
+    const row = { concern_id: mode === "wrong-id" ? "another-id" : ID,
+      state: mode === "open" ? "open" : "closed", resolution: "provider_issue" };
+    h.byFn.support_delivery_concerns = {
+      data: mode === "omitted" ? [] : mode === "bad-shape" ? { unexpected: true } : [row],
+      error: mode === "error-with-row" ? { code: "42501" } : null,
+    };
+    await expect(closeDeliveryConcernAction(form({ concern_id: ID, resolution: "provider_issue" })))
+      .rejects.toThrow("could not be verified");
+    expect(h.tableReads).toEqual([]);
+    expect(h.audits[0]).toMatchObject({ outcome: "failed", metadata: {
+      applied: false, recorded_resolution: null,
+    } });
+    expect(h.audits[0]!.metadata).not.toHaveProperty("resolution");
+  },
+);
 
 
 it.each(["missing", "read-error", "throw", "invalid-resolution"])(

@@ -217,6 +217,14 @@ export async function autoSendPostcareOnComplete(
         reviewUrl: (studio.postcare_review_url as string | null) ?? null,
         reviewPromptText:
           (studio.postcare_review_prompt_text as string | null) ?? null,
+        // THE AUTOMATIC PATH IS LEDGERED TOO (Codex P2 4307535216). The
+        // optional `ledger` parameter was added with the manual action and only
+        // the manual action was updated, so every AUTOMATIC postcare send went
+        // out untagged with no `email_outbound_messages` row. Both production
+        // completion entry points route through this helper, so delivery
+        // visibility for postcare was limited to manual sends — the feature's
+        // main path writing nothing the ledger could observe.
+        ledger: { studioId: studio.id as string, appointmentId },
       }),
     );
 
