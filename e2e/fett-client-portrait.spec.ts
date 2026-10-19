@@ -1,4 +1,4 @@
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page, type Route } from "@playwright/test";
 import sharp from "sharp";
 import { seedE2eStudio, seedE2eClientWithPreviousAreas, sql } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
@@ -54,12 +54,17 @@ async function saveWithPending(page: Page, control: Locator, busyLabel: string) 
   let entered = false;
   const url = new URL(page.url());
   const pattern = `${url.origin}${url.pathname}*`;
-  const handler = async (route: import("@playwright/test").Route) => {
-    if (route.request().method() === "POST" && route.request().headers()["next-action"]) {
-      entered = true;
-      await gate;
+  let actionDone: Promise<void> | undefined;
+  const handler = (route: Route) => {
+    if (route.request().method() !== "POST" || !route.request().headers()["next-action"]) {
+      return route.continue();
     }
-    await route.continue();
+    entered = true;
+    actionDone = (async () => {
+      await gate;
+      await route.continue();
+    })();
+    return actionDone;
   };
   await page.route(pattern, handler);
   try {
@@ -72,7 +77,13 @@ async function saveWithPending(page: Page, control: Locator, busyLabel: string) 
     await expect(busy).toHaveAttribute("aria-busy", "true");
   } finally {
     release();
-    await page.unroute(pattern, handler);
+    // unroute changes interception for in-flight requests too. Wait until the
+    // held action has actually continued before removing its handler.
+    try {
+      await actionDone;
+    } finally {
+      await page.unroute(pattern, handler);
+    }
   }
 }
 
