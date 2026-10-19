@@ -48,7 +48,7 @@ not a PR diary — per-capability evidence lives in
 ### Historical preceding baseline from the #929 reconciliation
 
 <!-- canonical-facts:ignore-start reason=preserves-the-34f4800a-record-as-dated-history -->
-## Reconciliation header
+#### Prior reconciliation header
 
 | Field | Value |
 |---|---|
@@ -64,7 +64,7 @@ not a PR diary — per-capability evidence lives in
 | **Tenant posture** | **Six studios in three classes — one real-customer, one controlled test, one synthetic, three empty.** Real-customer activity is **Willow Electrolysis only**. See **§0**, which is the canonical tenant register; do not restate its counts elsewhere. ⚠️ **Every tenant count in §0 was measured 2026-08-23 and was NOT re-measured on 2026-08-26** — see *What this reconciliation did and did not measure* below. |
 | **Next operational gate** | The **deep production / security / code audit** (still not performed against this baseline). **Chloe's human acceptance testing** remains outstanding and is **independent** — see §15. |
 
-### Re-derived at this reconciliation
+#### Prior re-derived evidence
 
 **Re-derived on 2026-10-19 (CANON-REFRESH-2026-10-19), from `34f4800a`:**
 
