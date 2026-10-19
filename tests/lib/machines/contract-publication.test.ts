@@ -91,12 +91,12 @@ describe("deployment contract publication selection", () => {
   it("keeps both required Apilus models separate and blocked with no invented Junior modes", () => {
     const plan = planContractPublication();
     expect(plan.publish).toEqual([]);
-    const senior = plan.skipped.filter((s) => s.profileId === "dectro-apilus:senior-3g");
-    const junior = plan.skipped.filter((s) => s.profileId === "dectro-apilus:junior-3g");
-    expect(senior.map((s) => s.mode)).toEqual(["multiplex"]);
-    expect(junior.map((s) => s.mode)).toEqual([null]);
-    expect(senior[0].reasons.join(" ")).toContain("pending-evidence");
-    expect(junior[0].reasons.join(" ")).toContain("no verified modes");
+    const senior = plan.skipped.filter((s) => s.profileId === "dectro-apilus:senior-3g" && s.version === 2);
+    const junior = plan.skipped.filter((s) => s.profileId === "dectro-apilus:junior-3g" && s.version === 2);
+    expect(senior.map((s) => s.mode)).toEqual(["flash", "microflash", "multiplex", "blend", "omniblend", "multiblend", "electrolysis"]);
+    expect(junior.map((s) => s.mode)).toEqual(["thermolysis", "flash", "blend", "omniblend", "electrolysis"]);
+    expect(senior[0].reasons.join(" ")).toContain("activation remains held");
+    expect(junior[0].reasons.join(" ")).toContain("decimals");
   });
 });
 

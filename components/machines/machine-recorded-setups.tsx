@@ -12,7 +12,7 @@ import {
 } from "@/lib/machines/charting";
 import type { RecordedReading } from "@/lib/machines/machine-queries";
 import {
-  currentProfile,
+  recordedProfile,
   findMode,
   modeFields,
 } from "@/lib/machines/profile-contract";
@@ -117,7 +117,7 @@ function ClockTime({ iso }: { iso: string }) {
 /**
  * The field's label, from the contract the reading was RECORDED under.
  *
- * Returns the recorded key whenever the version has moved on. Relabelling an
+ * Returns the recorded key when the exact recorded version is unavailable. Relabelling an
  * old number with a newer contract's words is how a record quietly starts
  * lying, and the unit is never taken from today's catalogue at all - see the
  * `nativeUnit` rule in machine-prior-setup.
@@ -145,11 +145,11 @@ function labelsFor(
   stageLabels: Map<string, string>;
   historical: boolean;
 } {
-  const profile = currentProfile(catalogue, entry.profileId);
-  const historical = profile ? entry.profileVersion !== profile.version : true;
+  const profile = recordedProfile(catalogue, entry.profileId, entry.profileVersion);
+  const historical = !profile;
   const labels = new Map<string, string>();
   const mode = profile ? findMode(profile, entry.modeKey) : undefined;
-  if (mode && !historical) {
+  if (mode) {
     // KEYED BY STAGE AND FIELD (Codex, #860 4301851853, reported against the
     // guidance surface; the same collision is here). `{ field }` alone
     // merges two stages that reuse a key — MultiPlex repeats "Duration" and
@@ -162,7 +162,7 @@ function labelsFor(
   // THE MACHINE'S OWN NAME for each stage, so the grouping below can be
   // labelled the way she sees it on the unit.
   const stageLabels = new Map<string, string>();
-  if (mode && !historical) {
+  if (mode) {
     for (const stage of mode.stages) stageLabels.set(stage.key, stage.nativeLabel);
   }
   return { labels, stageLabels, historical };
@@ -182,11 +182,10 @@ function ChangeLine({
   // versions (the same field key can mean something else there), or a field
   // re-read at the SAME value (another capture, not an adjustment). So this
   // line cannot make any of those claims, whatever it says.
-  const profile = currentProfile(catalogue, change.to.profileId);
-  const historical = profile ? change.to.profileVersion !== profile.version : true;
+  const profile = recordedProfile(catalogue, change.to.profileId, change.to.profileVersion);
   const mode = profile ? findMode(profile, change.to.modeKey) : undefined;
   let label = change.to.fieldKey;
-  if (mode && !historical) {
+  if (mode) {
     // MATCHED ON STAGE TOO, for the same reason: a change line naming the
     // wrong stage's label is a change line about the wrong component.
     for (const { field, stageKey } of modeFields(mode)) {
@@ -219,7 +218,7 @@ function ChangeLine({
   const stage =
     change.stageKey === null
       ? null
-      : ((mode && !historical
+      : ((mode
           ? mode.stages.find((s) => s.key === change.stageKey)?.nativeLabel
           : undefined) ?? change.stageKey);
   const at = renderableInstant(change.to.recordedAt);

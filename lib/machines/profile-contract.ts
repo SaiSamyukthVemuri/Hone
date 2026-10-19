@@ -351,6 +351,8 @@ export type ChannelStructure = {
 
 /** One selectable operating mode on one model. */
 export type MachineMode = {
+  /** A documented control cannot yet be captured faithfully. Blocks activation/publication. */
+  captureHold?: string;
   key: string;
   /** The mode name as the machine shows it. */
   nativeLabel: string;
@@ -527,27 +529,22 @@ function highestByProfileId(
 }
 
 /**
- * The CURRENT version of one profile, whatever its availability.
- *
- * WHAT THIS REPLACES, at three call sites that each had their own copy:
- * `catalogue.find((p) => p.profileId === id)`, which takes the FIRST match.
- * With two versions present that can be v1 while v2 is current, and all three
- * sites then compare a reading's version against the wrong one - flagging a
- * current reading as historical, so it renders raw field keys instead of
- * labels, or treating a superseded one as current and showing labels that no
- * longer apply. Order-dependent, so it would have surfaced the day a second
- * version was added and not before.
- *
- * AVAILABILITY IS DELIBERATELY NOT FILTERED. A caller choosing what to OFFER
- * wants `activeProfiles`; a caller rendering what was already RECORDED must be
- * able to resolve a blocked or legacy profile, or the record becomes
- * unreadable the moment a model is withdrawn.
+ * The current version for selection and catalogue policy, regardless of availability.
+ * Historical rendering uses recordedProfile instead: current labels must never
+ * replace a retained historical contract's labels.
  */
 export function currentProfile(
   profiles: readonly MachineProfile[],
   profileId: string,
 ): MachineProfile | undefined {
   return highestByProfileId(profiles).get(profileId);
+}
+
+/** Historical labels resolve against their exact immutable version, never today's. */
+export function recordedProfile(
+  profiles: readonly MachineProfile[], profileId: string, version: number,
+): MachineProfile | undefined {
+  return profiles.find((p) => p.profileId === profileId && p.version === version);
 }
 
 export function activeProfiles(

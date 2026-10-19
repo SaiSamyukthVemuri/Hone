@@ -49,6 +49,7 @@ export function planContractPublication(
     }
     for (const mode of p.modes) {
       const reasons = [...profileReasons];
+      if (mode.captureHold) reasons.push(mode.captureHold);
       if (mode.availability !== "active") reasons.push(`mode is ${mode.availability}`);
       if (!verified(mode.verification)) reasons.push(`mode identity is ${mode.verification}`);
       const fields = modeFields(mode);
