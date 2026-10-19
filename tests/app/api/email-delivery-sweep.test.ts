@@ -62,6 +62,7 @@ const healthRow = (over: Record<string, unknown> = {}) =>
       quarantined_24h: 0,
       unmatched_24h: 0,
       unreported_accepted: 0,
+      stale_claimed: 0,
       open_incidents: 0,
       last_sweep_at: "2026-10-12T00:00:00Z",
       last_sweep_failed: 0,
