@@ -1,3 +1,6 @@
+import { readdirSync, readFileSync } from "node:fs";
+import nodePath from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import type { MachineProfile } from "@/lib/machines/profile-contract";
@@ -81,6 +84,9 @@ const PROFILE: MachineProfile = {
 } as unknown as MachineProfile;
 
 const CAT = [PROFILE];
+
+/** A locale-formatted clock time, in any of the shapes Intl produces. */
+const CLOCK = /\d{1,2}:\d{2}\s?(AM|PM|am|pm)?/;
 
 const base = {
   blockId: "block-1",
@@ -195,7 +201,17 @@ describe("one capture", () => {
     // entry here is ONE capture with its OWN instant, and the time is what
     // distinguishes a change made twenty minutes ago from the starting setup.
     expect(html).toContain('data-testid="recorded-capture-when"');
-    expect(html).toMatch(/\d{1,2}:\d{2}/);
+    // THE TEXT IS A BROWSER FACT NOW (Codex, #860 4309128374). This asserted a
+    // clock pattern in the SERVER markup, which was the defect itself: the
+    // string came from the runtime's default locale and timezone, so Node and
+    // the practitioner's browser produced different text and, near midnight, a
+    // different DAY. `FormattedDateTime` renders nothing server-side on
+    // purpose, so the server-side property is that the SLOT exists and carries
+    // no instant for a client render to disagree with.
+    expect(
+      html,
+      "a locale-formatted clock time was rendered on the SERVER, which is the hydration hazard",
+    ).not.toMatch(CLOCK);
   });
 
   it("names the physical unit the studio knows", () => {
@@ -276,7 +292,11 @@ describe("a setting changed during the treatment", () => {
     expect(html).toContain('data-testid="recorded-change-g1-current"');
     expect(html).toContain("120");
     expect(html).toContain("150");
-    expect(html).toMatch(/\d{1,2}:\d{2}/);
+    // As above: the slot, not the text.
+    expect(
+      html,
+      "a locale-formatted clock time was rendered on the SERVER",
+    ).not.toMatch(CLOCK);
   });
 
   it("marks the later capture as a revision, and keeps the earlier one", () => {
@@ -638,29 +658,60 @@ describe("the prior-setup date agrees with itself", () => {
       }),
     );
 
-  it("shows the heading's date in the footer, not a second formatting of it", () => {
-    // ASSERTED AS AGREEMENT, not as a literal date. The test process's
-    // timezone decides what the correct string IS, so pinning one would
-    // either encode this machine's offset or silently pass everywhere. What
-    // must hold in every timezone is that the two agree.
+  it("renders NO day on the server, so there is none to disagree with", () => {
+    // THE AGREEMENT IS STRUCTURAL NOW (Codex, #860 4309128374).
+    //
+    // 4301722743 made the heading and footer agree by sharing one
+    // locale-formatted string. That string was itself the hazard: it came from
+    // the RUNTIME's default locale and timezone, so Node and the
+    // practitioner's browser produced different text and, for THIS VERY
+    // instant, a different DAY. Both places now render the same validated iso
+    // through the same component, which renders nothing at all server-side.
+    //
+    // THE LIMIT, STATED: a server-versus-client comparison is not observable
+    // in one process, so what is asserted is the ABSENCE of a server-rendered
+    // day - which is what makes a mismatch impossible rather than unlikely.
+    // The browser-side rendering is covered where a second locale exists: the
+    // fr-CA charting probe in e2e/point-of-care-memory.spec.ts.
     const html = renderAt(nearMidnightUtc);
-    const heading = html.match(
-      /data-testid="prior-setup-when"[^>]*>([^<]+)</,
+    expect(html, "the date slot was dropped entirely").toContain(
+      'data-testid="prior-setup-when"',
     );
-    expect(heading, "the heading date was not rendered").toBeTruthy();
-    const shown = heading![1]!.trim();
-    expect(shown.length).toBeGreaterThan(0);
+    expect(html).toContain("Recorded ");
+    // Neither "2026-10-17", nor "17/10/2026", nor "Oct 17, 2026".
     expect(
       html,
-      `the footer must repeat the heading's date (${shown}), not format the instant again`,
-    ).toContain(`Recorded ${shown}`);
+      "a day was rendered on the SERVER, which is the hydration hazard itself",
+    ).not.toMatch(
+      /\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{2,4}|[A-Z][a-z]{2} \d{1,2}, \d{4}/,
+    );
   });
 
-  it("and the footer no longer prints a raw ISO date", () => {
-    // The specific shape the defect produced. Kept as its own assertion so a
-    // regression names itself rather than failing the agreement test with a
-    // confusing diff.
-    expect(renderAt(nearMidnightUtc)).not.toMatch(/Recorded \d{4}-\d{2}-\d{2}/);
+  it("and the two places render the SAME validated instant, so they cannot drift", () => {
+    // What 4301722743 was protecting, asserted at the source now that the
+    // rendered text is deliberately absent: one validated iso, used twice,
+    // and no local formatting left in the component.
+    const src = readFileSync(
+      nodePath.resolve(
+        __dirname,
+        "../..",
+        "components/machines/machine-prior-setup.tsx",
+      ),
+      "utf8",
+    )
+      .replace(/\/\/[^\n]*/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(
+      (
+        src.match(
+          /<FormattedDateTime iso=\{recordedIso\} format="date" \/>/g,
+        ) ?? []
+      ).length,
+      "the heading and footer no longer render the same validated instant",
+    ).toBe(2);
+    expect(src, "the component formats an instant itself again").not.toMatch(
+      /toLocale(Date|Time)?String/,
+    );
   });
 
   it("an unreadable timestamp renders a phrase, not a crash", () => {
@@ -877,5 +928,240 @@ describe("recorded history keeps the machine's stages", () => {
     expect(html).not.toMatch(/recorded-stage-/);
     // And the source id keeps its original, unprefixed shape.
     expect(html).not.toMatch(/recorded-source-[a-z]+-/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MPX-03 · THE CHANGE SUMMARY NAMES THE COMPONENT, NOT JUST THE FIELD
+//
+// THE DEFECT (Codex, #860 4308488007). A staged mode repeats native labels
+// across its components - MultiPlex carries "Duration" and "Intensity" under
+// both "Slow thermolysis" and "Snap" - and the summary printed only the
+// FIELD's label. Two genuinely different adjustments therefore rendered as
+// two identical rows:
+//
+//     Duration 3 → 5
+//     Duration 40 → 55
+//
+// On the one surface whose job is to say what changed during the treatment,
+// that is a clinical record she cannot attribute. It also collided in the
+// testid, so a proof asking for one row silently got whichever came first.
+//
+// `changesWithin` was ALREADY RIGHT: stageKey is part of the series identity,
+// so the two stages were never paired. The pairing was correct and the
+// rendering threw the distinction away - which is why these cases assert the
+// RENDERED rows rather than the pairing.
+// ---------------------------------------------------------------------------
+describe("the change summary names which stage moved", () => {
+  const stagedChange = (
+    stageKey: string,
+    revision: number,
+    recordedAt: string,
+    value: number,
+  ): RecordedReading =>
+    ({
+      ...reading({ recordedAt, revision, captureId: `cap-${stageKey}-${revision}` }),
+      profileId: "fixture:staged",
+      profileVersion: 1,
+      modeKey: "galvanic",
+      stageKey,
+      fieldKey: "duration",
+      observationSource: null,
+      value: { kind: "value", value },
+    }) as RecordedReading;
+
+  const html = () =>
+    renderToStaticMarkup(
+      createElement(MachineRecordedSetups, {
+        catalogue: [STAGED],
+        readings: [
+          stagedChange("slow", 1, "2026-10-16T10:00:00Z", 3),
+          stagedChange("snap", 1, "2026-10-16T10:00:00Z", 40),
+          stagedChange("slow", 2, "2026-10-16T10:20:00Z", 5),
+          stagedChange("snap", 2, "2026-10-16T10:20:00Z", 55),
+        ],
+      }),
+    );
+
+  it("renders BOTH changes, with distinct ids", () => {
+    // Before the fix both were `recorded-change-g1-duration`.
+    const out = html();
+    expect(out).toContain('data-testid="recorded-change-g1-slow-duration"');
+    expect(out).toContain('data-testid="recorded-change-g1-snap-duration"');
+  });
+
+  it("and each row carries the machine's own name for its stage", () => {
+    const out = html();
+    const row = (id: string) => {
+      const from = out.indexOf(`data-testid="${id}"`);
+      expect(from, `${id} did not render`).toBeGreaterThan(-1);
+      return out.slice(from, out.indexOf("</li>", from));
+    };
+    expect(row("recorded-change-g1-slow-duration")).toMatch(/Slow thermolysis/);
+    expect(row("recorded-change-g1-snap-duration")).toMatch(/Snap/);
+  });
+
+  it("so the two rows are not byte-identical, which is the whole defect", () => {
+    // THE ASSERTION THAT WOULD HAVE CAUGHT IT. Distinct ids and present
+    // labels can both hold while the visible text of the two rows is the
+    // same; this compares what she actually reads.
+    const out = html();
+    const text = (id: string) => {
+      const from = out.indexOf(`data-testid="${id}"`);
+      return out
+        .slice(out.indexOf(">", from) + 1, out.indexOf("</li>", from))
+        .replace(/<[^>]*>/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    };
+    const a = text("recorded-change-g1-slow-duration");
+    const b = text("recorded-change-g1-snap-duration");
+    expect(a.length, "the row rendered empty, so this comparison is vacuous")
+      .toBeGreaterThan(5);
+    expect(
+      a,
+      "the two change rows read identically, so she cannot tell which component moved",
+    ).not.toBe(b);
+  });
+
+  it("falls back to the stage KEY when the version is historical", () => {
+    // A SUPERSEDED VERSION has no current labels to offer, and the earlier
+    // spelling would then have printed the field key alone for both rows -
+    // restoring the collision exactly where the record is oldest. The raw
+    // stage key is not pretty, but it distinguishes them.
+    //
+    // READ FROM THE ROW'S VISIBLE TEXT, not from the document. A negative
+    // control is why: asserting `/slow/` against the whole markup passed with
+    // the fallback REMOVED, because "slow" is in the testid, which comes from
+    // `change.stageKey` and not from the label. The assertion was satisfied
+    // by the one thing it was not testing.
+    const out = renderToStaticMarkup(
+      createElement(MachineRecordedSetups, {
+        catalogue: [STAGED],
+        readings: [
+          { ...stagedChange("slow", 1, "2026-10-16T10:00:00Z", 3), profileVersion: 0 } as RecordedReading,
+          { ...stagedChange("slow", 2, "2026-10-16T10:20:00Z", 5), profileVersion: 0 } as RecordedReading,
+          { ...stagedChange("snap", 1, "2026-10-16T10:00:00Z", 40), profileVersion: 0 } as RecordedReading,
+          { ...stagedChange("snap", 2, "2026-10-16T10:20:00Z", 55), profileVersion: 0 } as RecordedReading,
+        ],
+      }),
+    );
+    expect(out).toContain('data-testid="recorded-change-g1-slow-duration"');
+    expect(out).toContain('data-testid="recorded-change-g1-snap-duration"');
+    const rowText = (id: string) => {
+      const from = out.indexOf(`data-testid="${id}"`);
+      expect(from, `${id} did not render`).toBeGreaterThan(-1);
+      return out
+        .slice(out.indexOf(">", from) + 1, out.indexOf("</li>", from))
+        .replace(/<[^>]*>/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    };
+    expect(rowText("recorded-change-g1-slow-duration")).toMatch(/\bslow\b/);
+    expect(rowText("recorded-change-g1-snap-duration")).toMatch(/\bsnap\b/);
+  });
+
+  it("CONTROL: an UNSTAGED change keeps the id and shows no stage at all", () => {
+    // Every shipped profile is stageless, so this is the only path in
+    // production and it must be untouched - including the testid the browser
+    // proofs already depend on.
+    const out = renderToStaticMarkup(
+      createElement(MachineRecordedSetups, {
+        catalogue: CAT,
+        readings: [
+          reading({ captureId: "c1", revision: 1, recordedAt: "2026-10-14T14:00:00Z", value: 120 }),
+          reading({ captureId: "c2", revision: 2, recordedAt: "2026-10-14T14:30:00Z", value: 150 }),
+        ],
+      }),
+    );
+    expect(out).toContain('data-testid="recorded-change-g1-current"');
+    expect(out).not.toMatch(/recorded-change-g1-[a-z]+-current/);
+    expect(out).not.toContain('data-testid="recorded-change-stage"');
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// NO MACHINE SURFACE FORMATS AN INSTANT ITSELF (Codex, #860 4309128374)
+//
+// WHY THIS IS THE LOAD-BEARING GUARD, and the markup assertions above are not.
+// A negative control proved it: restoring `toLocaleDateString(undefined, …)`
+// and `toLocaleTimeString(undefined, …)` left every rendered-markup assertion
+// GREEN, because `FormattedDateTime` renders nothing server-side WHATEVER it
+// is handed - so a locally formatted string passed to it as `iso` produces
+// exactly the same empty server output as the correct code. The absence of a
+// day in the markup therefore cannot distinguish the fix from the defect.
+//
+// What can is the source: the component must not format an instant at all.
+// A tree walk rather than a list of two files, because a third machine
+// surface that renders a timestamp would not be on the list.
+//
+// THE ONE ALLOWED PLACE is `components/formatted-date-time.tsx`, which
+// formats inside `useEffect` - so it only ever runs in the browser, where
+// there is exactly one locale and one timezone. That file is outside this
+// walk.
+//
+// OUT OF SCOPE, REPORTED NOT FIXED: `components/clinical-notes-summary.tsx`
+// uses the same `toLocaleDateString(undefined, …)` shape. It belongs to
+// another feature and was not part of this finding, so it is named for
+// whoever owns it rather than changed here.
+// ---------------------------------------------------------------------------
+describe("no machine component formats an instant itself", () => {
+  const LANE = "components/machines";
+
+  const walk = (rel: string): string[] => {
+    const abs = nodePath.resolve(__dirname, "../..", rel);
+    const out: string[] = [];
+    for (const e of readdirSync(abs, { withFileTypes: true })) {
+      if (e.name === "node_modules" || e.name.startsWith(".")) continue;
+      const next = `${rel}/${e.name}`;
+      if (e.isDirectory()) out.push(...walk(next));
+      else if (/\.tsx?$/.test(e.name)) out.push(next);
+    }
+    return out;
+  };
+
+  // LINE comments before BLOCK comments: both components discuss the defect by
+  // name at length, so a guard reading raw text is tripped by the explanation.
+  const code = (rel: string) =>
+    readFileSync(nodePath.resolve(__dirname, "../..", rel), "utf8")
+      .replace(/\/\/[^\n]*/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+
+  const BANNED = /toLocale(Date|Time)?String\s*\(/;
+
+  it("ANTI-VACUITY: the walk finds files and the matcher sees the banned form", () => {
+    const files = walk(LANE);
+    expect(files.length, "the machine component tree walked to nothing").toBeGreaterThan(3);
+    expect(BANNED.test('d.toLocaleDateString(undefined, {})')).toBe(true);
+    expect(BANNED.test('d.toLocaleTimeString(undefined, {})')).toBe(true);
+    // And a comment ABOUT it is not a call, which is what the stripping is for.
+    expect(BANNED.test(code("components/machines/machine-prior-setup.tsx"))).toBe(
+      false,
+    );
+  });
+
+  it("not one of them calls toLocale*String", () => {
+    const offenders = walk(LANE).filter((rel) => BANNED.test(code(rel)));
+    expect(
+      offenders,
+      "a machine surface formats an instant with the runtime's own locale and timezone, which renders differently in Node and in the browser - and near midnight a different DAY",
+    ).toEqual([]);
+  });
+
+  it("and the two that show a timestamp route it through FormattedDateTime", () => {
+    // The positive half: banning the call is satisfied by showing nothing at
+    // all, so the renderer has to be named too.
+    for (const rel of [
+      "components/machines/machine-prior-setup.tsx",
+      "components/machines/machine-recorded-setups.tsx",
+    ]) {
+      expect(code(rel), `${rel} no longer renders instants at all`).toMatch(
+        /<FormattedDateTime\s/,
+      );
+      expect(code(rel)).toMatch(
+        /from "@\/components\/formatted-date-time"/,
+      );
+    }
   });
 });

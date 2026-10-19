@@ -5,9 +5,14 @@ import { isAreaOperationId } from "@/lib/machines/area-operation";
 import { SETUP_GROUPS_MOVED } from "@/lib/machines/pending-setup";
 import { recordedGroupsMoved } from "@/lib/machines/setting-groups";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import { activeModes, type MachineProfile } from "@/lib/machines/profile-contract";
+import {
+  activeModes,
+  currentProfile,
+  type MachineProfile,
+} from "@/lib/machines/profile-contract";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
+import { resolveWritingIdentity } from "@/lib/supabase/writing-identity";
 import {
   latestRecordedSetup,
   publishedModesFor,
@@ -473,9 +478,19 @@ export async function registerMachineAction(input: {
     return { ok: false, code: "unauthenticated", error: "Sign in first." };
   }
 
-  const profile = catalogueForRuntime().find(
-    (p) => p.profileId === input.profileId,
-  );
+  // THE CURRENT VERSION, not the first one listed (Codex, #860 4308488012).
+  //
+  // `find` took the FIRST entry with this id, which with two versions present
+  // can be v1 while v2 is current - so the device row stored a superseded
+  // version and every charting surface then treated the unit's own readings as
+  // historical, leaving it effectively unselectable with no way out but
+  // deleting and re-registering.
+  //
+  // THE AVAILABILITY CHECK STAYS HERE, and that is why the resolver does not
+  // do it: requiring the CURRENT version to be active is what makes a model
+  // withdrawn at v2 unregisterable. A resolver that filtered availability
+  // itself would have handed back the still-active v1 instead.
+  const profile = currentProfile(catalogueForRuntime(), input.profileId);
   if (!profile || profile.availability !== "active") {
     return {
       ok: false,
@@ -617,9 +632,10 @@ export async function recordReadingsAction(input: {
     };
   }
 
-  const profile = catalogueForRuntime().find(
-    (p) => p.profileId === device.profileId,
-  );
+  // THE CURRENT VERSION (Codex, #860 4308488012): `activeModes` below reads
+  // the modes OFF this profile, so a first-match v1 offers a superseded
+  // mode list for a unit whose contract has moved on.
+  const profile = currentProfile(catalogueForRuntime(), device.profileId);
   const mode = profile
     ? activeModes(profile).find((m) => m.key === input.modeKey)
     : undefined;
@@ -659,6 +675,7 @@ export async function recordReadingsAction(input: {
     profile,
     input.modeKey,
     input.readings,
+    input.channels,
   );
   if ("error" in checkedRows) {
     return { ok: false, code: "rejected", error: checkedRows.error };
@@ -754,10 +771,27 @@ export async function recordSetupSubmissionAction(input: {
     reused?: boolean;
   }
 > {
-  const scope = await identity();
-  if (!scope) {
-    return { ok: false, code: "unauthenticated", error: "Sign in first." };
+  // AN IDENTITY REFUSAL IS DEFINITIVE, NOT UNKNOWN (Codex, #860 4308620487).
+  // `identity()` calls `getCurrentPractitionerWithStudio()`, which THROWS on a
+  // removed membership or an invalid studio selection — before any RPC, so
+  // nothing is written. The entry's `catch` turns any throw into
+  // `{ kind: "unknown" }`, which keeps the retry key and freezes the draft and
+  // the mode buttons: correct for a lost answer, and a deadlock here, because
+  // every retry meets the same refusal.
+  //
+  // THE SAME HELPER AS THE INITIAL WRITE, so the two cannot drift apart the
+  // way the previous pair of pre-write-refusal fixes did.
+  const who = await resolveWritingIdentity();
+  if (!who.ok) {
+    // THE HELPER'S OWN CODE, so `unauthenticated` still reaches the caller as
+    // `unauthenticated`. Collapsing both to `rejected` here would have been
+    // the quiet way to make a failing test pass.
+    return { ok: false, code: who.code, error: who.error };
   }
+  const scope = {
+    studioId: who.value.studio.id,
+    practitionerId: who.value.practitioner.id,
+  };
   if (input.groups.length === 0) {
     return { ok: false, code: "rejected", error: "Nothing to save." };
   }
@@ -813,9 +847,10 @@ export async function recordSetupSubmissionAction(input: {
     };
   }
 
-  const profile = catalogueForRuntime().find(
-    (p) => p.profileId === device.profileId,
-  );
+  // THE CURRENT VERSION (Codex, #860 4308488012): `activeModes` below reads
+  // the modes OFF this profile, so a first-match v1 offers a superseded
+  // mode list for a unit whose contract has moved on.
+  const profile = currentProfile(catalogueForRuntime(), device.profileId);
   const mode = profile
     ? activeModes(profile).find((m) => m.key === input.modeKey)
     : undefined;
@@ -834,6 +869,7 @@ export async function recordSetupSubmissionAction(input: {
       profile,
       input.modeKey,
       g.readings,
+      g.channels,
     );
     if ("error" in checked) {
       return { ok: false, code: "rejected", error: checked.error };

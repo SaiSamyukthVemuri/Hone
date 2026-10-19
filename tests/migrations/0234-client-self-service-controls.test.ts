@@ -3,8 +3,6 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
   countVersion,
-  isRepoMax,
-  versionsAbove,
 } from "./helpers/migration-state";
 
 // 0234 — HON-47: a studio may disable CLIENT self-service cancellation and
@@ -34,15 +32,7 @@ const RESCHEDULE_V3 =
   "public.reschedule_appointment_v3(uuid, text, timestamptz, text, boolean, text)";
 
 describe("0234 sits correctly in the migration sequence", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    // Only the CURRENT maximum migration's own test may assert this — see
-    // CLAUDE.md §2. It reached this file from 0233's test (Codex P2
-    // 4308819830), which is how the pin travels instead of accumulating.
-    expect(isRepoMax(VERSION), "0234 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION), "something was added above 0234").toEqual(
-      [],
-    );
-  });
+  // The repository-maximum guard belongs to 0235 on the composed chain.
 
   it("is allocated exactly once", () => {
     expect(countVersion(VERSION)).toBe(1);

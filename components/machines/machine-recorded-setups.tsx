@@ -1,3 +1,4 @@
+import { FormattedDateTime } from "@/components/formatted-date-time";
 import { SectionLabel } from "@/components/ui/section-label";
 import {
   changesWithin,
@@ -11,7 +12,7 @@ import {
 } from "@/lib/machines/charting";
 import type { RecordedReading } from "@/lib/machines/machine-queries";
 import {
-  currentProfile,
+  recordedProfile,
   findMode,
   modeFields,
 } from "@/lib/machines/profile-contract";
@@ -89,16 +90,34 @@ function formatValue(r: RecordedReading): string {
   return r.value.value.toFixed(Math.max(r.decimals, own));
 }
 
-function clockTime(iso: string): string | null {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+/**
+ * Is this instant renderable at all?
+ *
+ * IT NO LONGER FORMATS (Codex, #860 4309128374). `toLocaleTimeString(undefined,
+ * ...)` took the RUNTIME's default locale and timezone, so this component
+ * produced one string in Node and another in the browser - a hydration
+ * mismatch, and near midnight a different DAY. Formatting belongs to
+ * `FormattedDateTime`, which renders nothing on the server and the viewer's
+ * own zone on mount; `recorded_at` is a `timestamptz` and therefore a real
+ * instant, which is the case `lib/clinical-notes/clinical-date.ts` says
+ * belongs in the viewer's zone.
+ *
+ * The null answer is kept, because both call sites render nothing at all for
+ * an unparseable timestamp rather than an empty slot.
+ */
+function renderableInstant(iso: string): string | null {
+  return Number.isNaN(Date.parse(iso)) ? null : iso;
+}
+
+/** The capture's own clock time, in the viewer's zone, or nothing. */
+function ClockTime({ iso }: { iso: string }) {
+  return <FormattedDateTime iso={iso} format="time" />;
 }
 
 /**
  * The field's label, from the contract the reading was RECORDED under.
  *
- * Returns the recorded key whenever the version has moved on. Relabelling an
+ * Returns the recorded key when the exact recorded version is unavailable. Relabelling an
  * old number with a newer contract's words is how a record quietly starts
  * lying, and the unit is never taken from today's catalogue at all - see the
  * `nativeUnit` rule in machine-prior-setup.
@@ -126,11 +145,11 @@ function labelsFor(
   stageLabels: Map<string, string>;
   historical: boolean;
 } {
-  const profile = currentProfile(catalogue, entry.profileId);
-  const historical = profile ? entry.profileVersion !== profile.version : true;
+  const profile = recordedProfile(catalogue, entry.profileId, entry.profileVersion);
+  const historical = !profile;
   const labels = new Map<string, string>();
   const mode = profile ? findMode(profile, entry.modeKey) : undefined;
-  if (mode && !historical) {
+  if (mode) {
     // KEYED BY STAGE AND FIELD (Codex, #860 4301851853, reported against the
     // guidance surface; the same collision is here). `{ field }` alone
     // merges two stages that reuse a key — MultiPlex repeats "Duration" and
@@ -143,7 +162,7 @@ function labelsFor(
   // THE MACHINE'S OWN NAME for each stage, so the grouping below can be
   // labelled the way she sees it on the unit.
   const stageLabels = new Map<string, string>();
-  if (mode && !historical) {
+  if (mode) {
     for (const stage of mode.stages) stageLabels.set(stage.key, stage.nativeLabel);
   }
   return { labels, stageLabels, historical };
@@ -163,28 +182,67 @@ function ChangeLine({
   // versions (the same field key can mean something else there), or a field
   // re-read at the SAME value (another capture, not an adjustment). So this
   // line cannot make any of those claims, whatever it says.
-  const profile = currentProfile(catalogue, change.to.profileId);
-  const historical = profile ? change.to.profileVersion !== profile.version : true;
+  const profile = recordedProfile(catalogue, change.to.profileId, change.to.profileVersion);
   const mode = profile ? findMode(profile, change.to.modeKey) : undefined;
   let label = change.to.fieldKey;
-  if (mode && !historical) {
+  if (mode) {
     // MATCHED ON STAGE TOO, for the same reason: a change line naming the
     // wrong stage's label is a change line about the wrong component.
     for (const { field, stageKey } of modeFields(mode)) {
       if (
         field.key === change.to.fieldKey &&
-        (stageKey ?? null) === (change.to.stageKey ?? null)
+        (stageKey ?? null) === change.stageKey
       ) {
         label = field.nativeLabel;
       }
     }
   }
-  const at = clockTime(change.to.recordedAt);
+
+  // AND THE COMPONENT IS NAMED, because the field's label does not identify
+  // it (Codex, #860 4308488007).
+  //
+  // THE DEFECT. A staged mode repeats native labels across its components -
+  // MultiPlex carries "Duration" and "Intensity" under both "Slow
+  // thermolysis" and "Snap" - so two genuinely different adjustments rendered
+  // as two identical rows, "Duration 120 → 130" and "Duration 9 → 10", on the
+  // one surface whose job is to say what changed during the treatment.
+  //
+  // THE CAPTURE HISTORY ABOVE ALREADY DOES THIS by grouping under each
+  // stage's own native label. This list is flat, so it carries the stage
+  // inline instead; same fact, shape that fits the surface.
+  //
+  // THE KEY IS THE FALLBACK, not a blank: on a historical version or an
+  // unknown stage the machine's word for it is unavailable, and the raw key
+  // still distinguishes the two rows - which is the whole point - where
+  // omitting it would silently restore the collision.
+  const stage =
+    change.stageKey === null
+      ? null
+      : ((mode
+          ? mode.stages.find((s) => s.key === change.stageKey)?.nativeLabel
+          : undefined) ?? change.stageKey);
+  const at = renderableInstant(change.to.recordedAt);
   return (
     <li
       className="text-sm text-neutral-700 dark:text-neutral-300"
-      data-testid={`recorded-change-${change.groupKey}-${change.fieldKey}`}
+      /*
+        THE STAGE IS IN THE TESTID, because the collision was there too: two
+        stages reusing one field key produced the SAME id, so a test could not
+        address them apart and `getByTestId` matched two nodes. An unstaged
+        mode keeps the id it had.
+      */
+      data-testid={
+        change.stageKey === null
+          ? `recorded-change-${change.groupKey}-${change.fieldKey}`
+          : `recorded-change-${change.groupKey}-${change.stageKey}-${change.fieldKey}`
+      }
     >
+      {stage && (
+        <span className="text-neutral-500" data-testid="recorded-change-stage">
+          {stage}
+        </span>
+      )}
+      {stage && <span className="mx-1 text-neutral-400">·</span>}
       <span className="text-neutral-500">{label}</span>{" "}
       <span className="font-medium">{formatValue(change.from)}</span>
       {/*
@@ -208,7 +266,11 @@ function ChangeLine({
           {recordedUnitLabel(change.to.nativeUnit)}
         </span>
       ) : null}
-      {at && <span className="ml-2 text-xs text-neutral-500">{at}</span>}
+      {at && (
+        <span className="ml-2 text-xs text-neutral-500">
+          <ClockTime iso={at} />
+        </span>
+      )}
     </li>
   );
 }
@@ -275,7 +337,7 @@ export function MachineRecordedSetups({
       <ol className="flex flex-col gap-2">
         {entries.map((entry) => {
           const { labels, stageLabels, historical } = labelsFor(entry, catalogue);
-          const at = clockTime(entry.recordedAt);
+          const at = renderableInstant(entry.recordedAt);
           const unitName = unitNames[entry.deviceId] ?? null;
           return (
             <li
@@ -290,7 +352,11 @@ export function MachineRecordedSetups({
                   clock time here is honest where it would not be on the
                   Previous treatment panel.
                 */}
-                {at && <span data-testid="recorded-capture-when">{at}</span>}
+                {at && (
+                  <span data-testid="recorded-capture-when">
+                    <ClockTime iso={at} />
+                  </span>
+                )}
                 {entry.channels.length > 0 && (
                   <span className="ml-2">Channels {entry.channels.join(", ")}</span>
                 )}
@@ -392,7 +458,10 @@ export function MachineRecordedSetups({
           <ul className="flex flex-col gap-0.5">
             {changes.map((c) => (
               <ChangeLine
-                key={`${c.groupKey}:${c.fieldKey}:${c.to.recordedAt}`}
+                // THE STAGE IS IN THE REACT KEY TOO: two stages' changes
+                // can share a transaction-start `recordedAt`, and without it
+                // React saw one key twice.
+                key={`${c.groupKey}:${c.stageKey ?? ""}:${c.fieldKey}:${c.to.recordedAt}`}
                 change={c}
                 catalogue={catalogue}
               />

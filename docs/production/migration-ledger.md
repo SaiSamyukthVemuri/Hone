@@ -14,7 +14,21 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-18, post-0212 apply; hosted `0212`; `0213`–`0234` AUTHORED AND PENDING, contiguous, in that order)
+## 0235 — Machines finite readings (pending hosted apply, 2026-10-19)
+
+OPS allocated 0235 after a fresh cross-ref/worktree/open-PR census. It promotes
+only the existing finite-reading proposal, preserving frozen 0223 and held 0234.
+It adds a NOT VALID constraint refusing NaN and both numeric infinities for new
+reading rows, with no backfill or historical correction. Hosted state is unchanged.
+
+The granted Machines slot proved the expected pre-repair Infinity acceptance,
+then 10/10 scoped existing-stack DB cases after the exact local patch (finite
+values, publication, four Senior and two Junior native cases). This was **not** a
+full-chain reset or browser proof; no migration-history entry was fabricated.
+See [the scoped proof](../reviews/hon8-0235-db-proof-2026-10-19.md). Full train order
+remains the existing pending train, HON-47 0234, then 0235; it is not apply authority.
+
+## Current state (verified 2026-10-18, post-0212 apply; hosted `0212`; `0213`–`0235` AUTHORED AND PENDING, contiguous, in that order)
 
 > **0232 IS AUTHORED AND PENDING, on `feat/fett-capture-stage` only** (FETT photos, HON-43), stacked on `feat/fett-client-portrait` (0231). It applies after `0231`.
 > `0232_treatment_image_capture_stage.sql` adds ONE nullable column, `treatment_images.capture_stage` (`check (capture_stage in ('before', 'after'))`, NULL = unlabelled, no backfill), ONE new command, and ONE trigger on `treatment_images`; it writes no rows.
@@ -108,6 +122,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 > `0212` is now **FROZEN**. Any correction is a new forward migration; there is no
 > manual down-migration.
 
+## Previous state (verified 2026-10-12, post-0211 apply)
 
 > **0211 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #827 HEAD, BEFORE ANY MERGE.**
 > `0211_client_sms_permission_guard.sql` was applied to production on

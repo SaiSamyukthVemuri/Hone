@@ -83,6 +83,11 @@ export function SettingDraftFields({
 
   return (
     <>
+      {mode.captureHold && (
+        <p role="status" className="text-sm text-neutral-600" data-testid="native-control-pending">
+          {mode.captureHold}
+        </p>
+      )}
       {groups.map((setting, settingIndex) => (
         <div
           key={setting.id}

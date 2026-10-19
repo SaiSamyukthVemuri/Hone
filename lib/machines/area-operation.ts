@@ -122,6 +122,59 @@ export function areaOperationSearch(
 }
 
 /**
+ * The operation id THE ADDRESS BAR is carrying, or null.
+ *
+ * THE READ THAT MATCHES THE WRITE. `syncAreaOperationParam` edits
+ * `window.location` through `history.replaceState`, so this is the only read
+ * that sees the current value. Reading the ROUTER's params instead returns
+ * whatever the last real navigation carried, which is the defect this pair
+ * exists to close — see the block comment on `readAreaOperationIdAtMount`.
+ *
+ * Null outside the browser, where there is no address bar to read.
+ */
+export function readAreaOperationIdFromLocation(): string | null {
+  if (typeof window === "undefined") return null;
+  return readAreaOperationId(new URL(window.location.href).searchParams);
+}
+
+/**
+ * The operation id a FORM MOUNT is resuming, from whichever surface exists.
+ *
+ * THE DEFECT THIS CLOSES, taken from the browser run's URL timeline on #922:
+ *
+ *     area_op=A    a lost save minted it
+ *     <cleared>    START NEW released it
+ *     area_op=B    the next area's own key
+ *     <cleared>    that save settled
+ *     area_op=A    <-- the released key came BACK on the next mount
+ *
+ * The key is written with `history.replaceState`, which deliberately does not
+ * notify the router. The mount read was `readAreaOperationId(useSearchParams())`
+ * — the ROUTER's view — so it reported the value from the LAST REAL
+ * NAVIGATION and every later mount in that page's life resumed THAT key,
+ * ignoring every clear and every mint since. After any reload that carried an
+ * `area_op`, which is exactly the scenario the feature is for, every
+ * subsequent Add re-asked the resume question about a save that was over and
+ * held Save until she answered it.
+ *
+ * SO THE ADDRESS BAR WINS WHEREVER IT EXISTS, and the router's params are
+ * consulted only on the SERVER render, where there is no address bar and
+ * where they are the request's own params — so the first client render agrees
+ * with the server markup and hydration is unaffected.
+ *
+ * THE DECISION LIVES HERE, beside the write, rather than in the form. A
+ * caller that has to remember which of two surfaces to read is a caller that
+ * will read the wrong one; `tests/lib/machines/area-operation-mount-read.test.ts`
+ * pins that create mode does not.
+ */
+export function readAreaOperationIdAtMount(
+  routerSearch: ReadableParams | string | null | undefined,
+): string | null {
+  if (typeof window === "undefined") return readAreaOperationId(routerSearch);
+  return readAreaOperationIdFromLocation();
+}
+
+/**
  * Put the current operation id into the address bar, or take it out.
  *
  * `history.replaceState`, NOT the Next router, and the distinction is

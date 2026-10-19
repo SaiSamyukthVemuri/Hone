@@ -373,9 +373,18 @@ describe("the create form carries the key in the URL", () => {
     // area consumed the create operation's key, froze her edits and disabled
     // Cancel — and the edit success path never cleared the parameter, so every
     // later edit stayed poisoned until she navigated away.
+    //
+    // AND IT READS THE ADDRESS BAR, NOT THE ROUTER (#922, found by browser
+    // journey (ii)). `readAreaOperationId(searchParams)` here reported the
+    // value from the last real NAVIGATION, so after a reload carrying
+    // `area_op=A` every later mount resumed A however many times it had since
+    // been released or replaced. `readAreaOperationIdAtMount` reads the
+    // surface the writes go to and falls back to the router only on the
+    // server. The sequence itself is proved in
+    // `area-operation-mount-read.test.ts`; this pins the WIRING.
     const src = read(FORM_SRC);
     expect(src).toMatch(
-      /const \[resumedSaveKey\] = useState<string \| null>\(\(\) =>\s*isEdit \? null : readAreaOperationId\(searchParams\),?\s*\)/,
+      /const \[resumedSaveKey\] = useState<string \| null>\(\(\) =>\s*isEdit \? null : readAreaOperationIdAtMount\(searchParams\),?\s*\)/,
     );
   });
 

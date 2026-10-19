@@ -10,9 +10,8 @@
  * THREE RULES CARRIED FROM THE CONTRACT
  *
  * 1. A HISTORICAL RENDERER USES THE RECORDED VERSION. When a stored setup's
- *    contract version is not the current one, this does NOT relabel it with
- *    today's labels and units. It returns the recorded values with their
- *    recorded keys and says plainly that the contract moved. Relabelling old
+ *    contract version is not the current one, this resolves its retained exact
+ *    version for labels and units, falling back to keys if unavailable. Relabelling old
  *    numbers with new units is how a record quietly starts lying.
  *
  * 2. ADVISORY IS NOT BLOCKING. `blocksSubmission` is true only for an actual
@@ -40,7 +39,7 @@ import {
   type NativeUnit,
   type ReadingValue,
 } from "./profile-contract";
-import { MACHINE_CATALOGUE, profileById } from "./catalogue";
+import { MACHINE_CATALOGUE, profileById, profileAtVersion } from "./catalogue";
 import {
   carryForwardCompatibility,
   type ValidationOutcome,
@@ -324,7 +323,7 @@ export type RecordedSetup = {
 
 export type PriorSetupRow = {
   key: string;
-  /** The recorded contract's label, when it is still the current one. */
+  /** The exact recorded contract's label, when that version is retained. */
   label: string;
   unit: string;
   /** Rendered value, or the reasoned absence. */
@@ -341,8 +340,7 @@ export type PriorSetupView = {
   sessionId: string;
   /**
    * True when the stored version is not the catalogue's current one. The rows
-   * then carry recorded KEYS rather than current labels, because relabelling
-   * with a newer contract's words is exactly what must not happen.
+   * resolve the retained recorded version or fall back to keys; never today's labels.
    */
   renderedAgainstHistoricalVersion: boolean;
 };
@@ -377,9 +375,10 @@ export function priorSetupView(
   }
 
   const historical = setup.profileVersion !== profile.version;
-  const mode = findMode(profile, setup.modeKey);
+  const recorded = profileAtVersion(setup.profileId, setup.profileVersion, catalogue);
+  const mode = recorded ? findMode(recorded, setup.modeKey) : undefined;
   const byKey = new Map<string, MachineField>();
-  if (mode && !historical) {
+  if (mode) {
     for (const { field } of modeFields(mode)) byKey.set(field.key, field);
   }
 
@@ -389,7 +388,7 @@ export function priorSetupView(
     }`,
     profileId: profile.profileId,
     profileVersion: setup.profileVersion,
-    modeLabel: historical ? setup.modeKey : (mode?.nativeLabel ?? setup.modeKey),
+    modeLabel: mode?.nativeLabel ?? setup.modeKey,
     recordedAt: setup.recordedAt,
     sessionId: setup.sessionId,
     renderedAgainstHistoricalVersion: historical,

@@ -261,9 +261,9 @@ describe("nothing is offered that is not yet verified", () => {
 describe("the traps #829 names are absent by assertion", () => {
   it("Junior 3G does not inherit MultiPlex from its family", () => {
     const junior = profileById("dectro-apilus:junior-3g")!;
-    // Identity only: no operating screen has been read for this unit, so it
-    // claims no mode at all — and in particular not MultiPlex.
-    expect(junior.modes).toEqual([]);
+    // v2 uses the Junior manual, not the sibling's modes. v1 remains identity-only.
+    expect(junior.modes.map((m) => m.key)).toEqual(["thermolysis", "flash", "blend", "omniblend", "electrolysis"]);
+    expect(profileAtVersion(junior.profileId, 1)!.modes).toEqual([]);
     // The sibling that DOES carry MultiPlex is what makes that absence a real
     // distinction rather than an empty catalogue entry.
     expect(profileById("dectro-apilus:xcell")!.modes.map((m) => m.key)).toContain(
@@ -278,7 +278,10 @@ describe("the traps #829 names are absent by assertion", () => {
     const carriers = MACHINE_CATALOGUE.filter((p) =>
       p.modes.some((m) => m.stages.some((s) => s.key === "final_component")),
     ).map((p) => p.profileId);
-    expect(carriers).toEqual(["dectro-apilus:xcell"]);
+    expect(carriers).toEqual(["dectro-apilus:senior-3g", "dectro-apilus:xcell"]);
+    const senior = profileById("dectro-apilus:senior-3g")!;
+    const fields = modeFields(findMode(senior, "multiblend")!);
+    expect(fields.every(({ field }) => field.evidence.every((id) => id.startsWith("senior-3g-native-")))).toBe(true);
   });
 
   it("the 5HD's UE and the ST 350's UL stay separate displays", () => {

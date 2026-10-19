@@ -5,8 +5,6 @@ import path from "node:path";
 import {
   countVersion,
   fileForVersion,
-  isRepoMax,
-  versionsAbove,
 } from "./helpers/migration-state";
 
 // ===========================================================================
@@ -133,16 +131,8 @@ function bodyOf(name: string): string {
 }
 
 describe("0223 sits correctly in the migration sequence", () => {
-  it("is no longer the repository maximum", () => {
-    // HANDED OFF in the Fett composition (integration/fett-composed-824): 0224
-    // (Audit) sits above it, and only the CURRENT max's own test may assert
-    // isRepoMax (CLAUDE.md §2). On #860's own branch 0223 is still the max.
-    // DERIVED, NOT PINNED.
-    expect(isRepoMax(VERSION)).toBe(false);
-    const above = versionsAbove(VERSION);
-    expect(above.length, "nothing sits above this older migration").toBeGreaterThan(0);
-    expect(above.every((v) => Number(v) > Number(VERSION))).toBe(true);
-  });
+  // The current maximum's derived guard now belongs to 0235's own test.
+  // 0223 remains a frozen historical migration; it owns no future numbers.
 
   it("is allocated exactly once, at the number the census derived", () => {
     expect(countVersion(VERSION)).toBe(1);

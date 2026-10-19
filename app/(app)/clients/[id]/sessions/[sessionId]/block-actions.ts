@@ -15,6 +15,8 @@ import { INITIAL_SAVE_UNRESOLVED } from "@/lib/machines/pending-setup";
 import { isDefinitiveDatabaseAnswer } from "@/lib/machines/save-attempt";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
+import { currentProfile } from "@/lib/machines/profile-contract";
+import { resolveWritingIdentity } from "@/lib/supabase/writing-identity";
 import { listStudioDevices } from "@/lib/machines/studio-devices";
 import type {
   MachineDb,
@@ -307,6 +309,22 @@ export type BlockResult =
    * without settings has no safe retry to offer.
    */
   | { ok: false; error: string; unresolved?: boolean };
+
+/**
+ * Does this `setup` value confirm that a settings submission exists?
+ *
+ * THE SUBMISSION ID IS THE CONFIRMATION (Codex, #860 4309128376). `groups` and
+ * `readings` are counts and may legitimately be absent from a shape this code
+ * does not recognise; the id is what says a submission row is there to point
+ * at. Anything else - null, a non-object, an object without a usable id - is a
+ * response this caller cannot confirm, and on the `withSetup` path that must
+ * be reported as unresolved rather than as a success that closes the form.
+ */
+function hasSetupReceipt(setup: unknown): boolean {
+  if (typeof setup !== "object" || setup === null) return false;
+  const id = (setup as { submission_id?: unknown }).submission_id;
+  return typeof id === "string" && id.trim().length > 0;
+}
 
 export type CreateBlockInput = {
   clientId: string;
@@ -1140,7 +1158,17 @@ export type InitialSetupInput = {
 export async function createTreatmentAreaWithEntryAction(
   input: CreateAreaWithEntryInput & { initialSetup?: InitialSetupInput | null },
 ): Promise<BlockResult & { setup?: unknown }> {
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // AN IDENTITY REFUSAL IS A REFUSAL TOO (Codex, #860 4308620484). This call
+  // THROWS on a removed membership or an invalid studio selection, before any
+  // RPC, and the throw escaped the action — so the form's catch called it
+  // `unresolved`, froze everything and kept a key whose every retry meets the
+  // same pre-write refusal. `resolveWritingIdentity` converts exactly that one
+  // error TYPE and re-throws everything else, so redirect signals still work.
+  const who = await resolveWritingIdentity();
+  if (!who.ok) {
+    return { ok: false, error: who.error, unresolved: false };
+  }
+  const { practitioner, studio } = who.value;
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot log sessions." };
   }
@@ -1387,9 +1415,12 @@ export async function createTreatmentAreaWithEntryAction(
         error: "That machine is not registered to this studio.",
       };
     }
-    const profile = catalogueForRuntime().find(
-      (p) => p.profileId === device.profileId,
-    );
+    // THE CURRENT VERSION (Codex, #860 4308488012), and here it decides
+    // whether a CLINICAL VALUE is accepted: `validateSubmittedReadings` below
+    // checks each reading against this profile's field contract, so a
+    // first-match v1 validates her readings by the wrong version's rules -
+    // refusing a legal value, or admitting one the current contract bounds.
+    const profile = currentProfile(catalogueForRuntime(), device.profileId);
     if (!profile) {
       return { ok: false, error: "That machine does not offer that mode." };
     }
@@ -1399,6 +1430,7 @@ export async function createTreatmentAreaWithEntryAction(
         profile,
         setup.modeKey,
         g.readings,
+        g.channels,
       );
       if ("error" in checked) return { ok: false, error: checked.error };
       setupGroups.push({
@@ -1489,6 +1521,29 @@ export async function createTreatmentAreaWithEntryAction(
   const asRow = Array.isArray(createdRows)
     ? (createdRows[0] as { block_id?: string } | undefined)
     : (createdRows as { block_id?: string; setup?: unknown } | null);
+  /**
+   * The outcome for a response this call cannot interpret.
+   *
+   * ONE DEFINITION FOR THREE SITES (the missing block, the failed read-back,
+   * and the missing setup receipt). They are the same event to the
+   * practitioner - the command may have committed and the answer is not
+   * trustworthy - so they must be reported identically, and a third hand-made
+   * copy of this ternary is a third place for it to drift.
+   *
+   * `withSetup` is what makes the retry safe: that command binds a retry key,
+   * so pressing Save again unchanged is answered with the original result.
+   * `create_block_with_entry` binds none, so there is no safe retry to offer
+   * and it keeps the plain failure it had.
+   */
+  const unresolvableResponse = (): BlockResult =>
+    withSetup
+      ? {
+          ok: false as const,
+          error: INITIAL_SAVE_UNRESOLVED,
+          unresolved: true as const,
+        }
+      : { ok: false, error: GENERIC_BLOCK_COMMAND_ERROR };
+
   const createdBlockId = asRow?.block_id;
   const setupResult = Array.isArray(createdRows)
     ? undefined
@@ -1505,13 +1560,7 @@ export async function createTreatmentAreaWithEntryAction(
     // reason: this is the `withSetup` path's retry key that makes pressing
     // Save again safe, and `create_block_with_entry` binds none, so it keeps
     // the plain failure it had.
-    return withSetup
-      ? {
-          ok: false as const,
-          error: INITIAL_SAVE_UNRESOLVED,
-          unresolved: true as const,
-        }
-      : { ok: false, error: GENERIC_BLOCK_COMMAND_ERROR };
+    return unresolvableResponse();
   }
 
   const { data: blockRow, error: blockReadErr } = await supabase
@@ -1539,13 +1588,31 @@ export async function createTreatmentAreaWithEntryAction(
     // pressing Save again unchanged is answered with the original result.
     // `create_block_with_entry` binds none, so there is no safe retry to
     // offer and it keeps the plain failure it had.
-    return withSetup
-      ? {
-          ok: false as const,
-          error: INITIAL_SAVE_UNRESOLVED,
-          unresolved: true as const,
-        }
-      : { ok: false, error: GENERIC_BLOCK_COMMAND_ERROR };
+    return unresolvableResponse();
+  }
+
+  // THE SETTINGS NEED THEIR RECEIPT BEFORE THIS IS A SUCCESS (Codex, #860
+  // 4309128376).
+  //
+  // Reporting `ok: true` closes the form and discards the draft, so a response
+  // carrying a block but no usable `setup` loses every entered setting
+  // SILENTLY - with nothing on screen to retry and no confirmation the
+  // submission exists.
+  //
+  // NULL IS ANOMALOUS ON THIS PATH, verified in 0223 rather than assumed: the
+  // fresh path builds the receipt only when the groups array is non-empty,
+  // which is exactly when `withSetup` is true, and the one place a null
+  // receipt is legitimate is an absorbed retry whose original recorded NO
+  // settings - which cannot be a same-digest retry of a save that carried
+  // them.
+  //
+  // UNRESOLVED, NOT FAILED, because the block id came back: the area and
+  // perhaps the settings may be committed, so unfreezing the draft and
+  // dropping the key would let a later save append a second area with a second
+  // copy of the settings. Same law as #860 4308887493 - only an authoritative
+  // answer for the same key may settle this.
+  if (withSetup && !hasSetupReceipt(setupResult)) {
+    return unresolvableResponse();
   }
   const block = blockRow as SessionBlock;
 

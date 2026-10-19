@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { SETUP_GROUPS_MOVED } from "@/lib/machines/pending-setup";
@@ -693,25 +693,69 @@ describe("THE VALIDATION IS SHARED, not copied", () => {
     "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts";
   const VALIDATOR = "lib/machines/validate-submitted-readings.ts";
 
-  it("has exactly ONE call site for the reading validator, and it is in lib/", () => {
+  it("calls the reading validator ONLY from lib/, and never from an action", () => {
     // Counted ACROSS the three files rather than within one, which is the
     // claim that actually matters now that the paths span two modules. The
     // previous version of this test counted inside machine-setup-actions only
     // and would have been satisfied by a second copy in block-actions.
+    //
+    // THE EXACT COUNT WAS A PROXY, AND IT EXPIRED (Codex, #860 4309004312).
+    // This asserted the shared validator calls `validateReading` EXACTLY ONCE,
+    // as a stand-in for "there is one implementation of the rule". Carrying
+    // the group's channels into it needs TWO calls - one for the first named
+    // channel, one per remaining channel, because a later out-of-range channel
+    // must be refused too - and the intent is untouched by that: the rule is
+    // still defined in exactly one place and still called from exactly one
+    // module.
+    //
+    // So the COUNT is bounded rather than pinned, and the load-bearing half -
+    // zero calls from either action - stays exact. Pinning a number that the
+    // implementation may legitimately change forces the next person to either
+    // contort the code or quietly weaken the test, and this lane has done the
+    // second of those before.
     const perFile = [SETUP_ACTIONS, BLOCK_ACTIONS, VALIDATOR].map((f) => ({
       f,
       hits: (read(f).match(/validateReading\(/g) ?? []).length,
     }));
     expect(
       perFile.find((p) => p.f === VALIDATOR)!.hits,
-      "the shared validator must call it exactly once",
-    ).toBe(1);
+      "the shared validator does not call the reading validator at all",
+    ).toBeGreaterThan(0);
     for (const p of perFile.filter((x) => x.f !== VALIDATOR)) {
       expect(
         p.hits,
         `${p.f} must not call validateReading itself`,
       ).toBe(0);
     }
+  });
+
+  it("and NOTHING outside lib/machines calls it, which is the anti-copy claim", () => {
+    // THE CLAIM THE COUNT WAS STANDING IN FOR, asserted directly: a second
+    // call site anywhere in app/ or components/ is a second place for a
+    // clinical validation rule to drift, and this feature has corrected that
+    // exact defect three times. A tree walk rather than a list of three files,
+    // because a fourth recording path would not be on the list.
+    const walk = (rel: string): string[] => {
+      const abs = path.resolve(__dirname, "../../..", rel);
+      const out: string[] = [];
+      for (const e of readdirSync(abs, { withFileTypes: true })) {
+        if (e.name === "node_modules" || e.name.startsWith(".")) continue;
+        const next = `${rel}/${e.name}`;
+        if (e.isDirectory()) out.push(...walk(next));
+        else if (/\.tsx?$/.test(e.name)) out.push(next);
+      }
+      return out;
+    };
+    const offenders = [...walk("app"), ...walk("components")].filter((rel) =>
+      /validateReading\(/.test(read(rel)),
+    );
+    expect(
+      offenders,
+      "a surface outside lib/ calls the reading validator itself",
+    ).toEqual([]);
+    // ANTI-VACUITY: the walk and the matcher both work.
+    expect(walk("app").length).toBeGreaterThan(50);
+    expect(/validateReading\(/.test(read(VALIDATOR))).toBe(true);
   });
 
   it("is reached by ALL THREE recording paths", () => {
