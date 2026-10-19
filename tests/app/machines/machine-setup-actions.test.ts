@@ -1110,7 +1110,7 @@ describe("the synthetic demo profile cannot reach production", () => {
     }
   });
 
-  it("the runtime catalogue exposes exactly four synthetic identities only gate-open and preserves real profiles", async () => {
+  it("the runtime catalogue exposes exactly six synthetic identities only gate-open and preserves real profiles", async () => {
     const { MACHINE_CATALOGUE } = await import("@/lib/machines/catalogue");
     const realBefore = structuredClone(MACHINE_CATALOGUE);
     const expectedSyntheticIds = [
@@ -1118,6 +1118,8 @@ describe("the synthetic demo profile cannot reach production", () => {
       "synthetic:demo-single-probe",
       "synthetic:native-senior-3g",
       "synthetic:native-junior-3g",
+      "synthetic:native-senior-3g-text",
+      "synthetic:native-junior-3g-text",
     ].sort();
     const on = synthetic.catalogueForRuntime(base);
     const fixtures = on.filter((p) => p.profileId.startsWith("synthetic:"));

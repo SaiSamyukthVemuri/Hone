@@ -3,7 +3,7 @@ import { isLoopbackUrl } from "@/lib/net/loopback";
 
 import type { MachineProfile } from "./profile-contract";
 import { MACHINE_CATALOGUE } from "./catalogue";
-import { APILUS_3G_NATIVE_FIXTURES } from "./apilus-3g-fixtures";
+import { APILUS_3G_NATIVE_FIXTURES, APILUS_3G_TEXT_FIXTURES } from "./apilus-3g-fixtures";
 
 /**
  * MPX-03 — local synthetic profiles for workflow proof, and why they cannot reach
@@ -429,7 +429,7 @@ export function catalogueForRuntime(
   env: NodeJS.ProcessEnv = process.env,
 ): readonly MachineProfile[] {
   return syntheticProfileEnabled(env)
-    ? [...MACHINE_CATALOGUE, SYNTHETIC_DEMO_PROFILE, SYNTHETIC_SINGLE_PROBE, ...APILUS_3G_NATIVE_FIXTURES]
+    ? [...MACHINE_CATALOGUE, SYNTHETIC_DEMO_PROFILE, SYNTHETIC_SINGLE_PROBE, ...APILUS_3G_NATIVE_FIXTURES, ...APILUS_3G_TEXT_FIXTURES]
     : MACHINE_CATALOGUE;
 }
 

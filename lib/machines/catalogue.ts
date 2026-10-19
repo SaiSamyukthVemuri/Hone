@@ -61,7 +61,7 @@ import type {
   OpenQuestion,
   VerificationState,
 } from "./profile-contract";
-import { APILUS_3G_PROFILES } from "./apilus-3g";
+import { APILUS_3G_PROFILES, APILUS_3G_TEXT_PROFILES } from "./apilus-3g";
 import { recordedProfile } from "./profile-contract";
 
 // ---------------------------------------------------------------------------
@@ -520,6 +520,7 @@ function apilus(
 
 export const MACHINE_CATALOGUE: readonly MachineProfile[] = [
   ...APILUS_3G_PROFILES,
+  ...APILUS_3G_TEXT_PROFILES,
   apilus("xCell", {
     modes: ["multiplex", "multiblend"],
     evidence: [APILUS_COMPARISON, APILUS_XCELL_MANUAL, CHLOE_FIELD_SCOPE],
@@ -1065,6 +1066,14 @@ export function catalogueIntegrity(
 
       for (const { f, stage } of fields) {
         cites(`field ${mode.key}.${f.key}`, f.evidence);
+        const kind = f.valueKind ?? "number";
+        if (!["number", "text", "choice"].includes(kind) ||
+            (kind !== "number" && (f.unit !== "none" || f.decimals !== 0 || f.ranges?.length)) ||
+            (kind === "choice" ? (!f.choices?.length || new Set(f.choices).size !== f.choices.length ||
+              f.choices.some((v) => typeof v !== "string" || !v.trim() || [...v].length > 500 || v.includes("\0"))) : !!f.choices?.length)) {
+          out.push({ profileId: p.profileId, problem: `field ${mode.key}.${f.key} has malformed text/choice metadata` });
+        }
+
         // A RANGE'S NUMBERS HAVE TO BE A RANGE (Codex, #855 4305364906).
         // Checked for every range regardless of class or availability,
         // because a non-finite bound, an inverted pair or a nonpositive step

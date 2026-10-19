@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 
 import { seedE2eStudio, seedE2eDraftElectrolysisSession, sql } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
-import { APILUS_3G_NATIVE_FIXTURES } from "../lib/machines/apilus-3g-fixtures";
+import { APILUS_3G_NATIVE_FIXTURES, APILUS_3G_TEXT_FIXTURES } from "../lib/machines/apilus-3g-fixtures";
 import { modeFields } from "../lib/machines/profile-contract";
 import { planContractPublication } from "../lib/machines/contract-publication";
 
@@ -1192,13 +1192,17 @@ test("create mode: choose the machine, save the block, record one save, retrieve
 
 // Prepared source, NOT executed proof. Reuses this spec's existing seed, login,
 // publication command, form and readback paths. Real model IDs stay blocked.
+for (const suite of [
+  { name: "native 3G durability", profiles: APILUS_3G_NATIVE_FIXTURES, choiceOnly: false },
+  { name: "native 3G text durability", profiles: APILUS_3G_TEXT_FIXTURES, choiceOnly: true },
+]) {
 for (const device of [
   { name: "desktop", viewport: { width: 1280, height: 800 }, isMobile: false, hasTouch: false },
   { name: "mobile", viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true },
 ]) {
-  test.describe(`native 3G durability ${device.name}`, () => {
+  test.describe(`${suite.name} ${device.name}`, () => {
     test.use({ viewport: device.viewport, isMobile: device.isMobile, hasTouch: device.hasTouch });
-    for (const profile of APILUS_3G_NATIVE_FIXTURES) for (const mode of profile.modes) {
+    for (const profile of suite.profiles) for (const mode of profile.modes.filter((m) => !suite.choiceOnly || m.fields.some((f) => f.valueKind === "choice"))) {
       test(`${profile.model} / ${mode.key}: save, reload, history and next visit`, async ({ page }) => {
         test.skip(process.env.HONE_SYNTHETIC_MACHINE_PROFILE !== "1",
           "UNRUN native journey: existing synthetic server gate must explicitly be enabled; closed gate is not native acceptance.");
@@ -1219,13 +1223,13 @@ for (const device of [
         const fields = modeFields(mode);
         const observations = fields.map(({ field, stageKey }, index) => ({
           stageKey, field,
-          value: (index + 1 + 27 / 10 ** field.decimals).toFixed(field.decimals),
+          value: field.valueKind === "choice" ? field.choices![0] : field.valueKind === "text" ? "003i" : (index + 1 + 27 / 10 ** field.decimals).toFixed(field.decimals),
         }));
         const readStored = () => sql<{
-          stage_key: string | null; field_key: string; value_numeric: string;
+          stage_key: string | null; field_key: string; value_numeric: string | null; value_text?: string | null;
           native_unit: string; decimals: number; machine_profile_version: number;
           observation_source: string;
-        }>(`select stage_key,field_key,value_numeric::text as value_numeric,native_unit,
+        }>(`select stage_key,field_key,value_numeric::text as value_numeric,value_text,native_unit,
           decimals,machine_profile_version,observation_source from public.treatment_setup_readings
           where session_block_id=$1 order by stage_key nulls first,field_key`, [blockId]);
         let blockId = "";
@@ -1234,15 +1238,21 @@ for (const device of [
         expect(await openMachinePanel(page), "enabled native fixture missing from server catalogue").toBe(true);
         await page.getByTestId("machine-select").selectOption(machineId);
         await page.getByTestId(`machine-mode-${mode.key}`).click({ timeout: T });
-        for (const held of ["blend", "omniblend", "multiblend", "thermolysis", "snap"]) {
+        for (const held of ["blend", "omniblend", "multiblend", "thermolysis", "snap"].filter((key) => !profile.modes.some((m) => m.key === key))) {
           await expect(page.getByTestId(`machine-mode-${held}`)).toHaveCount(0);
         }
         for (const stage of mode.stages) await expect(page.getByTestId("machine-setting-draft")).toContainText(stage.nativeLabel);
         for (const { field, value } of observations) {
           await expect(page.getByTestId(`field-label-${field.key}`)).toHaveText(field.nativeLabel);
-          await expect(page.getByTestId(`field-unit-${field.key}`)).toHaveText(`(${field.unit})`);
-          await expect(page.getByTestId(`reading-${field.key}`)).toHaveAttribute("step", String(10 ** -field.decimals));
-          await page.getByTestId(`reading-${field.key}`).fill(value);
+          const control = page.getByTestId(`reading-${field.key}`);
+          if (!field.valueKind || field.valueKind === "number") {
+            await expect(page.getByTestId(`field-unit-${field.key}`)).toHaveText(`(${field.unit})`);
+            await expect(control).toHaveAttribute("step", String(10 ** -field.decimals));
+          } else {
+            await expect(page.getByTestId(`field-unit-${field.key}`)).toHaveCount(0);
+          }
+          if (field.valueKind === "choice") await control.selectOption(value);
+          else await control.fill(value);
         }
         await noOverflow(page);
         await page.getByTestId("save-treatment-area").click({ timeout: T });
@@ -1253,8 +1263,8 @@ for (const device of [
         const saved = await readStored();
         for (const { stageKey, field, value } of observations) {
           expect(saved.find((row) => row.stage_key === stageKey && row.field_key === field.key)).toMatchObject({
-            value_numeric: value, native_unit: field.unit, decimals: field.decimals,
-            machine_profile_version: 2, observation_source: field.expectedSource,
+            ...(field.valueKind && field.valueKind !== "number" ? { value_numeric: null, value_text: value } : { value_numeric: value, value_text: null }), native_unit: field.unit, decimals: field.decimals,
+            machine_profile_version: profile.version, observation_source: field.expectedSource,
           });
         }
         const captures = await capturesFor(blockId);
@@ -1268,7 +1278,7 @@ for (const device of [
         await expect(history).toBeVisible({ timeout: T });
         for (const { field, value } of observations) {
           await expect(history).toContainText(field.nativeLabel);
-          await expect(history).toContainText(field.unit);
+          if (field.unit !== "none") await expect(history).toContainText(field.unit);
           await expect(history).toContainText(value);
           await expect(page.getByTestId(`reading-${field.key}`)).toHaveValue("");
         }
@@ -1292,7 +1302,7 @@ for (const device of [
           await expect(page.getByTestId(`reading-${field.key}`)).toHaveValue("");
           await expect(prior).toContainText(field.nativeLabel);
           await expect(prior).toContainText(value);
-          await expect(prior).toContainText(field.unit);
+          if (field.unit !== "none") await expect(prior).toContainText(field.unit);
         }
         expect(await readStored()).toEqual(saved);
         expect(await capturesFor(blockId)).toEqual(captures);
@@ -1300,4 +1310,6 @@ for (const device of [
       });
     }
   });
+}
+
 }

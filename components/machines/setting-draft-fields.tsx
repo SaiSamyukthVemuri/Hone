@@ -221,10 +221,21 @@ export function SettingDraftFields({
                           </span>
                         )}
                       </span>
-                      <input
-                        type="number"
-                        inputMode="decimal"
-                        step={f.decimals === 0 ? 1 : 1 / 10 ** f.decimals}
+                      {f.valueKind === "choice" ? (
+                        <select
+                          value={setting.values[k] ?? ""}
+                          onChange={(e) => setValue(setting.id, k, e.target.value)}
+                          disabled={frozen}
+                          data-testid={groups.length > 1 ? `reading-${setting.id}-${f.key}` : `reading-${f.key}`}
+                          className="min-h-[44px] rounded-md border border-neutral-300 px-3 py-2 text-base pointer-fine:text-sm"
+                        >
+                          <option value="">Choose…</option>
+                          {f.choices?.map((choice) => <option key={choice} value={choice}>{choice}</option>)}
+                        </select>
+                      ) : <input
+                        type={f.valueKind === "text" ? "text" : "number"}
+                        inputMode={f.valueKind === "text" ? "text" : "decimal"}
+                        step={f.valueKind === "text" ? undefined : f.decimals === 0 ? 1 : 1 / 10 ** f.decimals}
                         // NOT DISABLED by `editable: false`: that flag means
                         // she cannot change the value ON THE MACHINE, not that
                         // it cannot be charted, and nothing else populates it
@@ -242,7 +253,7 @@ export function SettingDraftFields({
                             : `reading-${f.key}`
                         }
                         className="min-h-[44px] rounded-md border border-neutral-300 px-3 py-2 text-base pointer-fine:text-sm dark:border-neutral-700 dark:bg-neutral-950"
-                      />
+                      />}
                       {f.advisory.map((note, i) => (
                         <span key={i} className="text-xs text-neutral-500">
                           {note}

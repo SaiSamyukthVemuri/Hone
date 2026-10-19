@@ -397,7 +397,8 @@ export type ReadingInputRow = {
  * The payload keeps a value and a reasoned absence distinct: `value` is sent as
  * a string so a recorded zero survives (a bare `0` would be indistinguishable
  * from absent once JSON-coerced), and an absence sends `absence_reason` with no
- * value at all. The database's XOR constraint refuses anything else.
+ * value at all. Exact text uses value_text, never a numeric encoding. The
+ * database requires exactly one of these representations.
  */
 export async function recordSetupGroup(
   db: MachineDb,
@@ -432,7 +433,7 @@ export async function recordSetupGroup(
     field_key: r.fieldKey,
     ...(r.value.kind === "value"
       ? { value: String(r.value.value) }
-      : { absence_reason: r.value.reason }),
+      : r.value.kind === "text" ? { value_text: r.value.value } : { absence_reason: r.value.reason }),
     native_unit: r.nativeUnit,
     decimals: r.decimals,
     observation_source: r.observationSource,
@@ -500,7 +501,8 @@ export type SetupSubmissionResult = {
  *
  * The per-reading payload is identical to `recordSetupGroup`'s and for the same
  * reasons: `value` goes as a string so a recorded zero survives JSON, and an
- * absence sends `absence_reason` with no value at all.
+ * absence sends `absence_reason` with no value at all; exact text uses
+ * `value_text` without trimming or numeric conversion.
  */
 export async function recordSetupSubmission(
   db: MachineDb,
@@ -543,7 +545,7 @@ export async function recordSetupSubmission(
         field_key: r.fieldKey,
         ...(r.value.kind === "value"
           ? { value: String(r.value.value) }
-          : { absence_reason: r.value.reason }),
+          : r.value.kind === "text" ? { value_text: r.value.value } : { absence_reason: r.value.reason }),
         native_unit: r.nativeUnit,
         decimals: r.decimals,
         observation_source: r.observationSource,
@@ -662,6 +664,7 @@ type ReadingRow = {
   channels: number[] | null;
   stage_key: string | null;
   field_key: string;
+  value_text?: string | null;
   value_numeric: string | number | null;
   absence_reason: string | null;
   native_unit: string;
@@ -693,7 +696,7 @@ function toReading(r: ReadingRow): RecordedReading {
     // nothing for these magnitudes, but the string is parsed once and the
     // native precision is carried separately in `decimals` regardless.
     value:
-      r.value_numeric != null
+      r.value_text != null ? { kind: "text", value: r.value_text } : r.value_numeric != null
         ? { kind: "value", value: Number(r.value_numeric) }
         : {
             kind: "absent",
@@ -775,8 +778,8 @@ export async function publishedModesFor(
  * precision, then made the row immutable. The application was validating; the
  * authority boundary was not.
  *
- * OWNER ONLY, enforced in the database. Publishing a contract is an
- * administrative act, like registering a unit, not part of charting.
+ * DEPLOYMENT AUTHORITY ONLY, enforced in the database; never a practitioner
+ * registration or charting action.
  */
 export async function publishMachineContract(
   db: MachineDb,
@@ -804,6 +807,8 @@ export async function publishMachineContract(
        * that forgets the flag gets the stricter reading.
        */
       optional?: boolean;
+      valueKind?: "number" | "text" | "choice";
+      choices?: string[];
     }>;
   },
 ): Promise<MachineOutcome<number>> {
@@ -820,6 +825,7 @@ export async function publishMachineContract(
       decimals: f.decimals,
       quantity: f.quantity,
       optional: f.optional ?? false,
+      ...(f.valueKind && f.valueKind !== "number" ? { value_kind: f.valueKind, choices: f.choices ?? [] } : {}),
     })),
   });
   if (error) {

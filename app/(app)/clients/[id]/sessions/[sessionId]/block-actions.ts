@@ -1481,7 +1481,7 @@ export async function createTreatmentAreaWithEntryAction(
             // it is the same rule and not a new one.
             ...(r.value.kind === "value"
               ? { value: String(r.value.value) }
-              : { absence_reason: r.value.reason }),
+              : r.value.kind === "text" ? { value_text: r.value.value } : { absence_reason: r.value.reason }),
             native_unit: r.nativeUnit,
             decimals: r.decimals,
             observation_source: r.observationSource,
