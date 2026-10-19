@@ -70,27 +70,35 @@ export async function resolveDeliveryIncidentAction(formData: FormData): Promise
   // the one place a reviewer would look to find out what the incident was
   // closed as.
   //
-  // The command cannot tell us what IS recorded, so the row is read on this
-  // path only. A direct service-role read in an admin ACTION follows
-  // app/admin/ops-alerts/actions.ts; the no-`.from(` rule is about the admin
-  // PAGE, whose reads must all go through the support commands.
+  // 0215 revokes direct service-role SELECT. The granted support command
+  // includes recent resolved rows when asked, but is capped at 300/14 days.
+  // An omitted row therefore cannot prove idempotent success.
   //
   // Same-value `already_resolved` stays idempotent success: the outcome the
   // caller asked for is the outcome on record.
   let recordedResolution: string | null = null;
   let conflicted = false;
   if (!error && result === "already_resolved") {
-    const { data: row } = await admin
-      .from("delivery_incidents")
-      .select("resolution")
-      .eq("id", incidentId)
-      .maybeSingle();
-    recordedResolution = (row?.resolution as string | null) ?? null;
+    try {
+      const { data: rows, error: readError } = await admin.rpc("support_delivery_incidents", {
+        p_include_resolved: true,
+      });
+      const matches = Array.isArray(rows)
+        ? rows.filter((row) => row?.incident_id === incidentId && typeof row.resolved_at === "string")
+        : [];
+      if (!readError && matches.length === 1 && typeof matches[0].resolution === "string" &&
+          RESOLUTIONS.has(matches[0].resolution)) {
+        recordedResolution = matches[0].resolution;
+      }
+    } catch {
+      // Unknown is not idempotent success; still audit the command outcome.
+    }
     conflicted = recordedResolution !== null && recordedResolution !== resolution;
   }
 
+  const repeatUnverified = !error && result === "already_resolved" && recordedResolution === null;
   const succeeded =
-    !error && (result === "resolved" || (result === "already_resolved" && !conflicted));
+    !error && (result === "resolved" || (result === "already_resolved" && !conflicted && !repeatUnverified));
 
   await logAdminAction({
     actorUserId: user.id,
@@ -99,12 +107,12 @@ export async function resolveDeliveryIncidentAction(formData: FormData): Promise
     targetId: incidentId,
     action: "delivery_incident_resolved",
     outcome: succeeded ? "succeeded" : "failed",
-    // On a conflict the submitted word is DELIBERATELY ABSENT: it was not
+    // On a conflicting or unverified repeat the submitted word is ABSENT: it was not
     // applied, and recording it is what made the old audit misleading. What is
     // recorded instead is the stored resolution and the fact that nothing moved.
-    metadata: conflicted
+    metadata: conflicted || repeatUnverified
       ? {
-          result: "already_resolved_conflict",
+          result: repeatUnverified ? "already_resolved_unknown" : "already_resolved_conflict",
           applied: false,
           recorded_resolution: recordedResolution,
         }
@@ -112,9 +120,11 @@ export async function resolveDeliveryIncidentAction(formData: FormData): Promise
   });
   if (!succeeded) {
     throw new Error(
-      conflicted
-        ? `Already resolved as "${recordedResolution}". Your resolution was not applied.`
-        : "Failed to resolve the incident.",
+      repeatUnverified
+        ? "Already resolved; the recorded resolution could not be verified. Your resolution was not applied."
+        : conflicted
+          ? `Already resolved as "${recordedResolution}". Your resolution was not applied.`
+          : "Failed to resolve the incident.",
     );
   }
 
