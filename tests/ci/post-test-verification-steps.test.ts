@@ -151,12 +151,14 @@ function guardConjuncts(cond: string | undefined): string[] | null {
   return atoms;
 }
 
-/** Does this condition still run when an earlier step has failed? */
+/** Does this condition run after either success or failure of earlier steps? */
 function survivesFailure(cond: string | undefined): boolean {
   const atoms = guardConjuncts(cond);
   if (!atoms?.some((a) => a === "!cancelled()" || a === "always()")) return false;
-  // Both success() and !failure() suppress the check after an earlier failure.
-  return !atoms.some((a) => requiresSuccess(a) || a === "!failure()");
+  // success()/!failure() hide failures; failure()/!success() hide clean runs.
+  return !atoms.some((a) =>
+    requiresSuccess(a) || ["!failure()", "failure()", "!success()"].includes(a),
+  );
 }
 
 /**
@@ -340,6 +342,39 @@ describe("the instrument works at all", () => {
 });
 
 describe("ci.yml: no verification step is hidden behind an earlier failure", () => {
+  it("standalone checks require checkout and npm checks also require Node setup", () => {
+    const steps = jobs(CI_BODY).find(([id]) => id === "validate")?.[1].steps ?? [];
+    for (const [command, needsNode] of [
+      ["git diff --check HEAD", false],
+      ["npm run check:stripe-gates", true],
+      ["npm run check:migration-extensions", true],
+    ] as const) {
+      const step = steps.find((s) => s.run === command);
+      expect(step, command).toBeTruthy();
+      const required = needsNode ? ["checkout", "node_setup"] : ["checkout"];
+      expect(referencedStepIds(step?.if), command).toEqual(required);
+      for (const id of required) {
+        expect(requiresStepSuccess(step?.if, id), `${command}: ${id}`).toBe(true);
+        const prerequisite = steps.find((s) => s.id === id);
+        expect(prerequisite?.uses, id).toMatch(
+          id === "checkout" ? /^actions\/checkout@/ : /^actions\/setup-node@/,
+        );
+        expect(steps.indexOf(prerequisite!)).toBeLessThan(steps.indexOf(step!));
+      }
+    }
+  });
+
+  it("CONTROL: failure-only status atoms must not hide checks on success", () => {
+    for (const condition of [
+      "${{ !cancelled() && failure() }}",
+      "${{ always() && failure() }}",
+      "${{ !cancelled() && !success() }}",
+      "${{ always() && !success() }}",
+    ]) {
+      expect(survivesFailure(condition), condition).toBe(false);
+    }
+  });
+
   it("standalone verification checks do not depend on npm ci", () => {
     const steps = jobs(CI_BODY).find(([id]) => id === "validate")?.[1].steps ?? [];
     for (const command of [
@@ -350,7 +385,7 @@ describe("ci.yml: no verification step is hidden behind an earlier failure", () 
       const step = steps.find((s) => s.run === command);
       expect(step, `standalone check must exist: ${command}`).toBeTruthy();
       expect(survivesFailure(step?.if), command).toBe(true);
-      expect(referencedStepIds(step?.if), `${command} needs no installed modules`).toEqual([]);
+      expect(referencedStepIds(step?.if), `${command} needs no installed modules`).not.toContain("deps");
     }
   });
 

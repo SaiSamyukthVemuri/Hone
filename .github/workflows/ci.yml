@@ -320,6 +320,7 @@ jobs:
 
     steps:
       - name: Checkout repository
+        id: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -329,6 +330,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Node.js
+        id: node_setup
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           # No .nvmrc and no engines.node in package.json today.
@@ -378,10 +380,8 @@ jobs:
       - name: Whitespace + conflict-marker check
         # CI-HARDEN-POSTTEST: see the drift-check step's note. A verification
         # step must not be skipped behind an earlier failure.
-        # Standalone: Git or Node built-ins only, so an npm ci failure must
-        # not hide this result (Codex 4309753071). Toolchain-dependent steps
-        # retain their own prerequisite gates.
-        if: ${{ !cancelled() }}
+        # Git needs a checked-out tree, but no Node setup or npm install.
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         # Catches stray trailing whitespace + leftover merge-conflict
         # markers. Matches the manual `git diff --check` step every
         # local PR is asked to run.
@@ -390,19 +390,15 @@ jobs:
       - name: Stripe / payment safety grep gates
         # CI-HARDEN-POSTTEST: see the drift-check step's note. A verification
         # step must not be skipped behind an earlier failure.
-        # Standalone: Git or Node built-ins only, so an npm ci failure must
-        # not hide this result (Codex 4309753071). Toolchain-dependent steps
-        # retain their own prerequisite gates.
-        if: ${{ !cancelled() }}
+        # Node built-ins need checkout and Node setup, but no npm install.
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && steps.node_setup.outcome == 'success' }}
         run: npm run check:stripe-gates
 
       - name: Migration extension-qualification check
         # CI-HARDEN-POSTTEST: see the drift-check step's note. A verification
         # step must not be skipped behind an earlier failure.
-        # Standalone: Git or Node built-ins only, so an npm ci failure must
-        # not hide this result (Codex 4309753071). Toolchain-dependent steps
-        # retain their own prerequisite gates.
-        if: ${{ !cancelled() }}
+        # Node built-ins need checkout and Node setup, but no npm install.
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && steps.node_setup.outcome == 'success' }}
         # Fresh-managed-project fence (RC hardening): every pgcrypto/uuid-ossp call
         # in supabase/migrations must be extensions.<fn>-qualified so the
         # 0001->NNNN chain applies on a FRESH managed project, where `extensions`
