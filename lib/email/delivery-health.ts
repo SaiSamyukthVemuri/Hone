@@ -33,14 +33,23 @@ export type HealthFinding = {
     | "email_delivery_receipts_exhausted"
     | "email_delivery_receipts_quarantined"
     | "email_delivery_unreported"
-    | "email_delivery_sweep_failing";
+    | "email_delivery_sweep_failing"
+    | "email_delivery_sweep_stale";
   severity: "warning" | "critical";
   message: string;
   details: Record<string, number | string | null>;
 };
 
+// Held activation plan: /api/cron/email-delivery-sweep at `30 10 * * *`
+// (docs/runbooks/delivery-monitoring-activation.md §D5 in the integration
+// candidate). Daily cadence × 2 allows one missed run plus scheduling jitter.
+// This is an expected schedule, NOT registration or activation of that cron.
+export const EMAIL_SWEEP_EXPECTED_INTERVAL_SECONDS = 24 * 60 * 60;
+export const EMAIL_SWEEP_INTERVAL_MARGIN = 2;
+
 /** Thresholds, each named for the failure it catches. */
 export const HEALTH_THRESHOLDS = {
+  staleSweepSeconds: EMAIL_SWEEP_EXPECTED_INTERVAL_SECONDS * EMAIL_SWEEP_INTERVAL_MARGIN,
   /** A receipt the sweep should have finished within a few runs. */
   stalePendingSeconds: 15 * 60,
   /** A pending receipt this old means processing has stopped altogether. */
@@ -56,6 +65,7 @@ function int(value: unknown): number {
 export function healthFindings(
   h: EmailDeliveryHealth,
   limits: typeof HEALTH_THRESHOLDS = HEALTH_THRESHOLDS,
+  nowMs: number = Date.now(),
 ): HealthFinding[] {
   const out: HealthFinding[] = [];
   if (h.oldestPendingSeconds !== null && h.oldestPendingSeconds > limits.stalePendingSeconds) {
@@ -98,6 +108,23 @@ export function healthFindings(
       severity: "warning",
       message: `The last email delivery recovery sweep failed to process ${h.lastSweepFailed} event(s).`,
       details: { last_sweep_failed: h.lastSweepFailed, last_sweep_at: h.lastSweepAt },
+    });
+  }
+  const sweepMs = h.lastSweepAt === null ? NaN : Date.parse(h.lastSweepAt);
+  const sweepAgeSeconds = Number.isFinite(sweepMs) ? (nowMs - sweepMs) / 1000 : null;
+  if (sweepAgeSeconds === null || sweepAgeSeconds > limits.staleSweepSeconds) {
+    out.push({
+      event: "email_delivery_sweep_stale",
+      severity: "warning",
+      message: sweepAgeSeconds === null
+        ? "Email delivery recovery has no usable sweep heartbeat; its daily run is unverified."
+        : `Email delivery recovery has not reported a sweep within ${limits.staleSweepSeconds / 3600} hours (daily schedule × ${EMAIL_SWEEP_INTERVAL_MARGIN} margin).`,
+      details: {
+        last_sweep_at: h.lastSweepAt,
+        sweep_age_seconds: sweepAgeSeconds,
+        expected_interval_seconds: EMAIL_SWEEP_EXPECTED_INTERVAL_SECONDS,
+        stale_after_seconds: limits.staleSweepSeconds,
+      },
     });
   }
   return out;

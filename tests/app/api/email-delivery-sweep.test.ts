@@ -73,6 +73,7 @@ const call = (auth?: string) =>
   GET(new Request("https://hone.care/api/cron/email-delivery-sweep", { headers: auth ? { authorization: auth } : {} }));
 
 beforeEach(() => {
+  vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-12T00:00:00Z"));
   h.rpc = {};
   h.calls = [];
   h.openAlerts = new Set();
@@ -233,4 +234,22 @@ describe("findings become DEDUPED ops alerts", () => {
     expect(body.raised).toEqual(["email_delivery_sweep_failing"]);
     expect(h.calls).not.toContain("record_email_sweep_run");
   });
+});
+
+
+it("reports and deduplicates a missing heartbeat at warning without critical email activation", async () => {
+  h.rpc = {
+    claim_email_provider_events: [ok([])],
+    record_email_sweep_run: [{ data: null, error: { message: "write failed" } }],
+    email_delivery_health: [healthRow({ last_sweep_at: null, last_sweep_failed: null })],
+  };
+  const body = await (await call("Bearer sweep-test-secret")).json();
+  expect(body.raised).toContain("email_delivery_sweep_stale");
+  expect(h.alerts.find((a) => a.event === "email_delivery_sweep_stale")).toMatchObject({ severity: "warning" });
+  expect(h.alerts.every((a) => a.severity !== "critical")).toBe(true);
+  h.openAlerts.add("email_delivery_sweep_stale");
+  h.alerts = [];
+  const again = await (await call("Bearer sweep-test-secret")).json();
+  expect(again.raised).not.toContain("email_delivery_sweep_stale");
+  expect(h.alerts.some((a) => a.event === "email_delivery_sweep_stale")).toBe(false);
 });

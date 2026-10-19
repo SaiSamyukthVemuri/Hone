@@ -167,7 +167,17 @@ export async function closeDeliveryConcernAction(formData: FormData): Promise<vo
     p_resolution: resolution,
   });
   const result = typeof data === "string" ? data : null;
-  const succeeded = !error && (result === "closed" || result === "already_closed");
+  let recordedResolution: string | null = null;
+  if (!error && result === "already_closed") {
+    const { data: row, error: readError } = await admin
+      .from("delivery_concerns")
+      .select("resolution")
+      .eq("id", concernId)
+      .maybeSingle();
+    if (!readError && typeof row?.resolution === "string") recordedResolution = row.resolution;
+  }
+  const repeatNotApplied = !error && result === "already_closed" && recordedResolution !== resolution;
+  const succeeded = !error && (result === "closed" || (result === "already_closed" && !repeatNotApplied));
 
   await logAdminAction({
     actorUserId: user.id,
@@ -176,10 +186,16 @@ export async function closeDeliveryConcernAction(formData: FormData): Promise<vo
     targetId: concernId,
     action: "delivery_concern_closed",
     outcome: succeeded ? "succeeded" : "failed",
-    metadata: { resolution, result: result ?? "error" },
+    metadata: repeatNotApplied
+      ? { result: "already_closed_not_applied", applied: false, recorded_resolution: recordedResolution }
+      : { resolution, result: result ?? "error" },
   });
   if (!succeeded) {
-    throw new Error("Failed to close the concern.");
+    throw new Error(repeatNotApplied
+      ? recordedResolution === null
+        ? "Already closed; the recorded resolution could not be verified. Your resolution was not applied."
+        : `Already closed as "${recordedResolution}". Your resolution was not applied.`
+      : "Failed to close the concern.");
   }
 
   revalidatePath("/admin/delivery");

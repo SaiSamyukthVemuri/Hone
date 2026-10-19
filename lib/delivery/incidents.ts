@@ -81,14 +81,20 @@ const READING: Readonly<Record<IncidentChannel, Partial<Record<IncidentFailureCl
   },
 };
 
-export function describeIncident(row: Pick<OwnerIncident, "channel" | "purpose" | "failure_class">): {
+export function describeIncident(row: Pick<OwnerIncident, "channel" | "purpose" | "failure_class"> & Partial<Pick<OwnerIncident, "last_reason">>): {
   title: string;
   meaning: string;
   nextStep: string;
   owner: "studio" | "hone";
 } {
   const channelWord = row.channel === "email" ? "email" : "text";
-  const reading = READING[row.channel]?.[row.failure_class] ?? {
+  const reading = row.channel === "email" && row.failure_class === "refused" && row.last_reason === "invalid_to_address"
+    ? {
+        meaning: "The email provider refused the client's invalid email address.",
+        nextStep: "Check the client's email address with them and update it.",
+        owner: "studio" as const,
+      }
+    : READING[row.channel]?.[row.failure_class] ?? {
     meaning: "The provider reported a problem sending it.",
     nextStep: "Contact Hone support.",
     owner: "hone" as const,

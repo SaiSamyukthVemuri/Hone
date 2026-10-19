@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { describeIncident, purposeLabel } from "@/lib/delivery/incidents";
@@ -56,7 +56,10 @@ const incident = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+beforeEach(() => { vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-19T12:00:00Z")); });
+
 afterEach(() => {
+  vi.restoreAllMocks();
   h.answer = { data: [], error: null };
   c.answer = { data: [], error: null };
   h.calls = [];
@@ -120,7 +123,7 @@ describe("OwnerDeliveryCard", () => {
     };
     const html = await render();
     expect(html).not.toContain("No delivery problems reported");
-    expect(html).toContain("No open delivery problems. 2 problems were reported in the last 14 days and since resolved.");
+    expect(html).toContain("No open delivery problems. 2 problems were resolved in the last 14 days.");
     expect(html).not.toContain("not delivered");
   });
 
@@ -131,7 +134,7 @@ describe("OwnerDeliveryCard", () => {
     };
     const html = await render();
     expect(html).toContain("1 open delivery problem shown.");
-    expect(html).toContain("1 problem was reported in the last 14 days and since resolved.");
+    expect(html).toContain("1 problem was resolved in the last 14 days.");
     expect(html).toContain("24-hour reminder email not delivered");
     expect(html).toContain("3 times");
     expect(html).toContain("The client&#x27;s mail server rejected the email.");
@@ -177,6 +180,7 @@ describe("the summary claim is derived from EVERY category (Codex P2 4307428928)
     ledger_status_at_report: "delivered",
     reported_at: "2026-10-12T16:00:00Z",
     state: "open",
+    closed_at: "2026-10-12T16:00:00Z",
     ...over,
   });
   const NONE_REPORTED = "No delivery problems reported in the last 14 days.";
@@ -252,6 +256,19 @@ describe("the summary claim is derived from EVERY category (Codex P2 4307428928)
     expect(await render()).toContain("2 reports from your studio were closed in the last 14 days.");
   });
 
+  it("counts only recent closed_at values in the 14-day note (4307824374)", async () => {
+    h.answer = { data: [], error: null };
+    c.answer = { data: [
+      concern({ state: "closed", closed_at: "2026-10-19T11:00:00Z" }),
+      concern({ concern_id: "older", state: "closed", closed_at: "2026-09-29T12:00:00Z" }),
+      concern({ concern_id: "boundary", state: "closed", closed_at: "2026-10-05T12:00:00Z" }),
+      concern({ concern_id: "unknown", state: "closed", closed_at: null }),
+    ], error: null };
+    const html = await render();
+    expect(html).toContain("1 report from your studio was closed in the last 14 days.");
+    expect(html).not.toContain("4 reports");
+  });
+
   it("CONTROL: a genuinely empty fortnight still says nothing was reported", async () => {
     // So the inversion above has not simply made the denial unreachable.
     h.answer = { data: [], error: null };
@@ -292,7 +309,7 @@ describe("the owner card's capped read is not a total (Codex P2 4307695060)", ()
   // resolved rows sort LAST they are the first thing the cap removes, which
   // would distort the resolved note silently as well.
   const CAP = 200;
-  const INDICATOR = "Showing the most recent 200 incidents. Older incidents are not listed.";
+  const INDICATOR = "Showing the most recent 200 incidents. Older incidents, if any, are not listed.";
 
   it("AT the cap: says so, and the count reads as SHOWN", async () => {
     h.answer = {
@@ -316,7 +333,7 @@ describe("the owner card's capped read is not a total (Codex P2 4307695060)", ()
       error: null,
     };
     const html = await render();
-    expect(html).not.toContain("Older incidents are not listed");
+    expect(html).not.toContain("Older incidents, if any, are not listed");
     // ...and it still reports the incidents it does have.
     expect(html).toContain("shown");
   });
@@ -324,7 +341,7 @@ describe("the owner card's capped read is not a total (Codex P2 4307695060)", ()
   it("an empty studio says neither", async () => {
     h.answer = { data: [], error: null };
     const html = await render();
-    expect(html).not.toContain("Older incidents are not listed");
+    expect(html).not.toContain("Older incidents, if any, are not listed");
     expect(html).toContain("No delivery problems reported in the last 14 days.");
   });
 });
@@ -352,4 +369,15 @@ describe("describeIncident", () => {
     expect(purposeLabel("waitlist_invitation")).toBe("Waitlist invitation");
     expect(purposeLabel("future_purpose")).toBe("Future purpose");
   });
+});
+
+
+it("assigns only invalid-address refusals to studio data correction (4307826148)", () => {
+  const row = { channel: "email" as const, purpose: "appointment_reminder_24h", failure_class: "refused" as const };
+  expect(describeIncident({ ...row, last_reason: "invalid_to_address" })).toMatchObject({
+    owner: "studio", nextStep: "Check the client's email address with them and update it.",
+  });
+  for (const last_reason of [null, "provider_refused", "invalid_api_key"]) {
+    expect(describeIncident({ ...row, last_reason }).owner).toBe("hone");
+  }
 });
