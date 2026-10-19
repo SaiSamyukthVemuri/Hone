@@ -33,12 +33,12 @@ This section previously carried a "(through 2026-07-27)" heading while containin
 
 **Coverage gap, stated rather than hidden:** this table covers PRs **#357–#479**, **#601**,
 **#629**, **#630**, and — added by the 2026-08-26 reconciliation and kept current through each
-production refresh since — **every** first-parent merge in `b9e0003f..78c1d640`, all
-**167** PR merges among them (**#632–#931**, plus **#631**, whose number sits below that floor but
+production refresh since — **every** first-parent merge in `b9e0003f..37b0ed82`, all
+**169** PR merges among them (**#632–#935**, plus **#631**, whose number sits below that floor but
 whose merge does not — see below). ⚠️ **EXTENDED 2026-10-12 by CANON-REFRESH-2026-10-12:**
 the range previously ended at `410e5039` (81 merges, the 2026-09-21 extension described next);
 **56** rows were backfilled from the first-parent graph and each merge's own diff, and the
-pre-existing `#773` row was moved, unchanged, to its first-parent position. ⚠️ **EXTENDED 2026-10-19 by CANON-REFRESH-2026-10-19b:** #931 and #907 added through `78c1d640` (167 merges), no migration. ⚠️ **EXTENDED 2026-10-19 by CANON-REFRESH-2026-10-19:** #929 added through `34f4800a` (165 merges), runtime-bearing, no migration. ⚠️ **EXTENDED 2026-10-18 by CANON-REFRESH-2026-10-18b:** 1 row added, `#894`,
+pre-existing `#773` row was moved, unchanged, to its first-parent position. ⚠️ **EXTENDED 2026-10-19 by CANON-REFRESH-2026-10-19c:** #935 and #928 added through `37b0ed82` (169 merges), no application runtime change or migration. ⚠️ **EXTENDED 2026-10-19 by CANON-REFRESH-2026-10-19b:** #931 and #907 added through `78c1d640` (167 merges), no migration. ⚠️ **EXTENDED 2026-10-19 by CANON-REFRESH-2026-10-19:** #929 added through `34f4800a` (165 merges), runtime-bearing, no migration. ⚠️ **EXTENDED 2026-10-18 by CANON-REFRESH-2026-10-18b:** 1 row added, `#894`,
 taking the range through `f9cd9013` (164 merges); `#894` is runtime-bearing. ⚠️ **EXTENDED 2026-10-18 by CANON-REFRESH-2026-10-18:** 3 rows added, `#915`, `#919`, `#918`,
 taking the range through `aaf3042b` (163 merges); only `#918` is runtime-bearing (`#919` is CI only). ⚠️ **EXTENDED 2026-10-17 by CANON-REFRESH-2026-10-17c:** 3 rows added, `#911`, `#913`, `#912`,
 taking the range through `6acea261` (160 merges); `#913` and `#912` are runtime-bearing. ⚠️ **EXTENDED 2026-10-17 by CANON-REFRESH-2026-10-17b:** 3 rows added, `#909`, `#842`, `#891`,
@@ -70,7 +70,7 @@ historical completeness. Do not read a missing row as "not shipped".
 
 **The block is complete, not sampled — and completeness is over the GIT RANGE, not over a
 span of PR numbers.** It was enumerated mechanically
-(`git log --merges --first-parent b9e0003f..78c1d640`, 167 merges; 165 through `34f4800a`; 164 through `f9cd9013`; 163 through `aaf3042b`; 160 through `6acea261`; 157 through `62ff27b2`; 154 through `b08845ce`; 152 through `0ae33bd3`; 150 through `1ae096e2`; 145 through `ce133c18` on 2026-10-14; 140 through `6f7281bb` on 2026-10-13; 138 through `d5efa20a` on 2026-10-12; it was `b9e0003f..410e5039`, 81 merges, at the 2026-09-21 extension) rather than recalled, so the
+(`git log --merges --first-parent b9e0003f..37b0ed82`, 169 merges; 167 through `78c1d640`; 165 through `34f4800a`; 164 through `f9cd9013`; 163 through `aaf3042b`; 160 through `6acea261`; 157 through `62ff27b2`; 154 through `b08845ce`; 152 through `0ae33bd3`; 150 through `1ae096e2`; 145 through `ce133c18` on 2026-10-14; 140 through `6f7281bb` on 2026-10-13; 138 through `d5efa20a` on 2026-10-12; it was `b9e0003f..410e5039`, 81 merges, at the 2026-09-21 extension) rather than recalled, so the
 current state can be reconstructed from shipped history without a gap. Each row records whether
 the merge was **runtime-bearing**, decided by changed-path analysis rather than by the PR title.
 
@@ -83,6 +83,8 @@ enumeration of `b9e0003f..bf6f09c4` while omitting `#631` entirely.
 
 | PR | Migration | Status | What shipped | Notes |
 |---|---|---|---|---|
+| **#928** | none | **CI / tests only — NOT runtime-bearing** | Verification steps remain eligible after an earlier failure | Merged `37b0ed82` at `2026-10-19T04:24:49Z` from `d32796fc`. Two files: CI workflow and its regression suite; no shipping application file or migration. Vercel status success `2026-10-19T04:26:38Z`, deployment `Fb6opkLfewSj2JNi9PWziGT6vo5i`; automatic production CI39199339032 still running at sync. Original exact-head CI39195263987 green with skips retained in current-state. Application runtime remains78c1d640. |
+| **#935** | none | **Documentation only — NOT runtime-bearing** | Record deployed #907 gallery and #931 | Merged `9965580e` at `2026-10-19T04:19:41Z` from `ddfaffdb`. Three production docs, no migration. Independently verified Vercel Ready/production/hone.care; automatic CI39198912242 green, 374 canonical checks, runtime lanes skipped. |
 | **#907** | none | **Runtime-bearing** | Ungrouped visit photo gallery | Sam merged `78c1d640` at `2026-10-19T03:19:52Z` from `ec6d4fea`. Six files, four shipping, no migration. Vercel `dpl_Fv99Z9BctuYxg9UcdAMV2DhGatAc` Ready, production, aliases include hone.care (read-only CLI inspection). Standalone local storage B3 1/1 passed; prior CI 20,904 unit pass, 3,570 DB pass / eight skipped, 601 browser pass / eleven skipped. Production CI39194178406 pending at sync; live gallery acceptance unmeasured. Portrait and grouping not deployed. |
 | **#931** | none | **Documentation only — NOT runtime-bearing** | Production record through #929 | Merged `e102d816`; deployment and automatic canonical-docs checks passed per Sam. Resolved, not a release blocker. |
 | **#929** | none | **Runtime-bearing** | Photo-grid re-mint recovers around hydration through an abortable signed-URL route | Merged `34f4800a` on `2026-10-19T00:47:56Z` from head `7afdb443`. Own first-parent diff: 26 files, 9 shipping, no migration; classifier application/database/security/browser_core, T3 baseline. Vercel GitHub status success `2026-10-19T00:50:07Z`, deployment link `Aoqji68MVSiqp3vTC9eLQme7pcTs`; Sam reports completed deployment, target/aliases and live behavior not independently re-probed here. Production CI `39182395633`: DB and all four extended browser shards plus aggregator passed; docs-only/payment/Google/mobile skipped; validate failed only stale canonical-production-facts A3/A5. No new human acceptance asserted. |

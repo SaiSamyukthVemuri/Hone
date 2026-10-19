@@ -320,6 +320,7 @@ jobs:
 
     steps:
       - name: Checkout repository
+        id: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -329,6 +330,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Node.js
+        id: node_setup
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           # No .nvmrc and no engines.node in package.json today.
@@ -338,6 +340,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
+        id: deps
         run: npm ci
 
       - name: Typecheck
@@ -363,6 +366,11 @@ jobs:
           NODE_OPTIONS: --require ./scripts/block-google-fonts.cjs
 
       - name: Unit tests
+        # Same mirror rule. `Lint` runs above with no `if:`, so a lint failure
+        # used to skip the entire unit suite — and unit results do not depend
+        # on lint, typecheck or the build in any way (vitest runs from source).
+        # Gated on the toolchain only.
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: npm test
         env:
           # enforce: pushes to production and production-record changes;
@@ -370,15 +378,27 @@ jobs:
           CANONICAL_FRESHNESS: ${{ (github.event_name != 'pull_request' || needs.changes.outputs.production_record == 'true') && 'enforce' || 'measure' }}
 
       - name: Whitespace + conflict-marker check
+        # CI-HARDEN-POSTTEST: see the drift-check step's note. A verification
+        # step must not be skipped behind an earlier failure.
+        # Git needs a checked-out tree, but no Node setup or npm install.
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         # Catches stray trailing whitespace + leftover merge-conflict
         # markers. Matches the manual `git diff --check` step every
         # local PR is asked to run.
         run: git diff --check HEAD
 
       - name: Stripe / payment safety grep gates
+        # CI-HARDEN-POSTTEST: see the drift-check step's note. A verification
+        # step must not be skipped behind an earlier failure.
+        # Node built-ins need checkout and Node setup, but no npm install.
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && steps.node_setup.outcome == 'success' }}
         run: npm run check:stripe-gates
 
       - name: Migration extension-qualification check
+        # CI-HARDEN-POSTTEST: see the drift-check step's note. A verification
+        # step must not be skipped behind an earlier failure.
+        # Node built-ins need checkout and Node setup, but no npm install.
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && steps.node_setup.outcome == 'success' }}
         # Fresh-managed-project fence (RC hardening): every pgcrypto/uuid-ossp call
         # in supabase/migrations must be extensions.<fn>-qualified so the
         # 0001->NNNN chain applies on a FRESH managed project, where `extensions`
@@ -524,6 +544,7 @@ jobs:
         run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 
       - name: Apply full migration chain from scratch
+        id: db_chain
         # Fails the job if ANY migration 0001-current cannot apply to
         # an empty database, or if any policy/function/trigger SQL
         # fails to compile. This is itself a guarantee no static test
@@ -540,9 +561,50 @@ jobs:
         run: npm run check:fresh-managed
 
       - name: DB/RLS integration tests
+        # THE MIRROR RULE: a VERIFICATION must not hide a TEST either.
+        # `Fresh-managed extension proof` runs just above with no `if:`, so a
+        # red extension proof used to SKIP this entire suite — one check
+        # costing every DB/RLS result in the lane. Gated on the migration chain
+        # (transitively: install, start, reset) and NOT on the proof above it.
+        if: ${{ !cancelled() && steps.db_chain.outcome == 'success' }}
         run: npm run test:db
 
       - name: Generated types drift check
+        # CI-HARDEN-POSTTEST. Runs even when an EARLIER step failed, because a
+        # step with no `if:` inherits `success()` and is silently SKIPPED behind
+        # one. `check:db-types` sat unreachable behind `test:db` on the whole G1
+        # stack, where test:db fails on an inherited pending-suffix hole, so a
+        # REAL drift (0222's practitioners.last_public_assignment_at missing from
+        # the hand-rolled type) went unseen until a composed branch happened to
+        # make test:db pass. A verification step must not be hidden by the
+        # failure of the thing it verifies alongside.
+        #
+        # `!cancelled()` rather than `always()`: on a CANCELLED run (a shard cut
+        # at its hard timeout) `always()` would still run these and report their
+        # output as if the run had completed, and this repository has a long
+        # history of cancellations being misread as test failures. This runs on
+        # success and on failure, and stops at cancellation.
+        #
+        # The job's overall result is unchanged: a failing step still fails the
+        # job, this only stops a later check being skipped.
+        #
+        # GATED ON THE RESET, NOT MERELY ON `!cancelled()` (Codex P2 4307392979).
+        # `scripts/check-db-types.mjs` states its own prerequisite — "supabase db
+        # start && supabase db reset --local" — so running it when the stack
+        # failed to start, or the chain failed to apply, generates BOGUS schema
+        # drift against an absent or half-migrated database: a misleading
+        # secondary failure stacked on the real one, which is the opposite of
+        # what this change is for.
+        #
+        # `steps.db_chain.outcome == 'success'` covers the whole prerequisite
+        # chain transitively: if `Start local Supabase` fails, the reset step is
+        # skipped, its outcome is 'skipped' rather than 'success', and this stays
+        # skipped too.
+        #
+        # It deliberately does NOT depend on `Fresh-managed extension proof` or
+        # on the tests. Those are VERIFICATIONS, and gating one verification on
+        # another is exactly the hiding this change removes.
+        if: ${{ !cancelled() && steps.db_chain.outcome == 'success' }}
         # PR #221. Regenerates types from the just-migrated LOCAL
         # database (supabase gen types typescript --local) and
         # compares column sets exactly, both directions, against the
