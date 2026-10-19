@@ -14,13 +14,15 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-19, hosted 0212; #846 branch carries 0215 and allocated 0236)
+## Current state (verified 2026-10-19, post-0212 apply; #846 branch carries 0215 and allocated 0236)
 
 > **0236 IS AUTHORED AND PENDING on Team #846, branch `feat/delivery-visibility-02`, at published head `3367f289f82fa5f38967e2825c345933c0d5eca6`.** `0236_delivery_incident_retained_failures.sql` atomically replaces the existing owner RPC return shape with a partial view of up to 200 still-retained failed appointment links and reason classifications. It keeps the existing owner/studio authorization and authenticated-only execute grant. It is not applied, merged, or a release authorization.
 >
 > **STACKED-BRANCH GAP, PRESERVED.** This branch contains `0215` and `0236` above the hosted `0212`; it does not carry the intervening `0213`–`0214` and `0216`–`0235` migration files. Those are intentionally supplied through the existing composition order, not absent from the existing composed candidate. The candidate at `860f6f4d960cea06430188072edbc59f62c651a0` carries the contiguous `0213`–`0235` train and passes the canonical production facts suite (122/122). This does not compose or authorize importing another lane's work into #846. Frozen `0223` remains unchanged. The candidate's `0234_client_self_service_controls.sql` is the existing Team HON-47 claim; held Machines #920's conflicting `0234` claim remains excluded. The branch-level contiguity guard remains red until the normal composition contains every required dependency; do not weaken it or fabricate migrations.
 >
 > **0236 ALLOCATION** was recorded by OPS on 2026-10-19 after a fresh census. The shared coordination ledger identifies `0234` as existing Team HON-47 and held Machines #920 claims, and `0235` as Machines finite-readings work. No hosted migration state changed; `docs/production/migration-state.json` remains the authority for hosted max `0212`.
+>
+> **CURRENT RELATIONSHIP:** `repo > hosted`; this branch is MIGRATION-FIRST PENDING, with the intentional stacked-branch gap described above. No production apply is recorded for 0236.
 
 | Field | Value |
 |---|---|
