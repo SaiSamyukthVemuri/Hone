@@ -68,6 +68,14 @@ describe("deployment contract publication selection", () => {
     expect(planContractPublication([old, structuredClone(old)]).publish).toEqual([]);
   });
 
+  it.each([NaN, Infinity, -Infinity, 0, 1.5, 65])("refuses malformed channel count %s before JSON can turn it into null", (count) => {
+    const p = publicationFixture();
+    p.channels = { count, nativeLabel: "Synthetic channel", associationRequired: false, supportsDistinctSettingGroups: true, verification: "device-confirmed", evidence: ["fixture"] };
+    const plan = planContractPublication([p]);
+    expect(plan.publish).toEqual([]);
+    expect(plan.skipped[0].reasons.join(" ")).toContain("channel count cannot be represented");
+  });
+
   it("blocks malformed precision and unknown evidence", () => {
     const p = publicationFixture(); p.modes[0].fields[0].decimals = Infinity;
     expect(planContractPublication([p]).publish).toEqual([]);

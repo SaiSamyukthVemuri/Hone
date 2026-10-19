@@ -36,6 +36,7 @@ export function planContractPublication(
     if (p.frequency.kind === "unverified") profileReasons.push(`frequency is unverified: ${p.frequency.note}`);
     if (profileById(p.profileId, catalogue)?.version !== p.version) profileReasons.push("superseded version; historical contracts are not newly published");
     if (p.channels?.associationRequired) profileReasons.push("0223 cannot enforce required channel association; a separate database change is required");
+    if (p.channels && (!Number.isInteger(p.channels.count) || p.channels.count < 1 || p.channels.count > 64)) profileReasons.push("channel count cannot be represented by 0223");
     // Reuse the canonical integrity gate; it checks identity, frequency,
     // evidence references and required-field holds. Do not promote blocked modes.
     profileReasons.push(...catalogueIntegrity([p]).map((v) => v.problem));
