@@ -34,8 +34,8 @@ describe("machine publication operator entry", () => {
   }, 20000);
 });
 
-describe("proposed finite-reading repair (static evidence only)", () => {
-  const source = readFileSync(path.join(root, "docs/production/proposals/machine-finite-readings.sql"), "utf8");
+describe("allocated finite-reading migration (static evidence only)", () => {
+  const source = readFileSync(path.join(root, "supabase/migrations/0235_machine_finite_readings.sql"), "utf8");
   const sql = source.replace(/--[^\n]*/g, "");
   const detectsFiniteConstraint = (text: string) =>
     /alter table public\.treatment_setup_readings\s+add constraint treatment_setup_readings_finite_value\s+check\s*\(value_numeric is null or value_numeric not in\s*\(\s*'NaN'::numeric,\s*'Infinity'::numeric,\s*'-Infinity'::numeric\)\) not valid;/i.test(text);

@@ -76,9 +76,10 @@ keys. v1 Senior milliseconds are never converted or relabelled as v2 seconds.
    suffix, activation choice and other categorical context cannot be represented
    by a numeric reading. No fake numeric preset or silently discarded field was
    added. Existing general charting/probe context is preserved.
-7. **Infinity:** the separate unnumbered repair proposal remains outside executable
-   migrations pending explicit allocation and isolated DB proof. Frozen 0223 and
-   held 0234 are unchanged; this change does not close that database finding.
+7. **Infinity:** OPS allocated 0235 and the proposal's unchanged SQL body is now
+   `supabase/migrations/0235_machine_finite_readings.sql`. Its scoped existing-stack
+   DB proof passed; full-chain composition and hosted apply remain unrun/held.
+   Frozen 0223 and held 0234 are unchanged. See [the proof record](reviews/hon8-0235-db-proof-2026-10-19.md).
 
 ## Test evidence boundaries
 
@@ -99,7 +100,8 @@ contract tests; restoring the exact source returned the suite to green.
 | History and next-visit component static render from supplied v2 rows | Passed, all 7 modes | Passed, all 5 modes |
 | Historical v1 preservation | Passed: original ms value/labels render without conversion | Passed: v1 identity-only contract remains unchanged |
 | Mounted browser UI, desktop/mobile interactions and mode switching | Unrun | Unrun |
-| Actual database save/read-back/history/next-session lookup | Unrun; 4 eligible-mode cases prepared | Unrun; 2 eligible-mode cases prepared |
+| Transaction-scoped DB recording/read-back/history/next-session lookup | Passed, 4 eligible modes | Passed, 2 eligible modes |
+| Committed cross-connection reload | Unrun | Unrun |
 | Browser save, refresh, reload and next visit | Unrun | Unrun |
 | Interrupted-save recovery and deliberate identical new area, including mobile | Unrun for these native contracts | Unrun for these native contracts |
 
@@ -110,10 +112,12 @@ merged, deployed, physically matched or human accepted by this implementation.
 ready numeric modes (Senior Flash/MicroFlash/MultiPlex/Electrolysis; Junior
 Flash/Electrolysis). It uses synthetic fixture identities, preserves the reviewed
 model's field definitions, and tests recording, repeated read-back, history and
-next-visit lookup. It never activates a real model. It has NOT been executed:
-the heavy-test slot belongs to Team. Browser save/reload/next-visit and mobile
-recovery proof likewise remain unrun; no previous synthetic demo result is claimed
-as evidence for these model contracts.
+next-visit lookup. All six passed on the owned stack in the granted Machines slot.
+The existing role helper rolls each test transaction back, so this proves database
+command behavior, not committed durability or a fresh browser/connection reload.
+No real model was activated. Native browser save/reload/next-visit and mobile
+recovery proof remain unrun; no previous synthetic demo result is claimed as evidence
+for these model contracts. The stack is stopped with volumes preserved and slot released.
 
 All production/provider/customer-data restrictions remain. #926 is evidence-only;
 #920/0234 stays held. No hosted apply, production merge/deploy, demo or server start.

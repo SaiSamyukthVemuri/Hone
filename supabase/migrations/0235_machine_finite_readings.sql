@@ -1,6 +1,5 @@
--- PROPOSAL ONLY: not in the migration chain and not authorized for production.
--- Allocate a new migration number through ops01 before promoting this repair.
--- Never amend frozen 0223 or held 0234. Finding #860 / 4309278439.
+-- Machines allocation 0235: finite readings only (#860 / 4309278439).
+-- Frozen 0223 and held #920/0234 remain unchanged. No clinical backfill.
 begin;
 set local lock_timeout = '5s';
 

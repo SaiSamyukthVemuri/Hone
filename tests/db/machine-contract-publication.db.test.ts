@@ -9,9 +9,12 @@ afterAll(closePool);
 describe("catalogue publication through the real service_role command", () => {
   it("publishes verified modes, records them, skips pending modes, replays and refuses mutation", async () => {
     const p = publicationFixture(`synthetic:publish-${randomUUID()}`);
-    const pending = publicationFixture(`synthetic:pending-${randomUUID()}`);
-    pending.modes[0].verification = "pending-evidence";
-    const plan = planContractPublication([p, pending]);
+    const pending = structuredClone(p.modes[0]);
+    pending.key = "pending";
+    pending.availability = "blocked";
+    pending.verification = "pending-evidence";
+    p.modes.push(pending);
+    const plan = planContractPublication([p]);
     expect(plan.publish).toHaveLength(1);
     expect(plan.skipped).toHaveLength(1);
     const studio = await seedStudio("publication");
@@ -33,7 +36,7 @@ describe("catalogue publication through the real service_role command", () => {
       await expect(publishContracts(changed, publish)).rejects.toThrow(/NEW version/i);
       await q("rollback to savepoint changed_contract");
       expect((await q("select * from public.machine_profile_field_contract where machine_profile_id=$1", [p.profileId])).rows).toEqual(before);
-      expect((await q("select * from public.machine_profile_mode_contract where machine_profile_id=$1", [pending.profileId])).rows).toEqual([]);
+      expect((await q("select * from public.machine_profile_mode_contract where machine_profile_id=$1 and mode_key=$2", [p.profileId, pending.key])).rows).toEqual([]);
 
       // The operator cannot chart as service_role; recording is a separate,
       // authenticated member command with full route ownership checks.
@@ -45,11 +48,10 @@ describe("catalogue publication through the real service_role command", () => {
         [studio.studioId, profile, name],
       )).rows[0].id;
       const machine = await register(p.profileId, "Verified fixture");
-      const unready = await register(pending.profileId, "Pending fixture");
-      const record = (id: string) => q(RECORD_GROUP_SQL, [blockId, id, "galvanic", "main", [], JSON.stringify([{ field_key: "current", value: "120.5", observation_source: "practitioner-entered" }]), sessionId, studio.clientId]);
+      const record = (id: string, modeKey = "galvanic") => q(RECORD_GROUP_SQL, [blockId, id, modeKey, "main", [], JSON.stringify([{ field_key: "current", value: "120.5", observation_source: "practitioner-entered" }]), sessionId, studio.clientId]);
       expect(Number((await record(machine)).rows[0].n)).toBe(1);
       expect((await q("select value_numeric::text as value from public.treatment_setup_readings where session_block_id=$1", [blockId])).rows).toEqual([{ value: "120.5" }]);
-      await expect(record(unready)).rejects.toThrow(/No field contract is published/i);
+      await expect(record(machine, pending.key)).rejects.toThrow(/No field contract is published/i);
     });
   });
 });

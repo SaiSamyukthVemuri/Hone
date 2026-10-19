@@ -5,8 +5,6 @@ import path from "node:path";
 import {
   countVersion,
   fileForVersion,
-  isRepoMax,
-  versionsAbove,
 } from "./helpers/migration-state";
 
 // ===========================================================================
@@ -133,14 +131,8 @@ function bodyOf(name: string): string {
 }
 
 describe("0223 sits correctly in the migration sequence", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    // Only the CURRENT maximum migration's own test may assert this - see
-    // CLAUDE.md §2. It reached this file from
-    // tests/migrations/0210-sms-waitlist-join-acknowledgement.test.ts in the
-    // same change that authored 0223.
-    expect(isRepoMax(VERSION), "0223 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION), "something was added above 0223").toEqual([]);
-  });
+  // The current maximum's derived guard now belongs to 0235's own test.
+  // 0223 remains a frozen historical migration; it owns no future numbers.
 
   it("is allocated exactly once, at the number the census derived", () => {
     expect(countVersion(VERSION)).toBe(1);

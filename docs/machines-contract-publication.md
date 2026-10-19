@@ -46,31 +46,41 @@ publication mechanism/credential handling and authorize each reviewed publicatio
 against an exact catalogue and hosted schema. There is no hosted flag or automatic
 deployment hook. A local result supplies no production authorization.
 
-## Outstanding schema proof
+## Allocated finite-reading repair and local proof
 
 Finding #860 / 4309278439 is confirmed in frozen 0223: unconstrained PostgreSQL
 `numeric` accepts `Infinity` and `-Infinity`; its finiteness guard rejects only
-`NaN`. The additive repair is proposed in
-`production/proposals/machine-finite-readings.sql`, outside executable migrations.
-No new number is allocated to Machines in the coordinator checkpoint. Do not edit
-0223, invent a number, or reuse held 0234. The proposed `NOT VALID` constraint
+`NaN`. OPS allocated 0235 for this repair only; after a fresh all-ref/worktree/open-PR
+census, the proposal's unchanged SQL body was promoted to
+`supabase/migrations/0235_machine_finite_readings.sql`. Frozen 0223 and held 0234
+are unchanged. The additive `NOT VALID` constraint
 enforces new inserts through all recording paths without modifying old immutable
 records. Existing non-finite rows, if any, require separate operator-led review;
-the proposal makes no claim that historical rows are valid.
+the migration makes no claim that historical rows are valid.
 
-After allocation, promote the repair into its own migration; prove it on the owned
-stack in a granted slot. `machine-finite-readings.db.test.ts` deliberately fails
-for infinity on 0223 alone and never applies the repair itself. Run it before and
-after the repair as a negative control, then run the publication and affected
-machine DB tests. No DB/browser proof has yet been run for this change.
+In the granted Machines slot, `machine-finite-readings.db.test.ts` produced the
+expected two pre-repair failures (positive and negative infinity accepted) while
+NaN was refused. After applying 0235 only to the owned 64821/64822 stack, its three
+cases passed, including finite controls and zero reading/capture delta on refusal.
+The existing publication case passed: verified publication becomes recordable,
+unchanged replay is a no-op, changed content is refused and an unpublished pending
+mode stays fail-closed. Its initial fixture error is preserved in the proof report.
+
+These are rollback-scoped database-command tests, not a publication CLI transport
+test or hosted publication. The six native DB cases also passed (Senior 4, Junior 2).
+Full-chain reset, missing train composition, committed cross-connection reload and
+native browser/mobile proof remain UNRUN. See
+[the scoped proof](reviews/hon8-0235-db-proof-2026-10-19.md). The owned stack was stopped,
+volumes preserved and the slot released; the shared frozen-stack census had zero delta.
 
 ## Required P0 model evidence
 
 Both Apilus Senior 3G and Junior 3G remain required P0 work and distinct contracts.
-The current dry-run publishes neither. Senior retains only its already-modelled
-MultiPlex structure; field evidence and conflicting frequency remain unresolved.
-Junior remains identity-only with no modelled modes. Do not borrow xCell/Senior
-fields or guess units, precision, modes or activation.
+The current dry-run publishes neither because activation remains explicitly held.
+Both have independent manufacturer-documented v2 native numeric contracts; their
+v1 contracts remain retained. See [the native contract record](apilus-3g-native-contracts.md)
+for the implemented fields and narrow remaining precision/order/categorical gaps.
+Do not borrow xCell/Senior fields or guess units, precision, modes or activation.
 
 The authoritative evidence requests remain each profile's `openQuestions` and
 `resolvedBy` in `lib/machines/catalogue.ts`. Obtain the matching physical unit's

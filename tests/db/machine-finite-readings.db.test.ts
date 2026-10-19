@@ -6,7 +6,7 @@ import { asRole, closePool, RECORD_GROUP_SQL, seedSession, seedStudio } from "./
 
 afterAll(closePool);
 
-// Requires the proposed finite-value repair applied by the slot owner to the
+// Requires allocated 0235's finite-value repair applied by the slot owner to the
 // isolated lane stack. Intentionally RED on frozen 0223 alone; never self-applies SQL.
 describe("direct RPC callers cannot persist non-finite clinical readings", () => {
   it.each(["NaN", "Infinity", "-Infinity"])("refuses %s with zero persisted capture/reading delta", async (value) => {

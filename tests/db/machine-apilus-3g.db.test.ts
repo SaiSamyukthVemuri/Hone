@@ -7,7 +7,7 @@ import { asRole, closePool, RECORD_GROUP_SQL, seedSession, seedStudio } from "./
 
 afterAll(closePool);
 
-// PENDING SLOT PROOF. Uses synthetic identities with the reviewed native field
+// Uses synthetic identities with the reviewed native field
 // definitions; never activates or publishes a real model's held contract.
 for (const original of APILUS_3G_PROFILES) {
   const eligible = original.modes.filter((m) => !m.captureHold && !modeFields(m).some(({ field }) => field.unverified?.length));
