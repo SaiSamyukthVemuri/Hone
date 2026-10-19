@@ -78,7 +78,12 @@ export function buildClientConfirmationEmail(p: ConfirmationToClient): {
 } {
   const dayStr = dayLabel(p.startsAt, p.timezone);
   const timeStr = rangeLabel(p.startsAt, p.endsAt, p.timezone);
-  const subject = `Appointment confirmed: ${p.serviceName} with ${p.studioName} on ${dayStr}`;
+  // SUBJECT RULE (HIPAA-READY-01, #828): a subject persists in the inbox, shows
+  // on a lock screen and is stored by the email provider, so it never carries
+  // the client's name, the service, or the appointment date or time. Those
+  // stay in the body. The studio name is allowed: the From line already
+  // shows it.
+  const subject = `Your appointment with ${p.studioName} is confirmed`;
   const safeClient = escapeHtml(p.clientName);
   const safeStudio = escapeHtml(p.studioName);
   const safeService = escapeHtml(p.serviceName);
@@ -209,7 +214,8 @@ export function buildPractitionerNotificationEmail(p: NotifyPractitioner): {
 } {
   const dayStr = dayLabel(p.startsAt, p.timezone);
   const timeStr = rangeLabel(p.startsAt, p.endsAt, p.timezone);
-  const subject = `New booking: ${p.clientName} – ${p.serviceName} on ${dayStr}`;
+  // SUBJECT RULE (#828): no client name, service, date or time in a subject.
+  const subject = `New booking at ${p.studioName}`;
   const safeClient = escapeHtml(p.clientName);
   const safeService = escapeHtml(p.serviceName);
   const safePract = escapeHtml(p.practitionerName);
@@ -296,14 +302,6 @@ export function cancellationActorSummary(
   return name ? `${name} (${label})` : label;
 }
 
-// Month + day only (e.g. "July 21"), studio-timezone aware, for the subject line.
-function monthDayLabel(d: Date, tz: string): string {
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone: tz,
-    month: "long",
-    day: "numeric",
-  }).format(d);
-}
 
 type CancellationEmail = {
   recipientName: string;
@@ -384,7 +382,8 @@ ${p.reason ? `\nReason: ${p.reason}` : ""}
 ${p.rebookUrl ? `\nBook another: ${p.rebookUrl}` : ""}
 `;
     return {
-      subject: `Appointment cancelled: ${p.serviceName} at ${p.studioName}`,
+      // SUBJECT RULE (#828): no client name, service, date or time in a subject.
+      subject: `Appointment cancelled · ${p.studioName}`,
       html: htmlShell(bodyRowsHtml, ctaHtml),
       text,
     };
@@ -393,13 +392,11 @@ ${p.rebookUrl ? `\nBook another: ${p.rebookUrl}` : ""}
   // ---- Practitioner-facing email. The recipient (studio/owner) must see, at a
   // glance, WHO cancelled, WHOSE appointment, WHEN, WHAT, and WHY. ----
   const cancelledBy = cancellationActorSummary(p.actorName, p.actorRole);
-  const actorName = p.actorName?.trim() || null;
-  const monthDay = monthDayLabel(p.startsAt, p.timezone);
-  // Clearer subject, e.g. "Appointment cancelled by Chloe Vemuri LE: 90 minute
-  // session on July 21"; with no name, name-free but still says who by role.
-  const subject = actorName
-    ? `Appointment cancelled by ${actorName}: ${p.serviceName} on ${monthDay}`
-    : `Appointment cancelled by the ${cancellationActorRoleLabel(p.actorRole).toLowerCase()}: ${p.serviceName} on ${monthDay}`;
+  // SUBJECT RULE (HIPAA-READY-01, #828): the subject says WHO cancelled by ROLE
+  // only, never by name (the actor can be the client), and never the service
+  // or date. The body's labelled rows still show the actor's name, the client,
+  // the original time and the service.
+  const subject = `Appointment cancelled by the ${cancellationActorRoleLabel(p.actorRole).toLowerCase()} · ${p.studioName}`;
 
   // Ordered, labelled rows. Every value is a display field (name/label/time/
   // service/duration/reason label), never an id, token, raw audit JSON, or note.
