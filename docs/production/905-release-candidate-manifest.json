@@ -139,7 +139,7 @@
     },
     {
       "version": "0222",
-      "owner_pr": 868,
+      "owner_pr": 874,
       "owner_head": "2e9f47dd922a942199c75419b3219ab650efe821",
       "path": "supabase/migrations/0222_public_practitioner_booking_command.sql",
       "raw_sha256": "9d85ba09f8ddcd308848a5c8711b7e8da5b58e7c707f040a6b69cf0333a6b798",
@@ -149,7 +149,8 @@
         "begin": "BEGIN",
         "lock_timeout": "SET LOCAL lock_timeout = 5s",
         "commit": "COMMIT"
-      }
+      },
+      "source_lineage": "Final reviewed source on #874; #868 is only the ancestor and its older SQL must not replace this file."
     },
     {
       "version": "0223",
