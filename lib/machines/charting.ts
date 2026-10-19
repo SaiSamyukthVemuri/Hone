@@ -127,6 +127,8 @@ export function observationSourceLabel(
 }
 
 export type FieldDescriptor = {
+  valueKind?: MachineField["valueKind"];
+  choices?: string[];
   key: string;
   stageKey: string | null;
   /**
@@ -180,6 +182,8 @@ function describe(field: MachineField, stageKey: string | null): FieldDescriptor
     );
   }
   return {
+    ...(field.valueKind ? { valueKind: field.valueKind } : {}),
+    ...(field.choices ? { choices: field.choices } : {}),
     key: field.key,
     stageKey,
     expectedSource: field.expectedSource,
@@ -355,6 +359,7 @@ function displayValue(v: ReadingValue, decimals: number): string {
   }
   // Pad to the contract's precision for display only. The stored number is
   // never altered, and a value finer than the contract keeps its own digits.
+  if (v.kind === "text") return v.value;
   const own = String(v.value).split(".")[1]?.length ?? 0;
   return v.value.toFixed(Math.max(decimals, own));
 }

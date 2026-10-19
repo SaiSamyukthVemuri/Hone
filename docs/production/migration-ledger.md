@@ -3734,3 +3734,18 @@ fallback in either direction, and the window is integrity-safe.
   untouched.
 - Public health after the apply: `/` and `/login` both 200. Final independent T3 review
   **P0 0 / P1 0 / P2 0**. **Next free migration: 0179.**
+
+## Pending — 0237 Machines native text/choice readings (HON-18, source only)
+
+OPS allocated `0237_machine_native_text_readings.sql` to the existing Machines
+owner branch after the shared census. Adds faithful text/choice representation
+through existing machine contract publication, governed capture and read RPCs;
+no model contract is published by the migration and no model is activated.
+Senior and Junior v3 contracts are separate; v1/v2 and historical readings remain
+retained. Frozen 0223/0235, Team 0236 and held #920/0234 are untouched.
+**NOT APPLIED HERE OR HOSTED.** DB/browser/full-chain proof of 0237 is UNRUN,
+pending OPS exact composed candidate/target and shared heavy slot. Historical
+DB202/native12 at d122c8eb is numeric-scope evidence, not 0237 proof. Hosted state
+is unchanged. See `docs/reviews/hon18-0237-native-text-source.md` and the external
+Machines allocation/census/proof-request artifacts. No provider/customer-data,
+production/activation/merge/deploy/release authorization is implied.

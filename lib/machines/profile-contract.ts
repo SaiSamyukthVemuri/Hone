@@ -150,12 +150,13 @@ export type AbsenceReason =
   /** The machine displayed it but the practitioner could not read it. */
   | "not-legible";
 
-/** A recorded number, or a reasoned absence. Never a bare `null`. */
+/** A recorded number, exact text/choice, or a reasoned absence. Never a bare null. */
 export type ReadingValue =
   | { kind: "value"; value: number }
+  | { kind: "text"; value: string }
   | { kind: "absent"; reason: AbsenceReason };
 
-/** Who or what produced a number. Four different epistemic statuses. */
+/** Who or what produced the observation. Four distinct provenance states. */
 export type ObservationSource =
   /** The practitioner set it on the machine and typed it here. */
   | "practitioner-entered"
@@ -217,7 +218,8 @@ export type FieldQuantity =
   | "count"
   | "percentage"
   | "energy-display"
-  | "preset-identifier";
+  | "preset-identifier"
+  | "configuration";
 
 /**
  * A unit as the MACHINE displays it. Deliberately a closed list of native
@@ -261,6 +263,9 @@ export type UnverifiedAspect = "label" | "unit" | "decimals" | "editability";
 
 /** One field on one machine's operating screen. */
 export type MachineField = {
+  /** Omitted means the historical numeric contract. Text is never numeric-coerced. */
+  valueKind?: "number" | "text" | "choice";
+  choices?: string[];
   /** Stable key for storage. Never a generic `number_1` / `duration_2`. */
   key: string;
   /** The label the MACHINE uses, verbatim. Not our paraphrase. */
@@ -270,6 +275,7 @@ export type MachineField = {
   /**
    * Decimal places the machine actually displays. Preserved on storage and
    * render; a machine showing `1.1 s` must not be stored as an integer second.
+   * Text/choice fields use zero as a nonnumeric storage sentinel, with unit none.
    */
   decimals: number;
   /** Required to make a pass meaningful, or genuinely optional. */

@@ -1,4 +1,4 @@
-import { APILUS_3G_PROFILES } from "./apilus-3g";
+import { APILUS_3G_PROFILES, APILUS_3G_TEXT_PROFILES } from "./apilus-3g";
 import { modeFields, type MachineProfile } from "./profile-contract";
 
 // Data shared by the existing server-only synthetic gate and browser specs.
@@ -29,5 +29,23 @@ export const APILUS_3G_NATIVE_FIXTURES: readonly MachineProfile[] = APILUS_3G_PR
     target === "*" || target === "@frequency" || fixture.modes.some((mode) => target.startsWith(`${mode.key}.`)),
   ));
   if (fixture.openQuestions.length) throw new Error(`Unresolved native fixture: ${original.model}`);
+  return fixture;
+});
+
+// Separate v3 fixtures leave the v2 identities and their executed proof intact.
+// Offered only through the same existing server-only gate; never real profiles.
+export const APILUS_3G_TEXT_FIXTURES: readonly MachineProfile[] = APILUS_3G_TEXT_PROFILES.map((original) => {
+  const fixture = structuredClone(original);
+  fixture.profileId = `synthetic:native-${original.profileId.split(":")[1]}-text`;
+  fixture.family = "Synthetic/Demo";
+  fixture.manufacturer = "Synthetic";
+  fixture.model = `${original.model} native-text fixture`;
+  fixture.availability = "active";
+  fixture.modes = fixture.modes.filter((mode) => !mode.captureHold && !modeFields(mode).some(({ field }) => field.unverified?.length));
+  fixture.modes.forEach((mode) => { mode.availability = "active"; });
+  fixture.openQuestions = fixture.openQuestions.filter((q) => q.blocks.some((target) =>
+    target === "*" || target === "@frequency" || fixture.modes.some((mode) => target.startsWith(`${mode.key}.`)),
+  ));
+  if (fixture.openQuestions.length) throw new Error(`Unresolved native text fixture: ${original.model}`);
   return fixture;
 });

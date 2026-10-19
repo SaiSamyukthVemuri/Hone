@@ -255,3 +255,21 @@ describe("and the message is the one the form holds the draft on", () => {
     });
   });
 });
+
+it("initial save preserves exact text in the governed atomic payload", async () => {
+  const field = FIXTURE_PROFILE.modes[0].fields[0];
+  const before = structuredClone(field);
+  try {
+    Object.assign(field, { quantity: "preset-identifier", unit: "none", decimals: 0, valueKind: "text" });
+    rpc.mockResolvedValue({ data: { block_id: "block-1", setup: { submission_id: "22222222-2222-4222-8222-222222222222", groups: 1, readings: 1, reused: false } }, error: null });
+    single.mockResolvedValue({ data: BLOCK_ROW, error: null });
+    const textInput = structuredClone(input) as Parameters<typeof createTreatmentAreaWithEntryAction>[0];
+    textInput.initialSetup!.groups[0].readings[0].value = { kind: "text", value: "003i" };
+    const out = await createTreatmentAreaWithEntryAction(textInput);
+    expect(out.ok, out.ok ? "" : out.error).toBe(true);
+    expect(rpc).toHaveBeenCalledWith("create_block_with_initial_setup", expect.objectContaining({ p_setup_groups: [expect.objectContaining({ readings: [expect.objectContaining({ value_text: "003i", native_unit: "none", decimals: 0 })] })] }));
+  } finally {
+    Object.assign(field, before);
+    delete (field as typeof field & { valueKind?: string }).valueKind;
+  }
+});

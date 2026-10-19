@@ -15,6 +15,8 @@ export type Publication = {
     decimals: number;
     quantity: string;
     optional: boolean;
+    value_kind?: "text" | "choice";
+    choices?: string[];
   }>;
 };
 export type PublicationPlan = {
@@ -72,6 +74,7 @@ export function planContractPublication(
         p_fields: fields.map(({ field: f, stageKey }) => ({
           stage_key: stageKey ?? "", field_key: f.key, native_unit: f.unit,
           decimals: f.decimals, quantity: f.quantity, optional: f.optional,
+          ...(f.valueKind && f.valueKind !== "number" ? { value_kind: f.valueKind, choices: f.choices ?? [] } : {}),
         })),
       });
     }

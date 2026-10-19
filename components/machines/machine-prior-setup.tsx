@@ -64,6 +64,7 @@ function formatValue(r: RecordedReading): string {
         ? "not legible"
         : "not recorded";
   }
+  if (r.value.kind === "text") return r.value.value;
   const own = String(r.value.value).split(".")[1]?.length ?? 0;
   return r.value.value.toFixed(Math.max(r.decimals, own));
 }

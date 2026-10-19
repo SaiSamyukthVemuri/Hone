@@ -109,3 +109,30 @@ function junior(): MachineProfile {
 }
 
 export const APILUS_3G_PROFILES: readonly MachineProfile[] = [senior(), junior()];
+
+/** Additive v3 retains v1/v2 exactly: a text/choice contract is a new version. */
+export const APILUS_3G_TEXT_PROFILES: readonly MachineProfile[] = APILUS_3G_PROFILES.map((original, index) => {
+  const p = structuredClone(original);
+  p.version = 3;
+  p.availabilityReason = "Native text/choice v3 implemented; 0237 DB/browser proof, physical acceptance and Sam's activation authority remain separate gates.";
+  const seniorModel = index === 0;
+  const context = source(seniorModel ? "senior" : "junior", seniorModel ? "22–25" : "20, 23");
+  context.id += "-text";
+  p.evidence.push(context);
+  for (const m of p.modes) {
+    // Optional identifier is transcribed, never inferred from current/area or
+    // coerced to a number. It does not assert the preset's underlying values.
+    m.fields.push({ ...field("program_identifier", "Program", "preset-identifier", "none", 0, context),
+      valueKind: "text", optional: true,
+      note: "Record the displayed program identifier exactly, including leading zeroes or text; blank records no observation. No preset values are inferred." });
+    if ((seniorModel && ["blend", "omniblend", "multiblend"].includes(m.key)) || (!seniorModel && m.key === "blend")) {
+      m.fields.push({ ...field("starting_current", seniorModel ? "Glv Hf" : "Glv hf", "configuration", "none", 0, context),
+        valueKind: "choice", choices: seniorModel ? ["Glv Hf", "Hf Glv"] : ["Glv hf", "Hf Glv"],
+        note: "Native starting-current configuration, not numeric dose or an instruction to actuate a device." });
+      delete m.captureHold;
+    }
+    // Junior OmniBlend's contradictory ordering and Thermolysis precision stay
+    // narrow held questions; no inherited Senior selector is added to either.
+  }
+  return p;
+});
