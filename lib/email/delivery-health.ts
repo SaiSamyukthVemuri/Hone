@@ -6,7 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 //
 // email_delivery_health() reads one row: the receipt backlog, receipts that
 // were exhausted, quarantined or could not be attributed, accepted attempts the
-// provider never reported on, open incidents and the last sweep. This module
+// provider never reported on, aged claims with unknown acceptance, open incidents and the last sweep. This module
 // turns it into FINDINGS, each with a purpose-specific threshold. A finding is
 // raised as an ops alert at most once while an unresolved alert for the same
 // event is open (the PR #283 dedupe rule), so a long outage is one alert, not
@@ -22,6 +22,7 @@ export type EmailDeliveryHealth = {
   quarantined24h: number;
   unmatched24h: number;
   unreportedAccepted: number;
+  staleClaimed: number;
   openIncidents: number;
   lastSweepAt: string | null;
   lastSweepFailed: number | null;
@@ -33,6 +34,7 @@ export type HealthFinding = {
     | "email_delivery_receipts_exhausted"
     | "email_delivery_receipts_quarantined"
     | "email_delivery_unreported"
+    | "email_delivery_claimed_stale"
     | "email_delivery_sweep_failing"
     | "email_delivery_sweep_stale";
   severity: "warning" | "critical";
@@ -94,6 +96,14 @@ export function healthFindings(
       details: { quarantined_24h: h.quarantined24h, exhausted_24h: h.exhausted24h },
     });
   }
+  if (h.staleClaimed > 0) {
+    out.push({
+      event: "email_delivery_claimed_stale",
+      severity: "warning",
+      message: `${h.staleClaimed} email attempt(s) remain claimed after 24 hours. Provider acceptance and delivery are unknown; a claim alone does not prove a send. Review before any resend.`,
+      details: { stale_claimed: h.staleClaimed },
+    });
+  }
   if (h.unreportedAccepted > 0) {
     out.push({
       event: "email_delivery_unreported",
@@ -148,6 +158,11 @@ export async function readEmailDeliveryHealth(
       logHealth("email_delivery_health_failed", { shape: "empty" });
       return null;
     }
+    // A pre-amendment/malformed RPC row cannot prove claims are healthy.
+    if (typeof row.stale_claimed !== "number" || !Number.isSafeInteger(row.stale_claimed) || row.stale_claimed < 0) {
+      logHealth("email_delivery_health_failed", { shape: "stale_claimed_unknown" });
+      return null;
+    }
     return {
       pendingReceipts: int(row.pending_receipts),
       oldestPendingSeconds: row.oldest_pending_seconds == null ? null : int(row.oldest_pending_seconds),
@@ -155,6 +170,7 @@ export async function readEmailDeliveryHealth(
       quarantined24h: int(row.quarantined_24h),
       unmatched24h: int(row.unmatched_24h),
       unreportedAccepted: int(row.unreported_accepted),
+      staleClaimed: int(row.stale_claimed),
       openIncidents: int(row.open_incidents),
       lastSweepAt: typeof row.last_sweep_at === "string" ? row.last_sweep_at : null,
       lastSweepFailed: row.last_sweep_failed == null ? null : int(row.last_sweep_failed),
