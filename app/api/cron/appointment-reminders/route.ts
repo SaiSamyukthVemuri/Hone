@@ -333,16 +333,19 @@ async function sendReminderPass(opts: {
     let result: EmailSendResult;
 
     // DELIVERY-VISIBILITY-01: one email delivery-ledger row per real attempt,
-    // begun only now -- after the 0080 claim, the live status re-check and the
-    // case decision -- so the row describes a send that is about to happen.
+    // begun immediately before the send, after token and treatment-context
+    // preparation, so a preparation failure cannot strand a claimed row.
     // Fail-soft: a null id sends exactly as before, untagged. The case-4
     // standalone intake email is the same window slot, so it carries the same
     // purpose.
-    const ledgerMessageId = await beginAppointmentEmailMessage(admin, {
+    const ledgerRef = {
       studioId: appt.studio.id,
       appointmentId: appt.id,
-      purpose: opts.kind === "24h" ? "appointment_reminder_24h" : "appointment_reminder_2h",
-    });
+      purpose: opts.kind === "24h"
+        ? ("appointment_reminder_24h" as const)
+        : ("appointment_reminder_2h" as const),
+    };
+    let ledgerMessageId: string | null = null;
 
     if (wantsReminder) {
       // CASES 1/2/3 - the appointment reminder, carrying the intake CTA only
@@ -400,6 +403,7 @@ async function sendReminderPass(opts: {
         : null;
       const sendFn =
         opts.kind === "24h" ? send24hReminderToClient : send2hReminderToClient;
+      ledgerMessageId = await beginAppointmentEmailMessage(admin, ledgerRef);
       result = await sendFn({
         appointment: appt,
         service: appt.service,
@@ -422,6 +426,7 @@ async function sendReminderPass(opts: {
       // !wantsReminder, and the !wantsReminder && !intakeIncomplete case
       // already `continue`d above - so intakeIncomplete holds, `intake` is
       // non-null, and the link was minted.
+      ledgerMessageId = await beginAppointmentEmailMessage(admin, ledgerRef);
       result = await sendIntakeReminderToClient({
         kind: opts.kind,
         clientEmail: appt.client.email,

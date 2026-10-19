@@ -29,11 +29,44 @@ describe("reminder email pass: begin, tag, settle", () => {
   });
 
   it("begins the ledger row after the claim, the status re-check and the nothing-to-send exit", () => {
-    const begin = PASS.indexOf("await beginAppointmentEmailMessage(admin, {");
+    const begin = PASS.indexOf("await beginAppointmentEmailMessage(admin, ledgerRef)");
+    expect(begin).toBeGreaterThan(-1);
     expect(begin).toBeGreaterThan(PASS.indexOf("await claimEmailSend(admin, appt.id, emailType)"));
     expect(begin).toBeGreaterThan(PASS.indexOf('fresh.status !== "confirmed"'));
     expect(begin).toBeGreaterThan(PASS.indexOf("if (!wantsReminder && !intakeIncomplete)"));
     expect(begin).toBeLessThan(PASS.indexOf("result = await sendFn("));
+  });
+
+  it("begins it after ALL PREPARATION, so no path can leave a claimed row (Codex P2 4307698580)", () => {
+    // `begin` leaves the row `claimed`, and nothing reports a row stuck there.
+    // Two paths used to skip the settle entirely: an unmintable token
+    // `continue`s the loop, and `getTreatmentTimeContextForEmail` can THROW.
+    // Both sat BETWEEN the old begin and the send.
+    const begin = PASS.indexOf("await beginAppointmentEmailMessage(admin, ledgerRef)");
+    expect(begin).toBeGreaterThan(PASS.indexOf("generateCancellationToken(appt.id"));
+    expect(begin).toBeGreaterThan(PASS.indexOf("await getTreatmentTimeContextForEmail("));
+    // ...and nothing that could leave the loop sits between the first begin and
+    // the send it is for. A `continue` there is the leak in its purest form.
+    const send = PASS.indexOf("result = await sendFn(");
+    expect(send).toBeGreaterThan(begin);
+    // FROM AFTER the begin LINE: slicing from `begin` includes the begin call
+    // itself, whose own `await` makes "no await between" trivially false. My
+    // first version did exactly that and failed on its own boundary.
+    const afterBegin = PASS.indexOf("\n", begin) + 1;
+    expect(PASS.slice(afterBegin, send)).not.toContain("continue");
+    expect(PASS.slice(afterBegin, send)).not.toContain("await ");
+  });
+
+  it("each branch begins its OWN row, immediately before its own provider call", () => {
+    // Two sends, two begins — one per branch — rather than one begin shared
+    // across a decision that can still fail.
+    expect(PASS.match(/await beginAppointmentEmailMessage\(admin, ledgerRef\)/g)).toHaveLength(2);
+    const intakeBegin = PASS.lastIndexOf("await beginAppointmentEmailMessage(admin, ledgerRef)");
+    const intakeSend = PASS.indexOf("result = await sendIntakeReminderToClient(");
+    expect(intakeBegin).toBeLessThan(intakeSend);
+    const afterIntakeBegin = PASS.indexOf("\n", intakeBegin) + 1;
+    expect(PASS.slice(afterIntakeBegin, intakeSend)).not.toContain("await ");
+    expect(PASS.slice(afterIntakeBegin, intakeSend)).not.toContain("continue");
   });
 
   it("tags both sends the window can make", () => {
@@ -48,6 +81,11 @@ describe("reminder email pass: begin, tag, settle", () => {
   });
 
   it("names the window's own purpose", () => {
-    expect(PASS).toContain('purpose: opts.kind === "24h" ? "appointment_reminder_24h" : "appointment_reminder_2h"');
+    // Computed ONCE into `ledgerRef`, so both branches cannot disagree about
+    // which window they are reporting.
+    expect(PASS).toContain('? ("appointment_reminder_24h" as const)');
+    expect(PASS).toContain(': ("appointment_reminder_2h" as const)');
+    expect(PASS).toContain("const ledgerRef = {");
+    expect(PASS).toContain("appointmentId: appt.id");
   });
 });
