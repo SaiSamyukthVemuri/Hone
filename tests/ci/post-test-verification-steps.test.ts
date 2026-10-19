@@ -172,8 +172,12 @@ function survivesFailure(cond: string | undefined): boolean {
  */
 function requiresStepSuccess(cond: string | undefined, id: string): boolean {
   const atoms = guardConjuncts(cond) ?? [];
-  return atoms.includes(`steps.${id}.outcome=='success'`) ||
-    atoms.includes(`steps.${id}.conclusion=='success'`);
+  const comparisons = atoms.filter((a) => a.startsWith(`steps.${id}.`));
+  // Every comparison must require success. A success atom alongside failure,
+  // cancelled or skipped (even on the other property) makes the guard dead.
+  return comparisons.length > 0 && comparisons.every((a) =>
+    a === `steps.${id}.outcome=='success'` || a === `steps.${id}.conclusion=='success'`,
+  );
 }
 
 /** The step ids a condition reads, e.g. `steps.db_chain.outcome`. */
@@ -638,6 +642,17 @@ describe("ci.yml: no verification step is hidden behind an earlier failure", () 
     expect(isEarlierDeclaredStep(reordered, unit, "deps")).toBe(false);
     const duplicate = { steps: [...steps, { ...deps }] };
     expect(isEarlierDeclaredStep(duplicate, unit, "deps")).toBe(false);
+  });
+
+  it("CONTROL: a success atom cannot hide contradictory or non-success comparisons", () => {
+    for (const property of ["outcome", "conclusion"]) {
+      for (const state of ["failure", "cancelled", "skipped"]) {
+        const cond = "${{ !cancelled() && steps.db_chain.outcome == 'success' && " +
+          `steps.db_chain.${property} == '${state}' }}`;
+        expect(requiresStepSuccess(cond, "db_chain"), cond).toBe(false);
+      }
+    }
+    expect(requiresStepSuccess("${{ !cancelled() && steps.db_chain.outcome == 'success' && steps.db_chain.conclusion == 'success' }}", "db_chain")).toBe(true);
   });
 
   it("EVERY gated step requires its prerequisite to have SUCCEEDED", () => {
