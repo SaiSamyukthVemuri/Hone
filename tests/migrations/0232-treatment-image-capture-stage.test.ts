@@ -66,7 +66,7 @@ describe("0232's transaction and shape", () => {
     const triggers = TOP_LEVEL.match(/\bcreate (or replace )?trigger\b/gi) ?? [];
     expect(triggers).toHaveLength(1);
     expect(TOP_LEVEL).toMatch(
-      /create trigger treatment_images_clear_stage_without_session\s+before update on public\.treatment_images\s+for each row\s+when \(new\.session_id is null and new\.capture_stage is not null\)\s+execute function public\.treatment_images_clear_stage_without_session\(\);/,
+      /create trigger treatment_images_clear_stage_without_session\s+before insert or update on public\.treatment_images\s+for each row\s+when \(new\.session_id is null and new\.capture_stage is not null\)\s+execute function public\.treatment_images_clear_stage_without_session\(\);/,
     );
     const fn = sql.slice(sql.indexOf("create or replace function public.treatment_images_clear_stage_without_session()"));
     expect(fn.slice(0, fn.indexOf("$$;") + 3)).toMatch(/begin\s+new\.capture_stage := null;\s+return new;\s+end;/);
@@ -87,6 +87,21 @@ describe("0232's transaction and shape", () => {
     ]) {
       expect(TOP_LEVEL, pinned).not.toMatch(new RegExp(`function public\\.${pinned}\\(`));
     }
+  });
+});
+
+describe("0232 visit-only cleanup: Codex 4309998087", () => {
+  it("repairs sessionless inserts as well as updates through the same trigger", () => {
+    // Structural tripwire only: real service_role/postgres INSERT behaviour
+    // and the unchanged ON DELETE SET NULL cascade are DB-suite proofs.
+    const trigger = TOP_LEVEL.match(
+      /create trigger treatment_images_clear_stage_without_session\s+before\s+([\s\S]*?)\s+on public\.treatment_images\s+for each row\s+when \(([\s\S]*?)\)\s+execute function public\.treatment_images_clear_stage_without_session\(\);/i,
+    );
+    expect(trigger, "the cleanup must actually be attached to treatment_images").not.toBeNull();
+    expect(trigger![1].trim().split(/\s+or\s+/i)).toEqual(["insert", "update"]);
+    expect(trigger![2].replace(/\s+/g, " ").trim()).toBe(
+      "new.session_id is null and new.capture_stage is not null",
+    );
   });
 });
 
