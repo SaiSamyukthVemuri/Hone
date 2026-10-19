@@ -7,6 +7,11 @@ const h = vi.hoisted(() => ({
   emails: [] as Record<string, unknown>[],
   emailRecords: [] as boolean[],
   emailOk: true,
+  preparationFailure: "none" as "none" | "context" | "intake",
+  failures: [] as Record<string, unknown>[],
+  practitioner: [] as Record<string, unknown>[],
+  allowPractitioner: false,
+  recordThrows: false,
   intakeCalls: 0,
   claim: true,
   rpc: [] as Array<[string, Record<string, unknown>]>,
@@ -15,19 +20,30 @@ vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => "https://hone.t
 vi.mock("@/lib/booking/tokens", () => ({ generateCancellationToken: () => "fake-token" }));
 vi.mock("@/lib/intake/queries", () => ({ ensureIntakeForClient: async () => {
   h.intakeCalls++;
+  if (h.preparationFailure === "intake") throw new Error("SYNTHETIC_PRIVATE_CONTEXT client@example.invalid");
   return { url: "https://hone.test/intake/fake-intake" };
 } }));
 vi.mock("@/lib/treatment-time/queries", () => ({
-  getTreatmentTimeContextForEmail: async () => ({}), buildTreatmentTimeLine: () => null,
+  getTreatmentTimeContextForEmail: async () => {
+    if (h.preparationFailure === "context") throw new Error("SYNTHETIC_PRIVATE_CONTEXT client@example.invalid");
+    return {};
+  }, buildTreatmentTimeLine: () => null,
 }));
 vi.mock("@/lib/email/send-appointment", () => ({
   sendBookingConfirmationToClient: async (p: Record<string, unknown>) => {
     h.emails.push(p);
     return h.emailOk ? { ok: true, messageId: "fake-email" } : { ok: false, error: "fake refusal", retryable: false };
   },
-  recordEmailAttempt: async (_admin: unknown, _id: string, _type: string, ok: boolean) => { h.emailRecords.push(ok); },
-  logEmailFailure: () => undefined,
-  sendBookingNotificationToPractitioner: async () => { throw new Error("unexpected practitioner email"); },
+  recordEmailAttempt: async (_admin: unknown, _id: string, _type: string, ok: boolean) => {
+    h.emailRecords.push(ok);
+    if (h.recordThrows) throw new Error("SYNTHETIC_PRIVATE_RECORD client@example.invalid");
+  },
+  logEmailFailure: (p: Record<string, unknown>) => { h.failures.push(p); },
+  sendBookingNotificationToPractitioner: async (p: Record<string, unknown>) => {
+    if (!h.allowPractitioner) throw new Error("unexpected practitioner email");
+    h.practitioner.push(p);
+    return { ok: true, messageId: "fake-practitioner-email" };
+  },
 }));
 vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: async () => undefined }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({
@@ -56,6 +72,8 @@ const params = (): DispatchParams => ({
 const bodies = () => fetchMock.mock.calls.map(([, init]) => new URLSearchParams((init as RequestInit).body as string).get("Body"));
 
 beforeEach(() => {
+  h.preparationFailure = "none"; h.failures = []; h.practitioner = [];
+  h.allowPractitioner = false; h.recordThrows = false;
   h.emails = []; h.emailRecords = []; h.intakeCalls = 0; h.claim = true; h.emailOk = true; h.rpc = [];
   vi.stubEnv("VERCEL_ENV", "production");
   vi.stubEnv("TWILIO_ACCOUNT_SID", `AC${"1".repeat(32)}`);
@@ -125,5 +143,55 @@ describe("post-commit confirmation channels remain independent (4310083201)", ()
     const p = params(); p.studio.send_confirmation_emails = true; h.emailOk = false;
     await dispatchBookingNotifications(p);
     expect(h.emailRecords).toEqual([false]); expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe("email preparation failure stays inside its channel (4310174756)", () => {
+  const enabled = () => {
+    const p = params();
+    p.studio.send_confirmation_emails = true;
+    p.studio.show_treatment_time_to_clients = true;
+    p.studio.notify_practitioner_on_new_booking = true;
+    h.allowPractitioner = true;
+    return p;
+  };
+  const safeObservability = () => {
+    const observed = JSON.stringify({ failures: h.failures, logs: vi.mocked(console.error).mock.calls });
+    expect(observed).not.toContain("SYNTHETIC_PRIVATE");
+    expect(observed).not.toContain("client@example.invalid");
+  };
+  it.each(["context", "intake"] as const)("rejecting %s leaves email unsent/failed but dispatches SMS and practitioner", async (stage) => {
+    const p = enabled(); h.preparationFailure = stage;
+    await expect(dispatchBookingNotifications(p)).resolves.toBeUndefined();
+    expect(h.emails).toHaveLength(0);
+    expect(h.emailRecords).toEqual([false]);
+    expect(h.failures).toEqual([expect.objectContaining({
+      appointmentId: "appt-1", emailType: "confirmation", error: "confirmation_preparation_failed", retryable: true,
+    })]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(h.rpc.filter(([fn]) => fn === "claim_sms_send")).toHaveLength(1);
+    expect(h.practitioner).toHaveLength(1);
+    expect(bodies()[0]).toContain("https://hone.test/manage/fake-token");
+    if (stage === "context") expect(bodies()[0]).toContain("https://hone.test/intake/fake-intake");
+    else expect(bodies()[0]).not.toContain("/intake/");
+    safeObservability();
+  });
+  it("a failed failure-record write also cannot suppress SMS/practitioner", async () => {
+    const p = enabled(); h.preparationFailure = "context"; h.recordThrows = true;
+    await expect(dispatchBookingNotifications(p)).resolves.toBeUndefined();
+    expect(h.emails).toHaveLength(0); expect(h.emailRecords).toEqual([false]);
+    expect(fetchMock).toHaveBeenCalledTimes(1); expect(h.practitioner).toHaveLength(1);
+    expect(JSON.stringify(vi.mocked(console.error).mock.calls)).toContain("booking_confirmation_preparation_record_failed");
+    safeObservability();
+  });
+  it("email prep failure does not bypass SMS consent or the practitioner toggle", async () => {
+    const p = enabled(); h.preparationFailure = "context";
+    p.clientSmsConsentAt = null; p.studio.notify_practitioner_on_new_booking = false;
+    await expect(dispatchBookingNotifications(p)).resolves.toBeUndefined();
+    expect(h.emailRecords).toEqual([false]); expect(h.emails).toHaveLength(0);
+    expect(fetchMock).not.toHaveBeenCalled(); expect(h.rpc).toHaveLength(0);
+    expect(h.practitioner).toHaveLength(0);
+    safeObservability();
   });
 });

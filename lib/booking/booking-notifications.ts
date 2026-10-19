@@ -75,49 +75,78 @@ export async function dispatchBookingNotifications(p: DispatchParams) {
 
   let intakeUrl: string | null = null;
   if (p.clientEmail && p.studio.send_confirmation_emails) {
-    const intake = await ensureIntakeForClient({
-      studioId: p.studio.id,
-      clientId: p.appointment.client_id,
-      appOrigin,
-    });
-    intakeUrl = intake?.url ?? null;
-    const treatmentTimeLine = p.studio.show_treatment_time_to_clients
-      ? buildTreatmentTimeLine({
-          enabled: true,
-          clientFirstName: p.clientName.split(/\s+/)[0] || p.clientName,
-          context: await getTreatmentTimeContextForEmail(
-            p.studio.id,
-            p.appointment.client_id,
-          ),
-        })
-      : null;
-    // Email reporting is truthful: recordEmailAttempt stamps
-    // confirmation_sent_at only when Resend actually delivered. The old
-    // code path stamped on every booking, falsely advertising delivery.
-    const result = await sendBookingConfirmationToClient({
-      appointment: p.appointment,
-      service: p.service,
-      studio: p.studio,
-      practitionerDisplayName: p.practitionerName,
-      clientName: p.clientName,
-      clientEmail: p.clientEmail,
-      cancellationUrl: cancelUrl,
-      rescheduleUrl,
-      intakeUrl,
-      treatmentTimeLine,
-      appBaseUrl: appOrigin,
-    });
-    const { createAdminClient } = await import("@/lib/supabase/admin-server");
-    const admin = createAdminClient();
-    await recordEmailAttempt(admin, p.appointment.id, "confirmation", result.ok);
-    if (!result.ok) {
+    let treatmentTimeLine: ReturnType<typeof buildTreatmentTimeLine> = null;
+    let emailPrepared = false;
+    try {
+      const intake = await ensureIntakeForClient({
+        studioId: p.studio.id,
+        clientId: p.appointment.client_id,
+        appOrigin,
+      });
+      intakeUrl = intake?.url ?? null;
+      treatmentTimeLine = p.studio.show_treatment_time_to_clients
+        ? buildTreatmentTimeLine({
+            enabled: true,
+            clientFirstName: p.clientName.split(/\s+/)[0] || p.clientName,
+            context: await getTreatmentTimeContextForEmail(
+              p.studio.id,
+              p.appointment.client_id,
+            ),
+          })
+        : null;
+      emailPrepared = true;
+    } catch {
+      // A preparation failure is not a provider refusal. Never log the raw
+      // exception: context/intake failures can contain patient information.
       logEmailFailure({
         appointmentId: p.appointment.id,
         emailType: "confirmation",
-        error: result.error,
-        retryable: result.retryable,
+        error: "confirmation_preparation_failed",
+        retryable: true,
         attemptNumber: 1,
       });
+      try {
+        const { createAdminClient } = await import("@/lib/supabase/admin-server");
+        await recordEmailAttempt(createAdminClient(), p.appointment.id, "confirmation", false);
+      } catch {
+        // Failure bookkeeping must not suppress the other notifications either.
+        console.error(JSON.stringify({
+          event: "booking_confirmation_preparation_record_failed",
+          appointmentId: p.appointment.id,
+          emailType: "confirmation",
+          timestamp: new Date().toISOString(),
+        }));
+      }
+    }
+    if (emailPrepared) {
+      // Email reporting is truthful: recordEmailAttempt stamps
+      // confirmation_sent_at only when Resend actually delivered. The old
+      // code path stamped on every booking, falsely advertising delivery.
+      const result = await sendBookingConfirmationToClient({
+        appointment: p.appointment,
+        service: p.service,
+        studio: p.studio,
+        practitionerDisplayName: p.practitionerName,
+        clientName: p.clientName,
+        clientEmail: p.clientEmail,
+        cancellationUrl: cancelUrl,
+        rescheduleUrl,
+        intakeUrl,
+        treatmentTimeLine,
+        appBaseUrl: appOrigin,
+      });
+      const { createAdminClient } = await import("@/lib/supabase/admin-server");
+      const admin = createAdminClient();
+      await recordEmailAttempt(admin, p.appointment.id, "confirmation", result.ok);
+      if (!result.ok) {
+        logEmailFailure({
+          appointmentId: p.appointment.id,
+          emailType: "confirmation",
+          error: result.error,
+          retryable: result.retryable,
+          attemptNumber: 1,
+        });
+      }
     }
   }
 
