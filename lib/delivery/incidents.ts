@@ -3,7 +3,8 @@
 //
 // Truthful by construction: each failure class says what the provider reported
 // and nothing more, and the next step names who can act. A bounce is the
-// client's address; a provider failure or refusal is Hone's to look at. No
+// client's address; a confirmed invalid-recipient refusal needs studio data
+// correction. Other provider refusals are Hone's to look at. No
 // sentence claims a message was read, received or lost when the provider did
 // not say so.
 
@@ -94,7 +95,13 @@ export function describeIncident(row: Pick<OwnerIncident, "channel" | "purpose" 
         nextStep: "Check the client's email address with them and update it.",
         owner: "studio" as const,
       }
-    : READING[row.channel]?.[row.failure_class] ?? {
+    : row.channel === "sms" && row.failure_class === "refused" && row.last_reason === "twilio_21211"
+      ? {
+          meaning: "The text provider refused the client's invalid mobile number.",
+          nextStep: "Check the client's mobile number with them and update it.",
+          owner: "studio" as const,
+        }
+      : READING[row.channel]?.[row.failure_class] ?? {
     meaning: "The provider reported a problem sending it.",
     nextStep: "Contact Hone support.",
     owner: "hone" as const,
