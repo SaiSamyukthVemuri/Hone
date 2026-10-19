@@ -103,20 +103,8 @@ export async function dispatchBookingNotifications(p: DispatchParams) {
         emailType: "confirmation",
         error: "confirmation_preparation_failed",
         retryable: true,
-        attemptNumber: 1,
       });
-      try {
-        const { createAdminClient } = await import("@/lib/supabase/admin-server");
-        await recordEmailAttempt(createAdminClient(), p.appointment.id, "confirmation", false);
-      } catch {
-        // Failure bookkeeping must not suppress the other notifications either.
-        console.error(JSON.stringify({
-          event: "booking_confirmation_preparation_record_failed",
-          appointmentId: p.appointment.id,
-          emailType: "confirmation",
-          timestamp: new Date().toISOString(),
-        }));
-      }
+      // No provider call occurred: do not increment the send-attempt counter.
     }
     if (emailPrepared) {
       // Email reporting is truthful: recordEmailAttempt stamps

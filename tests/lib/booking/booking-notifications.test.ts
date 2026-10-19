@@ -165,7 +165,7 @@ describe("email preparation failure stays inside its channel (4310174756)", () =
     const p = enabled(); h.preparationFailure = stage;
     await expect(dispatchBookingNotifications(p)).resolves.toBeUndefined();
     expect(h.emails).toHaveLength(0);
-    expect(h.emailRecords).toEqual([false]);
+    expect(h.emailRecords).toEqual([]);
     expect(h.failures).toEqual([expect.objectContaining({
       appointmentId: "appt-1", emailType: "confirmation", error: "confirmation_preparation_failed", retryable: true,
     })]);
@@ -177,19 +177,21 @@ describe("email preparation failure stays inside its channel (4310174756)", () =
     else expect(bodies()[0]).not.toContain("/intake/");
     safeObservability();
   });
-  it("a failed failure-record write also cannot suppress SMS/practitioner", async () => {
+  it("preparation failure never calls the send-attempt recorder, even when it would throw", async () => {
     const p = enabled(); h.preparationFailure = "context"; h.recordThrows = true;
     await expect(dispatchBookingNotifications(p)).resolves.toBeUndefined();
-    expect(h.emails).toHaveLength(0); expect(h.emailRecords).toEqual([false]);
+    expect(h.emails).toHaveLength(0); expect(h.emailRecords).toEqual([]);
     expect(fetchMock).toHaveBeenCalledTimes(1); expect(h.practitioner).toHaveLength(1);
-    expect(JSON.stringify(vi.mocked(console.error).mock.calls)).toContain("booking_confirmation_preparation_record_failed");
+    expect(h.failures).toEqual([expect.objectContaining({ error: "confirmation_preparation_failed" })]);
+    expect(h.failures[0]).not.toHaveProperty("attemptNumber");
+    expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain("booking_confirmation_preparation_record_failed");
     safeObservability();
   });
   it("email prep failure does not bypass SMS consent or the practitioner toggle", async () => {
     const p = enabled(); h.preparationFailure = "context";
     p.clientSmsConsentAt = null; p.studio.notify_practitioner_on_new_booking = false;
     await expect(dispatchBookingNotifications(p)).resolves.toBeUndefined();
-    expect(h.emailRecords).toEqual([false]); expect(h.emails).toHaveLength(0);
+    expect(h.emailRecords).toEqual([]); expect(h.emails).toHaveLength(0);
     expect(fetchMock).not.toHaveBeenCalled(); expect(h.rpc).toHaveLength(0);
     expect(h.practitioner).toHaveLength(0);
     safeObservability();
