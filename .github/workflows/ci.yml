@@ -378,12 +378,10 @@ jobs:
       - name: Whitespace + conflict-marker check
         # CI-HARDEN-POSTTEST: see the drift-check step's note. A verification
         # step must not be skipped behind an earlier failure.
-        # AND ON A WORKING TOOLCHAIN (Codex P2 4307392979). `!cancelled()` alone
-        # would also run this when `npm ci` FAILED, producing a second,
-        # misleading failure about missing modules on top of the real one. The
-        # point is only that a TEST failure must not hide a check — not that a
-        # check should run on a machine that never installed.
-        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        # Standalone: Git or Node built-ins only, so an npm ci failure must
+        # not hide this result (Codex 4309753071). Toolchain-dependent steps
+        # retain their own prerequisite gates.
+        if: ${{ !cancelled() }}
         # Catches stray trailing whitespace + leftover merge-conflict
         # markers. Matches the manual `git diff --check` step every
         # local PR is asked to run.
@@ -392,23 +390,19 @@ jobs:
       - name: Stripe / payment safety grep gates
         # CI-HARDEN-POSTTEST: see the drift-check step's note. A verification
         # step must not be skipped behind an earlier failure.
-        # AND ON A WORKING TOOLCHAIN (Codex P2 4307392979). `!cancelled()` alone
-        # would also run this when `npm ci` FAILED, producing a second,
-        # misleading failure about missing modules on top of the real one. The
-        # point is only that a TEST failure must not hide a check — not that a
-        # check should run on a machine that never installed.
-        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        # Standalone: Git or Node built-ins only, so an npm ci failure must
+        # not hide this result (Codex 4309753071). Toolchain-dependent steps
+        # retain their own prerequisite gates.
+        if: ${{ !cancelled() }}
         run: npm run check:stripe-gates
 
       - name: Migration extension-qualification check
         # CI-HARDEN-POSTTEST: see the drift-check step's note. A verification
         # step must not be skipped behind an earlier failure.
-        # AND ON A WORKING TOOLCHAIN (Codex P2 4307392979). `!cancelled()` alone
-        # would also run this when `npm ci` FAILED, producing a second,
-        # misleading failure about missing modules on top of the real one. The
-        # point is only that a TEST failure must not hide a check — not that a
-        # check should run on a machine that never installed.
-        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        # Standalone: Git or Node built-ins only, so an npm ci failure must
+        # not hide this result (Codex 4309753071). Toolchain-dependent steps
+        # retain their own prerequisite gates.
+        if: ${{ !cancelled() }}
         # Fresh-managed-project fence (RC hardening): every pgcrypto/uuid-ossp call
         # in supabase/migrations must be extensions.<fn>-qualified so the
         # 0001->NNNN chain applies on a FRESH managed project, where `extensions`

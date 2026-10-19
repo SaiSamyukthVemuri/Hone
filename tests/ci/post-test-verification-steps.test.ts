@@ -121,13 +121,42 @@ function requiresSuccess(normalized: string): boolean {
   return /(?:^|[^!A-Za-z0-9_])success\(\)/.test(normalized);
 }
 
+/**
+ * The bounded grammar used by these workflow guards: status atoms and step
+ * outcome comparisons joined by &&. Unknown syntax (including OR, grouped
+ * expressions and negated comparisons) fails closed, rather than treating a
+ * mentioned status/prerequisite as mandatory. This is not a general Actions
+ * expression evaluator. Quoted values are validated before normalization.
+ */
+function guardConjuncts(cond: string | undefined): string[] | null {
+  if (!cond) return null;
+  let expression = cond.trim();
+  if (expression.startsWith("${{")) {
+    if (!expression.endsWith("}}")) return null;
+    expression = expression.slice(3, -2).trim();
+  }
+  const atoms: string[] = [];
+  for (const raw of expression.split("&&")) {
+    const atom = raw.trim();
+    if (/^(?:!cancelled|always|!?success|!?failure)\(\)$/.test(atom)) {
+      atoms.push(atom);
+      continue;
+    }
+    const step = atom.match(
+      /^steps\.([A-Za-z0-9_-]+)\.(outcome|conclusion)\s*==\s*(['"])(success|failure|cancelled|skipped)\3$/,
+    );
+    if (!step) return null;
+    atoms.push(`steps.${step[1]}.${step[2]}=='${step[4]}'`);
+  }
+  return atoms;
+}
+
 /** Does this condition still run when an earlier step has failed? */
 function survivesFailure(cond: string | undefined): boolean {
-  if (!cond) return false;
-  const c = cond.replace(/\s+/g, "");
-  if (!c.includes("!cancelled()") && !c.includes("always()")) return false;
-  // ...and it must not re-impose the very gate it just lifted.
-  return !requiresSuccess(c);
+  const atoms = guardConjuncts(cond);
+  if (!atoms?.some((a) => a === "!cancelled()" || a === "always()")) return false;
+  // Both success() and !failure() suppress the check after an earlier failure.
+  return !atoms.some((a) => requiresSuccess(a) || a === "!failure()");
 }
 
 /**
@@ -140,11 +169,9 @@ function survivesFailure(cond: string | undefined): boolean {
  * comparison itself is read, not merely the step name.
  */
 function requiresStepSuccess(cond: string | undefined, id: string): boolean {
-  if (!cond) return false;
-  const c = cond.replace(/\s+/g, "");
-  return new RegExp(
-    `steps\\.${id}\\.(?:outcome|conclusion)==(?:'success'|"success")`,
-  ).test(c);
+  const atoms = guardConjuncts(cond) ?? [];
+  return atoms.includes(`steps.${id}.outcome=='success'`) ||
+    atoms.includes(`steps.${id}.conclusion=='success'`);
 }
 
 /** The step ids a condition reads, e.g. `steps.db_chain.outcome`. */
@@ -313,6 +340,51 @@ describe("the instrument works at all", () => {
 });
 
 describe("ci.yml: no verification step is hidden behind an earlier failure", () => {
+  it("standalone verification checks do not depend on npm ci", () => {
+    const steps = jobs(CI_BODY).find(([id]) => id === "validate")?.[1].steps ?? [];
+    for (const command of [
+      "git diff --check HEAD",
+      "npm run check:stripe-gates",
+      "npm run check:migration-extensions",
+    ]) {
+      const step = steps.find((s) => s.run === command);
+      expect(step, `standalone check must exist: ${command}`).toBeTruthy();
+      expect(survivesFailure(step?.if), command).toBe(true);
+      expect(referencedStepIds(step?.if), `${command} needs no installed modules`).toEqual([]);
+    }
+  });
+
+  it("dependency-needed tests retain their actual prerequisite gates", () => {
+    for (const [jobId, command, prerequisite, prerequisiteCommand] of [
+      ["validate", "npm test", "deps", "npm ci"],
+      ["db-integration", "npm run test:db", "db_chain", "db reset --local"],
+    ]) {
+      const steps = jobs(CI_BODY).find(([id]) => id === jobId)?.[1].steps ?? [];
+      const step = steps.find((s) => s.run === command);
+      expect(step, `${jobId}: ${command} must exist`).toBeTruthy();
+      expect(requiresStepSuccess(step?.if, prerequisite), command).toBe(true);
+      expect(steps.find((s) => s.id === prerequisite)?.run).toContain(prerequisiteCommand);
+    }
+  });
+
+  it("CONTROL: negating failure() hides a check after an earlier failure", () => {
+    expect(survivesFailure("${{ !cancelled() && !failure() }}")).toBe(false);
+    expect(survivesFailure("${{ always() && !failure() }}")).toBe(false);
+  });
+
+  it("CONTROL: prerequisite success cannot be an OR alternative", () => {
+    for (const cond of [
+      "${{ !cancelled() && (steps.db_chain.outcome == 'success' || failure()) }}",
+      "${{ steps.db_chain.outcome == 'success' || always() }}",
+      "${{ !cancelled() && !steps.db_chain.outcome == 'success' }}",
+    ]) {
+      expect(requiresStepSuccess(cond, "db_chain"), cond).toBe(false);
+    }
+    expect(requiresStepSuccess("${{ always() && steps.db_chain.outcome == 'success' }}", "db_chain")).toBe(true);
+    expect(requiresStepSuccess('${{ !cancelled() && steps.db_chain.conclusion == "success" }}', "db_chain")).toBe(true);
+    expect(requiresStepSuccess("${{ !cancelled() && steps.db_chain.outcome == 'suc cess' }}", "db_chain")).toBe(false);
+  });
+
   it("EVERY post-test verification step carries a condition that survives failure", () => {
     // THE GENERAL ASSERTION, deliberately not a hardcoded list of the four
     // steps this change fixed: a NEW check appended after a test step in any
