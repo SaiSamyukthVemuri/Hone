@@ -278,6 +278,12 @@ Token storage: the DB only ever holds `hashToken(rawToken)`. A DB compromise doe
 
   `tests/lib/analytics/vercel-url-redaction.test.ts` walks every dynamic page under the opted-in trees with synthetic ids, so a new route is covered automatically. Vercel's own `route` field is already a template and is left untouched.
 - **PostHog token-path redaction follows the canonical registry (#828).** `TOKEN_PATH_PREFIXES` in `lib/analytics/client-boundary.ts` is derived from `TOKEN_ROUTE_PREFIXES` (`lib/security/token-routes.ts`). The hand-written copy lacked `/invitation`, so an invitation token in a marketing pageview's `$prev_pageview_pathname` or `$referrer` passed unredacted. No client-side link from `/invitation` to a marketing page was found, so this is defence in depth against drift. Pinned by Scenario 12 in `tests/lib/analytics/client-boundary.test.ts`.
+- **PostHog URL properties lose record ids, and `/flags` is off (#828 G-07/G-26).** Browser events leave only from canonical marketing pages, but their URL-valued properties can name app pages.
+  - **Where app URLs appear:** a `$referrer` of `/clients/<uuid>/sessions/<uuid>` after a practitioner follows a link to a marketing page, plus `$initial_*`, `$session_entry_*`, and `$set` / `$set_once`.
+  - **The fix:** `guardBrowserEvent` treats every named URL key, and any key ending in `_url`, `_referrer` or `_pathname`, as a URL. It applies the same segment rules as Vercel Analytics (`lib/analytics/path-ids.ts`): `[id]` and `[token]`, percent-decoded first. It does the same in `properties`, `$set` and `$set_once`. PostHog's own ids (`$session_id`, `distinct_id`) are kept.
+  - **`/flags`:** posthog-js 1.404.1 sends the person properties, including the first page that browser loaded, in every `/flags` request body. `before_send` never sees that request. Hone uses no feature flags, so `advanced_disable_flags: true` stops the request entirely.
+  - **Tests:** `tests/lib/analytics/posthog-url-ids.test.ts` pins both, including the SDK's own gate on that option name.
+  - **Not a BAA.**
 - **Why a pathname denylist is not enough:** the analytics script can already have loaded on a previous safe page in the same SPA navigation. By the time a runtime denylist runs, the script is already in the document and ready to observe the new URL.
 
 ## 7. Production config fail-closed (PR #143)
