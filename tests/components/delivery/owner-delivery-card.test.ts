@@ -381,3 +381,35 @@ it("assigns only invalid-address refusals to studio data correction (4307826148)
     expect(describeIncident({ ...row, last_reason }).owner).toBe("hone");
   }
 });
+
+
+describe("confirmed invalid-number refusal needs studio correction (4310343000)", () => {
+  it.each(["appointment_confirmation", "appointment_reminder_24h", "appointment_reminder_2h"])("assigns confirmed21211 %s to the studio with the correction step", (purpose) => {
+    const result = describeIncident({ channel: "sms", purpose, failure_class: "refused", last_reason: "twilio_21211" });
+    expect(result).toMatchObject({
+      meaning: "The text provider refused the client's invalid mobile number.",
+      nextStep: "Check the client's mobile number with them and update it.",
+      owner: "studio",
+    });
+    expect(result.title).toContain("text not delivered");
+    expect(result.nextStep).not.toContain("Nothing to change");
+  });
+
+  it("keeps unknown and non-exact SMS refusal reasons Hone-owned", () => {
+    for (const last_reason of [null, "provider_refused", "twilio_unknown", "twilio_21211_extra", "21211"]) {
+      expect(describeIncident({ channel: "sms", purpose: "appointment_confirmation", failure_class: "refused", last_reason })).toMatchObject({
+        owner: "hone", nextStep: "Nothing to change on your side. Contact Hone support if it continues.",
+      });
+    }
+  });
+
+  it("does not apply a foreign SMS reason to email or change other failure classes", () => {
+    for (const channel of ["email", "sms"] as const) {
+      for (const failure_class of ["refused", "bounced", "failed", "suppressed", "undelivered"] as const) {
+        if (channel === "sms" && failure_class === "refused") continue;
+        const row = { channel, purpose: "appointment_reminder_24h", failure_class };
+        expect(describeIncident({ ...row, last_reason: "twilio_21211" })).toEqual(describeIncident({ ...row, last_reason: null }));
+      }
+    }
+  });
+});
