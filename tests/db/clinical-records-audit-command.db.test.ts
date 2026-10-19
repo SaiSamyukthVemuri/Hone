@@ -357,6 +357,27 @@ describe("0233: clinical-records audit rows are actor-bound", () => {
     expect((await rowsFor(s.clientId)).length).toBe(2);
   });
 
+  it("rejects deleted session previews and prints, including deletion after preview (4309703170)", async () => {
+    const s = await seedStudio("aud0233deleted");
+    const sessionId = (await seedSession(s)).sessionId;
+    const scope = { scope: "session", session_id: sessionId };
+    const call = (action: string, metadata: unknown) =>
+      asUser(s.userId, (q) =>
+        q(`select public.record_clinical_records_audit($1, $2, $3) as id`, [s.clientId, action, metadata]),
+      );
+    // Positive control: the same live session supports preview and print.
+    const preview = await call("clinical_records_previewed", scope);
+    const printScope = { ...scope, preview_audit_id: preview.rows[0].id };
+    await call("clinical_records_printed", printScope);
+    await adminQuery(`update public.sessions set deleted_at = now() where id = $1`, [sessionId]);
+    const before = await rowsFor(s.clientId);
+    expect(before.map((r) => r.action).sort()).toEqual(["clinical_records_previewed", "clinical_records_printed"]);
+    await expect(call("clinical_records_previewed", scope)).rejects.toSatisfy((e) => refused(e) === "22023");
+    // A still-recent, genuine preview must not authorize printing a deleted session.
+    await expect(call("clinical_records_printed", printScope)).rejects.toSatisfy((e) => refused(e) === "22023");
+    expect(await rowsFor(s.clientId)).toEqual(before);
+  });
+
   it("a SESSION scope must name this client's own session (Codex P1 4305625192)", async () => {
     const s = await seedStudio("aud0233s");
     const other = await seedStudio("aud0233s-o");
