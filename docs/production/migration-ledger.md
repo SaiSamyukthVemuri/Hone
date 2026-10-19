@@ -122,6 +122,15 @@ remains the existing pending train, HON-47 0234, then 0235; it is not apply auth
 > `0212` is now **FROZEN**. Any correction is a new forward migration; there is no
 > manual down-migration.
 
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0212** (`0212_email_delivery_events.sql`), applied 2026-10-12 from #832's reviewed head. |
+| **Repo migration max** | **0235**: `0235_machine_finite_readings.sql` (Machines finite-reading repair), above `0234_client_self_service_controls.sql` (HON-47, #930), above `0233_clinical_records_audit_command.sql` (HON-46, #896) and `0232_treatment_image_capture_stage.sql` and `0231_client_identification_portrait.sql` (FETT photos), `0230_studio_sms_sender_stop_preflights.sql` and `0229_studio_sms_sender_campaign_bindings.sql` (HON-50) and `0228_legacy_new_client_refusal_atomicity.sql` (#874). Derived by `npm run migration:state` on this tree. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **`0213`–`0235`** (`0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`, `0229`, `0230`, `0231`, `0232`, `0233`, `0234`, `0235`), contiguous from hosted + 1, all **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING. `0211` and `0212` are APPLIED and FROZEN and carried byte-identical. Each pending migration applies from its own reviewed head, never from this branch. `0233` (`0233_clinical_records_audit_command.sql`, HON-46 #896) and `0234` (`0234_client_self_service_controls.sql`, HON-47 #930) are **PENDING, NOT APPLIED**; applying either needs Sam's separate per-change authorization. `0234` adds `studios.client_cancellation_enabled` and `client_reschedule_enabled`, both `not null default true`, so applying it changes no existing studio's behaviour; the switches are set afterwards, as their own authorized write. `0235` is also PENDING/NOT APPLIED; the scoped local patch supplied no hosted apply or full-chain proof. |
+| **Next free migration** | Next free number is **0236**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** here: availability is not allocation. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. |
+
 ## Previous state (verified 2026-10-12, post-0211 apply)
 
 > **0211 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #827 HEAD, BEFORE ANY MERGE.**
@@ -202,14 +211,6 @@ remains the existing pending train, HON-47 0234, then 0235; it is not apply auth
 >
 > **`0209` and `0210` are APPLIED AND FROZEN**, carried byte-identical.
 
-| Field | Value |
-|---|---|
-| **Hosted (production) migration max** | **0212** (`0212_email_delivery_events.sql`), applied 2026-10-12 from #832's reviewed head. |
-| **Repo migration max** | **0235**: `0235_machine_finite_readings.sql` (Machines finite-reading repair), above `0234_client_self_service_controls.sql` (HON-47, #930), above `0233_clinical_records_audit_command.sql` (HON-46, #896) and `0232_treatment_image_capture_stage.sql` and `0231_client_identification_portrait.sql` (FETT photos), `0230_studio_sms_sender_stop_preflights.sql` and `0229_studio_sms_sender_campaign_bindings.sql` (HON-50) and `0228_legacy_new_client_refusal_atomicity.sql` (#874). Derived by `npm run migration:state` on this tree. |
-| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **`0213`–`0235`** (`0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`, `0229`, `0230`, `0231`, `0232`, `0233`, `0234`, `0235`), contiguous from hosted + 1, all **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING. `0211` and `0212` are APPLIED and FROZEN and carried byte-identical. Each pending migration applies from its own reviewed head, never from this branch. `0233` (`0233_clinical_records_audit_command.sql`, HON-46 #896) and `0234` (`0234_client_self_service_controls.sql`, HON-47 #930) are **PENDING, NOT APPLIED**; applying either needs Sam's separate per-change authorization. `0234` adds `studios.client_cancellation_enabled` and `client_reschedule_enabled`, both `not null default true`, so applying it changes no existing studio's behaviour; the switches are set afterwards, as their own authorized write. `0235` is also PENDING/NOT APPLIED; the scoped local patch supplied no hosted apply or full-chain proof. |
-| **Next free migration** | Next free number is **0236**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** here: availability is not allocation. |
-| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. |
 
 ## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, repo == hosted)
 > **0215 IS AUTHORED AND PENDING, on the DELIVERY-VISIBILITY-01 branch `feat/delivery-visibility-01` only.**
