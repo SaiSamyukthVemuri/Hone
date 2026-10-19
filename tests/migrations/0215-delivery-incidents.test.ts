@@ -194,3 +194,14 @@ describe("0215 grants EXACTLY the intended roles, and nothing else", () => {
     ]);
   });
 });
+
+
+describe("aged claims remain unknown, separate from accepted mail (4310259234)", () => {
+  it("counts only claimed attempts older than24h in the existing read without adding a writer", () => {
+    const health = CODE.match(/create or replace function public\.email_delivery_health\(\)[\s\S]*?as \$\$([\s\S]*?)\$\$;/)![1]!;
+    expect(CODE).toMatch(/stale_claimed\s+integer/);
+    expect(health).toMatch(/where m\.status = 'claimed'\s+and m\.claimed_at < now\(\) - interval '24 hours'/);
+    expect(health).toMatch(/where m\.status in \('accepted', 'sent'\)/);
+    expect(health).not.toMatch(/\b(insert|update|delete|perform)\b/i);
+  });
+});
