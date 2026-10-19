@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { EMAIL_SWEEP_EXPECTED_INTERVAL_SECONDS, EMAIL_SWEEP_INTERVAL_MARGIN, HEALTH_THRESHOLDS, healthFindings, type EmailDeliveryHealth } from "@/lib/email/delivery-health";
+import { EMAIL_SWEEP_EXPECTED_INTERVAL_SECONDS, EMAIL_SWEEP_INTERVAL_MARGIN, HEALTH_THRESHOLDS, healthFindings, readEmailDeliveryHealth, type EmailDeliveryHealth } from "@/lib/email/delivery-health";
 
 // ===========================================================================
 // DELIVERY-VISIBILITY-01 — which health rows warrant an operator finding.
@@ -14,6 +14,7 @@ const healthy: EmailDeliveryHealth = {
   quarantined24h: 0,
   unmatched24h: 12,
   unreportedAccepted: 0,
+  staleClaimed: 0,
   openIncidents: 3,
   lastSweepAt: "2026-10-12T00:00:00.000Z",
   lastSweepFailed: 0,
@@ -91,4 +92,41 @@ describe("sweep heartbeat age (4307828020)", () => {
       "email_delivery_sweep_failing:warning", "email_delivery_sweep_stale:warning",
     ]);
   });
+});
+
+
+describe("aged committed claims (4310259234)", () => {
+  it("keeps an aged claim separate from known acceptance and reports unknown, not a send", () => {
+    const [finding] = findings({ ...healthy, staleClaimed: 2 });
+    expect(finding).toMatchObject({ event: "email_delivery_claimed_stale", severity: "warning", details: { stale_claimed: 2 } });
+    expect(finding!.message).toContain("Provider acceptance and delivery are unknown");
+    expect(finding!.message).toContain("a claim alone does not prove a send");
+    expect(finding!.message).toContain("Review before any resend");
+    expect(events({ staleClaimed: 0 })).toEqual([]);
+    expect(events({ staleClaimed: 1, unreportedAccepted: 1 })).toEqual([
+      "email_delivery_claimed_stale:warning", "email_delivery_unreported:warning",
+    ]);
+  });
+
+  it("maps the existing RPC's separate aged-claim count into its finding without a provider/write call", async () => {
+    const calls: string[] = [];
+    const admin = { rpc: async (name: string) => {
+      calls.push(name);
+      return { data: [{ stale_claimed: 3, unreported_accepted: 0, last_sweep_at: healthy.lastSweepAt, last_sweep_failed: 0 }], error: null };
+    } } as unknown as Parameters<typeof readEmailDeliveryHealth>[0];
+    const health = await readEmailDeliveryHealth(admin);
+    expect(calls).toEqual(["email_delivery_health"]);
+    expect(health).toMatchObject({ staleClaimed: 3, unreportedAccepted: 0 });
+    expect(findings(health!)).toEqual([expect.objectContaining({ event: "email_delivery_claimed_stale", details: { stale_claimed: 3 } })]);
+  });
+});
+
+
+it.each([undefined, -1, "3", 0.5])("missing/invalid claimed count %s is unknown health, never zero", async (stale_claimed) => {
+  const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  try {
+    const admin = { rpc: async () => ({ data: [{ stale_claimed }], error: null }) } as unknown as Parameters<typeof readEmailDeliveryHealth>[0];
+    expect(await readEmailDeliveryHealth(admin)).toBeNull();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("stale_claimed_unknown"));
+  } finally { log.mockRestore(); }
 });
