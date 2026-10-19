@@ -891,7 +891,7 @@ export default async function ClientCheatSheetPage({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               {portraitUrl && (
-                <ClientPortrait key={`${portraitUrl.url}:${portraitUrl.thumbUrl ?? ""}`} imageId={client.portrait_image_id!} url={portraitUrl.url} thumbUrl={portraitUrl.thumbUrl} clientName={client.name} />
+                <ClientPortrait key={`${portraitUrl.url}:${portraitUrl.thumbUrl ?? ""}`} clientId={client.id} imageId={client.portrait_image_id!} url={portraitUrl.url} thumbUrl={portraitUrl.thumbUrl} clientName={client.name} />
               )}
               <h1 className="break-words text-2xl font-semibold tracking-tight md:text-3xl">
                 {client.name}

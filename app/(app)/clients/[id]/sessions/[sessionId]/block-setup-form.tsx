@@ -84,7 +84,7 @@ import {
 } from "@/lib/sessions/charting-labels";
 import { SESSION_BLOCK_SIDE_OPTIONS } from "@/lib/sessions/side-labels";
 import {
-  readAreaOperationId,
+  readAreaOperationIdAtMount,
   syncAreaOperationParam,
 } from "@/lib/machines/area-operation";
 import { AreaPicker } from "@/components/area-picker";
@@ -100,6 +100,11 @@ import {
   INITIAL_SAVE_ALREADY_SAVED,
   INITIAL_SAVE_RESUME_NEEDS_SETTINGS,
   INITIAL_SAVE_RESUME_UNKNOWN,
+  RESUME_RECONSTRUCT_CONFIRM,
+  RESUME_RECONSTRUCT_NOTICE,
+  RESUME_CHOICE_NEW,
+  RESUME_CHOICE_PROMPT,
+  RESUME_CHOICE_RESUME,
   INITIAL_SAVE_UNRESOLVED,
   prepareHandoff,
   type PendingSetupIdentity,
@@ -464,6 +469,15 @@ export function BlockSetupForm({
    * stale value. Held in state so it is the value this mount resumed from,
    * whatever the address bar says afterwards.
    *
+   * AND THAT IS WHY IT READS `readAreaOperationIdAtMount` AND NOT
+   * `useSearchParams()` (found by journey (ii) on #922). The comment above
+   * was right about the WRITE and wrong about this READ: reading the router's
+   * params here reported the value from the last real NAVIGATION, so after a
+   * reload carrying `area_op=A` every later mount resumed A no matter how
+   * many times it had since been released or replaced. The address bar is the
+   * one surface; the helper consults the router only on the server, where
+   * there is no address bar and its params are the request's own.
+   *
    * ONLY AN ID WE MINTED: `readAreaOperationId` returns null for anything
    * missing, malformed, repeated or not v4-shaped, and a null simply mints a
    * fresh one. Honouring a value we did not mint could have 0223 hand her
@@ -481,7 +495,7 @@ export function BlockSetupForm({
   const router = useRouter();
   const searchParams = useSearchParams();
   const [resumedSaveKey] = useState<string | null>(() =>
-    isEdit ? null : readAreaOperationId(searchParams),
+    isEdit ? null : readAreaOperationIdAtMount(searchParams),
   );
 
   /**
@@ -530,6 +544,36 @@ export function BlockSetupForm({
     | { state: "unknown" }
   >(() => (resumedSaveKey === null ? { state: "idle" } : { state: "checking" }));
 
+  // DECLARED ABOVE `resumeOwnsKey`, WHICH READS IT. The ownership rule ends
+  // when she starts a new area (Codex, #922 4307763147), so the choice has to
+  // exist by then - and TypeScript says so rather than leaving it to reading
+  // order.
+  /**
+   * WHAT SHE DECIDED ABOUT AN UNSETTLED EARLIER SAVE, or null while unasked.
+   *
+   * WHY THERE IS A CHOICE AT ALL (ops01's ruling on #922 4307515255). The
+   * retained key is what lets a resumed save be ABSORBED instead of
+   * duplicated - and absorption is only correct if this really is the same
+   * save. If she has come back to create a genuinely SECOND area with the
+   * same values, absorbing it suppresses an area she meant to make. Sam's
+   * standing requirement is that recovery must preserve the ability to create
+   * an identical second area deliberately, so the ambiguity is resolved by
+   * ASKING rather than by guessing from the values.
+   *
+   * NOTHING HERE ASKS HER TO CHANGE A CLINICAL VALUE to get a second area,
+   * which is the rule this exists to honour.
+   *
+   * ONLY MEANINGFUL WHILE THE ANSWER IS UNSETTLED. `saved` is settled and
+   * closes the form; `idle` is the ordinary non-resumed form.
+   */
+  const [resumeChoice, setResumeChoice] = useState<null | "resume" | "new">(
+    null,
+  );
+  const resumeUnsettled =
+    resume.state === "absent" || resume.state === "unknown";
+  /** The choice is open: unsettled, and not yet answered. */
+  const resumeChoicePending = resumeUnsettled && resumeChoice === null;
+
   /**
    * THE RESUMED OPERATION STILL OWNS THE KEY, and nothing else may discard it.
    *
@@ -572,7 +616,21 @@ export function BlockSetupForm({
    * original never committed, the key is unused and the save proceeds. A
    * fresh key is the only option that duplicates silently.
    */
-  const resumeOwnsKey = resume.state !== "idle" && resume.state !== "saved";
+  const resumeOwnsKey =
+    resume.state !== "idle" &&
+    resume.state !== "saved" &&
+    // AND NOT ONCE SHE HAS STARTED A NEW AREA (Codex, #922 4307763147).
+    //
+    // THE DEFECT. `chooseStartNew` released the retained key, but the resumed
+    // operation still OWNED the key slot - so the fresh key minted for the new
+    // area inherited that protection and survived Cancel after a definitive
+    // error. The next Add then resumed an operation that had already been
+    // abandoned, which is the trap 4305701038 reported from the other side.
+    //
+    // "START NEW" IS A SETTLED ANSWER. She has told us this is not the earlier
+    // save, so the earlier save's claim on the key ends there - and the new
+    // one is an ordinary mint, with the ordinary rules.
+    resumeChoice !== "new";
 
 
   /**
@@ -651,17 +709,55 @@ export function BlockSetupForm({
     // lookup, and `resumedNeedsSettings` blocked an ordinary settings-free
     // save. There was no way back to a fresh area short of editing the URL.
     //
-    // THE EXCEPTION IS `checking` ONLY, which is what 4305431336 was actually
-    // about: closing while the lookup is in flight would discard an answer
-    // that is one round trip away. Cancel is disabled in that state, so this
-    // is the belt to that braces — and the two together mean she can always
-    // leave, and leaving always means leaving.
+    // SETTLED STATES CLEAR IT; UNSETTLED STATES KEEP IT (Codex, #922
+    // 4307515255, and ops01's scoped ruling).
     //
-    // Abandoning in `unknown` is hers to choose, and the copy says what it
-    // costs: the area may already be on the chart, so check before adding
-    // another.
-    if (!isEdit && resume.state !== "checking") syncAreaOperationParam(null);
+    // `checking` was the only exception, and that was too narrow. `absent` is
+    // not settled either: `create_block_with_initial_setup` takes its
+    // advisory lock BEFORE looking for a claim and writes the claim at the
+    // very END, and the reconciliation read holds no lock - so a read landing
+    // mid-commit sees NO ROW for a save that is about to succeed. Clearing on
+    // that answer discarded the only identity that could absorb the original,
+    // and a later Add then duplicated the area once the first transaction
+    // committed. `unknown` is unsettled by definition.
+    //
+    // SO THIS DEFERS TO `resumeOwnsKey`, which the comment on that constant
+    // already claimed both paths did. They did not: that one governed the
+    // draft-change drop rule while this kept its own narrower test, and the
+    // gap between them was the defect.
+    //
+    // AND KEEPING THE KEY IS NOT THE WHOLE ANSWER. A key kept silently would
+    // make a later Add whose values happen to match the abandoned save get
+    // ABSORBED, which suppresses an intentionally identical second area -
+    // Sam's standing requirement is that recovery preserve the ability to
+    // make one deliberately. So the next Add does not resume silently: it
+    // ASKS. See `resumeChoice` below.
+    if (!isEdit && !resumeOwnsKey) syncAreaOperationParam(null);
     onCancel();
+  };
+
+  /**
+   * RESUME: keep the retained key, so the original is absorbed or refused
+   * rather than duplicated. A settings-free resume still carries it, through
+   * `create_block_with_initial_setup` with null groups - which 0223 declares
+   * a valid save and for which it still writes the claim.
+   */
+  const chooseResume = () => {
+    setResumeChoice("resume");
+    adoptResumedKey();
+  };
+
+  /**
+   * START NEW: a fresh key, and the retained one is released.
+   *
+   * THIS IS THE ANSWER THAT PRESERVES INTENT. She is telling us this is not
+   * the earlier save, so it must not be absorbed by it - and a fresh key is
+   * exactly what makes an identical second area possible without touching a
+   * single recorded value.
+   */
+  const chooseStartNew = () => {
+    setResumeChoice("new");
+    setPendingSaveKey(null);
   };
 
   /**
@@ -824,15 +920,65 @@ export function BlockSetupForm({
    * save in this state is therefore a DIFFERENT save, and it is the one that
    * must not proceed unkeyed while the original may still be committing.
    *
+   * AND THAT WAS NOT THE REAL REASON, which I had wrong until a browser test
+   * would not write (ops01's ruling on #922 4307515255). Carrying the key on a
+   * settings-free save is possible - 0223's settings half is nullable and it
+   * still writes the claim - so "unkeyed" was fixable and would not have
+   * justified a hold on its own.
+   *
+   * THE REASON THAT SURVIVES IS THAT A SETTINGS-FREE SAVE CANNOT REPRODUCE
+   * THE SETTINGS SHE ENTERED. If the original committed, a keyed bare save is
+   * absorbed and she gets the original with its settings - fine. If it never
+   * committed, which is what `absent` usually means, it would create an area
+   * with NO machine settings and silently discard what she typed before the
+   * reload. That is data loss dressed as recovery, and we cannot tell the two
+   * cases apart at save time - which is the whole premise of the finding.
+   *
+   * SO RESUME MEANS RE-ENTER, and the retained key then decides it: identical
+   * values are absorbed, different values are refused by name, and a save
+   * whose original never committed proceeds once. None of the three loses a
+   * setting.
+   *
+   * THE WAY BACK IS THE CHOICE, NOT A BARE SAVE. 4305701038's trap - a
+   * retained key blocking an ordinary settings-free save for ever - is closed
+   * by "Start a new area as well", which releases the key. There is no dead
+   * end: unsettled with nothing entered offers Start New, or Resume plus her
+   * settings.
+   *
    * Derived from `machineDraft` directly rather than from
    * `machineSetupForSave()`, because that function MINTS AND STORES a key —
    * calling it during render would set state from a render pass.
    */
   const hasSettingsToSend =
     machineDraft !== null && machineDraft.groups.length > 0;
+
+
   const resumedNeedsSettings =
-    (resume.state === "absent" || resume.state === "unknown") &&
-    !hasSettingsToSend;
+    resumeUnsettled && resumeChoice === "resume" && !hasSettingsToSend;
+
+  /**
+   * SHE HAS CONFIRMED THAT THE WHOLE DRAFT IS BACK, not just the settings.
+   *
+   * THE DEFECT THIS CLOSES (Codex, #922 4307763145). A reload resets the
+   * ENTIRE draft - area, minutes, readings, observations, numbing, notes - and
+   * the recovery gate treated only `machineDraft.groups` as the lost payload.
+   * So Save enabled on one re-entered machine group, and a resume whose
+   * original never committed recorded null and default values for everything
+   * else: a record quietly thinner than the treatment.
+   *
+   * A CONFIRMATION RATHER THAN A VALIDATION RULE, deliberately. A blank note
+   * or no numbing detail is LEGAL - she may have none - so there is no
+   * "required" to lean on, and inventing one would be deciding clinical
+   * completeness, which is not this file's to decide. What is wrong is not
+   * that fields are empty but that they are empty BY ACCIDENT while she
+   * believes she is restoring. This makes the emptiness deliberate.
+   *
+   * ONLY ON A CHOSEN RESUME. "Start a new area" is authoring a fresh area and
+   * already knows it; an ordinary create never had anything to lose.
+   */
+  const [resumedReconstructed, setResumedReconstructed] = useState(false);
+  const resumedUnconfirmed =
+    resumeUnsettled && resumeChoice === "resume" && !resumedReconstructed;
 
   const onSettingDraftChanged = (
     next: {
@@ -2009,6 +2155,60 @@ export function BlockSetupForm({
         </div>
       )}
 
+      {/* THE RECOVERY CHOICE (ops01's ruling on #922 4307515255).
+
+          A key kept silently would let a later Add whose values happen to
+          match the abandoned save be ABSORBED, suppressing an area she meant
+          to create. So the unsettled answer is not resolved by guessing from
+          the values - it is put to her, and neither option asks her to change
+          one. */}
+      {resumeChoicePending && (
+        <div
+          className="flex flex-col gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300"
+          role="status"
+          data-testid="initial-save-resume-choice"
+        >
+          <p>{RESUME_CHOICE_PROMPT}</p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={chooseResume}
+              data-testid="initial-save-resume-choice-resume"
+              className="rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
+            >
+              {RESUME_CHOICE_RESUME}
+            </button>
+            <button
+              type="button"
+              onClick={chooseStartNew}
+              data-testid="initial-save-resume-choice-new"
+              className="rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
+            >
+              {RESUME_CHOICE_NEW}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {resumeUnsettled && resumeChoice === "resume" && (
+        <div
+          className="flex flex-col gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300"
+          data-testid="initial-save-resume-reconstruct"
+        >
+          <p>{RESUME_RECONSTRUCT_NOTICE}</p>
+          <label className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              checked={resumedReconstructed}
+              onChange={(e) => setResumedReconstructed(e.target.checked)}
+              data-testid="initial-save-resume-reconstructed"
+              className="mt-0.5 h-4 w-4"
+            />
+            <span>{RESUME_RECONSTRUCT_CONFIRM}</span>
+          </label>
+        </div>
+      )}
+
       {resumedNeedsSettings && (
         <p
           className="text-sm text-neutral-700 dark:text-neutral-300"
@@ -2042,11 +2242,19 @@ export function BlockSetupForm({
           // HELD WHILE THE RESUMED QUESTION IS OPEN. Committing a second save
           // before the claim read lands is the one outcome this must not
           // allow, and once the answer is "saved" there is nothing to save.
+          //
+          // AND WHILE THE RECOVERY CHOICE IS UNANSWERED. Saving before she
+          // has said whether this is the earlier save or a new area would
+          // decide it for her - either absorbing an area she meant to create,
+          // or duplicating one she did not (ops01's ruling on #922
+          // 4307515255).
           disabled={
             pending ||
             resume.state === "checking" ||
             resume.state === "saved" ||
-            resumedNeedsSettings
+            resumeChoicePending ||
+            resumedNeedsSettings ||
+            resumedUnconfirmed
           }
           data-testid="save-treatment-area"
           className="rounded-md bg-neutral-900 px-5 py-3 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"

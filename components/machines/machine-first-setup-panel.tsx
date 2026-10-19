@@ -749,7 +749,7 @@ export function MachineFirstSetupPanel({
                 })
               }
             />
-          ) : blockId && recordAndCount && mode ? (
+          ) : blockId && recordAndCount && mode && !recordedSetupUnavailable ? (
             <MachineReadingEntry
               // REMOUNTED WHEN THE IDENTITY CHANGES, which is the whole fix.
               //

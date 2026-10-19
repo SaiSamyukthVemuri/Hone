@@ -267,7 +267,11 @@ describe("HON-46 export reads every author and every note to completion", () => 
           "blend", 3, 1.5, "hon46 initial save", JSON.stringify(["Coarse hair"]), null, 11, 22, null, null,
           33, 44.5, 55, 66, 77.5, 88.5,
           machineId, "galvanic", "hon46-initial-save-0001",
-          JSON.stringify([{ group_key: "g1", channels: [1], readings: [{ field_key: "current", value: "120", observation_source: "practitioner-entered" }] }]),
+          // A NEW group is named by `new_group_ref`, never `group_key`: the
+          // database issues group identities (final 0223; #860's
+          // group-identity-serialisation rule), and an initial save has no
+          // existing group to revise. The key is OMITTED, never sent as null.
+          JSON.stringify([{ new_group_ref: "g1", channels: [1], readings: [{ field_key: "current", value: "120", observation_source: "practitioner-entered" }] }]),
         ],
       );
       return r.rows[0].r as { block_id: string; entry_id: string | null; setup: { readings: number } | null };

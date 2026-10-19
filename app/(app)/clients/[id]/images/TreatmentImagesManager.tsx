@@ -84,6 +84,12 @@ export type SessionAttachOption = {
 
 type PhotoContextKind = "client" | "session" | "block";
 
+// 0232: the upload summary's label suffix.
+const CAPTURE_STAGE_SUMMARY = {
+  before: "Labelled: Before treatment.",
+  after: "Labelled: After treatment.",
+} as const;
+
 // Treatment-context tags shown on each card and in the larger preview. Labels
 // only, no UUIDs, storage paths, bucket names, or signed-URL text.
 function ContextTags({
@@ -513,7 +519,7 @@ export function TreatmentImagesManager({
                 </div>
               )}
 
-              <p className="text-xs text-neutral-400">
+              <p className="text-xs text-neutral-400" data-testid="upload-attach-summary">
                 {contextKind === "client"
                   ? "Will attach as: Client photo."
                   : contextKind === "session"
@@ -523,6 +529,11 @@ export function TreatmentImagesManager({
                     : ctxBlockId && ctxSession
                       ? `Will attach as: Treatment area photo, ${ctxBlocks.find((b) => b.id === ctxBlockId)?.areaLabel ?? ""}, Session on ${sessionDateLabel(ctxSession.startedAt)}.`
                       : "Will attach as: Treatment area photo: choose a session and area."}
+                {/* 0232: the chosen label, so the summary says everything the
+                    upload will record. Nothing when Not labelled. */}
+                {contextKind !== "client" && captureStage
+                  ? ` ${CAPTURE_STAGE_SUMMARY[captureStage]}`
+                  : null}
               </p>
             </fieldset>
           ) : (
@@ -627,6 +638,7 @@ export function TreatmentImagesManager({
                     cell over. Availability still keys off the ORIGINAL. */}
                 <GridPhoto
                   key={`${img.id}:${img.previewUrl ?? ""}:${img.thumbUrl ?? ""}`}
+                  clientId={clientId}
                   imageId={img.id}
                   previewUrl={img.previewUrl}
                   thumbUrl={img.thumbUrl}

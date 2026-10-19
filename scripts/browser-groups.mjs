@@ -268,6 +268,11 @@ export const BROWSER_GROUPS = {
       // runs extended) and `sessions` carries a cost pin. Needs REAL storage,
       // so it SELF-SKIPS in CI (no storage-api); its evidence is a local run.
       "fett-photos-thumbnail-recovery.spec.ts",
+      // FETT photos (HON-43), 0232: the Before/After label end to end at phone
+      // width (upload, keyboard relabel/clear, the visit sections) and the
+      // receptionist refusal. Same group and the same reasons as the recovery
+      // spec above; it uploads, so it SELF-SKIPS in CI (no storage-api).
+      "fett-photo-labels.spec.ts",
       // OWNER-CAP Slice 1: /dashboard/capacity. This group's stated scope is
       // already "owner/admin, onboarding, studio setup AND CAPACITY", and the
       // spec is exactly an owner-authority surface — an owner reaches the

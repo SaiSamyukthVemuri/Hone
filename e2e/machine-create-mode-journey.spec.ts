@@ -3,6 +3,9 @@ import { randomUUID } from "node:crypto";
 
 import { seedE2eStudio, seedE2eDraftElectrolysisSession, sql } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
+import { APILUS_3G_NATIVE_FIXTURES } from "../lib/machines/apilus-3g-fixtures";
+import { modeFields } from "../lib/machines/profile-contract";
+import { planContractPublication } from "../lib/machines/contract-publication";
 
 // MPX-03 — THE CREATE-MODE JOURNEY, end to end, in a real browser.
 //
@@ -1186,3 +1189,115 @@ test("create mode: choose the machine, save the block, record one save, retrieve
     await noOverflow(page);
   });
 });
+
+// Prepared source, NOT executed proof. Reuses this spec's existing seed, login,
+// publication command, form and readback paths. Real model IDs stay blocked.
+for (const device of [
+  { name: "desktop", viewport: { width: 1280, height: 800 }, isMobile: false, hasTouch: false },
+  { name: "mobile", viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true },
+]) {
+  test.describe(`native 3G durability ${device.name}`, () => {
+    test.use({ viewport: device.viewport, isMobile: device.isMobile, hasTouch: device.hasTouch });
+    for (const profile of APILUS_3G_NATIVE_FIXTURES) for (const mode of profile.modes) {
+      test(`${profile.model} / ${mode.key}: save, reload, history and next visit`, async ({ page }) => {
+        test.skip(process.env.HONE_SYNTHETIC_MACHINE_PROFILE !== "1",
+          "UNRUN native journey: existing synthetic server gate must explicitly be enabled; closed gate is not native acceptance.");
+        const seed = await seedE2eStudio();
+        const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(seed);
+        const plan = planContractPublication([profile]);
+        expect(plan.publish).toHaveLength(profile.modes.length);
+        for (const contract of plan.publish) {
+          await sql("select public.sync_machine_profile_contract($1,$2,$3,$4,$5,$6::jsonb)", [
+            contract.p_machine_profile_id, contract.p_machine_profile_version, contract.p_mode_key,
+            contract.p_channels_max, contract.p_requires_installed_option, JSON.stringify(contract.p_fields),
+          ]);
+        }
+        const machineId = randomUUID();
+        await sql(`insert into public.studio_machines
+          (id, studio_id, machine_profile_id, machine_profile_version, display_name)
+          values ($1,$2,$3,$4,$5)`, [machineId, seed.studioId, profile.profileId, profile.version, profile.model]);
+        const fields = modeFields(mode);
+        const observations = fields.map(({ field, stageKey }, index) => ({
+          stageKey, field,
+          value: (index + 1 + 27 / 10 ** field.decimals).toFixed(field.decimals),
+        }));
+        const readStored = () => sql<{
+          stage_key: string | null; field_key: string; value_numeric: string;
+          native_unit: string; decimals: number; machine_profile_version: number;
+          observation_source: string;
+        }>(`select stage_key,field_key,value_numeric::text as value_numeric,native_unit,
+          decimals,machine_profile_version,observation_source from public.treatment_setup_readings
+          where session_block_id=$1 order by stage_key nulls first,field_key`, [blockId]);
+        let blockId = "";
+        await loginAsOwner(page, seed);
+        await openCreateForm(page, clientId, sessionId);
+        expect(await openMachinePanel(page), "enabled native fixture missing from server catalogue").toBe(true);
+        await page.getByTestId("machine-select").selectOption(machineId);
+        await page.getByTestId(`machine-mode-${mode.key}`).click({ timeout: T });
+        for (const held of ["blend", "omniblend", "multiblend", "thermolysis", "snap"]) {
+          await expect(page.getByTestId(`machine-mode-${held}`)).toHaveCount(0);
+        }
+        for (const stage of mode.stages) await expect(page.getByTestId("machine-setting-draft")).toContainText(stage.nativeLabel);
+        for (const { field, value } of observations) {
+          await expect(page.getByTestId(`field-label-${field.key}`)).toHaveText(field.nativeLabel);
+          await expect(page.getByTestId(`field-unit-${field.key}`)).toHaveText(`(${field.unit})`);
+          await expect(page.getByTestId(`reading-${field.key}`)).toHaveAttribute("step", String(10 ** -field.decimals));
+          await page.getByTestId(`reading-${field.key}`).fill(value);
+        }
+        await noOverflow(page);
+        await page.getByTestId("save-treatment-area").click({ timeout: T });
+        await expect.poll(async () => (blockId = await blockIdOf(sessionId)), { timeout: T }).not.toBe("");
+        // Separate SQL call after the application transaction commits: unlike
+        // rollback-scoped DB helpers this checks the persisted durability boundary.
+        await expect.poll(async () => (await readStored()).length, { timeout: T }).toBe(observations.length);
+        const saved = await readStored();
+        for (const { stageKey, field, value } of observations) {
+          expect(saved.find((row) => row.stage_key === stageKey && row.field_key === field.key)).toMatchObject({
+            value_numeric: value, native_unit: field.unit, decimals: field.decimals,
+            machine_profile_version: 2, observation_source: field.expectedSource,
+          });
+        }
+        const captures = await capturesFor(blockId);
+        expect(captures).toHaveLength(1);
+        expect(captures[0].setup_submission_id).not.toBeNull();
+
+        await page.reload();
+        await page.getByTestId(`edit-area-${blockId}`).click({ timeout: T });
+        expect(await openMachinePanel(page)).toBe(true);
+        const history = page.getByTestId("machine-recorded-setups");
+        await expect(history).toBeVisible({ timeout: T });
+        for (const { field, value } of observations) {
+          await expect(history).toContainText(field.nativeLabel);
+          await expect(history).toContainText(field.unit);
+          await expect(history).toContainText(value);
+          await expect(page.getByTestId(`reading-${field.key}`)).toHaveValue("");
+        }
+        expect(await readStored()).toEqual(saved);
+        expect(await capturesFor(blockId)).toEqual(captures);
+        await noOverflow(page);
+
+        await sql("update public.sessions set started_at=now()-interval '2 hours' where client_id=$1", [clientId]);
+        await page.goto(`/clients/${clientId}/sessions/new`);
+        await page.locator('[data-modality="electrolysis"]').click({ timeout: T });
+        await page.waitForURL(/\/clients\/[^/]+\/sessions\/[0-9a-f-]{36}/, { timeout: T });
+        expect(page.url().split("/sessions/")[1]!.split(/[?#]/)[0]).not.toBe(sessionId);
+        await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+        expect(await openMachinePanel(page)).toBe(true);
+        await page.getByTestId("machine-select").selectOption(machineId);
+        await page.getByTestId(`machine-mode-${mode.key}`).click({ timeout: T });
+        await expect(page.getByTestId("machine-prior-setup")).toContainText(profile.model);
+        for (const { stageKey, field, value } of observations) {
+          const suffix = stageKey ? `${stageKey}-${field.key}` : field.key;
+          const prior = page.getByTestId(`prior-setup-g1-${suffix}`);
+          await expect(page.getByTestId(`reading-${field.key}`)).toHaveValue("");
+          await expect(prior).toContainText(field.nativeLabel);
+          await expect(prior).toContainText(value);
+          await expect(prior).toContainText(field.unit);
+        }
+        expect(await readStored()).toEqual(saved);
+        expect(await capturesFor(blockId)).toEqual(captures);
+        await noOverflow(page);
+      });
+    }
+  });
+}

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { SETUP_GROUPS_MOVED } from "@/lib/machines/pending-setup";
@@ -693,25 +693,69 @@ describe("THE VALIDATION IS SHARED, not copied", () => {
     "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts";
   const VALIDATOR = "lib/machines/validate-submitted-readings.ts";
 
-  it("has exactly ONE call site for the reading validator, and it is in lib/", () => {
+  it("calls the reading validator ONLY from lib/, and never from an action", () => {
     // Counted ACROSS the three files rather than within one, which is the
     // claim that actually matters now that the paths span two modules. The
     // previous version of this test counted inside machine-setup-actions only
     // and would have been satisfied by a second copy in block-actions.
+    //
+    // THE EXACT COUNT WAS A PROXY, AND IT EXPIRED (Codex, #860 4309004312).
+    // This asserted the shared validator calls `validateReading` EXACTLY ONCE,
+    // as a stand-in for "there is one implementation of the rule". Carrying
+    // the group's channels into it needs TWO calls - one for the first named
+    // channel, one per remaining channel, because a later out-of-range channel
+    // must be refused too - and the intent is untouched by that: the rule is
+    // still defined in exactly one place and still called from exactly one
+    // module.
+    //
+    // So the COUNT is bounded rather than pinned, and the load-bearing half -
+    // zero calls from either action - stays exact. Pinning a number that the
+    // implementation may legitimately change forces the next person to either
+    // contort the code or quietly weaken the test, and this lane has done the
+    // second of those before.
     const perFile = [SETUP_ACTIONS, BLOCK_ACTIONS, VALIDATOR].map((f) => ({
       f,
       hits: (read(f).match(/validateReading\(/g) ?? []).length,
     }));
     expect(
       perFile.find((p) => p.f === VALIDATOR)!.hits,
-      "the shared validator must call it exactly once",
-    ).toBe(1);
+      "the shared validator does not call the reading validator at all",
+    ).toBeGreaterThan(0);
     for (const p of perFile.filter((x) => x.f !== VALIDATOR)) {
       expect(
         p.hits,
         `${p.f} must not call validateReading itself`,
       ).toBe(0);
     }
+  });
+
+  it("and NOTHING outside lib/machines calls it, which is the anti-copy claim", () => {
+    // THE CLAIM THE COUNT WAS STANDING IN FOR, asserted directly: a second
+    // call site anywhere in app/ or components/ is a second place for a
+    // clinical validation rule to drift, and this feature has corrected that
+    // exact defect three times. A tree walk rather than a list of three files,
+    // because a fourth recording path would not be on the list.
+    const walk = (rel: string): string[] => {
+      const abs = path.resolve(__dirname, "../../..", rel);
+      const out: string[] = [];
+      for (const e of readdirSync(abs, { withFileTypes: true })) {
+        if (e.name === "node_modules" || e.name.startsWith(".")) continue;
+        const next = `${rel}/${e.name}`;
+        if (e.isDirectory()) out.push(...walk(next));
+        else if (/\.tsx?$/.test(e.name)) out.push(next);
+      }
+      return out;
+    };
+    const offenders = [...walk("app"), ...walk("components")].filter((rel) =>
+      /validateReading\(/.test(read(rel)),
+    );
+    expect(
+      offenders,
+      "a surface outside lib/ calls the reading validator itself",
+    ).toEqual([]);
+    // ANTI-VACUITY: the walk and the matcher both work.
+    expect(walk("app").length).toBeGreaterThan(50);
+    expect(/validateReading\(/.test(read(VALIDATOR))).toBe(true);
   });
 
   it("is reached by ALL THREE recording paths", () => {
@@ -1066,40 +1110,47 @@ describe("the synthetic demo profile cannot reach production", () => {
     }
   });
 
-  it("the runtime catalogue adds it only when enabled, and never alters a real profile", () => {
-    const off = synthetic.catalogueForRuntime({} as unknown as NodeJS.ProcessEnv);
+  it("the runtime catalogue exposes exactly four synthetic identities only gate-open and preserves real profiles", async () => {
+    const { MACHINE_CATALOGUE } = await import("@/lib/machines/catalogue");
+    const realBefore = structuredClone(MACHINE_CATALOGUE);
+    const expectedSyntheticIds = [
+      "synthetic:demo-multineedle",
+      "synthetic:demo-single-probe",
+      "synthetic:native-senior-3g",
+      "synthetic:native-junior-3g",
+    ].sort();
     const on = synthetic.catalogueForRuntime(base);
-    expect(off.some((p) => p.profileId === synthetic.SYNTHETIC_PROFILE_ID)).toBe(false);
-    expect(on.some((p) => p.profileId === synthetic.SYNTHETIC_PROFILE_ID)).toBe(true);
-    expect(
-      on.some((p) => p.profileId === synthetic.SYNTHETIC_SINGLE_PROBE_PROFILE_ID),
-      "the second synthetic model is gated identically",
-    ).toBe(true);
-    expect(
-      off.some((p) => p.profileId === synthetic.SYNTHETIC_SINGLE_PROBE_PROFILE_ID),
-    ).toBe(false);
-    expect(on).toHaveLength(off.length + 2);
+    const fixtures = on.filter((p) => p.profileId.startsWith("synthetic:"));
+    expect(fixtures.map((p) => p.profileId).sort()).toEqual(expectedSyntheticIds);
+    expect(fixtures.every((p) => p.availability === "active")).toBe(true);
+    // Exact real entries, not merely an ID prefix or a catalogue length:
+    // no replacement, mutation, dropped profile or extra active real profile.
+    const realOn = on.filter((p) => !p.profileId.startsWith("synthetic:"));
+    expect(realOn).toEqual(realBefore);
+    realOn.forEach((profile, index) => expect(profile).toBe(MACHINE_CATALOGUE[index]));
+    expect(on.filter((p) => p.availability === "active").map((p) => p.profileId).sort())
+      .toEqual(expectedSyntheticIds);
 
-    // Every real profile is still exactly as the curated catalogue states it.
-    expect(off.filter((p) => p.availability === "active")).toEqual([]);
-
-    // NOTHING REAL IS EVER ACTIVATED, stated as the rule rather than as a list
-    // of ids.
-    //
-    // This used to assert the active set EQUALLED [SYNTHETIC_PROFILE_ID], which
-    // had to be edited the moment a second synthetic fixture appeared - and an
-    // assertion that needs editing whenever a fixture is added is one someone
-    // will eventually "fix" by appending the new id without checking what the
-    // test was for. The rule is that activation is confined to synthetic
-    // profiles, and the product rule behind it is that an unverified
-    // manufacturer profile is never activated to make a dropdown look fuller.
-    const active = on.filter((p) => p.availability === "active");
-    expect(active.length).toBeGreaterThan(0);
-    for (const p of active) {
-      expect(p.profileId, `${p.profileId} is active but not synthetic`).toMatch(
-        /^synthetic:/,
-      );
+    const closedEnvironments = [
+      ["absent flag", {}],
+      ["disabled flag", { ...base, HONE_SYNTHETIC_MACHINE_PROFILE: "0" }],
+      ["non-exact flag", { ...base, HONE_SYNTHETIC_MACHINE_PROFILE: "true" }],
+      ["missing local target", { HONE_SYNTHETIC_MACHINE_PROFILE: "1" }],
+      ["hosted target", { ...base, NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co" }],
+      ["Vercel", { ...base, VERCEL: "1" }],
+      ["Vercel preview", { ...base, VERCEL_ENV: "preview" }],
+      ["AWS region", { ...base, AWS_REGION: "eu-west-1" }],
+      ["AWS runtime", { ...base, AWS_EXECUTION_ENV: "AWS_Lambda_nodejs" }],
+      ["Kubernetes", { ...base, KUBERNETES_SERVICE_HOST: "10.0.0.1" }],
+    ] as const;
+    for (const [label, env] of closedEnvironments) {
+      const off = synthetic.catalogueForRuntime(env as NodeJS.ProcessEnv);
+      expect(off, label).toEqual(realBefore);
+      expect(off.some((p) => p.profileId.startsWith("synthetic:")), label).toBe(false);
+      expect(off.filter((p) => p.availability === "active"), label).toEqual([]);
+      off.forEach((profile, index) => expect(profile, label).toBe(MACHINE_CATALOGUE[index]));
     }
+    expect(MACHINE_CATALOGUE).toEqual(realBefore);
   });
 
   it("the second model DISAGREES with the first, which is its whole purpose", () => {

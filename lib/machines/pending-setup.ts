@@ -206,6 +206,72 @@ export const SETUP_GROUPS_MOVED =
   "while this form was open, so saving now could overwrite them. Reload the " +
   "chart and enter these settings again - nothing here has been recorded.";
 
+/**
+ * AN EARLIER SAVE MAY STILL BE FINISHING, and she has to say which this is.
+ *
+ * WHY SHE IS ASKED RATHER THAN GUESSED AT (ops01's ruling on #922
+ * 4307515255). The retained retry key is what lets a resumed save be absorbed
+ * instead of duplicated. Absorption is only correct if this IS the same save:
+ * if she has returned to create a genuinely second area with the same values,
+ * absorbing it suppresses an area she meant to make. Sam's standing
+ * requirement is that recovery preserve the ability to create an identical
+ * second area deliberately, so the ambiguity is resolved by asking.
+ *
+ * PLAIN AND FACTUAL. It says what is uncertain - the earlier save MAY still
+ * be finishing - without implying either that it failed or that it worked,
+ * because neither is known. And it never asks her to change a value.
+ *
+ * PRODUCT WORDING, flagged for Sam's packet rather than settled here.
+ */
+export const RESUME_CHOICE_PROMPT =
+  "An earlier save of this treatment area may still be finishing. Choose " +
+  "whether this is that same save, or a new area you want as well.";
+
+/** Keep the earlier save's identity, so it cannot be recorded twice. */
+export const RESUME_CHOICE_RESUME = "Resume that save";
+
+/**
+ * A SECOND AREA, DELIBERATELY, with no value changed to get it.
+ *
+ * The label says "as well" rather than "instead" because nothing is being
+ * replaced: if the earlier save did commit, both areas exist, which is what
+ * she asked for.
+ */
+export const RESUME_CHOICE_NEW = "Start a new area as well";
+
+/**
+ * NOTHING FROM THE EARLIER ATTEMPT SURVIVED THE RELOAD, and she has to know
+ * that before she saves (Codex, #922 4307763145).
+ *
+ * THE DEFECT. A reload resets the WHOLE draft - the treatment area, minutes,
+ * entry readings, observations, numbing details and notes - not only the
+ * machine setup. The recovery gate treated just `machineDraft.groups` as the
+ * lost payload, so Save enabled as soon as one machine group was re-entered.
+ * If the original never committed, the save then recorded null and default
+ * values for every field she had filled in before the reload: a clinical
+ * record quietly thinner than the treatment it describes.
+ *
+ * WHY A CONFIRMATION AND NOT A VALIDATION RULE. A treatment area with blank
+ * notes, no observations and no numbing detail is LEGAL - a practitioner may
+ * genuinely have none to record - so there is no existing notion of
+ * "required" to lean on, and inventing one would be deciding a clinical
+ * completeness rule that is not mine to decide. What is wrong here is not
+ * that the fields are empty; it is that they are empty BY ACCIDENT while she
+ * believes she is restoring an earlier save. So the fix is to make the
+ * emptiness deliberate rather than silent: she is told what was lost and
+ * confirms that what is on screen is everything.
+ *
+ * SHE IS NEVER ASKED TO CHANGE A VALUE, only to confirm the ones she has
+ * re-entered - which keeps Sam's rule intact on this path too.
+ */
+export const RESUME_RECONSTRUCT_NOTICE =
+  "The reload cleared everything you had entered for this area, not just the " +
+  "machine settings. Only what is on screen now will be saved.";
+
+/** The affirmation that turns an accidental blank into a deliberate one. */
+export const RESUME_RECONSTRUCT_CONFIRM =
+  "Everything I recorded for this area is back on screen";
+
 export const WRONG_BLOCK =
   "These settings were entered for a different treatment area and cannot be " +
   "recorded against this one.";

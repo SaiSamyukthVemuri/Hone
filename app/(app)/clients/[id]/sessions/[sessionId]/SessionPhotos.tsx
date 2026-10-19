@@ -1,15 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { SessionPhoto } from "./session-photos";
-import { getTreatmentImageSignedUrlAction } from "../../images/actions";
-import {
-  initialGridPhoto,
-  onGridPhotoError,
-  onGridPhotoRemint,
-  type GridPhotoState,
-} from "@/lib/images/grid-photo-recovery";
+import { useGridPhotoRecovery } from "@/lib/images/use-grid-photo-recovery";
 
 // FETT photos (HON-43): the photos attached to this visit, on the visit's own
 // chart page, so before/after photos sit with the treatment they document.
@@ -61,65 +54,38 @@ export function SessionPhotos({ clientId, photos }: { clientId: string; photos: 
           return (
             <div key={g.heading} className="flex flex-col gap-2" data-testid={`session-photos-group-${g.heading.toLowerCase()}`}>
               <h3 className="text-sm font-medium text-neutral-700 dark:text-neutral-200">{g.heading}</h3>
-              <PhotoGrid photos={inGroup} />
+              <PhotoGrid clientId={clientId} photos={inGroup} />
             </div>
           );
         })
       ) : (
-        <PhotoGrid photos={photos} />
+        <PhotoGrid clientId={clientId} photos={photos} />
       )}
     </section>
   );
 }
 
-function PhotoGrid({ photos }: { photos: SessionPhoto[] }) {
+function PhotoGrid({ clientId, photos }: { clientId: string; photos: SessionPhoto[] }) {
   return (
     <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
       {photos.map((p) => (
-        <SessionPhotoCell key={`${p.id}:${p.url}:${p.thumbUrl ?? ""}`} photo={p} />
+        <SessionPhotoCell key={`${p.id}:${p.url}:${p.thumbUrl ?? ""}`} clientId={clientId} photo={p} />
       ))}
     </ul>
   );
 }
 
-function SessionPhotoCell({ photo: p }: { photo: SessionPhoto }) {
-  const [state, setState] = useState<GridPhotoState>(() => initialGridPhoto({ previewUrl: p.url, thumbUrl: p.thumbUrl }));
-  const imgRef = useRef<HTMLImageElement | null>(null);
-  const alive = useRef(true);
-  useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-    };
-  }, []);
-
-  // Transitions run against a ref, never inside a state updater, so React may
-  // re-run an updater without issuing a second re-mint request.
-  const stateRef = useRef(state);
-  stateRef.current = state;
-  const handleError = useCallback(() => {
-    const urls = { previewUrl: p.url, thumbUrl: p.thumbUrl };
-    const next = onGridPhotoError(stateRef.current, urls);
-    stateRef.current = next.state;
-    setState(next.state);
-    if (!next.remint) return;
-    const variant = next.remint;
-    void getTreatmentImageSignedUrlAction({ imageId: p.id, variant })
-      .then((res) => (res.ok ? res.url : null))
-      .catch(() => null)
-      .then((fresh) => {
-        if (!alive.current) return;
-        const landed = onGridPhotoRemint(stateRef.current, urls, variant, fresh);
-        stateRef.current = landed;
-        setState(landed);
-      });
-  }, [p.id, p.url, p.thumbUrl]);
-
-  // An image that failed BEFORE hydration never reached React's onError.
-  useEffect(() => {
-    const el = imgRef.current;
-    if (el && el.complete && el.naturalWidth === 0 && el.getAttribute("src")) handleError();
-  }, [state.src, handleError]);
+function SessionPhotoCell({ clientId, photo: p }: { clientId: string; photo: SessionPhoto }) {
+  // The SHARED bounded recovery (lib/images/use-grid-photo-recovery.ts): an
+  // abortable GET to the signed-url route (never a server action), one retry
+  // on a timed-out or rejected re-mint, then terminal; the hydration-window
+  // check. Identical to the Photos grid and the ID photo.
+  const { state, imgRef, onError } = useGridPhotoRecovery({
+    previewUrl: p.url,
+    thumbUrl: p.thumbUrl,
+    clientId,
+    imageId: p.id,
+  });
 
   const area = p.areaLabel;
   return (
@@ -136,7 +102,7 @@ function SessionPhotoCell({ photo: p }: { photo: SessionPhoto }) {
           alt={area ? `Treatment photo, ${area}` : "Treatment photo from this visit"}
           className="aspect-square w-full rounded-md object-cover"
           data-stage={state.stage}
-          onError={handleError}
+          onError={onError}
         />
       )}
       {area && <span className="text-xs text-neutral-600 dark:text-neutral-300">{area}</span>}

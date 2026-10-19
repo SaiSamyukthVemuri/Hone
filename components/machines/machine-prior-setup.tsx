@@ -1,3 +1,4 @@
+import { FormattedDateTime } from "@/components/formatted-date-time";
 import { SectionLabel } from "@/components/ui/section-label";
 import {
   observationSourceLabel,
@@ -5,7 +6,11 @@ import {
 } from "@/lib/machines/charting";
 import type { RecordedReading } from "@/lib/machines/machine-queries";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
-import { findMode, modeFields } from "@/lib/machines/profile-contract";
+import {
+  recordedProfile,
+  findMode,
+  modeFields,
+} from "@/lib/machines/profile-contract";
 
 // MPX-03 — the next-visit payoff.
 //
@@ -14,10 +19,10 @@ import { findMode, modeFields } from "@/lib/machines/profile-contract";
 // adjust it next time. This renders the most recent recorded setup in the
 // studio, which is the question a practitioner actually asks.
 //
-// IT RENDERS AGAINST THE RECORDED VERSION. When a reading's
-// `machine_profile_version` is not the catalogue's current one, the field's
-// label and unit are NOT taken from today's contract - the recorded key is
-// shown instead and the difference is stated. Relabelling an old number with a
+// IT RENDERS AGAINST THE RECORDED VERSION. A reading's
+// label is taken only from the exact retained recorded version. If that version
+// is unavailable the recorded key is shown. Units always come from the row.
+// Relabelling an old number with a
 // newer contract's words is how a record quietly starts lying.
 //
 // Server-safe: no state, no directive, no transport.
@@ -129,15 +134,15 @@ export function MachinePriorSetup({
   if (readings.length === 0) return null;
 
   const first = readings[0]!;
-  const profile = catalogue.find((p) => p.profileId === first.profileId);
-  const historical = profile ? first.profileVersion !== profile.version : true;
+  const profile = recordedProfile(catalogue, first.profileId, first.profileVersion);
+  const historical = !profile;
   const mode = profile ? findMode(profile, first.modeKey) : undefined;
 
   // LABELS ONLY, NO UNITS. The unit always comes from the reading itself
   // (see the render below), so this map deliberately does not carry one -
   // the component cannot print today's unit because it never holds it.
   const labels = new Map<string, { label: string }>();
-  if (mode && !historical) {
+  if (mode) {
     // KEYED BY STAGE AND FIELD. `{ field }` alone merged two stages that
     // reuse a key (Codex, #860 4301851853).
     for (const { field, stageKey } of modeFields(mode)) {
@@ -148,7 +153,7 @@ export function MachinePriorSetup({
   // THE MACHINE'S OWN NAME for each stage, so the grouping below can be
   // labelled the way the practitioner sees it on the unit.
   const stageLabels = new Map<string, string>();
-  if (mode && !historical) {
+  if (mode) {
     for (const stage of mode.stages) stageLabels.set(stage.key, stage.nativeLabel);
   }
 
@@ -176,17 +181,24 @@ export function MachinePriorSetup({
   // different instants. The date answers the question that matters - this is a
   // previous visit, not today - without implying a precision the row set does
   // not have.
-  const recordedOn = (() => {
+  // THE INSTANT, VALIDATED BUT NOT FORMATTED HERE (Codex, #860 4309128374).
+  //
+  // Formatting it in this component used the RUNTIME's default locale and
+  // timezone, which differs between Node and the browser - a hydration
+  // mismatch, and near midnight a different DAY on a clinical record.
+  // `FormattedDateTime` is the page's own answer for an instant: SSR renders
+  // nothing, the browser fills in its own zone on mount. `recorded_at` is a
+  // `timestamptz` and therefore a real instant, which
+  // `lib/clinical-notes/clinical-date.ts` says belongs in the viewer's zone -
+  // and `CopyPreviousAreasPanel` already renders a previous VISIT's date this
+  // way on the same screen.
+  //
+  // Still validated here, because an unparseable value must read as "Recorded
+  // earlier" rather than as an empty space.
+  const recordedIso = (() => {
     const iso = first.recordedAt;
     if (!iso) return null;
-    const d = new Date(iso);
-    return Number.isNaN(d.getTime())
-      ? null
-      : d.toLocaleDateString(undefined, {
-          year: "numeric",
-          month: "short",
-          day: "numeric",
-        });
+    return Number.isNaN(Date.parse(iso)) ? null : iso;
   })();
 
   return (
@@ -224,9 +236,9 @@ export function MachinePriorSetup({
         <span className="ml-2 text-neutral-500">
           {historical ? first.modeKey : (mode?.nativeLabel ?? first.modeKey)}
         </span>
-        {recordedOn && (
+        {recordedIso && (
           <span className="ml-2 text-neutral-500" data-testid="prior-setup-when">
-            {recordedOn}
+            <FormattedDateTime iso={recordedIso} format="date" />
           </span>
         )}
       </p>
@@ -375,7 +387,13 @@ export function MachinePriorSetup({
         where the shared value is simply null.
       */}
       <p className="text-xs text-neutral-500">
-        {recordedOn ? `Recorded ${recordedOn}` : "Recorded earlier"}
+        {recordedIso ? (
+          <>
+            Recorded <FormattedDateTime iso={recordedIso} format="date" />
+          </>
+        ) : (
+          "Recorded earlier"
+        )}
         {historical
           ? ". The field contract has changed since, so the recorded keys are shown rather than today's labels."
           : "."}

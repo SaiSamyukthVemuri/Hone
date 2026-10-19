@@ -133,6 +133,29 @@ describe("0232 UI: the tile control", () => {
     expect(ctl).not.toMatch(/error\.message/);
   });
 
+  it("KEYBOARD: a choice never disables its own button; all three are disabled only while saving, and focus returns", () => {
+    // Before the fix, `disabled={pending || stage === s}` disabled the pressed
+    // button, so a keyboard user's focus dropped to <body> after every choice.
+    expect(ctl).not.toMatch(/disabled=\{[^}]*stage === s/);
+    expect(ctl).toMatch(/aria-pressed=\{stage === s\}\s+disabled=\{pending\}/);
+    expect(ctl).toMatch(/pending=\{pending\}\s+busyLabel="Clearing…"/); // Clear is disabled while saving too
+    // Pressing the current stage saves nothing.
+    expect(ctl).toMatch(/if \(next === stage\) return;/);
+    // Focus goes back to the pressed button once the save settles; after a
+    // Clear (which unmounts) it moves to "Before".
+    expect(ctl).toMatch(/refocus\.current = from;/);
+    expect(ctl).toMatch(/if \(pending \|\| !refocus\.current\) return;/);
+    expect(ctl).toMatch(/const target = refocus\.current === "clear" && !stage \? "before" : refocus\.current;/);
+    expect(ctl).toMatch(/querySelector<HTMLButtonElement>\(`\[data-stage-button="\$\{target\}"\]`\)\?\.focus\(\);/);
+    for (const b of ['data-stage-button={s}', 'data-stage-button="clear"']) expect(ctl).toContain(b);
+  });
+
+  it("the result is announced in a visually hidden polite live region, with the approved copy", () => {
+    expect(ctl).toMatch(/before: "Labelled Before",\s+after: "Labelled After",\s+cleared: "Label cleared",/);
+    expect(ctl).toMatch(/<p className="sr-only" aria-live="polite" data-testid="capture-stage-announce">\s*\{announcement\}\s*<\/p>/);
+    expect(ctl).toMatch(/setAnnouncement\(ANNOUNCE\[next \?\? "cleared"\]\);/);
+  });
+
   it("the page marks visit photos from session_id and passes the label; the tile renders the control", () => {
     expect(page).toMatch(/practitioner_note, capture_stage, sessions \( started_at, record_status \)/);
     // Never on a LEGACY finalized/void session (0159): no control that can never work.
@@ -145,8 +168,11 @@ describe("0232 UI: the tile control", () => {
     );
   });
 
-  it("states the interim behaviour: label right after attach, until the upload choice ships", () => {
-    expect(ctl).toMatch(/Until the upload choice ships \(after #892\), a photo is labelled right\s+\/\/ after it is attached, from here\./);
+  it("states where a label is set: on the tile, and (since the upload choice shipped) at attach time", () => {
+    // The interim "until the upload choice ships (after #892)" note is retired:
+    // the upload panel's radiogroup is pinned below.
+    expect(ctl).not.toMatch(/Until the upload choice ships/);
+    expect(ctl).toMatch(/on its Photos-tab tile \(the upload panel offers the same choice\s+\/\/ at attach time\)/);
   });
 });
 
@@ -190,6 +216,11 @@ describe("0232 at upload: the panel choice", () => {
   it("is offered only when attaching to a visit, with no default label, on the 44px floor", () => {
     expect(mgr).toMatch(/\{\(contextKind === "session" \|\| contextKind === "block"\) && \(\s*<div\s+role="radiogroup"\s+aria-label="Taken before or after treatment"/);
     expect(mgr).toMatch(/\["", "Not labelled"\],\s*\["before", "Before treatment"\],\s*\["after", "After treatment"\],/);
+    // The "Will attach as" summary names the chosen label (approved copy);
+    // nothing when Not labelled, never on a client photo.
+    expect(mgr).toMatch(/before: "Labelled: Before treatment\.",\s+after: "Labelled: After treatment\.",/);
+    expect(mgr).toContain('<p className="text-xs text-neutral-400" data-testid="upload-attach-summary">');
+    expect(mgr).toMatch(/\{contextKind !== "client" && captureStage\s+\? ` \$\{CAPTURE_STAGE_SUMMARY\[captureStage\]\}`\s+: null\}/);
     expect(mgr).toMatch(/useState<"" \| "before" \| "after">\(""\)/);
     expect(mgr).toMatch(/className="flex min-h-\[44px\] items-center gap-2 text-sm text-neutral-700 dark:text-neutral-200"\s*>\s*<input\s+type="radio"\s+name="captureStage"/);
   });

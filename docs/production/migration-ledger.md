@@ -14,10 +14,25 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-18, post-0212 apply; hosted `0212`; `0213`–`0234` AUTHORED AND PENDING, contiguous, in that order)
+## 0235 — Machines finite readings (pending hosted apply, 2026-10-19)
+
+OPS allocated 0235 after a fresh cross-ref/worktree/open-PR census. It promotes
+only the existing finite-reading proposal, preserving frozen 0223 and held 0234.
+It adds a NOT VALID constraint refusing NaN and both numeric infinities for new
+reading rows, with no backfill or historical correction. Hosted state is unchanged.
+
+The granted Machines slot proved the expected pre-repair Infinity acceptance,
+then 10/10 scoped existing-stack DB cases after the exact local patch (finite
+values, publication, four Senior and two Junior native cases). This was **not** a
+full-chain reset or browser proof; no migration-history entry was fabricated.
+See [the scoped proof](../reviews/hon8-0235-db-proof-2026-10-19.md). Full train order
+remains the existing pending train, HON-47 0234, then 0235; it is not apply authority.
+
+## Current state (verified 2026-10-18, post-0212 apply; hosted `0212`; `0213`–`0235` AUTHORED AND PENDING, contiguous, in that order)
 
 > **0232 IS AUTHORED AND PENDING, on `feat/fett-capture-stage` only** (FETT photos, HON-43), stacked on `feat/fett-client-portrait` (0231). It applies after `0231`.
-> `0232_treatment_image_capture_stage.sql` adds ONE nullable column, `treatment_images.capture_stage` (`check (capture_stage in ('before', 'after'))`, NULL = unlabelled, no backfill), and ONE new command; it writes no rows and adds no trigger.
+> `0232_treatment_image_capture_stage.sql` adds ONE nullable column, `treatment_images.capture_stage` (`check (capture_stage in ('before', 'after'))`, NULL = unlabelled, no backfill), ONE new command, and ONE trigger on `treatment_images`; it writes no rows.
+> - **The trigger:** `treatment_images_clear_stage_without_session`, `BEFORE UPDATE … FOR EACH ROW WHEN (new.session_id is null and new.capture_stage is not null)`, clears `capture_stage` when a photo loses its session (0092's `ON DELETE SET NULL` on a session hard delete; Codex 4308037526). It repairs the row and never raises, so the cascade and the session delete still succeed; it is not a CHECK. Its function is revoked from `public`, `anon`, `authenticated` and `service_role` by name and never granted (no API EXECUTE). The `treatment_images` trigger-set pins name it.
 > - **The command:** `set_treatment_image_capture_stage(uuid, uuid, text)`. The actor is resolved by `treatment_image_actor(studio)`; a wrong studio, client, archived photo, deactivated practitioner or receptionist gets NULL (non-disclosing, like `set_treatment_image_note`). Only a photo linked to a session can carry a stage. EXECUTE is revoked from `public`, `anon`, `authenticated` and `service_role` by name, then granted to `authenticated` only.
 > - **The pinned 0168 commands are untouched:** a separate command instead of a tenth argument on `create_treatment_image_metadata`.
 > - **Allocation:** `0232` allocated by the coordinator (#825). It inherits 0231's by-construction `0229`/`0230` hole.
@@ -107,6 +122,16 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 > `0212` is now **FROZEN**. Any correction is a new forward migration; there is no
 > manual down-migration.
 
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0212** (`0212_email_delivery_events.sql`), applied 2026-10-12 from #832's reviewed head. |
+| **Repo migration max** | **0235**: `0235_machine_finite_readings.sql` (Machines finite-reading repair), above `0234_client_self_service_controls.sql` (HON-47, #930), above `0233_clinical_records_audit_command.sql` (HON-46, #896) and `0232_treatment_image_capture_stage.sql` and `0231_client_identification_portrait.sql` (FETT photos), `0230_studio_sms_sender_stop_preflights.sql` and `0229_studio_sms_sender_campaign_bindings.sql` (HON-50) and `0228_legacy_new_client_refusal_atomicity.sql` (#874). Derived by `npm run migration:state` on this tree. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **`0213`–`0235`** (`0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`, `0229`, `0230`, `0231`, `0232`, `0233`, `0234`, `0235`), contiguous from hosted + 1, all **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING. `0211` and `0212` are APPLIED and FROZEN and carried byte-identical. Each pending migration applies from its own reviewed head, never from this branch. `0233` (`0233_clinical_records_audit_command.sql`, HON-46 #896) and `0234` (`0234_client_self_service_controls.sql`, HON-47 #930) are **PENDING, NOT APPLIED**; applying either needs Sam's separate per-change authorization. `0234` adds `studios.client_cancellation_enabled` and `client_reschedule_enabled`, both `not null default true`, so applying it changes no existing studio's behaviour; the switches are set afterwards, as their own authorized write. `0235` is also PENDING/NOT APPLIED; the scoped local patch supplied no hosted apply or full-chain proof. |
+| **Next free migration** | Next free number is **0236**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** here: availability is not allocation. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. |
+
+## Previous state (verified 2026-10-12, post-0211 apply)
 
 > **0211 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #827 HEAD, BEFORE ANY MERGE.**
 > `0211_client_sms_permission_guard.sql` was applied to production on
@@ -186,14 +211,6 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 >
 > **`0209` and `0210` are APPLIED AND FROZEN**, carried byte-identical.
 
-| Field | Value |
-|---|---|
-| **Hosted (production) migration max** | **0212** (`0212_email_delivery_events.sql`), applied 2026-10-12 from #832's reviewed head. |
-| **Repo migration max** | **0234**: `0234_client_self_service_controls.sql` (HON-47, #930), above `0233_clinical_records_audit_command.sql` (HON-46, #896) and `0232_treatment_image_capture_stage.sql` and `0231_client_identification_portrait.sql` (FETT photos), `0230_studio_sms_sender_stop_preflights.sql` and `0229_studio_sms_sender_campaign_bindings.sql` (HON-50) and `0228_legacy_new_client_refusal_atomicity.sql` (#874). Derived by `npm run migration:state` on this tree. |
-| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **`0213`–`0234`** (`0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`, `0229`, `0230`, `0231`, `0232`, `0233`, `0234`), contiguous from hosted + 1, all **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING. `0211` and `0212` are APPLIED and FROZEN and carried byte-identical. Each pending migration applies from its own reviewed head, never from this branch. `0233` (`0233_clinical_records_audit_command.sql`, HON-46 #896) and `0234` (`0234_client_self_service_controls.sql`, HON-47 #930) are **PENDING, NOT APPLIED**; applying either needs Sam's separate per-change authorization. `0234` adds `studios.client_cancellation_enabled` and `client_reschedule_enabled`, both `not null default true`, so applying it changes no existing studio's behaviour; the switches are set afterwards, as their own authorized write. |
-| **Next free migration** | Next free number is **0235**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** here: availability is not allocation. |
-| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. |
 
 ## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, repo == hosted)
 > **0215 IS AUTHORED AND PENDING, on the DELIVERY-VISIBILITY-01 branch `feat/delivery-visibility-01` only.**

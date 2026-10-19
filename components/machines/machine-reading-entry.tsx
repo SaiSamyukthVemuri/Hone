@@ -7,7 +7,6 @@ import { nativeFieldGroups } from "@/lib/machines/charting";
 import { SettingDraftFields } from "./setting-draft-fields";
 import {
   assembleGroupSubmissions,
-  clearedForNextCapture,
   groupIssues,
   groupReadiness,
   groupsFromRecorded,
@@ -147,6 +146,19 @@ export type MachineReadingEntryProps = {
   onUnresolvedChange?: (unresolved: boolean) => void;
 };
 
+/**
+ * The recorded group keys, deduplicated and ordered.
+ *
+ * NAMED ONCE because it is read at mount AND at every re-seed, and two
+ * spellings of "the set this draft was built from" is how a staleness
+ * comparison comes to be made against the wrong baseline.
+ */
+function recordedKeysOf(
+  recorded: readonly RecordedGroupIdentity[],
+): string[] {
+  return [...new Set(recorded.map((g) => g.groupKey))].sort();
+}
+
 export function MachineReadingEntry({
   profile,
   mode,
@@ -206,9 +218,33 @@ export function MachineReadingEntry({
    * comparison then happens in the same request as the write, so the window is
    * the action's own microseconds instead of a user-visible round trip.
    */
-  const [expectedGroupKeys] = useState<string[]>(() =>
-    [...new Set(recordedGroups.map((g) => g.groupKey))].sort(),
+  const [expectedGroupKeys, setExpectedGroupKeys] = useState<string[]>(() =>
+    recordedKeysOf(recordedGroups),
   );
+
+  /**
+   * RE-SEED ALL THREE FROM THE RECORD, together.
+   *
+   * THE ONLY LEGITIMATE WAY TO OPEN THE NEXT CAPTURE (Codex, #860 4307735441,
+   * 4307735445). Each of the three is a function of the recorded set, so
+   * moving one alone leaves the form reasoning from two different snapshots -
+   * which is exactly what shipped and what those two findings caught.
+   *
+   * THE ORDINAL NEVER GOES BACKWARDS. It is monotonic for the life of the
+   * mount: a removed group's identity must never be reissued, so this takes
+   * the HIGHER of what it already was and what the record now needs.
+   */
+  const reseedFromRecord = () => {
+    const seeded = groupsFromRecorded(recordedGroups, {
+      deviceId,
+      profileId: profile.profileId,
+      profileVersion: profile.version,
+      modeKey: mode.key,
+    });
+    setGroups(seeded);
+    setGroupOrdinal((prev) => Math.max(prev, highestOrdinal(seeded)));
+    setExpectedGroupKeys(recordedKeysOf(recordedGroups));
+  };
   // THE WHOLE SAVE, as one state machine.
   //
   // THIS REPLACED FIVE PIECES OF PER-GROUP BOOKKEEPING - a saved-group set, an
@@ -407,13 +443,35 @@ export function MachineReadingEntry({
               // ran the same probes, which is the opposite of what a reading
               // is.
               //
-              // THE GROUP IDENTITIES SURVIVE, and that is the repair. This
-              // reset to `firstGroup()`, so after a save of g1 and g2 the form
-              // offered one fresh g1 - and a change to what had been g2 was
-              // submitted as a revision of g1, which guidance then combined
-              // with the stale g2 (Codex, #860 4290452715). See
-              // `clearedForNextCapture`.
-              setGroups(clearedForNextCapture);
+              // THE IDENTITIES ARE RE-SEEDED FROM THE DATABASE, not carried
+              // over from the draft (Codex, #860 4307523224).
+              //
+              // THE DEFECT. `clearedForNextCapture` preserves each group's
+              // `recorded` flag, and in a previously EMPTY scope every group
+              // is `recorded: false`. The database issues the real keys and
+              // the command's result carries no placeholder-to-key mapping, so
+              // after the first save the draft still held groups claiming to
+              // be NEW. The next "Record a setting change" therefore sent
+              // `new_group_ref` again and was issued ANOTHER key at revision
+              // 1 - and `latest_setup_for_client` returns the newest capture
+              // PER GROUP KEY, so guidance then offered both as separate
+              // probes. The same corruption as 4290452715, reached from the
+              // other end: there the identity shifted, here it never settled.
+              //
+              // WHY THE PROP IS TRUSTWORTHY HERE. `recordAndCount` in
+              // machine-first-setup-connected AWAITS `readingsForBlockAction`
+              // and updates `recordedSetup` BEFORE returning this call's
+              // result, so by the time this button can be clicked the prop
+              // already carries the issued keys. It is not a `router.refresh`
+              // race.
+              //
+              // AND THE 4290452715 REPAIR IS KEPT, more strongly than before:
+              // `groupsFromRecorded` returns one group per RECORDED key with
+              // values and channels cleared, so after a save of two groups the
+              // form still offers two - but under the keys the database
+              // actually holds rather than the placeholders this mount
+              // invented.
+              reseedFromRecord();
               // THE ORDINAL IS NOT RESET, and must not be: it is monotonic so
               // a removed group's id is never reused. Resetting it to 1 while
               // g1 and g2 are still on screen would mint a SECOND g2 on the

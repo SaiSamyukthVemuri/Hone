@@ -351,6 +351,8 @@ export type ChannelStructure = {
 
 /** One selectable operating mode on one model. */
 export type MachineMode = {
+  /** A documented control cannot yet be captured faithfully. Blocks activation/publication. */
+  captureHold?: string;
   key: string;
   /** The mode name as the machine shows it. */
   nativeLabel: string;
@@ -505,15 +507,52 @@ export function findField(
  * reproduce exactly this defect one case over. Every entry returned here can
  * therefore actually be recorded against, which is the property worth having.
  */
-export function activeProfiles(
+/**
+ * The HIGHEST version held for each profile id.
+ *
+ * ONE DEFINITION OF "CURRENT", shared by selection and by display (Codex,
+ * #860 4307914917). Selection wants the current version AND only if it is
+ * active; a display surface wants the current version WHATEVER its
+ * availability, because labelling a historical reading against a blocked or
+ * legacy profile is precisely its job. Those are two filters over one rule,
+ * and the rule lives here.
+ */
+function highestByProfileId(
   profiles: readonly MachineProfile[],
-): MachineProfile[] {
+): Map<string, MachineProfile> {
   const current = new Map<string, MachineProfile>();
   for (const p of profiles) {
     const held = current.get(p.profileId);
     if (!held || p.version > held.version) current.set(p.profileId, p);
   }
-  return [...current.values()].filter((p) => p.availability === "active");
+  return current;
+}
+
+/**
+ * The current version for selection and catalogue policy, regardless of availability.
+ * Historical rendering uses recordedProfile instead: current labels must never
+ * replace a retained historical contract's labels.
+ */
+export function currentProfile(
+  profiles: readonly MachineProfile[],
+  profileId: string,
+): MachineProfile | undefined {
+  return highestByProfileId(profiles).get(profileId);
+}
+
+/** Historical labels resolve against their exact immutable version, never today's. */
+export function recordedProfile(
+  profiles: readonly MachineProfile[], profileId: string, version: number,
+): MachineProfile | undefined {
+  return profiles.find((p) => p.profileId === profileId && p.version === version);
+}
+
+export function activeProfiles(
+  profiles: readonly MachineProfile[],
+): MachineProfile[] {
+  return [...highestByProfileId(profiles).values()].filter(
+    (p) => p.availability === "active",
+  );
 }
 
 /** Modes offered for a profile: active profile, active mode. */

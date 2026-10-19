@@ -468,7 +468,10 @@ export function buildClinicalRecordsDocument(input: {
       modality: s.modality,
       practitioner: name(s.performed_by_practitioner_id ?? s.practitioner_id),
       notes: s.session_notes,
-      recordStatus: s.record_status,
+      // 'draft' is RETIRED lifecycle state: every session since 0159 is draft
+      // forever, so printing it would make a completed record read unfinished
+      // (Codex P2 4307447128). A preserved legacy 'finalized'/'void' still shows.
+      recordStatus: s.record_status === "draft" ? null : s.record_status,
       finalizedAt: s.finalized_at,
       aftercareExplainedAt: s.aftercare_and_risks_explained_at,
       aftercareExplainedBy: s.aftercare_and_risks_explained_at ? name(s.aftercare_and_risks_explained_by) : null,

@@ -111,6 +111,20 @@ describe("parseExportScope", () => {
 });
 
 describe("localDayBounds", () => {
+  it.each([
+    ["2026-03-08", "2026-03-08T05:00:00.000Z", "2026-03-09T04:00:00.000Z", 23],
+    ["2026-11-01", "2026-11-01T04:00:00.000Z", "2026-11-02T05:00:00.000Z", 25],
+  ])("keeps all of the studio-local DST day %s, with an exclusive end", (day, fromUtc, toUtcExclusive, hours) => {
+    const bounds = localDayBounds(day, day, "America/Toronto");
+    expect(bounds).toEqual({ fromUtc, toUtcExclusive });
+    expect((Date.parse(bounds.toUtcExclusive) - Date.parse(bounds.fromUtc)) / 3_600_000).toBe(hours);
+    const includes = (instant: number) => instant >= Date.parse(bounds.fromUtc) && instant < Date.parse(bounds.toUtcExclusive);
+    expect(includes(Date.parse(fromUtc) - 1)).toBe(false);
+    expect(includes(Date.parse(fromUtc))).toBe(true);
+    expect(includes(Date.parse(toUtcExclusive) - 1)).toBe(true);
+    expect(includes(Date.parse(toUtcExclusive))).toBe(false);
+  });
+
   it("is the studio-local day, in UTC, end-exclusive", () => {
     expect(localDayBounds("2026-01-15", "2026-01-15", "America/Toronto")).toEqual({
       fromUtc: "2026-01-15T05:00:00.000Z",
@@ -581,6 +595,38 @@ describe("laser treatment passes are exported (Codex P1 4301153312)", () => {
     expect(o).toContain("Settings: fluence j cm2 18 · spot size mm 12");
     expect(o).toContain("Results: Good");
     expect(o).not.toContain("nested");
+  });
+});
+
+describe("the retired draft status is never printed (Codex P2 4307447128)", () => {
+  const statusOf = (record_status: string | null) =>
+    buildClinicalRecordsDocument({
+      sessions: [{ ...BASE_SESSION, record_status }],
+      entries: [],
+      notes: [],
+      practitionerNameById: new Map(),
+    }).sessions[0].recordStatus;
+  it("draft prints nothing; a preserved legacy finalized or void status still shows", () => {
+    expect(statusOf("draft")).toBeNull();
+    expect(statusOf("finalized")).toBe("finalized");
+    expect(statusOf("void")).toBe("void");
+    expect(statusOf(null)).toBeNull();
+  });
+});
+
+describe("a galvanic pass never prints the writer's default pulse (Codex P1 4307447121)", () => {
+  it("a backfilled null-mode entry inherits galvanic suppression from its block (4309769366)", () => {
+    const out = (mode: "galv" | "thermo") => printed({
+      blocks: [blockOf({ mode })],
+      entries: [entryOf({ block_id: "b", mode: null, pulse_count: 1 })],
+    });
+    expect(out("galv")).toContain("Galvanic");
+    expect(out("galv")).not.toMatch(/pulse/i);
+    expect(out("thermo")).toContain("1 pulse");
+  });
+
+  it("a reading-less galv pass stored with pulse_count 1 shows no pulses, on paper as on screen", () => {
+    expect(printed({ entries: [entryOf({ mode: "galv", pulse_count: 1 })] })).not.toMatch(/pulse/i);
   });
 });
 

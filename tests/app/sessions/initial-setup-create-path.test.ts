@@ -80,13 +80,34 @@ describe("the block arguments are built ONCE for both commands", () => {
 
 describe("the UNEXECUTED command is not on the default path", () => {
   it("is taken only when there are settings to record", () => {
-    // 0223 is pending and no database has run it. A twenty-six parameter
-    // forwarding wrapper is exactly the class where one wrong parameter name
-    // fails only at runtime, so routing EVERY treatment-area creation through
-    // it would put the whole charting flow behind unexecuted SQL.
+    // 0223 is pending and no database has run the whole of it. A twenty-six
+    // parameter forwarding wrapper is exactly the class where one wrong
+    // parameter name fails only at runtime, so routing EVERY treatment-area
+    // creation through it would put the whole charting flow behind SQL that
+    // has not been exercised. The proven path stays the default.
+    //
+    // A `withClaim` ARM WAS ADDED AND REMOVED WITHOUT EVER RUNNING (ops01's
+    // ruling on #922 4307515255). It let a resumed SETTINGS-FREE save carry
+    // its retry key, which 0223 permits - the settings half is nullable and
+    // the claim is written whenever a key is supplied. But such a save
+    // creates an area with NO machine settings whenever the original never
+    // committed, which is what "no claim found" usually means, silently
+    // discarding what she entered before the reload. Data loss dressed as
+    // recovery.
+    //
+    // So the form holds a settings-free resume and asks her to re-enter, and
+    // nothing reaches this action without settings. The way back from a
+    // retained key is the explicit CHOICE, not a bare save.
     expect(createBody).toMatch(
       /const withSetup\s*=\s*\n?\s*input\.initialSetup != null && input\.initialSetup\.groups\.length > 0;/,
     );
+    // THE DECLARATION, not the word: the comment above the boolean names
+    // `withClaim` to record why it went, and banning the bare word would be
+    // tripped by that explanation.
+    expect(
+      createBody,
+      "the claim-only arm is back, and it can create a settings-less area",
+    ).not.toMatch(/const withClaim/);
     const branchAt = createBody.indexOf("withSetup");
     const newAt = createBody.indexOf('"create_block_with_initial_setup"');
     const oldAt = createBody.indexOf('"create_block_with_entry"');
@@ -147,6 +168,34 @@ describe("the settings payload keeps the rules the other write paths use", () =>
     ).not.toMatch(/p_setup_groups: input\.initialSetup!\.groups\.map/);
     // And the rows that are mapped came OUT of the validator.
     expect(createBody).toMatch(/readings: checked\.rows,/);
+  });
+
+  it("asks for an IDENTITY for every group, because on this path all are new", () => {
+    // THE DEFECT THIS CATCHES broke the entire create journey for a
+    // machine-charted area (Codex, #860 4307426212).
+    //
+    // On this path the block does not exist yet, so EVERY group is new:
+    // `assembleGroupSubmissions` sets `groupKey: null` and a non-null
+    // `newGroupRef`. Emitting `group_key: g.groupKey` therefore sent
+    // `{"group_key": null}` - and a JSON null is PRESENT to the `?` operator,
+    // so the command's exactly-one check passed and the group then fell
+    // through to "A settings group must be named.", because `->>'group_key'`
+    // on a JSON null is SQL NULL. The command refused and the atomic create
+    // rolled the area back with it.
+    //
+    // WHY NOTHING ELSE CAUGHT IT. `machine-initial-save.db.test.ts` calls the
+    // command DIRECTLY with `new_group_ref`; it never goes through this
+    // serialisation. The one path where every group is necessarily new had its
+    // payload shape covered by nothing at all.
+    expect(createBody).toMatch(
+      /\.\.\.\(g\.groupKey === null\s*\?\s*\{ new_group_ref: g\.newGroupRef \}\s*:\s*\{ group_key: g\.groupKey \}\),/,
+    );
+    // AND THE UNCONDITIONAL FORM IS BANNED, which is the half that actually
+    // fails: the spread can be added while the old line stays.
+    expect(
+      createBody,
+      "a bare group_key still reaches the command, so a new group sends a JSON null",
+    ).not.toMatch(/^\s*group_key: g\.groupKey,$/m);
   });
 
   it("sends a value as a STRING, so a recorded zero survives JSON", () => {

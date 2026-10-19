@@ -40,7 +40,10 @@ export function pulseReadingsShown(
   entry: StructuredReadingFields & { pulse_delay_seconds?: number | string | null },
 ): { pulses: boolean; delay: boolean } {
   const thermoish = entry.mode === "thermo" || entry.mode === "blend";
-  const pulses = entry.pulse_count != null && (thermoish || !hasStructuredReadings(entry));
+  // Never for a galvanic pass, structured or not: its stored count is the
+  // writer's default, not a setting (Codex P1 4307447121; entry-row's legacyPulses).
+  const pulses =
+    entry.pulse_count != null && entry.mode !== "galv" && (thermoish || !hasStructuredReadings(entry));
   const delay = pulses && (entry.pulse_count as number) > 1 && entry.pulse_delay_seconds != null;
   return { pulses, delay };
 }

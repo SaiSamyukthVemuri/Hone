@@ -379,12 +379,34 @@ describe("switching machine or mode clears the collected draft", () => {
     // PINNED ON SOURCE because it is an onClick handler, which this repo has
     // no jsdom to exercise; the behaviour itself is proved by the pure
     // function's tests and MOUNTED in the multi-group revision journey.
+    // THE MECHANISM CHANGED AND THE PROPERTY DID NOT (Codex, #860
+    // 4307523224). Carrying the draft's own groups forward kept their
+    // `recorded` flag, so in a previously EMPTY scope every group still
+    // claimed to be NEW after the first save - and the next change was issued
+    // ANOTHER key at revision 1 instead of revising. The identity survived the
+    // reset and then never settled, which guidance renders the same way: two
+    // separate probes.
+    //
+    // So the next capture re-seeds from the RECORD. That keeps this test's
+    // original claim - after a save of g1 and g2 the form still offers two
+    // groups - and strengthens it, because the keys are now the ones the
+    // database issued rather than the ones this mount invented.
+    // THROUGH `reseedFromRecord` NOW, not inline (Codex, #860 4307735441 and
+    // 4307735445). The draft is one of THREE values derived from the recorded
+    // set, and setting it alone left the ordinal and the staleness baseline at
+    // their mount values. The property this test states is unchanged; the
+    // single function is what keeps its two siblings honest.
     const src = read(ENTRY_SRC);
-    expect(src).toMatch(/setGroups\(clearedForNextCapture\)/);
+    expect(src).toMatch(/reseedFromRecord\(\);/);
+    expect(src).toMatch(/const reseedFromRecord = \(\) => \{/);
     expect(
       src,
       "resetting to firstGroup() is what renumbered her groups",
     ).not.toMatch(/setGroups\(firstGroup\(\)\)/);
+    expect(
+      src,
+      "carrying the draft forward preserves `recorded: false` on a saved group",
+    ).not.toMatch(/setGroups\(clearedForNextCapture\)/);
   });
 
   it("the ENTRY form SEEDS its draft from what is already recorded", () => {
@@ -587,11 +609,34 @@ describe("switching machine or mode clears the collected draft", () => {
     //
     // Only on the withSetup path, because only that command binds a retry
     // key; without one there is no safe retry to offer.
+    // RE-POINTED AT THE DELEGATION (Codex, #860 4309128376). The outcome used
+    // to be a ternary written out at each site; there are now THREE sites -
+    // the missing block, this read-back, and a missing setup receipt - so it
+    // is factored into `unresolvableResponse()`. The claim is the same and the
+    // assertion is stronger: previously each branch could have carried a
+    // subtly different ternary and this would still have passed.
+    //
+    // SCOPED TO THE BRANCH, not matched by proximity: a lazy gap reached past
+    // the end of a branch once already in this file, and the fix was to bound
+    // the slice to the thing it is about.
     const src = read(ACTIONS_SRC);
-    expect(src).toMatch(
-      /if \(blockReadErr \|\| !blockRow\) \{[\s\S]{0,1400}?return withSetup\s*\?\s*\{[\s\S]{0,200}?unresolved: true as const,/,
+    const i = src.indexOf("if (blockReadErr || !blockRow)");
+    expect(i, "the read-back failure branch is gone").toBeGreaterThan(-1);
+    const j = src.indexOf("const block = blockRow as SessionBlock", i);
+    expect(j, "the end of the branch is gone").toBeGreaterThan(i);
+    expect(
+      src.slice(i, j),
+      "the post-commit read failure no longer reports the unresolved outcome",
+    ).toMatch(/return unresolvableResponse\(\);/);
+    // AND THE ONE DEFINITION still carries the withSetup rule and the fields
+    // the form acts on.
+    const helper = src.slice(
+      src.indexOf("const unresolvableResponse"),
+      src.indexOf("const createdBlockId"),
     );
-    expect(src).toMatch(/error: INITIAL_SAVE_UNRESOLVED,/);
+    expect(helper, "the shared outcome is gone").toMatch(/withSetup/);
+    expect(helper).toMatch(/unresolved: true as const,/);
+    expect(helper).toMatch(/error: INITIAL_SAVE_UNRESOLVED,/);
   });
 
   it("and the form already freezes on exactly that signal", () => {
@@ -614,7 +659,10 @@ describe("switching machine or mode clears the collected draft", () => {
     // 1/3 the entry captures the set AT DRAFT BUILD, not at submit — the
     // identity it will mint is a function of exactly that snapshot.
     expect(entry, "1/3 the entry does not capture the recorded set").toMatch(
-      /const \[expectedGroupKeys\] = useState<string\[\]>\(\(\) =>/,
+      // IT HAS A SETTER NOW, because the re-seed has to move it too - a
+      // baseline frozen at the mount made the next capture trip the very
+      // refusal it was meant to satisfy (Codex, #860 4307735441).
+      /const \[expectedGroupKeys, setExpectedGroupKeys\] = useState<string\[\]>\(\(\) =>/,
     );
     // 2/3 and sends it with the save.
     expect(entry, "2/3 the captured set never leaves the entry").toMatch(
@@ -711,12 +759,12 @@ describe("switching machine or mode clears the collected draft", () => {
     const j = src.indexOf("const { data: blockRow", i);
     expect(j, "the read-back that bounds this branch is gone").toBeGreaterThan(i);
     const branch = src.slice(i, j);
-    expect(branch).toMatch(/return withSetup/);
+    // THE DELEGATION, for the reason given on the read-back guard above: the
+    // outcome is one definition now, shared by three sites.
     expect(
       branch,
       "a malformed create success is still reported as a definitive failure",
-    ).toMatch(/unresolved: true as const/);
-    expect(branch).toMatch(/INITIAL_SAVE_UNRESOLVED/);
+    ).toMatch(/return unresolvableResponse\(\);/);
   });
 
   it("a PRE-WRITE lineage refusal on the CREATE path is rejected, not unresolved", () => {
@@ -1403,21 +1451,114 @@ describe("switching machine or mode clears the collected draft", () => {
     ).toMatch(/\} catch \{\s*fresh = \{ ok: false \};/);
   });
 
+  it("an UNAVAILABLE identity read refuses to drive a write at all", () => {
+    // THE DEFECT (Codex, #860 4307523228). When the block-history read failed,
+    // `recordedSetupUnavailable` changed only the warning renderer while the
+    // entry still received `recordedSetup` as an EMPTY array - so it seeded a
+    // fresh unrecorded group and stayed saveable. A mid-treatment change then
+    // asked the database for a NEW key rather than revising the group whose
+    // identity could not be loaded, and guidance kept both the stale and the
+    // changed setting as separate probes.
+    //
+    // MY CHANGE MADE THIS WORSE, which is why it is fixed here rather than
+    // carried. While the client named groups, an empty snapshot produced `g1`
+    // and a save would have landed on the existing g1. Now an empty snapshot
+    // means "ask for a new key", so the collision became a certainty instead
+    // of a possibility.
+    //
+    // FAIL CLOSED: no identities, no recording. The warning still renders -
+    // she is told why - and the history below is unaffected.
+    const panel = read(PANEL_SRC);
+    expect(panel).toMatch(
+      /blockId && recordAndCount && mode && !recordedSetupUnavailable \?/,
+    );
+  });
+
+  it("the re-seed moves ALL THREE derived values, not just the groups", () => {
+    // TWO DEFECTS, ONE CAUSE (Codex, #860 4307735441 and 4307735445). The
+    // draft, the monotonic ordinal and the staleness baseline are all
+    // functions of the recorded set - the docblock on the baseline says so
+    // outright, "the same moment `groupOrdinal` is seeded from them, because
+    // the two are the same fact". Re-seeding the next capture moved ONE of the
+    // three and left the other two at their MOUNT values:
+    //
+    //   * the baseline stayed `[]` from the empty-scope mount, so the next
+    //     capture sent an EXISTING key with an empty expected set and tripped
+    //     the staleness refusal it was meant to satisfy;
+    //   * the ordinal stayed at 1 beside a re-seeded `g2`, so "Add setting
+    //     group" minted a SECOND `g2` - duplicate React keys, and the
+    //     collapsed revision history this whole path exists to prevent.
+    //
+    // SO IT IS ONE FUNCTION. Three setters at a call site is the shape that
+    // produced this; `reseedFromRecord` is the shape that cannot.
+    const entry = read(ENTRY_SRC);
+    expect(entry).toMatch(/const reseedFromRecord = \(\) => \{/);
+    const at = entry.indexOf("const reseedFromRecord = () => {");
+    const body = entry.slice(at, entry.indexOf("\n  };", at));
+    expect(body, "the re-seed does not set the draft").toMatch(
+      /setGroups\(seeded\)/,
+    );
+    expect(body, "the re-seed leaves the ordinal behind").toMatch(
+      /setGroupOrdinal\(/,
+    );
+    expect(body, "the re-seed leaves the staleness baseline behind").toMatch(
+      /setExpectedGroupKeys\(/,
+    );
+    // THE ORDINAL NEVER GOES BACKWARDS: it is monotonic for the life of the
+    // mount, so a removed group's identity is never reissued.
+    expect(body).toMatch(/Math\.max\(prev, highestOrdinal\(seeded\)\)/);
+    // AND THE CALL SITE DEFERS to it rather than re-deriving.
+    expect(entry).toMatch(/reseedFromRecord\(\);/);
+    expect(
+      entry,
+      "the next capture sets the draft directly again, so the siblings can drift",
+    ).not.toMatch(/setGroups\(\s*groupsFromRecorded/);
+  });
+
+  it("and the recorded key set is projected ONCE, not spelled twice", () => {
+    // Two spellings of "the set this draft was built from" is how a staleness
+    // comparison comes to be made against the wrong baseline.
+    const entry = read(ENTRY_SRC);
+    expect(entry).toMatch(/function recordedKeysOf\(/);
+    const uses = entry.match(/recordedKeysOf\(recordedGroups\)/g) ?? [];
+    expect(
+      uses.length,
+      "the mount and the re-seed must share one projection",
+    ).toBe(2);
+  });
+
   it("the SEED SOURCES are enumerated, and every one is current", () => {
     // ops01 asked for this path to join the enumeration. The draft's
     // identities can come from exactly two places, and both must be
     // current at the moment they are read:
     //
-    //   1. WITHIN a mount, from the previous capture — `clearedForNextCapture`,
-    //      which keeps identities and clears observations;
-    //   2. ACROSS a mount, from the record — `groupsFromRecorded`, scoped to
-    //      the mount's (device, profile, version, mode).
+    // THERE IS NOW EXACTLY ONE SOURCE, which is the simplification the
+    // identity change bought (Codex, #860 4307523224). It used to be two:
     //
-    // Source 2 is only as good as `recordedSetup`, which is why the refresh
-    // above is part of the invariant rather than a nicety.
+    //   1. WITHIN a mount, from the previous capture - `clearedForNextCapture`;
+    //   2. ACROSS a mount, from the record - `groupsFromRecorded`.
+    //
+    // Source 1 is GONE, and its helper with it. Once the database issues the
+    // keys, a draft carried forward from the previous capture holds
+    // PLACEHOLDERS, not identities - so after the first save in an empty scope
+    // every group still claimed to be new and the next change was issued
+    // another key. The record is the only thing that knows what a group is
+    // called, so it is the only legitimate seed.
+    //
+    // Both the mount and the next capture therefore read the SAME source, and
+    // it is only as good as `recordedSetup` - which is why the awaited refresh
+    // above is part of the invariant rather than a nicety, and why the panel
+    // refuses to render this form at all when that read failed.
     const entry = read(ENTRY_SRC);
-    expect(entry).toMatch(/setGroups\(clearedForNextCapture\)/);
-    expect(entry).toMatch(/groupsFromRecorded\(recordedGroups, \{/);
+    const fromRecord = entry.match(/groupsFromRecorded\(recordedGroups, \{/g) ?? [];
+    expect(
+      fromRecord.length,
+      "the mount and the next capture must seed from the same place",
+    ).toBe(2);
+    expect(
+      entry,
+      "the retired within-mount source is back, carrying placeholders forward",
+    ).not.toMatch(/clearedForNextCapture/);
     // No THIRD source may appear without this guard being updated: a seed
     // that came from anywhere else would not be covered by either rule.
     const seeds = entry.match(/useState<SettingGroupDraft\[\]>\(/g) ?? [];
