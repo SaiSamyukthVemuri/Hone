@@ -99,7 +99,7 @@ What this stack adds stays inside the boundary #828 asked for:
   - findings are de-duplicated **best-effort**, always at **warning**: the sweep never records a critical alert, because critical ops alerts are emailed to `OPS_ALERT_EMAILS` (#828 gate). A finding assessed critical carries `assessed_severity: "critical"` in its details.
 
     **Why best-effort and not "at most one".** De-duplication is `hasOpenOpsAlert` followed by an insert — two separate statements — and `ops_alerts` carries no unique constraint for these delivery events (0067 adds CHECK constraints only). Two overlapping invocations can therefore both observe no unresolved alert and both insert, leaving more than one unresolved row for the same event. The daily cadence makes that unlikely rather than impossible, and a manual `workflow_dispatch` alongside a scheduled run is the realistic way to see it. So when auditing, do not treat a second unresolved row for one event as corruption. An atomic guarantee needs a partial unique index on `ops_alerts (event) where resolved_at is null`, which is a migration and is tracked separately.
-- **Rollback:** remove the cron entry. `last_sweep_at` in `email_delivery_health()` then stops advancing. **No health finding reports a stale sweep by time**: the only sweep finding is a failed count. So check `last_sweep_at` directly, or on the support page, after a rollback.
+- **Rollback:** remove the cron entry. `last_sweep_at` in `email_delivery_health()` then stops advancing. The read-triggered `email_delivery_sweep_stale` finding warns when no usable heartbeat exists or its age exceeds 48 hours (daily cadence × 2 margin), including after an intentional rollback. No independent scheduled email-health caller is wired, so removing the sweep does not itself trigger evaluation. Check `last_sweep_at` and the resulting finding on the support page alongside invocation/completion logs; do not mistake an expected rollback warning for a new provider failure.
 
 ## 4. Go / no-go for the Friday demo (synthetic only)
 
@@ -286,7 +286,7 @@ The route already exists and authenticates with the existing `CRON_SECRET`.
 - `/admin/ops-alerts` shows no `email_delivery_*` alert at **critical** (pinned by `tests/app/api/email-delivery-sweep.test.ts`);
 - the sweep sends no email or SMS and calls no provider.
 
-**Rollback:** remove the cron entry and redeploy. `last_sweep_at` then stops advancing. No health finding fires on that by time, so verify it directly.
+**Rollback:** remove the cron entry and redeploy. `last_sweep_at` then stops advancing. Reading health can then produce `email_delivery_sweep_stale`: missing/unusable immediately, or older than 48 hours. Evaluation is read-triggered; no independent scheduled email-health caller is wired. Verify the heartbeat and finding directly alongside invocation/completion logs; the intentional rollback explains the expected warning.
 
 ### Emailed delivery alerts stay off (#828)
 
