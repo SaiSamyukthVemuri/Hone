@@ -255,6 +255,18 @@ describe("0232 at upload: the panel choice", () => {
     expect(mgr).toMatch(/className="flex min-h-\[44px\] items-center gap-2 text-sm text-neutral-700 dark:text-neutral-200"\s*>\s*<input\s+type="radio"\s+name="captureStage"/);
   });
 
+  it("freezes the submitted context and stage choice until the whole upload batch finishes", () => {
+    const fieldset = mgr.match(/<fieldset\b([^>]*)>([\s\S]*?)<\/fieldset>/);
+    expect(fieldset, "the existing upload context fieldset").toBeTruthy();
+    expect(fieldset![1]).toContain("disabled={uploading}");
+    // Native disabled-fieldset semantics freeze all descendant radios/selects,
+    // including the stage and context which drive the displayed summary.
+    expect(fieldset![2]).toContain('name="captureStage"');
+    expect(fieldset![2]).toContain('name="contextKind"');
+    expect(fieldset![2]).toContain('data-testid="upload-attach-summary"');
+    expect(fieldset![2]).toContain("checked={captureStage === value}");
+  });
+
   it("sends the stage only for a visit photo, and reports an unsaved label honestly", () => {
     expect(mgr).toMatch(/if \(canLabelUpload && captureStage\) fd\.set\("captureStage", captureStage\);/);
     expect(mgr).toMatch(/"label not saved; set it on the photo"/);
