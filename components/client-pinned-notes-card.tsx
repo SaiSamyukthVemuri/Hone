@@ -1,9 +1,101 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useLayoutEffect, useRef, useState, useTransition } from "react";
 import type { ClientPinnedNote } from "@/lib/types/database";
 
-const MAX_LENGTH = 200;
+export const MAX_LENGTH = 200;
+
+/**
+ * Pinned notes are single-line (Enter saves), but a pasted value can carry line
+ * breaks a single-line <input> used to drop silently. Keep that behaviour: a
+ * break becomes a space, so editing never introduces stored newlines.
+ */
+export function toSingleLine(value: string): string {
+  return value.replace(/\r\n|\r|\n/g, " ");
+}
+
+type FieldProps = {
+  value: string;
+  onChange: (value: string) => void;
+  onEnter: () => void;
+  onEscape?: () => void;
+  ariaLabel: string;
+  placeholder?: string;
+  autoFocus?: boolean;
+  className?: string;
+};
+
+/**
+ * HON-9: the FULL pinned note stays readable while it is being edited or added.
+ * A wrapping <textarea> that grows to fit its text replaces the old single-line
+ * <input>, which scrolled a 200-character note sideways inside one line on a
+ * phone. Keyboard behaviour is unchanged: Enter saves, Escape cancels, and no
+ * newline can be typed or pasted (toSingleLine).
+ */
+export function PinnedNoteField({
+  value,
+  onChange,
+  onEnter,
+  onEscape,
+  ariaLabel,
+  placeholder,
+  autoFocus,
+  className = "",
+}: FieldProps) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  // Fit the box to its text. With Tailwind's border-box sizing the assigned
+  // height includes the borders, which scrollHeight does not, so they are
+  // added back; otherwise the last line is clipped by about 2px (Codex P2
+  // 4301103594). Re-fit whenever the text changes AND whenever the field's
+  // width changes (rotation, split view, layout), since a narrower box wraps
+  // onto more lines without any change in value (Codex P2 4301103599).
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const fit = () => {
+      const cs = getComputedStyle(el);
+      const borders = (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
+      el.style.height = "auto";
+      el.style.height = `${el.scrollHeight + borders}px`;
+    };
+    fit();
+    if (typeof ResizeObserver === "undefined") return;
+    let lastWidth = el.clientWidth;
+    const ro = new ResizeObserver(() => {
+      if (el.clientWidth === lastWidth) return; // our own height change: ignore
+      lastWidth = el.clientWidth;
+      fit();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [value]);
+  return (
+    <div className={`flex min-w-0 flex-col gap-1 ${className}`}>
+      <textarea
+        ref={ref}
+        rows={1}
+        value={value}
+        onChange={(e) => onChange(toSingleLine(e.target.value))}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            onEnter();
+          } else if (e.key === "Escape" && onEscape) {
+            onEscape();
+          }
+        }}
+        maxLength={MAX_LENGTH}
+        autoFocus={autoFocus}
+        aria-label={ariaLabel}
+        placeholder={placeholder}
+        className="w-full min-w-0 resize-none overflow-hidden whitespace-pre-wrap break-words rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+      />
+      <span className="self-end text-[11px] tabular-nums text-neutral-500 dark:text-neutral-400" aria-live="polite">
+        {value.length}/{MAX_LENGTH}
+      </span>
+    </div>
+  );
+}
 
 type Props = {
   clientId: string;
@@ -132,22 +224,13 @@ export function ClientPinnedNotesCard({
                 key={n.id}
                 className="flex flex-col gap-2 rounded-md border border-amber-300 bg-white px-3 py-2 dark:border-amber-700 dark:bg-neutral-950"
               >
-                <input
-                  type="text"
+                <PinnedNoteField
                   value={editText}
-                  onChange={(e) => setEditText(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      submitEdit(n.id);
-                    } else if (e.key === "Escape") {
-                      cancelEdit();
-                    }
-                  }}
-                  maxLength={MAX_LENGTH}
+                  onChange={setEditText}
+                  onEnter={() => submitEdit(n.id)}
+                  onEscape={cancelEdit}
                   autoFocus
-                  aria-label="Edit pinned note"
-                  className="w-full min-w-0 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+                  ariaLabel="Edit pinned note"
                 />
                 <div className="flex flex-wrap justify-end gap-2">
                   <button
@@ -203,19 +286,13 @@ export function ClientPinnedNotesCard({
       )}
 
       <div className="mt-3 flex flex-wrap items-stretch gap-2">
-        <input
-          type="text"
+        <PinnedNoteField
           value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              submitAdd();
-            }
-          }}
+          onChange={setText}
+          onEnter={submitAdd}
+          ariaLabel="New pinned note"
           placeholder="e.g. Allergies: Penicillin. Prefers right side first."
-          maxLength={MAX_LENGTH}
-          className="flex-1 min-w-[12rem] rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+          className="flex-1 min-w-[12rem]"
         />
         <button
           type="button"
