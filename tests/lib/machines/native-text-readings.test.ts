@@ -94,6 +94,55 @@ for (const [index, profile] of APILUS_3G_TEXT_FIXTURES.entries()) describe(`${pr
   });
 });
 
+// Exercise each confirmed mode's actual field layout, not just Blend's layout.
+// Senior OmniBlend/MultiBlend differ in numeric/stage fields; Junior must never
+// acquire their starting-current selector through a family-wide shortcut.
+for (const [index, profile] of APILUS_3G_TEXT_FIXTURES.entries()) {
+  const confirmed = index === 0 ? ["blend", "omniblend", "multiblend"] : ["blend"];
+  for (const modeKey of confirmed) it(`${profile.model}/${modeKey}: both choices survive draft assembly and native validation`, () => {
+    const mode = profile.modes.find(m => m.key === modeKey)!;
+    const fields = nativeFieldGroups(profile, mode);
+    const starting = fields.flatMap(g => g.fields).find(f => f.key === "starting_current")!;
+    const nativeChoices = index === 0 ? ["Glv Hf", "Hf Glv"] : ["Glv hf", "Hf Glv"];
+    const publication = planContractPublication([profile]).publish.find(p => p.p_mode_key === modeKey)!;
+    expect(publication.p_fields.find(f => f.field_key === "starting_current")?.choices).toEqual(nativeChoices);
+    for (const choice of nativeChoices) {
+      const groups = firstGroup();
+      for (const group of fields) for (const field of group.fields) {
+        groups[0].values[draftKey(group.key, field)] = field.key === "program_identifier"
+          ? " 003i " : field.key === "starting_current" ? choice : "1";
+      }
+      expect(groupReadiness(fields, groups[0])).toBe("complete");
+      const readings = assembleReadings(fields, groups[0].values);
+      expect(readings.find(r => r.fieldKey === "starting_current")?.value).toEqual({ kind: "text", value: choice });
+      expect(readings.find(r => r.fieldKey === "program_identifier")?.value).toEqual({ kind: "text", value: " 003i " });
+      for (const reading of readings) {
+        expect(validateReading({
+          profileId: profile.profileId, version: profile.version, modeKey,
+          stageKey: reading.stageKey, fieldKey: reading.fieldKey,
+          value: reading.value, source: reading.observationSource,
+        }, { catalogue: [profile] }).ok).toBe(true);
+      }
+    }
+    expect(validateReading({ profileId: profile.profileId, version: profile.version,
+      modeKey, fieldKey: starting.key, value: { kind: "text", value: index === 0 ? "Glv hf" : "Glv Hf" },
+      source: "practitioner-entered",
+    }, { catalogue: [profile] })).toMatchObject({ ok: false, code: "malformed_value" });
+  });
+  it(`${profile.model}: only its confirmed modes publish starting-current choices`, () => {
+    const published = planContractPublication([profile]).publish;
+    expect(published.filter(p => p.p_fields.some(f => f.field_key === "starting_current"))
+      .map(p => p.p_mode_key)).toEqual(confirmed);
+    expect(APILUS_3G_TEXT_PROFILES[index].availability).toBe("blocked");
+    if (index === 1) {
+      const held = APILUS_3G_TEXT_PROFILES[index].modes.find(m => m.key === "omniblend")!;
+      expect(held.captureHold).toBeTruthy();
+      expect(held.fields.some(f => f.key === "starting_current")).toBe(false);
+      expect(published.some(p => p.p_mode_key === "omniblend")).toBe(false);
+    }
+  });
+}
+
 it("all six synthetic identities are absent when gate-closed or deployed, with real profiles unchanged", () => {
   const baseline = structuredClone(MACHINE_CATALOGUE);
   for (const env of [ { NODE_ENV: "test" }, { NODE_ENV: "test", HONE_SYNTHETIC_MACHINE_PROFILE: "1", NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:64821", VERCEL: "1" } ] as NodeJS.ProcessEnv[]) {

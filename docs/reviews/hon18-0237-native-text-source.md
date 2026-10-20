@@ -120,3 +120,45 @@ Machines handoff directory as `0237-*.txt`. The target/candidate request is
 `0237-target-candidate-proof-request.json`; a proposed owned pair is not a slot
 or reset grant. Full unit CI, independent schema/source review, composed full-chain
 and 0237 DB/browser evidence remain outstanding before any release decision.
+
+
+## 2026-10-20 focused mode coverage and acceptance boundaries
+
+The existing lightweight native-text suite now exercises the actual field groups
+for Senior Blend, OmniBlend and MultiBlend separately, and Junior Blend
+independently. Both native choice strings pass through draft assembly, exact
+program text (including surrounding spaces), native validation and publication
+metadata. Wrong-model choice spelling is refused. Junior OmniBlend stays absent
+from the synthetic publication set and retains its current-order hold; real
+profiles remain blocked. These are unit checks, not mounted browser or device
+acceptance. The focused native-text plus 0237 source-contract suites pass
+**43/43** (39 + 4); earlier totals above are historical, overlapping evidence.
+
+Remote CI39349144127 at adfa751 passed **3842/3842 DB tests**, including the six
+numeric and four categorical native cases; its six canonical-production-facts
+unit failures remain a separate lineage/record dependency. This remote receipt
+does not close the local integrated full-chain, native browser or device gaps
+marked UNRUN above. Exact review at adfa751 found no major issues.
+
+For **Senior**, Sam can provide existing model-label/firmware/manual-edition
+images, then separate mode-labelled Operation screens for Blend, OmniBlend and
+MultiBlend showing the starting-current options and literal program display.
+Record the displayed units/digits and MultiPlex stage labels independently. Keep
+the OmniBlend 19%/29% discrepancy explicit until matching evidence resolves it.
+No treatment actuation or customer record is needed for this evidence request.
+
+For **Junior**, obtain its own model-label/firmware/manual-edition images and
+Blend Configuration screen with its own exact choice labels and program display.
+Request a separate OmniBlend screen/manufacturer clarification: the same Junior
+manual p20 allows starting-current changes in Blend or OmniBlend, while p31 says
+OmniBlend is galvanic-first. Its p19 simultaneous-current description does not
+resolve editability. Keep that mode isolated; separately request Thermolysis
+digits/increment versus Flash and the Electrolysis 0.99/1.99 mA discrepancy.
+Do not substitute Senior observations for Junior evidence.
+
+The existing eight v3 browser cells remain **UNRUN** (Senior six, Junior two):
+mounted desktop/mobile controls, save, committed readback, reload/history and a
+distinct same-client next visit require OPS's exact integrated candidate, verified
+owned target and explicit slot grant. Native revision/retry and physical/firmware
+acceptance remain separate UNRUN gaps. No activation or privileged publication
+follows from any of these source or synthetic checks.
