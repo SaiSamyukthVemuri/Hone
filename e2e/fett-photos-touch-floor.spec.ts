@@ -96,7 +96,8 @@ test.describe("FETT photos: touch floor, mounted at phone width", () => {
         const box = await target.boundingBox();
         expect(box, `${name} mounted target`).not.toBeNull();
         expect(box!.height, `${name} computed touch height`).toBeGreaterThanOrEqual(FLOOR);
-        if (target !== input) await expect(target).toHaveCSS("min-height", "44px");
+        // The native input needs its own floor: label borders made h-full only42px.
+        await expect(target).toHaveCSS("min-height", "44px");
       }
     }
     await page.getByRole("button", { name: "Add note", exact: true }).first().click();
