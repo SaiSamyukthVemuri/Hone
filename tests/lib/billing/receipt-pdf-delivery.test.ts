@@ -407,3 +407,27 @@ describe("an unsupported name fails preparation — zero emails, honest advice",
     expect(att.content.byteLength).toBeLessThan(200_000);
   });
 });
+
+describe("recorded USD reaches the receipt sender's email and attached PDF", () => {
+  it.each([false, true])("uses the attempt currency in both outputs (live=%s)", async (livemode) => {
+    h.livemode = livemode;
+    h.responses["payment_charge_attempts:select"] = {
+      data: { ...succeededAttempt(null), currency: "usd", amount_cents: 7550, stripe_livemode: livemode },
+      error: null,
+    };
+    const result = await sendPaymentChargeReceipt({
+      attemptId: ATTEMPT, studioId: STUDIO, practitionerId: "prac-1",
+    });
+    expect(result.ok).toBe(true);
+    expect(h.sends).toHaveLength(1);
+    const sent = h.sends[0] as unknown as Sent;
+    expect(sent.attachments).toHaveLength(1);
+    const pdfText = await extractPdfText(sent.attachments![0]!.content);
+    for (const surface of [sent.subject, sent.html, sent.text, pdfText]) {
+      expect(surface).toContain("$75.50 USD");
+      expect(surface).not.toContain("$75.50 CAD");
+    }
+    expect(sent.subject.includes("TEST MODE")).toBe(!livemode);
+    expect(h.stmts.map((s) => s.key)).toContain("payment_charge_attempts:update:sent");
+  });
+});
