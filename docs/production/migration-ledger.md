@@ -30,7 +30,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | **Repo migration max** | **0237** (`0237_machine_native_text_readings.sql`), source-only and pending. |
 | **Remote-only migrations** | **None recorded** by canonical hosted migration state. |
 | **Pending migrations** | PENDING, NOT APPLIED: **0213–0237** (`0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`, `0229`, `0230`, `0231`, `0232`, `0233`, `0234`, `0235`, `0236`, `0237`), contiguous in the integrated candidate; not applied. |
-| **Next free number** | Next free number is **0238** (based on integrated candidate filenames; not allocated). |
+| **Next free number** | Next free number is **0238** (based on integrated candidate filenames; not claimed or allocated). |
 | **Project ref** | `alhhybgqdmcdyzpybykj` (Hone production project). |
 
 ## Previous state (historical records follow; individual apply evidence is preserved)
