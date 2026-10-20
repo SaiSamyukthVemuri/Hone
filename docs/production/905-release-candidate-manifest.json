@@ -408,7 +408,7 @@
       "source_head": "92fcdcccc4543b433827e44754f08f0078852505",
       "sha256": "78970778cfc96e0d33b421882c2cd30f67ffa23819675d22e846a4ef90bdcf9d",
       "purpose": "Restore existing0212behavior/source proof with the reviewed0227forward-repair bounce contract and exact-role grant checks; no SQL changes",
-      "candidate_current_sha256": "78970778cfc96e0d33b421882c2cd30f67ffa23819675d22e846a4ef90bdcf9d"
+      "candidate_current_sha256": "b87dbcff975bf1fd78780e97ca562e992488f5eec766e79ee85911a2118d5261"
     },
     {
       "path": "tests/migrations/email-delivery-grants.test.ts",
@@ -575,7 +575,7 @@
   ],
   "canonical_record_source": {
     "pr": 960,
-    "head": "eb240657554db83f3ea730cbc36772d727005e1c",
+    "head": "b4961561d0c81c85327555a513caca8486c75899",
     "status": "published; source review/CI pending; no hosted apply or production authority",
     "scope": "Current production4f08de03 receipt, verified0212checksum/precision and original#832export dispositions; all required new CI/review pending"
   },
@@ -587,5 +587,10 @@
       "tests/db/export-resource-registry.db.test.ts"
     ],
     "reason": "Preserve complete narrow owner registry and independent guards already in this candidate. Deduplicate imported0212catalog entries and financial expected-table list; platform webhook receipts remain excluded. No guard was weakened and SQL is unchanged."
+  },
+  "frozen_migration_verification_source": {
+    "source_head": "b4961561d0c81c85327555a513caca8486c75899",
+    "path": "tests/migrations/0212-email-delivery-events.test.ts",
+    "purpose": "Exact applied0212SHA256guard from recordowner, composed with existing0227forward-compatible test/grant checks; SQL unchanged"
   }
 }
