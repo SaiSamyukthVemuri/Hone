@@ -49,8 +49,8 @@ describe("UI-01J: the thumbnail wrapper is deliberately NOT converted", () => {
     // `inline-flex items-center justify-center min-h-[44px] rounded-md
     // font-medium` plus a variant fill — applying it here would visibly break
     // the photo grid for no accessibility gain.
-    // Since #913 the grid cell (and this wrapper) lives in GridPhoto.tsx, so
-    // the manager has NO raw button left and GridPhoto holds exactly this one.
+    // Production's recovery integration owns the thumbnail wrapper in
+    // GridPhoto; keep the manager free of raw short buttons without reverting it.
     expect((src.match(/<button\b/g) ?? []).length).toBe(0);
     const cell = readFileSync(join(ROOT, "app/(app)/clients/[id]/images/GridPhoto.tsx"), "utf8");
     expect((cell.match(/<button\b/g) ?? []).length).toBe(1);
@@ -141,6 +141,7 @@ describe("FETT photos: the remaining photo controls reach the floor", () => {
     const input = picker![3];
     const classes = label.match(/className=\{buttonClasses\(\{ className: "([^"]*)" \}\)\}/);
     expect(classes, "label uses the actual shared button class recipe").toBeTruthy();
+    expect(classes![1]).toContain("min-h-[44px]");
     const cls = buttonClasses({ className: classes![1] });
     for (const required of ["min-h-[44px]", "inline-flex", "items-center", "relative", "focus-within:outline-2"]) {
       expect(cls).toContain(required);
@@ -170,8 +171,10 @@ describe("FETT photos: the remaining photo controls reach the floor", () => {
 });
 
 
-it("the editable photo note has a 44px minimum", () => {
-  const textarea = read().match(/<textarea[\s\S]*?className="([^"]*)"/);
-  expect(textarea, "editable photo note").toBeTruthy();
-  expect(textarea![1]).toContain("min-h-[44px]");
+describe("FETT photos: editable note touch floor", () => {
+  it("the note textarea has an explicit 44px minimum", () => {
+    const textarea = read().match(/<textarea[\s\S]*?className="([^"]*)"/);
+    expect(textarea, "editable photo note").toBeTruthy();
+    expect(textarea![1]).toContain("min-h-[44px]");
+  });
 });
