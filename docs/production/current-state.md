@@ -34,7 +34,7 @@ not a PR diary — per-capability evidence lives in
 | **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
 | **Health** | **Read-only route smoke, 2026-10-20T01:11Z:** unauthenticated GETs to `hone.care/`, `/pricing`, and `/privacy` returned **200**. This is a reachability reading only, not application-path, authorization, alert-email, or database health proof. ⚠️ `ops_alerts` was **not** re-read. Earlier probes are preserved below as dated readings; tenant counts and provider state were not refreshed. |
 | **Tenant posture** | **Six studios in three classes — one real-customer, one controlled test, one synthetic, three empty.** Real-customer activity is **Willow Electrolysis only**. See **§0**, which is the canonical tenant register; do not restate its counts elsewhere. ⚠️ **Every tenant count in §0 was measured 2026-08-23 and was NOT re-measured on 2026-08-26** — see *What this reconciliation did and did not measure* below. |
-| **Next operational gate** | The **deep production / security / code audit** remains outstanding. Chloe’s independent human acceptance of the deployed #903, #897, #895 and #942 changes also remains outstanding; safe staging limits and steps are recorded in §15. |
+| **Next operational gate** | The **deep production / security / code audit** remains outstanding. Chloe’s independent human acceptance of the deployed #903, #897, #895, #942 and #944 changes also remains outstanding; safe staging limits and steps are recorded in §15. |
 
 ### Re-derived at this reconciliation
 
@@ -1737,9 +1737,15 @@ the `portal_magic_link_sent` log shows `studioId` and `clientId` as `[id]`, pres
 timestamp and success marker, and contains no email, raw token, token hash or UUID. Do not send
 to a live email destination or access a real-client record. The insert-failure redaction path
 has no safe user-facing trigger and remains verified by synthetic CI fixtures only.
+12. **#944 portal last-seen failure logging:** there is no safe user-facing action that produces
+a controlled database failure for either last-seen callback. Do not induce an error or inspect
+production logs. Existing synthetic fake-database tests prove that session IDs and free-form
+error text are omitted while the failure event, timestamp and database code remain. A human
+runtime check requires an existing approved synthetic staging failure trigger; none is
+currently recorded.
 
 Engineering deployment for all of the above is **complete**. Human acceptance is **not**.
-Items 8 and 10 have no safe runtime acceptance path in the current application; adding a
+Items 8, 10 and 12 have no safe runtime acceptance path in the current application; adding a
 synthetic canary or changing the test-alert payload requires separate scope and safety review.
 Do not describe any of it as accepted, validated by Chloe, or signed off.
 
