@@ -251,7 +251,9 @@ async function expectCommittedWithinWindow(
   w: { start: string; end: string },
   context: string,
 ): Promise<void> {
-  const { startMin, endMin } = await committedBounds(appointmentId);
+  const { startMin, endMin, localDate } = await committedBounds(appointmentId);
+  // A week grid can show a booking committed on the wrong day of that week.
+  expect(localDate, `${context}: committed date must match the selected LA date`).toBe(bookDate);
   expect(startMin, `${context}: committed start is before ${w.start}`).toBeGreaterThanOrEqual(
     windowToMinutes(w.start),
   );
@@ -499,7 +501,7 @@ test("ACCEPTANCE: pick A, pick B, reschedule one, and the owner's calendar attri
   const originalId = aRows[0].id;
   const originalStart = aRows[0].starts_at;
   const originalKeys = await getSourceReservationKeys("appointment", originalId);
-  expect(originalKeys.length, "the original booking must hold a reservation").toBeGreaterThan(0);
+  expect(originalKeys, "the original booking must reserve A's practitioner key").toEqual([A.practitionerId]);
 
   const token = await getCancellationToken(live.studioId, originalId);
   expect(token, "the booking must carry a reschedule token").toBeTruthy();
@@ -599,6 +601,12 @@ test("ACCEPTANCE: pick A, pick B, reschedule one, and the owner's calendar attri
     "the reschedule must PRESERVE A's assignment, not re-attribute to the owner",
   ).toBe(A.practitionerId);
   expect(successors[0].starts_at, "the successor must be at a NEW time").not.toBe(originalStart);
+  // Assignment alone cannot prove reservation scope: disjoint appointment
+  // times also fit a broken studio-wide reservation. Check the new row's key.
+  expect(
+    await getSourceReservationKeys("appointment", successors[0].id),
+    "the successor must reserve A's practitioner key",
+  ).toEqual([A.practitionerId]);
 
   // THE SELECTED DATE, NOT JUST A DIFFERENT INSTANT (Codex, this head). Every
   // other check here is satisfied by a successor on ANOTHER DAY of the same
