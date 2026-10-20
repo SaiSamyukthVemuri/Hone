@@ -7,10 +7,11 @@ import {
   INTERNAL_SLOT_PACKING,
   type Slot,
 } from "@/lib/booking/slots";
+import { safeLog } from "@/lib/logging/safe-log";
 
 function logBookingSlotError(stage: string, code: string | undefined): void {
   // Bounded PHI-free marker only, never the raw DB/PostgREST message.
-  console.error(`booking_slot_db_error:${stage}:${code ?? "unknown"}`);
+  safeLog.error(`booking_slot_db_error:${stage}:${code ?? "unknown"}`);
 }
 
 // Part 4 Item 6: target-aware internal slot loader. An OWNER of a capacity-ON
