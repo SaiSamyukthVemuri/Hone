@@ -689,6 +689,23 @@ async function sendReminder(
   await settleLedgerRow(args.admin, attempt, args.ledgerBudget);
 
   if (result.ok) {
+    if (!resultRecorded) {
+      // Acceptance is not delivery, and an RPC error may be a lost response
+      // after commit. Surface uncertain accounting without changing the
+      // successful provider result or authorizing another attempt.
+      void import("@/lib/ops/alerts").then(({ recordOpsAlert }) => recordOpsAlert({
+        severity: "warning",
+        event: "sms_result_record_unconfirmed",
+        message: `SMS ${smsType} was accepted by the provider, but result recording was not confirmed. Check delivery accounting before taking action.`,
+        studioId: args.studio.id,
+        appointmentId: args.appointmentId,
+        route: "lib/sms/send-appointment",
+        safeDetails: { sms_type: smsType },
+      })).catch(() => {
+        // Alerting remains best effort; recordSmsResult already logged it.
+      });
+    }
+
     console.log(
       JSON.stringify({
         event: "sms_sent",

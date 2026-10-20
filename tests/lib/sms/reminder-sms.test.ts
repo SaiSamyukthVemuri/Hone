@@ -418,6 +418,29 @@ describe("provider failure", () => {
   });
 });
 
+describe("accepted reminders with unconfirmed result recording", () => {
+  it.each([
+    ["24h", send24hReminderSmsToClient, "reminder_24h"],
+    ["2h", send2hReminderSmsToClient, "reminder_2h"],
+  ] as const)("the %s provider acceptance stays successful and its accounting warning is visible", async (_kind, send, smsType) => {
+    h.recordError = true;
+    expect(await send(input())).toMatchObject({ ok: true, messageSid: SID });
+    await flush();
+    expect(alerts).toEqual([expect.objectContaining({
+      event: "sms_result_record_unconfirmed", severity: "warning",
+      studioId: "studio-1", appointmentId: "appt-1",
+      message: expect.stringContaining("accepted by the provider, but result recording was not confirmed"),
+      safeDetails: { sms_type: smsType },
+    })]);
+    expect(alerts[0].message).not.toMatch(/delivered|gave up|exhaust/i);
+    expect(JSON.stringify(alerts)).not.toContain(SID);
+    expect(recorded()).toEqual([true]);
+    expect(h.attemptReads).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(h.rpcs.map((call) => call.fn)).toContain("settle_sms_message");
+  });
+});
+
 describe("retry exhaustion remains visible without changing send authority", () => {
   it("an accounting read that only ends on abort preserves the retryable result without claiming exhaustion", async () => {
     h.attemptReadWaitsForAbort = true;
