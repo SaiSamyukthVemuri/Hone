@@ -76,11 +76,29 @@ function trustedCall(call: ts.CallExpression): boolean {
   return imports.length === 1 && imports[0]!.module === TRUSTED_MODULES[name] &&
     imports[0]!.original === name && !imports[0]!.typeOnly;
 }
-function ownHalt(stmt: ts.Statement): boolean {
+// Refusal rendering is work too. Accept static intrinsic markup, not server
+// components, spread props or dynamic expressions that can execute a read.
+function inertReturn(expression: ts.Expression): boolean {
+  if (ts.isParenthesizedExpression(expression)) return inertReturn(expression.expression);
+  if (ts.isStringLiteral(expression) || ts.isNumericLiteral(expression) ||
+      [ts.SyntaxKind.NullKeyword, ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword].includes(expression.kind)) return true;
+  if (ts.isObjectLiteralExpression(expression)) return expression.properties.every((p) =>
+    ts.isPropertyAssignment(p) && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) && inertReturn(p.initializer));
+  if (!ts.isJsxElement(expression) && !ts.isJsxSelfClosingElement(expression) && !ts.isJsxFragment(expression)) return false;
+  const intrinsicTags = new Set(["section", "div", "p", "h1", "h2", "h3", "span", "strong", "em", "br"]);
+  return nodes(expression).every((n) => {
+    if (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n))
+      return ts.isIdentifier(n.tagName) && intrinsicTags.has(n.tagName.text);
+    if (ts.isJsxSpreadAttribute(n)) return false;
+    if (ts.isJsxExpression(n)) return !n.expression || ts.isStringLiteral(n.expression) || ts.isNumericLiteral(n.expression);
+    return true;
+  });
+}
+function ownHalt(stmt: ts.Statement, requireInertReturn = true): boolean {
   const body = ts.isBlock(stmt) ? [...stmt.statements] : [stmt];
   if (body.length !== 1) return false;
   const last = body[0]!;
-  if (ts.isReturnStatement(last)) return !last.expression || calls(last.expression).length === 0;
+  if (ts.isReturnStatement(last)) return !requireInertReturn || !last.expression || inertReturn(last.expression);
   return ts.isExpressionStatement(last) && ts.isCallExpression(last.expression)
     && callName(last.expression) === "redirect" && trustedCall(last.expression)
     && last.expression.arguments.length === 1 && ts.isStringLiteral(last.expression.arguments[0]!);
@@ -155,7 +173,7 @@ function practitionerGates(text: string): string[] {
       const nonOwnerBranch = [NON_OWNER, 'practitioner.role==="practitioner"'].includes(condition)
         ? n.thenStatement : ['practitioner.role==="owner"', 'practitioner.role!=="practitioner"'].includes(condition)
           ? n.elseStatement : undefined;
-      if (nonOwnerBranch && ownHalt(nonOwnerBranch)) return [n.expression.getText()];
+      if (nonOwnerBranch && ownHalt(nonOwnerBranch, false)) return [n.expression.getText()];
     }
     return [];
   });
@@ -168,7 +186,8 @@ function helperIssues(text: string): string[] {
     return ["helper must refuse as its first statement"];
   const halt = ts.isBlock(first.thenStatement) ? first.thenStatement.statements[0]! : first.thenStatement;
   if (!ts.isReturnStatement(halt) || !halt.expression || !ts.isObjectLiteralExpression(halt.expression) ||
-      !halt.expression.properties.some((p) => ts.isPropertyAssignment(p) && p.name.getText() === "access" &&
+      halt.expression.properties.length !== 1 ||
+      !halt.expression.properties.every((p) => ts.isPropertyAssignment(p) && p.name.getText() === "access" &&
         ts.isStringLiteral(p.initializer) && p.initializer.text === "refused"))
     return ["helper must return access refused"];
   return [];
@@ -392,5 +411,14 @@ describe("trusted gate and role-contract positive controls", () => {
   it("detects a real non-owner halt in the else branch", () => {
     expect(practitionerGates(`${TRUSTED_IMPORTS} export default async function Page() { ${identity} if (practitioner.role === "owner") { showOwnerExtras(); } else { redirect("/"); } return <SharedWork />; }`)).not.toEqual([]);
     expect(practitionerGates(`${TRUSTED_IMPORTS} export default async function Page() { ${identity} if (practitioner.role === "practitioner") return <Refused />; return <OwnerWork />; }`)).not.toEqual([]);
+  });
+});
+
+describe("refusal render and final discriminator controls", () => {
+  it.each(['<FinancialDetails studio={studio} />', '<Financial.Details />', '<section><FinancialDetails /></section>'])("an executable refusal component is not inert: %s", (jsx) => {
+    expect(pageIssues(page(identity, `if (practitioner.role !== "owner") return ${jsx};`))).not.toEqual([]);
+  });
+  it.each(['{ access: "refused", ...metadata }', '{ ...metadata, access: "refused" }', '{ access: "refused", access: "granted" }'])("the helper discriminator cannot be overridden: %s", (value) => {
+    expect(helperIssues(`export async function loadFinancialsView() { if (practitioner.role !== "owner") return ${value}; }`)).not.toEqual([]);
   });
 });
