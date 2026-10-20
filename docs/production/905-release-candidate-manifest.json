@@ -1,6 +1,6 @@
 {
   "title": "#905 narrow production-based release candidate source manifest",
-  "production_base": "aa90510354d7aa0ceeeeb70e631a85d8a9aa0b33",
+  "production_base": "73a6f5770a6c09d67e74e7bed89494f7179d1a92",
   "portrait_source": "affcb86727324b2c2505f5185b3ba3db3e9f4545",
   "hosted_anchor": {
     "version": "0212",
@@ -595,8 +595,8 @@
       "reason": "expected-current-image compare-and-clear under client row lock; stale removal fails closed and preserves newer portrait; exact seven-file owner delta composed without merging owner branch ancestry"
     }
   ],
-  "review_state": "ParentD380PRCIandfullnightlySUCCESS; exactcleanreceiptwithhistoricalsummarytrue/true retained. Currentmanifestprofiledigest repaired; currentproduction/recordcomposition andnewexactheadreview/normalCI pending. NoSQL/sourceguardmutation; hosted/consentholds remain.",
-  "previous_candidate_base": "e91ddd43c932df726a100fc3f4e33c12258007bd",
+  "review_state": "D380PRCI+nightlySUCCESS retainedforscopedunchangedsubjects. Currentproduction927+reviewedrecord968normallycomposed; currentprofiledigestcorrected; ALLcurrentcandidatefiledigestsverified. Newexactreview/normalfullmatrixCIneededafterpublication; no manualnightlyrerunforonlymanifestchange, changedclinicalhelpersreceiveexistingCIcoverage. Hosted/consentholds remain.",
+  "previous_candidate_base": "aa90510354d7aa0ceeeeb70e631a85d8a9aa0b33",
   "candidate_base_history": [
     "102faf94fc573c724d73419bc9e8a6262ac1a247",
     "cda67e7c9f779838dfad2360a628ab81221cb43e",
@@ -607,13 +607,19 @@
       "base": "4425b8ef4a024d5d3d34dbe2a9a752aa88d9524b",
       "superseded_by": "aa90510354d7aa0ceeeeb70e631a85d8a9aa0b33",
       "reason": "Normal merge deployed925 latest-treatment runtime and published dedicated record967; no pending SQL change"
+    },
+    {
+      "base": "aa90510354d7aa0ceeeeb70e631a85d8a9aa0b33",
+      "superseded_by": "73a6f5770a6c09d67e74e7bed89494f7179d1a92",
+      "reason": "Normalmerge current reviewed/deployed927 and record968; portraitimagecode and19SQLunchanged"
     }
   ],
   "canonical_record_source": {
-    "pr": 967,
-    "head": "6dd9ffc8ba709c8a1d88aa6e9e43620e633731f4",
-    "status": "Published dedicated owner correction; review/CI pending; actual925 runtimeaa905READY",
-    "scope": "204/175 ancestry; actual925source21278unit603browser11skip; post39507202447onlyA3A5failure preserved; no SQL/history changes"
+    "pr": 968,
+    "head": "442d041031316540a6b66f148fab0523efdb028b",
+    "merged": "73a6f5770a6c09d67e74e7bed89494f7179d1a92",
+    "status": "ExactreviewCLEANfalsefalse+normalCI39514570204SUCCESS; mergednormally; deployment/postdocs verification pending (notinferred)",
+    "scope": "206/177productionancestryat9270dc, settled39511500257unit21295PASS2canonicalFAIL/allbrowserPASS/skippedDBpaymentmobileGoogledocs preserved; no SQL/historychange"
   },
   "integration_compatibility_repairs": {
     "source": "95a840518b270021d792eae2a52eb00096759566",
@@ -691,5 +697,6 @@
     "Google": 13,
     "review": "Exactreceipt6303466243 no majorissues; aggregatesummarytrue/true/historythreads preserved,notrewritten",
     "reuse": "Evidenceatparentheadscope; field-onlydigestrepair doesnotalterUI/RPC/SQL/guards. Newcurrentreview/normalCI required onpublishedfinalhead."
-  }
+  },
+  "production_runtime_base": "0dc7d5e457b4445191f47404aefd140a59f927b9"
 }
