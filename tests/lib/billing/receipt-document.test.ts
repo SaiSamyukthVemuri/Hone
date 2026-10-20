@@ -225,3 +225,39 @@ describe("settlement is a discriminant, and unapproved live copy is refused", ()
     expect(sender).not.toContain('kind: "external"');
   });
 });
+
+describe("USD receipt currency follows the recorded payment", () => {
+  it.each([
+    { currencyCode: "usd", expected: "$75.50 USD", livemode: false },
+    { currencyCode: "USD", expected: "$75.50 USD", livemode: false },
+    { currencyCode: "usd", expected: "$75.50 USD", livemode: true },
+    { currencyCode: "USD", expected: "$75.50 USD", livemode: true },
+    { currencyCode: "cad", expected: "$75.50 CAD", livemode: false },
+    { currencyCode: "cad", expected: "$75.50 CAD", livemode: true },
+  ])("$currencyCode / live=$livemode stays consistent across receipt surfaces", ({ currencyCode, expected, livemode }) => {
+    const input = { ...CASES.test_full!, amountCents: 7550, currencyCode, livemode };
+    const email = buildPaymentReceiptEmail(input);
+    const document = buildReceiptDocument({
+      studioName: input.studioName,
+      studioContactEmail: input.studioContactEmail,
+      clientName: input.clientName,
+      reasonLabel: input.chargeReasonLabel,
+      amountCents: input.amountCents,
+      currencyCode: input.currencyCode,
+      paidAt: input.chargedAt,
+      livemode: input.livemode,
+      settlement: {
+        kind: "card", last4: input.last4,
+        stripePaymentIntentId: input.stripePaymentIntentId,
+        stripeChargeId: input.stripeChargeId,
+      },
+    });
+    expect(document.detailRows.find((row) => row.label === "Amount")?.value).toBe(expected);
+    expect(document.subject).toBe(email.subject);
+    for (const surface of [email.subject, email.html, email.text]) {
+      expect(surface).toContain(expected);
+      expect(surface).not.toContain(currencyCode.toLowerCase() === "usd" ? "$75.50 CAD" : "$75.50 USD");
+    }
+    expect(email.subject.includes("TEST MODE")).toBe(!livemode);
+  });
+});
