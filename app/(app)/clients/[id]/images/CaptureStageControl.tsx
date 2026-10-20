@@ -29,6 +29,23 @@ const ANNOUNCE: Record<TreatmentImageCaptureStage | "cleared", string> = {
 
 type FocusTarget = TreatmentImageCaptureStage | "clear";
 
+// Resolve the next focus target from the save/refresh state.
+export function captureStageRefocusTarget(
+  target: FocusTarget | null,
+  stage: TreatmentImageCaptureStage | null,
+  pending: boolean,
+  saveFailed: boolean,
+): FocusTarget | null {
+  if (pending || !target) return null;
+  if (target === "clear") {
+    if (stage === null) return "before";
+    // router.refresh() can finish the transition before server props arrive.
+    // Keep the intent until Clear disappears; a refused save keeps Clear.
+    if (!saveFailed) return null;
+  }
+  return target;
+}
+
 export function CaptureStageControl({
   clientId,
   imageId,
@@ -47,14 +64,16 @@ export function CaptureStageControl({
   const group = useRef<HTMLDivElement | null>(null);
   const refocus = useRef<FocusTarget | null>(null);
 
-  // Once the save settles and the buttons are enabled again, put focus back
-  // where the keyboard user left it ("clear" no longer exists: use "before").
+  // Wait for both the save and refreshed stage before consuming Clear's intent.
+  // A failed save retains the original control and can refocus it immediately.
   useEffect(() => {
-    if (pending || !refocus.current) return;
-    const target = refocus.current === "clear" && !stage ? "before" : refocus.current;
+    const target = captureStageRefocusTarget(refocus.current, stage, pending, error !== null);
+    if (!target) return;
+    const button = group.current?.querySelector<HTMLButtonElement>(`[data-stage-button="${target}"]`);
+    if (!button) return;
     refocus.current = null;
-    group.current?.querySelector<HTMLButtonElement>(`[data-stage-button="${target}"]`)?.focus();
-  }, [pending, stage]);
+    button.focus();
+  }, [pending, stage, error]);
 
   if (!visitPhoto) return null;
 

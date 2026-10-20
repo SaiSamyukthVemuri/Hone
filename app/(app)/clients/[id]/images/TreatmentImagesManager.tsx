@@ -18,7 +18,7 @@ import {
 import { TREATMENT_NOTE_MAX_LENGTH } from "./note-constants";
 import { PortraitControl } from "./PortraitControl";
 import { CaptureStageControl } from "./CaptureStageControl";
-import { Button } from "@/components/ui/button";
+import { Button, buttonClasses } from "@/components/ui/button";
 import {
   validateTreatmentImageUpload,
 } from "@/lib/images/treatment-images";
@@ -187,7 +187,7 @@ function PhotoNoteEditor({
         maxLength={TREATMENT_NOTE_MAX_LENGTH}
         rows={2}
         placeholder="Add a note for this photo…"
-        className="w-full rounded-md border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-800 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
+        className="min-h-[44px] w-full rounded-md border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-800 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
       />
       <div className="mt-1 flex items-center gap-2">
         <Button
@@ -256,6 +256,8 @@ export function TreatmentImagesManager({
   const [modalUrl, setModalUrl] = useState<string | null>(null);
   const [modalLoading, setModalLoading] = useState(false);
   const [modalError, setModalError] = useState(false);
+  // Label saves refresh images; the open preview must not retain its old label.
+  const modalPhoto = modal ? images.find((image) => image.id === modal.id) ?? null : null;
 
   useEffect(() => {
     if (!modal) return;
@@ -543,17 +545,32 @@ export function TreatmentImagesManager({
           )}
 
           <div className="flex flex-wrap items-center gap-3">
-          <label className="inline-flex min-h-[44px] cursor-pointer items-center rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-100 dark:hover:bg-neutral-900">
-            Choose images
-            <input
-              type="file"
-              name="file"
-              multiple
-              accept="image/jpeg,image/png,image/webp"
-              onChange={onPick}
-              className="sr-only"
-            />
-          </label>
+            <label className={buttonClasses({ className: "focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent" })}>
+              Take photo
+              <input
+                type="file"
+                name="cameraFile"
+                aria-label="Take a treatment photo"
+                accept="image/jpeg,image/png,image/webp"
+                capture="environment"
+                disabled={uploading}
+                onChange={onPick}
+                className="absolute inset-0 h-full min-h-[44px] w-full cursor-pointer opacity-0 disabled:cursor-wait"
+              />
+            </label>
+            <label className={buttonClasses({ className: "focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent" })}>
+              Choose images
+              <input
+                type="file"
+                name="file"
+                aria-label="Choose treatment images"
+                multiple
+                accept="image/jpeg,image/png,image/webp"
+                disabled={uploading}
+                onChange={onPick}
+                className="absolute inset-0 h-full min-h-[44px] w-full cursor-pointer opacity-0 disabled:cursor-wait"
+              />
+            </label>
           <span className="text-sm text-neutral-600 dark:text-neutral-300">
             {selectedFiles.length > 0 ? (
               <span className="font-medium">
@@ -750,6 +767,14 @@ export function TreatmentImagesManager({
                   clientId={clientId}
                   note={modal.note}
                 />
+                {modalPhoto && (
+                  <CaptureStageControl
+                    clientId={clientId}
+                    imageId={modalPhoto.id}
+                    visitPhoto={modalPhoto.visitPhoto}
+                    stage={modalPhoto.captureStage}
+                  />
+                )}
               </div>
               <Button
                 variant="secondary"
