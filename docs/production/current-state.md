@@ -1716,10 +1716,15 @@ to produce a database/provider failure containing a synthetic record UUID. Do no
 orphaned record or deliberately break a dependency to exercise this log branch. Runtime
 acceptance of UUID redaction is therefore unavailable through the current UI; the existing
 synthetic unit/CI evidence remains the only verification of that invariant.
-9. **#897 treatment history:** with synthetic clients, confirm an uncharted recent visit's
-Watch/Plan note remains on the Sessions tab; a full recent window without usable charted
-treatment reports history as unavailable; and a charted treatment retains its date, modality
-and summary. Check desktop and phone layouts.
+9. **#897 treatment history:** on the Sessions tab, confirm an uncharted recent visit's
+Watch/Plan note remains associated with that visit. Separately, in the existing synthetic
+staging workspace, create one older charted session and exactly **25 newer, non-deleted,
+non-void, uncharted sessions** that all start before a synthetic target appointment and are
+not linked to that appointment. Open the target appointment's **detail page**; the Last
+treatment section must say **“Previous treatment could not be loaded. Open the client's chart
+to review it before treating.”** The 25-row candidate limit is what makes older history
+unavailable here. Also confirm a charted prior treatment shows its date, modality and summary
+on the appointment detail page. Check desktop and phone layouts.
 10. **#895 operator alert email:** the existing `sendTestCriticalAlertAction` emits a static
 synthetic event with no record identifiers. Its captured email can verify delivery and
 operational context only; it cannot verify identifier redaction. Do not treat this action as
