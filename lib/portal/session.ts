@@ -55,13 +55,12 @@ export async function getCurrentPortalSession(): Promise<PortalSession | null> {
     .eq("session_token_hash", tokenHash)
     .maybeSingle();
   if (error) {
-    // Log sanitized; never include the raw cookie or its hash. A DB
+    // Omit provider text: it can quote identifiers, cookies or hashes. A DB
     // outage should not 500 the page render; treat as anonymous.
     console.error(
       JSON.stringify({
         event: "portal_session_lookup_failed",
         code: error.code,
-        message: error.message,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -174,7 +173,6 @@ export async function destroyPortalSession(): Promise<void> {
         JSON.stringify({
           event: "portal_session_revoke_failed",
           code: error.code,
-          message: error.message,
           timestamp: new Date().toISOString(),
         }),
       );

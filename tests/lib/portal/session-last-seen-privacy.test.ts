@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getCurrentPortalSession } from "@/lib/portal/session";
+import { destroyPortalSession, getCurrentPortalSession } from "@/lib/portal/session";
 
-const mocks = vi.hoisted(() => ({ admin: vi.fn(), get: vi.fn(), hash: vi.fn() }));
-vi.mock("next/headers", () => ({ cookies: async () => ({ get: mocks.get }) }));
+const mocks = vi.hoisted(() => ({ admin: vi.fn(), get: vi.fn(), hash: vi.fn(), set: vi.fn() }));
+vi.mock("next/headers", () => ({ cookies: async () => ({ get: mocks.get, set: mocks.set }) }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: mocks.admin }));
 vi.mock("@/lib/portal/tokens", () => ({ generateRawToken: vi.fn(), hashToken: mocks.hash }));
 
@@ -63,5 +63,33 @@ describe("portal last-seen failures disclose only operational markers", () => {
 
   it("keeps successful last-seen writes silent", async () => {
     expect(await lookup("ok")).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("portal lookup/logout diagnostics omit free-form provider text", () => {
+  function expectMarker(log: ReturnType<typeof vi.spyOn>, event: string) {
+    expect(log).toHaveBeenCalledOnce();
+    const entry = JSON.parse(String(log.mock.calls[0]![0])) as Record<string, unknown>;
+    expect(entry).toEqual({ event, code: "42P01", timestamp: expect.any(String) });
+  }
+
+  it("lookup errors stay anonymous and do not publish the error payload", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const eq = vi.fn(() => ({ maybeSingle: async () => ({ data: null, error: { code: "42P01", message: secretText } }) }));
+    mocks.admin.mockReturnValue({ from: () => ({ select: () => ({ eq }) }) });
+    expect(await getCurrentPortalSession()).toBeNull();
+    expect(eq).toHaveBeenCalledWith("session_token_hash", "token-hash-secret");
+    expectMarker(log, "portal_session_lookup_failed");
+  });
+
+  it("revocation errors still clear the cookie without publishing error text", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const eq = vi.fn(() => ({ is: async () => ({ error: { code: "42P01", message: secretText } }) }));
+    mocks.admin.mockReturnValue({ from: () => ({ update: () => ({ eq }) }) });
+    await destroyPortalSession();
+    expect(eq).toHaveBeenCalledWith("session_token_hash", "token-hash-secret");
+    expect(mocks.set).toHaveBeenCalledWith(expect.objectContaining({ name: "hone_portal_session", value: "", expires: new Date(0), httpOnly: true }));
+    expectMarker(log, "portal_session_revoke_failed");
   });
 });
