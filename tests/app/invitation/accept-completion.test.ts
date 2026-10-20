@@ -13,6 +13,10 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({ rpc: ctx.rpc }) }));
 vi.mock("@/lib/supabase/selected-studio", () => ({ clearSelectedStudioId: ctx.clearSelection }));
+vi.mock("@/lib/auth/admin-return", () => ({
+  clearAdminReturn: async () => {},
+  fulfilAdminReturn: async () => null,
+}));
 const { acceptInvitationAction } = await import("@/app/(auth)/accept-invitation/actions");
 const consented = () => { const fd = new FormData(); fd.set("consent", "on"); return fd; };
 const failed = { error: "Something went wrong. Please try again." };
