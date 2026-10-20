@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { runStopPreflight, targetAllowed, type AdminLike } from "@/scripts/sms/stop-preflight/run";
 import { sanitizeFacts, FACTS_FILE_VERSION } from "@/scripts/sms/stop-preflight/facts";
 import { STOP_PREFLIGHT_CHECKLIST, STOP_PREFLIGHT_CHECKLIST_VERSION } from "@/lib/sms/inbound-stop-preflight";
@@ -380,5 +381,50 @@ describe("output and reach", () => {
     const cli = readFileSync(path.join(process.cwd(), "scripts/sms/record-stop-preflight.mjs"), "utf8");
     expect(cli).toMatch(/record: false/);
     expect(cli).toMatch(/mode: args\.record \? "record" : "dry_run"/);
+  });
+});
+
+
+// Execute only the CLI's early refusals, with no inherited credentials,
+// approval flags or Node hooks. Even the loopback case has no service key,
+// so no case can import/construct a Supabase client or make a request.
+describe("CLI startup and early refusal without a target connection", () => {
+  it.each([
+    {
+      label: "missing arguments",
+      args: [] as string[],
+      env: {},
+      expected: { result: "invalid_arguments", code: "missing_argument" },
+    },
+    {
+      label: "no target URL",
+      args: ["--studio", STUDIO, "--facts", "never-read-facts.json"],
+      env: {},
+      expected: { result: "target_refused", code: "no_supabase_url" },
+    },
+    {
+      label: "hosted record flag without hosted approval",
+      args: ["--studio", STUDIO, "--facts", "never-read-facts.json", "--record", "--allow-hosted"],
+      env: { NEXT_PUBLIC_SUPABASE_URL: "https://example.invalid" },
+      expected: { result: "target_refused", code: "hosted_not_approved" },
+    },
+    {
+      label: "loopback target without service key",
+      args: ["--studio", STUDIO, "--facts", "never-read-facts.json", "--record"],
+      env: { NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1" },
+      expected: { result: "target_refused", code: "no_service_role_key" },
+    },
+  ])("$label exits with one JSON refusal before facts/client access", ({ args, env, expected }) => {
+    const child = spawnSync(
+      process.execPath,
+      [path.join(process.cwd(), "scripts/sms/record-stop-preflight.mjs"), ...args],
+      { cwd: process.cwd(), env, encoding: "utf8", timeout: 10_000 },
+    );
+    expect(child.error).toBeUndefined();
+    expect(child.signal).toBeNull();
+    expect(child.status).toBe(2);
+    expect(child.stderr).toBe("");
+    expect(child.stdout.trim().split("\n")).toHaveLength(1);
+    expect(JSON.parse(child.stdout)).toEqual(expected);
   });
 });
