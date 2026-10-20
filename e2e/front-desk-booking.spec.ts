@@ -93,7 +93,7 @@ test("owner invites a receptionist who explicitly accepts before receiving front
   await page.goto("/settings/team");
   await page.getByRole("textbox", { name: /^Email/ }).fill(deskEmail);
   await page.getByLabel("Display name", { exact: true }).fill("Front Desk E2E");
-  await page.getByLabel("Role", { exact: true }).selectOption("receptionist");
+  await page.getByRole("combobox", { name: "Role", exact: true }).selectOption("receptionist");
   console.info("[front-desk acceptance] submitting owner invitation");
   await page.getByRole("button", { name: "Create invite", exact: true }).click();
   await expect(page.getByText(`Invite created for ${deskEmail}.`, { exact: true })).toBeVisible();
