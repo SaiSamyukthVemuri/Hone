@@ -143,7 +143,7 @@ export async function recordSmsResult(
   appointmentId: string,
   smsType: SmsType,
   success: boolean,
-): Promise<void> {
+): Promise<boolean> {
   const { error } = await admin.rpc("record_sms_result", {
     p_appointment_id: appointmentId,
     p_sms_type: smsType,
@@ -166,7 +166,9 @@ export async function recordSmsResult(
         timestamp: new Date().toISOString(),
       }),
     );
+    return false;
   }
+  return true;
 }
 
 // PR #153. SMS give-up threshold. SMS retries are bounded by the
@@ -183,6 +185,7 @@ async function readUnsentReminderAttemptNumber(
   studioId: string,
   appointmentId: string,
   smsType: "reminder_24h" | "reminder_2h",
+  resultRecorded: boolean,
 ): Promise<number | undefined> {
   const attemptsColumn = `sms_${smsType}_send_attempts`;
   const sentColumn = `sms_${smsType}_sent_at`;
@@ -190,7 +193,8 @@ async function readUnsentReminderAttemptNumber(
   try {
     // Read after record_sms_result, rather than infer the count from a stale
     // cron candidate. A later successful send or active claim must not be
-    // called exhausted.
+    // called exhausted after a successful record cleared this invocation's
+    // claim. A failed record may leave our own claim set at the retry cap.
     // Bound the diagnostic read so an unavailable observer cannot stall the
     // reminder batch. This observation never changes atomic claim authority.
     const { data, error } = await admin
@@ -205,7 +209,8 @@ async function readUnsentReminderAttemptNumber(
     if (!row || typeof row !== "object" || Array.isArray(row)) return undefined;
     const accounting = row as Record<string, unknown>;
     const attempts = accounting[attemptsColumn];
-    return accounting[sentColumn] === null && accounting[claimedColumn] === null &&
+    return accounting[sentColumn] === null &&
+      (!resultRecorded || accounting[claimedColumn] === null) &&
       typeof attempts === "number" &&
       Number.isSafeInteger(attempts) && attempts >= 0
       ? attempts
@@ -675,7 +680,7 @@ async function sendReminder(
   // (2) The AUTHORITATIVE record, first. Sent, or possibly sent, counts as
   // sent: an ambiguous attempt is never retried automatically.
   const providerMayHaveIt = result.ok || result.attempt === "ambiguous";
-  await recordSmsResult(args.admin, args.appointmentId, smsType, providerMayHaveIt);
+  const resultRecorded = await recordSmsResult(args.admin, args.appointmentId, smsType, providerMayHaveIt);
 
   // (3) Then the best-effort ledger settle, within the run's ledger budget.
   await settleLedgerRow(args.admin, attempt, args.ledgerBudget);
@@ -696,7 +701,7 @@ async function sendReminder(
 
   const ambiguous = result.attempt === "ambiguous";
   const attemptNumber = !ambiguous && result.retryable
-    ? await readUnsentReminderAttemptNumber(args.admin, args.studio.id, args.appointmentId, smsType)
+    ? await readUnsentReminderAttemptNumber(args.admin, args.studio.id, args.appointmentId, smsType, resultRecorded)
     : undefined;
   logSmsFailure({
     appointmentId: args.appointmentId,

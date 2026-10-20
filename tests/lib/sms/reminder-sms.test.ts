@@ -48,6 +48,7 @@ const h: {
   attemptNumber: number;
   alreadySent: boolean;
   laterClaim: string | null;
+  recordError: boolean;
   attemptReadError: boolean;
   attemptReadWaitsForAbort: boolean;
   attemptReads: Array<{ columns: string; filters: Array<[string, string]>; signal?: AbortSignal; rpcsBefore: string[] }>;
@@ -59,6 +60,7 @@ const h: {
   attemptNumber: 1,
   alreadySent: false,
   laterClaim: null,
+  recordError: false,
   attemptReadError: false,
   attemptReadWaitsForAbort: false,
   attemptReads: [],
@@ -75,6 +77,9 @@ function admin(): SupabaseClient {
             ? { data: null, error: { message: "boom" } }
             : { data: [h.claim], error: null },
         );
+      }
+      if (fn === "record_sms_result" && h.recordError) {
+        return Promise.resolve({ data: null, error: { message: "record unavailable" } });
       }
       // The confirmation path's plain claim (0049).
       if (fn === "claim_sms_send") return Promise.resolve({ data: true, error: null });
@@ -187,6 +192,7 @@ beforeEach(() => {
   h.attemptNumber = 1;
   h.alreadySent = false;
   h.laterClaim = null;
+  h.recordError = false;
   h.attemptReadError = false;
   h.attemptReadWaitsForAbort = false;
   h.attemptReads = [];
@@ -476,6 +482,25 @@ describe("retry exhaustion remains visible without changing send authority", () 
     await flush();
     expect(alerts).toEqual([]);
     expect(recorded()).toEqual([false]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["24h", send24hReminderSmsToClient],
+    ["2h", send2hReminderSmsToClient],
+  ] as const)("a failed result record preserves the final %s failure warning", async (_kind, send) => {
+    h.attemptNumber = 3;
+    h.laterClaim = START; // This invocation's claim survives the failed record.
+    h.recordError = true;
+    fetchMock.mockImplementationOnce(() =>
+      Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } })),
+    );
+    expect(await send(input())).toMatchObject({ ok: false, retryable: true });
+    await flush();
+    expect(alerts).toEqual([expect.objectContaining({
+      event: "sms_send_failed", severity: "warning",
+      safeDetails: expect.objectContaining({ attempt_number: 3 }),
+    })]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
