@@ -179,9 +179,19 @@ function practitionerGates(text: string): string[] {
   });
 }
 function helperIssues(text: string): string[] {
-  const fn = parse(text).statements.find((n): n is ts.FunctionDeclaration =>
+  const source = parse(text);
+  const fn = source.statements.find((n): n is ts.FunctionDeclaration =>
     ts.isFunctionDeclaration(n) && n.name?.text === "loadFinancialsView");
-  const first = fn?.body?.statements[0];
+  // Parameter initialization precedes the first body statement. Keep this
+  // proof bounded to bare bindings and the existing unshadowed undefined
+  // default; destructuring and other defaults require a separate proof.
+  const shadowsUndefined = nodes(source).some((n) =>
+    ts.isIdentifier(n) && n.text === "undefined" &&
+    ("name" in n.parent && n.parent.name === n));
+  if (!fn || fn.parameters.some((p) => !ts.isIdentifier(p.name) || p.name.text === "undefined" ||
+      (p.initializer && (!ts.isIdentifier(p.initializer) || p.initializer.text !== "undefined" || shadowsUndefined))))
+    return ["helper parameters must not execute work before refusal"];
+  const first = fn.body?.statements[0];
   if (!first || !ts.isIfStatement(first) || compact(first.expression) !== NON_OWNER || !ownHalt(first.thenStatement))
     return ["helper must refuse as its first statement"];
   const halt = ts.isBlock(first.thenStatement) ? first.thenStatement.statements[0]! : first.thenStatement;
@@ -420,5 +430,25 @@ describe("refusal render and final discriminator controls", () => {
   });
   it.each(['{ access: "refused", ...metadata }', '{ ...metadata, access: "refused" }', '{ access: "refused", access: "granted" }'])("the helper discriminator cannot be overridden: %s", (value) => {
     expect(helperIssues(`export async function loadFinancialsView() { if (practitioner.role !== "owner") return ${value}; }`)).not.toEqual([]);
+  });
+});
+
+
+describe("helper parameter initialization controls", () => {
+  const helper = (parameters: string) => `export async function loadFinancialsView(${parameters}) { if (practitioner.role !== "owner") return { access: "refused" }; }`;
+  it("accepts the existing undefined default without executing parameter work", () => {
+    expect(helperIssues(helper("practitioner, studio, period, supabaseClient = undefined"))).toEqual([]);
+    expect(helperIssues(helper("practitioner, studio, period"))).toEqual([]);
+  });
+  it.each([
+    "preload = readFinancials(studio.id)",
+    "preload = (readFinancials(studio.id))",
+    "preload = new FinancialReader()",
+    "preload = settings.financials",
+    "{ preload = readFinancials(studio.id) } = {}",
+    "[preload = readFinancials(studio.id)] = []",
+    "undefined, preload = undefined",
+  ])("refuses executable or unproven parameter initialization: %s", (parameters) => {
+    expect(helperIssues(helper(parameters))).not.toEqual([]);
   });
 });
