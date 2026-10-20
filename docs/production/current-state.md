@@ -34,7 +34,7 @@ not a PR diary — per-capability evidence lives in
 | **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
 | **Health** | **Read-only route smoke after #921 deployment READY:** GET `/login` returned **200**; unauthenticated GET `/dashboard` returned **307 → /login**. This is route reachability and unauthenticated-boundary evidence only, not analytics-event or human-acceptance proof. ⚠️ `ops_alerts` was **not** re-read. Tenant counts and provider state were not refreshed. |
 | **Tenant posture** | **Six studios in three classes — one real-customer, one controlled test, one synthetic, three empty.** Real-customer activity is **Willow Electrolysis only**. See **§0**, which is the canonical tenant register; do not restate its counts elsewhere. ⚠️ **Every tenant count in §0 was measured 2026-08-23 and was NOT re-measured on 2026-08-26** — see *What this reconciliation did and did not measure* below. |
-| **Next operational gate** | The **deep production / security / code audit** remains outstanding. Chloe’s independent human acceptance of the deployed #903, #897, #895, #942, #944, #945, #947 and #946 changes also remains outstanding; safe staging limits and steps are recorded in §15. |
+| **Next operational gate** | The **deep production / security / code audit** remains outstanding. Chloe’s independent human acceptance of deployed #921, #903, #897, #895, #942, #944, #945, #947 and #946 changes also remains outstanding; safe staging limits and steps are recorded in §15. #921 requires an approved synthetic staging actor and event sink; do not emit an acceptance event from production. |
 
 ### Re-derived at this reconciliation
 
@@ -1750,9 +1750,10 @@ error text are omitted while the failure event, timestamp and database code rema
 runtime check requires an existing approved synthetic staging failure trigger; none is
 currently recorded.
 13. **#945 portal lookup/logout failure logging:** use only an approved isolated synthetic staging account and preconfigured failure trigger. Exercise lookup and logout, confirm anonymous fallback and cookie clearing, then inspect only staging logs to verify event/code/time remain and provider free-form message, session/client/email/cookie data are absent. No approved staging fixture or failure trigger is currently recorded; do not induce production errors or inspect production logs.
+14. **#921 server analytics boundary:** Chloe's acceptance requires an approved staging-only synthetic actor and event sink. With that fixture, send one supported event containing allowed coarse values and verify it is accepted; then exercise the existing rejected ID-like event-name/value cases and confirm no rejected value reaches the staging sink. No approved staging actor/sink is currently recorded. Do not emit test events from production or include real-client data; until that fixture exists, synthetic CI is the only recorded verification and Chloe's acceptance remains pending.
 
 Engineering deployment for all of the above is **complete**. Human acceptance is **not**.
-Items 8, 10, 12 and 13 have no safe runtime acceptance path in the current application; adding a
+Items 8, 10, 12, 13 and 14 have no currently recorded safe runtime acceptance fixture; adding a
 synthetic canary or changing the test-alert payload requires separate scope and safety review.
 Do not describe any of it as accepted, validated by Chloe, or signed off.
 
