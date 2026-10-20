@@ -72,6 +72,29 @@ for (const [index, profile] of APILUS_3G_TEXT_FIXTURES.entries()) describe(`${pr
     expect(html).toContain('value="003i"');
     expect(html).not.toContain('native-control-pending');
   });
+  it.each([" 003i ", "00  3i", "003i\t  03i\n"])("preserves visible whitespace for text %j in history and prior guidance", value => {
+    const stored = row(profile, value);
+    const revised = { ...stored, revision: 2, captureId: "capture2", value: { kind: "text" as const, value: " 03i " } };
+    const history = renderToStaticMarkup(createElement(MachineRecordedSetups, { readings: [stored, revised], catalogue: [profile] }));
+    const prior = renderToStaticMarkup(createElement(MachinePriorSetup, { readings: [stored], catalogue: [profile] }));
+    const exactSpan = (text: string) => `class="font-medium whitespace-break-spaces [overflow-wrap:anywhere]">${text}</span>`;
+    for (const html of [history, prior]) expect(html).toContain(exactSpan(value));
+    // The change summary must retain both strings too, not only the saved row.
+    expect(history.split(exactSpan(value)).length - 1).toBeGreaterThanOrEqual(2);
+    expect(history.split(exactSpan(" 03i ")).length - 1).toBeGreaterThanOrEqual(2);
+  });
+  it("keeps numeric precision and reasoned-absence rendering unchanged", () => {
+    const stored = { ...row(profile, "unused"), fieldKey: "galvanic_current", nativeUnit: "mA" as const, decimals: 2,
+      value: { kind: "value" as const, value: 0.27 } };
+    for (const Component of [MachineRecordedSetups, MachinePriorSetup]) {
+      const html = renderToStaticMarkup(createElement(Component, { readings: [stored], catalogue: [profile] }));
+      expect(html).toContain('class="font-medium">0.27</span>');
+      expect(html).not.toContain("whitespace-break-spaces");
+      const absent = renderToStaticMarkup(createElement(Component, { readings: [{ ...stored, value: { kind: "absent", reason: "not-legible" } }], catalogue: [profile] }));
+      expect(absent).toContain('class="font-medium">not legible</span>');
+      expect(absent).not.toContain("whitespace-break-spaces");
+    }
+  });
   it("preserves text across existing write/read adapters and exact-version history display", async () => {
     const stored = row(profile, "003i");
     const rpc = vi.fn(async (name: string) => ({ data: name === "record_treatment_setup_group" ? 1 : [{

@@ -245,7 +245,7 @@ function ChangeLine({
       )}
       {stage && <span className="mx-1 text-neutral-400">·</span>}
       <span className="text-neutral-500">{label}</span>{" "}
-      <span className="font-medium">{formatValue(change.from)}</span>
+      <span className={change.from.value.kind === "text" ? "font-medium whitespace-break-spaces [overflow-wrap:anywhere]" : "font-medium"}>{formatValue(change.from)}</span>
       {/*
         THE UNIT COMES FROM EACH READING, not from one of them and not from
         the catalogue. Both sides are printed with their own recorded unit,
@@ -261,7 +261,7 @@ function ChangeLine({
       <span className="mx-1.5 text-neutral-500" aria-label="changed to">
         →
       </span>
-      <span className="font-medium">{formatValue(change.to)}</span>
+      <span className={change.to.value.kind === "text" ? "font-medium whitespace-break-spaces [overflow-wrap:anywhere]" : "font-medium"}>{formatValue(change.to)}</span>
       {recordedUnitLabel(change.to.nativeUnit) ? (
         <span className="ml-0.5 text-neutral-500">
           {recordedUnitLabel(change.to.nativeUnit)}
@@ -402,7 +402,7 @@ export function MachineRecordedSetups({
                       {labels.get(`${r.stageKey ?? ""}::${r.fieldKey}`) ??
                         r.fieldKey}
                     </span>{" "}
-                    <span className="font-medium">{formatValue(r)}</span>
+                    <span className={r.value.kind === "text" ? "font-medium whitespace-break-spaces [overflow-wrap:anywhere]" : "font-medium"}>{formatValue(r)}</span>
                     {/*
                       ALWAYS the recorded unit, never today's catalogue - but
                       through the sentinel rule, which this printed straight

@@ -162,3 +162,17 @@ distinct same-client next visit require OPS's exact integrated candidate, verifi
 owned target and explicit slot grant. Native revision/retry and physical/firmware
 acceptance remain separate UNRUN gaps. No activation or privileged publication
 follows from any of these source or synthetic checks.
+
+
+## Exact text whitespace rendering repair
+
+Review of 96075c85 found that normal inline HTML collapsed accepted identifier
+whitespace even though the stored string remained exact. Text values now use
+whitespace-preserving wrapping in recorded history, both sides of the change
+summary and previous-treatment guidance. Numeric precision/unit and reasoned
+absence formatting are unchanged. Regressions cover surrounding/repeated spaces,
+tabs and newlines independently for Senior and Junior. The focused native-text,
+recorded/prior component, chronology and 0237 source-contract suites pass
+**144/144** across four files. This establishes rendering markup and CSS intent;
+actual mounted browser/mobile layout remains UNRUN pending the existing OPS gate.
+No payload, model contract, SQL, publication or activation behavior changed.

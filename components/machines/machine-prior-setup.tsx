@@ -314,7 +314,7 @@ export function MachinePriorSetup({
                   <span className="text-neutral-500">
                     {named?.label ?? r.fieldKey}
                   </span>{" "}
-                  <span className="font-medium">{formatValue(r)}</span>
+                  <span className={r.value.kind === "text" ? "font-medium whitespace-break-spaces [overflow-wrap:anywhere]" : "font-medium"}>{formatValue(r)}</span>
                   {/*
                     ALWAYS THE RECORDED UNIT. Never the catalogue's, not even
                     as a preference when the versions appear to match.
