@@ -374,9 +374,9 @@ deployment, route smoke and human acceptance.
 
 ## 2026-10-20 rolling release after `abed5498`
 
-The first-parent production sequence now reaches `291ba2ee`. The rolling releases below add no migration.
+The first-parent production sequence now reaches #952. The rolling releases below add no migration.
 
-⚠️ **EXTENDED 2026-10-20 by CANON-REFRESH-2026-10-20:** added #950 and #921 through `291ba2ee` (186 first-parent production merges). #950 is record-only; #921 is runtime-bearing. Neither adds a migration.
+⚠️ **EXTENDED 2026-10-20 by CANON-REFRESH-2026-10-20:** added #950, #921 and subsequent rolling releases through #952 (188 first-parent production merges). #950 and #951 are record-only; #921 and #952 are runtime-bearing. None adds a migration.
 
 | PR | Migration | Status | What shipped | Notes |
 |---|---|---|---|---|
