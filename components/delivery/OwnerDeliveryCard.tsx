@@ -85,8 +85,8 @@ export async function OwnerDeliveryCard({ studioId, timezone }: Props) {
               stated, true whether or not reporting is switched on. */}
           Shows what the email and text providers report back. An email that bounces after sending
           appears here only once Hone is receiving the email provider&apos;s delivery reports, so no
-          email problem listed does not prove every email arrived. Accepted or delivered means the
-          client&apos;s mail server or carrier took it, not that it was read.
+          email problem listed does not prove every email arrived. Accepted means the provider took
+          the message for sending, not that it arrived. A delivery report does not prove the client read it.
         </p>
       </header>
 

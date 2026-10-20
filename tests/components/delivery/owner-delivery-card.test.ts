@@ -61,6 +61,13 @@ afterEach(() => {
 });
 
 describe("OwnerDeliveryCard", () => {
+  it("distinguishes provider acceptance from delivery and reading", async () => {
+    const html = await render();
+    expect(html).toContain("Accepted means the provider took the message for sending, not that it arrived.");
+    expect(html).toContain("A delivery report does not prove the client read it.");
+    expect(html).not.toContain("Accepted or delivered means");
+  });
+
   it("reads its own studio through the owner RPC, with the user's session", async () => {
     await render();
     expect(h.calls).toEqual([["owner_delivery_incidents", { p_studio_id: STUDIO }]]);
@@ -90,7 +97,7 @@ describe("OwnerDeliveryCard", () => {
     expect(html).toContain("No delivery problems reported in the last 14 days.");
     expect(html).toContain("appears here only once Hone is receiving the email provider&#x27;s delivery reports");
     expect(html).toContain("does not prove every email arrived");
-    expect(html).toContain("not that it was read");
+    expect(html).toContain("A delivery report does not prove the client read it.");
   });
 
   it("never infers that bounce reporting is live from the signing secret (Codex P2 4253217747)", async () => {
