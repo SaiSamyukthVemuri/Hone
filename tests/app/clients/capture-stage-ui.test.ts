@@ -1,3 +1,4 @@
+import { canLabelPhotoAttachment } from "@/app/(app)/clients/[id]/images/photo-context";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -243,19 +244,19 @@ describe("0232 at upload: the panel choice", () => {
   const mgr = read("TreatmentImagesManager.tsx");
 
   it("is offered only when attaching to a visit, with no default label, on the 44px floor", () => {
-    expect(mgr).toMatch(/\{\(contextKind === "session" \|\| contextKind === "block"\) && \(\s*<div\s+role="radiogroup"\s+aria-label="Taken before or after treatment"/);
+    expect(mgr).toMatch(/\{canLabelUpload && \(\s*<div\s+role="radiogroup"\s+aria-label="Taken before or after treatment"/);
     expect(mgr).toMatch(/\["", "Not labelled"\],\s*\["before", "Before treatment"\],\s*\["after", "After treatment"\],/);
     // The "Will attach as" summary names the chosen label (approved copy);
     // nothing when Not labelled, never on a client photo.
     expect(mgr).toMatch(/before: "Labelled: Before treatment\.",\s+after: "Labelled: After treatment\.",/);
     expect(mgr).toContain('<p className="text-xs text-neutral-400" data-testid="upload-attach-summary">');
-    expect(mgr).toMatch(/\{contextKind !== "client" && captureStage\s+\? ` \$\{CAPTURE_STAGE_SUMMARY\[captureStage\]\}`\s+: null\}/);
+    expect(mgr).toMatch(/\{canLabelUpload && captureStage\s+\? ` \$\{CAPTURE_STAGE_SUMMARY\[captureStage\]\}`\s+: null\}/);
     expect(mgr).toMatch(/useState<"" \| "before" \| "after">\(""\)/);
     expect(mgr).toMatch(/className="flex min-h-\[44px\] items-center gap-2 text-sm text-neutral-700 dark:text-neutral-200"\s*>\s*<input\s+type="radio"\s+name="captureStage"/);
   });
 
   it("sends the stage only for a visit photo, and reports an unsaved label honestly", () => {
-    expect(mgr).toMatch(/if \(contextKind !== "client" && captureStage\) fd\.set\("captureStage", captureStage\);/);
+    expect(mgr).toMatch(/if \(canLabelUpload && captureStage\) fd\.set\("captureStage", captureStage\);/);
     expect(mgr).toMatch(/"label not saved; set it on the photo"/);
     expect(mgr).toMatch(/f\.note \? `✓ Uploaded \(\$\{f\.note\}\)` : "✓ Uploaded"/);
   });
@@ -289,5 +290,27 @@ describe("0232 Clear focus waits for refreshed props (4320065777)", () => {
     expect(captureStageRefocusTarget("after", "before", false, false)).toBe("after");
     expect(captureStageRefocusTarget(null, null, false, false)).toBeNull();
     expect(captureStageRefocusTarget("clear", null, true, false)).toBeNull();
+  });
+});
+
+
+describe("upload stage eligibility preserves 0159", () => {
+  it.each(["session", "block"] as const)("%s rejects legacy sessions and missing selection, permits ordinary visits", (context) => {
+    expect(canLabelPhotoAttachment(context, null)).toBe(false);
+    for (const recordStatus of ["finalized", "void"]) {
+      expect(canLabelPhotoAttachment(context, { recordStatus })).toBe(false);
+    }
+    for (const recordStatus of ["draft", null]) {
+      expect(canLabelPhotoAttachment(context, { recordStatus })).toBe(true);
+    }
+    expect(canLabelPhotoAttachment("client", { recordStatus: "draft" })).toBe(false);
+  });
+  it("carries existing session status and uses one decision for UI, summary and submission", () => {
+    const page = read("page.tsx");
+    const mgr = read("TreatmentImagesManager.tsx");
+    expect(page).toContain("id, started_at, record_status, session_blocks");
+    expect(page).toContain("recordStatus: s.record_status");
+    expect(mgr).toContain("canLabelPhotoAttachment(contextKind, ctxSession)");
+    expect(mgr).toContain('if (canLabelUpload && captureStage) fd.set("captureStage", captureStage)');
   });
 });

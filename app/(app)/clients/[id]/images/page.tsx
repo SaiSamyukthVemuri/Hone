@@ -214,7 +214,7 @@ export default async function ClientImagesPage({
   const { data: sessionRows, error: sessErr } = await supabase
     .from("sessions")
     .select(
-      "id, started_at, session_blocks ( id, primary_area, side, custom_area_detail )",
+      "id, started_at, record_status, session_blocks ( id, primary_area, side, custom_area_detail )",
     )
     .eq("studio_id", studio.id)
     .eq("client_id", id)
@@ -242,6 +242,7 @@ export default async function ClientImagesPage({
     return {
       id: s.id as string,
       startedAt: s.started_at as string,
+      recordStatus: s.record_status,
       blocks: blocks.map((b) => ({
         id: b.id,
         areaLabel: sessionBlockOptionLabel({

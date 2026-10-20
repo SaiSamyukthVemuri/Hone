@@ -17,6 +17,7 @@ import {
 } from "./actions";
 import { TREATMENT_NOTE_MAX_LENGTH } from "./note-constants";
 import { PortraitControl } from "./PortraitControl";
+import { canLabelPhotoAttachment } from "./photo-context";
 import { CaptureStageControl } from "./CaptureStageControl";
 import { Button, buttonClasses } from "@/components/ui/button";
 import {
@@ -79,6 +80,7 @@ type Row = {
 export type SessionAttachOption = {
   id: string;
   startedAt: string;
+  recordStatus: string | null;
   blocks: { id: string; areaLabel: string }[];
 };
 
@@ -246,6 +248,7 @@ export function TreatmentImagesManager({
   const [ctxBlockId, setCtxBlockId] = useState<string>("");
   const ctxSession = sessionOptions.find((s) => s.id === ctxSessionId) ?? null;
   const ctxBlocks = ctxSession?.blocks ?? [];
+  const canLabelUpload = canLabelPhotoAttachment(contextKind, ctxSession);
   const sessionDateLabel = (iso: string): string => {
     const d = new Date(iso);
     return Number.isNaN(d.getTime()) ? "session" : d.toLocaleDateString();
@@ -335,7 +338,7 @@ export function TreatmentImagesManager({
       try {
         const fd = new FormData();
         for (const [k, val] of Object.entries(context)) fd.set(k, val);
-        if (contextKind !== "client" && captureStage) fd.set("captureStage", captureStage);
+        if (canLabelUpload && captureStage) fd.set("captureStage", captureStage);
         fd.set("file", file);
         const res = await uploadTreatmentImageAction(fd);
         if (res.ok) {
@@ -490,7 +493,7 @@ export function TreatmentImagesManager({
                   </p>
                 ))}
 
-              {(contextKind === "session" || contextKind === "block") && (
+              {canLabelUpload && (
                 <div
                   role="radiogroup"
                   aria-label="Taken before or after treatment"
@@ -533,7 +536,7 @@ export function TreatmentImagesManager({
                       : "Will attach as: Treatment area photo: choose a session and area."}
                 {/* 0232: the chosen label, so the summary says everything the
                     upload will record. Nothing when Not labelled. */}
-                {contextKind !== "client" && captureStage
+                {canLabelUpload && captureStage
                   ? ` ${CAPTURE_STAGE_SUMMARY[captureStage]}`
                   : null}
               </p>
