@@ -112,7 +112,7 @@ describe("HON-44 invitation acceptance authority", () => {
     await expect(acceptInvitationAction(null, fd)).rejects.toThrow("REDIRECT:/front-desk");
     expect(ctx.rpc).toHaveBeenCalledTimes(1);
     expect(ctx.rpc).toHaveBeenCalledWith("admin_accept_pending_invitation", { p_user_id: "user-1" });
-    expect(ctx.fulfilled).toBe(1);
+    expect(ctx.fulfilled).toBe(0);
   });
 
   it("requires explicit consent before any privileged acceptance call", async () => {
