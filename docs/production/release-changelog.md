@@ -33,9 +33,11 @@ This section previously carried a "(through 2026-07-27)" heading while containin
 
 **Coverage gap, stated rather than hidden:** this table covers PRs **#357–#479**, **#601**,
 **#629**, **#630**, and — added by the 2026-08-26 reconciliation and kept current through each
-production refresh since — **every** first-parent merge in `b9e0003f..440829c2`, all
-**171** PR merges among them (**#632–#938**, plus **#631**, whose number sits below that floor but
-whose merge does not — see below). ⚠️ **EXTENDED 2026-10-12 by CANON-REFRESH-2026-10-12:**
+production refresh since — **every** first-parent merge in `b9e0003f..38d3f25c`, all
+**175** PR merges among them (**#632–#940**, plus **#631**, whose number sits below that floor but
+whose merge does not — see below). The four merges after the prior `440829c2` snapshot are #940,
+#903, #897 and #895; their dated receipts are listed at the end of this changelog. ⚠️ **EXTENDED
+2026-10-12 by CANON-REFRESH-2026-10-12:**
 the range previously ended at `410e5039` (81 merges, the 2026-09-21 extension described next);
 **56** rows were backfilled from the first-parent graph and each merge's own diff, and the
 pre-existing `#773` row was moved, unchanged, to its first-parent position. ⚠️ **EXTENDED 2026-10-19 by CANON-REFRESH-2026-10-19d:** #938 and #932 added through `440829c2` (171 merges); #932 is runtime-bearing, with no migration. ⚠️ **EXTENDED 2026-10-19 by CANON-REFRESH-2026-10-19c:** #935 and #928 added through `37b0ed82` (169 merges), no application runtime change or migration. ⚠️ **EXTENDED 2026-10-19 by CANON-REFRESH-2026-10-19b:** #931 and #907 added through `78c1d640` (167 merges), no migration. ⚠️ **EXTENDED 2026-10-19 by CANON-REFRESH-2026-10-19:** #929 added through `34f4800a` (165 merges), runtime-bearing, no migration. ⚠️ **EXTENDED 2026-10-18 by CANON-REFRESH-2026-10-18b:** 1 row added, `#894`,
@@ -352,3 +354,16 @@ See [../runbooks/migration-first-process.md](../runbooks/migration-first-process
 This changelog was reconstructed at the 2026-07-08 documentation repair from PR reports and
 git history; it is not auto-generated. A generated changelog (from `git log` / merged PRs) is
 a documentation follow-up.
+
+## 2026-10-20 rolling releases after `440829c2`
+
+The following four first-parent merges extend the prior production record to `38d3f25c`.
+They changed no hosted migration state. The dated evidence distinguishes code review, CI,
+deployment, route smoke and human acceptance.
+
+| PR | Migration | Status | What shipped | Notes |
+|---|---|---|---|---|
+| **#940** | none | **Documentation only — NOT runtime-bearing** | Reconciled production documentation to #932 source/deployment evidence | Merged `dcd5e37577fed4224c6407ca8024aacc218340a9`; canonical docs CI passed. No runtime or hosted-state change. |
+| **#903** | none | **Runtime-bearing** | Redacts record UUIDs from safe operator logs | Merged `f3668b8e6d72d6fc6a0a47922be50d9b757dd399`; exact-head review and pre-merge CI passed. Deployment `dpl_FAqidkKkU2NwjRHAP6XCjbup9nVM` READY on production aliases. Post-merge workflow cancelled; local-stack gate reported no runner assignment within 15 minutes. No production error was injected; Chloe acceptance pending. |
+| **#897** | none | **Runtime-bearing** | Preserves uncharted Watch/Plan notes and reports history unavailable when the recent window is truncated | Merged `e17b09157fa70dee4d060b3650359f512c69d48e`; exact-head review and pre-merge CI passed (921 test files / 21,064 tests, four extended browser shards and local-stack browser). Deployment `dpl_2wF8fKo8eizco3emSNhNevp5RoYN` READY before #895 superseded it. Post-merge browser aggregate failed because all four extended shards were cancelled at hard timeout with zero reported test failures. Chloe acceptance pending. |
+| **#895** | none | **Runtime-bearing** | Removes record identifiers from the critical operator-alert email | Merged `38d3f25ce248ed1a5a46a4c3a34426d0de21c1a1`; exact-head review and pre-merge CI passed (unit/typecheck/lint/build/safety, four extended browser shards and local-stack browser). Deployment `dpl_qowJkmtRmDWsDAWGZf4fJaT2etER` READY on production aliases at exact source `38d3f25c`. Read-only `/`, `/pricing` and `/privacy` GETs returned 200; alert-email behavior and Chloe acceptance remain unverified. |
