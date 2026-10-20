@@ -47,6 +47,7 @@ const h: {
   settle: "ok" | "hang";
   attemptNumber: number;
   alreadySent: boolean;
+  laterClaim: string | null;
   attemptReadError: boolean;
   attemptReadWaitsForAbort: boolean;
   attemptReads: Array<{ columns: string; filters: Array<[string, string]>; signal?: AbortSignal; rpcsBefore: string[] }>;
@@ -57,6 +58,7 @@ const h: {
   settle: "ok",
   attemptNumber: 1,
   alreadySent: false,
+  laterClaim: null,
   attemptReadError: false,
   attemptReadWaitsForAbort: false,
   attemptReads: [],
@@ -97,7 +99,7 @@ function admin(): SupabaseClient {
         select(columns: string) {
           // Only failure accounting may read here. Start/status remain owned
           // by the atomic reminder claim, never an unlocked appointment read.
-          const match = columns.match(/^(sms_reminder_(?:24h|2h))_send_attempts, \1_sent_at$/);
+          const match = columns.match(/^(sms_reminder_(?:24h|2h))_send_attempts, \1_sent_at, \1_claimed_at$/);
           if (!match) throw new Error("appointment timing/status must come from the claim");
           const read = { columns, filters: [] as Array<[string, string]>, signal: undefined as AbortSignal | undefined, rpcsBefore: h.rpcs.map((call) => call.fn) };
           h.attemptReads.push(read);
@@ -123,6 +125,7 @@ function admin(): SupabaseClient {
                 data: h.attemptReadError ? null : {
                   [`${match[1]}_send_attempts`]: h.attemptNumber,
                   [`${match[1]}_sent_at`]: h.alreadySent ? START : null,
+                  [`${match[1]}_claimed_at`]: h.laterClaim,
                 },
                 error: h.attemptReadError ? { message: "read failed" } : null,
               };
@@ -183,6 +186,7 @@ beforeEach(() => {
   h.settle = "ok";
   h.attemptNumber = 1;
   h.alreadySent = false;
+  h.laterClaim = null;
   h.attemptReadError = false;
   h.attemptReadWaitsForAbort = false;
   h.attemptReads = [];
@@ -457,6 +461,22 @@ describe("retry exhaustion remains visible without changing send authority", () 
     expect(h.attemptReads[0].signal).toBeInstanceOf(AbortSignal);
     expect(h.attemptReads[0].rpcsBefore).toContain("record_sms_result");
     expect(h.attemptReads[0].rpcsBefore).toContain("settle_sms_message");
+  });
+
+  it.each([
+    ["24h", send24hReminderSmsToClient],
+    ["2h", send2hReminderSmsToClient],
+  ] as const)("a later in-flight %s claim does not claim exhaustion", async (_kind, send) => {
+    h.attemptNumber = 3;
+    h.laterClaim = START;
+    fetchMock.mockImplementationOnce(() =>
+      Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } })),
+    );
+    expect(await send(input())).toMatchObject({ ok: false, retryable: true });
+    await flush();
+    expect(alerts).toEqual([]);
+    expect(recorded()).toEqual([false]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it.each([

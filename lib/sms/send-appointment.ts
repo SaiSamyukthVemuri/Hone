@@ -186,14 +186,16 @@ async function readUnsentReminderAttemptNumber(
 ): Promise<number | undefined> {
   const attemptsColumn = `sms_${smsType}_send_attempts`;
   const sentColumn = `sms_${smsType}_sent_at`;
+  const claimedColumn = `sms_${smsType}_claimed_at`;
   try {
     // Read after record_sms_result, rather than infer the count from a stale
-    // cron candidate. A later successful send must not be called exhausted.
+    // cron candidate. A later successful send or active claim must not be
+    // called exhausted.
     // Bound the diagnostic read so an unavailable observer cannot stall the
-    // reminder batch. This reads no timing/status used by the atomic claim.
+    // reminder batch. This observation never changes atomic claim authority.
     const { data, error } = await admin
       .from("appointments")
-      .select(`${attemptsColumn}, ${sentColumn}`)
+      .select(`${attemptsColumn}, ${sentColumn}, ${claimedColumn}`)
       .eq("id", appointmentId)
       .eq("studio_id", studioId)
       .abortSignal(AbortSignal.timeout(1_000))
@@ -203,7 +205,8 @@ async function readUnsentReminderAttemptNumber(
     if (!row || typeof row !== "object" || Array.isArray(row)) return undefined;
     const accounting = row as Record<string, unknown>;
     const attempts = accounting[attemptsColumn];
-    return accounting[sentColumn] === null && typeof attempts === "number" &&
+    return accounting[sentColumn] === null && accounting[claimedColumn] === null &&
+      typeof attempts === "number" &&
       Number.isSafeInteger(attempts) && attempts >= 0
       ? attempts
       : undefined;
