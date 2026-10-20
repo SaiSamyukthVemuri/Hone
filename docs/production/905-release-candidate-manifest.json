@@ -1,6 +1,6 @@
 {
   "title": "#905 narrow production-based release candidate source manifest",
-  "production_base": "e91ddd43c932df726a100fc3f4e33c12258007bd",
+  "production_base": "4425b8ef4a024d5d3d34dbe2a9a752aa88d9524b",
   "portrait_source": "affcb86727324b2c2505f5185b3ba3db3e9f4545",
   "hosted_anchor": {
     "version": "0212",
@@ -491,6 +491,14 @@
       "sha256": "b000f5826990bf1eac36e4c85da788edcbb923a342cfb0bd08fe8919c4ffbdd0",
       "purpose": "Restore existing0212behavior/source proof with the reviewed0227forward-repair bounce contract and exact-role grant checks; no SQL changes",
       "candidate_current_sha256": "b000f5826990bf1eac36e4c85da788edcbb923a342cfb0bd08fe8919c4ffbdd0"
+    },
+    {
+      "owner": "General",
+      "path": "tests/db/waitlist-integration-seams.db.test.ts",
+      "repair": "One missing jar-backed getAll mock method; no assertion/runtime/guard change",
+      "owner_handoff": "general/939-nightly-seams-repair.json",
+      "patch_sha256": "f80262d75623d65dfb86caef9e3970abb557a912735a6110c9aba581a5536186",
+      "after_sha256": "31b24b2e0fd66b148ed5ff5060b557c17234813371a941e530be23f86d1ef50e"
     }
   ],
   "schema_export_dispositions": {
@@ -587,23 +595,20 @@
       "reason": "expected-current-image compare-and-clear under client row lock; stale removal fails closed and preserves newer portrait; exact seven-file owner delta composed without merging owner branch ancestry"
     }
   ],
-  "review_state": {
-    "previous_review_head": "6f07b7aec16bee0961fe58f4140208d9a2732fd8",
-    "previous_review_finding_id": 4319379075,
-    "status": "Current production4f08de03and published record-ownerf792 composed; all19pendingSQLsources unchanged. New final-head CI/review required; migration/consent/release holds remain."
-  },
-  "previous_candidate_base": "462b16b0fa4d2c531ee3c6bfb67fd2d52345cb54",
+  "review_state": "Previous ce123 PRCI39499340864SUCCESS; nightly39499338695DB3644assertionsPASS12unhandledcookie-mockerrors FAILED. New exact-head CI/review and nightly DB proof required; unchanged prior passing evidence retained. Migration/consent holds remain.",
+  "previous_candidate_base": "e91ddd43c932df726a100fc3f4e33c12258007bd",
   "candidate_base_history": [
     "102faf94fc573c724d73419bc9e8a6262ac1a247",
     "cda67e7c9f779838dfad2360a628ab81221cb43e",
     "4f08de03c458dc381ddcb1e1011fdb50a14d66a9",
-    "462b16b0fa4d2c531ee3c6bfb67fd2d52345cb54"
+    "462b16b0fa4d2c531ee3c6bfb67fd2d52345cb54",
+    "e91ddd43c932df726a100fc3f4e33c12258007bd"
   ],
   "canonical_record_source": {
-    "pr": 965,
-    "head": "2bc03d6e752399390335e229f331fd319a1016c7",
-    "status": "Published dedicated-owner correction; exact review/CI pending. Actual production runtime e91 deployed READY; no hosted apply.",
-    "scope": "#892 phone runtime, source200/171 merge count, exact READY/smoke/source-CI receipts and observed automatic push unit failure with remaining run pending. Historical measurements and migration history unchanged."
+    "pr": 966,
+    "head": "1bcddf1052dd2b3fc877d6562b45e081d6d9eb32",
+    "status": "Published dedicated-owner correction; exact review/CI pending. Actual production4425 deployed READY; no hosted apply.",
+    "scope": "#963 privacy runtime and202/173 ancestry; settled39501278868unit21244PASS2canonicalFAIL preserved. Historical measurements/migration history unchanged."
   },
   "integration_compatibility_repairs": {
     "source": "95a840518b270021d792eae2a52eb00096759566",
