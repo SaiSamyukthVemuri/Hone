@@ -1,0 +1,263 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+import { guardBrowserEvent } from "@/lib/analytics/client-boundary";
+
+// ===========================================================================
+// #828 G-07/G-26 + G-08: no record id in what PostHog receives from the
+// browser.
+//
+// L1. Marketing-page events are the only browser events allowed out, but their
+// URL-valued properties named APP pages: a practitioner on /clients/<uuid> who
+// follows a link to /pricing sends that URL as $referrer (same-origin
+// navigations get the full referrer), and $initial_current_url /
+// $session_entry_url carry the first app page a browser saw. guardBrowserEvent
+// redacted token routes only. Now every URL-valued property (named keys plus
+// any *_url / *_referrer / *_pathname), in `properties`, `$set` and
+// `$set_once`, loses its record ids, by the same rules as Vercel Analytics.
+//
+// L2. posthog-js 1.404.1 sends person properties, including the first page this
+// browser loaded, in every /flags request body, which before_send never sees.
+// Hone uses no feature flags, so /flags is turned off; pinned below against
+// both the config and the SDK's own gate.
+//
+// ZERO NETWORK: pure functions only, with fetch trapped and a positive control.
+// All ids are SYNTHETIC. The oracle decodes percent-escapes to a fixed point.
+// ===========================================================================
+
+const CLIENT = "6f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5";
+const SESSION = "0a1b2c3d-4e5f-4061-8273-8495a6b7c8d9";
+const APPT = "ABCDEF12-3456-4789-8ABC-DEF012345678";
+// A PostHog-generated UUIDv7 ($session_id, distinct_id, uuid): NOT a Hone
+// record id, and must be kept or analytics sessions break.
+const PH_SESSION = "01928f3a-7b2c-7d4e-8f00-123456789abc";
+const UUID_ANYWHERE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+const HOST = "https://hone.care";
+
+function oracleDecode(text: string): string {
+  let cur = text;
+  for (let i = 0; i < 16; i += 1) {
+    const next = cur.replace(/%([0-7][0-9a-f])/gi, (_m, h: string) => String.fromCharCode(parseInt(h, 16)));
+    if (next === cur) break;
+    cur = next;
+  }
+  return cur;
+}
+
+const networkCalls: string[] = [];
+beforeAll(() => {
+  vi.stubGlobal("fetch", (input: unknown) => {
+    networkCalls.push(String(input));
+    throw new Error("network egress is forbidden in this test");
+  });
+});
+afterAll(() => vi.unstubAllGlobals());
+
+/** A marketing $pageview whose URL properties name app pages, every way. */
+function marketingEventCarryingAppUrls() {
+  const appPage = `${HOST}/clients/${CLIENT}/sessions/${SESSION}?tab=photos`;
+  return {
+    event: "$pageview",
+    uuid: PH_SESSION,
+    properties: {
+      $current_url: `${HOST}/pricing`,
+      $pathname: "/pricing",
+      $host: "hone.care",
+      $session_id: PH_SESSION,
+      distinct_id: PH_SESSION,
+      $referrer: appPage,
+      $referring_domain: "hone.care",
+      $initial_current_url: `${HOST}/calendar/${APPT}`,
+      $initial_pathname: `/calendar/${APPT}`,
+      $initial_referrer: `${HOST}/clients/${CLIENT.replace(/-/g, "%2D")}`,
+      $session_entry_url: `${HOST}/clients/%36${CLIENT.slice(1)}`,
+      $session_entry_pathname: `/clients/${CLIENT}/intake`,
+      $session_entry_referrer: `${HOST}/clients/${CLIENT}%252Fsessions`,
+      $prev_pageview_pathname: `/clients/${CLIENT}/sessions/${SESSION}`,
+      $appointment_url: `${HOST}/calendar/42`,
+    },
+    $set: { $current_url: appPage },
+    $set_once: { $initial_current_url: appPage, $initial_pathname: `/clients/${CLIENT}` },
+  };
+}
+
+describe("L1: marketing events carry no record id in any URL-valued property", () => {
+  it("properties, $set and $set_once: no Hone record id survives, in any encoding", () => {
+    const out = guardBrowserEvent(marketingEventCarryingAppUrls());
+    expect(out).not.toBeNull();
+    const urlish = JSON.stringify({
+      ...Object.fromEntries(
+        Object.entries(out!.properties ?? {}).filter(([k]) => !["$session_id", "distinct_id"].includes(k)),
+      ),
+      $set: out!.$set,
+      $set_once: out!.$set_once,
+    });
+    const decoded = oracleDecode(urlish);
+    for (const id of [CLIENT, SESSION, APPT]) expect(decoded.toLowerCase()).not.toContain(id.toLowerCase());
+    expect(UUID_ANYWHERE.test(decoded), decoded).toBe(false);
+    expect(decoded).not.toMatch(/\/calendar\/42\b/);
+  });
+
+  it("keeps the route shape, the marketing URL and PostHog's own ids (analytics still works)", () => {
+    const out = guardBrowserEvent(marketingEventCarryingAppUrls())!;
+    const p = out.properties as Record<string, string>;
+    expect(p.$current_url).toBe(`${HOST}/pricing`);
+    expect(p.$pathname).toBe("/pricing");
+    expect(p.$referrer).toBe(`${HOST}/clients/[id]/sessions/[id]`);
+    expect(p.$initial_pathname).toBe("/calendar/[id]");
+    expect(p.$prev_pageview_pathname).toBe("/clients/[id]/sessions/[id]");
+    expect(p.$appointment_url).toBe(`${HOST}/calendar/[id]`);
+    // PostHog's own UUIDv7s are not Hone record ids and are kept:
+    // the oracle above is not blind to UUIDs, it is scoped to URL fields.
+    expect(p.$session_id).toBe(PH_SESSION);
+    expect(p.distinct_id).toBe(PH_SESSION);
+    expect(out.$set_once).toEqual({ $initial_current_url: `${HOST}/clients/[id]/sessions/[id]`, $initial_pathname: "/clients/[id]" });
+  });
+
+  it("long marketing slugs are not mistaken for tokens", () => {
+    const out = guardBrowserEvent({
+      event: "$pageview",
+      properties: {
+        $current_url: `${HOST}/pricing`,
+        $referrer: `${HOST}/resources/electrolysis-treatment-record-checklist?utm_source=x`,
+      },
+    })!;
+    expect((out.properties as Record<string, string>).$referrer).toBe(
+      `${HOST}/resources/electrolysis-treatment-record-checklist?utm_source=x`,
+    );
+  });
+
+  it("NEGATIVE CONTROL: an app-page event is still dropped whole (the boundary itself is unchanged)", () => {
+    const ev = marketingEventCarryingAppUrls();
+    ev.properties.$current_url = `${HOST}/clients/${CLIENT}`;
+    expect(guardBrowserEvent(ev)).toBeNull();
+  });
+});
+
+describe("L2: no /flags request leaves (Hone uses no feature flags)", () => {
+  const read = (f: string) => readFileSync(path.join(process.cwd(), f), "utf8");
+
+  it("instrumentation-client.ts sets advanced_disable_flags: true", () => {
+    const src = read("instrumentation-client.ts").replace(/^\s*\/\/.*$/gm, "");
+    expect(src).toMatch(/advanced_disable_flags:\s*true/);
+  });
+
+  it("the installed posthog-js gates its /flags request on that exact option name", () => {
+    const pkg = JSON.parse(read("node_modules/posthog-js/package.json")) as { version: string };
+    const dist = read("node_modules/posthog-js/dist/module.js");
+    // The flags loader returns early when the instance reports flags disabled,
+    // and that check reads `advanced_disable_flags`. If an upgrade renames the
+    // option, this fails instead of silently re-enabling /flags.
+    expect(dist, `posthog-js ${pkg.version}`).toContain('"advanced_disable_flags"in o?!!o.advanced_disable_flags');
+    expect(dist).toContain('endpointFor("flags","/flags/?v=2")');
+  });
+
+  it("nothing in the app evaluates a feature flag (turning /flags off changes no behaviour)", () => {
+    for (const f of ["instrumentation-client.ts"]) {
+      expect(read(f)).not.toMatch(/isFeatureEnabled|getFeatureFlag|onFeatureFlags/);
+    }
+  });
+});
+
+describe("zero network", () => {
+  it("no network call was made, and the trap really traps (positive control)", () => {
+    expect(networkCalls).toEqual([]);
+    expect(() => fetch("https://us.i.posthog.example.invalid/flags")).toThrow(/forbidden/);
+    expect(networkCalls).toHaveLength(1);
+    networkCalls.length = 0;
+  });
+});
+
+describe("encoded separators (Codex P1 4305142681): every decoded part is judged", () => {
+  // Imported lazily so the describe above stays the file's primary story.
+  const cases: Array<[string, string, string]> = [
+    ["Codex example 1, %2F", "/calendar%2F42", "/calendar/[id]"],
+    ["Codex example 2, %2F before an opaque token", "/x%2FAbCdEf0123456789_-AbCdEf", "/x/[token]"],
+    ["lower-case %2f", `/clients%2f${CLIENT}`, "/clients/[id]"],
+    ["backslash %5C", `/clients%5C${CLIENT}`, "/clients/[id]"],
+    ["double-encoded %252F", "/calendar%252F42", "/calendar/[id]"],
+    ["mixed /clients%2F<uuid>%2Fsessions", `/clients%2F${CLIENT}%2Fsessions`, "/clients/[id]/sessions"],
+  ];
+
+  it.each(cases)("%s: redactIdsInPath", async (_label, input, expected) => {
+    const { redactIdsInPath } = await import("@/lib/analytics/path-ids");
+    const out = redactIdsInPath(input);
+    expect(out).toBe(expected);
+    expect(UUID_ANYWHERE.test(oracleDecode(out))).toBe(false);
+    expect(oracleDecode(out)).not.toMatch(/\/42(\/|$)/);
+  });
+
+  it.each(cases)("%s: the Vercel Analytics boundary (shared rules)", async (_label, input, expected) => {
+    const { redactVercelAnalyticsUrl } = await import("@/lib/analytics/vercel-url-redaction");
+    expect(redactVercelAnalyticsUrl(`${HOST}${input}`)).toBe(`${HOST}${expected}`);
+  });
+
+  it.each(cases)("%s: a PostHog marketing event's $referrer", (_label, input, expected) => {
+    const out = guardBrowserEvent({
+      event: "$pageview",
+      properties: { $current_url: `${HOST}/pricing`, $referrer: `${HOST}${input}` },
+    })!;
+    expect((out.properties as Record<string, string>).$referrer).toBe(`${HOST}${expected}`);
+  });
+
+  it("an undecodable or still-encoded-after-the-bound segment fails closed to [token]", async () => {
+    const { redactIdsInPath } = await import("@/lib/analytics/path-ids");
+    expect(redactIdsInPath("/clients/%E0%A4%A")).toBe("/clients/[token]");
+    expect(redactIdsInPath("/clients/%2525252525252F42")).toBe("/clients/[token]");
+  });
+
+  it("ordinary segments with no id are returned exactly as they came", async () => {
+    const { redactIdsInPath } = await import("@/lib/analytics/path-ids");
+    expect(redactIdsInPath("/settings/charting-records")).toBe("/settings/charting-records");
+    expect(redactIdsInPath("/a%20b")).toBe("/a%20b");
+  });
+});
+
+describe("decoded URL syntax is never emitted (Codex P1 4305158024)", () => {
+  // A segment with an id PLUS encoded URL syntax must not come back decoded:
+  // that would rebuild a query or fragment and carry the text (an email) out.
+  const cases: Array<[string, string, string]> = [
+    ["Codex example: an id, then an encoded ?email=…@…", `/clients/${CLIENT}%3Femail%3Dpatient%40example.com`, "/clients/[token]"],
+    ["an encoded # fragment after an id", "/calendar/42%23notes", "/calendar/[token]"],
+    ["encoded = and & after an id", `/clients/${CLIENT}%26x%3D1`, "/clients/[token]"],
+    ["an encoded id joined to text with an encoded space", `/clients/client_%36${CLIENT.slice(1)}%20notes`, "/clients/[token]"],
+    ["an encoded id joined to unreserved text (one opaque run)", `/clients/client_%36${CLIENT.slice(1)}`, "/clients/[token]"],
+    ["a raw id hidden behind literal syntax", "/calendar/42;v=1", "/calendar/[token]"],
+  ];
+  const noSyntax = (out: string) => {
+    const path = new URL(out, HOST).pathname;
+    expect(out).not.toMatch(/[?#@%=&;\s]/);
+    expect(path).not.toMatch(/@|email/i);
+    expect(UUID_ANYWHERE.test(oracleDecode(out))).toBe(false);
+  };
+
+  it.each(cases)("%s: redactIdsInPath", async (_label, input, expected) => {
+    const { redactIdsInPath } = await import("@/lib/analytics/path-ids");
+    const out = redactIdsInPath(input);
+    expect(out).toBe(expected);
+    noSyntax(out);
+  });
+
+  it.each(cases)("%s: Vercel Analytics", async (_label, input, expected) => {
+    const { redactVercelAnalyticsUrl } = await import("@/lib/analytics/vercel-url-redaction");
+    const out = redactVercelAnalyticsUrl(`${HOST}${input}`)!;
+    expect(out).toBe(`${HOST}${expected}`);
+    noSyntax(out.slice(HOST.length));
+  });
+
+  it.each(cases)("%s: PostHog $referrer", (_label, input, expected) => {
+    const out = guardBrowserEvent({
+      event: "$pageview",
+      properties: { $current_url: `${HOST}/pricing`, $referrer: `${HOST}${input}` },
+    })!;
+    const ref = (out.properties as Record<string, string>).$referrer;
+    expect(ref).toBe(`${HOST}${expected}`);
+    noSyntax(ref.slice(HOST.length));
+  });
+
+  it("a segment with encoding but no id is returned exactly as it came, never decoded", async () => {
+    const { redactIdsInPath } = await import("@/lib/analytics/path-ids");
+    expect(redactIdsInPath("/settings/a%3Fb%3Dc")).toBe("/settings/a%3Fb%3Dc");
+  });
+});
