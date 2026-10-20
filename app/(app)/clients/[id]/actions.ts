@@ -126,7 +126,6 @@ async function checkDuplicateEmail(
       JSON.stringify({
         event: "client_duplicate_email_lookup_failed",
         code: error.code,
-        message: error.message,
         timestamp: new Date().toISOString(),
       }),
     );
