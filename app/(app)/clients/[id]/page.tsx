@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { orderByRecency } from "@/lib/sessions/charted-session";
 // RESP-CLIENT-INTAKE-01. The four outbound controls measured as dead clicks on
 // this page use the shipped navigation leaf (DESIGN contract 2c). The remaining
 // bare <Link>s here — the /clients back link and the two Edit links — were NOT
@@ -237,6 +238,7 @@ export default async function ClientCheatSheetPage({
   }
 
   const { client, pricing, sessions, practitioners } = data;
+  const newestSession = orderByRecency(sessions)[0];
   // PR Willow launch fixes: surface past appointments that the
   // practitioner has not charted yet under the Sessions tab. The
   // helper filters out appointments that already have a session
@@ -1095,7 +1097,7 @@ export default async function ClientCheatSheetPage({
             performerName={lastTreatmentPerformer}
             aftercareExplainedAt={lastTreatmentAftercareAt}
             totalMinutes={lastTreatmentTotalMinutes}
-            isLatestSession={lastTreatment?.id === sessions[0]?.id}
+            isLatestSession={lastTreatment?.id === newestSession?.id}
             summary={lastTreatmentSummary}
             unavailable={clinicalHistoryUnavailable}
           />
@@ -1598,7 +1600,7 @@ export default async function ClientCheatSheetPage({
                         {/* A newer uncharted session exists; say so quietly
                             instead of letting it blank out this card. It
                             still shows under Needs charting below. */}
-                        {lastTreatment.id !== sessions[0]?.id && (
+                        {lastTreatment.id !== newestSession?.id && (
                           <p className="mt-1 text-xs text-neutral-500">
                             Most recent charted treatment. A newer session has no
                             treatment details yet.

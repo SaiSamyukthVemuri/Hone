@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { orderByRecency } from "@/lib/sessions/charted-session";
 import { pickLastTreatment } from "@/lib/sessions/clinical-summary";
 
 // PR #199: Last Treatment + charting redundancy + client info cleanup.
@@ -129,7 +130,9 @@ describe("Last treatment card (Sessions tab)", () => {
 
   it("a newer uncharted session is called out, not allowed to blank the card", () => {
     expect(PAGE).toMatch(/Most recent charted treatment/);
-    expect(PAGE).toMatch(/lastTreatment\.id !== sessions\[0\]\?\.id/);
+    expect(PAGE).toMatch(/const newestSession = orderByRecency\(sessions\)\[0\]/);
+    expect(PAGE).toMatch(/lastTreatment\.id !== newestSession\?\.id/);
+    expect(PAGE).not.toMatch(/lastTreatment\??\.id [!=]== sessions\[0\]\?\.id/);
   });
 
   it("empty state says no charted treatments yet; 'No entries logged' is gone", () => {
@@ -304,5 +307,24 @@ describe("Client info birthday row", () => {
     expect(skin).toBeGreaterThan(allergies);
     expect(info).toBeGreaterThan(skin);
     expect(pricing).toBeGreaterThan(info);
+  });
+});
+
+
+describe("latest-session banner uses shared recency", () => {
+  it("does not invent an uncharted newer session from a tied charted row", () => {
+    const a = session("a", { electro: 1 });
+    const b = session("b", { electro: 1 });
+    for (const rows of [[a, b], [b, a]]) {
+      expect(pickLastTreatment(rows, new Map())?.id).toBe(orderByRecency(rows)[0]?.id);
+    }
+  });
+
+  it("still distinguishes a genuinely newer empty session", () => {
+    const charted = session("a", { electro: 1 });
+    const empty = session("b", { at: "2026-01-02T10:00:00Z" });
+    const rows = [charted, empty];
+    expect(pickLastTreatment(rows, new Map())?.id).toBe("a");
+    expect(orderByRecency(rows)[0]?.id).toBe("b");
   });
 });
