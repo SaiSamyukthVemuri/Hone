@@ -26,6 +26,7 @@ import {
   recordAssistedEntry,
   recordAssistedHandoff,
 } from "@/lib/intake/entry-provenance";
+import { safeLog } from "@/lib/logging/safe-log";
 
 export type ReviewResult = { ok: true } | { ok: false; error: string };
 
@@ -124,7 +125,7 @@ function logIntakeActionFailure(
   event: string,
   detail: { code?: string; message?: string },
 ): void {
-  console.error(
+  safeLog.error(
     JSON.stringify({
       event,
       code: detail.code ?? null,
@@ -449,7 +450,7 @@ export async function requestIntakeUpdateAction(
       });
       emailSent = result.ok;
       if (!result.ok) {
-        console.error(
+        safeLog.error(
           JSON.stringify({
             event: "intake_reissue_email_failed",
             error: result.error,
@@ -608,7 +609,7 @@ export async function resendIntakeEmailAction(
     intakeUrl: url,
   });
   if (!result.ok) {
-    console.error(
+    safeLog.error(
       JSON.stringify({
         event: "intake_reissue_email_failed",
         error: result.error,
