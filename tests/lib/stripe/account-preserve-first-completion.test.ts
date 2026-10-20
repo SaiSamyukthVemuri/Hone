@@ -46,6 +46,10 @@ const h = vi.hoisted(() => ({
   observation: "match",
   provisioningCompleteError: false,
   accountCreates: 0,
+  accountLinks: 0,
+  boundAccountId: null as string | null,
+  recordedCountry: null as string | null,
+  countryConflict: null as string | null,
   settings: { kind: "zero_row" } as SettingsOutcome,
   // Stripe side
   accountRetrieveThrows: false,
@@ -66,6 +70,10 @@ vi.mock("@/lib/stripe/server", () => ({
   STRIPE_CONNECT_COUNTRY: "CA",
   inferStripeLivemode: () => h.livemode,
   getStripe: () => ({
+    accountLinks: { create: async () => {
+      h.accountLinks++;
+      return { url: "https://stripe.invalid/onboarding" };
+    } },
     accounts: {
       create: async () => {
         h.accountCreates++;
@@ -77,6 +85,8 @@ vi.mock("@/lib/stripe/server", () => ({
         }
         return {
           id: "acct_test",
+          country: "CA",
+          default_currency: "cad",
           charges_enabled: h.chargesEnabled,
           payouts_enabled: true,
           requirements: { currently_due: [], eventually_due: [], disabled_reason: null },
@@ -95,6 +105,10 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         h.reads.push({ table, filters: [...filters] });
         if (table === "stripe_account_provisioning_attempts") {
           return { data: { payment_country: "CA" }, error: null };
+        }
+        if (h.boundAccountId && h.settings.kind !== "error") {
+          return { data: { stripe_account_country: h.recordedCountry,
+            stripe_account_country_conflict: h.countryConflict }, error: null };
         }
         switch (h.settings.kind) {
           case "error":
@@ -121,13 +135,17 @@ vi.mock("@/lib/supabase/admin-server", () => ({
     rpc: async (name: string, args: Record<string, unknown>) => {
       h.rpcCalls.push({ name, args });
       if (name === "create_or_claim_stripe_account_provisioning") {
+        if (h.boundAccountId) return { data: { already_provisioned: true,
+          out_stripe_account_id: h.boundAccountId, out_stripe_livemode: h.livemode }, error: null };
         return { data: { attempt_id: "attempt_fake", out_processing_claim_token: "claim_fake",
           out_idempotency_key: "idempotency_fake", should_execute_stripe_call: true }, error: null };
       }
       if (name === "complete_stripe_account_provisioning") {
+        if (!h.provisioningCompleteError) h.boundAccountId = String(args.p_stripe_account_id);
         return { data: null, error: h.provisioningCompleteError ? DB_ERROR : null };
       }
       if (name === "record_stripe_account_jurisdiction") {
+        if (h.observation === "match") h.recordedCountry = "CA";
         return { data: h.observation === "empty" ? null : {
           out_result: h.observation, out_account_country: "CA",
           out_payment_country: "CA", out_matches: h.observation === "match",
@@ -146,6 +164,7 @@ vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: vi.fn() }));
 const {
   refreshAccountStatusFromStripe,
   createOrLoadConnectedAccountForStudio,
+  createConnectOnboardingLink,
   PAYMENT_COUNTRY_UNVERIFIED_ERROR,
   ACCOUNT_COUNTRY_MISMATCH_ERROR,
 } = await import("@/lib/stripe/account");
@@ -170,6 +189,10 @@ beforeEach(() => {
   h.observation = "match";
   h.provisioningCompleteError = false;
   h.accountCreates = 0;
+  h.accountLinks = 0;
+  h.boundAccountId = null;
+  h.recordedCountry = null;
+  h.countryConflict = null;
   h.settings = { kind: "zero_row" };
   h.accountRetrieveThrows = false;
   h.chargesEnabled = true;
@@ -327,5 +350,51 @@ describe("new account country must be recorded before provisioning succeeds", ()
     await expect(createOrLoadConnectedAccountForStudio(STUDIO)).rejects.toThrow("local binding failed");
     expect(h.rpcCalls.some((c) => c.name === "record_stripe_account_jurisdiction")).toBe(false);
     expect(h.accountCreates).toBe(1);
+  });
+});
+
+
+describe("bound retries cannot bypass an unrecorded country", () => {
+  async function onboard() {
+    const result = await createOrLoadConnectedAccountForStudio(STUDIO);
+    return createConnectOnboardingLink({ stripeAccountId: result.stripeAccountId,
+      appOrigin: "https://hone.invalid" });
+  }
+
+  it.each(["rpc_failed", "not_bound", "invalid_input", "empty"])(
+    "keeps %s blocked on bound retry, then reuses the account after verified refresh",
+    async (outcome) => {
+      h.observation = outcome;
+      await expect(onboard()).rejects.toThrow(PAYMENT_COUNTRY_UNVERIFIED_ERROR);
+      expect(h.boundAccountId).toBe("acct_created");
+      expect(h.recordedCountry).toBeNull();
+      await expect(onboard()).rejects.toThrow(PAYMENT_COUNTRY_UNVERIFIED_ERROR);
+      expect(h.boundAccountId).toBe("acct_created");
+      expect(h.accountCreates).toBe(1);
+      expect(h.accountLinks).toBe(0);
+      expect(h.rpcCalls.filter((c) => c.name === "complete_stripe_account_provisioning")).toHaveLength(1);
+      expect(h.rpcCalls.some((c) => c.name === "mark_stripe_account_provisioning_failed")).toBe(false);
+      const read = h.reads.find((r) => r.table === "studio_payment_settings");
+      expect(read?.filters).toEqual([["studio_id", STUDIO], ["stripe_livemode", true],
+        ["stripe_account_id", "acct_created"]]);
+      h.observation = "match";
+      await refreshAccountStatusFromStripe({ studioId: STUDIO, stripeAccountId: "acct_created" });
+      expect(h.recordedCountry).toBe("CA");
+      await expect(onboard()).resolves.toBe("https://stripe.invalid/onboarding");
+      expect(h.accountCreates).toBe(1);
+      expect(h.accountLinks).toBe(1);
+    },
+  );
+
+  it.each(["mismatch", "conflict", "unread"])("keeps a bound %s account blocked", async (outcome) => {
+    h.boundAccountId = "acct_created";
+    h.recordedCountry = outcome === "mismatch" ? "US" : "CA";
+    if (outcome === "conflict") h.countryConflict = "US";
+    if (outcome === "unread") h.settings = { kind: "error" };
+    await expect(onboard()).rejects.toThrow(outcome === "unread"
+      ? PAYMENT_COUNTRY_UNVERIFIED_ERROR : ACCOUNT_COUNTRY_MISMATCH_ERROR);
+    expect(h.accountCreates).toBe(0);
+    expect(h.accountLinks).toBe(0);
+    expect(h.boundAccountId).toBe("acct_created");
   });
 });
