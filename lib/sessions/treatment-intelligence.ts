@@ -357,13 +357,15 @@ export function buildTreatmentIntelligence(input: {
     // (review 3780005405); the sweep stopped at that one file.
     //
     // Name ascending is the tie-break: area keys are unique by construction
-    // (areasByKey is keyed on the lower-cased name), so the order is total.
+    // (areasByKey is keyed on the lower-cased name). Collation can equate
+    // distinct Unicode spellings, so use binary order when collation ties.
     .sort((x, y) =>
       x.lastTreated !== y.lastTreated
         ? x.lastTreated < y.lastTreated
           ? 1
           : -1
-        : x.name.localeCompare(y.name),
+        : x.name.localeCompare(y.name) ||
+          (x.name < y.name ? -1 : x.name > y.name ? 1 : 0),
     );
 
   // Client-level reaction / tolerance / watch / plan.
