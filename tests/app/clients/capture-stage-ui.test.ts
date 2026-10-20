@@ -69,6 +69,8 @@ import {
   uploadTreatmentImageAction,
 } from "@/app/(app)/clients/[id]/images/actions";
 
+import { captureStageRefocusTarget } from "@/app/(app)/clients/[id]/images/CaptureStageControl";
+
 function uploadForm(extra: Record<string, string>): FormData {
   const fd = new FormData();
   fd.set("clientId", CLIENT);
@@ -169,9 +171,11 @@ describe("0232 UI: the tile control", () => {
     // Focus goes back to the pressed button once the save settles; after a
     // Clear (which unmounts) it moves to "Before".
     expect(ctl).toMatch(/refocus\.current = from;/);
-    expect(ctl).toMatch(/if \(pending \|\| !refocus\.current\) return;/);
-    expect(ctl).toMatch(/const target = refocus\.current === "clear" && !stage \? "before" : refocus\.current;/);
-    expect(ctl).toMatch(/querySelector<HTMLButtonElement>\(`\[data-stage-button="\$\{target\}"\]`\)\?\.focus\(\);/);
+    expect(ctl).toContain("const target = captureStageRefocusTarget(refocus.current, stage, pending, error !== null);");
+    expect(ctl).toContain("if (!target) return;");
+
+    expect(ctl).toMatch(/querySelector<HTMLButtonElement>\(`\[data-stage-button="\$\{target\}"\]`\)/);
+    expect(ctl).toMatch(/if \(!button\) return;\s+refocus\.current = null;\s+button\.focus\(\);/);
     for (const b of ['data-stage-button={s}', 'data-stage-button="clear"']) expect(ctl).toContain(b);
   });
 
@@ -264,5 +268,26 @@ describe("0232 full-size phone photo labelling", () => {
     expect(mgr).toMatch(/const modalPhoto = modal \? images.find\(\(image\) => image.id === modal.id\) \?\? null : null;/);
     const preview = mgr.slice(mgr.indexOf('aria-label="Treatment photo preview"'));
     expect(preview).toMatch(/\{modalPhoto && \(\s*<CaptureStageControl[\s\S]*?imageId=\{modalPhoto.id\}[\s\S]*?visitPhoto=\{modalPhoto.visitPhoto\}[\s\S]*?stage=\{modalPhoto.captureStage\}/);
+  });
+});
+
+
+describe("0232 Clear focus waits for refreshed props (4320065777)", () => {
+  it("holds the clear intent when pending ends before stage props refresh", () => {
+    expect(captureStageRefocusTarget("clear", "after", true, false)).toBeNull();
+    expect(captureStageRefocusTarget("clear", "after", false, false)).toBeNull();
+    expect(captureStageRefocusTarget("clear", null, false, false)).toBe("before");
+  });
+
+  it("restores Clear after a failed save without waiting for a nonexistent refresh", () => {
+    expect(captureStageRefocusTarget("clear", "after", false, true)).toBe("clear");
+    expect(captureStageRefocusTarget("clear", "after", true, true)).toBeNull();
+  });
+
+  it("keeps ordinary button focus and ignores an absent intent", () => {
+    expect(captureStageRefocusTarget("before", "after", false, false)).toBe("before");
+    expect(captureStageRefocusTarget("after", "before", false, false)).toBe("after");
+    expect(captureStageRefocusTarget(null, null, false, false)).toBeNull();
+    expect(captureStageRefocusTarget("clear", null, true, false)).toBeNull();
   });
 });
