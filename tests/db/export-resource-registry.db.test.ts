@@ -885,7 +885,10 @@ describe("what is excluded, and on what grounds", () => {
     // change to what Hone tells owners it withholds.
     expect(counts).toEqual({
       security: 5,
-      platform: 4,
+      // 4 -> 5: email_provider_events (0212, DELIVERY-EVENTS-01), Hone's
+      // intake of Resend webhooks. A studio's delivery truth stays on the
+      // pending email_outbound_messages ledger.
+      platform: 5,
       derived: 6,
       deliberate_privacy: 2,
     });
