@@ -1,6 +1,6 @@
 {
   "title": "#905 narrow production-based release candidate source manifest",
-  "production_base": "102faf94fc573c724d73419bc9e8a6262ac1a247",
+  "production_base": "cda67e7c9f779838dfad2360a628ab81221cb43e",
   "portrait_source": "affcb86727324b2c2505f5185b3ba3db3e9f4545",
   "hosted_anchor": {
     "version": "0212",
@@ -531,5 +531,6 @@
     "previous_review_head": "6f07b7aec16bee0961fe58f4140208d9a2732fd8",
     "previous_review_finding_id": 4319379075,
     "status": "repair source and finding linkage recorded; use the current PR #939 head for final review and CI state"
-  }
+  },
+  "previous_candidate_base": "102faf94fc573c724d73419bc9e8a6262ac1a247"
 }
