@@ -407,19 +407,22 @@
       "path": "tests/migrations/0212-email-delivery-events.test.ts",
       "source_head": "92fcdcccc4543b433827e44754f08f0078852505",
       "sha256": "78970778cfc96e0d33b421882c2cd30f67ffa23819675d22e846a4ef90bdcf9d",
-      "purpose": "Restore existing0212behavior/source proof with the reviewed0227forward-repair bounce contract and exact-role grant checks; no SQL changes"
+      "purpose": "Restore existing0212behavior/source proof with the reviewed0227forward-repair bounce contract and exact-role grant checks; no SQL changes",
+      "candidate_current_sha256": "78970778cfc96e0d33b421882c2cd30f67ffa23819675d22e846a4ef90bdcf9d"
     },
     {
       "path": "tests/migrations/email-delivery-grants.test.ts",
       "source_head": "92fcdcccc4543b433827e44754f08f0078852505",
       "sha256": "561e8428c89b6589aa8cd13e8977fd913ceea78bb9b124d1675ce8157c8078f4",
-      "purpose": "Restore existing0212behavior/source proof with the reviewed0227forward-repair bounce contract and exact-role grant checks; no SQL changes"
+      "purpose": "Restore existing0212behavior/source proof with the reviewed0227forward-repair bounce contract and exact-role grant checks; no SQL changes",
+      "candidate_current_sha256": "561e8428c89b6589aa8cd13e8977fd913ceea78bb9b124d1675ce8157c8078f4"
     },
     {
       "path": "tests/migrations/helpers/email-delivery-grants.ts",
       "source_head": "92fcdcccc4543b433827e44754f08f0078852505",
       "sha256": "5098c985e004888467403f8aa7a8a952b3be5901b44b47c271837cefd28ee0d8",
-      "purpose": "Restore existing0212behavior/source proof with the reviewed0227forward-repair bounce contract and exact-role grant checks; no SQL changes"
+      "purpose": "Restore existing0212behavior/source proof with the reviewed0227forward-repair bounce contract and exact-role grant checks; no SQL changes",
+      "candidate_current_sha256": "5098c985e004888467403f8aa7a8a952b3be5901b44b47c271837cefd28ee0d8"
     }
   ],
   "candidate_test_compatibility_sources": [
@@ -442,7 +445,7 @@
       "source_head": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
       "sha256": "646370f36c02312248a16b08cc416b1e12ef6b36abe780a0c00c06e4ca9d383b",
       "reason": "assertions updated for the exact included schema train; no behavior under test removed",
-      "candidate_current_sha256": "ba398ece750c224bd460bc3e6db1393400b875ac4a7a588cbdc6a555e0e9454b"
+      "candidate_current_sha256": "646370f36c02312248a16b08cc416b1e12ef6b36abe780a0c00c06e4ca9d383b"
     },
     {
       "path": "tests/db/studio-sms-sender.db.test.ts",
@@ -462,7 +465,8 @@
       "path": "tests/db/email-delivery-events.db.test.ts",
       "source_head": "92fcdcccc4543b433827e44754f08f0078852505",
       "sha256": "b000f5826990bf1eac36e4c85da788edcbb923a342cfb0bd08fe8919c4ffbdd0",
-      "purpose": "Restore existing0212behavior/source proof with the reviewed0227forward-repair bounce contract and exact-role grant checks; no SQL changes"
+      "purpose": "Restore existing0212behavior/source proof with the reviewed0227forward-repair bounce contract and exact-role grant checks; no SQL changes",
+      "candidate_current_sha256": "b000f5826990bf1eac36e4c85da788edcbb923a342cfb0bd08fe8919c4ffbdd0"
     }
   ],
   "schema_export_dispositions": {
@@ -571,8 +575,17 @@
   ],
   "canonical_record_source": {
     "pr": 960,
-    "head": "f7922a68f661b03e10484fe738ec550e4fef2989",
+    "head": "eb240657554db83f3ea730cbc36772d727005e1c",
     "status": "published; source review/CI pending; no hosted apply or production authority",
-    "scope": "current4f08de03deployment/CI/provenance record and existing0212behaviorcoverage restored"
+    "scope": "Current production4f08de03 receipt, verified0212checksum/precision and original#832export dispositions; all required new CI/review pending"
+  },
+  "integration_compatibility_repairs": {
+    "source": "95a840518b270021d792eae2a52eb00096759566",
+    "paths": [
+      "lib/export/resource-registry.ts",
+      "tests/db/public-reschedule-command.db.test.ts",
+      "tests/db/export-resource-registry.db.test.ts"
+    ],
+    "reason": "Preserve complete narrow owner registry and independent guards already in this candidate. Deduplicate imported0212catalog entries and financial expected-table list; platform webhook receipts remain excluded. No guard was weakened and SQL is unchanged."
   }
 }
