@@ -1,6 +1,6 @@
 {
   "title": "#905 narrow production-based release candidate source manifest",
-  "production_base": "cda67e7c9f779838dfad2360a628ab81221cb43e",
+  "production_base": "4f08de03c458dc381ddcb1e1011fdb50a14d66a9",
   "portrait_source": "affcb86727324b2c2505f5185b3ba3db3e9f4545",
   "hosted_anchor": {
     "version": "0212",
@@ -392,13 +392,34 @@
       "path": "tests/migrations/helpers/grant-posture.ts",
       "sha256": "96eb3d31cea075960c94e8d825495418a6af4db60a54f88c75742951dc616171",
       "source_head": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
-      "purpose": "shared exact-role grant/revoke assertions required by 0231 source test"
+      "purpose": "shared exact-role grant/revoke assertions required by 0231 source test",
+      "candidate_current_sha256": "96eb3d31cea075960c94e8d825495418a6af4db60a54f88c75742951dc616171"
     },
     {
       "path": "tests/migrations/0211-client-sms-permission-guard.test.ts",
       "sha256": "dedf935a3e36e5c3a5f174a70c94bc73bc8899c19622f80a6d26bb9ae14072e2",
       "source_head": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
-      "purpose": "transfers the obsolete repo-maximum assertion to a derived non-maximum contract while preserving 0211 allocation and behavior coverage"
+      "purpose": "transfers the obsolete repo-maximum assertion to a derived non-maximum contract while preserving 0211 allocation and behavior coverage",
+      "candidate_current_sha256": "cefd8a1f0cfc0496b3b82b065cfe779a8a5b02117b75dd74abdb8a9b0f05ee53",
+      "candidate_current_source_head": "f7922a68f661b03e10484fe738ec550e4fef2989"
+    },
+    {
+      "path": "tests/migrations/0212-email-delivery-events.test.ts",
+      "source_head": "92fcdcccc4543b433827e44754f08f0078852505",
+      "sha256": "78970778cfc96e0d33b421882c2cd30f67ffa23819675d22e846a4ef90bdcf9d",
+      "purpose": "Restore existing0212behavior/source proof with the reviewed0227forward-repair bounce contract and exact-role grant checks; no SQL changes"
+    },
+    {
+      "path": "tests/migrations/email-delivery-grants.test.ts",
+      "source_head": "92fcdcccc4543b433827e44754f08f0078852505",
+      "sha256": "561e8428c89b6589aa8cd13e8977fd913ceea78bb9b124d1675ce8157c8078f4",
+      "purpose": "Restore existing0212behavior/source proof with the reviewed0227forward-repair bounce contract and exact-role grant checks; no SQL changes"
+    },
+    {
+      "path": "tests/migrations/helpers/email-delivery-grants.ts",
+      "source_head": "92fcdcccc4543b433827e44754f08f0078852505",
+      "sha256": "5098c985e004888467403f8aa7a8a952b3be5901b44b47c271837cefd28ee0d8",
+      "purpose": "Restore existing0212behavior/source proof with the reviewed0227forward-repair bounce contract and exact-role grant checks; no SQL changes"
     }
   ],
   "candidate_test_compatibility_sources": [
@@ -406,31 +427,42 @@
       "path": "tests/db/appointment-audit-invariant.db.test.ts",
       "source_head": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
       "sha256": "d53b49c8f88acc369f9dc866fcc7f50a8a4111904b564f1640769fcb64debeb1",
-      "reason": "assertions updated for the exact included schema train; no behavior under test removed"
+      "reason": "assertions updated for the exact included schema train; no behavior under test removed",
+      "candidate_current_sha256": "d53b49c8f88acc369f9dc866fcc7f50a8a4111904b564f1640769fcb64debeb1"
     },
     {
       "path": "tests/db/appointment-boundary-revocation.db.test.ts",
       "source_head": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
       "sha256": "368165e6ae93d4eee2d3803f78d9f6995e5c2f78b0572438f91cab3ca45ea722",
-      "reason": "assertions updated for the exact included schema train; no behavior under test removed"
+      "reason": "assertions updated for the exact included schema train; no behavior under test removed",
+      "candidate_current_sha256": "368165e6ae93d4eee2d3803f78d9f6995e5c2f78b0572438f91cab3ca45ea722"
     },
     {
       "path": "tests/db/public-reschedule-command.db.test.ts",
       "source_head": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
       "sha256": "646370f36c02312248a16b08cc416b1e12ef6b36abe780a0c00c06e4ca9d383b",
-      "reason": "assertions updated for the exact included schema train; no behavior under test removed"
+      "reason": "assertions updated for the exact included schema train; no behavior under test removed",
+      "candidate_current_sha256": "ba398ece750c224bd460bc3e6db1393400b875ac4a7a588cbdc6a555e0e9454b"
     },
     {
       "path": "tests/db/studio-sms-sender.db.test.ts",
       "source_head": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
       "sha256": "46a6ec8fd3954e6b0fdc6f9985e65af0b810544031a04c1e6b34484de7eaeb26",
-      "reason": "assertions updated for the exact included schema train; no behavior under test removed"
+      "reason": "assertions updated for the exact included schema train; no behavior under test removed",
+      "candidate_current_sha256": "2eaf69ea7db9c4dac9d902ec4b271ce4a40975b88fabe4ebeb38076092056783"
     },
     {
       "path": "tests/db/export-resource-registry.db.test.ts",
       "source_head": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
       "sha256": "118204eb9a67d761bf771da24292465ba6ffe3bef5544de2753c1cf75e4cb708",
-      "reason": "assertions updated for the exact included schema train; no behavior under test removed"
+      "reason": "assertions updated for the exact included schema train; no behavior under test removed",
+      "candidate_current_sha256": "118204eb9a67d761bf771da24292465ba6ffe3bef5544de2753c1cf75e4cb708"
+    },
+    {
+      "path": "tests/db/email-delivery-events.db.test.ts",
+      "source_head": "92fcdcccc4543b433827e44754f08f0078852505",
+      "sha256": "b000f5826990bf1eac36e4c85da788edcbb923a342cfb0bd08fe8919c4ffbdd0",
+      "purpose": "Restore existing0212behavior/source proof with the reviewed0227forward-repair bounce contract and exact-role grant checks; no SQL changes"
     }
   ],
   "schema_export_dispositions": {
@@ -530,7 +562,17 @@
   "review_state": {
     "previous_review_head": "6f07b7aec16bee0961fe58f4140208d9a2732fd8",
     "previous_review_finding_id": 4319379075,
-    "status": "repair source and finding linkage recorded; use the current PR #939 head for final review and CI state"
+    "status": "Current production4f08de03and published record-ownerf792 composed; all19pendingSQLsources unchanged. New final-head CI/review required; migration/consent/release holds remain."
   },
-  "previous_candidate_base": "102faf94fc573c724d73419bc9e8a6262ac1a247"
+  "previous_candidate_base": "cda67e7c9f779838dfad2360a628ab81221cb43e",
+  "candidate_base_history": [
+    "102faf94fc573c724d73419bc9e8a6262ac1a247",
+    "cda67e7c9f779838dfad2360a628ab81221cb43e"
+  ],
+  "canonical_record_source": {
+    "pr": 960,
+    "head": "f7922a68f661b03e10484fe738ec550e4fef2989",
+    "status": "published; source review/CI pending; no hosted apply or production authority",
+    "scope": "current4f08de03deployment/CI/provenance record and existing0212behaviorcoverage restored"
+  }
 }
