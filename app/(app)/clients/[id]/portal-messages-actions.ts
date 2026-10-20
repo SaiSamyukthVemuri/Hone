@@ -113,7 +113,6 @@ export async function createPortalMessageAction(
       JSON.stringify({
         event: "portal_message_client_lookup_failed",
         code: clientErr.code,
-        message: clientErr.message,
         timestamp: new Date().toISOString(),
       }),
     );

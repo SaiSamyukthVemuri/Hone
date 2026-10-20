@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
-  identity: vi.fn(), lookup: vi.fn(), duplicate: vi.fn(), filters: [] as Array<[string, unknown]>, writes: vi.fn(),
+  identity: vi.fn(), lookup: vi.fn(), duplicate: vi.fn(), audit: vi.fn(), redirect: vi.fn(), revalidate: vi.fn(), filters: [] as Array<[string, unknown]>, writes: vi.fn(),
 }));
-vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
-vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("next/navigation", () => ({ redirect: h.redirect }));
+vi.mock("next/cache", () => ({ revalidatePath: h.revalidate }));
 vi.mock("@/lib/supabase/queries", () => ({ getCurrentPractitionerWithStudio: h.identity }));
-vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from: () => {
+vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from: (table: string) => {
+  if (table === "audit_logs") return { insert: h.audit };
   const query = {
     select: () => query,
     eq: (key: string, value: unknown) => { h.filters.push([key, value]); return query; },
@@ -17,7 +18,7 @@ vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from: () 
   };
   return query;
 } }) }));
-import { updateClientAction } from "@/app/(app)/clients/[id]/actions";
+import { updateClientAction, archiveClientAction, unarchiveClientAction } from "@/app/(app)/clients/[id]/actions";
 
 const STUDIO = "11111111-2222-4333-8444-555555555555";
 const CLIENT = "22222222-3333-4444-8555-666666666666";
@@ -28,6 +29,7 @@ function form() {
 }
 beforeEach(() => {
   vi.clearAllMocks(); h.filters = [];
+  h.audit.mockReset(); h.redirect.mockReset(); h.revalidate.mockReset();
   h.identity.mockResolvedValue({ studio: { id: STUDIO } });
 });
 afterEach(() => vi.restoreAllMocks());
@@ -134,5 +136,77 @@ describe("client UPDATE failure diagnostic privacy", () => {
     expect(h.writes).toHaveBeenCalledOnce();
     expect(updateFilters.mock.calls).toEqual([["id", CLIENT], ["studio_id", STUDIO]]);
     expect(log).not.toHaveBeenCalled();
+  });
+});
+
+
+const ACTOR = "33333333-4444-4555-8666-777777777777";
+const NAV = new Error("synthetic redirect control flow");
+describe.each([
+  { name: "archive", action: archiveClientAction, event: "client_archive_audit_failed", auditAction: "client_archived", destination: "/clients" },
+  { name: "unarchive", action: unarchiveClientAction, event: "client_unarchive_audit_failed", auditAction: "client_unarchived", destination: `/clients/${CLIENT}` },
+])("$name audit diagnostic privacy", ({ name, action, event, auditAction, destination }) => {
+  function setup() {
+    h.identity.mockResolvedValue({ practitioner: { id: ACTOR }, studio: { id: STUDIO } });
+    h.lookup.mockResolvedValue({ data: { id: CLIENT }, error: null });
+    const update = { eq: vi.fn(), is: vi.fn(), not: vi.fn() };
+    update.eq.mockReturnValue(update);
+    update.is.mockResolvedValue({ error: null }); update.not.mockResolvedValue({ error: null });
+    h.writes.mockReset(); h.writes.mockReturnValue(update);
+    h.audit.mockResolvedValue({ error: null });
+    h.redirect.mockImplementation(() => { throw NAV; });
+    return update;
+  }
+  it("omits returned audit-error free text but preserves audit row, UPDATE scope and redirect", async () => {
+    const update = setup();
+    const sentinel = `synthetic-patient@example.test private-clinical-sentinel synthetic-token ${CLIENT}`;
+    h.audit.mockResolvedValue({ error: { code: "23514", message: sentinel } });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(action(form())).rejects.toBe(NAV);
+    expect(h.identity).toHaveBeenCalledOnce(); expect(h.lookup).toHaveBeenCalledOnce();
+    expect(h.filters).toEqual([["id", CLIENT], ["studio_id", STUDIO]]);
+    expect(h.writes).toHaveBeenCalledOnce();
+    expect(update.eq.mock.calls).toEqual([["id", CLIENT], ["studio_id", STUDIO]]);
+    const mutation = h.writes.mock.calls[0]![0];
+    expect(mutation).toEqual(name === "archive"
+      ? { archived_at: expect.any(String), archived_by: ACTOR } : { archived_at: null, archived_by: null });
+    expect(update.is.mock.calls).toEqual(name === "archive" ? [["archived_at", null]] : []);
+    expect(update.not.mock.calls).toEqual(name === "unarchive" ? [["archived_at", "is", null]] : []);
+    expect(h.audit).toHaveBeenCalledExactlyOnceWith({
+      studio_id: STUDIO, actor_id: ACTOR, action: auditAction, entity_type: "client", entity_id: CLIENT,
+      metadata: name === "archive" ? { archived_at: mutation.archived_at } : {},
+    });
+    expect(h.revalidate.mock.calls).toEqual([[`/clients/${CLIENT}`], ["/clients"]]);
+    expect(h.redirect).toHaveBeenCalledExactlyOnceWith(destination);
+    expect(log).toHaveBeenCalledOnce();
+    const payload = JSON.parse(String(log.mock.calls[0]![0]));
+    expect(payload).toEqual({ event, clientId: "[id]", code: "23514", timestamp: expect.any(String) });
+    expect(Number.isNaN(Date.parse(payload.timestamp))).toBe(false);
+    for (const text of ["synthetic-patient", "private-clinical", "synthetic-token", CLIENT])
+      expect(JSON.stringify(log.mock.calls)).not.toContain(text);
+  });
+  it("propagates rejected audit promises without logging or redirecting", async () => {
+    setup(); const failure = new Error("synthetic rejected audit");
+    h.audit.mockRejectedValue(failure);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(action(form())).rejects.toBe(failure);
+    expect(h.writes).toHaveBeenCalledOnce(); expect(h.audit).toHaveBeenCalledOnce();
+    expect(h.revalidate).not.toHaveBeenCalled(); expect(h.redirect).not.toHaveBeenCalled(); expect(log).not.toHaveBeenCalled();
+  });
+  it("preserves UPDATE failure before audit and redirect", async () => {
+    const update = setup();
+    update.is.mockResolvedValue({ error: { message: "synthetic update refusal" } });
+    update.not.mockResolvedValue({ error: { message: "synthetic update refusal" } });
+    await expect(action(form())).rejects.toThrow(`Failed to ${name} client: synthetic update refusal`);
+    expect(h.audit).not.toHaveBeenCalled(); expect(h.revalidate).not.toHaveBeenCalled(); expect(h.redirect).not.toHaveBeenCalled();
+  });
+  it.each(["auth", "visibility"])("preserves %s refusal before UPDATE or audit", async (mode) => {
+    setup();
+    if (mode === "auth") h.identity.mockRejectedValue(new Error("synthetic auth refusal"));
+    else h.lookup.mockResolvedValue({ data: null, error: null });
+    await expect(action(form())).rejects.toThrow(mode === "auth" ? "synthetic auth refusal" : "Client not found.");
+    if (mode === "auth") expect(h.lookup).not.toHaveBeenCalled();
+    expect(h.writes).not.toHaveBeenCalled(); expect(h.audit).not.toHaveBeenCalled();
+    expect(h.revalidate).not.toHaveBeenCalled(); expect(h.redirect).not.toHaveBeenCalled();
   });
 });
