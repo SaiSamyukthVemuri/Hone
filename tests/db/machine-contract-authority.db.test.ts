@@ -495,13 +495,15 @@ describe("0223 · the command refuses FORGED readings, not just bad UI input", (
     ["a NaN value", [ok("current", "NaN")], /not a number/i],
     ["precision beyond the machine", [ok("current", "1.25")], /decimal places; this machine displays/i],
     ["an unrecognised observation source", [{ field_key: "current", value: "5", observation_source: "telepathy" }], /not a recognised way of observing/i],
-    ["both a value AND an absence", [{ field_key: "current", value: "5", absence_reason: "not-recorded", observation_source: "practitioner-entered" }], /either a value or a reason/i],
-    ["neither a value nor an absence", [{ field_key: "current", observation_source: "practitioner-entered" }], /either a value or a reason/i],
+    ["both a value AND an absence", [{ field_key: "current", value: "5", absence_reason: "not-recorded", observation_source: "practitioner-entered" }], /^Field "current" needs exactly one number, text or reasoned absence\.$/],
+    ["neither a value nor an absence", [{ field_key: "current", observation_source: "practitioner-entered" }], /^Field "current" needs exactly one number, text or reasoned absence\.$/],
   ])("refuses %s", async (_label, readings, pattern) => {
     await setup();
-    await expect(
-      recordAs(studio.userId, blockId, machineId, "forge", readings as Reading[]),
-    ).rejects.toThrow(pattern as RegExp);
+    const attempt = recordAs(studio.userId, blockId, machineId, "forge", readings as Reading[]);
+    await expect(attempt).rejects.toThrow(pattern as RegExp);
+    if (_label === "both a value AND an absence" || _label === "neither a value nor an absence") {
+      await expect(attempt).rejects.toMatchObject({ code: "23514" });
+    }
   });
 
   it("refuses a channel the model does not have", async () => {
