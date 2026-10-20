@@ -33,8 +33,8 @@ This section previously carried a "(through 2026-07-27)" heading while containin
 
 **Coverage gap, stated rather than hidden:** this table covers PRs **#357–#479**, **#601**,
 **#629**, **#630**, and — added by the 2026-08-26 reconciliation and kept current through each
-production refresh since — **every** first-parent merge in `b9e0003f..38d3f25c`, all
-**175** PR merges among them (**#632–#940**, plus **#631**, whose number sits below that floor but
+production refresh since — **every** first-parent merge in `b9e0003f..0726dcff`, all
+**176** PR merges among them (**#632–#942**, plus **#631**, whose number sits below that floor but
 whose merge does not — see below). The four merges after the prior `440829c2` snapshot are #940,
 #903, #897 and #895; their dated receipts are listed at the end of this changelog. ⚠️ **EXTENDED
 2026-10-12 by CANON-REFRESH-2026-10-12:**
@@ -357,7 +357,7 @@ a documentation follow-up.
 
 ## 2026-10-20 rolling releases after `440829c2`
 
-The following four first-parent merges extend the prior production record to `38d3f25c`.
+The following five first-parent merges extend the prior production record to `0726dcff`.
 They changed no hosted migration state. The dated evidence distinguishes code review, CI,
 deployment, route smoke and human acceptance.
 
@@ -367,3 +367,4 @@ deployment, route smoke and human acceptance.
 | **#903** | none | **Runtime-bearing** | Redacts record UUIDs from safe operator logs | Merged `f3668b8e6d72d6fc6a0a47922be50d9b757dd399`; exact-head review and pre-merge CI passed. Deployment `dpl_FAqidkKkU2NwjRHAP6XCjbup9nVM` READY on production aliases. Post-merge workflow cancelled; local-stack gate reported no runner assignment within 15 minutes. No production error was injected; Chloe acceptance pending. |
 | **#897** | none | **Runtime-bearing** | Preserves uncharted Watch/Plan notes and reports history unavailable when the recent window is truncated | Merged `e17b09157fa70dee4d060b3650359f512c69d48e`; exact-head review and pre-merge CI passed (921 test files / 21,064 tests, four extended browser shards and local-stack browser). Deployment `dpl_2wF8fKo8eizco3emSNhNevp5RoYN` READY before #895 superseded it. Post-merge browser aggregate failed because all four extended shards were cancelled at hard timeout with zero reported test failures. Chloe acceptance pending. |
 | **#895** | none | **Runtime-bearing** | Removes record identifiers from the critical operator-alert email | Merged `38d3f25ce248ed1a5a46a4c3a34426d0de21c1a1`; exact-head review and pre-merge CI passed (unit/typecheck/lint/build/safety, four extended browser shards and local-stack browser). Deployment `dpl_qowJkmtRmDWsDAWGZf4fJaT2etER` READY on production aliases at exact source `38d3f25c`. Read-only `/`, `/pricing` and `/privacy` GETs returned 200; alert-email behavior and Chloe acceptance remain unverified. |
+| **#942** | none | **Runtime-bearing** | Redacts studio/client identifiers from portal magic-link success and insert-failure logs | Merged `0726dcff098b02b4e5c0c0f03a46863768c9def1`; exact-head review and pre-merge CI passed (unit/typecheck/lint/build/safety, three targeted browser shards and local-stack browser; DB/payment/mobile/Google/canonical-docs skipped by diff plan). Deployment `dpl_85ex4xgVzy6jgj7miXweJtSKubBG` READY on production aliases at exact source `0726dcff`. Read-only `/`, `/pricing` and `/privacy` GETs returned 200. Post-merge CI `39351117285` was queued at this sync; Chloe’s synthetic-staging acceptance remains pending. No migration or hosted-state change. |
