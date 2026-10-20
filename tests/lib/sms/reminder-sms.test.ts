@@ -45,11 +45,25 @@ const h: {
   begin: { data: unknown; error: unknown } | "hang" | { afterMs: number };
   /** "hang": settle_sms_message never answers (a stalled or killed request). */
   settle: "ok" | "hang";
+  attemptNumber: number;
+  alreadySent: boolean;
+  laterClaim: string | null;
+  recordError: boolean;
+  attemptReadError: boolean;
+  attemptReadWaitsForAbort: boolean;
+  attemptReads: Array<{ columns: string; filters: Array<[string, string]>; signal?: AbortSignal; rpcsBefore: string[] }>;
   rpcs: Array<{ fn: string; args: Record<string, unknown> }>;
 } = {
   claim: { result: "claimed", starts_at: START },
   begin: { data: LEDGER_ROW, error: null },
   settle: "ok",
+  attemptNumber: 1,
+  alreadySent: false,
+  laterClaim: null,
+  recordError: false,
+  attemptReadError: false,
+  attemptReadWaitsForAbort: false,
+  attemptReads: [],
   rpcs: [],
 };
 
@@ -63,6 +77,9 @@ function admin(): SupabaseClient {
             ? { data: null, error: { message: "boom" } }
             : { data: [h.claim], error: null },
         );
+      }
+      if (fn === "record_sms_result" && h.recordError) {
+        return Promise.resolve({ data: null, error: { message: "record unavailable" } });
       }
       // The confirmation path's plain claim (0049).
       if (fn === "claim_sms_send") return Promise.resolve({ data: true, error: null });
@@ -81,8 +98,47 @@ function admin(): SupabaseClient {
       }
       return Promise.resolve({ data: null, error: null });
     },
-    from() {
-      throw new Error("the reminder path must not read the appointment outside its claim");
+    from(table: string) {
+      if (table !== "appointments") throw new Error("unexpected table");
+      return {
+        select(columns: string) {
+          // Only failure accounting may read here. Start/status remain owned
+          // by the atomic reminder claim, never an unlocked appointment read.
+          const match = columns.match(/^(sms_reminder_(?:24h|2h))_send_attempts, \1_sent_at, \1_claimed_at$/);
+          if (!match) throw new Error("appointment timing/status must come from the claim");
+          const read = { columns, filters: [] as Array<[string, string]>, signal: undefined as AbortSignal | undefined, rpcsBefore: h.rpcs.map((call) => call.fn) };
+          h.attemptReads.push(read);
+          const query = {
+            eq: (column: string, value: string) => {
+              read.filters.push([column, value]);
+              return query;
+            },
+            abortSignal: (signal: AbortSignal) => {
+              read.signal = signal;
+              return query;
+            },
+            maybeSingle: async () => {
+              if (h.attemptReadWaitsForAbort) {
+                return new Promise<never>((_resolve, reject) => {
+                  const signal = read.signal;
+                  if (!signal) return;
+                  if (signal.aborted) reject(signal.reason);
+                  else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+                });
+              }
+              return {
+                data: h.attemptReadError ? null : {
+                  [`${match[1]}_send_attempts`]: h.attemptNumber,
+                  [`${match[1]}_sent_at`]: h.alreadySent ? START : null,
+                  [`${match[1]}_claimed_at`]: h.laterClaim,
+                },
+                error: h.attemptReadError ? { message: "read failed" } : null,
+              };
+            },
+          };
+          return query;
+        },
+      };
     },
   } as unknown as SupabaseClient;
 }
@@ -133,6 +189,13 @@ beforeEach(() => {
   h.claim = { result: "claimed", starts_at: START };
   h.begin = { data: LEDGER_ROW, error: null };
   h.settle = "ok";
+  h.attemptNumber = 1;
+  h.alreadySent = false;
+  h.laterClaim = null;
+  h.recordError = false;
+  h.attemptReadError = false;
+  h.attemptReadWaitsForAbort = false;
+  h.attemptReads = [];
   h.rpcs = [];
   alerts.length = 0;
   manageFor.length = 0;
@@ -321,8 +384,9 @@ describe("cancellation and moves before the send", () => {
     expect(alerts, "a retryable miss raises no alert").toEqual([]);
   });
 
-  it("the appointment is never read outside the claim (the mock throws if it is)", async () => {
+  it("appointment timing is read only by the claim; successful sends need no failure-accounting read", async () => {
     expect((await send24hReminderSmsToClient(input())).ok).toBe(true);
+    expect(h.attemptReads).toEqual([]);
   });
 });
 
@@ -351,6 +415,141 @@ describe("provider failure", () => {
     });
     expect(recorded()).toEqual([false]);
     expect(settled()).toEqual([expect.objectContaining({ p_outcome: "refused" })]);
+  });
+});
+
+describe("accepted reminders with unconfirmed result recording", () => {
+  it.each([
+    ["24h", send24hReminderSmsToClient, "reminder_24h"],
+    ["2h", send2hReminderSmsToClient, "reminder_2h"],
+  ] as const)("the %s provider acceptance stays successful and its accounting warning is visible", async (_kind, send, smsType) => {
+    h.recordError = true;
+    expect(await send(input())).toMatchObject({ ok: true, messageSid: SID });
+    await flush();
+    expect(alerts).toEqual([expect.objectContaining({
+      event: "sms_result_record_unconfirmed", severity: "warning",
+      studioId: "studio-1", appointmentId: "appt-1",
+      message: expect.stringContaining("accepted by the provider, but result recording was not confirmed"),
+      safeDetails: { sms_type: smsType },
+    })]);
+    expect(alerts[0].message).not.toMatch(/delivered|gave up|exhaust/i);
+    expect(JSON.stringify(alerts)).not.toContain(SID);
+    expect(recorded()).toEqual([true]);
+    expect(h.attemptReads).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(h.rpcs.map((call) => call.fn)).toContain("settle_sms_message");
+  });
+});
+
+describe("retry exhaustion remains visible without changing send authority", () => {
+  it("an accounting read that only ends on abort preserves the retryable result without claiming exhaustion", async () => {
+    h.attemptReadWaitsForAbort = true;
+    h.attemptNumber = 3;
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    fetchMock.mockImplementationOnce(() =>
+      Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } })),
+    );
+    expect(await send24hReminderSmsToClient(input())).toEqual({
+      ok: false,
+      error: "twilio_unreachable",
+      retryable: true,
+    });
+    await flush();
+    expect(timeout).toHaveBeenCalledWith(1_000);
+    expect(h.attemptReads[0].signal?.aborted).toBe(true);
+    expect(h.attemptReads[0].rpcsBefore).toContain("record_sms_result");
+    expect(h.attemptReads[0].rpcsBefore).toContain("settle_sms_message");
+    expect(alerts).toEqual([]);
+    expect(recorded()).toEqual([false]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["24h", send24hReminderSmsToClient],
+    ["2h", send2hReminderSmsToClient],
+  ] as const)("the third definite retryable %s failure raises an attributed warning", async (_kind, send) => {
+    h.attemptNumber = 3;
+    fetchMock.mockImplementationOnce(() =>
+      Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } })),
+    );
+    expect(await send(input())).toMatchObject({ ok: false, retryable: true });
+    await flush();
+    expect(alerts).toEqual([
+      expect.objectContaining({
+        event: "sms_send_failed",
+        severity: "warning",
+        studioId: "studio-1",
+        appointmentId: "appt-1",
+        safeDetails: expect.objectContaining({ attempt_number: 3 }),
+      }),
+    ]);
+    expect(recorded()).toEqual([false]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(h.attemptReads).toHaveLength(1);
+    expect(h.attemptReads[0].filters).toEqual([["id", "appt-1"], ["studio_id", "studio-1"]]);
+    expect(h.attemptReads[0].signal).toBeInstanceOf(AbortSignal);
+    expect(h.attemptReads[0].rpcsBefore).toContain("record_sms_result");
+    expect(h.attemptReads[0].rpcsBefore).toContain("settle_sms_message");
+  });
+
+  it.each([
+    ["24h", send24hReminderSmsToClient],
+    ["2h", send2hReminderSmsToClient],
+  ] as const)("a later in-flight %s claim does not claim exhaustion", async (_kind, send) => {
+    h.attemptNumber = 3;
+    h.laterClaim = START;
+    fetchMock.mockImplementationOnce(() =>
+      Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } })),
+    );
+    expect(await send(input())).toMatchObject({ ok: false, retryable: true });
+    await flush();
+    expect(alerts).toEqual([]);
+    expect(recorded()).toEqual([false]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["24h", send24hReminderSmsToClient, false],
+    ["2h", send2hReminderSmsToClient, false],
+    ["24h with unreadable diagnostic", send24hReminderSmsToClient, true],
+    ["2h with unreadable diagnostic", send2hReminderSmsToClient, true],
+  ] as const)("an unconfirmed result record preserves a truthful %s accounting warning", async (_kind, send, readError) => {
+    h.attemptNumber = 3;
+    h.laterClaim = START; // Could be our surviving claim OR a later claim after a lost response.
+    h.recordError = true;
+    h.attemptReadError = readError;
+    fetchMock.mockImplementationOnce(() =>
+      Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } })),
+    );
+    expect(await send(input())).toMatchObject({ ok: false, retryable: true });
+    await flush();
+    expect(alerts).toEqual([expect.objectContaining({
+      event: "sms_send_failed", severity: "warning",
+      message: expect.stringContaining("result recording was not confirmed"),
+      safeDetails: expect.objectContaining({ attempt_number: null, retryable: true }),
+    })]);
+    expect(alerts[0].message).not.toMatch(/gave up|exhaust/i);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["an earlier attempt", 2, false, false],
+    ["a malformed attempt count", Number.NaN, false, false],
+    ["a negative attempt count", -1, false, false],
+    ["a later attempt already sent it", 3, true, false],
+    ["the attempt count cannot be read", 3, false, true],
+  ] as const)("%s does not claim exhaustion", async (_label, count, sent, readError) => {
+    h.attemptNumber = count;
+    h.alreadySent = sent;
+    h.attemptReadError = readError;
+    fetchMock.mockImplementationOnce(() =>
+      Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } })),
+    );
+    expect(await send24hReminderSmsToClient(input())).toMatchObject({ ok: false, retryable: true });
+    await flush();
+    expect(alerts).toEqual([]);
+    expect(recorded()).toEqual([false]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 

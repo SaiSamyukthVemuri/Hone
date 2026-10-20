@@ -143,7 +143,7 @@ export async function recordSmsResult(
   appointmentId: string,
   smsType: SmsType,
   success: boolean,
-): Promise<void> {
+): Promise<boolean> {
   const { error } = await admin.rpc("record_sms_result", {
     p_appointment_id: appointmentId,
     p_sms_type: smsType,
@@ -166,7 +166,9 @@ export async function recordSmsResult(
         timestamp: new Date().toISOString(),
       }),
     );
+    return false;
   }
+  return true;
 }
 
 // PR #153. SMS give-up threshold. SMS retries are bounded by the
@@ -177,12 +179,59 @@ export async function recordSmsResult(
 // hit a cap. Lower-numbered retryable attempts stay log-only.
 const SMS_GIVE_UP_ATTEMPT_THRESHOLD = 3;
 
+/** Read-only failure accounting; never used to authorize or retry a send. */
+async function readUnsentReminderAttemptNumber(
+  admin: SupabaseClient,
+  studioId: string,
+  appointmentId: string,
+  smsType: "reminder_24h" | "reminder_2h",
+): Promise<number | undefined> {
+  const attemptsColumn = `sms_${smsType}_send_attempts`;
+  const sentColumn = `sms_${smsType}_sent_at`;
+  const claimedColumn = `sms_${smsType}_claimed_at`;
+  try {
+    // Read after record_sms_result, rather than infer the count from a stale
+    // cron candidate. A later successful send or active claim must not be
+    // called exhausted. An RPC error can also be a lost commit response, so
+    // it cannot establish that an observed active claim belongs to us.
+    // Bound the diagnostic read so an unavailable observer cannot stall the
+    // reminder batch. This observation never changes atomic claim authority.
+    const { data, error } = await admin
+      .from("appointments")
+      .select(`${attemptsColumn}, ${sentColumn}, ${claimedColumn}`)
+      .eq("id", appointmentId)
+      .eq("studio_id", studioId)
+      .abortSignal(AbortSignal.timeout(1_000))
+      .maybeSingle();
+    if (error) throw new Error("attempt count unavailable");
+    const row: unknown = data;
+    if (!row || typeof row !== "object" || Array.isArray(row)) return undefined;
+    const accounting = row as Record<string, unknown>;
+    const attempts = accounting[attemptsColumn];
+    return accounting[sentColumn] === null &&
+      accounting[claimedColumn] === null &&
+      typeof attempts === "number" &&
+      Number.isSafeInteger(attempts) && attempts >= 0
+      ? attempts
+      : undefined;
+  } catch {
+    console.error(JSON.stringify({
+      event: "sms_reminder_attempt_read_failed",
+      smsType,
+      timestamp: new Date().toISOString(),
+    }));
+    return undefined;
+  }
+}
+
 export function logSmsFailure(opts: {
   appointmentId: string;
   smsType: SmsType;
   error: string;
   retryable: boolean;
   attemptNumber?: number;
+  /** An RPC error may mean rollback or a committed result with a lost answer. */
+  resultRecordUnconfirmed?: boolean;
   // PR #153. Optional studio id surfaces on the ops alert.
   studioId?: string | null;
 }): void {
@@ -201,7 +250,7 @@ export function logSmsFailure(opts: {
     !opts.retryable ||
     (typeof opts.attemptNumber === "number" &&
       opts.attemptNumber >= SMS_GIVE_UP_ATTEMPT_THRESHOLD);
-  if (!isFinalAttempt) return;
+  if (!isFinalAttempt && !opts.resultRecordUnconfirmed) return;
   // Fire-and-forget; recordOpsAlert never throws to the caller.
   void (async () => {
     try {
@@ -209,7 +258,9 @@ export function logSmsFailure(opts: {
       await recordOpsAlert({
         severity: "warning",
         event: "sms_send_failed",
-        message: `SMS ${opts.smsType} gave up after ${opts.attemptNumber ?? "?"} attempts.`,
+        message: opts.resultRecordUnconfirmed
+          ? `SMS ${opts.smsType} failed; result recording was not confirmed. Check delivery accounting before taking action.`
+          : `SMS ${opts.smsType} gave up after ${opts.attemptNumber ?? "?"} attempts.`,
         studioId: opts.studioId ?? null,
         appointmentId: opts.appointmentId,
         route: "lib/sms/send-appointment",
@@ -632,12 +683,29 @@ async function sendReminder(
   // (2) The AUTHORITATIVE record, first. Sent, or possibly sent, counts as
   // sent: an ambiguous attempt is never retried automatically.
   const providerMayHaveIt = result.ok || result.attempt === "ambiguous";
-  await recordSmsResult(args.admin, args.appointmentId, smsType, providerMayHaveIt);
+  const resultRecorded = await recordSmsResult(args.admin, args.appointmentId, smsType, providerMayHaveIt);
 
   // (3) Then the best-effort ledger settle, within the run's ledger budget.
   await settleLedgerRow(args.admin, attempt, args.ledgerBudget);
 
   if (result.ok) {
+    if (!resultRecorded) {
+      // Acceptance is not delivery, and an RPC error may be a lost response
+      // after commit. Surface uncertain accounting without changing the
+      // successful provider result or authorizing another attempt.
+      void import("@/lib/ops/alerts").then(({ recordOpsAlert }) => recordOpsAlert({
+        severity: "warning",
+        event: "sms_result_record_unconfirmed",
+        message: `SMS ${smsType} was accepted by the provider, but result recording was not confirmed. Check delivery accounting before taking action.`,
+        studioId: args.studio.id,
+        appointmentId: args.appointmentId,
+        route: "lib/sms/send-appointment",
+        safeDetails: { sms_type: smsType },
+      })).catch(() => {
+        // Alerting remains best effort; recordSmsResult already logged it.
+      });
+    }
+
     console.log(
       JSON.stringify({
         event: "sms_sent",
@@ -652,12 +720,17 @@ async function sendReminder(
   }
 
   const ambiguous = result.attempt === "ambiguous";
+  const attemptNumber = !ambiguous && result.retryable
+    ? await readUnsentReminderAttemptNumber(args.admin, args.studio.id, args.appointmentId, smsType)
+    : undefined;
   logSmsFailure({
     appointmentId: args.appointmentId,
     smsType,
     error: ambiguous ? `${result.error}:outcome_unknown` : result.error,
     // An ambiguous attempt is never retried automatically, so it is final.
     retryable: ambiguous ? false : result.retryable,
+    attemptNumber,
+    resultRecordUnconfirmed: !resultRecorded,
     studioId: args.studio.id,
   });
   if (ambiguous) {
