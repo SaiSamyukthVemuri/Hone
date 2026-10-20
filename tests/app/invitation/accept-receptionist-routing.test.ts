@@ -8,7 +8,7 @@ import path from "node:path";
 // selection.
 
 const ctx = vi.hoisted(() => ({
-  result: {} as Record<string, unknown>,
+  result: {} as unknown,
   user: { id: "user-1" } as { id: string } | null,
   rpc: vi.fn(),
   rpcError: null as { code: string; message: string } | null,
@@ -65,14 +65,18 @@ beforeEach(() => {
 });
 
 describe("acceptInvitationAction routes by the accepted role", () => {
-  it("a receptionist lands on /front-desk, even if they practise elsewhere", async () => {
-    expect(await destination({ status: "linked", role: "receptionist", choose_studio: false })).toBe("/front-desk");
+  it.each(["linked", "already_linked"])("%s receptionist lands on /front-desk, even if they practise elsewhere", async (status) => {
+    expect(await destination({ status, role: "receptionist", choose_studio: false })).toBe("/front-desk");
     expect(ctx.cleared).toBe(0);
+    expect(ctx.adminCleared).toBe(1);
+    expect(ctx.fulfilled).toBe(0);
   });
 
-  it("a receptionist at 2+ desks clears the stale selection and goes to the receptionist chooser", async () => {
-    expect(await destination({ status: "linked", role: "receptionist", choose_studio: true })).toBe("/front-desk/select");
+  it.each(["linked", "already_linked"])("%s receptionist at 2+ desks clears the stale selection and goes to the receptionist chooser", async (status) => {
+    expect(await destination({ status, role: "receptionist", choose_studio: true })).toBe("/front-desk/select");
     expect(ctx.cleared).toBe(1);
+    expect(ctx.adminCleared).toBe(1);
+    expect(ctx.fulfilled).toBe(0);
   });
 
   it("a practitioner acceptance is unchanged: /dashboard", async () => {
@@ -136,5 +140,28 @@ describe("HON-44 invitation acceptance authority", () => {
     expect(await destination({ status, role: "owner" })).toBe(expected);
     expect(ctx.adminCleared).toBe(1);
     expect(ctx.fulfilled).toBe(0);
+  });
+});
+
+
+describe("acceptance completion requires an explicit command success status", () => {
+  it.each([
+    { label: "null", result: null },
+    { label: "array", result: [] },
+    { label: "missing status", result: {} },
+    { label: "acceptance_required", result: { status: "acceptance_required", role: "receptionist", choose_studio: true } },
+    { label: "revoked", result: { status: "revoked", role: "receptionist" } },
+    { label: "expired", result: { status: "expired", role: "owner" } },
+  ])("does not complete or route an unconfirmed response: $label", async ({ result }) => {
+    ctx.result = result;
+    expect(await acceptInvitationAction(null, consented())).toEqual({ error: "Something went wrong. Please try again." });
+    expect(ctx.rpc).toHaveBeenCalledTimes(1);
+    expect(ctx.fulfilled).toBe(0);
+    expect(ctx.cleared).toBe(0);
+  });
+
+  it("preserves already_linked completion from the governed command", async () => {
+    expect(await destination({ status: "already_linked", role: "practitioner", choose_studio: false })).toBe("/dashboard");
+    expect(ctx.fulfilled).toBe(1);
   });
 });

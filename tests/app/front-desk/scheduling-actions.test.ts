@@ -15,16 +15,18 @@ const APPT = "55555555-5555-4555-8555-555555555555";
 const ctx = vi.hoisted(() => ({
   rpc: vi.fn(),
   adminFrom: vi.fn(),
+  adminClient: vi.fn(),
   dispatch: vi.fn(),
   notifyMoved: vi.fn(),
   sendCancel: vi.fn(),
   guard: vi.fn(),
+  revalidate: vi.fn(),
   origin: vi.fn(() => "https://app.test"),
 }));
 
-vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("next/cache", () => ({ revalidatePath: ctx.revalidate }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ rpc: ctx.rpc }) }));
-vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({ from: ctx.adminFrom }) }));
+vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: ctx.adminClient }));
 vi.mock("@/lib/receptionist/identity", () => ({ requireReceptionistWithStudio: ctx.guard }));
 vi.mock("@/lib/booking/booking-notifications", () => ({ dispatchBookingNotifications: ctx.dispatch }));
 vi.mock("@/lib/email/notify-appointment-moved", () => ({ notifyAppointmentMoved: ctx.notifyMoved }));
@@ -54,6 +56,7 @@ const future = { date: "2031-08-04", time: "10:00" };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  ctx.adminClient.mockImplementation(() => ({ from: ctx.adminFrom }));
   ctx.guard.mockResolvedValue({ receptionist: { id: "r-1", displayName: "Front Desk" }, studio: STUDIO });
   adminRows({});
 });
@@ -186,6 +189,50 @@ describe("moving", () => {
     expect(r?.message).toBe("Appointment moved and reassigned, but the client notification could not be delivered.");
   });
 
+  it.each([
+    ["moved", "moved"],
+    ["reassigned", "reassigned"],
+    ["moved_and_reassigned", "moved and reassigned"],
+  ])("a committed %s remains successful if notification client setup throws", async (kind, verb) => {
+    ctx.rpc.mockResolvedValue({ data: [{ result: kind }], error: null });
+    ctx.adminClient.mockImplementationOnce(() => {
+      throw new Error("SUPABASE_SERVICE_ROLE_KEY not set");
+    });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await moveFrontDeskAppointmentAction(null, form({ ...ok, practitioner_id: PRACT }))).toEqual({
+        ok: true, message: `Appointment ${verb}, but the client notification could not be delivered.`,
+      });
+      expect(ctx.rpc).toHaveBeenCalledTimes(1);
+      expect(ctx.rpc.mock.calls[0][0]).toBe("receptionist_move_appointment");
+      expect(ctx.notifyMoved).not.toHaveBeenCalled();
+      expect(ctx.adminFrom).not.toHaveBeenCalled();
+      expect(ctx.revalidate).toHaveBeenCalledWith("/front-desk");
+      expect(logged).toHaveBeenCalledWith("front_desk_action_error:move:post_commit_notification:unknown");
+      expect(JSON.stringify(logged.mock.calls)).not.toContain("SUPABASE_SERVICE_ROLE_KEY");
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  it("contains an unexpected notification rejection after exactly one move commit", async () => {
+    ctx.rpc.mockResolvedValue({ data: [{ result: "moved" }], error: null });
+    ctx.notifyMoved.mockRejectedValueOnce(new TypeError("private provider detail"));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await moveFrontDeskAppointmentAction(null, form(ok))).toEqual({
+        ok: true, message: "Appointment moved, but the client notification could not be delivered.",
+      });
+      expect(ctx.rpc).toHaveBeenCalledTimes(1);
+      expect(ctx.notifyMoved).toHaveBeenCalledTimes(1);
+      expect(ctx.revalidate).toHaveBeenCalledWith("/front-desk");
+      expect(logged).toHaveBeenCalledWith("front_desk_action_error:move:post_commit_notification:unknown");
+      expect(JSON.stringify(logged.mock.calls)).not.toContain("private provider detail");
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
   it("refuses a nonexistent spring-forward time on a move too", async () => {
     const r = await moveFrontDeskAppointmentAction(null, form({ ...ok, date: "2031-03-09", time: "02:15" }));
     expect(r?.message).toMatch(/does not exist/);
@@ -258,4 +305,57 @@ describe("cancelling", () => {
     expect((await cancelFrontDeskAppointmentAction(null, form({ appointment_id: "x" })))?.ok).toBe(false);
     expect(ctx.rpc).not.toHaveBeenCalled();
   });
+});
+
+
+// HON-18/HON-44: command-level refusal tests do not exercise failure of the
+// admission guard itself. A browser-supplied identity cannot rescue a refused
+// request, and no post-commit path may run before that guard admits the caller.
+describe("receptionist admission refuses before any scheduling side effect", () => {
+  const actions: Array<{
+    name: string;
+    run: typeof bookFrontDeskAppointmentAction;
+    fields: Record<string, string>;
+  }> = [
+    {
+      name: "booking", run: bookFrontDeskAppointmentAction,
+      fields: { client_id: CLIENT, service_id: SERVICE, practitioner_id: PRACT, ...future },
+    },
+    {
+      name: "moving", run: moveFrontDeskAppointmentAction,
+      fields: {
+        appointment_id: APPT, practitioner_id: PRACT,
+        expected_starts_at: "2031-08-04T17:00:00Z", expected_ends_at: "2031-08-04T17:30:00Z",
+        ...future, time: "13:00",
+      },
+    },
+    {
+      name: "cancellation", run: cancelFrontDeskAppointmentAction,
+      fields: { appointment_id: APPT, reason: "synthetic client request" },
+    },
+  ];
+  for (const action of actions) {
+    it.each([
+      ["signed out", "REDIRECT:/login"],
+      ["no active desk membership", "REDIRECT:/no-access"],
+      ["membership read failed", "receptionist_membership_read_failed:57014"],
+    ])(`${action.name}: %s cannot be bypassed by forged form authority`, async (_state, message) => {
+      const refusal = new Error(message);
+      ctx.guard.mockRejectedValueOnce(refusal);
+      const fd = form({
+        ...action.fields,
+        studio_id: "forged-studio", user_id: "forged-user", receptionist_id: "forged-desk",
+        actor: "forged-owner", role: "owner", override: "true",
+      });
+      await expect(action.run(null, fd)).rejects.toBe(refusal);
+      expect(ctx.guard).toHaveBeenCalledTimes(1);
+      expect(ctx.rpc).not.toHaveBeenCalled();
+      expect(ctx.adminFrom).not.toHaveBeenCalled();
+      expect(ctx.dispatch).not.toHaveBeenCalled();
+      expect(ctx.notifyMoved).not.toHaveBeenCalled();
+      expect(ctx.sendCancel).not.toHaveBeenCalled();
+      expect(ctx.origin).not.toHaveBeenCalled();
+      expect(ctx.revalidate).not.toHaveBeenCalled();
+    });
+  }
 });

@@ -6,7 +6,11 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { requireReceptionistWithStudio } from "@/lib/receptionist/identity";
 import { localDateString, localTimeString, utcInstantFromLocal } from "@/lib/booking/tz";
 import { dispatchBookingNotifications } from "@/lib/booking/booking-notifications";
-import { notifyAppointmentMoved, type MoveNotificationKind } from "@/lib/email/notify-appointment-moved";
+import {
+  notifyAppointmentMoved,
+  type MoveNotificationKind,
+  type MoveNotificationStatus,
+} from "@/lib/email/notify-appointment-moved";
 import { sendCancellationEmail } from "@/lib/email/send-appointment";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import type { Appointment, Service, Studio } from "@/lib/types/database";
@@ -230,13 +234,20 @@ export async function moveFrontDeskAppointmentAction(
     return { ok: false, message: frontDeskResultMessage(kind) };
   }
 
-  // COMMITTED. The practitioner calendar's own truthful move notification.
-  const status = await notifyAppointmentMoved(createAdminClient(), {
-    appointmentId,
-    studioId: studio.id,
-    appOrigin,
-    resultKind: kind as MoveNotificationKind,
-  });
+  // COMMITTED. Notification setup is post-commit too: the admin-client factory
+  // can throw before the notification helper's own containment starts.
+  let status: MoveNotificationStatus = "degraded";
+  try {
+    status = await notifyAppointmentMoved(createAdminClient(), {
+      appointmentId,
+      studioId: studio.id,
+      appOrigin,
+      resultKind: kind as MoveNotificationKind,
+    });
+  } catch {
+    // Fixed stage only: no raw provider/config error, client data or retry.
+    logDeskError("move", "post_commit_notification", undefined);
+  }
   revalidatePath("/front-desk");
   const verb = kind === "reassigned" ? "reassigned" : kind === "moved_and_reassigned" ? "moved and reassigned" : "moved";
   return {

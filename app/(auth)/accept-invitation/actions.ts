@@ -59,23 +59,26 @@ export async function acceptInvitationAction(
   if (res.status === "ambiguous") redirect("/no-access?reason=invite-ambiguous");
   if (res.status === "no_invitation") redirect("/no-access");
 
-  // Complete acceptance only when the governed command confirms success.
-  // Missing or unknown responses must not clear selection or imply a join.
+  // Only the governed command's explicit success states complete acceptance.
+  // A missing/unknown response must not route on an unconfirmed role or fulfil
+  // an operator's remembered destination as though joining succeeded.
   if (res.status !== "linked" && res.status !== "already_linked") {
     return { error: "Something went wrong. Please try again." };
   }
 
-  // A front-desk acceptance defaults to the front desk, whatever other
+  // A front-desk acceptance lands on the front desk, whatever other
   // memberships the person holds (STUDIO-READY-02b, Codex P2 4243953164 on
   // #850). The middleware only reroutes users with NO practitioner membership,
   // so a practitioner elsewhere would otherwise stay in the practitioner app.
   if (res.role === "receptionist") {
+    // This accepted role owns the destination. Do not leave a remembered
+    // operator target to influence a later sign-in after front-desk routing.
+    await clearAdminReturn();
     if (res.choose_studio === true) {
       await clearSelectedStudioId();
       redirect("/front-desk/select");
     }
-    // Acceptance is complete; only an allowlisted operator may use the target.
-    redirect((await fulfilAdminReturn(user.email)) ?? "/front-desk");
+    redirect("/front-desk");
   }
 
   // linked / already_linked. Force the chooser for a newly multi-studio user:
