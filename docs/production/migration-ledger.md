@@ -14,21 +14,23 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-19, post-0212 apply; hosted `0212`; repo `0236`; `0213`–`0236` AUTHORED AND PENDING, contiguous, in that order)
+## Current state (verified 2026-10-20, post-0212 apply; hosted `0212`; repo `0237`; `0213`–`0237` AUTHORED AND PENDING, contiguous, in that order)
 
-> **CURRENT RELATIONSHIP: repo > hosted.** Hosted migration history remains recorded through `0212`; the repository/evidence candidate contains the contiguous pending train `0213`–`0236`. Historical apply entries remain intact below and are not rewritten by this current relationship.
+> **CURRENT RELATIONSHIP: repo > hosted.** Hosted migration history remains recorded through `0212`; the repository/evidence candidate contains the contiguous pending train `0213`–`0237`. Historical apply entries remain intact below and are not rewritten by this current relationship.
 >
 > **0236 IS AUTHORED AND PENDING on Team #846**, branch `feat/delivery-visibility-02`, published code at `84ff6ba905fedf5eb2ea1de0312856a4196ff325` (includes `a9fd08f98c61b93347b9e5445ef62d9cd6ad095b`). Its retained-failure view returns up to 200 still-retained failed appointment links with reason classifications through the existing owner RPC and studio authorization. It is partial history, not a reconstruction. It is not applied, merged, or release authorization.
 >
-> **INTEGRATED EVIDENCE CANDIDATE:** this existing candidate composes #846 `0215` and `0236` with the existing authorized dependency train `0213`–`0235`. `0234_client_self_service_controls.sql` is Team HON-47; held Machines #920's alternative claim remains excluded. Frozen `0223` remains unchanged. No migration was fabricated and hosted state did not change.
+> **INTEGRATED EVIDENCE CANDIDATE:** this existing candidate composes #846 `0215` and `0236` and Machines `0237` with the existing dependency train `0213`–`0235`. `0234_client_self_service_controls.sql` is Team HON-47; held Machines #920's alternative claim remains excluded. Frozen `0223` remains unchanged. No migration was fabricated and hosted state did not change.
+>
+> **0237 IS AUTHORED AND PENDING on Machines #922**, branch `feat/mpx03-area-op-url` at `96075c857b00375a424779b00146ba3f50d627fe`. Its exact source is `supabase/migrations/0237_machine_native_text_readings.sql`, SHA-256 `e565db62660ad237fa8b8541a2e021d9d755a8b7fb89492d436c251979db24e2`. It follows `0236` in the evidence candidate. It is not applied, merged, or activation authority; Senior/Junior physical-unit and firmware checks remain separate acceptance evidence.
 
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0212** (`0212_email_delivery_events.sql`), applied 2026-10-12; history preserved. |
-| **Repo migration max** | **0236** (`0236_delivery_incident_retained_failures.sql`), source-only and pending. |
+| **Repo migration max** | **0237** (`0237_machine_native_text_readings.sql`), source-only and pending. |
 | **Remote-only migrations** | **None recorded** by canonical hosted migration state. |
-| **Pending migrations** | PENDING, NOT APPLIED: **0213–0236** (`0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`, `0229`, `0230`, `0231`, `0232`, `0233`, `0234`, `0235`, `0236`), contiguous in the integrated candidate; not applied. |
-| **Next free number** | Next free number is **0237** (based on integrated candidate filenames; not claimed). |
+| **Pending migrations** | PENDING, NOT APPLIED: **0213–0237** (`0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`, `0229`, `0230`, `0231`, `0232`, `0233`, `0234`, `0235`, `0236`, `0237`), contiguous in the integrated candidate; not applied. |
+| **Next free number** | Next free number is **0238** (based on integrated candidate filenames; not allocated). |
 | **Project ref** | `alhhybgqdmcdyzpybykj` (Hone production project). |
 
 ## Previous state (historical records follow; individual apply evidence is preserved)
