@@ -317,3 +317,38 @@ describe("THE GUARANTEE for encodings (ASCII percent-decoding to a fixed point)"
     }
   });
 });
+
+
+// PRIVACY-EMAIL-FAILURE-01: provider diagnostics may echo payload content.
+// The existing email client mock guarantees these cases never call Resend.
+describe("provider failure log privacy", () => {
+  it.each([
+    ["returned", "ops_alert_email_send_failed"],
+    ["thrown", "ops_alert_email_threw"],
+  ])("%s provider errors retain only fixed diagnostic fields", async (mode, event) => {
+    vi.stubEnv("OPS_ALERT_EMAILS", "ops@example.test");
+    const { resend } = await import("@/lib/email/client");
+    const { notifyCriticalOpsAlert } = await import("@/lib/ops/alert-email");
+    const sentinel = "synthetic-patient@example.test 6f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5";
+    const send = vi.spyOn(resend!.emails, "send");
+    if (mode === "returned") send.mockResolvedValueOnce({ data: null, headers: null, error: { name: "validation_error", message: sentinel, statusCode: 400 } });
+    else send.mockRejectedValueOnce(new Error(sentinel));
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await expect(notifyCriticalOpsAlert({
+        event: "session_payment_succeeded_write_zero_rows", message: "safe", createdAtIso: "2026-10-20T00:00:00Z",
+      })).resolves.toBeUndefined();
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(error).toHaveBeenCalledTimes(1);
+      const logged = JSON.parse(String(error.mock.calls[0]![0]));
+      expect(logged).toEqual({
+        event, origin_event: "session_payment_succeeded_write_zero_rows",
+        timestamp: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+      });
+      expect(Number.isNaN(Date.parse(logged.timestamp))).toBe(false);
+      expect(JSON.stringify(error.mock.calls)).not.toContain(sentinel);
+    } finally {
+      send.mockRestore(); error.mockRestore(); vi.unstubAllEnvs();
+    }
+  });
+});
