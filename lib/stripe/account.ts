@@ -341,9 +341,9 @@ export async function createOrLoadConnectedAccountForStudio(
     );
   }
 
-  // PAY-CCY-03. Record what Stripe actually created. A failure to record is
-  // logged and not fatal: the account is bound, and the next refresh or
-  // account.updated records it. Until then a non-CA studio cannot charge on it.
+  // PAY-CCY-03. A newly created account must have its country recorded before
+  // provisioning succeeds. Keep the binding for reconciliation on failure;
+  // do not report onboarding success with an unobserved new account.
   const observation = await recordStripeAccountObservation({
     studioId,
     stripeAccountId: account.id,
@@ -356,6 +356,10 @@ export async function createOrLoadConnectedAccountForStudio(
     // It stays bound (it exists on Stripe and must remain traceable) and is
     // NOT replaced; onboarding stops here.
     throw new Error(ACCOUNT_COUNTRY_MISMATCH_ERROR);
+  }
+
+  if (observation.kind === "not_recorded") {
+    throw new Error(PAYMENT_COUNTRY_UNVERIFIED_ERROR);
   }
 
   return {
