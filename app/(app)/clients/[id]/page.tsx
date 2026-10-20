@@ -1574,58 +1574,70 @@ export default async function ClientCheatSheetPage({
                 belongs only to a read that succeeded and found nothing. */}
             {clinicalHistoryUnavailable ? (
               <ClinicalUnavailableNotice testId="sessions-last-treatment-unavailable" />
-            ) : lastTreatment ? (
+            ) : lastTreatment ||
+              (preClientWatchPlan &&
+                hasFromLastVisitContent(preClientWatchPlan)) ? (
               <div className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
-                <div className="flex flex-wrap items-baseline justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-medium">
-                      <FormattedDateTime iso={lastTreatment.started_at} />
+                {/* HON-10: with no charted treatment, a plan written on an uncharted
+                    visit (consultation-only, abandoned) still gets this card, so its
+                    Watch/Plan band below is not hidden; the appointment page already
+                    shows it in that case. Still the ONE band render on this tab. */}
+                {lastTreatment ? (
+                  <>
+                    <div className="flex flex-wrap items-baseline justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-medium">
+                          <FormattedDateTime iso={lastTreatment.started_at} />
+                        </div>
+                        <div className="text-xs text-neutral-500">
+                          {lastTreatment.modality}
+                          {lastTreatmentPerformer && ` · ${lastTreatmentPerformer}`}
+                          {lastTreatment.price_paid_cents != null &&
+                            ` · Session price ${formatPrice(lastTreatment.price_paid_cents)}`}
+                        </div>
+                        {/* A newer uncharted session exists; say so quietly
+                            instead of letting it blank out this card. It
+                            still shows under Needs charting below. */}
+                        {lastTreatment.id !== sessions[0]?.id && (
+                          <p className="mt-1 text-xs text-neutral-500">
+                            Most recent charted treatment. A newer session has no
+                            treatment details yet.
+                          </p>
+                        )}
+                      </div>
+                      {/* RESP-CLIENT-INTAKE-01 RANK 2. This lands on Session
+                          Detail, the slowest destination measured on this surface
+                          (714 ms median against 444-463 ms for the others), and
+                          said nothing for all of it. The route's own waterfall is
+                          owned by #732 and is deliberately untouched here. */}
+                      <PendingLink
+                        href={`/clients/${client.id}/sessions/${lastTreatment.id}`}
+                        pendingLabel="Opening session…"
+                        className="inline-flex items-center min-h-[44px] min-w-[44px] text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+                      >
+                        Open →
+                      </PendingLink>
                     </div>
-                    <div className="text-xs text-neutral-500">
-                      {lastTreatment.modality}
-                      {lastTreatmentPerformer && ` · ${lastTreatmentPerformer}`}
-                      {lastTreatment.price_paid_cents != null &&
-                        ` · Session price ${formatPrice(lastTreatment.price_paid_cents)}`}
-                    </div>
-                    {/* A newer uncharted session exists; say so quietly
-                        instead of letting it blank out this card. It
-                        still shows under Needs charting below. */}
-                    {lastTreatment.id !== sessions[0]?.id && (
-                      <p className="mt-1 text-xs text-neutral-500">
-                        Most recent charted treatment. A newer session has no
-                        treatment details yet.
-                      </p>
+                    {/* The same per-area summary the charting screen
+                        shows. Charted laser/legacy sessions without
+                        treatment areas fall back to their raw entries
+                        list; a charted session always has one or the
+                        other. */}
+                    {lastTreatmentSummary &&
+                    lastTreatmentSummary.areas.length > 0 ? (
+                      <div className="mt-3">
+                        <AreaSummaries summary={lastTreatmentSummary} />
+                      </div>
+                    ) : (
+                      <LastSessionEntries
+                        modality={lastTreatment.modality}
+                        electrolysisEntries={lastTreatment.electrolysis_entries}
+                        laserEntries={lastTreatment.laser_entries}
+                      />
                     )}
-                  </div>
-                  {/* RESP-CLIENT-INTAKE-01 RANK 2. This lands on Session
-                      Detail, the slowest destination measured on this surface
-                      (714 ms median against 444-463 ms for the others), and
-                      said nothing for all of it. The route's own waterfall is
-                      owned by #732 and is deliberately untouched here. */}
-                  <PendingLink
-                    href={`/clients/${client.id}/sessions/${lastTreatment.id}`}
-                    pendingLabel="Opening session…"
-                    className="inline-flex items-center min-h-[44px] min-w-[44px] text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
-                  >
-                    Open →
-                  </PendingLink>
-                </div>
-                {/* The same per-area summary the charting screen
-                    shows. Charted laser/legacy sessions without
-                    treatment areas fall back to their raw entries
-                    list; a charted session always has one or the
-                    other. */}
-                {lastTreatmentSummary &&
-                lastTreatmentSummary.areas.length > 0 ? (
-                  <div className="mt-3">
-                    <AreaSummaries summary={lastTreatmentSummary} />
-                  </div>
+                  </>
                 ) : (
-                  <LastSessionEntries
-                    modality={lastTreatment.modality}
-                    electrolysisEntries={lastTreatment.electrolysis_entries}
-                    laserEntries={lastTreatment.laser_entries}
-                  />
+                  <p className="text-sm text-neutral-500">No charted treatments yet.</p>
                 )}
                 {/* PR #200 (Chloe iPad retest): the Watch/Plan box is
                     the card's flush footer band (attached variant +

@@ -245,10 +245,12 @@ describe("recordOpsAlert wires central message redaction (PR #285)", () => {
 // pass a raw provider error.message (the central redactor covers the rest).
 // ---------------------------------------------------------------------------
 describe("treatment-images alert call sites use generic messages (PR #285)", () => {
-  const IMG_ACTIONS = readFileSync(
-    path.resolve(__dirname, "../../../app/(app)/clients/[id]/images/actions.ts"),
-    "utf8",
-  );
+  // The signer moved into sign-treatment-image.ts (shared with the re-mint
+  // route, Codex P1 4307807754); its alert call sites are checked too.
+  const IMG_ACTIONS =
+    readFileSync(path.resolve(__dirname, "../../../app/(app)/clients/[id]/images/actions.ts"), "utf8") +
+    "\n" +
+    readFileSync(path.resolve(__dirname, "../../../app/(app)/clients/[id]/images/sign-treatment-image.ts"), "utf8");
 
   it("upload / metadata-insert / sign alerts no longer pass raw error.message", () => {
     expect(IMG_ACTIONS).not.toMatch(/message:\s*upErr\.message/);
