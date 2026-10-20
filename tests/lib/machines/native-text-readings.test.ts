@@ -180,6 +180,24 @@ for (const [index, profile] of APILUS_3G_TEXT_FIXTURES.entries()) {
       expect(first).toMatchObject({ ok: false, unresolved: true });
       const frozen = afterOutcome(initial, key, outcomeFromRecordResult({ ok: false, code: "unknown" }, 1));
       expect(canEditDraft(frozen, false)).toBe(false);
+      // The shared mounted controls must receive the same freeze, including
+      // native selects and literal text, not just the save-state predicate.
+      const fieldGroups = nativeFieldGroups(profile, mode);
+      const groups = firstGroup();
+      for (const group of fieldGroups) for (const field of group.fields) {
+        groups[0].values[draftKey(group.key, field)] = field.key === "program_identifier"
+          ? " 003i " : field.key === "starting_current" ? choice : "1";
+      }
+      const props = { profile, mode, groups, groupOrdinal: 1,
+        editDraft: () => {}, onAdvanceOrdinal: () => {}, setValue: () => {}, flipChannel: () => {} };
+      for (const freeze of [false, true]) {
+        const html = renderToStaticMarkup(createElement(SettingDraftFields, { ...props, frozen: freeze }));
+        const controls = [...html.matchAll(/<(?:input|select)\b[^>]*data-testid="reading-[^"]+"[^>]*>/g)].map(match => match[0]);
+        expect(controls).toHaveLength(readings.length);
+        expect(controls.every(control => control.includes('disabled=""') === freeze)).toBe(true);
+        expect(html).toContain('value=" 003i "');
+        expect(html).toContain(`<option value="${choice}" selected="">${choice}</option>`);
+      }
       expect(canSubmit(frozen)).toBe(true);
       expect(afterDraftChanged(frozen)).toEqual(frozen);
       const mint = vi.fn(() => "deliberate-new-save");
