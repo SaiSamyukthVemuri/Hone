@@ -1706,6 +1706,21 @@ inbound-busy and two-way calendar · broad-SaaS SMS · self-serve studio creatio
    its behaviour. **Usage is evidence of exercise, not of acceptance.**)*
 7. Conditional numbing notes (0156) and inventory-backed probe-lot linkage (0155).
 
+**Additional UAT for the 2026-10-20 deployed releases — also pending:** Use an existing
+synthetic staging workspace and its existing mail-capture inbox only. Do not use production
+logs, send live email/SMS, or access or modify real-client records.
+
+8. **#903 safe operator logging:** exercise a safe test error path already covered by privacy
+tests, inspect its operator log, and confirm record UUIDs appear as `[id]` while the normal
+client workflow remains usable.
+9. **#897 treatment history:** with synthetic clients, confirm an uncharted recent visit's
+Watch/Plan note remains on the Sessions tab; a full recent window without usable charted
+treatment reports history as unavailable; and a charted treatment retains its date, modality
+and summary. Check desktop and phone layouts.
+10. **#895 operator alert email:** trigger the existing safe test error path in synthetic
+staging and inspect only the captured alert. Confirm client/record identifiers are absent while
+useful operational context remains. Use mail capture only; do not send a real email.
+
 Engineering deployment for all of the above is **complete**. Human acceptance is **not**.
 Do not describe any of it as accepted, validated by Chloe, or signed off.
 
