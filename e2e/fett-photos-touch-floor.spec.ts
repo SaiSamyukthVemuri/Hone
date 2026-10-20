@@ -102,7 +102,7 @@ test.describe("FETT photos: touch floor, mounted at phone width", () => {
     const all = [...areaPanel, ...panel, ...tiles, ...preview];
     const under = all.filter((c) => c.height < FLOOR);
     // The surfaces the check claims to cover must actually be in the sample.
-    for (const must of [/Choose images/, /Client photo/, /Treatment area photo/, /Attach/, /View larger/, /Archive/, /Close preview/]) {
+    for (const must of [/Take photo/, /Choose images/, /Client photo/, /Treatment area photo/, /Attach/, /View larger/, /Archive/, /Close preview/]) {
       expect(all.some((c) => must.test(c.what)), `measured ${must}`).toBe(true);
     }
     expect(all.filter((c) => c.what.startsWith("select")).length, "both selects measured").toBeGreaterThanOrEqual(2);

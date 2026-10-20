@@ -16,7 +16,7 @@ import {
   updateTreatmentImageNoteAction,
 } from "./actions";
 import { TREATMENT_NOTE_MAX_LENGTH } from "./note-constants";
-import { Button } from "@/components/ui/button";
+import { Button, buttonClasses } from "@/components/ui/button";
 import {
   validateTreatmentImageUpload,
 } from "@/lib/images/treatment-images";
@@ -476,17 +476,32 @@ export function TreatmentImagesManager({
           )}
 
           <div className="flex flex-wrap items-center gap-3">
-          <label className="inline-flex min-h-[44px] cursor-pointer items-center rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-100 dark:hover:bg-neutral-900">
-            Choose images
-            <input
-              type="file"
-              name="file"
-              multiple
-              accept="image/jpeg,image/png,image/webp"
-              onChange={onPick}
-              className="sr-only"
-            />
-          </label>
+            <label className={buttonClasses({ className: "focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent" })}>
+              Take photo
+              <input
+                type="file"
+                name="cameraFile"
+                aria-label="Take a treatment photo"
+                accept="image/jpeg,image/png,image/webp"
+                capture="environment"
+                disabled={uploading}
+                onChange={onPick}
+                className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-wait"
+              />
+            </label>
+            <label className={buttonClasses({ className: "focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent" })}>
+              Choose images
+              <input
+                type="file"
+                name="file"
+                aria-label="Choose treatment images"
+                multiple
+                accept="image/jpeg,image/png,image/webp"
+                disabled={uploading}
+                onChange={onPick}
+                className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-wait"
+              />
+            </label>
           <span className="text-sm text-neutral-600 dark:text-neutral-300">
             {selectedFiles.length > 0 ? (
               <span className="font-medium">
