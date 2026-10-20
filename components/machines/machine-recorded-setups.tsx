@@ -9,6 +9,7 @@ import {
 import {
   observationSourceLabel,
   recordedUnitLabel,
+  readingsInContractOrder,
 } from "@/lib/machines/charting";
 import type { RecordedReading } from "@/lib/machines/machine-queries";
 import {
@@ -16,7 +17,7 @@ import {
   findMode,
   modeFields,
 } from "@/lib/machines/profile-contract";
-import type { MachineProfile } from "@/lib/machines/profile-contract";
+import type { MachineMode, MachineProfile } from "@/lib/machines/profile-contract";
 
 // MPX-03 — WHAT HAS ALREADY BEEN RECORDED ON THIS TREATMENT.
 //
@@ -145,6 +146,7 @@ function labelsFor(
   labels: Map<string, string>;
   stageLabels: Map<string, string>;
   historical: boolean;
+  mode: MachineMode | undefined;
 } {
   const profile = recordedProfile(catalogue, entry.profileId, entry.profileVersion);
   const historical = !profile;
@@ -166,7 +168,7 @@ function labelsFor(
   if (mode) {
     for (const stage of mode.stages) stageLabels.set(stage.key, stage.nativeLabel);
   }
-  return { labels, stageLabels, historical };
+  return { labels, stageLabels, historical, mode };
 }
 
 function ChangeLine({
@@ -245,7 +247,7 @@ function ChangeLine({
       )}
       {stage && <span className="mx-1 text-neutral-400">·</span>}
       <span className="text-neutral-500">{label}</span>{" "}
-      <span className="font-medium">{formatValue(change.from)}</span>
+      <span className={change.from.value.kind === "text" ? "font-medium whitespace-break-spaces [overflow-wrap:anywhere]" : "font-medium"}>{formatValue(change.from)}</span>
       {/*
         THE UNIT COMES FROM EACH READING, not from one of them and not from
         the catalogue. Both sides are printed with their own recorded unit,
@@ -261,7 +263,7 @@ function ChangeLine({
       <span className="mx-1.5 text-neutral-500" aria-label="changed to">
         →
       </span>
-      <span className="font-medium">{formatValue(change.to)}</span>
+      <span className={change.to.value.kind === "text" ? "font-medium whitespace-break-spaces [overflow-wrap:anywhere]" : "font-medium"}>{formatValue(change.to)}</span>
       {recordedUnitLabel(change.to.nativeUnit) ? (
         <span className="ml-0.5 text-neutral-500">
           {recordedUnitLabel(change.to.nativeUnit)}
@@ -337,7 +339,7 @@ export function MachineRecordedSetups({
 
       <ol className="flex flex-col gap-2">
         {entries.map((entry) => {
-          const { labels, stageLabels, historical } = labelsFor(entry, catalogue);
+          const { labels, stageLabels, historical, mode } = labelsFor(entry, catalogue);
           const at = renderableInstant(entry.recordedAt);
           const unitName = unitNames[entry.deviceId] ?? null;
           return (
@@ -382,7 +384,7 @@ export function MachineRecordedSetups({
                 An UNSTAGED profile has exactly one bucket with a null key
                 and renders with no heading, identical to before.
               */}
-              {[...byStage(entry.readings).entries()].map(([stageKey, stageRows]) => (
+              {[...byStage(readingsInContractOrder(entry.readings, mode)).entries()].map(([stageKey, stageRows]) => (
               <div key={stageKey ?? ""} className="flex flex-col gap-0.5">
               {stageKey !== null && (
                 <span
@@ -402,7 +404,7 @@ export function MachineRecordedSetups({
                       {labels.get(`${r.stageKey ?? ""}::${r.fieldKey}`) ??
                         r.fieldKey}
                     </span>{" "}
-                    <span className="font-medium">{formatValue(r)}</span>
+                    <span className={r.value.kind === "text" ? "font-medium whitespace-break-spaces [overflow-wrap:anywhere]" : "font-medium"}>{formatValue(r)}</span>
                     {/*
                       ALWAYS the recorded unit, never today's catalogue - but
                       through the sentinel rule, which this printed straight

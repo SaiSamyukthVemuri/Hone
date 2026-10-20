@@ -45,6 +45,23 @@ import {
   type ValidationOutcome,
 } from "./validate-reading";
 
+/**
+ * SQL/chronology key order is not native display order. The caller supplies the
+ * recorded version's mode; never resolve today's contract here. Unknown fields
+ * remain visible in received order, after known fields. Missing contracts keep
+ * the entire received order. Sorting a copy cannot rewrite the record.
+ */
+export function readingsInContractOrder<T extends { stageKey: string | null; fieldKey: string }>(
+  readings: readonly T[],
+  mode: MachineMode | undefined,
+): readonly T[] {
+  if (!mode) return readings;
+  const rank = new Map(modeFields(mode).map(({ field, stageKey }, index) =>
+    [`${stageKey ?? ""}::${field.key}`, index] as const));
+  const order = (r: T) => rank.get(`${r.stageKey ?? ""}::${r.fieldKey}`) ?? Number.MAX_SAFE_INTEGER;
+  return [...readings].sort((a, b) => order(a) - order(b));
+}
+
 // ---------------------------------------------------------------------------
 // Native field projection
 // ---------------------------------------------------------------------------
