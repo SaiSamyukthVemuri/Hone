@@ -55,9 +55,23 @@ const PROPERTY_SHAPES: Readonly<Record<string, (value: unknown) => boolean>> = {
 };
 const ALLOWED_EVENT_PROPERTIES = new Set(Object.keys(PROPERTY_SHAPES));
 
-// Event names are code constants. A name that is not a short snake_case word
-// (an interpolated id, a URL) drops the event too.
-const EVENT_NAME = /^[a-z][a-z0-9_]{0,63}$/;
+// Only supported code constants may leave this boundary. A shape regex also
+// admits interpolated alphanumeric client ids and phone numbers. Adding an
+// event here requires privacy review, just like adding a property shape.
+const SUPPORTED_SERVER_EVENTS: ReadonlySet<string> = new Set([
+  "appointment_booked",
+  "card_on_file_saved",
+  "client_created",
+  "onboarding_wizard_completed",
+  "onboarding_wizard_started",
+  "payment_charge_executed",
+  "payment_refunded",
+  "public_appointment_booked",
+  "session_started",
+  "stripe_account_connected",
+  "studio_created",
+  "user_signed_in",
+]);
 
 const DISPATCH_TIMEOUT_MS = 2000;
 
@@ -176,7 +190,7 @@ export function captureServerEvent(args: {
   event: string;
   properties?: ServerEventProperties;
 }): void {
-  if (!EVENT_NAME.test(args.event)) {
+  if (!SUPPORTED_SERVER_EVENTS.has(args.event)) {
     warnNameOnly({ event: "analytics_event_name_rejected" });
     return;
   }

@@ -538,7 +538,10 @@ describe("narrative survives without a charted treatment (final-review P2 #2)", 
 
   it("every load outcome carries narrative, and only a candidate-read failure has none", () => {
     expect(LOADER_CODE).toMatch(/case "selected":[\s\S]{0,120}unavailable: false, narrative/);
-    expect(LOADER_CODE).toMatch(/case "none":[\s\S]{0,200}unavailable: false, narrative/);
+    // HON-10: "none" is unavailable when the candidate window was truncated
+    // (the treatment may sit below the SQL cut); it still carries narrative.
+    expect(LOADER_CODE).toMatch(/case "none":[\s\S]{0,200}unavailable: truncated, narrative/);
+    expect(LOADER_CODE).toMatch(/const truncated = rows\.length >= limit;/);
     expect(LOADER_CODE).toMatch(/case "unavailable":[\s\S]{0,200}unavailable: true, narrative/);
   });
 

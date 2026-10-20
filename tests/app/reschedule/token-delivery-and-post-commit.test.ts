@@ -417,6 +417,8 @@ describe("0171 — malformed command success rows", () => {
 
 describe("0171 — refusal codes still map before any side effect", () => {
   it.each([
+    ["", "This reschedule link can't be used right now."],
+    ["unknown_command_result", "This reschedule link can't be used right now."],
     ["appointment_not_found", "This reschedule link can't be used right now."],
     ["appointment_not_reschedulable", "This reschedule link can't be used right now."],
     ["same_time", null],
@@ -429,6 +431,9 @@ describe("0171 — refusal codes still map before any side effect", () => {
   ])("%s produces no side effects", async (code, exactCopy) => {
     scenario.rpcResult = { result: code };
     const r = await rescheduleAppointmentViaTokenAction(form());
+    expect(rpcCalls).toHaveLength(1);
+    expect(rpcCalls[0].fn).toBe("reschedule_appointment_v2");
+    expect(emailAttempts).toHaveLength(0);
     expect(r.ok).toBe(false);
     if (!r.ok && exactCopy) expect(r.error).toBe(exactCopy);
     if (!r.ok) expect(r.error).not.toMatch(/postgres|sqlstate|constraint|relation/i);

@@ -8,7 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 // VALUE, not only by key. An allowed key carrying the wrong shape (a client id
 // in `source`, a non-UUID `studio_id`, free text in `modality`) drops the
 // WHOLE event, as a non-UUID distinctId already does. The event name must be
-// a short snake_case constant.
+// one of the supported server event constants.
 //
 // WIRE-LEVEL: the REAL posthog-node client (built by lib/posthog-server.ts)
 // sends through a capturing fetch; every body it would put on the wire is
@@ -88,6 +88,16 @@ describe("R18-1: what posthog-node puts on the wire", () => {
   });
 
   it.each([
+    "appointment_booked", "card_on_file_saved", "client_created",
+    "onboarding_wizard_completed", "onboarding_wizard_started",
+    "payment_charge_executed", "payment_refunded", "public_appointment_booked",
+    "session_started", "stripe_account_connected", "studio_created", "user_signed_in",
+  ])("supported event %s still reaches the wire", async (event) => {
+    await capture(event, { studio_id: STUDIO });
+    expect(wire.map((entry) => entry.body).join("\n")).toContain(`"event":"${event}"`);
+  });
+
+  it.each([
     ["a client id in source", { studio_id: STUDIO, source: CLIENT }],
     ["free text in source", { studio_id: STUDIO, source: "Jane Synthetic booked" }],
     ["a non-UUID studio_id", { studio_id: "studio-name" }],
@@ -102,6 +112,22 @@ describe("R18-1: what posthog-node puts on the wire", () => {
   it("an event name carrying an id is dropped", async () => {
     await capture(`appointment_booked_${CLIENT}`, { studio_id: STUDIO });
     expect(wire).toEqual([]);
+  });
+
+  it.each([
+    "client_created_abc123def456",
+    "appointment_booked_15555550123",
+    "unknown_event",
+  ])("unsupported event %s is rejected without sending or logging its name", async (event) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await capture(event, { studio_id: STUDIO });
+      expect(wire).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(JSON.stringify({ event: "analytics_event_name_rejected" }));
+      expect(warn.mock.calls.map((call) => String(call[0])).join("\n")).not.toContain(event);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("an unknown KEY is still dropped by name (the event is sent without it)", async () => {
