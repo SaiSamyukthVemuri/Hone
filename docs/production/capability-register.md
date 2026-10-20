@@ -329,7 +329,7 @@ carry a capability that belongs in this register. The 161 later production merge
 [release-changelog.md](./release-changelog.md) and are **not** enumerated for capability here.
 
 **THOSE TWO NUMBERS ARE DERIVED OVER DIFFERENT SPANS, AND SAYING SO IS THE POINT.** The
-**188** is the merge ancestry through the *current* branch head, `33c56229`. The **ten**
+**190** is the merge ancestry through the *current* branch head, `e125ea4e`. The **ten**
 is **not** derived over it: it is the **2026-08-30** derivation over the twenty-nine merges
 through `bf6f09c4`, and it has not been re-run since.
 
