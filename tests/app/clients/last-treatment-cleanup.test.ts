@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { orderByRecency } from "@/lib/sessions/charted-session";
 import { pickLastTreatment } from "@/lib/sessions/clinical-summary";
 
 // PR #199: Last Treatment + charting redundancy + client info cleanup.
@@ -131,7 +132,9 @@ describe("Last treatment card (Sessions tab)", () => {
 
   it("a newer uncharted session is called out, not allowed to blank the card", () => {
     expect(PAGE).toMatch(/Most recent charted treatment/);
-    expect(PAGE).toMatch(/lastTreatment\.id !== sessions\[0\]\?\.id/);
+    expect(PAGE).toMatch(/const newestSession = sessionsByRecency\[0\]/);
+    expect(PAGE).toMatch(/lastTreatment\.id !== newestSession\?\.id/);
+    expect(PAGE).not.toMatch(/lastTreatment\??\.id [!=]== sessions\[0\]\?\.id/);
   });
 
   it("empty state says no charted treatments yet; 'No entries logged' is gone", () => {
@@ -306,5 +309,48 @@ describe("Client info birthday row", () => {
     expect(skin).toBeGreaterThan(allergies);
     expect(info).toBeGreaterThan(skin);
     expect(pricing).toBeGreaterThan(info);
+  });
+});
+
+
+describe("latest-session banner uses shared recency", () => {
+  it("does not invent an uncharted newer session from a tied charted row", () => {
+    const a = session("a", { electro: 1 });
+    const b = session("b", { electro: 1 });
+    for (const rows of [[a, b], [b, a]]) {
+      expect(pickLastTreatment(rows, new Map())?.id).toBe(orderByRecency(rows)[0]?.id);
+    }
+  });
+
+  it("still distinguishes a genuinely newer empty session", () => {
+    const charted = session("a", { electro: 1 });
+    const empty = session("b", { at: "2026-01-02T10:00:00Z" });
+    const rows = [charted, empty];
+    expect(pickLastTreatment(rows, new Map())?.id).toBe("a");
+    expect(orderByRecency(rows)[0]?.id).toBe("b");
+  });
+});
+
+
+describe("profile candidate bounds follow shared recency", () => {
+  it("sorts before taking the bounded window and keeps the block-read windows nested", () => {
+    expect(PAGE).toMatch(/const sessionsByRecency = orderByRecency\(sessions\)/);
+    expect(PAGE).toMatch(/const recentSessions = sessionsByRecency\.slice\(0, 25\)/);
+    expect(PAGE).toMatch(/sessionsByRecency\.slice\(0, 200\)\.map/);
+  });
+
+  it("keeps the greater-ID charted winner at the 25/26 boundary in either query order", () => {
+    const newerEmpty = Array.from({ length: 24 }, (_, i) => session(`empty-${i}`, { at: "2026-02-01T10:00:00Z" }));
+    const a = session("a", { electro: 1 });
+    const b = session("b", { electro: 1 });
+    const retiredWindow = [...newerEmpty, a, b].slice(0, 25);
+    expect(pickLastTreatment(retiredWindow, new Map())?.id).toBe("a");
+    for (const tied of [[a, b], [b, a]]) {
+      const ordered = orderByRecency([...newerEmpty, ...tied]);
+      const candidates = ordered.slice(0, 25);
+      expect(pickLastTreatment(candidates, new Map())?.id).toBe("b");
+      expect(candidates.map((s) => s.id)).toContain("b");
+      expect(candidates.every((s) => ordered.slice(0, 200).includes(s))).toBe(true);
+    }
   });
 });

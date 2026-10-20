@@ -354,7 +354,10 @@ describe("E — the controls are not vacuous", () => {
     expect(forward).not.toEqual(backward);
   });
 
-  it("`Latest setup` names the same area whatever order the blocks arrive in", () => {
+  it.each([
+    ["Chin", "Upper lip", "Sideburns"],
+    ["é", "e\u0301"],
+  ])("`Latest setup` is stable across block orders for %j", (...areaNames) => {
     // areas[0] becomes the dashboard's "Latest setup" line. One session
     // treating two areas gives both the SAME lastTreated — the common case.
     const sessions = [
@@ -382,7 +385,7 @@ describe("E — the controls are not vacuous", () => {
       caution_note: null,
       entry_hairs: [] as ReadonlyArray<number | null>,
     });
-    const rows = [block("Chin"), block("Upper lip"), block("Sideburns")];
+    const rows = areaNames.map(block);
 
     const names = new Set(
       permutations(rows).map(

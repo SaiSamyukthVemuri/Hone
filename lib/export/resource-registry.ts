@@ -1631,6 +1631,20 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "The outbound SMS delivery ledger, live since migration 0206 (SMS-00): one row per appointment or waitlist-invitation text attempt, with its purpose, status, skip reason and timestamps. It holds no message body and no phone number. Studio-scoped operational history, so PENDING rather than EXCLUDED, and field-review-required for the same reason as studio_sms_senders: provider_message_sid is Hone's provider identifier for one message and carries no customer meaning, while the status history is what a studio would recognise (whether a reminder reached a client). No export surface ships in SMS-00.",
   },
+  email_outbound_messages: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "The outbound email delivery ledger, live since migration 0212 (DELIVERY-EVENTS-01), the email counterpart of sms_outbound_messages. One row per appointment email attempt, with its purpose, status, skip reason, normalised provider reason codes and timestamps. It holds no recipient address, subject or body. It is studio-scoped operational history, so PENDING rather than EXCLUDED. It is field-review-required for the same reason as sms_outbound_messages: provider_email_id is Hone's provider identifier for one message and means nothing to a customer, while the status history is something a studio would recognise (whether a reminder reached a client's mail server). No export surface ships in DELIVERY-EVENTS-01.",
+  },
+  email_provider_events: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "Hone's intake of Resend's signed delivery webhooks, live since migration 0212 (DELIVERY-EVENTS-01). One receipt per provider delivery, kept so an event is applied exactly once and a lost one can be finished. A receipt carries the provider's delivery id and email id plus normalised reason codes. It holds no studio content, and an unmatched or quarantined receipt is attributable to no studio by construction. What a studio would recognise, whether an email reached a client's mail server, lives on email_outbound_messages, which is decided separately.",
+  },
   new_client_waitlist_entry_events: {
     kind: "pending",
     ticket: "TRUTH-01B",
