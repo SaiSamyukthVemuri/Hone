@@ -65,12 +65,12 @@ const STUDIO = "11111111-1111-4111-8111-111111111111";
 const APPOINTMENT = "22222222-2222-4222-8222-222222222222";
 const SID = `SM${"a".repeat(32)}`;
 
-function callback(status: "undelivered" | "failed", signingToken = TOKEN) {
+function callback(status: "undelivered" | "failed", signingToken = TOKEN, errorCode = "30007") {
   const url = `${BASE}/api/twilio/message-status?m=${MESSAGE}`;
   const params = {
     MessageSid: SID,
     MessageStatus: status,
-    ErrorCode: "30007",
+    ErrorCode: errorCode,
     To: "+12125550123",
     Body: "Synthetic private body must not reach the alert",
   };
@@ -143,6 +143,22 @@ describe("synthetic SMS delivery failures reach the operator's real page", () =>
     for (const privateValue of ["+12125550123", "Synthetic private body", TOKEN, SID]) {
       expect(html).not.toContain(privateValue);
     }
+    expect(h.email).not.toHaveBeenCalled();
+    expect(h.action).not.toHaveBeenCalled();
+    expect(h.fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(["private-provider-error-sentinel", "123456789"])("malformed provider error %s cannot leak into the alert page", async (errorCode) => {
+    expect((await callback("failed", TOKEN, errorCode)).status).toBe(200);
+    expect(h.rpc).toHaveBeenCalledWith("record_sms_delivery_status", expect.objectContaining({
+      p_provider_error_code: null,
+    }));
+    expect(h.rows).toHaveLength(1);
+    expect(JSON.stringify(h.rows)).not.toContain(errorCode);
+    const html = renderToStaticMarkup(await OpsAlertsPage());
+    expect(html).toContain("sms_delivery_failed");
+    expect(html).not.toContain(errorCode);
+    expect(html).not.toContain("Synthetic private body");
     expect(h.email).not.toHaveBeenCalled();
     expect(h.action).not.toHaveBeenCalled();
     expect(h.fetch).not.toHaveBeenCalled();
