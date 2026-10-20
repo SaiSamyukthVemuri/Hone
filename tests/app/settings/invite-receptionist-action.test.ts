@@ -7,6 +7,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const ctx = vi.hoisted(() => ({
   role: "owner" as "owner" | "practitioner",
   rows: {} as Record<string, unknown[]>,
+  lookupErrors: {} as Record<string, { code: string; message: string }>,
+  lookups: [] as string[],
   inserted: [] as Array<{ table: string; row: Record<string, unknown> }>,
   sent: 0,
   messages: [] as Array<{ html: string; text: string }>,
@@ -15,7 +17,10 @@ const ctx = vi.hoisted(() => ({
 function builder(table: string) {
   const b: Record<string, unknown> = {};
   for (const m of ["select", "eq", "ilike"]) b[m] = () => b;
-  b.maybeSingle = async () => ({ data: (ctx.rows[table] ?? [])[0] ?? null, error: null });
+  b.maybeSingle = async () => {
+    ctx.lookups.push(table);
+    return { data: (ctx.rows[table] ?? [])[0] ?? null, error: ctx.lookupErrors[table] ?? null };
+  };
   b.insert = async (row: Record<string, unknown>) => {
     ctx.inserted.push({ table, row });
     return { error: null };
@@ -52,6 +57,8 @@ const form = (fields: Record<string, string>) => {
 beforeEach(() => {
   ctx.role = "owner";
   ctx.rows = {};
+  ctx.lookupErrors = {};
+  ctx.lookups = [];
   ctx.inserted = [];
   ctx.sent = 0;
   ctx.messages = [];
@@ -99,6 +106,20 @@ describe("inviting a receptionist", () => {
   it("an unknown role from the browser falls back to practitioner, never to anything wider", async () => {
     await invitePractitionerAction(form({ email: "someone@example.test", role: "platform_admin" }));
     expect(ctx.inserted[0].row.role).toBe("practitioner");
+  });
+
+  it.each([
+    ["practitioners", "Could not check existing practitioners."],
+    ["studio_receptionists", "Could not check the front desk team."],
+    ["pending_invitations", "Could not check existing invitations."],
+  ])("refuses a %s lookup error before insertion or sending", async (table, message) => {
+    ctx.lookupErrors[table] = { code: "42501", message: "private database detail" };
+    const result = await invitePractitionerAction(form({ email: "desk@example.test", role: "receptionist" }));
+    expect(ctx.lookups).toContain(table);
+    expect(result).toEqual({ ok: false, error: message });
+    expect(ctx.inserted).toEqual([]);
+    expect(ctx.sent).toBe(0);
+    expect(ctx.messages).toEqual([]);
   });
 
   it("a non-owner cannot invite anyone, and nothing is written", async () => {
