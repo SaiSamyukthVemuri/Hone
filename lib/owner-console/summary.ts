@@ -85,7 +85,9 @@ export function bookingPanel(readiness: NewClientReadiness | null): ConsolePanel
   const detail =
     admission.length > 0
       ? `${chosen} Finishing the remaining setup does not change that: clients can book online once setup is complete AND that setting allows direct booking.${more}`
-      : `Finish setup before clients can book online.${more}`;
+      : readiness.unavailable.includes("admission")
+        ? `The admission setting could not be checked. Clients can book online once setup is complete AND that setting allows direct booking.${more}`
+        : `Finish setup before clients can book online.${more}`;
   return {
     ...base,
     tone: "attention",

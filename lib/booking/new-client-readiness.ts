@@ -475,6 +475,9 @@ export function computeNewClientReadiness(
  */
 export async function getNewClientReadiness(
   studio: NewClientReadinessEvidence["studio"] & { id: string },
+  // Authenticated callers may supply admission from their already authorized
+  // studio row. An explicit unknown must never trigger a privileged fallback.
+  admissionEvidence?: NewClientAdmission,
 ): Promise<NewClientReadiness> {
   const [services, availability, treatmentConsent, admission] = await Promise.all([
     getActiveServices(studio.id).then(
@@ -502,7 +505,7 @@ export async function getNewClientReadiness(
     // Already result-bearing; it never throws and never collapses.
     getTreatmentConsentReadiness(studio.id),
     // Already result-bearing; it never throws and never collapses to `open`.
-    getNewClientAdmissionMode(studio),
+    admissionEvidence === undefined ? getNewClientAdmissionMode(studio) : admissionEvidence,
   ]);
 
   return computeNewClientReadiness({

@@ -232,6 +232,17 @@ describe("the three-state rule", () => {
     expect(panel([step, wait], ["consent"]).detail).toMatch(/there may be more/);
   });
 
+  it("booking: unreadable admission cannot promise booking after setup", () => {
+    const p = bookingPanel({
+      status: "not_ready", blockers: [{ key: "availability", label: "Set availability" }] as never,
+      nextStep: null, unavailable: ["admission"],
+    });
+    expect(p.status).toBe("At least 1 step left");
+    expect(p.detail).not.toMatch(/Finish setup before clients can book online/);
+    expect(p.detail).toMatch(/admission setting could not be checked/);
+    expect(p.detail).toMatch(/allows direct booking/);
+  });
+
   it("panels without an authority yet say so, and link nowhere", () => {
     for (const k of ["delivery", "notifications"] as const) {
       expect(notYetAvailablePanel(k)).toMatchObject({ tone: "unavailable", status: "Not available yet", href: null });
@@ -251,11 +262,12 @@ describe("the console page", () => {
   });
 
   it("the PAGE reads under the owner's own session and never calls a provider or the admin client itself", () => {
-    // Precisely: the page imports no admin client. Its booking-setup authority,
-    // getNewClientReadiness, reads the admission mode server-side with the
-    // service role internally. That is the same authority the Launch page
-    // already uses for this owner (Codex P2 4243961745 on #851).
-    expect(PAGE).toMatch(/getNewClientReadiness\(studio\)/);
+    // Admission is resolved from the same owner-authorized studio evidence;
+    // loader behavior tests require zero calls to the privileged reader.
+    expect(PAGE).toMatch(/getNewClientReadiness\(studio, resolveAdmission\(/);
+    expect(PAGE).toMatch(/storedMode: studio\.new_client_admission_mode/);
+    expect(PAGE).toMatch(/storedSetAt: studio\.new_client_admission_mode_set_at/);
+    expect(PAGE).toMatch(/readFailed: studio\.new_client_admission_mode === undefined \|\| studio\.new_client_admission_mode_set_at === undefined/);
     expect(PAGE).not.toMatch(/createAdminClient|admin-server/);
     expect(PAGE).not.toMatch(/refreshAccountStatusFromStripe|lib\/stripe\/account|lib\/sms\/provider|twilio/i);
     expect(PAGE).not.toMatch(/\.insert\(|\.update\(|\.delete\(|\.upsert\(/);

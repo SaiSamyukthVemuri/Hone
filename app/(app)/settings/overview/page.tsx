@@ -5,6 +5,7 @@ import { getNewClientReadiness, type NewClientReadiness } from "@/lib/booking/ne
 import { presentSenderStatus, readOwnStudioSmsSender } from "@/lib/sms/sender-status";
 import { currentRuntimeMode, deriveConnectCapability } from "@/lib/payments/payment-status-presenter";
 import { inferStripeLivemode } from "@/lib/stripe/server";
+import { resolveAdmission } from "@/lib/booking/new-client-admission";
 import {
   bookingPanel,
   notYetAvailablePanel,
@@ -43,7 +44,14 @@ export default async function OwnerConsolePage() {
 
   const supabase = await createClient();
   const [readiness, practitioners, pending, sender, payment] = await Promise.all([
-    getNewClientReadiness(studio).then(
+    // The guard loaded this selected studio through the owner's request/RLS.
+    // Resolve those same columns; do not call the sessionless admin reader.
+    getNewClientReadiness(studio, resolveAdmission({
+      storedMode: studio.new_client_admission_mode,
+      storedSetAt: studio.new_client_admission_mode_set_at,
+      readFailed: studio.new_client_admission_mode === undefined || studio.new_client_admission_mode_set_at === undefined,
+      studioSlug: studio.slug,
+    })).then(
       (r): NewClientReadiness | null => r,
       () => null,
     ),
