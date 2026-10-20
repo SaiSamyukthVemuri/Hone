@@ -24,6 +24,18 @@ import { E2E_APP_ORIGIN } from "./helpers/local-env";
 
 test.describe.configure({ mode: "serial" });
 
+// The list reporter prints failure details only after the full shard finishes.
+// Preserve the actual error immediately if a later job timeout cuts it short.
+test.afterEach(async ({}, testInfo) => {
+  if (testInfo.status === testInfo.expectedStatus) return;
+  for (const error of testInfo.errors) {
+    // Auth navigation errors can contain single-use verification URLs.
+    const message = (error.message ?? error.value ?? "Unknown test error")
+      .replace(/https?:\/\/[^\s"'<>]+/g, "[URL omitted]");
+    console.error(`[front-desk acceptance: ${testInfo.title}] ${message}`);
+  }
+});
+
 let seed: E2eSeed;
 let serviceId: string;
 let clientId: string;
