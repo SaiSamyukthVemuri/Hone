@@ -168,3 +168,12 @@ describe("FETT photos: the remaining photo controls reach the floor", () => {
     for (const cls of selects) expect(cls).toContain("min-h-[44px]");
   });
 });
+
+
+describe("FETT photos: editable note touch floor", () => {
+  it("the note textarea has an explicit 44px minimum", () => {
+    const textarea = read().match(/<textarea[\s\S]*?className="([^"]*)"/);
+    expect(textarea, "editable photo note").toBeTruthy();
+    expect(textarea![1]).toContain("min-h-[44px]");
+  });
+});

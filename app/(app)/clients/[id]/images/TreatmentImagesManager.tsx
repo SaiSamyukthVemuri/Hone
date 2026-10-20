@@ -170,7 +170,7 @@ function PhotoNoteEditor({
         maxLength={TREATMENT_NOTE_MAX_LENGTH}
         rows={2}
         placeholder="Add a note for this photo…"
-        className="w-full rounded-md border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-800 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
+        className="min-h-[44px] w-full rounded-md border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-800 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
       />
       <div className="mt-1 flex items-center gap-2">
         <Button
