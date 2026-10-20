@@ -138,7 +138,7 @@ export default async function OwnerConsolePage() {
               <p className="mt-1 text-sm text-neutral-500">{p.detail}</p>
             </div>
             {p.href && (
-              <Link href={p.href} className="shrink-0 text-sm underline-offset-4 hover:underline">
+              <Link href={p.href} aria-label={`Open ${p.title}`} className="shrink-0 text-sm underline-offset-4 hover:underline">
                 Open
               </Link>
             )}

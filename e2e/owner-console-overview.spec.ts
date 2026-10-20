@@ -31,6 +31,14 @@ test("the owner sees every panel, the delivery card, and nothing reads ready tha
   for (const title of ["Booking setup", "Team", "Phone and text messages", "Payments", "Alert recipients"]) {
     await expect(panel(title), title).toBeVisible();
   }
+  for (const [title, href] of [
+    ["Booking setup", "/settings/launch"],
+    ["Team", "/settings/team"],
+    ["Phone and text messages", "/settings/integrations"],
+    ["Payments", "/settings/payments"],
+  ]) {
+    await expect(page.getByRole("link", { name: `Open ${title}`, exact: true })).toHaveAttribute("href", href);
+  }
   // No sender: per-country rows, never "ready".
   await expect(panel("Phone and text messages")).toContainText("Canada:");
   await expect(panel("Phone and text messages")).toContainText("US:");
