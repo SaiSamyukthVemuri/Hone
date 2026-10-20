@@ -1,3 +1,4 @@
+import { orderByRecency } from "@/lib/sessions/charted-session";
 import { apilusModalityLabel } from "@/lib/constants";
 import { unifiedReactionLabels } from "@/lib/sessions/reaction-unified";
 import { resolveBlockAreas, type BlockArea } from "@/lib/sessions/block-areas";
@@ -191,7 +192,7 @@ export function buildTreatmentIntelligence(input: {
   blocks: ReadonlyArray<IntelligenceBlockInput>;
 }): TreatmentIntelligence {
   const { sessionsNewestFirst, blocks } = input;
-  const sessionsOldestFirst = [...sessionsNewestFirst].reverse();
+  const sessionsOldestFirst = orderByRecency(sessionsNewestFirst).reverse();
   const sessionDate = new Map(
     sessionsNewestFirst.map((s) => [s.id, s.started_at]),
   );
