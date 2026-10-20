@@ -44,8 +44,7 @@ const TRANSPORT_DEFINITIONS: Record<string, string> = {
 
 /**
  * Callers that legitimately send UNBRANDED, with the recipient that makes it
- * so. Both go to the STUDIO, not to a client, so branding them "<Studio> via
- * Hone" would be Hone impersonating a studio while writing to that same studio.
+ * so. These go to studio staff or invite a teammate to Hone, not to a client.
  */
 // Keyed on the RECIPIENT EXPRESSION, not the enclosing function name. The
 // recipient is what makes a send Hone-facing, and a function name is both
@@ -108,6 +107,11 @@ const PLATFORM_IDENTITY_CLIENT_CALLERS: ReadonlyArray<{
 
 const HONE_FACING_CALLERS: ReadonlyArray<{ file: string; to: string; why: string }> = [
   {
+    file: "app/(app)/settings/team/actions.ts",
+    to: "params.inviteeEmail",
+    why: "invites a STUDIO teammate (owner, practitioner or receptionist) to join Hone, not a client",
+  },
+  {
     file: "lib/email/send-appointment.ts",
     to: "params.practitionerEmail",
     why: "notifies the PRACTITIONER of a new booking; the studio is the reader",
@@ -143,6 +147,10 @@ type CallSite = {
   eventScope: string;
   branded: boolean;
 };
+
+function isHoneFacing(site: Pick<CallSite, "file" | "to">): boolean {
+  return HONE_FACING_CALLERS.some((h) => h.file === site.file && h.to === site.to);
+}
 
 function discoverCallSites(): CallSite[] {
   const files = [...walk(join(ROOT, "lib")), ...walk(join(ROOT, "app"))];
@@ -197,7 +205,7 @@ describe("every caller of the canonical email transport is accounted for", () =>
     const unbranded = sites.filter((s) => !s.branded);
     const undeclared = unbranded.filter(
       (s) =>
-        !HONE_FACING_CALLERS.some((h) => h.file === s.file && h.to === s.to) &&
+        !isHoneFacing(s) &&
         !PLATFORM_IDENTITY_CLIENT_CALLERS.some(
           (h) =>
             h.file === s.file &&
@@ -215,6 +223,16 @@ describe("every caller of the canonical email transport is accounted for", () =>
         "identity. If it writes to the studio or to Hone, add it to " +
         "HONE_FACING_CALLERS with its recipient.",
     ).toEqual([]);
+  });
+
+  it("exempts the team invitation recipient without exempting client mail or another file", () => {
+    const invitations = sites.filter((s) => s.file === "app/(app)/settings/team/actions.ts");
+    expect(invitations).toHaveLength(1);
+    const invitation = invitations[0];
+    expect(invitation.to).toBe("params.inviteeEmail");
+    expect(isHoneFacing(invitation)).toBe(true);
+    expect(isHoneFacing({ ...invitation, to: "params.clientEmail" })).toBe(false);
+    expect(isHoneFacing({ ...invitation, file: "app/other/actions.ts" })).toBe(false);
   });
 
   it("the platform-identity client allowlist has no stale entries", () => {
