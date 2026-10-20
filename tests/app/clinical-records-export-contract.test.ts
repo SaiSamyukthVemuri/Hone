@@ -405,6 +405,10 @@ describe("HON-46 is structurally outside third-party telemetry (Codex P1 4301165
     expect(block).toContain('role="alert"');
     expect(block).toContain('data-testid="export-print-unavailable"');
     expect(block).toContain("Printing is unavailable");
+    // Missing print signing cannot undo the successful preview audit.
+    expect(page).toContain("outcome?.ok && !emptyDay && !printToken");
+    expect(block).toMatch(/This preview was\s+audited, but printing remains blocked/);
+    expect(block).not.toContain("nothing can be printed or");
   });
 
   it("One day is the default scope, prefilled with the studio's today; an empty date offers no print", () => {

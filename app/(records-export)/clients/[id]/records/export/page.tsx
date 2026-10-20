@@ -228,8 +228,8 @@ export default async function ClinicalRecordsExportPage({
         {outcome?.ok && !emptyDay && printToken && <AuditedPrintButton printToken={printToken} />}
         {outcome?.ok && !emptyDay && !printToken && (
           <p role="alert" data-testid="export-print-unavailable" className="text-xs text-red-700 print:hidden">
-            Printing is unavailable: this server cannot sign print requests, so nothing can be printed or
-            audited. The preview above is still correct.
+            Printing is unavailable because this server cannot sign print requests. This preview was
+            audited, but printing remains blocked.
           </p>
         )}
       </header>
