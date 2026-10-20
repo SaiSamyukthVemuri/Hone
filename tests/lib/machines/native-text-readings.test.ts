@@ -6,11 +6,13 @@ import { APILUS_3G_TEXT_FIXTURES } from "../../../lib/machines/apilus-3g-fixture
 import { catalogueIntegrity, MACHINE_CATALOGUE, profileAtVersion } from "../../../lib/machines/catalogue";
 import { catalogueForRuntime } from "../../../lib/machines/synthetic-profile";
 import { nativeFieldGroups } from "../../../lib/machines/charting";
+import { modeFields } from "../../../lib/machines/profile-contract";
 import { assembleReadings, firstGroup, draftKey, groupReadiness } from "../../../lib/machines/setting-groups";
 import { validateReading } from "../../../lib/machines/validate-reading";
 import { planContractPublication } from "../../../lib/machines/contract-publication";
-import { recordSetupGroup, readingsForBlock, type MachineDb, type RecordedReading } from "../../../lib/machines/machine-queries";
+import { recordSetupGroup, recordSetupSubmission, readingsForBlock, type MachineDb, type RecordedReading } from "../../../lib/machines/machine-queries";
 import { changesWithin, chronology } from "../../../lib/machines/capture-chronology";
+import { initialSaveState, keyForSave, afterOutcome, afterDraftChanged, afterRecordAnother, canEditDraft, canSubmit, outcomeFromRecordResult, REUSED_NOTE } from "../../../lib/machines/save-attempt";
 import { SettingDraftFields } from "../../../components/machines/setting-draft-fields";
 import { MachinePriorSetup } from "../../../components/machines/machine-prior-setup";
 import { MachineRecordedSetups } from "../../../components/machines/machine-recorded-setups";
@@ -151,6 +153,53 @@ for (const [index, profile] of APILUS_3G_TEXT_FIXTURES.entries()) {
       modeKey, fieldKey: starting.key, value: { kind: "text", value: index === 0 ? "Glv hf" : "Glv Hf" },
       source: "practitioner-entered",
     }, { catalogue: [profile] })).toMatchObject({ ok: false, code: "malformed_value" });
+  });
+  for (const modeKey of confirmed) it(`${profile.model}/${modeKey}: an unknown response retains exact text and the same retry identity`, async () => {
+    const mode = profile.modes.find(m => m.key === modeKey)!;
+    const choices = mode.fields.find(f => f.key === "starting_current")!.choices!;
+    // Simulated transport/receipt only: this does not prove database idempotency
+    // or mounted reload recovery. Exercise both model-specific choice strings.
+    for (const choice of choices) {
+      const readings = modeFields(mode).map(({ field, stageKey }) => ({
+        stageKey, fieldKey: field.key, nativeUnit: field.unit,
+        decimals: field.decimals, observationSource: field.expectedSource,
+        value: field.valueKind === "text" ? { kind: "text" as const, value: " 003i " }
+          : field.valueKind === "choice" ? { kind: "text" as const, value: choice }
+            : { kind: "value" as const, value: 1 },
+      }));
+      const rpc = vi.fn()
+        .mockResolvedValueOnce({ data: null, error: { message: "Failed to fetch" } })
+        .mockResolvedValueOnce({ data: { submission_id: "original-submission", groups: 1, readings: readings.length, reused: true }, error: null });
+      const db: MachineDb = { rpc, from: () => { throw new Error("No unscoped read permitted"); } };
+      const initial = initialSaveState();
+      const key = keyForSave(initial, () => "same-native-save");
+      const input = { blockId: "block", machineId: "device", modeKey, idempotencyKey: key,
+        groups: [{ groupKey: null, newGroupRef: "g1", channels: [], readings }],
+        sessionId: "session", clientId: "client" };
+      const first = await recordSetupSubmission(db, input);
+      expect(first).toMatchObject({ ok: false, unresolved: true });
+      const frozen = afterOutcome(initial, key, outcomeFromRecordResult({ ok: false, code: "unknown" }, 1));
+      expect(canEditDraft(frozen, false)).toBe(false);
+      expect(canSubmit(frozen)).toBe(true);
+      expect(afterDraftChanged(frozen)).toEqual(frozen);
+      const mint = vi.fn(() => "deliberate-new-save");
+      input.idempotencyKey = keyForSave(frozen, mint);
+      expect(mint).not.toHaveBeenCalled();
+      const beforeRetry = structuredClone(rpc.mock.calls[0][1]);
+      const retry = await recordSetupSubmission(db, input);
+      expect(rpc).toHaveBeenCalledTimes(2);
+      expect(rpc.mock.calls[1][1]).toEqual(beforeRetry);
+      expect(beforeRetry.p_groups[0].readings).toContainEqual(expect.objectContaining({ field_key: "program_identifier", value_text: " 003i ", native_unit: "none", decimals: 0 }));
+      expect(beforeRetry.p_groups[0].readings).toContainEqual(expect.objectContaining({ field_key: "starting_current", value_text: choice, native_unit: "none", decimals: 0 }));
+      expect(retry.ok).toBe(true);
+      if (!retry.ok) throw new Error(retry.error);
+      expect(retry.value.submissionId).toBe("original-submission");
+      const settled = afterOutcome(frozen, key, outcomeFromRecordResult({ ok: true,
+        captures: retry.value.groups, written: retry.value.readings, reused: retry.value.reused }, 1));
+      expect(settled).toMatchObject({ recorded: true, unresolved: false, key: null, captures: 1, message: REUSED_NOTE });
+      // An intentional later capture may retain identical values, with a new key.
+      expect(keyForSave(afterRecordAnother(settled), mint)).toBe("deliberate-new-save");
+    }
   });
   it(`${profile.model}: only its confirmed modes publish starting-current choices`, () => {
     const published = planContractPublication([profile]).publish;
