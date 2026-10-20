@@ -9,6 +9,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 const h = vi.hoisted(() => ({
   rows: [] as Record<string, unknown>[],
   result: "updated",
+  resolvedReadError: false,
   rpc: vi.fn(),
   email: vi.fn(),
   action: vi.fn(),
@@ -36,7 +37,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
             order: () => ({
               limit: async () => ({
                 data: h.rows.filter((row) => (row.resolved_at !== null) === resolved),
-                error: null,
+                error: resolved && h.resolvedReadError ? { message: "synthetic history unavailable" } : null,
               }),
             }),
           });
@@ -88,6 +89,7 @@ function callback(status: "undelivered" | "failed", signingToken = TOKEN, errorC
 beforeEach(() => {
   h.rows = [];
   h.result = "updated";
+  h.resolvedReadError = false;
   h.rpc.mockReset().mockImplementation(async (fn: string) => {
     if (fn !== "record_sms_delivery_status") throw new Error(`Unexpected RPC: ${fn}`);
     return {
@@ -171,6 +173,20 @@ describe("synthetic SMS delivery failures reach the operator's real page", () =>
     const html = renderToStaticMarkup(await OpsAlertsPage());
     expect(html).toContain("No unresolved alerts");
     expect(html).not.toContain("sms_delivery_failed");
+    expect(h.email).not.toHaveBeenCalled();
+    expect(h.action).not.toHaveBeenCalled();
+    expect(h.fetch).not.toHaveBeenCalled();
+  });
+
+  it("unavailable resolved history is not presented as empty while unresolved delivery warnings remain visible", async () => {
+    expect((await callback("failed")).status).toBe(200);
+    h.resolvedReadError = true;
+    const html = renderToStaticMarkup(await OpsAlertsPage());
+    expect(html).toContain("sms_delivery_failed");
+    expect(html).toContain("Recently resolved alerts are unavailable. Try again.");
+    expect(html).not.toContain("Nothing resolved yet.");
+    expect(html).not.toContain("last 0");
+    expect(html).not.toContain("synthetic history unavailable");
     expect(h.email).not.toHaveBeenCalled();
     expect(h.action).not.toHaveBeenCalled();
     expect(h.fetch).not.toHaveBeenCalled();

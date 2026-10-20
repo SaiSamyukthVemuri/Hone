@@ -202,10 +202,14 @@ export default async function OpsAlertsPage() {
         <h2 className="text-lg font-medium">
           Recently resolved
           <span className="ml-2 text-sm font-normal text-neutral-500">
-            last {resolved.length}
+            {resolvedRes.error ? "unavailable" : `last ${resolved.length}`}
           </span>
         </h2>
-        {resolved.length === 0 ? (
+        {resolvedRes.error ? (
+          <p role="status" className="text-sm text-neutral-500">
+            Recently resolved alerts are unavailable. Try again.
+          </p>
+        ) : resolved.length === 0 ? (
           <p className="text-sm text-neutral-500">Nothing resolved yet.</p>
         ) : (
           <ul className="flex flex-col gap-2">
