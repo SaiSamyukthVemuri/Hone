@@ -432,7 +432,7 @@ describe("0171 — refusal codes still map before any side effect", () => {
     scenario.rpcResult = { result: code };
     const r = await rescheduleAppointmentViaTokenAction(form());
     expect(rpcCalls).toHaveLength(1);
-    expect(rpcCalls[0].fn).toBe("reschedule_appointment_v2");
+    expect(rpcCalls[0].fn).toBe("reschedule_appointment_v3");
     expect(emailAttempts).toHaveLength(0);
     expect(r.ok).toBe(false);
     if (!r.ok && exactCopy) expect(r.error).toBe(exactCopy);
