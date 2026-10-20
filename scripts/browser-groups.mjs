@@ -212,10 +212,8 @@ export const BROWSER_GROUPS = {
       // end to end — pick A, pick B, reschedule one, then read the owner's
       // calendar. Registered HERE, with the picker, because its dominant
       // surface is /book/[slug] and that is the diff most likely to break it.
-      // It also asserts attribution on /calendar/[id], which the `calendar`
-      // group owns; a spec may appear in only one group, so a calendar-only
-      // diff selects `calendar` and not this journey. That is the deliberate
-      // trade, not an oversight.
+      // It also asserts attribution on /calendar/[id]. specsForGroups includes
+      // this same journey for calendar selections, without registering it twice.
       "multi-practitioner-acceptance.spec.ts",
     ],
   },
@@ -479,6 +477,9 @@ export function specsForGroups(groups) {
   for (const g of groups) {
     for (const s of BROWSER_GROUPS[g]?.specs ?? []) out.add(s);
   }
+  // The booking journey also proves rendered calendar attribution. Keep one
+  // manifest owner while covering calendar-only changes (review4305391682).
+  if (groups.includes("calendar")) out.add("multi-practitioner-acceptance.spec.ts");
   return [...out].sort();
 }
 

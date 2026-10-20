@@ -139,7 +139,11 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // because it drives that journey. RECORDED AS A DECISION per the note above,
     // with the cost explicitly ZERO: the spec skips itself unless
     // HONE_PERF_TIMING=1, so the lane gains a selection entry and no runtime.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(39);
+    // Now40: calendar-only diffs also need the existing multi-practitioner
+    // journey's grid/detail attribution proof (review4305391682). Its five
+    // serial cases took about29s in CI39185896904; this adds that journey,
+    // not a second registration or duplicate run, to calendar selections.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(40);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
@@ -368,5 +372,20 @@ describe("ci:plan output contract", () => {
     const p = plan("package.json");
     expect(p.full_matrix_required).toBe(true);
     expect(p.browser.groups.length).toBeGreaterThan(0);
+  });
+});
+
+
+describe("multi-practitioner calendar attribution coverage", () => {
+  it("selects the acceptance journey for a calendar-only detail diff", () => {
+    const selection = sel("app/(app)/calendar/[id]/page.tsx");
+    expect(selection.extended).toBe(false);
+    expect(selection.groups).toContain("calendar");
+    expect(specsForGroups(selection.groups)).toContain("multi-practitioner-acceptance.spec.ts");
+  });
+
+  it("selects the shared journey exactly once for booking plus calendar", () => {
+    const specs = specsForGroups(["booking", "calendar", "smoke"]) as string[];
+    expect(specs.filter((s) => s === "multi-practitioner-acceptance.spec.ts")).toHaveLength(1);
   });
 });
