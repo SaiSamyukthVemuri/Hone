@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildContentSecurityPolicy } from "@/lib/security/headers";
 
@@ -54,8 +54,14 @@ describe("Sentry init configs (client/server/edge)", () => {
 });
 
 describe("next.config.ts Sentry build options", () => {
-  it("routes events through the same-origin tunnel", () => {
-    expect(NEXT_CONFIG).toMatch(/tunnelRoute:\s*"\/monitoring"/);
+  it("routes events through the same-origin tunnel: a header-allowlisting route, not a bare rewrite (#828 G-07/G-26)", () => {
+    // tunnelRoute is a bare rewrite that forwards the browser's Referer,
+    // Cookie and IP to Sentry; app/monitoring/route.ts forwards only the
+    // envelope body for Hone's own DSN (tests/lib/observability/egress-proxy.test.ts).
+    expect(NEXT_CONFIG).not.toMatch(/^\s*tunnelRoute\s*:/m);
+    const client = readFileSync(join(process.cwd(), "instrumentation-client.ts"), "utf8");
+    expect(client).toMatch(/tunnel:\s*"\/monitoring"/);
+    expect(existsSync(join(process.cwd(), "app/monitoring/route.ts"))).toBe(true);
   });
   it("disables build telemetry and deletes source maps after upload", () => {
     expect(NEXT_CONFIG).toMatch(/telemetry:\s*false/);
