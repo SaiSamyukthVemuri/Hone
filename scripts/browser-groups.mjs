@@ -208,6 +208,13 @@ export const BROWSER_GROUPS = {
       // /book/[slug], so a diff to app/book/** selects the group that can
       // break it.
       "public-practitioner-picker.spec.ts",
+      // #824 ACCEPTANCE: the operator's multi-practitioner journey walked once
+      // end to end — pick A, pick B, reschedule one, then read the owner's
+      // calendar. Registered HERE, with the picker, because its dominant
+      // surface is /book/[slug] and that is the diff most likely to break it.
+      // It also asserts attribution on /calendar/[id]. specsForGroups includes
+      // this same journey for calendar selections, without registering it twice.
+      "multi-practitioner-acceptance.spec.ts",
     ],
   },
   calendar: {
@@ -470,6 +477,9 @@ export function specsForGroups(groups) {
   for (const g of groups) {
     for (const s of BROWSER_GROUPS[g]?.specs ?? []) out.add(s);
   }
+  // The booking journey also proves rendered calendar attribution. Keep one
+  // manifest owner while covering calendar-only changes (review4305391682).
+  if (groups.includes("calendar")) out.add("multi-practitioner-acceptance.spec.ts");
   return [...out].sort();
 }
 
