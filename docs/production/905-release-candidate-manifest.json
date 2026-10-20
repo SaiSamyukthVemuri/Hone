@@ -498,8 +498,10 @@
         },
         {
           "path": "docs/production/migration-ledger.md",
-          "sha256": "5c562ded343b2150ac1b8413e64077f2c390d6116f5ef8f2c9c132ce5e0c4629",
-          "blob": "a56ac05065d9336d2d68851f24b3230d96c079cc"
+          "sha256": "44de4e0305fca6223054162987358223879bb4624232e726ddade5216a09084a",
+          "blob": "03f62631fbf26c5f47ca35a296b733475f7337d4",
+          "source_sha256": "5c562ded343b2150ac1b8413e64077f2c390d6116f5ef8f2c9c132ce5e0c4629",
+          "source_blob": "a56ac05065d9336d2d68851f24b3230d96c079cc"
         },
         {
           "path": "supabase/migrations/0231_client_identification_portrait.sql",
