@@ -321,23 +321,23 @@ prospects at every measured instant.
 
 ## 15. Capabilities added since the 2026-08-23 reconciliation
 
-**197** production merges landed between `b9e0003f` and the current production branch head (2026-10-20 sync, `4f08de03`; it was 196 through `338115e4`, 195 through `b09b870f`, 194 through `ea76407e`, 192 through `6dc70b7e`, 190 through `e125ea4e`, 186 through `291ba2ee`, 176 through `0726dcff`, 171 through `440829c2`; it was 169 through `37b0ed82`; it was 164 at the 2026-10-18 sync through `f9cd9013`; it was 163 at the 2026-10-18 sync through `aaf3042b`; it was 160 at the 2026-10-17 sync through `6acea261`; it was 157 at the 2026-10-17 sync through `62ff27b2`; it was 154 at the 2026-10-17 sync through `b08845ce`; it was 152 at the 2026-10-16 sync through `0ae33bd3`; it was 150 at the 2026-10-16 sync through `1ae096e2`; it was 145 at the 2026-10-14 sync through `ce133c18`; it was 140 at the 2026-10-13 sync through `6f7281bb`, 138 at the 2026-10-12 sync through `d5efa20a`, and eighty-one at the 2026-09-21 sync through `410e5039`). That is
+**198** production merges landed between `b9e0003f` and the current production branch head (2026-10-20 sync, `af2f7423`; it was 197 through `4f08de03`, 196 through `338115e4`, 195 through `b09b870f`, 194 through `ea76407e`, 192 through `6dc70b7e`, 190 through `e125ea4e`, 186 through `291ba2ee`, 176 through `0726dcff`, 171 through `440829c2`; it was 169 through `37b0ed82`; it was 164 at the 2026-10-18 sync through `f9cd9013`; it was 163 at the 2026-10-18 sync through `aaf3042b`; it was 160 at the 2026-10-17 sync through `6acea261`; it was 157 at the 2026-10-17 sync through `62ff27b2`; it was 154 at the 2026-10-17 sync through `b08845ce`; it was 152 at the 2026-10-16 sync through `0ae33bd3`; it was 150 at the 2026-10-16 sync through `1ae096e2`; it was 145 at the 2026-10-14 sync through `ce133c18`; it was 140 at the 2026-10-13 sync through `6f7281bb`, 138 at the 2026-10-12 sync through `d5efa20a`, and eighty-one at the 2026-09-21 sync through `410e5039`). That is
 the current ancestry count and nothing more — capability was **not** re-derived over it.
 
 Over the **twenty-nine** merges through `bf6f09c4`, derived on **2026-08-30**, **Ten**
-carry a capability that belongs in this register. The 168 later production merges are recorded in
+carry a capability that belongs in this register. The 169 later production merges are recorded in
 [release-changelog.md](./release-changelog.md) and are **not** enumerated for capability here.
 
 **THOSE TWO NUMBERS ARE DERIVED OVER DIFFERENT SPANS, AND SAYING SO IS THE POINT.** The
-**197** is the merge ancestry through the *current* branch head, `4f08de03`. The **ten**
+**198** is the merge ancestry through the *current* branch head, `af2f7423`. The **ten**
 is **not** derived over it: it is the **2026-08-30** derivation over the twenty-nine merges
 through `bf6f09c4`, and it has not been re-run since.
 
 **This section is scoped to that dated derivation and must not be read as a current capability
-count.** The 168 merges between `bf6f09c4` and `4f08de03` are recorded row by row in
+count.** The 169 merges between `bf6f09c4` and `af2f7423` are recorded row by row in
 [release-changelog.md](./release-changelog.md), and several of them plainly ship capability —
 `#702`'s automatic card receipts and `#745`'s next-setup-step checklist among them. This register
-has **not** re-enumerated them. Re-running the capability derivation across all 197 merges
+has **not** re-enumerated them. Re-running the capability derivation across all 198 merges
 is its own lane with its own evidence; raising the number here without doing that work would
 manufacture a figure nobody derived, which is the precise failure this document exists to
 prevent.
