@@ -325,19 +325,19 @@ prospects at every measured instant.
 the current ancestry count and nothing more — capability was **not** re-derived over it.
 
 Over the **twenty-nine** merges through `bf6f09c4`, derived on **2026-08-30**, **Ten**
-carry a capability that belongs in this register. The 166 later production merges are recorded in
+carry a capability that belongs in this register. The 168 later production merges are recorded in
 [release-changelog.md](./release-changelog.md) and are **not** enumerated for capability here.
 
 **THOSE TWO NUMBERS ARE DERIVED OVER DIFFERENT SPANS, AND SAYING SO IS THE POINT.** The
-**195** is the merge ancestry through the *current* branch head, `b09b870f`. The **ten**
+**197** is the merge ancestry through the *current* branch head, `4f08de03`. The **ten**
 is **not** derived over it: it is the **2026-08-30** derivation over the twenty-nine merges
 through `bf6f09c4`, and it has not been re-run since.
 
 **This section is scoped to that dated derivation and must not be read as a current capability
-count.** The 166 merges between `bf6f09c4` and `b09b870f` are recorded row by row in
+count.** The 168 merges between `bf6f09c4` and `4f08de03` are recorded row by row in
 [release-changelog.md](./release-changelog.md), and several of them plainly ship capability —
 `#702`'s automatic card receipts and `#745`'s next-setup-step checklist among them. This register
-has **not** re-enumerated them. Re-running the capability derivation across all 195 merges
+has **not** re-enumerated them. Re-running the capability derivation across all 197 merges
 is its own lane with its own evidence; raising the number here without doing that work would
 manufacture a figure nobody derived, which is the precise failure this document exists to
 prevent.
