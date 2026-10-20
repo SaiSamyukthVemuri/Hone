@@ -486,12 +486,15 @@ describe("retry exhaustion remains visible without changing send authority", () 
   });
 
   it.each([
-    ["24h", send24hReminderSmsToClient],
-    ["2h", send2hReminderSmsToClient],
-  ] as const)("an unconfirmed result record preserves a truthful %s accounting warning", async (_kind, send) => {
+    ["24h", send24hReminderSmsToClient, false],
+    ["2h", send2hReminderSmsToClient, false],
+    ["24h with unreadable diagnostic", send24hReminderSmsToClient, true],
+    ["2h with unreadable diagnostic", send2hReminderSmsToClient, true],
+  ] as const)("an unconfirmed result record preserves a truthful %s accounting warning", async (_kind, send, readError) => {
     h.attemptNumber = 3;
     h.laterClaim = START; // Could be our surviving claim OR a later claim after a lost response.
     h.recordError = true;
+    h.attemptReadError = readError;
     fetchMock.mockImplementationOnce(() =>
       Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } })),
     );
