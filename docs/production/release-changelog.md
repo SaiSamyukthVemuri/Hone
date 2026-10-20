@@ -35,8 +35,9 @@ This section previously carried a "(through 2026-07-27)" heading while containin
 **#629**, **#630**, and — added by the 2026-08-26 reconciliation and kept current through each
 production refresh since — **every** first-parent merge in `b9e0003f..c82d97e1`, all
 **177** PR merges among them (**#632–#944**, plus **#631**, whose number sits below that floor but
-whose merge does not — see below). The four merges after the prior `440829c2` snapshot are #940,
-#903, #897 and #895; their dated receipts are listed at the end of this changelog. ⚠️ **EXTENDED
+whose merge does not — see below). The five merges after the prior `440829c2` snapshot are #940,
+#903, #897, #895 and #942; their dated receipts are listed at the end of this changelog. #944
+extends the range by one merge. ⚠️ **EXTENDED
 2026-10-12 by CANON-REFRESH-2026-10-12:**
 the range previously ended at `410e5039` (81 merges, the 2026-09-21 extension described next);
 **56** rows were backfilled from the first-parent graph and each merge's own diff, and the
