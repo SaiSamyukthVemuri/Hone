@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { clearSelectedStudioId } from "@/lib/supabase/selected-studio";
@@ -53,11 +54,18 @@ export async function acceptInvitationAction(
   if (res.status === "ambiguous") redirect("/no-access?reason=invite-ambiguous");
   if (res.status === "no_invitation") redirect("/no-access");
 
-  // A front-desk acceptance lands on the front desk, whatever other
-  // memberships the person holds (STUDIO-READY-02b, Codex P2 4243953164 on
-  // #850). The middleware only reroutes users with NO practitioner membership,
-  // so a practitioner elsewhere would otherwise stay in the practitioner app.
+  // Complete acceptance only when the governed command confirms success.
+  // Missing/unknown responses cannot route on an unconfirmed role.
+  if (res.status !== "linked" && res.status !== "already_linked") {
+    return { error: "Something went wrong. Please try again." };
+  }
+
+  // Team's accepted 6113/2ffd receptionist contract owns this destination.
   if (res.role === "receptionist") {
+    // Delete-only equivalent of clearAdminReturn on the composed branch.
+    // This parent has no lead-return helper: never read or fulfil the target.
+    const jar = await cookies();
+    if (jar.has("hone_admin_return")) jar.delete("hone_admin_return");
     if (res.choose_studio === true) {
       await clearSelectedStudioId();
       redirect("/front-desk/select");

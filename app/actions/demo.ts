@@ -1,14 +1,13 @@
 "use server";
 
 import { headers } from "next/headers";
-import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
   limitDemoRequestSubmit,
   RATE_LIMIT_MESSAGE,
 } from "@/lib/rate-limit/public";
 import { CONTACT_EMAIL } from "@/lib/marketing/content";
-import { deliverPlatformLeadAlert } from "@/lib/platform-leads/alert-delivery";
+import { schedulePlatformLeadAlert } from "@/lib/platform-leads/alert-delivery";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -102,6 +101,6 @@ export async function submitDemoRequest(
   // happens to it is recorded on the alert: it cannot make this request look
   // unsaved, and nothing is ever sent to the person who asked.
   const alertId = saved.alert_id;
-  after(() => deliverPlatformLeadAlert(alertId));
+  schedulePlatformLeadAlert(alertId);
   return { ok: true };
 }

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
+import { countVersion } from "./helpers/migration-state";
 
 // ===========================================================================
 // Migration 0215 — DELIVERY-VISIBILITY-01 incidents and recovery heartbeat.
@@ -37,14 +37,6 @@ const TRIGGER_FUNCTIONS = ["email_outbound_messages_open_incident()", "sms_outbo
 const TABLES = ["public.delivery_incidents", "public.delivery_sweep_heartbeat"] as const;
 
 describe("0215 sits correctly in the migration sequence", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    // Only the CURRENT maximum migration's own test may assert this — see
-    // CLAUDE.md §2. It reached this file from 0212's test.
-    expect(isRepoMax(VERSION)).toBe(false); // INTEGRATION handoff — see note below
-    const above = versionsAbove(VERSION);
-    expect(above.length, "nothing sits above 0215").toBeGreaterThan(0);
-    expect(above.every((v) => Number(v) > Number(VERSION))).toBe(true);
-  });
 
   it("is allocated exactly once", () => {
     expect(countVersion(VERSION)).toBe(1);
@@ -157,5 +149,48 @@ describe("0215 privacy", () => {
     const table = CODE.slice(start, CODE.indexOf("\n);", start));
     expect(table).not.toMatch(/\b(client_id|client_name|phone|email_address|recipient|subject|body|payload|message_text|note)\b/i);
     expect(table).toContain("last_reason ~ '^[a-z][a-z0-9_]{1,63}$'");
+  });
+});
+
+describe("0215 grants EXACTLY the intended roles, and nothing else", () => {
+  // Every GRANT statement in the file -- any privilege, any object, every role
+  // of a comma list -- as "privilege | object -> role". A stray grant beside
+  // the intended one (to anon, a second role, \`grant all\`, a schema-wide
+  // grant) changes this list, so the assertion is exact, not "contains".
+  const grants = (code: string): string[] => {
+    // Both comment forms are stripped first, so a commented-out grant neither
+    // counts nor hides one. Then statement by statement (split on ";"), so a
+    // grant on the same line as another statement is still seen.
+    const bare = code.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ");
+    const out: string[] = [];
+    for (const stmt of bare.split(";")) {
+      const m = /^\s*grant\s+([\s\S]+?)\s+on\s+([\s\S]+?)\s+to\s+([\s\S]+?)\s*$/i.exec(stmt);
+      if (!m) continue;
+      const obj = m[2]!.replace(/\s+/g, " ").trim().replace(/^function /i, "");
+      for (const role of m[3]!.split(",")) out.push(`${m[1]!.replace(/\s+/g, " ").trim().toLowerCase()} | ${obj} -> ${role.trim().toLowerCase()}`);
+    }
+    return out.sort();
+  };
+
+  it("matches the intended grant list exactly", () => {
+    expect(grants(SQL)).toEqual([
+      "execute | public.email_delivery_health() -> service_role",
+      "execute | public.owner_delivery_incidents(uuid) -> authenticated",
+      "execute | public.record_email_sweep_run(integer, integer, integer) -> service_role",
+      "execute | public.resolve_delivery_incident(uuid, text) -> service_role",
+      "execute | public.support_delivery_incidents(boolean) -> service_role",
+      "execute | public.support_email_receipt_outcomes() -> service_role",
+    ]);
+  });
+});
+
+
+describe("aged claims remain unknown, separate from accepted mail (4310259234)", () => {
+  it("counts only claimed attempts older than24h in the existing read without adding a writer", () => {
+    const health = CODE.match(/create or replace function public\.email_delivery_health\(\)[\s\S]*?as \$\$([\s\S]*?)\$\$;/)![1]!;
+    expect(CODE).toMatch(/stale_claimed\s+integer/);
+    expect(health).toMatch(/where m\.status = 'claimed'\s+and m\.claimed_at < now\(\) - interval '24 hours'/);
+    expect(health).toMatch(/where m\.status in \('accepted', 'sent'\)/);
+    expect(health).not.toMatch(/\b(insert|update|delete|perform)\b/i);
   });
 });

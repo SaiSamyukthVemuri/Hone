@@ -1,13 +1,12 @@
 "use server";
 
 import { headers } from "next/headers";
-import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
   limitWaitlistSubmit,
   RATE_LIMIT_MESSAGE,
 } from "@/lib/rate-limit/public";
-import { deliverPlatformLeadAlert } from "@/lib/platform-leads/alert-delivery";
+import { schedulePlatformLeadAlert } from "@/lib/platform-leads/alert-delivery";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -60,6 +59,6 @@ export async function submitWaitlistEntry(
   // SAVED. The operator email goes out after this response; its outcome is
   // recorded on the alert and never reaches the person who signed up.
   const alertId = saved.alert_id;
-  after(() => deliverPlatformLeadAlert(alertId));
+  schedulePlatformLeadAlert(alertId);
   return { ok: true };
 }

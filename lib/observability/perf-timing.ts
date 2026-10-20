@@ -138,6 +138,8 @@ export const PERF_SPAN_IDS = [
   "session-chart.previous-note",
   "session-chart.last-treatment",
   "session-chart.copy-descriptor",
+  // FETT photos: this visit's photos, a read inside the chart's wave.
+  "session-chart.photos",
   "session-chart.domain",
 ] as const;
 

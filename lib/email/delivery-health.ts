@@ -6,7 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 //
 // email_delivery_health() reads one row: the receipt backlog, receipts that
 // were exhausted, quarantined or could not be attributed, accepted attempts the
-// provider never reported on, open incidents and the last sweep. This module
+// provider never reported on, aged claims with unknown acceptance, open incidents and the last sweep. This module
 // turns it into FINDINGS, each with a purpose-specific threshold. A finding is
 // raised as an ops alert at most once while an unresolved alert for the same
 // event is open (the PR #283 dedupe rule), so a long outage is one alert, not
@@ -22,6 +22,7 @@ export type EmailDeliveryHealth = {
   quarantined24h: number;
   unmatched24h: number;
   unreportedAccepted: number;
+  staleClaimed: number;
   openIncidents: number;
   lastSweepAt: string | null;
   lastSweepFailed: number | null;
@@ -33,14 +34,24 @@ export type HealthFinding = {
     | "email_delivery_receipts_exhausted"
     | "email_delivery_receipts_quarantined"
     | "email_delivery_unreported"
-    | "email_delivery_sweep_failing";
+    | "email_delivery_claimed_stale"
+    | "email_delivery_sweep_failing"
+    | "email_delivery_sweep_stale";
   severity: "warning" | "critical";
   message: string;
   details: Record<string, number | string | null>;
 };
 
+// Held activation plan: /api/cron/email-delivery-sweep at `30 10 * * *`
+// (docs/runbooks/delivery-monitoring-activation.md §D5 in the integration
+// candidate). Daily cadence × 2 allows one missed run plus scheduling jitter.
+// This is an expected schedule, NOT registration or activation of that cron.
+export const EMAIL_SWEEP_EXPECTED_INTERVAL_SECONDS = 24 * 60 * 60;
+export const EMAIL_SWEEP_INTERVAL_MARGIN = 2;
+
 /** Thresholds, each named for the failure it catches. */
 export const HEALTH_THRESHOLDS = {
+  staleSweepSeconds: EMAIL_SWEEP_EXPECTED_INTERVAL_SECONDS * EMAIL_SWEEP_INTERVAL_MARGIN,
   /** A receipt the sweep should have finished within a few runs. */
   stalePendingSeconds: 15 * 60,
   /** A pending receipt this old means processing has stopped altogether. */
@@ -56,6 +67,7 @@ function int(value: unknown): number {
 export function healthFindings(
   h: EmailDeliveryHealth,
   limits: typeof HEALTH_THRESHOLDS = HEALTH_THRESHOLDS,
+  nowMs: number = Date.now(),
 ): HealthFinding[] {
   const out: HealthFinding[] = [];
   if (h.oldestPendingSeconds !== null && h.oldestPendingSeconds > limits.stalePendingSeconds) {
@@ -84,6 +96,14 @@ export function healthFindings(
       details: { quarantined_24h: h.quarantined24h, exhausted_24h: h.exhausted24h },
     });
   }
+  if (h.staleClaimed > 0) {
+    out.push({
+      event: "email_delivery_claimed_stale",
+      severity: "warning",
+      message: `${h.staleClaimed} email attempt(s) remain claimed after 24 hours. Provider acceptance and delivery are unknown; a claim alone does not prove a send. Review before any resend.`,
+      details: { stale_claimed: h.staleClaimed },
+    });
+  }
   if (h.unreportedAccepted > 0) {
     out.push({
       event: "email_delivery_unreported",
@@ -98,6 +118,23 @@ export function healthFindings(
       severity: "warning",
       message: `The last email delivery recovery sweep failed to process ${h.lastSweepFailed} event(s).`,
       details: { last_sweep_failed: h.lastSweepFailed, last_sweep_at: h.lastSweepAt },
+    });
+  }
+  const sweepMs = h.lastSweepAt === null ? NaN : Date.parse(h.lastSweepAt);
+  const sweepAgeSeconds = Number.isFinite(sweepMs) ? (nowMs - sweepMs) / 1000 : null;
+  if (sweepAgeSeconds === null || sweepAgeSeconds > limits.staleSweepSeconds) {
+    out.push({
+      event: "email_delivery_sweep_stale",
+      severity: "warning",
+      message: sweepAgeSeconds === null
+        ? "Email delivery recovery has no usable sweep heartbeat; its daily run is unverified."
+        : `Email delivery recovery has not reported a sweep within ${limits.staleSweepSeconds / 3600} hours (daily schedule × ${EMAIL_SWEEP_INTERVAL_MARGIN} margin).`,
+      details: {
+        last_sweep_at: h.lastSweepAt,
+        sweep_age_seconds: sweepAgeSeconds,
+        expected_interval_seconds: EMAIL_SWEEP_EXPECTED_INTERVAL_SECONDS,
+        stale_after_seconds: limits.staleSweepSeconds,
+      },
     });
   }
   return out;
@@ -121,6 +158,11 @@ export async function readEmailDeliveryHealth(
       logHealth("email_delivery_health_failed", { shape: "empty" });
       return null;
     }
+    // A pre-amendment/malformed RPC row cannot prove claims are healthy.
+    if (typeof row.stale_claimed !== "number" || !Number.isSafeInteger(row.stale_claimed) || row.stale_claimed < 0) {
+      logHealth("email_delivery_health_failed", { shape: "stale_claimed_unknown" });
+      return null;
+    }
     return {
       pendingReceipts: int(row.pending_receipts),
       oldestPendingSeconds: row.oldest_pending_seconds == null ? null : int(row.oldest_pending_seconds),
@@ -128,6 +170,7 @@ export async function readEmailDeliveryHealth(
       quarantined24h: int(row.quarantined_24h),
       unmatched24h: int(row.unmatched_24h),
       unreportedAccepted: int(row.unreported_accepted),
+      staleClaimed: int(row.stale_claimed),
       openIncidents: int(row.open_incidents),
       lastSweepAt: typeof row.last_sweep_at === "string" ? row.last_sweep_at : null,
       lastSweepFailed: row.last_sweep_failed == null ? null : int(row.last_sweep_failed),

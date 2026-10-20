@@ -9,6 +9,8 @@ import path from "node:path";
 
 const ctx = vi.hoisted(() => ({ result: {} as Record<string, unknown>, cleared: 0 }));
 
+vi.mock("next/headers", () => ({ cookies: async () => ({ has: () => false, delete: () => undefined }) }));
+
 vi.mock("next/navigation", () => ({
   redirect: (to: string) => {
     throw new Error(`REDIRECT:${to}`);

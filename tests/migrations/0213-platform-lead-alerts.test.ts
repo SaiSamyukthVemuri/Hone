@@ -29,7 +29,10 @@ const MIGRATIONS = path.join(process.cwd(), "supabase/migrations");
 const read = (f: string) => readFileSync(path.join(MIGRATIONS, f), "utf8");
 const SQL = read(FILE);
 // LINE comments first: a comment must never satisfy a code assertion.
-const stripComments = (sql: string) => sql.replace(/^\s*--.*$/gm, " ").replace(/\s+--.*$/gm, " ");
+// Block comments first, then line comments: a commented-out statement of
+// either kind is neither counted nor able to hide a real one.
+const stripComments = (sql: string) =>
+  sql.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*--.*$/gm, " ").replace(/\s+--.*$/gm, " ");
 const CODE = stripComments(SQL);
 // Everything OUTSIDE dollar-quoted bodies: the migration's own top-level statements.
 const TOP_LEVEL = CODE.replace(/\$\$[\s\S]*?\$\$/g, " ");
@@ -39,10 +42,11 @@ const COMMANDS: ReadonlyArray<readonly [string, string]> = [
   ["record_platform_demo_request", "text, text, text, text, text, text, text, text"],
   ["record_platform_early_access_signup", "text"],
   ["claim_platform_lead_alert", "uuid, integer"],
+  ["freeze_platform_lead_alert_message", "uuid, uuid, jsonb, text"],
   ["settle_platform_lead_alert", "uuid, uuid, text, text, text, text"],
   ["expire_platform_lead_alerts", ""],
   ["record_platform_lead_alerts_unconfigured", "text, uuid"],
-  ["requeue_platform_lead_alert", "uuid"],
+  ["requeue_platform_lead_alert", "uuid, boolean"],
 ];
 const GUARD = "platform_lead_alerts_guard";
 
@@ -95,7 +99,7 @@ describe("0213 leaves every applied migration it relies on untouched", () => {
     expect(TOP_LEVEL.trim()).toMatch(/commit;$/);
   });
 
-  it("creates one table and defines exactly eight functions, all new", () => {
+  it("creates one table and defines exactly nine functions, all new", () => {
     expect([...TOP_LEVEL.matchAll(/create table (public\.\w+)/g)].map((m) => m[1])).toEqual([
       "public.platform_lead_alerts",
     ]);
@@ -205,7 +209,8 @@ describe("the commands", () => {
   it("no command takes or returns an address to send to", () => {
     for (const [fn] of COMMANDS) {
       const signature = definition(fn).split(/\b(language|as \$\$)/)[0];
-      expect(signature, fn).not.toMatch(/recipient|p_to\b|destination/);
+      // A recipient DIGEST (the frozen payload's check, Codex P2 4244387544) is not an address.
+      expect(signature, fn).not.toMatch(/recipient(?!_sha256\b)|p_to\b|destination/);
     }
   });
 });
@@ -235,5 +240,44 @@ describe("privileges and blast radius", () => {
       expect(TOP_LEVEL).toContain(`revoke all privileges on function public.${GUARD}() from ${role};`);
     }
     expect(TOP_LEVEL).not.toMatch(new RegExp(`grant [^;]*${GUARD}`));
+  });
+});
+
+// EXACT PRIVILEGES (cross-lane finding from History 0223): the grantee lists
+// above match one grantee per statement, so a stray multi-grantee grant
+// (`to anon, authenticated`) or `grant all` slipped past them. This compares
+// EVERY top-level grant statement, of any shape or case, to the exact list.
+describe("exactly these grants, and no other", () => {
+  it("every top-level GRANT statement, normalised, is exactly the intended list; no default-privilege change", () => {
+    const grants = TOP_LEVEL.split(";")
+      .map((st) => st.replace(/\s+/g, " ").trim())
+      .filter((st) => /^grant\b/i.test(st));
+    expect(grants).toEqual([
+      "grant select on table public.platform_lead_alerts to service_role",
+      "grant execute on function public.record_platform_demo_request(text, text, text, text, text, text, text, text) to service_role",
+      "grant execute on function public.record_platform_early_access_signup(text) to service_role",
+      "grant execute on function public.claim_platform_lead_alert(uuid, integer) to service_role",
+      "grant execute on function public.freeze_platform_lead_alert_message(uuid, uuid, jsonb, text) to service_role",
+      "grant execute on function public.settle_platform_lead_alert(uuid, uuid, text, text, text, text) to service_role",
+      "grant execute on function public.expire_platform_lead_alerts() to service_role",
+      "grant execute on function public.record_platform_lead_alerts_unconfigured(text, uuid) to service_role",
+      "grant execute on function public.requeue_platform_lead_alert(uuid, boolean) to service_role",
+    ]);
+    expect(TOP_LEVEL).not.toMatch(/alter\s+default\s+privileges/i);
+  });
+});
+
+// Codex P2 4276616247: the list of failures retried WITHOUT confirmation is
+// exactly lib/platform-leads/alert-status.ts LEAD_ALERT_KNOWN_UNSENT_CODES.
+describe("the operator's retry and possible duplicates", () => {
+  it("the SQL known-unsent list matches the console's, and anything else needs confirmation", async () => {
+    const { LEAD_ALERT_KNOWN_UNSENT_CODES } = await import("@/lib/platform-leads/alert-status");
+    const body = normalise(definition("requeue_platform_lead_alert"));
+    const m = body.match(/v_code in \(([^)]*)\)/);
+    expect(m).not.toBeNull();
+    const sqlList = [...m![1].matchAll(/'([a-z_]+)'/g)].map((x) => x[1]).sort();
+    expect(sqlList).toEqual([...LEAD_ALERT_KNOWN_UNSENT_CODES].sort());
+    expect(body).toMatch(/v_code = 'expired' and v_attempts = 0/);
+    expect(body).toMatch(/and not p_confirm_possible_duplicate then return 'possible_duplicate'/);
   });
 });

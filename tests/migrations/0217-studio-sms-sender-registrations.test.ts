@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
+import { countVersion } from "./helpers/migration-state";
+import { TOLL_FREE_AREA_CODES } from "@/lib/sms/nanp";
 
 // Migration 0217 — SMS-SENDER-REG-01 (#824): US registration evidence for a
 // studio sender. SOURCE CONTRACT. Behaviour is proved in
@@ -14,16 +15,14 @@ const VERSION = "0217";
 const MIGRATIONS = path.join(process.cwd(), "supabase/migrations");
 const read = (f: string) => readFileSync(path.join(MIGRATIONS, f), "utf8");
 const SQL = read("0217_studio_sms_sender_registrations.sql");
-const CODE = SQL.replace(/^\s*--.*$/gm, " ").replace(/\s+--.*$/gm, " ");
+// Block comments first, then line comments: a commented-out statement of
+// either kind is neither counted nor able to hide a real one.
+const CODE = SQL.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*--.*$/gm, " ").replace(/\s+--.*$/gm, " ");
 const TOP_LEVEL = CODE.replace(/\$\$[\s\S]*?\$\$/g, " ");
-const SIG = "public.record_studio_sms_sender_registration(uuid, text, text, text, text)";
+const SIG = "public.record_studio_sms_sender_registration(uuid, uuid, text, text, text, text, timestamptz)";
 
 describe("0217 in the sequence", () => {
-  it("is the repository maximum on this branch, allocated once", () => {
-    expect(isRepoMax(VERSION)).toBe(false); // INTEGRATION handoff — see note below
-    const above = versionsAbove(VERSION);
-    expect(above.length, "nothing sits above 0217").toBeGreaterThan(0);
-    expect(above.every((v) => Number(v) > Number(VERSION))).toBe(true);
+  it("is allocated once; current maximum coverage belongs to 0218", () => {
     expect(countVersion(VERSION)).toBe(1);
   });
 
@@ -47,18 +46,33 @@ describe("blast radius", () => {
     ]);
     expect([...CODE.matchAll(/create or replace function (public\.\w+)\(/g)].map((m) => m[1])).toEqual([
       "public.record_studio_sms_sender_registration",
-      "public.list_live_studio_sms_sender_registrations",
+      "public.get_live_studio_sms_sender_registration_state",
     ]);
     expect(TOP_LEVEL).not.toMatch(/^\s*(drop|alter\s+(?!table public\.studio_sms_sender_registrations\b))/im);
     expect(TOP_LEVEL).not.toMatch(/^\s*(insert|update|delete)\b/im);
     expect(TOP_LEVEL).not.toMatch(/\bon\s+(table\s+)?public\.studio_sms_senders\b/i);
   });
 
-  it("the command resolves the LIVE sender itself and never takes a sender id", () => {
-    const signature = SQL.slice(SQL.indexOf("create or replace function"), SQL.indexOf(") returns table"));
-    expect(signature).not.toMatch(/p_sender/);
-    expect(CODE).toMatch(/where s\.studio_id = p_studio_id\s+and s\.status <> 'released'/);
+  it("the command writes to the LIVE sender it resolves; the expected id is only ever compared", () => {
+    const body = CODE.slice(CODE.indexOf("create or replace function public.record_studio_sms_sender_registration("));
+    const fn = body.slice(0, body.indexOf("$$;", body.indexOf("as $$") + 5));
+    // The row written is v_live[1], resolved here; p_expected_sender_id appears
+    // only in the null check and the comparison.
+    expect(fn).toMatch(/values\s+\(p_studio_id, v_live\[1\], v_phones\[1\], v_kind/);
+    expect(fn.match(/p_expected_sender_id/g)).toHaveLength(3);
+    expect(CODE).toMatch(/where s\.studio_id = p_studio_id\s+and s\.status <> 'released'\s+for update\) l;/);
     expect(CODE).toMatch(/security definer\s+set search_path = pg_catalog, pg_temp/);
+  });
+
+  it("a write replaces only the record its form showed, checked after the sender lock and before the upsert (Codex P2 4266275222)", () => {
+    const body = CODE.slice(CODE.indexOf("create or replace function public.record_studio_sms_sender_registration("));
+    const fn = body.slice(0, body.indexOf("$$;", body.indexOf("as $$") + 5));
+    const lock = fn.indexOf("for update) l;");
+    const check = fn.search(/if \(v_exists and p_expected_updated_at is distinct from v_prev_at\)\s+or \(not v_exists and p_expected_updated_at is not null\) then\s+return query select 'stale_record'/);
+    const upsert = fn.indexOf("insert into public.studio_sms_sender_registrations");
+    expect(lock).toBeGreaterThan(0);
+    expect(check).toBeGreaterThan(lock);
+    expect(upsert).toBeGreaterThan(check);
   });
 });
 
@@ -67,7 +81,7 @@ describe("privileges", () => {
     for (const role of ["public", "anon", "authenticated", "service_role"]) {
       expect(TOP_LEVEL).toContain(`revoke all on table public.studio_sms_sender_registrations from ${role};`);
     }
-    expect(TOP_LEVEL).toMatch(/grant select \(id, studio_id, sender_id, kind, status, missing_information, recorded_at, updated_at\)\s+on public\.studio_sms_sender_registrations to authenticated;/);
+    expect(TOP_LEVEL).toMatch(/grant select \(id, studio_id, sender_id, phone_number, kind, status, missing_information, recorded_at, updated_at\)\s+on public\.studio_sms_sender_registrations to authenticated;/);
     expect(TOP_LEVEL).toContain("grant select on table public.studio_sms_sender_registrations to service_role;");
     expect(TOP_LEVEL.match(/grant [^;]*\bon (table )?public\.studio_sms_sender_registrations\b[^;]*;/g)).toHaveLength(2);
   });
@@ -78,7 +92,7 @@ describe("privileges", () => {
   });
 
   it("both functions are revoked by name and granted to service_role only", () => {
-    for (const sig of [SIG, "public.list_live_studio_sms_sender_registrations(uuid)"]) {
+    for (const sig of [SIG, "public.get_live_studio_sms_sender_registration_state(uuid)"]) {
       for (const role of ["public", "anon", "authenticated", "service_role"]) {
         expect(TOP_LEVEL).toContain(`revoke execute on function ${sig} from ${role};`);
       }
@@ -86,7 +100,79 @@ describe("privileges", () => {
     expect([...TOP_LEVEL.matchAll(/grant execute on function [^;]* to (\w+);/g)].map((m) => m[1])).toEqual(["service_role", "service_role"]);
   });
 
-  it("the operator's read returns the LIVE sender's rows only (Codex P2 4244011188)", () => {
-    expect(CODE).toMatch(/join public\.studio_sms_senders s on s\.id = r\.sender_id\s+where r\.studio_id = p_studio_id\s+and s\.studio_id = p_studio_id\s+and s\.status <> 'released'/);
+  it("the operator's snapshot is one statement over the LIVE sender(s) and exactly their rows", () => {
+    expect(CODE).toMatch(/with live as \(\s+select s\.id, s\.studio_id, s\.status, s\.phone_number, s\.messaging_service_sid, s\.created_at\s+from public\.studio_sms_senders s\s+where s\.studio_id = p_studio_id\s+and s\.status <> 'released'/);
+    // ... and only the evidence for the number each sender holds NOW.
+    expect(CODE).toMatch(/join live l on l\.id = r\.sender_id and l\.phone_number = r\.phone_number/);
+  });
+
+  it("the writer is compare-and-set on the expected sender, with the sender row locked", () => {
+    // Serialized: concurrent record writes take turns (Codex P2 on #844).
+    expect(CODE).toMatch(/for update\) l;/);
+    expect(CODE).not.toMatch(/for share\) l;/);
+    expect(CODE).toMatch(/if v_live\[1\] <> p_expected_sender_id then\s+return query select 'sender_changed'/);
+  });
+
+  it("evidence is bound to the number (Codex P2 4244484021): no number refuses, a different number is a changed sender", () => {
+    expect(CODE).toMatch(/if v_phones\[1\] is null then\s+return query select 'sender_has_no_number'/);
+    expect(CODE).toMatch(/if v_phones\[1\] <> p_expected_phone then\s+return query select 'sender_changed'/);
+    expect(CODE).toMatch(/phone_number\s+text\s+not null,/);
+    expect(CODE).toMatch(/unique \(sender_id, phone_number, kind\)/);
+  });
+
+  it("the kind is derived from the number, never taken from the caller (Codex P2 4244484022)", () => {
+    expect(CODE).not.toMatch(/p_kind/);
+    // The toll-free prefixes in SQL (the table check and the command) are exactly lib/sms/nanp.ts's.
+    // (The other-NANP exclusion lists, below, are pinned separately.)
+    const lists = [...CODE.matchAll(/'\^\\\+1\(([0-9|]+)\)'/g)].map((m) => m[1].split("|").sort()).filter((l) => l.includes("800"));
+    expect(lists).toHaveLength(2);
+    for (const l of lists) expect(l).toEqual([...TOLL_FREE_AREA_CODES].sort());
+  });
+});
+
+describe("the record is what was submitted (Codex P2 4253653241, 4253770080)", () => {
+  it("the provider reference is stored as submitted, never coalesced with the old one", () => {
+    expect(CODE).toMatch(/provider_reference\s+= excluded\.provider_reference,/);
+    expect(CODE).not.toMatch(/coalesce\(excluded\.provider_reference/);
+  });
+
+  it("the command returns the status it replaced, for the audit trail", () => {
+    expect(CODE).toMatch(/returns table \(result text, registration_id uuid, kind text, previous_status text\)/);
+  });
+});
+
+// EXACT PRIVILEGES (cross-lane finding from History 0223): the grantee lists
+// above match one grantee per statement, so a stray multi-grantee grant
+// (`to anon, authenticated`) or `grant all` slipped past them. This compares
+// EVERY top-level grant statement, of any shape or case, to the exact list.
+describe("exactly these grants, and no other", () => {
+  it("every top-level GRANT statement, normalised, is exactly the intended list; no default-privilege change", () => {
+    const grants = TOP_LEVEL.split(";")
+      .map((st) => st.replace(/\s+/g, " ").trim())
+      .filter((st) => /^grant\b/i.test(st));
+    expect(grants).toEqual([
+      "grant select (id, studio_id, sender_id, phone_number, kind, status, missing_information, recorded_at, updated_at) on public.studio_sms_sender_registrations to authenticated",
+      "grant select on table public.studio_sms_sender_registrations to service_role",
+      "grant execute on function public.record_studio_sms_sender_registration(uuid, uuid, text, text, text, text, timestamptz) to service_role",
+      "grant execute on function public.get_live_studio_sms_sender_registration_state(uuid) to service_role",
+    ]);
+    expect(TOP_LEVEL).not.toMatch(/alter\s+default\s+privileges/i);
+  });
+});
+
+// Codex P2 4274747633: only numbers Hone serves. The other-NANP list in the
+// table constraint AND the command is lib/sms/nanp.ts OTHER_NANP_AREA_CODES,
+// exactly, and N11 service codes are refused too.
+describe("unsupported NANP numbers are refused by the table and the command", () => {
+  it("both SQL lists are OTHER_NANP_AREA_CODES exactly, and N11 is excluded", async () => {
+    const { OTHER_NANP_AREA_CODES } = await import("@/lib/sms/nanp");
+    const lists = [...CODE.matchAll(/!?~ '\^\\\+1\(([0-9|]+)\)'/g)].map((m) => m[1].split("|").sort());
+    const expected = [...OTHER_NANP_AREA_CODES].sort();
+    const otherLists = lists.filter((l) => l.length === expected.length);
+    expect(otherLists).toHaveLength(2);
+    for (const l of otherLists) expect(l).toEqual(expected);
+    expect(CODE.match(/\^\\\+1\[2-9\]11'/g)).toHaveLength(2);
+    expect(CODE).toMatch(/constraint studio_sms_sender_registrations_supported_number_ck/);
+    expect(CODE).toMatch(/return query select 'unsupported_number'::text/);
   });
 });

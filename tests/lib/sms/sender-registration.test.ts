@@ -21,8 +21,13 @@ const SQL = readFileSync(
   "utf8",
 );
 
-const row = (kind: SenderRegistrationRow["kind"], status: SenderRegistrationRow["status"], missing: string | null = null): SenderRegistrationRow => ({
-  id: "r", studio_id: "s", sender_id: "x", kind, status, missing_information: missing,
+const row = (
+  kind: SenderRegistrationRow["kind"],
+  status: SenderRegistrationRow["status"],
+  missing: string | null = null,
+  phone = "+12125550123",
+): SenderRegistrationRow => ({
+  id: "r", studio_id: "s", sender_id: "x", phone_number: phone, kind, status, missing_information: missing,
   recorded_at: "2026-10-12T00:00:00Z", updated_at: "2026-10-12T00:00:00Z",
 });
 const read = (...rows: SenderRegistrationRow[]): RegistrationRead => ({ ok: true, rows });
@@ -32,11 +37,33 @@ const TF = "+18885550123";
 const CA = "+16045550123";
 
 describe("the number decides which registration matters", () => {
-  it("US local -> 10DLC; toll-free -> verification; Canadian or invalid -> none", () => {
+  it("any long code (US or Canadian) -> 10DLC; toll-free -> verification; other or invalid -> none", () => {
     expect(registrationKindFor(US)).toBe("us_10dlc");
+    expect(registrationKindFor(CA)).toBe("us_10dlc");
     expect(registrationKindFor(TF)).toBe("toll_free_verification");
-    expect(registrationKindFor(CA)).toBeNull();
+    expect(registrationKindFor("+18765550123")).toBeNull();
     expect(registrationKindFor(null)).toBeNull();
+  });
+
+  it("a REGISTERED Canadian long code serves US recipients, end to end", () => {
+    const sender: SenderRead = {
+      ok: true,
+      sender: {
+        id: "x", studio_id: "s", provider: "twilio", status: "active", country: "CA", requested_area_code: null,
+        phone_number: CA, provisioned_at: null, last_test_ok_at: null, last_error_code: null, last_error_at: null,
+        released_at: null, created_at: "", updated_at: "",
+      },
+    };
+    const evidence = registrationEvidenceFor(read(row("us_10dlc", "approved", null, CA)), CA);
+    expect(destinationReadiness("US", sender, evidence).state).toBe("active");
+    // ...but it is NOT an eligible Canadian A2P route (Codex P2 4253590276).
+    expect(destinationReadiness("CA", sender, { state: "not_recorded" }).state).toBe("requires_information");
+  });
+
+  it("a row for ANOTHER number says nothing about this one (Codex P2 4244484021)", () => {
+    // Recorded for the number the sender held before (or before it held one).
+    expect(registrationEvidenceFor(read(row("us_10dlc", "approved", null, "+12125550999")), US)).toEqual({ state: "not_recorded" });
+    expect(registrationEvidenceFor(read(row("us_10dlc", "approved", null, US)), US)).toEqual({ state: "approved" });
   });
 
   it("a row of the OTHER kind says nothing about this number", () => {
@@ -73,7 +100,8 @@ describe("the vocabulary is 0217's", () => {
   it("kinds and statuses", () => {
     for (const k of REGISTRATION_KINDS) expect(SQL).toContain(`'${k}'`);
     for (const s of REGISTRATION_STATUSES) expect(SQL).toContain(`'${s}'`);
-    expect(SQL).toMatch(/check \(kind in \('us_10dlc', 'toll_free_verification'\)\)/);
+    // The kind is the number's: 8XX toll-free -> verification, every other +1 long code -> 10DLC.
+    expect(SQL).toMatch(/check \(kind = case when phone_number ~ '\^\\\+1\(800\|833\|844\|855\|866\|877\|888\)'\s+then 'toll_free_verification' else 'us_10dlc' end\)/);
     expect(SQL).toMatch(/check \(status in \('pending', 'requires_information', 'approved', 'rejected', 'suspended'\)\)/);
   });
 

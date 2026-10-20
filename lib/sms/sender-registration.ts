@@ -12,9 +12,15 @@ import type { UsRegistrationEvidence } from "./sender-readiness";
 // reference is not among the granted columns. This module never takes a
 // service-role client and never writes.
 //
-// Which row matters depends on the NUMBER: a US local number is held to its
-// 10DLC registration, a toll-free number to toll-free verification. A row of
-// the other kind says nothing about this number and is ignored.
+// Which row matters depends on the NUMBER (#841's DESTINATION_RULES): any
+// 10-digit long code, Canadian or US, is held to A2P 10DLC registration for
+// US recipients; a toll-free number to toll-free verification. A row of the
+// other kind says nothing about this number and is ignored.
+//
+// EVIDENCE IS PER NUMBER (Codex P2 4244484021): each row carries the number
+// support verified. A row for any other number -- one the sender held before,
+// or recorded before this number was assigned -- says nothing about the
+// current number and is ignored, exactly as 0217's snapshot ignores it.
 // ===========================================================================
 
 export const REGISTRATION_KINDS = ["us_10dlc", "toll_free_verification"] as const;
@@ -34,6 +40,7 @@ export const OWNER_READABLE_REGISTRATION_COLUMNS = [
   "id",
   "studio_id",
   "sender_id",
+  "phone_number",
   "kind",
   "status",
   "missing_information",
@@ -45,6 +52,7 @@ export type SenderRegistrationRow = {
   id: string;
   studio_id: string;
   sender_id: string;
+  phone_number: string;
   kind: RegistrationKind;
   status: RegistrationStatus;
   missing_information: string | null;
@@ -77,7 +85,7 @@ export async function readOwnSenderRegistrations(
 export function registrationKindFor(phoneNumber: string | null): RegistrationKind | null {
   const n = classifyNanpNumber(phoneNumber);
   if (!n.ok) return null;
-  if (n.country === "US") return "us_10dlc";
+  if (n.country === "US" || n.country === "CA") return "us_10dlc";
   if (n.country === "toll_free") return "toll_free_verification";
   return null;
 }
@@ -88,10 +96,10 @@ export function registrationEvidenceFor(
   phoneNumber: string | null,
 ): UsRegistrationEvidence {
   const kind = registrationKindFor(phoneNumber);
-  // A Canadian or unclassifiable number is not held to US registration at all.
+  // Another NANP member, or an unclassifiable number, is not a supported sender.
   if (!kind) return { state: "not_recorded" };
   if (!read.ok) return { state: "unreadable" };
-  const row = read.rows.find((r) => r.kind === kind);
+  const row = read.rows.find((r) => r.kind === kind && r.phone_number === phoneNumber);
   if (!row) return { state: "not_recorded" };
   switch (row.status) {
     case "requires_information":
@@ -102,4 +110,60 @@ export function registrationEvidenceFor(
     case "suspended":
       return { state: row.status };
   }
+}
+
+// ---------------------------------------------------------------------------
+// The operator's snapshot (0217 get_live_studio_sms_sender_registration_state)
+// ---------------------------------------------------------------------------
+
+export type LiveSenderSnapshot = {
+  id: string;
+  studio_id: string;
+  status: string;
+  phone_number: string | null;
+  messaging_service_sid: string | null;
+};
+
+export type LiveRegistrationSnapshot = {
+  sender_id: string;
+  studio_id: string;
+  phone_number: string;
+  kind: RegistrationKind;
+  status: RegistrationStatus;
+  missing_information: string | null;
+  provider_reference: string | null;
+  updated_at: string;
+};
+
+/**
+ * One statement, one snapshot: the studio's live sender and exactly its
+ * registrations. `ok: false` when the read failed OR its answer is not the
+ * shape 0217 returns; a caller must then offer no write at all.
+ */
+export type LiveRegistrationState =
+  | { ok: true; senders: LiveSenderSnapshot[]; registrations: LiveRegistrationSnapshot[] }
+  | { ok: false };
+
+export function parseLiveRegistrationState(data: unknown, studioId: string): LiveRegistrationState {
+  if (!data || typeof data !== "object") return { ok: false };
+  const { senders, registrations } = data as { senders?: unknown; registrations?: unknown };
+  if (!Array.isArray(senders) || !Array.isArray(registrations)) return { ok: false };
+  const ownSenders = senders as LiveSenderSnapshot[];
+  // Anything about another studio is a broken answer, never a row to show.
+  if (ownSenders.some((s) => s?.studio_id !== studioId)) return { ok: false };
+  const numbers = new Map(ownSenders.map((s) => [s.id, s.phone_number]));
+  const rows = registrations as LiveRegistrationSnapshot[];
+  // A row must be about a listed sender AND the number that sender holds now.
+  if (
+    rows.some(
+      (r) =>
+        r?.studio_id !== studioId ||
+        !numbers.has(r.sender_id) ||
+        r.phone_number == null ||
+        r.phone_number !== numbers.get(r.sender_id),
+    )
+  ) {
+    return { ok: false };
+  }
+  return { ok: true, senders: ownSenders, registrations: rows };
 }
