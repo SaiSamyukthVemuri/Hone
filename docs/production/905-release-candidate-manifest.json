@@ -1,6 +1,6 @@
 {
   "title": "#905 narrow production-based release candidate source manifest",
-  "production_base": "462b16b0fa4d2c531ee3c6bfb67fd2d52345cb54",
+  "production_base": "e91ddd43c932df726a100fc3f4e33c12258007bd",
   "portrait_source": "affcb86727324b2c2505f5185b3ba3db3e9f4545",
   "hosted_anchor": {
     "version": "0212",
@@ -300,8 +300,8 @@
       "path": "app/(app)/clients/[id]/images/TreatmentImagesManager.tsx",
       "source_blob": "1140fd15478a8f5db7b495771876e89e179c7f83",
       "sha256": "88e3306d82a772b97ddc535bec8ff5ae7f4257a41d352fb66635d0e900ee887f",
-      "candidate_current_sha256": "88e3306d82a772b97ddc535bec8ff5ae7f4257a41d352fb66635d0e900ee887f",
-      "candidate_current_blob": "1140fd15478a8f5db7b495771876e89e179c7f83"
+      "candidate_current_sha256": "d88cb313f3de7803b18492fb1654bf93c5e114ac191ee886d87409b348bf1000",
+      "candidate_current_blob": "d7be10654bb23daea68884a0c0884963a98dc8b3"
     },
     {
       "path": "app/(app)/clients/[id]/images/actions.ts",
@@ -592,18 +592,18 @@
     "previous_review_finding_id": 4319379075,
     "status": "Current production4f08de03and published record-ownerf792 composed; all19pendingSQLsources unchanged. New final-head CI/review required; migration/consent/release holds remain."
   },
-  "previous_candidate_base": "4f08de03c458dc381ddcb1e1011fdb50a14d66a9",
+  "previous_candidate_base": "462b16b0fa4d2c531ee3c6bfb67fd2d52345cb54",
   "candidate_base_history": [
     "102faf94fc573c724d73419bc9e8a6262ac1a247",
     "cda67e7c9f779838dfad2360a628ab81221cb43e",
-    "4f08de03c458dc381ddcb1e1011fdb50a14d66a9"
+    "4f08de03c458dc381ddcb1e1011fdb50a14d66a9",
+    "462b16b0fa4d2c531ee3c6bfb67fd2d52345cb54"
   ],
   "canonical_record_source": {
-    "pr": 964,
-    "head": "7959d1814c8ea8ef431509ea91c17c8e867febbc",
-    "merge_head": "462b16b0fa4d2c531ee3c6bfb67fd2d52345cb54",
-    "status": "Merged after clean exact-head review and CI39491855174; automatic docs-only push CI39493675623 passed. No hosted apply.",
-    "scope": "Runtime/head receipt af2f7423, READY deployment dpl_B4VQ16BLn78ExLsAmFsQvmuKU4x1, settled automatic CI39488092317 unit21213PASS/2FAIL preserved; historical applied0212 evidence unchanged."
+    "pr": 965,
+    "head": "2bc03d6e752399390335e229f331fd319a1016c7",
+    "status": "Published dedicated-owner correction; exact review/CI pending. Actual production runtime e91 deployed READY; no hosted apply.",
+    "scope": "#892 phone runtime, source200/171 merge count, exact READY/smoke/source-CI receipts and observed automatic push unit failure with remaining run pending. Historical measurements and migration history unchanged."
   },
   "integration_compatibility_repairs": {
     "source": "95a840518b270021d792eae2a52eb00096759566",
@@ -618,5 +618,30 @@
     "source_head": "b4961561d0c81c85327555a513caca8486c75899",
     "path": "tests/migrations/0212-email-delivery-events.test.ts",
     "purpose": "Exact applied0212SHA256guard from recordowner, composed with existing0227forward-compatible test/grant checks; SQL unchanged"
+  },
+  "phone_integration_owner_resolution": {
+    "owner": "Photos",
+    "receipt": "photos/939-ca9-d6-owner-resolution/receipt.json",
+    "basis_candidate": "ca9afec5bd53c48c16dd989b9227f68e3dd36be1",
+    "published_phone_source": "ad9186275add406223f4966a3012257b13fd9568",
+    "current_phone_release": "e91ddd43c932df726a100fc3f4e33c12258007bd",
+    "resolved_files": [
+      {
+        "path": "app/(app)/clients/[id]/images/TreatmentImagesManager.tsx",
+        "sha256": "d88cb313f3de7803b18492fb1654bf93c5e114ac191ee886d87409b348bf1000",
+        "git_blob": "d7be10654bb23daea68884a0c0884963a98dc8b3"
+      },
+      {
+        "path": "docs/00_PRODUCT_OVERVIEW.md",
+        "sha256": "b74d5e198ebf7394a7392e742bca5967501988b2987b407773b81fc4969f1348",
+        "git_blob": "9b84efac8aaa51ba7ff990f9971df3003337181f"
+      },
+      {
+        "path": "docs/03_SECURITY_AND_PRIVACY.md",
+        "sha256": "7a4985a44e6925eddb2b49daa9db32415ff1847ebbb66921d6a83b44ef179d75",
+        "git_blob": "2957ad6525cd10b7cbbfda8f41d362b407efc6bb"
+      }
+    ],
+    "scope": "Portrait + current phone controls only; capture-stage/0232 excluded; SQL19 unchanged."
   }
 }
