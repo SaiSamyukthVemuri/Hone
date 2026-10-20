@@ -26,10 +26,15 @@ import {
 // ===========================================================================
 
 const alerts: Array<Record<string, unknown>> = [];
+let alertCompletion: Promise<void> | null = null;
+let alertStarted: (() => void) | null = null;
+let alertRejects = false;
 vi.mock("@/lib/ops/alerts", () => ({
   recordOpsAlert: (input: Record<string, unknown>) => {
     alerts.push(input);
-    return Promise.resolve();
+    alertStarted?.();
+    if (alertRejects) return Promise.reject(new Error("PRIVATE_ALERT_FAILURE"));
+    return alertCompletion ?? Promise.resolve();
   },
 }));
 
@@ -198,6 +203,9 @@ beforeEach(() => {
   h.attemptReads = [];
   h.rpcs = [];
   alerts.length = 0;
+  alertCompletion = null;
+  alertStarted = null;
+  alertRejects = false;
   manageFor.length = 0;
   fetchMock = vi.fn(() => twilioAnswer(201, { sid: SID }));
   vi.stubGlobal("fetch", fetchMock);
@@ -424,8 +432,22 @@ describe("accepted reminders with unconfirmed result recording", () => {
     ["2h", send2hReminderSmsToClient, "reminder_2h"],
   ] as const)("the %s provider acceptance stays successful and its accounting warning is visible", async (_kind, send, smsType) => {
     h.recordError = true;
-    expect(await send(input())).toMatchObject({ ok: true, messageSid: SID });
-    await flush();
+    let finishAlert!: () => void;
+    alertCompletion = new Promise<void>((resolve) => { finishAlert = resolve; });
+    const started = new Promise<void>((resolve) => { alertStarted = resolve; });
+    const args = input();
+    args.studio.name = "PRIVATE_STUDIO_SENTINEL";
+    args.intakeUrl = "https://example.test/private-intake-secret";
+    let returned = false;
+    const sending = send(args).then((result) => { returned = true; return result; });
+    await started;
+    try {
+      await flush();
+      expect(returned).toBe(false);
+    } finally {
+      finishAlert();
+    }
+    expect(await sending).toMatchObject({ ok: true, messageSid: SID });
     expect(alerts).toEqual([expect.objectContaining({
       event: "sms_result_record_unconfirmed", severity: "warning",
       studioId: "studio-1", appointmentId: "appt-1",
@@ -433,12 +455,26 @@ describe("accepted reminders with unconfirmed result recording", () => {
       safeDetails: { sms_type: smsType },
     })]);
     expect(alerts[0].message).not.toMatch(/delivered|gave up|exhaust/i);
-    expect(JSON.stringify(alerts)).not.toContain(SID);
+    for (const value of [SID, "PRIVATE_STUDIO_SENTINEL", "private-intake-secret", "604-555-0199", "+16045550199"]) {
+      expect(JSON.stringify(alerts)).not.toContain(value);
+    }
     expect(recorded()).toEqual([true]);
     expect(h.attemptReads).toEqual([]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(h.rpcs.map((call) => call.fn)).toContain("settle_sms_message");
   });
+  it.each([
+    ["24h", send24hReminderSmsToClient],
+    ["2h", send2hReminderSmsToClient],
+  ] as const)("a rejected accounting alert preserves the accepted %s send result", async (_kind, send) => {
+    h.recordError = true;
+    alertRejects = true;
+    expect(await send(input())).toMatchObject({ ok: true, messageSid: SID });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(recorded()).toEqual([true]);
+    expect(JSON.stringify(alerts)).not.toContain("PRIVATE_ALERT_FAILURE");
+  });
+
 });
 
 describe("retry exhaustion remains visible without changing send authority", () => {
