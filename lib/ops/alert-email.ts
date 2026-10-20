@@ -1,4 +1,5 @@
 import "server-only";
+import { replaceDecodedMatches, type Detector } from "@/lib/logging/encoded-match";
 import { resend, FROM_ADDRESS } from "@/lib/email/client";
 import { SAFE_STRIPE_ID_PREFIXES } from "@/lib/ops/redact";
 
@@ -11,7 +12,7 @@ import { SAFE_STRIPE_ID_PREFIXES } from "@/lib/ops/redact";
 //
 // Dependency-cycle posture: this module imports ONLY the bare Resend
 // client (lib/email/client.ts, which imports nothing from Hone) and the
-// pure, dependency-free lib/ops/redact.ts, and is imported ONLY by lib/ops/alerts.ts. It never imports
+// pure, dependency-free redaction/decoding helpers, and is imported ONLY by lib/ops/alerts.ts. It never imports
 // lib/email/send-appointment.ts (the appointment email subsystem that
 // recordOpsAlert observes), and it NEVER calls recordOpsAlert: a
 // failure here logs to stderr and stops, so alert email failures can
@@ -73,74 +74,6 @@ const RECORD_ID_REDACTED = "[Redacted]";
 // Out of scope: non-URL encodings (HTML entities, \u escapes, base64), which
 // URL serialization does not produce.
 const RECORD_ID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
-const MAX_DECODE_ROUNDS = 4;
-
-type Detector = { re: RegExp; placeholder: string };
-
-/** One decoded character and the [start, end) range of the original token it
- *  decodes from. */
-type Unit = { ch: string; start: number; end: number };
-
-const isHex = (u: Unit | undefined): boolean => u !== undefined && /^[0-9a-f]$/i.test(u.ch);
-
-/** One round of ASCII %XX decoding over units, left to right. Returns null
- *  when nothing changed. */
-function decodeRound(units: Unit[]): Unit[] | null {
-  const out: Unit[] = [];
-  let changed = false;
-  for (let i = 0; i < units.length; i += 1) {
-    const u = units[i]!;
-    const h1 = units[i + 1];
-    const h2 = units[i + 2];
-    if (u.ch === "%" && isHex(h1) && isHex(h2)) {
-      const code = parseInt(h1!.ch + h2!.ch, 16);
-      if (code < 0x80) {
-        out.push({ ch: String.fromCharCode(code), start: u.start, end: h2!.end });
-        i += 2;
-        changed = true;
-        continue;
-      }
-    }
-    out.push(u);
-  }
-  return changed ? out : null;
-}
-
-/** Replace every detector match found in the token's decoded form, at its
- *  original range. `undefined` means the token is still changing after the
- *  bound and must be dropped. */
-function replaceDecodedMatches(token: string, detectors: readonly Detector[]): string | undefined {
-  // UTF-16 code units, not code points (Codex P2 4301959849 / 4301959252):
-  // regex indexes and String.slice count code units, so an astral character
-  // (an emoji is two units) must be two units here too.
-  let units: Unit[] = Array.from({ length: token.length }, (_v, i) => ({ ch: token[i]!, start: i, end: i + 1 }));
-  for (let round = 0; ; round += 1) {
-    const next = decodeRound(units);
-    if (next === null) break;
-    if (round === MAX_DECODE_ROUNDS) return undefined;
-    units = next;
-  }
-  const decoded = units.map((u) => u.ch).join("");
-  const hits: Array<{ start: number; end: number; placeholder: string }> = [];
-  for (const { re, placeholder } of detectors) {
-    for (const m of decoded.matchAll(re)) {
-      const first = units[m.index!]!;
-      const last = units[m.index! + m[0].length - 1]!;
-      hits.push({ start: first.start, end: last.end, placeholder });
-    }
-  }
-  if (hits.length === 0) return token;
-  hits.sort((a, b) => a.start - b.start || b.end - a.end);
-  let out = "";
-  let at = 0;
-  for (const h of hits) {
-    if (h.start < at) continue; // overlapped by an earlier (wider) hit
-    out += token.slice(at, h.start) + h.placeholder;
-    at = h.end;
-  }
-  return out + token.slice(at);
-}
-
 /** Apply detectors to text, decoding any token that contains "%". */
 function replaceEncodedAware(text: string, detectors: readonly Detector[]): string {
   return text
@@ -194,7 +127,7 @@ function withoutRecordIds(text: string): string {
   // are what the operator acts on).
   try {
     return replaceEncodedAware(text, [
-      { re: RECORD_ID_RE, placeholder: "[id]" },
+      { re: RECORD_ID_RE, placeholder: RECORD_ID_PLACEHOLDER },
       { re: STRIPE_ID_RE, placeholder: "[stripe-id]" },
       { re: GENERIC_STRIPE_ID_RE, placeholder: "[stripe-id]" },
     ]);
@@ -268,23 +201,22 @@ export async function notifyCriticalOpsAlert(
       text,
     });
     if (error) {
+      // Provider diagnostics can echo payload content; retain fixed fields only.
       console.error(
         JSON.stringify({
           event: "ops_alert_email_send_failed",
           origin_event: input.event,
-          err_message: String(error.message ?? error),
           timestamp: new Date().toISOString(),
         }),
       );
     }
-  } catch (err) {
+  } catch {
     // Last resort: log and stop. Never throw, never recurse into
     // recordOpsAlert.
     console.error(
       JSON.stringify({
         event: "ops_alert_email_threw",
         origin_event: input.event,
-        err_message: err instanceof Error ? err.message : String(err),
         timestamp: new Date().toISOString(),
       }),
     );

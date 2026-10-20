@@ -230,6 +230,14 @@ describe("#828 G-24: the alert email carries no record identifiers", () => {
     expect(mail.text).toContain("in session_payment_succeeded_write_zero_rows");
   });
 
+  it("shared decoder preserves the email sink policy at the decode bound", async () => {
+    const id = "6f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5";
+    const four = "%25252536" + id.slice(1);
+    const five = four.replaceAll("%", "%25");
+    const mail = await send(`😀${four}%20dp%5F1TestDispute9Ab%20foo%40example.test%0A%zz%C3%A9 ${five}`);
+    expect(mail.text).toContain("😀[id]%20[stripe-id]%20foo%40example.test%0A%zz%C3%A9 [Redacted]");
+  });
+
   it("keeps what the operator needs to triage: event slug, time, environment and the admin link", async () => {
     const mail = await send("Benign message");
     expect(mail.subject).toBe("[Hone CRITICAL] session_payment_succeeded_write_zero_rows");
@@ -306,6 +314,41 @@ describe("THE GUARANTEE for encodings (ASCII percent-decoding to a fixed point)"
       await notifyCriticalOpsAlert({ event: "x_failed", message: `at ${input}`, createdAtIso: "2026-10-17T06:00:00.000Z" });
       const mail = sent[0]!;
       expect(UUID_ANYWHERE.test(oracleDecode(`${mail.subject}\n${mail.text}`)), `${input} -> ${mail.text}`).toBe(false);
+    }
+  });
+});
+
+
+// PRIVACY-EMAIL-FAILURE-01: provider diagnostics may echo payload content.
+// The existing email client mock guarantees these cases never call Resend.
+describe("provider failure log privacy", () => {
+  it.each([
+    ["returned", "ops_alert_email_send_failed"],
+    ["thrown", "ops_alert_email_threw"],
+  ])("%s provider errors retain only fixed diagnostic fields", async (mode, event) => {
+    vi.stubEnv("OPS_ALERT_EMAILS", "ops@example.test");
+    const { resend } = await import("@/lib/email/client");
+    const { notifyCriticalOpsAlert } = await import("@/lib/ops/alert-email");
+    const sentinel = "synthetic-patient@example.test 6f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5";
+    const send = vi.spyOn(resend!.emails, "send");
+    if (mode === "returned") send.mockResolvedValueOnce({ data: null, headers: null, error: { name: "validation_error", message: sentinel, statusCode: 400 } });
+    else send.mockRejectedValueOnce(new Error(sentinel));
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await expect(notifyCriticalOpsAlert({
+        event: "session_payment_succeeded_write_zero_rows", message: "safe", createdAtIso: "2026-10-20T00:00:00Z",
+      })).resolves.toBeUndefined();
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(error).toHaveBeenCalledTimes(1);
+      const logged = JSON.parse(String(error.mock.calls[0]![0]));
+      expect(logged).toEqual({
+        event, origin_event: "session_payment_succeeded_write_zero_rows",
+        timestamp: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+      });
+      expect(Number.isNaN(Date.parse(logged.timestamp))).toBe(false);
+      expect(JSON.stringify(error.mock.calls)).not.toContain(sentinel);
+    } finally {
+      send.mockRestore(); error.mockRestore(); vi.unstubAllEnvs();
     }
   });
 });
