@@ -183,10 +183,10 @@ export async function createOrLoadConnectedAccountForStudio(
     // PAY-CCY-03. An EXISTING account whose recorded country is not the
     // studio's, or that Stripe has reported in two countries (0214's
     // persisted conflict), fails closed: no onboarding link is minted for it,
-    // and it is never swapped for a new one. An account Hone has not observed yet is
-    // let through; its country is recorded on the next refresh or
-    // account.updated, and charging stays blocked for a non-CA studio until
-    // then (0214 guard).
+    // and it is never swapped for a new one. An unobserved bound account also
+    // stays blocked until refresh or account.updated records its country.
+    // Binding succeeds before observation, so a retry must not bypass the
+    // new-account observation refusal below.
     const { data: bound, error: boundErr } = await admin
       .from("studio_payment_settings")
       .select("stripe_account_country, stripe_account_country_conflict")
@@ -213,6 +213,9 @@ export async function createOrLoadConnectedAccountForStudio(
         paymentCountry,
       });
       throw new Error(ACCOUNT_COUNTRY_MISMATCH_ERROR);
+    }
+    if (!recorded) {
+      throw new Error(PAYMENT_COUNTRY_UNVERIFIED_ERROR);
     }
     return {
       stripeAccountId: claim.out_stripe_account_id,
