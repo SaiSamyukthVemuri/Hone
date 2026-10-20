@@ -185,7 +185,6 @@ async function readUnsentReminderAttemptNumber(
   studioId: string,
   appointmentId: string,
   smsType: "reminder_24h" | "reminder_2h",
-  resultRecorded: boolean,
 ): Promise<number | undefined> {
   const attemptsColumn = `sms_${smsType}_send_attempts`;
   const sentColumn = `sms_${smsType}_sent_at`;
@@ -193,8 +192,8 @@ async function readUnsentReminderAttemptNumber(
   try {
     // Read after record_sms_result, rather than infer the count from a stale
     // cron candidate. A later successful send or active claim must not be
-    // called exhausted after a successful record cleared this invocation's
-    // claim. A failed record may leave our own claim set at the retry cap.
+    // called exhausted. An RPC error can also be a lost commit response, so
+    // it cannot establish that an observed active claim belongs to us.
     // Bound the diagnostic read so an unavailable observer cannot stall the
     // reminder batch. This observation never changes atomic claim authority.
     const { data, error } = await admin
@@ -210,7 +209,7 @@ async function readUnsentReminderAttemptNumber(
     const accounting = row as Record<string, unknown>;
     const attempts = accounting[attemptsColumn];
     return accounting[sentColumn] === null &&
-      (!resultRecorded || accounting[claimedColumn] === null) &&
+      accounting[claimedColumn] === null &&
       typeof attempts === "number" &&
       Number.isSafeInteger(attempts) && attempts >= 0
       ? attempts
@@ -231,6 +230,8 @@ export function logSmsFailure(opts: {
   error: string;
   retryable: boolean;
   attemptNumber?: number;
+  /** An RPC error may mean rollback or a committed result with a lost answer. */
+  resultRecordUnconfirmed?: boolean;
   // PR #153. Optional studio id surfaces on the ops alert.
   studioId?: string | null;
 }): void {
@@ -249,7 +250,7 @@ export function logSmsFailure(opts: {
     !opts.retryable ||
     (typeof opts.attemptNumber === "number" &&
       opts.attemptNumber >= SMS_GIVE_UP_ATTEMPT_THRESHOLD);
-  if (!isFinalAttempt) return;
+  if (!isFinalAttempt && !opts.resultRecordUnconfirmed) return;
   // Fire-and-forget; recordOpsAlert never throws to the caller.
   void (async () => {
     try {
@@ -257,7 +258,9 @@ export function logSmsFailure(opts: {
       await recordOpsAlert({
         severity: "warning",
         event: "sms_send_failed",
-        message: `SMS ${opts.smsType} gave up after ${opts.attemptNumber ?? "?"} attempts.`,
+        message: opts.resultRecordUnconfirmed
+          ? `SMS ${opts.smsType} failed; result recording was not confirmed. Check delivery accounting before taking action.`
+          : `SMS ${opts.smsType} gave up after ${opts.attemptNumber ?? "?"} attempts.`,
         studioId: opts.studioId ?? null,
         appointmentId: opts.appointmentId,
         route: "lib/sms/send-appointment",
@@ -701,7 +704,7 @@ async function sendReminder(
 
   const ambiguous = result.attempt === "ambiguous";
   const attemptNumber = !ambiguous && result.retryable
-    ? await readUnsentReminderAttemptNumber(args.admin, args.studio.id, args.appointmentId, smsType, resultRecorded)
+    ? await readUnsentReminderAttemptNumber(args.admin, args.studio.id, args.appointmentId, smsType)
     : undefined;
   logSmsFailure({
     appointmentId: args.appointmentId,
@@ -710,6 +713,7 @@ async function sendReminder(
     // An ambiguous attempt is never retried automatically, so it is final.
     retryable: ambiguous ? false : result.retryable,
     attemptNumber,
+    resultRecordUnconfirmed: !resultRecorded,
     studioId: args.studio.id,
   });
   if (ambiguous) {

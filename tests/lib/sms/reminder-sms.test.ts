@@ -488,9 +488,9 @@ describe("retry exhaustion remains visible without changing send authority", () 
   it.each([
     ["24h", send24hReminderSmsToClient],
     ["2h", send2hReminderSmsToClient],
-  ] as const)("a failed result record preserves the final %s failure warning", async (_kind, send) => {
+  ] as const)("an unconfirmed result record preserves a truthful %s accounting warning", async (_kind, send) => {
     h.attemptNumber = 3;
-    h.laterClaim = START; // This invocation's claim survives the failed record.
+    h.laterClaim = START; // Could be our surviving claim OR a later claim after a lost response.
     h.recordError = true;
     fetchMock.mockImplementationOnce(() =>
       Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } })),
@@ -499,8 +499,10 @@ describe("retry exhaustion remains visible without changing send authority", () 
     await flush();
     expect(alerts).toEqual([expect.objectContaining({
       event: "sms_send_failed", severity: "warning",
-      safeDetails: expect.objectContaining({ attempt_number: 3 }),
+      message: expect.stringContaining("result recording was not confirmed"),
+      safeDetails: expect.objectContaining({ attempt_number: null, retryable: true }),
     })]);
+    expect(alerts[0].message).not.toMatch(/gave up|exhaust/i);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
