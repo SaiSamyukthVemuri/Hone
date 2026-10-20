@@ -1631,6 +1631,22 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "The outbound SMS delivery ledger, live since migration 0206 (SMS-00): one row per appointment or waitlist-invitation text attempt, with its purpose, status, skip reason and timestamps. It holds no message body and no phone number. Studio-scoped operational history, so PENDING rather than EXCLUDED, and field-review-required for the same reason as studio_sms_senders: provider_message_sid is Hone's provider identifier for one message and carries no customer meaning, while the status history is what a studio would recognise (whether a reminder reached a client). No export surface ships in SMS-00.",
   },
+  email_outbound_messages: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "The appointment-linked email delivery ledger, added by already-applied migration 0212. It contains delivery status and normalized reason slugs alongside provider message identifiers. Keep it pending field review: no export surface ships in the migration, and provider identifiers must not be dumped raw.",
+  },
+  email_provider_events: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "The email provider webhook receipt and processing ledger, added by already-applied migration 0212. It can include provider event/message identifiers and delivery diagnostics; studio attribution is only established after a receipt matches its ledger row. Keep unmatched events platform-only and review any studio export field-by-field. No export surface ships in the migration.",
+  },
   new_client_waitlist_entry_events: {
     kind: "pending",
     ticket: "TRUTH-01B",
