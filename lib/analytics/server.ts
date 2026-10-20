@@ -31,21 +31,46 @@
 
 import { after } from "next/server";
 import { getPostHogClient } from "@/lib/posthog-server";
+import { KNOWN_MODALITIES } from "@/lib/types/database";
 import {
   resolveDistinctId,
   validateRole,
   type AnalyticsActor,
 } from "@/lib/analytics/ids";
 
-// Every property a server-side event may carry. Adding a key here is a
-// privacy-review event: coarse, non-clinical, non-identifying values only.
-const ALLOWED_EVENT_PROPERTIES = new Set([
-  "studio_id",
-  "modality",
-  "is_new_session",
-  "source",
-  "provider",
-  "livemode",
+// Every property a server-side event may carry, and the SHAPE its value must
+// have. Adding a key here is a privacy-review event: coarse, non-clinical,
+// non-identifying values only. The key allow-list alone let any value
+// through, so a future caller could put a client id or free text into
+// `source` (#828 G-26 row 18, R18-1). A value that does not fit its shape
+// drops the WHOLE event, fail closed, exactly like a non-UUID distinctId.
+const UUID_VALUE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const PROPERTY_SHAPES: Readonly<Record<string, (value: unknown) => boolean>> = {
+  studio_id: (v) => typeof v === "string" && UUID_VALUE.test(v),
+  modality: (v) => typeof v === "string" && KNOWN_MODALITIES.some((m) => m.value === v),
+  is_new_session: (v) => typeof v === "boolean",
+  source: (v) => v === "practitioner_ui" || v === "public_booking",
+  provider: (v) => v === "magic_link",
+  livemode: (v) => typeof v === "boolean",
+};
+const ALLOWED_EVENT_PROPERTIES = new Set(Object.keys(PROPERTY_SHAPES));
+
+// Only supported code constants may leave this boundary. A shape regex also
+// admits interpolated alphanumeric client ids and phone numbers. Adding an
+// event here requires privacy review, just like adding a property shape.
+const SUPPORTED_SERVER_EVENTS: ReadonlySet<string> = new Set([
+  "appointment_booked",
+  "card_on_file_saved",
+  "client_created",
+  "onboarding_wizard_completed",
+  "onboarding_wizard_started",
+  "payment_charge_executed",
+  "payment_refunded",
+  "public_appointment_booked",
+  "session_started",
+  "stripe_account_connected",
+  "studio_created",
+  "user_signed_in",
 ]);
 
 const DISPATCH_TIMEOUT_MS = 2000;
@@ -60,14 +85,21 @@ function warnNameOnly(fields: Record<string, string | undefined>): void {
   console.warn(JSON.stringify(fields));
 }
 
+/** The allow-listed properties, or null when an allowed key carries a value
+ *  of the wrong shape (the caller drops the whole event). */
 function allowlistProperties(
   properties: ServerEventProperties | undefined,
   event: string,
-): Record<string, string | number | boolean | null> {
+): Record<string, string | number | boolean | null> | null {
   const out: Record<string, string | number | boolean | null> = {};
   for (const [key, value] of Object.entries(properties ?? {})) {
     if (value === undefined) continue;
     if (ALLOWED_EVENT_PROPERTIES.has(key)) {
+      if (!PROPERTY_SHAPES[key]!(value)) {
+        // Name-only: the rejected VALUE is never logged.
+        warnNameOnly({ event: "analytics_property_value_rejected", analyticsEvent: event, property: key });
+        return null;
+      }
       out[key] = value;
     } else {
       warnNameOnly({
@@ -158,7 +190,12 @@ export function captureServerEvent(args: {
   event: string;
   properties?: ServerEventProperties;
 }): void {
+  if (!SUPPORTED_SERVER_EVENTS.has(args.event)) {
+    warnNameOnly({ event: "analytics_event_name_rejected" });
+    return;
+  }
   const properties = allowlistProperties(args.properties, args.event);
+  if (properties === null) return;
   schedule(async () => {
     const distinctId = resolveDistinctId(args.actor);
     if (distinctId === null) {
