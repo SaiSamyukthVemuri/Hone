@@ -48,6 +48,7 @@ const h: {
   attemptNumber: number;
   alreadySent: boolean;
   attemptReadError: boolean;
+  attemptReadWaitsForAbort: boolean;
   attemptReads: Array<{ columns: string; filters: Array<[string, string]>; signal?: AbortSignal; rpcsBefore: string[] }>;
   rpcs: Array<{ fn: string; args: Record<string, unknown> }>;
 } = {
@@ -57,6 +58,7 @@ const h: {
   attemptNumber: 1,
   alreadySent: false,
   attemptReadError: false,
+  attemptReadWaitsForAbort: false,
   attemptReads: [],
   rpcs: [],
 };
@@ -108,13 +110,23 @@ function admin(): SupabaseClient {
               read.signal = signal;
               return query;
             },
-            maybeSingle: async () => ({
-              data: h.attemptReadError ? null : {
-                [`${match[1]}_send_attempts`]: h.attemptNumber,
-                [`${match[1]}_sent_at`]: h.alreadySent ? START : null,
-              },
-              error: h.attemptReadError ? { message: "read failed" } : null,
-            }),
+            maybeSingle: async () => {
+              if (h.attemptReadWaitsForAbort) {
+                return new Promise<never>((_resolve, reject) => {
+                  const signal = read.signal;
+                  if (!signal) return;
+                  if (signal.aborted) reject(signal.reason);
+                  else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+                });
+              }
+              return {
+                data: h.attemptReadError ? null : {
+                  [`${match[1]}_send_attempts`]: h.attemptNumber,
+                  [`${match[1]}_sent_at`]: h.alreadySent ? START : null,
+                },
+                error: h.attemptReadError ? { message: "read failed" } : null,
+              };
+            },
           };
           return query;
         },
@@ -172,6 +184,7 @@ beforeEach(() => {
   h.attemptNumber = 1;
   h.alreadySent = false;
   h.attemptReadError = false;
+  h.attemptReadWaitsForAbort = false;
   h.attemptReads = [];
   h.rpcs = [];
   alerts.length = 0;
@@ -396,6 +409,28 @@ describe("provider failure", () => {
 });
 
 describe("retry exhaustion remains visible without changing send authority", () => {
+  it("an accounting read that only ends on abort preserves the retryable result without claiming exhaustion", async () => {
+    h.attemptReadWaitsForAbort = true;
+    h.attemptNumber = 3;
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    fetchMock.mockImplementationOnce(() =>
+      Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } })),
+    );
+    expect(await send24hReminderSmsToClient(input())).toEqual({
+      ok: false,
+      error: "twilio_unreachable",
+      retryable: true,
+    });
+    await flush();
+    expect(timeout).toHaveBeenCalledWith(1_000);
+    expect(h.attemptReads[0].signal?.aborted).toBe(true);
+    expect(h.attemptReads[0].rpcsBefore).toContain("record_sms_result");
+    expect(h.attemptReads[0].rpcsBefore).toContain("settle_sms_message");
+    expect(alerts).toEqual([]);
+    expect(recorded()).toEqual([false]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     ["24h", send24hReminderSmsToClient],
     ["2h", send2hReminderSmsToClient],
