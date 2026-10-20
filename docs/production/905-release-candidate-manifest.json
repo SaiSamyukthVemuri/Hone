@@ -1,6 +1,6 @@
 {
   "title": "#905 narrow production-based release candidate source manifest",
-  "production_base": "4425b8ef4a024d5d3d34dbe2a9a752aa88d9524b",
+  "production_base": "aa90510354d7aa0ceeeeb70e631a85d8a9aa0b33",
   "portrait_source": "affcb86727324b2c2505f5185b3ba3db3e9f4545",
   "hosted_anchor": {
     "version": "0212",
@@ -595,20 +595,25 @@
       "reason": "expected-current-image compare-and-clear under client row lock; stale removal fails closed and preserves newer portrait; exact seven-file owner delta composed without merging owner branch ancestry"
     }
   ],
-  "review_state": "Previous ce123 PRCI39499340864SUCCESS; nightly39499338695DB3644assertionsPASS12unhandledcookie-mockerrors FAILED. New exact-head CI/review and nightly DB proof required; unchanged prior passing evidence retained. Migration/consent holds remain.",
+  "review_state": "b76 PRCI39504062573SUCCESS; nightly39504054304other8jobsPASS incl3644DB; shard1 attempts1/2 CANCELLED15m after139/137 observed passes0failures; never green. Refreshed current production/record and bounded existing shard1 ceiling18; new exact review/CI/fullmatrix required. Hosted apply and consent holds remain.",
   "previous_candidate_base": "e91ddd43c932df726a100fc3f4e33c12258007bd",
   "candidate_base_history": [
     "102faf94fc573c724d73419bc9e8a6262ac1a247",
     "cda67e7c9f779838dfad2360a628ab81221cb43e",
     "4f08de03c458dc381ddcb1e1011fdb50a14d66a9",
     "462b16b0fa4d2c531ee3c6bfb67fd2d52345cb54",
-    "e91ddd43c932df726a100fc3f4e33c12258007bd"
+    "e91ddd43c932df726a100fc3f4e33c12258007bd",
+    {
+      "base": "4425b8ef4a024d5d3d34dbe2a9a752aa88d9524b",
+      "superseded_by": "aa90510354d7aa0ceeeeb70e631a85d8a9aa0b33",
+      "reason": "Normal merge deployed925 latest-treatment runtime and published dedicated record967; no pending SQL change"
+    }
   ],
   "canonical_record_source": {
-    "pr": 966,
-    "head": "1bcddf1052dd2b3fc877d6562b45e081d6d9eb32",
-    "status": "Published dedicated-owner correction; exact review/CI pending. Actual production4425 deployed READY; no hosted apply.",
-    "scope": "#963 privacy runtime and202/173 ancestry; settled39501278868unit21244PASS2canonicalFAIL preserved. Historical measurements/migration history unchanged."
+    "pr": 967,
+    "head": "6dd9ffc8ba709c8a1d88aa6e9e43620e633731f4",
+    "status": "Published dedicated owner correction; review/CI pending; actual925 runtimeaa905READY",
+    "scope": "204/175 ancestry; actual925source21278unit603browser11skip; post39507202447onlyA3A5failure preserved; no SQL/history changes"
   },
   "integration_compatibility_repairs": {
     "source": "95a840518b270021d792eae2a52eb00096759566",
@@ -648,5 +653,13 @@
       }
     ],
     "scope": "Portrait + current phone controls only; capture-stage/0232 excluded; SQL19 unchanged."
+  },
+  "nightly_budget_repair": {
+    "run": 39504054304,
+    "prior_attempts": 2,
+    "previous_minutes": 15,
+    "new_shard1_minutes": 18,
+    "observed_attempt2": "137/157 pass before timeout; no final result, remaining20 unrun",
+    "scope": "Only existing first core browser nightly lane ceiling; no command/permission/fixture/assertion/cache/concurrency change"
   }
 }
