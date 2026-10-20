@@ -30,13 +30,11 @@ function component(src: ts.SourceFile): ts.FunctionDeclaration {
 const NON_OWNER = 'practitioner.role!=="owner"';
 const ASSERTIONS = new Set(["assertStudioOwner", "requireStudioOwner"]);
 function delegatedCall(stmt: ts.Statement): ts.CallExpression | undefined {
-  return calls(stmt).find((c) => callName(c) === "loadFinancialsView" && compact(c.arguments[0]!) === "practitioner");
+  return calls(stmt).find((c) => callName(c) === "loadFinancialsView" && c.arguments.length > 0 && compact(c.arguments[0]!) === "practitioner");
 }
-function assertionCall(stmt: ts.Statement): ts.CallExpression | undefined {
-  return calls(stmt).find((c) => ASSERTIONS.has(callName(c)) && c.arguments.length === 1 && compact(c.arguments[0]!) === "practitioner");
-}
-// Only a direct, executed top-level call counts as assertion/delegation; a
-// callback or string containing the name cannot satisfy the gate.
+// Only a direct, executed delegation can qualify; a callback or string
+// containing its name cannot satisfy the gate. Assertion names alone never
+// supply authority: no runtime assertion helper currently has a proved contract.
 function directCall(stmt: ts.Statement, target: ts.CallExpression): boolean {
   let expr: ts.Node | undefined;
   if (ts.isExpressionStatement(stmt)) expr = stmt.expression;
@@ -53,6 +51,19 @@ function ownHalt(stmt: ts.Statement): boolean {
   return ts.isExpressionStatement(last) && ts.isCallExpression(last.expression)
     && callName(last.expression) === "redirect";
 }
+// A returned refusal is not an exception. The caller must stop page work
+// itself, before ANY statement after delegation can read financial data.
+function delegationIssues(stmt: ts.Statement, next: ts.Statement | undefined): string[] {
+  if (!ts.isVariableStatement(stmt) || stmt.declarationList.declarations.length !== 1)
+    return ["delegated result must be bound and awaited"];
+  const declaration = stmt.declarationList.declarations[0]!;
+  if (!ts.isIdentifier(declaration.name) || !declaration.initializer || !ts.isAwaitExpression(declaration.initializer))
+    return ["delegated result must be bound and awaited"];
+  const expected = `${declaration.name.text}.access==="refused"`;
+  if (!next || !ts.isIfStatement(next) || compact(next.expression) !== expected || !ownHalt(next.thenStatement))
+    return ["delegated refusal must halt immediately before later page work"];
+  return [];
+}
 // Calls before the gate are restricted to identity, framework request primitives
 // and the two pure period parsers used by the existing financials page. This
 // also detects non-awaited .from/.rpc, parenthesized awaits, same-line reads,
@@ -66,8 +77,6 @@ function pageIssues(text: string, delegationAllowed = false): string[] {
   const issues: string[] = [];
   const gateIndex = statements.findIndex((stmt) => {
     if (ts.isIfStatement(stmt) && compact(stmt.expression) === NON_OWNER) return true;
-    const assertion = assertionCall(stmt);
-    if (assertion && directCall(stmt, assertion)) return true;
     const delegated = delegationAllowed && delegatedCall(stmt);
     return !!delegated && directCall(stmt, delegated);
   });
@@ -89,7 +98,11 @@ function pageIssues(text: string, delegationAllowed = false): string[] {
       }
     }
   }
-  if (ts.isIfStatement(gate) && !ownHalt(gate.thenStatement)) issues.push("refusal must itself halt");
+  if (ts.isIfStatement(gate)) {
+    if (!ownHalt(gate.thenStatement)) issues.push("refusal must itself halt");
+  } else {
+    issues.push(...delegationIssues(gate, statements[gateIndex + 1]));
+  }
   return issues;
 }
 function practitionerGates(text: string): string[] {
@@ -199,8 +212,9 @@ describe("permanent controls: supported weaknesses must turn the tripwire red", 
     expect(pageIssues(page(identity + readCall))).not.toEqual([]);
     expect(pageIssues(page(identity + readCall, "await loadFinancialsView(practitioner, studio);"), true)).not.toEqual([]);
   });
-  it("compares reads directly with assertion position, never suffix length", () => {
-    expect(pageIssues(page(identity, "assertStudioOwner(practitioner);"))).toEqual([]);
+  it("orders real owner refusal before reads and rejects unproven assertion names", () => {
+    expect(pageIssues(page(identity))).toEqual([]);
+    expect(pageIssues(page(identity, "assertStudioOwner(practitioner);"))).not.toEqual([]);
     expect(pageIssues(page(identity + "await readMoney();", "assertStudioOwner(practitioner);"))).not.toEqual([]);
     expect(pageIssues(page(identity, "items.map(() => assertStudioOwner(practitioner));"))).not.toEqual([]);
   });
@@ -244,5 +258,35 @@ describe("permanent controls: supported weaknesses must turn the tripwire red", 
     "drop table public.practitioners;",
   ])("effective migrated constraint refuses unsupported later DDL: %s", (sql) => {
     expect(roleIssues([{ name: "0001.sql", sql: baseSql }, { name: "9999.sql", sql }])).not.toEqual([]);
+  });
+});
+
+// Exact review regressions 4320848397 / 4320918043. These exercise the
+// detector with unsafe source in memory, never the runtime pages themselves.
+describe("delegation and assertion authority controls", () => {
+  const financialPage = (body: string) => `export default async function Page() { ${identity} ${body} }`;
+  const delegate = "const view = await loadFinancialsView(practitioner, studio);";
+  const refusal = 'if (view.access === "refused") return <p>Owner only</p>;';
+  it("accepts a bound delegated result whose refusal halts before later reads", () => {
+    expect(pageIssues(financialPage(`${delegate} ${refusal} await loadBalances(studio.id);`), true)).toEqual([]);
+  });
+  it.each([
+    "await loadFinancialsView(practitioner, studio); await loadBalances(studio.id);",
+    `${delegate} await loadBalances(studio.id);`,
+    `${delegate} await loadBalances(studio.id); ${refusal}`,
+    `${delegate} if (view.access === "refused") { items.map(() => { return null; }); } await loadBalances(studio.id);`,
+    `${delegate} if (other.access === "refused") return null; await loadBalances(studio.id);`,
+    'const view = loadFinancialsView(practitioner, studio); if (view.access === "refused") return null; await loadBalances(studio.id);',
+  ])("refuses delegated work without its own timely halt: %s", (body) => {
+    expect(pageIssues(financialPage(body), true)).not.toEqual([]);
+  });
+  it.each(["assertStudioOwner", "requireStudioOwner"])("unproven %s spelling cannot supply authority", (helper) => {
+    for (const definition of [
+      `function ${helper}() {}`,
+      `function ${helper}(practitioner: unknown) { return false; }`,
+      `import { ${helper} } from "./unverified-owner-helper";`,
+    ]) {
+      expect(pageIssues(`${definition} ${page(identity, `${helper}(practitioner);`)}`)).not.toEqual([]);
+    }
   });
 });
