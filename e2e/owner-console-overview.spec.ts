@@ -44,7 +44,7 @@ test("the owner sees every panel, the delivery card, and nothing reads ready tha
   await expect(panel("Phone and text messages")).toContainText("US:");
   // No Stripe account: never "Live payments ready".
   await expect(panel("Payments")).not.toContainText("Live payments ready");
-  await expect(panel("Payments")).toContainText("Not connected");
+  await expect(panel("Payments")).toContainText("Test mode: not connected");
   // The delivery lane's own card, which answered: no problems, not "unavailable".
   const delivery = page.getByRole("region", { name: "Message delivery" });
   await expect(delivery).toBeVisible();
