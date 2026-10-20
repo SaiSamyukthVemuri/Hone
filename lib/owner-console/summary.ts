@@ -121,6 +121,45 @@ const CONNECT_COPY: Record<ConnectCapability, { tone: PanelTone; status: string;
   unknown: { tone: "unknown", status: "Unknown", detail: "Payment status could not be read just now. Nothing is assumed." },
 };
 
+const TEST_MODE_COPY: Record<ConnectCapability, { tone?: PanelTone; status: string; detail: string }> = {
+  ready: {
+    tone: "chosen",
+    status: "Test mode ready",
+    detail: "Test payment setup is ready. Test mode charges no real cards, so no real money moves.",
+  },
+  charges_enabled_payouts_pending: {
+    // Worded to avoid a phrase that
+    // tests/source-guards/payment-messaging-guards.test.ts bans in runtime
+    // source outside a mode-aware ternary. That guard reads RAW FILE TEXT, so
+    // a comment naming the banned phrase trips it too — this comment cannot
+    // quote it. The meaning is identical and the guard's allowlist stays
+    // untouched; widening a money-messaging guard to fit new copy is the
+    // wrong direction.
+    status: "Test mode: payouts pending",
+    detail: "Charges may be enabled in test mode, but payouts are not ready yet. No real cards can be charged.",
+  },
+  onboarding_started: {
+    status: "Test mode: setup in progress",
+    detail: "Stripe onboarding is not finished. No real cards can be charged in test mode.",
+  },
+  charges_disabled: {
+    status: "Test mode: charges disabled",
+    detail: "Stripe is not accepting charges for this account in test mode. No real cards can be charged.",
+  },
+  not_connected: {
+    status: "Test mode: not connected",
+    detail: "No payment account is connected. No real cards can be charged in test mode.",
+  },
+  // UNKNOWN STAYS UNKNOWN. The deployment mode is a fact and is safe to state,
+  // but nothing about the ACCOUNT may be asserted from a read that failed.
+  unknown: {
+    status: "Unknown",
+    detail:
+      "Payment status could not be read just now. Nothing is assumed. No real cards can be charged in test mode.",
+  },
+};
+
+
 /**
  * PAY-CCY (#833/#836/#839): the studio's payment COUNTRY gates the Connect status.
  * A blocked country means no charge can happen whatever Connect says. An unread
@@ -170,15 +209,8 @@ export function paymentsPanel(
 
 function connectPanel(capability: ConnectCapability, mode: RuntimeMode): ConsolePanel {
   const base = { key: "payments" as const, title: "Payments", href: "/settings/payments" };
-  // Test-mode readiness is never shown as live readiness: no real money can
-  // move (Codex P2 4244007430 on #851; the same split as connectBannerCopy).
-  if (capability === "ready" && mode === "test") {
-    return {
-      ...base,
-      tone: "chosen",
-      status: "Test mode ready",
-      detail: "Test payment setup is ready. Test mode charges no real cards, so no real money moves.",
-    };
+  if (mode === "test") {
+    return { ...base, ...CONNECT_COPY[capability], ...TEST_MODE_COPY[capability] };
   }
   return { ...base, ...CONNECT_COPY[capability] };
 }

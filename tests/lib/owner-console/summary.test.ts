@@ -109,6 +109,23 @@ describe("the three-state rule", () => {
     expect(readable.detail).toMatch(/cards can be charged/i);
   });
 
+  it("payments: every test-mode capability is explicitly qualified without live chargeability", () => {
+    const capabilities = ["ready", "charges_enabled_payouts_pending", "onboarding_started", "charges_disabled", "not_connected", "unknown"] as const;
+    for (const capability of capabilities) {
+      const panel = paymentsPanel(capability, "test", null);
+      expect(panel.detail, capability).toMatch(/test mode|no real money moves/i);
+      expect(panel.detail, capability).not.toMatch(/^Cards can be charged/);
+    }
+    const testPending = paymentsPanel("charges_enabled_payouts_pending", "test", null);
+    expect(testPending.status).toBe("Test mode: payouts pending");
+    expect(testPending.detail).toContain("No real cards can be charged");
+    expect(testPending.tone).toBe("attention");
+    const livePending = paymentsPanel("charges_enabled_payouts_pending", "live", null);
+    expect(livePending.detail).not.toMatch(/test mode/i);
+    expect(livePending.detail).not.toBe(testPending.detail);
+    expect(paymentsPanel("unknown", "test", null).tone).toBe("unknown");
+  });
+
   it("payments: the payment COUNTRY gates Connect (PAY-CCY): blocked or unread can never read ready", () => {
     const live = paymentsPanel("ready", "live", country("ok"));
     expect(live).toMatchObject({ tone: "ready", status: "Live payments ready" });
