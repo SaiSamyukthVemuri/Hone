@@ -292,6 +292,13 @@ Token storage: the DB only ever holds `hashToken(rawToken)`. A DB compromise doe
 
   `tests/lib/analytics/vercel-url-redaction.test.ts` walks every dynamic page under the opted-in trees with synthetic ids, so a new route is covered automatically. Vercel's own `route` field is already a template and is left untouched.
 - **PostHog token-path redaction follows the canonical registry (#828).** `TOKEN_PATH_PREFIXES` in `lib/analytics/client-boundary.ts` is derived from `TOKEN_ROUTE_PREFIXES` (`lib/security/token-routes.ts`). The hand-written copy lacked `/invitation`, so an invitation token in a marketing pageview's `$prev_pageview_pathname` or `$referrer` passed unredacted. No client-side link from `/invitation` to a marketing page was found, so this is defence in depth against drift. Pinned by Scenario 12 in `tests/lib/analytics/client-boundary.test.ts`.
+- **Server-side PostHog events are checked by key AND value (#828 G-26 row 18).** `captureServerEvent` (`lib/analytics/server.ts`) already allowed only six property keys. Each now also has a value shape:
+  - `studio_id` must be a UUID;
+  - `modality`, `source` and `provider` must come from closed enums;
+  - `is_new_session` and `livemode` must be booleans;
+  - the event name must belong to the closed set of supported server event constants.
+
+  A mismatch drops the whole event, fail closed, and only the property name is logged. `distinctId` identity (raw practitioner UUID or `studio:<uuid>`) is unchanged; that is an identity decision for Sam. `tests/lib/analytics/server-property-shapes.test.ts` checks what the real posthog-node client puts on the wire, with zero network.
 - **PostHog URL properties lose record ids, and `/flags` is off (#828 G-07/G-26).** Browser events leave only from canonical marketing pages, but their URL-valued properties can name app pages.
   - **Where app URLs appear:** a `$referrer` of `/clients/<uuid>/sessions/<uuid>` after a practitioner follows a link to a marketing page, plus `$initial_*`, `$session_entry_*`, and `$set` / `$set_once`.
   - **The fix:** `guardBrowserEvent` treats every named URL key, and any key ending in `_url`, `_referrer` or `_pathname`, as a URL. It applies the same segment rules as Vercel Analytics (`lib/analytics/path-ids.ts`): `[id]` and `[token]`, percent-decoded first. It does the same in `properties`, `$set` and `$set_once`. PostHog's own ids (`$session_id`, `distinct_id`) are kept.
