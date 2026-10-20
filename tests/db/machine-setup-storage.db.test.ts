@@ -509,7 +509,10 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
       // field, BEFORE the column's XOR constraint is reached. The constraint
       // is still there as a backstop; what changed is that a forged direct
       // call gets an explanation rather than a constraint name.
-    ).rejects.toThrow(/needs either a value or a reason/i);
+    ).rejects.toMatchObject({
+      code: "23514",
+      message: 'Field "nothing" needs exactly one number, text or reasoned absence.',
+    });
   });
 
   it("preserves TWO settings groups when probes differ", async () => {
