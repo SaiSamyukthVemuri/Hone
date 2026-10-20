@@ -841,11 +841,21 @@ describe("errored setups: release or a truthful support line, never a retry that
   it("ADOPTED, test failed (identifiers recorded; Codex 4271749292): support", async () => {
     const s = await seedStudio("ctl-err-adopted");
     const provider = controls.senderControlsFakeProvider(ORIGIN, s.studioId);
-    const inventory = (await import("@/lib/sms/sender-controls-demo")).demoAdoptionInventory(s.studioId);
+    // Select the same unrecorded fake resources the page advertises. Candidate 0
+    // may already belong to another studio; that is a pre-claim refusal, not
+    // the post-claim provider failure this case must exercise.
+    const inventory = await controls.resolveDemoInventory(admin, s.studioId);
     provider.script = { ...provider.script, testSendFails: "provider_unavailable" };
-    expect((await controls.runSenderAdoption(deps(provider), {
+    const outcome = await controls.runSenderAdoption(deps(provider), {
       studioId: s.studioId, actorUserId: s.userId, country: "CA", phoneNumber: inventory.numbers.CA.phoneNumber, messagingServiceSid: inventory.messagingServiceSid,
-    })).ok).toBe(false);
+    });
+    // Fail here with the complete returned outcome if selection/read/claim
+    // refused; never infer recorded identifiers from ok:false alone.
+    expect(outcome).toMatchObject({
+      ok: false, result: "failed", reason: "provider_unavailable",
+      parked: true, parkResult: "failed",
+      identifiersRecorded: true, identifierResult: "provisioned_untested",
+    });
     const row = await live(s.studioId);
     expect(row).toMatchObject({ status: "error", phone_number: inventory.numbers.CA.phoneNumber, last_error_code: "provider_unavailable" });
     expect(controls.senderRecoveryFor(row.status, row.last_error_code)).toBe("support");
