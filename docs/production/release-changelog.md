@@ -33,10 +33,10 @@ This section previously carried a "(through 2026-07-27)" heading while containin
 
 **Coverage gap, stated rather than hidden:** this table covers PRs **#357–#479**, **#601**,
 **#629**, **#630**, and — added by the 2026-08-26 reconciliation and kept current through each
-production refresh since — **every** first-parent merge in `b9e0003f..abed5498`, all
-**178** PR merges among them (**#632–#945**, plus **#631**, whose number sits below that floor but
-whose merge does not — see below). The seven merges after the prior `440829c2` snapshot are #940,
-#903, #897, #895, #942, #944 and #945; their dated receipts are listed at the end of this changelog. ⚠️ **EXTENDED
+production refresh since — **every** first-parent merge in `b9e0003f..fca724ab`, all
+**180** PR merges among them (**#632–#947**, plus **#631**, whose number sits below that floor but
+whose merge does not — see below). The nine merges after the prior `440829c2` snapshot are #940,
+#903, #897, #895, #942, #944, #945, #941 and #947; their dated receipts are listed at the end of this changelog. ⚠️ **EXTENDED
 2026-10-12 by CANON-REFRESH-2026-10-12:**
 the range previously ended at `410e5039` (81 merges, the 2026-09-21 extension described next);
 **56** rows were backfilled from the first-parent graph and each merge's own diff, and the
@@ -370,3 +370,13 @@ deployment, route smoke and human acceptance.
 | **#942** | none | **Runtime-bearing** | Redacts studio/client identifiers from portal magic-link success and insert-failure logs | Merged `0726dcff098b02b4e5c0c0f03a46863768c9def1`; exact-head review and pre-merge CI passed (unit/typecheck/lint/build/safety, three targeted browser shards and local-stack browser; DB/payment/mobile/Google/canonical-docs skipped by diff plan). Deployment `dpl_85ex4xgVzy6jgj7miXweJtSKubBG` READY on production aliases at exact source `0726dcff`. Read-only `/`, `/pricing` and `/privacy` GETs returned 200. Post-merge CI `39351117285` was cancelled while its browser shards were running; the local-stack aggregate failed because shard results were absent. No post-merge result is claimed. Chloe’s synthetic-staging acceptance remains pending. No migration or hosted-state change. |
 | **#944** | none | **Runtime-bearing** | Omits portal last-seen session IDs and free-form error text from success/failure logs | Merged `c82d97e1b86f0b8d85dda180c70d04149db512b4`; exact-head review and pre-merge CI `39350706434` passed. Deployment `dpl_BN1WCVHdnhY9fs5g1x8qzzbXHYUp` READY on production aliases at exact source `c82d97e1`. Read-only `/`, `/pricing` and `/privacy` GETs returned 200. Post-merge CI `39351724598` failed canonical A3/A5 freshness checks against the stale pre-#944 record; the failure remains recorded; Chloe’s synthetic-staging acceptance remains pending because no safe UI action exposes the callback error path. No migration or hosted-state change. |
 | **#945** | none | **Runtime-bearing** | Omits provider free-form error text from portal lookup/logout failure logs | Exact-head review clean; pre-merge CI `39352275006` passed selected unit/type/build/safety, three targeted browser shards and local-stack aggregation; DB/payment/mobile/Google/docs skipped by plan. Merged `abed5498fee659d1fcda74ed73ed7e219beb9d73`; Vercel `dpl_4RJ1jb9MXfBbSRwj1W8evRTkwqtY` READY at exact source, aliases `hone.care` and `www.hone.care`. GET smoke `/`, `/pricing`, `/privacy` returned 200. Post-merge CI `39353475232` settled with only canonical-production-facts A3/A5 failures: the then-current production record still pinned runtime and Current Git branch HEAD to `440829c2`, while production was `abed5498`. The exact-head record refresh #941 passes the canonical check at `ea145427`; that docs-only PR remains open pending review/merge. Synthetic staging behavior/UAT pending; no migration or hosted-state change. |
+
+
+## 2026-10-20 rolling release after `abed5498`
+
+The first-parent production sequence now reaches `fca724ab`. This release adds no migration.
+
+| PR | Migration | Status | What shipped | Notes |
+|---|---|---|---|---|
+| **#941** | none | **Documentation only — NOT runtime-bearing** | Refreshed canonical production facts through #945 | Merged normally as `9a731aacb8f2f08421c1c4c1b80a072514d13c11`; exact-head review and selected docs-only CI passed, with non-doc application suites skipped by classification. It changed only the canonical production record and introduced no migration or runtime behavior. The subsequent #947 release advanced production again; this is recorded in the next row. |
+| **#947** | none | **Runtime-bearing; deployed** | Fail-closed invitation completion when the server cannot confirm the invitation was accepted | Source `59560829e1d19e3128af066c3e3deceeea924c2e`; exact-head review clean; pre-merge CI `39355890252` passed 21,137 tests with 0 failures, three targeted browser shards and local-stack browser. DB, payment, mobile, Google and canonical-docs jobs were skipped by plan. Merged normally as `fca724abb60a96eb6dbd02c5cab5bba13af557df`; Vercel deployment `dpl_Hyh1mdSbVzuYwbV8guSpSdwyYBAq` is READY at that exact source on `hone.care` and `www.hone.care`. Read-only GET `/login` returned 200 and GET `/accept-invitation` returned 307 to `/login` unauthenticated. Post-merge CI `39357006112` failed only canonical A3/A5 freshness checks; its recorded pins were stale (`78c1d640` runtime and `37b0ed82` branch HEAD), not application checks. The follow-up docs refresh records the current source. Chloe's isolated synthetic invitation acceptance remains pending; no email, provider, database, or customer-data action was performed. |
