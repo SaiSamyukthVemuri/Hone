@@ -65,7 +65,7 @@ const STUDIO = "11111111-1111-4111-8111-111111111111";
 const APPOINTMENT = "22222222-2222-4222-8222-222222222222";
 const SID = `SM${"a".repeat(32)}`;
 
-function callback(status: "undelivered" | "failed") {
+function callback(status: "undelivered" | "failed", signingToken = TOKEN) {
   const url = `${BASE}/api/twilio/message-status?m=${MESSAGE}`;
   const params = {
     MessageSid: SID,
@@ -79,7 +79,7 @@ function callback(status: "undelivered" | "failed") {
     method: "POST",
     headers: {
       "content-type": "application/x-www-form-urlencoded",
-      "x-twilio-signature": createHmac("sha1", TOKEN).update(signed).digest("base64"),
+      "x-twilio-signature": createHmac("sha1", signingToken).update(signed).digest("base64"),
     },
     body: new URLSearchParams(params).toString(),
   }));
@@ -143,6 +143,18 @@ describe("synthetic SMS delivery failures reach the operator's real page", () =>
     for (const privateValue of ["+12125550123", "Synthetic private body", TOKEN, SID]) {
       expect(html).not.toContain(privateValue);
     }
+    expect(h.email).not.toHaveBeenCalled();
+    expect(h.action).not.toHaveBeenCalled();
+    expect(h.fetch).not.toHaveBeenCalled();
+  });
+
+  it("an invalid callback signature cannot create a visible delivery warning", async () => {
+    expect((await callback("failed", "wrong-synthetic-token")).status).toBe(403);
+    expect(h.rpc).not.toHaveBeenCalled();
+    expect(h.rows).toEqual([]);
+    const html = renderToStaticMarkup(await OpsAlertsPage());
+    expect(html).toContain("No unresolved alerts");
+    expect(html).not.toContain("sms_delivery_failed");
     expect(h.email).not.toHaveBeenCalled();
     expect(h.action).not.toHaveBeenCalled();
     expect(h.fetch).not.toHaveBeenCalled();
