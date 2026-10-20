@@ -417,7 +417,7 @@ export function TreatmentImagesManager({
               width controls. Only shown when this client has sessions; otherwise
               every photo attaches to the client. */}
           {hasSessions ? (
-            <fieldset className="flex flex-col gap-2 rounded-md border border-neutral-200 p-3 dark:border-neutral-800">
+            <fieldset disabled={uploading} className="flex flex-col gap-2 rounded-md border border-neutral-200 p-3 dark:border-neutral-800">
               <legend className="px-1 text-xs font-medium text-neutral-500">
                 Photo context
               </legend>
