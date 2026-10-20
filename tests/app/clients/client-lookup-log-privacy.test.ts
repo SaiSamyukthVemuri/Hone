@@ -94,3 +94,45 @@ describe("duplicate-email lookup diagnostic privacy", () => {
     expect(h.writes).not.toHaveBeenCalled(); expect(log).not.toHaveBeenCalled();
   });
 });
+
+
+describe("client UPDATE failure diagnostic privacy", () => {
+  function prepareUpdate(error: { code: string; message: string }) {
+    h.lookup.mockResolvedValue({ data: { id: CLIENT }, error: null });
+    h.duplicate.mockReset(); h.duplicate.mockResolvedValue({ data: [], error: null });
+    const query = { eq: vi.fn() };
+    query.eq.mockReturnValueOnce(query).mockResolvedValueOnce({ error });
+    h.writes.mockReset(); h.writes.mockReturnValue(query);
+    const data = form(); data.set("email", "synthetic-email@example.test");
+    return { data, updateFilters: query.eq };
+  }
+  it("omits UPDATE error free text while preserving safe metadata, scope and generic response", async () => {
+    const sentinel = `synthetic-patient@example.test private-clinical-sentinel synthetic-token ${CLIENT}`;
+    const { data, updateFilters } = prepareUpdate({ code: "23514", message: sentinel });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(updateClientAction(data)).resolves.toEqual({ ok: false, error: "Couldn't save the client. Please try again." });
+    expect(h.identity).toHaveBeenCalledOnce(); expect(h.lookup).toHaveBeenCalledOnce();
+    expect(h.duplicate).toHaveBeenCalledExactlyOnceWith(1); expect(h.writes).toHaveBeenCalledOnce();
+    expect(updateFilters.mock.calls).toEqual([["id", CLIENT], ["studio_id", STUDIO]]);
+    expect(log).toHaveBeenCalledOnce();
+    const payload = JSON.parse(String(log.mock.calls[0]![0]));
+    expect(payload).toEqual({ event: "client_update_failed", clientId: "[id]", code: "23514", timestamp: expect.any(String) });
+    expect(Number.isNaN(Date.parse(payload.timestamp))).toBe(false);
+    for (const text of ["synthetic-patient", "private-clinical", "synthetic-token", CLIENT])
+      expect(JSON.stringify(log.mock.calls)).not.toContain(text);
+  });
+  it.each([
+    [null, "That email is already used by another active client. Use a different email or archive the duplicate client first."],
+    ["2026-10-20T00:00:00Z", "That email belongs to an archived client. Unarchive that client or use a different email."],
+  ])("keeps duplicate race classification and recheck for archived_at=%s", async (archivedAt, error) => {
+    const { data, updateFilters } = prepareUpdate({ code: "23505", message: "clients_studio_normalized_email_uniq" });
+    h.duplicate.mockResolvedValueOnce({ data: [], error: null })
+      .mockResolvedValueOnce({ data: [{ id: "other-synthetic-client", archived_at: archivedAt }], error: null });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(updateClientAction(data)).resolves.toEqual({ ok: false, error });
+    expect(h.duplicate.mock.calls).toEqual([[1], [1]]);
+    expect(h.writes).toHaveBeenCalledOnce();
+    expect(updateFilters.mock.calls).toEqual([["id", CLIENT], ["studio_id", STUDIO]]);
+    expect(log).not.toHaveBeenCalled();
+  });
+});

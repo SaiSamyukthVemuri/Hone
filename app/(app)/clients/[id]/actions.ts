@@ -257,7 +257,6 @@ export async function updateClientAction(
         event: "client_update_failed",
         clientId,
         code: error.code,
-        message: error.message,
         timestamp: new Date().toISOString(),
       }),
     );
