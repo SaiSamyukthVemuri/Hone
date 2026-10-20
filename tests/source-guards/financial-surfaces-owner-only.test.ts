@@ -133,6 +133,11 @@ const PREFIX_CALLS = new Set([
 function pageIssues(text: string, delegationAllowed = false): string[] {
   const src = parse(text), fn = component(src), statements = [...fn.body!.statements];
   const issues: string[] = [];
+  // Defaults (including nested destructuring defaults/computed keys) run
+  // before the body. Existing Next bindings need no parameter-time work.
+  if (fn.parameters.some((p) => nodes(p).some((n) =>
+    ((ts.isParameter(n) || ts.isBindingElement(n)) && !!n.initializer) || ts.isComputedPropertyName(n))))
+    issues.push("unsupported page parameter initialization");
   const gateIndex = statements.findIndex((stmt) => {
     if (ts.isIfStatement(stmt) && compact(stmt.expression) === NON_OWNER) return true;
     const delegated = delegationAllowed && delegatedCall(stmt);
@@ -148,6 +153,12 @@ function pageIssues(text: string, delegationAllowed = false): string[] {
       if (!PREFIX_CALLS.has(callName(call)) || !trustedCall(call)) issues.push(`untrusted pre-gate call: ${callName(call)}`);
     }
     for (const n of nodes(stmt)) {
+      if (ts.isNewExpression(n) || ts.isTaggedTemplateExpression(n) ||
+          ts.isPostfixUnaryExpression(n) || ts.isDeleteExpression(n) || ts.isYieldExpression(n) ||
+          (ts.isPrefixUnaryExpression(n) && [ts.SyntaxKind.PlusPlusToken, ts.SyntaxKind.MinusMinusToken].includes(n.operator)) ||
+          (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+            n.operatorToken.kind <= ts.SyntaxKind.LastAssignment))
+        issues.push("unsupported executable pre-gate expression");
       if (ts.isAwaitExpression(n)) {
         const expr = n.expression;
         if (!(ts.isCallExpression(expr) && PREFIX_CALLS.has(callName(expr))) &&
@@ -450,5 +461,18 @@ describe("helper parameter initialization controls", () => {
     "undefined, preload = undefined",
   ])("refuses executable or unproven parameter initialization: %s", (parameters) => {
     expect(helperIssues(helper(parameters))).not.toEqual([]);
+  });
+});
+
+
+describe("page parameter and executable-prefix controls", () => {
+  it.each(["preload = loadBalancesForCurrentStudio()", "{ preload = loadBalancesForCurrentStudio() }", "{ [loadBalancesForCurrentStudio()]: preload }"])("rejects pre-body parameter work: %s", (parameters) => {
+    expect(pageIssues(page(identity).replace("function Page()", `function Page(${parameters})`))).not.toEqual([]);
+  });
+  it.each(["new FinancialReader(studio.id);", "financialReader`balance`;", "counter++;", "delete financials.balance;"])("rejects unsupported executable prefix: %s", (work) => {
+    expect(pageIssues(page(`${identity} ${work}`))).not.toEqual([]);
+  });
+  it("keeps ordinary Next page parameter destructuring supported", () => {
+    expect(pageIssues(page(identity).replace("function Page()", "function Page({ params, searchParams })"))).toEqual([]);
   });
 });
