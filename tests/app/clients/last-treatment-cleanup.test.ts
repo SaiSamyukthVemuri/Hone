@@ -44,6 +44,7 @@ const SUMMARY = read("components/last-session-summary.tsx");
 type Candidate = {
   id: string;
   started_at: string;
+  record_status: string | null;
   electrolysis_entries: ReadonlyArray<unknown>;
   laser_entries: ReadonlyArray<unknown>;
 };
@@ -60,6 +61,7 @@ function session(
   return {
     id,
     started_at: opts.at ?? "2026-01-01T10:00:00Z",
+    record_status: "draft",
     electrolysis_entries: Array.from({ length: opts.electro ?? 0 }, () => ({})),
     laser_entries: Array.from({ length: opts.laser ?? 0 }, () => ({})),
   };

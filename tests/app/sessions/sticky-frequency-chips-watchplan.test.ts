@@ -166,6 +166,7 @@ describe("merged observation & reaction chips render consistently", () => {
 type Candidate = {
   id: string;
   started_at: string;
+  record_status: string | null;
   next_session_note?: string | null;
 };
 
@@ -183,11 +184,13 @@ describe("pickPreClientWatchPlanSource", () => {
     const newerCharted: Candidate = {
       id: "new",
       started_at: NEWER,
+      record_status: "draft",
       next_session_note: null,
     };
     const olderWithNote: Candidate = {
       id: "old",
       started_at: OLDER,
+      record_status: "draft",
       next_session_note: "Start lower on upper lip.",
     };
     expect(
@@ -199,11 +202,13 @@ describe("pickPreClientWatchPlanSource", () => {
     const a: Candidate = {
       id: "a",
       started_at: NEWER,
+      record_status: "draft",
       next_session_note: "newest plan",
     };
     const b: Candidate = {
       id: "b",
       started_at: OLDER,
+      record_status: "draft",
       next_session_note: "older plan",
     };
     expect(pickPreClientWatchPlanSource([a, b], blocksMap([]))).toBe(a);
@@ -213,11 +218,13 @@ describe("pickPreClientWatchPlanSource", () => {
     const newerEmpty: Candidate = {
       id: "new",
       started_at: NEWER,
+      record_status: "draft",
       next_session_note: null,
     };
     const olderCaution: Candidate = {
       id: "old",
       started_at: OLDER,
+      record_status: "draft",
       next_session_note: null,
     };
     const map = blocksMap([
@@ -232,11 +239,13 @@ describe("pickPreClientWatchPlanSource", () => {
     const a: Candidate = {
       id: "a",
       started_at: NEWER,
+      record_status: "draft",
       next_session_note: "   ",
     };
     const b: Candidate = {
       id: "b",
       started_at: OLDER,
+      record_status: "draft",
       next_session_note: null,
     };
     expect(pickPreClientWatchPlanSource([a, b], blocksMap([]))).toBeNull();

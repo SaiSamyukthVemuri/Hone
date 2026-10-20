@@ -187,11 +187,21 @@ export function buildLastSessionSummary(input: {
 // It now applies `compareChartedRecency` itself — THE shared rule, the same one
 // pickNewestChartedSession uses and the same one migration 0157 encodes in SQL.
 // Callers may pass rows in any order; the answer is identical either way.
+//
+// HON-10 row 1. A VOID SESSION IS NEVER THE LAST TREATMENT.
+//
+// pickNewestChartedSession (prep card, /sessions/new) and 0157's SQL both skip
+// `record_status = 'void'`; this selector did not, so a void newest session with
+// a live block was "Last treatment" here and skipped everywhere else. 0159
+// refuses every new transition into 'void', so this closes a parity gap rather
+// than a live one. `record_status` is REQUIRED on the type so a caller cannot
+// silently skip the filter by not selecting the column.
 export type LastTreatmentCandidate = {
   id: string;
   // Required so this selector can establish its own order. Both callers already
   // select it; it is not a new read.
   started_at: string;
+  record_status: string | null;
   electrolysis_entries: ReadonlyArray<unknown>;
   laser_entries: ReadonlyArray<unknown>;
 };
@@ -203,9 +213,10 @@ export function pickLastTreatment<T extends LastTreatmentCandidate>(
   return (
     orderByRecency(sessions).find(
       (s) =>
-        (blocksBySession.get(s.id)?.length ?? 0) > 0 ||
-        s.electrolysis_entries.length > 0 ||
-        s.laser_entries.length > 0,
+        s.record_status !== "void" &&
+        ((blocksBySession.get(s.id)?.length ?? 0) > 0 ||
+          s.electrolysis_entries.length > 0 ||
+          s.laser_entries.length > 0),
     ) ?? null
   );
 }
@@ -227,6 +238,10 @@ export function pickLastTreatment<T extends LastTreatmentCandidate>(
 export type WatchPlanCandidate = {
   id: string;
   started_at: string;
+  // HON-10 row 1 (Sam): a void session is never the Watch/Plan source either.
+  // This is ONLY the void exclusion; which content qualifies (note OR caution)
+  // is HON-10 row 2 and is unchanged.
+  record_status: string | null;
   next_session_note?: string | null;
 };
 
@@ -241,6 +256,7 @@ export function pickPreClientWatchPlanSource<T extends WatchPlanCandidate>(
 ): T | null {
   return (
     orderByRecency(sessions).find((s) => {
+      if (s.record_status === "void") return false;
       if (s.next_session_note?.trim()) return true;
       const blocks = blocksBySession.get(s.id) ?? [];
       return blocks.some(

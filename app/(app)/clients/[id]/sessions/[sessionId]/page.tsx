@@ -453,6 +453,9 @@ export default async function SessionDetailPage({
     .eq("studio_id", studio.id)
     .eq("client_id", id)
     .is("deleted_at", null)
+    // HON-10 row 1: a void session's note is never "From last visit".
+    // record_status is NOT NULL (0119), so `neq` drops nothing else.
+    .neq("record_status", "void")
     .not("next_session_note", "is", null)
     .lt("started_at", session.started_at)
     .order("started_at", { ascending: false })
