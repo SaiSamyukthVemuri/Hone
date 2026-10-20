@@ -201,23 +201,22 @@ export async function notifyCriticalOpsAlert(
       text,
     });
     if (error) {
+      // Provider diagnostics can echo payload content; retain fixed fields only.
       console.error(
         JSON.stringify({
           event: "ops_alert_email_send_failed",
           origin_event: input.event,
-          err_message: String(error.message ?? error),
           timestamp: new Date().toISOString(),
         }),
       );
     }
-  } catch (err) {
+  } catch {
     // Last resort: log and stop. Never throw, never recurse into
     // recordOpsAlert.
     console.error(
       JSON.stringify({
         event: "ops_alert_email_threw",
         origin_event: input.event,
-        err_message: err instanceof Error ? err.message : String(err),
         timestamp: new Date().toISOString(),
       }),
     );
