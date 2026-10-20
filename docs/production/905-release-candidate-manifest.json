@@ -322,8 +322,8 @@
       "path": "app/(app)/clients/[id]/page.tsx",
       "source_blob": "20ea9fe0da25ae10411e8aa65b3d16c535e6897d",
       "sha256": "725a62f5785d648910054c373685187ecc892dc1304ddab8d41db91eb88bcd4f",
-      "candidate_current_sha256": "0de499b55d2c53039559093c3f075f136d3740a48aadab5bc5db27d228fbe66d",
-      "candidate_current_blob": "6f81b6fde1e36bcdf302dcc9a500f067d5ecc4db"
+      "candidate_current_sha256": "9c5b088b7214f27c0e5bb1877683be472231ce476e0b75f077bdc5a4a2398703",
+      "candidate_current_blob": "d256a3e3b9d87fb0600351df4dff72ea718f55d6"
     },
     {
       "path": "lib/images/client-portrait.ts",
@@ -595,7 +595,7 @@
       "reason": "expected-current-image compare-and-clear under client row lock; stale removal fails closed and preserves newer portrait; exact seven-file owner delta composed without merging owner branch ancestry"
     }
   ],
-  "review_state": "b76 PRCI39504062573SUCCESS; nightly39504054304other8jobsPASS incl3644DB; shard1 attempts1/2 CANCELLED15m after139/137 observed passes0failures; never green. Refreshed current production/record and bounded existing shard1 ceiling18; new exact review/CI/fullmatrix required. Hosted apply and consent holds remain.",
+  "review_state": "ParentD380PRCIandfullnightlySUCCESS; exactcleanreceiptwithhistoricalsummarytrue/true retained. Currentmanifestprofiledigest repaired; currentproduction/recordcomposition andnewexactheadreview/normalCI pending. NoSQL/sourceguardmutation; hosted/consentholds remain.",
   "previous_candidate_base": "e91ddd43c932df726a100fc3f4e33c12258007bd",
   "candidate_base_history": [
     "102faf94fc573c724d73419bc9e8a6262ac1a247",
@@ -661,5 +661,35 @@
     "new_shard1_minutes": 18,
     "observed_attempt2": "137/157 pass before timeout; no final result, remaining20 unrun",
     "scope": "Only existing first core browser nightly lane ceiling; no command/permission/fixture/assertion/cache/concurrency change"
+  },
+  "candidate_digest_refresh": {
+    "basis_head": "d38026dd374d1cb29e44db4dc2a474b225fd8ad9",
+    "reason": "Deployed925 normalmerge changed profile body; source-provenancefields retained, onlycandidate-currentdigest corrected",
+    "fixes": [
+      {
+        "path": "app/(app)/clients/[id]/page.tsx",
+        "prior_candidate_current_sha256": "0de499b55d2c53039559093c3f075f136d3740a48aadab5bc5db27d228fbe66d",
+        "prior_candidate_current_blob": "6f81b6fde1e36bcdf302dcc9a500f067d5ecc4db",
+        "current_sha256": "9c5b088b7214f27c0e5bb1877683be472231ce476e0b75f077bdc5a4a2398703",
+        "current_blob": "d256a3e3b9d87fb0600351df4dff72ea718f55d6"
+      }
+    ],
+    "runtime_SQL_changed": false
+  },
+  "verified_parent_evidence": {
+    "head": "d38026dd374d1cb29e44db4dc2a474b225fd8ad9",
+    "PR_CI": 39510067856,
+    "nightly": 39510084795,
+    "result": "BothSUCCESS",
+    "unit": 21331,
+    "PR_DB": "3636PASS8SKIP",
+    "nightly_DB": "3644PASS0SKIP",
+    "PR_browser": "603PASS12SKIP",
+    "nightly_browser": "604PASS11SKIP",
+    "payment": 56,
+    "mobile": 6,
+    "Google": 13,
+    "review": "Exactreceipt6303466243 no majorissues; aggregatesummarytrue/true/historythreads preserved,notrewritten",
+    "reuse": "Evidenceatparentheadscope; field-onlydigestrepair doesnotalterUI/RPC/SQL/guards. Newcurrentreview/normalCI required onpublishedfinalhead."
   }
 }
