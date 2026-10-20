@@ -177,6 +177,46 @@ export async function recordSmsResult(
 // hit a cap. Lower-numbered retryable attempts stay log-only.
 const SMS_GIVE_UP_ATTEMPT_THRESHOLD = 3;
 
+/** Read-only failure accounting; never used to authorize or retry a send. */
+async function readUnsentReminderAttemptNumber(
+  admin: SupabaseClient,
+  studioId: string,
+  appointmentId: string,
+  smsType: "reminder_24h" | "reminder_2h",
+): Promise<number | undefined> {
+  const attemptsColumn = `sms_${smsType}_send_attempts`;
+  const sentColumn = `sms_${smsType}_sent_at`;
+  try {
+    // Read after record_sms_result, rather than infer the count from a stale
+    // cron candidate. A later successful send must not be called exhausted.
+    // Bound the diagnostic read so an unavailable observer cannot stall the
+    // reminder batch. This reads no timing/status used by the atomic claim.
+    const { data, error } = await admin
+      .from("appointments")
+      .select(`${attemptsColumn}, ${sentColumn}`)
+      .eq("id", appointmentId)
+      .eq("studio_id", studioId)
+      .abortSignal(AbortSignal.timeout(1_000))
+      .maybeSingle();
+    if (error) throw new Error("attempt count unavailable");
+    const row: unknown = data;
+    if (!row || typeof row !== "object" || Array.isArray(row)) return undefined;
+    const accounting = row as Record<string, unknown>;
+    const attempts = accounting[attemptsColumn];
+    return accounting[sentColumn] === null && typeof attempts === "number" &&
+      Number.isSafeInteger(attempts) && attempts >= 0
+      ? attempts
+      : undefined;
+  } catch {
+    console.error(JSON.stringify({
+      event: "sms_reminder_attempt_read_failed",
+      smsType,
+      timestamp: new Date().toISOString(),
+    }));
+    return undefined;
+  }
+}
+
 export function logSmsFailure(opts: {
   appointmentId: string;
   smsType: SmsType;
@@ -652,12 +692,16 @@ async function sendReminder(
   }
 
   const ambiguous = result.attempt === "ambiguous";
+  const attemptNumber = !ambiguous && result.retryable
+    ? await readUnsentReminderAttemptNumber(args.admin, args.studio.id, args.appointmentId, smsType)
+    : undefined;
   logSmsFailure({
     appointmentId: args.appointmentId,
     smsType,
     error: ambiguous ? `${result.error}:outcome_unknown` : result.error,
     // An ambiguous attempt is never retried automatically, so it is final.
     retryable: ambiguous ? false : result.retryable,
+    attemptNumber,
     studioId: args.studio.id,
   });
   if (ambiguous) {
