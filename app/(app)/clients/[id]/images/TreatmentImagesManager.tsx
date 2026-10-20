@@ -476,7 +476,7 @@ export function TreatmentImagesManager({
           )}
 
           <div className="flex flex-wrap items-center gap-3">
-            <label className={buttonClasses({ className: "focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent" })}>
+            <label className={buttonClasses({ className: "min-h-[44px] focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent" })}>
               Take photo
               <input
                 type="file"
@@ -489,7 +489,7 @@ export function TreatmentImagesManager({
                 className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-wait"
               />
             </label>
-            <label className={buttonClasses({ className: "focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent" })}>
+            <label className={buttonClasses({ className: "min-h-[44px] focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent" })}>
               Choose images
               <input
                 type="file"

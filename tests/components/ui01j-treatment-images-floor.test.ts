@@ -141,6 +141,7 @@ describe("FETT photos: the remaining photo controls reach the floor", () => {
     const input = picker![3];
     const classes = label.match(/className=\{buttonClasses\(\{ className: "([^"]*)" \}\)\}/);
     expect(classes, "label uses the actual shared button class recipe").toBeTruthy();
+    expect(classes![1]).toContain("min-h-[44px]");
     const cls = buttonClasses({ className: classes![1] });
     for (const required of ["min-h-[44px]", "inline-flex", "items-center", "relative", "focus-within:outline-2"]) {
       expect(cls).toContain(required);

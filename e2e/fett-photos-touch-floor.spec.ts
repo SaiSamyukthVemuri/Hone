@@ -96,10 +96,16 @@ test.describe("FETT photos: touch floor, mounted at phone width", () => {
         const box = await target.boundingBox();
         expect(box, `${name} mounted target`).not.toBeNull();
         expect(box!.height, `${name} computed touch height`).toBeGreaterThanOrEqual(FLOOR);
+        if (target !== input) await expect(target).toHaveCSS("min-height", "44px");
       }
     }
     await page.getByRole("button", { name: "Add note", exact: true }).first().click();
-    await expect(page.getByPlaceholder("Add a note for this photo…")).toBeVisible();
+    const noteInput = page.getByPlaceholder("Add a note for this photo…");
+    await expect(noteInput).toBeVisible();
+    await expect(noteInput).toHaveCSS("min-height", "44px");
+    const noteBox = await noteInput.boundingBox();
+    expect(noteBox, "opened note editor mounted").not.toBeNull();
+    expect(noteBox!.height, "opened note editor computed touch height").toBeGreaterThanOrEqual(FLOOR);
     const editor = await controlHeights(page);
     expect(editor.some((c) => c.what.startsWith("textarea")), "opened note textarea measured").toBe(true);
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
