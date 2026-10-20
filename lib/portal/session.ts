@@ -80,7 +80,8 @@ export async function getCurrentPortalSession(): Promise<PortalSession | null> {
   // failures resolve with { error } rather than rejecting, so the
   // fulfilled arm inspects error; the rejected arm covers transport
   // throws. Neither arm logs the cookie token, its hash, or any
-  // client PII; a failed touch never affects the returned session.
+  // client PII: only an event marker, timestamp and database code leave.
+  // A failed touch never affects the returned session.
   void admin
     .from("client_portal_sessions")
     .update({ last_seen_at: nowIso })
@@ -91,20 +92,16 @@ export async function getCurrentPortalSession(): Promise<PortalSession | null> {
           console.error(
             JSON.stringify({
               event: "portal_session_last_seen_update_failed",
-              sessionId: data.id,
               code: touchError.code,
-              message: touchError.message,
               timestamp: new Date().toISOString(),
             }),
           );
         }
       },
-      (err: unknown) => {
+      () => {
         console.error(
           JSON.stringify({
             event: "portal_session_last_seen_update_failed",
-            sessionId: data.id,
-            err: err instanceof Error ? err.message : String(err),
             timestamp: new Date().toISOString(),
           }),
         );
