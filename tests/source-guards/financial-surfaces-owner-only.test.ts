@@ -1,467 +1,248 @@
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
-// ===========================================================================
-// #824 — studio-wide financial surfaces refuse a non-owner BEFORE any read.
-// ===========================================================================
-//
-// THIS FILE ADDS TRIPWIRES ONLY. The surfaces were ALREADY owner-only before
-// this PR. An earlier version of this change treated them as open and added a
-// redirect, which was wrong twice over: it closed nothing, and it made the
-// existing user-facing refusal unreachable. What was actually missing was the
-// tripwire — delete any of these blocks today and no test notices.
-//
-// WHAT ALREADY EXISTS:
-//   * app/(app)/settings/payments/page.tsx, .../refresh/page.tsx and
-//     .../return/page.tsx each refuse with `role !== "owner"` and render
-//     "Only the studio owner can manage payments."
-//   * /financials needs no page check: lib/finance/financial-briefing.ts
-//     refuses on the role as the FIRST STATEMENT of loadFinancialsView, before
-//     any Supabase client exists, so a non-owner causes no studio-wide query
-//     and receives no aggregate — not merely an aggregate they are not shown.
-//
-// THE BEHAVIOUR IS PROVED ELSEWHERE AND IS DELIBERATELY NOT DUPLICATED.
-// tests/lib/finance/financial-briefing.test.ts calls loadFinancialsView with a
-// RECORDING stub client and asserts both `access === "refused"` and
-// `tables === []` — no read happened — across "practitioner", "admin",
-// "Owner", "OWNER", "" and "superuser". A second copy would be two places to
-// keep true, one of which would rot.
-
-// ---------------------------------------------------------------------------
-// WHAT THIS FILE IS NOT. A SOURCE GUARD IS NOT A PROOF.
-//
-// The real protection is elsewhere and this file does not replace it:
-//   * tests/lib/finance/financial-briefing.test.ts RUNS loadFinancialsView with
-//     a recording stub and asserts `access === "refused"` AND `tables === []`
-//     across "practitioner", "admin", "Owner", "OWNER", "" and "superuser";
-//   * the in-page refusals themselves.
-// This file only notices if someone DELETES or REORDERS those.
-//
-// STATED LIMITATIONS, deliberately left rather than chased. Each needs a
-// contrived edit, and chasing them with text matching trades real clarity for
-// imagined coverage:
-//
-//   1. CONTROL FLOW INSIDE THE BRANCH. The halt check is a text match over the
-//      refusal branch's body, so a nested callback's `return`, or a string
-//      containing "redirect(", satisfies it while the outer branch falls
-//      through. The REALISTIC failure — a branch with no return and no
-//      redirect at all — is caught. (Codex P2 4303336567, accepted as a
-//      limitation rather than fixed.)
-//   2. REACHABILITY. Measured: inserting `return null;` immediately after a
-//      guard leaves later code textually present, so no text guard here can
-//      tell reachable from dead.
-//   3. DELIBERATE OBFUSCATION. The await scan is TOTAL over `await` tokens, so
-//      an await cannot vanish — but a loader invoked without `await`, or
-//      aliased to a name this file allow-lists, is not classified correctly.
-//   4. SOURCE, NOT EFFECTIVE SCHEMA. The role domain is read from 0001's
-//      CREATE TABLE and bounded by a tripwire that fails if any later
-//      migration touches that constraint. It is not a pg_constraint query; the
-//      tripwire's message says to move it to a DB suite when that stops being
-//      enough.
-//   5. SAME-LINE PLACEMENT. The pre-guard scan ends at the start of the
-//      guard's LINE, so a loader placed on that same line is outside it.
-//   6. PRACTITIONER_PAGES is a NAMED SAMPLE, not a discovered set — it proves
-//      the refusal is not universal and claims nothing more.
-// ---------------------------------------------------------------------------
-
+// Regression tripwires for ALREADY owner-only studio-wide financial surfaces.
+// No runtime authority is added. These syntax checks deliberately accept only
+// the page/gate forms below; unsupported control flow fails for human review.
+// The recording-client financial-briefing tests remain the behavioral proof.
+// SQL checks establish the role constraint from ordered repository DDL, NOT a
+// hosted catalog: relevant unsupported DDL fails closed rather than being ignored.
 const ROOT = path.join(__dirname, "..", "..");
 const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
-
-/** Comment-stripped, so a refusal named only in prose is not counted. */
-const code = (src: string) =>
-  src.replace(/^[ \t]*\/\/[^\n]*$/gm, " ").replace(/\/\*[\s\S]*?\*\//g, " ");
-
-
-/** The body of a `{ … }` block starting at `braceAt`, brace-matched. */
-function blockBody(src: string, braceAt: number): string {
-  let depth = 0;
-  for (let i = braceAt; i < src.length; i += 1) {
-    if (src[i] === "{") depth += 1;
-    else if (src[i] === "}") {
-      depth -= 1;
-      if (depth === 0) return src.slice(braceAt + 1, i);
-    }
-  }
-  throw new Error("unbalanced braces while scoping the refusal branch");
+const parse = (text: string) => ts.createSourceFile("page.tsx", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const compact = (node: ts.Node) => node.getText().replace(/\s+/g, "").replace(/'/g, '"');
+function nodes(root: ts.Node): ts.Node[] {
+  const out: ts.Node[] = [];
+  function visit(n: ts.Node) { out.push(n); ts.forEachChild(n, visit); }
+  visit(root);
+  return out;
 }
-
-/** The text inside a balanced `( … )` whose opening paren is at `parenAt`. */
-function parenText(src: string, parenAt: number): string {
-  let depth = 0;
-  for (let i = parenAt; i < src.length; i += 1) {
-    if (src[i] === "(") depth += 1;
-    else if (src[i] === ")") {
-      depth -= 1;
-      if (depth === 0) return src.slice(parenAt + 1, i);
-    }
-  }
-  throw new Error("unbalanced parens");
+const callName = (call: ts.CallExpression) => call.expression.getText();
+const calls = (root: ts.Node) => nodes(root).filter(ts.isCallExpression);
+function component(src: ts.SourceFile): ts.FunctionDeclaration {
+  const fn = src.statements.find((n): n is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(n) && !!n.modifiers?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword));
+  if (!fn?.body) throw new Error("missing default function body");
+  return fn;
 }
-
-/** Collapse whitespace so a comparison is about CODE, not formatting. */
-const norm = (t: string) => t.replace(/\s+/g, " ").trim();
-
-/** The parenthesised body of `create table … (` starting at `parenAt`. */
-function parenBody(src: string, parenAt: number): string {
-  let depth = 0;
-  for (let i = parenAt; i < src.length; i += 1) {
-    if (src[i] === "(") depth += 1;
-    else if (src[i] === ")") {
-      depth -= 1;
-      if (depth === 0) return src.slice(parenAt + 1, i);
-    }
-  }
-  throw new Error("unbalanced parens while scoping the practitioners table");
+const NON_OWNER = 'practitioner.role!=="owner"';
+const ASSERTIONS = new Set(["assertStudioOwner", "requireStudioOwner"]);
+function delegatedCall(stmt: ts.Statement): ts.CallExpression | undefined {
+  return calls(stmt).find((c) => callName(c) === "loadFinancialsView" && compact(c.arguments[0]!) === "practitioner");
 }
-
-/**
- * Next's own request-scoped promises. Awaiting one of these is NOT a studio
- * read — `searchParams` in particular MUST be awaited before /financials can
- * compute the period it hands to the guard — so they are permitted before the
- * financial guard while any other awaited call is not.
- */
-const REQUEST_PRIMITIVES = new Set([
-  "searchParams",
-  "params",
-  "cookies",
-  "headers",
-  "draftMode",
+function assertionCall(stmt: ts.Statement): ts.CallExpression | undefined {
+  return calls(stmt).find((c) => ASSERTIONS.has(callName(c)) && c.arguments.length === 1 && compact(c.arguments[0]!) === "practitioner");
+}
+// Only a direct, executed top-level call counts as assertion/delegation; a
+// callback or string containing the name cannot satisfy the gate.
+function directCall(stmt: ts.Statement, target: ts.CallExpression): boolean {
+  let expr: ts.Node | undefined;
+  if (ts.isExpressionStatement(stmt)) expr = stmt.expression;
+  if (ts.isVariableStatement(stmt) && stmt.declarationList.declarations.length === 1)
+    expr = stmt.declarationList.declarations[0]!.initializer;
+  if (expr && ts.isAwaitExpression(expr)) expr = expr.expression;
+  return expr === target;
+}
+function ownHalt(stmt: ts.Statement): boolean {
+  const body = ts.isBlock(stmt) ? [...stmt.statements] : [stmt];
+  if (body.length !== 1) return false;
+  const last = body[0]!;
+  if (ts.isReturnStatement(last)) return !last.expression || calls(last.expression).length === 0;
+  return ts.isExpressionStatement(last) && ts.isCallExpression(last.expression)
+    && callName(last.expression) === "redirect";
+}
+// Calls before the gate are restricted to identity, framework request primitives
+// and the two pure period parsers used by the existing financials page. This
+// also detects non-awaited .from/.rpc, parenthesized awaits, same-line reads,
+// and reads before identity. Unknown forms fail rather than disappear.
+const PREFIX_CALLS = new Set([
+  "requirePractitionerWithStudio", "cookies", "headers", "draftMode",
+  "Array.isArray", "isReportingPeriod",
 ]);
-
-
-/**
- * Every awaited expression in `region`, as the identifier it starts with, or
- * the literal "<unrecognised>" when the await is not followed by a plain
- * identifier — e.g. `await (loadStudioData())`.
- *
- * TOTAL BY CONSTRUCTION (Codex P2 4303336564). The previous matcher required an
- * identifier immediately after `await`, so a pre-guard load written with
- * parentheses recorded NOTHING and slipped through. Counting every `await`
- * token and accounting for each one means an await this test cannot classify
- * FAILS rather than disappears.
- */
-function awaitedNames(region: string): string[] {
-  return [...region.matchAll(/\bawait\b\s*([A-Za-z_$][\w$]*)?/g)].map(
-    (m) => m[1] ?? "<unrecognised>",
-  );
+function pageIssues(text: string, delegationAllowed = false): string[] {
+  const src = parse(text), fn = component(src), statements = [...fn.body!.statements];
+  const issues: string[] = [];
+  const gateIndex = statements.findIndex((stmt) => {
+    if (ts.isIfStatement(stmt) && compact(stmt.expression) === NON_OWNER) return true;
+    const assertion = assertionCall(stmt);
+    if (assertion && directCall(stmt, assertion)) return true;
+    const delegated = delegationAllowed && delegatedCall(stmt);
+    return !!delegated && directCall(stmt, delegated);
+  });
+  if (gateIndex < 0) return ["missing unconditional owner gate"];
+  const gate = statements[gateIndex]!;
+  const prefix = statements.slice(0, gateIndex);
+  const identity = prefix.flatMap(calls).filter((c) => callName(c) === "requirePractitionerWithStudio");
+  if (identity.length !== 1 || !ts.isAwaitExpression(identity[0]!.parent)) issues.push("identity must be awaited exactly once before gate");
+  for (const stmt of prefix) {
+    for (const call of calls(stmt)) {
+      if (!PREFIX_CALLS.has(callName(call))) issues.push(`pre-gate call: ${callName(call)}`);
+    }
+    for (const n of nodes(stmt)) {
+      if (ts.isAwaitExpression(n)) {
+        const expr = n.expression;
+        if (!(ts.isCallExpression(expr) && PREFIX_CALLS.has(callName(expr))) &&
+            !(ts.isIdentifier(expr) && ["searchParams", "params"].includes(expr.text)))
+          issues.push("unsupported pre-gate await");
+      }
+    }
+  }
+  if (ts.isIfStatement(gate) && !ownHalt(gate.thenStatement)) issues.push("refusal must itself halt");
+  return issues;
 }
-
-/**
- * The role literals inside a `check (role in (…))` list.
- *
- * BROAD BY CONSTRUCTION (Codex P2 4303373303). This was `/'([a-z_]+)'/g`, which
- * silently DROPPED any role containing a capital, a digit or a hyphen — so
- * adding `'studio-admin'` left the parsed domain equal to the expected pair and
- * the tripwire passed WHILE THE ROLE EXISTED. That is this assertion failing at
- * its one job, for an ordinary naming choice, and `'studio-admin'` is plausible
- * precisely because the ruling was phrased "owner/admins".
- */
-function roleLiteralsIn(list: string): string[] {
-  return [...list.matchAll(/'([^']+)'/g)].map((m) => m[1]).sort();
+function practitionerGates(text: string): string[] {
+  // Scan syntax, not strings/comments. Both equivalent role predicates and
+  // assertion/delegation helpers would violate the named sample's contract.
+  return nodes(component(parse(text)).body!).flatMap((n) => {
+    if (ts.isCallExpression(n) && (ASSERTIONS.has(callName(n)) || callName(n) === "loadFinancialsView")) return [callName(n)];
+    if (ts.isIfStatement(n) && nodes(n.expression).some((x) => ts.isPropertyAccessExpression(x) && x.name.text === "role")) {
+      const literals = nodes(n.expression).filter(ts.isStringLiteral).map((x) => x.text);
+      if (literals.includes("owner") || literals.includes("practitioner")) return [n.expression.getText()];
+    }
+    return [];
+  });
 }
-
-/** Every `page.tsx` under `rel`, recursively, as repo-relative paths. */
+function helperIssues(text: string): string[] {
+  const fn = parse(text).statements.find((n): n is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(n) && n.name?.text === "loadFinancialsView");
+  const first = fn?.body?.statements[0];
+  if (!first || !ts.isIfStatement(first) || compact(first.expression) !== NON_OWNER || !ownHalt(first.thenStatement))
+    return ["helper must refuse as its first statement"];
+  const halt = ts.isBlock(first.thenStatement) ? first.thenStatement.statements[0]! : first.thenStatement;
+  if (!ts.isReturnStatement(halt) || !halt.expression || !ts.isObjectLiteralExpression(halt.expression) ||
+      !halt.expression.properties.some((p) => ts.isPropertyAssignment(p) && p.name.getText() === "access" &&
+        ts.isStringLiteral(p.initializer) && p.initializer.text === "refused"))
+    return ["helper must return access refused"];
+  return [];
+}
 function discoverPages(rel: string): string[] {
-  const out: string[] = [];
-  const walk = (dir: string) => {
-    for (const entry of readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
-      const child = `${dir}/${entry.name}`;
-      if (entry.isDirectory()) walk(child);
-      else if (entry.name === "page.tsx") out.push(child);
-    }
-  };
-  walk(rel);
-  return out.sort();
+  return readdirSync(path.join(ROOT, rel), { withFileTypes: true }).flatMap((entry) => {
+    const child = `${rel}/${entry.name}`;
+    return entry.isDirectory() ? discoverPages(child) : entry.name === "page.tsx" ? [child] : [];
+  }).sort();
 }
 
-// DISCOVERED, NOT LISTED (raised against my own guard before review did). A
-// hardcoded list fails the standard this file is held to: the smallest edit
-// that breaks the claim is "add a new payments route with no owner refusal",
-// and a list of three would have stayed green while the new route was open.
-// The walk closes that, and the known routes are asserted PRESENT below so the
-// walk cannot pass by discovering nothing.
-const PAYMENT_PAGES = discoverPages("app/(app)/settings/payments");
-const FINANCIALS_PAGES = discoverPages("app/(app)/financials");
-
-const KNOWN_PAYMENT_PAGES = [
-  "app/(app)/settings/payments/page.tsx",
-  "app/(app)/settings/payments/refresh/page.tsx",
-  "app/(app)/settings/payments/return/page.tsx",
-] as const;
-
-/**
- * A NAMED SAMPLE, deliberately not discovered: surfaces that must STAY open to
- * any practitioner. Without it the suite would pass against a codebase that
- * had put an owner refusal on everything, locking electrologists out of their
- * own work. It is a sample because "every page a practitioner may open" is not
- * a set this file can enumerate correctly — so it proves the refusal is not
- * universal, and claims nothing more.
- */
-const PRACTITIONER_PAGES = [
-  "app/(app)/dashboard/page.tsx",
-  "app/(app)/clients/[id]/page.tsx",
-] as const;
-
-describe("#824: financial surfaces refuse a non-owner before any read", () => {
-  it("the walks find the known surfaces, so a discovery failure cannot pass as coverage", () => {
-    for (const known of KNOWN_PAYMENT_PAGES) {
-      expect(PAYMENT_PAGES, `the payments walk lost ${known}`).toContain(known);
+// Bounded SQL inspection: locate the practitioners CREATE TABLE, select its
+// role column (not the first CHECK on an unrelated column/table), and compare
+// the ENTIRE CHECK. Later DDL that can change its effective meaning is refused.
+const sqlCode = (s: string) => s.replace(/--[^\n]*|\/\*[\s\S]*?\*\//g, " ").replace(/"([a-z_]+)"/g, "$1");
+function balanced(text: string, at: number): string {
+  let depth = 0, quoted = false;
+  for (let i = at; i < text.length; i++) {
+    if (text[i] === "'") {
+      if (quoted && text[i + 1] === "'") { i++; continue; }
+      quoted = !quoted;
     }
-    expect(
-      FINANCIALS_PAGES,
-      "the financials walk lost the page it exists to cover",
-    ).toContain("app/(app)/financials/page.tsx");
-  });
-
-  for (const rel of PAYMENT_PAGES) {
-    it(`${rel} refuses a non-owner before it loads anything`, () => {
-      const src = code(read(rel));
-      const resolveAt = src.search(/requirePractitionerWithStudio\s*\(/);
-      const refuseAt = src.search(/practitioner\.role\s*!==\s*"owner"/);
-      expect(resolveAt, "the page must resolve identity itself").toBeGreaterThan(-1);
-      expect(refuseAt, "the page must refuse a non-owner").toBeGreaterThan(-1);
-
-      // THE WHOLE CONDITION, not a substring of it (Codex P2 4303407203).
-      // `practitioner.role !== "owner" && paymentsLockdownEnabled` contains the
-      // role test, so a substring search passed while the refusal applied only
-      // when the extra conjunct happened to be true — a non-owner through the
-      // gate, guard green. The condition is paren-matched and compared whole.
-      const ifAt = src.lastIndexOf("if", refuseAt);
-      expect(ifAt, "the refusal must sit in an if statement").toBeGreaterThan(-1);
-      expect(
-        norm(parenText(src, src.indexOf("(", ifAt))),
-        "the refusal condition must be EXACTLY the role test — no extra conjunct " +
-          "may narrow when a non-owner is refused",
-      ).toBe('practitioner.role !== "owner"');
-      // ORDER IS THE PROPERTY, and the region starts at the COMPONENT, not at
-      // the resolver (Codex P2 4303257432). Slicing from
-      // requirePractitionerWithStudio could not see a loader awaited EARLIER in
-      // the page — work done before the identity is even resolved, which is
-      // strictly worse than work done between resolving and refusing.
-      //
-      // So: every await before the refusal must be the resolver's, and there
-      // must be exactly one of them.
-      const fnAt = src.search(/export default async function/);
-      expect(fnAt, "the page must export an async component").toBeGreaterThan(-1);
-      // The region ends at the START OF THE GUARD'S LINE. Slicing to the guard
-      // itself left its own `await ` inside the region, which the total scan
-      // then reported as "<unrecognised>" — a boundary artifact of this test,
-      // not a pre-guard load. Verified by printing the matches.
-      const awaitsBefore = awaitedNames(src.slice(fnAt, src.lastIndexOf("\n", refuseAt)));
-      expect(
-        awaitsBefore,
-        "the identity resolver must be awaited before the owner refusal",
-      ).toContain("requirePractitionerWithStudio");
-      expect(
-        awaitsBefore.filter(
-          (n) => n !== "requirePractitionerWithStudio" && !REQUEST_PRIMITIVES.has(n),
-        ),
-        "no DATA LOADER may be awaited before the owner refusal",
-      ).toEqual([]);
-      // AND THE BRANCH ITSELF MUST HALT. Scoped to the branch BODY by
-      // brace-matching, not to a character window (Codex P2 4303218405): a
-      // 400-character window around the condition swept up the OWNER's later
-      // `redirect(url)` in refresh/page.tsx, so deleting the non-owner's own
-      // `redirect("/settings/payments")` still passed while a non-owner went on
-      // to create the connected account. The window proved the wrong thing.
-      //
-      // Both halting shapes are accepted on purpose: page.tsx RETURNS the
-      // owner-only message, the two Connect callbacks REDIRECT to it, and
-      // redirect() throws in Next. An earlier draft demanded a literal
-      // `return` and failed the callbacks for being correct.
-      const body = blockBody(src, src.indexOf("{", refuseAt));
-      expect(
-        body,
-        "the non-owner branch must halt — return a refusal or redirect away",
-      ).toMatch(/\breturn\b|\bredirect\s*\(/);
-    });
+    if (quoted) continue;
+    if (text[i] === "(") depth++;
+    if (text[i] === ")" && --depth === 0) return text.slice(at + 1, i);
   }
-
-  for (const rel of FINANCIALS_PAGES) {
-    it(`${rel} refuses a non-owner, by its own branch or by delegating`, () => {
-      // TWO LEGITIMATE SHAPES, so the walk admits either rather than forcing
-      // the one the current page happens to use. /financials carries no in-page
-      // check because loadFinancialsView refuses as its first statement; a
-      // future financials route could instead refuse in-page. What is NOT
-      // acceptable is neither.
-      const src = code(read(rel));
-      const delegateAt = src.search(/loadFinancialsView\s*\(\s*practitioner/);
-      const refuseAt = src.search(/practitioner\.role\s*!==\s*"owner"/);
-      expect(
-        delegateAt > -1 || refuseAt > -1,
-        `${rel} must either refuse in-page or hand the practitioner to loadFinancialsView`,
-      ).toBe(true);
-
-      // NOTHING MAY LOAD BEFORE WHICHEVER GUARD THIS PAGE USES (Codex P2
-      // 4303288171). Delegating is not enough on its own: the helper can only
-      // refuse reads performed INSIDE itself, so a page that runs a
-      // studio-wide query and THEN delegates satisfied the old check while
-      // breaking the guarantee. The boundary is the guard this page actually
-      // has, and every await before it must be the identity resolver's.
-      const guardAt = refuseAt > -1 ? Math.min(...[refuseAt, delegateAt].filter((n) => n > -1)) : delegateAt;
-      const fnAt = src.search(/export default async function/);
-      expect(fnAt, "the page must export an async component").toBeGreaterThan(-1);
-      // Region ends at the start of the guard's LINE, for the reason the
-      // payments loop above records.
-      const awaitsBefore = awaitedNames(src.slice(fnAt, src.lastIndexOf("\n", guardAt)));
-      expect(
-        awaitsBefore,
-        "the identity resolver must be awaited before the financial guard",
-      ).toContain("requirePractitionerWithStudio");
-      expect(
-        awaitsBefore.filter(
-          (n) => n !== "requirePractitionerWithStudio" && !REQUEST_PRIMITIVES.has(n),
-        ),
-        "no DATA LOADER may be awaited before the financial guard",
-      ).toEqual([]);
-
-      if (refuseAt > -1) {
-        const body = blockBody(src, src.indexOf("{", refuseAt));
-        expect(body, "an in-page refusal must halt").toMatch(/\breturn\b|\bredirect\s*\(/);
-      }
-    });
+  throw new Error("unbalanced SQL");
+}
+function roleIssues(migrations: Array<{ name: string; sql: string }>): string[] {
+  const issues: string[] = [];
+  let found = false;
+  let roleConstraintName = "practitioners_role_check";
+  for (const { name, sql: raw } of [...migrations].sort((a, b) => a.name.localeCompare(b.name))) {
+    const sql = sqlCode(raw);
+    const create = /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?practitioners\s*\(/i.exec(sql);
+    if (create) {
+      if (found) issues.push(`${name}: practitioners recreated`);
+      found = true;
+      const body = balanced(sql, create.index + create[0].length - 1);
+      const role = /(?:^|,)\s*role\s+text\b[^,]*?(?:check\s*\()/i.exec(body);
+      if (!role) { issues.push(`${name}: missing practitioners.role CHECK`); continue; }
+      roleConstraintName = /constraint\s+([a-z_][a-z0-9_]*)/i.exec(role[0])?.[1] ?? "practitioners_role_check";
+      const expr = balanced(body, role.index + role[0].length - 1).replace(/\s+/g, "").replace(/^rolein\(/i, "rolein(");
+      if (expr !== "rolein('owner','practitioner')") issues.push(`${name}: role CHECK domain changed`);
+    }
+    for (const m of sql.matchAll(/alter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?(?:public\.)?practitioners\b([^;]*)/gi)) {
+      const change = m[1]!;
+      if (/\brole\b|\brename\b|\bset\s+schema\b/i.test(change) ||
+          new RegExp(`\\b${roleConstraintName}\\b`, "i").test(change))
+        issues.push(`${name}: effective role constraint needs migrated-catalog validation`);
+    }
+    if (/drop\s+table\s+(?:if\s+exists\s+)?(?:public\.)?practitioners\b/i.test(sql)) issues.push(`${name}: practitioners dropped`);
   }
+  if (!found) issues.push("missing practitioners table");
+  return issues;
+}
 
-  it("loadFinancialsView's refusal is its FIRST executable statement", () => {
-    // MECHANISM-INDEPENDENT (Codex P2 4303288175). The old form compared the
-    // refusal's position against the first `.from(` only, so an awaited RPC or
-    // any other loader added BEFORE the refusal would have left the tripwire
-    // green while the claim "refuses before every read" became false. Rather
-    // than enumerate every read mechanism — a list that rots — assert what the
-    // helper's own comment already demands: "FIRST STATEMENT, and it must stay
-    // first."
-    const helper = code(read("lib/finance/financial-briefing.ts"));
-    const sig = /export async function loadFinancialsView\s*\(/.exec(helper);
-    expect(sig, "loadFinancialsView must exist").toBeTruthy();
-    // Paren-match the PARAMETER LIST first: the params contain a type literal
-    // `{ readonly role: string }`, so the next `{` after the signature is that
-    // TYPE's brace, not the function body's. Scoping to it returned an empty
-    // first statement and failed on correct code.
-    const parenAt = sig!.index + sig![0].length - 1;
-    let depth = 0;
-    let closeParen = -1;
-    for (let i = parenAt; i < helper.length; i += 1) {
-      if (helper[i] === "(") depth += 1;
-      else if (helper[i] === ")") {
-        depth -= 1;
-        if (depth === 0) {
-          closeParen = i;
-          break;
-        }
-      }
-    }
-    expect(closeParen, "could not scope loadFinancialsView's parameter list").toBeGreaterThan(-1);
-    const body = blockBody(helper, helper.indexOf("{", closeParen));
-    // ANCHORED AT THE BODY START, not sliced to the first semicolon (Codex P2
-    // 4303336569). Semicolon slicing could span two ASI-separated statements,
-    // so an inserted `await preloadFinancialData()` without a trailing
-    // semicolon would have left the refusal inside the slice and the check
-    // green. Anchoring means ANY inserted statement breaks the match.
-    expect(
-      body.trimStart(),
-      "the role refusal must be the FIRST executable statement of loadFinancialsView",
-    ).toMatch(/^if\s*\(\s*practitioner\.role\s*!==\s*"owner"\s*\)/);
-    expect(
-      body.trimStart().slice(0, 200),
-      "and it must return the refusal",
-    ).toMatch(/access:\s*"refused"/);
+const PAYMENTS = discoverPages("app/(app)/settings/payments");
+const FINANCIALS = discoverPages("app/(app)/financials");
+describe("existing owner-only financial surface tripwires", () => {
+  it("discovers the known pages non-vacuously", () => {
+    for (const rel of ["page.tsx", "refresh/page.tsx", "return/page.tsx"])
+      expect(PAYMENTS).toContain(`app/(app)/settings/payments/${rel}`);
+    expect(FINANCIALS).toContain("app/(app)/financials/page.tsx");
   });
-
-  it("NON-VACUITY: ordinary practitioner surfaces carry NO owner refusal", () => {
-    for (const rel of PRACTITIONER_PAGES) {
-      const src = code(read(rel));
-      expect(
-        src,
-        `${rel} must stay open to any practitioner — the refusal is for money, not for work`,
-      ).not.toMatch(/practitioner\.role\s*!==\s*"owner"/);
-    }
+  for (const rel of PAYMENTS) it(`${rel}: identity then unconditional halting owner gate before reads`, () => expect(pageIssues(read(rel))).toEqual([]));
+  for (const rel of FINANCIALS) it(`${rel}: no reads before identity/delegation`, () => expect(pageIssues(read(rel), true)).toEqual([]));
+  it("helper refuses before table, RPC or other reads", () => expect(helperIssues(read("lib/finance/financial-briefing.ts"))).toEqual([]));
+  for (const rel of ["app/(app)/dashboard/page.tsx", "app/(app)/clients/[id]/page.tsx"])
+    it(`${rel}: named practitioner sample has no owner gate`, () => expect(practitionerGates(read(rel))).toEqual([]));
+  it("ordered repository migrations retain exactly the practitioners role constraint", () => {
+    const dir = path.join(ROOT, "supabase/migrations");
+    expect(roleIssues(readdirSync(dir).filter((f) => f.endsWith(".sql")).map((name) => ({ name, sql: readFileSync(path.join(dir, name), "utf8") })))).toEqual([]);
   });
+});
 
-  it("CONTROL: a third role is seen whatever it is named", () => {
-    // PERMANENT, not a one-off mutant. The previous parser dropped exactly
-    // these shapes, so the tripwire above would have stayed green while a
-    // third role existed. Each name below must be PARSED, and must therefore
-    // make the domain differ from the expected pair.
-    for (const bad of ["studio-admin", "frontDesk", "admin2"]) {
-      const list = `'owner', 'practitioner', '${bad}'`;
-      const parsed = roleLiteralsIn(list);
-      expect(parsed, `${bad} must be parsed, not dropped`).toContain(bad);
-      expect(
-        parsed,
-        `${bad} must make the role domain differ from the expected pair`,
-      ).not.toEqual(["owner", "practitioner"]);
-    }
-    // And the parser still reads the ordinary case correctly.
-    expect(roleLiteralsIn("'owner', 'practitioner'")).toEqual(["owner", "practitioner"]);
+const page = (prefix: string, gate = 'if (practitioner.role !== "owner") { redirect("/settings/payments"); }') =>
+  `export default async function Page() { ${prefix} ${gate} await readMoney(); }`;
+const identity = "const { practitioner, studio } = await requirePractitionerWithStudio();";
+const baseSql = "create table public.practitioners (id uuid, role text check (role in ('owner', 'practitioner')));";
+describe("permanent controls: supported weaknesses must turn the tripwire red", () => {
+  it.each(["await readMoney();", "await (readMoney());", "db.from('money');", "await db.rpc('money');"])("detects %s before identity and on the gate's own line", (readCall) => {
+    expect(pageIssues(page(readCall + identity))).not.toEqual([]);
+    expect(pageIssues(page(identity + readCall))).not.toEqual([]);
+    expect(pageIssues(page(identity + readCall, "await loadFinancialsView(practitioner, studio);"), true)).not.toEqual([]);
   });
-
-  it("practitioners.role admits no third role, so owner-only is unambiguous", () => {
-    // THE ONE GENUINELY NEW GUARANTEE IN THIS PR. "Owner/admins" resolves to
-    // owner-only because there IS no admin studio role. The only "admin" in
-    // Hone is the PLATFORM /admin surface, which is not a studio membership.
-    //
-    // SCOPED TO THE practitioners TABLE (Codex P2 4303218407). An earlier draft
-    // collected EVERY `check (role in (…))` across all migrations, and
-    // 0007_pending_invitations.sql carries an identical check on
-    // pending_invitations.role — so deleting the practitioners constraint would
-    // have left the array non-empty and the test green, with the guarantee it
-    // claims no longer enforced. Measured: both checks exist and both read
-    // ('owner','practitioner'), which is exactly why the loose version passed.
-    const migrations = path.join(ROOT, "supabase", "migrations");
-    const found: { expr: string; roles: string[] }[] = [];
-    for (const f of readdirSync(migrations).filter((n) => n.endsWith(".sql"))) {
-      const sql = readFileSync(path.join(migrations, f), "utf8");
-      const create = /create table\s+(?:if not exists\s+)?public\.practitioners\s*\(/i.exec(sql);
-      if (!create) continue;
-      const columns = parenBody(sql, create.index + create[0].length - 1);
-      // THE WHOLE CHECK EXPRESSION (Codex P2 4303407206). The previous regex
-      // stopped at the first `)`, so widening the constraint to
-      // `check (role in ('owner','practitioner') or role = 'admin')` left the
-      // parsed list equal to the expected pair and the tripwire green while
-      // 'admin' was admitted. The check is paren-matched and compared whole, so
-      // ANY additional predicate fails rather than being skipped past.
-      const checkAt = columns.search(/\bcheck\s*\(/i);
-      if (checkAt > -1) {
-        const expr = norm(parenText(columns, columns.indexOf("(", checkAt)));
-        found.push({ expr, roles: roleLiteralsIn(expr) });
-      }
-    }
-    // NON-VACUITY: the constraint must be FOUND on practitioners itself, so
-    // removing or renaming it fails here rather than passing by absence.
-    expect(found.length, "practitioners.role must carry a role CHECK constraint").toBe(1);
-
-    // AND NOTHING LATER MAY REDEFINE IT (Codex P2 4303257438). This reads the
-    // historical CREATE TABLE, which is the EFFECTIVE schema only while no
-    // later migration alters that constraint. Measured today: none does. If one
-    // ever appears, this trips — and the right response is to move this
-    // assertion to a tests/db suite that queries pg_constraint for the
-    // effective check, not to widen the pattern here. Stated as the limit it
-    // is rather than left implied.
-    const laterAlters: string[] = [];
-    for (const f of readdirSync(migrations).filter((n) => n.endsWith(".sql"))) {
-      const sql = readFileSync(path.join(migrations, f), "utf8");
-      for (const stmt of sql.split(";")) {
-        if (!/alter\s+table[^;]*\bpractitioners\b/i.test(stmt)) continue;
-        if (/\brole\b/i.test(stmt) && /constraint|check/i.test(stmt)) laterAlters.push(f);
-      }
-    }
-    expect(
-      [...new Set(laterAlters)],
-      "a migration alters practitioners' role constraint — this source-level " +
-        "assertion can no longer stand for the effective schema; move it to a " +
-        "DB suite that reads pg_constraint",
-    ).toEqual([]);
-    expect(found[0].roles, "unexpected practitioners.role domain").toEqual([
-      "owner",
-      "practitioner",
-    ]);
-    // And the expression must be ONLY that list — no `or role = …` appended
-    // (Codex P2 4303407206). Quotes are normalised so the comparison is about
-    // the EXPRESSION, not the dialect's quoting.
-    expect(
-      found[0].expr.replace(/'/g, '"'),
-      "the role CHECK must be exactly an IN list of the two roles",
-    ).toBe('role in ("owner", "practitioner")');
+  it("compares reads directly with assertion position, never suffix length", () => {
+    expect(pageIssues(page(identity, "assertStudioOwner(practitioner);"))).toEqual([]);
+    expect(pageIssues(page(identity + "await readMoney();", "assertStudioOwner(practitioner);"))).not.toEqual([]);
+    expect(pageIssues(page(identity, "items.map(() => assertStudioOwner(practitioner));"))).not.toEqual([]);
+  });
+  it.each(['items.map(() => { return null; });', 'const text = "redirect(";', '', 'if (flag) return null;'])("refusal does not halt through nested/string/conditional text: %s", (body) => {
+    expect(pageIssues(page(identity, `if (practitioner.role !== "owner") { ${body} }`))).toContain("refusal must itself halt");
+  });
+  it("accepts the existing refusal return and rejects narrowed predicates", () => {
+    expect(pageIssues(page(identity, 'if (practitioner.role !== "owner") return <p>Owner only</p>;'))).toEqual([]);
+    expect(pageIssues(page(identity, 'if (practitioner.role !== "owner" && enabled) redirect("/");'))).not.toEqual([]);
+  });
+  it.each(['if (practitioner.role === "practitioner") redirect("/");', 'assertStudioOwner(practitioner);', 'requireStudioOwner(practitioner);'])("detects equivalent owner restriction on a practitioner sample: %s", (gate) => {
+    expect(practitionerGates(page(identity, gate))).not.toEqual([]);
+  });
+  it("helper rejects ASI, RPC and arbitrary reads before its refusal", () => {
+    for (const pre of ["await preloadFinancialData()\n", "await db.rpc('money');", "db.from('money');"])
+      expect(helperIssues(`export async function loadFinancialsView() { ${pre} if (practitioner.role !== "owner") return { access: "refused" }; }`)).not.toEqual([]);
+  });
+  it("the helper's own return must be the refusal, not merely any return", () => {
+    expect(helperIssues('export async function loadFinancialsView() { if (practitioner.role !== "owner") return { access: "granted" }; }')).not.toEqual([]);
+  });
+  it("role CHECK cannot be borrowed from another column or table", () => {
+    expect(roleIssues([{ name: "0001.sql", sql: baseSql }])).toEqual([]);
+    expect(roleIssues([{ name: "0001.sql", sql: "create table public.practitioners (role text, other text check (role in ('owner','practitioner'))); create table pending_invitations (role text check(role in ('owner','practitioner')));" }])).not.toEqual([]);
+  });
+  it.each(["studio-admin", "frontDesk", "admin2"])("whole CHECK rejects additional role %s", (role) => {
+    expect(roleIssues([{ name: "0001.sql", sql: baseSql.replace("'practitioner'))", `'practitioner','${role}'))`) }])).not.toEqual([]);
+    expect(roleIssues([{ name: "0001.sql", sql: baseSql.replace("'practitioner'))", `'practitioner') or role = '${role}')`) }])).not.toEqual([]);
+  });
+  it("preserves role literal case and tracks a named role constraint", () => {
+    expect(roleIssues([{ name: "0001.sql", sql: baseSql.replace("'owner'", "'OWNER'") }])).not.toEqual([]);
+    expect(roleIssues([
+      { name: "0001.sql", sql: baseSql.replace("check (", "constraint membership_domain check (") },
+      { name: "9999.sql", sql: "alter table public.practitioners drop constraint membership_domain;" },
+    ])).not.toEqual([]);
+  });
+  it.each([
+    "alter table public.practitioners drop constraint practitioners_role_check;",
+    "alter table public.practitioners add constraint replacement check(role in ('owner','practitioner','admin'));",
+    "alter table public.practitioners rename constraint practitioners_role_check to old_check;",
+    "alter table public.practitioners drop column role;",
+    "drop table public.practitioners;",
+  ])("effective migrated constraint refuses unsupported later DDL: %s", (sql) => {
+    expect(roleIssues([{ name: "0001.sql", sql: baseSql }, { name: "9999.sql", sql }])).not.toEqual([]);
   });
 });
