@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { adminQuery, closePool, seedStudio, type SeededStudio } from "./helpers/harness";
+import { adminQuery, adminTx, closePool, seedStudio, type SeededStudio } from "./helpers/harness";
 import { E2E_SERVICE_ROLE_KEY, E2E_SUPABASE_URL } from "@/e2e/helpers/local-env";
 
 // ===========================================================================
@@ -84,6 +84,11 @@ vi.mock("@/lib/ops/alerts", () => ({
     fake.alerts.push({ severity: a.severity, event: a.event, details: a.safeDetails ?? {} });
   },
 }));
+vi.mock("@/lib/ops/alert-email", () => ({
+  notifyCriticalOpsAlert: async (a: { event: string }) => {
+    fake.alerts.push({ severity: "critical", event: a.event, details: {} });
+  },
+}));
 vi.mock("@/lib/analytics/server", () => ({ captureServerEvent: () => undefined }));
 // The REAL jurisdiction read, plus an optional hook run AFTER it returns, so a
 // test can commit an operator change between onboarding's read and its claim
@@ -117,6 +122,7 @@ const created: SeededStudio[] = [];
 afterAll(async () => {
   for (const s of created) {
     for (const sql of [
+      `delete from public.ops_alerts where studio_id=$1`,
       `delete from public.payment_charge_attempts where studio_id=$1`,
       `delete from public.stripe_events where studio_id=$1`,
       `delete from public.studio_payment_settings where studio_id=$1`,
@@ -363,7 +369,12 @@ describe("K2 + K4 refresh and account.updated record the country", () => {
     ).rejects.toThrow(ACCOUNT_COUNTRY_MISMATCH_ERROR);
     expect((await bound(s.studioId))?.stripe_account_country).toBe("CA");
     expect(mismatchAlerts()).toHaveLength(1);
-    expect(mismatchAlerts()[0].details).toMatchObject({ reason: "country_conflict" });
+    const incident = await adminQuery(
+      `select safe_details from public.ops_alerts where studio_id=$1
+       and event='stripe_account_country_mismatch' and resolved_at is null`, [s.studioId],
+    );
+    expect(incident.rows).toHaveLength(1);
+    expect(incident.rows[0].safe_details).toMatchObject({ reason: "country_conflict" });
     expect(
       (
         await adminQuery(
@@ -441,5 +452,121 @@ describe("K2 + K4 refresh and account.updated record the country", () => {
     expect((await bound(s.studioId))?.stripe_account_country).toBe("US");
     expect(mismatchAlerts()).toEqual([]);
     expect(await tryPrepare(s, "usd", id)).toBe("ok");
+  });
+});
+
+
+// 0238 source prepared here; execute only on an OPS-approved target/slot.
+describe("0238 durable account-country incident serialization", () => {
+  async function mismatch() {
+    const s = await studio("incident");
+    const id = `acct_test_${randomUUID().replace(/-/g, "")}`;
+    await adminQuery(`insert into public.studio_payment_settings
+      (studio_id,stripe_account_id,stripe_account_status,stripe_livemode,stripe_account_country)
+      values ($1,$2,'enabled',false,'US')`, [s.studioId, id]);
+    fake.accounts.set(id, { country: "US", default_currency: "usd" });
+    return { s, id };
+  }
+  async function claim(studioId: string, id: string, mode = false) {
+    const r = await adminQuery(`select * from public.claim_stripe_account_country_alert($1,$2,$3)`,
+      [studioId, id, mode]);
+    return r.rows[0] as { out_result: string; out_alert_id: string; out_reason: string };
+  }
+  async function incidents(studioId: string) {
+    return (await adminQuery(`select id,safe_details from public.ops_alerts where studio_id=$1
+      and event='stripe_account_country_mismatch' and resolved_at is null`, [studioId])).rows;
+  }
+  it("concurrent RPCs yield one created winner, one durable row and a shared id", async () => {
+    const { s, id } = await mismatch();
+    const results = await Promise.all(Array.from({ length: 4 }, () => claim(s.studioId, id)));
+    expect(results.filter((r) => r.out_result === "created")).toHaveLength(1);
+    expect(results.filter((r) => r.out_result === "existing")).toHaveLength(3);
+    expect(new Set(results.map((r) => r.out_alert_id)).size).toBe(1);
+    expect(await incidents(s.studioId)).toHaveLength(1);
+  });
+  it("real refresh callers create one row and notify once while all still refuse", async () => {
+    const { s, id } = await mismatch();
+    const { refreshAccountStatusFromStripe, ACCOUNT_COUNTRY_MISMATCH_ERROR } = await account_ts();
+    const results = await Promise.allSettled(Array.from({ length: 3 }, () =>
+      refreshAccountStatusFromStripe({ studioId: s.studioId, stripeAccountId: id })));
+    for (const result of results) {
+      expect(result.status).toBe("rejected");
+      if (result.status === "rejected") expect(result.reason.message).toBe(ACCOUNT_COUNTRY_MISMATCH_ERROR);
+    }
+    expect(mismatchAlerts()).toHaveLength(1);
+    expect(await incidents(s.studioId)).toHaveLength(1);
+    expect(fake.creates).toHaveLength(0);
+    expect(fake.links).toHaveLength(0);
+  });
+  it("derives conflict, reuses existing incidents, re-arms only after operator resolution", async () => {
+    const { s, id } = await mismatch();
+    expect((await claim(s.studioId, id)).out_reason).toBe("country_mismatch");
+    await adminQuery(`update public.studio_payment_settings set stripe_account_country_conflict='CA',
+      stripe_account_country_conflict_at=now() where studio_id=$1`, [s.studioId]);
+    const conflict = await claim(s.studioId, id);
+    expect(conflict.out_reason).toBe("country_conflict");
+    expect(conflict.out_result).toBe("created");
+    expect((await claim(s.studioId, id)).out_result).toBe("existing");
+    await adminQuery(`update public.ops_alerts set resolved_at=now(),resolved_by_practitioner_id=$2
+      where id=$1`, [conflict.out_alert_id, s.practitionerId]);
+    const rearmed = await claim(s.studioId, id);
+    expect(rearmed.out_result).toBe("created");
+    expect(rearmed.out_alert_id).not.toBe(conflict.out_alert_id);
+    expect((await bound(s.studioId))?.stripe_account_country).toBe("US");
+  });
+  it("reuses historical open alerts without cleanup or another durable insert", async () => {
+    const { s, id } = await mismatch();
+    const prior = await adminQuery(`insert into public.ops_alerts(severity,event,message,studio_id,safe_details)
+      values ('critical','stripe_account_country_mismatch','existing safe incident',$1,
+      jsonb_build_object('stripe_account_id',$2::text,'livemode',false,'reason','country_mismatch')) returning id`,
+      [s.studioId, id]);
+    expect(await claim(s.studioId, id)).toMatchObject({out_result:"existing",out_alert_id:prior.rows[0].id});
+    expect(await incidents(s.studioId)).toHaveLength(1);
+  });
+  it("separates account/mode/studio, unverified and healthy persisted state", async () => {
+    const { s, id } = await mismatch();
+    const other = await studio("incident-other");
+    expect((await claim(other.studioId, id)).out_result).toBe("not_bound");
+    expect((await claim(s.studioId, "acct_other")).out_result).toBe("not_bound");
+    expect((await claim(s.studioId, id, true)).out_result).toBe("not_bound");
+    await adminQuery(`insert into public.studio_payment_settings
+      (studio_id,stripe_account_id,stripe_account_status,stripe_livemode,stripe_account_country)
+      values ($1,$2,'enabled',true,'US')`, [s.studioId, id + "_live"]);
+    expect((await claim(s.studioId, id, false)).out_result).toBe("created");
+    expect((await claim(s.studioId, id + "_live", true)).out_result).toBe("created");
+    expect(await incidents(s.studioId)).toHaveLength(2);
+    await adminQuery(`update public.studio_payment_settings set stripe_account_country=null
+      where studio_id=$1 and stripe_livemode=false`, [s.studioId]);
+    expect((await claim(s.studioId, id)).out_result).toBe("unverified");
+    await adminQuery(`update public.studio_payment_settings set stripe_account_country='CA'
+      where studio_id=$1 and stripe_livemode=false`, [s.studioId]);
+    expect((await claim(s.studioId, id)).out_result).toBe("not_mismatched");
+    expect(await incidents(other.studioId)).toHaveLength(0);
+  });
+  it("rolls back a created incident if its transaction fails; fixed snapshots refuse", async () => {
+    const { s, id } = await mismatch();
+    await expect(adminTx(async (q) => {
+      const r = await q(`select * from public.claim_stripe_account_country_alert($1,$2,false)`, [s.studioId, id]);
+      expect(r.rows[0].out_result).toBe("created");
+      throw new Error("synthetic rollback");
+    })).rejects.toThrow("synthetic rollback");
+    expect(await incidents(s.studioId)).toHaveLength(0);
+    await expect(adminTx(async (q) => {
+      await q("set transaction isolation level repeatable read");
+      await q(`select * from public.claim_stripe_account_country_alert($1,$2,false)`, [s.studioId, id]);
+    })).rejects.toMatchObject({ code: "40001" });
+    expect((await claim(s.studioId, id)).out_result).toBe("created");
+  });
+  it("rejects malformed/unverified identifiers without fabricating incidents", async () => {
+    const r = await adminQuery(`select * from public.claim_stripe_account_country_alert(null,'',null)`);
+    expect(r.rows[0].out_result).toBe("invalid_input");
+    expect(r.rows[0].out_alert_id).toBeNull();
+  });
+  it("exposes no browser-role execute privilege", async () => {
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      const r = await adminQuery(`select has_function_privilege($1,
+        'public.claim_stripe_account_country_alert(uuid,text,boolean)','EXECUTE') as allowed`, [role]);
+      expect(r.rows[0].allowed).toBe(role === "service_role");
+    }
   });
 });
