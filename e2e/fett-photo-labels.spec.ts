@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type Locator } from "@playwright/test";
 import sharp from "sharp";
 import {
   createLocalAuthUser,
@@ -18,7 +18,8 @@ import { E2E_APP_ORIGIN, E2E_SUPABASE_URL } from "./helpers/local-env";
 //      result is announced; the visit moves it to "After";
 //   3. cleared with the keyboard: focus moves to "Before", "Label cleared" is
 //      announced; the visit is back to one plain grid;
-//   4. every control is on the 44 px floor;
+//   4. camera/library targets and full-size preview labels are accessible at
+//      phone width; preview Before/After/Clear refreshes without closing;
 //   5. a RECEPTIONIST (0220) is refused the Photos tab and the photo re-mint
 //      route: the middleware sends both to /front-desk, with no signed URL.
 // The partial-failure note ("label not saved; set it on the photo") is proven
@@ -57,6 +58,15 @@ async function stageInDb(sessionId: string): Promise<string | null> {
   );
   expect(rows).toHaveLength(1);
   return rows[0].capture_stage;
+}
+
+/** Both dimensions of the actual input/button hit target, not just its label. */
+async function phoneTarget(control: Locator): Promise<void> {
+  await expect(control).toBeVisible();
+  const box = await control.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.width).toBeGreaterThanOrEqual(44);
+  expect(box!.height).toBeGreaterThanOrEqual(44);
 }
 
 /** The accessible name of whatever has keyboard focus. */
@@ -104,9 +114,29 @@ test("a practitioner labels a visit photo at upload, relabels and clears it by k
   await expect(summary).toHaveText(/^Will attach as: Session photo: Session on [^.]+\.$/);
   await choice.getByRole("radio", { name: "Before treatment" }).check();
   await expect(summary).toHaveText(/^Will attach as: Session photo: Session on [^.]+\. Labelled: Before treatment\.$/);
-  await page
-    .locator('input[type="file"][name="file"]')
-    .setInputFiles({ name: "synthetic.png", mimeType: "image/png", buffer: await syntheticPng() });
+  const camera = page.getByLabel("Take a treatment photo", { exact: true });
+  const library = page.getByLabel("Choose treatment images", { exact: true });
+  await expect(camera).toHaveAttribute("capture", "environment");
+  expect(await camera.getAttribute("multiple")).toBeNull();
+  await expect(library).toHaveAttribute("multiple", "");
+  expect(await library.getAttribute("capture")).toBeNull();
+  for (const input of [camera, library]) {
+    await phoneTarget(input);
+    await input.focus();
+    await expect(input).toBeFocused();
+    await expect.poll(() => input.locator("..").evaluate((label) =>
+      Number.parseFloat(getComputedStyle(label).outlineWidth),
+    )).toBeGreaterThanOrEqual(2);
+  }
+  // Exercise the accessible camera control with the SAME synthetic PNG.
+  // A Playwright chooser proves input wiring, not physical native-camera UX.
+  await camera.focus();
+  const [chooser] = await Promise.all([
+    page.waitForEvent("filechooser"),
+    camera.press("Enter"),
+  ]);
+  expect(chooser.isMultiple()).toBe(false);
+  await chooser.setFiles({ name: "synthetic.png", mimeType: "image/png", buffer: await syntheticPng() });
   await page.getByRole("button", { name: /^Attach/ }).click();
   await expect(page.getByText(/✓ Uploaded/)).toBeVisible({ timeout: 120_000 });
   await expect(page.getByText(/label not saved/)).toHaveCount(0);
@@ -158,6 +188,52 @@ test("a practitioner labels a visit photo at upload, relabels and clears it by k
   await expect(page.getByTestId("session-photos").locator("img")).toHaveCount(1, { timeout: T });
   await expect(page.getByTestId("session-photos-group-before")).toHaveCount(0);
   await expect(page.getByTestId("session-photos-group-after")).toHaveCount(0);
+
+  // ---- 4. full-size preview: no tile/dialog locator ambiguity ---------------
+  await page.goto(`/clients/${clientId}/images`);
+  const openPreview = page.getByRole("button", { name: "View larger", exact: true });
+  await phoneTarget(openPreview);
+  await openPreview.focus();
+  await openPreview.press("Enter");
+  const dialog = page.getByRole("dialog", { name: "Treatment photo preview" });
+  await expect(dialog).toBeVisible({ timeout: T });
+  const previewImage = dialog.getByRole("img", { name: "Treatment photo", exact: true });
+  await expect(previewImage).toBeVisible({ timeout: T });
+  await expect.poll(() => previewImage.evaluate((img) =>
+    (img as HTMLImageElement).complete && (img as HTMLImageElement).naturalWidth > 0,
+  ), { timeout: T }).toBe(true);
+  const previewControl = dialog.getByTestId("capture-stage");
+  const previewBefore = previewControl.getByRole("button", { name: "Before", exact: true });
+  const previewAfter = previewControl.getByRole("button", { name: "After", exact: true });
+  const previewClear = previewControl.getByRole("button", { name: "Clear label", exact: true });
+  for (const [button, value, announcement] of [
+    [previewBefore, "before", "Labelled Before"],
+    [previewAfter, "after", "Labelled After"],
+    [previewClear, null, "Label cleared"],
+  ] as const) {
+    await phoneTarget(button);
+    await button.focus();
+    await button.press("Enter");
+    await expect.poll(() => stageInDb(previousSessionId), { timeout: T }).toBe(value);
+    await expect(dialog).toBeVisible(); // router.refresh must retain this preview
+    await expect(previewControl.getByTestId("capture-stage-announce")).toHaveText(announcement);
+    if (value === null) {
+      await expect(previewClear).toHaveCount(0);
+      await expect(previewControl.getByText("Not labelled", { exact: true })).toBeVisible();
+      await expect(previewBefore).toBeFocused({ timeout: T });
+    } else {
+      await expect(button).toHaveAttribute("aria-pressed", "true", { timeout: T });
+      await expect(button).toBeFocused({ timeout: T });
+    }
+  }
+  const closePreview = dialog.getByRole("button", { name: "Close preview", exact: true });
+  await phoneTarget(closePreview);
+  await closePreview.focus();
+  await closePreview.press("Enter");
+  await expect(dialog).toHaveCount(0);
+  await page.reload();
+  expect(await stageInDb(previousSessionId)).toBeNull();
+  await expect(page.getByTestId("capture-stage").getByText("Not labelled", { exact: true })).toBeVisible({ timeout: T });
 
   // ---- 5. a receptionist is refused ---------------------------------------
   const imageId = (
