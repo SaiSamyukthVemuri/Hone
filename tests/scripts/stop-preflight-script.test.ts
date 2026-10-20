@@ -418,7 +418,7 @@ describe("CLI startup and early refusal without a target connection", () => {
     const child = spawnSync(
       process.execPath,
       [path.join(process.cwd(), "scripts/sms/record-stop-preflight.mjs"), ...args],
-      { cwd: process.cwd(), env, encoding: "utf8", timeout: 10_000 },
+      { cwd: process.cwd(), env: { NODE_ENV: "test", ...env }, encoding: "utf8", timeout: 10_000 },
     );
     expect(child.error).toBeUndefined();
     expect(child.signal).toBeNull();
