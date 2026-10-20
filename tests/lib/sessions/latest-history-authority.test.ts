@@ -481,4 +481,3 @@ describe("H — sub-millisecond precision is honoured (Codex 4307093242)", () =>
     expect(cmp("2026-03-10T10:00:00.002000Z", "2026-03-10T10:00:00.001999Z")).toBe(-1);
   });
 });
-
