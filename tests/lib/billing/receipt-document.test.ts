@@ -235,7 +235,9 @@ describe("USD receipt currency follows the recorded payment", () => {
     { currencyCode: "cad", expected: "$75.50 CAD", livemode: false },
     { currencyCode: "cad", expected: "$75.50 CAD", livemode: true },
   ])("$currencyCode / live=$livemode stays consistent across receipt surfaces", ({ currencyCode, expected, livemode }) => {
-    const input = { ...CASES.test_full!, amountCents: 7550, currencyCode, livemode };
+    const input = {
+      ...CASES.test_full!, last4: "4242", amountCents: 7550, currencyCode, livemode,
+    } satisfies Parameters<typeof buildPaymentReceiptEmail>[0];
     const email = buildPaymentReceiptEmail(input);
     const document = buildReceiptDocument({
       studioName: input.studioName,
