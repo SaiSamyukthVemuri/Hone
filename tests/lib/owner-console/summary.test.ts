@@ -198,6 +198,24 @@ describe("the three-state rule", () => {
     expect(clean).not.toMatch(/Some checks could not run/);
   });
 
+  it("booking: mixed closed states disclose unread checks before reopening (Codex P2 4325253096)", () => {
+    for (const unavailable of [["services"], ["availability"], ["services", "availability"]]) {
+      const p = bookingPanel({
+        status: "not_ready",
+        blockers: [
+          { key: "admission_closed", label: "This studio is not accepting new clients." },
+          { key: "booking_link", label: "Choose a booking link." },
+        ] as never,
+        nextStep: null,
+        unavailable: unavailable as never,
+      });
+      expect(p).toMatchObject({ tone: "attention", status: "1 step left" });
+      expect(p.detail).toContain("Some checks could not run");
+      expect(p.detail).toContain("recheck them before allowing direct booking");
+      expect(p.detail).not.toMatch(/may still need steps|there may be more/);
+    }
+  });
+
   it("booking: a mixed state never promises booking that admission still blocks (Codex P2 4301111467)", () => {
     const wait = { key: "wait_admission", label: "New clients join the waitlist instead of booking directly." };
     const closed = { key: "admission_closed", label: "This studio is not accepting new clients." };

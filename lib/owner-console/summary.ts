@@ -75,7 +75,11 @@ export function bookingPanel(readiness: NewClientReadiness | null): ConsolePanel
   // checks could not run, the COUNT is a lower bound and is never stated as
   // exact (Codex P2 4243961742 on #851).
   const steps = `${setup} step${setup === 1 ? "" : "s"} left`;
-  const more = partial ? " Some checks could not run, so there may be more." : "";
+  const more = partial
+    ? " Some checks could not run, so there may be more."
+    : unreadableButMoot
+      ? " Some checks could not run. They cannot change the closed status; recheck them before allowing direct booking."
+      : "";
   // MIXED STATE: a deliberate admission choice sits alongside unfinished setup.
   // Finishing the counted steps does NOT override the choice, so the
   // instruction must not promise online booking (Codex P2 4301111467 on #851).
