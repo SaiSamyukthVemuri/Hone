@@ -3,6 +3,7 @@ import { SectionLabel } from "@/components/ui/section-label";
 import {
   observationSourceLabel,
   recordedUnitLabel,
+  readingsInContractOrder,
 } from "@/lib/machines/charting";
 import type { RecordedReading } from "@/lib/machines/machine-queries";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
@@ -275,7 +276,7 @@ export function MachinePriorSetup({
             An UNSTAGED profile has exactly one bucket with a null key and
             renders exactly as before, with no heading.
           */}
-          {[...byStage(rows).entries()].map(([stageKey, stageRows]) => (
+          {[...byStage(readingsInContractOrder(rows, mode)).entries()].map(([stageKey, stageRows]) => (
           <div key={stageKey ?? ""} className="flex flex-col gap-0.5">
           {stageKey !== null && (
             <span

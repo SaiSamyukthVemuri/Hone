@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { APILUS_3G_PROFILES, APILUS_3G_TEXT_PROFILES } from "../../../lib/machines/apilus-3g";
-import { APILUS_3G_TEXT_FIXTURES } from "../../../lib/machines/apilus-3g-fixtures";
+import { APILUS_3G_NATIVE_FIXTURES, APILUS_3G_TEXT_FIXTURES } from "../../../lib/machines/apilus-3g-fixtures";
 import { catalogueIntegrity, MACHINE_CATALOGUE, profileAtVersion } from "../../../lib/machines/catalogue";
 import { catalogueForRuntime } from "../../../lib/machines/synthetic-profile";
 import { nativeFieldGroups } from "../../../lib/machines/charting";
@@ -248,4 +248,47 @@ it.each(["missing choices", "duplicate choices", "blank choice", "numeric unit",
   if (mutation === "numeric precision") f.decimals = 2;
   expect(catalogueIntegrity([p]).some((v) => v.problem.includes("malformed text/choice metadata"))).toBe(true);
   expect(planContractPublication([p]).publish).toEqual([]);
+});
+
+
+// Reads arrive in SQL/chronology key order, not in the device's field order.
+// Resolve display order from the retained exact-version contract only.
+for (const profile of APILUS_3G_TEXT_FIXTURES) {
+  for (const mode of profile.modes.filter(m => m.fields.some(f => f.valueKind === "choice"))) {
+    it(`${profile.model}/${mode.key}: history and prior preserve retained contract order`, () => {
+      const recorded = modeFields(mode).map(({ field, stageKey }, index): RecordedReading => ({
+        ...row(profile, "unused"), modeKey: mode.key, stageKey, fieldKey: field.key,
+        nativeUnit: field.unit, decimals: field.decimals,
+        value: field.valueKind === "text" ? { kind: "text", value: " 003i " }
+          : field.valueKind === "choice" ? { kind: "text", value: field.choices![0] }
+            : { kind: "value", value: index + 1 },
+      }));
+      const incoming = [...recorded].reverse();
+      const before = structuredClone(incoming);
+      const newer = { ...profile, version: profile.version + 1, modes: profile.modes.map(m => ({
+        ...m, fields: [...m.fields].reverse(), stages: [...m.stages].reverse(),
+      })) };
+      for (const Component of [MachineRecordedSetups, MachinePriorSetup]) {
+        const html = renderToStaticMarkup(createElement(Component, { readings: incoming, catalogue: [newer, profile] }));
+        const positions = recorded.map(r => html.indexOf(`>${r.value.kind === "text" ? r.value.value : r.value.kind === "value" ? r.value.value.toFixed(r.decimals) : ""}</span>`));
+        expect(positions.every(p => p >= 0)).toBe(true);
+        expect(positions).toEqual([...positions].sort((a, b) => a - b));
+      }
+      expect(incoming).toEqual(before);
+    });
+  }
+}
+it("Senior MultiPlex: history and prior preserve retained contract order of warming before MicroFlash", () => {
+  const profile = APILUS_3G_NATIVE_FIXTURES[0];
+  const mode = profile.modes.find(m => m.key === "multiplex")!;
+  const recorded = modeFields(mode).map(({ field, stageKey }, index): RecordedReading => ({
+    ...row(profile, "unused"), profileVersion: profile.version, modeKey: mode.key,
+    stageKey, fieldKey: field.key, nativeUnit: field.unit, decimals: field.decimals,
+    value: { kind: "value", value: index + 1 },
+  }));
+  for (const Component of [MachineRecordedSetups, MachinePriorSetup]) {
+    const html = renderToStaticMarkup(createElement(Component, { readings: [...recorded].reverse(), catalogue: [profile] }));
+    expect(html.indexOf("Warming H.F.")).toBeGreaterThanOrEqual(0);
+    expect(html.indexOf("MicroFlash pulse")).toBeGreaterThan(html.indexOf("Warming H.F."));
+  }
 });

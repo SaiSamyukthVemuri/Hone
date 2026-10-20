@@ -9,6 +9,7 @@ import {
 import {
   observationSourceLabel,
   recordedUnitLabel,
+  readingsInContractOrder,
 } from "@/lib/machines/charting";
 import type { RecordedReading } from "@/lib/machines/machine-queries";
 import {
@@ -16,7 +17,7 @@ import {
   findMode,
   modeFields,
 } from "@/lib/machines/profile-contract";
-import type { MachineProfile } from "@/lib/machines/profile-contract";
+import type { MachineMode, MachineProfile } from "@/lib/machines/profile-contract";
 
 // MPX-03 — WHAT HAS ALREADY BEEN RECORDED ON THIS TREATMENT.
 //
@@ -145,6 +146,7 @@ function labelsFor(
   labels: Map<string, string>;
   stageLabels: Map<string, string>;
   historical: boolean;
+  mode: MachineMode | undefined;
 } {
   const profile = recordedProfile(catalogue, entry.profileId, entry.profileVersion);
   const historical = !profile;
@@ -166,7 +168,7 @@ function labelsFor(
   if (mode) {
     for (const stage of mode.stages) stageLabels.set(stage.key, stage.nativeLabel);
   }
-  return { labels, stageLabels, historical };
+  return { labels, stageLabels, historical, mode };
 }
 
 function ChangeLine({
@@ -337,7 +339,7 @@ export function MachineRecordedSetups({
 
       <ol className="flex flex-col gap-2">
         {entries.map((entry) => {
-          const { labels, stageLabels, historical } = labelsFor(entry, catalogue);
+          const { labels, stageLabels, historical, mode } = labelsFor(entry, catalogue);
           const at = renderableInstant(entry.recordedAt);
           const unitName = unitNames[entry.deviceId] ?? null;
           return (
@@ -382,7 +384,7 @@ export function MachineRecordedSetups({
                 An UNSTAGED profile has exactly one bucket with a null key
                 and renders with no heading, identical to before.
               */}
-              {[...byStage(entry.readings).entries()].map(([stageKey, stageRows]) => (
+              {[...byStage(readingsInContractOrder(entry.readings, mode)).entries()].map(([stageKey, stageRows]) => (
               <div key={stageKey ?? ""} className="flex flex-col gap-0.5">
               {stageKey !== null && (
                 <span

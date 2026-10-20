@@ -216,3 +216,25 @@ isolated target and explicit OPS slot. They authorize no stack/device run,
 hosted application, publication, activation or deployment. Sam must separately
 supply exact Senior and Junior model/firmware references and named qualified
 operator/reviewer for physical acceptance; all actual physical proof remains UNRUN.
+
+
+## Retained native field/stage order in history and next-visit guidance
+
+The source audit confirmed a display gap: chronology sorts field keys, and the
+SQL read projections also use key order. Grouping those rows in received order
+can put Senior MultiPlex's MicroFlash stage before warming and reorder native
+fields in both models' text/choice modes. History and prior guidance now project
+known readings in the retained exact-version mode's field/stage order. They do
+not use the latest contract to reinterpret an older reading. Unknown fields stay
+visible in received relative order; a missing retained contract preserves the
+received order rather than inventing a native sequence. Sorting copies leaves
+all observations and chronology records unchanged.
+
+Five source-driven rendering regressions failed before the fix. They cover
+Senior Blend/OmniBlend/MultiBlend, Junior Blend and Senior MultiPlex warming
+before MicroFlash, including a differently ordered newer contract as a negative
+control. The focused existing native-text, recorded/prior component, chronology,
+save/recovery, initial receipt and 0237 source suites pass **224/224** across
+seven files. This proves source/rendering behavior, not a mounted browser or a
+physical unit's installed firmware. No field/unit/precision/bound/choice, storage,
+SQL, historical record, publication or activation contract changed.
