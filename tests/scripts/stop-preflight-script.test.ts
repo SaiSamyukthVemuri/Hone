@@ -408,6 +408,12 @@ describe("CLI startup and early refusal without a target connection", () => {
       env: { NEXT_PUBLIC_SUPABASE_URL: "https://example.invalid" },
       expected: { result: "target_refused", code: "hosted_not_approved" },
     },
+    ...["ftp://localhost", "httpss://localhost", "ftp://example.invalid"].map((url) => ({
+      label: `unsupported target scheme ${url}`,
+      args: ["--studio", STUDIO, "--facts", "never-read-facts.json", "--allow-hosted"],
+      env: { NEXT_PUBLIC_SUPABASE_URL: url, HONE_STOP_PREFLIGHT_HOSTED_APPROVED: "yes" },
+      expected: { result: "target_refused", code: "unparseable_supabase_url" },
+    })),
     {
       label: "loopback target without service key",
       args: ["--studio", STUDIO, "--facts", "never-read-facts.json", "--record"],

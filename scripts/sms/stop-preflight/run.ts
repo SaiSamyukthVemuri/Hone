@@ -201,7 +201,11 @@ export function targetAllowed(
   if (!supabaseUrl) return { ok: false, code: "no_supabase_url" };
   let host: string;
   try {
-    host = new URL(supabaseUrl).hostname;
+    const target = new URL(supabaseUrl);
+    if (target.protocol !== "http:" && target.protocol !== "https:") {
+      return { ok: false, code: "unparseable_supabase_url" };
+    }
+    host = target.hostname;
   } catch {
     return { ok: false, code: "unparseable_supabase_url" };
   }
