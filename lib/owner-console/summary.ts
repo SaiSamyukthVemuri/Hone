@@ -15,6 +15,7 @@
 // new-client-readiness applies).
 
 import type { NewClientReadiness } from "@/lib/booking/new-client-readiness";
+import { SUPPRESSED_WHEN_CLOSED } from "@/lib/booking/new-client-readiness";
 import type { DestinationReadiness } from "@/lib/sms/sender-readiness";
 import type { PaymentCountrySummary } from "@/lib/billing/payment-jurisdiction";
 import type { ConnectCapability, RuntimeMode } from "@/lib/payments/payment-status-presenter";
@@ -46,7 +47,21 @@ export function bookingPanel(readiness: NewClientReadiness | null): ConsolePanel
   // reason). It is still stated, because clients cannot book online.
   const admission = readiness.blockers.filter((b) => ADMISSION_CHOICES.has(b.key));
   const setup = readiness.blockers.length - admission.length;
-  const partial = readiness.unavailable.length > 0;
+  // A CLOSED studio suppresses the structural authorities, so an unreadable
+  // `services` or `availability` cannot reveal another setup step and must not
+  // become "setup may still need steps" (Codex P2 4301288046 on #851). Only
+  // authorities that can STILL change this studio's answer make the count a
+  // lower bound. `treatment_consent` is not suppressed and still counts. The
+  // suppression set is imported, never restated, so this cannot drift from the
+  // module that owns the rule.
+  const closed = admission.some((b) => b.key === "admission_closed");
+  const consequential = readiness.unavailable.filter(
+    (a) => !(closed && SUPPRESSED_WHEN_CLOSED.has(a)),
+  );
+  const partial = consequential.length > 0;
+  // Something WAS unreadable even if it cannot change the answer; that is
+  // still stated, just never as possible extra setup.
+  const unreadableButMoot = closed && consequential.length === 0 && readiness.unavailable.length > 0;
   const chosen = admission.map((b) => b.label).join(" ");
   if (setup === 0 && admission.length > 0) {
     return {
@@ -55,21 +70,37 @@ export function bookingPanel(readiness: NewClientReadiness | null): ConsolePanel
       status: admission.some((b) => b.key === "admission_closed") ? "Not accepting new clients" : "Waitlist only",
       detail: partial
         ? `${chosen} This is a choice in your settings. Some checks could not run, so setup may still need steps.`
-        : `${chosen} This is a choice in your settings, not unfinished setup.`,
+        : unreadableButMoot
+          ? `${chosen} This is a choice in your settings, not unfinished setup. Some checks could not run, but while the studio is closed they cannot change this.`
+          : `${chosen} This is a choice in your settings, not unfinished setup.`,
     };
   }
   // A proven blocker is real, so the tone stays "attention". But when some
   // checks could not run, the COUNT is a lower bound and is never stated as
   // exact (Codex P2 4243961742 on #851).
   const steps = `${setup} step${setup === 1 ? "" : "s"} left`;
-  const finish = partial
-    ? "Finish setup before clients can book online. Some checks could not run, so there may be more."
-    : "Finish setup before clients can book online.";
+  const more = partial
+    ? " Some checks could not run, so there may be more."
+    : unreadableButMoot
+      ? " Some checks could not run. They cannot change the closed status; recheck them before allowing direct booking."
+      : "";
+  // MIXED STATE: a deliberate admission choice sits alongside unfinished setup.
+  // Finishing the counted steps does NOT override the choice, so the
+  // instruction must not promise online booking (Codex P2 4301111467 on #851).
+  // The old copy said "Finish setup before clients can book online" and then
+  // appended "clients join the waitlist", which contradicted itself. The two
+  // conditions are independent and BOTH have to change.
+  const detail =
+    admission.length > 0
+      ? `${chosen} Finishing the remaining setup does not change that: clients can book online once setup is complete AND that setting allows direct booking.${more}`
+      : readiness.unavailable.includes("admission")
+        ? `The admission setting could not be checked. Clients can book online once setup is complete AND that setting allows direct booking.${more}`
+        : `Finish setup before clients can book online.${more}`;
   return {
     ...base,
     tone: "attention",
     status: partial ? `At least ${steps}` : steps,
-    detail: admission.length > 0 ? `${finish} ${chosen}` : finish,
+    detail,
   };
 }
 

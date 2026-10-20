@@ -193,6 +193,20 @@ describe("gateConnectBannerOnCountry", () => {
     expect(out.headline).toBe("Payment country could not be verified");
   });
 
+  it("unread country replaces pending-payout chargeability copy but retains the payout warning", () => {
+    const pending = connectBannerCopy("live", "charges_enabled_payouts_pending");
+    const out = gateConnectBannerOnCountry(pending, {
+      tone: "unknown",
+      detail: "Hone could not read this studio's payment country.",
+    });
+    expect(out.tone).toBe("warning");
+    expect(out.headline).toBe("Payment country could not be verified");
+    expect(out.detail).toContain("could not read this studio's payment country");
+    expect(out.detail).toContain("Payouts are not ready");
+    expect(out.detail).not.toMatch(/Charges may be enabled|charging clients/);
+    expect(gateConnectBannerOnCountry(pending, { tone: "ok", detail: "x" })).toBe(pending);
+  });
+
   it("ok and attention (legacy CA, still chargeable) leave the banner unchanged", () => {
     expect(gateConnectBannerOnCountry(ready, { tone: "ok", detail: "x" })).toBe(ready);
     expect(gateConnectBannerOnCountry(ready, { tone: "attention", detail: "x" })).toBe(ready);

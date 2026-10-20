@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { resolveAdmission } from "@/lib/booking/new-client-admission";
 import { createClient } from "@/lib/supabase/server";
 import { getPractitionersForStudio, requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { getNewClientReadiness, type NewClientReadiness } from "@/lib/booking/new-client-readiness";
@@ -49,7 +50,12 @@ export default async function OwnerConsolePage() {
   const supabase = await createClient();
   const livemode = inferStripeLivemode();
   const [readiness, practitioners, pending, sender, payment, country] = await Promise.all([
-    getNewClientReadiness(studio).then(
+    getNewClientReadiness(studio, resolveAdmission({
+      storedMode: studio.new_client_admission_mode,
+      storedSetAt: studio.new_client_admission_mode_set_at,
+      readFailed: studio.new_client_admission_mode === undefined || studio.new_client_admission_mode_set_at === undefined,
+      studioSlug: studio.slug,
+    })).then(
       (r): NewClientReadiness | null => r,
       () => null,
     ),

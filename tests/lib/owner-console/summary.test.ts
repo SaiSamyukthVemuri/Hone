@@ -149,6 +149,103 @@ describe("the three-state rule", () => {
     expect(only([wait], ["consent"]).detail).toMatch(/may still need steps/);
   });
 
+  it("booking: a CLOSED studio does not invent setup uncertainty (Codex P2 4301288046)", () => {
+    const closed = { key: "admission_closed", label: "This studio is not accepting new clients." };
+    const wait = { key: "wait_admission", label: "New clients join the waitlist instead of booking directly." };
+    const panel = (blockers: unknown[], unavailable: unknown[] = []) =>
+      bookingPanel({ status: "not_ready", blockers: blockers as never, nextStep: null, unavailable: unavailable as never });
+
+    // computeNewClientReadiness suppresses the structural blockers for a closed
+    // studio (structuralApplies), so an unreadable services/availability CANNOT
+    // reveal another step. Claiming it might is invented uncertainty.
+    for (const moot of [["services"], ["availability"], ["services", "availability"]]) {
+      const p = panel([closed], moot);
+      expect(p.detail, `${moot}: must not claim setup may still need steps`).not.toMatch(
+        /may still need steps/,
+      );
+      // It is still honest that something could not be read.
+      expect(p.detail, `${moot}: the unread check is still stated`).toMatch(
+        /Some checks could not run/,
+      );
+      expect(p.detail).toMatch(/cannot change this/);
+    }
+
+    // NON-VACUITY, three ways — the filter must be narrow, not a blanket mute:
+    // 1. treatment_consent is NOT suppressed, so it still makes the count a
+    //    lower bound even when closed.
+    expect(panel([closed], ["treatment_consent"]).detail).toMatch(/may still need steps/);
+    // 2. the same unreadable authority on a WAITLIST studio still counts,
+    //    because only a closure suppresses the structural questions.
+    expect(panel([wait], ["services"]).detail).toMatch(/may still need steps/);
+    // 3. with nothing unreadable, neither caveat appears at all.
+    const clean = panel([closed]).detail;
+    expect(clean).not.toMatch(/may still need steps/);
+    expect(clean).not.toMatch(/Some checks could not run/);
+  });
+
+  it("booking: mixed closed states disclose unread checks before reopening (Codex P2 4325253096)", () => {
+    for (const unavailable of [["services"], ["availability"], ["services", "availability"]]) {
+      const p = bookingPanel({
+        status: "not_ready",
+        blockers: [
+          { key: "admission_closed", label: "This studio is not accepting new clients." },
+          { key: "booking_link", label: "Choose a booking link." },
+        ] as never,
+        nextStep: null,
+        unavailable: unavailable as never,
+      });
+      expect(p).toMatchObject({ tone: "attention", status: "1 step left" });
+      expect(p.detail).toContain("Some checks could not run");
+      expect(p.detail).toContain("recheck them before allowing direct booking");
+      expect(p.detail).not.toMatch(/may still need steps|there may be more/);
+    }
+  });
+
+  it("booking: a mixed state never promises booking that admission still blocks (Codex P2 4301111467)", () => {
+    const wait = { key: "wait_admission", label: "New clients join the waitlist instead of booking directly." };
+    const closed = { key: "admission_closed", label: "This studio is not accepting new clients." };
+    const step = { key: "availability", label: "x" };
+    const panel = (blockers: unknown[], unavailable: unknown[] = []) =>
+      bookingPanel({ status: "not_ready", blockers: blockers as never, nextStep: null, unavailable: unavailable as never });
+
+    for (const choice of [wait, closed]) {
+      const mixed = panel([step, choice]);
+      // The choice is still stated, and the step count still excludes it.
+      expect(mixed.detail).toContain(choice.label);
+      expect(mixed.status).toBe("1 step left");
+      // THE DEFECT: the old copy promised that finishing setup would let
+      // clients book online, while the same sentence said they are waitlisted
+      // or refused. The bare promise must be gone.
+      expect(mixed.detail, "must not promise booking on setup alone").not.toMatch(
+        /Finish setup before clients can book online/,
+      );
+      // And BOTH conditions must be named, not just the steps.
+      expect(mixed.detail).toMatch(/does not change that/);
+      expect(mixed.detail).toMatch(/that setting allows direct booking/);
+    }
+
+    // NON-VACUITY: with no admission choice, the plain instruction is correct
+    // and MUST still be used — otherwise this test would pass against copy
+    // that simply dropped the sentence everywhere.
+    const setupOnly = panel([step]);
+    expect(setupOnly.detail).toMatch(/Finish setup before clients can book online/);
+    expect(setupOnly.detail).not.toMatch(/that setting allows direct booking/);
+
+    // The lower-bound clause survives in the mixed state too.
+    expect(panel([step, wait], ["consent"]).detail).toMatch(/there may be more/);
+  });
+
+  it("booking: unreadable admission cannot promise booking after setup", () => {
+    const p = bookingPanel({
+      status: "not_ready", blockers: [{ key: "availability", label: "Set availability" }] as never,
+      nextStep: null, unavailable: ["admission"],
+    });
+    expect(p.status).toBe("At least 1 step left");
+    expect(p.detail).not.toMatch(/Finish setup before clients can book online/);
+    expect(p.detail).toMatch(/admission setting could not be checked/);
+    expect(p.detail).toMatch(/allows direct booking/);
+  });
+
   it("panels without an authority yet say so, and link nowhere", () => {
     expect(notYetAvailablePanel("notifications")).toMatchObject({ tone: "unavailable", status: "Not available yet", href: null });
   });
@@ -166,11 +263,12 @@ describe("the console page", () => {
   });
 
   it("the PAGE reads under the owner's own session and never calls a provider or the admin client itself", () => {
-    // Precisely: the page imports no admin client. Its booking-setup authority,
-    // getNewClientReadiness, reads the admission mode server-side with the
-    // service role internally. That is the same authority the Launch page
-    // already uses for this owner (Codex P2 4243961745 on #851).
-    expect(PAGE).toMatch(/getNewClientReadiness\(studio\)/);
+    // Booking admission comes from the already owner-authorized studio row,
+    // including explicit unknown evidence; no privileged admission fallback.
+    // Payment-country reads remain the existing financial authority's scope.
+    expect(PAGE).toMatch(/getNewClientReadiness\(studio, resolveAdmission\(\{/);
+    expect(PAGE).toContain("storedMode: studio.new_client_admission_mode");
+    expect(PAGE).toContain("storedSetAt: studio.new_client_admission_mode_set_at");
     expect(PAGE).not.toMatch(/createAdminClient|admin-server/);
     expect(PAGE).not.toMatch(/refreshAccountStatusFromStripe|lib\/stripe\/account|lib\/sms\/provider|twilio/i);
     expect(PAGE).not.toMatch(/\.insert\(|\.update\(|\.delete\(|\.upsert\(/);

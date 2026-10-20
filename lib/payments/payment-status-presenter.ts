@@ -144,6 +144,15 @@ export function gateConnectBannerOnCountry(
       detail: country.detail,
     };
   }
+  if (country.tone === "unknown" && banner.tone === "warning") {
+    // Pending payouts stay a warning, but unread country evidence cannot
+    // support the banner's suggestion that charging may be enabled.
+    return {
+      tone: "warning",
+      headline: "Payment country could not be verified",
+      detail: `${country.detail} Payouts are not ready.`,
+    };
+  }
   return banner;
 }
 
