@@ -14,7 +14,26 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-12, post-0212 apply; `0212` APPLIED, `0215` AUTHORED AND PENDING on the DELIVERY-VISIBILITY-01 branch)
+## Current state (verified 2026-10-19, post-0212 apply; #846 branch carries 0215 and allocated 0236)
+
+> **0236 IS AUTHORED AND PENDING on Team #846, branch `feat/delivery-visibility-02`, at published head `3367f289f82fa5f38967e2825c345933c0d5eca6`.** `0236_delivery_incident_retained_failures.sql` atomically replaces the existing owner RPC return shape with a partial view of up to 200 still-retained failed appointment links and reason classifications. It keeps the existing owner/studio authorization and authenticated-only execute grant. It is not applied, merged, or a release authorization.
+>
+> **STACKED-BRANCH GAP, PRESERVED.** This branch contains `0215` and `0236` above the hosted `0212`; it does not carry the intervening `0213`–`0214` and `0216`–`0235` migration files. Those are intentionally supplied through the existing composition order, not absent from the existing composed candidate. The candidate at `860f6f4d960cea06430188072edbc59f62c651a0` carries the contiguous `0213`–`0235` train and passes the canonical production facts suite (122/122). This does not compose or authorize importing another lane's work into #846. Frozen `0223` remains unchanged. The candidate's `0234_client_self_service_controls.sql` is the existing Team HON-47 claim; held Machines #920's conflicting `0234` claim remains excluded. The branch-level contiguity guard remains red until the normal composition contains every required dependency; do not weaken it or fabricate migrations.
+>
+> **0236 ALLOCATION** was recorded by OPS on 2026-10-19 after a fresh census. The shared coordination ledger identifies `0234` as existing Team HON-47 and held Machines #920 claims, and `0235` as Machines finite-readings work. No hosted migration state changed; `docs/production/migration-state.json` remains the authority for hosted max `0212`.
+>
+> **CURRENT RELATIONSHIP:** `repo > hosted`; this branch is MIGRATION-FIRST PENDING, with the intentional stacked-branch gap described above. No production apply is recorded for 0236.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0212** (`0212_email_delivery_events.sql`), applied 2026-10-12. |
+| **Repo migration max** | **0236**: `0236_delivery_incident_retained_failures.sql` (#846), source-only and pending. |
+| **Remote-only migrations** | **none recorded** by the canonical hosted migration state. |
+| **Pending migrations on this branch** | **`0215`, `0236`**, not applied. The branch is stacked and omits intervening dependency files; this list is not a contiguous release chain. |
+| **Next free migration number** | Next free number is **0237**, derived from this branch's migration filenames; not claimed here. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` (Hone production project). |
+
+## Previous state (verified 2026-10-12, post-0212 apply; `0212` APPLIED, `0215` AUTHORED AND PENDING on the DELIVERY-VISIBILITY-01 branch)
 
 > **0215 IS AUTHORED AND PENDING, on the DELIVERY-VISIBILITY-01 branch `feat/delivery-visibility-01` only.**
 > `0215_delivery_incidents.sql` adds:

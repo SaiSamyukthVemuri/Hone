@@ -178,7 +178,15 @@ Findings (`lib/email/delivery-health.ts`) have purpose-specific thresholds: a ba
 
 **Independent-monitor/config gap.** No existing independently scheduled caller invokes email `healthFindings`/`readEmailDeliveryHealth`. The sweep evaluates itself after its heartbeat write, so it cannot independently detect its own failure to start. The integration candidate's `/admin/delivery` already evaluates this helper on demand, but a page read is not a monitor. Existing daily calendar routes check *reminder* scheduler health (calendar-sync at `30 9 * * *` is a possible reuse point), but they are not wired to email health. This change adds no job, schedule, health-caller wiring or provider activation; missing/stale detection remains read-triggered until an independently scheduled email-health invocation is explicitly wired. The sweep itself remains absent from `vercel.json`. Critical ops-alert email activation remains held under #828, and #925/#927 remain held.
 
-**Not yet:** an owner-facing screen, a support queue UI, emailed owner/support notifications (the HIPAA routing gate #828 applies to any patient-related email: Resend cannot sign a BAA), and producers beyond the reminder window.
+**Where people see it (DELIVERY-VISIBILITY-02).**
+- **Owner:** a "Message delivery" card on Settings → Launch (`components/delivery/OwnerDeliveryCard.tsx`, mounted by one line; it moves into the owner console when that lands). It reads `owner_delivery_incidents` with the owner's own session and renders **nothing** for anyone the database refuses. Each open incident shows once, with:
+  - a count and its first and last occurrence;
+  - a plain-English meaning and the next step (`lib/delivery/incidents.ts`), with a link to the latest appointment.
+
+  A bounce is the studio's to fix (check the address); an invalid-address refusal is also the studio's to correct; other provider failures or refusals are Hone's. Until the Resend webhook is activated, the card says plainly that a bounce after sending cannot appear.
+- **Platform support:** `/admin/delivery`. It shows the delivery health (an unreadable row is shown as unknown, never healthy), Resend receipt outcomes and the cross-studio incident queue. Resolve is an admin-only server action, audited as `delivery_incident_resolved` (blocked attempts included).
+
+**Not yet:** emailed owner or support notifications (the HIPAA routing gate #828 applies to any patient-related email: Resend cannot sign a BAA), and producers beyond the reminder window.
 
 Pinned by `tests/db/delivery-incidents.db.test.ts`, `tests/migrations/0215-delivery-incidents.test.ts`, `tests/lib/email/delivery-ledger.test.ts`, `tests/lib/email/delivery-health.test.ts`, `tests/app/api/email-delivery-sweep.test.ts` and `tests/app/api/cron/reminder-email-ledger.test.ts`.
 

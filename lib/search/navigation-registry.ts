@@ -895,6 +895,10 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
     reason: "Platform audit surface: raw change payloads, cross-studio.",
   },
   {
+    route: "/admin/delivery",
+    reason: "Platform message-delivery support queue, cross-studio (DELIVERY-VISIBILITY-02).",
+  },
+  {
     route: "/admin/ops-alerts",
     reason: "Platform operations surface, cross-studio.",
   },

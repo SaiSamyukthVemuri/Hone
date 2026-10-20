@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
+import { countVersion } from "./helpers/migration-state";
 
 // ===========================================================================
 // Migration 0215 — DELIVERY-VISIBILITY-01 incidents and recovery heartbeat.
@@ -37,13 +37,6 @@ const TRIGGER_FUNCTIONS = ["email_outbound_messages_open_incident()", "sms_outbo
 const TABLES = ["public.delivery_incidents", "public.delivery_sweep_heartbeat"] as const;
 
 describe("0215 sits correctly in the migration sequence", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    // Only the CURRENT maximum migration's own test may assert this — see
-    // CLAUDE.md §2. It reached this file from 0212's test.
-    expect(isRepoMax(VERSION), "0215 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION), "something was added above 0215").toEqual([]);
-  });
-
   it("is allocated exactly once", () => {
     expect(countVersion(VERSION)).toBe(1);
   });

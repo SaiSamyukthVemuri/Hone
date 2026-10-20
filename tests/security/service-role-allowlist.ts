@@ -305,6 +305,18 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "admin_complete_onboarding",
   },
   {
+    path: "app/admin/delivery/page.tsx",
+    purpose: "DELIVERY-VISIBILITY-02 platform support delivery queue (cross-studio).",
+    why: "Platform-global by design. The /admin layout gates it to the ADMIN_EMAILS allowlist (isAdmin) before render. It reads ONLY the service-role-only 0215 commands support_delivery_incidents, support_email_receipt_outcomes and email_delivery_health, which return operational metadata (no client identity, address or message).",
+    scopeGuard: "support_delivery_incidents",
+  },
+  {
+    path: "app/admin/delivery/actions.ts",
+    purpose: "DELIVERY-VISIBILITY-02 support closes a delivery incident.",
+    why: "Admin-only server action: isAdmin(user.email) is re-checked before the admin client is built, and every attempt (blocked included) is audited via logAdminAction. It drives ONLY resolve_delivery_incident, which closes one open incident by id.",
+    scopeGuard: "isAdmin(user.email)",
+  },
+  {
     path: "app/api/cron/appointment-reminders/route.ts",
     purpose: "Scheduled, session-less cron / heartbeat.",
     why: "Runs with no user session; authorized by the CRON_SECRET bearer. Service-role is required; each row is studio-scoped in-query.",
