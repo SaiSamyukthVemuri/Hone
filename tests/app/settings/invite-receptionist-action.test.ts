@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // STUDIO-READY-02b (#824): the owner invites a receptionist through the
 // existing invite action. The studio and inviter come from the server; the
@@ -11,6 +11,8 @@ const ctx = vi.hoisted(() => ({
   lookups: [] as string[],
   inserted: [] as Array<{ table: string; row: Record<string, unknown> }>,
   sent: 0,
+  rawSent: 0,
+  sendMode: "success" as "success" | "pending" | "reject" | "throw",
   messages: [] as Array<{ html: string; text: string }>,
 }));
 
@@ -37,12 +39,22 @@ vi.mock("@/lib/supabase/queries", () => ({
     studio: { id: "studio-1", name: "Synthetic Studio" },
   }),
 }));
+async function fakeSend(message: { html: string; text: string }) {
+  ctx.sent += 1;
+  ctx.messages.push(message);
+  if (ctx.sendMode === "pending") return new Promise<never>(() => {});
+  if (ctx.sendMode === "throw") throw new Error("private provider detail");
+  if (ctx.sendMode === "reject") return { data: null, error: { statusCode: 400, message: "private provider detail" } };
+  return { data: { id: "m" }, error: null };
+}
+
 vi.mock("@/lib/email/client", () => ({
+  // Distinguish the raw SDK from the governed fake-aware resolver.
   resend: { emails: { send: async (message: { html: string; text: string }) => {
-    ctx.sent += 1;
-    ctx.messages.push(message);
-    return { data: { id: "m" }, error: null };
+    ctx.rawSent += 1;
+    return fakeSend(message);
   } } },
+  getResendTransport: () => ({ emails: { send: fakeSend } }),
   FROM_ADDRESS: "Hone <noreply@example.test>",
 }));
 
@@ -61,8 +73,12 @@ beforeEach(() => {
   ctx.lookups = [];
   ctx.inserted = [];
   ctx.sent = 0;
+  ctx.rawSent = 0;
+  ctx.sendMode = "success";
   ctx.messages = [];
 });
+
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("inviting a receptionist", () => {
   it("records a receptionist invitation for the SERVER-resolved studio and inviter", async () => {
@@ -94,6 +110,41 @@ describe("inviting a receptionist", () => {
       expect(body).toContain("Complete the joining steps shown after signing in.");
       expect(body).not.toContain("automatically");
     }
+  });
+
+  it("uses the fake-aware transport rather than the raw provider client", async () => {
+    const result = await invitePractitionerAction(form({ email: "desk@harness.local", role: "receptionist" }));
+    expect(result).toEqual({ ok: true, email: "desk@harness.local" });
+    expect(ctx.rawSent).toBe(0);
+    expect(ctx.sent).toBe(1);
+  });
+
+  it("returns the committed invitation when the provider never answers, without retrying", async () => {
+    vi.useFakeTimers();
+    ctx.sendMode = "pending";
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    let result: unknown;
+    const pending = invitePractitionerAction(form({ email: "desk@harness.local", role: "receptionist" }))
+      .then((value) => { result = value; });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ctx.inserted).toHaveLength(1);
+    expect(result).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(15_001);
+    expect(result).toEqual({ ok: true, email: "desk@harness.local" });
+    await pending;
+    expect(ctx.sent).toBe(1);
+    expect(ctx.rawSent).toBe(0);
+    expect(log).toHaveBeenCalledWith("invitation_email_error:send:ambiguous");
+  });
+
+  it.each(["reject", "throw"] as const)("keeps the invitation after provider %s without leaking provider text", async (mode) => {
+    ctx.sendMode = mode;
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const result = await invitePractitionerAction(form({ email: "desk@harness.local", role: "receptionist" }));
+    expect(result).toEqual({ ok: true, email: "desk@harness.local" });
+    expect(ctx.inserted).toHaveLength(1);
+    expect(ctx.sent).toBe(1);
+    expect(JSON.stringify(log.mock.calls)).not.toContain("private provider detail");
   });
 
   it("refuses an email already on this studio's front desk", async () => {

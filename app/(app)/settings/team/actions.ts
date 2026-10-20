@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type { InvitationRole } from "@/lib/types/database";
-import { resend, FROM_ADDRESS } from "@/lib/email/client";
+import { sendEmailSafely } from "@/lib/email/send-appointment";
 import { buildInvitationEmail } from "@/lib/email/templates/invitation";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -54,27 +54,22 @@ async function sendInvitationEmail(params: {
   studioName: string;
   inviterName: string;
 }): Promise<void> {
-  if (!resend) {
-    console.warn(
-      "Skipping invitation email: Resend client is not configured.",
-    );
-    return;
-  }
-
-  const { subject, html, text } = buildInvitationEmail(params);
   try {
-    const { error } = await resend.emails.send({
-      from: FROM_ADDRESS,
+    const { subject, html, text } = buildInvitationEmail(params);
+    // Reuse the fake-aware transport and its existing 15s provider bound.
+    // The committed invitation/share message must survive a stalled send.
+    const result = await sendEmailSafely({
       to: params.inviteeEmail,
       subject,
       html,
       text,
     });
-    if (error) {
-      console.error("Failed to send invitation email:", error);
+    if (!result.ok) {
+      console.error(`invitation_email_error:send:${result.attempt}`);
     }
-  } catch (error) {
-    console.error("Failed to send invitation email:", error);
+  } catch {
+    // No recipient, provider body or token in this operational marker.
+    console.error("invitation_email_error:send:exception");
   }
 }
 
@@ -182,8 +177,8 @@ export async function invitePractitionerAction(
     return { ok: false, error: `Failed to send invite: ${error.message}` };
   }
 
-  // Fire-and-forget the email. Any failure stays inside sendInvitationEmail
-  // and is logged; the invite row + share-message UI cover the user path.
+  // Await the bounded notification, not an unbounded provider request. Failure
+  // stays inside sendInvitationEmail; the row + share UI remain authoritative.
   await sendInvitationEmail({
     inviteeEmail: email,
     inviteeDisplayName: displayName,

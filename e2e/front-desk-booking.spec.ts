@@ -89,13 +89,16 @@ test.beforeAll(async () => {
 
 test("owner invites a receptionist who explicitly accepts before receiving front-desk access", async ({ page }) => {
   await loginAsOwner(page, seed);
+  console.info("[front-desk acceptance] owner authenticated");
   await page.goto("/settings/team");
   await page.getByRole("textbox", { name: /^Email/ }).fill(deskEmail);
   await page.getByLabel("Display name", { exact: true }).fill("Front Desk E2E");
   await page.getByLabel("Role", { exact: true }).selectOption("receptionist");
+  console.info("[front-desk acceptance] submitting owner invitation");
   await page.getByRole("button", { name: "Create invite", exact: true }).click();
   await expect(page.getByText(`Invite created for ${deskEmail}.`, { exact: true })).toBeVisible();
 
+  console.info("[front-desk acceptance] invitation visible");
   const pending = await sql<{ role: string; status: string }>(
     `select role, status from public.pending_invitations where studio_id = $1 and email = $2`,
     [seed.studioId, deskEmail],
@@ -105,8 +108,10 @@ test("owner invites a receptionist who explicitly accepts before receiving front
   // Separate sessions: an owner's existing cookie must never satisfy the
   // invitee's authorization or the acceptance route.
   await page.context().clearCookies();
+  console.info("[front-desk acceptance] starting separate invitee login");
   await loginAsReceptionist(page, deskEmail, false);
   await page.waitForURL(/\/accept-invitation(?:\?|$)/, { timeout: 30_000 });
+  console.info("[front-desk acceptance] explicit acceptance page reached");
   const join = page.getByRole("button", { name: /Join .* as/ });
   await expect(join).toBeDisabled();
   const before = await sql<{ n: number }>(
@@ -116,8 +121,10 @@ test("owner invites a receptionist who explicitly accepts before receiving front
   expect(before).toEqual([{ n: 0 }]);
 
   await page.getByLabel(/I agree to the current/).check();
+  console.info("[front-desk acceptance] submitting explicit consent");
   await join.click();
   await page.waitForURL(/\/front-desk$/, { timeout: 30_000 });
+  console.info("[front-desk acceptance] front desk reached");
   const memberships = await sql<{ id: string; terms_accepted_at: string | null; privacy_accepted_at: string | null }>(
     `select id, terms_accepted_at::text, privacy_accepted_at::text
        from public.studio_receptionists where studio_id = $1 and user_id = $2 and active`,
