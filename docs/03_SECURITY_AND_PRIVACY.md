@@ -285,7 +285,7 @@ Token storage: the DB only ever holds `hashToken(rawToken)`. A DB compromise doe
   - `studio_id` must be a UUID;
   - `modality`, `source` and `provider` must come from closed enums;
   - `is_new_session` and `livemode` must be booleans;
-  - the event name must be a short snake_case constant.
+  - the event name must belong to the closed set of supported server event constants.
 
   A mismatch drops the whole event, fail closed, and only the property name is logged. `distinctId` identity (raw practitioner UUID or `studio:<uuid>`) is unchanged; that is an identity decision for Sam. `tests/lib/analytics/server-property-shapes.test.ts` checks what the real posthog-node client puts on the wire, with zero network.
 - **PostHog URL properties lose record ids, and `/flags` is off (#828 G-07/G-26).** Browser events leave only from canonical marketing pages, but their URL-valued properties can name app pages.
