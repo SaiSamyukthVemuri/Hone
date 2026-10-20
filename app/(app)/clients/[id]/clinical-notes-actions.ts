@@ -31,6 +31,7 @@ import type {
   ClientClinicalNote,
   ClinicalNoteKind,
 } from "@/lib/types/database";
+import { safeLog } from "@/lib/logging/safe-log";
 
 const MAX_BODY_LENGTH = 20000;
 const MAX_AREAS = 40;
@@ -129,11 +130,11 @@ function logNoteFailure(
   },
 ): void {
   try {
-    console.error(
+    safeLog.error(
       JSON.stringify({ event, ...detail, timestamp: new Date().toISOString() }),
     );
   } catch {
-    console.error(event, detail.code ?? "unknown");
+    safeLog.error(event, detail.code ?? "unknown");
   }
 }
 
