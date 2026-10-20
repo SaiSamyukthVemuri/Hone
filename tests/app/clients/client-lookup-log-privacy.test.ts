@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
-  identity: vi.fn(), lookup: vi.fn(), filters: [] as Array<[string, unknown]>, writes: vi.fn(),
+  identity: vi.fn(), lookup: vi.fn(), duplicate: vi.fn(), filters: [] as Array<[string, unknown]>, writes: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -11,6 +11,8 @@ vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from: () 
     select: () => query,
     eq: (key: string, value: unknown) => { h.filters.push([key, value]); return query; },
     maybeSingle: h.lookup,
+    neq: (key: string, value: unknown) => { h.filters.push([`exclude:${key}`, value]); return query; },
+    limit: h.duplicate,
     update: h.writes,
   };
   return query;
@@ -56,5 +58,39 @@ describe("client visibility lookup diagnostic privacy", () => {
     h.identity.mockRejectedValue(new Error("synthetic auth refusal"));
     await expect(updateClientAction(form())).rejects.toThrow("synthetic auth refusal");
     expect(h.lookup).not.toHaveBeenCalled(); expect(h.writes).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("duplicate-email lookup diagnostic privacy", () => {
+  const EMAIL = "synthetic-email@example.test";
+  function duplicateForm() {
+    const data = form(); data.set("email", `  ${EMAIL.toUpperCase()}  `); return data;
+  }
+  it("withholds raw DB free text and identifiers without changing the scoped query or generic refusal", async () => {
+    const sentinel = `synthetic-patient@example.test private-clinical-sentinel synthetic-token ${CLIENT} ${CLIENT.replaceAll("-", "%2D")}`;
+    h.lookup.mockResolvedValue({ data: { id: CLIENT }, error: null });
+    h.duplicate.mockResolvedValue({ data: null, error: { code: "57014", message: sentinel } });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(updateClientAction(duplicateForm())).resolves.toEqual({ ok: false, error: "Couldn't save the client. Please try again." });
+    expect(h.identity).toHaveBeenCalledOnce(); expect(h.lookup).toHaveBeenCalledOnce();
+    expect(h.duplicate).toHaveBeenCalledExactlyOnceWith(1);
+    expect(h.filters).toEqual([["id", CLIENT], ["studio_id", STUDIO], ["studio_id", STUDIO], ["normalized_email", EMAIL], ["exclude:id", CLIENT]]);
+    expect(h.writes).not.toHaveBeenCalled(); expect(log).toHaveBeenCalledOnce();
+    const payload = JSON.parse(String(log.mock.calls[0]![0]));
+    expect(payload).toEqual({ event: "client_duplicate_email_lookup_failed", code: "57014", timestamp: expect.any(String) });
+    expect(Number.isNaN(Date.parse(payload.timestamp))).toBe(false);
+    for (const text of ["synthetic-patient", "private-clinical", "synthetic-token", CLIENT, "%2D"])
+      expect(JSON.stringify(log.mock.calls)).not.toContain(text);
+  });
+  it.each([
+    [null, "That email is already used by another active client. Use a different email or archive the duplicate client first."],
+    ["2026-10-20T00:00:00Z", "That email belongs to an archived client. Unarchive that client or use a different email."],
+  ])("preserves the existing duplicate response for archived_at=%s", async (archivedAt, error) => {
+    h.lookup.mockResolvedValue({ data: { id: CLIENT }, error: null });
+    h.duplicate.mockResolvedValue({ data: [{ id: "other-synthetic-client", archived_at: archivedAt }], error: null });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(updateClientAction(duplicateForm())).resolves.toEqual({ ok: false, error });
+    expect(h.writes).not.toHaveBeenCalled(); expect(log).not.toHaveBeenCalled();
   });
 });
