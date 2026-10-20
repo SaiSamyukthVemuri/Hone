@@ -40,7 +40,7 @@ describe("styled upload UI", () => {
     expect(MANAGER).toMatch(/type="file"/);
     expect(MANAGER).toMatch(/accept="image\/jpeg,image\/png,image\/webp"/);
     // Native inputs retain keyboard access and cover the visible targets.
-    expect(MANAGER).toContain('className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-wait"');
+    expect(MANAGER).toContain('className="absolute inset-0 h-full min-h-[44px] w-full cursor-pointer opacity-0 disabled:cursor-wait"');
   });
   it("shows the selected count and disables Attach until files are chosen", () => {
     expect(MANAGER).toMatch(/\{selectedFiles\.length\} image/);

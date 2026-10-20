@@ -486,7 +486,7 @@ export function TreatmentImagesManager({
                 capture="environment"
                 disabled={uploading}
                 onChange={onPick}
-                className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-wait"
+                className="absolute inset-0 h-full min-h-[44px] w-full cursor-pointer opacity-0 disabled:cursor-wait"
               />
             </label>
             <label className={buttonClasses({ className: "min-h-[44px] focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent" })}>
@@ -499,7 +499,7 @@ export function TreatmentImagesManager({
                 accept="image/jpeg,image/png,image/webp"
                 disabled={uploading}
                 onChange={onPick}
-                className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-wait"
+                className="absolute inset-0 h-full min-h-[44px] w-full cursor-pointer opacity-0 disabled:cursor-wait"
               />
             </label>
           <span className="text-sm text-neutral-600 dark:text-neutral-300">
