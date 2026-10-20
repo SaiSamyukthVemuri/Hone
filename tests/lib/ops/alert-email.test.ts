@@ -230,6 +230,14 @@ describe("#828 G-24: the alert email carries no record identifiers", () => {
     expect(mail.text).toContain("in session_payment_succeeded_write_zero_rows");
   });
 
+  it("shared decoder preserves the email sink policy at the decode bound", async () => {
+    const id = "6f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5";
+    const four = "%25252536" + id.slice(1);
+    const five = four.replaceAll("%", "%25");
+    const mail = await send(`😀${four}%20dp%5F1TestDispute9Ab%20foo%40example.test%0A%zz%C3%A9 ${five}`);
+    expect(mail.text).toContain("😀[id]%20[stripe-id]%20foo%40example.test%0A%zz%C3%A9 [Redacted]");
+  });
+
   it("keeps what the operator needs to triage: event slug, time, environment and the admin link", async () => {
     const mail = await send("Benign message");
     expect(mail.subject).toBe("[Hone CRITICAL] session_payment_succeeded_write_zero_rows");
