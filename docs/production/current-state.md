@@ -24,6 +24,39 @@ not a PR diary — per-capability evidence lives in
 
 | Field | Value |
 |---|---|
+| **Reconciliation date** | **2026-10-20T01:31Z source sync** (CANON-REFRESH-2026-10-20: production-record #940, followed by runtime releases #903, #897, #895, #942, #944 and #945). Production-data observations keep their original measurement dates. |
+| **Production branch** | `claude/build-hone-saas-hOex7` |
+| **Current Git branch HEAD at this sync** | **`abed5498fee659d1fcda74ed73ed7e219beb9d73` — merge of #945**, following #944 (`c82d97e1`), #942 (`0726dcff`), #895 (`38d3f25c`) and documentation-only #940 (`dcd5e375`). This is a dated source sync, not a perpetual pointer. |
+| **Last runtime-bearing application HEAD at this sync** | **`abed5498fee659d1fcda74ed73ed7e219beb9d73` (#945).** Since #932, deployed runtime merges are #903 (redacts record UUIDs from safe operator logs), #897 (preserves uncharted Watch/Plan notes and reports history unavailable when the recent window is truncated), #895 (omits record identifiers from critical operator-alert email), #942 (redacts portal magic-link studio/client identifiers from success and insert-failure logs), and #944 (omits portal last-seen session IDs and free-form error text from success/failure logs), and #945 (omits provider free-form error text from portal lookup/logout failure logs). These releases add no migration. This is a dated source/runtime baseline, not evidence of human acceptance. A3’s runtime residue is zero files at this pin. |
+| **Current Vercel Production deployment evidence** | #945 merged at `2026-10-20T01:26:52Z`. Deployment **`dpl_4RJ1jb9MXfBbSRwj1W8evRTkwqtY`**, exact Git source `abed5498fee659d1fcda74ed73ed7e219beb9d73`, is **READY**, target **production**, with aliases **hone.care** and `www.hone.care`. Read-only GET smoke at `2026-10-20T01:29Z` returned **200** for `/`, `/pricing`, and `/privacy`; route reachability only, not portal lookup/logout failure behavior, log payload redaction, or human acceptance. Production push CI `39353475232` settled at 01:32Z with only canonical-production-facts A3/A5 failures: the then-current record still pinned runtime and Current Git branch HEAD to `440829c2`, while production was `abed5498`. The exact-head record refresh in #941 passes these checks at `ea145427`; #941 remains pending review and merge. |
+| **Migration state** | **This document deliberately states no migration number.** Hosted max is declared once, machine-readably, in [`migration-state.json`](./migration-state.json). Repository max, total applied and the next free number are **derived** — run `npm run migration:state`. The current reconciled position, with checksums and apply evidence, is [migration-ledger.md](./migration-ledger.md) under *Current state*. A number copied into this table is a number that goes stale on the next apply; that is how the `0160`/`0163`/`0165` divergence happened. |
+| **Database vs. application skew** | **This document asserts no parity, pending or remote-only claim of its own.** It previously declared the two states equal and the pending set empty, and went stale the moment a reviewed migration was authored above hosted — the same second-copy failure this table already avoids for migration NUMBERS. Derive the relationship with `npm run migration:state`; hosted state is declared once in [`migration-state.json`](./migration-state.json); the reconciled position with apply evidence is [migration-ledger.md](./migration-ledger.md) under *Current state*. **A repository maximum ABOVE hosted is the normal state of an authorized migration-first apply** — reviewed migration authored, production not yet advanced — and is not by itself skew. What would be skew is a **remote-only** migration (hosted above repo), which the derivation reports and the canonical guard forbids. |
+| **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
+| **Health** | **Read-only route smoke, 2026-10-20T01:29Z:** unauthenticated GETs to `hone.care/`, `/pricing`, and `/privacy` returned **200**. This is a reachability reading only, not application-path, authorization, alert-email, or database health proof. ⚠️ `ops_alerts` was **not** re-read. Earlier probes are preserved below as dated readings; tenant counts and provider state were not refreshed. |
+| **Tenant posture** | **Six studios in three classes — one real-customer, one controlled test, one synthetic, three empty.** Real-customer activity is **Willow Electrolysis only**. See **§0**, which is the canonical tenant register; do not restate its counts elsewhere. ⚠️ **Every tenant count in §0 was measured 2026-08-23 and was NOT re-measured on 2026-08-26** — see *What this reconciliation did and did not measure* below. |
+| **Next operational gate** | The **deep production / security / code audit** remains outstanding. Chloe’s independent human acceptance of the deployed #903, #897, #895, #942, #944 and #945 changes also remains outstanding; safe staging limits and steps are recorded in §15. |
+
+### Re-derived at this reconciliation
+
+- Verified the full merge ancestry back to `b9e0003f` (178 merges), with **149** after `bf6f09c4`, through `abed5498`. Since the prior `440829c2` snapshot, #940 is record-only and #903, #897, #895, #942, #944 and #945 are runtime-bearing; none adds a migration. No hosted migration state, customer data or provider configuration was accessed or changed.
+- At `abed5498`, the deployed runtime includes safe operator-log redaction (#903, #942, #944, #945), accurate previous-treatment history (#897), and alert-email identifier minimization (#895); no migration was introduced.
+- The earlier #932 production CI [39337826311](https://github.com/SaiSamyukthVemuri/Hone/actions/runs/39337826311) remains **failed**, with 21,051 tests passing and two canonical-production-facts A3/A5 failures. #940 corrected that record; the failure is not relabeled or erased.
+- **#903:** exact-head review and pre-merge CI passed. Deployment `dpl_FAqidkKkU2NwjRHAP6XCjbup9nVM` reached READY on production aliases. Its post-merge workflow was cancelled; the local-stack gate reported no runner assignment within 15 minutes. This is not a post-merge pass.
+- **#897:** exact-head review and pre-merge CI passed (921 test files / 21,064 tests, four extended browser shards and local-stack browser). Deployment `dpl_2wF8fKo8eizco3emSNhNevp5RoYN` reached READY before #895 superseded it. Its post-merge required browser aggregate failed because all four extended shards were cancelled at hard timeout with zero reported test failures; this is not a pass.
+- **#895:** exact-head review and required pre-merge CI passed (unit/typecheck/lint/build/safety, four extended browser shards and local-stack browser). Deployment `dpl_qowJkmtRmDWsDAWGZf4fJaT2etER` is READY at exact source `38d3f25c`. Read-only `/`, `/pricing` and `/privacy` GETs returned 200. This does not verify alert-email content or human acceptance.
+- **#942:** exact-head review and pre-merge CI passed (unit/typecheck/lint/build/safety, three targeted browser shards and local-stack browser; DB/payment/mobile/Google/canonical-docs checks were skipped by the diff plan). Deployment `dpl_85ex4xgVzy6jgj7miXweJtSKubBG` was READY at exact source `0726dcff`; read-only `/`, `/pricing` and `/privacy` GETs returned 200. Post-merge CI [39351117285](https://github.com/SaiSamyukthVemuri/Hone/actions/runs/39351117285) was cancelled while browser shards ran; local-stack aggregation failed because shard results were absent. These checks do not prove portal issuance, log payload redaction, email delivery, or human acceptance.
+- **#944:** exact-head review and pre-merge CI `39350706434` passed. Deployment `dpl_BN1WCVHdnhY9fs5g1x8qzzbXHYUp` is READY at exact source `c82d97e1`; read-only `/`, `/pricing` and `/privacy` GETs returned 200. Post-merge CI `39351724598` failed only canonical A3/A5 freshness checks for the stale pre-#944 record; those failures remain recorded. These checks do not prove callback-log payload redaction or human acceptance.
+- **#945:** exact-head review on `eb23b37977e2242973536137d4273704b5e4d985` found no major findings. Pre-merge CI `39352275006` passed typecheck/lint/build/unit/safety, three targeted browser shards and local-stack aggregation; DB/payment/mobile/Google/canonical docs were skipped by plan. Merged `abed5498fee659d1fcda74ed73ed7e219beb9d73`; deployment `dpl_4RJ1jb9MXfBbSRwj1W8evRTkwqtY` is READY on production aliases at exact source. Read-only `/`, `/pricing`, `/privacy` GETs returned 200. Production push CI `39353475232` settled at 01:32Z with only canonical-production-facts A3/A5 failures: the then-current record still pinned runtime and Current Git branch HEAD to `440829c2`, while production was `abed5498`. The exact-head record refresh in #941 passes these checks at `ea145427`; #941 remains pending review and merge. No migration or hosted-state change; synthetic Chloe acceptance remains pending because no approved isolated staging failure trigger/log path was supplied.
+
+**Not re-measured:** application workflows, database health, tenant counts, alerts, providers or human acceptance. The route smoke above is reachability only. Earlier dated measurements remain unchanged. Portrait and capture-stage grouping are not deployed; their independent release and activation holds remain. Vendor-side deletion remains a separate decision.
+
+### Historical preceding baseline from the #928 reconciliation
+
+<!-- canonical-facts:ignore-start reason=preserves-the-37b0ed82-record-as-dated-history -->
+#### Prior reconciliation header
+
+| Field | Value |
+|---|---|
 | **Reconciliation date** | **2026-10-19 UTC source sync** (CANON-REFRESH-2026-10-19c: documentation-only #935 and CI-only #928 after `78c1d640`). Application runtime remains `78c1d640`; production-data observations keep their original measurement dates. |
 | **Production branch** | `claude/build-hone-saas-hOex7` |
 | **Current Git branch HEAD at this sync** | **`37b0ed82e7827d2d07c5d65c2b7bcdab78326a2a` — merge of #928.** Its two-file first-parent diff is `.github/workflows/ci.yml` and `tests/ci/post-test-verification-steps.test.ts`, with no shipping application or migration file. This is a dated source sync, not a perpetual pointer. |
@@ -36,13 +69,15 @@ not a PR diary — per-capability evidence lives in
 | **Tenant posture** | **Six studios in three classes — one real-customer, one controlled test, one synthetic, three empty.** Real-customer activity is **Willow Electrolysis only**. See **§0**, which is the canonical tenant register; do not restate its counts elsewhere. ⚠️ **Every tenant count in §0 was measured 2026-08-23 and was NOT re-measured on 2026-08-26** — see *What this reconciliation did and did not measure* below. |
 | **Next operational gate** | The **deep production / security / code audit** (still not performed against this baseline). **Chloe's human acceptance testing** remains outstanding and is **independent** — see §15. |
 
-### Re-derived at this reconciliation
+#### Prior re-derived evidence
 
 - Verified the full merge ancestry back to `b9e0003f` (169 merges), with **140** after `bf6f09c4`. #935 is record-only and #928 is CI/tests-only; the last runtime-bearing application SHA stays `78c1d640`.
 - #928 changes no migration, customer data, studio flag or provider activation. No hosted declaration/history was changed; the separately observed hosted-history discrepancy remains an external read-only finding.
 - #928 source head had clean exact-head review and green CI39195263987: 20,931 unit/static pass; 3,570 DB pass / eight skipped; 601 browser pass / eleven skipped; payment56, Google13 and mobile6 pass; canonical-only job skipped. These are pre-merge proofs, not production workflow or customer acceptance.
 
 **Not re-measured:** application workflow, health, tenant counts, alerts, providers or human acceptance. #931 and #935 remain resolved. This follow-up updates branch-head freshness after the CI-only merge; it does not change the application runtime pin. Dependent releases remain held pending the new record’s review/checks and Sam’s authority.
+
+<!-- canonical-facts:ignore-end -->
 
 ### Historical preceding baseline from the #907 reconciliation
 
@@ -714,7 +749,7 @@ surfaces then made affirmative clinical statements nobody had read: *Last visit*
 Intelligence* reported every stat as a known zero, and *Before today* reported no watch or plan
 notes and a complete procedure record.
 
-At `78c1d640` all four check `unavailable` **before** `hasHistory`, and
+The current client profile checks read availability before `hasHistory`: all four surfaces render `unavailable` **before** treating an empty result as absence, and
 `session_blocks.caution_for_next_session` / `caution_note` — which reach the practitioner only
 through the Watch/Plan band built from that same read — are protected on both the Overview and
 Sessions tabs. Read failure now renders *clinical history could not be loaded*. **Re-run on
@@ -1615,11 +1650,10 @@ trigger that freezes identity columns after insert — are unaffected and remain
   Authorization, client IP or User-Agent, and return only `content-type`, `cache-control`,
   `x-sentry-rate-limits` and `retry-after`. **Not a BAA; production requests were not
   measured.**
-- **PostHog: path-segment id redaction for URL properties (depth ≤ 8), and `/flags` off** (PR #918,
-  #828 G-07/G-26, merge `aaf3042b`, deployed 2026-10-18, no migration). This is a set of
-  mechanisms, **not a guarantee that record ids never reach PostHog.** `guardBrowserEvent` (`lib/analytics/client-boundary.ts`) passes only allowed marketing events from canonical marketing pages, then runs `sanitizeProps` over `properties`, `$set` and `$set_once`. A string value whose key is a named URL key (`$current_url`, `$referrer`, `$initial_*`, `$session_entry_*`, ...) or ends in `_url`, `_referrer` or `_pathname`, at nesting depth 8 or less, is rebuilt by `sanitizeMarketingUrl`: its path, unless it is a token route (`<prefix>[token]`) or a canonical marketing path (kept), goes through the segment rules in `lib/analytics/path-ids.ts` shared with `vercel-url-redaction.ts`, so an id-bearing path segment becomes `[id]` or `[token]` (percent-decoded first; a redacted segment that would still contain `?`, `#`, `@`, `%` or a space becomes `[token]`); query parameters not on the attribution allowlist are dropped; the fragment is dropped. Other string values get only token-route redaction (`sanitizeTokenPaths`), not id redaction. A string at depth 9 becomes `[redacted]`. `instrumentation-client.ts` sets `advanced_disable_flags: true`, which in posthog-js 1.404.1 stops the `/flags` request (whose body carried the first page the browser loaded and, per #918's own analysis, does not pass through `before_send`); pinned by `tests/lib/analytics/posthog-url-ids.test.ts`, including the SDK's gate on that option name.
-  **Known gaps (Privacy lane fix in progress):** (1) record ids inside retained allowlisted `utm_*` values (`utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`) are not redacted: those values are copied verbatim; (2) properties nested deeper than 8 levels are passed through unsanitised: a non-string value (object, array, number, boolean, null) reached at depth 9 is returned unchanged, so every string inside it is sent as is.
-  **Not a BAA; production events were not measured.**
+- **PostHog: bounded URL/campaign record-id redaction, fail-closed serialization, and `/flags` off** (#828 G-07/G-26; #918 introduced the boundary, #932 extended it at `440829c2`, deployed 2026-10-19; no migration). `guardBrowserEvent` allows only approved marketing events from canonical marketing pages, then sanitizes `properties`, `$set` and `$set_once`.
+  - URL strings use the existing marketing URL/path rules: token routes and record-id path segments are redacted; non-allowlisted query parameters and fragments are dropped. Retained `utm_*` values and standalone campaign/ad-click properties (including `$initial_`/`$session_entry_` forms) now redact embedded dashed UUIDs after bounded percent-decoding. Malformed or still-encoded values become `[token]`; non-id attribution text is retained. Other non-URL strings also lose embedded record UUIDs, while bare unencoded UUIDs are deliberately retained for PostHog’s own identifiers.
+  - Beyond nesting depth 8, strings become `[redacted]` and containers become `[depth-limited]`, rather than passing their contents through; non-text primitives remain unchanged. Object keys are sanitized too. URL objects are withheld as `[url]` without serialization; Date values use intrinsic time access and a fresh ISO serialization. Callable/accessor `toJSON` and unsupported object types become `[unsupported]` without invoking the serializer; bigint, symbols and functions are dropped.
+  - `advanced_disable_flags: true` remains set for posthog-js 1.404.1. The earlier retained-UTM/deep-container gaps are repaired in deployed #932; source/regression evidence is in `tests/lib/analytics/posthog-attribution-values.test.ts`. This is bounded ID/token protection, **not a general PII classifier or an unconditional guarantee that record ids never reach PostHog**. Freeform non-id attribution and PostHog’s own identifiers remain by design. **Not a BAA; production events and current provider configuration were not measured. Vendor-side deletion remains a separate decision.**
 - Rate limiting via Upstash **fails OPEN** — if it is down or unset, portal and booking rate
   limits bypass.
 
@@ -1675,7 +1709,46 @@ inbound-busy and two-way calendar · broad-SaaS SMS · self-serve studio creatio
    its behaviour. **Usage is evidence of exercise, not of acceptance.**)*
 7. Conditional numbing notes (0156) and inventory-backed probe-lot linkage (0155).
 
+**Additional UAT for the 2026-10-20 deployed releases — also pending:** Do not use production
+logs, induce a database/provider failure, send live email/SMS, or access or modify real-client
+records. Existing CI fixtures prove the redaction invariants; they are not Chloe's runtime
+acceptance.
+
+8. **#903 safe operator logging:** no existing non-destructive application path is available
+to produce a database/provider failure containing a synthetic record UUID. Do not create an
+orphaned record or deliberately break a dependency to exercise this log branch. Runtime
+acceptance of UUID redaction is therefore unavailable through the current UI; the existing
+synthetic unit/CI evidence remains the only verification of that invariant.
+9. **#897 treatment history:** on the Sessions tab, confirm an uncharted recent visit's
+Watch/Plan note remains associated with that visit. Separately, in the existing synthetic
+staging workspace, create one older charted session and exactly **25 newer, non-deleted,
+non-void, uncharted sessions** that all start before a synthetic target appointment and are
+not linked to that appointment. Open the target appointment's **detail page**; the Last
+treatment section must say **“Previous treatment could not be loaded. Open the client's chart
+to review it before treating.”** The 25-row candidate limit is what makes older history
+unavailable here. Also confirm a charted prior treatment shows its date, modality and summary
+on the appointment detail page. Check desktop and phone layouts.
+10. **#895 operator alert email:** the existing `sendTestCriticalAlertAction` emits a static
+synthetic event with no record identifiers. Its captured email can verify delivery and
+operational context only; it cannot verify identifier redaction. Do not treat this action as
+acceptance of that invariant. Existing synthetic CI fixtures remain its only verification.
+11. **#942 portal magic-link logging:** in the existing synthetic staging workspace, issue a
+portal link for a synthetic client/studio and use the existing mail-capture inbox only. Confirm
+the `portal_magic_link_sent` log shows `studioId` and `clientId` as `[id]`, preserves its event,
+timestamp and success marker, and contains no email, raw token, token hash or UUID. Do not send
+to a live email destination or access a real-client record. The insert-failure redaction path
+has no safe user-facing trigger and remains verified by synthetic CI fixtures only.
+12. **#944 portal last-seen failure logging:** there is no safe user-facing action that produces
+a controlled database failure for either last-seen callback. Do not induce an error or inspect
+production logs. Existing synthetic fake-database tests prove that session IDs and free-form
+error text are omitted while the failure event, timestamp and database code remain. A human
+runtime check requires an existing approved synthetic staging failure trigger; none is
+currently recorded.
+13. **#945 portal lookup/logout failure logging:** use only an approved isolated synthetic staging account and preconfigured failure trigger. Exercise lookup and logout, confirm anonymous fallback and cookie clearing, then inspect only staging logs to verify event/code/time remain and provider free-form message, session/client/email/cookie data are absent. No approved staging fixture or failure trigger is currently recorded; do not induce production errors or inspect production logs.
+
 Engineering deployment for all of the above is **complete**. Human acceptance is **not**.
+Items 8, 10, 12 and 13 have no safe runtime acceptance path in the current application; adding a
+synthetic canary or changing the test-alert payload requires separate scope and safety review.
 Do not describe any of it as accepted, validated by Chloe, or signed off.
 
 **Do not infer acceptance from usage.** For items 1–5 and 7, no per-item production-exercise
