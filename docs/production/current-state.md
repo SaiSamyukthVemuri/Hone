@@ -1706,22 +1706,28 @@ inbound-busy and two-way calendar · broad-SaaS SMS · self-serve studio creatio
    its behaviour. **Usage is evidence of exercise, not of acceptance.**)*
 7. Conditional numbing notes (0156) and inventory-backed probe-lot linkage (0155).
 
-**Additional UAT for the 2026-10-20 deployed releases — also pending:** Use an existing
-synthetic staging workspace and its existing mail-capture inbox only. Do not use production
-logs, send live email/SMS, or access or modify real-client records.
+**Additional UAT for the 2026-10-20 deployed releases — also pending:** Do not use production
+logs, induce a database/provider failure, send live email/SMS, or access or modify real-client
+records. Existing CI fixtures prove the redaction invariants; they are not Chloe's runtime
+acceptance.
 
-8. **#903 safe operator logging:** exercise a safe test error path already covered by privacy
-tests, inspect its operator log, and confirm record UUIDs appear as `[id]` while the normal
-client workflow remains usable.
+8. **#903 safe operator logging:** no existing non-destructive application path is available
+to produce a database/provider failure containing a synthetic record UUID. Do not create an
+orphaned record or deliberately break a dependency to exercise this log branch. Runtime
+acceptance of UUID redaction is therefore unavailable through the current UI; the existing
+synthetic unit/CI evidence remains the only verification of that invariant.
 9. **#897 treatment history:** with synthetic clients, confirm an uncharted recent visit's
 Watch/Plan note remains on the Sessions tab; a full recent window without usable charted
 treatment reports history as unavailable; and a charted treatment retains its date, modality
 and summary. Check desktop and phone layouts.
-10. **#895 operator alert email:** trigger the existing safe test error path in synthetic
-staging and inspect only the captured alert. Confirm client/record identifiers are absent while
-useful operational context remains. Use mail capture only; do not send a real email.
+10. **#895 operator alert email:** the existing `sendTestCriticalAlertAction` emits a static
+synthetic event with no record identifiers. Its captured email can verify delivery and
+operational context only; it cannot verify identifier redaction. Do not treat this action as
+acceptance of that invariant. Existing synthetic CI fixtures remain its only verification.
 
 Engineering deployment for all of the above is **complete**. Human acceptance is **not**.
+Items 8 and 10 have no safe runtime acceptance path in the current application; adding a
+synthetic canary or changing the test-alert payload requires separate scope and safety review.
 Do not describe any of it as accepted, validated by Chloe, or signed off.
 
 **Do not infer acceptance from usage.** For items 1–5 and 7, no per-item production-exercise
