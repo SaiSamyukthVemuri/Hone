@@ -481,6 +481,33 @@ describe("http(s) URL strings are classified by parsing, not by prefix", () => {
 // becomes [unsupported] and its toJSON is never invoked.
 // ===========================================================================
 describe("object serialization avoids overridden methods", () => {
+  it("does not invoke the current URL getter while deciding whether to send", () => {
+    const getter = vi.fn(() => `${HOST}/pricing`);
+    const properties = Object.defineProperty({}, "$current_url", { enumerable: true, get: getter });
+    expect(guardBrowserEvent({ event: "$pageview", properties })).toBeNull();
+    expect(getter).not.toHaveBeenCalled();
+  });
+
+  it.each(["plain", "null-prototype", "array"])("withholds %s accessor containers without invoking getters", (kind) => {
+    const value = kind === "array" ? [] : kind === "null-prototype" ? Object.create(null) : {};
+    const getter = vi.fn(() => "synthetic-patient@example.test");
+    Object.defineProperty(value, kind === "array" ? "0" : "note", { enumerable: true, get: getter });
+    const out = pageview({ value });
+    expect((out.properties as Record<string, unknown>).value).toBe("[unsupported]");
+    expect(getter).not.toHaveBeenCalled();
+    expect(JSON.stringify(out)).not.toContain("synthetic-patient");
+  });
+
+  it("copies array data without dispatching through an overridden map", () => {
+    const value = ["ordinary"];
+    const map = vi.fn(() => ["synthetic-patient@example.test"]);
+    Object.defineProperty(value, "map", { value: map });
+    const out = pageview({ value });
+    expect((out.properties as Record<string, unknown>).value).toEqual(["ordinary"]);
+    expect(map).not.toHaveBeenCalled();
+  });
+
+
   it.each(["plain", "null-prototype", "array", "inherited"])(
     "never invokes a non-enumerable toJSON getter on %s values", (kind) => {
       const value = kind === "array" ? [] : kind === "null-prototype" ? Object.create(null) : {};
