@@ -40,9 +40,6 @@ async function isClientVisible(
     safeLog.error(
       JSON.stringify({
         event: "client_visible_lookup_failed",
-        clientId,
-        code: error.code,
-        message: error.message,
         timestamp: new Date().toISOString(),
       }),
     );
