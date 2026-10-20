@@ -330,14 +330,26 @@ function sanitizeProps(value: unknown, key: string, depth: number): unknown {
     if (!Object.hasOwn(descriptor, "value") || typeof descriptor.value === "function") return "[unsupported]";
     break;
   }
+  // Reading a value must not execute arbitrary getters (not only toJSON).
+  // Snapshot data descriptors before traversal, and never call array methods
+  // supplied by the input: an overridden map could return unsanitized data.
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (Object.values(descriptors).some((descriptor) => !Object.hasOwn(descriptor, "value")))
+    return "[unsupported]";
   if (Array.isArray(value)) {
-    return value.map((v) => sanitizeProps(v, key, depth + 1));
+    const length = descriptors.length!.value as number;
+    const out: unknown[] = new Array(length);
+    for (let i = 0; i < length; i += 1) {
+      const descriptor = descriptors[String(i)];
+      if (descriptor) out[i] = sanitizeProps(descriptor.value, key, depth + 1);
+    }
+    return out;
   }
   const proto = Object.getPrototypeOf(value);
   if (proto !== Object.prototype && proto !== null) return "[unsupported]";
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-    out[sanitizeKey(k, out)] = sanitizeProps(v, k, depth + 1);
+  for (const [k, descriptor] of Object.entries(descriptors)) {
+    if (descriptor.enumerable) out[sanitizeKey(k, out)] = sanitizeProps(descriptor.value, k, depth + 1);
   }
   return out;
 }
@@ -365,8 +377,10 @@ export function guardBrowserEvent<T extends OutgoingEventShape | null>(
   if (typeof name !== "string" || name.length === 0) return null; // fail closed
 
   const props = event.properties;
-  const currentUrl =
-    props && typeof props.$current_url === "string" ? props.$current_url : null;
+  // The route decision must not invoke a payload accessor before sanitation.
+  const currentUrlDescriptor = props && Object.getOwnPropertyDescriptor(props, "$current_url");
+  const currentUrl = currentUrlDescriptor && Object.hasOwn(currentUrlDescriptor, "value") &&
+    typeof currentUrlDescriptor.value === "string" ? currentUrlDescriptor.value : null;
   const pathname = currentUrl ? pathnameOf(currentUrl) : null;
 
   // Fail closed: require a parsable marketing URL AND an allowed marketing
