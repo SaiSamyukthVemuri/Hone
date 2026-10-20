@@ -90,6 +90,42 @@ export function redactEncodedSegment(segment: string): string {
   return /[?#@%\s]/.test(out) ? "[token]" : out;
 }
 
+/** A retained query or attribution VALUE (#828 G-07/G-26, Codex P1
+ *  4309025843): percent-decoded to a fixed point (bounded), then every record
+ *  id (a dashed UUID, anywhere in the value) becomes [id]; the rest of the
+ *  value is kept, so attribution still works ("spring-<uuid>" becomes
+ *  "spring-[id]"). Only UUIDs, not digit runs or long tokens: campaign values
+ *  legitimately hold years ("spring 2026") and ad-platform click ids, and
+ *  Hone's record ids are UUIDs. Fail closed: an undecodable or still-encoded
+ *  value becomes [token]. The caller re-encodes the result, so decoded text
+ *  never rebuilds URL syntax. */
+/** Percent-decode to a fixed point (bounded); null when undecodable or still
+ *  encoded after the bound. Decide on the DECODED value, never on a raw-text
+ *  signal (Codex 4309069522: "%36f1…" hid a UUID from a raw check). */
+export function decodeBounded(value: string): string | null {
+  let decoded = value;
+  for (let i = 0; i < MAX_DECODE_ROUNDS && ENCODED.test(decoded); i += 1) {
+    let next: string;
+    try {
+      next = decodeURIComponent(decoded);
+    } catch {
+      return null;
+    }
+    if (next === decoded) break;
+    decoded = next;
+  }
+  return ENCODED.test(decoded) ? null : decoded;
+}
+
+export function redactIdsInValue(value: string): string {
+  const decoded = decodeBounded(value);
+  if (decoded === null) return "[token]";
+  // replace() (not .test() on the global regex, whose lastIndex would carry
+  // over between calls and skip a match).
+  const redacted = decoded.replace(EMBEDDED_UUID, "[id]");
+  return redacted === decoded ? value : redacted;
+}
+
 /** A URL pathname with every id-bearing segment replaced. */
 export function redactIdsInPath(pathname: string): string {
   return pathname.split("/").map(redactEncodedSegment).join("/");

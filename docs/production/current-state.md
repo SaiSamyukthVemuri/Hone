@@ -24,6 +24,103 @@ not a PR diary — per-capability evidence lives in
 
 | Field | Value |
 |---|---|
+| **Reconciliation date** | **2026-10-20T12:16Z source sync** (runtime release #921 after record-only #950). Production-data observations keep their original measurement dates. |
+| **Production branch** | `claude/build-hone-saas-hOex7` |
+| **Current Git branch HEAD at this sync** | **`291ba2eefe991859979efaaf3f58d21e1bfd6914` — merge of #921**, following record-only #950 (`b403f263`). This is a dated source sync, not a perpetual pointer. |
+| **Last runtime-bearing application HEAD at this sync** | **`291ba2eefe991859979efaaf3f58d21e1bfd6914` (#921).** It adds the closed server-event allowlist and value-shape guards in `lib/analytics/server.ts`, with ID-like-name/value regression coverage. The prior runtime features in #947, #946 and #906 remain included. No migration is included. This is a dated source/runtime baseline, not evidence of human acceptance. A3’s runtime residue is zero files at this pin. |
+| **Current Vercel Production deployment evidence** | #921 source `5bf23c09c104015345a1fd3d885c93fce42a59c8` merged at `2026-10-20T11:59Z` as `291ba2eefe991859979efaaf3f58d21e1bfd6914`. Vercel deployment **`dpl_Gt4fky9uohkQCV2zqxn2jiXfTT4g`** is **READY** for exact Git source `291ba2eefe991859979efaaf3f58d21e1bfd6914` on production aliases **hone.care** and `www.hone.care`. Read-only GET smoke after READY: `/login` returned **200** and unauthenticated `/dashboard` returned **307 → /login**. #921 pre-merge CI `39416777700` and exact-head review passed. Post-merge CI `39418867585` completed with the validate/unit job failing exactly canonical A3/A5: 21,176 tests passed, 2 failed. A3 still pinned runtime `b049b7e1` while `lib/analytics/server.ts` shipped; A5 still recorded HEAD `b049b7e1` instead of `291ba2ee`. Four extended browser shards and the local-stack browser aggregate passed. DB, payment, mobile, Google and canonical-docs jobs were skipped by plan. No hosted migration, provider action, or customer-data change occurred. |
+| **Migration state** | **This document deliberately states no migration number.** Hosted max is declared once, machine-readably, in [`migration-state.json`](./migration-state.json). Repository max, total applied and the next free number are **derived** — run `npm run migration:state`. The current reconciled position, with checksums and apply evidence, is [migration-ledger.md](./migration-ledger.md) under *Current state*. A number copied into this table is a number that goes stale on the next apply; that is how the `0160`/`0163`/`0165` divergence happened. |
+| **Database vs. application skew** | **This document asserts no parity, pending or remote-only claim of its own.** It previously declared the two states equal and the pending set empty, and went stale the moment a reviewed migration was authored above hosted — the same second-copy failure this table already avoids for migration NUMBERS. Derive the relationship with `npm run migration:state`; hosted state is declared once in [`migration-state.json`](./migration-state.json); the reconciled position with apply evidence is [migration-ledger.md](./migration-ledger.md) under *Current state*. **A repository maximum ABOVE hosted is the normal state of an authorized migration-first apply** — reviewed migration authored, production not yet advanced — and is not by itself skew. What would be skew is a **remote-only** migration (hosted above repo), which the derivation reports and the canonical guard forbids. |
+| **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
+| **Health** | **Read-only route smoke after #921 deployment READY:** GET `/login` returned **200**; unauthenticated GET `/dashboard` returned **307 → /login**. This is route reachability and unauthenticated-boundary evidence only, not analytics-event or human-acceptance proof. ⚠️ `ops_alerts` was **not** re-read. Tenant counts and provider state were not refreshed. |
+| **Tenant posture** | **Six studios in three classes — one real-customer, one controlled test, one synthetic, three empty.** Real-customer activity is **Willow Electrolysis only**. See **§0**, which is the canonical tenant register; do not restate its counts elsewhere. ⚠️ **Every tenant count in §0 was measured 2026-08-23 and was NOT re-measured on 2026-08-26** — see *What this reconciliation did and did not measure* below. |
+| **Next operational gate** | The **deep production / security / code audit** remains outstanding. Chloe’s independent human acceptance of deployed #921, #903, #897, #895, #942, #944, #945, #947 and #946 changes also remains outstanding; safe staging limits and steps are recorded in §15. #921 requires an approved synthetic staging actor and event sink; do not emit an acceptance event from production. |
+
+### Re-derived at this reconciliation
+
+- Verified the full merge ancestry back to `b9e0003f` (186 merges) using the first-parent production graph, with **157** after `bf6f09c4`, through `291ba2ee`. Since the preceding `abed5498` record, #941, #948, #949 and #950 are documentation-only; #947, #946, #906 and #921 are runtime-bearing. #921 is the only runtime-bearing merge since `b049b7e1`; its merge diff changes `lib/analytics/server.ts`, `tests/lib/analytics/server-capture.test.ts`, `tests/lib/analytics/server-property-shapes.test.ts` and `docs/03_SECURITY_AND_PRIVACY.md`. No merge in this interval adds a migration. No hosted migration state, customer data or provider configuration was accessed or changed.
+- At `291ba2ee`, the deployed runtime includes #947’s fail-closed invitation completion behavior, #946’s truthful missing-currency label, #906’s consistent refunded appointment state/session quote prefill, and #921’s server analytics event/value allowlist. #921 exact-head review and pre-merge CI `39416777700` passed. Production push CI `39418867585` passed four extended browser shards and local-stack aggregate, but its unit gate failed exactly the two canonical A3/A5 freshness assertions (21,176 passed, 2 failed); DB, payment, mobile, Google and canonical-docs were skipped by plan. This reconciliation updates the runtime/current-HEAD pins to `291ba2ee`; it does not erase the failed CI receipt or claim human acceptance.
+- The earlier #932 production CI [39337826311](https://github.com/SaiSamyukthVemuri/Hone/actions/runs/39337826311) remains **failed**, with 21,051 tests passing and two canonical-production-facts A3/A5 failures. #940 corrected that record; the failure is not relabeled or erased.
+- **#903:** exact-head review and pre-merge CI passed. Deployment `dpl_FAqidkKkU2NwjRHAP6XCjbup9nVM` reached READY on production aliases. Its post-merge workflow was cancelled; the local-stack gate reported no runner assignment within 15 minutes. This is not a post-merge pass.
+- **#897:** exact-head review and pre-merge CI passed (921 test files / 21,064 tests, four extended browser shards and local-stack browser). Deployment `dpl_2wF8fKo8eizco3emSNhNevp5RoYN` reached READY before #895 superseded it. Its post-merge required browser aggregate failed because all four extended shards were cancelled at hard timeout with zero reported test failures; this is not a pass.
+- **#895:** exact-head review and required pre-merge CI passed (unit/typecheck/lint/build/safety, four extended browser shards and local-stack browser). Deployment `dpl_qowJkmtRmDWsDAWGZf4fJaT2etER` is READY at exact source `38d3f25c`. Read-only `/`, `/pricing` and `/privacy` GETs returned 200. This does not verify alert-email content or human acceptance.
+- **#942:** exact-head review and pre-merge CI passed (unit/typecheck/lint/build/safety, three targeted browser shards and local-stack browser; DB/payment/mobile/Google/canonical-docs checks were skipped by the diff plan). Deployment `dpl_85ex4xgVzy6jgj7miXweJtSKubBG` was READY at exact source `0726dcff`; read-only `/`, `/pricing` and `/privacy` GETs returned 200. Post-merge CI [39351117285](https://github.com/SaiSamyukthVemuri/Hone/actions/runs/39351117285) was cancelled while browser shards ran; local-stack aggregation failed because shard results were absent. These checks do not prove portal issuance, log payload redaction, email delivery, or human acceptance.
+- **#944:** exact-head review and pre-merge CI `39350706434` passed. Deployment `dpl_BN1WCVHdnhY9fs5g1x8qzzbXHYUp` is READY at exact source `c82d97e1`; read-only `/`, `/pricing` and `/privacy` GETs returned 200. Post-merge CI `39351724598` failed only canonical A3/A5 freshness checks for the stale pre-#944 record; those failures remain recorded. These checks do not prove callback-log payload redaction or human acceptance.
+- **#945:** The preceding reconciliation records its exact-head review, pre-merge CI, deployment, smoke and the original stale-record CI failure at the time. #941 subsequently corrected that source record at `9a731aac`; its docs-only CI passed and it merged normally. The new #947 runtime merge then made that record stale again, as shown by the current #947 production push result above.
+- **#947:** The preceding reconciliation records its exact-head review, pre-merge CI, deployment, smoke and stale-record push result at the time. It remains deployed at `fca724ab`; no migration or hosted-state change. Chloe’s isolated synthetic invitation acceptance remains pending.
+- **#948:** Docs-only record refresh source `e2987e39ffdac08b24b7d5f965d56c62dd6a5b81` passed exact-head review and CI `39360204120`, then merged normally as `c264ed540258d5626e211339a5034ab41c186bda`. Production push CI `39360580504` passed its docs-only selected jobs; unit/DB/browser/payment/mobile/Google suites were skipped by plan. It changed no runtime, migration, hosted state or customer data.
+- **#946:** Source `3b24ff55cbd92fc1d69fe60c1e2d8c892468f7e2` passed exact-head review and CI `39357088930` (unit/typecheck/lint/build/safety, four extended browser shards, payment browser and local-stack browser passed; DB/mobile/Google/canonical-docs were skipped by plan). It merged normally as `49640bd8cd06b65a5bc81e2493f9d04e5bb7df3d`; Vercel deployment `dpl_nrThv1JA8yGRuq6wvyGMVVuLaRut` is READY on production aliases at the exact source. Read-only `/login` returned 200 and unauthenticated `/admin/payments` returned 307 to `/login`; no authenticated feature-row or payment operation was performed. Post-merge workflow `39361843543` was cancelled after stale canonical A3/A5 failed and required browser shards were cancelled. #949 later refreshed the source record through #946. Chloe’s synthetic staging UAT remains pending; no migration or customer-data change.
+- **#949:** Docs-only canonical record refresh source `ded62ef6817e983f5843fdc76da5dfcef6c93add` passed exact-head review and selected docs-only CI `39362577215`; production push CI `39362844385` also passed. It merged normally as `926f1ece18d0367b29fbe55e097f4b1ce876ee14`; Vercel deployment `dpl_DnCcFkgftq3cfxCscTonafNkqP1A` is READY at exact source. Read-only `/login` returned 200 and unauthenticated `/dashboard` returned 307 to `/login`. Non-doc suites were skipped by plan. No runtime, migration, hosted-state or customer-data change.
+- **#906:** Source `afb4e1b38aff93e9fbf79e8d18def3ed6de93073` passed exact-head review and pre-merge CI `39363164120` (21,153 tests / 927 files, three targeted browser shards, fake-payment browser and local-stack aggregate; DB/mobile/Google/canonical-docs skipped by plan). It merged normally as `b049b7e1f2ec8c87eff722632ab33664bdfd8921`; Vercel deployment `dpl_EpUVuqDuCQKDaf8RBa2MkPnEmgkV` is READY at exact source. Read-only `/login` returned 200 and unauthenticated `/dashboard` returned 307 to `/login`; synthetic checkout UAT is prepared but not executed. Post-merge CI `39364247876` passed the three browser shards, fake-payment browser and local-stack aggregate; DB/mobile/Google/canonical-docs skipped by plan. Unit tests had 21,151 passes and two failures, both stale canonical A3/A5 facts at the then-current pin `49640bd8`; no feature test failed. No migration, live payment action or customer-data change.
+
+**Not re-measured:** application workflows, database health, tenant counts, alerts, providers or human acceptance. The route smoke above is reachability only. Earlier dated measurements remain unchanged. Portrait and capture-stage grouping are not deployed; their independent release and activation holds remain. Vendor-side deletion remains a separate decision.
+
+### Historical preceding baseline from the #928 reconciliation
+
+<!-- canonical-facts:ignore-start reason=preserves-the-37b0ed82-record-as-dated-history -->
+#### Prior reconciliation header
+
+| Field | Value |
+|---|---|
+| **Reconciliation date** | **2026-10-19 UTC source sync** (CANON-REFRESH-2026-10-19c: documentation-only #935 and CI-only #928 after `78c1d640`). Application runtime remains `78c1d640`; production-data observations keep their original measurement dates. |
+| **Production branch** | `claude/build-hone-saas-hOex7` |
+| **Current Git branch HEAD at this sync** | **`37b0ed82e7827d2d07c5d65c2b7bcdab78326a2a` — merge of #928.** Its two-file first-parent diff is `.github/workflows/ci.yml` and `tests/ci/post-test-verification-steps.test.ts`, with no shipping application or migration file. This is a dated source sync, not a perpetual pointer. |
+| **Last runtime-bearing application HEAD at this sync** | **`78c1d640b80d15080dd4ec68aaba48997e3daacf` (#907).** The own first-parent diff changes six files, four shipping files under `app/` and `lib/`, and no migration. The session page now loads and renders its visit’s ungrouped photo gallery. Portrait and capture-stage grouping remain separate, unmerged work. A3’s runtime residue is zero files at this pin. |
+| **Current Vercel Production deployment evidence** | `37b0ed82` (#928, merged `2026-10-19T04:24:49Z` from `d32796fc3c59821341ecd91fe873c3b14a98c8bd`) has Vercel GitHub status **success**, updated `2026-10-19T04:26:38Z`, target `Fb6opkLfewSj2JNi9PWziGT6vo5i`. Existing authenticated Vercel CLI independently confirms exact `37b0ed82`, **Ready**, target **production**, aliases **hone.care** and `www.hone.care`. The preceding #935 record-only commit `9965580e` was independently confirmed through the existing Vercel CLI as Ready, production, hone.care alias, and automatic CI39198912242 passed **374 canonical checks**; validate/DB/payment/Google/mobile/browser-shard execution was skipped, not runtime proof. Automatic production CI39199339032 for #928 is still running at this sync; its final outcome is not asserted. #928 changes CI only; no new application behavior or human acceptance is claimed. |
+| **Migration state** | **This document deliberately states no migration number.** Hosted max is declared once, machine-readably, in [`migration-state.json`](./migration-state.json). Repository max, total applied and the next free number are **derived** — run `npm run migration:state`. The current reconciled position, with checksums and apply evidence, is [migration-ledger.md](./migration-ledger.md) under *Current state*. A number copied into this table is a number that goes stale on the next apply; that is how the `0160`/`0163`/`0165` divergence happened. |
+| **Database vs. application skew** | **This document asserts no parity, pending or remote-only claim of its own.** It previously declared the two states equal and the pending set empty, and went stale the moment a reviewed migration was authored above hosted — the same second-copy failure this table already avoids for migration NUMBERS. Derive the relationship with `npm run migration:state`; hosted state is declared once in [`migration-state.json`](./migration-state.json); the reconciled position with apply evidence is [migration-ledger.md](./migration-ledger.md) under *Current state*. **A repository maximum ABOVE hosted is the normal state of an authorized migration-first apply** — reviewed migration authored, production not yet advanced — and is not by itself skew. What would be skew is a **remote-only** migration (hosted above repo), which the derivation reports and the canonical guard forbids. |
+| **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
+| **Health** | **Status-code probe, 2026-10-17T17:05Z** (unauthenticated GET, redirects not followed): `hone.care` **200** · `/login` **200** · `/dashboard`, `/clients`, `/calendar` and `/api/health` **307 → /login**, all non-5xx. This is a reachability reading only. ⚠️ `ops_alerts` was **not** re-read at this sync. Earlier probes are preserved below as dated readings. These are dated observations, not current health. |
+| **Tenant posture** | **Six studios in three classes — one real-customer, one controlled test, one synthetic, three empty.** Real-customer activity is **Willow Electrolysis only**. See **§0**, which is the canonical tenant register; do not restate its counts elsewhere. ⚠️ **Every tenant count in §0 was measured 2026-08-23 and was NOT re-measured on 2026-08-26** — see *What this reconciliation did and did not measure* below. |
+| **Next operational gate** | The **deep production / security / code audit** (still not performed against this baseline). **Chloe's human acceptance testing** remains outstanding and is **independent** — see §15. |
+
+#### Prior re-derived evidence
+
+- Verified the full merge ancestry back to `b9e0003f` (169 merges), with **140** after `bf6f09c4`. #935 is record-only and #928 is CI/tests-only; the last runtime-bearing application SHA stays `78c1d640`.
+- #928 changes no migration, customer data, studio flag or provider activation. No hosted declaration/history was changed; the separately observed hosted-history discrepancy remains an external read-only finding.
+- #928 source head had clean exact-head review and green CI39195263987: 20,931 unit/static pass; 3,570 DB pass / eight skipped; 601 browser pass / eleven skipped; payment56, Google13 and mobile6 pass; canonical-only job skipped. These are pre-merge proofs, not production workflow or customer acceptance.
+
+**Not re-measured:** application workflow, health, tenant counts, alerts, providers or human acceptance. #931 and #935 remain resolved. This follow-up updates branch-head freshness after the CI-only merge; it does not change the application runtime pin. Dependent releases remain held pending the new record’s review/checks and Sam’s authority.
+
+<!-- canonical-facts:ignore-end -->
+
+### Historical preceding baseline from the #907 reconciliation
+
+<!-- canonical-facts:ignore-start reason=preserves-the-78c1d640-record-as-dated-history -->
+#### Prior reconciliation header
+
+| Field | Value |
+|---|---|
+| **Reconciliation date** | **2026-10-19 UTC source sync** (CANON-REFRESH-2026-10-19b, two merges after the preceding `34f4800a` record: documentation-only #931 and runtime-bearing #907). Production-data observations retain their own measurement dates. |
+| **Production branch** | `claude/build-hone-saas-hOex7` |
+| **Current Git branch HEAD at this sync** | **`78c1d640b80d15080dd4ec68aaba48997e3daacf` — Sam’s merge of #907.** This is a dated sync value; re-read GitHub before any production action. |
+| **Last runtime-bearing application HEAD at this sync** | **`78c1d640b80d15080dd4ec68aaba48997e3daacf` (#907).** The own first-parent diff changes six files, four shipping files under `app/` and `lib/`, and no migration. The session page now loads and renders its visit’s ungrouped photo gallery. Portrait and capture-stage grouping remain separate, unmerged work. A3’s runtime residue is zero files at this pin. |
+| **Current Vercel Production deployment evidence** | `78c1d640` (#907, merged by Sam `2026-10-19T03:19:52Z` from `ec6d4fea3da14b6dada8c88014104898f776629b`) has GitHub Vercel status **success**, updated `2026-10-19T03:21:56Z`. Installed Vercel CLI read-only inspection confirms **`dpl_Fv99Z9BctuYxg9UcdAMV2DhGatAc`**, **Ready**, target **production**, aliases **`hone.care`** and `www.hone.care`. The connector denied scope access; CLI inspection succeeded using its existing credentials. Production CI `39194178406` was still running at this sync; no final pass is asserted. Candidate CI `39194477523` validate failed only canonical A3/A5 against the preceding `34f4800a` record (24,405 passed, two failed). These historical failures remain failures. No live gallery workflow or customer acceptance was measured here. |
+| **Migration state** | **This document deliberately states no migration number.** Hosted max is declared once, machine-readably, in [`migration-state.json`](./migration-state.json). Repository max, total applied and the next free number are **derived** — run `npm run migration:state`. The current reconciled position, with checksums and apply evidence, is [migration-ledger.md](./migration-ledger.md) under *Current state*. A number copied into this table is a number that goes stale on the next apply; that is how the `0160`/`0163`/`0165` divergence happened. |
+| **Database vs. application skew** | **This document asserts no parity, pending or remote-only claim of its own.** It previously declared the two states equal and the pending set empty, and went stale the moment a reviewed migration was authored above hosted — the same second-copy failure this table already avoids for migration NUMBERS. Derive the relationship with `npm run migration:state`; hosted state is declared once in [`migration-state.json`](./migration-state.json); the reconciled position with apply evidence is [migration-ledger.md](./migration-ledger.md) under *Current state*. **A repository maximum ABOVE hosted is the normal state of an authorized migration-first apply** — reviewed migration authored, production not yet advanced — and is not by itself skew. What would be skew is a **remote-only** migration (hosted above repo), which the derivation reports and the canonical guard forbids. |
+| **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
+| **Health** | **Status-code probe, 2026-10-17T17:05Z** (unauthenticated GET, redirects not followed): `hone.care` **200** · `/login` **200** · `/dashboard`, `/clients`, `/calendar` and `/api/health` **307 → /login**, all non-5xx. This is a reachability reading only. ⚠️ `ops_alerts` was **not** re-read at this sync. Earlier probes are preserved below as dated readings. These are dated observations, not current health. |
+| **Tenant posture** | **Six studios in three classes — one real-customer, one controlled test, one synthetic, three empty.** Real-customer activity is **Willow Electrolysis only**. See **§0**, which is the canonical tenant register; do not restate its counts elsewhere. ⚠️ **Every tenant count in §0 was measured 2026-08-23 and was NOT re-measured on 2026-08-26** — see *What this reconciliation did and did not measure* below. |
+| **Next operational gate** | The **deep production / security / code audit** (still not performed against this baseline). **Chloe's human acceptance testing** remains outstanding and is **independent** — see §15. |
+
+#### Prior re-derived evidence
+
+- Verified production merge #907 and deployment status/target/aliases through GitHub and the existing Vercel CLI. No deployment was performed by OPS.
+- Verified the full merge ancestry back to `b9e0003f` (167 merges), with **138** after `bf6f09c4`; #931 is documentation-only and #907 is runtime-bearing.
+- #907 changes no migration. No hosted migration declaration/history, provider state, customer data or studio flag was changed. The previously observed hosted-history discrepancy remains an external read-only reconciliation finding.
+- Exact source #907 had standalone local storage B3 **1/1 pass, zero failures/skips/retries**; its prior CI had 20,904 unit tests pass, 3,570 DB pass / eight skipped, and 601 browser pass / eleven skipped. These are pre-release proofs, not live acceptance.
+
+**Not re-measured:** live gallery behavior, health, tenant counts, alerts, provider state or human acceptance. #931 at `e102d816` remains resolved; dependent releases await this new record repair’s review, applicable CI and Sam’s authorization.
+
+<!-- canonical-facts:ignore-end -->
+
+### Historical preceding baseline from the #929 reconciliation
+
+<!-- canonical-facts:ignore-start reason=preserves-the-34f4800a-record-as-dated-history -->
+#### Prior reconciliation header
+
+| Field | Value |
+|---|---|
 | **Reconciliation date** | **2026-10-19 UTC source sync** (CANON-REFRESH-2026-10-19, 1 merge after the `f9cd9013` record, runtime-bearing; the earlier record was never merged before production moved and is preserved below as history). Earlier syncs are preserved below as history. Production-data counts elsewhere retain their own older measurement dates. |
 | **Production branch** | `claude/build-hone-saas-hOex7` |
 | **Current Git branch HEAD at this sync** | **`34f4800a4adda2c7efa4d2f6479a9543c175e840` — merge of #929.** Re-read GitHub before any production action; this is a dated sync value, not a perpetual pointer. |
@@ -36,7 +133,7 @@ not a PR diary — per-capability evidence lives in
 | **Tenant posture** | **Six studios in three classes — one real-customer, one controlled test, one synthetic, three empty.** Real-customer activity is **Willow Electrolysis only**. See **§0**, which is the canonical tenant register; do not restate its counts elsewhere. ⚠️ **Every tenant count in §0 was measured 2026-08-23 and was NOT re-measured on 2026-08-26** — see *What this reconciliation did and did not measure* below. |
 | **Next operational gate** | The **deep production / security / code audit** (still not performed against this baseline). **Chloe's human acceptance testing** remains outstanding and is **independent** — see §15. |
 
-### Re-derived at this reconciliation
+#### Prior re-derived evidence
 
 **Re-derived on 2026-10-19 (CANON-REFRESH-2026-10-19), from `34f4800a`:**
 
@@ -54,6 +151,8 @@ tenant counts, `ops_alerts`, provider state, payment counts or customer acceptan
 Those facts keep their original dates and scopes. Other open-PR rows below remain
 dated history, not a fresh census. Dependent releases stay held pending this
 record repair's exact-head review, applicable CI and Sam's release authorization.
+
+<!-- canonical-facts:ignore-end -->
 
 ### Historical preceding baseline from the 2026-10-18 `f9cd9013` reconciliation
 
@@ -655,7 +754,7 @@ surfaces then made affirmative clinical statements nobody had read: *Last visit*
 Intelligence* reported every stat as a known zero, and *Before today* reported no watch or plan
 notes and a complete procedure record.
 
-At `34f4800a` all four check `unavailable` **before** `hasHistory`, and
+The current client profile checks read availability before `hasHistory`: all four surfaces render `unavailable` **before** treating an empty result as absence, and
 `session_blocks.caution_for_next_session` / `caution_note` — which reach the practitioner only
 through the Watch/Plan band built from that same read — are protected on both the Overview and
 Sessions tabs. Read failure now renders *clinical history could not be loaded*. **Re-run on
@@ -1556,11 +1655,10 @@ trigger that freezes identity columns after insert — are unaffected and remain
   Authorization, client IP or User-Agent, and return only `content-type`, `cache-control`,
   `x-sentry-rate-limits` and `retry-after`. **Not a BAA; production requests were not
   measured.**
-- **PostHog: path-segment id redaction for URL properties (depth ≤ 8), and `/flags` off** (PR #918,
-  #828 G-07/G-26, merge `aaf3042b`, deployed 2026-10-18, no migration). This is a set of
-  mechanisms, **not a guarantee that record ids never reach PostHog.** `guardBrowserEvent` (`lib/analytics/client-boundary.ts`) passes only allowed marketing events from canonical marketing pages, then runs `sanitizeProps` over `properties`, `$set` and `$set_once`. A string value whose key is a named URL key (`$current_url`, `$referrer`, `$initial_*`, `$session_entry_*`, ...) or ends in `_url`, `_referrer` or `_pathname`, at nesting depth 8 or less, is rebuilt by `sanitizeMarketingUrl`: its path, unless it is a token route (`<prefix>[token]`) or a canonical marketing path (kept), goes through the segment rules in `lib/analytics/path-ids.ts` shared with `vercel-url-redaction.ts`, so an id-bearing path segment becomes `[id]` or `[token]` (percent-decoded first; a redacted segment that would still contain `?`, `#`, `@`, `%` or a space becomes `[token]`); query parameters not on the attribution allowlist are dropped; the fragment is dropped. Other string values get only token-route redaction (`sanitizeTokenPaths`), not id redaction. A string at depth 9 becomes `[redacted]`. `instrumentation-client.ts` sets `advanced_disable_flags: true`, which in posthog-js 1.404.1 stops the `/flags` request (whose body carried the first page the browser loaded and, per #918's own analysis, does not pass through `before_send`); pinned by `tests/lib/analytics/posthog-url-ids.test.ts`, including the SDK's gate on that option name.
-  **Known gaps (Privacy lane fix in progress):** (1) record ids inside retained allowlisted `utm_*` values (`utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`) are not redacted: those values are copied verbatim; (2) properties nested deeper than 8 levels are passed through unsanitised: a non-string value (object, array, number, boolean, null) reached at depth 9 is returned unchanged, so every string inside it is sent as is.
-  **Not a BAA; production events were not measured.**
+- **PostHog: bounded URL/campaign record-id redaction, fail-closed serialization, and `/flags` off** (#828 G-07/G-26; #918 introduced the boundary, #932 extended it at `440829c2`, deployed 2026-10-19; no migration). `guardBrowserEvent` allows only approved marketing events from canonical marketing pages, then sanitizes `properties`, `$set` and `$set_once`.
+  - URL strings use the existing marketing URL/path rules: token routes and record-id path segments are redacted; non-allowlisted query parameters and fragments are dropped. Retained `utm_*` values and standalone campaign/ad-click properties (including `$initial_`/`$session_entry_` forms) now redact embedded dashed UUIDs after bounded percent-decoding. Malformed or still-encoded values become `[token]`; non-id attribution text is retained. Other non-URL strings also lose embedded record UUIDs, while bare unencoded UUIDs are deliberately retained for PostHog’s own identifiers.
+  - Beyond nesting depth 8, strings become `[redacted]` and containers become `[depth-limited]`, rather than passing their contents through; non-text primitives remain unchanged. Object keys are sanitized too. URL objects are withheld as `[url]` without serialization; Date values use intrinsic time access and a fresh ISO serialization. Callable/accessor `toJSON` and unsupported object types become `[unsupported]` without invoking the serializer; bigint, symbols and functions are dropped.
+  - `advanced_disable_flags: true` remains set for posthog-js 1.404.1. The earlier retained-UTM/deep-container gaps are repaired in deployed #932; source/regression evidence is in `tests/lib/analytics/posthog-attribution-values.test.ts`. This is bounded ID/token protection, **not a general PII classifier or an unconditional guarantee that record ids never reach PostHog**. Freeform non-id attribution and PostHog’s own identifiers remain by design. **Not a BAA; production events and current provider configuration were not measured. Vendor-side deletion remains a separate decision.**
 - Rate limiting via Upstash **fails OPEN** — if it is down or unset, portal and booking rate
   limits bypass.
 
@@ -1616,7 +1714,47 @@ inbound-busy and two-way calendar · broad-SaaS SMS · self-serve studio creatio
    its behaviour. **Usage is evidence of exercise, not of acceptance.**)*
 7. Conditional numbing notes (0156) and inventory-backed probe-lot linkage (0155).
 
+**Additional UAT for the 2026-10-20 deployed releases — also pending:** Do not use production
+logs, induce a database/provider failure, send live email/SMS, or access or modify real-client
+records. Existing CI fixtures prove the redaction invariants; they are not Chloe's runtime
+acceptance.
+
+8. **#903 safe operator logging:** no existing non-destructive application path is available
+to produce a database/provider failure containing a synthetic record UUID. Do not create an
+orphaned record or deliberately break a dependency to exercise this log branch. Runtime
+acceptance of UUID redaction is therefore unavailable through the current UI; the existing
+synthetic unit/CI evidence remains the only verification of that invariant.
+9. **#897 treatment history:** on the Sessions tab, confirm an uncharted recent visit's
+Watch/Plan note remains associated with that visit. Separately, in the existing synthetic
+staging workspace, create one older charted session and exactly **25 newer, non-deleted,
+non-void, uncharted sessions** that all start before a synthetic target appointment and are
+not linked to that appointment. Open the target appointment's **detail page**; the Last
+treatment section must say **“Previous treatment could not be loaded. Open the client's chart
+to review it before treating.”** The 25-row candidate limit is what makes older history
+unavailable here. Also confirm a charted prior treatment shows its date, modality and summary
+on the appointment detail page. Check desktop and phone layouts.
+10. **#895 operator alert email:** the existing `sendTestCriticalAlertAction` emits a static
+synthetic event with no record identifiers. Its captured email can verify delivery and
+operational context only; it cannot verify identifier redaction. Do not treat this action as
+acceptance of that invariant. Existing synthetic CI fixtures remain its only verification.
+11. **#942 portal magic-link logging:** in the existing synthetic staging workspace, issue a
+portal link for a synthetic client/studio and use the existing mail-capture inbox only. Confirm
+the `portal_magic_link_sent` log shows `studioId` and `clientId` as `[id]`, preserves its event,
+timestamp and success marker, and contains no email, raw token, token hash or UUID. Do not send
+to a live email destination or access a real-client record. The insert-failure redaction path
+has no safe user-facing trigger and remains verified by synthetic CI fixtures only.
+12. **#944 portal last-seen failure logging:** there is no safe user-facing action that produces
+a controlled database failure for either last-seen callback. Do not induce an error or inspect
+production logs. Existing synthetic fake-database tests prove that session IDs and free-form
+error text are omitted while the failure event, timestamp and database code remain. A human
+runtime check requires an existing approved synthetic staging failure trigger; none is
+currently recorded.
+13. **#945 portal lookup/logout failure logging:** use only an approved isolated synthetic staging account and preconfigured failure trigger. Exercise lookup and logout, confirm anonymous fallback and cookie clearing, then inspect only staging logs to verify event/code/time remain and provider free-form message, session/client/email/cookie data are absent. No approved staging fixture or failure trigger is currently recorded; do not induce production errors or inspect production logs.
+14. **#921 server analytics boundary:** Chloe's acceptance requires an approved staging-only synthetic actor and event sink. With that fixture, send one supported event containing allowed coarse values and verify it is accepted; then exercise the existing rejected ID-like event-name/value cases and confirm no rejected value reaches the staging sink. No approved staging actor/sink is currently recorded. Do not emit test events from production or include real-client data; until that fixture exists, synthetic CI is the only recorded verification and Chloe's acceptance remains pending.
+
 Engineering deployment for all of the above is **complete**. Human acceptance is **not**.
+Items 8, 10, 12, 13 and 14 have no currently recorded safe runtime acceptance fixture; adding a
+synthetic canary or changing the test-alert payload requires separate scope and safety review.
 Do not describe any of it as accepted, validated by Chloe, or signed off.
 
 **Do not infer acceptance from usage.** For items 1–5 and 7, no per-item production-exercise
