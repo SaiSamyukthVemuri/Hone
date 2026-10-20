@@ -52,6 +52,7 @@ async function controlHeights(page: Page) {
     const sel = [
       "main button",
       "main select",
+      "main textarea",
       'main label:has(> input[type="file"])',
       'main label:has(> input[type="radio"])',
       '[aria-label="Treatment photo preview"] button',
@@ -88,6 +89,27 @@ test.describe("FETT photos: touch floor, mounted at phone width", () => {
     const areaPanel = await controlHeights(page);
     await page.getByLabel("Client photo").check();
     const panel = await controlHeights(page);
+    // Native inputs overlay their labels; measure both actual boxes, not Button count.
+    for (const name of ["Take a treatment photo", "Choose treatment images"]) {
+      const input = page.getByLabel(name, { exact: true });
+      for (const target of [input, input.locator("..")]) {
+        const box = await target.boundingBox();
+        expect(box, `${name} mounted target`).not.toBeNull();
+        expect(box!.height, `${name} computed touch height`).toBeGreaterThanOrEqual(FLOOR);
+        // The native input needs its own floor: label borders made h-full only42px.
+        await expect(target).toHaveCSS("min-height", "44px");
+      }
+    }
+    await page.getByRole("button", { name: "Add note", exact: true }).first().click();
+    const noteInput = page.getByPlaceholder("Add a note for this photo…");
+    await expect(noteInput).toBeVisible();
+    await expect(noteInput).toHaveCSS("min-height", "44px");
+    const noteBox = await noteInput.boundingBox();
+    expect(noteBox, "opened note editor mounted").not.toBeNull();
+    expect(noteBox!.height, "opened note editor computed touch height").toBeGreaterThanOrEqual(FLOOR);
+    const editor = await controlHeights(page);
+    expect(editor.some((c) => c.what.startsWith("textarea")), "opened note textarea measured").toBe(true);
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
 
     // Without storage there is no signed thumbnail, so the image button is not
     // drawn; the tile's own "View larger" action is, and opens the same preview.
@@ -97,12 +119,17 @@ test.describe("FETT photos: touch floor, mounted at phone width", () => {
 
     await tile.click();
     await expect(page.getByRole("button", { name: "Close preview" })).toBeVisible({ timeout: T });
+    // A missing storage object must reach a definitive outcome, not merely
+    // the initial loading state in which no image has rendered yet.
+    const dialog = page.getByRole("dialog", { name: "Treatment photo preview" });
+    await expect(dialog.getByText("Image not available", { exact: true })).toBeVisible({ timeout: T });
+    await expect(dialog.getByText("Loading preview…", { exact: true })).toHaveCount(0);
     const preview = await controlHeights(page);
 
-    const all = [...areaPanel, ...panel, ...tiles, ...preview];
+    const all = [...areaPanel, ...panel, ...editor, ...tiles, ...preview];
     const under = all.filter((c) => c.height < FLOOR);
     // The surfaces the check claims to cover must actually be in the sample.
-    for (const must of [/Choose images/, /Client photo/, /Treatment area photo/, /Attach/, /View larger/, /Archive/, /Close preview/]) {
+    for (const must of [/Take photo/, /Choose images/, /Client photo/, /Treatment area photo/, /Attach/, /View larger/, /Archive/, /Close preview/]) {
       expect(all.some((c) => must.test(c.what)), `measured ${must}`).toBe(true);
     }
     expect(all.filter((c) => c.what.startsWith("select")).length, "both selects measured").toBeGreaterThanOrEqual(2);

@@ -49,8 +49,8 @@ describe("UI-01J: the thumbnail wrapper is deliberately NOT converted", () => {
     // `inline-flex items-center justify-center min-h-[44px] rounded-md
     // font-medium` plus a variant fill — applying it here would visibly break
     // the photo grid for no accessibility gain.
-    // Since #913 the grid cell (and this wrapper) lives in GridPhoto.tsx, so
-    // the manager has NO raw button left and GridPhoto holds exactly this one.
+    // Production's recovery integration owns the thumbnail wrapper in
+    // GridPhoto; keep the manager free of raw short buttons without reverting it.
     expect((src.match(/<button\b/g) ?? []).length).toBe(0);
     const cell = readFileSync(join(ROOT, "app/(app)/clients/[id]/images/GridPhoto.tsx"), "utf8");
     expect((cell.match(/<button\b/g) ?? []).length).toBe(1);
@@ -129,14 +129,29 @@ describe("UI-01J: no new primitive", () => {
 // MEASURED before by class only: picker ~36px, radio rows ~20px, selects ~38px.
 // A min-height does nothing on an inline box, so the picker needs inline-flex.
 describe("FETT photos: the remaining photo controls reach the floor", () => {
-  it("the 'Choose images' file picker is a 44px inline-flex target", () => {
-    const src = read();
-    const picker = src.match(/<label className="([^"]*)">\s*Choose images/);
-    expect(picker, "the picker label").toBeTruthy();
-    const cls = (picker as RegExpMatchArray)[1];
-    expect(cls).toContain("min-h-[44px]");
-    expect(cls).toContain("inline-flex");
-    expect(cls).toContain("items-center");
+  it.each([
+    ["Choose images", "Choose treatment images", "file"],
+    ["Take photo", "Take a treatment photo", "cameraFile"],
+  ])("the %s native file target inherits the shared 44px floor", (text, accessibleName, name) => {
+    // Match the label AND its own input, not another control later in the file.
+    const pickers = [...read().matchAll(/<label\b([^>]*?)>\s*(Take photo|Choose images)\s*<input\b([^>]*?)\/>\s*<\/label>/g)];
+    const picker = pickers.find((match) => match[2] === text);
+    expect(picker, `the ${text} label/input pair`).toBeDefined();
+    const label = picker![1];
+    const input = picker![3];
+    const classes = label.match(/className=\{buttonClasses\(\{ className: "([^"]*)" \}\)\}/);
+    expect(classes, "label uses the actual shared button class recipe").toBeTruthy();
+    expect(classes![1]).toContain("min-h-[44px]");
+    const cls = buttonClasses({ className: classes![1] });
+    for (const required of ["min-h-[44px]", "inline-flex", "items-center", "relative", "focus-within:outline-2"]) {
+      expect(cls).toContain(required);
+    }
+    expect(input).toContain('type="file"');
+    expect(input).toContain(`name="${name}"`);
+    expect(input).toContain(`aria-label="${accessibleName}"`);
+    expect(input).toContain('className="absolute inset-0 h-full min-h-[44px] w-full cursor-pointer opacity-0 disabled:cursor-wait"');
+    expect(input).toContain("disabled={uploading}");
+    expect(input).toContain("onChange={onPick}");
   });
 
   it("each attach-as radio row is a 44px flex target", () => {
@@ -152,5 +167,14 @@ describe("FETT photos: the remaining photo controls reach the floor", () => {
     const selects = [...read().matchAll(/<select[\s\S]*?className="([^"]*)"/g)].map((m) => m[1]);
     expect(selects).toHaveLength(2);
     for (const cls of selects) expect(cls).toContain("min-h-[44px]");
+  });
+});
+
+
+describe("FETT photos: editable note touch floor", () => {
+  it("the note textarea has an explicit 44px minimum", () => {
+    const textarea = read().match(/<textarea[\s\S]*?className="([^"]*)"/);
+    expect(textarea, "editable photo note").toBeTruthy();
+    expect(textarea![1]).toContain("min-h-[44px]");
   });
 });

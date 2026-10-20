@@ -161,7 +161,16 @@ describe("merged observation & reaction chips render consistently", () => {
 // 3. Sessions tab Watch/Plan pre-client source (pure helper, behavioral)
 // ---------------------------------------------------------------------------
 
-type Candidate = { id: string; next_session_note?: string | null };
+// F3: `started_at` is REQUIRED — the selector orders by the shared recency rule
+// rather than trusting the order these fixtures are written in.
+type Candidate = {
+  id: string;
+  started_at: string;
+  next_session_note?: string | null;
+};
+
+const NEWER = "2026-03-10T10:00:00Z";
+const OLDER = "2026-01-10T10:00:00Z";
 
 function blocksMap(
   entries: Array<[string, Array<{ caution_for_next_session: boolean; caution_note: string | null }>]>,
@@ -171,9 +180,14 @@ function blocksMap(
 
 describe("pickPreClientWatchPlanSource", () => {
   it("a newer charted session WITHOUT notes does not hide older guidance", () => {
-    const newerCharted: Candidate = { id: "new", next_session_note: null };
+    const newerCharted: Candidate = {
+      id: "new",
+      started_at: NEWER,
+      next_session_note: null,
+    };
     const olderWithNote: Candidate = {
       id: "old",
+      started_at: OLDER,
       next_session_note: "Start lower on upper lip.",
     };
     expect(
@@ -182,14 +196,30 @@ describe("pickPreClientWatchPlanSource", () => {
   });
 
   it("the newest session WITH a note wins over older ones", () => {
-    const a: Candidate = { id: "a", next_session_note: "newest plan" };
-    const b: Candidate = { id: "b", next_session_note: "older plan" };
+    const a: Candidate = {
+      id: "a",
+      started_at: NEWER,
+      next_session_note: "newest plan",
+    };
+    const b: Candidate = {
+      id: "b",
+      started_at: OLDER,
+      next_session_note: "older plan",
+    };
     expect(pickPreClientWatchPlanSource([a, b], blocksMap([]))).toBe(a);
   });
 
   it("area-level caution data qualifies a session even without a note", () => {
-    const newerEmpty: Candidate = { id: "new", next_session_note: null };
-    const olderCaution: Candidate = { id: "old", next_session_note: null };
+    const newerEmpty: Candidate = {
+      id: "new",
+      started_at: NEWER,
+      next_session_note: null,
+    };
+    const olderCaution: Candidate = {
+      id: "old",
+      started_at: OLDER,
+      next_session_note: null,
+    };
     const map = blocksMap([
       ["old", [{ caution_for_next_session: true, caution_note: null }]],
     ]);
@@ -199,8 +229,16 @@ describe("pickPreClientWatchPlanSource", () => {
   });
 
   it("whitespace-only notes do not qualify; no content anywhere returns null", () => {
-    const a: Candidate = { id: "a", next_session_note: "   " };
-    const b: Candidate = { id: "b", next_session_note: null };
+    const a: Candidate = {
+      id: "a",
+      started_at: NEWER,
+      next_session_note: "   ",
+    };
+    const b: Candidate = {
+      id: "b",
+      started_at: OLDER,
+      next_session_note: null,
+    };
     expect(pickPreClientWatchPlanSource([a, b], blocksMap([]))).toBeNull();
   });
 });

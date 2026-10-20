@@ -1,3 +1,4 @@
+import { canLabelPhotoAttachment } from "@/app/(app)/clients/[id]/images/photo-context";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -65,8 +66,11 @@ vi.mock("@/lib/supabase/server", () => ({
 
 import {
   setTreatmentImageCaptureStageAction,
+  setClientPortraitAction,
   uploadTreatmentImageAction,
 } from "@/app/(app)/clients/[id]/images/actions";
+
+import { captureStageRefocusTarget } from "@/app/(app)/clients/[id]/images/CaptureStageControl";
 
 function uploadForm(extra: Record<string, string>): FormData {
   const fd = new FormData();
@@ -79,6 +83,30 @@ function uploadForm(extra: Record<string, string>): FormData {
 beforeEach(() => {
   rpcResult = { data: "img-1", error: null };
   rpcCalls.length = 0;
+});
+
+describe("0231 portrait removal action: displayed-image precondition", () => {
+  it("passes the displayed photo to the command when clearing", async () => {
+    expect(await setClientPortraitAction({ clientId: CLIENT, imageId: null, expectedImageId: "displayed-photo" })).toEqual({ ok: true });
+    expect(rpcCalls).toEqual([{ name: "set_client_portrait", params: {
+      p_client_id: CLIENT, p_image_id: null, p_expected_image_id: "displayed-photo",
+    } }]);
+  });
+
+  it("reports a stale-removal conflict without claiming success or disclosing DB text", async () => {
+    rpcResult = { data: null, error: { code: "P0231", message: "private database detail" } };
+    expect(await setClientPortraitAction({ clientId: CLIENT, imageId: null, expectedImageId: "stale-photo" })).toEqual({
+      ok: false, error: "The ID photo changed. Reload and try again.",
+    });
+  });
+
+  it("sets a photo without a removal precondition and keeps other errors generic", async () => {
+    rpcResult = { data: null, error: { code: "23514", message: "private database detail" } };
+    expect(await setClientPortraitAction({ clientId: CLIENT, imageId: "new-photo" })).toEqual({
+      ok: false, error: "Could not update the ID photo.",
+    });
+    expect(rpcCalls[0].params).toEqual({ p_client_id: CLIENT, p_image_id: "new-photo", p_expected_image_id: null });
+  });
 });
 
 describe("0232 action: setTreatmentImageCaptureStageAction", () => {
@@ -144,9 +172,11 @@ describe("0232 UI: the tile control", () => {
     // Focus goes back to the pressed button once the save settles; after a
     // Clear (which unmounts) it moves to "Before".
     expect(ctl).toMatch(/refocus\.current = from;/);
-    expect(ctl).toMatch(/if \(pending \|\| !refocus\.current\) return;/);
-    expect(ctl).toMatch(/const target = refocus\.current === "clear" && !stage \? "before" : refocus\.current;/);
-    expect(ctl).toMatch(/querySelector<HTMLButtonElement>\(`\[data-stage-button="\$\{target\}"\]`\)\?\.focus\(\);/);
+    expect(ctl).toContain("const target = captureStageRefocusTarget(refocus.current, stage, pending, error !== null);");
+    expect(ctl).toContain("if (!target) return;");
+
+    expect(ctl).toMatch(/querySelector<HTMLButtonElement>\(`\[data-stage-button="\$\{target\}"\]`\)/);
+    expect(ctl).toMatch(/if \(!button\) return;\s+refocus\.current = null;\s+button\.focus\(\);/);
     for (const b of ['data-stage-button={s}', 'data-stage-button="clear"']) expect(ctl).toContain(b);
   });
 
@@ -214,20 +244,85 @@ describe("0232 at upload: the panel choice", () => {
   const mgr = read("TreatmentImagesManager.tsx");
 
   it("is offered only when attaching to a visit, with no default label, on the 44px floor", () => {
-    expect(mgr).toMatch(/\{\(contextKind === "session" \|\| contextKind === "block"\) && \(\s*<div\s+role="radiogroup"\s+aria-label="Taken before or after treatment"/);
+    expect(mgr).toMatch(/\{canLabelUpload && \(\s*<div\s+role="radiogroup"\s+aria-label="Taken before or after treatment"/);
     expect(mgr).toMatch(/\["", "Not labelled"\],\s*\["before", "Before treatment"\],\s*\["after", "After treatment"\],/);
     // The "Will attach as" summary names the chosen label (approved copy);
     // nothing when Not labelled, never on a client photo.
     expect(mgr).toMatch(/before: "Labelled: Before treatment\.",\s+after: "Labelled: After treatment\.",/);
     expect(mgr).toContain('<p className="text-xs text-neutral-400" data-testid="upload-attach-summary">');
-    expect(mgr).toMatch(/\{contextKind !== "client" && captureStage\s+\? ` \$\{CAPTURE_STAGE_SUMMARY\[captureStage\]\}`\s+: null\}/);
+    expect(mgr).toMatch(/\{canLabelUpload && captureStage\s+\? ` \$\{CAPTURE_STAGE_SUMMARY\[captureStage\]\}`\s+: null\}/);
     expect(mgr).toMatch(/useState<"" \| "before" \| "after">\(""\)/);
     expect(mgr).toMatch(/className="flex min-h-\[44px\] items-center gap-2 text-sm text-neutral-700 dark:text-neutral-200"\s*>\s*<input\s+type="radio"\s+name="captureStage"/);
   });
 
+  it("freezes the submitted context and stage choice until the whole upload batch finishes", () => {
+    const fieldset = mgr.match(/<fieldset\b([^>]*)>([\s\S]*?)<\/fieldset>/);
+    expect(fieldset, "the existing upload context fieldset").toBeTruthy();
+    expect(fieldset![1]).toContain("disabled={uploading}");
+    // Native disabled-fieldset semantics freeze all descendant radios/selects,
+    // including the stage and context which drive the displayed summary.
+    expect(fieldset![2]).toContain('name="captureStage"');
+    expect(fieldset![2]).toContain('name="contextKind"');
+    expect(fieldset![2]).toContain('data-testid="upload-attach-summary"');
+    expect(fieldset![2]).toContain("checked={captureStage === value}");
+  });
+
   it("sends the stage only for a visit photo, and reports an unsaved label honestly", () => {
-    expect(mgr).toMatch(/if \(contextKind !== "client" && captureStage\) fd\.set\("captureStage", captureStage\);/);
+    expect(mgr).toMatch(/if \(canLabelUpload && captureStage\) fd\.set\("captureStage", captureStage\);/);
     expect(mgr).toMatch(/"label not saved; set it on the photo"/);
     expect(mgr).toMatch(/f\.note \? `✓ Uploaded \(\$\{f\.note\}\)` : "✓ Uploaded"/);
+  });
+});
+
+
+describe("0232 full-size phone photo labelling", () => {
+  it("offers the same visit-only label control in preview using refreshed photo state", () => {
+    const mgr = read("TreatmentImagesManager.tsx");
+    expect(mgr).toMatch(/const modalPhoto = modal \? images.find\(\(image\) => image.id === modal.id\) \?\? null : null;/);
+    const preview = mgr.slice(mgr.indexOf('aria-label="Treatment photo preview"'));
+    expect(preview).toMatch(/\{modalPhoto && \(\s*<CaptureStageControl[\s\S]*?imageId=\{modalPhoto.id\}[\s\S]*?visitPhoto=\{modalPhoto.visitPhoto\}[\s\S]*?stage=\{modalPhoto.captureStage\}/);
+  });
+});
+
+
+describe("0232 Clear focus waits for refreshed props (4320065777)", () => {
+  it("holds the clear intent when pending ends before stage props refresh", () => {
+    expect(captureStageRefocusTarget("clear", "after", true, false)).toBeNull();
+    expect(captureStageRefocusTarget("clear", "after", false, false)).toBeNull();
+    expect(captureStageRefocusTarget("clear", null, false, false)).toBe("before");
+  });
+
+  it("restores Clear after a failed save without waiting for a nonexistent refresh", () => {
+    expect(captureStageRefocusTarget("clear", "after", false, true)).toBe("clear");
+    expect(captureStageRefocusTarget("clear", "after", true, true)).toBeNull();
+  });
+
+  it("keeps ordinary button focus and ignores an absent intent", () => {
+    expect(captureStageRefocusTarget("before", "after", false, false)).toBe("before");
+    expect(captureStageRefocusTarget("after", "before", false, false)).toBe("after");
+    expect(captureStageRefocusTarget(null, null, false, false)).toBeNull();
+    expect(captureStageRefocusTarget("clear", null, true, false)).toBeNull();
+  });
+});
+
+
+describe("upload stage eligibility preserves 0159", () => {
+  it.each(["session", "block"] as const)("%s rejects legacy sessions and missing selection, permits ordinary visits", (context) => {
+    expect(canLabelPhotoAttachment(context, null)).toBe(false);
+    for (const recordStatus of ["finalized", "void"]) {
+      expect(canLabelPhotoAttachment(context, { recordStatus })).toBe(false);
+    }
+    for (const recordStatus of ["draft", null]) {
+      expect(canLabelPhotoAttachment(context, { recordStatus })).toBe(true);
+    }
+    expect(canLabelPhotoAttachment("client", { recordStatus: "draft" })).toBe(false);
+  });
+  it("carries existing session status and uses one decision for UI, summary and submission", () => {
+    const page = read("page.tsx");
+    const mgr = read("TreatmentImagesManager.tsx");
+    expect(page).toContain("id, started_at, record_status, session_blocks");
+    expect(page).toContain("recordStatus: s.record_status");
+    expect(mgr).toContain("canLabelPhotoAttachment(contextKind, ctxSession)");
+    expect(mgr).toContain('if (canLabelUpload && captureStage) fd.set("captureStage", captureStage)');
   });
 });

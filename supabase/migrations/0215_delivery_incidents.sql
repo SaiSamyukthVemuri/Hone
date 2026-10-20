@@ -235,7 +235,8 @@ returns table (
   unreported_accepted     integer,
   open_incidents          integer,
   last_sweep_at           timestamptz,
-  last_sweep_failed       integer
+  last_sweep_failed       integer,
+  stale_claimed           integer
 )
 language sql
 stable
@@ -263,7 +264,12 @@ as $$
     (select count(*)::integer from public.delivery_incidents d
       where d.resolved_at is null),
     (select h.last_run_at from public.delivery_sweep_heartbeat h),
-    (select h.last_failed from public.delivery_sweep_heartbeat h);
+    (select h.last_failed from public.delivery_sweep_heartbeat h),
+    -- A committed claim does not prove a provider request or acceptance. Keep
+    -- these separate from accepted/sent attempts, and never retry from health.
+    (select count(*)::integer from public.email_outbound_messages m
+      where m.status = 'claimed'
+        and m.claimed_at < now() - interval '24 hours');
 $$;
 
 -- ---------------------------------------------------------------------------
@@ -488,6 +494,6 @@ comment on function public.resolve_delivery_incident(uuid, text) is
 comment on function public.record_email_sweep_run(integer, integer, integer) is
   'The recovery sweep records one run: claimed, processed and failed receipts. Returns recorded | invalid_input. service_role only.';
 comment on function public.email_delivery_health() is
-  'One row of email delivery health: pending receipts and the oldest one''s age, receipts exhausted / quarantined / unattributed in 24 hours, accepted attempts with no report for 24 hours, open incidents and the last sweep. service_role only.';
+  'One row of email delivery health: pending receipts and the oldest one''s age, receipts exhausted / quarantined / unattributed in 24 hours, accepted attempts with no report for 24 hours, claims older than 24 hours with unknown provider acceptance, open incidents and the last sweep. service_role only.';
 
 commit;
