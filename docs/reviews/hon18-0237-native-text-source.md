@@ -238,3 +238,40 @@ save/recovery, initial receipt and 0237 source suites pass **224/224** across
 seven files. This proves source/rendering behavior, not a mounted browser or a
 physical unit's installed firmware. No field/unit/precision/bound/choice, storage,
 SQL, historical record, publication or activation contract changed.
+
+## Native mounted recovery and exact rendered values — source prepared
+
+The existing twenty native durability cases now include the initial-save lost
+response and retry, using the existing initial-save-retry spec's interception
+pattern. Senior retains fourteen cells (eight numeric, six text/choice); Junior
+retains six (four numeric, two text/choice), each split across desktop and mobile.
+No fixture identity, manufacturer contract, SQL, gate or harness changes.
+
+Every case now performs the original request before aborting only its response,
+requires the unknown-outcome UI, independently reads the committed observations
+and all original session block/submission/capture/reading/claim identities, then
+checks every native control is disabled. Forced DOM changes exercise the existing
+handler guard. Retry must settle with precisely the original identities, rows
+and capture metadata; new-key duplication anywhere in the session fails. The
+same snapshots must survive reload/history and a distinct app-created next visit.
+This covers same-mount initial-save recovery; reload while the outcome remains
+unknown and later revision-response loss are separate, unexecuted acceptance gaps.
+
+For each confirmed choice mode, desktop selects the first native choice and
+mobile the second. Mobile transcribes ` 003i ` literally; desktop retains `003i`.
+History and prior guidance now assert each value's exact `textContent`, nonnumeric
+`white-space: break-spaces`, retained native field order and stage headings. This
+avoids substring or whitespace-normalizing assertions passing a wrong field or
+collapsed string. These synthetic values establish no physical program format.
+Both choices are covered across the two viewports, not both in each viewport.
+
+The existing native text unit tests now additionally render both frozen and
+editable shared controls for both choices in Senior Blend/OmniBlend/MultiBlend
+and Junior Blend. All native inputs/selects must match the freeze while retaining
+exact program/choice values. Focused existing native/recovery/environment units
+passed 139/139 across five files; TypeScript and focused ESLint passed. These
+checks verify source and unit behavior only. No Playwright collection, DB/browser,
+build, server, reset, migration application or slot claim ran. All twenty extended
+mounted cells remain UNRUN until OPS supplies an aligned candidate, compliant
+isolated target and explicit shared-slot grant. Physical model/firmware evidence
+and named qualified operator/independent reviewer remain separate inputs from Sam.

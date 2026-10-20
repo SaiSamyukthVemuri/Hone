@@ -1203,7 +1203,7 @@ for (const device of [
   test.describe(`${suite.name} ${device.name}`, () => {
     test.use({ viewport: device.viewport, isMobile: device.isMobile, hasTouch: device.hasTouch });
     for (const profile of suite.profiles) for (const mode of profile.modes.filter((m) => !suite.choiceOnly || m.fields.some((f) => f.valueKind === "choice"))) {
-      test(`${profile.model} / ${mode.key}: save, reload, history and next visit`, async ({ page }) => {
+      test(`${profile.model} / ${mode.key}: save, retry, reload, history and next visit`, async ({ page }) => {
         test.skip(process.env.HONE_SYNTHETIC_MACHINE_PROFILE !== "1",
           "UNRUN native journey: existing synthetic server gate must explicitly be enabled; closed gate is not native acceptance.");
         const seed = await seedE2eStudio();
@@ -1223,16 +1223,47 @@ for (const device of [
         const fields = modeFields(mode);
         const observations = fields.map(({ field, stageKey }, index) => ({
           stageKey, field,
-          value: field.valueKind === "choice" ? field.choices![0] : field.valueKind === "text" ? "003i" : (index + 1 + 27 / 10 ** field.decimals).toFixed(field.decimals),
+          // Both documented choices per mode, without doubling the matrix.
+          // Mobile also exercises visible leading/trailing program whitespace.
+          value: field.valueKind === "choice" ? field.choices![device.isMobile ? 1 : 0]
+            : field.valueKind === "text" ? (device.isMobile ? " 003i " : "003i")
+              : (index + 1 + 27 / 10 ** field.decimals).toFixed(field.decimals),
         }));
         const readStored = () => sql<{
+          id: string; capture_id: string;
           stage_key: string | null; field_key: string; value_numeric: string | null; value_text?: string | null;
           native_unit: string; decimals: number; machine_profile_version: number;
           observation_source: string;
-        }>(`select stage_key,field_key,value_numeric::text as value_numeric,value_text,native_unit,
+        }>(`select id,capture_id,stage_key,field_key,value_numeric::text as value_numeric,value_text,native_unit,
           decimals,machine_profile_version,observation_source from public.treatment_setup_readings
           where session_block_id=$1 order by stage_key nulls first,field_key`, [blockId]);
         let blockId = "";
+        // Existing initial-save-retry pattern: the first request must COMMIT
+        // before losing its response. An aborted unsent request proves nothing.
+        const lost = { arm: false, fired: 0, upstreamCompleted: false };
+        await page.route(`**/clients/${clientId}/sessions/${sessionId}**`, async route => {
+          if (route.request().method() !== "POST" || !lost.arm) {
+            await route.continue();
+            return;
+          }
+          lost.arm = false;
+          lost.fired += 1;
+          const response = await route.fetch();
+          expect(response.ok(), "the original server action did not complete successfully").toBe(true);
+          lost.upstreamCompleted = true;
+          await route.abort("failed");
+        });
+        // Read every identity in this synthetic session, not just the first
+        // block found: a new-key retry could otherwise create a hidden duplicate.
+        const readIdentities = async () => (await sql<{
+          blocks: string[]; submissions: string[]; captures: string[];
+          readings: string[]; claims: string[];
+        }>(`select
+          array(select id::text from public.session_blocks where session_id=$1 order by id) as blocks,
+          array(select s.id::text from public.treatment_setup_submissions s join public.session_blocks b on b.id=s.session_block_id where b.session_id=$1 order by s.id) as submissions,
+          array(select c.id::text from public.treatment_setup_captures c join public.session_blocks b on b.id=c.session_block_id where b.session_id=$1 order by c.id) as captures,
+          array(select r.id::text from public.treatment_setup_readings r join public.session_blocks b on b.id=r.session_block_id where b.session_id=$1 order by r.id) as readings,
+          array(select id::text from public.treatment_area_create_claims where session_id=$1 order by id) as claims`, [sessionId]))[0]!;
         await loginAsOwner(page, seed);
         await openCreateForm(page, clientId, sessionId);
         expect(await openMachinePanel(page), "enabled native fixture missing from server catalogue").toBe(true);
@@ -1255,7 +1286,11 @@ for (const device of [
           else await control.fill(value);
         }
         await noOverflow(page);
+        lost.arm = true;
         await page.getByTestId("save-treatment-area").click({ timeout: T });
+        await expect(page.getByRole("alert").filter({ hasText: /press save again/i })).toBeVisible({ timeout: T });
+        expect(lost.fired).toBe(1);
+        expect(lost.upstreamCompleted).toBe(true);
         await expect.poll(async () => (blockId = await blockIdOf(sessionId)), { timeout: T }).not.toBe("");
         // Separate SQL call after the application transaction commits: unlike
         // rollback-scoped DB helpers this checks the persisted durability boundary.
@@ -1270,20 +1305,62 @@ for (const device of [
         const captures = await capturesFor(blockId);
         expect(captures).toHaveLength(1);
         expect(captures[0].setup_submission_id).not.toBeNull();
+        const identities = await readIdentities();
+        expect(identities.blocks).toEqual([blockId]);
+        expect(identities.submissions).toEqual([captures[0].setup_submission_id]);
+        expect(identities.captures).toHaveLength(1);
+        expect(identities.readings).toHaveLength(observations.length);
+        expect(identities.claims).toHaveLength(1);
+
+        await expect(page.getByTestId("setting-draft-frozen")).toBeVisible();
+        for (const { field, value } of observations) {
+          const control = page.getByTestId(`reading-${field.key}`);
+          await expect(control).toBeDisabled();
+          await expect(control).toHaveValue(value);
+          // Drive the existing handler guard despite the disabled DOM control.
+          // As in the original retry spec, DOM text may now differ; the proof
+          // is the unchanged committed payload/identity after retry, below.
+          await control.evaluate((el, replacement) => {
+            const select = el instanceof HTMLSelectElement;
+            const prototype = select ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+            Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(el, replacement);
+            el.dispatchEvent(new Event(select ? "change" : "input", { bubbles: true }));
+          }, field.valueKind === "choice" ? field.choices!.find(choice => choice !== value)!
+            : field.valueKind === "text" ? "changed program" : "999");
+        }
+        await noOverflow(page);
+        await page.getByTestId("save-treatment-area").click({ timeout: T });
+        await expect(page.getByTestId("save-treatment-area")).toHaveCount(0, { timeout: T });
+        expect(lost.fired).toBe(1);
+        expect(await readIdentities()).toEqual(identities);
+        expect(await readStored()).toEqual(saved);
+        expect(await capturesFor(blockId)).toEqual(captures);
 
         await page.reload();
         await page.getByTestId(`edit-area-${blockId}`).click({ timeout: T });
         expect(await openMachinePanel(page)).toBe(true);
         const history = page.getByTestId("machine-recorded-setups");
         await expect(history).toBeVisible({ timeout: T });
-        for (const { field, value } of observations) {
+        const historyRows = history.getByTestId("recorded-capture-g1-1").locator("li");
+        await expect(historyRows).toHaveCount(observations.length);
+        expect(await historyRows.locator(":scope > span:first-child").allTextContents())
+          .toEqual(observations.map(({ field }) => field.nativeLabel));
+        expect(await history.locator('[data-testid^="recorded-stage-g1-"]').allTextContents())
+          .toEqual(mode.stages.map(stage => stage.nativeLabel));
+        for (const [index, { field, value }] of observations.entries()) {
           await expect(history).toContainText(field.nativeLabel);
           if (field.unit !== "none") await expect(history).toContainText(field.unit);
           await expect(history).toContainText(value);
+          const displayed = historyRows.nth(index).locator("span.font-medium");
+          // toContainText normalizes whitespace; textContent plus computed CSS
+          // proves both exact bytes and the browser's whitespace treatment.
+          expect(await displayed.textContent()).toBe(value);
+          if (field.valueKind && field.valueKind !== "number") await expect(displayed).toHaveCSS("white-space", "break-spaces");
           await expect(page.getByTestId(`reading-${field.key}`)).toHaveValue("");
         }
         expect(await readStored()).toEqual(saved);
         expect(await capturesFor(blockId)).toEqual(captures);
+        expect(await readIdentities()).toEqual(identities);
         await noOverflow(page);
 
         await sql("update public.sessions set started_at=now()-interval '2 hours' where client_id=$1", [clientId]);
@@ -1295,17 +1372,26 @@ for (const device of [
         expect(await openMachinePanel(page)).toBe(true);
         await page.getByTestId("machine-select").selectOption(machineId);
         await page.getByTestId(`machine-mode-${mode.key}`).click({ timeout: T });
-        await expect(page.getByTestId("machine-prior-setup")).toContainText(profile.model);
+        const priorPanel = page.getByTestId("machine-prior-setup");
+        await expect(priorPanel).toContainText(profile.model);
+        expect(await priorPanel.locator("li > span:first-child").allTextContents())
+          .toEqual(observations.map(({ field }) => field.nativeLabel));
+        expect(await priorPanel.locator('[data-testid^="prior-setup-stage-"]').allTextContents())
+          .toEqual(mode.stages.map(stage => stage.nativeLabel));
         for (const { stageKey, field, value } of observations) {
           const suffix = stageKey ? `${stageKey}-${field.key}` : field.key;
           const prior = page.getByTestId(`prior-setup-g1-${suffix}`);
           await expect(page.getByTestId(`reading-${field.key}`)).toHaveValue("");
           await expect(prior).toContainText(field.nativeLabel);
           await expect(prior).toContainText(value);
+          const displayed = prior.locator("span.font-medium");
+          expect(await displayed.textContent()).toBe(value);
+          if (field.valueKind && field.valueKind !== "number") await expect(displayed).toHaveCSS("white-space", "break-spaces");
           if (field.unit !== "none") await expect(prior).toContainText(field.unit);
         }
         expect(await readStored()).toEqual(saved);
         expect(await capturesFor(blockId)).toEqual(captures);
+        expect(await readIdentities()).toEqual(identities);
         await noOverflow(page);
       });
     }
