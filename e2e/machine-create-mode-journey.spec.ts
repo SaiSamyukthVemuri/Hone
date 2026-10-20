@@ -1404,7 +1404,10 @@ for (const device of [
         lost.upstreamCompleted = false;
         lost.arm = true;
         await page.getByTestId("machine-reading-save").click({ timeout: T });
-        await expect(page.getByRole("alert").filter({ hasText: /press save again/i })).toBeVisible({ timeout: T });
+        const revisionMessage = page.getByTestId("machine-reading-message");
+        await expect(revisionMessage).toBeVisible({ timeout: T });
+        await expect(revisionMessage).toHaveAttribute("role", "status");
+        await expect(revisionMessage).toContainText(/press save again/i);
         expect(lost.fired).toBe(2);
         expect(lost.upstreamCompleted).toBe(true);
         await expect.poll(async () => (await capturesFor(blockId)).length, { timeout: T }).toBe(2);
