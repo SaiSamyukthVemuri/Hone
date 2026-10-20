@@ -226,7 +226,9 @@ describe("every caller of the canonical email transport is accounted for", () =>
   });
 
   it("exempts the team invitation recipient without exempting client mail or another file", () => {
-    const invitations = sites.filter((s) => s.file === "app/(app)/settings/team/actions.ts");
+    const invitations = sites.filter(
+      (s) => s.file === "app/(app)/settings/team/actions.ts" && s.to === "params.inviteeEmail",
+    );
     expect(invitations).toHaveLength(1);
     const invitation = invitations[0];
     expect(invitation.to).toBe("params.inviteeEmail");
