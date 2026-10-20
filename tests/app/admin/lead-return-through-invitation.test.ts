@@ -312,20 +312,20 @@ describe("the invitation and no-access flows are unchanged without a target", ()
 });
 
 
-describe("receptionist acceptance preserves the operator's return target", () => {
-  it.each(["linked", "already_linked"])("single-desk %s consumes the target after acceptance", async (status) => {
+describe("receptionist acceptance follows the approved front-desk boundary", () => {
+  it.each(["linked", "already_linked"])("single-desk %s clears the target and enters the front desk", async (status) => {
     h.jar.set(ADMIN_RETURN_COOKIE, LEAD);
     h.accept = { status, role: "receptionist", choose_studio: false };
-    expect(await accept()).toBe(LEAD);
+    expect(await accept()).toBe("/front-desk");
     expect(h.jar.has(ADMIN_RETURN_COOKIE)).toBe(false);
   });
 
-  it("multi-desk acceptance requires the desk chooser and carries the target", async () => {
+  it("multi-desk acceptance clears the target before the desk chooser", async () => {
     h.jar.set(ADMIN_RETURN_COOKIE, LEAD);
     h.accept = { status: "linked", role: "receptionist", choose_studio: true };
     expect(await accept()).toBe("/front-desk/select");
     expect(h.selectionCleared).toBe(1);
-    expect(h.jar.get(ADMIN_RETURN_COOKIE)).toBe(LEAD);
+    expect(h.jar.has(ADMIN_RETURN_COOKIE)).toBe(false);
   });
 
   it("single-desk non-operator with a planted target stays on the front desk", async () => {
@@ -352,12 +352,12 @@ const chooseDesk = (studioId = "s2") => {
 };
 
 describe("verified front-desk choice fulfils the remembered operator target", () => {
-  it("multi-desk acceptance carries the cookie until verified choice consumes it", async () => {
+  it("multi-desk acceptance clears the cookie and verified choice enters the front desk", async () => {
     h.jar.set(ADMIN_RETURN_COOKIE, LEAD);
     h.accept = { status: "linked", role: "receptionist", choose_studio: true };
     expect(await accept()).toBe("/front-desk/select");
-    expect(h.jar.get(ADMIN_RETURN_COOKIE)).toBe(LEAD);
-    expect(await chooseDesk()).toBe(LEAD);
+    expect(h.jar.has(ADMIN_RETURN_COOKIE)).toBe(false);
+    expect(await chooseDesk()).toBe("/front-desk");
     expect(h.selected).toBe("s2");
     expect(h.jar.has(ADMIN_RETURN_COOKIE)).toBe(false);
     expect(h.membershipFilters).toContainEqual(["user_id", "u1"]);
