@@ -116,6 +116,7 @@ type SessionRow = {
   id: string;
   client_id: string;
   started_at: string;
+  record_status: string | null;
   next_session_note: string | null;
   aftercare_and_risks_explained_at: string | null;
   modality: string;
@@ -220,7 +221,7 @@ export async function getBeforeTodayPreviews(
       supabase
         .from("sessions")
         .select(
-          "id, client_id, started_at, next_session_note, aftercare_and_risks_explained_at, modality, electrolysis_entries(hairs_treated, deleted_at), laser_entries(id, deleted_at)",
+          "id, client_id, started_at, record_status, next_session_note, aftercare_and_risks_explained_at, modality, electrolysis_entries(hairs_treated, deleted_at), laser_entries(id, deleted_at)",
         )
         .eq("studio_id", studioId)
         .in("client_id", ids)
