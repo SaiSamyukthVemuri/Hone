@@ -192,6 +192,19 @@ describe("synthetic SMS delivery failures reach the operator's real page", () =>
     expect(h.fetch).not.toHaveBeenCalled();
   });
 
+  it("a capped unresolved delivery-alert view discloses its slice without claiming more alerts exist", async () => {
+    expect((await callback("failed")).status).toBe(200);
+    const row = h.rows[0];
+    h.rows = Array.from({ length: 200 }, (_, i) => ({ ...row, id: `synthetic-alert-${i}` }));
+    const notice = "Showing the 200 newest unresolved alerts. Older alerts, if any, are not shown.";
+    expect(renderToStaticMarkup(await OpsAlertsPage())).toContain(notice);
+    h.rows = [row];
+    expect(renderToStaticMarkup(await OpsAlertsPage())).not.toContain(notice);
+    expect(h.email).not.toHaveBeenCalled();
+    expect(h.action).not.toHaveBeenCalled();
+    expect(h.fetch).not.toHaveBeenCalled();
+  });
+
   it("a stale repeat does not add a second visible warning", async () => {
     expect((await callback("undelivered")).status).toBe(200);
     h.result = "stale"; // The DB result is supplied, not a DB deduplication proof.

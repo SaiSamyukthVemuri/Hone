@@ -132,6 +132,11 @@ export default async function OpsAlertsPage() {
             {unresolved.length}
           </span>
         </h2>
+        {unresolved.length >= 200 && (
+          <p className="text-sm text-neutral-500">
+            Showing the 200 newest unresolved alerts. Older alerts, if any, are not shown.
+          </p>
+        )}
         {unresolved.length === 0 ? (
           <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 px-5 py-8 text-sm text-neutral-500">
             No unresolved alerts. Quiet is good.
