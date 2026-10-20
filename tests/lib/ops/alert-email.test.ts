@@ -1,10 +1,25 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
 // PR #193. Pins the standalone critical-alert operator email module:
 // the env-gated, cycle-free, never-throwing notification layer on
 // top of the durable ops_alerts row.
+
+// Behavioural canary (#828 G-24): the bare Resend client is replaced so the
+// exact email the operator would receive can be inspected. Nothing is sent.
+const sent: Array<{ to: string[]; subject: string; text: string }> = [];
+vi.mock("@/lib/email/client", () => ({
+  FROM_ADDRESS: "Hone <alerts@example.test>",
+  resend: {
+    emails: {
+      send: async (msg: { to: string[]; subject: string; text: string }) => {
+        sent.push(msg);
+        return { data: { id: "fake" }, error: null };
+      },
+    },
+  },
+}));
 
 const SOURCE = readFileSync(
   path.resolve(__dirname, "../../../lib/ops/alert-email.ts"),
@@ -58,7 +73,7 @@ describe("env gating and failure behavior", () => {
 });
 
 describe("email content safety", () => {
-  it("sends only safe ids and the already-sanitized message", () => {
+  it("takes ids + message only as input (no safe_details, card fields or tokens); the G-24 cases below prove no id is rendered", () => {
     // The input type carries ids + message only: no safe_details
     // blob, no card fields, no tokens.
     expect(SOURCE).toMatch(/event: string;\s*\n\s*message: string;/);
@@ -94,5 +109,203 @@ describe("severity gating (in alerts.ts)", () => {
 
   it("dispatch is wrapped so even a thrown email error cannot break the caller", () => {
     expect(ALERTS).toMatch(/ops_alert_email_dispatch_threw/);
+  });
+});
+
+describe("#828 G-24: the alert email carries no record identifiers", () => {
+  // Synthetic values only.
+  const STUDIO = "11111111-2222-4333-8444-555555555555";
+  const APPT = "6f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5";
+  const CLIENT = "ABCDEF12-3456-4789-8ABC-DEF012345678";
+  const EVT = "evt_1TestEventABCDEF";
+  const PI = "pi_3TestPaymentIntent";
+  const ROUTE = `/clients/${CLIENT}/sessions/${APPT}`;
+  const FORBIDDEN = [STUDIO, APPT, CLIENT, EVT, PI, ROUTE, "Client id:", "Studio:", "Appointment:", "PaymentIntent:", "Route:"];
+
+  beforeEach(() => {
+    sent.length = 0;
+    process.env.OPS_ALERT_EMAILS = "ops@example.test";
+  });
+  afterEach(() => {
+    delete process.env.OPS_ALERT_EMAILS;
+  });
+
+  async function send(message: string) {
+    const { notifyCriticalOpsAlert } = await import("@/lib/ops/alert-email");
+    await notifyCriticalOpsAlert({
+      event: "session_payment_succeeded_write_zero_rows",
+      message,
+      createdAtIso: "2026-10-17T03:00:00.000Z",
+      studioId: STUDIO,
+      appointmentId: APPT,
+      clientId: CLIENT,
+      stripeEventId: EVT,
+      stripePaymentIntentId: PI,
+      route: ROUTE,
+    });
+    expect(sent).toHaveLength(1);
+    return sent[0]!;
+  }
+
+  it("renders no id lines, and scrubs ids embedded in the message", async () => {
+    const mail = await send(`Payment ${PI} for appointment ${APPT} (evt ${EVT}) wrote zero rows at ${ROUTE}`);
+    const whole = `${mail.subject}\n${mail.text}`.toLowerCase();
+    for (const f of FORBIDDEN) expect(whole, `email still carries ${f}`).not.toContain(f.toLowerCase());
+    expect(mail.text).toContain("Payment [stripe-id] for appointment [id] (evt [stripe-id]) wrote zero rows at /clients/[id]/sessions/[id]");
+  });
+
+  it("removes every Stripe id prefix redact.ts preserves, plus pm_, even joined by _ (Codex P1 4301147665)", async () => {
+    const { SAFE_STRIPE_ID_PREFIXES } = await import("@/lib/ops/redact");
+    const ids = [...SAFE_STRIPE_ID_PREFIXES, "pm"].map((p) => `${p}_1TestObject${p.toUpperCase()}x`);
+    const mail = await send(`objects ${ids.join(" ")} and refund_re_1TestJoinedRefund`);
+    for (const id of [...ids, "re_1TestJoinedRefund"]) expect(mail.text, `email still carries ${id}`).not.toContain(id);
+    expect(mail.text).toContain("refund_[stripe-id]");
+  });
+
+  it("removes an id glued to hex letters or with %2D hyphens (Codex P1 4301586679, on #903)", async () => {
+    const mail = await send(`ref abc${APPT}fed at /clients/${CLIENT.replace(/-/g, "%2D")}`);
+    const whole = mail.text.toLowerCase();
+    expect(whole).not.toContain(APPT.toLowerCase());
+    expect(whole).not.toContain(CLIENT.replace(/-/g, "%2D").toLowerCase());
+    expect(mail.text).toContain("ref abc[id]fed at /clients/[id]");
+  });
+
+  it("removes a Stripe id glued to preceding text (Codex P1 4301636814)", async () => {
+    const mail = await send(`ref${PI} and x${EVT}`);
+    expect(mail.text).not.toContain(PI);
+    expect(mail.text).not.toContain(EVT);
+    expect(mail.text).toContain("ref[stripe-id] and x[stripe-id]");
+  });
+
+  it("removes Stripe ids outside the safe list (dp_, src_, card_, ...) but leaves snake_case slugs (Codex P1 4301706583)", async () => {
+    const others = ["dp_1TestDispute9Ab", "src_1TestSource7Cd", "card_1TestCard4Ef", "ba_1TestBank2Gh", "acctx_9TestOther1"];
+    const mail = await send(`dispute ${others.join(" ")} in session_payment_succeeded_write_zero_rows`);
+    for (const id of others) expect(mail.text, `email still carries ${id}`).not.toContain(id);
+    expect(mail.text).toContain("in session_payment_succeeded_write_zero_rows");
+  });
+
+  it("removes a UUID whose hex digits are percent-encoded (Codex P2 4301707490, on #891)", async () => {
+    const ENCODED = `/clients/%36f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e%35 and %30a1b2c3d%2D4e5f-4061-8273-8495a6b7c8d%39`;
+    const mail = await send(`at ${ENCODED}`);
+    expect(mail.text).toContain("at /clients/[id] and [id]");
+  });
+
+  it("decoding never injects a control character into the email (Codex P2 4301838851, on #903)", async () => {
+    const FORGE = `{"clientId":"${"6f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5"}","message":"bad%0Aforged%1B[31m%20x"}`;
+    const mail = await send(FORGE);
+    expect(mail.text).toContain(`{"clientId":"[id]","message":"bad%0Aforged%1B[31m%20x"}`);
+  });
+
+  it("removes a Stripe id whose suffix has no digit, if it has an upper-case letter (Codex P1 4301841195)", async () => {
+    const mail = await send("dispute dp_AbCdEfGhIjKlMn and src_ABCDEFGHIJKL in session_payment_succeeded_write_zero_rows");
+    expect(mail.text).not.toContain("dp_AbCdEfGhIjKlMn");
+    expect(mail.text).not.toContain("src_ABCDEFGHIJKL");
+    expect(mail.text).toContain("in session_payment_succeeded_write_zero_rows");
+  });
+
+  it("does not re-expose other encoded text when an encoded id is removed (Codex P1 4301902565)", async () => {
+    const mail = await send(`at https://example.test/client/foo%40example.com/${CLIENT}`);
+    expect(mail.text).toContain("at https://example.test/client/foo%40example.com/[id]");
+    expect(mail.text).not.toContain("foo@example.com");
+  });
+
+  it("removes percent-encoded Stripe ids (Codex P1 4301902572)", async () => {
+    const mail = await send("pay pi%5F3TestPaymentIntent dispute dp%5F1TestDispute9Ab and evt%255F1TestEventABCDEF");
+    for (const id of ["pi%5F3TestPaymentIntent", "dp%5F1TestDispute9Ab", "evt%255F1TestEventABCDEF", "3TestPaymentIntent", "1TestDispute9Ab"]) {
+      expect(mail.text, id).not.toContain(id);
+    }
+    expect(mail.text).toContain("pay [stripe-id] dispute [stripe-id] and [stripe-id]");
+  });
+
+  it("astral characters before an id: offsets are UTF-16, the email still goes out scrubbed (Codex P2 4301959252)", async () => {
+    const ASTRAL = `💥%20${"6f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5"}%20x 😀${"0a1b2c3d-4e5f-4061-8273-8495a6b7c8d9"}%20y 🎉%20dp%5F1TestDispute9Ab`;
+    const mail = await send(ASTRAL);
+    expect(mail.text).toContain("💥%20[id]%20x 😀[id]%20y 🎉%20[stripe-id]");
+  });
+
+  it("a KNOWN Stripe prefix removes any suffix, even all lower case (Codex P1 4302008658)", async () => {
+    const ids = ["dp_abcdefghijklmn", "src_abcdefghij", "pm_abcdefghij", "du_abcdefghij"];
+    const mail = await send(`ids ${ids.join(" ")} in session_payment_succeeded_write_zero_rows`);
+    for (const id of ids) expect(mail.text, id).not.toContain(id);
+    expect(mail.text).toContain("in session_payment_succeeded_write_zero_rows");
+  });
+
+  it("keeps what the operator needs to triage: event slug, time, environment and the admin link", async () => {
+    const mail = await send("Benign message");
+    expect(mail.subject).toBe("[Hone CRITICAL] session_payment_succeeded_write_zero_rows");
+    expect(mail.text).toContain("CRITICAL ops alert: session_payment_succeeded_write_zero_rows");
+    expect(mail.text).toContain("Created: 2026-10-17T03:00:00.000Z");
+    expect(mail.text).toMatch(/Environment: \S+/);
+    expect(mail.text).toContain("Review and resolve: https://hone.care/admin/ops-alerts");
+    expect(mail.text).toContain("Record and payment details are on the alert itself, not in this email.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE GUARANTEE for encodings: no string or key, after ASCII percent-decoding
+// to a fixed point, contains a UUID. The oracle below decodes the OUTPUT fully
+// and searches it; inputs are fuzzed per character (raw, %XX, %25XX, either
+// case), glued to letters, with a fixed seed so a failure reproduces.
+// ---------------------------------------------------------------------------
+function oracleDecode(text: string): string {
+  let cur = text;
+  for (let i = 0; i < 16; i += 1) {
+    const next = cur.replace(/%([0-7][0-9a-f])/gi, (_m, h: string) => String.fromCharCode(parseInt(h, 16)));
+    if (next === cur) break;
+    cur = next;
+  }
+  return cur;
+}
+const UUID_ANYWHERE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+function mulberry32(seed: number): () => number {
+  let a = seed;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function encodeFuzzed(id: string, rnd: () => number): string {
+  return [...id]
+    .map((ch) => {
+      const hex = ch.charCodeAt(0).toString(16);
+      const r = rnd();
+      const esc = rnd() < 0.5 ? hex : hex.toUpperCase();
+      if (r < 0.4) return ch;
+      if (r < 0.75) return `%${esc}`;
+      if (r < 0.95) return `%25${esc}`;
+      return `%2525${esc}`;
+    })
+    .join("");
+}
+
+const FUZZ_IDS = ["6f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5", "11111111-2222-4333-8444-555555555555", "ABCDEF12-3456-4789-8ABC-DEF012345678"];
+const FUZZ_CASES = Array.from({ length: 400 }, (_v, i) => {
+  const rnd = mulberry32(828 + i);
+  const id = FUZZ_IDS[i % FUZZ_IDS.length]!;
+  const glue = ["", "abc", "x_", "9"][Math.floor(rnd() * 4)]!;
+  return `/clients/${glue}${encodeFuzzed(id, rnd)}${glue ? "fed" : ""}/sessions?tab=1`;
+});
+
+describe("THE GUARANTEE for encodings (ASCII percent-decoding to a fixed point)", () => {
+  beforeEach(() => {
+    sent.length = 0;
+    process.env.OPS_ALERT_EMAILS = "ops@example.test";
+  });
+  afterEach(() => {
+    delete process.env.OPS_ALERT_EMAILS;
+  });
+
+  it("400 fuzzed encodings: no UUID survives in the fully decoded email", async () => {
+    const { notifyCriticalOpsAlert } = await import("@/lib/ops/alert-email");
+    for (const input of FUZZ_CASES) {
+      sent.length = 0;
+      await notifyCriticalOpsAlert({ event: "x_failed", message: `at ${input}`, createdAtIso: "2026-10-17T06:00:00.000Z" });
+      const mail = sent[0]!;
+      expect(UUID_ANYWHERE.test(oracleDecode(`${mail.subject}\n${mail.text}`)), `${input} -> ${mail.text}`).toBe(false);
+    }
   });
 });

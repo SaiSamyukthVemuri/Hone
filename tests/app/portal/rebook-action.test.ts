@@ -808,12 +808,20 @@ describe("H. a stale or taken slot is refused", () => {
   });
 
   it("refuses a start in the past", async () => {
-    const past = new Date(Date.now() - 60_000).toISOString();
-    const out = await bookAnotherAppointmentAction(form({ startsAt: past }));
-    expect(out.ok).toBe(false);
-    if (out.ok) throw new Error("unreachable");
-    expect(out.code).toBe("slot_taken");
-    expect(commits()).toHaveLength(0);
+    // Exercise a past instant TODAY. Near UTC midnight, wall-clock now - 60s
+    // is yesterday and correctly hits the earlier outside-window guard.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-20T12:00:00.000Z"));
+    try {
+      const past = new Date(Date.now() - 60_000).toISOString();
+      const out = await bookAnotherAppointmentAction(form({ startsAt: past }));
+      expect(out.ok).toBe(false);
+      if (out.ok) throw new Error("unreachable");
+      expect(out.code).toBe("slot_taken");
+      expect(commits()).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("refuses a date beyond the studio's booking horizon", async () => {
