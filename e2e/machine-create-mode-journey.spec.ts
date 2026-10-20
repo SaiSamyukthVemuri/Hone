@@ -1236,7 +1236,7 @@ for (const device of [
           observation_source: string;
         }>(`select id,capture_id,stage_key,field_key,value_numeric::text as value_numeric,value_text,native_unit,
           decimals,machine_profile_version,observation_source from public.treatment_setup_readings
-          where session_block_id=$1 order by stage_key nulls first,field_key`, [blockId]);
+          where session_block_id=$1 order by stage_key nulls first,field_key,id`, [blockId]);
         let blockId = "";
         // Existing initial-save-retry pattern: the first request must COMMIT
         // before losing its response. An aborted unsent request proves nothing.
@@ -1312,25 +1312,49 @@ for (const device of [
         expect(identities.readings).toHaveLength(observations.length);
         expect(identities.claims).toHaveLength(1);
 
-        await expect(page.getByTestId("setting-draft-frozen")).toBeVisible();
-        for (const { field, value } of observations) {
-          const control = page.getByTestId(`reading-${field.key}`);
-          await expect(control).toBeDisabled();
-          await expect(control).toHaveValue(value);
-          // Drive the existing handler guard despite the disabled DOM control.
-          // As in the original retry spec, DOM text may now differ; the proof
-          // is the unchanged committed payload/identity after retry, below.
-          await control.evaluate((el, replacement) => {
-            const select = el instanceof HTMLSelectElement;
-            const prototype = select ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
-            Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(el, replacement);
-            el.dispatchEvent(new Event(select ? "change" : "input", { bubbles: true }));
-          }, field.valueKind === "choice" ? field.choices!.find(choice => choice !== value)!
-            : field.valueKind === "text" ? "changed program" : "999");
-        }
+        const assertFrozenDraft = async (draft: typeof observations) => {
+          await expect(page.getByTestId("setting-draft-frozen")).toBeVisible();
+          for (const { field, value } of draft) {
+            const control = page.getByTestId(`reading-${field.key}`);
+            await expect(control).toBeDisabled();
+            await expect(control).toHaveValue(value);
+            // Drive the existing handler guard despite the disabled DOM control.
+            // As in the original retry spec, DOM text may now differ; the proof
+            // is the unchanged committed payload/identity after retry, below.
+            await control.evaluate((el, replacement) => {
+              const select = el instanceof HTMLSelectElement;
+              const prototype = select ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+              Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(el, replacement);
+              el.dispatchEvent(new Event(select ? "change" : "input", { bubbles: true }));
+            }, field.valueKind === "choice" ? field.choices!.find(choice => choice !== value)!
+              : field.valueKind === "text" ? "changed program" : "999");
+          }
+        };
+        await assertFrozenDraft(observations);
         await noOverflow(page);
-        await page.getByTestId("save-treatment-area").click({ timeout: T });
-        await expect(page.getByTestId("save-treatment-area")).toHaveCount(0, { timeout: T });
+        if (device.isMobile) {
+          // Existing reload reconciliation journey, now with each native mode.
+          // The address-bar identity must match the independently read claim.
+          const areaOp = () => new URL(page.url()).searchParams.get("area_op");
+          await expect.poll(areaOp, { timeout: T }).not.toBeNull();
+          const carried = areaOp();
+          const claims = await sql<{ idempotency_key: string }>(
+            "select idempotency_key from public.treatment_area_create_claims where id=$1", [identities.claims[0]],
+          );
+          expect(carried).toBe(claims[0].idempotency_key);
+          await page.reload();
+          expect(areaOp()).toBe(carried);
+          await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+          await expect(page.getByTestId("initial-save-already-saved")).toHaveAttribute("data-block-id", blockId, { timeout: T });
+          await expect.poll(areaOp, { timeout: T }).toBeNull();
+          await expect(page.getByTestId("save-treatment-area")).toBeDisabled();
+          // No native draft reconstruction and no second save: the committed
+          // claim answers the uncertainty. Closing must retain every original.
+          await page.getByTestId("initial-save-already-saved-close").click({ timeout: T });
+        } else {
+          await page.getByTestId("save-treatment-area").click({ timeout: T });
+          await expect(page.getByTestId("save-treatment-area")).toHaveCount(0, { timeout: T });
+        }
         expect(lost.fired).toBe(1);
         expect(await readIdentities()).toEqual(identities);
         expect(await readStored()).toEqual(saved);
@@ -1363,6 +1387,88 @@ for (const device of [
         expect(await readIdentities()).toEqual(identities);
         await noOverflow(page);
 
+        // A later setting change uses the EXISTING revision save, a different
+        // command/key from initial creation. Prove its lost response too, then
+        // make next-visit guidance read that revision, never stale initial text.
+        const revised = observations.map(({ field, stageKey }, index) => ({
+          field, stageKey,
+          value: field.valueKind === "choice" ? field.choices!.find(choice => choice !== observations[index].value)!
+            : field.valueKind === "text" ? " 004i "
+              : (index + 2 + 27 / 10 ** field.decimals).toFixed(field.decimals),
+        }));
+        for (const { field, value } of revised) {
+          const control = page.getByTestId(`reading-${field.key}`);
+          if (field.valueKind === "choice") await control.selectOption(value);
+          else await control.fill(value);
+        }
+        lost.upstreamCompleted = false;
+        lost.arm = true;
+        await page.getByTestId("machine-reading-save").click({ timeout: T });
+        await expect(page.getByRole("alert").filter({ hasText: /press save again/i })).toBeVisible({ timeout: T });
+        expect(lost.fired).toBe(2);
+        expect(lost.upstreamCompleted).toBe(true);
+        await expect.poll(async () => (await capturesFor(blockId)).length, { timeout: T }).toBe(2);
+        const revisedSaved = await readStored();
+        const revisedCaptures = await capturesFor(blockId);
+        const revisedIdentities = await readIdentities();
+        expect(revisedIdentities.blocks).toEqual(identities.blocks);
+        expect(revisedIdentities.claims).toEqual(identities.claims);
+        expect(revisedIdentities.submissions).toHaveLength(2);
+        expect(revisedIdentities.captures).toHaveLength(2);
+        expect(revisedIdentities.readings).toHaveLength(2 * observations.length);
+        expect(revisedCaptures[0]).toEqual(captures[0]);
+        expect(revisedCaptures[1]).toMatchObject({ group_key: "g1", revision: 2 });
+        expect(revisedCaptures[1].setup_submission_id).not.toBe(captures[0].setup_submission_id);
+        expect(revisedCaptures[1].setup_submission_id).not.toBeNull();
+        const originalIds = new Set(saved.map(row => row.id));
+        expect(revisedSaved.filter(row => originalIds.has(row.id))).toEqual(saved);
+        const newRows = revisedSaved.filter(row => !originalIds.has(row.id));
+        expect(newRows).toHaveLength(revised.length);
+        expect(new Set(newRows.map(row => row.capture_id)).size).toBe(1);
+        expect(newRows[0].capture_id).not.toBe(saved[0].capture_id);
+        for (const { stageKey, field, value } of revised) {
+          expect(newRows.find(row => row.stage_key === stageKey && row.field_key === field.key)).toMatchObject({
+            ...(field.valueKind && field.valueKind !== "number" ? { value_numeric: null, value_text: value } : { value_numeric: value, value_text: null }),
+            native_unit: field.unit, decimals: field.decimals,
+            machine_profile_version: profile.version, observation_source: field.expectedSource,
+          });
+        }
+        await assertFrozenDraft(revised);
+        await expect(page.getByTestId("machine-select")).toBeDisabled();
+        const modeButtons = page.getByTestId("machine-mode-picker").getByRole("button");
+        await expect(modeButtons).toHaveCount(profile.modes.length);
+        expect(profile.modes.length, "native identity freeze must not be vacuous").toBeGreaterThan(1);
+        for (const button of await modeButtons.all()) await expect(button).toBeDisabled();
+        await noOverflow(page);
+        await page.getByTestId("machine-reading-save").click({ timeout: T });
+        await expect(page.getByTestId("machine-reading-saved")).toBeVisible({ timeout: T });
+        expect(lost.fired).toBe(2);
+        expect(await readIdentities()).toEqual(revisedIdentities);
+        expect(await readStored()).toEqual(revisedSaved);
+        expect(await capturesFor(blockId)).toEqual(revisedCaptures);
+
+        await page.reload();
+        await page.getByTestId(`edit-area-${blockId}`).click({ timeout: T });
+        expect(await openMachinePanel(page)).toBe(true);
+        // Both immutable captures stay visible, and each exact value is checked
+        // on its own row rather than matched somewhere else in the history.
+        for (const [revision, expected] of [[1, observations], [2, revised]] as const) {
+          const capture = history.getByTestId(`recorded-capture-g1-${revision}`);
+          const rows = capture.locator("li");
+          await expect(rows).toHaveCount(expected.length);
+          expect(await rows.locator(":scope > span:first-child").allTextContents()).toEqual(expected.map(({ field }) => field.nativeLabel));
+          expect(await capture.locator('[data-testid^="recorded-stage-g1-"]').allTextContents()).toEqual(mode.stages.map(stage => stage.nativeLabel));
+          for (const [index, { field, value }] of expected.entries()) {
+            const displayed = rows.nth(index).locator("span.font-medium");
+            expect(await displayed.textContent()).toBe(value);
+            if (field.valueKind && field.valueKind !== "number") await expect(displayed).toHaveCSS("white-space", "break-spaces");
+            await expect(page.getByTestId(`reading-${field.key}`)).toHaveValue("");
+          }
+        }
+        expect(await readIdentities()).toEqual(revisedIdentities);
+        expect(await readStored()).toEqual(revisedSaved);
+        await noOverflow(page);
+
         await sql("update public.sessions set started_at=now()-interval '2 hours' where client_id=$1", [clientId]);
         await page.goto(`/clients/${clientId}/sessions/new`);
         await page.locator('[data-modality="electrolysis"]').click({ timeout: T });
@@ -1378,7 +1484,7 @@ for (const device of [
           .toEqual(observations.map(({ field }) => field.nativeLabel));
         expect(await priorPanel.locator('[data-testid^="prior-setup-stage-"]').allTextContents())
           .toEqual(mode.stages.map(stage => stage.nativeLabel));
-        for (const { stageKey, field, value } of observations) {
+        for (const { stageKey, field, value } of revised) {
           const suffix = stageKey ? `${stageKey}-${field.key}` : field.key;
           const prior = page.getByTestId(`prior-setup-g1-${suffix}`);
           await expect(page.getByTestId(`reading-${field.key}`)).toHaveValue("");
@@ -1389,9 +1495,9 @@ for (const device of [
           if (field.valueKind && field.valueKind !== "number") await expect(displayed).toHaveCSS("white-space", "break-spaces");
           if (field.unit !== "none") await expect(prior).toContainText(field.unit);
         }
-        expect(await readStored()).toEqual(saved);
-        expect(await capturesFor(blockId)).toEqual(captures);
-        expect(await readIdentities()).toEqual(identities);
+        expect(await readStored()).toEqual(revisedSaved);
+        expect(await capturesFor(blockId)).toEqual(revisedCaptures);
+        expect(await readIdentities()).toEqual(revisedIdentities);
         await noOverflow(page);
       });
     }

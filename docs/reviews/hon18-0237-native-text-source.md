@@ -275,3 +275,41 @@ build, server, reset, migration application or slot claim ran. All twenty extend
 mounted cells remain UNRUN until OPS supplies an aligned candidate, compliant
 isolated target and explicit shared-slot grant. Physical model/firmware evidence
 and named qualified operator/independent reviewer remain separate inputs from Sam.
+
+## Native reload-while-unknown and revision response loss — source prepared
+
+The same existing twenty native cases now reach the two remaining recovery paths,
+without new fixtures, modes, workers or a harness. Desktop's ten cells retain
+same-mount initial-save retry. Mobile's ten cells instead reload while the initial
+save outcome is still unknown: the URL's `area_op` must match the independently
+read committed claim, survive reload, resolve to the original block, disable a
+second save and clear the settled identity. Closing the reconciliation notice
+must leave every original block/submission/capture/reading/claim unchanged. This
+is the committed-but-response-lost branch; an uncommitted/unknown claim still
+needing full draft reconstruction is a different case and is not proved here.
+
+All twenty cells then enter a genuine later setting change through the existing
+revision controls, changing native numbers and, where present, Program text and
+the starting-current choice. The revision commits before its response is lost.
+The test independently verifies exactly one new submission/capture and its exact
+values while preserving the original capture/rows. Native fields, machine and
+all mode buttons must be frozen; mode counts are asserted to avoid a vacuous
+identity-freeze loop. Forced DOM edits exercise the existing handler guard.
+Retry must settle without any new identities, row changes or third capture.
+
+A subsequent reload must show both immutable captures, with each capture's own
+exact values/whitespace and native field/stage order. A distinct app-created next
+visit must offer the revised values, not the initial capture, while new inputs
+remain blank and all original-session identities/rows stay unchanged. The SQL
+snapshot uses a stable row-ID tie-breaker when revisions share field/stage keys.
+This gives per-mode mobile initial-unknown reload and desktop/mobile revision
+retry coverage; initial-unknown reload on desktop remains outside this matrix.
+
+Relevant existing lightweight recovery/state/shared-control tests passed 63/63
+across three files; TypeScript and focused ESLint passed. The earlier 139-pass
+suite was not rerun or added to this count. No DB/browser collection/run, build,
+stack/start/reset, SQL change, apply, activation or slot claim occurred. These are
+executable assertions prepared from the current contracts, not executed mounted
+proof. All twenty updated cells remain UNRUN pending OPS's aligned candidate,
+verified compliant target and explicit slot. Physical Senior/Junior unit/firmware
+and named operator/independent reviewer acceptance remains separate and UNRUN.
