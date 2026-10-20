@@ -49,9 +49,13 @@ describe("UI-01J: the thumbnail wrapper is deliberately NOT converted", () => {
     // `inline-flex items-center justify-center min-h-[44px] rounded-md
     // font-medium` plus a variant fill — applying it here would visibly break
     // the photo grid for no accessibility gain.
-    expect((src.match(/<button\b/g) ?? []).length).toBe(1);
-    expect(src).toMatch(/className="block overflow-hidden rounded-md"/);
-    expect(src).toMatch(/aria-label="View larger treatment photo"/);
+    // Production's recovery integration owns the thumbnail wrapper in
+    // GridPhoto; keep the manager free of raw short buttons without reverting it.
+    expect((src.match(/<button\b/g) ?? []).length).toBe(0);
+    const cell = readFileSync(join(ROOT, "app/(app)/clients/[id]/images/GridPhoto.tsx"), "utf8");
+    expect((cell.match(/<button\b/g) ?? []).length).toBe(1);
+    expect(cell).toMatch(/className="block overflow-hidden rounded-md"/);
+    expect(cell).toMatch(/aria-label="View larger treatment photo"/);
   });
 });
 
