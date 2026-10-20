@@ -71,6 +71,9 @@ export async function acceptInvitationAction(
   // #850). The middleware only reroutes users with NO practitioner membership,
   // so a practitioner elsewhere would otherwise stay in the practitioner app.
   if (res.role === "receptionist") {
+    // This accepted role owns the destination. Do not leave a remembered
+    // operator target to influence a later sign-in after front-desk routing.
+    await clearAdminReturn();
     if (res.choose_studio === true) {
       await clearSelectedStudioId();
       redirect("/front-desk/select");

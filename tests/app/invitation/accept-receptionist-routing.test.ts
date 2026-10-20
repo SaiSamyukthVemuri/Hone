@@ -68,11 +68,15 @@ describe("acceptInvitationAction routes by the accepted role", () => {
   it.each(["linked", "already_linked"])("%s receptionist lands on /front-desk, even if they practise elsewhere", async (status) => {
     expect(await destination({ status, role: "receptionist", choose_studio: false })).toBe("/front-desk");
     expect(ctx.cleared).toBe(0);
+    expect(ctx.adminCleared).toBe(1);
+    expect(ctx.fulfilled).toBe(0);
   });
 
   it.each(["linked", "already_linked"])("%s receptionist at 2+ desks clears the stale selection and goes to the receptionist chooser", async (status) => {
     expect(await destination({ status, role: "receptionist", choose_studio: true })).toBe("/front-desk/select");
     expect(ctx.cleared).toBe(1);
+    expect(ctx.adminCleared).toBe(1);
+    expect(ctx.fulfilled).toBe(0);
   });
 
   it("a practitioner acceptance is unchanged: /dashboard", async () => {
