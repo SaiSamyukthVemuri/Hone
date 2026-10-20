@@ -43,13 +43,47 @@ function directCall(stmt: ts.Statement, target: ts.CallExpression): boolean {
   if (expr && ts.isAwaitExpression(expr)) expr = expr.expression;
   return expr === target;
 }
+const TRUSTED_MODULES: Readonly<Record<string, string>> = {
+  loadFinancialsView: "@/lib/finance/financial-briefing",
+  redirect: "next/navigation",
+  requirePractitionerWithStudio: "@/lib/supabase/queries",
+  isReportingPeriod: "@/lib/booking/reporting-period",
+  cookies: "next/headers", headers: "next/headers", draftMode: "next/headers",
+};
+function bindingNames(name: ts.BindingName): string[] {
+  return ts.isIdentifier(name) ? [name.text] : name.elements.flatMap((e) => ts.isOmittedExpression(e) ? [] : bindingNames(e.name));
+}
+function locallyDeclared(src: ts.SourceFile, name: string): boolean {
+  return nodes(src).some((n) => {
+    if (ts.isVariableDeclaration(n) || ts.isParameter(n) || ts.isBindingElement(n)) return bindingNames(n.name).includes(name);
+    return (ts.isFunctionDeclaration(n) || ts.isClassDeclaration(n)) && n.name?.text === name;
+  });
+}
+// Restricted import forms, not a spelling-based contract. Reject local shadows
+// and duplicate/foreign imports; canonical helper behavior is checked separately.
+function trustedCall(call: ts.CallExpression): boolean {
+  const src = call.getSourceFile(), name = callName(call);
+  if (name === "Array.isArray") return !locallyDeclared(src, "Array");
+  if (!TRUSTED_MODULES[name] || locallyDeclared(src, name)) return false;
+  const imports = src.statements.filter(ts.isImportDeclaration).flatMap((decl) => {
+    const clause = decl.importClause;
+    if (!clause || clause.isTypeOnly || !clause.namedBindings || !ts.isNamedImports(clause.namedBindings)) return [];
+    return clause.namedBindings.elements.filter((e) => e.name.text === name).map((e) => ({
+      module: ts.isStringLiteral(decl.moduleSpecifier) ? decl.moduleSpecifier.text : "",
+      original: (e.propertyName ?? e.name).text, typeOnly: e.isTypeOnly,
+    }));
+  });
+  return imports.length === 1 && imports[0]!.module === TRUSTED_MODULES[name] &&
+    imports[0]!.original === name && !imports[0]!.typeOnly;
+}
 function ownHalt(stmt: ts.Statement): boolean {
   const body = ts.isBlock(stmt) ? [...stmt.statements] : [stmt];
   if (body.length !== 1) return false;
   const last = body[0]!;
   if (ts.isReturnStatement(last)) return !last.expression || calls(last.expression).length === 0;
   return ts.isExpressionStatement(last) && ts.isCallExpression(last.expression)
-    && callName(last.expression) === "redirect";
+    && callName(last.expression) === "redirect" && trustedCall(last.expression)
+    && last.expression.arguments.length === 1 && ts.isStringLiteral(last.expression.arguments[0]!);
 }
 // A returned refusal is not an exception. The caller must stop page work
 // itself, before ANY statement after delegation can read financial data.
@@ -59,6 +93,12 @@ function delegationIssues(stmt: ts.Statement, next: ts.Statement | undefined): s
   const declaration = stmt.declarationList.declarations[0]!;
   if (!ts.isIdentifier(declaration.name) || !declaration.initializer || !ts.isAwaitExpression(declaration.initializer))
     return ["delegated result must be bound and awaited"];
+  const call = declaration.initializer.expression;
+  if (!ts.isCallExpression(call) || !trustedCall(call)) return ["delegation must use the canonical imported helper"];
+  const allowedArguments = ["practitioner", "studio", "period"];
+  if (call.arguments.length < 2 || call.arguments.length > 3 || call.arguments.some((arg, i) =>
+    !ts.isIdentifier(arg) || arg.text !== allowedArguments[i]))
+    return ["delegation arguments must be side-effect-free approved bindings"];
   const expected = `${declaration.name.text}.access==="refused"`;
   if (!next || !ts.isIfStatement(next) || compact(next.expression) !== expected || !ownHalt(next.thenStatement))
     return ["delegated refusal must halt immediately before later page work"];
@@ -87,7 +127,7 @@ function pageIssues(text: string, delegationAllowed = false): string[] {
   if (identity.length !== 1 || !ts.isAwaitExpression(identity[0]!.parent)) issues.push("identity must be awaited exactly once before gate");
   for (const stmt of prefix) {
     for (const call of calls(stmt)) {
-      if (!PREFIX_CALLS.has(callName(call))) issues.push(`pre-gate call: ${callName(call)}`);
+      if (!PREFIX_CALLS.has(callName(call)) || !trustedCall(call)) issues.push(`untrusted pre-gate call: ${callName(call)}`);
     }
     for (const n of nodes(stmt)) {
       if (ts.isAwaitExpression(n)) {
@@ -110,9 +150,12 @@ function practitionerGates(text: string): string[] {
   // assertion/delegation helpers would violate the named sample's contract.
   return nodes(component(parse(text)).body!).flatMap((n) => {
     if (ts.isCallExpression(n) && (ASSERTIONS.has(callName(n)) || callName(n) === "loadFinancialsView")) return [callName(n)];
-    if (ts.isIfStatement(n) && nodes(n.expression).some((x) => ts.isPropertyAccessExpression(x) && x.name.text === "role")) {
-      const literals = nodes(n.expression).filter(ts.isStringLiteral).map((x) => x.text);
-      if (literals.includes("owner") || literals.includes("practitioner")) return [n.expression.getText()];
+    if (ts.isIfStatement(n)) {
+      const condition = compact(n.expression);
+      const nonOwnerBranch = [NON_OWNER, 'practitioner.role==="practitioner"'].includes(condition)
+        ? n.thenStatement : ['practitioner.role==="owner"', 'practitioner.role!=="practitioner"'].includes(condition)
+          ? n.elseStatement : undefined;
+      if (nonOwnerBranch && ownHalt(nonOwnerBranch)) return [n.expression.getText()];
     }
     return [];
   });
@@ -154,6 +197,9 @@ function balanced(text: string, at: number): string {
   }
   throw new Error("unbalanced SQL");
 }
+function sqlIdentifier(raw: string): string {
+  return raw.startsWith('"') ? raw.slice(1, -1).replace(/""/g, '"') : raw.toLowerCase();
+}
 function roleIssues(migrations: Array<{ name: string; sql: string }>): string[] {
   const issues: string[] = [];
   let found = false;
@@ -167,14 +213,19 @@ function roleIssues(migrations: Array<{ name: string; sql: string }>): string[] 
       const body = balanced(sql, create.index + create[0].length - 1);
       const role = /(?:^|,)\s*role\s+text\b[^,]*?(?:check\s*\()/i.exec(body);
       if (!role) { issues.push(`${name}: missing practitioners.role CHECK`); continue; }
-      roleConstraintName = /constraint\s+([a-z_][a-z0-9_]*)/i.exec(role[0])?.[1] ?? "practitioners_role_check";
+      const named = /constraint\s+("(?:[^"]|"")+"|[a-z_][a-z0-9_$]*)\s+check/i.exec(role[0]);
+      if (/\bconstraint\b/i.test(role[0]) && !named) issues.push(`${name}: unsupported role constraint identifier`);
+      roleConstraintName = named ? sqlIdentifier(named[1]!) : "practitioners_role_check";
+      const definition = role[0].replace(/'(?:[^']|'')*'|"(?:[^"]|"")*"/g, "");
+      if (!/\bnot\s+null\b/i.test(definition)) issues.push(`${name}: practitioners.role must remain NOT NULL`);
       const expr = balanced(body, role.index + role[0].length - 1).replace(/\s+/g, "").replace(/^rolein\(/i, "rolein(");
       if (expr !== "rolein('owner','practitioner')") issues.push(`${name}: role CHECK domain changed`);
     }
     for (const m of sql.matchAll(/alter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?(?:public\.)?practitioners\b([^;]*)/gi)) {
       const change = m[1]!;
+      const references = [...change.matchAll(/(?:drop|rename|alter|validate)\s+constraint\s+(?:if\s+exists\s+)?("(?:[^"]|"")+"|[a-z_][a-z0-9_$]*)/gi)];
       if (/\brole\b|\brename\b|\bset\s+schema\b/i.test(change) ||
-          new RegExp(`\\b${roleConstraintName}\\b`, "i").test(change))
+          references.some((m) => sqlIdentifier(m[1]!) === roleConstraintName))
         issues.push(`${name}: effective role constraint needs migrated-catalog validation`);
     }
     if (/drop\s+table\s+(?:if\s+exists\s+)?(?:public\.)?practitioners\b/i.test(sql)) issues.push(`${name}: practitioners dropped`);
@@ -202,10 +253,15 @@ describe("existing owner-only financial surface tripwires", () => {
   });
 });
 
+const TRUSTED_IMPORTS = `
+  import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
+  import { loadFinancialsView } from "@/lib/finance/financial-briefing";
+  import { redirect } from "next/navigation";
+`;
 const page = (prefix: string, gate = 'if (practitioner.role !== "owner") { redirect("/settings/payments"); }') =>
-  `export default async function Page() { ${prefix} ${gate} await readMoney(); }`;
+  `${TRUSTED_IMPORTS} export default async function Page() { ${prefix} ${gate} await readMoney(); }`;
 const identity = "const { practitioner, studio } = await requirePractitionerWithStudio();";
-const baseSql = "create table public.practitioners (id uuid, role text check (role in ('owner', 'practitioner')));";
+const baseSql = "create table public.practitioners (id uuid, role text not null check (role in ('owner', 'practitioner')));";
 describe("permanent controls: supported weaknesses must turn the tripwire red", () => {
   it.each(["await readMoney();", "await (readMoney());", "db.from('money');", "await db.rpc('money');"])("detects %s before identity and on the gate's own line", (readCall) => {
     expect(pageIssues(page(readCall + identity))).not.toEqual([]);
@@ -264,7 +320,7 @@ describe("permanent controls: supported weaknesses must turn the tripwire red", 
 // Exact review regressions 4320848397 / 4320918043. These exercise the
 // detector with unsafe source in memory, never the runtime pages themselves.
 describe("delegation and assertion authority controls", () => {
-  const financialPage = (body: string) => `export default async function Page() { ${identity} ${body} }`;
+  const financialPage = (body: string) => `${TRUSTED_IMPORTS} export default async function Page() { ${identity} ${body} }`;
   const delegate = "const view = await loadFinancialsView(practitioner, studio);";
   const refusal = 'if (view.access === "refused") return <p>Owner only</p>;';
   it("accepts a bound delegated result whose refusal halts before later reads", () => {
@@ -288,5 +344,53 @@ describe("delegation and assertion authority controls", () => {
     ]) {
       expect(pageIssues(`${definition} ${page(identity, `${helper}(practitioner);`)}`)).not.toEqual([]);
     }
+  });
+});
+
+describe("current exact-head authority and role controls", () => {
+  const resultGuard = 'if (view.access === "refused") return <p>Owner only</p>;';
+  const delegatedPage = (argument: string) => `${TRUSTED_IMPORTS} export default async function Page() { ${identity} const view = await loadFinancialsView(practitioner, studio, ${argument}); ${resultGuard} await loadBalances(); }`;
+  it.each(['await loadBalances(studio.id)', 'loadBalances(studio.id)', '(period = loadBalances())', '...values'])("delegation rejects argument work: %s", (argument) => {
+    expect(pageIssues(delegatedPage(argument), true)).not.toEqual([]);
+  });
+  it("untrusted delegation imports and local redirects cannot supply a gate", () => {
+    expect(pageIssues('import { loadFinancialsView } from "./untrusted"; ' + delegatedPage('period'), true)).not.toEqual([]);
+    expect(pageIssues('function redirect() {} ' + page(identity))).not.toEqual([]);
+  });
+  it("quoted constraint removal cannot evade effective-role checks", () => {
+    const named = baseSql.replace('check (', 'constraint "MembershipDomain" check (');
+    expect(roleIssues([{ name: "0001.sql", sql: named }, { name: "9999.sql", sql: 'alter table public.practitioners drop constraint "MembershipDomain";' }])).not.toEqual([]);
+  });
+  it("role requires NOT NULL, not CHECK alone", () => {
+    const nullable = baseSql.replace(/not null/gi, '');
+    expect(roleIssues([{ name: "0001.sql", sql: nullable }])).not.toEqual([]);
+  });
+  it.each(['if (practitioner.role === "owner") return <OwnerTools />;', 'if (practitioner.role !== "practitioner") return <OwnerTools />;', 'if (practitioner.role === "owner") { showOwnerExtras(); }'])("owner-only UI does not deny practitioner access: %s", (branch) => {
+    expect(practitionerGates(`export default async function Page() { ${identity} ${branch} return <SharedWork />; }`)).toEqual([]);
+  });
+  it("a non-halting practitioner-role branch is not an access gate", () => {
+    expect(practitionerGates(`export default async function Page() { ${identity} if (practitioner.role === "practitioner") { showTools(); } return <SharedWork />; }`)).toEqual([]);
+  });
+});
+
+describe("trusted gate and role-contract positive controls", () => {
+  it("canonical delegation passes, but a local shadow or argument read cannot", () => {
+    const body = `${identity} const view = await loadFinancialsView(practitioner, studio, period); if (view.access === "refused") return null; await loadBalances();`;
+    expect(pageIssues(`${TRUSTED_IMPORTS} export default async function Page() { ${body} }`, true)).toEqual([]);
+    expect(pageIssues(`${TRUSTED_IMPORTS} export default async function Page() { function loadFinancialsView() { return { access: "granted" }; } ${body} }`, true)).not.toEqual([]);
+    expect(pageIssues(page(identity, 'if (practitioner.role !== "owner") redirect(loadBalances());'))).not.toEqual([]);
+  });
+  it.each(['MembershipDomain', 'Member.Domain', 'Member"Domain'])("retains quoted SQL identifier %s", (name) => {
+    const quoted = '"' + name.replace(/"/g, '""') + '"';
+    const sql = baseSql.replace('check (', `constraint ${quoted} check (`);
+    expect(roleIssues([{ name: "0001.sql", sql }])).toEqual([]);
+    expect(roleIssues([{ name: "0001.sql", sql }, { name: "9999.sql", sql: `alter table public.practitioners drop constraint ${quoted};` }])).not.toEqual([]);
+  });
+  it("a default string cannot masquerade as NOT NULL", () => {
+    expect(roleIssues([{ name: "0001.sql", sql: baseSql.replace('not null', "default 'not null'") }])).not.toEqual([]);
+  });
+  it("detects a real non-owner halt in the else branch", () => {
+    expect(practitionerGates(`${TRUSTED_IMPORTS} export default async function Page() { ${identity} if (practitioner.role === "owner") { showOwnerExtras(); } else { redirect("/"); } return <SharedWork />; }`)).not.toEqual([]);
+    expect(practitionerGates(`${TRUSTED_IMPORTS} export default async function Page() { ${identity} if (practitioner.role === "practitioner") return <Refused />; return <OwnerWork />; }`)).not.toEqual([]);
   });
 });
