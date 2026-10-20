@@ -148,7 +148,7 @@ describe("FETT photos: the remaining photo controls reach the floor", () => {
     expect(input).toContain('type="file"');
     expect(input).toContain(`name="${name}"`);
     expect(input).toContain(`aria-label="${accessibleName}"`);
-    expect(input).toContain('className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-wait"');
+    expect(input).toContain('className="absolute inset-0 h-full min-h-[44px] w-full cursor-pointer opacity-0 disabled:cursor-wait"');
     expect(input).toContain("disabled={uploading}");
     expect(input).toContain("onChange={onPick}");
   });
@@ -167,4 +167,11 @@ describe("FETT photos: the remaining photo controls reach the floor", () => {
     expect(selects).toHaveLength(2);
     for (const cls of selects) expect(cls).toContain("min-h-[44px]");
   });
+});
+
+
+it("the editable photo note has a 44px minimum", () => {
+  const textarea = read().match(/<textarea[\s\S]*?className="([^"]*)"/);
+  expect(textarea, "editable photo note").toBeTruthy();
+  expect(textarea![1]).toContain("min-h-[44px]");
 });
