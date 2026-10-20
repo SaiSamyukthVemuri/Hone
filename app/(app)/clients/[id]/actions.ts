@@ -321,7 +321,6 @@ export async function archiveClientAction(formData: FormData): Promise<void> {
         event: "client_archive_audit_failed",
         clientId,
         code: auditErr.code,
-        message: auditErr.message,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -373,7 +372,6 @@ export async function unarchiveClientAction(formData: FormData): Promise<void> {
         event: "client_unarchive_audit_failed",
         clientId,
         code: auditErr.code,
-        message: auditErr.message,
         timestamp: new Date().toISOString(),
       }),
     );
