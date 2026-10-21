@@ -563,13 +563,14 @@ export async function getClientProcedureRecords(
   if (filter.fromUtc) query = query.gte("started_at", filter.fromUtc);
   if (filter.toUtcExclusive)
     query = query.lt("started_at", filter.toUtcExclusive);
-  const { data: sessions } = await query
+  const { data: sessions, error: sessionsError } = await query
     .order("started_at", { ascending: false })
     .limit(limit);
+  if (sessionsError) throw new Error("Failed to load procedure records");
   if (!sessions || sessions.length === 0) return [];
 
   const sessionIds = sessions.map((s) => s.id as string);
-  const [{ data: blocks }, { data: practitioners }] = await Promise.all([
+  const [{ data: blocks, error: blocksError }, { data: practitioners, error: practitionersError }] = await Promise.all([
     supabase
       .from("session_blocks")
       .select(
@@ -584,6 +585,9 @@ export async function getClientProcedureRecords(
       .select("id, display_name, email")
       .eq("studio_id", studioId),
   ]);
+  // A missing read must not become zero records, zero areas or an apparently
+  // incomplete chart. Callers can use their existing unavailable/error boundary.
+  if (blocksError || practitionersError) throw new Error("Failed to load procedure records");
 
   // Migration 0128: resolve EVERY treated area + laterality per block so a
   // procedure record never shows only the first of several areas.
