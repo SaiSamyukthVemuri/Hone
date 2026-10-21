@@ -379,6 +379,12 @@ export default async function ClientIntakePage({
         </p>
       ) : null}
 
+      <p className="rounded-md border border-neutral-200 bg-neutral-50 p-4 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
+        Question and answer labels below use the current questionnaire.
+        The original questionnaire wording was not saved with this intake
+        and may have been different. Stored answers are unchanged.
+      </p>
+
       {/* Step-by-step intake answers, wrapped in native
           <details open> disclosures so a practitioner can collapse a
           long step once they have read it. Default open: nothing is

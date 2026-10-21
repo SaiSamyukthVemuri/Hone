@@ -231,7 +231,18 @@ describe("0169 — the command surface is untouched", () => {
         group by c.relname order by c.relname`,
     );
     const byTable = Object.fromEntries(r.rows.map((x) => [x.t, x.n]));
-    expect(byTable.sessions).toBe(4);
+    // 0214 adds the jurisdiction lock; preserve every prior clinical guard.
+    expect(byTable.sessions).toBe(5);
+    const sessionTriggers = await adminQuery(
+      "select tgname from pg_trigger where tgrelid='public.sessions'::regclass and not tgisinternal order by tgname",
+    );
+    expect(sessionTriggers.rows.map(x => x.tgname)).toEqual([
+      "sessions_aftercare_audit",
+      "sessions_guard_finalized",
+      "sessions_guard_retired_finalization",
+      "sessions_immutable_lineage",
+      "sessions_price_jurisdiction_lock",
+    ]);
     // 0232 (Codex 4308037526) added ONE: it clears a before/after label when a
     // photo loses its session. Named, not just counted, so a future silent
     // addition (or a swap) still trips this.

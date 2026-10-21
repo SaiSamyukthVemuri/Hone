@@ -6,6 +6,13 @@ alter table public.payment_charge_attempts
   add column stripe_refund_status text,
   add column stripe_refund_event_created bigint,
   add column stripe_refund_event_id text,
+  add column stripe_charge_refund_event_created bigint,
+  add column stripe_charge_refund_event_id text,
+  add constraint payment_charge_attempts_charge_refund_event_pair_check check (
+    (stripe_charge_refund_event_created is null and stripe_charge_refund_event_id is null)
+    or (stripe_charge_refund_event_created is not null and stripe_charge_refund_event_created>=0
+      and stripe_charge_refund_event_id is not null and length(stripe_charge_refund_event_id)>0)
+  ),
   add constraint payment_charge_attempts_provider_refund_status_check check (
     stripe_refund_status is null or stripe_refund_status in ('pending','requires_action','succeeded','failed','canceled')
   ),
@@ -36,6 +43,11 @@ declare
   v_status text := nullif(p_object->>'refund_status','');
   v_event_created bigint;
   v_charge text := nullif(p_object->>'charge_id','');
+  v_component jsonb;
+  v_component_amount bigint;
+  v_component_ids text[] := array[]::text[];
+  v_total bigint := 0;
+  v_valid boolean;
   v_refund text := nullif(p_object->>'refund_id','');
 begin
   if p_attempt_id is null or nullif(btrim(p_event_id),'') is null
@@ -100,8 +112,76 @@ begin
         where a.id=v_row.id and a.status in ('ready','pending_stripe');
       v_result:='reconciled';
     else v_result:='zero_rows'; end if;
+  elsif p_event_type='charge.refunded' and p_object ? 'charge_refund_components' then
+    -- Separate aggregate authority BEFORE single-Refund ID/status/clock gates.
+    -- Preserve actual single-object evidence; never turn latest partial into full.
+    v_valid := v_row.status='succeeded' and v_row.stripe_charge_id is not null
+      and p_object->>'evidence_kind'='signed_event'
+      and jsonb_typeof(p_object->'event_created')='number'
+      and coalesce(p_object->>'event_created','') ~ '^[0-9]{1,12}$'
+      and p_object->>'charge_object_type'='charge' and p_object->>'charge_status'='succeeded'
+      and p_object->'charge_paid'='true'::jsonb and p_object->'charge_captured'='true'::jsonb
+      and jsonb_typeof(p_object->'charge_amount_captured')='number'
+      and p_object->>'charge_amount_captured'=v_row.amount_cents::text
+      and p_object->'charge_livemode'=to_jsonb(p_livemode)
+      and p_object->'charge_refunded'='true'::jsonb
+      and jsonb_typeof(p_object->'charge_amount_refunded')='number'
+      and p_object->>'charge_amount_refunded'=v_row.amount_cents::text
+      and p_object->'charge_refund_list_complete'='true'::jsonb
+      and jsonb_typeof(p_object->'charge_refund_components')='array';
+    if v_valid is true then
+      if jsonb_array_length(p_object->'charge_refund_components')=0 then v_valid:=false; end if;
+      for v_component in select value from jsonb_array_elements(p_object->'charge_refund_components') loop
+        if jsonb_typeof(v_component) is distinct from 'object'
+          or v_component->>'object_type' is distinct from 'refund'
+          or nullif(btrim(v_component->>'refund_id'),'') is null
+          or v_component->>'refund_id'=any(v_component_ids)
+          or jsonb_typeof(v_component->'amount_cents') is distinct from 'number'
+          or coalesce(v_component->>'amount_cents','') !~ '^[0-9]{1,16}$'
+          or v_component->>'refund_status' is null
+          or v_component->>'refund_status' not in ('succeeded','failed','canceled')
+          or v_component->>'charge_id' is distinct from v_row.stripe_charge_id
+          or v_component->>'payment_intent_id' is distinct from v_row.stripe_payment_intent_id
+          or v_component->>'currency' is distinct from v_row.currency
+          or jsonb_typeof(v_component->'customer_present') is distinct from 'boolean'
+          or (v_component->'customer_present'='true'::jsonb
+            and v_component->>'customer_id' is distinct from v_row.stripe_customer_id) then
+          v_valid:=false; exit;
+        end if;
+        v_component_amount := (v_component->>'amount_cents')::bigint;
+        if v_component_amount<=0 or v_component_amount>9007199254740991
+          or v_component_amount>v_row.amount_cents then v_valid:=false; exit; end if;
+        v_component_ids := array_append(v_component_ids,v_component->>'refund_id');
+        if v_component->>'refund_status'='succeeded' then
+          v_total:=v_total+v_component_amount;
+          if v_total>v_row.amount_cents then v_valid:=false; exit; end if;
+        end if;
+      end loop;
+    end if;
+    if v_valid is not true or v_total<>v_row.amount_cents then
+      v_result:='refund_evidence_refused';
+    else
+      v_event_created:=(p_object->>'event_created')::bigint;
+      if v_row.stripe_charge_refund_event_id is not null then
+        v_result:=case when v_event_created<v_row.stripe_charge_refund_event_created
+          then 'stale_observation' else 'already_refunded' end;
+      else
+        update public.payment_charge_attempts a set
+          refund_status='succeeded',refund_amount_cents=v_row.amount_cents,
+          refunded_at=coalesce(a.refunded_at,now()),
+          refund_failure_code=null,refund_failure_message_safe=null,
+          stripe_charge_refund_event_id=p_event_id,
+          stripe_charge_refund_event_created=v_event_created
+          where a.id=v_row.id;
+        v_result:=case when v_row.refund_status='succeeded' then 'already_refunded' else 'reconciled' end;
+      end if;
+    end if;
   else
-    if v_row.status<>'succeeded' or v_row.stripe_charge_id is null
+    -- A complete cumulative success is monotonic across ALL later single-
+    -- refund/action observations; their object ID/status cannot undo the total.
+    if v_row.stripe_charge_refund_event_id is not null then
+      v_result:='already_refunded';
+    elsif v_row.status<>'succeeded' or v_row.stripe_charge_id is null
        or v_refund is null
        or (v_row.stripe_refund_id is not null and v_row.stripe_refund_id<>v_refund)
        or p_object->>'refund_amount_cents' is distinct from v_row.amount_cents::text
@@ -170,6 +250,8 @@ revoke all privileges on function public.reconcile_bound_payment_event(uuid,text
 grant execute on function public.reconcile_bound_payment_event(uuid,text,text,uuid,text,boolean,jsonb) to service_role;
 comment on column public.payment_charge_attempts.stripe_refund_status is
   'Actual allowlisted provider Refund status, bound to the stored original account/customer/PI/charge/refund. NULL is unobserved legacy or unknown action response, never implicit success. Local refund_status retains existing reader semantics.';
+comment on column public.payment_charge_attempts.stripe_charge_refund_event_id is
+  'Signed complete charge-level cumulative full-refund receipt, separate from actual single Refund ID/status. Legacy evidence remains untouched; no provider lookup. Local full truth cannot be regressed by later single-object observations.';
 comment on column public.payment_charge_attempts.stripe_refund_event_created is
   'Signed provider event creation seconds; nullable for legacy/action-only observation. Older events and unordered action responses cannot regress newer evidence or terminal truth.';
 commit;

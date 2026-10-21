@@ -4,6 +4,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import {
   adminQuery,
+  adminTx,
   RECORD_GROUP_SQL,
   asUser,
   closePool,
@@ -1159,13 +1160,17 @@ describe("0223 · existing historical values are untouched", () => {
   it("adds its columns as NULL and alters no existing block value", async () => {
     const studio = await seedStudio("mpx-legacy");
     const { blockId, sessionId } = await seedSession(studio);
-    await adminQuery(
-      `update public.session_blocks
-          set apilus_modality = 'Multiplex', energy_level = 7.25,
-              machine_frequency = '13.56 MHz'
-        where id = $1`,
-      [blockId],
-    );
+    await adminTx(async q => {
+      // Privileged legacy fixture edit, explicitly attributed; no DML grant change.
+      await q("select set_config('request.jwt.claims',$1,true)", [JSON.stringify({ sub: studio.userId, role: "authenticated" })]);
+      return q(
+        `update public.session_blocks
+            set apilus_modality = 'Multiplex', energy_level = 7.25,
+                machine_frequency = '13.56 MHz'
+          where id = $1`,
+        [blockId],
+      );
+    });
     const machineId = await registerMachine(studio, "Room 1");
     await asUser(studio.userId, (q) =>
       q(RECORD_GROUP_SQL, [

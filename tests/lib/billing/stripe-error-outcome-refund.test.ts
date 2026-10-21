@@ -115,6 +115,7 @@ beforeEach(() => {
     currency: "cad",
     stripe_livemode: true,
     stripe_account_id: "acct_1",
+    stripe_customer_id: "cus_1",
     stripe_payment_intent_id: "pi_1",
     stripe_charge_id: "ch_1",
     charged_at: "2026-08-14T10:00:00.000Z",
@@ -123,6 +124,9 @@ beforeEach(() => {
     refund_amount_cents: null,
     refunded_at: null,
     stripe_refund_id: null,
+    stripe_refund_status: null,
+    stripe_refund_event_created: null,
+    stripe_refund_event_id: null,
     receipt_status: null,
   };
 });

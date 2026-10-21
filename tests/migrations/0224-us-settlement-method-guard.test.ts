@@ -12,7 +12,7 @@ import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-stat
 // tests/db/us-settlement-method-guard.db.test.ts. This file pins what that
 // cannot see: the file wraps itself, it only ADDS a guard (no vocabulary,
 // CHECK, row or other table is touched), the trigger function holds no grant,
-// and 0214, which it reads, is byte-identical.
+// and the exact reviewed 0214 owner source it reads is pinned.
 // ===========================================================================
 
 const VERSION = "0224";
@@ -43,9 +43,9 @@ describe("0224 sits correctly in the migration sequence", () => {
     expect(countVersion(VERSION)).toBe(1);
   });
 
-  it("reads 0214, which stays byte-identical", () => {
+  it("reads exact reviewed verified-only 0214 owner source", () => {
     expect(sha256(read("0214_studio_payment_jurisdiction.sql"))).toBe(
-      "25da63b7bdacefa44e12c2357c85cb8b814cd7be4d25dfb8dbf8cf151e1ab65f",
+      "8ff9350eb53070c970b9548e4e4093e2aa878116fd7ad9dc118bfb3d401a3289",
     );
   });
 });

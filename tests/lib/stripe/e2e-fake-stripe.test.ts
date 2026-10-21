@@ -294,14 +294,14 @@ describe("fake-call recorder — invocation vs effect, run-isolated, test-safe",
     // The recorder type is method/key/account/amount/currency/resultId/chargeId/
     // metadataDigest/replay only. chargeId (PAY-CCY-09) is a synthetic provider
     // id; metadataDigest is a one-way hash, never the metadata values.
-    const keys = ["method", "idempotencyKey", "stripeAccount", "amountCents", "currency", "resultId", "chargeId", "metadataDigest", "replay"];
+    const keys = ["method", "idempotencyKey", "stripeAccount", "amountCents", "currency", "resultId", "chargeId", "metadataDigest", "payerDigest", "replay"];
     const src = readFileSync(join(process.cwd(), "lib/stripe/e2e-fake-stripe.ts"), "utf8");
     for (const forbidden of ["email", "last4", "customer", "client_id", "card_", "signature", "cvc", "secret"]) {
       // no forbidden field is recorded (the FakeStripeCall type block)
       const typeBlock = src.slice(src.indexOf("export type FakeStripeCall"), src.indexOf("};", src.indexOf("export type FakeStripeCall")));
       expect(typeBlock.toLowerCase()).not.toContain(forbidden);
     }
-    expect(keys.length).toBe(9);
+    expect(keys.length).toBe(10);
   });
 });
 
@@ -519,5 +519,30 @@ describe("fake refunds: selectable outcomes match production's failure classes",
       { stripeAccount: "acct_test_r3", idempotencyKey: "hone:payment_refund:att-restart-m:v1" },
     );
     expect(refund).toMatchObject({ amount: 15000, currency: "usd" });
+  });
+});
+
+
+describe("fake processor payer evidence for signed webhook fixtures", () => {
+  const RUN = "run-payerbind0001";
+  afterEach(() => resetFakeStripeState(RUN));
+  async function create(customer?: string) {
+    process.env.HONE_E2E_RUN_ID = RUN;
+    await createFakeStripe().paymentIntents.create({ amount: 18500, currency: "usd", ...(customer ? { customer } : {}) },
+      { idempotencyKey: `payer-${getFakeStripeCalls(RUN).length}` });
+    return getFakeStripeCalls(RUN).at(-1)!;
+  }
+  it("records the payer the SDK actually received as a digest, never raw contact/identity", async () => {
+    const call = await create("cus_SYNTHETIC_PAYER_SECRETLIKE");
+    expect(call.payerDigest).toBe(metadataDigest({ payer: "cus_SYNTHETIC_PAYER_SECRETLIKE" }));
+    expect(JSON.stringify(call)).not.toContain("cus_SYNTHETIC_PAYER_SECRETLIKE");
+  });
+  it("a different supplied payer cannot be repaired by copying a correct row identifier", async () => {
+    const wrong = await create("cus_wrong");
+    expect(wrong.payerDigest).not.toBe(metadataDigest({ payer: "cus_original" }));
+    expect(wrong.payerDigest).toBe(metadataDigest({ payer: "cus_wrong" }));
+  });
+  it("missing supplied payer stays absent evidence, never a fabricated default", async () => {
+    expect((await create()).payerDigest).toBeNull();
   });
 });

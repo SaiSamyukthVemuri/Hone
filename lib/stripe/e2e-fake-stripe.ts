@@ -54,6 +54,8 @@ export type FakeStripeCall = {
   // carry client and authorization ids. A webhook test validates the metadata it
   // signs against this processor fact instead of re-deriving it from the row.
   metadataDigest: string | null;
+  // One-way binding of the SDK payer identifier; no raw identifier recorded.
+  payerDigest?: string | null;
   // INVOCATION vs EFFECT (PR #419 concurrency pass). Every adapter call is
   // recorded (an "invocation"); replay=false marks the calls that actually
   // created a NEW synthetic processor result for a previously-unseen idempotency
@@ -201,6 +203,7 @@ export function resetFakeStripeState(run: string = runId()): void {
 
 // ---- The fake client -----------------------------------------------------------
 type CreatePiParams = {
+  customer?: string | null;
   amount?: number | null;
   currency?: string | null;
   metadata?: Record<string, string | null | undefined> | null;
@@ -249,6 +252,8 @@ function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiPar
     resultId: id,
     chargeId: outcome === "success" ? chargeId : null,
     metadataDigest: fakeMetadataDigest(params?.metadata),
+    payerDigest: typeof params?.customer === "string" && params.customer.length > 0
+      ? fakeMetadataDigest({ payer: params.customer }) : null,
     replay,
   });
   // Success → succeeded (+ latest_charge); decline → non-succeeded status the

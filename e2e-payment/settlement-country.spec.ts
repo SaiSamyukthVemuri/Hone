@@ -44,10 +44,13 @@ async function seedStudioIn(country: "CA" | "US"): Promise<PaymentSeed> {
     // refuses with refused_priced_configuration). Given here, as the US fixture
     // (tests/db/helpers/usd-payment-fixture makeStudioUsd) does.
     const r = await adminQuery(
-      `select out_result from public.set_studio_payment_jurisdiction($1,'US','usd','e2e:settlement-country','synthetic US studio',true)`,
+      `select out_result from public.set_studio_payment_jurisdiction($1,'US','usd','e2e:settlement-country','synthetic US studio',true,'fixture:settlement-country-US-USD')`,
       [seed.studioId],
     );
-    expect(r.rows[0]?.out_result).toBe("changed");
+    expect(["initialized", "changed", "unchanged"]).toContain(r.rows[0]?.out_result);
+    const jurisdiction = await adminQuery(
+      `select payment_country,payment_currency from public.studio_payment_jurisdictions where studio_id=$1`, [seed.studioId]);
+    expect(jurisdiction.rows[0]).toEqual({ payment_country: "US", payment_currency: "usd" });
   }
   return seed;
 }

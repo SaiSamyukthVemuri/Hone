@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { initialGridPhoto, type GridPhotoState } from "./grid-photo-recovery";
+import { currentGridPhoto, initialGridPhoto, type GridPhotoState } from "./grid-photo-recovery";
 import { createRemintController, oncePerErrorEvent, type RemintController } from "./remint-controller";
 import { fetchSignedImageUrl } from "./remint-request";
 
@@ -35,7 +35,8 @@ export function useGridPhotoRecovery(input: {
   imageId: string;
 }) {
   const { previewUrl, thumbUrl, clientId, imageId } = input;
-  const [state, setState] = useState<GridPhotoState>(() => initialGridPhoto({ previewUrl, thumbUrl }));
+  const [storedState, setState] = useState<GridPhotoState>(() => initialGridPhoto({ previewUrl, thumbUrl }));
+  const state = currentGridPhoto(storedState, { previewUrl, thumbUrl });
   const imgRef = useRef<HTMLImageElement | null>(null);
   const stateRef = useRef(state);
   stateRef.current = state;

@@ -784,6 +784,24 @@ describe("0166 — strict allow-list block patch", () => {
 // 0244 proof preparation: existing studio/role helpers, no cleanup bypass.
 // RESTRICT evidence is deliberately retained; afterAll only closes the pool.
 describe("0244 — attributable routine reading correction history", () => {
+  // Practitioner corrections use the existing governed command, never table DML.
+  async function correctionArgs(f: { sessionId: string; blockId: string }, patch: unknown) {
+    const args = patchArgs(f.blockId, {});
+    args[0] = f.sessionId;
+    // 0129 replaces its allow-listed fields rather than applying a sparse
+    // patch. Preserve the existing reading payload exactly, as the form does.
+    const current = (await adminQuery("select to_jsonb(b) as value from public.session_blocks b where id=$1", [f.blockId])).rows[0].value;
+    args[3] = JSON.stringify({ ...current, ...patch as Record<string, unknown> });
+    args[5] = null; // Preserve the area set this caller does not own.
+    return args;
+  }
+  // Low-level lineage/legacy/laser trigger fixtures need owner privileges but
+  // still supply a real active actor. This is NOT an authenticated DML path.
+  const ownerCorrection = (text: string, params: unknown[]) => adminTx(async q => {
+    await q("select set_config('request.jwt.claims',$1,true)", [JSON.stringify({ sub: A.userId, role: "authenticated" })]);
+    return q(text, params);
+  });
+
   async function fixture() {
     const seeded = await seedSession(A);
     return seeded;
@@ -792,11 +810,17 @@ describe("0244 — attributable routine reading correction history", () => {
     "select * from public.treatment_reading_change_events where source_id=$1 order by occurred_at,id", [id])).rows;
   it("records one exact multi-field diff, no-op/narrative edits none, and retains on soft removal", async () => {
     const f = await fixture();
-    await userQuery(A.userId, "update public.session_blocks set energy_level=10,minutes_performed=7 where id=$1", [f.blockId]);
+    await expect(userQuery(A.userId, "update public.session_blocks set energy_level=10 where id=$1", [f.blockId])).rejects.toMatchObject({ code: "42501" });
+    expect(await events(f.blockId)).toEqual([]);
+    await userQuery(A.userId, UPDATE_SQL, await correctionArgs(f, { energy_level: 10, minutes_performed: 7 }));
     const [event] = await events(f.blockId);
     expect(event).toMatchObject({ studio_id: A.studioId, client_id: A.clientId, session_id: f.sessionId, actor_practitioner_id: A.practitionerId, actor_user_id: A.userId, source_table: "session_blocks", changed_fields: ["energy_level", "minutes_performed"] });
     expect(event.changes.energy_level.new).toEqual({ present: true, value: 10 });
-    await userQuery(A.userId, "update public.session_blocks set energy_level=10,block_notes='private excluded',deleted_at=now() where id=$1", [f.blockId]);
+    await userQuery(A.userId, UPDATE_SQL, await correctionArgs(f, { energy_level: 10 }));
+    const noteArgs = await correctionArgs(f, {});
+    noteArgs[4] = JSON.stringify({ block_notes: "private excluded" });
+    await userQuery(A.userId, UPDATE_SQL, noteArgs);
+    await userQuery(A.userId, "select public.soft_delete_session_block($1,$2,$3,$4)", [f.sessionId, A.clientId, f.blockId, "synthetic wrong area"]);
     expect(await events(f.blockId)).toEqual([event]);
     expect((await userQuery(B.userId, "select id from public.treatment_reading_change_events where source_id=$1", [f.blockId])).rowCount).toBe(0);
     expect((await userQuery(A.userId, "select id from public.treatment_reading_change_events where source_id=$1", [f.blockId])).rowCount).toBe(1);
@@ -805,7 +829,7 @@ describe("0244 — attributable routine reading correction history", () => {
     const f = await fixture();
     await asRole("authenticated", async q => {
       await q("select set_config('request.jwt.claims',$1,true)", [JSON.stringify({ sub: A.userId, role: "authenticated" })]);
-      await q("update public.session_blocks set energy_level=12 where id=$1", [f.blockId]);
+      await q(UPDATE_SQL, await correctionArgs(f, { energy_level: 12 }));
       expect((await q("select id from public.treatment_reading_change_events where source_id=$1", [f.blockId])).rowCount).toBe(1);
     }); // existing helper ALWAYS rolls back; no special history deletion.
     expect(await events(f.blockId)).toEqual([]);
@@ -813,23 +837,27 @@ describe("0244 — attributable routine reading correction history", () => {
   it.each(["NaN", "Infinity", "-Infinity"])("legacy numeric %s can be corrected without losing its stored history", async sentinel => {
     const f = await fixture();
     const block = (await adminQuery("insert into public.session_blocks(studio_id,session_id,sort_order,energy_level) values ($1,$2,1,$3::numeric) returning id", [A.studioId, f.sessionId, sentinel])).rows[0].id;
-    await userQuery(A.userId, "update public.session_blocks set energy_level=5 where id=$1", [block]);
+    await userQuery(A.userId, UPDATE_SQL, await correctionArgs({ sessionId: f.sessionId, blockId: block }, { energy_level: 5 }));
     const [event] = await events(block);
     expect(event.changes.energy_level).toEqual({ old: { present: true, value: sentinel }, new: { present: true, value: 5 } });
   });
   it("electrolysis correction preserves typed leaves and failed lineage writes add no event", async () => {
     const created = (await userQuery(A.userId, CREATE_SQL, createArgs())).rows[0];
-    await userQuery(A.userId, "update public.electrolysis_entries set thermolysis_intensity_percent=30,thermolysis_duration_seconds=0.5 where id=$1", [created.entry_id]);
+    const blockArgs = await correctionArgs({ sessionId: sessionA, blockId: created.block_id }, {});
+    const args = [sessionA, A.clientId, created.block_id, blockArgs[3], "{}", null, null,
+      true, created.entry_id, "chin", ["chin"], null, null, "thermo", 1, null,
+      null, "[]", null, null, null, null, null, null, null, null, 30, 0.5, null];
+    await userQuery(A.userId, UPDATE_SQL, args);
     const [event] = await events(created.entry_id);
     expect(event).toMatchObject({ source_table: "electrolysis_entries", block_id: created.block_id, actor_practitioner_id: A.practitionerId });
     expect(event.changed_fields).toEqual(["thermolysis_duration_seconds", "thermolysis_intensity_percent"]);
     expect(event.changes.thermolysis_duration_seconds.new).toEqual({ present: true, value: 0.5 });
-    await expect(userQuery(A.userId, "update public.electrolysis_entries set session_id=$2,thermolysis_duration_seconds=0.6 where id=$1", [created.entry_id, sessionB])).rejects.toThrow();
+    await expect(ownerCorrection("update public.electrolysis_entries set session_id=$2,thermolysis_duration_seconds=0.6 where id=$1", [created.entry_id, sessionB])).rejects.toMatchObject({ code: "23514" });
     expect(await events(created.entry_id)).toEqual([event]);
   });
   it("retains 0160 permitted block-link clearing during a reading correction", async () => {
     const created = (await userQuery(A.userId, CREATE_SQL, createArgs())).rows[0];
-    await userQuery(A.userId, "update public.electrolysis_entries set block_id=null,thermolysis_duration_seconds=0.7 where id=$1", [created.entry_id]);
+    await ownerCorrection("update public.electrolysis_entries set block_id=null,thermolysis_duration_seconds=0.7 where id=$1", [created.entry_id]);
     expect((await adminQuery("select block_id from public.electrolysis_entries where id=$1", [created.entry_id])).rows[0].block_id).toBeNull();
     const [event] = await events(created.entry_id);
     expect(event).toMatchObject({ block_id: created.block_id, source_id: created.entry_id, changed_fields: ["thermolysis_duration_seconds"] });
@@ -840,7 +868,7 @@ describe("0244 — attributable routine reading correction history", () => {
     await expect(asRole("service_role", q => q("update public.session_blocks set energy_level=9 where id=$1", [f.blockId]))).rejects.toMatchObject({ code: "23514" });
     await adminQuery("update public.sessions set modality='laser' where id=$1", [f.sessionId]);
     const entry = (await adminQuery("insert into public.laser_entries(session_id,zone,equipment_params) values ($1,'synthetic', '{}'::jsonb) returning id", [f.sessionId])).rows[0].id;
-    await expect(userQuery(A.userId, "update public.laser_entries set equipment_params=$2::jsonb where id=$1", [entry, JSON.stringify({ fluence: { private: "not a reading" } })])).rejects.toMatchObject({ code: "23514" });
+    await expect(ownerCorrection("update public.laser_entries set equipment_params=$2::jsonb where id=$1", [entry, JSON.stringify({ fluence: { private: "not a reading" } })])).rejects.toMatchObject({ code: "23514" });
     expect(await events(f.blockId)).toEqual([]);
     expect(await events(entry)).toEqual([]);
   });
@@ -848,7 +876,7 @@ describe("0244 — attributable routine reading correction history", () => {
     const f = await fixture();
     await adminQuery("update public.sessions set modality='laser' where id=$1", [f.sessionId]);
     const entry = (await adminQuery("insert into public.laser_entries(session_id,zone,equipment_params) values ($1,'synthetic','{}'::jsonb) returning id", [f.sessionId])).rows[0].id;
-    await userQuery(A.userId, "update public.laser_entries set equipment_params=$2::jsonb where id=$1", [entry, JSON.stringify({ fluence: " 003i ", pulse_width: null, ignored: { private: "excluded" } })]);
+    await ownerCorrection("update public.laser_entries set equipment_params=$2::jsonb where id=$1", [entry, JSON.stringify({ fluence: " 003i ", pulse_width: null, ignored: { private: "excluded" } })]);
     const [event] = await events(entry);
     expect(event.changed_fields).toEqual(["equipment_params.fluence", "equipment_params.pulse_width"]);
     expect(event.changes["equipment_params.fluence"]).toEqual({ old: { present: false, value: null }, new: { present: true, value: " 003i " } });
@@ -859,7 +887,7 @@ describe("0244 — attributable routine reading correction history", () => {
   });
   it("transport forgery and even owner mutation/truncate are denied; parent cleanup RESTRICT", async () => {
     const f = await fixture();
-    await userQuery(A.userId, "update public.session_blocks set energy_level=8 where id=$1", [f.blockId]);
+    await userQuery(A.userId, UPDATE_SQL, await correctionArgs(f, { energy_level: 8 }));
     const [event] = await events(f.blockId);
     for (const role of ["anon", "authenticated", "service_role"] as const) {
       for (const statement of ["insert into public.treatment_reading_change_events default values", "update public.treatment_reading_change_events set actor_display_name='forged'", "delete from public.treatment_reading_change_events", "truncate public.treatment_reading_change_events"]) {
@@ -874,7 +902,7 @@ describe("0244 — attributable routine reading correction history", () => {
   });
   it("inactive actor is refused and prior attribution survives practitioner rename", async () => {
     const f = await fixture();
-    await userQuery(A.userId, "update public.session_blocks set energy_level=6 where id=$1", [f.blockId]);
+    await userQuery(A.userId, UPDATE_SQL, await correctionArgs(f, { energy_level: 6 }));
     const [event] = await events(f.blockId);
     await asRole("service_role", async q => {
       // Existing rollback-only fixture helper; no persistent actor deactivation.
@@ -885,7 +913,9 @@ describe("0244 — attributable routine reading correction history", () => {
       await q("set local role service_role");
       await q("update public.practitioners set active=false where id=$1", [A.practitionerId]);
       await q("set local role authenticated");
-      expect((await q("update public.session_blocks set energy_level=7 where id=$1", [f.blockId])).rowCount).toBe(0);
+      await q("savepoint inactive_correction");
+      await expect(q(UPDATE_SQL, await correctionArgs(f, { energy_level: 7 }))).rejects.toMatchObject({ code: "23514" });
+      await q("rollback to savepoint inactive_correction");
       expect((await q("select id from public.treatment_reading_change_events where source_id=$1", [f.blockId])).rowCount).toBe(0);
     });
     expect(await events(f.blockId)).toEqual([event]);
@@ -896,7 +926,7 @@ describe("0244 — attributable routine reading correction history", () => {
     const membership = (await adminQuery("select to_regclass('public.studio_receptionists') as relation")).rows[0].relation;
     if (!membership) context.skip("UNRUN receptionist history proof: aligned candidate must include existing Team receptionist foundation; no schema imported here.");
     const f = await fixture();
-    await userQuery(A.userId, "update public.session_blocks set energy_level=4 where id=$1", [f.blockId]);
+    await userQuery(A.userId, UPDATE_SQL, await correctionArgs(f, { energy_level: 4 }));
     const receptionist = randomUUID();
     await adminQuery("insert into auth.users(id,email) values ($1,$2)", [receptionist, `history-desk-${receptionist}@harness.local`]);
     await adminQuery("insert into public.studio_receptionists(studio_id,user_id,display_name,active) values ($1,$2,'Synthetic History Desk',true)", [A.studioId, receptionist]);
@@ -911,7 +941,11 @@ describe("0244 — attributable routine reading correction history", () => {
     const otherClient = randomUUID();
     await adminQuery("insert into public.clients(id,studio_id,name) values ($1,$2,'Synthetic Visible History Client')", [otherClient, A.studioId]);
     const visible = await seedSession({ ...A, clientId: otherClient });
-    for (const f of [hidden, visible]) await userQuery(A.userId, "update public.session_blocks set energy_level=3 where id=$1", [f.blockId]);
+    for (const f of [hidden, visible]) {
+      const args = await correctionArgs(f, { energy_level: 3 });
+      args[1] = f === visible ? otherClient : A.clientId;
+      await userQuery(A.userId, UPDATE_SQL, args);
+    }
     const sourceIds = [hidden.blockId, visible.blockId];
     const historyQuery = "select source_id from public.treatment_reading_change_events where source_id=any($1::uuid[]) order by source_id";
     expect((await userQuery(A.userId, historyQuery, [sourceIds])).rowCount).toBe(2);
