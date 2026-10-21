@@ -60,6 +60,8 @@ const scenario = {
   ownerLookupThrows: false,
   contextMissing: false,
   contextThrows: false,
+  rpcError: null as null | { code: string; message: string },
+  fetchError: null as null | { code: string; message: string },
 };
 
 const ownerEmail = vi.fn(async (): Promise<{ ok: true } | { ok: false; error: string; retryable: boolean }> => ({ ok: true }));
@@ -107,6 +109,7 @@ function makeQuery(table: string) {
     },
     async maybeSingle() {
       if (table === "appointments") {
+        if (columns.startsWith("id, status, starts_at") && scenario.fetchError) return { data: null, error: scenario.fetchError };
         if (columns.startsWith("studio_id, client_id, practitioner_id")) {
           if (scenario.contextThrows) throw new Error("PRIVATE context token=" + TOKEN);
           if (scenario.contextMissing) return { data: null, error: { message: "PRIVATE context" } };
@@ -148,7 +151,7 @@ const admin = {
   },
   async rpc(fn: string, args: Record<string, unknown>) {
     rpcCalls.push({ fn, args });
-    return { data: [{ result: scenario.cancelResult }], error: null };
+    return scenario.rpcError ? { data: null, error: scenario.rpcError } : { data: [{ result: scenario.cancelResult }], error: null };
   },
 };
 
@@ -263,6 +266,7 @@ beforeEach(() => {
     studioSlug: WAITLISTED_SLUG,
     cancelResult: "cancelled",
     ownerMissing: false, ownerLookupThrows: false, contextMissing: false, contextThrows: false,
+    rpcError: null, fetchError: null,
   });
   process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = WAITLISTED_SLUG;
 });
@@ -536,6 +540,36 @@ describe("MSG-004 public cancellation owner-notification recovery", () => {
       expect(writes).toEqual([]);
       expect(log).toHaveBeenCalledTimes(1);
       expect(JSON.stringify([result, recoveryAlert.mock.calls, log.mock.calls])).not.toMatch(/PRIVATE|raw-url-token|owner@example.invalid/);
+    } finally { log.mockRestore(); }
+  });
+});
+
+
+describe("MSG007 public cancellation failure diagnostics", () => {
+  it.each([
+    ["rpc", "private message"], ["fetch", "private message"],
+    ["rpc", "throwing message getter"], ["fetch", "throwing message getter"],
+    ["rpc", "throwing console"], ["fetch", "throwing console"],
+  ] as const)("%s %s stays generic and never discloses private contents or retries", async (path, boundary) => {
+    const messageRead = vi.fn(() => { throw new Error("SYNTHETIC_PRIVATE message getter " + TOKEN); });
+    const failure = { code: "42703", message: "SYNTHETIC_PRIVATE owner@example.invalid " + TOKEN };
+    if (boundary === "throwing message getter") Object.defineProperty(failure, "message", { get: messageRead });
+    if (path === "rpc") scenario.rpcError = failure; else scenario.fetchError = failure;
+    const log = vi.spyOn(console, "error").mockImplementation(() => {
+      if (boundary === "throwing console") throw new Error("SYNTHETIC_PRIVATE console " + TOKEN);
+    });
+    try {
+      const result = path === "rpc" ? await publicCancelAppointmentAction(cancelForm()) : await fetchAppointmentForCancelAction(TOKEN);
+      expect(result).toEqual({ ok: false, error: "This cancellation link is no longer valid. Please contact the studio if you need assistance." });
+      expect(messageRead).not.toHaveBeenCalled();
+      expect(log).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(String(log.mock.calls[0][0]))).toEqual({
+        event: path === "rpc" ? "public_cancel_rpc_error" : "public_cancel_fetch_error",
+        timestamp: expect.any(String),
+      });
+      expect(JSON.stringify([result, log.mock.calls])).not.toMatch(/SYNTHETIC_PRIVATE|owner@example.invalid|raw-url-token/);
+      expect(ownerEmail).not.toHaveBeenCalled(); expect(recoveryAlert).not.toHaveBeenCalled();
+      expect(rpcCalls).toHaveLength(path === "rpc" ? 1 : 0); expect(writes).toEqual([]);
     } finally { log.mockRestore(); }
   });
 });

@@ -58,18 +58,18 @@ const POLICY_CHANGED_ERROR =
 const PUBLIC_CANCEL_GENERIC_ERROR =
   "This cancellation link is no longer valid. Please contact the studio if you need assistance.";
 
-function logInternal(event: string, detail: unknown) {
+type PublicCancelDiagnostic =
+  | "public_cancel_command_unavailable"
+  | "public_cancel_rpc_error"
+  | "public_cancel_rpc_empty"
+  | "public_cancel_fetch_error";
+
+function logInternal(event: PublicCancelDiagnostic) {
+  // Fixed metadata only: SQL text may contain a token or client contents.
+  // Logging must never replace the public refusal with a thrown exception.
   try {
-    console.error(
-      JSON.stringify({
-        event,
-        detail,
-        timestamp: new Date().toISOString(),
-      }),
-    );
-  } catch {
-    console.error(event, detail);
-  }
+    safeLog.error(JSON.stringify({ event, timestamp: new Date().toISOString() }));
+  } catch { /* Diagnostics are best effort; never retry with the rejected data. */ }
 }
 
 // Resolves a cancel/reschedule URL token to an appointment id. PR #260:
@@ -293,17 +293,17 @@ export async function publicCancelAppointmentAction(
   // deployment is in progress. The cost is a bounded AVAILABILITY window for
   // cancellations if the order is reversed; there is no INTEGRITY window.
   if (rpcErr?.code === "PGRST202") {
-    logInternal("public_cancel_command_unavailable", { code: rpcErr.code });
+    logInternal("public_cancel_command_unavailable");
     return { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };
   }
 
   if (rpcErr) {
-    logInternal("public_cancel_rpc_error", { code: rpcErr.code, message: rpcErr.message });
+    logInternal("public_cancel_rpc_error");
     return { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };
   }
   const outcome = Array.isArray(rpcRows) ? rpcRows[0] : rpcRows;
   if (!outcome) {
-    logInternal("public_cancel_rpc_empty", {});
+    logInternal("public_cancel_rpc_empty");
     return { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };
   }
   // The ONE outcome that must not collapse: the client needs to be told to
@@ -592,10 +592,7 @@ export async function fetchAppointmentForCancelAction(token: string): Promise<
     .eq("id", resolved.appointment_id)
     .maybeSingle();
   if (error) {
-    logInternal("public_cancel_fetch_error", {
-      code: error.code,
-      message: error.message,
-    });
+    logInternal("public_cancel_fetch_error");
     return { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };
   }
   if (!data) return { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };
