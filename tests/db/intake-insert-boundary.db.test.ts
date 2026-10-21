@@ -1,7 +1,9 @@
 import { ISSUED_QUESTIONNAIRE } from "@/lib/intake/questionnaire";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   adminQuery,
+  adminTx,
   asRole,
   closePool,
   seedStudio,
@@ -31,6 +33,13 @@ import {
 // Everything runs against the real migrated local database. Every row is
 // synthetic and confined to the disposable local database; responses are
 // non-clinical placeholders and no intake answer is ever printed.
+
+// Phase1 is exercised only in a rolled-back catalog/data savepoint. The
+// final248 guard remains installed outside it; no migration history is altered.
+const additiveMigration = readFileSync("supabase/migrations/0243_intake_revision_cas_and_profile_sync.sql", "utf8");
+const additiveStart = additiveMigration.indexOf("create function public.advance_intake_revision()");
+const additiveGuardSql = additiveMigration.slice(additiveStart, additiveMigration.indexOf("\n$$;", additiveStart) + 4)
+  .replace("create function", "create or replace function");
 
 let A: SeededStudio;
 let B: SeededStudio;
@@ -195,7 +204,7 @@ describe("0163 — the service-role writers are preserved", () => {
 // 8-9. Nothing else regressed.
 // ---------------------------------------------------------------------------
 
-describe("0163 — SELECT, UPDATE and the 0162 guard are unchanged", () => {
+describe("0163 — INSERT denial, phased draft writes and the preserved0162 review guard", () => {
   it("8a. authenticated SELECT of an own-studio intake still works", async () => {
     const seeded = await adminQuery(
       `insert into public.client_intake_forms (studio_id, client_id)
@@ -221,21 +230,49 @@ describe("0163 — SELECT, UPDATE and the 0162 guard are unchanged", () => {
     await adminQuery(`delete from public.client_intake_forms where id = $1`, [id]);
   });
 
-  it("8b. authenticated UPDATE permitted by 0118/0162 still works", async () => {
-    const seeded = await adminQuery(
-      `insert into public.client_intake_forms (studio_id, client_id)
-       values ($1, $2) returning id`,
-      [A.studioId, A.clientId],
-    );
+  it("8b. additive0243 preserves the legacy authenticated step edit before248 enforcement", async () => {
+    const seeded = await adminQuery("insert into public.client_intake_forms(studio_id,client_id) values($1,$2) returning id", [A.studioId,A.clientId]);
     const id = seeded.rows[0].id as string;
-    // An ordinary in-progress edit: still allowed for a studio member.
-    const res = await userQuery(
-      A.userId,
-      `update public.client_intake_forms set current_step = 2 where id = $1 returning id`,
-      [id],
-    );
-    expect(res.rowCount, "a permitted member UPDATE must still affect its row").toBe(1);
-    await adminQuery(`delete from public.client_intake_forms where id = $1`, [id]);
+    await adminTx(async q => {
+      const { rows: [original] } = await q("select pg_catalog.pg_get_functiondef('public.advance_intake_revision()'::regprocedure) as definition");
+      await q("savepoint additive_positive");
+      try {
+        expect(additiveGuardSql).toContain("new.revision := old.revision + 1");
+        await q(additiveGuardSql);
+        await q("set local role authenticated");
+        await q("select set_config('request.jwt.claims',$1,true)", [JSON.stringify({ sub: A.userId, role: "authenticated" })]);
+        expect((await q("select current_user as role,auth.uid()::text as user_id")).rows[0])
+          .toEqual({ role: "authenticated", user_id: A.userId });
+        const res = await q("update public.client_intake_forms set current_step=2 where id=$1 returning id", [id]);
+        expect(res.rowCount).toBe(1);
+        expect((await q("select current_step,revision::text from public.client_intake_forms where id=$1", [id])).rows[0])
+          .toEqual({ current_step: 2, revision: "1" });
+      } finally {
+        await q("rollback to savepoint additive_positive");
+      }
+      expect((await q("select pg_catalog.pg_get_functiondef('public.advance_intake_revision()'::regprocedure) as definition")).rows[0].definition)
+        .toBe(original.definition);
+    });
+    expect((await adminQuery("select current_step,revision::text from public.client_intake_forms where id=$1", [id])).rows[0])
+      .toEqual({ current_step: 1, revision: "0" });
+    await adminQuery("delete from public.client_intake_forms where id=$1", [id]);
+  });
+
+  it("8c. final248 refuses the direct step edit but the scoped service CAS save succeeds", async () => {
+    const seeded = await adminQuery("insert into public.client_intake_forms(studio_id,client_id) values($1,$2) returning id", [A.studioId,A.clientId]);
+    const id = seeded.rows[0].id as string;
+    const before = (await adminQuery("select responses,current_step,revision::text from public.client_intake_forms where id=$1", [id])).rows[0];
+    await expect(userQuery(A.userId,"update public.client_intake_forms set current_step=2 where id=$1 returning id",[id]))
+      .rejects.toMatchObject({ code: "42501", message: "Protected intake changes require the governed revision command." });
+    expect((await adminQuery("select responses,current_step,revision::text from public.client_intake_forms where id=$1", [id])).rows[0]).toEqual(before);
+    const saved = await adminTx(async q => {
+      await q("set local role service_role");
+      return q("select * from public.write_intake_revision($1,$2,$3,0,$4::jsonb,2,'save','{}'::jsonb)", [id,A.studioId,A.clientId,JSON.stringify(before.responses)]);
+    });
+    expect(saved.rows).toEqual([{ outcome: "saved", new_revision: "1" }]);
+    expect((await adminQuery("select responses,current_step,revision::text from public.client_intake_forms where id=$1", [id])).rows[0])
+      .toEqual({ responses: before.responses, current_step: 2, revision: "1" });
+    await adminQuery("delete from public.client_intake_forms where id=$1", [id]);
   });
 
   it("9. the 0162 review-transition protection is still enforced", async () => {
