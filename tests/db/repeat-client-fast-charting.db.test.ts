@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import {
   adminQuery,
+  adminTx,
   asUser,
   closePool,
   seedStudio,
@@ -548,10 +549,14 @@ describe("(10) a stale source fails closed", () => {
     const specs = await fastPathSpecs(s.previous);
 
     // The previous visit's reusable setup changes after the fast path read it.
-    await adminQuery(
-      `update public.session_blocks set energy_level = energy_level + 5 where session_id = $1`,
-      [s.previous],
-    );
+    await adminTx(async q => {
+      // Privileged legacy fixture edit, explicitly attributed; no DML grant change.
+      await q("select set_config('request.jwt.claims',$1,true)", [JSON.stringify({ sub: a.userId, role: "authenticated" })]);
+      return q(
+        `update public.session_blocks set energy_level = energy_level + 5 where session_id = $1`,
+        [s.previous],
+      );
+    });
     expect(await fingerprintOf(s.previous)).not.toBe(s.fp);
 
     await expect(
@@ -563,10 +568,14 @@ describe("(10) a stale source fails closed", () => {
 
   it("recovery is a fresh read: the NEW fingerprint commits the NEW setup", async () => {
     const s = await seedRepeatClient([AREA_CHIN]);
-    await adminQuery(
-      `update public.session_blocks set energy_level = 33 where session_id = $1`,
-      [s.previous],
-    );
+    await adminTx(async q => {
+      // Privileged legacy fixture edit, explicitly attributed; no DML grant change.
+      await q("select set_config('request.jwt.claims',$1,true)", [JSON.stringify({ sub: a.userId, role: "authenticated" })]);
+      return q(
+        `update public.session_blocks set energy_level = 33 where session_id = $1`,
+        [s.previous],
+      );
+    });
     const freshFp = await fingerprintOf(s.previous);
     await callCopy({
       target: s.today,

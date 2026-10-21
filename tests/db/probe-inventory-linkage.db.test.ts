@@ -246,7 +246,11 @@ describe("0244 clinical history restricts parent cleanup without a bypass", () =
       probe_inventory_item_id: item,
       probe_lot_number: "C-LOT",
     });
-    await asUser(c.userId, q => q("update public.session_blocks set energy_level=1 where id=$1", [blockId]));
+    const current = (await adminQuery("select to_jsonb(b) as value from public.session_blocks b where id=$1", [blockId])).rows[0].value;
+    await asUser(c.userId, q => q(
+      "select public.update_session_block_with_areas($1,$2,$3,$4::jsonb,$5::jsonb,null)",
+      [c.studioId, sessionId, blockId, JSON.stringify({ ...current, energy_level: 1 }), "[]"],
+    ));
     // Existing cascade guards can refuse first; the session-specific case in
     // the entry suite separately requires exact FK23503. No denial is bypassed.
     await expect(adminQuery("delete from public.studios where id=$1", [c.studioId])).rejects.toMatchObject({ code: expect.stringMatching(/^(23503|23514|55000)$/) });
