@@ -859,10 +859,22 @@ describe("SCH-002 public submit advisory availability failures", () => {
     expect(rpcCalls.some((c) => c.fn === "create_public_appointment")).toBe(true);
     expect(confirmationEmails).toEqual([]);
   });
-  it("keeps discovery failures rejecting rather than returning invented empty availability", async () => {
-    const failure = new Error("availability_read_failed:blockouts"); scenario.slotError = failure;
+  it.each(["blockouts", "window", "reservations"])("returns a sanitized typed refusal for discovery %s failures, never empty slots", async (stage) => {
+    scenario.slotError = new Error(`availability_read_failed:${stage}:PRIVATE_SENTINEL`);
+    const { fetchPublicSlotsAction } = await import("@/app/book/[slug]/actions");
+    expect(await fetchPublicSlotsAction({ slug: "test-studio", serviceId: SERVICE_ID, date: START_ISO.slice(0, 10) })).toEqual({ ok: false, error: "We couldn't complete your booking. Please try again or contact the studio." });
+    expect(consoleErrors.join(" ")).not.toContain("PRIVATE_SENTINEL"); expect(rpcCalls).toEqual([]);
+  });
+  it.each([new Error("unexpected discovery error"), "availability_read_failed:blockouts"])("does not absorb unrelated/non-Error discovery throws", async (failure) => {
+    scenario.slotError = failure;
     const { fetchPublicSlotsAction } = await import("@/app/book/[slug]/actions");
     await expect(fetchPublicSlotsAction({ slug: "test-studio", serviceId: SERVICE_ID, date: START_ISO.slice(0, 10) })).rejects.toBe(failure);
+    expect(rpcCalls).toEqual([]);
+  });
+  it("retains a genuinely empty discovery day as successful empty, not a read refusal", async () => {
+    scenario.emptySlots = true;
+    const { fetchPublicSlotsAction } = await import("@/app/book/[slug]/actions");
+    expect(await fetchPublicSlotsAction({ slug: "test-studio", serviceId: SERVICE_ID, date: START_ISO.slice(0, 10) })).toEqual({ ok: true, slots: [] });
     expect(rpcCalls).toEqual([]);
   });
   it("still refuses a successfully read empty slot list without command", async () => {

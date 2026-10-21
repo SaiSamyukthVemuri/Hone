@@ -580,19 +580,26 @@ export async function fetchRescheduleSlotsAction(params: {
   // r.duration_minutes`, so a studio that edited the service after the booking
   // made the page offer slots at one length while the submit path used another.
   // The exclusion and the practitioner are passed for the first time here.
-  const slots = await getAvailableSlots(
-    admin,
-    ctx.studio,
-    params.date,
-    ctx.durationMinutes,
-    ctx.excludeReservation,
-    ctx.practitionerId,
-  );
-  // PR #149: hide same-day past slots. Shared filterFutureSlots
-  // helper is the single source of truth for public booking and
-  // public reschedule so the two surfaces cannot drift apart on
-  // what "future slot" means.
-  return { ok: true, slots: filterFutureSlots(slots) };
+  // Discovery has a structured retryable refusal, never fabricated availability.
+  try {
+    const slots = await getAvailableSlots(
+      admin,
+      ctx.studio,
+      params.date,
+      ctx.durationMinutes,
+      ctx.excludeReservation,
+      ctx.practitionerId,
+    );
+    // PR #149: hide same-day past slots. Shared filterFutureSlots
+    // helper is the single source of truth for public booking and
+    // public reschedule so the two surfaces cannot drift apart on
+    // what "future slot" means.
+    return { ok: true, slots: filterFutureSlots(slots) };
+  } catch (err) {
+    if (!(err instanceof Error) || !err.message.startsWith("availability_read_failed:")) throw err;
+    logInternal("public_reschedule_slots_read_failed", { studioId: ctx.studio.id });
+    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+  }
 }
 
 // ---------------------------------------------------------------------------
