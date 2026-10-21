@@ -50,10 +50,18 @@ type ReadResult = { data: unknown; error: unknown };
 function makeAdmin(reads: Record<string, ReadResult[]>, rpcs: Record<string, ReadResult> = {}) {
   const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const eqCalls: Array<{ table: string; column: string; value: unknown }> = [];
+  const updateCalls: Array<{ table: string; payload: Record<string, unknown> }> = [];
   const admin = {
     from(table: string) {
+      let update: Record<string, unknown> | null = null;
       const q = {
-        select: () => q,
+        select: () => update ? Promise.resolve({ data: [{ id: "attempt-1" }], error: null }) : q,
+        update: (payload: Record<string, unknown>) => {
+          update = payload; updateCalls.push({ table, payload }); return q;
+        },
+        in: () => q,
+        or: () => q,
+        is: () => q,
         eq: (column: string, value: unknown) => {
           eqCalls.push({ table, column, value });
           return q;
@@ -68,7 +76,7 @@ function makeAdmin(reads: Record<string, ReadResult[]>, rpcs: Record<string, Rea
       return rpcs[name] ?? { data: null, error: null };
     },
   };
-  return { admin, rpcCalls, eqCalls };
+  return { admin, rpcCalls, eqCalls, updateCalls };
 }
 
 const CLAIM_OK = {
@@ -317,3 +325,163 @@ describe("PAY-005 capability retrieval stays retryable", () => {
     expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
   });
 });
+
+// PAY-001: signature verification authenticates Stripe, not this attempt's owner.
+describe("PAY-001 durable payment event identity", () => {
+  const attempt = {
+    id: "attempt-1", studio_id: "studio-1", client_id: "client-1",
+    charge_reason: "session_payment", status: "pending_stripe",
+    stripe_account_id: "acct_test_1", stripe_customer_id: "cus_1",
+    stripe_livemode: false, stripe_payment_intent_id: "pi_1", stripe_charge_id: "ch_1",
+    amount_cents: 5000, currency: "cad", charged_at: null,
+    refund_status: null, refund_amount_cents: null, refunded_at: null, stripe_refund_id: null,
+  };
+  function prepare(overrides: Record<string, unknown> = {}) {
+    CONSTRUCT_EVENT.mockReturnValue({
+      id: "evt_payment_1", type: "payment_intent.succeeded", account: "acct_test_1", livemode: false,
+      data: { object: { id: "pi_1", customer: "cus_1", amount: 5000, currency: "cad", latest_charge: "ch_1",
+        metadata: { hone_payment_charge_attempt_id: "attempt-1" } } },
+    });
+    ADMIN.current = makeAdmin({
+      studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
+      payment_charge_attempts: [{ data: { ...attempt, ...overrides }, error: null }],
+    }, { claim_stripe_event: CLAIM_OK, reconcile_card_payment_succeeded: { data: [{ result: "zero_rows" }], error: null } });
+  }
+  it.each([
+    ["account", { stripe_account_id: "acct_other" }],
+    ["studio", { studio_id: "studio-other" }],
+    ["customer", { stripe_customer_id: "cus_other" }],
+    ["payment intent", { stripe_payment_intent_id: "pi_other" }],
+    ["charge", { stripe_charge_id: "ch_other" }],
+    ["missing original intent", { stripe_payment_intent_id: null }],
+    ["missing original customer", { stripe_customer_id: null }],
+  ] as const)("refuses a signed event resolving to a different %s", async (_label, overrides) => {
+    prepare(overrides);
+    const response = await callRoute();
+    expect(response.status).toBe(200);
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("reconcile_card_payment_succeeded");
+    expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+    expect(RECORD_OPS_ALERT).toHaveBeenCalledWith(expect.objectContaining({ event: "stripe_webhook_payment_identity_mismatch" }));
+  });
+  it("allows a genuinely matching event to reach the existing locked command", async () => {
+    prepare();
+    const response = await callRoute();
+    expect(response.status).toBe(200);
+    expect(names(ADMIN.current!.rpcCalls)).toContain("reconcile_card_payment_succeeded");
+    expect(ADMIN.current!.eqCalls).toEqual(expect.arrayContaining([
+      { table: "payment_charge_attempts", column: "studio_id", value: "studio-1" },
+      { table: "payment_charge_attempts", column: "stripe_account_id", value: "acct_test_1" },
+      { table: "payment_charge_attempts", column: "stripe_livemode", value: false },
+    ]));
+  });
+});
+
+// Exercise all three existing payment writers through the real route. Scripted
+// reads deliberately may return a row despite its filters, so the independent
+// identity guard is tested too; positive cases prove the write detector works.
+describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "charge.refunded"] as const)(
+  "PAY-001 app-first %s binding",
+  (type) => {
+    function prepareBound(options: {
+      row?: Record<string, unknown>;
+      object?: Record<string, unknown>;
+      metadata?: Record<string, string>;
+      account?: string;
+      studio?: string;
+      resolution?: "canonical" | "legacy" | "fallback";
+    } = {}) {
+      const account = options.account ?? "acct_test_1";
+      const studio = options.studio ?? "studio-1";
+      const row = {
+        id: "attempt-1", studio_id: studio, client_id: "client-1", charge_reason: "session_payment",
+        status: type === "charge.refunded" ? "succeeded" : "pending_stripe", stripe_livemode: false,
+        stripe_account_id: account, stripe_customer_id: "cus_1", stripe_payment_intent_id: "pi_1",
+        stripe_charge_id: "ch_1", amount_cents: 5000, currency: "cad", charged_at: null,
+        refund_status: type === "charge.refunded" ? "pending_stripe" : null,
+        refund_amount_cents: null, refunded_at: null, stripe_refund_id: null, ...options.row,
+      };
+      const metadata = options.metadata ?? (options.resolution === "fallback" ? {}
+        : options.resolution === "legacy" ? { hone_session_payment_charge_attempt_id: "attempt-1" }
+        : { hone_payment_charge_attempt_id: "attempt-1" });
+      const object = type === "charge.refunded"
+        ? { id: "ch_1", payment_intent: "pi_1", customer: "cus_1", amount: 5000, currency: "cad",
+          refunded: true, amount_refunded: 5000, refunds: { data: [{ id: "re_1" }] }, metadata, ...options.object }
+        : { id: "pi_1", customer: "cus_1", amount: 5000, currency: "cad", latest_charge: "ch_1",
+          metadata, ...options.object };
+      CONSTRUCT_EVENT.mockReturnValue({ id: "evt_payment_bound", type, account, livemode: false, data: { object } });
+      ADMIN.current = makeAdmin({
+        studio_payment_settings: [{ data: { studio_id: studio }, error: null }],
+        payment_charge_attempts: [{ data: row, error: null }],
+      }, { claim_stripe_event: CLAIM_OK,
+        reconcile_card_payment_succeeded: { data: [{ result: "reconciled", status_before: "pending_stripe" }], error: null } });
+    }
+    const writes = () => ADMIN.current!.rpcCalls.filter(({ name }) => name === "reconcile_card_payment_succeeded");
+    it.each([
+      ["another connected account", { stripe_account_id: "acct_test_2" }],
+      ["another studio", { studio_id: "studio-2" }],
+      ["another customer", { stripe_customer_id: "cus_other" }],
+      ["another mode", { stripe_livemode: true }],
+      ["another original intent", { stripe_payment_intent_id: "pi_other" }],
+      ["another original charge", { stripe_charge_id: "ch_other" }],
+      ["missing original intent", { stripe_payment_intent_id: null }],
+      ["missing original customer", { stripe_customer_id: null }],
+      ["missing bound account", { stripe_account_id: null }],
+    ] as const)("refuses %s despite a scripted row result", async (_name, row) => {
+      prepareBound({ row });
+      expect((await callRoute()).status).toBe(200);
+      expect(writes()).toEqual([]);
+      expect(ADMIN.current!.updateCalls).toEqual([]);
+      expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+      expect(RECORD_OPS_ALERT).toHaveBeenCalledWith(expect.objectContaining({
+        severity: "critical", event: "stripe_webhook_payment_identity_mismatch",
+      }));
+    });
+    it.each(["canonical", "legacy", "fallback"] as const)("matching %s resolution reaches the existing writer with all scope filters", async (resolution) => {
+      prepareBound({ resolution });
+      expect((await callRoute()).status).toBe(200);
+      if (type === "payment_intent.succeeded") expect(writes()).toHaveLength(1);
+      else {
+        expect(ADMIN.current!.updateCalls).toHaveLength(1);
+        expect(ADMIN.current!.updateCalls[0]).toMatchObject({ table: "payment_charge_attempts",
+          payload: type === "charge.refunded" ? { refund_status: "succeeded", stripe_refund_id: "re_1" } : { status: "failed" } });
+      }
+      expect(ADMIN.current!.eqCalls).toEqual(expect.arrayContaining([
+        { table: "payment_charge_attempts", column: "studio_id", value: "studio-1" },
+        { table: "payment_charge_attempts", column: "stripe_account_id", value: "acct_test_1" },
+        { table: "payment_charge_attempts", column: "stripe_livemode", value: false },
+        { table: "payment_charge_attempts", column: resolution === "fallback"
+          ? type === "charge.refunded" ? "stripe_charge_id" : "stripe_payment_intent_id" : "id",
+          value: resolution === "fallback" ? type === "charge.refunded" ? "ch_1" : "pi_1" : "attempt-1" },
+      ]));
+    });
+    it("allows a separately bound second studio/account without borrowing the first", async () => {
+      prepareBound({ account: "acct_test_2", studio: "studio-2" });
+      expect((await callRoute()).status).toBe(200);
+      expect(writes().length + ADMIN.current!.updateCalls.length).toBe(1);
+      expect(ADMIN.current!.eqCalls).toEqual(expect.arrayContaining([
+        { table: "payment_charge_attempts", column: "studio_id", value: "studio-2" },
+        { table: "payment_charge_attempts", column: "stripe_account_id", value: "acct_test_2" },
+      ]));
+      expect(RECORD_OPS_ALERT).not.toHaveBeenCalledWith(expect.objectContaining({ event: "stripe_webhook_payment_identity_mismatch" }));
+    });
+    it("does not trust contradictory canonical and legacy metadata IDs", async () => {
+      prepareBound({ metadata: { hone_payment_charge_attempt_id: "attempt-1", hone_session_payment_charge_attempt_id: "attempt-other" } });
+      expect((await callRoute()).status).toBe(200);
+      expect(writes()).toEqual([]); expect(ADMIN.current!.updateCalls).toEqual([]);
+      expect(RECORD_OPS_ALERT).toHaveBeenCalledWith(expect.objectContaining({ event: "stripe_webhook_payment_identity_mismatch" }));
+    });
+    it("does not bind a different provider object because metadata names this attempt", async () => {
+      prepareBound({ object: { id: type === "charge.refunded" ? "ch_other" : "pi_other" } });
+      expect((await callRoute()).status).toBe(200);
+      expect(writes()).toEqual([]); expect(ADMIN.current!.updateCalls).toEqual([]);
+      expect(RECORD_OPS_ALERT).toHaveBeenCalledWith(expect.objectContaining({ event: "stripe_webhook_payment_identity_mismatch" }));
+    });
+    it("does not borrow a payment row when its account has no studio binding", async () => {
+      prepareBound();
+      ADMIN.current = makeAdmin({ studio_payment_settings: [{ data: null, error: null }] }, { claim_stripe_event: CLAIM_OK });
+      expect((await callRoute()).status).toBe(200);
+      expect(writes()).toEqual([]); expect(ADMIN.current!.updateCalls).toEqual([]);
+      expect(ADMIN.current!.eqCalls.filter(({ table }) => table === "payment_charge_attempts")).toEqual([]);
+    });
+  },
+);

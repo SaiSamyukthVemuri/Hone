@@ -648,7 +648,7 @@ describe("PRIVACY PAY-004 retrieved identity across terminal branches", () => {
 // 3. The webhooks
 // ---------------------------------------------------------------------------
 function event(type: string, object: Record<string, unknown>): Stripe.Event {
-  return { id: "evt_1", type, livemode: false, data: { object } } as unknown as Stripe.Event;
+  return { id: "evt_1", type, account: "acct_test", livemode: false, data: { object: { customer: "cus_test", ...(type.startsWith("charge.") ? { payment_intent: PI_ID } : {}), ...object } } } as unknown as Stripe.Event;
 }
 const META = {
   hone_payment_charge_attempt_id: ATTEMPT,
@@ -660,7 +660,7 @@ const CTX = { studioId: STUDIO, stripeAccountId: "acct_test", livemode: false };
 
 describe("payment_intent.succeeded webhook", () => {
   it.each(["cad", "usd"] as const)("%s: matching money reconciles (control)", async (currency) => {
-    h.rows = { payment_charge_attempts: attemptRow(currency, { status: "pending_stripe" }) };
+    h.rows = { payment_charge_attempts: attemptRow(currency, { status: "pending_stripe", stripe_payment_intent_id: PI_ID }) };
     const out = await handlePaymentIntentSucceeded(
       event("payment_intent.succeeded", {
         id: PI_ID,
@@ -676,7 +676,7 @@ describe("payment_intent.succeeded webhook", () => {
   });
 
   it("different money: no command, no write, a critical alert", async () => {
-    h.rows = { payment_charge_attempts: attemptRow("usd", { status: "pending_stripe" }) };
+    h.rows = { payment_charge_attempts: attemptRow("usd", { status: "pending_stripe", stripe_payment_intent_id: PI_ID }) };
     const out = await handlePaymentIntentSucceeded(
       event("payment_intent.succeeded", {
         id: PI_ID,
@@ -699,7 +699,7 @@ describe("payment_intent.succeeded webhook", () => {
 
   it("an already-succeeded row does not borrow a charge id from different money", async () => {
     h.rows = {
-      payment_charge_attempts: attemptRow("cad", { status: "succeeded", stripe_charge_id: null }),
+      payment_charge_attempts: attemptRow("cad", { status: "succeeded", stripe_payment_intent_id: PI_ID, stripe_charge_id: null }),
     };
     const out = await handlePaymentIntentSucceeded(
       event("payment_intent.succeeded", {
@@ -718,7 +718,7 @@ describe("payment_intent.succeeded webhook", () => {
 
 describe("payment_intent.payment_failed webhook", () => {
   it("matching money still flips pending_stripe to failed (control)", async () => {
-    h.rows = { payment_charge_attempts: attemptRow("usd", { status: "pending_stripe" }) };
+    h.rows = { payment_charge_attempts: attemptRow("usd", { status: "pending_stripe", stripe_payment_intent_id: PI_ID }) };
     const out = await handlePaymentIntentPaymentFailed(
       event("payment_intent.payment_failed", {
         id: PI_ID,
@@ -734,7 +734,7 @@ describe("payment_intent.payment_failed webhook", () => {
   });
 
   it("different money never retires the prepared attempt", async () => {
-    h.rows = { payment_charge_attempts: attemptRow("usd", { status: "pending_stripe" }) };
+    h.rows = { payment_charge_attempts: attemptRow("usd", { status: "pending_stripe", stripe_payment_intent_id: PI_ID }) };
     const out = await handlePaymentIntentPaymentFailed(
       event("payment_intent.payment_failed", {
         id: PI_ID,
@@ -768,7 +768,7 @@ describe("charge.refunded webhook", () => {
     async (currency) => {
       h.rows = {
         payment_charge_attempts: attemptRow(currency, {
-          status: "succeeded",
+          status: "succeeded", stripe_payment_intent_id: PI_ID,
           stripe_charge_id: CHARGE_ID,
         }),
       };
@@ -781,7 +781,7 @@ describe("charge.refunded webhook", () => {
   it("a refunded charge in another currency is not this payment's refund", async () => {
     h.rows = {
       payment_charge_attempts: attemptRow("cad", {
-        status: "succeeded",
+        status: "succeeded", stripe_payment_intent_id: PI_ID,
         stripe_charge_id: CHARGE_ID,
       }),
     };
@@ -801,7 +801,7 @@ describe("charge.refunded webhook", () => {
   it("a charge of a different amount is caught before the partial/full decision", async () => {
     h.rows = {
       payment_charge_attempts: attemptRow("cad", {
-        status: "succeeded",
+        status: "succeeded", stripe_payment_intent_id: PI_ID,
         stripe_charge_id: CHARGE_ID,
       }),
     };
