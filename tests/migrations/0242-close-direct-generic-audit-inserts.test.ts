@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { exportedResources } from "@/lib/export/resource-registry";
 import { countVersion, fileForVersion } from "./helpers/migration-state";
 
 const sql = readFileSync("supabase/migrations/0242_close_direct_generic_audit_inserts.sql", "utf8");
@@ -25,10 +26,11 @@ describe("0242 closes direct generic audit forgery without expanding authority",
       expect(code).toContain(`has_any_column_privilege('${role}', 'public.audit_logs', 'INSERT')`);
     }
   });
-  it("requires existing service authority without granting anything or rewriting history", () => {
+  it("requires existing table authority, only explicit narrow EXECUTE, no history rewrite", () => {
     expect(code).toContain("if not has_table_privilege('service_role', 'public.audit_logs', 'INSERT')");
-    expect(code).not.toMatch(/\bgrant\s/i);
-    expect(code).not.toMatch(/create\s+(?:function|table|policy)|update\s+public\.audit_logs|delete\s+from\s+public\.audit_logs/i);
+    expect(code).not.toMatch(/grant\s+(?:insert|update|delete|select)|grant[^;]+on\s+table/i);
+    expect(code.match(/grant execute on function/g)).toHaveLength(2);
+    expect(code).not.toMatch(/create\s+(?:table|policy)|update\s+public\.audit_logs|delete\s+from\s+public\.audit_logs/i);
     expect(code).not.toMatch(/drop policy[^;]+members read/);
     expect(code).not.toContain("record_clinical_records_audit");
   });
@@ -51,5 +53,29 @@ describe("0242 closes direct generic audit forgery without expanding authority",
     expect(exporter).toContain("await recordStudioExportAudit({");
     expect(exporter).toContain("if (auditError)");
     expect(exporter).toContain("Could not record the export audit entry. Try again.");
+  });
+});
+
+describe("0242 atomic governed service commands", () => {
+  it("pins the operation-specific SQL metadata map to the actual export registry", () => {
+    const raw = sql.match(/\$registry\$([\s\S]*?)\$registry\$/)?.[1];
+    expect(raw).toBeDefined();
+    expect(JSON.parse(raw!)).toEqual(Object.fromEntries(exportedResources().map(({ resource, disposition }) => [resource, disposition.file])));
+  });
+  it("binds membership locks and audit insertion in each narrow transaction", () => {
+    for (const name of ["record_client_archive_audit_governed", "record_studio_export_audit_governed"]) {
+      const start = code.indexOf(`create function public.${name}(`);
+      const body = code.slice(start, code.indexOf("$$;", start));
+      expect(start).toBeGreaterThan(-1);
+      expect(body).toContain("security invoker set search_path = ''");
+      expect(body).toContain("p.user_id=p_user_id");
+      expect(body.indexOf("for update")).toBeLessThan(body.indexOf("insert into public.audit_logs"));
+      expect(code).toContain(`grant execute on function public.${name}(`);
+    }
+    expect(code).toContain("p.active is true and p.role='owner' for update");
+    expect(helper).not.toContain('.from("audit_logs").insert');
+    expect(helper).toContain('admin.rpc("record_studio_export_audit_governed"');
+    expect(helper).toContain('recorded !== true');
+    expect(code).toContain("a.grantee <> p.proowner and a.is_grantable");
   });
 });

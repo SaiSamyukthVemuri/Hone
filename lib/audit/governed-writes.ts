@@ -13,7 +13,7 @@ async function freshAuditMembership(
   client: Awaited<ReturnType<typeof createClient>>,
   practitionerId: string,
   studioId: string,
-): Promise<{ role: string } | null> {
+): Promise<{ role: string; userId: string } | null> {
   const { data: { user }, error: authError } = await client.auth.getUser();
   if (authError || !user) return null;
   const { data: member, error } = await client.from("practitioners")
@@ -22,7 +22,7 @@ async function freshAuditMembership(
     .eq("studio_id", studioId).eq("active", true).maybeSingle();
   if (error || !member || member.id !== practitionerId || member.user_id !== user.id
     || member.studio_id !== studioId || member.active !== true || typeof member.role !== "string") return null;
-  return { role: member.role };
+  return { role: member.role, userId: user.id };
 }
 
 // These are internal server helpers, NOT exported Server Actions. There is no
@@ -46,20 +46,26 @@ export async function recordClientArchiveAudit(input: {
     const { data, error } = await client.from("clients").select("id")
       .eq("id", input.clientId).eq("studio_id", studio.id).maybeSingle();
     if (error || !data || data.id !== input.clientId) return refused();
-    if (!await freshAuditMembership(client, practitioner.id, studio.id)) return refused();
+    const membership = await freshAuditMembership(client, practitioner.id, studio.id);
+    if (!membership) return refused();
 
     const admin = createAdminClient();
-    const { error: writeError } = await admin.from("audit_logs").insert({
-      studio_id: studio.id, actor_id: practitioner.id,
-      action: input.change === "archive" ? "client_archived" : "client_unarchived",
-      entity_type: "client", entity_id: data.id,
-      metadata: input.change === "archive" ? { archived_at: input.archivedAt } : {},
+    // The early session read is only a refusal optimization. This command
+    // locks/rechecks membership and inserts the fixed audit row atomically.
+    const { data: recorded, error: writeError } = await admin.rpc("record_client_archive_audit_governed", {
+      p_actor_id: practitioner.id, p_user_id: membership.userId,
+      p_studio_id: studio.id, p_client_id: data.id,
+      p_archived: input.change === "archive",
+      p_archived_at: input.change === "archive" ? input.archivedAt! : null,
     });
-    return writeError ? refused() : { error: null };
+    // Missing/skewed RPC, refused membership and malformed success all fail
+    // closed. Never fall back to service/user direct table INSERT.
+    return writeError || recorded !== true ? refused() : { error: null };
   } catch {
-    // Preserve the existing action rejection on a rejected audit promise.
-    // Returned audit errors stay best-effort; raw database text never escapes.
-    throw new Error("Could not record the archive audit entry. Please try again.");
+    // Archive/unarchive already committed before this best-effort emission.
+    // A thrown lookup/transport failure must not falsely report rollback or
+    // prevent the caller's safe diagnostic, revalidation and redirect.
+    return refused();
   }
 }
 
@@ -86,12 +92,13 @@ export async function recordStudioExportAudit(input: {
     const membership = await freshAuditMembership(client, practitioner.id, studio.id);
     if (!membership || membership.role !== "owner") return refused();
     const admin = createAdminClient();
-    const { error } = await admin.from("audit_logs").insert({
-      studio_id: studio.id, actor_id: practitioner.id, action: "studio_export",
-      entity_type: "studio", entity_id: studio.id,
-      metadata: { filename: input.filename, files: [...input.files], row_counts: { ...input.rowCounts } },
+    const { data: recorded, error } = await admin.rpc("record_studio_export_audit_governed", {
+      p_actor_id: practitioner.id, p_user_id: membership.userId, p_studio_id: studio.id,
+      p_filename: input.filename, p_files: [...input.files], p_row_counts: { ...input.rowCounts },
     });
-    return error ? refused() : { error: null };
+    // Atomic authorization/audit is a release prerequisite, not an optional
+    // enhancement. A missing/refused command withholds the archive.
+    return error || recorded !== true ? refused() : { error: null };
   } catch {
     return refused();
   }

@@ -64,6 +64,7 @@ type StubResult = { data: unknown[] | null; error: unknown; count?: number | nul
 let auditInsert: Record<string, unknown> | null = null;
 let auditFailure: "error" | "throw" | null = null;
 let freshOwnerActive = true;
+let revokeAtAtomicCommand = false;
 let adminConstructed = 0;
 let completedExportReads = 0;
 /**
@@ -121,6 +122,19 @@ function builder(
 function makeClient() {
   return {
     auth: { getUser: async () => ({ data: { user: { id: "user-1" } }, error: null }) },
+    // Synthetic atomic-command adapter, not SQL/concurrency proof.
+    async rpc(name: string, args: Record<string, unknown>) {
+      expect(name).toBe("record_studio_export_audit_governed");
+      expect(args).toMatchObject({ p_actor_id: "prac-1", p_user_id: "user-1", p_studio_id: "studio-1" });
+      if (revokeAtAtomicCommand) freshOwnerActive = false;
+      if (!freshOwnerActive) return { data: false, error: null };
+      if (auditFailure === "throw") throw new Error("PRIVATE AUDIT FAILURE");
+      if (auditFailure === "error") return { data: null, error: { code: "42501", message: "PRIVATE AUDIT FAILURE" } };
+      auditInsert = { studio_id: args.p_studio_id, actor_id: args.p_actor_id,
+        action: "studio_export", entity_type: "studio", entity_id: args.p_studio_id,
+        metadata: { filename: args.p_filename, files: args.p_files, row_counts: args.p_row_counts } };
+      return { data: true, error: null };
+    },
     from(table: string) {
       if (table === "audit_logs") {
         return {
@@ -626,6 +640,7 @@ describe("SEC-003 actual export withholds bytes on trusted audit failure", () =>
       const result = await exportStudioDataAction();
       expect(result).toEqual({ ok: false, error: "Could not record the export audit entry. Try again." });
       expect(result).not.toHaveProperty("base64");
+      expect(result).not.toHaveProperty("filename");
       expect(auditInsert).toBeNull();
     } finally { auditFailure = null; }
   });
@@ -655,8 +670,27 @@ describe("SEC-003 cached owner revocation after export reads", () => {
       expect(freshOwnerActive).toBe(false);
       expect(result).toEqual({ ok: false, error: "Could not record the export audit entry. Try again." });
       expect(result).not.toHaveProperty("base64");
+      expect(result).not.toHaveProperty("filename");
       expect(adminConstructed).toBe(0);
       expect(auditInsert).toBeNull();
     } finally { revoke.mockRestore(); freshOwnerActive = true; }
+  });
+});
+
+// Stronger race oracle, preserving cached/fresh precheck proof.
+describe("SEC-003 atomic write-time owner check", () => {
+  it("withholds ZIP when membership is revoked AFTER the fresh app check", async () => {
+    auditInsert = null; failingTables = new Set(); auditFailure = null;
+    freshOwnerActive = true; adminConstructed = 0; revokeAtAtomicCommand = true;
+    try {
+      const { exportStudioDataAction } = await import("@/app/(app)/settings/data/actions");
+      const result = await exportStudioDataAction();
+      expect(freshOwnerActive).toBe(false); // Only the command mock revoked it.
+      expect(adminConstructed).toBe(1); // App precheck passed; this exercises RPC denial.
+      expect(auditInsert).toBeNull();
+      expect(result).toEqual({ ok: false, error: "Could not record the export audit entry. Try again." });
+      expect(result).not.toHaveProperty("base64");
+      expect(result).not.toHaveProperty("filename");
+    } finally { revokeAtAtomicCommand = false; freshOwnerActive = true; }
   });
 });

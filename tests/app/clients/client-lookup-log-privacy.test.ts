@@ -25,7 +25,14 @@ vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ auth: { g
 } }) }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => {
   h.admin();
-  return { from: (table: string) => {
+  return { rpc: (name: string, args: Record<string, unknown>) => {
+    if (name !== "record_client_archive_audit_governed") throw new Error("Unexpected privileged command");
+    expect(args.p_user_id).toBe("user-A");
+    return Promise.resolve(h.audit({ studio_id: args.p_studio_id, actor_id: args.p_actor_id,
+      action: args.p_archived ? "client_archived" : "client_unarchived", entity_type: "client", entity_id: args.p_client_id,
+      metadata: args.p_archived ? { archived_at: args.p_archived_at } : {},
+    })).then((reply: { error: unknown }) => ({ data: !reply.error, error: reply.error }));
+  }, from: (table: string) => {
     if (table !== "audit_logs") throw new Error("Unexpected privileged table");
     return { insert: h.audit };
   } };
@@ -203,22 +210,47 @@ describe.each([
     for (const text of ["synthetic-patient", "private-clinical", "synthetic-token", CLIENT])
       expect(JSON.stringify(log.mock.calls)).not.toContain(text);
   });
-  it("keeps rejected audit promises rejected without raw free text, logging or redirecting", async () => {
-    setup(); const sentinel = "synthetic-patient@example.test private-clinical-sentinel synthetic-token";
+  it.each(["identity", "client", "fresh-auth", "fresh-member", "rpc"])("keeps committed state and redirect/revalidation after thrown audit %s", async (stage) => {
+    const update = setup();
+    const sentinel = `synthetic-patient@example.test private-clinical-sentinel synthetic-token ${CLIENT}`;
     const failure = new Error(sentinel);
-    h.audit.mockRejectedValue(failure);
+    const identity = { practitioner: { id: ACTOR, active: true, role: "practitioner" }, studio: { id: STUDIO } };
+    let committedState: Record<string, unknown> | null = null;
+    const sequence: string[] = [];
+    const commit = async () => {
+      committedState = { ...h.writes.mock.calls[0]![0] };
+      sequence.push("committed");
+      return { error: null };
+    };
+    update.is.mockImplementation(commit); update.not.mockImplementation(commit);
+    const rejectAfterCommit = async () => {
+      expect(sequence).toEqual(["committed"]);
+      sequence.push(stage);
+      throw failure;
+    };
+    if (stage === "identity") h.identity.mockResolvedValueOnce(identity).mockImplementationOnce(rejectAfterCommit);
+    if (stage === "client") h.lookup.mockResolvedValueOnce({ data: { id: CLIENT }, error: null }).mockImplementationOnce(rejectAfterCommit);
+    if (stage === "fresh-auth") h.getUser.mockImplementationOnce(rejectAfterCommit);
+    if (stage === "fresh-member") h.member.mockImplementationOnce(rejectAfterCommit);
+    if (stage === "rpc") h.audit.mockImplementationOnce(rejectAfterCommit);
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    let rejected: unknown;
-    try { await action(form()); } catch (error) { rejected = error; }
-    expect(rejected).toBeInstanceOf(Error);
-    expect((rejected as Error).message).toBe("Could not record the archive audit entry. Please try again.");
-    expect(rejected).not.toBe(failure);
-    expect(rejected).not.toHaveProperty("cause");
-    expect(String(rejected)).not.toContain(sentinel);
-    expect(h.identity).toHaveBeenCalledTimes(2); expect(h.lookup).toHaveBeenCalledTimes(2);
-    expect(h.admin).toHaveBeenCalledOnce();
-    expect(h.writes).toHaveBeenCalledOnce(); expect(h.audit).toHaveBeenCalledOnce();
-    expect(h.revalidate).not.toHaveBeenCalled(); expect(h.redirect).not.toHaveBeenCalled(); expect(log).not.toHaveBeenCalled();
+    await expect(action(form())).rejects.toBe(NAV);
+    expect(sequence).toEqual(["committed", stage]);
+    expect(committedState).toEqual(name === "archive"
+      ? { archived_at: expect.any(String), archived_by: ACTOR } : { archived_at: null, archived_by: null });
+    expect(h.writes).toHaveBeenCalledOnce();
+    expect(update.eq.mock.calls).toEqual([["id", CLIENT], ["studio_id", STUDIO]]);
+    expect(update.is.mock.calls).toEqual(name === "archive" ? [["archived_at", null]] : []);
+    expect(update.not.mock.calls).toEqual(name === "unarchive" ? [["archived_at", "is", null]] : []);
+    expect(h.revalidate.mock.calls).toEqual([[`/clients/${CLIENT}`], ["/clients"]]);
+    expect(h.redirect).toHaveBeenCalledExactlyOnceWith(destination);
+    expect(h.admin).toHaveBeenCalledTimes(stage === "rpc" ? 1 : 0);
+    expect(h.audit).toHaveBeenCalledTimes(stage === "rpc" ? 1 : 0);
+    expect(log).toHaveBeenCalledOnce();
+    const payload = JSON.parse(String(log.mock.calls[0]![0]));
+    expect(payload).toEqual({ event, clientId: "[id]", code: "audit_write_unavailable", timestamp: expect.any(String) });
+    for (const text of ["synthetic-patient", "private-clinical", "synthetic-token", CLIENT])
+      expect(JSON.stringify(log.mock.calls)).not.toContain(text);
   });
   it("preserves UPDATE failure before audit and redirect", async () => {
     const update = setup();
