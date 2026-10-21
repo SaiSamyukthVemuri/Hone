@@ -372,6 +372,21 @@ describe("classifier — payment AUTHORITY vs the broad payment lane (review P1-
     // boundary, escalated semantically if it ever moves money.
     expect(tier("app/(app)/settings/payments/fee-amounts-actions.ts")).toBe("T2");
   });
+
+  it.each([
+    "app/(app)/quick-checkout-actions.ts",
+    "app/(app)/calendar/[id]/manual-fee-actions.ts",
+    "components/quick-checkout-modal.tsx",
+    "components/checkout-button.tsx",
+    "tests/app/sessions/quick-checkout.test.ts",
+    "tests/app/calendar/manual-fee-endpoint-authority.test.ts",
+  ])("%s selects the fake-payment gate independently of its risk tier", (file) => {
+    expect(c(file).payment).toBe(true);
+  });
+
+  it("does not mistake an unrelated calendar action for payment", () => {
+    expect(c("app/(app)/calendar/reschedule-actions.ts").payment).toBe(false);
+  });
 });
 
 describe("classifier — mixed diffs still take the highest tier", () => {
