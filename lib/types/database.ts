@@ -12,10 +12,6 @@ import type { ClientBudgetLevel } from "@/lib/budget/levels";
 export type Modality = "electrolysis" | "laser";
 export type ElectrolysisMode = "thermo" | "galv" | "blend";
 export type PractitionerRole = "owner" | "practitioner";
-// STUDIO-READY-02b (#824, migration 0218): an invitation may also be for the
-// front desk. Accepting one creates a studio_receptionists row, never a
-// practitioners row, so this is NOT a practitioner role.
-export type InvitationRole = PractitionerRole | "receptionist";
 export type PhotoType = "before" | "after" | "progress";
 export type FitzpatrickType = 1 | 2 | 3 | 4 | 5 | 6;
 
@@ -440,8 +436,7 @@ export type Appointment = {
   // `cancelled_by_practitioner_id` complements it with WHICH practitioner.
   created_by_practitioner_id?: string | null;
   cancelled_by_practitioner_id?: string | null;
-  // 0220: the receptionist twins. At most one creator kind and one canceller
-  // kind per row (CHECKs). NULL unless the front desk created or cancelled it.
+  // 0220: receptionist attribution follows the same nullable, same-studio contract.
   created_by_receptionist_id?: string | null;
   cancelled_by_receptionist_id?: string | null;
   // The outside-hours override authoriser and their role AT THE TIME. Both
@@ -751,8 +746,6 @@ export type AppointmentAudit = {
   // NULL for client and system actors, never invented for a non-practitioner.
   // Complements, and does not replace, the historical bare actor_id above.
   actor_practitioner_id: string | null;
-  // Migration 0220: the receptionist twin, derived and same-studio-validated
-  // the same way. NULL for every actor but a receptionist.
   actor_receptionist_id: string | null;
   action: string;
   details: Record<string, unknown> | null;
@@ -814,6 +807,9 @@ export type Practitioner = {
 };
 
 export type Client = {
+  // Migration 0231: the client's identification portrait, a pointer to one of
+  // their own client-scoped, unarchived treatment photos (null = none).
+  portrait_image_id: string | null;
   id: string;
   studio_id: string;
   name: string;
@@ -864,9 +860,6 @@ export type Client = {
   // Migration 0052: lowercased/trimmed email maintained by trigger
   // for portal lookups. Added here by the PR #221 drift check.
   normalized_email: string | null;
-  // Migration 0231: the client's identification portrait, a pointer to one of
-  // their own client-scoped, unarchived treatment photos (null = none).
-  portrait_image_id: string | null;
 };
 
 // Migration 0126 (Willow PR A): dedicated dated CONSULTATION notes + SKIN/HAIR
@@ -1369,8 +1362,6 @@ export type TreatmentImage = {
   // Optional practitioner-authored note/caption (migration 0099). Free text,
   // capped at 1000 chars by the update action; NULL = no note.
   practitioner_note: string | null;
-  // FETT photos (migration 0232): taken before or after treatment, on a visit
-  // photo only; NULL = unlabelled. Set via set_treatment_image_capture_stage.
   capture_stage: "before" | "after" | null;
   created_at: string;
   updated_at: string;
@@ -1385,7 +1376,7 @@ export type PendingInvitation = {
   studio_id: string;
   email: string;
   invited_by: string | null;
-  role: InvitationRole;
+  role: PractitionerRole;
   display_name: string | null;
   status: InvitationStatus;
   created_at: string;

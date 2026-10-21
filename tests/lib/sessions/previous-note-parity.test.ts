@@ -153,7 +153,7 @@ describe("HON-10 row 3: the client overview shows an uncharted visit's plan", ()
   // The source half: the band's source does not require charting, so for a
   // client whose only visit is uncharted it is that visit.
   it("the watch/plan source is found when no session is charted", () => {
-    const only = { id: "s-only", started_at: "2026-08-01T10:00:00.000Z", next_session_note: DOXYCYCLINE };
+    const only = { id: "s-only", record_status: "draft", started_at: "2026-08-01T10:00:00.000Z", next_session_note: DOXYCYCLINE };
     const source = pickPreClientWatchPlanSource([only], new Map());
     expect(source?.id).toBe("s-only");
     const summary = buildLastSessionSummary({ blocks: [], nextSessionNote: source!.next_session_note ?? null });

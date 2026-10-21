@@ -103,8 +103,9 @@ export async function prepareManualFeeChargeAction(
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     practitionerId = practitioner.id;
     studioId = studio.id;
-  } catch (err) {
-    logInternal("manual_fee_prepare_auth_failed", { err: String(err) });
+  } catch {
+    // Identity errors may quote sensitive values; safeLog removes UUIDs only.
+    logInternal("manual_fee_prepare_auth_failed", {});
     return { ok: false, error: NOT_AUTHORIZED_ERROR };
   }
 

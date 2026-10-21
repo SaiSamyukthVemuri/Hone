@@ -69,11 +69,14 @@ jobs:
             needs_supabase: true
             needs_browsers: false
             timeout: 30
+          # Run39504054304 attempts1/2 hit15m with139/137 passing cases
+          # and no assertion failures; setup+157 serial cases needs headroom.
+          # Keep the test command and finite ceiling; other lanes unchanged.
           - lane: "core browser e2e (shard 1/4)"
             command: "npx playwright test --shard=1/4"
             needs_supabase: true
             needs_browsers: true
-            timeout: 15
+            timeout: 18
           - lane: "core browser e2e (shard 2/4)"
             command: "npx playwright test --shard=2/4"
             needs_supabase: true

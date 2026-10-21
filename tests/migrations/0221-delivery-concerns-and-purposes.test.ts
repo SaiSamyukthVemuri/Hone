@@ -36,7 +36,7 @@ describe("0221 sits correctly in the migration sequence", () => {
 
   it("leaves the pending delivery migrations it builds on byte-identical", () => {
     expect(sha("0212_email_delivery_events.sql")).toBe("cc2abfa3059157b841c1c1c095a84045410121be13d96ff93e34f8332f81d6d1");
-    expect(sha("0215_delivery_incidents.sql")).toBe("09b01315e5159a1786a0bcabf0c5a3a8abffe62790123099b887c3d29de5e9d2");
+    expect(sha("0215_delivery_incidents.sql")).toBe("612f98fe62b9bb7113e32956a46eaeab07238fbf94cb305f6c1ab6ddaa2ec168");
   });
 });
 

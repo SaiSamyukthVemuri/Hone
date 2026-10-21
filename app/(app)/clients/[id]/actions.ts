@@ -40,9 +40,6 @@ async function isClientVisible(
     safeLog.error(
       JSON.stringify({
         event: "client_visible_lookup_failed",
-        clientId,
-        code: error.code,
-        message: error.message,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -129,7 +126,6 @@ async function checkDuplicateEmail(
       JSON.stringify({
         event: "client_duplicate_email_lookup_failed",
         code: error.code,
-        message: error.message,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -261,7 +257,6 @@ export async function updateClientAction(
         event: "client_update_failed",
         clientId,
         code: error.code,
-        message: error.message,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -326,7 +321,6 @@ export async function archiveClientAction(formData: FormData): Promise<void> {
         event: "client_archive_audit_failed",
         clientId,
         code: auditErr.code,
-        message: auditErr.message,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -378,7 +372,6 @@ export async function unarchiveClientAction(formData: FormData): Promise<void> {
         event: "client_unarchive_audit_failed",
         clientId,
         code: auditErr.code,
-        message: auditErr.message,
         timestamp: new Date().toISOString(),
       }),
     );
