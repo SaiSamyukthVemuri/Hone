@@ -321,23 +321,23 @@ prospects at every measured instant.
 
 ## 15. Capabilities added since the 2026-08-23 reconciliation
 
-**235** production merges landed between `b9e0003f` and the current production branch head (2026-10-21 sync, `df0d42a2`; it was233 through `e3f63b74`; it was231 through `59ff87cd`; it was227 through `dd6be03d`; it was224 through `7e801043`; it was220 through `d379d747`; it was218 through `7c724bd4`; it was215 through `4c42e777`; it was211 through `5a9aba77`,210 through `fc3101a2`,209 through `cae869ac`,208 through `10982f4a`; it was 207 through `73a6f577`, 206 through `0dc7d5e4`, 205 through `751f3176`, 204 through `aa905103`; it was 203 through `1f6be8c6`, 202 through `4425b8ef`, 201 through `00c14c90`, 200 through `e91ddd43`, 199 through `462b16b0`, 198 through `af2f7423`, 197 through `4f08de03`, 196 through `338115e4`, 195 through `b09b870f`, 194 through `ea76407e`, 192 through `6dc70b7e`, 190 through `e125ea4e`, 186 through `291ba2ee`, 176 through `0726dcff`, 171 through `440829c2`; it was 169 through `37b0ed82`; it was 164 at the 2026-10-18 sync through `f9cd9013`; it was 163 at the 2026-10-18 sync through `aaf3042b`; it was 160 at the 2026-10-17 sync through `6acea261`; it was 157 at the 2026-10-17 sync through `62ff27b2`; it was 154 at the 2026-10-17 sync through `b08845ce`; it was 152 at the 2026-10-16 sync through `0ae33bd3`; it was 150 at the 2026-10-16 sync through `1ae096e2`; it was 145 at the 2026-10-14 sync through `ce133c18`; it was 140 at the 2026-10-13 sync through `6f7281bb`, 138 at the 2026-10-12 sync through `d5efa20a`, and eighty-one at the 2026-09-21 sync through `410e5039`). That is
+**237** production merges landed between `b9e0003f` and the current production branch head (2026-10-21 sync, `f7ec655c`; it was235 through `df0d42a2`; it was233 through `e3f63b74`; it was231 through `59ff87cd`; it was227 through `dd6be03d`; it was224 through `7e801043`; it was220 through `d379d747`; it was218 through `7c724bd4`; it was215 through `4c42e777`; it was211 through `5a9aba77`,210 through `fc3101a2`,209 through `cae869ac`,208 through `10982f4a`; it was 207 through `73a6f577`, 206 through `0dc7d5e4`, 205 through `751f3176`, 204 through `aa905103`; it was 203 through `1f6be8c6`, 202 through `4425b8ef`, 201 through `00c14c90`, 200 through `e91ddd43`, 199 through `462b16b0`, 198 through `af2f7423`, 197 through `4f08de03`, 196 through `338115e4`, 195 through `b09b870f`, 194 through `ea76407e`, 192 through `6dc70b7e`, 190 through `e125ea4e`, 186 through `291ba2ee`, 176 through `0726dcff`, 171 through `440829c2`; it was 169 through `37b0ed82`; it was 164 at the 2026-10-18 sync through `f9cd9013`; it was 163 at the 2026-10-18 sync through `aaf3042b`; it was 160 at the 2026-10-17 sync through `6acea261`; it was 157 at the 2026-10-17 sync through `62ff27b2`; it was 154 at the 2026-10-17 sync through `b08845ce`; it was 152 at the 2026-10-16 sync through `0ae33bd3`; it was 150 at the 2026-10-16 sync through `1ae096e2`; it was 145 at the 2026-10-14 sync through `ce133c18`; it was 140 at the 2026-10-13 sync through `6f7281bb`, 138 at the 2026-10-12 sync through `d5efa20a`, and eighty-one at the 2026-09-21 sync through `410e5039`). That is
 the current ancestry count and nothing more — capability was **not** re-derived over it.
 
 Over the **twenty-nine** merges through `bf6f09c4`, derived on **2026-08-30**, **Ten**
-carry a capability that belongs in this register. The 206 later production merges are recorded in
+carry a capability that belongs in this register. The 208 later production merges are recorded in
 [release-changelog.md](./release-changelog.md) and are **not** enumerated for capability here.
 
 **THOSE TWO NUMBERS ARE DERIVED OVER DIFFERENT SPANS, AND SAYING SO IS THE POINT.** The
-**235** is the merge ancestry through the *current* branch head, `df0d42a2`. The **ten**
+**237** is the merge ancestry through the *current* branch head, `f7ec655c`. The **ten**
 is **not** derived over it: it is the **2026-08-30** derivation over the twenty-nine merges
 through `bf6f09c4`, and it has not been re-run since.
 
 **This section is scoped to that dated derivation and must not be read as a current capability
-count.** The 206 merges between `bf6f09c4` and `df0d42a2` are recorded row by row in
+count.** The 208 merges between `bf6f09c4` and `f7ec655c` are recorded row by row in
 [release-changelog.md](./release-changelog.md), and several of them plainly ship capability —
 `#702`'s automatic card receipts and `#745`'s next-setup-step checklist among them. This register
-has **not** re-enumerated them. Re-running the capability derivation across all 235 merges
+has **not** re-enumerated them. Re-running the capability derivation across all 237 merges
 is its own lane with its own evidence; raising the number here without doing that work would
 manufacture a figure nobody derived, which is the precise failure this document exists to
 prevent.
@@ -447,3 +447,8 @@ overwritten, because a register that silently changes its mind teaches readers n
 ### 2026-10-21 bounded reminder scan release
 
 #995 now bounds scans separately from provider attempts and retains fair continuation and the prior cursor on an unavailable claim. Sourcecd788 exact review/CI39608140091 passed21,627unit/603browser13skip, other heavy suites skipped. Normaldf0d42a2 READYdpl_5RqZ3WWoBRdU38RnDbzA8dDyCkqq, alias/tree/read-only smoke verified. Actual Redis/Lua/network proof and Chloe UAT remain UNRUN; no manual cron/send, hosted apply or provider activation. Automatic39611091351 unit failed exactly stale canonical A3/A5:21,625passed/2failed. Browser jobs remain in progress at this dated sync; DB/payment/mobile/Google/canonical-docs skipped. Failure evidence is retained, not relabeled passed. Held generation/idempotency work is separate; no MSG002/003 closure is inferred. Earlier measurements and failures remain dated evidence.
+
+
+### 2026-10-21 availability-read failure containment
+
+#984 is deployed atf7ec655c READYdpl_3otXTFYDoNb5QdqcCzJrcon1qAXj, alias/tree/read-only smoke verified. Exactd9 review/CI39614332644 passed21,712unit/270browser9skip; DB/payment/mobile/Google/docs skipped. Internal booking/move refuse classified read failures in every mode and return sanitized retryable results; existing public/portal locked-command authority remains. No SQL/grants/activation or customer-data action. Automatic39616619850 was queued at source sync, not PASS; human UAT remains UNRUN. Later-settled995automatic39611091351 failed onlyA3/A5 (21,625pass/2fail); allbrowser/aggregate passed, other suites skipped. Previous measurements/29-merge capability derivation remain dated evidence, not a current capability recount.
