@@ -1,5 +1,6 @@
 "use server";
 
+import { safeLog } from "@/lib/logging/safe-log";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
@@ -462,15 +463,7 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
     },
   );
   if (rpcErr) {
-    console.error(
-      JSON.stringify({
-        event: "practitioner_cancel_rpc_error",
-        code: rpcErr.code,
-        message: rpcErr.message,
-        appointmentId,
-        timestamp: new Date().toISOString(),
-      }),
-    );
+    safeLog.error(JSON.stringify({ event: "practitioner_cancel_rpc_error", timestamp: new Date().toISOString() }));
     return { ok: false, error: "Could not cancel this appointment." };
   }
   if (rpcResult === "already_cancelled") {
@@ -557,7 +550,7 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
         safeDetails: { notification_type: "cancellation", outcome: "unconfirmed" },
       });
     } catch {
-      console.error(JSON.stringify({ event: "cancellation_notification_alert_unavailable", appointmentId, studioId: studio.id }));
+      safeLog.error(JSON.stringify({ event: "cancellation_notification_alert_unavailable", timestamp: new Date().toISOString() }));
     }
   }
   revalidatePath("/calendar");
@@ -1089,9 +1082,12 @@ function postcareClaimRefusalCopy(result: string): string {
   }
 }
 
-// Bounded structured logging: codes and ids only, never provider payloads.
-function logPostcare(event: string, fields: Record<string, unknown>): void {
-  console.error(JSON.stringify({ event, ...fields, timestamp: new Date().toISOString() }));
+// Closed projection only: callers may supply an operational code, never an
+// arbitrary provider error or record id to the external console.
+const POSTCARE_LOG_CODES = new Set(["PGRST202", "42501", "23503", "23514", "22P02", "P0001", "40001", "40P01", "57014", "stale_claim", "not_authorized", "invalid_input"]);
+function logPostcare(event: "send_postcare_claim_command_failed" | "send_postcare_claim_empty" | "send_postcare_settle_failure_unpersisted", fields: Record<string, unknown>): void {
+  const code = typeof fields.code === "string" && POSTCARE_LOG_CODES.has(fields.code) ? fields.code : "unknown";
+  safeLog.error(JSON.stringify({ event, code, timestamp: new Date().toISOString() }));
 }
 
 export async function sendPostcareEmailAction(
@@ -1132,15 +1128,7 @@ export async function sendPostcareEmailAction(
     .eq("studio_id", studio.id)
     .maybeSingle();
   if (lookupErr) {
-    console.error(
-      JSON.stringify({
-        event: "send_postcare_lookup_failed",
-        code: lookupErr.code,
-        message: lookupErr.message,
-        appointmentId,
-        timestamp: new Date().toISOString(),
-      }),
-    );
+    safeLog.error(JSON.stringify({ event: "send_postcare_lookup_failed", timestamp: new Date().toISOString() }));
     return { ok: false, error: "Could not send postcare. Please try again." };
   }
   if (!appt) return { ok: false, error: "Appointment not found." };
@@ -1268,17 +1256,7 @@ export async function sendPostcareEmailAction(
     // logEmailFailure's emailType union doesn't include "postcare" and we
     // intentionally don't extend it (postcare bypasses record_email_attempt);
     // log inline with the postcare event tag.
-    console.error(
-      JSON.stringify({
-        event: "send_postcare_email_failed",
-        appointmentId,
-        retryable: result.retryable,
-        // Bounded: retryable category only. A raw provider error can carry the
-        // recipient address and vendor internals, and the DB stores only the
-        // safe derived copy: operational logging matches that posture.
-        timestamp: new Date().toISOString(),
-      }),
-    );
+    safeLog.error(JSON.stringify({ event: "send_postcare_email_failed", retryable: result.retryable === true, timestamp: new Date().toISOString() }));
     // B8: settle the FAILURE through the command, under the exact claim token.
     // The safe operator-facing copy is derived in SQL from `retryable` alone,
     // a raw provider error can carry recipient addresses and vendor internals
@@ -1340,17 +1318,7 @@ export async function sendPostcareEmailAction(
     // The email DID hand off to the provider, but the success stamp failed.
     // Log it; the claim stays and is stale-reclaimable, we under-claim
     // ("still sending" → "not sent yet") rather than overclaim "sent".
-    console.error(
-      JSON.stringify({
-        event: "send_postcare_success_write_failed",
-        // The email DID reach the provider but the settlement did not persist.
-        // Bounded metadata only, and deliberately NO repair: we under-claim
-        // ("still sending" -> reclaimable) rather than fabricate a sent state.
-        code: successWriteErr.code,
-        appointmentId,
-        timestamp: new Date().toISOString(),
-      }),
-    );
+    safeLog.error(JSON.stringify({ event: "send_postcare_success_write_failed", timestamp: new Date().toISOString() }));
   }
 
   revalidatePath(`/calendar/${appointmentId}`);

@@ -35,6 +35,7 @@ const state: {
   providerResult: { ok: boolean; retryable?: boolean; error?: string };
   row: Record<string, unknown> | null;
   allowDirectDml: boolean;
+  lookupError: unknown;
 } = {
   events: [],
   rpc: [],
@@ -45,6 +46,7 @@ const state: {
   providerResult: { ok: true },
   row: null,
   allowDirectDml: false,
+  lookupError: null,
 };
 
 function appointmentRow(over: Record<string, unknown> = {}) {
@@ -112,7 +114,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       q.eq = () => q;
       q.is = () => q;
       q.or = () => q;
-      q.maybeSingle = async () => ({ data: state.row, error: null });
+      q.maybeSingle = async () => ({ data: state.lookupError ? null : state.row, error: state.lookupError });
       const forbid = (op: string) => {
         state.events.push(`direct:${op}`);
         state.directDml.push(`${table}.${op}`);
@@ -170,7 +172,7 @@ beforeEach(() => {
   state.settle = {};
   state.providerResult = { ok: true };
   state.row = appointmentRow();
-  state.allowDirectDml = false;
+  state.allowDirectDml = false; state.lookupError = null;
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
@@ -384,5 +386,33 @@ describe("B8 deployment skew — STATE A: new app, old (0176) database", () => {
     if (res.ok === false) {
       expect(res.error).not.toMatch(/PGRST|schema cache|migration|deploy/i);
     }
+  });
+});
+
+
+describe("MSG-007 postcare failure diagnostics", () => {
+  const PRIVATE = "PRIVATE patient@example.invalid SECRET_TOKEN";
+  const logs = () => JSON.stringify(vi.mocked(console.error).mock.calls);
+  it("lookup error keeps refusal without exporting raw context or record id", async () => {
+    state.lookupError = { code: "XX000", message: PRIVATE };
+    expect((await sendPostcareEmailAction(fd())).ok).toBe(false);
+    expect(state.provider).toEqual([]);
+    expect(logs()).toContain("send_postcare_lookup_failed");
+    expect(logs()).not.toContain(APPT);
+    expect(logs()).not.toContain("PRIVATE");
+  });
+  it("claim error code cannot carry free-form content into logs", async () => {
+    state.claim = { data: null, error: { code: PRIVATE } };
+    expect((await sendPostcareEmailAction(fd())).ok).toBe(false);
+    expect(state.provider).toEqual([]);
+    expect(logs()).not.toContain(APPT);
+    expect(logs()).not.toContain("PRIVATE");
+  });
+  it("accepted but unrecorded outcome stays distinct without logging raw settlement details", async () => {
+    state.settle = { data: null, error: { code: PRIVATE } };
+    expect(await sendPostcareEmailAction(fd())).toMatchObject({ ok: false, code: "provider_sent_status_unrecorded" });
+    expect(state.provider).toHaveLength(1);
+    expect(logs()).not.toContain(APPT);
+    expect(logs()).not.toContain("PRIVATE");
   });
 });

@@ -20,7 +20,7 @@ const booking = vi.hoisted(() => ({
   cancelEmail: vi.fn(async (): Promise<{ ok: true } | { ok: false; error: string; retryable: boolean }> => ({ ok: true })),
   alert: vi.fn(async () => undefined),
   cancelContextUnavailable: false,
-  rpc: vi.fn(async (): Promise<{ data: unknown; error: null }> => ({ data: [{ result: "created", appointment_id: "appointment" }], error: null })),
+  rpc: vi.fn(async (): Promise<{ data: unknown; error: null | { code: string; message: string } }> => ({ data: [{ result: "created", appointment_id: "appointment" }], error: null })),
   event: vi.fn(),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -182,6 +182,21 @@ describe("MSG-004 cancellation commit and notification are separate outcomes", (
     try {
       expect(await cancel()).toEqual({ ok: true, notification: "unconfirmed" });
       expect(JSON.stringify(log.mock.calls)).not.toContain("PRIVATE");
+    } finally { log.mockRestore(); }
+  });
+});
+
+
+describe("MSG-007 practitioner cancellation failure logs", () => {
+  it("refuses RPC failure without exporting its payload or submitted appointment identifier", async () => {
+    booking.rpc.mockResolvedValueOnce({ data: null, error: { code: "XX000", message: "PRIVATE patient@example.invalid" } });
+    const form = new FormData(); form.set("appointment_id", "11111111-1111-4111-8111-111111111111");
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await cancelAppointmentAction(form)).toEqual({ ok: false, error: "Could not cancel this appointment." });
+      expect(booking.cancelEmail).not.toHaveBeenCalled();
+      expect(JSON.stringify(log.mock.calls)).toContain("practitioner_cancel_rpc_error");
+      expect(JSON.stringify(log.mock.calls)).not.toMatch(/PRIVATE|patient@example|11111111-1111/);
     } finally { log.mockRestore(); }
   });
 });

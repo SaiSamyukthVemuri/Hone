@@ -60,6 +60,7 @@ const scenario = {
   ownerLookupThrows: false,
   contextMissing: false,
   contextThrows: false,
+  rpcError: null as null | { code: string; message: string },
 };
 
 const ownerEmail = vi.fn(async (): Promise<{ ok: true } | { ok: false; error: string; retryable: boolean }> => ({ ok: true }));
@@ -148,7 +149,7 @@ const admin = {
   },
   async rpc(fn: string, args: Record<string, unknown>) {
     rpcCalls.push({ fn, args });
-    return { data: [{ result: scenario.cancelResult }], error: null };
+    return { data: scenario.rpcError ? null : [{ result: scenario.cancelResult }], error: scenario.rpcError };
   },
 };
 
@@ -256,7 +257,7 @@ beforeEach(() => {
     service: FREE_CONSULT,
     studioSlug: WAITLISTED_SLUG,
     cancelResult: "cancelled",
-    ownerMissing: false, ownerLookupThrows: false, contextMissing: false, contextThrows: false,
+    ownerMissing: false, ownerLookupThrows: false, contextMissing: false, contextThrows: false, rpcError: null,
   });
   process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = WAITLISTED_SLUG;
 });
@@ -515,5 +516,19 @@ describe("MSG-004 public cancellation owner-notification recovery", () => {
     expect(html).not.toContain("The studio has been notified.");
     expect(html).not.toContain("<form");
     expect(html).not.toContain("Resend");
+  });
+});
+
+
+describe("MSG-007 public cancellation failure logs", () => {
+  it("keeps generic refusal and drops RPC free text/token from console", async () => {
+    scenario.rpcError = { code: "XX000", message: "PRIVATE patient@example.invalid " + TOKEN };
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect((await publicCancelAppointmentAction(cancelForm())).ok).toBe(false);
+      expect(ownerEmail).not.toHaveBeenCalled();
+      expect(JSON.stringify(log.mock.calls)).toContain("public_cancel_rpc_error");
+      expect(JSON.stringify(log.mock.calls)).not.toMatch(/PRIVATE|patient@example|raw-url-token/);
+    } finally { log.mockRestore(); }
   });
 });

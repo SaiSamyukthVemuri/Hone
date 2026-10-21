@@ -1,5 +1,6 @@
 "use server";
 
+import { safeLog } from "@/lib/logging/safe-log";
 import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { verifyCancellationToken } from "@/lib/booking/tokens";
@@ -47,18 +48,10 @@ const POLICY_CHANGED_ERROR =
 const PUBLIC_CANCEL_GENERIC_ERROR =
   "This cancellation link is no longer valid. Please contact the studio if you need assistance.";
 
-function logInternal(event: string, detail: unknown) {
-  try {
-    console.error(
-      JSON.stringify({
-        event,
-        detail,
-        timestamp: new Date().toISOString(),
-      }),
-    );
-  } catch {
-    console.error(event, detail);
-  }
+function logInternal(event: "public_cancel_command_unavailable" | "public_cancel_rpc_error" | "public_cancel_rpc_empty" | "public_cancel_fetch_error") {
+  // Only this closed event reaches third-party logs; never the token, row,
+  // error message or an arbitrary diagnostic object.
+  safeLog.error(JSON.stringify({ event, timestamp: new Date().toISOString() }));
 }
 
 // Resolves a cancel/reschedule URL token to an appointment id. PR #260:
@@ -272,17 +265,17 @@ export async function publicCancelAppointmentAction(
   // deployment is in progress. The cost is a bounded AVAILABILITY window for
   // cancellations if the order is reversed; there is no INTEGRITY window.
   if (rpcErr?.code === "PGRST202") {
-    logInternal("public_cancel_command_unavailable", { code: rpcErr.code });
+    logInternal("public_cancel_command_unavailable");
     return { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };
   }
 
   if (rpcErr) {
-    logInternal("public_cancel_rpc_error", { code: rpcErr.code, message: rpcErr.message });
+    logInternal("public_cancel_rpc_error");
     return { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };
   }
   const outcome = Array.isArray(rpcRows) ? rpcRows[0] : rpcRows;
   if (!outcome) {
-    logInternal("public_cancel_rpc_empty", {});
+    logInternal("public_cancel_rpc_empty");
     return { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };
   }
   // The ONE outcome that must not collapse: the client needs to be told to
@@ -454,7 +447,7 @@ export async function publicCancelAppointmentAction(
       });
     } catch {
       // Fixed metadata only: never the token, reason, address or provider body.
-      console.error(JSON.stringify({ event: "cancellation_notification_alert_unavailable", appointmentId: resolved.appointment_id }));
+      safeLog.error(JSON.stringify({ event: "cancellation_notification_alert_unavailable", timestamp: new Date().toISOString() }));
     }
   }
 
@@ -536,7 +529,7 @@ export async function fetchAppointmentForCancelAction(
     .eq("id", resolved.appointment_id)
     .maybeSingle();
   if (error) {
-    logInternal("public_cancel_fetch_error", { code: error.code, message: error.message });
+    logInternal("public_cancel_fetch_error");
     return { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };
   }
   if (!data) return { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };

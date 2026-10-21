@@ -755,7 +755,7 @@ export async function GET(req: Request) {
       sms_reminder_24h,
       sms_reminder_2h,
     });
-  } catch (err) {
+  } catch {
     // PR #153. Cron-route failure alert. The cron runs every few
     // minutes; if it starts throwing, reminders silently stop. The
     // 3-strike per-row attempt counter caps the blast radius once
@@ -763,8 +763,7 @@ export async function GET(req: Request) {
     await recordOpsAlert({
       severity: "critical",
       event: "cron_route_failed",
-      message:
-        err instanceof Error ? err.message : String(err ?? "unknown error"),
+      message: "Appointment reminder run failed. Check the cron execution status.",
       route: "/api/cron/appointment-reminders",
       safeDetails: {
         duration_ms: Date.now() - startedAt,

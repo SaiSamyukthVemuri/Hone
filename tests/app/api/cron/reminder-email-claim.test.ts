@@ -155,6 +155,8 @@ const race = vi.hoisted(() => ({
   start: "2026-10-22T12:00:00.000Z",
   freshStart: "2026-10-22T12:00:00.000Z" as string | null,
   readError: false,
+  queryError: false,
+  alert: vi.fn(async () => undefined),
   backlog: null as null | { channel: "email" | "sms"; skipped: number; eligible: number; reason: "toggle" | "destination" | "consent" | "claim" },
   sent: new Set<string>(),
   pages: [] as Array<{ cursor: string | null; orders: string[] }>,
@@ -167,7 +169,7 @@ vi.mock("@/lib/cron/auth", () => ({ isAuthorizedCronRequest: () => true }));
 vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => "https://example.invalid" }));
 vi.mock("@/lib/booking/tokens", () => ({ generateCancellationToken: () => "synthetic-token" }));
 vi.mock("@/lib/cron/reminder-heartbeat", () => ({ recordReminderRunSuccess: async () => undefined }));
-vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: async () => undefined }));
+vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: race.alert }));
 vi.mock("@/lib/email/send-appointment", () => ({
   claimEmailSend: race.claim,
   recordEmailResult: race.record,
@@ -203,6 +205,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         };
       };
       const answer = () => {
+        if (race.queryError) throw new Error("PRIVATE patient@example.invalid /intake/SECRET_TOKEN");
         const channel = race.backlog?.channel ?? "email";
         if (candidateColumn !== (channel === "email" ? "reminder_24h_sent_at" : "sms_reminder_24h_sent_at")) {
           return { data: [], error: null };
@@ -245,7 +248,7 @@ describe("email reminder appointment-time race", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-21T12:00:00.000Z"));
     race.freshStart = race.start;
-    race.readError = false;
+    race.readError = false; race.queryError = false; race.alert.mockClear();
     race.backlog = null; race.sent.clear(); race.pages = [];
     race.send.mockClear(); race.smsSend.mockClear();
     race.claim.mockReset().mockResolvedValue(true);
@@ -318,6 +321,15 @@ describe("email reminder appointment-time race", () => {
     expect(response.status).toBe(200);
     expect(channel === "email" ? race.send : race.smsSend).toHaveBeenCalledTimes(50);
     expect(race.pages).toHaveLength(1);
+  });
+
+  it("MSG-007 cron failure remains a 500/critical event without exporting its raw exception", async () => {
+    race.queryError = true;
+    const response = await GET(new Request("https://example.invalid/api/cron/appointment-reminders"));
+    expect(response.status).toBe(500);
+    expect(race.send).not.toHaveBeenCalled();
+    expect(race.alert).toHaveBeenCalledWith(expect.objectContaining({ severity: "critical", event: "cron_route_failed" }));
+    expect(JSON.stringify(race.alert.mock.calls)).not.toMatch(/PRIVATE|patient@example|SECRET_TOKEN/);
   });
 
 });
