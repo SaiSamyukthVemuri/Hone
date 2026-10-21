@@ -834,11 +834,12 @@ async function resolveAccountFromEvent(
   try {
     const stripe = getStripe();
     return await stripe.accounts.retrieve(stripeAccountId);
-  } catch (err) {
+  } catch {
     logInternal("capability_updated_account_retrieve_failed", {
       stripeAccountId,
-      err: err instanceof Error ? err.message : String(err),
     });
-    return null;
+    // Stripe must retry this event: acknowledging it would permanently lose a
+    // capability change while Hone still holds an outdated readiness snapshot.
+    throw new Error("capability_updated_account_retrieve_failed");
   }
 }
