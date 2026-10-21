@@ -80,6 +80,8 @@ const scenario = {
   service: FREE_CONSULT as ServiceShape | null,
   studioSlug: WAITLISTED_SLUG as string | null,
   capacity: false,
+  slotError: null as unknown,
+  emptySlots: false,
 };
 
 // --- the in-memory admin client -------------------------------------------
@@ -257,6 +259,8 @@ vi.mock("@/lib/booking/slots", async () => {
       date: string,
     ) {
       slotEngineCalls.push({ date });
+      if (scenario.slotError !== null) throw scenario.slotError;
+      if (scenario.emptySlots) return [];
       const start = new Date(Date.now() + 172_800_000);
       return [
         {
@@ -336,6 +340,8 @@ beforeEach(() => {
   slotEngineCalls.length = 0;
   Object.assign(scenario, {
     tokenResolves: true,
+    slotError: null,
+    emptySlots: false,
     capacity: false,
     status: "confirmed",
     startsAt: new Date(Date.now() + 86_400_000).toISOString(),
@@ -667,5 +673,33 @@ describe("SCH-003 next reschedule date reuses one bounded range load", () => {
     const r = await fetchNextAvailableDateForRescheduleAction({ token: TOKEN, fromDate: new Date(Date.now() + 172_800_000).toISOString().slice(0, 10) });
     expect(r).toEqual({ ok: true, date: null });
     expect(bulk.load).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe("SCH-002 reschedule discovery returns classified read failures as refusals", () => {
+  const date = () => new Date(Date.now() + 172_800_000).toISOString().slice(0, 10);
+  beforeEach(() => { scenario.service = PAID_CONSULT; });
+  it.each(["blockouts", "window", "reservations"])("returns only sanitized failure for %s, with no invented free/empty offer", async (stage) => {
+    scenario.slotError = new Error(`availability_read_failed:${stage}:PRIVATE_SENTINEL`);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await fetchRescheduleSlotsAction({ token: TOKEN, date: date() })).toEqual({ ok: false, error: GENERIC });
+      expect(JSON.stringify(log.mock.calls)).not.toContain("PRIVATE_SENTINEL"); expect(JSON.stringify(log.mock.calls)).not.toContain(TOKEN);
+      expect(rpcCalls).toEqual([]);
+    } finally { log.mockRestore(); }
+  });
+  it.each([new Error("unexpected discovery error"), "availability_read_failed:blockouts"])("does not absorb unrelated/non-Error discovery throws", async (failure) => {
+    scenario.slotError = failure;
+    await expect(fetchRescheduleSlotsAction({ token: TOKEN, date: date() })).rejects.toBe(failure); expect(rpcCalls).toEqual([]);
+  });
+  it("keeps successful empty discovery distinct from read failure", async () => {
+    scenario.emptySlots = true;
+    expect(await fetchRescheduleSlotsAction({ token: TOKEN, date: date() })).toEqual({ ok: true, slots: [] }); expect(rpcCalls).toEqual([]);
+  });
+  it("keeps invalid-token refusal before the failing slot read", async () => {
+    scenario.tokenResolves = false; scenario.slotError = new Error("availability_read_failed:window");
+    expect(await fetchRescheduleSlotsAction({ token: TOKEN, date: date() })).toEqual({ ok: false, error: GENERIC });
+    expect(slotEngineCalls).toEqual([]); expect(rpcCalls).toEqual([]);
   });
 });
