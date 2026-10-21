@@ -446,13 +446,18 @@ describe("0243 public/assisted revision and atomic profile boundary", () => {
   });
 
   it.each([
-    ["submitted", "in_progress"], ["reviewed", "in_progress"],
-    ["reviewed", "submitted"], ["in_progress", "reviewed"],
-  ] as const)("service role cannot reset %s -> %s and re-enter CAS", async (before, after) => {
+    ["submitted", "in_progress", "42501"], ["reviewed", "in_progress", "42501"],
+    ["reviewed", "submitted", "42501"], ["in_progress", "reviewed", "23514"],
+  ] as const)("service role cannot reset %s -> %s and re-enter CAS", async (before, after, expectedCode) => {
     const id = await seedIntake(A, before);
     await expect(asRole("service_role", (q) => q(
       "update public.client_intake_forms set status=$2 where id=$1", [id, after],
-    ))).rejects.toMatchObject({ code: "42501" });
+    ))).rejects.toMatchObject({
+      code: expectedCode,
+      message: expectedCode === "23514"
+        ? "An intake can only be marked reviewed after the client submits it."
+        : "Protected intake changes require the governed revision command.",
+    });
     const { rows: [row] } = await adminQuery("select status,revision::text,responses from public.client_intake_forms where id=$1", [id]);
     expect(row).toEqual({ status: before, revision: "0", responses: { q: "draft" } });
     if (before !== "in_progress") expect((await write(parameters(id, "0", "save", { q: "Must not reopen" }))).outcome).toBe("terminal");
