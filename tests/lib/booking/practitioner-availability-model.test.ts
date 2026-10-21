@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { resolveCalendarDayAvailability } from "@/lib/calendar/day-availability";
 import {
   computeEffectiveWeek,
   computeEffectiveOverrides,
@@ -8,6 +9,64 @@ import {
 
 // PR B Part 2 — the server-side effective-schedule model (inheritance +
 // precedence + scope resolution). Pure functions, no DB.
+
+describe("SCH-004 combined calendar uses common hours, never an arbitrary scope", () => {
+  const date = "2026-07-06";
+  const resolve = (defaults: Parameters<typeof resolveCalendarDayAvailability>[0]["defaults"], overrides: Parameters<typeof resolveCalendarDayAvailability>[0]["overrides"] = [], capacityEnabled = true, activePractitionerIds = ["P", "Q"]) =>
+    resolveCalendarDayAvailability({ date, dayOfWeek: 1, defaults, overrides, capacityEnabled, activePractitionerIds });
+
+  it("does not choose the last row when practitioner hours conflict", () => {
+    const rows = [day(1, true, "09:00", "17:00"), day(1, false, null, null, "P")];
+    for (const order of [rows, [...rows].reverse()]) {
+      expect(resolve(order)).toEqual({ availability: null, closedDay: false, hoursVary: true });
+    }
+  });
+  it("ignores retained personal rows when capacity is off", () => {
+    const result = resolve([day(1, false, null, null, "P"), day(1, true, "09:00", "17:00")], [ov(date, false, null, null, "P")], false);
+    expect(result).toEqual({ availability: { isOpen: true, openTime: "09:00", closeTime: "17:00" }, closedDay: false, hoursVary: false });
+  });
+  it("uses the studio date override ahead of personal weekly hours, like booking", () => {
+    expect(resolve([day(1, true, "09:00", "17:00"), day(1, true, "08:00", "20:00", "P")], [ov(date, false, null, null)]).closedDay).toBe(true);
+  });
+  it("never hides breaks on a studio-closed date when a personal override is open", () => {
+    expect(resolve([day(1, false)], [ov(date, true, "09:00", "17:00", "P")])).toEqual({ availability: null, closedDay: false, hoursVary: true });
+  });
+  it("shows actual common date-override times instead of the weekly tint", () => {
+    expect(resolve([day(1, true, "09:00", "17:00")], [ov(date, true, "10:00", "18:00")]).availability).toEqual({ isOpen: true, openTime: "10:00", closeTime: "18:00" });
+  });
+  it("retains shared hours when personal schedules agree", () => {
+    expect(resolve([day(1, true, "09:00", "17:00"), day(1, true, "09:00", "17:00", "P")]).hoursVary).toBe(false);
+  });
+  it("does not relabel absent configuration as a persisted closed-hours tint", () => {
+    expect(resolve([])).toEqual({ availability: null, closedDay: true, hoursVary: false });
+  });
+  it("ignores inactive and foreign practitioners' retained weekday/date history", () => {
+    const rows = [day(1, true, "09:00", "17:00"), day(1, false, null, null, "INACTIVE"), day(1, false, null, null, "FOREIGN")];
+    const overrides = [ov(date, false, null, null, "INACTIVE")];
+    expect(resolve(rows, overrides, true, ["P", "Q"])).toEqual({ availability: { isOpen: true, openTime: "09:00", closeTime: "17:00" }, closedDay: false, hoursVary: false });
+  });
+  it("compares active inherited schedules even when they have no personal rows", () => {
+    const rows = [day(1, true, "09:00", "17:00"), day(1, true, "11:00", "15:00", "P")];
+    expect(resolve(rows, [], true, ["P", "Q"])).toEqual({ availability: null, closedDay: false, hoursVary: true });
+  });
+  it("does not add an unused studio fallback as a fictitious practitioner", () => {
+    const rows = [day(1, true, "09:00", "17:00"), day(1, true, "11:00", "15:00", "P"), day(1, true, "11:00", "15:00", "Q")];
+    for (const ids of [["P", "Q"], ["Q", "P"]]) expect(resolve(rows, [], true, ids)).toEqual({ availability: { isOpen: true, openTime: "11:00", closeTime: "15:00" }, closedDay: false, hoursVary: false });
+  });
+  it("uses active personal date overrides ahead of a shared closed date", () => {
+    expect(resolve([day(1, true, "09:00", "17:00")], [ov(date, false, null, null), ov(date, true, "10:00", "12:00", "P")], true, ["P"])).toEqual({ availability: { isOpen: true, openTime: "10:00", closeTime: "12:00" }, closedDay: false, hoursVary: false });
+  });
+  it("does not label a zero-active-practitioner census as shared closed or varied hours", () => {
+    expect(resolve([day(1, false, null, null, "INACTIVE")], [], true, [])).toEqual({ availability: null, closedDay: false, hoursVary: false });
+  });
+  it("treats the legacy missing-column shape as studio-wide without mutating it", () => {
+    const row = day(1, true, "09:00:00", "17:00:00");
+    delete row.practitioner_id;
+    const before = JSON.stringify(row);
+    expect(resolve([row]).availability?.openTime).toBe("09:00");
+    expect(JSON.stringify(row)).toBe(before);
+  });
+});
 
 const day = (
   day_of_week: number,
