@@ -232,25 +232,41 @@ export async function getAppointmentsForRange(
   const supabase = await createClient();
   const BASE =
     "*, practitioner:practitioners!appointments_practitioner_same_studio_fk(id, color), client:clients(id, name), ";
-  const runSelect = (serviceEmbed: string) =>
+  const runSelect = (serviceEmbed: string, from: number) =>
     supabase
       .from("appointments")
       .select(`${BASE}${serviceEmbed}`)
       .eq("studio_id", studioId)
       .gte("starts_at", startIso)
       .lt("starts_at", endIso)
-      .order("starts_at");
+      .order("starts_at")
+      .order("id")
+      .range(from, from + 999);
 
   // Prefer the persisted calendar_color; if that column does not exist YET (app
   // deployed before 0153), retry the legacy embed and normalize calendar_color to
   // null. Any OTHER database error is re-thrown, never swallowed.
-  let { data, error } = await runSelect(
-    "service:services(id, name, modality, calendar_color)",
-  );
-  if (error && isMissingColumnError(error, "calendar_color")) {
-    ({ data, error } = await runSelect("service:services(id, name, modality)"));
+  // SCH-005: one API response is not a complete calendar range. Keep scope and
+  // the starts_at/id order on every page, and continue to an empty page so a
+  // lower server cap cannot masquerade as the end. Never return a partial range.
+  const appointments: unknown[] = [];
+  const seen = new Set<string>();
+  let serviceEmbed = "service:services(id, name, modality, calendar_color)";
+  for (;;) {
+    let { data, error } = await runSelect(serviceEmbed, appointments.length);
+    if (error && isMissingColumnError(error, "calendar_color")) {
+      serviceEmbed = "service:services(id, name, modality)";
+      ({ data, error } = await runSelect(serviceEmbed, appointments.length));
+    }
+    if (error) throw new Error("Failed to load appointments");
+    const rows = (data ?? []) as unknown as Array<{ id: string }>;
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      if (seen.has(row.id)) throw new Error("Failed to load appointments");
+      seen.add(row.id);
+      appointments.push(row);
+    }
   }
-  if (error) throw new Error(`Failed to load appointments: ${error.message}`);
 
   // Supabase types joined relations as either a single row or an array.
   // Normalize so callers can use `a.practitioner?.color` without
@@ -269,7 +285,7 @@ export async function getAppointmentsForRange(
       | { id: string; name: string; modality: string | null; calendar_color?: string | null }[]
       | null;
   };
-  return ((data ?? []) as unknown as Raw[]).map((row) => {
+  return (appointments as Raw[]).map((row) => {
     const p = Array.isArray(row.practitioner)
       ? row.practitioner[0] ?? null
       : row.practitioner;
