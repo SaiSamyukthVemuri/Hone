@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
@@ -180,5 +180,45 @@ describe("smart status UI on the resend card", () => {
     // Legacy linkMaybeExpired prop is still computed (unchanged behavior).
     expect(PAGE).toMatch(/linkMaybeExpired=/);
     expect(OVERVIEW).toMatch(/linkMaybeExpired=/);
+  });
+});
+
+// Exercise the existing real creation helpers through the unit DB facade.
+// No live Supabase, mail transport or provider is used.
+const issue = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown>>, inserts: [] as Array<Record<string, unknown>> }));
+vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({ from: () => {
+  let inserted: Record<string, unknown> | null = null;
+  let patch: Record<string, unknown> | null = null;
+  let id: unknown;
+  const q = {
+    select: () => q, eq: (key: string, value: unknown) => { if (key === "id") id = value; return q; },
+    is: () => q, order: () => q, limit: () => q,
+    insert: (value: Record<string, unknown>) => { inserted = { id: `issued-${issue.inserts.length}`, ...value }; issue.inserts.push(inserted); issue.rows.push(inserted); return q; },
+    update: (value: Record<string, unknown>) => { patch = value; return q; },
+    single: async () => ({ data: inserted, error: null }),
+    maybeSingle: async () => ({ data: issue.rows.find(r => id === undefined || r.id === id) ?? null, error: null }),
+    then: (resolve: (value: unknown) => unknown) => { const row = issue.rows.find(r => r.id === id); if (row && patch) Object.assign(row, patch); return Promise.resolve(resolve({ data: null, error: null })); },
+  }; return q;
+} }) }));
+vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
+vi.mock("@/lib/intake/tokens", () => ({ generateIntakeToken: () => "synthetic-token" }));
+
+describe("0246 prospective issue capture in both real creation helpers", () => {
+  it("captures only new rows and never adopts a legacy row on reuse or link stamping", async () => {
+    const { ensureIntakeForClient, createIntakeRequestForClient } = await import("@/lib/intake/queries");
+    const { ISSUED_QUESTIONNAIRE } = await import("@/lib/intake/questionnaire");
+    issue.rows = []; issue.inserts = [];
+    const context = { studioId: "studio-A", clientId: "client-A", appOrigin: "https://example.test" };
+    await ensureIntakeForClient(context);
+    expect(issue.inserts).toHaveLength(1);
+    expect(issue.inserts[0].questionnaire_snapshot).toEqual(ISSUED_QUESTIONNAIRE);
+    await createIntakeRequestForClient({ ...context, requestedBy: "derived-practitioner" });
+    expect(issue.inserts).toHaveLength(2);
+    expect(issue.inserts[1].questionnaire_snapshot).toEqual(ISSUED_QUESTIONNAIRE);
+    issue.rows = [{ id: "legacy", status: "in_progress", questionnaire_snapshot: null }]; issue.inserts = [];
+    await ensureIntakeForClient(context);
+    expect(issue.inserts).toHaveLength(0);
+    expect(issue.rows[0].questionnaire_snapshot).toBeNull();
+    expect(issue.rows[0].intake_link_send_count).toBe(1);
   });
 });

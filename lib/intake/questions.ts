@@ -795,16 +795,16 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
 
 export const TOTAL_STEPS = INTAKE_STEPS.length;
 
-export function stepById(id: number): Step | undefined {
-  return INTAKE_STEPS.find((s) => s.id === id);
+export function stepById(id: number, steps: ReadonlyArray<Step> = INTAKE_STEPS): Step | undefined {
+  return steps.find((s) => s.id === id);
 }
 
 // Pure key -> question / label resolvers, used by the practitioner-side
 // intake review surfaces (e.g. derived review flags in
 // lib/intake/review-flags.ts). Walk INTAKE_STEPS; fall back to the raw key /
 // value for older intakes whose keys/options were since renamed. No I/O.
-export function getQuestionByKey(key: string): Question | undefined {
-  for (const step of INTAKE_STEPS) {
+export function getQuestionByKey(key: string, steps: ReadonlyArray<Step> = INTAKE_STEPS): Question | undefined {
+  for (const step of steps) {
     const q = step.questions.find((qq) => qq.key === key);
     if (q) return q;
   }
@@ -880,9 +880,10 @@ export function isAnswerProvided(
 // re-validated when the practitioner views them.
 export function findMissingRequiredAnswers(
   responses: Record<string, unknown>,
+  steps: ReadonlyArray<Step> = INTAKE_STEPS,
 ): string[] {
   const missing: string[] = [];
-  for (const step of INTAKE_STEPS) {
+  for (const step of steps) {
     for (const q of step.questions) {
       if (!q.required) continue;
       if (!isConditionalSatisfied(responses, q.conditional)) continue;
@@ -929,9 +930,10 @@ export function isCanonicalYesNoAnswer(value: unknown): value is "yes" | "no" {
 
 export function findInvalidChoiceAnswers(
   responses: Record<string, unknown>,
+  steps: ReadonlyArray<Step> = INTAKE_STEPS,
 ): string[] {
   const invalid: string[] = [];
-  for (const step of INTAKE_STEPS) {
+  for (const step of steps) {
     for (const q of step.questions) {
       if (q.type !== "yes_no" && (q.type !== "single_select" || !q.options)) continue;
       if (!isConditionalSatisfied(responses, q.conditional)) continue;
@@ -1034,8 +1036,9 @@ export function isClientOwnedResponseKey(key: string): boolean {
 export function visibleQuestionsForStep(
   stepId: number,
   responses: Record<string, unknown>,
+  steps: ReadonlyArray<Step> = INTAKE_STEPS,
 ): ReadonlyArray<Question> {
-  const step = stepById(stepId);
+  const step = stepById(stepId, steps);
   if (!step) return [];
   return step.questions.filter((q) =>
     isConditionalSatisfied(responses, q.conditional),

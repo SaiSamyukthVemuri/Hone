@@ -1,10 +1,9 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import { questionnaireForRow, QUESTIONNAIRE_UNAVAILABLE } from "@/lib/intake/questionnaire";
 import { useRouter } from "next/navigation";
 import {
-  INTAKE_STEPS,
-  TOTAL_STEPS,
   stepById,
   validateVisibleAnswers,
   visibleQuestionsForStep,
@@ -35,7 +34,6 @@ type Responses = Record<string, unknown>;
 // persists `current_step = TOTAL_STEPS`. A client who abandons the intake on
 // the consent phase resumes on step 5 with their answers intact, which is
 // truthful: they have not completed the consent forms.
-const CONSENT_PHASE = TOTAL_STEPS + 1;
 
 // RETIRED (#518): this component used to attach a versioned electrolysis
 // acknowledgement claim to every save and submit. The acknowledgement is no
@@ -43,6 +41,7 @@ const CONSENT_PHASE = TOTAL_STEPS + 1;
 // claim is gone and the browser no longer sends anything under that key.
 //
 type Props = {
+  questionnaireSnapshot: unknown;
   token: string;
   studioName: string;
   initialStep: number;
@@ -56,6 +55,7 @@ type Props = {
 };
 
 export function IntakeWizard({
+  questionnaireSnapshot,
   token,
   studioName,
   initialStep,
@@ -64,6 +64,10 @@ export function IntakeWizard({
   alreadySubmitted,
   consentForms,
 }: Props) {
+  const catalogue = useMemo(() => questionnaireForRow(questionnaireSnapshot), [questionnaireSnapshot]);
+  const INTAKE_STEPS = catalogue.steps;
+  const TOTAL_STEPS = INTAKE_STEPS.length;
+  const CONSENT_PHASE = TOTAL_STEPS + 1;
   const router = useRouter();
   const [revision, setRevision] = useState(initialRevision);
   const [conflict, setConflict] = useState(false);
@@ -129,16 +133,18 @@ export function IntakeWizard({
   }
 
   const onConsentPhase = step === CONSENT_PHASE;
-  const current: Step | undefined = stepById(step);
+  const current: Step | undefined = stepById(step, INTAKE_STEPS);
 
   // Conditional visibility comes from the shared questionnaire authority in
   // lib/intake/questions.ts. This component used to carry a private `isVisible`
   // fork of the same predicate; the fork is gone so the practitioner-assisted
   // editor and this wizard cannot disagree about which questions apply.
   const visibleQuestions = useMemo(
-    () => visibleQuestionsForStep(step, responses),
-    [step, responses],
+    () => visibleQuestionsForStep(step, responses, INTAKE_STEPS),
+    [step, responses, INTAKE_STEPS],
   );
+
+  if (catalogue.kind === "invalid") return <p>{QUESTIONNAIRE_UNAVAILABLE}</p>;
 
   if (alreadySubmitted) {
     return (
@@ -250,7 +256,7 @@ export function IntakeWizard({
 
   return (
     <div className="flex flex-col gap-6">
-      <StepIndicator currentStep={step} showConsent={hasConsentPhase} />
+      <StepIndicator steps={INTAKE_STEPS} currentStep={step} showConsent={hasConsentPhase} />
 
       <div>
         <h2 className="text-[24px] font-semibold leading-tight tracking-tight">
@@ -280,6 +286,7 @@ export function IntakeWizard({
         <div className="flex flex-col gap-5">
           {visibleQuestions.map((q) => (
             <IntakeQuestionField
+                noneValue={catalogue.noneValue}
               key={q.key}
               q={q}
               value={responses[q.key]}
@@ -330,9 +337,11 @@ export function IntakeWizard({
 }
 
 function StepIndicator({
+  steps: INTAKE_STEPS,
   currentStep,
   showConsent,
 }: {
+  steps: ReadonlyArray<Step>;
   currentStep: number;
   showConsent: boolean;
 }) {
@@ -341,7 +350,7 @@ function StepIndicator({
   const columns: Array<{ id: number; shortLabel: string }> = [
     ...INTAKE_STEPS.map((s) => ({ id: s.id, shortLabel: s.shortLabel })),
     ...(showConsent
-      ? [{ id: CONSENT_PHASE, shortLabel: "Consent" }]
+      ? [{ id: INTAKE_STEPS.length + 1, shortLabel: "Consent" }]
       : []),
   ];
   return (

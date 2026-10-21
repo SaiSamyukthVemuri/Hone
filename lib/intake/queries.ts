@@ -1,3 +1,4 @@
+import { ISSUED_QUESTIONNAIRE } from "./questionnaire";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { createClient } from "@/lib/supabase/server";
@@ -141,6 +142,7 @@ export async function ensureIntakeForClient(params: {
     const { data: created, error: insertErr } = await admin
       .from("client_intake_forms")
       .insert({
+        questionnaire_snapshot: ISSUED_QUESTIONNAIRE,
         studio_id: params.studioId,
         client_id: params.clientId,
       })
@@ -183,6 +185,7 @@ export async function createIntakeRequestForClient(params: {
   const { data: created, error: insertErr } = await admin
     .from("client_intake_forms")
     .insert({
+      questionnaire_snapshot: ISSUED_QUESTIONNAIRE,
       studio_id: params.studioId,
       client_id: params.clientId,
       // status, current_step, responses default to in_progress / 1 / {}.

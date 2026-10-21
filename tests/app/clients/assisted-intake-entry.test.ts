@@ -212,6 +212,7 @@ function intakeRow(over: Partial<Row> = {}): Row {
     deleted_at: null,
     updated_at: T0,
     revision: 0,
+    questionnaire_snapshot: null,
     ...over,
   };
 }
@@ -764,5 +765,26 @@ describe("4332229852 whole-map draft navigation", () => {
     expect(rejected.ok).toBe(false);
     expect(JSON.stringify(currentIntake())).toBe(before);
     expect((await save({ step: 3, responses: { ...storedResponses(), has_allergies: "no" } })).ok).toBe(true);
+  });
+});
+
+describe("0246 assisted snapshot authority", () => {
+  it("known catalogue retains CAS and client-owned refusal without accepting supplied catalogue text", async () => {
+    const { ISSUED_QUESTIONNAIRE } = await import("@/lib/intake/questionnaire");
+    state.intakes = [intakeRow({ questionnaire_snapshot: structuredClone(ISSUED_QUESTIONNAIRE) })];
+    expect((await save({ step: 1, responses: { legal_name: "Synthetic", questionnaire_snapshot: { forged: true } } })).ok).toBe(true);
+    expect(storedResponses()).not.toHaveProperty("questionnaire_snapshot");
+    expect(currentIntake().questionnaire_snapshot).toEqual(ISSUED_QUESTIONNAIRE);
+    const before = JSON.stringify(currentIntake());
+    expect((await save({ step: 1, responses: { ack_accurate: true } })).ok).toBe(false);
+    expect(JSON.stringify(currentIntake())).toBe(before);
+  });
+  it.each([{}, { schema_version: 99 }, undefined])("refuses snapshot %j on save and handoff without stamping or minting a link", async (snapshot) => {
+    state.intakes = [intakeRow({ questionnaire_snapshot: snapshot })];
+    const before = JSON.stringify(currentIntake());
+    expect((await save({ step: 1, responses: { legal_name: "Unsaved" } })).ok).toBe(false);
+    expect((await handOffAssistedIntakeAction(handoffFd())).ok).toBe(false);
+    expect(JSON.stringify(currentIntake())).toBe(before);
+    expect(generateIntakeLinkUrl).not.toHaveBeenCalled();
   });
 });

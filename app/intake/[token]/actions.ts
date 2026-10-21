@@ -9,8 +9,9 @@ import {
   findInvalidChoiceAnswers,
   getQuestionByKey,
   findMissingRequiredAnswers,
-  TOTAL_STEPS,
+  TOTAL_STEPS, type Step,
 } from "@/lib/intake/questions";
+import { questionnaireForRow, QUESTIONNAIRE_UNAVAILABLE } from "@/lib/intake/questionnaire";
 import { sanitizeQuestionResponses } from "@/lib/intake/responses";
 import {
   INTAKE_CONSENT_RESPONSES,
@@ -76,8 +77,8 @@ const INTAKE_TOKEN_INVALID =
 //     question removed it from ALL_QUESTION_KEYS.
 //
 // Historical evidence stays readable; no new evidence is accepted.
-function sanitizeResponses(input: unknown): Record<string, unknown> {
-  const out = sanitizeQuestionResponses(input);
+function sanitizeResponses(input: unknown, steps: ReadonlyArray<Step>): Record<string, unknown> {
+  const out = sanitizeQuestionResponses(input, steps);
   if (!input || typeof input !== "object" || Array.isArray(input)) return out;
   const consentClaims = normalizeIntakeConsentClaims(
     (input as Record<string, unknown>)[INTAKE_CONSENT_RESPONSES.id],
@@ -112,7 +113,6 @@ export async function saveIntakeStepAction(payload: {
   }
   const expectedRevision = intakeRevision(payload.expectedRevision);
   if (expectedRevision === null) return { ok: false, code: "conflict", error: INTAKE_CONFLICT };
-  const responses = sanitizeResponses(payload.responses);
 
   const admin = createAdminClient();
   const { data: existing, error: lookupErr } = await admin
@@ -122,7 +122,7 @@ export async function saveIntakeStepAction(payload: {
     // from the intake row the verified token addresses, never from the
     // request, so a claim can only ever be checked against ITS OWN studio's
     // forms.
-    .select("id, status, responses, studio_id, client_id, revision")
+    .select("id, status, responses, studio_id, client_id, revision, questionnaire_snapshot")
     .eq("id", v.intake_id)
     .is("deleted_at", null)
     .maybeSingle();
@@ -137,6 +137,10 @@ export async function saveIntakeStepAction(payload: {
 
   // Merge with what's already saved so a save from step 3 doesn't blow away
   // step 1 answers if the client only sent the latest step's fields.
+  const catalogue = questionnaireForRow(existing.questionnaire_snapshot);
+  if (catalogue.kind === "invalid") return { ok: false, error: QUESTIONNAIRE_UNAVAILABLE };
+  const responses = sanitizeResponses(payload.responses, catalogue.steps);
+
   if (intakeRevision(existing.revision) !== expectedRevision) {
     return { ok: false, code: "conflict", error: INTAKE_CONFLICT };
   }
@@ -149,10 +153,10 @@ export async function saveIntakeStepAction(payload: {
   // Incomplete drafts remain legal; a supplied yes/no value must be canonical.
   // Use the saved parent for applicability, but do not strand an unrelated
   // step because an untouched historic value needs correction on a later step.
-  const invalidYesNo = findInvalidChoiceAnswers(merged).filter(
+  const invalidYesNo = findInvalidChoiceAnswers(merged, catalogue.steps).filter(
     (key) => Object.hasOwn(responses, key)
       && !isDeepStrictEqual(responses[key], (existing.responses as Record<string, unknown> | null)?.[key])
-      && getQuestionByKey(key)?.type === "yes_no",
+      && getQuestionByKey(key, catalogue.steps)?.type === "yes_no",
   );
   if (invalidYesNo.length > 0) {
     return { ok: false, error: "Please choose Yes or No for each yes/no answer before saving." };
@@ -210,12 +214,11 @@ export async function submitIntakeAction(payload: {
 
   const expectedRevision = intakeRevision(payload.expectedRevision);
   if (expectedRevision === null) return { ok: false, code: "conflict", error: INTAKE_CONFLICT };
-  const responses = sanitizeResponses(payload.responses);
 
   const admin = createAdminClient();
   const { data: existing, error: lookupErr } = await admin
     .from("client_intake_forms")
-    .select("id, status, responses, studio_id, client_id, revision")
+    .select("id, status, responses, studio_id, client_id, revision, questionnaire_snapshot")
     .eq("id", v.intake_id)
     .is("deleted_at", null)
     .maybeSingle();
@@ -227,6 +230,10 @@ export async function submitIntakeAction(payload: {
   if (existing.status === "submitted" || existing.status === "reviewed") {
     return { ok: false, code: "terminal", error: INTAKE_TERMINAL };
   }
+
+  const catalogue = questionnaireForRow(existing.questionnaire_snapshot);
+  if (catalogue.kind === "invalid") return { ok: false, error: QUESTIONNAIRE_UNAVAILABLE };
+  const responses = sanitizeResponses(payload.responses, catalogue.steps);
 
   if (intakeRevision(existing.revision) !== expectedRevision) {
     return { ok: false, code: "conflict", error: INTAKE_CONFLICT };
@@ -244,7 +251,7 @@ export async function submitIntakeAction(payload: {
   // blocked here. Conditionally-hidden questions don't count as
   // missing; findMissingRequiredAnswers honors the same conditional
   // predicate the wizard uses.
-  const missing = findMissingRequiredAnswers(merged);
+  const missing = findMissingRequiredAnswers(merged, catalogue.steps);
   if (missing.length > 0) {
     return {
       ok: false,
@@ -269,7 +276,7 @@ export async function submitIntakeAction(payload: {
   // takes a few lines down. A draft is never authoritative; THIS is the gate,
   // and it re-checks the whole merged map, so a bad value planted by an earlier
   // save is caught here rather than waved through.
-  const invalidChoices = findInvalidChoiceAnswers(merged);
+  const invalidChoices = findInvalidChoiceAnswers(merged, catalogue.steps);
   if (invalidChoices.length > 0) {
     return {
       ok: false,

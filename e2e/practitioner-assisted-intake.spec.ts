@@ -709,3 +709,52 @@ test.describe("0243 stale public and assisted drafts", () => {
     } finally { await publicPage.close(); }
   });
 });
+
+// Prepared source only: separately aligned0246 target/slot required.
+test.describe("0246 prospective issue and legacy provenance", () => {
+  test("normal no-email assisted issue pins one immutable catalogue through save and review", async ({ page }) => {
+    const { ISSUED_QUESTIONNAIRE } = await import("@/lib/intake/questionnaire");
+    const { sql } = await import("./helpers/seed");
+    const { clientId } = await seedE2eClient(seed);
+    await loginAsOwner(page, seed);
+    await page.goto(`/clients/${clientId}?tab=health`);
+    // The existing start path delegates to the governed reissue helper.
+    await page.getByTestId("start-intake-with-client").click();
+    await expect(page).toHaveURL(/\/intake\/assist/);
+    const rows = await sql<{ id: string; questionnaire_snapshot: unknown; intake_link_last_sent_at: string | null }>(
+      `select id, questionnaire_snapshot, intake_link_last_sent_at::text from public.client_intake_forms where studio_id=$1 and client_id=$2 and deleted_at is null`, [seed.studioId,clientId]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].questionnaire_snapshot).toEqual(ISSUED_QUESTIONNAIRE);
+    expect(rows[0].intake_link_last_sent_at).toBeNull();
+    await page.getByLabel("Preferred name", { exact: true }).fill("Synthetic issued draft");
+    await page.locator("#legal_name").fill("Synthetic Client");
+    await page.locator("#email").fill("synthetic@example.test");
+    await page.locator("#phone").fill("5551230000");
+    await page.locator("#date_of_birth").fill("1990-04-02");
+    await page.locator("#pronouns").fill("they/them");
+    await page.locator("#address").fill("1 Test Street");
+    await page.locator("#emergency_contact_name").fill("Synthetic Contact");
+    await page.locator("#emergency_contact_phone").fill("5559998888");
+    await page.getByRole("button", { name: /Continue|Save and continue/ }).click();
+    await expect.poll(async () => (await getIntakeRow(rows[0].id))?.responses.preferred_name).toBe("Synthetic issued draft");
+    await page.goto(`/clients/${clientId}/intake?intake=${rows[0].id}`);
+    await expect(page.getByText("Labels below use the questionnaire saved when this intake was issued.", { exact: false })).toBeVisible();
+    const after = await sql<{ questionnaire_snapshot: unknown }>(`select questionnaire_snapshot from public.client_intake_forms where id=$1`,[rows[0].id]);
+    expect(after[0].questionnaire_snapshot).toEqual(ISSUED_QUESTIONNAIRE);
+  });
+  test("a retained legacy intake remains unknown and terminal token discloses neither answers nor catalogue", async ({ page }) => {
+    const { clientId } = await seedE2eClient(seed);
+    const intakeId = await seedE2eIntake(seed.studioId,clientId,"submitted",answeredQuestionnaire());
+    await loginAsOwner(page,seed);
+    await page.goto(`/clients/${clientId}/intake?intake=${intakeId}`);
+    await expect(page.getByText("The original questionnaire wording was not saved with this intake",{exact:false})).toBeVisible();
+    const { ISSUED_QUESTIONNAIRE } = await import("@/lib/intake/questionnaire");
+    const { sql } = await import("./helpers/seed");
+    const known = await sql<{id:string}>(`insert into public.client_intake_forms (studio_id,client_id,status,submitted_at,responses,questionnaire_snapshot) values ($1,$2,'submitted',now(),$3::jsonb,$4::jsonb) returning id`,[seed.studioId,clientId,JSON.stringify({preferred_name:"Synthetic terminal answer canary"}),JSON.stringify(ISSUED_QUESTIONNAIRE)]);
+    const response = await page.goto(`/intake/${await mintIntakeToken(known[0].id)}`);
+    const document = await response!.text();
+    expect(document).not.toContain(ISSUED_QUESTIONNAIRE.content_digest);
+    expect(document).not.toContain("Synthetic terminal answer canary");
+    await expect(page.getByLabel("Preferred name",{exact:true})).toHaveCount(0);
+  });
+});

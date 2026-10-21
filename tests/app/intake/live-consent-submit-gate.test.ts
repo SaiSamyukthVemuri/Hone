@@ -214,6 +214,7 @@ beforeEach(() => {
       client_id: CLIENT_ID,
       status: "in_progress",
       revision: 0,
+    questionnaire_snapshot: null,
       current_step: 5,
       responses: {},
       submitted_at: null,

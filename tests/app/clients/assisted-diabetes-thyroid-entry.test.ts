@@ -189,6 +189,7 @@ function intakeRow(over: Partial<Row> = {}): Row {
     deleted_at: null,
     updated_at: T0,
     revision: 0,
+    questionnaire_snapshot: null,
     ...over,
   };
 }

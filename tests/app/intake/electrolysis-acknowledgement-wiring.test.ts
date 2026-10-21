@@ -162,6 +162,7 @@ function seed(overrides: Row = {}) {
       id: INTAKE_ID,
       status: "in_progress",
       revision: 0,
+    questionnaire_snapshot: null,
       responses: {},
       studio_id: STUDIO_ID,
       client_id: CLIENT_ID,

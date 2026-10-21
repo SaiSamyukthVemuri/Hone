@@ -1,3 +1,4 @@
+import { questionnaireForRow, QUESTIONNAIRE_HISTORY_UNAVAILABLE } from "@/lib/intake/questionnaire";
 import Link from "next/link";
 // RESP-CLIENT-INTAKE-01. Only the back control was in the measured slice; the
 // "view current intake" and "assisted intake" links below stay bare <Link> on
@@ -16,9 +17,7 @@ import {
   INTAKE_LINK_TTL_DAYS,
 } from "@/lib/intake/queries";
 import {
-  INTAKE_STEPS,
-  NONE_VALUE,
-  type Question,
+  type Question, type Step,
 } from "@/lib/intake/questions";
 import { computeFitzpatrickEstimate } from "@/lib/intake/fitzpatrick";
 import {
@@ -66,7 +65,7 @@ function optionLabel(q: Question, value: string): string {
   return match?.label ?? value;
 }
 
-function renderResponse(q: Question, value: unknown, notes: unknown): React.ReactNode {
+function renderResponse(q: Question, value: unknown, notes: unknown, noneValue: string): React.ReactNode {
   if (value === undefined || value === null || value === "") {
     return (
       <span className="text-neutral-400">
@@ -90,10 +89,10 @@ function renderResponse(q: Question, value: unknown, notes: unknown): React.Reac
     // non-None options shown; the remainder collapses to "+N more"
     // so very long lists (e.g. medical_conditions has 14) don't
     // dominate the review grid.
-    if (selected.length === 1 && selected[0] === NONE_VALUE) {
-      const noneLabel = optionLabel(q, NONE_VALUE);
+    if (selected.length === 1 && selected[0] === noneValue) {
+      const noneLabel = optionLabel(q, noneValue);
       const others = (q.options ?? [])
-        .filter((o) => o.value !== NONE_VALUE)
+        .filter((o) => o.value !== noneValue)
         .map((o) => o.label);
       // The truncate/expand UI lives in a tiny client component so the
       // practitioner can reveal the full negated list on demand
@@ -220,6 +219,8 @@ export default async function ClientIntakePage({
   const reviewer = intake.reviewed_by
     ? practitioners.find((p) => p.id === intake.reviewed_by)
     : null;
+  const catalogue = questionnaireForRow(intake.questionnaire_snapshot);
+  const INTAKE_STEPS = catalogue.steps;
   const responses = (intake.responses ?? {}) as Record<string, unknown>;
   const viewingNonLatest = latest != null && intake.id !== latest.id;
 
@@ -354,7 +355,7 @@ export default async function ClientIntakePage({
 
       <IntakeReviewFlags responses={responses} />
 
-      <FitzpatrickSummary responses={responses} />
+      {catalogue.kind !== "invalid" ? <FitzpatrickSummary responses={responses} steps={INTAKE_STEPS} /> : null}
 
       <IntakeEntrySummary
         responses={responses}
@@ -379,11 +380,14 @@ export default async function ClientIntakePage({
         </p>
       ) : null}
 
-      <p className="rounded-md border border-neutral-200 bg-neutral-50 p-4 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
+      {catalogue.kind === "legacy" ? <p className="rounded-md border border-neutral-200 bg-neutral-50 p-4 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
         Question and answer labels below use the current questionnaire.
         The original questionnaire wording was not saved with this intake
         and may have been different. Stored answers are unchanged.
-      </p>
+      </p> : catalogue.kind === "known" ? <p className="text-sm text-neutral-600">
+        Labels below use the questionnaire saved when this intake was issued.
+        This does not confirm that every question was read.
+      </p> : <p role="alert">{QUESTIONNAIRE_HISTORY_UNAVAILABLE}</p>}
 
       {/* Step-by-step intake answers, wrapped in native
           <details open> disclosures so a practitioner can collapse a
@@ -435,6 +439,7 @@ export default async function ClientIntakePage({
                             q,
                             responses[q.key],
                             responses[`${q.key}_notes`],
+                            catalogue.noneValue,
                           )
                         ) : (
                           // Deliberately does NOT fall through to
@@ -643,20 +648,21 @@ function AllergiesSummary({
 // reminds the practitioner this is a self-reported intake estimate,
 // not a clinical assessment.
 function FitzpatrickSummary({
-  responses,
+  responses, steps,
 }: {
   responses: Record<string, unknown>;
+  steps: ReadonlyArray<Step>;
 }) {
   const estimate = computeFitzpatrickEstimate(responses);
   const hairColorRaw = responses.hair_color_in_treatment_area;
   const hairTextureRaw = responses.hair_texture_in_treatment_area;
   const hairColorLabel =
     typeof hairColorRaw === "string"
-      ? resolveOptionLabel("hair_color_in_treatment_area", hairColorRaw)
+      ? resolveOptionLabel("hair_color_in_treatment_area", hairColorRaw, steps)
       : null;
   const hairTextureLabel =
     typeof hairTextureRaw === "string"
-      ? resolveOptionLabel("hair_texture_in_treatment_area", hairTextureRaw)
+      ? resolveOptionLabel("hair_texture_in_treatment_area", hairTextureRaw, steps)
       : null;
 
   // Nothing to render: this intake pre-dates the Fitzpatrick section
@@ -862,8 +868,8 @@ function IntakeEntrySummary({
 // by walking INTAKE_STEPS. Falls back to the raw value if the question
 // or option isn't found (e.g. an older intake whose key has since been
 // renamed). Pure, no React or I/O.
-function resolveOptionLabel(key: string, value: string): string {
-  for (const step of INTAKE_STEPS) {
+function resolveOptionLabel(key: string, value: string, steps: ReadonlyArray<Step>): string {
+  for (const step of steps) {
     const q = step.questions.find((qq) => qq.key === key);
     if (q && q.options) {
       const opt = q.options.find((o) => o.value === value);

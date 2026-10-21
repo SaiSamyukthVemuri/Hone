@@ -1450,6 +1450,7 @@ export type ClientTag = {
 export type IntakeStatus = "in_progress" | "submitted" | "reviewed";
 
 export type ClientIntakeForm = {
+  questionnaire_snapshot: unknown | null;
   revision: string | number;
   id: string;
   studio_id: string;

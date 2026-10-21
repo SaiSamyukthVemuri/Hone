@@ -1,3 +1,4 @@
+import { questionnaireForRow, QUESTIONNAIRE_UNAVAILABLE } from "@/lib/intake/questionnaire";
 import type { Metadata } from "next";
 import { intakeRevision } from "@/lib/intake/revision";
 import { MarketingFooter } from "@/app/_components/MarketingFooter";
@@ -23,6 +24,7 @@ type LoadResult =
       initialStep: number;
       initialResponses: Record<string, unknown>;
       initialRevision: string | null;
+      questionnaireSnapshot: unknown;
       alreadySubmitted: boolean;
       consentForms: RenderedConsentForm[];
     }
@@ -86,11 +88,12 @@ async function loadIntake(token: string): Promise<LoadResult> {
   // alreadySubmitted=true and does not render the questionnaire.
   let initialResponses: Record<string, unknown> = {};
   let initialRevision: string | null = null;
+  let questionnaireSnapshot: unknown = null;
   let initialStep = headerRow.current_step;
   if (!alreadySubmitted) {
     const { data: row, error: respErr } = await admin
       .from("client_intake_forms")
-      .select("responses, revision, current_step")
+      .select("responses, revision, current_step, questionnaire_snapshot")
       .eq("status", "in_progress")
       .eq("id", v.intake_id)
       .is("deleted_at", null)
@@ -107,6 +110,8 @@ async function loadIntake(token: string): Promise<LoadResult> {
       return { ok: false, error: "This intake link is no longer valid." };
     }
     if (!row || intakeRevision(row.revision) === null) return { ok: false, error: "This intake could not be loaded. Please contact the studio." };
+    if (questionnaireForRow(row.questionnaire_snapshot).kind === "invalid") return { ok: false, error: QUESTIONNAIRE_UNAVAILABLE };
+    questionnaireSnapshot = row.questionnaire_snapshot;
     initialRevision = intakeRevision(row.revision);
     initialStep = row.current_step;
     initialResponses = (row?.responses as Record<string, unknown> | null) ?? {};
@@ -133,6 +138,7 @@ async function loadIntake(token: string): Promise<LoadResult> {
     initialStep,
     initialResponses,
     initialRevision,
+    questionnaireSnapshot,
     alreadySubmitted,
     consentForms,
   };
@@ -184,6 +190,7 @@ export default async function IntakePage({
           </div>
           {result.ok ? (
             <IntakeWizard
+              questionnaireSnapshot={result.questionnaireSnapshot}
               token={result.token}
               studioName={result.studioName}
               initialStep={result.initialStep}

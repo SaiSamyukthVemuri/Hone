@@ -32,6 +32,14 @@ const PAGE = read("app/(app)/clients/[id]/intake/page.tsx");
 const PAGE_CODE = codeOnly(PAGE);
 
 describe("the review grid asks the projection, not the raw response map", () => {
+  it("uses the validated row catalogue and refuses a labelled grid for invalid non-NULL provenance", () => {
+    expect(PAGE_CODE).toContain("questionnaireForRow(intake.questionnaire_snapshot)");
+    expect(PAGE_CODE).toContain("const INTAKE_STEPS = catalogue.steps");
+    expect(PAGE_CODE).toContain('catalogue.kind === "legacy"');
+    expect(PAGE_CODE).toContain('catalogue.kind === "known"');
+    expect(PAGE_CODE).toContain("QUESTIONNAIRE_HISTORY_UNAVAILABLE");
+  });
+
   it("labels current questionnaire wording and the missing historical snapshot before the answer grid (CLN-008)", () => {
     const notice = PAGE_CODE.indexOf("Question and answer labels below use the current questionnaire.");
     expect(notice).toBeGreaterThan(0);
