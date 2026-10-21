@@ -34,6 +34,7 @@ describe("check-stripe-gates script (PR #154)", () => {
     const stdout = result.stdout ?? "";
     // Each documented rule must show up as PASS in the output.
     expect(stdout).toMatch(/^PASS paymentIntents\.create:/m);
+    expect(stdout).toMatch(/^PASS paymentIntents\.confirm: 1 occurrence\(s\), all in allowlisted file\(s\): lib\/billing\/session-payment-charge\.ts:1$/m);
     // PR #320: the requires_action safety cancel — pinned to exactly one site.
     expect(stdout).toMatch(/^PASS paymentIntents\.cancel:/m);
     expect(stdout).toMatch(/^PASS charges\.create:/m);
@@ -187,6 +188,19 @@ describe("check-stripe-gates: unknown Stripe writes hard-fail (PR #309)", () => 
   afterEach(() => {
     if (dir) rmSync(dir, { recursive: true, force: true });
     dir = null;
+  });
+
+  it("pins staged confirmation to the one reviewed executor", () => {
+    const r = runAgainst("lib/billing/session-payment-charge.ts", "await stripe.paymentIntents.confirm(id, {});\n");
+    expect(r.stdout ?? "").toMatch(/^PASS paymentIntents\.confirm: 1 occurrence/m);
+    expect(r.stdout ?? "").toMatch(/^PASS no-unclassified-stripe-writes:/m);
+  });
+
+  it("refuses confirmation in every unapproved runtime file", () => {
+    const r = runAgainst("lib/other.ts", "await stripe.paymentIntents.confirm(id, {});\n");
+    expect(r.status).not.toBe(0);
+    expect(r.stdout ?? "").toMatch(/^FAIL paymentIntents\.confirm:/m);
+    expect(r.stdout ?? "").toContain("lib/other.ts");
   });
 
   it("hard-fails on an unclassified server Stripe write (new verb)", () => {

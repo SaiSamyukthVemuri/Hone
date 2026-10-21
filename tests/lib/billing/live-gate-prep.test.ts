@@ -229,7 +229,7 @@ describe("stale pending_stripe recovery (already shipped; pinned)", () => {
     expect(SESSION).toMatch(/pending_stripe/);
     expect(SESSION).toMatch(/idempotency/i);
     expect(SESSION).toMatch(
-      /row stays pending_stripe\. Reconcile via Stripe dashboard\./,
+      /The staged payment outcome could not be verified\. Review before retrying\./,
     );
     expect(() => read("lib/billing/manual-fee-charge.ts")).toThrow();
   });

@@ -2234,3 +2234,19 @@ Headers on every route: `Strict-Transport-Security`, `X-Frame-Options: DENY`, `X
 | Inventory / consumables tracking | Out of scope. |
 | Multi-currency | Currency pinned to CAD via column CHECK. |
 | Subscriptions / packages | Out of scope. |
+
+
+### 2026-10-21 — PAY001 staged producer source preparation
+
+OPS authorized the existing General producer repair: create an unconfirmed manual
+PaymentIntent, bind its trusted identity using an exact frozen-tuple/key/raw-claim-time
+NULL-original CAS, require one acknowledged ID and a verified pending read, then
+allow only that invocation to confirm that original. The new confirmation call is
+pinned to the existing session-payment executor by the Stripe gate. Existing auth,
+mode, money, lineage, settlement and outcome guards remain.
+
+Pending or lost-acknowledgment invocations never acquire confirmation authority.
+Legacy keys are not reinterpreted; unknown legacy and new creates stay manual.
+Complete old-writer and rollback drain, attempt UUID/key lifetime, normal exact-head
+verification and production approval remain release prerequisites. No SQL, hosted
+apply, provider activation or live-money action is authorized by this source decision.
