@@ -197,6 +197,9 @@ type AttemptRow = {
   refund_amount_cents: number | null;
   refunded_at: string | null;
   stripe_refund_id: string | null;
+  stripe_refund_status: string | null;
+  stripe_refund_event_created: number | null;
+  stripe_refund_event_id: string | null;
 };
 
 export async function refundPaymentChargeAttempt(args: {
@@ -225,7 +228,7 @@ export async function refundPaymentChargeAttempt(args: {
   const { data: rawRow, error: loadErr } = await admin
     .from("payment_charge_attempts")
     .select(
-      "id, studio_id, client_id, charge_reason, status, stripe_livemode, stripe_account_id, stripe_customer_id, stripe_payment_intent_id, stripe_charge_id, amount_cents, currency, charged_at, refund_status, refund_amount_cents, refunded_at, stripe_refund_id",
+      "id, studio_id, client_id, charge_reason, status, stripe_livemode, stripe_account_id, stripe_customer_id, stripe_payment_intent_id, stripe_charge_id, amount_cents, currency, charged_at, refund_status, refund_amount_cents, refunded_at, stripe_refund_id, stripe_refund_status, stripe_refund_event_created, stripe_refund_event_id",
     )
     .eq("id", args.attemptId)
     .maybeSingle();
@@ -357,6 +360,13 @@ export async function refundPaymentChargeAttempt(args: {
         "A refund is already in flight for this charge. Wait a moment and refresh.",
     };
   }
+  // Actual provider evidence needs governed reconciliation/new generation,
+  // never a reset of its object identity or signed chronology. Legacy local
+  // failure without any provider object/evidence retains its existing retry.
+  if (attempt.stripe_refund_id !== null || attempt.stripe_refund_status !== null
+      || attempt.stripe_refund_event_created !== null || attempt.stripe_refund_event_id !== null) {
+    return { ok: false, outcome: "needs_manual_review", message: "A refund outcome is already recorded for this payment. The studio operator must review it before starting another refund." };
+  }
   if (!attempt.stripe_account_id) {
     return {
       ok: false,
@@ -384,7 +394,6 @@ export async function refundPaymentChargeAttempt(args: {
       refund_amount_cents: refundAmountCents,
       refund_initiated_by_practitioner_id: args.practitionerId,
       refund_internal_note: sanitizeInternalNote(args.internalNote),
-      stripe_refund_id: null,
       refund_failure_code: null,
       refund_failure_message_safe: null,
       refunded_at: null,
@@ -394,6 +403,11 @@ export async function refundPaymentChargeAttempt(args: {
     .eq("status", "succeeded")
     .eq("stripe_livemode", livemode)
     .or("refund_status.is.null,refund_status.eq.failed")
+    // Recheck under the row UPDATE if a signed result arrived after the read.
+    .is("stripe_refund_id", null)
+    .is("stripe_refund_status", null)
+    .is("stripe_refund_event_created", null)
+    .is("stripe_refund_event_id", null)
     // RECIPROCAL WITH THE RECEIPT CLAIM. A refund may not start while a receipt
     // send holds the row.
     //
@@ -448,7 +462,7 @@ export async function refundPaymentChargeAttempt(args: {
       ok: false,
       outcome: "claim_lost",
       message:
-        "This payment changed while the refund was starting. Another refund or receipt operation may still be in progress. Refresh and try again.",
+        "This payment changed while the refund was starting. Refresh to review its current refund and receipt status before trying again.",
     };
   }
 
@@ -507,11 +521,16 @@ export async function refundPaymentChargeAttempt(args: {
           refund_status: "failed",
           refund_failure_code: code,
           refund_failure_message_safe: safeMessage,
-          stripe_refund_id: null,
           refunded_at: null,
         })
         .eq("id", attempt.id)
+        .eq("studio_id", attempt.studio_id)
+        .eq("stripe_livemode", attempt.stripe_livemode)
         .eq("refund_status", "pending_stripe")
+        .is("stripe_refund_id", null)
+        .is("stripe_refund_status", null)
+        .is("stripe_refund_event_created", null)
+        .is("stripe_refund_event_id", null)
         .select("id");
       // PR #263: a zero-row update (no matching pending_stripe row)
       // persisted nothing even though Stripe terminally refused the
@@ -543,6 +562,7 @@ export async function refundPaymentChargeAttempt(args: {
             zero_rows: failedWriteZeroRows,
           },
         });
+        return { ok: false, outcome: "needs_manual_review", message: "The refund outcome changed or could not be saved. The studio operator will reconcile it." };
       }
       await recordOpsAlert({
         severity: "warning",
