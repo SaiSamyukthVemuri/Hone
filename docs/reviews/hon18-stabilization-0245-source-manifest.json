@@ -1,5 +1,5 @@
 {
-  "at": "2026-10-21T12:38:25.813768+00:00",
+  "at": "2026-10-21T13:45:00.373574+00:00",
   "purpose": "Ordered source/checksum evidence only, not apply/release authority",
   "hosted_declaration": "0212 unchanged; originalapplyreceipts/history preserved; not re-read/applied here",
   "source_SQL_tree": "a334e5a75bbb8debff77aa5cf3f7a9f33326fa0a",
@@ -363,7 +363,7 @@
   "holds": [
     "926NEVERMERGE/863frozen/223unchanged/held920alternativeexcluded",
     "No hosted/provider/model/consent/customerdata actions",
-    "All newDB/runtime/concurrency/ACL/cleanup proofUNRUN untilfreshCI",
+    "Changed tests/refund union require fresh exact-head CI; unchanged f7 SQL scoped DB proof retained in current_proof below. No complete-green or production/human acceptance claim.",
     "0246 composed;0247 Willow reserved/source-native-held/ABSENT;0248 Team source-only composed for evidence;0249 derived, UNALLOCATED. No full contiguous prefix or release-ready claim."
   ],
   "source_corrections": {
@@ -458,5 +458,35 @@
     "owner": "Willow",
     "reason": "Existing source allocation/native approval rejection; no SQL fabricated/imported/reallocated",
     "effect": "Canonical pending-chain contiguity guard remains unchanged and expected to fail until legitimate source dependency/allocation adjudication. Existing DB/browser CI may still execute present real source for evidence only."
+  },
+  "current_proof": {
+    "source": "f7a18216c63a390b1fbd5f6dbb51bdaaf743e437",
+    "CI": 39601398180,
+    "review": "Completed exact f7, no findings",
+    "unit": "25519PASS1FAIL actual247chainhole guard unchanged",
+    "DB": "4564PASS4FAIL8SKIP; audit32+assisted41 scoped PASS;3legacy direct-positive expectations and247gap failed",
+    "browser": "665PASS42SKIP0flaky;20native+2recovery explicitlySKIPPEDflagOFF, NOTnativejourneyacceptance",
+    "payment": "67PASS1SKIP1FAIL futureappointmentcompletionfixture mismatch; correctproductgate retained",
+    "mobile": "6PASS",
+    "Google": "13PASS",
+    "historical_native": "fa08520PASS/a6312PASS scoped unchangedcontracts/UI; current214seed/241entry/244history changed, currentmountedjourneysUNRUN",
+    "limits": "Counts overlap with per-suite proof. Fresh proof required for new test cases and financial union; no hosted apply/production data or human acceptance."
+  },
+  "current_composition": {
+    "pre_manifest_commit": "628b671796a070a1af7c51392448e949e336b9c9",
+    "production_base": "d4fb5ab75c061e12e836ceb89d139a7cc396cce4",
+    "test_repairs": {
+      "Team_legacy_contracts_published": "02617476ec948588c5dc222d3993991b72e16226",
+      "Team_stale_service_submit_patch_sha256": "5288e96fd704a1855303219be79bea10b8494b354374b9d98214b3e70c7a9957",
+      "Insurance_same_appointment_time_patch_sha256": "15f02cb8b5c740849a07a40075f29431f3721b0b086407f9ad352d91a7e040c9",
+      "proof": "TSC/prepush PASS; newly edited DB/browser behavior UNRUN until fresh existing CI. Original phase positives/harddenials/future-timegate retained."
+    },
+    "refund_union": {
+      "owner_patch_sha256": "3d508b519737d60a466fafe3ac7d44de112051af3cb2a751bef0239156cfdb2a",
+      "owner_scope": "Existing future239/240 observation RPC/status/provenance + production998 strict same-durable-winner tuple/firsttimestamp; manual refusal already present. No oldCAS/newSDK/SQL imported.",
+      "proof": "Owner+root82focusedPASS; oldb40twoFAIL preserved; ownerlint/TSC PASS; Machines exactsourceclear. Root203PASS1held247canonicalFAIL across refund+canonical checks.",
+      "normal_merge_expected_actual_tree": "5eeaa3bf6e0365a0179cacba4c4a6cf3bee35741"
+    },
+    "SQL": "All35sources/SQLtree and historicalledger/frozen223 unchanged; no247fabrication, no new migration allocation."
   }
 }
