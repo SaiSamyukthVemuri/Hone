@@ -141,9 +141,14 @@ describe("booking action — post-commit + safe-error hardening (Item 8)", () =>
 
 describe("SCH-002 internal submit advisory availability failures", () => {
   it.each(["blockouts", "reservations", "window", "defaults"])("refuses a failed %s preflight even when the ON pre-read command would accept", async (stage) => {
-    booking.slotError = new Error(`availability_read_failed:${stage}`);
-    await expect(bookFor()).rejects.toBe(booking.slotError);
-    expect(booking.rpc).not.toHaveBeenCalled();
+    booking.slotError = new Error(`availability_read_failed:${stage}:PRIVATE_SENTINEL`);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await bookFor()).toEqual({ ok: false, error: "Could not create the appointment. Please try again." });
+      expect(booking.rpc).not.toHaveBeenCalled();
+      expect(booking.clientEmail).not.toHaveBeenCalled(); expect(booking.practitionerEmail).not.toHaveBeenCalled();
+      expect(JSON.stringify(log.mock.calls)).not.toContain("PRIVATE_SENTINEL");
+    } finally { log.mockRestore(); }
   });
   it("preserves authoritative refusal after a successful offered-slot read", async () => {
     booking.rpcResult = "time_unavailable";
@@ -171,7 +176,7 @@ describe("SCH-002 legacy internal submission retains the app availability bounda
   it.each([false, null, undefined])("does not defer a failed preflight when capacity is %s, even if the command would accept", async (capacity) => {
     booking.capacityEnabled = capacity;
     const failure = new Error("availability_read_failed:window"); booking.slotError = failure;
-    await expect(bookFor()).rejects.toBe(failure);
+    expect(await bookFor()).toEqual({ ok: false, error: "Could not create the appointment. Please try again." });
     expect(booking.rpc).not.toHaveBeenCalled();
     expect(booking.clientEmail).not.toHaveBeenCalled();
     expect(booking.practitionerEmail).not.toHaveBeenCalled();
@@ -179,13 +184,13 @@ describe("SCH-002 legacy internal submission retains the app availability bounda
   it.each(["blockouts", "reservations"])("also refuses unread %s in legacy mode before the permissive legacy command", async (stage) => {
     booking.capacityEnabled = false;
     const failure = new Error(`availability_read_failed:${stage}`); booking.slotError = failure;
-    await expect(bookFor()).rejects.toBe(failure); expect(booking.rpc).not.toHaveBeenCalled();
+    expect(await bookFor()).toEqual({ ok: false, error: "Could not create the appointment. Please try again." }); expect(booking.rpc).not.toHaveBeenCalled();
   });
   it("does not use an ON pre-read as authority if capacity flips OFF before the command", async () => {
     booking.capacityEnabled = true;
     booking.onSlotsRead = () => { booking.capacityEnabled = false; };
     const failure = new Error("availability_read_failed:window"); booking.slotError = failure;
-    await expect(bookFor()).rejects.toBe(failure);
+    expect(await bookFor()).toEqual({ ok: false, error: "Could not create the appointment. Please try again." });
     expect(booking.capacityEnabled).toBe(false);
     expect(booking.rpc).not.toHaveBeenCalled();
     expect(booking.clientEmail).not.toHaveBeenCalled();

@@ -267,36 +267,42 @@ export async function bookAppointmentForClientAction(
     // capacity is ON, getAvailableSlots reads that practitioner's own hours +
     // resource_key reservations, so A's calendar never advertises/consumes B's
     // slots. Legacy (flag off) ignores the practitioner id → studio-wide, as today.
-    // Keep failed reads fatal in BOTH modes. Effective 0174 calls validator
+    // Refuse failed reads in BOTH modes. Effective 0174 calls validator
     // 0152, which does not check studio hours when capacity is OFF. An ON app
     // pre-read can also flip OFF before the locked command; it cannot justify
     // treating an unread window as permission. Public booking uses a different
     // validator (0170) that enforces its window in both modes.
-    const slots = await getAvailableSlots(
-      supabase,
-      {
-        id: studio.id,
-        timezone: studio.timezone,
-        default_appointment_duration_minutes:
-          studio.default_appointment_duration_minutes,
-        buffer_minutes: studio.buffer_minutes,
-        practitioner_capacity_enabled: studio.practitioner_capacity_enabled,
-      },
-      dateStr,
-      service.default_duration_minutes,
-      undefined,
-      targetPractitionerId,
-      INTERNAL_SLOT_PACKING,
-    );
-    const isFree = slots.some(
-      (s) => new Date(s.start).getTime() === start.getTime(),
-    );
-    if (!isFree) {
-      return {
-        ok: false,
-        error:
-          "That time is no longer available. Please choose another time.",
-      };
+    try {
+      const slots = await getAvailableSlots(
+        supabase,
+        {
+          id: studio.id,
+          timezone: studio.timezone,
+          default_appointment_duration_minutes:
+            studio.default_appointment_duration_minutes,
+          buffer_minutes: studio.buffer_minutes,
+          practitioner_capacity_enabled: studio.practitioner_capacity_enabled,
+        },
+        dateStr,
+        service.default_duration_minutes,
+        undefined,
+        targetPractitionerId,
+        INTERNAL_SLOT_PACKING,
+      );
+      const isFree = slots.some(
+        (s) => new Date(s.start).getTime() === start.getTime(),
+      );
+      if (!isFree) {
+        return {
+          ok: false,
+          error:
+            "That time is no longer available. Please choose another time.",
+        };
+      }
+    } catch (err) {
+      if (!(err instanceof Error) || !err.message.startsWith("availability_read_failed:")) throw err;
+      console.error("booking_action_availability_read_failed");
+      return { ok: false, error: "Could not create the appointment. Please try again." };
     }
   }
 
