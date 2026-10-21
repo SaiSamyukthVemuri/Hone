@@ -224,12 +224,44 @@ begin
      or not pg_catalog.has_table_privilege(v_owner, 'public.clients', 'UPDATE') then
     raise exception 'Existing intake revision owner authority is unavailable.';
   end if;
-  -- Current source has no other callable definer over this clinical table.
-  -- An unexpected existing delegate needs review, never a silent bypass.
+  -- 0216's authenticated receptionist contacts command reads completion facts
+  -- only. Pin its exact reviewed implementation/context, never its name alone.
+  -- Unknown or changed callable delegates still require explicit review.
   if exists (
     select 1 from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'public' and p.prosecdef and p.oid <> v_writer
       and p.prosrc ~* '(^|[^a-z0-9_])client_intake_forms([^a-z0-9_]|$)'
+      and (
+        p.oid = pg_catalog.to_regprocedure('public.receptionist_client_contacts(pg_catalog.uuid,pg_catalog.text,pg_catalog.int4)')
+        and p.proowner = v_owner and p.provolatile = 's' and p.prokind = 'f'
+        and p.prolang = (select l.oid from pg_catalog.pg_language l where l.lanname = 'plpgsql')
+        and p.proconfig = array['search_path=pg_catalog, pg_temp']::text[]
+        and pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p.prosrc, 'UTF8')), 'hex') = '4ad10247566c4186a5c03d12180c2946ae05919fcc75f4145e5a8566ada9ff6a'
+        and exists (
+          select 1 from pg_catalog.pg_proc helper
+          where helper.oid = pg_catalog.to_regprocedure('public.receptionist_actor_id(pg_catalog.uuid)')
+            and helper.proowner = p.proowner and helper.prosecdef
+            and helper.provolatile = 's' and helper.prokind = 'f'
+            and helper.prolang = (select l.oid from pg_catalog.pg_language l where l.lanname = 'sql')
+            and helper.proconfig = array['search_path=pg_catalog, pg_temp']::text[]
+            and pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(helper.prosrc, 'UTF8')), 'hex') = 'cf6256e2abdaaa6c319b17b26b22da159ab1017d5b2970676695961bdd9af7b4'
+            and not pg_catalog.has_function_privilege('anon', helper.oid, 'EXECUTE')
+            and not pg_catalog.has_function_privilege('authenticated', helper.oid, 'EXECUTE')
+            and not pg_catalog.has_function_privilege('service_role', helper.oid, 'EXECUTE')
+            and not exists (
+              select 1 from pg_catalog.aclexplode(coalesce(helper.proacl, pg_catalog.acldefault('f', helper.proowner))) a
+              where a.privilege_type = 'EXECUTE' and a.grantee <> helper.proowner
+            )
+        )
+        and pg_catalog.has_function_privilege('authenticated', p.oid, 'EXECUTE')
+        and not pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE')
+        and not pg_catalog.has_function_privilege('service_role', p.oid, 'EXECUTE')
+        and not exists (
+          select 1 from pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) a
+          where a.privilege_type = 'EXECUTE' and a.grantee not in
+            (p.proowner, (select r.oid from pg_catalog.pg_roles r where r.rolname = 'authenticated'))
+        )
+      ) is not true
       and (pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE')
         or pg_catalog.has_function_privilege('authenticated', p.oid, 'EXECUTE')
         or pg_catalog.has_function_privilege('service_role', p.oid, 'EXECUTE'))

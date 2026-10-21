@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { countVersion, fileForVersion } from "./helpers/migration-state";
 
@@ -35,6 +36,31 @@ describe("0243 scoped intake revision and atomic profile contract", () => {
     expect(code).toContain("Unsafe intake revision command privileges.");
     expect(code).toContain("Unexpected callable intake definer requires review.");
     expect(guard).not.toMatch(/current_setting|session_user|pg_trigger_depth|auth\.uid/);
+  });
+  it("permits only the exact reviewed read-only receptionist delegate, never a name-only exception", () => {
+    const foundation = readFileSync("supabase/migrations/0216_receptionist_membership_foundation.sql", "utf8");
+    const body = foundation.split("create or replace function public.receptionist_client_contacts(")[1].split("as $$")[1].split("$$;")[0];
+    const fingerprint = createHash("sha256").update(body).digest("hex");
+    expect(code).toContain(`pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p.prosrc, 'UTF8')), 'hex') = '${fingerprint}'`);
+    expect(code).toContain("public.receptionist_client_contacts(pg_catalog.uuid,pg_catalog.text,pg_catalog.int4)");
+    expect(code).toContain("p.proowner = v_owner and p.provolatile = 's' and p.prokind = 'f'");
+    expect(code).toContain("p.proconfig = array['search_path=pg_catalog, pg_temp']::text[]");
+    expect(code).toContain(") is not true");
+    expect(code).toContain("and not pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE')");
+    expect(code).toContain("and not pg_catalog.has_function_privilege('service_role', p.oid, 'EXECUTE')");
+    expect(body).not.toMatch(/\b(?:insert|update|delete|execute|perform)\b/i);
+    expect(body).toContain("public.receptionist_actor_id(p_studio_id)");
+    expect(body).toContain("f.studio_id = c.studio_id");
+    expect(body).toContain("c.studio_id = p_studio_id");
+    const helperBody = foundation.split("create or replace function public.receptionist_actor_id(")[1].split("as $$")[1].split("$$;")[0];
+    const helperFingerprint = createHash("sha256").update(helperBody).digest("hex");
+    expect(code).toContain(`pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(helper.prosrc, 'UTF8')), 'hex') = '${helperFingerprint}'`);
+    expect(code).toContain("helper.proowner = p.proowner and helper.prosecdef");
+    expect(code).toContain("helper.provolatile = 's' and helper.prokind = 'f'");
+    expect(code).toContain("a.grantee <> helper.proowner");
+    expect(code).toContain("and not pg_catalog.has_function_privilege('authenticated', helper.oid, 'EXECUTE')");
+    expect(helperBody).not.toMatch(/\b(?:insert|update|delete|execute|perform)\b/i);
+    expect(helperBody).toContain("sr.user_id = auth.uid()");
   });
   it("never accepts a caller counter and bumps every existing writer", () => {
     expect(code).toMatch(/new\.revision := 0/);
