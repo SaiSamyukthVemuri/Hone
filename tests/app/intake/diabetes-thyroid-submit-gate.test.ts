@@ -447,3 +447,21 @@ describe("3. intakes that predate the subtype are untouched", () => {
     expect(storedResponses().diabetes_type).toBe("type_2");
   });
 });
+
+
+describe("4332229852 whole-map draft navigation", () => {
+  it.each(["historic-unknown", false, { legacy: "unknown" }])("preserves unchanged legacy %j posted with the whole public map", async (legacy) => {
+    seedIntake({ responses: { has_allergies: legacy, preferred_name: "Before" } });
+    const wholeMap = JSON.parse(JSON.stringify(storedResponses()));
+    const result = await saveIntakeStepAction({ token: "good", step: 1, responses: { ...wholeMap, preferred_name: "After" } });
+    expect(result.ok).toBe(true);
+    expect(storedResponses().preferred_name).toBe("After");
+    expect(storedResponses().has_allergies).toEqual(legacy);
+    const before = JSON.stringify(storedRow());
+    expect((await saveIntakeStepAction({ token: "good", step: 3, responses: { ...storedResponses(), has_allergies: "new-invalid" } })).ok).toBe(false);
+    expect(JSON.stringify(storedRow())).toBe(before);
+    expect((await submitIntakeAction({ token: "good", responses: completeAnswers({ has_allergies: legacy }) })).ok).toBe(false);
+    expect(JSON.stringify(storedRow())).toBe(before);
+    expect((await saveIntakeStepAction({ token: "good", step: 3, responses: { ...storedResponses(), has_allergies: "no" } })).ok).toBe(true);
+  });
+});

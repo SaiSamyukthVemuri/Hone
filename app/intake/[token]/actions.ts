@@ -1,5 +1,7 @@
 "use server";
 
+import { isDeepStrictEqual } from "node:util";
+
 import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { verifyIntakeToken } from "@/lib/intake/tokens";
@@ -134,11 +136,13 @@ export async function saveIntakeStepAction(payload: {
     ...responses,
   };
 
-  // Incomplete drafts remain legal; a supplied yes/no value must be canonical.
-  // Use the saved parent for applicability, but do not strand an unrelated
-  // step because an untouched historic value needs correction on a later step.
+  // Both editors post whole maps. Validate changed draft values, not unchanged
+  // legacy answers carried through navigation; full submit stays strict.
+  // Deep equality also preserves unchanged malformed JSON historical values.
   const invalidYesNo = findInvalidChoiceAnswers(merged).filter(
-    (key) => Object.hasOwn(responses, key) && getQuestionByKey(key)?.type === "yes_no",
+    (key) => Object.hasOwn(responses, key)
+      && !isDeepStrictEqual(responses[key], (existing.responses as Record<string, unknown> | null)?.[key])
+      && getQuestionByKey(key)?.type === "yes_no",
   );
   if (invalidYesNo.length > 0) {
     return { ok: false, error: "Please choose Yes or No for each yes/no answer before saving." };
