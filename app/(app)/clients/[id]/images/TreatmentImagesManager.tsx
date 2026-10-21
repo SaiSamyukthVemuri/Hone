@@ -289,7 +289,7 @@ export function TreatmentImagesManager({
   // Label saves refresh images; the open preview must not retain its old label.
   const modalPhoto = modal ? images.find((image) => image.id === modal.id) ?? null : null;
 
-  const { panelRef, initialFocusRef } = useDialogKeyboard<HTMLDivElement, HTMLButtonElement>({
+  const { panelRef } = useDialogKeyboard<HTMLDivElement>({
     open: modal !== null,
     busy: false, // A read-only preview may always close, including during signing.
     onClose: closePreview,
@@ -752,6 +752,7 @@ export function TreatmentImagesManager({
         >
           <div
             ref={panelRef}
+            data-testid="photo-preview-panel"
             tabIndex={-1}
             onClick={(e) => e.stopPropagation()}
             className="flex max-h-full w-full max-w-2xl flex-col overflow-auto rounded-lg bg-white p-4 dark:bg-neutral-900"
@@ -800,7 +801,6 @@ export function TreatmentImagesManager({
               <Button
                 variant="secondary"
                 size="sm"
-                ref={initialFocusRef}
                 onClick={closePreview}
                 aria-label="Close preview"
                 className="shrink-0"

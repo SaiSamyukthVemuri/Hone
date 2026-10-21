@@ -130,8 +130,9 @@ test.describe("FETT photos: touch floor, mounted at phone width", () => {
     // in this existing metadata-only fixture (no new browser/session harness).
     const firstPreviewControl = dialog.getByRole("button").first();
     const lastPreviewControl = dialog.getByRole("button").last();
-    await expect(page.getByRole("button", { name: "Close preview" })).toBeFocused();
-    await lastPreviewControl.focus();
+    await expect(page.getByTestId("photo-preview-panel")).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(lastPreviewControl).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(firstPreviewControl).toBeFocused();
     await page.keyboard.press("Shift+Tab");
