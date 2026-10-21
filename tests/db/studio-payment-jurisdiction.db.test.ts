@@ -657,6 +657,62 @@ describe("J8 stale configuration fails closed under a concurrent change", () => 
     }
   }, 15_000);
 
+  it.each(["service", "client-price"] as const)("an in-flight %s insert must be visible before the unacknowledged change", async (kind) => {
+    const s = await studio(`j8-price-${kind}`);
+    const pool = new Pool({ connectionString: resolveLocalDbUrl(), max: 2 });
+    const writer = await pool.connect();
+    const setter = await pool.connect();
+    let pending: Promise<{ result: string | null; error: unknown }> | undefined;
+    try {
+      await writer.query("begin isolation level read committed");
+      await setter.query("begin isolation level read committed");
+      await writer.query("set local statement_timeout = '3s'");
+      await setter.query("set local statement_timeout = '5s'");
+      const writerPid = (await writer.query("select pg_backend_pid() pid")).rows[0].pid as number;
+      const setterPid = (await setter.query("select pg_backend_pid() pid")).rows[0].pid as number;
+      if (kind === "service") {
+        await writer.query(
+          `insert into public.services (studio_id,name,default_duration_minutes,price_cents,active,modality)
+           values ($1,'Concurrent price',30,9000,true,'electrolysis')`, [s.studioId],
+        );
+      } else {
+        await writer.query(
+          `insert into public.client_pricing (studio_id,client_id,service_name,price_cents)
+           values ($1,$2,'Concurrent price',9000)`, [s.studioId, s.clientId],
+        );
+      }
+      // The uncommitted price holds the parent FK KEY SHARE; the setter must
+      // wait for it, then read its committed row in a fresh READ COMMITTED query.
+      pending = setter.query(
+        "select * from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','price race',false,'fixture:price-race')",
+        [s.studioId],
+      ).then((r) => ({ result: r.rows[0].out_result as string, error: null }), (error: unknown) => ({ result: null, error }));
+      const deadline = Date.now() + 2_000;
+      let blocked = false;
+      while (Date.now() < deadline) {
+        const blockers = (await adminQuery("select pg_blocking_pids($1) pids", [setterPid])).rows[0].pids as number[];
+        if (blockers.includes(writerPid)) { blocked = true; break; }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(blocked, "setter must wait for the uncommitted price FK lock").toBe(true);
+      await writer.query("commit");
+      expect(await pending).toEqual({ result: "refused_priced_configuration", error: null });
+      await setter.query("commit");
+      expect((await jurisdiction(s.studioId))?.payment_currency).toBe("cad");
+      const audit = await adminQuery(
+        "select count(*)::int n from public.studio_payment_jurisdiction_changes where studio_id=$1 and reason='price race'", [s.studioId],
+      );
+      expect(audit.rows[0].n).toBe(0);
+      // A legitimate explicit acknowledgement still works after serialization.
+      expect((await setJurisdiction(s.studioId, "US", "usd", true)).out_result).toBe("changed");
+    } finally {
+      await writer.query("rollback").catch(() => undefined);
+      await setter.query("rollback").catch(() => undefined);
+      await pending;
+      writer.release(); setter.release(); await pool.end();
+    }
+  }, 15_000);
+
   it("an attempt prepared against the old currency waits for the change and is refused", async () => {
     const s = await studio("j8");
     const appt = await appointment(s);

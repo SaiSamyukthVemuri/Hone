@@ -226,6 +226,13 @@ begin
    for update;
   v_initial := not found;
 
+  -- Only upgrade the parent AFTER acquiring the jurisdiction lock. This waits
+  -- for in-flight price inserts' FK KEY SHARE before checking their committed
+  -- rows, and prevents new inserts until the currency decision commits. Taking
+  -- this stronger lock before the jurisdiction would deadlock a payer that
+  -- already holds jurisdiction SHARE and still needs its parent FK KEY SHARE.
+  perform 1 from public.studios st where st.id = p_studio_id for update;
+
   if v_row.payment_country = v_country and v_row.payment_currency = v_currency then
     return query select 'unchanged'::text, v_row.payment_country, v_row.payment_currency;
     return;

@@ -85,6 +85,17 @@ describe("0214 is one bounded transaction", () => {
     expect(CODE).toContain("v_actor, v_reason, v_ack, v_reference");
   });
 
+  it("serializes price FK inserts only after acquiring the payment jurisdiction lock", () => {
+    const parentWeak = CODE.indexOf("where st.id = p_studio_id for no key update");
+    const jurisdiction = CODE.indexOf("for update;", parentWeak);
+    const parentStrong = CODE.indexOf("where st.id = p_studio_id for update", jurisdiction);
+    const prices = CODE.indexOf("if not v_ack and (", parentStrong);
+    expect(parentWeak).toBeGreaterThan(-1);
+    expect(jurisdiction).toBeGreaterThan(parentWeak);
+    expect(parentStrong).toBeGreaterThan(jurisdiction);
+    expect(prices).toBeGreaterThan(parentStrong);
+  });
+
   it("does not touch the legacy and dormant CAD-only ledgers", () => {
     for (const t of [
       "manual_fee_charge_attempts",
