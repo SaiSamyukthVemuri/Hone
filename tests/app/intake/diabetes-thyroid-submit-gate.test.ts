@@ -31,14 +31,19 @@ const db: {
   client_consent_signatures: [],
 };
 
+let profileRace: (() => void) | null = null;
+let profileFailure = false;
+
 function makeBuilder(table: keyof typeof db) {
   const filters: Array<(r: Row) => boolean> = [];
   let op: "select" | "update" = "select";
+  let projection = "";
   let patch: Row | null = null;
 
   function run() {
     const rows = db[table].filter((r) => filters.every((f) => f(r)));
     if (op === "update") {
+      if (table === "clients" && profileFailure) return { data: [], error: { message: "Synthetic profile failure" } };
       for (const r of rows) Object.assign(r, patch);
       return { data: rows.map((r) => ({ id: r.id })), error: null };
     }
@@ -46,7 +51,7 @@ function makeBuilder(table: keyof typeof db) {
   }
 
   const builder: Record<string, unknown> = {
-    select: () => builder,
+    select: (columns: string) => { projection = columns; return builder; },
     update: (p: Row) => {
       op = "update";
       patch = p;
@@ -68,7 +73,11 @@ function makeBuilder(table: keyof typeof db) {
     maybeSingle: () => {
       const res = run();
       const rows = (res.data ?? []) as Row[];
-      return Promise.resolve({ data: rows[0] ?? null, error: res.error });
+      const snapshot = rows[0] ? { ...rows[0] } : null;
+      if (table === "clients" && projection.includes("allergies") && profileRace) {
+        const edit = profileRace; profileRace = null; edit();
+      }
+      return Promise.resolve({ data: snapshot, error: res.error });
     },
     then: (onF: (v: unknown) => unknown, onR: (e: unknown) => unknown) =>
       Promise.resolve(run()).then(onF, onR),
@@ -78,7 +87,31 @@ function makeBuilder(table: keyof typeof db) {
 
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 vi.mock("@/lib/supabase/admin-server", () => ({
-  createAdminClient: () => ({ from: (t: keyof typeof db) => makeBuilder(t) }),
+  createAdminClient: () => ({
+    from: (t: keyof typeof db) => makeBuilder(t),
+    // Unit facade for the one governed command. Real locking/profile rollback
+    // and ACLs are separately prepared in the existing DB suite, not proved here.
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      if (fn !== "write_intake_revision") throw new Error("unexpected writer");
+      const row = db.client_intake_forms.find((r) => r.id === args.p_intake_id && r.studio_id === args.p_studio_id && r.client_id === args.p_client_id && !r.deleted_at);
+      if (!row) return { data: [{ outcome: "not_available", new_revision: null }], error: null };
+      if (row.status !== "in_progress") return { data: [{ outcome: "terminal", new_revision: null }], error: null };
+      if (String(row.revision) !== args.p_expected_revision) return { data: [{ outcome: "conflict", new_revision: null }], error: null };
+      if (args.p_operation === "submit") {
+        if (profileFailure) return { data: null, error: { message: "Synthetic profile failure" } };
+        if (profileRace) { const edit = profileRace; profileRace = null; edit(); }
+        const client = db.clients.find((c) => c.id === row.client_id && c.studio_id === row.studio_id)!;
+        const contribution = args.p_profile as Record<string, string | null>;
+        for (const key of ["emergency_contact_name", "emergency_contact_phone", "date_of_birth", "pronouns", "address"]) {
+          if (!client[key] && contribution[key]) client[key] = contribution[key];
+        }
+        if (contribution.allergy_text) client.allergies = [client.allergies, contribution.allergy_text].filter(Boolean).join("\n");
+      }
+      row.responses = args.p_responses; row.current_step = args.p_step; row.revision = Number(row.revision) + 1;
+      if (args.p_operation === "submit") { row.status = "submitted"; row.submitted_at = new Date().toISOString(); }
+      return { data: [{ outcome: args.p_operation === "submit" ? "submitted" : "saved", new_revision: String(row.revision) }], error: null };
+    },
+  }),
 }));
 vi.mock("@/lib/intake/tokens", () => ({
   verifyIntakeToken: (t: string) =>
@@ -125,6 +158,7 @@ function seedIntake(over: Partial<Row> = {}) {
       client_id: CLIENT_ID,
       studio_id: STUDIO_ID,
       status: "in_progress",
+      revision: 0,
       responses: {},
       current_step: 1,
       submitted_at: null,
@@ -143,6 +177,7 @@ function storedResponses(): Record<string, unknown> {
 }
 
 beforeEach(() => {
+  profileRace = null; profileFailure = false;
   db.client_intake_forms = [];
   db.clients = [{ id: CLIENT_ID, studio_id: STUDIO_ID }];
   // No live consent templates: the consent gate yields null and submission
@@ -157,25 +192,25 @@ describe("CLN-004 yes/no values on the real public write actions", () => {
   it.each(["maybe", "YES", false, {}])("rejects malformed %j on draft save without writing", async (value) => {
     seedIntake({ responses: { has_allergies: "yes", has_allergies_notes: "synthetic note" } });
     const before = JSON.stringify(storedRow());
-    const result = await saveIntakeStepAction({ token: "good", step: 3, responses: { has_allergies: value } });
+    const result = await saveIntakeStepAction({ token: "good", expectedRevision: String(storedRow().revision), step: 3, responses: { has_allergies: value } });
     expect(result.ok).toBe(false);
     expect(JSON.stringify(storedRow())).toBe(before);
   });
 
   it.each(["maybe", "YES", false, {}])("rejects malformed %j on submit without changing the draft", async (value) => {
     const before = JSON.stringify(storedRow());
-    const result = await submitIntakeAction({ token: "good", responses: completeAnswers({ has_allergies: value }) });
+    const result = await submitIntakeAction({ token: "good", expectedRevision: String(storedRow().revision), responses: completeAnswers({ has_allergies: value }) });
     expect(result.ok).toBe(false);
     expect(JSON.stringify(storedRow())).toBe(before);
   });
 
   it("allows incomplete drafts and preserves untouched historic values until explicitly corrected", async () => {
     seedIntake({ responses: { has_allergies: "historic-unknown" } });
-    expect((await saveIntakeStepAction({ token: "good", step: 1, responses: { preferred_name: "Demo" } })).ok).toBe(true);
+    expect((await saveIntakeStepAction({ token: "good", expectedRevision: String(storedRow().revision), step: 1, responses: { preferred_name: "Demo" } })).ok).toBe(true);
     expect(storedResponses().has_allergies).toBe("historic-unknown");
-    expect((await saveIntakeStepAction({ token: "good", step: 3, responses: { has_allergies: "" } })).ok).toBe(true);
+    expect((await saveIntakeStepAction({ token: "good", expectedRevision: String(storedRow().revision), step: 3, responses: { has_allergies: "" } })).ok).toBe(true);
     expect(storedResponses().has_allergies).toBe("");
-    expect((await saveIntakeStepAction({ token: "good", step: 3, responses: { has_allergies: "no" } })).ok).toBe(true);
+    expect((await saveIntakeStepAction({ token: "good", expectedRevision: String(storedRow().revision), step: 3, responses: { has_allergies: "no" } })).ok).toBe(true);
     expect(storedResponses().has_allergies).toBe("no");
   });
 });
@@ -183,7 +218,7 @@ describe("CLN-004 yes/no values on the real public write actions", () => {
 describe("1. a new intake reporting the condition must state the type", () => {
   it("refuses diabetes with no type, and writes nothing", async () => {
     const res = await submitIntakeAction({
-      token: "good",
+      token: "good", expectedRevision: String(storedRow().revision),
       responses: completeAnswers({ medical_conditions: ["diabetes"] }),
     });
 
@@ -195,7 +230,7 @@ describe("1. a new intake reporting the condition must state the type", () => {
 
   it("refuses a thyroid condition with no type, and writes nothing", async () => {
     const res = await submitIntakeAction({
-      token: "good",
+      token: "good", expectedRevision: String(storedRow().revision),
       responses: completeAnswers({ medical_conditions: ["thyroid"] }),
     });
 
@@ -211,7 +246,7 @@ describe("1. a new intake reporting the condition must state the type", () => {
     for (const opt of options) {
       seedIntake();
       const res = await submitIntakeAction({
-        token: "good",
+        token: "good", expectedRevision: String(storedRow().revision),
         responses: completeAnswers({
           medical_conditions: ["diabetes"],
           diabetes_type: opt.value,
@@ -230,7 +265,7 @@ describe("1. a new intake reporting the condition must state the type", () => {
     for (const opt of options) {
       seedIntake();
       const res = await submitIntakeAction({
-        token: "good",
+        token: "good", expectedRevision: String(storedRow().revision),
         responses: completeAnswers({
           medical_conditions: ["thyroid"],
           thyroid_type: opt.value,
@@ -248,7 +283,7 @@ describe("1. a new intake reporting the condition must state the type", () => {
     // unfinished intake. Both must now submit cleanly and store what they said.
     seedIntake();
     const gestational = await submitIntakeAction({
-      token: "good",
+      token: "good", expectedRevision: String(storedRow().revision),
       responses: completeAnswers({
         medical_conditions: ["diabetes"],
         diabetes_type: "gestational",
@@ -259,7 +294,7 @@ describe("1. a new intake reporting the condition must state the type", () => {
 
     seedIntake();
     const unsure = await submitIntakeAction({
-      token: "good",
+      token: "good", expectedRevision: String(storedRow().revision),
       responses: completeAnswers({
         medical_conditions: ["diabetes", "thyroid"],
         diabetes_type: "other_or_unsure",
@@ -273,7 +308,7 @@ describe("1. a new intake reporting the condition must state the type", () => {
 
   it("requires BOTH types when both conditions are reported", async () => {
     const half = await submitIntakeAction({
-      token: "good",
+      token: "good", expectedRevision: String(storedRow().revision),
       responses: completeAnswers({
         medical_conditions: ["diabetes", "thyroid"],
         diabetes_type: "type_2",
@@ -283,7 +318,7 @@ describe("1. a new intake reporting the condition must state the type", () => {
     expect(storedRow().status).toBe("in_progress");
 
     const whole = await submitIntakeAction({
-      token: "good",
+      token: "good", expectedRevision: String(storedRow().revision),
       responses: completeAnswers({
         medical_conditions: ["diabetes", "thyroid"],
         diabetes_type: "type_2",
@@ -296,7 +331,7 @@ describe("1. a new intake reporting the condition must state the type", () => {
 
   it("asks for no type when neither condition is reported", async () => {
     const res = await submitIntakeAction({
-      token: "good",
+      token: "good", expectedRevision: String(storedRow().revision),
       responses: completeAnswers({ medical_conditions: ["pcos"] }),
     });
 
@@ -311,7 +346,7 @@ describe("2. the browser does not decide what is a valid type", () => {
     for (const bad of ["Type 1", "type_3", "gestational_diabetes", "other", "<script>"]) {
       seedIntake();
       const res = await submitIntakeAction({
-        token: "good",
+        token: "good", expectedRevision: String(storedRow().revision),
         responses: completeAnswers({
           medical_conditions: ["diabetes"],
           diabetes_type: bad,
@@ -331,7 +366,7 @@ describe("2. the browser does not decide what is a valid type", () => {
     // Recorded here because a reader would otherwise assume this proves the
     // choice gate, and it does not.
     const res = await submitIntakeAction({
-      token: "good",
+      token: "good", expectedRevision: String(storedRow().revision),
       responses: completeAnswers({
         medical_conditions: ["diabetes"],
         diabetes_type: { value: "type_1" },
@@ -352,7 +387,7 @@ describe("2. the browser does not decide what is a valid type", () => {
     });
 
     const res = await submitIntakeAction({
-      token: "good",
+      token: "good", expectedRevision: String(storedRow().revision),
       responses: completeAnswers({ medical_conditions: ["diabetes"] }),
     });
 
@@ -365,7 +400,7 @@ describe("2. the browser does not decide what is a valid type", () => {
     // the map (nothing deletes it), the question no longer applies, and the
     // client must not be trapped behind a field the wizard will not render.
     const res = await submitIntakeAction({
-      token: "good",
+      token: "good", expectedRevision: String(storedRow().revision),
       responses: completeAnswers({
         medical_conditions: ["pcos"],
         diabetes_type: "type_1",
@@ -391,11 +426,12 @@ describe("3. intakes that predate the subtype are untouched", () => {
     const before = JSON.parse(JSON.stringify(storedRow()));
 
     const res = await submitIntakeAction({
-      token: "good",
+      token: "good", expectedRevision: String(storedRow().revision),
       responses: completeAnswers({ medical_conditions: ["diabetes"] }),
     });
 
-    expect(res.ok).toBe(true);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.code).toBe("terminal");
     expect(storedRow()).toEqual(before);
     expect(storedResponses().diabetes_type).toBeUndefined();
   });
@@ -410,7 +446,7 @@ describe("3. intakes that predate the subtype are untouched", () => {
     const before = JSON.parse(JSON.stringify(storedRow()));
 
     const res = await submitIntakeAction({
-      token: "good",
+      token: "good", expectedRevision: String(storedRow().revision),
       responses: completeAnswers({
         medical_conditions: ["thyroid"],
         thyroid_type: "hypothyroidism",
@@ -419,7 +455,8 @@ describe("3. intakes that predate the subtype are untouched", () => {
 
     // Accepted as a no-op, and — the part that matters — no type was grafted
     // onto a record the client completed before the question existed.
-    expect(res.ok).toBe(true);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.code).toBe("terminal");
     expect(storedRow()).toEqual(before);
     expect(storedResponses().thyroid_type).toBeUndefined();
   });
@@ -431,13 +468,13 @@ describe("3. intakes that predate the subtype are untouched", () => {
     seedIntake({ responses: { medical_conditions: ["diabetes"] } });
 
     const blocked = await submitIntakeAction({
-      token: "good",
+      token: "good", expectedRevision: String(storedRow().revision),
       responses: completeAnswers({ medical_conditions: ["diabetes"] }),
     });
     expect(blocked.ok).toBe(false);
 
     const done = await submitIntakeAction({
-      token: "good",
+      token: "good", expectedRevision: String(storedRow().revision),
       responses: completeAnswers({
         medical_conditions: ["diabetes"],
         diabetes_type: "type_2",
@@ -445,5 +482,63 @@ describe("3. intakes that predate the subtype are untouched", () => {
     });
     expect(done.ok).toBe(true);
     expect(storedResponses().diabetes_type).toBe("type_2");
+  });
+});
+
+
+describe("4332229852 whole-map draft navigation", () => {
+  it.each(["historic-unknown", false, { legacy: "unknown" }])("preserves unchanged legacy %j posted with the whole public map", async (legacy) => {
+    seedIntake({ responses: { has_allergies: legacy, preferred_name: "Before" } });
+    const wholeMap = JSON.parse(JSON.stringify(storedResponses()));
+    const result = await saveIntakeStepAction({ token: "good", expectedRevision: String(storedRow().revision), step: 1, responses: { ...wholeMap, preferred_name: "After" } });
+    expect(result.ok).toBe(true);
+    expect(storedResponses().preferred_name).toBe("After");
+    expect(storedResponses().has_allergies).toEqual(legacy);
+    const before = JSON.stringify(storedRow());
+    expect((await saveIntakeStepAction({ token: "good", expectedRevision: String(storedRow().revision), step: 3, responses: { ...storedResponses(), has_allergies: "new-invalid" } })).ok).toBe(false);
+    expect(JSON.stringify(storedRow())).toBe(before);
+    expect((await submitIntakeAction({ token: "good", expectedRevision: String(storedRow().revision), responses: completeAnswers({ has_allergies: legacy }) })).ok).toBe(false);
+    expect(JSON.stringify(storedRow())).toBe(before);
+    expect((await saveIntakeStepAction({ token: "good", expectedRevision: String(storedRow().revision), step: 3, responses: { ...storedResponses(), has_allergies: "no" } })).ok).toBe(true);
+  });
+});
+
+
+describe("0243 public snapshot conflicts through real actions", () => {
+  it("two editors with the same snapshot cannot overwrite the first save", async () => {
+    const snapshot = String(storedRow().revision);
+    expect((await saveIntakeStepAction({ token: "good", expectedRevision: snapshot, step: 1, responses: { preferred_name: "First" } })).ok).toBe(true);
+    const persisted = JSON.stringify(storedRow());
+    const second = await saveIntakeStepAction({ token: "good", expectedRevision: snapshot, step: 1, responses: { preferred_name: "Second" } });
+    expect(second.ok).toBe(false);
+    if (!second.ok) expect(second.code).toBe("conflict");
+    expect(JSON.stringify(storedRow())).toBe(persisted);
+  });
+  it("never assumes a missing browser revision means legacy zero", async () => {
+    const before = JSON.stringify(storedRow());
+    const result = await saveIntakeStepAction({ token: "good", step: 1, responses: { preferred_name: "Missing counter" } });
+    expect(result.ok).toBe(false);
+    expect(JSON.stringify(storedRow())).toBe(before);
+  });
+});
+
+
+describe("0243 profile synchronization through the real submit action", () => {
+  it("preserves a practitioner edit interleaved with the old profile read/write window", async () => {
+    db.clients[0].allergies = "Prior allergies";
+    db.clients[0].emergency_contact_phone = null;
+    profileRace = () => { db.clients[0].allergies = "Concurrent practitioner"; db.clients[0].emergency_contact_phone = "Latest emergency"; };
+    const result = await submitIntakeAction({ token: "good", expectedRevision: "0", responses: completeAnswers({ has_allergies: "yes", has_allergies_notes: "Synthetic intake contribution", requires_epipen: "no", emergency_contact_phone: "+14165550123" }) });
+    expect(result.ok).toBe(true);
+    expect(db.clients[0].allergies).toContain("Concurrent practitioner");
+    expect(db.clients[0].allergies).toContain("Synthetic intake contribution");
+    expect(db.clients[0].emergency_contact_phone).toBe("Latest emergency");
+  });
+  it("does not report a successful submitted intake when the atomic profile write fails", async () => {
+    profileFailure = true;
+    const before = JSON.stringify(storedRow());
+    const result = await submitIntakeAction({ token: "good", expectedRevision: "0", responses: completeAnswers({ pronouns: "they/them" }) });
+    expect(result.ok).toBe(false);
+    expect(JSON.stringify(storedRow())).toBe(before);
   });
 });

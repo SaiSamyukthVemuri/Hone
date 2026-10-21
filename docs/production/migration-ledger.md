@@ -15,7 +15,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
 
-## Current state (reconciled 2026-10-20; hosted 0212 APPLIED; 0213–0235 authored and pending on this tree)
+## Current state (reconciled 2026-10-20; hosted 0212 APPLIED; 0213–0235 and 0243 authored and pending on this tree)
 
 > **This is a documentation/source reconciliation of an existing apply, not an authorization or execution of an apply.** A fresh read-only query on 2026-10-19 at 21:23:10.258674Z ran with `transaction_read_only=on` against the verified canonical Hone production project: migration history max **0212**, **211** rows, exactly one each for 0211 and 0212, and no entries above 0212. Migration-history presence establishes a recorded apply; it does not by itself claim a table's present existence or contents.
 >
@@ -23,15 +23,15 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 >
 > The prior production record's 0211 declaration and missing 0212 source were stale repository documentation/source, not grounds to reapply. The full 0211 apply account below remains unchanged as historical evidence. **Do not reapply 0212.** No hosted database, migration history, schema, table or row was changed in this reconciliation.
 >
-> The production-only record reconciles at 0212. This stacked Team tree also carries the contiguous authored pending suffix 0213–0235: MIGRATION-FIRST PENDING, not hosted parity; nothing remote-only. No apply is performed or authorized by this source merge.
+> The production-only record reconciles at 0212. This stacked Team tree carries authored pending 0213–0235 plus allocated 0243. Owner sources 0236–0242 are not imported into this branch; no missing history is fabricated. The standalone source is not a complete release/apply train: MIGRATION-FIRST PENDING, not hosted parity; nothing remote-only. No apply is performed or authorized by this source merge.
 
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0212** (`0212_email_delivery_events.sql`), recorded in read-only history as described above. |
-| **Repo migration max** | **0235**, derived from this tree; the restored applied 0212 source remains byte-identical. |
+| **Repo migration max** | **0243**, derived from this tree; the restored applied 0212 source remains byte-identical. |
 | **Remote-only migrations** | **none** after restoring the exact applied 0212 source. |
-| **Pending migrations** | **0213–0235** (`0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`, `0229`, `0230`, `0231`, `0232`, `0233`, `0234`, `0235`), contiguous and **PENDING, NOT APPLIED**; **repo > hosted — MIGRATION-FIRST PENDING**. This includes `0233_clinical_records_audit_command.sql`, legitimate Team `0234_client_self_service_controls.sql` and `0235_machine_finite_readings.sql`; each requires its own approval before hosted apply. `0234` adds default-true cancellation/reschedule flags; separate flag writes need separate authority. The held Machines #920 alternative is not this Team migration. |
-| **Next free migration** | Next free number is **0236**, derived by `npm run migration:state` from this actual 0235 tree; it is **not claimed** here: availability is not an allocation. No 0236/0237 source is imported. |
+| **Pending migrations** | **0213–0235 and 0243** (`0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`, `0229`, `0230`, `0231`, `0232`, `0233`, `0234`, `0235`, `0243`), **PENDING, NOT APPLIED**; **repo > hosted — MIGRATION-FIRST PENDING**. This includes `0233_clinical_records_audit_command.sql`, legitimate Team `0234_client_self_service_controls.sql` and `0235_machine_finite_readings.sql`; each requires its own approval before hosted apply. `0243_intake_revision_cas_and_profile_sync.sql` is the source-only CLN-001/003 allocation: explicit all-writer revision/CAS and atomic submit/profile merge. Its app callers require this schema first; no local or hosted apply is authorized. Source versions 0236–0242 are absent on this branch and must be reconciled by existing owners in the final composed candidate, not invented or applied out of history. `0234` adds default-true cancellation/reschedule flags; separate flag writes need separate authority. The held Machines #920 alternative is not this Team migration. |
+| **Next free migration** | Next free number is **0244**, derived by `npm run migration:state` from this actual 0243 tree; it is **not claimed** here: availability is not an allocation. No 0236–0242 source is imported. Global OPS allocations, including Machines 0244, still govern reservation; this branch-derived availability grants no number. |
 | **Project ref** | Canonical Hone production project; see the verified linked-project evidence retained in the apply receipt. No credentials or new project identifiers are recorded here. |
 | **0212 apply source** | PR #832 reviewed head `7116c66848574b0e02e7c2b8f500a6d3198edb58`; exact raw file SHA-256 `cc2abfa3059157b841c1c1c095a84045410121be13d96ff93e34f8332f81d6d1`; source reintroduced unchanged from `cbb567afed08550e29e165bdc91adb4324a93181`. |
 | **Apply timestamp** | `hosted_applied_at` remains `null`; the receipt contains client-side bounds and a server history bracket, not a server-generated apply timestamp. |

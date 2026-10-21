@@ -91,6 +91,18 @@ function makeFakeAdmin(state: DbState) {
   }
 
   return {
+    async rpc(fn: string, args: Record<string, unknown>) {
+      if (fn !== "write_intake_revision") throw new Error("unexpected writer");
+      const r = state.rows.find((r) => r.id === args.p_intake_id && r.studio_id === args.p_studio_id && r.client_id === args.p_client_id && !r.deleted_at);
+      if (!r) return { data: [{ outcome: "not_available", new_revision: null }], error: null };
+      if (r.status !== "in_progress") return { data: [{ outcome: "terminal", new_revision: null }], error: null };
+      if (String(r.revision) !== args.p_expected_revision) return { data: [{ outcome: "conflict", new_revision: null }], error: null };
+      const patch = { responses: args.p_responses, current_step: args.p_step };
+      Object.assign(r, patch); r.revision = Number(r.revision) + 1;
+      if (args.p_operation === "submit") { r.status = "submitted"; r.submitted_at = new Date().toISOString(); }
+      state.updates.push({ patch, matched: 1 });
+      return { data: [{ outcome: args.p_operation === "submit" ? "submitted" : "saved", new_revision: String(r.revision) }], error: null };
+    },
     from(table: string) {
       return {
         select: (cols: string) => chain(table).select(cols),
@@ -151,6 +163,7 @@ function row(over: Partial<Row> = {}): Row {
     studio_id: STUDIO,
     client_id: CLIENT,
     status: "in_progress",
+    revision: 0,
     current_step: TOTAL_STEPS,
     responses: { legal_name: "Dana Reyes", [KEY]: { ...REAL_PROVENANCE } },
     submitted_at: null,
@@ -198,7 +211,7 @@ beforeEach(() => {
 describe("the client's own save cannot disturb assisted provenance", () => {
   it("a normal client save leaves it byte-identical", async () => {
     const res = await saveIntakeStepAction({
-      token: "tok",
+      token: "tok", expectedRevision: String(state.rows[0].revision),
       step: 2,
       responses: { pronouns: "they/them" },
     });
@@ -211,7 +224,7 @@ describe("the client's own save cannot disturb assisted provenance", () => {
 
   it("the client cannot REPLACE it", async () => {
     await saveIntakeStepAction({
-      token: "tok",
+      token: "tok", expectedRevision: String(state.rows[0].revision),
       step: 2,
       responses: {
         [KEY]: {
@@ -231,7 +244,7 @@ describe("the client's own save cannot disturb assisted provenance", () => {
     for (const attack of [null, undefined, "", 0, false, {}, []]) {
       state.rows = [row()];
       await saveIntakeStepAction({
-        token: "tok",
+        token: "tok", expectedRevision: String(state.rows[0].revision),
         step: 2,
         responses: { [KEY]: attack } as Record<string, unknown>,
       });
@@ -241,7 +254,7 @@ describe("the client's own save cannot disturb assisted provenance", () => {
 
   it("the client cannot re-attribute it to another practitioner", async () => {
     await saveIntakeStepAction({
-      token: "tok",
+      token: "tok", expectedRevision: String(state.rows[0].revision),
       step: 2,
       responses: {
         [KEY]: { ...REAL_PROVENANCE, started_by: { practitioner_id: "prac-b", display_name: "Jane" } },
@@ -255,7 +268,7 @@ describe("the client's own save cannot disturb assisted provenance", () => {
   it("the client cannot CREATE it on an intake that never had one", async () => {
     state.rows = [row({ responses: { legal_name: "Dana" } })];
     await saveIntakeStepAction({
-      token: "tok",
+      token: "tok", expectedRevision: String(state.rows[0].revision),
       step: 2,
       responses: { [KEY]: { ...REAL_PROVENANCE } } as Record<string, unknown>,
     });
@@ -264,7 +277,7 @@ describe("the client's own save cannot disturb assisted provenance", () => {
 
   it("no client save path ever writes the key", async () => {
     await saveIntakeStepAction({
-      token: "tok",
+      token: "tok", expectedRevision: String(state.rows[0].revision),
       step: 2,
       responses: { [KEY]: "anything" } as Record<string, unknown>,
     });
@@ -285,7 +298,7 @@ describe("the client's own SUBMIT preserves it and still works", () => {
       row({ responses: { ...completeAnswers(), [KEY]: { ...REAL_PROVENANCE } } }),
     ];
     const res = await submitIntakeAction({
-      token: "tok",
+      token: "tok", expectedRevision: String(state.rows[0].revision),
       responses: completeAnswers(),
     });
     expect(res.ok).toBe(true);
@@ -300,7 +313,7 @@ describe("the client's own SUBMIT preserves it and still works", () => {
     const answers = completeAnswers();
     delete answers["ack_accurate"];
     state.rows = [row({ responses: { [KEY]: { ...REAL_PROVENANCE } } })];
-    const res = await submitIntakeAction({ token: "tok", responses: answers });
+    const res = await submitIntakeAction({ token: "tok", expectedRevision: String(state.rows[0].revision), responses: answers });
     expect(res.ok).toBe(false);
     expect(state.rows[0].status).toBe("in_progress");
     // Assisted provenance does not become a back door around the client's
