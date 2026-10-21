@@ -160,6 +160,13 @@ const authState = vi.hoisted(() => ({
   error: null as { message: string } | null,
   allowed: true,
 }));
+const privilegedReads = vi.hoisted(() => ({ clients: 0 }));
+vi.mock("@/lib/supabase/admin-server", () => ({
+  createAdminClient: () => {
+    privilegedReads.clients += 1;
+    throw new Error("PRIVILEGED_CLIENT_CONSTRUCTED");
+  },
+}));
 vi.mock("next/navigation", () => ({
   notFound: () => { throw new Error("NEXT_NOT_FOUND"); },
 }));
@@ -174,7 +181,10 @@ vi.mock("@/lib/admin", () => ({
 import { requirePlatformAdmin } from "@/lib/auth/require-platform-admin";
 
 describe("SEC-002 independently authorized privileged loaders", () => {
-  beforeEach(() => { authState.user = null; authState.error = null; authState.allowed = true; });
+  beforeEach(() => {
+    authState.user = null; authState.error = null; authState.allowed = true;
+    privilegedReads.clients = 0;
+  });
 
   it.each(["ordinary-studio-A", "ordinary-studio-B", "deactivated-member"])(
     "refuses %s without trusting studio role or layout", async (id) => {
@@ -194,6 +204,21 @@ describe("SEC-002 independently authorized privileged loaders", () => {
   it("permits the currently authenticated platform operator without a studio membership", async () => {
     authState.user = { id: "operator", email: "operator@hone.example" };
     await expect(requirePlatformAdmin()).resolves.toBe(authState.user);
+  });
+  it.each(["ordinary-studio-A", "ordinary-studio-B", "deactivated-member", "former-platform-admin"])(
+    "the actual ops loader refuses %s before constructing its privileged client", async (id) => {
+      authState.user = { id, email: id === "former-platform-admin" ? "operator@hone.example" : "member@hone.example" };
+      authState.allowed = id !== "former-platform-admin";
+      const { default: Page } = await import("@/app/admin/ops-alerts/page");
+      await expect(Page()).rejects.toThrow("NEXT_NOT_FOUND");
+      expect(privilegedReads.clients).toBe(0);
+    },
+  );
+  it("the actual current-operator loader reaches the privileged-client detector", async () => {
+    authState.user = { id: "operator", email: "operator@hone.example" };
+    const { default: Page } = await import("@/app/admin/ops-alerts/page");
+    await expect(Page()).rejects.toThrow("PRIVILEGED_CLIENT_CONSTRUCTED");
+    expect(privilegedReads.clients).toBe(1);
   });
   it.each([
     "app/admin/page.tsx", "app/admin/studios/[id]/page.tsx",
