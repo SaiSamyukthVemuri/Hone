@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -10,6 +10,70 @@ const ACTIONS = readFileSync(
   join(process.cwd(), "app/(app)/calendar/actions.ts"),
   "utf8",
 );
+
+const booking = vi.hoisted(() => ({
+  assignedId: "B",
+  assigned: { id: "B", studio_id: "studio", active: true, display_name: "Assigned B", email: "b@example.test" },
+  lookupError: false,
+  slotError: null as unknown,
+  emptySlots: false,
+  rpcResult: "created",
+  rpcError: null as null | { code: string },
+  clientEmail: vi.fn(async () => ({ ok: true })),
+  practitionerEmail: vi.fn(async () => ({ ok: true })),
+  rpc: vi.fn(async () => ({ data: [{ result: booking.rpcResult, appointment_id: "appointment" }], error: booking.rpcError })),
+  event: vi.fn(),
+}));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("@/lib/supabase/queries", () => ({ getCurrentPractitionerWithStudio: async () => ({
+  practitioner: { id: "A", role: "owner", active: true, display_name: "Owner A", email: "a@example.test" },
+  studio: { id: "studio", timezone: "America/Toronto", practitioner_capacity_enabled: true,
+    default_appointment_duration_minutes: 60, buffer_minutes: 0, send_confirmation_emails: true },
+}) }));
+vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({ rpc: booking.rpc }) }));
+vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from: (table: string) => {
+  const filters: Record<string, unknown> = {};
+  const query: Record<string, unknown> = {
+    select: () => query,
+    eq: (key: string, value: unknown) => { filters[key] = value; return query; },
+    maybeSingle: async () => {
+      if (table === "services") return { data: { id: "service", default_duration_minutes: 60 }, error: null };
+      if (table === "clients") return { data: { id: "client", name: "Synthetic Client", email: "client@example.test", phone: null }, error: null };
+      if (table === "appointments") return { data: { id: "appointment", client_id: "client", practitioner_id: booking.assignedId, starts_at: "2099-01-01T15:00:00.000Z" }, error: null };
+      if (booking.lookupError) return { data: null, error: { message: "synthetic private lookup detail" } };
+      const assigned = booking.assigned as Record<string, unknown>;
+      return { data: Object.entries(filters).every(([k, v]) => assigned[k] === v) ? assigned : null, error: null };
+    },
+  };
+  return query;
+} }) }));
+vi.mock("@/lib/booking/slots", () => ({ INTERNAL_SLOT_PACKING: {}, getAvailableSlots: async () => { if (booking.slotError !== null) throw booking.slotError; return booking.emptySlots ? [] : [{ start: "2099-01-01T15:00:00.000Z", end: "2099-01-01T16:00:00.000Z" }]; } }));
+vi.mock("@/lib/booking/appointment-token", () => ({ generateAppointmentToken: () => "synthetic", hashAppointmentToken: () => "hash" }));
+vi.mock("@/lib/booking/tokens", () => ({ generateCancellationToken: () => "synthetic" }));
+vi.mock("@/lib/analytics/server", () => ({ captureServerEvent: booking.event }));
+vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => "https://synthetic.example.test" }));
+vi.mock("@/lib/intake/queries", () => ({ ensureIntakeForClient: async () => null }));
+vi.mock("@/lib/email/send-appointment", () => ({
+  sendBookingConfirmationToClient: booking.clientEmail,
+  sendBookingNotificationToPractitioner: booking.practitionerEmail,
+  recordEmailAttempt: vi.fn(), logEmailFailure: vi.fn(),
+  sendCancellationEmail: vi.fn(), sendPostcareToClient: vi.fn(),
+}));
+vi.mock("@/lib/sms/send-appointment", () => ({ sendBookingConfirmationSmsToClient: vi.fn() }));
+
+import { bookAppointmentForClientAction } from "@/app/(app)/calendar/actions";
+
+function bookFor(target = "B") {
+  const form = new FormData();
+  for (const [key, value] of Object.entries({ client_id: "client", service_id: "service", starts_at: "2099-01-01T15:00:00.000Z", practitioner_id: target })) form.set(key, value);
+  return bookAppointmentForClientAction(form);
+}
+
+beforeEach(() => {
+  booking.slotError = null; booking.emptySlots = false; booking.rpcResult = "created"; booking.rpcError = null;
+  vi.clearAllMocks(); booking.assignedId = "B"; booking.lookupError = false;
+  booking.assigned = { id: "B", studio_id: "studio", active: true, display_name: "Assigned B", email: "b@example.test" };
+});
 
 describe("booking action — post-commit + safe-error hardening (Item 8)", () => {
   it("the post-commit notification dispatch is fail-open (a throw never fails a committed booking)", () => {
@@ -31,5 +95,33 @@ describe("booking action — post-commit + safe-error hardening (Item 8)", () =>
     expect(ACTIONS).toMatch(/Could not create the client\. Please try again\./);
     expect(ACTIONS).toMatch(/logBookingDbError\("last_service", "query", error\.code\)/);
     expect(ACTIONS).toMatch(/Could not load the last service\. Please try again\./);
+  });
+});
+
+
+describe("SCH-002 internal submit advisory availability failures", () => {
+  it.each(["blockouts", "reservations", "window", "defaults"])("still reaches the locked target-aware command after %s read failure", async (stage) => {
+    booking.slotError = new Error(`availability_read_failed:${stage}`);
+    expect(await bookFor()).toEqual({ ok: true, appointmentId: "appointment" });
+    expect(booking.rpc).toHaveBeenCalledWith("create_internal_appointment_v2", expect.objectContaining({ p_actor_practitioner_id: "A", p_target_practitioner_id: "B", p_allow_outside_availability: false }));
+  });
+  it("preserves authoritative refusal after advisory failure", async () => {
+    booking.slotError = new Error("availability_read_failed:window"); booking.rpcResult = "time_unavailable";
+    expect(await bookFor()).toMatchObject({ ok: false }); expect(booking.rpc).toHaveBeenCalledTimes(1);
+    expect(booking.clientEmail).not.toHaveBeenCalled();
+  });
+  it.each(["23514", "42501"])("preserves command error %s after advisory failure", async (code) => {
+    booking.slotError = new Error("availability_read_failed:reservations"); booking.rpcError = { code };
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try { expect(await bookFor()).toMatchObject({ ok: false }); expect(booking.rpc).toHaveBeenCalledTimes(1); expect(booking.clientEmail).not.toHaveBeenCalled(); }
+    finally { log.mockRestore(); }
+  });
+  it("refuses successfully read empty slots without calling the command", async () => {
+    booking.emptySlots = true;
+    expect(await bookFor()).toMatchObject({ ok: false }); expect(booking.rpc).not.toHaveBeenCalled();
+  });
+  it.each([new Error("unexpected programming error"), "availability_read_failed:blockouts"])("propagates unclassified/non-Error throws without command", async (failure) => {
+    booking.slotError = failure;
+    await expect(bookFor()).rejects.toBe(failure); expect(booking.rpc).not.toHaveBeenCalled();
   });
 });
