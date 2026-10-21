@@ -74,7 +74,7 @@ describe("0214 is one bounded transaction", () => {
   it("requires explicit verified evidence and serializes first initialization", () => {
     expect(CODE).toContain("p_verification_reference text default null");
     expect(CODE).toContain("'verification_required'::text");
-    expect(CODE).toContain("where st.id = p_studio_id for update");
+    expect(CODE).toContain("where st.id = p_studio_id for no key update");
     expect(CODE).toContain("v_initial := not found");
     expect(CODE).toContain("verification_reference = v_reference");
     expect(CODE).toContain("case when v_initial then 'initialized' else 'changed' end");

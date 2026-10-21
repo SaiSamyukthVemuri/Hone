@@ -206,9 +206,12 @@ begin
   end if;
 
   -- Serialize first initialization on the existing studio, then its jurisdiction.
+  -- NO KEY UPDATE still serializes initializers but permits the KEY SHARE
+  -- needed by a payment FK after its jurisdiction SHARE lock; FOR UPDATE here
+  -- would create a parent/jurisdiction lock cycle. We never change the parent key.
   -- Missing evidence never creates a placeholder/default row. Existing money
   -- and account refusals below also apply to initialization, not just changes.
-  perform 1 from public.studios st where st.id = p_studio_id for update;
+  perform 1 from public.studios st where st.id = p_studio_id for no key update;
   if not found then
     return query select 'not_found'::text, null::text, null::text;
     return;
