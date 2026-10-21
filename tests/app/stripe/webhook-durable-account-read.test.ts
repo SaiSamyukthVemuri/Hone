@@ -365,3 +365,31 @@ describe("PAY-002 signed refund status wiring", () => {
     },
   );
 });
+
+describe("PAY-005 capability retrieval stays retryable", () => {
+  function prepareCapability() {
+    CONSTRUCT_EVENT.mockReturnValue({ id: "evt_capability_1", type: "capability.updated", account: "acct_test_1", livemode: false,
+      data: { object: { id: "card_payments", object: "capability", account: "acct_test_1", status: "inactive" } } });
+    ADMIN.current = makeAdmin({ studio_payment_settings: [
+      { data: { studio_id: "studio-1" }, error: null },
+      { data: { stripe_onboarding_completed_at: null }, error: null },
+    ] }, { claim_stripe_event: CLAIM_OK });
+  }
+  it("does not acknowledge provider retrieval failure as processed", async () => {
+    prepareCapability();
+    ACCOUNTS_RETRIEVE.mockRejectedValue(new Error("synthetic provider unavailable"));
+    const response = await callRoute();
+    expect(response.status).toBe(500);
+    expect(ACCOUNTS_RETRIEVE).toHaveBeenCalledWith("acct_test_1");
+    expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("mark_stripe_event_processed");
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("sync_studio_account_status");
+  });
+  it("a healthy retrieval still synchronizes and completes the event", async () => {
+    prepareCapability();
+    ACCOUNTS_RETRIEVE.mockResolvedValue(ACCOUNT_OBJECT);
+    expect((await callRoute()).status).toBe(200);
+    expect(names(ADMIN.current!.rpcCalls)).toContain("sync_studio_account_status");
+    expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+  });
+});
