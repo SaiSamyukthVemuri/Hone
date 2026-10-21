@@ -404,6 +404,8 @@ export function createFakeStripe(): Stripe {
         }
         return {
           id,
+          charge: params?.charge ?? null,
+          payment_intent: ledgerEffects(run).find((effect) => effect.method === "pi_create" && effect.chargeId === params?.charge)?.resultId ?? null,
           status: "succeeded",
           amount: money.amount,
           currency: money.currency,

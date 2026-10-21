@@ -322,3 +322,46 @@ describe("PAY-001 durable payment event identity", () => {
     ]));
   });
 });
+
+describe("PAY-002 signed refund status wiring", () => {
+  function prepareRefund(status: string, attemptOverride: Record<string, unknown> = {}, refundOverride: Record<string, unknown> = {}) {
+    CONSTRUCT_EVENT.mockReturnValue({ id: "evt_refund_1", created: 1770000000,
+      type: "refund.updated", account: "acct_test_1", livemode: false,
+      data: { object: { id: "re_1", charge: "ch_1", payment_intent: "pi_1", amount: 5000,
+        currency: "cad", status, metadata: { hone_payment_charge_attempt_id: "attempt-1" }, ...refundOverride } },
+    });
+    ADMIN.current = makeAdmin({
+      studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
+      payment_charge_attempts: [{ data: { id: "attempt-1", studio_id: "studio-1", client_id: "client-1",
+        charge_reason: "session_payment", status: "succeeded", stripe_livemode: false,
+        stripe_account_id: "acct_test_1", stripe_customer_id: "cus_original",
+        stripe_payment_intent_id: "pi_1", stripe_charge_id: "ch_1", amount_cents: 5000,
+        currency: "cad", refund_status: "pending_stripe", stripe_refund_id: "re_1", ...attemptOverride }, error: null }],
+    }, { claim_stripe_event: CLAIM_OK, reconcile_bound_payment_event: { data: [{ result: "refund_pending" }], error: null } });
+  }
+  it.each(["pending", "requires_action", "succeeded", "failed", "canceled"])("passes actual %s and immutable original identity to the ordered command", async (status) => {
+    prepareRefund(status);
+    const response = await callRoute();
+    expect(response.status).toBe(200);
+    const command = ADMIN.current!.rpcCalls.find((call) => call.name === "reconcile_bound_payment_event");
+    expect(command?.args).toMatchObject({ p_event_id: "evt_refund_1", p_event_type: "refund.updated",
+      p_studio_id: "studio-1", p_stripe_account_id: "acct_test_1", p_livemode: false,
+      p_object: { refund_id: "re_1", refund_status: status, refund_amount_cents: 5000,
+        refund_currency: "cad", refund_charge_id: "ch_1", payment_intent_id: "pi_1",
+        customer_id: "cus_original", evidence_kind: "signed_event", event_created: 1770000000 } });
+    expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+  });
+  it("refuses a provider-supplied customer that conflicts with the original payment", async () => {
+    prepareRefund("succeeded", {}, { customer: "cus_other" });
+    expect((await callRoute()).status).toBe(200);
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("reconcile_bound_payment_event");
+  });
+  it.each([{ stripe_account_id: "acct_other" }, { stripe_payment_intent_id: "pi_other" }, { stripe_charge_id: "ch_other" }, { stripe_customer_id: null }])(
+    "refuses a signed status event with conflicting/missing original identity: %j", async (overrides) => {
+      prepareRefund("succeeded", overrides);
+      expect((await callRoute()).status).toBe(200);
+      expect(names(ADMIN.current!.rpcCalls)).not.toContain("reconcile_bound_payment_event");
+      expect(RECORD_OPS_ALERT).toHaveBeenCalledWith(expect.objectContaining({ event: "stripe_webhook_payment_identity_mismatch" }));
+    },
+  );
+});

@@ -37,6 +37,7 @@ const db = vi.hoisted(() => ({
   livemode: true,
   refundProviderStatus: "succeeded" as string | null,
   afterRefund: null as null | (() => void),
+  providerRefundOverrides: {} as Record<string, unknown>,
   // THE one row. Every claim is evaluated and applied against this object.
   row: {} as Record<string, unknown>,
   aux: {} as Record<string, { data: unknown; error: unknown }>,
@@ -87,8 +88,11 @@ vi.mock("@/lib/stripe/session-payment-stripe", () => ({
         return {
           id: "re_1",
           status: db.refundProviderStatus,
+          charge: params.charge,
+          payment_intent: db.row.stripe_payment_intent_id,
           amount: params.amount,
           currency: "cad",
+          ...db.providerRefundOverrides,
         };
       },
     },
@@ -118,6 +122,32 @@ function allMatch(row: Record<string, unknown>, filters: Filter[]): boolean {
 
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ({
+    async rpc(name: string, args: Record<string, unknown>) {
+      if (name !== "reconcile_bound_payment_event") throw new Error(`unexpected RPC ${name}`);
+      const object = args.p_object as Record<string, unknown>;
+      const identityMatches = args.p_attempt_id === db.row.id && args.p_studio_id === db.row.studio_id
+        && args.p_stripe_account_id === db.row.stripe_account_id && args.p_livemode === db.row.stripe_livemode
+        && object.customer_id === db.row.stripe_customer_id && object.payment_intent_id === db.row.stripe_payment_intent_id
+        && object.charge_id === db.row.stripe_charge_id && object.amount_cents === db.row.amount_cents
+        && object.currency === db.row.currency && object.refund_amount_cents === db.row.amount_cents
+        && object.refund_currency === db.row.currency && object.refund_charge_id === db.row.stripe_charge_id;
+      if (!identityMatches) return { data: [{ result: "identity_mismatch" }], error: null };
+      if (db.row.refund_status !== "pending_stripe") {
+        db.writes.push({ patch: {}, matched: false });
+        return { data: [{ result: "stale_observation" }], error: null };
+      }
+      const status = object.refund_status;
+      const failed = status === "failed" || status === "canceled";
+      const succeeded = status === "succeeded";
+      const patch = {
+        stripe_refund_id: object.refund_id, stripe_refund_status: status,
+        refund_status: succeeded ? "succeeded" : failed ? "failed" : "pending_stripe",
+        refunded_at: succeeded ? new Date().toISOString() : null,
+      };
+      Object.assign(db.row, patch);
+      db.writes.push({ patch, matched: true });
+      return { data: [{ result: succeeded ? "reconciled" : failed ? "refund_failed" : "refund_pending" }], error: null };
+    },
     from(table: string) {
       const filters: Filter[] = [];
       let op: "select" | "update" = "select";
@@ -223,6 +253,7 @@ function seedRow(over: Record<string, unknown> = {}) {
     currency: "cad",
     stripe_livemode: true,
     stripe_account_id: "acct_1",
+    stripe_customer_id: "cus_1",
     stripe_payment_intent_id: "pi_live_1",
     stripe_charge_id: "ch_live_1",
     charged_at: "2026-08-14T10:00:00.000Z",
@@ -242,6 +273,7 @@ beforeEach(() => {
   db.livemode = true;
   db.refundProviderStatus = "succeeded";
   db.afterRefund = null;
+  db.providerRefundOverrides = {};
   db.writes = [];
   db.emails = [];
   db.stripeRefunds = [];
@@ -695,6 +727,7 @@ describe("PAY-002 provider refund status", () => {
       expect(db.stripeRefunds).toHaveLength(1);
       expect(db.emails).toHaveLength(0);
       expect(db.row.stripe_refund_id).toBe("re_1");
+      expect(db.row.stripe_refund_status).toBe(status);
       expect(db.row.refund_status).toBe(status === "failed" || status === "canceled" ? "failed" : "pending_stripe");
       if (status !== "failed" && status !== "canceled") {
         // The unresolved claim must refuse a second provider request.
@@ -714,6 +747,19 @@ describe("PAY-002 provider refund status", () => {
     expect(db.row.refunded_at).toBeNull();
     expect(db.stripeRefunds).toHaveLength(1);
     expect(db.writes.at(-1)?.matched).toBe(false);
+  });
+  it.each([{ charge: "ch_other" }, { payment_intent: "pi_other" }, { customer: "cus_other" }])("refuses a returned refund for another provider object: %j", async (provider) => {
+    db.providerRefundOverrides = provider;
+    const result = await refund();
+    expect(result.ok).toBe(false);
+    expect(db.row.refund_status).toBe("pending_stripe");
+    expect(db.row.refunded_at).toBeNull();
+    expect(db.row.stripe_refund_id).toBeNull();
+  });
+  it("refuses before asking Stripe when the original customer is missing", async () => {
+    db.row.stripe_customer_id = null;
+    expect((await refund()).ok).toBe(false);
+    expect(db.stripeRefunds).toHaveLength(0);
   });
   it("still records a genuinely succeeded provider refund", async () => {
     const result = await refund();
