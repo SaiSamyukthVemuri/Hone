@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type Route } from "@playwright/test";
 import sharp from "sharp";
 import { seedE2eStudio, seedE2eClient, seedNoStudioAuthUser, sql } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
@@ -335,5 +335,206 @@ test("re-mint route via the middleware: owner 200 (control); logged-out 307 /log
     expectNoSignedUrl(await r.text(), r.headers()["location"]);
   } finally {
     await other.close();
+  }
+});
+
+
+// CLN-005: reuse this spec's real upload/auth/storage fixture, not a fabricated
+// Flight response. Hold real signing replies at the browser boundary. Next
+// serializes actions, so B is held AFTER A completes: that makes the stale-A
+// render observable while B's metadata is already current.
+test("delayed preview replies never cross image identity; close and signing failure stay safe", async ({ page }) => {
+  test.setTimeout(180_000);
+  const seed = await seedE2eStudio();
+  const { clientId } = await seedE2eClient(seed);
+  await loginAsOwner(page, seed);
+  await uploadPhotos(page, clientId, 2);
+  const rows = await sql<{ id: string; storage_path: string }>(
+    `select id, storage_path from public.treatment_images where client_id = $1 and deleted_at is null order by created_at desc, id desc`,
+    [clientId],
+  );
+  expect(rows).toHaveLength(2);
+  const [b, a] = rows;
+  const tiles = page.getByRole("button", { name: "View larger", exact: true });
+  const tileA = tiles.last();
+  const tileB = tiles.first();
+  // Distinguishable current metadata, through the EXISTING note editor/action.
+  for (const [tile, note] of [[tileA, "Synthetic preview A"], [tileB, "Synthetic preview B"]] as const) {
+    const card = tile.locator("xpath=../..");
+    await card.getByRole("button", { name: "Add note", exact: true }).click();
+    await card.getByPlaceholder("Add a note for this photo…").fill(note);
+    const saved = page.waitForResponse((response) => {
+      const request = response.request();
+      return request.method() === "POST" && Boolean(request.headers()["next-action"])
+        && (request.postData() ?? "").includes(JSON.stringify(note));
+    });
+    await card.getByRole("button", { name: "Save", exact: true }).click();
+    expect((await saved).ok()).toBe(true);
+    await expect(card.getByText(note, { exact: true })).toBeVisible({ timeout: T });
+  }
+  // Note text is optimistic. Settle the saves and read persisted metadata before
+  // installing a gate, otherwise a note action can block the queued signer.
+  await page.reload();
+  await expect(page.getByText("Synthetic preview A", { exact: true })).toBeVisible();
+  await expect(page.getByText("Synthetic preview B", { exact: true })).toBeVisible();
+
+  let releaseA!: () => void;
+  let releaseB!: () => void;
+  const gateA = new Promise<void>((resolve) => { releaseA = resolve; });
+  const gateB = new Promise<void>((resolve) => { releaseB = resolve; });
+  let heldA = false;
+  let heldB = false;
+  let hold = true;
+  let refuseA = false;
+  const inFlight: Promise<void>[] = [];
+  const pattern = `${E2E_APP_ORIGIN}/clients/${clientId}/images*`;
+  const handler = (route: Route) => {
+    const request = route.request();
+    const body = request.postData() ?? "";
+    // The signer receives exactly [{ imageId }]. A UUID also appears in note
+    // saves, which must never be held behind this preview-only response gate.
+    let args: unknown;
+    try { args = JSON.parse(body); } catch { return route.continue(); }
+    const input: unknown = Array.isArray(args) && args.length === 1 ? args[0] : null;
+    const imageId = input !== null && typeof input === "object"
+      && Object.keys(input).length === 1 && "imageId" in input ? input.imageId : null;
+    const image = imageId === a.id ? "A" : imageId === b.id ? "B" : null;
+    if (request.method() !== "POST" || !request.headers()["next-action"] || !image) {
+      return route.continue();
+    }
+    if (refuseA && image === "A") return route.abort("failed");
+    if (!hold) return route.continue();
+    const pending = (async () => {
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      if (image === "A") { heldA = true; await gateA; }
+      else { heldB = true; await gateB; }
+      await route.fulfill({ response }); // one terminal route action, never continue again
+    })();
+    inFlight.push(pending);
+    return pending;
+  };
+  await page.route(pattern, handler);
+  const dialog = page.getByRole("dialog", { name: "Treatment photo preview" });
+  try {
+    await tileA.click();
+    await expect.poll(() => heldA, { timeout: T }).toBe(true);
+    await expect(dialog.getByText("Synthetic preview A", { exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+
+    await tileB.click();
+    await expect(dialog.getByText("Synthetic preview B", { exact: true })).toBeVisible();
+    releaseA();
+    await expect.poll(() => heldB, { timeout: T }).toBe(true);
+    // Paint after the delivered A result and B's real server round trip. This
+    // prevents an initial no-image/loading assertion passing before A settles.
+    await page.evaluate(() => new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    }));
+    await expect(dialog.getByText("Loading preview…", { exact: true })).toBeVisible();
+    await expect(dialog.getByRole("img")).toHaveCount(0);
+    await expect(dialog.getByText("Synthetic preview B", { exact: true })).toBeVisible();
+    releaseB();
+    const image = dialog.getByRole("img", { name: "Treatment photo", exact: true });
+    await expect(image).toBeVisible({ timeout: T });
+    await expect.poll(() => image.evaluate((el) => (el as HTMLImageElement).naturalWidth), { timeout: T }).toBeGreaterThan(0);
+    const src = await image.getAttribute("src");
+    expect(decodeURIComponent(new URL(src!, E2E_APP_ORIGIN).pathname)).toContain(b.storage_path);
+    expect(src).not.toContain(a.id);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(tileB).toBeFocused();
+
+    hold = false;
+    refuseA = true; // deterministic transport rejection, no storage deletion
+    await tileA.click();
+    await expect(dialog.getByText("Synthetic preview A", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("Image not available", { exact: true })).toBeVisible({ timeout: T });
+    await expect(dialog.getByText("Loading preview…", { exact: true })).toHaveCount(0);
+    await expect(dialog.getByRole("img")).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+  } finally {
+    releaseA();
+    releaseB();
+    await Promise.allSettled(inFlight);
+    await page.unroute(pattern, handler);
+  }
+});
+
+// CLN-006: close before a note refresh commits, then retain the SAME grid
+// opener after fresh signed URLs arrive. Real responses/storage, no fake Flight.
+test("grid preview opener keeps focus when note refresh commits after close", async ({ page }) => {
+  test.setTimeout(180_000);
+  const seed = await seedE2eStudio();
+  const { clientId } = await seedE2eClient(seed);
+  await loginAsOwner(page, seed);
+  await uploadPhotos(page, clientId, 1);
+  const [row] = await sql<{ id: string }>(
+    "select id from public.treatment_images where client_id = $1 and deleted_at is null", [clientId],
+  );
+  const opener = page.getByRole("button", { name: "View larger treatment photo", exact: true });
+  await expect(opener.locator("img")).toBeVisible();
+  const oldSrc = await opener.locator("img").getAttribute("src");
+  const originalButton = await opener.elementHandle();
+  expect(originalButton).not.toBeNull();
+  await opener.click();
+  const dialog = page.getByRole("dialog", { name: "Treatment photo preview" });
+  await expect(dialog.getByRole("img", { name: "Treatment photo", exact: true })).toBeVisible();
+  // Storage tokens include second-resolution issuance. Ensure the refresh
+  // actually changes the URLs, otherwise a URL-keyed remount is not exercised.
+  const signingSecond = Math.floor(Date.now() / 1000);
+  await expect.poll(() => Math.floor(Date.now() / 1000)).toBeGreaterThan(signingSecond);
+
+  const note = "Synthetic note saved before preview close";
+  let releaseNote!: () => void;
+  let releaseRefresh!: () => void;
+  const noteGate = new Promise<void>((resolve) => { releaseNote = resolve; });
+  const refreshGate = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+  let heldNote = false;
+  let heldRefresh = false;
+  const pending: Promise<void>[] = [];
+  const pattern = `${E2E_APP_ORIGIN}/clients/${clientId}/images*`;
+  const handler = (route: Route) => {
+    const request = route.request();
+    const body = request.postData() ?? "";
+    const savingNote = request.method() === "POST" && Boolean(request.headers()["next-action"])
+      && body.includes(row.id) && body.includes(JSON.stringify(note));
+    const refreshing = request.method() === "GET" && request.headers().rsc === "1";
+    if (!savingNote && !refreshing) return route.continue();
+    const task = (async () => {
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      if (savingNote) { heldNote = true; await noteGate; }
+      else { heldRefresh = true; await refreshGate; }
+      await route.fulfill({ response });
+    })();
+    pending.push(task);
+    return task;
+  };
+  await page.route(pattern, handler);
+  try {
+    await dialog.getByRole("button", { name: "Add note", exact: true }).click();
+    await dialog.getByPlaceholder("Add a note for this photo…").fill(note);
+    await dialog.getByRole("button", { name: "Save", exact: true }).click();
+    await expect.poll(() => heldNote, { timeout: T }).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    // The review's race: close sees a CONNECTED opener, before refresh commit.
+    await expect.poll(() => originalButton!.evaluate((el) => el.isConnected && el === document.activeElement)).toBe(true);
+    releaseNote();
+    await expect.poll(() => heldRefresh, { timeout: T }).toBe(true);
+    releaseRefresh();
+    await Promise.all(pending);
+    await expect(page.getByText(note, { exact: true })).toBeVisible();
+    await expect.poll(() => opener.locator("img").getAttribute("src")).not.toBe(oldSrc);
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await expect.poll(() => originalButton!.evaluate((el) => el.isConnected && el === document.activeElement)).toBe(true);
+  } finally {
+    releaseNote();
+    releaseRefresh();
+    await Promise.allSettled(pending);
+    await page.unroute(pattern, handler);
   }
 });

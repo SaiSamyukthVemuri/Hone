@@ -319,3 +319,80 @@ describe("oncePerErrorEvent (Codex 4308035614): one error EVENT, one transition"
     expect(n).toBe(4);
   });
 });
+
+
+// CLN-005 uses the same deferred-request style as the existing remint cases.
+import { createPhotoPreviewController, type PhotoPreviewState } from "@/lib/images/photo-preview-controller";
+
+function previewRequests() {
+  let state: PhotoPreviewState | null = null;
+  const calls: Array<{ imageId: string; resolve: (r: { ok: true; url: string } | { ok: false }) => void; reject: (e: unknown) => void }> = [];
+  const writes: Array<PhotoPreviewState | null> = [];
+  const controller = createPhotoPreviewController({
+    request: (imageId) => new Promise((resolve, reject) => calls.push({ imageId, resolve, reject })),
+    write: (next) => { state = next; writes.push(next); },
+  });
+  return { controller, calls, writes, get state() { return state; } };
+}
+
+describe("CLN-005: preview results belong to the current image generation", () => {
+  it("delayed A cannot replace B's URL under B's metadata", async () => {
+    const h = previewRequests();
+    const a = h.controller.open("A");
+    const b = h.controller.open("B");
+    h.calls[1].resolve({ ok: true, url: "signed-B" }); await b;
+    h.calls[0].resolve({ ok: true, url: "signed-A" }); await a;
+    expect(h.state).toMatchObject({ imageId: "B", status: "ready", url: "signed-B" });
+    expect(h.writes.some((s) => s?.url === "signed-A")).toBe(false);
+  });
+
+  it("A's rejection cannot stop B's loading or mark B unavailable", async () => {
+    const h = previewRequests();
+    const a = h.controller.open("A"); const b = h.controller.open("B");
+    h.calls[0].reject(new Error("A failed")); await a;
+    expect(h.state).toMatchObject({ imageId: "B", status: "loading", url: null });
+    h.calls[1].resolve({ ok: true, url: "signed-B" }); await b;
+    expect(h.state?.url).toBe("signed-B");
+  });
+
+  it("close invalidates a pending reply and does not reopen the preview", async () => {
+    const h = previewRequests(); const a = h.controller.open("A");
+    h.controller.close(); h.calls[0].resolve({ ok: true, url: "signed-A" }); await a;
+    expect(h.state).toBeNull();
+  });
+
+  it("reopening the SAME image cannot accept its earlier generation", async () => {
+    const h = previewRequests(); const old = h.controller.open("A");
+    h.controller.close(); const fresh = h.controller.open("A");
+    h.calls[0].resolve({ ok: true, url: "expired-A" }); await old;
+    expect(h.state).toMatchObject({ imageId: "A", status: "loading", url: null });
+    h.calls[1].resolve({ ok: true, url: "fresh-A" }); await fresh;
+    expect(h.state?.url).toBe("fresh-A");
+  });
+
+  it.each(["refusal", "rejection"])("current signing %s becomes explicit unavailable state", async (failure) => {
+    const h = previewRequests(); const a = h.controller.open("A");
+    if (failure === "refusal") h.calls[0].resolve({ ok: false });
+    else h.calls[0].reject(new Error("signing unavailable"));
+    await a;
+    expect(h.state).toMatchObject({ imageId: "A", status: "error", url: null });
+  });
+
+  it("unmount disposal prevents any later state write", async () => {
+    const h = previewRequests(); const a = h.controller.open("A");
+    const writes = h.writes.length; h.controller.dispose();
+    h.calls[0].resolve({ ok: true, url: "signed-A" }); await a;
+    expect(h.writes).toHaveLength(writes);
+  });
+
+  it("an old image error cannot clear the current image", async () => {
+    const h = previewRequests(); const a = h.controller.open("A");
+    const oldGeneration = h.state!.generation;
+    h.calls[0].resolve({ ok: true, url: "signed-A" }); await a;
+    const b = h.controller.open("B");h.calls[1].resolve({ ok: true, url: "signed-B" }); await b;
+    h.controller.onImageError("A", oldGeneration);
+    expect(h.state?.url).toBe("signed-B");
+    h.controller.onImageError("B", h.state!.generation);
+    expect(h.state).toMatchObject({ imageId: "B", status: "error", url: null });
+  });
+});
