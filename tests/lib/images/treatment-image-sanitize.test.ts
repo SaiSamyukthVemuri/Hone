@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import sharp from "sharp";
 import { sanitizeTreatmentImage } from "@/lib/images/treatment-image-sanitize";
 
@@ -146,5 +146,26 @@ describe("sanitizeTreatmentImage — strips metadata + deterministic output", ()
     expect(rj.ok && rj.contentType).toBe("image/jpeg");
     expect(rp.ok && rp.contentType).toBe("image/png");
     expect(rw.ok && rw.contentType).toBe("image/webp");
+  });
+});
+
+
+describe("ENG-002: unsupported upload bytes never reach a decoder", () => {
+  it.each([
+    ["SVG", Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>')],
+    ["HEIF", Buffer.from("00000018667479706865696300000000686569636d696631", "hex")],
+    ["GIF", Buffer.from("GIF89a0000000000000000")],
+    ["PDF", Buffer.from("%PDF-1.4 unsupported")],
+  ])("rejects %s before Sharp metadata/decode", async (_name, bytes) => {
+    const decoder = vi.spyOn(sharp.prototype, "metadata").mockImplementation(() => {
+      throw new Error("decoder boundary reached");
+    });
+    try {
+      expect(await sanitizeTreatmentImage({ bytes, declaredContentType: "image/png" }))
+        .toEqual({ ok: false, error: "Upload a valid JPEG, PNG, or WebP image." });
+      expect(decoder).not.toHaveBeenCalled();
+    } finally {
+      decoder.mockRestore();
+    }
   });
 });
