@@ -12,8 +12,8 @@ import {
 
 describe("SCH-004 combined calendar uses common hours, never an arbitrary scope", () => {
   const date = "2026-07-06";
-  const resolve = (defaults: Parameters<typeof resolveCalendarDayAvailability>[0]["defaults"], overrides: Parameters<typeof resolveCalendarDayAvailability>[0]["overrides"] = [], capacityEnabled = true) =>
-    resolveCalendarDayAvailability({ date, dayOfWeek: 1, defaults, overrides, capacityEnabled });
+  const resolve = (defaults: Parameters<typeof resolveCalendarDayAvailability>[0]["defaults"], overrides: Parameters<typeof resolveCalendarDayAvailability>[0]["overrides"] = [], capacityEnabled = true, activePractitionerIds = ["P", "Q"]) =>
+    resolveCalendarDayAvailability({ date, dayOfWeek: 1, defaults, overrides, capacityEnabled, activePractitionerIds });
 
   it("does not choose the last row when practitioner hours conflict", () => {
     const rows = [day(1, true, "09:00", "17:00"), day(1, false, null, null, "P")];
@@ -39,6 +39,25 @@ describe("SCH-004 combined calendar uses common hours, never an arbitrary scope"
   });
   it("does not relabel absent configuration as a persisted closed-hours tint", () => {
     expect(resolve([])).toEqual({ availability: null, closedDay: true, hoursVary: false });
+  });
+  it("ignores inactive and foreign practitioners' retained weekday/date history", () => {
+    const rows = [day(1, true, "09:00", "17:00"), day(1, false, null, null, "INACTIVE"), day(1, false, null, null, "FOREIGN")];
+    const overrides = [ov(date, false, null, null, "INACTIVE")];
+    expect(resolve(rows, overrides, true, ["P", "Q"])).toEqual({ availability: { isOpen: true, openTime: "09:00", closeTime: "17:00" }, closedDay: false, hoursVary: false });
+  });
+  it("compares active inherited schedules even when they have no personal rows", () => {
+    const rows = [day(1, true, "09:00", "17:00"), day(1, true, "11:00", "15:00", "P")];
+    expect(resolve(rows, [], true, ["P", "Q"])).toEqual({ availability: null, closedDay: false, hoursVary: true });
+  });
+  it("does not add an unused studio fallback as a fictitious practitioner", () => {
+    const rows = [day(1, true, "09:00", "17:00"), day(1, true, "11:00", "15:00", "P"), day(1, true, "11:00", "15:00", "Q")];
+    for (const ids of [["P", "Q"], ["Q", "P"]]) expect(resolve(rows, [], true, ids)).toEqual({ availability: { isOpen: true, openTime: "11:00", closeTime: "15:00" }, closedDay: false, hoursVary: false });
+  });
+  it("uses active personal date overrides ahead of a shared closed date", () => {
+    expect(resolve([day(1, true, "09:00", "17:00")], [ov(date, false, null, null), ov(date, true, "10:00", "12:00", "P")], true, ["P"])).toEqual({ availability: { isOpen: true, openTime: "10:00", closeTime: "12:00" }, closedDay: false, hoursVary: false });
+  });
+  it("does not label a zero-active-practitioner census as shared closed or varied hours", () => {
+    expect(resolve([day(1, false, null, null, "INACTIVE")], [], true, [])).toEqual({ availability: null, closedDay: false, hoursVary: false });
   });
   it("treats the legacy missing-column shape as studio-wide without mutating it", () => {
     const row = day(1, true, "09:00:00", "17:00:00");

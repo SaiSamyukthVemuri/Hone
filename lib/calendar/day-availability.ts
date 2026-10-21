@@ -19,6 +19,8 @@ export function resolveCalendarDayAvailability(args: {
   defaults: ReadonlyArray<ScopedDefault>;
   overrides: ReadonlyArray<ScopedOverride>;
   capacityEnabled: boolean;
+  /** IDs from the authenticated, active same-studio practitioner census. */
+  activePractitionerIds: ReadonlyArray<string>;
 }): {
   availability: { isOpen: boolean; openTime: string | null; closeTime: string | null } | null;
   closedDay: boolean;
@@ -34,10 +36,16 @@ export function resolveCalendarDayAvailability(args: {
     return computeEffectiveOverrides(studioOverrides, personalOverrides).find((row) => row.effective_date === date)
       ?? computeEffectiveWeek(studioDefaults, personalDefaults)[dayOfWeek];
   };
-  const shared = effective(null);
+  const ids = [...new Set(args.activePractitionerIds)];
+  if (capacityEnabled && ids.length === 0) {
+    return { availability: null, closedDay: false, hoursVary: false };
+  }
+  // Compare actual bookable practitioners, not retained history or a fictitious
+  // extra studio practitioner. An active ID with no rows still inherits.
+  const commonId = capacityEnabled ? ids[0] : null;
+  const shared = effective(commonId);
   if (capacityEnabled) {
-    const ids = new Set([...defaults, ...overrides].map((row) => row.practitioner_id).filter((id): id is string => id != null));
-    for (const id of ids) {
+    for (const id of ids.slice(1)) {
       const personal = effective(id);
       const agrees = shared.is_open === personal.is_open && (!shared.is_open || (
         shared.open_time === personal.open_time && shared.close_time === personal.close_time
@@ -46,7 +54,11 @@ export function resolveCalendarDayAvailability(args: {
     }
   }
   const configured = studioDefaults.some((row) => row.day_of_week === dayOfWeek)
-    || studioOverrides.some((row) => row.effective_date === date);
+    || studioOverrides.some((row) => row.effective_date === date)
+    || (commonId != null && (
+      defaults.some((row) => row.practitioner_id === commonId && row.day_of_week === dayOfWeek)
+      || overrides.some((row) => row.practitioner_id === commonId && row.effective_date === date)
+    ));
   return {
     availability: configured ? { isOpen: shared.is_open, openTime: shared.open_time, closeTime: shared.close_time } : null,
     closedDay: !shared.is_open,

@@ -1,5 +1,6 @@
 import {
   getClientsForStudio,
+  getPractitionersForStudio,
   requirePractitionerWithStudio,
 } from "@/lib/supabase/queries";
 import {
@@ -131,6 +132,7 @@ export default async function CalendarPage({
     clients,
     availabilityDefaults,
     availabilityOverrides,
+    activePractitioners,
   ] = await Promise.all([
     getAppointmentsForRange(studio.id, startUtc.toISOString(), endUtc.toISOString()),
     getBlockouts(studio.id),
@@ -149,6 +151,7 @@ export default async function CalendarPage({
     // used with weekday defaults to resolve common hours without collapsing
     // different practitioner schedules into one studio-wide state.
     getOverridesForRange(studio.id, weekStart, weekEnd),
+    studio.practitioner_capacity_enabled === true ? getPractitionersForStudio(studio.id) : Promise.resolve([]),
   ]);
   domain.end();
 
@@ -158,6 +161,7 @@ export default async function CalendarPage({
   const availabilityForDate = (date: string, dayOfWeek: number) => resolveCalendarDayAvailability({
     date, dayOfWeek, defaults: availabilityDefaults, overrides: availabilityOverrides,
     capacityEnabled: studio.practitioner_capacity_enabled === true,
+    activePractitionerIds: activePractitioners.map((p) => p.id),
   });
   function isClosedDate(date: string, dow: number): boolean {
     return availabilityForDate(date, dow).closedDay;
@@ -476,6 +480,7 @@ async function renderMonthView(opts: {
     blockouts,
     timedBlocks,
     recurringOccurrences,
+    activePractitioners,
   ] = await Promise.all([
     getAppointmentsForRange(
       studio.id,
@@ -495,6 +500,7 @@ async function renderMonthView(opts: {
       startUtc.toISOString(),
       endUtc.toISOString(),
     ),
+    studio.practitioner_capacity_enabled === true ? getPractitionersForStudio(studio.id) : Promise.resolve([]),
   ]);
   domain.end();
 
@@ -505,6 +511,7 @@ async function renderMonthView(opts: {
     return resolveCalendarDayAvailability({
       date: dateStr, dayOfWeek: dow, defaults: availabilityDefaults, overrides: availabilityOverrides,
       capacityEnabled: studio.practitioner_capacity_enabled === true,
+      activePractitionerIds: activePractitioners.map((p) => p.id),
     });
   };
   function isClosedDate(dateStr: string): boolean {
