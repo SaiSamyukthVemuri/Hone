@@ -234,7 +234,7 @@ test.describe("SEC-002 admin document and RSC authorization", () => {
   async function assertIdentity(page: Page, userId: string, email: string): Promise<void> {
     const auth = createServerClient(E2E_SUPABASE_URL, E2E_WEB_SERVER_ENV.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
       cookies: {
-        getAll: async () => (await page.context().cookies()).map(({ name, value }) => ({ name, value })),
+        getAll: async () => (await page.context().cookies(E2E_APP_ORIGIN)).map(({ name, value }) => ({ name, value })),
         // Fresh sign-in cookies must verify without an invisible replacement.
         setAll: () => { throw new Error("SEC002 identity probe unexpectedly required cookie replacement"); },
       },

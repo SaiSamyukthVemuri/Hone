@@ -212,7 +212,7 @@ describe("SEC-002 browser request contract", () => {
     const spec = readFileSync(path.join(ROOT, "e2e/lead-alert-operator.spec.ts"), "utf8");
     const scope = spec.slice(spec.indexOf('test.describe("SEC-002'));
     expect(scope).toContain("const auth = createServerClient(E2E_SUPABASE_URL");
-    expect(scope).toContain("await page.context().cookies()");
+    expect(scope).toContain("await page.context().cookies(E2E_APP_ORIGIN)");
     expect(scope).toContain("await auth.auth.getUser()");
     expect(scope).toContain("expect(error === null).toBe(true)");
     expect(scope).toContain("expect(user?.id).toBe(userId)");
