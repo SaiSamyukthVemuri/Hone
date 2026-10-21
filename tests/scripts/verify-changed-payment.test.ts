@@ -12,7 +12,7 @@ afterEach(() => {
 
 // Run the actual CLI, replacing only its external executables. No real
 // typecheck, payment test, provider, database or network is invoked here.
-function run(units: number, gates: number, plan = false) {
+function run(units: number, gates: number, plan = false, titleUnits = units) {
   const dir = mkdtempSync(path.join(tmpdir(), "hone-verify-payment-"));
   scratch.push(dir);
   const trace = path.join(dir, "trace");
@@ -21,7 +21,7 @@ function run(units: number, gates: number, plan = false) {
     writeFileSync(file, `#!/bin/sh\nprintf '%s %s\\n' '${name}' "$*" >> "$VERIFY_TRACE"\n${body}\n`);
     chmodSync(file, 0o700);
   };
-  executable("npx", `case "$*" in *vitest*) echo 'synthetic payment unit result'; exit ${units};; *) exit 0;; esac`);
+  executable("npx", `case "$*" in *vitest*"-t payment"*) echo 'synthetic payment-title result'; exit ${titleUnits};; *vitest*) echo 'synthetic payment unit result'; exit ${units};; *) exit 0;; esac`);
   executable("npm", `echo 'synthetic safety gate result'; exit ${gates}`);
   const result = spawnSync(process.execPath, [SCRIPT, "--files", "lib/billing/payment-refund.ts", ...(plan ? ["--plan"] : [])], {
     cwd: dir,
@@ -40,6 +40,7 @@ describe("ENG-003: payment verification cannot mask or omit a required check", (
     expect(result.error).toBeUndefined();
     expect(result.status, result.stdout + result.stderr).toBe(1);
     expect(result.calls).toContain("npx vitest run");
+    expect(result.calls).toContain("npx vitest run tests/app/ --silent=false -t payment");
     expect(result.calls).toContain("npm run check:stripe-gates");
   });
 
@@ -47,9 +48,17 @@ describe("ENG-003: payment verification cannot mask or omit a required check", (
     const result = run(0, 0);
     expect(result.status, result.stdout + result.stderr).toBe(0);
     expect(result.calls).toContain("npx vitest run payment stripe checkout manual-fee refund tests/lib/billing/");
-    expect(result.calls).not.toContain("-t payment");
+    expect(result.calls).toContain("npx vitest run tests/app/ --silent=false -t payment");
+    expect(result.calls.match(/npx vitest run/g)).toHaveLength(2);
     expect(result.calls.match(/npm run check:stripe-gates/g)).toHaveLength(1);
     expect(result.stdout).toContain("were NOT run");
+  });
+
+  it.each([[0, 1], [1, 0]])("file exit %i / title exit %i cannot mask each other", (files, titles) => {
+    const result = run(files, 0, false, titles);
+    expect(result.status, result.stdout + result.stderr).toBe(1);
+    expect(result.calls.match(/npx vitest run/g)).toHaveLength(2);
+    expect(result.calls).toContain("npm run check:stripe-gates");
   });
 
   it("dry-run reports both required checks without executing either", () => {
@@ -58,6 +67,7 @@ describe("ENG-003: payment verification cannot mask or omit a required check", (
     expect(result.calls).toBe("");
     expect(result.stdout).toContain("payment unit regressions");
     expect(result.stdout).toContain("payment safety gates");
+    expect(result.stdout).toContain("payment-title action regressions");
     expect(result.stdout).toContain("nothing executed");
   });
 });

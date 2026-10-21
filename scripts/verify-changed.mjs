@@ -63,6 +63,9 @@ if (c.docs_only) {
     // run, and a passing unit run must not skip the gate. File filters include
     // billing/refund/checkout cases regardless of their describe/test wording.
     addAuto("payment unit regressions", "npx vitest run payment stripe checkout manual-fee refund tests/lib/billing/", "payment paths changed");
+    // Preserve the earlier title-selected action coverage too: receipt-ui.test
+    // contains SessionPayment suites but none of the file-name keywords above.
+    addAuto("payment-title action regressions", "npx vitest run tests/app/ --silent=false -t payment", "payment paths changed");
     addAuto("payment safety gates", "npm run check:stripe-gates", "payment paths changed");
     addSuggested("payment browser E2E", "npm run test:e2e:payment", "payment paths changed");
   }
