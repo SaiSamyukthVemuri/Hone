@@ -7,8 +7,8 @@ import { countVersion } from "../migrations/helpers/migration-state";
 // ACTOR-BOUND. A studio member can no longer write clinical_records_* rows
 // directly, nor any audit row naming another practitioner as actor; the ONE
 // way in is record_clinical_records_audit, which records auth.uid()'s own
-// owner row. The two remaining member-path writers (client archive/unarchive,
-// studio data export) still work: they name their own actor.
+// owner row.0242 closes all direct member generic inserts; archive/unarchive
+// and owner export now use narrow trusted server writers with derived actors.
 
 afterAll(() => closePool());
 
@@ -154,29 +154,59 @@ describe("0233: clinical-records audit rows are actor-bound", () => {
     expect(await rowsFor(s.clientId)).toEqual([]);
   });
 
-  it("the remaining member-path writers still work: own actor, ordinary actions", async () => {
-    const s = await seedStudio("aud0233b");
-    const member = await seedMember(s, "aud0233b-m");
-    // app/(app)/clients/[id]/actions.ts (archive/unarchive) and
-    // app/(app)/settings/data/actions.ts (studio_export): actor = self.
+  it("0242 closes ordinary generic inserts even with the caller's own actor", async () => {
+    const s = await seedStudio("aud0242b");
+    const member = await seedMember(s, "aud0242b-m");
     for (const [userId, actorId, action] of [
       [s.userId, s.practitionerId, "client_archived"],
       [member.userId, member.practitionerId, "client_unarchived"],
       [s.userId, s.practitionerId, "studio_export"],
     ] as const) {
-      await asUser(userId, (q) =>
-        q(
-          `insert into public.audit_logs (studio_id, actor_id, action, entity_type, entity_id, metadata)
-           values ($1, $2, $3, 'client', $4, '{}'::jsonb)`,
-          [s.studioId, actorId, action, s.clientId],
-        ),
-      );
+      await expect(asUser(userId, (q) => q(
+        `insert into public.audit_logs (studio_id,actor_id,action,entity_type,entity_id,metadata)
+         values ($1,$2,$3,'client',$4,'{"forged":"contents"}'::jsonb)`,
+        [s.studioId, actorId, action, s.clientId],
+      ))).rejects.toSatisfy((e) => refused(e) === "42501");
     }
-    expect((await rowsFor(s.clientId)).map((r) => r.action)).toEqual([
-      "client_archived",
-      "client_unarchived",
-      "studio_export",
-    ]);
+    expect(await rowsFor(s.clientId)).toEqual([]);
+  });
+
+  it("0242 denies table and column INSERT privileges but preserves existing service authority", async () => {
+    const r = await adminQuery(`select
+      has_table_privilege('anon','public.audit_logs','INSERT') as anon_insert,
+      has_any_column_privilege('anon','public.audit_logs','INSERT') as anon_column,
+      has_table_privilege('authenticated','public.audit_logs','INSERT') as auth_insert,
+      has_any_column_privilege('authenticated','public.audit_logs','INSERT') as auth_column,
+      has_table_privilege('service_role','public.audit_logs','INSERT') as trusted_insert`);
+    expect(r.rows[0]).toEqual({ anon_insert: false, anon_column: false, auth_insert: false, auth_column: false, trusted_insert: true });
+    const policies = await adminQuery("select polname from pg_policy where polrelid='public.audit_logs'::regclass");
+    expect(policies.rows.map((p) => p.polname)).not.toContain("audit_logs: members insert");
+    expect(policies.rows.map((p) => p.polname)).toContain("audit_logs: members read");
+  });
+
+  it("0242 blocks anonymous/no-identity inserts and preserves scoped reads/no update-delete", async () => {
+    const s = await seedStudio("aud0242r");
+    const other = await seedStudio("aud0242other");
+    for (const role of ["anon", "authenticated"] as const) {
+      await expect(asRole(role, (q) => q("insert into public.audit_logs(studio_id,action) values($1,'forged')", [s.studioId]))).rejects.toSatisfy((e) => refused(e) === "42501");
+    }
+    const inserted = await adminQuery(`insert into public.audit_logs(studio_id,actor_id,action,entity_type,entity_id,metadata)
+      values($1,$2,'client_archived','client',$3,'{}') returning id`, [s.studioId, s.practitionerId, s.clientId]);
+    const id = inserted.rows[0].id;
+    expect((await asUser(s.userId, (q) => q("select id from public.audit_logs where id=$1", [id]))).rows).toHaveLength(1);
+    expect((await asUser(other.userId, (q) => q("select id from public.audit_logs where id=$1", [id]))).rows).toHaveLength(0);
+    for (const sql of ["update public.audit_logs set metadata='{\"forged\":true}' where id=$1 returning id", "delete from public.audit_logs where id=$1 returning id"]) {
+      try { expect((await asUser(s.userId, (q) => q(sql, [id]))).rows).toHaveLength(0); }
+      catch (e) { expect(refused(e)).toBe("42501"); }
+    }
+    expect((await adminQuery("select id,metadata from public.audit_logs where id=$1", [id])).rows).toEqual([{ id, metadata: {} }]);
+  });
+
+  it("0242 inactive identity cannot create a generic event or read another studio", async () => {
+    const s = await seedStudio("aud0242inactive");
+    await adminQuery("update public.practitioners set active=false where id=$1", [s.practitionerId]);
+    await expect(asUser(s.userId, (q) => q("insert into public.audit_logs(studio_id,actor_id,action) values($1,$2,'client_archived')", [s.studioId, s.practitionerId]))).rejects.toSatisfy((e) => refused(e) === "42501");
+    expect(await rowsFor(s.clientId)).toEqual([]);
   });
 
   it("the service-role sms_opt_out writer (Twilio inbound, actor null) is unaffected", async () => {
