@@ -813,7 +813,7 @@ async function writeFailedOutcome(args: {
   stripeStatus: string | null;
   failureCode: string | null | undefined;
   failureMessage: string | null | undefined;
-}): Promise<void> {
+}): Promise<boolean> {
   const admin = createAdminClient();
   const { data: updatedRows, error } = await admin
     .from("payment_charge_attempts")
@@ -836,7 +836,7 @@ async function writeFailedOutcome(args: {
     // now diverges from a row that may stay 'pending_stripe'. Raise a CRITICAL
     // ops alert, symmetric with writeSucceededOutcome, so failure-persistence
     // failures are as observable as success-persistence failures. Alerting
-    // only: the caller still returns 'failed' (no flow/money change).
+    // only; callers now return manual review unless persistence is proved.
     logInternal("session_payment_failed_write_failed", {
       code: error.code,
       message: error.message,
@@ -858,7 +858,7 @@ async function writeFailedOutcome(args: {
         db_code: error.code ?? null,
       },
     });
-    return;
+    return false;
   }
   // PR #263: zero-row detection. A failed-outcome update that matches no
   // 'pending_stripe' row persisted nothing; the row may be stuck in
@@ -887,7 +887,40 @@ async function writeFailedOutcome(args: {
         stripe_status: args.stripeStatus ?? null,
       },
     });
+    return false;
   }
+  return true;
+}
+
+// PAY-004. Nonterminal provider truth must retain its original PI identity and
+// remain reconcilable. Only the existing pending claim may be updated; a
+// concurrent success/terminal writer or different PI is never overwritten.
+async function retainNonterminalPaymentIntent(args: {
+  attemptId: string; studioId: string; clientId: string;
+  pi: Stripe.PaymentIntent; expectedPaymentIntentId: string | null;
+}): Promise<boolean> {
+  if (!args.pi.id || (args.expectedPaymentIntentId !== null && args.expectedPaymentIntentId !== args.pi.id)) {
+    await recordOpsAlert({ severity: "critical", event: "session_payment_nonterminal_write_refused",
+      message: "The retrieved provider intent does not match the pending attempt identity. No cancellation or terminal write was permitted.",
+      studioId: args.studioId, clientId: args.clientId, route: "lib/billing/session-payment-charge",
+      safeDetails: { attempt_id: args.attemptId, reason: "intent_identity_mismatch" } });
+    return false;
+  }
+  let query = createAdminClient().from("payment_charge_attempts")
+    .update({ stripe_payment_intent_id: args.pi.id, stripe_status: args.pi.status })
+    .eq("id", args.attemptId).eq("studio_id", args.studioId)
+    .eq("stripe_livemode", inferStripeLivemode()).eq("status", "pending_stripe");
+  query = args.expectedPaymentIntentId === null
+    ? query.is("stripe_payment_intent_id", null)
+    : query.eq("stripe_payment_intent_id", args.expectedPaymentIntentId);
+  const { data, error } = await query.select("id");
+  if (!error && data?.length) return true;
+  await recordOpsAlert({ severity: "critical", event: "session_payment_nonterminal_write_refused",
+    message: "The nonterminal provider intent could not be retained on its pending claim. No terminal outcome was recorded.",
+    studioId: args.studioId, clientId: args.clientId,
+    route: "lib/billing/session-payment-charge",
+    safeDetails: { attempt_id: args.attemptId, stripe_payment_intent_id: args.pi.id } });
+  return false;
 }
 
 // PR #320: safely finalize a PaymentIntent that resolved to `requires_action`
@@ -905,6 +938,7 @@ async function writeFailedOutcome(args: {
 // early return gates all charging).
 async function finalizeRequiresActionPaymentIntent(args: {
   stripe: Stripe;
+  expectedPaymentIntentId: string | null;
   pi: Stripe.PaymentIntent;
   stripeAccountId: string;
   attemptId: string;
@@ -914,15 +948,23 @@ async function finalizeRequiresActionPaymentIntent(args: {
   appointmentId: string | null;
   route: string;
 }): Promise<SessionPaymentChargeResult> {
+  if (!(await retainNonterminalPaymentIntent(args))) {
+    return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE,
+      stripePaymentIntentId: args.pi.id, attemptId: args.attemptId };
+  }
   try {
     const canceled = await args.stripe.paymentIntents.cancel(
       args.pi.id,
       undefined,
       { stripeAccount: args.stripeAccountId },
     );
+    if (canceled.status !== "canceled" || canceled.id !== args.pi.id
+        || canceled.amount !== args.pi.amount || canceled.currency !== args.pi.currency) {
+      throw new Error("payment_intent_cancel_not_confirmed");
+    }
     // PI is now 'canceled' on Stripe and can never succeed: terminal 'failed'
     // is now truthful and cannot diverge.
-    await writeFailedOutcome({
+    const failedPersisted = await writeFailedOutcome({
       attemptId: args.attemptId,
       studioId: args.studioId,
       clientId: args.clientId,
@@ -931,6 +973,7 @@ async function finalizeRequiresActionPaymentIntent(args: {
       failureCode: "requires_action_canceled",
       failureMessage: AUTHENTICATION_REQUIRED_MESSAGE,
     });
+    if (!failedPersisted) return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE };
     await recordOpsAlert({
       severity: "warning",
       event: "session_payment_requires_action_canceled",
@@ -998,7 +1041,7 @@ async function finalizeRequiresActionPaymentIntent(args: {
 // by create (including an idempotent replay) — is compared with the attempt's
 // PREPARED amount and currency BEFORE any status branch runs. The status
 // branches act on it: `requires_action` CANCELS it and records `failed`, and
-// every other non-success status records `failed`. Doing either on an intent
+// other nonterminal statuses remain pending; only canceled records failure. Doing either on an intent
 // whose money is not the prepared charge would retire a real prepared attempt
 // on the strength of an unrelated (stale, misbound or replayed) provider
 // object, and cancel that object on Stripe.
@@ -1159,6 +1202,7 @@ async function reconcileExistingPaymentIntent(args: {
     return finalizeRequiresActionPaymentIntent({
       stripe,
       pi,
+      expectedPaymentIntentId: args.paymentIntentId,
       stripeAccountId: args.stripeAccountId,
       attemptId: args.attemptId,
       studioId: args.studioId,
@@ -1168,7 +1212,12 @@ async function reconcileExistingPaymentIntent(args: {
       route: "lib/billing/session-payment-charge:reconcileExistingPaymentIntent",
     });
   }
-  await writeFailedOutcome({
+  if (pi.status !== "canceled") {
+    await retainNonterminalPaymentIntent({ ...args, pi, expectedPaymentIntentId: args.paymentIntentId });
+    return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE,
+      stripePaymentIntentId: pi.id, attemptId: args.attemptId };
+  }
+  const failedPersisted = await writeFailedOutcome({
     attemptId: args.attemptId,
     studioId: args.studioId,
     clientId: args.clientId,
@@ -1178,6 +1227,7 @@ async function reconcileExistingPaymentIntent(args: {
     failureMessage:
       pi.last_payment_error?.message ?? `PaymentIntent status: ${pi.status}`,
   });
+  if (!failedPersisted) return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE };
   await recordOpsAlert({
     severity: "warning",
     event: "session_payment_charge_failed",
@@ -1588,7 +1638,19 @@ export async function runSessionPaymentCharge(args: {
       const paymentIntent = decline.payment_intent;
       const piId = paymentIntent?.id ?? null;
       const piStatus = paymentIntent?.status ?? null;
-      await writeFailedOutcome({
+      if ((piId || piStatus) && piStatus !== "canceled") {
+        // An attached actionable/unknown intent is not proof that no money can
+        // move. Its partial error shape is not sufficient to bind new identity;
+        // keep the claim unresolved for verified retrieve/webhook reconciliation.
+        await recordOpsAlert({ severity: "critical", event: "session_payment_needs_manual_review",
+          message: "Stripe returned an error with an intent that is not confirmed canceled. No terminal failure was recorded.",
+          studioId: attemptRow.studio_id, clientId: attemptRow.client_id,
+          route: "lib/billing/session-payment-charge:runSessionPaymentCharge",
+          safeDetails: { attempt_id: attemptRow.id, stripe_payment_intent_id: piId, stripe_status: piStatus } });
+        return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE,
+          attemptId: attemptRow.id, ...(piId ? { stripePaymentIntentId: piId } : {}) };
+      }
+      const failedPersisted = await writeFailedOutcome({
         attemptId: attemptRow.id,
         studioId: attemptRow.studio_id,
         clientId: attemptRow.client_id,
@@ -1597,6 +1659,7 @@ export async function runSessionPaymentCharge(args: {
         failureCode: err.code ?? piStatus,
         failureMessage: err.message,
       });
+      if (!failedPersisted) return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE };
       logInternal("session_payment_stripe_error", {
         attemptId: attemptRow.id,
         type: err.type,
@@ -1747,6 +1810,7 @@ export async function runSessionPaymentCharge(args: {
     return finalizeRequiresActionPaymentIntent({
       stripe,
       pi,
+      expectedPaymentIntentId: attemptRow.stripe_payment_intent_id,
       stripeAccountId: card.stripe_account_id,
       attemptId: attemptRow.id,
       studioId: attemptRow.studio_id,
@@ -1757,9 +1821,15 @@ export async function runSessionPaymentCharge(args: {
     });
   }
 
-  // Other non-success status (e.g. requires_payment_method), genuinely terminal
-  // for an off-session charge (Stripe will not auto-succeed it), so record failed.
-  await writeFailedOutcome({
+  // Processing/confirmation/capture/new-method states can still succeed later.
+  // Retain the original intent; only an explicitly canceled PI is terminal here.
+  if (pi.status !== "canceled") {
+    await retainNonterminalPaymentIntent({ attemptId: attemptRow.id, studioId: attemptRow.studio_id,
+      clientId: attemptRow.client_id, pi, expectedPaymentIntentId: attemptRow.stripe_payment_intent_id });
+    return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE,
+      stripePaymentIntentId: pi.id, attemptId: attemptRow.id };
+  }
+  const failedPersisted = await writeFailedOutcome({
     attemptId: attemptRow.id,
     studioId: attemptRow.studio_id,
     clientId: attemptRow.client_id,
@@ -1770,6 +1840,7 @@ export async function runSessionPaymentCharge(args: {
       pi.last_payment_error?.message ??
       `PaymentIntent status: ${pi.status}`,
   });
+  if (!failedPersisted) return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE };
   await recordOpsAlert({
     // requires_action is handled + alerted in finalizeRequiresActionPaymentIntent
     // above, so this path is always a plain (warning-level) charge failure.
