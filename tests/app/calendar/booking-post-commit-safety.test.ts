@@ -17,7 +17,10 @@ const booking = vi.hoisted(() => ({
   lookupError: false,
   clientEmail: vi.fn(async () => ({ ok: true })),
   practitionerEmail: vi.fn(async () => ({ ok: true })),
-  rpc: vi.fn(async () => ({ data: [{ result: "created", appointment_id: "appointment" }], error: null })),
+  cancelEmail: vi.fn(async (): Promise<{ ok: true } | { ok: false; error: string; retryable: boolean }> => ({ ok: true })),
+  alert: vi.fn(async () => undefined),
+  cancelContextUnavailable: false,
+  rpc: vi.fn(async (): Promise<{ data: unknown; error: null }> => ({ data: [{ result: "created", appointment_id: "appointment" }], error: null })),
   event: vi.fn(),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -35,6 +38,7 @@ vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from: (ta
     maybeSingle: async () => {
       if (table === "services") return { data: { id: "service", default_duration_minutes: 60 }, error: null };
       if (table === "clients") return { data: { id: "client", name: "Synthetic Client", email: "client@example.test", phone: null }, error: null };
+      if (table === "appointments" && booking.cancelContextUnavailable) return { data: null, error: { message: "PRIVATE context" } };
       if (table === "appointments") return { data: { id: "appointment", client_id: "client", practitioner_id: booking.assignedId, starts_at: "2099-01-01T15:00:00.000Z" }, error: null };
       if (booking.lookupError) return { data: null, error: { message: "synthetic private lookup detail" } };
       const assigned = booking.assigned as Record<string, unknown>;
@@ -53,11 +57,13 @@ vi.mock("@/lib/email/send-appointment", () => ({
   sendBookingConfirmationToClient: booking.clientEmail,
   sendBookingNotificationToPractitioner: booking.practitionerEmail,
   recordEmailAttempt: vi.fn(), logEmailFailure: vi.fn(),
-  sendCancellationEmail: vi.fn(), sendPostcareToClient: vi.fn(),
+  sendCancellationEmail: booking.cancelEmail, sendPostcareToClient: vi.fn(),
 }));
 vi.mock("@/lib/sms/send-appointment", () => ({ sendBookingConfirmationSmsToClient: vi.fn() }));
 
-import { bookAppointmentForClientAction } from "@/app/(app)/calendar/actions";
+vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: booking.alert }));
+
+import { cancelAppointmentAction, bookAppointmentForClientAction } from "@/app/(app)/calendar/actions";
 
 function bookFor(target = "B") {
   const form = new FormData();
@@ -66,7 +72,8 @@ function bookFor(target = "B") {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks(); booking.assignedId = "B"; booking.lookupError = false;
+  vi.clearAllMocks(); booking.cancelContextUnavailable = false; booking.cancelEmail.mockReset().mockResolvedValue({ ok: true });
+  booking.assignedId = "B"; booking.lookupError = false;
   booking.assigned = { id: "B", studio_id: "studio", active: true, display_name: "Assigned B", email: "b@example.test" };
 });
 
@@ -125,5 +132,56 @@ describe("booking action — post-commit + safe-error hardening (Item 8)", () =>
     expect(ACTIONS).toMatch(/Could not create the client\. Please try again\./);
     expect(ACTIONS).toMatch(/logBookingDbError\("last_service", "query", error\.code\)/);
     expect(ACTIONS).toMatch(/Could not load the last service\. Please try again\./);
+  });
+});
+
+
+describe("MSG-004 cancellation commit and notification are separate outcomes", () => {
+  async function cancel(result = "cancelled") {
+    booking.rpc.mockResolvedValueOnce({ data: result, error: null });
+    const form = new FormData(); form.set("appointment_id", "appointment");
+    return cancelAppointmentAction(form);
+  }
+  it("an accepted email preserves ordinary cancellation success", async () => {
+    expect(await cancel()).toEqual({ ok: true });
+    expect(booking.cancelEmail).toHaveBeenCalledTimes(1);
+    expect(booking.alert).not.toHaveBeenCalled();
+  });
+  it("a returned refusal preserves cancellation and surfaces a safe recovery warning", async () => {
+    booking.cancelEmail.mockResolvedValueOnce({ ok: false, error: "PRIVATE provider body client@example.test", retryable: false });
+    const result = await cancel();
+    expect(result).toEqual({ ok: true, notification: "unconfirmed" });
+    expect(booking.alert).toHaveBeenCalledWith(expect.objectContaining({
+      severity: "warning", event: "cancellation_email_unconfirmed", studioId: "studio", appointmentId: "appointment",
+    }));
+    expect(JSON.stringify([result, booking.alert.mock.calls])).not.toMatch(/PRIVATE|client@example.test/);
+  });
+  it("a thrown send preserves cancellation without logging private provider content", async () => {
+    booking.cancelEmail.mockRejectedValueOnce(new Error("PRIVATE throw client@example.test"));
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await cancel();
+      expect(result).toEqual({ ok: true, notification: "unconfirmed" });
+      expect(JSON.stringify([result, booking.alert.mock.calls, log.mock.calls])).not.toMatch(/PRIVATE|client@example.test/);
+    } finally { log.mockRestore(); }
+  });
+  it("unavailable post-commit context is visible rather than an ordinary success", async () => {
+    booking.cancelContextUnavailable = true;
+    expect(await cancel()).toEqual({ ok: true, notification: "unconfirmed" });
+    expect(booking.cancelEmail).not.toHaveBeenCalled();
+    expect(booking.alert).toHaveBeenCalledTimes(1);
+  });
+  it("an already-cancelled retry never sends again", async () => {
+    expect(await cancel("already_cancelled")).toEqual({ ok: true });
+    expect(booking.cancelEmail).not.toHaveBeenCalled();
+  });
+  it("a recovery-alert rejection cannot turn a committed cancellation into failure", async () => {
+    booking.cancelEmail.mockResolvedValueOnce({ ok: false, error: "PRIVATE", retryable: true });
+    booking.alert.mockRejectedValueOnce(new Error("PRIVATE alert"));
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await cancel()).toEqual({ ok: true, notification: "unconfirmed" });
+      expect(JSON.stringify(log.mock.calls)).not.toContain("PRIVATE");
+    } finally { log.mockRestore(); }
   });
 });

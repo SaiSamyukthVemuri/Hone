@@ -25,6 +25,7 @@ import {
   sendPostcareToClient,
 } from "@/lib/email/send-appointment";
 import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
+import { recordOpsAlert } from "@/lib/ops/alerts";
 import { localDateString } from "@/lib/booking/tz";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 
@@ -430,6 +431,7 @@ export async function bookAppointmentForClientAction(
 
 export async function cancelAppointmentAction(formData: FormData): Promise<{
   ok: true;
+  notification?: "unconfirmed";
 } | { ok: false; error: string }> {
   const appointmentId = formDataStr(formData, "appointment_id");
   const reason = formDataStrOrNull(formData, "reason");
@@ -489,31 +491,33 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
     };
   }
 
-  // Look up enough data to send the client-notification email.
-  const supabase = await createClient();
-  const { data: appt } = await supabase
-    .from("appointments")
-    .select("client_id, starts_at, duration_minutes, service_id")
-    .eq("id", appointmentId)
-    .eq("studio_id", studio.id)
-    .maybeSingle();
-  if (appt) {
-    const { data: client } = await supabase
-      .from("clients")
-      .select("name, email")
-      .eq("id", appt.client_id)
+  // Cancellation already committed. Its notification can fail independently;
+  // never imply delivery or invite a second cancellation/send as recovery.
+  let notificationUnconfirmed = true;
+  try {
+    const supabase = await createClient();
+    const { data: appt } = await supabase
+      .from("appointments")
+      .select("client_id, starts_at, duration_minutes, service_id")
+      .eq("id", appointmentId)
+      .eq("studio_id", studio.id)
       .maybeSingle();
-    const { data: service } = appt.service_id
-      ? await supabase
-          .from("services")
-          .select("name")
-          .eq("id", appt.service_id)
-          .maybeSingle()
-      : { data: null };
+    if (appt) {
+      const { data: client } = await supabase
+        .from("clients")
+        .select("name, email")
+        .eq("id", appt.client_id)
+        .maybeSingle();
+      const { data: service } = appt.service_id
+        ? await supabase
+            .from("services")
+            .select("name")
+            .eq("id", appt.service_id)
+            .maybeSingle()
+        : { data: null };
 
-    if (client?.email) {
-      try {
-        await sendCancellationEmail({
+      if (client?.email) {
+        const sent = await sendCancellationEmail({
           to: client.email,
           recipientName: client.name,
           clientName: client.name,
@@ -531,17 +535,35 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
           isClient: true,
           rebookUrl: `${getRequiredAppOrigin()}/book/${studio.slug}`,
         });
-      } catch (err) {
-        console.error("client cancel notification email failed", err);
+        notificationUnconfirmed = !sent.ok;
       }
-    }
 
-    revalidatePath(`/clients/${appt.client_id}`);
+      revalidatePath(`/clients/${appt.client_id}`);
+    }
+  } catch {
+    notificationUnconfirmed = true;
+  }
+  if (notificationUnconfirmed) {
+    try {
+      // Existing durable operator surface; no provider error, address or
+      // cancellation reason is copied into logs or alert metadata.
+      await recordOpsAlert({
+        severity: "warning",
+        event: "cancellation_email_unconfirmed",
+        message: "Appointment cancelled; client notification was not confirmed. Review notification status before contacting the client.",
+        studioId: studio.id,
+        appointmentId,
+        route: "/calendar",
+        safeDetails: { notification_type: "cancellation", outcome: "unconfirmed" },
+      });
+    } catch {
+      console.error(JSON.stringify({ event: "cancellation_notification_alert_unavailable", appointmentId, studioId: studio.id }));
+    }
   }
   revalidatePath("/calendar");
   revalidatePath("/calendar/upcoming");
   revalidatePath(`/calendar/${appointmentId}`);
-  return { ok: true };
+  return notificationUnconfirmed ? { ok: true, notification: "unconfirmed" } : { ok: true };
 }
 
 export type AppointmentStateActionResult =

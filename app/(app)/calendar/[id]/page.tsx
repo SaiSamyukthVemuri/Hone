@@ -97,12 +97,14 @@ export default async function AppointmentDetailPage({
     view?: string | string[];
     week?: string | string[];
     month?: string | string[];
+    notice?: string | string[];
   }>;
 }) {
   const { id } = await params;
   // Safe, internal-only back link: returns to the view/date the practitioner
   // came from (falls back to /calendar). Never an external URL.
-  const backHref = calendarReturnHref(await searchParams);
+  const query = await searchParams;
+  const backHref = calendarReturnHref(query);
   const { practitioner, studio } = await requirePractitionerWithStudio();
   const isOwner = practitioner.role === "owner";
   const supabase = await createClient();
@@ -411,6 +413,13 @@ export default async function AppointmentDetailPage({
         practitioner={data.practitioner}
         displayStatus={displayStatus}
       />
+
+      {data.status === "cancelled" && query.notice === "cancel_email_unconfirmed" ? (
+        <p role="status" className="text-sm text-amber-800 dark:text-amber-300">
+          Appointment cancelled. The client email was not confirmed. Check notification
+          status with support before sending another message.
+        </p>
+      ) : null}
 
       <PinnedNotesReadonly notes={pinnedNotes} />
 

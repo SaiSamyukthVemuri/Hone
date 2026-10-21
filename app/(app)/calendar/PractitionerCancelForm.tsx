@@ -35,6 +35,13 @@ export function PractitionerCancelForm({ appointmentId }: PractitionerCancelForm
         setError(res.error);
         return;
       }
+      if (res.notification === "unconfirmed") {
+        // The cancel form disappears after the status changes. Carry only a
+        // fixed notice marker to the refreshed detail page, never provider text.
+        const url = new URL(window.location.href);
+        url.searchParams.set("notice", "cancel_email_unconfirmed");
+        router.replace(`${url.pathname}${url.search}`, { scroll: false });
+      }
       router.refresh();
     });
   }

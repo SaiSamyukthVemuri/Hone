@@ -637,3 +637,21 @@ describe("AppointmentLifecycleActions: forbidden surface (PR #180 scope)", () =>
     expect(code).not.toMatch(/sendEmailSafely|sendSms|twilio/i);
   });
 });
+
+
+describe("MSG-004 cancellation warning survives the form disappearing", () => {
+  const form = readFileSync(path.resolve(__dirname, "../../../app/(app)/calendar/PractitionerCancelForm.tsx"), "utf8");
+  const page = readFileSync(path.resolve(__dirname, "../../../app/(app)/calendar/[id]/page.tsx"), "utf8");
+  it("carries a fixed notice through navigation before refreshing cancelled state", () => {
+    expect(form).toContain('res.notification === "unconfirmed"');
+    expect(form).toContain('url.searchParams.set("notice", "cancel_email_unconfirmed")');
+    expect(form.indexOf("router.replace(")).toBeLessThan(form.indexOf("router.refresh()"));
+    expect(form).not.toMatch(/searchParams\.set\([^\n]*res\.error/);
+  });
+  it("the persisted notice requires cancelled state and renders fixed accessible copy", () => {
+    expect(page).toContain('data.status === "cancelled" && query.notice === "cancel_email_unconfirmed"');
+    expect(page).toContain('role="status"');
+    expect(page).toContain("Appointment cancelled. The client email was not confirmed.");
+    expect(page).not.toContain("{query.notice}");
+  });
+});
