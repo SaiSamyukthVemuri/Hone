@@ -398,6 +398,15 @@ async function verifyProviderMoneyAgainstRow(args: {
   return false;
 }
 
+// A normal create/confirm-to-persistence race, distinct from a genuine handler
+// failure. The route recognizes this exact server-only type, never message text.
+export class PaymentOriginalBindingPendingError extends Error {
+  constructor() {
+    super("stripe_webhook_payment_original_binding_pending");
+    this.name = "PaymentOriginalBindingPendingError";
+  }
+}
+
 // The signature proves the event came from Stripe. It does not let metadata
 // replace the account/customer/provider object stamped on this durable attempt.
 async function verifyPaymentEventIdentity(args: {
@@ -436,7 +445,7 @@ async function verifyPaymentEventIdentity(args: {
       || (mismatch === "charge" && args.requireCharge
         && !attempt.stripe_charge_id && !!args.chargeId));
   if (awaitingOriginalBinding) {
-    throw new Error("stripe_webhook_payment_original_binding_pending");
+    throw new PaymentOriginalBindingPendingError();
   }
 
   await recordOpsAlert({

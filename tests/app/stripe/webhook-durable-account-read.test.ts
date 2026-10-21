@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { OpsAlertInput } from "@/lib/ops/alerts";
 
 // PAY-WEBHOOK-01. DURABLE EVENT LOSS ON A FAILED STUDIO-BINDING READ.
 //
@@ -17,7 +18,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // a source pin cannot observe that mark_stripe_event_processed was called.
 
 const CONSTRUCT_EVENT = vi.fn();
-const RECORD_OPS_ALERT = vi.fn(async () => {});
+const RECORD_OPS_ALERT = vi.fn<(input: OpsAlertInput) => Promise<void>>(async () => {});
+const NOTIFY_CRITICAL_OPS_ALERT = vi.fn(async () => {});
 const CAPTURE_EVENT = vi.fn();
 const ACCOUNTS_RETRIEVE = vi.fn();
 
@@ -31,7 +33,17 @@ vi.mock("@/lib/stripe/server", async (importActual) => {
     }),
   };
 });
-vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: RECORD_OPS_ALERT }));
+vi.mock("@/lib/ops/alert-email", () => ({ notifyCriticalOpsAlert: NOTIFY_CRITICAL_OPS_ALERT }));
+// Execute the real alert writer/redactor/critical-dispatch decision; stub only
+// its final operator-email transport. Positive genuine-error controls below
+// prove these durable-row and email detectors actually fire.
+vi.mock("@/lib/ops/alerts", async (importActual) => {
+  const actual = await importActual<typeof import("@/lib/ops/alerts")>();
+  return { ...actual, recordOpsAlert: async (input: OpsAlertInput) => {
+    await RECORD_OPS_ALERT(input);
+    await actual.recordOpsAlert(input);
+  } };
+});
 vi.mock("@/lib/analytics/server", () => ({ captureServerEvent: CAPTURE_EVENT }));
 
 const ADMIN = { current: null as ReturnType<typeof makeAdmin> | null };
@@ -47,15 +59,20 @@ type ReadResult = { data: unknown; error: unknown };
  * studio binding, then preserve-first-completion) and the two must be able to
  * fail independently.
  */
-function makeAdmin(reads: Record<string, ReadResult[]>, rpcs: Record<string, ReadResult> = {}) {
+function makeAdmin(reads: Record<string, ReadResult[]>, rpcs: Record<string, ReadResult | Error> = {}) {
   const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const eqCalls: Array<{ table: string; column: string; value: unknown }> = [];
   const updateCalls: Array<{ table: string; payload: Record<string, unknown> }> = [];
+  const opsRows: Array<Record<string, unknown>> = [];
   const admin = {
     from(table: string) {
       let update: Record<string, unknown> | null = null;
       const q = {
         select: () => update ? Promise.resolve({ data: [{ id: "attempt-1" }], error: null }) : q,
+        insert: async (payload: Record<string, unknown>) => {
+          if (table !== "ops_alerts") throw new Error("Unexpected insert table");
+          opsRows.push(payload); return { error: null };
+        },
         update: (payload: Record<string, unknown>) => {
           update = payload; updateCalls.push({ table, payload }); return q;
         },
@@ -73,10 +90,12 @@ function makeAdmin(reads: Record<string, ReadResult[]>, rpcs: Record<string, Rea
     },
     async rpc(name: string, args: Record<string, unknown>): Promise<ReadResult> {
       rpcCalls.push({ name, args });
-      return rpcs[name] ?? { data: null, error: null };
+      const result = rpcs[name];
+      if (result instanceof Error) throw result;
+      return result ?? { data: null, error: null };
     },
   };
-  return { admin, rpcCalls, eqCalls, updateCalls };
+  return { admin, rpcCalls, eqCalls, updateCalls, opsRows };
 }
 
 const CLAIM_OK = {
@@ -127,6 +146,7 @@ beforeEach(() => {
   vi.resetModules();
   CONSTRUCT_EVENT.mockReset();
   RECORD_OPS_ALERT.mockClear();
+  NOTIFY_CRITICAL_OPS_ALERT.mockClear();
   CAPTURE_EVENT.mockClear();
   ACCOUNTS_RETRIEVE.mockReset();
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test";
@@ -389,6 +409,7 @@ describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "cha
       account?: string;
       studio?: string;
       resolution?: "canonical" | "legacy" | "fallback";
+      rpcFailure?: Error;
     } = {}) {
       const account = options.account ?? "acct_test_1";
       const studio = options.studio ?? "studio-1";
@@ -413,7 +434,7 @@ describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "cha
         studio_payment_settings: [{ data: { studio_id: studio }, error: null }],
         payment_charge_attempts: [{ data: row, error: null }],
       }, { claim_stripe_event: CLAIM_OK,
-        reconcile_card_payment_succeeded: { data: [{ result: "reconciled", status_before: "pending_stripe" }], error: null } });
+        reconcile_card_payment_succeeded: options.rpcFailure ?? { data: [{ result: "reconciled", status_before: "pending_stripe" }], error: null } });
     }
     const writes = () => ADMIN.current!.rpcCalls.filter(({ name }) => name === "reconcile_card_payment_succeeded");
     it.each([
@@ -466,6 +487,9 @@ describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "cha
       expect(response.status).toBe(500);
       expect(await response.json()).toEqual({ ok: false });
       expect(first.updateCalls).toEqual([]);
+      expect(first.opsRows).toEqual([]);
+      expect(RECORD_OPS_ALERT).not.toHaveBeenCalled();
+      expect(NOTIFY_CRITICAL_OPS_ALERT).not.toHaveBeenCalled();
       expect(writes()).toEqual([]);
       expect(names(first.rpcCalls)).not.toContain("mark_stripe_event_processed");
       expect(first.rpcCalls.filter(({ name }) => name === "release_stripe_event_claim_with_error")).toEqual([
@@ -481,6 +505,9 @@ describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "cha
       prepareBound();
       expect((await callRoute()).status).toBe(200);
       expect(CONSTRUCT_EVENT.mock.results.at(-1)!.value).toEqual(originalEnvelope);
+      expect(RECORD_OPS_ALERT).not.toHaveBeenCalled();
+      expect(NOTIFY_CRITICAL_OPS_ALERT).not.toHaveBeenCalled();
+      expect(ADMIN.current!.opsRows).toEqual([]);
       expect(writes().length + ADMIN.current!.updateCalls.length).toBe(1);
       expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
       expect(names(ADMIN.current!.rpcCalls)).not.toContain("release_stripe_event_claim_with_error");
@@ -490,10 +517,20 @@ describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "cha
       for (let delivery = 0; delivery < 2; delivery++) {
         prepareBound({ row: { status: "pending_stripe", stripe_payment_intent_id: null } });
         expect((await callRoute()).status).toBe(500);
+        expect(ADMIN.current!.opsRows).toEqual([]);
+        expect(RECORD_OPS_ALERT).not.toHaveBeenCalled();
+        expect(NOTIFY_CRITICAL_OPS_ALERT).not.toHaveBeenCalled();
         expect(writes()).toEqual([]); expect(ADMIN.current!.updateCalls).toEqual([]);
         expect(names(ADMIN.current!.rpcCalls)).not.toContain("mark_stripe_event_processed");
         expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
       }
+      prepareBound();
+      expect((await callRoute()).status).toBe(200);
+      expect(writes().length + ADMIN.current!.updateCalls.length).toBe(1);
+      expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+      expect(RECORD_OPS_ALERT).not.toHaveBeenCalled();
+      expect(NOTIFY_CRITICAL_OPS_ALERT).not.toHaveBeenCalled();
+      expect(ADMIN.current!.opsRows).toEqual([]);
       expect(ACCOUNTS_RETRIEVE).not.toHaveBeenCalled();
     });
     it.each([
@@ -529,6 +566,9 @@ describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "cha
       it("pending required charge waits for its original binding without adopting the event ID", async () => {
         prepareBound({ row: { status: "pending_stripe", stripe_charge_id: null } });
         expect((await callRoute()).status).toBe(500);
+        expect(ADMIN.current!.opsRows).toEqual([]);
+        expect(RECORD_OPS_ALERT).not.toHaveBeenCalled();
+        expect(NOTIFY_CRITICAL_OPS_ALERT).not.toHaveBeenCalled();
         expect(writes()).toEqual([]); expect(ADMIN.current!.updateCalls).toEqual([]);
         expect(names(ADMIN.current!.rpcCalls)).not.toContain("mark_stripe_event_processed");
         expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
@@ -536,6 +576,25 @@ describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "cha
         expect((await callRoute()).status).toBe(200);
         expect(ADMIN.current!.updateCalls).toHaveLength(1);
         expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+      });
+    }
+    if (type === "payment_intent.succeeded") {
+      it.each(["unrelated error", "same message", "same message and name"])("genuine %s still records and dispatches one critical alert", async (kind) => {
+        const error = new Error(kind === "unrelated error" ? "synthetic payment command failed"
+          : "stripe_webhook_payment_original_binding_pending");
+        if (kind === "same message and name") error.name = "PaymentOriginalBindingPendingError";
+        prepareBound({ rpcFailure: error });
+        expect((await callRoute()).status).toBe(500);
+        expect(ADMIN.current!.updateCalls).toEqual([]);
+        expect(names(ADMIN.current!.rpcCalls)).not.toContain("mark_stripe_event_processed");
+        expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
+        expect(RECORD_OPS_ALERT).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+          severity: "critical", event: "stripe_webhook_processing_failed",
+        }));
+        expect(ADMIN.current!.opsRows).toHaveLength(1);
+        expect(ADMIN.current!.opsRows[0]).toMatchObject({ severity: "critical", event: "stripe_webhook_processing_failed" });
+        expect(NOTIFY_CRITICAL_OPS_ALERT).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ event: "stripe_webhook_processing_failed" }));
+        expect(ACCOUNTS_RETRIEVE).not.toHaveBeenCalled();
       });
     }
     it("allows a separately bound second studio/account without borrowing the first", async () => {
