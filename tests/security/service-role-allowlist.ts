@@ -20,6 +20,13 @@ export type ServiceRoleAllowlistEntry = {
 
 export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
+    path: "lib/audit/governed-writes.ts",
+    purpose: "SEC-003: only the existing archive/unarchive and owner-export audit emissions after direct member INSERT closure.",
+    why: "This is an internal server-only module, not a Server Action or arbitrary audit transport. Both writers independently resolve the current active practitioner and selected studio and compare studio.id against the calling server's expectedStudioId before constructing the privileged client. The cached resolver is not final authority: an uncached session getUser and exact practitioner/user/studio/active membership query run before privileged construction, with fresh owner role required for export. Archive/unarchive also re-read the exact client through the session/RLS client by id AND studio_id; the server derives actor_id/studio_id and hard-codes action/entity/metadata, with only a validated archive timestamp. Export independently requires owner role and validates the emitted filename, registry file set and exact nonnegative safe-integer resource counts; a failed audit withholds export bytes. No raw actor, action, clinical command or metadata object is admitted. Returned failures are curated; rejected archive audit promises still reject with a fixed no-PHI error and no redirect. This entry does not authorize any other service-role table read/write or bypass the authority checks.",
+    scopeGuard: "studio.id !== input.expectedStudioId",
+  },
+
+  {
     path: "app/(app)/settings/waitlist/profile-actions.ts",
     purpose:
       "WAIT-04A owner surface — the sole caller of set_waitlist_entry_availability, create_practitioner_waitlist_entry and import_legacy_waitlist_entry (all migration 0193).",
