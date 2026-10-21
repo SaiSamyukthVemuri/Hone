@@ -824,6 +824,14 @@ describe("0244 — attributable routine reading correction history", () => {
     await expect(userQuery(A.userId, "update public.electrolysis_entries set session_id=$2,thermolysis_duration_seconds=0.6 where id=$1", [created.entry_id, sessionB])).rejects.toThrow();
     expect(await events(created.entry_id)).toEqual([event]);
   });
+  it("retains 0160 permitted block-link clearing during a reading correction", async () => {
+    const created = (await userQuery(A.userId, CREATE_SQL, createArgs())).rows[0];
+    await userQuery(A.userId, "update public.electrolysis_entries set block_id=null,thermolysis_duration_seconds=0.7 where id=$1", [created.entry_id]);
+    expect((await adminQuery("select block_id from public.electrolysis_entries where id=$1", [created.entry_id])).rows[0].block_id).toBeNull();
+    const [event] = await events(created.entry_id);
+    expect(event).toMatchObject({ block_id: created.block_id, source_id: created.entry_id, changed_fields: ["thermolysis_duration_seconds"] });
+    expect(event.changes.thermolysis_duration_seconds.new).toEqual({ present: true, value: 0.7 });
+  });
   it("unattributed service correction and nested laser payload are refused atomically", async () => {
     const f = await fixture();
     await expect(asRole("service_role", q => q("update public.session_blocks set energy_level=9 where id=$1", [f.blockId]))).rejects.toMatchObject({ code: "23514" });

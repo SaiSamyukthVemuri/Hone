@@ -49,4 +49,22 @@ describe("0244 routine history source contract, not DB proof", () => {
     expect(EXPORT_RESOURCE_REGISTRY.treatment_reading_change_events).toMatchObject({ kind: "pending", fieldReviewRequired: true, tier: 1 });
     expect(exportedResources().some(row => row.resource === "treatment_reading_change_events")).toBe(false);
   });
+  it("preserves the existing clearable block link and snapshots its prior context", () => {
+    // 0160 permits clearing an entry block link; history must not introduce
+    // a second, stricter lineage rule while recording a reading correction.
+    expect(sql).not.toContain("tg_table_name='electrolysis_entries' and v_old->>'block_id' is distinct from v_new->>'block_id'");
+    expect(sql).toContain("coalesce((v_new->>'block_id')::uuid,(v_old->>'block_id')::uuid)");
+    expect(sql).toContain("v_old->>'session_id'");
+  });
+  it("adds only its own trigger functions, never a signed/native workflow replacement", () => {
+    expect([...executable.matchAll(/create or replace function public\.(\w+)/g)].map(match => match[1])).toEqual([
+      "capture_treatment_reading_change", "guard_treatment_reading_history_immutable",
+    ]);
+    for (const source of ["session_blocks", "electrolysis_entries", "laser_entries"]) {
+      expect(sql).toContain(`after update on public.${source}`);
+    }
+    for (const untouched of ["public.treatment_setup_", "public.machine_profile_", "public.clinical_record_", "public.guard_retired_"]) {
+      expect(executable).not.toContain(untouched);
+    }
+  });
 });
