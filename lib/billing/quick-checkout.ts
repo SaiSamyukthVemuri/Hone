@@ -10,6 +10,8 @@ import {
   resolveAppointmentQuotedAmountCents,
 } from "@/lib/billing/appointment-settlement";
 import type { SettlementMethod } from "@/lib/billing/settlement-types";
+import type { PaymentCurrency } from "@/lib/billing/payment-jurisdiction";
+import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
 
 // Quick checkout (Chloe feedback: checkout takes too many clicks while the client
 // is waiting). This resolver is the ONLY new server logic: it turns an
@@ -54,6 +56,13 @@ export type AppointmentSettlementContext = {
   /** The live attested disposition, when one exists. */
   settledMethod: SettlementMethod | null;
   settledAmountCents: number | null;
+  /** PAY-CCY-04. The live disposition's own recorded currency. */
+  settledCurrency: PaymentCurrency | null;
+  /**
+   * PAY-CCY-04. The studio's currency, labelling a NEW amount. Null on a
+   * failed read: the amount is then unlabelled, never assumed Canadian.
+   */
+  currency: PaymentCurrency | null;
   /**
    * The authoritative price, resolved from the APPOINTMENT so it is available
    * with no session. Pre-fills the amount; the action re-resolves and snapshots
@@ -140,8 +149,9 @@ export async function resolveQuickCheckoutContext(
   //    an outcome over one that already exists would have the practitioner type
   //    an amount only to be refused with already_settled. Refuse up front and
   //    say so, for the same reason the free-visit loader refuses to infer.
-  const settlements = await getAppointmentSettlements(args.studioId, [
-    args.appointmentId,
+  const [settlements, jurisdiction] = await Promise.all([
+    getAppointmentSettlements(args.studioId, [args.appointmentId]),
+    getStudioPaymentJurisdiction(args.studioId),
   ]);
   if (!settlements.ok) {
     return {
@@ -160,6 +170,8 @@ export async function resolveQuickCheckoutContext(
     canRecord: apptStatus === "completed",
     settledMethod: live?.method ?? null,
     settledAmountCents: live?.amountCents ?? null,
+    settledCurrency: live?.currency ?? null,
+    currency: jurisdiction.ok ? jurisdiction.jurisdiction.currency : null,
     quotedAmountCents: await resolveAppointmentQuotedAmountCents(
       args.studioId,
       args.appointmentId,

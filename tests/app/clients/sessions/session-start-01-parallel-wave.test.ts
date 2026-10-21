@@ -151,6 +151,8 @@ describe("SESSION-START-01 2A: the eight independent reads are issued together",
       "session-chart.payment-eligibility",
       "session-chart.payment-amount",
       "session-chart.settlements",
+      // PAY-CCY-04: conditional on a linked appointment, like settlements.
+      "session-chart.payment-jurisdiction",
     ]) {
       expect(wave).toContain(span);
     }
