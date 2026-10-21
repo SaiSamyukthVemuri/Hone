@@ -14,7 +14,7 @@ const KNOWN_FAKE_MODES: FakeResendMode[] = [
   "failonce",
   "hold",
 ];
-import { sendEmailSafely } from "@/lib/email/send-appointment";
+import { sendCancellationEmail, sendEmailSafely } from "@/lib/email/send-appointment";
 
 // ===========================================================================
 // RESCHEDULE-E2E-01 — the appointment send path resolves a FAKEABLE transport.
@@ -195,5 +195,19 @@ describe("the lane default and the acceptance seam are ONE contract", () => {
     for (const mode of ["success", "reject"]) {
       expect(KNOWN_FAKE_MODES).toContain(mode);
     }
+  });
+});
+
+
+describe("MSG-004 cancellation transport result is observable", () => {
+  const cancellation = (to: string) => sendCancellationEmail({
+    to, recipientName: "Synthetic", clientName: "Synthetic",
+    studio: { name: "Synthetic", timezone: "UTC" } as Parameters<typeof sendCancellationEmail>[0]["studio"],
+    serviceName: "Consultation", durationMinutes: 30, startsAt: new Date("2099-01-01T12:00:00Z"),
+    actorName: "Synthetic owner", actorRole: "owner", reason: null, isClient: true,
+  });
+  it.each([["client@harness.local", true], ["reject+cancel@harness.local", false], ["throw+cancel@harness.local", false]] as const)("returns the fake transport outcome for %s", async (to, ok) => {
+    vi.stubEnv("HONE_E2E_FAKE_RESEND", "1");
+    expect(await cancellation(to)).toMatchObject({ ok });
   });
 });

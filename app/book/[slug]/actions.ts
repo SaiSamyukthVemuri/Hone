@@ -210,25 +210,32 @@ export async function fetchPublicSlotsAction(params: {
   }
   if (!service) return { ok: false, error: "Service not found." };
 
-  const slots = await getAvailableSlots(
-    admin,
-    {
-      id: studio.id,
-      timezone: studio.timezone,
-      default_appointment_duration_minutes:
-        studio.default_appointment_duration_minutes,
-      buffer_minutes: studio.buffer_minutes,
-    },
-    params.date,
-    service.default_duration_minutes,
-  );
-  // Public-only past-time guard: never offer a slot whose start instant is
-  // already in the past (today's earlier hours). Shared helper in
-  // lib/booking/slots.ts so public booking + public reschedule cannot
-  // drift apart (PR #149). No lead-time buffer here.
-  // The shared getAvailableSlots() is untouched, so the internal calendar
-  // quick-book drawer (app/(app)/calendar/actions.ts) is unaffected.
-  return { ok: true, slots: filterFutureSlots(slots) };
+  // Discovery has a structured retryable refusal, never fabricated availability.
+  try {
+    const slots = await getAvailableSlots(
+      admin,
+      {
+        id: studio.id,
+        timezone: studio.timezone,
+        default_appointment_duration_minutes:
+          studio.default_appointment_duration_minutes,
+        buffer_minutes: studio.buffer_minutes,
+      },
+      params.date,
+      service.default_duration_minutes,
+    );
+    // Public-only past-time guard: never offer a slot whose start instant is
+    // already in the past (today's earlier hours). Shared helper in
+    // lib/booking/slots.ts so public booking + public reschedule cannot
+    // drift apart (PR #149). No lead-time buffer here.
+    // The shared getAvailableSlots() is untouched, so the internal calendar
+    // quick-book drawer (app/(app)/calendar/actions.ts) is unaffected.
+    return { ok: true, slots: filterFutureSlots(slots) };
+  } catch (err) {
+    if (!(err instanceof Error) || !err.message.startsWith("availability_read_failed:")) throw err;
+    logInternalBookingError("public_slots_availability_read_failed", { studioId: studio.id });
+    return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -755,24 +762,31 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // UTC date: a 10pm Toronto booking would otherwise look up slots
   // for the next calendar day.
   const dateStr = localDateString(start, studio.timezone);
-  const slots = await getAvailableSlots(
-    admin,
-    {
-      id: studio.id,
-      timezone: studio.timezone,
-      default_appointment_duration_minutes:
-        studio.default_appointment_duration_minutes,
-      buffer_minutes: studio.buffer_minutes,
-    },
-    dateStr,
-    service.default_duration_minutes,
-  );
-  const free = slots.some((s) => new Date(s.start).getTime() === start.getTime());
-  if (!free) {
-    return {
-      ok: false,
-      error: "That time is no longer available. Please choose another time.",
-    };
+  // Advisory only: a classified failed read defers to the locked command.
+  // Discovery still fails closed; successful empty reads still refuse here.
+  try {
+    const slots = await getAvailableSlots(
+      admin,
+      {
+        id: studio.id,
+        timezone: studio.timezone,
+        default_appointment_duration_minutes:
+          studio.default_appointment_duration_minutes,
+        buffer_minutes: studio.buffer_minutes,
+      },
+      dateStr,
+      service.default_duration_minutes,
+    );
+    const free = slots.some((s) => new Date(s.start).getTime() === start.getTime());
+    if (!free) {
+      return {
+        ok: false,
+        error: "That time is no longer available. Please choose another time.",
+      };
+    }
+  } catch (err) {
+    if (!(err instanceof Error) || !err.message.startsWith("availability_read_failed:")) throw err;
+    logInternalBookingError("public_booking_advisory_read_failed", { studioId: studio.id });
   }
 
   const end = new Date(start.getTime() + service.default_duration_minutes * 60_000);

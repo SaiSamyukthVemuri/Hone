@@ -105,3 +105,25 @@ describe("scope: no annotation/OCR/AI/AR assets/comparison/export", () => {
     });
   }
 });
+
+describe("CLN-005 current-image preview wiring", () => {
+  it("routes opens, closes, image failures and unmount through the request controller", () => {
+    expect(MANAGER).toContain("createPhotoPreviewController");
+    expect(MANAGER).toContain("preview?.imageId === modal?.id");
+    expect(MANAGER).toContain("previewRequests.current?.open(img.id)");
+    expect(MANAGER).toContain("previewRequests.current?.close()");
+    expect(MANAGER).toContain("previewRequests.current?.dispose()");
+    expect(MANAGER).toContain("previewRequests.current?.onImageError(modal.id, currentPreview?.generation ?? -1)");
+    expect(MANAGER).not.toContain("setModalUrl(res.url)");
+  });
+});
+
+
+describe("CLN-006 photo opener replaced by a label refresh", () => {
+  it("uses the shipped settled-close fallback only for a detached opener", () => {
+    expect(MANAGER).toContain("useReturnFocus<HTMLDivElement>(modal !== null)");
+    expect(MANAGER).toContain("previewOpener.current && !previewOpener.current.isConnected");
+    expect(MANAGER).toContain("returnToGallery()");
+    expect(MANAGER).toContain("ref={galleryFocusRef}");
+  });
+});
