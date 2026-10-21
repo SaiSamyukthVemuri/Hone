@@ -364,6 +364,28 @@ export async function bookAppointmentForClientAction(
     return { ok: true, appointmentId: createdId };
   }
 
+  // SCH-001: the booking actor remains the authorization/audit identity above.
+  // Notification identity comes only from the COMMITTED assignment, never the
+  // actor or a submitted target. A missing/unread contact must not notify A in
+  // B's place; resolve inside the existing post-commit failure boundary below.
+  const assignedNotificationContact = async () => {
+    if (!created.practitioner_id) throw new Error("assigned_practitioner_unavailable");
+    const { data: assigned, error: assignedError } = await supabase
+      .from("practitioners")
+      .select("display_name, email")
+      .eq("id", created.practitioner_id)
+      .eq("studio_id", studio.id)
+      .eq("active", true)
+      .maybeSingle();
+    if (assignedError || !assigned?.email?.trim()) {
+      throw new Error("assigned_practitioner_unavailable");
+    }
+    return {
+      practitionerName: assigned.display_name?.trim() || assigned.email,
+      practitionerEmail: assigned.email,
+    };
+  };
+
   // The appointment is COMMITTED (create_internal_appointment_v2 returned). The
   // post-commit notification dispatch is best-effort/fail-open: a throwing helper
   // (e.g. a transient read inside the email context) must NEVER turn a committed
@@ -374,8 +396,7 @@ export async function bookAppointmentForClientAction(
       appointment: created,
       service,
       studio,
-      practitionerName: practitioner.display_name?.trim() || practitioner.email,
-      practitionerEmail: practitioner.email,
+      ...(await assignedNotificationContact()),
       clientName: client.name,
       clientEmail: client.email,
       clientPhone: client.phone,
