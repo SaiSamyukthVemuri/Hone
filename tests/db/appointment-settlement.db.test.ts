@@ -3,6 +3,7 @@ import { Pool } from "pg";
 import { randomUUID } from "node:crypto";
 import {
   adminQuery,
+  adminTx,
   asRole,
   asUser,
   closePool,
@@ -1604,6 +1605,118 @@ describe("0239 — bound signed payment event command", () => {
         and stripe_refund_event_created is null and stripe_refund_event_id is null returning id`, [p.row.id, p.s.studioId]);
     expect(claim.rows).toEqual([]);
     expect(await read()).toEqual(before);
+  });
+
+
+  // 0240 cumulative SOURCE ONLY: no local DB authority or execution implied.
+  function cumulative(p: Awaited<ReturnType<typeof prepared>>) {
+    const first = Math.floor(p.row.amount_cents / 2);
+    const component = (amount: number) => ({ object_type: "refund", refund_id: `re_part_${randomUUID()}`,
+      amount_cents: amount, currency: p.row.currency, refund_status: "succeeded",
+      charge_id: p.object.charge_id, payment_intent_id: p.object.payment_intent_id,
+      customer_present: false, customer_id: null });
+    return { evidence_kind: "signed_event", event_created: 600, refund_id: null,
+      charge_object_type: "charge", charge_status: "succeeded", charge_paid: true, charge_captured: true,
+      charge_amount_captured: p.row.amount_cents, charge_livemode: p.row.stripe_livemode,
+      charge_refunded: true, charge_amount_refunded: p.row.amount_cents, charge_refund_list_complete: true,
+      charge_refund_components: [component(first), component(p.row.amount_cents - first)] };
+  }
+  async function readCumulative(p: Awaited<ReturnType<typeof prepared>>) {
+    return (await adminQuery(`select refund_status,refund_amount_cents,refunded_at,stripe_refund_id,
+      stripe_refund_status,stripe_refund_event_id,stripe_refund_event_created,
+      stripe_charge_refund_event_id,stripe_charge_refund_event_created
+      from public.payment_charge_attempts where id=$1`, [p.row.id])).rows[0];
+  }
+  it("0240 two succeeded partial objects establish full charge truth without one fabricated full Refund", async () => {
+    const p = await prepared(); await bound(p);
+    const evidence = cumulative(p);
+    expect((await bound(p, evidence, "charge.refunded")).rows[0].result).toBe("reconciled");
+    expect(await readCumulative(p)).toMatchObject({ refund_status: "succeeded", refund_amount_cents: p.row.amount_cents,
+      stripe_refund_id: null, stripe_refund_status: null, stripe_refund_event_id: null,
+      stripe_charge_refund_event_created: "600" });
+    expect((await readCumulative(p)).refunded_at).not.toBeNull();
+  });
+  it.each(["failed", "succeeded"])("0240 prior actual single %s identity does not block or get rewritten by cumulative full truth", async (status) => {
+    const p = await prepared(); await bound(p);
+    const actual = { refund_id: `re_actual_${randomUUID()}`, refund_amount_cents: p.row.amount_cents,
+      refund_currency: p.row.currency, refund_charge_id: p.object.charge_id, refund_status: status, event_created: 500 };
+    await bound(p, actual, "refund.updated");
+    const before = await readCumulative(p);
+    await bound(p, cumulative(p), "charge.refunded");
+    const after = await readCumulative(p);
+    expect(after.refund_status).toBe("succeeded");
+    for (const key of ["stripe_refund_id", "stripe_refund_status", "stripe_refund_event_id", "stripe_refund_event_created"]) {
+      expect(after[key]).toEqual(before[key]);
+    }
+  });
+  it("0240 duplicate/older/sameclock aggregate and later pending/failed/action events cannot regress cumulative full", async () => {
+    const p = await prepared(); await bound(p);
+    const evidence = cumulative(p); const eventId = `evt_cumulative_${randomUUID()}`;
+    await bound(p, evidence, "charge.refunded", { eventId });
+    const before = await readCumulative(p);
+    expect((await bound(p, evidence, "charge.refunded", { eventId })).rows[0].result).toBe("already_refunded");
+    expect((await bound(p, { ...evidence, event_created: 599 }, "charge.refunded")).rows[0].result).toBe("stale_observation");
+    await bound(p, evidence, "charge.refunded");
+    for (const status of ["pending", "failed", "canceled", "succeeded"]) {
+      const single = { refund_id: `re_late_${randomUUID()}`, refund_amount_cents: p.row.amount_cents,
+        refund_currency: p.row.currency, refund_charge_id: p.object.charge_id, refund_status: status, event_created: 700 };
+      expect((await bound(p, single, "refund.updated")).rows[0].result).toBe("already_refunded");
+      expect((await bound(p, { ...single, evidence_kind: "action_response", event_created: null }, "refund.observed")).rows[0].result).toBe("already_refunded");
+    }
+    expect(await readCumulative(p)).toEqual(before);
+  });
+  it("0240 rejects duplicate, wrong-bound, unsafe and nonterminal components without local completion", async () => {
+    const p = await prepared(); await bound(p); const evidence = cumulative(p);
+    const before = await readCumulative(p);
+    const parts = evidence.charge_refund_components;
+    const mutations = [
+      { refund_id: parts[1].refund_id }, { charge_id: "ch_other" }, { payment_intent_id: "pi_other" },
+      { currency: "usd" }, { customer_present: true, customer_id: "cus_other" },
+      { amount_cents: 9007199254740992 }, { amount_cents: 0 }, { amount_cents: parts[0].amount_cents + 1 },
+      { refund_status: "pending" }, { refund_status: "requires_action" }, { refund_status: "unknown" },
+    ];
+    // Use a genuinely different currency even if fixture setup changes later.
+    mutations[3] = { currency: p.row.currency === "usd" ? "cad" : "usd" };
+    for (const patch of mutations) {
+      expect((await bound(p, { ...evidence, charge_refund_components: [{ ...parts[0], ...patch }, parts[1]] }, "charge.refunded")).rows[0].result).toBe("refund_evidence_refused");
+      expect(await readCumulative(p)).toEqual(before);
+    }
+  });
+  it("0240 refuses absent/truncated list and unproven captured/signed charge context", async () => {
+    const p = await prepared(); await bound(p); const evidence = cumulative(p);
+    for (const patch of [{ charge_refund_list_complete: false }, { charge_refund_components: null },
+      { charge_refund_components: [] }, { evidence_kind: "action_response" }, { event_created: null },
+      { charge_paid: false }, { charge_captured: false }, { charge_amount_captured: p.row.amount_cents - 1 },
+      { charge_livemode: !p.row.stripe_livemode }]) {
+      expect((await bound(p, { ...evidence, ...patch }, "charge.refunded")).rows[0].result).toBe("refund_evidence_refused");
+    }
+    expect((await readCumulative(p)).refund_status).toBeNull();
+  });
+  it("0240 cumulative evidence cannot bypass original account/studio/mode identity", async () => {
+    const p = await prepared(); await bound(p);
+    for (const scope of [{ studio: randomUUID() }, { account: "acct_other" }, { mode: !p.row.stripe_livemode }]) {
+      expect((await bound(p, cumulative(p), "charge.refunded", scope)).rows[0].result).toBe("identity_mismatch");
+    }
+    expect((await readCumulative(p)).refund_status).toBeNull();
+  });
+  it("0240 concurrent single failure and cumulative completion serialize without losing aggregate truth", async () => {
+    const p = await prepared(); await bound(p);
+    await Promise.all([
+      bound(p, { refund_id: `re_failed_${randomUUID()}`, refund_amount_cents: p.row.amount_cents,
+        refund_currency: p.row.currency, refund_charge_id: p.object.charge_id, refund_status: "failed", event_created: 700 }, "refund.updated"),
+      bound(p, cumulative(p), "charge.refunded"),
+    ]);
+    expect(await readCumulative(p)).toMatchObject({ refund_status: "succeeded", refund_amount_cents: p.row.amount_cents });
+  });
+  it("0240 transaction rollback retains prior actual-object and local refund truth", async () => {
+    const p = await prepared(); await bound(p); const before = await readCumulative(p);
+    await expect(adminTx(async (query) => {
+      await query(`select * from public.reconcile_bound_payment_event($1,$2,'charge.refunded',$3,$4,$5,$6::jsonb)`,
+        [p.row.id, `evt_rollback_${randomUUID()}`, p.row.studio_id, p.row.stripe_account_id,
+          p.row.stripe_livemode, JSON.stringify({ ...p.object, ...cumulative(p) })]);
+      throw new Error("synthetic cumulative transaction rollback");
+    })).rejects.toThrow("synthetic cumulative transaction rollback");
+    expect(await readCumulative(p)).toEqual(before);
   });
 
 });

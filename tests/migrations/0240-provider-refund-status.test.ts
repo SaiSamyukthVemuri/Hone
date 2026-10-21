@@ -51,3 +51,33 @@ describe("0240 actual provider refund status", () => {
     expect(route).toContain("handleRefundStatusEvent(event, ctx)");
   });
 });
+
+
+describe("0240 separate cumulative charge truth", () => {
+  it("stores separate nullable cumulative provenance without rewriting actual single-refund evidence", () => {
+    expect(code).toContain("add column stripe_charge_refund_event_created bigint");
+    expect(code).toContain("add column stripe_charge_refund_event_id text");
+    const start = code.indexOf("elsif p_event_type='charge.refunded' and p_object ? 'charge_refund_components'");
+    expect(start).toBeGreaterThan(-1);
+    const aggregate = code.slice(start, code.indexOf("\n  else\n", start));
+    expect(aggregate).not.toMatch(/set[\s\S]*stripe_refund_(id|status|event_id|event_created)=/);
+    expect(aggregate).toContain("v_total<>v_row.amount_cents");
+    expect(aggregate).toContain("v_component->>'refund_id'=any(v_component_ids)");
+    expect(aggregate).toContain("v_component_amount>9007199254740991");
+    expect(aggregate).toContain("v_component->>'refund_status'='succeeded'");
+  });
+  it("requires complete signed captured charge plus original-bound component set", () => {
+    for (const token of ["charge_refund_list_complete", "charge_amount_captured", "charge_amount_refunded", "charge_livemode",
+      "v_component->>'charge_id' is distinct from v_row.stripe_charge_id",
+      "v_component->>'payment_intent_id' is distinct from v_row.stripe_payment_intent_id",
+      "v_component->>'currency' is distinct from v_row.currency",
+      "v_component->>'customer_id' is distinct from v_row.stripe_customer_id"]) expect(code).toContain(token);
+  });
+  it("all later single-refund/action writes stop before they can regress cumulative full truth", () => {
+    const gate = code.lastIndexOf("if v_row.stripe_charge_refund_event_id is not null then");
+    expect(gate).toBeGreaterThan(-1);
+    const guard = code.indexOf("elsif v_row.status<>'succeeded' or v_row.stripe_charge_id is null");
+    expect(guard).toBeGreaterThan(gate);
+    expect(code.slice(gate, guard)).toContain("v_result:='already_refunded'");
+  });
+});

@@ -23,6 +23,7 @@ const h = vi.hoisted(() => ({
   rows: {} as Record<string, unknown>,
   updates: [] as Array<{ table: string; payload: Record<string, unknown> }>,
   rpcCalls: [] as string[],
+  boundObjects: [] as Array<Record<string, unknown>>,
   updateAttempts: [] as Array<{ payload: Record<string, unknown>; filters: Array<{ column: string; value: unknown }>; matched: boolean }>,
   afterRetrieve: null as null | (() => void),
   recheckReadError: false,
@@ -161,12 +162,22 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       if (name === "reconcile_bound_payment_event") {
         const row = h.rows.payment_charge_attempts as Record<string, unknown>;
         const object = args.p_object as Record<string, unknown>;
+        h.boundObjects.push(object);
         const matches = args.p_attempt_id === row.id && args.p_studio_id === row.studio_id
           && args.p_stripe_account_id === row.stripe_account_id && args.p_livemode === row.stripe_livemode
           && object.customer_id === row.stripe_customer_id && object.payment_intent_id === row.stripe_payment_intent_id
           && object.amount_cents === row.amount_cents && object.currency === row.currency
           && (!row.stripe_charge_id || object.charge_id === row.stripe_charge_id);
         if (!matches) return { data: [{ result: "identity_mismatch" }], error: null };
+        if (Array.isArray(object.charge_refund_components)) {
+          if (row.stripe_charge_refund_event_id) return { data: [{ result: "already_refunded", status_before: row.status }], error: null };
+          const payload = { refund_status: "succeeded", refund_amount_cents: row.amount_cents,
+            refunded_at: "2026-10-21T00:00:00.000Z", stripe_charge_refund_event_id: args.p_event_id,
+            stripe_charge_refund_event_created: object.event_created };
+          h.updates.push({ table: "payment_charge_attempts", payload });
+          Object.assign(row, payload);
+          return { data: [{ result: "reconciled", status_before: row.status }], error: null };
+        }
         const statusBefore = row.status;
         const refund = args.p_event_type === "charge.refunded" || args.p_event_type === "refund.observed";
         const failed = args.p_event_type === "payment_intent.payment_failed";
@@ -289,6 +300,7 @@ beforeEach(() => {
   h.rows = {};
   h.updates = [];
   h.rpcCalls = [];
+  h.boundObjects = [];
   h.updateAttempts = [];
   h.afterRetrieve = null;
   h.recheckReadError = false;
@@ -886,6 +898,76 @@ describe("PAY004 identical concurrent canceled failure", () => {
     prepareRace({}, true);
     expect(await charge()).toMatchObject({ ok: false, outcome: "needs_manual_review" });
     expect(critical("session_payment_failed_write_zero_rows")).toHaveLength(1);
+    expect(h.updates).toEqual([]);
+  });
+});
+
+
+describe("PAY002 cumulative full refund evidence", () => {
+  function prepare(components?: Array<Record<string, unknown>>, chargeOverrides: Record<string, unknown> = {}, rowOverrides: Record<string, unknown> = {}) {
+    h.rows.payment_charge_attempts = attemptRow("usd", { status: "succeeded", stripe_payment_intent_id: PI_ID,
+      stripe_charge_id: CHARGE_ID, ...rowOverrides });
+    const parts = components ?? [
+      { id: "re_part_a", amount: 5000 }, { id: "re_part_b", amount: 10000 },
+    ];
+    return event("charge.refunded", { object: "charge", id: CHARGE_ID, status: "succeeded", paid: true,
+      captured: true, amount_captured: AMOUNT, amount: AMOUNT, amount_refunded: AMOUNT,
+      refunded: true, livemode: false, customer: "cus_test", payment_intent: PI_ID, currency: "usd",
+      refunds: { object: "list", has_more: false, data: parts.map((part) => ({ object: "refund", status: "succeeded",
+        charge: CHARGE_ID, payment_intent: PI_ID, currency: "usd", ...part })) }, ...chargeOverrides });
+  }
+  it("two successful partials prove full charge total without fabricating one full Refund", async () => {
+    const out = await handleChargeRefunded(prepare(), CTX);
+    expect(out.outOfBandReconciled).toBe(true);
+    expect(h.boundObjects[0]).toMatchObject({ charge_amount_refunded: AMOUNT,
+      charge_refund_list_complete: true, refund_id: null, refund_status: null, refund_amount_cents: null,
+      charge_refund_components: [{ refund_id: "re_part_a", amount_cents: 5000 }, { refund_id: "re_part_b", amount_cents: 10000 }] });
+    const row = h.rows.payment_charge_attempts as Record<string, unknown>;
+    expect(row.refund_status).toBe("succeeded");
+    expect(row.stripe_refund_id).toBeNull();
+    expect(row.stripe_refund_status).toBeNull();
+    expect(h.stripeCalls).toEqual([]);
+  });
+  it.each(["failed", "succeeded"])("existing actual single %s evidence is preserved by separate cumulative completion", async (status) => {
+    await handleChargeRefunded(prepare(undefined, {}, { refund_status: status === "failed" ? "failed" : "pending_stripe",
+      stripe_refund_id: "re_original", stripe_refund_status: status }), CTX);
+    const row = h.rows.payment_charge_attempts as Record<string, unknown>;
+    expect(row.refund_status).toBe("succeeded");
+    expect(row.stripe_refund_id).toBe("re_original");
+    expect(row.stripe_refund_status).toBe(status);
+    expect(h.updates[0].payload).not.toHaveProperty("stripe_refund_id");
+    expect(h.updates[0].payload).not.toHaveProperty("stripe_refund_status");
+  });
+  it.each([
+    [{ id: "re_same", amount: 5000 }, { id: "re_same", amount: 10000 }],
+    [{ id: "re_a", amount: 5000, status: "pending" }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 5000, status: "requires_action" }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 5000, status: "mystery" }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 5000, charge: "ch_other" }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 5000, payment_intent: "pi_other" }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 5000, currency: "cad" }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 5000, customer: "cus_other" }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 5000, customer: null }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: Number.MAX_SAFE_INTEGER + 1 }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 5001 }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 4999 }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 0 }, { id: "re_b", amount: AMOUNT }],
+  ].map((parts) => ({ parts })))("incomplete or contradictory component evidence cannot stamp full refund: %j", async ({ parts }) => {
+    const out = await handleChargeRefunded(prepare(parts), CTX);
+    expect(out.cumulativeRefundEvidenceRefused).toBe(true);
+    expect(h.boundObjects).toEqual([]);
+    expect(h.updates).toEqual([]);
+    expect(h.stripeCalls).toEqual([]);
+  });
+  it.each([
+    { refunds: { object: "list", has_more: true, data: [] } },
+    { refunds: { object: "list", data: [] } },
+    { refunds: null }, { object: "not_charge" }, { paid: false },
+    { captured: false }, { amount_captured: AMOUNT - 1 }, { livemode: true },
+  ])("missing complete/captured charge context refuses: %j", async (over) => {
+    const out = await handleChargeRefunded(prepare(undefined, over), CTX);
+    expect(out.cumulativeRefundEvidenceRefused).toBe(true);
+    expect(h.boundObjects).toEqual([]);
     expect(h.updates).toEqual([]);
   });
 });

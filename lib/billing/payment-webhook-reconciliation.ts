@@ -436,12 +436,61 @@ async function verifyPaymentEventIdentity(args: {
   return false;
 }
 
+// A cumulative charge observation is not a single full Refund object. Keep
+// only the bound evidence needed by the locked command; no provider lookup.
+function isCumulativeChargeRefund(charge: Stripe.Charge): boolean {
+  return (charge.refunds?.data?.length ?? 0) > 1
+    || charge.refunds?.data?.[0]?.amount !== charge.amount;
+}
+
+function cumulativeChargeRefundEvidence(event: Stripe.Event, ctx: WebhookCtx, attempt: AttemptRow) {
+  const charge = event.data.object as Stripe.Charge;
+  const id = (v: string | { id: string } | null | undefined) => typeof v === "string" ? v : v?.id ?? null;
+  if (charge.object !== "charge" || charge.status !== "succeeded" || charge.paid !== true
+      || charge.captured !== true || charge.amount_captured !== attempt.amount_cents
+      || charge.livemode !== ctx.livemode || charge.refunded !== true
+      || charge.amount_refunded !== attempt.amount_cents || charge.amount !== attempt.amount_cents
+      || !Number.isSafeInteger(event.created) || event.created < 0
+      || typeof event.id !== "string" || !event.id.trim()
+      || charge.refunds?.object !== "list" || charge.refunds.has_more !== false
+      || !Array.isArray(charge.refunds.data) || charge.refunds.data.length === 0) return null;
+  const seen = new Set<string>();
+  const components: Array<Record<string, unknown>> = [];
+  let total = 0;
+  for (const refund of charge.refunds.data) {
+    const hasCustomer = "customer" in refund;
+    const customer = hasCustomer ? refund.customer : undefined;
+    const customerId = typeof customer === "string" ? customer
+      : customer && typeof customer === "object" && "id" in customer && typeof customer.id === "string" ? customer.id : null;
+    if (refund.object !== "refund" || typeof refund.id !== "string" || !refund.id.trim() || seen.has(refund.id)
+        || !Number.isSafeInteger(refund.amount) || refund.amount <= 0 || refund.amount > attempt.amount_cents
+        || !["succeeded", "failed", "canceled"].includes(refund.status ?? "")
+        || id(refund.charge) !== attempt.stripe_charge_id
+        || id(refund.payment_intent) !== attempt.stripe_payment_intent_id
+        || refund.currency !== attempt.currency || (hasCustomer && customerId !== attempt.stripe_customer_id)) return null;
+    seen.add(refund.id);
+    if (refund.status === "succeeded") total += refund.amount;
+    if (!Number.isSafeInteger(total) || total > attempt.amount_cents) return null;
+    components.push({ object_type: refund.object, refund_id: refund.id, amount_cents: refund.amount,
+      currency: refund.currency, refund_status: refund.status, charge_id: id(refund.charge),
+      payment_intent_id: id(refund.payment_intent), customer_present: hasCustomer, customer_id: customerId });
+  }
+  if (total !== attempt.amount_cents) return null;
+  return { charge_object_type: charge.object, charge_status: charge.status, charge_paid: charge.paid,
+    charge_captured: charge.captured, charge_amount_captured: charge.amount_captured,
+    charge_livemode: charge.livemode, charge_refunded: charge.refunded,
+    charge_amount_refunded: charge.amount_refunded, charge_refund_list_complete: true,
+    charge_refund_components: components };
+}
+
 async function reconcileBoundEvent(event: Stripe.Event, ctx: WebhookCtx, attempt: AttemptRow) {
   const isRefund = event.type === "charge.refunded";
   const isStandaloneRefund = event.type.startsWith("refund.");
   const pi = event.data.object as Stripe.PaymentIntent;
   const charge = event.data.object as Stripe.Charge;
   const refund = isStandaloneRefund ? event.data.object as Stripe.Refund : isRefund ? charge.refunds?.data?.[0] : undefined;
+  const cumulative = isRefund && isCumulativeChargeRefund(charge);
+  const cumulativeEvidence = cumulative ? cumulativeChargeRefundEvidence(event, ctx, attempt) : null;
   const objectId = (value: string | { id: string } | null | undefined) => typeof value === "string" ? value : value?.id ?? null;
   const { data, error } = await createAdminClient().rpc("reconcile_bound_payment_event", {
     p_attempt_id: attempt.id,
@@ -459,11 +508,12 @@ async function reconcileBoundEvent(event: Stripe.Event, ctx: WebhookCtx, attempt
       charge_id: isStandaloneRefund ? objectId(refund?.charge) : isRefund ? charge.id : objectId(pi.latest_charge),
       amount_cents: isStandaloneRefund ? attempt.amount_cents : isRefund ? charge.amount : pi.amount,
       currency: isStandaloneRefund ? attempt.currency : isRefund ? charge.currency : pi.currency,
-      refund_id: refund?.id ?? null,
-      refund_amount_cents: refund?.amount ?? null,
-      refund_currency: refund?.currency ?? null,
-      refund_charge_id: objectId(refund?.charge),
-      refund_status: refund?.status ?? null,
+      ...(cumulative ? cumulativeEvidence ?? { charge_refund_components: null } : {}),
+      refund_id: cumulative ? null : refund?.id ?? null,
+      refund_amount_cents: cumulative ? null : refund?.amount ?? null,
+      refund_currency: cumulative ? null : refund?.currency ?? null,
+      refund_charge_id: cumulative ? null : objectId(refund?.charge),
+      refund_status: cumulative ? null : refund?.status ?? null,
       failure_code: sanitizeFailureCode(pi.last_payment_error?.code ?? pi.last_payment_error?.type),
       failure_message_safe: sanitizeFailureMessage(pi.last_payment_error?.message),
       event_created: event.created,
@@ -1166,11 +1216,20 @@ export async function handleChargeRefunded(
     };
   }
 
+  const cumulative = isCumulativeChargeRefund(charge);
+  if (cumulative && !cumulativeChargeRefundEvidence(event, ctx, attempt)) {
+    await recordOpsAlert({ severity: "critical", event: "charge_refunded_cumulative_evidence_refused",
+      message: "Charge-level full refund lacks complete, distinct, bound successful refund evidence. No payment row was mutated.",
+      studioId: attempt.studio_id, clientId: attempt.client_id, stripeEventId: event.id, route: ROUTE,
+      safeDetails: { attempt_id: attempt.id, reason: "incomplete_or_conflicting_cumulative_evidence" } });
+    return { eventType: event.type, attemptId: attempt.id, cumulativeRefundEvidenceRefused: true };
+  }
+
   // Resolve the Stripe refund id. Prefer the most recent refund
   // object on the charge (refunds.data is ordered newest-first by
   // Stripe in the standard payload).
   const latestRefund = charge.refunds?.data?.[0];
-  const stripeRefundId = latestRefund?.id ?? null;
+  const stripeRefundId = cumulative ? null : latestRefund?.id ?? null;
 
   if (attempt.refund_status === "pending_stripe") {
     // PR #178 helper claimed the row but the action either lost
