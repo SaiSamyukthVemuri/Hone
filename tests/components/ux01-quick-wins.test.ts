@@ -262,6 +262,12 @@ describe("CLN-006 clinical dialogs use the existing keyboard contract", () => {
 });
 
 
+describe("CLN-006 native disclosure tab stops", () => {
+  it("includes the first native summary, while respecting explicit removal from tab order", () => {
+    expect(codeOnly(read(HOOK))).toContain('details > summary:first-of-type:not([tabindex="-1"])');
+  });
+});
+
 describe("CLN-006 executed focus-boundary decisions", () => {
   const first = { id: "first" } as HTMLElement;
   const middle = { id: "middle" } as HTMLElement;
