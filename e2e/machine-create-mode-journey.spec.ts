@@ -1508,3 +1508,124 @@ for (const device of [
 }
 
 }
+
+// Two model-specific recovery cases, not another durability cross-product.
+// Recovery choice/key handling has no viewport branch in block-setup-form;
+// use the existing mobile viewport. Desktop initial-reload remains UNRUN.
+for (const profile of APILUS_3G_TEXT_FIXTURES) {
+  test(`native 3G uncommitted recovery ${profile.model}: explicit whole-draft reconstruction`, async ({ page }) => {
+    test.skip(process.env.HONE_SYNTHETIC_MACHINE_PROFILE !== "1",
+      "UNRUN recovery: existing synthetic server gate must explicitly be enabled.");
+    const mode = profile.modes.find((candidate) => candidate.key === "blend")!;
+    expect(mode).toBeDefined();
+    const seed = await seedE2eStudio();
+    const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(seed);
+    for (const contract of planContractPublication([profile]).publish) {
+      await sql("select public.sync_machine_profile_contract($1,$2,$3,$4,$5,$6::jsonb)", [
+        contract.p_machine_profile_id, contract.p_machine_profile_version, contract.p_mode_key,
+        contract.p_channels_max, contract.p_requires_installed_option, JSON.stringify(contract.p_fields),
+      ]);
+    }
+    const machineId = randomUUID();
+    await sql(`insert into public.studio_machines
+      (id,studio_id,machine_profile_id,machine_profile_version,display_name)
+      values ($1,$2,$3,$4,$5)`, [machineId, seed.studioId, profile.profileId, profile.version, profile.model]);
+    const observations = modeFields(mode).map(({ field, stageKey }, index) => ({
+      field, stageKey,
+      value: field.valueKind === "choice" ? field.choices![0]
+        : field.valueKind === "text" ? " 003i "
+          : (index + 1 + 27 / 10 ** field.decimals).toFixed(field.decimals),
+    }));
+    const enterWholeDraft = async () => {
+      await page.getByRole("button", { name: "Upper lip", exact: true }).click();
+      await expect(page.getByTestId("area-row-Upper lip")).toBeVisible();
+      expect(await openMachinePanel(page)).toBe(true);
+      await page.getByTestId("machine-select").selectOption(machineId);
+      await page.getByTestId(`machine-mode-${mode.key}`).click({ timeout: T });
+      for (const { field, value } of observations) {
+        const control = page.getByTestId(`reading-${field.key}`);
+        if (field.valueKind === "choice") await control.selectOption(value);
+        else await control.fill(value);
+      }
+      await page.getByLabel("Hairs treated", { exact: true }).fill("7");
+      await page.getByLabel(/Minutes performed/).fill("5");
+      await page.getByTestId("additional-notes").fill(`Synthetic ${profile.model}\nwhole-draft recovery`);
+    };
+    const counts = async () => (await sql<{ blocks: number; claims: number; captures: number; readings: number }>(`select
+      (select count(*)::int from public.session_blocks where session_id=$1) as blocks,
+      (select count(*)::int from public.treatment_area_create_claims where session_id=$1) as claims,
+      (select count(*)::int from public.treatment_setup_captures c join public.session_blocks b on b.id=c.session_block_id where b.session_id=$1) as captures,
+      (select count(*)::int from public.treatment_setup_readings r join public.session_blocks b on b.id=r.session_block_id where b.session_id=$1) as readings`, [sessionId]))[0]!;
+    let phase: "idle" | "abort" | "resume" = "idle";
+    let originalPayload: unknown;
+    let intercepted = 0;
+    await page.route(`**/clients/${clientId}/sessions/${sessionId}**`, async route => {
+      if (route.request().method() !== "POST" || phase === "idle") {
+        await route.continue();
+        return;
+      }
+      const action = phase;
+      phase = "idle";
+      intercepted += 1;
+      // Existing plain server-action arguments: compare the WHOLE input,
+      // including clinical/area/entry defaults, not just the native readings.
+      const payload: unknown = JSON.parse(route.request().postData()!);
+      if (action === "abort") {
+        originalPayload = payload;
+        // Deliberately never delivered: deterministic synthetic no-write.
+        // The application still cannot infer non-write from an absent lookup.
+        await route.abort("failed");
+      } else {
+        expect(payload).toEqual(originalPayload);
+        await route.continue();
+      }
+    });
+    await loginAsOwner(page, seed);
+    await openCreateForm(page, clientId, sessionId);
+    await enterWholeDraft();
+    phase = "abort";
+    await page.getByTestId("save-treatment-area").click({ timeout: T });
+    await expect(page.getByRole("alert").filter({ hasText: /press save again/i })).toBeVisible({ timeout: T });
+    expect(intercepted).toBe(1);
+    expect(originalPayload).toBeDefined();
+    const key = new URL(page.url()).searchParams.get("area_op");
+    expect(key).toBeTruthy();
+    expect(JSON.stringify(originalPayload)).toContain(key!);
+    for (const { field, value } of observations) {
+      await expect(page.getByTestId(`reading-${field.key}`)).toBeDisabled();
+      await expect(page.getByTestId(`reading-${field.key}`)).toHaveValue(value);
+    }
+    expect(await counts()).toEqual({ blocks: 0, claims: 0, captures: 0, readings: 0 });
+    await page.reload();
+    expect(new URL(page.url()).searchParams.get("area_op")).toBe(key);
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+    await expect(page.getByTestId("initial-save-resume-choice")).toBeVisible({ timeout: T });
+    await expect(page.getByTestId("save-treatment-area")).toBeDisabled();
+    await page.getByTestId("initial-save-resume-choice-resume").click();
+    await expect(page.getByTestId("save-treatment-area")).toBeDisabled();
+    await enterWholeDraft();
+    expect(new URL(page.url()).searchParams.get("area_op")).toBe(key);
+    await expect(page.getByTestId("save-treatment-area")).toBeDisabled();
+    await page.getByTestId("initial-save-resume-reconstructed").check();
+    await expect(page.getByTestId("save-treatment-area")).toBeEnabled({ timeout: T });
+    await noOverflow(page);
+    phase = "resume";
+    await page.getByTestId("save-treatment-area").click({ timeout: T });
+    await expect(page.getByTestId("save-treatment-area")).toHaveCount(0, { timeout: T });
+    expect(intercepted).toBe(2);
+    expect(await counts()).toEqual({ blocks: 1, claims: 1, captures: 1, readings: observations.length });
+    const blockId = await blockIdOf(sessionId);
+    const stored = await sql<{ stage_key: string | null; field_key: string; value_numeric: string | null; value_text: string | null; machine_profile_version: number }>(
+      `select stage_key,field_key,value_numeric::text,value_text,machine_profile_version
+       from public.treatment_setup_readings where session_block_id=$1`, [blockId]);
+    for (const { field, stageKey, value } of observations) {
+      expect(stored.find(row => row.field_key === field.key && row.stage_key === stageKey)).toMatchObject({
+        machine_profile_version: profile.version,
+        ...((field.valueKind === "choice" || field.valueKind === "text")
+          ? { value_numeric: null, value_text: value } : { value_numeric: value, value_text: null }),
+      });
+    }
+    await page.reload();
+    expect(await counts()).toEqual({ blocks: 1, claims: 1, captures: 1, readings: observations.length });
+  });
+}
