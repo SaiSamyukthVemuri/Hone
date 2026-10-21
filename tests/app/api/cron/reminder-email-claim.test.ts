@@ -155,7 +155,7 @@ const race = vi.hoisted(() => ({
   start: "2026-10-22T12:00:00.000Z",
   freshStart: "2026-10-22T12:00:00.000Z" as string | null,
   readError: false,
-  incidentRead: "none" as "none" | "db_error" | "timeout" | "invalid_row" | "throw",
+  incidentRead: "none" as "none" | "db_error" | "timeout" | "invalid_row" | "throw" | "timeout_once",
   incidentThrown: undefined as unknown,
   setupThrown: undefined as unknown,
   originThrown: undefined as unknown,
@@ -287,6 +287,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         }),
         then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) => {
           if (race.incidentRead === "throw") { answer(); return Promise.reject(race.incidentThrown).then(resolve, reject); }
+          if (race.incidentRead === "timeout_once" && race.pages.length === 0) { answer(); return new Promise(() => undefined); }
           if (race.incidentRead === "timeout") { answer(); return new Promise(() => undefined); }
           return Promise.resolve(answer()).then(resolve);
         },
@@ -471,19 +472,20 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
   it.each(["db_error", "timeout"] as const)("16:15 incident signature: first-page %s fails before any claim/SDK and a later healthy fake run recovers without resets", async (failure) => {
     race.incidentRead = failure;
     const pending = GET(new Request("https://example.invalid/api/cron/appointment-reminders"));
-    if (failure === "timeout") await vi.advanceTimersByTimeAsync(1000);
+    if (failure === "timeout") await vi.advanceTimersByTimeAsync(2000);
     const response = await pending;
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({ ok: false, error: "cron_failed", lead_alerts: { ran: false, reason: "offline_fixture" } });
     expect(race.alerts).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
       event: "cron_route_failed", severity: "critical",
       message: "Reminder scan incomplete. Check scheduler progress before retrying work.",
-      safeDetails: { reason: "read_or_handler", candidates_scanned: 0, candidate_queries: 1, attempted: 0, coverage_unconfirmed: false,
+      safeDetails: { reason: "read_or_handler", candidates_scanned: 0, candidate_queries: failure === "timeout" ? 2 : 1, attempted: 0, coverage_unconfirmed: false,
+        ...(failure === "timeout" ? { read_timeouts: 2, read_retries: 1, read_retry_recovered: false } : {}),
         failure_stage: "read", failure_category: failure === "timeout" ? "read_timeout" : "rejected_query",
         ...(failure === "db_error" ? { sql_state: "42703" } : {}),
       },
     }));
-    expect(race.pages).toHaveLength(1);
+    expect(race.pages).toHaveLength(failure === "timeout" ? 2 : 1);
     expect(race.claim).not.toHaveBeenCalled(); expect(race.send).not.toHaveBeenCalled();
     expect(race.smsSend).not.toHaveBeenCalled(); expect(race.record).not.toHaveBeenCalled();
     expect(race.heartbeat).not.toHaveBeenCalled();
@@ -603,6 +605,20 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({ ok: false, error: "cron_failed", lead_alerts: { ran: false, reason: "offline_fixture" } });
     expect(race.alerts).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("SYNTHETIC_PRIVATE");
+  });
+  it.each([false, true])("bounded READ retry retains recovered timeout observation; writer rejects=%s", async (writerRejects) => {
+    race.incidentRead = "timeout_once";
+    if (writerRejects) race.alerts.mockRejectedValueOnce(new Error("SYNTHETIC_PRIVATE diagnostic writer"));
+    const pending = GET(new Request("https://example.invalid"));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect((await pending).status).toBe(200);
+    expect(race.alerts).toHaveBeenCalledExactlyOnceWith({ severity: "warning", event: "reminder_read_timeout",
+      message: "A reminder candidate read timed out before a bounded retry recovered. Check scheduler progress.",
+      route: "/api/cron/appointment-reminders", safeDetails: { failure_stage: "read", failure_category: "read_timeout",
+        read_timeouts: 1, read_retries: 1, read_retry_recovered: true, candidate_queries: 5 } });
+    expect(race.claim).toHaveBeenCalledTimes(1); expect(race.send).toHaveBeenCalledTimes(1);
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("SYNTHETIC_PRIVATE");
   });
 

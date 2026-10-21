@@ -719,6 +719,20 @@ export async function GET(req: Request) {
         };
       },
     });
+    // Retain the factual timeout even when a bounded read retry recovers.
+    // This does not resolve prior alerts or establish message delivery.
+    if (batch.readRetry?.recovered && batch.kind === "complete" && !batch.coverageUnconfirmed) {
+      try {
+        await recordOpsAlert({
+          severity: "warning", event: "reminder_read_timeout",
+          message: "A reminder candidate read timed out before a bounded retry recovered. Check scheduler progress.",
+          route: "/api/cron/appointment-reminders",
+          safeDetails: { failure_stage: "read", failure_category: "read_timeout",
+            read_timeouts: batch.readRetry.timeouts, read_retries: batch.readRetry.attempted ? 1 : 0,
+            read_retry_recovered: true, candidate_queries: batch.queries },
+        });
+      } catch { /* Best-effort observation; completion still requires all passes. */ }
+    }
     if (batch.kind !== "complete" || batch.coverageUnconfirmed) {
       try {
         await recordOpsAlert({
@@ -729,6 +743,9 @@ export async function GET(req: Request) {
           safeDetails: {
             reason: batch.reason, candidates_scanned: batch.scanned, candidate_queries: batch.queries,
             attempted: batch.attempted, coverage_unconfirmed: batch.coverageUnconfirmed,
+            ...(batch.readRetry ? { read_timeouts: batch.readRetry.timeouts,
+              read_retries: batch.readRetry.attempted ? 1 : 0,
+              read_retry_recovered: batch.readRetry.recovered } : {}),
             ...(batch.failure ? {
               failure_stage: batch.failure.stage, failure_category: batch.failure.category,
               ...(batch.failure.sqlState ? { sql_state: batch.failure.sqlState } : {}),
