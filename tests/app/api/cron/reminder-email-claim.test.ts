@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -60,7 +60,7 @@ describe("email reminder pass: claim before send", () => {
 
   it("a lost claim skips the row without sending", () => {
     expect(EMAIL_PASS).toMatch(
-      /if \(!claimed\) \{\s*\n?\s*stats\.skipped \+= 1;\s*\n?\s*continue;\s*\n?\s*\}/,
+      /if \(!claimed\) \{\s*\n?\s*stats\.skipped \+= 1;\s*\n?\s*return;\s*\n?\s*\}/,
     );
   });
 
@@ -114,7 +114,7 @@ describe("email reminder pass: preserved behavior", () => {
     // that nothing claims a slot before the cheap in-memory guards have run:
     // a claim costs an attempt off the 3-strike cap.
     const toggleIdx = EMAIL_PASS.indexOf("[studioToggle]");
-    const emailIdx = EMAIL_PASS.indexOf("if (!appt.client?.email) continue;");
+    const emailIdx = EMAIL_PASS.indexOf("if (!appt.client?.email) return;");
     const claimIdx = EMAIL_PASS.indexOf("await claimEmailSend(");
     expect(toggleIdx).toBeGreaterThan(-1);
     expect(emailIdx).toBeGreaterThan(-1);
@@ -122,7 +122,7 @@ describe("email reminder pass: preserved behavior", () => {
     expect(claimIdx).toBeGreaterThan(emailIdx);
     // A row that can produce no email at all never reaches the claim.
     expect(EMAIL_PASS).toMatch(
-      /if \(!wantsReminder && !intakeEnabled\) continue;/,
+      /if \(!wantsReminder && !intakeEnabled\) return;/,
     );
   });
 
@@ -147,4 +147,271 @@ describe("PR #189 boundaries (cron route)", () => {
   it("cron auth gate unchanged", () => {
     expect(CODE).toMatch(/if \(!isAuthorizedCronRequest\(req\)\)/);
   });
+});
+
+
+// Exercise the real route across the query/claim boundary with synthetic rows.
+const race = vi.hoisted(() => ({
+  start: "2026-10-22T12:00:00.000Z",
+  freshStart: "2026-10-22T12:00:00.000Z" as string | null,
+  readError: false,
+  backlog: null as null | { channel: "email" | "sms"; skipped: number; eligible: number; reason: "toggle" | "destination" | "consent" | "claim" },
+  sent: new Set<string>(),
+  heartbeat: vi.fn(async () => undefined),
+  alerts: vi.fn(async () => undefined),
+  store: new Map<string, { value: string; expiry: number }>(),
+  failStore: false,
+  pages: [] as Array<{ cursor: string | null; orders: string[] }>,
+  smsSend: vi.fn(async () => ({ ok: true, intakeLinkIncluded: false })),
+  send: vi.fn(async () => ({ ok: true })),
+  claim: vi.fn(async () => true),
+  record: vi.fn(async () => undefined),
+}));
+vi.mock("@/lib/cron/reminder-scan-coordinator", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/cron/reminder-scan-coordinator")>();
+  const get = (key: string) => {
+    const entry = race.store.get(key);
+    if (entry && entry.expiry <= Date.now()) { race.store.delete(key); return null; }
+    return entry?.value ?? null;
+  };
+  return { ...actual, createUpstashReminderScanCoordinator: () => actual.createReminderScanCoordinator({
+    async set(key, value, opts) {
+      if (race.failStore) throw new Error("synthetic storage failure");
+      if (get(key)) return null;
+      race.store.set(key, { value, expiry: Date.now() + opts.ex * 1000 }); return "OK";
+    },
+    async eval(script, keys, args) {
+      if (race.failStore) throw new Error("synthetic storage failure");
+      if (script.includes("return {0,''}")) return get(keys[0]) === args[0] ? [1, get(keys[1]) ?? ""] : [0, ""];
+      if (get(keys[0]) !== args[0]) return 0;
+      if (script.includes("pexpireat")) {
+        if (Number(args[2]) <= Date.now()) return 0;
+        race.store.set(keys[1], { value: String(args[1]), expiry: Number(args[2]) });
+        race.store.set(keys[2], { value: String(args[3]), expiry: Date.now() + Number(args[4]) * 1000 });
+        race.store.set(keys[0], { value: String(args[0]), expiry: Date.now() + Number(args[5]) * 1000 }); return 1;
+      }
+      if (script.includes("'del'")) { race.store.delete(keys[0]); return 1; }
+      race.store.set(keys[0], { value: String(args[0]), expiry: Date.now() + Number(args[1]) * 1000 }); return 1;
+    },
+  }) };
+});
+vi.mock("@/lib/cron/auth", () => ({ isAuthorizedCronRequest: () => true }));
+vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => "https://example.invalid" }));
+vi.mock("@/lib/booking/tokens", () => ({ generateCancellationToken: () => "synthetic-token" }));
+vi.mock("@/lib/cron/reminder-heartbeat", () => ({ recordReminderRunSuccess: race.heartbeat }));
+vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: race.alerts }));
+vi.mock("@/lib/email/send-appointment", () => ({
+  claimEmailSend: race.claim,
+  recordEmailResult: race.record,
+  logEmailFailure: vi.fn(),
+  send24hReminderToClient: race.send,
+  send2hReminderToClient: race.send,
+  sendIntakeReminderToClient: race.send,
+}));
+vi.mock("@/lib/sms/send-appointment", () => ({
+  createLedgerBudget: () => ({}),
+  send24hReminderSmsToClient: race.smsSend,
+  send2hReminderSmsToClient: race.smsSend,
+}));
+vi.mock("@/lib/supabase/admin-server", () => ({
+  createAdminClient: () => ({
+    from: () => {
+      let candidateColumn = "";
+      let cursor: string | null = null;
+      let limit = 50;
+      const orders: string[] = [];
+      const row = (id: string, skipped = false) => {
+        const reason = race.backlog?.reason;
+        return {
+          id, studio_id: "synthetic-studio", client_id: "synthetic-client",
+          status: "confirmed", starts_at: race.start, reminder_24h_send_attempts: 0,
+          studio: { id: "synthetic-studio", name: "Synthetic", timezone: "UTC",
+            send_24h_reminders: !(skipped && reason === "toggle"), send_intake_reminders: false,
+            send_24h_sms_reminders: !(skipped && reason === "toggle") },
+          client: { name: "Synthetic", email: skipped && reason === "destination" ? null : "synthetic@example.invalid",
+            phone: skipped && reason === "destination" ? null : "+15555550123",
+            sms_consent_at: skipped && reason === "consent" ? null : "2026-10-01T00:00:00Z", sms_opted_out_at: null },
+          service: null, practitioner: null,
+        };
+      };
+      const answer = () => {
+        const channel = race.backlog?.channel ?? "email";
+        if (candidateColumn !== (channel === "email" ? "reminder_24h_sent_at" : "sms_reminder_24h_sent_at")) {
+          return { data: [], error: null };
+        }
+        race.pages.push({ cursor, orders });
+        if (race.pages.length > 100) throw new Error("Candidate cursor did not advance");
+        const rows = race.backlog ? Array.from({ length: race.backlog.skipped + race.backlog.eligible }, (_, i) =>
+          row(`00000000-0000-4000-8000-${String(i + 1).padStart(12, "0")}`, i < race.backlog!.skipped),
+        ) : [row("00000000-0000-4000-8000-000000000001")];
+        return { data: rows.filter((r) => !race.sent.has(r.id) && (!cursor || r.id > cursor)).slice(0, limit), error: null };
+      };
+      const b = {
+        select: () => b,
+        eq: () => b,
+        is: (column: string) => { candidateColumn = column; return b; },
+        lt: () => b, gte: () => b, lte: () => b, abortSignal: () => b,
+        order: (column: string) => { orders.push(column); return b; },
+        limit: (n: number) => { limit = n; return b; },
+        or: (filter: string) => {
+          const match = filter.match(/id\.gt\.("[^"]+")/);
+          if (!match) throw new Error("Expected keyset tie-breaker");
+          cursor = JSON.parse(match[1]);
+          return b;
+        },
+        maybeSingle: async () => ({
+          data: race.readError ? null : { ...row("00000000-0000-4000-8000-000000000001"), starts_at: race.freshStart },
+          error: race.readError ? { message: "synthetic read failure" } : null,
+        }),
+        then: (resolve: (value: unknown) => unknown) => Promise.resolve(answer()).then(resolve),
+      };
+      return b;
+    },
+  }),
+}));
+
+import { GET } from "@/app/api/cron/appointment-reminders/route";
+
+describe("MSG-001 candidate eligibility and keyset paging", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-21T12:00:00.000Z"));
+    race.store.clear(); race.store.set("reminder_scan:v1:rotation", { value: JSON.stringify({version:1,next:"email24h",known:[]}), expiry: Date.now() + 10800000 }); race.failStore = false; race.heartbeat.mockClear(); race.alerts.mockClear();
+    race.start = "2026-10-22T12:00:00.000Z"; race.freshStart = race.start;
+    race.readError = false;
+    race.backlog = null; race.sent.clear(); race.pages = [];
+    race.send.mockClear(); race.smsSend.mockClear();
+    race.claim.mockReset().mockResolvedValue(true);
+    race.record.mockReset().mockImplementation(async () => undefined);
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it.each([
+    ["email", "toggle"], ["email", "destination"],
+    ["sms", "toggle"], ["sms", "destination"], ["sms", "consent"],
+  ] as const)("pages past 100 %s candidates skipped for %s", async (channel, reason) => {
+    race.backlog = { channel, reason, skipped: 100, eligible: 1 };
+    const response = await GET(new Request("https://example.invalid/api/cron/appointment-reminders"));
+    expect(response.status).toBe(200);
+    const send = channel === "email" ? race.send : race.smsSend;
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(race.pages).toHaveLength(3);
+    expect(race.pages[1].cursor).toBe("00000000-0000-4000-8000-000000000050");
+    expect(race.pages.every((p) => p.orders.join(",") === "starts_at,id")).toBe(true);
+  });
+
+  it("does not skip unsent rows when earlier successful sends leave the selection", async () => {
+    race.backlog = { channel: "email", reason: "claim", skipped: 50, eligible: 1 };
+    race.claim.mockImplementation(async (_admin?: unknown, id?: string) => {
+      const n = Number(id?.slice(-12));
+      // Half the first page succeeds and disappears; half loses its claim.
+      return n > 50 || n % 2 === 0;
+    });
+    race.record.mockImplementation(async (_admin?: unknown, id?: string, _kind?: unknown, success?: boolean) => {
+      if (id && success) race.sent.add(id);
+    });
+    const response = await GET(new Request("https://example.invalid/api/cron/appointment-reminders"));
+    expect(response.status).toBe(200);
+    expect(race.send).toHaveBeenCalledTimes(26);
+    expect(race.claim).toHaveBeenCalledTimes(51);
+    expect(race.pages).toHaveLength(2);
+  });
+
+  it.each(["email", "sms"] as const)("caps actual %s attempts at 50 despite a larger eligible backlog", async (channel) => {
+    race.backlog = { channel, reason: "toggle", skipped: 0, eligible: 120 };
+    const response = await GET(new Request("https://example.invalid/api/cron/appointment-reminders"));
+    expect(response.status).toBe(500);
+    expect(race.heartbeat).not.toHaveBeenCalled();
+    expect(channel === "email" ? race.send : race.smsSend).toHaveBeenCalledTimes(50);
+    expect(race.pages).toHaveLength(1);
+  });
+
+  it.each([["email", "toggle"], ["sms", "consent"], ["email", "claim"]] as const)("#995 bounded continuation reaches the tail behind 1000 %s %s skips", async (channel, reason) => {
+    race.backlog = { channel, reason, skipped: 1000, eligible: 1 };
+    if (reason === "claim") race.claim.mockImplementation(async (_admin?: unknown, id?: string) => Number(id?.slice(-12)) > 1000);
+    let finalStatus = 0;
+    for (let invocation = 0; invocation < 6; invocation++) {
+      const before = race.pages.length;
+      const claims = race.claim.mock.calls.length;
+      const response = await GET(new Request("https://example.invalid/api/cron/appointment-reminders"));
+      finalStatus = response.status;
+      expect(race.pages.length - before).toBeLessThanOrEqual(8);
+      expect(race.claim.mock.calls.length - claims).toBeLessThanOrEqual(200);
+      if (invocation < 5) { expect(response.status).toBe(500); expect(race.heartbeat).not.toHaveBeenCalled(); }
+    }
+    expect(finalStatus).toBe(200);
+    expect(channel === "email" ? race.send : race.smsSend).toHaveBeenCalledTimes(1);
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("00000000-");
+  });
+
+  it("#995 unavailable claim stops after one row and rotates to the other passes next invocation", async () => {
+    race.backlog = { channel: "sms", reason: "toggle", skipped: 0, eligible: 1001 };
+    race.smsSend.mockResolvedValueOnce({ ok: false, skipped: true, reason: "reminder_claim_unavailable" } as never);
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(500);
+    expect(race.smsSend).toHaveBeenCalledTimes(1);
+    expect(race.pages).toHaveLength(1);
+    expect(race.heartbeat).not.toHaveBeenCalled();
+    const checkpoint = JSON.parse(race.store.get("reminder_scan:v1:checkpoint:sms24h")!.value);
+    expect(checkpoint.after).toBeNull();
+    expect(JSON.parse(race.store.get("reminder_scan:v1:rotation")!.value).next).toBe("sms2h");
+    const retried = await GET(new Request("https://example.invalid"));
+    expect(retried.status).toBe(500); // still a bounded, unfinished backlog
+    expect(race.smsSend).toHaveBeenNthCalledWith(2, expect.objectContaining({ appointmentId: "00000000-0000-4000-8000-000000000001" }));
+    expect(race.smsSend).toHaveBeenCalledTimes(51); // one refused claim + max50 attempts
+    expect(race.heartbeat).not.toHaveBeenCalled();
+  });
+
+  it("#995 overlapping GET cannot read candidates or dispatch while the first lease is held", async () => {
+    let entered!: () => void; let release!: () => void;
+    const gate = new Promise<void>((resolve) => { entered = resolve; });
+    race.send.mockImplementationOnce(async () => { entered(); await new Promise<void>((resolve) => { release = resolve; }); return { ok: true }; });
+    const first = GET(new Request("https://example.invalid"));
+    await gate;
+    const pages = race.pages.length;
+    const second = await GET(new Request("https://example.invalid"));
+    expect(second.status).toBe(500);
+    expect(race.pages).toHaveLength(pages);
+    expect(race.send).toHaveBeenCalledTimes(1);
+    expect(race.heartbeat).not.toHaveBeenCalled();
+    release(); expect((await first).status).toBe(200);
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+  });
+
+  it("#995 corrupt cursor refuses dispatch, success heartbeat and private diagnostic data", async () => {
+    race.store.set("reminder_scan:v1:checkpoint:email24h", { value: "PRIVATE malformed cursor", expiry: Date.now() + 10800000 });
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(500);
+    expect(race.pages).toEqual([]); expect(race.send).not.toHaveBeenCalled(); expect(race.heartbeat).not.toHaveBeenCalled();
+    expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("PRIVATE");
+  });
+
+  it("#995 storage outage is fail closed before any query, claim or provider dispatch", async () => {
+    race.failStore = true;
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(500);
+    expect(race.pages).toEqual([]); expect(race.claim).not.toHaveBeenCalled();
+    expect(race.send).not.toHaveBeenCalled(); expect(race.smsSend).not.toHaveBeenCalled(); expect(race.heartbeat).not.toHaveBeenCalled();
+  });
+
+  it("#995 all-state expiry after unfinished work cannot become a healthy empty-window run", async () => {
+    race.backlog = { channel: "email", reason: "toggle", skipped: 1000, eligible: 1 };
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(500);
+    vi.advanceTimersByTime(10800001);
+    race.start = new Date(Date.now() + 86400000).toISOString(); race.freshStart = race.start;
+    race.backlog = { channel: "email", reason: "toggle", skipped: 0, eligible: 0 };
+    race.heartbeat.mockClear();
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(500);
+    expect(race.heartbeat).not.toHaveBeenCalled();
+    expect(race.alerts).toHaveBeenLastCalledWith(expect.objectContaining({ safeDetails: expect.objectContaining({ coverage_unconfirmed: true }) }));
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(200);
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+  });
+
+  it("#995 a definite fake email failure preserves its counted result and subsequent work", async () => {
+    race.send.mockResolvedValueOnce({ ok: false, error: "synthetic refusal" } as never);
+    const response = await GET(new Request("https://example.invalid"));
+    expect(response.status).toBe(200);
+    expect((await response.json()).reminder_24h).toMatchObject({ attempted: 1, failed: 1, succeeded: 0 });
+    expect(race.record).toHaveBeenCalledWith(expect.anything(), "00000000-0000-4000-8000-000000000001", "reminder_24h", false);
+  });
+
 });
