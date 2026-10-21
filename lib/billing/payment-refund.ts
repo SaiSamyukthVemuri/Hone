@@ -4,6 +4,11 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { getSessionPaymentStripe } from "@/lib/stripe/session-payment-stripe";
 import { recordOpsAlert } from "@/lib/ops/alerts";
+import { isDefinitiveStripeRefusal } from "@/lib/billing/stripe-error-outcome";
+import {
+  compareProviderMoney,
+  providerMoneyMismatchDetails,
+} from "@/lib/billing/provider-money-facts";
 
 // ---------------------------------------------------------------------------
 // PR #178. refundPaymentChargeAttempt.
@@ -182,14 +187,19 @@ type AttemptRow = {
   status: string;
   stripe_livemode: boolean;
   stripe_account_id: string | null;
+  stripe_customer_id: string | null;
   stripe_payment_intent_id: string | null;
   stripe_charge_id: string | null;
   amount_cents: number;
+  currency: string;
   charged_at: string | null;
   refund_status: string | null;
   refund_amount_cents: number | null;
   refunded_at: string | null;
   stripe_refund_id: string | null;
+  stripe_refund_status: string | null;
+  stripe_refund_event_created: number | null;
+  stripe_refund_event_id: string | null;
 };
 
 export async function refundPaymentChargeAttempt(args: {
@@ -218,7 +228,7 @@ export async function refundPaymentChargeAttempt(args: {
   const { data: rawRow, error: loadErr } = await admin
     .from("payment_charge_attempts")
     .select(
-      "id, studio_id, client_id, charge_reason, status, stripe_livemode, stripe_account_id, stripe_payment_intent_id, stripe_charge_id, amount_cents, charged_at, refund_status, refund_amount_cents, refunded_at, stripe_refund_id",
+      "id, studio_id, client_id, charge_reason, status, stripe_livemode, stripe_account_id, stripe_customer_id, stripe_payment_intent_id, stripe_charge_id, amount_cents, currency, charged_at, refund_status, refund_amount_cents, refunded_at, stripe_refund_id, stripe_refund_status, stripe_refund_event_created, stripe_refund_event_id",
     )
     .eq("id", args.attemptId)
     .maybeSingle();
@@ -311,6 +321,9 @@ export async function refundPaymentChargeAttempt(args: {
       message: "This charge has no Stripe charge id and cannot be refunded.",
     };
   }
+  if (!attempt.stripe_customer_id) {
+    return { ok: false, outcome: "needs_manual_review", message: "The original payment customer is not recorded. The studio operator must reconcile this payment before refunding it." };
+  }
   if (!attempt.stripe_payment_intent_id) {
     return {
       ok: false,
@@ -347,6 +360,13 @@ export async function refundPaymentChargeAttempt(args: {
         "A refund is already in flight for this charge. Wait a moment and refresh.",
     };
   }
+  // Actual provider evidence needs governed reconciliation/new generation,
+  // never a reset of its object identity or signed chronology. Legacy local
+  // failure without any provider object/evidence retains its existing retry.
+  if (attempt.stripe_refund_id !== null || attempt.stripe_refund_status !== null
+      || attempt.stripe_refund_event_created !== null || attempt.stripe_refund_event_id !== null) {
+    return { ok: false, outcome: "needs_manual_review", message: "A refund outcome is already recorded for this payment. The studio operator must review it before starting another refund." };
+  }
   if (!attempt.stripe_account_id) {
     return {
       ok: false,
@@ -374,7 +394,6 @@ export async function refundPaymentChargeAttempt(args: {
       refund_amount_cents: refundAmountCents,
       refund_initiated_by_practitioner_id: args.practitionerId,
       refund_internal_note: sanitizeInternalNote(args.internalNote),
-      stripe_refund_id: null,
       refund_failure_code: null,
       refund_failure_message_safe: null,
       refunded_at: null,
@@ -384,6 +403,11 @@ export async function refundPaymentChargeAttempt(args: {
     .eq("status", "succeeded")
     .eq("stripe_livemode", livemode)
     .or("refund_status.is.null,refund_status.eq.failed")
+    // Recheck under the row UPDATE if a signed result arrived after the read.
+    .is("stripe_refund_id", null)
+    .is("stripe_refund_status", null)
+    .is("stripe_refund_event_created", null)
+    .is("stripe_refund_event_id", null)
     // RECIPROCAL WITH THE RECEIPT CLAIM. A refund may not start while a receipt
     // send holds the row.
     //
@@ -438,7 +462,7 @@ export async function refundPaymentChargeAttempt(args: {
       ok: false,
       outcome: "claim_lost",
       message:
-        "This payment changed while the refund was starting. Another refund or receipt operation may still be in progress. Refresh and try again.",
+        "This payment changed while the refund was starting. Refresh to review its current refund and receipt status before trying again.",
     };
   }
 
@@ -480,7 +504,7 @@ export async function refundPaymentChargeAttempt(args: {
     // can be classified; network errors leave the row pending so
     // a manual reconciliation can re-query Stripe with the
     // deterministic idempotency key.
-    if (err instanceof Stripe.errors.StripeError) {
+    if (err instanceof Stripe.errors.StripeError && isDefinitiveStripeRefusal(err)) {
       const code = sanitizeFailureCode(err.code ?? err.type);
       const safeMessage =
         sanitizeFailureMessage(err.message) ??
@@ -491,11 +515,16 @@ export async function refundPaymentChargeAttempt(args: {
           refund_status: "failed",
           refund_failure_code: code,
           refund_failure_message_safe: safeMessage,
-          stripe_refund_id: null,
           refunded_at: null,
         })
         .eq("id", attempt.id)
+        .eq("studio_id", attempt.studio_id)
+        .eq("stripe_livemode", attempt.stripe_livemode)
         .eq("refund_status", "pending_stripe")
+        .is("stripe_refund_id", null)
+        .is("stripe_refund_status", null)
+        .is("stripe_refund_event_created", null)
+        .is("stripe_refund_event_id", null)
         .select("id");
       // PR #263: a zero-row update (no matching pending_stripe row)
       // persisted nothing even though Stripe terminally refused the
@@ -527,6 +556,7 @@ export async function refundPaymentChargeAttempt(args: {
             zero_rows: failedWriteZeroRows,
           },
         });
+        return { ok: false, outcome: "needs_manual_review", message: "The refund outcome changed or could not be saved. The studio operator will reconcile it." };
       }
       await recordOpsAlert({
         severity: "warning",
@@ -617,58 +647,112 @@ export async function refundPaymentChargeAttempt(args: {
     };
   }
 
-  const refundedAtIso = new Date().toISOString();
-  const { data: okRows, error: writeOkErr } = await admin
-    .from("payment_charge_attempts")
-    .update({
-      refund_status: "succeeded",
-      stripe_refund_id: refund.id,
-      refunded_at: refundedAtIso,
-      refund_failure_code: null,
-      refund_failure_message_safe: null,
-    })
-    .eq("id", attempt.id)
-    .eq("refund_status", "pending_stripe")
-    .select("id");
-  // PR #263: a zero-row update (no matching pending_stripe row) means
-  // the refund is real on Stripe but nothing was persisted locally.
-  // Treat it identically to a write error, never report success
-  // without proving the row was stamped.
-  const okWriteZeroRows = !writeOkErr && (!okRows || okRows.length === 0);
-  if (writeOkErr || okWriteZeroRows) {
-    // Stripe says refund is done but we could not persist the
-    // success outcome (DB error or zero-row update). Critical alert;
-    // do not invent the refund id elsewhere.
-    logInternal("payment_refund_succeeded_write_failed", {
-      attemptId: attempt.id,
-      stripeRefundId: refund.id,
-      code: writeOkErr?.code ?? null,
-      message: writeOkErr?.message ?? null,
-      zeroRows: okWriteZeroRows,
-    });
-    await recordOpsAlert({
-      severity: "critical",
-      event: "payment_refund_succeeded_write_failed",
-      message:
-        "Stripe refund succeeded, but Hone could not persist the succeeded outcome on the attempt row (DB error or zero-row update). The refund is real on Stripe; the row stays pending until reconciled.",
-      studioId: attempt.studio_id,
-      clientId: attempt.client_id,
-      route: ROUTE,
-      safeDetails: {
-        attempt_id: attempt.id,
-        charge_reason: attempt.charge_reason,
-        stripe_refund_id: refund.id,
-        db_code: writeOkErr?.code ?? null,
-        zero_rows: okWriteZeroRows,
-      },
-    });
-    return {
-      ok: false,
-      outcome: "needs_manual_review",
-      message:
-        "The refund went through on Stripe, but Hone could not save the result. The studio operator will reconcile this.",
+  // PAY-CCY-01. The refund Stripe made must be the refund Hone asked for: the
+  // claimed amount, in the attempt's own prepared currency. Stripe derives a
+  // refund's currency from the charge, so a different currency means the
+  // charge id on this row is not the prepared charge. Recording `succeeded`
+  // would then say this payment was returned when different money was. The
+  // row stays `pending_stripe`, the same unresolved state an unclear Stripe
+  // answer leaves above, and the operator reconciles it.
+  {
+    const prepared = {
+      amountCents: refundAmountCents,
+      currency: attempt.currency,
     };
+    const provider = { amount: refund.amount, currency: refund.currency };
+    const money = compareProviderMoney(prepared, provider);
+    if (!money.ok) {
+      logInternal("payment_refund_provider_money_mismatch", {
+        attemptId: attempt.id,
+        stripeRefundId: refund.id,
+        mismatches: money.mismatches,
+      });
+      await recordOpsAlert({
+        severity: "critical",
+        event: "payment_refund_provider_money_mismatch",
+        message:
+          "Stripe returned a refund whose amount or currency does not equal the claimed refund of the prepared attempt. Hone did NOT record it as succeeded; the row stays refund_status='pending_stripe'. Manual reconciliation required.",
+        studioId: attempt.studio_id,
+        clientId: attempt.client_id,
+        route: ROUTE,
+        safeDetails: {
+          attempt_id: attempt.id,
+          charge_reason: attempt.charge_reason,
+          stripe_charge_id: attempt.stripe_charge_id,
+          stripe_refund_id: refund.id,
+          ...providerMoneyMismatchDetails(prepared, provider, money.mismatches),
+        },
+      });
+      return {
+        ok: false,
+        outcome: "needs_manual_review",
+        message:
+          "Stripe's refund does not match this payment, so Hone did not record it. The studio operator will reconcile this.",
+      };
+    }
   }
+
+  const providerCharge = typeof refund.charge === "string" ? refund.charge : refund.charge?.id;
+  const providerIntent = typeof refund.payment_intent === "string" ? refund.payment_intent : refund.payment_intent?.id;
+  const refundCustomer = "customer" in refund ? refund.customer : undefined;
+  const providerCustomer = refundCustomer === undefined ? attempt.stripe_customer_id
+    : typeof refundCustomer === "string" ? refundCustomer
+      : refundCustomer && typeof refundCustomer === "object" && "id" in refundCustomer && typeof refundCustomer.id === "string" ? refundCustomer.id : null;
+  if (!refund.id || providerCharge !== attempt.stripe_charge_id || providerIntent !== attempt.stripe_payment_intent_id || providerCustomer !== attempt.stripe_customer_id) {
+    await recordOpsAlert({
+      severity: "critical", event: "payment_refund_provider_identity_mismatch",
+      message: "Provider refund does not match the original charge/payment intent. Hone retained the unresolved claim without recording completion.",
+      studioId: attempt.studio_id, clientId: attempt.client_id, route: ROUTE,
+      safeDetails: { attempt_id: attempt.id, stripe_refund_id: refund.id },
+    });
+    return { ok: false, outcome: "needs_manual_review", message: "The refund response could not be matched to this payment. The studio operator will reconcile it." };
+  }
+  const { data: observationRows, error: observationError } = await admin.rpc("reconcile_bound_payment_event", {
+    p_attempt_id: attempt.id,
+    p_event_id: `refund-observation:${refund.id}`,
+    p_event_type: "refund.observed",
+    p_studio_id: attempt.studio_id,
+    p_stripe_account_id: attempt.stripe_account_id,
+    p_livemode: attempt.stripe_livemode,
+    p_object: {
+      evidence_kind: "action_response",
+      customer_id: attempt.stripe_customer_id,
+      payment_intent_id: providerIntent,
+      charge_id: providerCharge,
+      amount_cents: attempt.amount_cents,
+      currency: attempt.currency,
+      refund_id: refund.id,
+      refund_amount_cents: refund.amount,
+      refund_currency: refund.currency,
+      refund_charge_id: providerCharge,
+      refund_status: refund.status,
+    },
+  });
+  const observation = (Array.isArray(observationRows) ? observationRows[0] : observationRows) as { result?: string } | null;
+  if (observationError || !["reconciled", "already_refunded", "refund_pending", "refund_failed"].includes(observation?.result ?? "")) {
+    await recordOpsAlert({
+      severity: "critical", event: "payment_refund_outcome_write_refused",
+      message: "Provider refund observation could not be persisted by the bound payment command. Manual reconciliation required.",
+      studioId: attempt.studio_id, clientId: attempt.client_id, route: ROUTE,
+      safeDetails: { attempt_id: attempt.id, stripe_refund_id: refund.id, result: observation?.result ?? null },
+    });
+    return { ok: false, outcome: "needs_manual_review", message: "The refund outcome could not be saved. The studio operator will reconcile it." };
+  }
+  if (observation?.result === "refund_pending") {
+    return { ok: false, outcome: "needs_manual_review", message: "Stripe has not completed the refund. Refresh later; the studio operator may need to review it." };
+  }
+  if (observation?.result === "refund_failed") {
+    return { ok: false, outcome: "failed", failureCode: `provider_refund_${refund.status}`, message: "Stripe did not complete the refund. The studio operator can review the payment before retrying." };
+  }
+  // Read the timestamp actually committed by the command; never invent a local
+  // completion time after a refused/missing write or a concurrent event.
+  const { data: saved, error: savedError } = await admin.from("payment_charge_attempts")
+    .select("refund_status,stripe_refund_id,refunded_at")
+    .eq("id", attempt.id).eq("studio_id", attempt.studio_id).maybeSingle();
+  if (savedError || saved?.refund_status !== "succeeded" || saved.stripe_refund_id !== refund.id || !saved.refunded_at) {
+    return { ok: false, outcome: "needs_manual_review", message: "The saved refund could not be confirmed. The studio operator will reconcile it." };
+  }
+  const refundedAtIso = saved.refunded_at as string;
 
   return {
     ok: true,
