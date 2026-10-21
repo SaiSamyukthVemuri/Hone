@@ -101,36 +101,10 @@ export function useDialogKeyboard<
         panel.focus();
         return;
       }
-      const first = focusables[0]!;
-      const last = focusables[focusables.length - 1]!;
-      const active = document.activeElement;
-
-      // FOCUS RESTING OUTSIDE THE TABBABLE SET IS A BOUNDARY IN BOTH
-      // DIRECTIONS, and missing this left a real hole.
-      //
-      // On open, focus is placed on the PANEL, which carries `tabIndex={-1}`
-      // and is therefore excluded by FOCUSABLE by design. So the very first
-      // keystroke after opening had an `activeElement` that was neither `first`
-      // nor `last`, no branch fired, and Shift+Tab followed the browser's
-      // default order straight out of the dialog to the opener behind it — past
-      // an `aria-modal` that had already hidden that content from assistive
-      // technology. `confirm-dialog` never hit this because it rests focus on a
-      // real button; this hook rests it on the panel.
-      //
-      // The same clause covers focus having escaped by any other route (a
-      // backdrop click, say): wherever it is, the next Tab pulls it back in.
-      if (!focusables.includes(active as HTMLElement)) {
+      const target = dialogTabTarget(focusables, document.activeElement, e.shiftKey);
+      if (target) {
         e.preventDefault();
-        (e.shiftKey ? last : first).focus();
-        return;
-      }
-
-      if (e.shiftKey && active === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && active === last) {
-        e.preventDefault();
-        first.focus();
+        target.focus();
       }
     };
     document.addEventListener("keydown", onKey);
@@ -143,3 +117,21 @@ export function useDialogKeyboard<
 /** Same selector `confirm-dialog` uses, so the two traps cannot disagree. */
 const FOCUSABLE =
   'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])';
+
+
+// The existing trap's boundary decision, kept pure so both Tab directions can
+// be exercised without a browser. Interior Tab uses normal DOM order; focus
+// outside the tabbable set (including the panel itself) returns inside.
+export function dialogTabTarget(
+  focusables: readonly HTMLElement[],
+  active: Element | null,
+  shiftKey: boolean,
+): HTMLElement | null {
+  if (focusables.length === 0) return null; // the caller parks on its panel
+  const first = focusables[0]!;
+  const last = focusables[focusables.length - 1]!;
+  if (!focusables.includes(active as HTMLElement)) return shiftKey ? last : first;
+  if (shiftKey && active === first) return last;
+  if (!shiftKey && active === last) return first;
+  return null;
+}
