@@ -217,10 +217,11 @@ test.describe("operator lead alerts — fake Resend", () => {
 // No role grants or allowlist changes: a former-operator fixture is currently
 // outside ADMIN_EMAILS. Revocation between requests is covered by guard units.
 test.describe("SEC-002 admin document and RSC authorization", () => {
+  test.describe.configure({ mode: "serial" });
   const run = randomUUID().slice(0, 8);
   const identities = ["member-a", "member-b", "deactivated", "former-operator"] as const;
   const emails = Object.fromEntries(identities.map((role) => [role, `sec002-${role}-${run}@harness.local`]));
-  const studios: Array<{ studioId: string; name: string }> = [];
+  const studios: Array<{ studioId: string; name: string; ownerEmail: string }> = [];
 
   test.beforeAll(async () => {
     await ensureOperator();
@@ -237,7 +238,29 @@ test.describe("SEC-002 admin document and RSC authorization", () => {
   });
 
   const paths = () => ["/admin", ...studios.map((s) => `/admin/studios/${s.studioId}`),
-    "/admin/studios/new", "/admin/ops-alerts", "/admin/delivery"];
+    `/admin/studios/new?created=${studios[0].studioId}`, "/admin/ops-alerts", "/admin/delivery"];
+
+  // Positive content canary runs first, in the same serial group/request shape.
+  // RSC prefetch can return an empty router skeleton; it is NOT this proof.
+  test("current platform operator proves full document and RSC page content", async ({ page }) => {
+    await signIn(page, OPERATOR);
+    for (const pathname of paths()) {
+      const expected = pathname === "/admin" ? studios.map((s) => s.name)
+        : pathname === "/admin/ops-alerts" ? ["Ops alerts"]
+        : pathname === "/admin/delivery" ? ["Message delivery"]
+        : [studios.find((studio) => pathname.includes(studio.studioId))!.name];
+      for (const rsc of [false, true]) {
+        const response = await page.request.get(`${E2E_APP_ORIGIN}${pathname}`, {
+          maxRedirects: 0,
+          headers: rsc ? { RSC: "1" } : {},
+        });
+        expect(response.status()).toBe(200);
+        if (rsc) expect(response.headers()["content-type"]).toContain("text/x-component");
+        const body = await response.text();
+        for (const canary of expected) expect(body).toContain(canary);
+      }
+    }
+  });
 
   for (const role of identities) {
     test(`${role} cannot read either studio through documents or RSC`, async ({ page }) => {
@@ -247,31 +270,21 @@ test.describe("SEC-002 admin document and RSC authorization", () => {
         for (const rsc of [false, true]) {
           const response = await page.request.get(`${E2E_APP_ORIGIN}${pathname}`, {
             maxRedirects: 0,
-            headers: rsc ? { RSC: "1", "Next-Router-Prefetch": "1" } : {},
+            headers: rsc ? { RSC: "1" } : {},
           });
           const body = await response.text();
           const refused = [301, 302, 303, 307, 308, 401, 403, 404].includes(response.status())
             || (rsc && response.status() === 200 && /NEXT_REDIRECT|NEXT_HTTP_ERROR_FALLBACK;404/.test(body));
           expect(refused, `${role} ${pathname} ${rsc ? "RSC" : "document"} ${response.status()}`).toBe(true);
-          for (const studio of studios) expect(body).not.toContain(studio.name);
+          for (const studio of studios) {
+            expect(body).not.toContain(studio.name);
+            expect(body).not.toContain(studio.ownerEmail);
+          }
           expect(body).not.toContain("admin-lead-detail");
         }
       }
     });
   }
 
-  test("current platform operator reads both studios without membership", async ({ page }) => {
-    await signIn(page, OPERATOR);
-    for (const studio of studios) {
-      const pathname = `/admin/studios/${studio.studioId}`;
-      for (const rsc of [false, true]) {
-        const response = await page.request.get(`${E2E_APP_ORIGIN}${pathname}`, {
-          maxRedirects: 0,
-          headers: rsc ? { RSC: "1", "Next-Router-Prefetch": "1" } : {},
-        });
-        expect(response.status()).toBe(200);
-        expect(await response.text()).toContain(studio.name);
-      }
-    }
-  });
+
 });
