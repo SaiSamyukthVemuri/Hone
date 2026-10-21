@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { orderByRecency } from "@/lib/sessions/charted-session";
-import { pickLastTreatment } from "@/lib/sessions/clinical-summary";
+import { pickLastTreatment, pickNewestNonVoidSession } from "@/lib/sessions/clinical-summary";
 
 // PR #199: Last Treatment + charting redundancy + client info cleanup.
 //
@@ -132,9 +132,21 @@ describe("Last treatment card (Sessions tab)", () => {
 
   it("a newer uncharted session is called out, not allowed to blank the card", () => {
     expect(PAGE).toMatch(/Most recent charted treatment/);
-    expect(PAGE).toMatch(/const newestSession = sessionsByRecency\[0\]/);
+    expect(PAGE).toMatch(/const newestSession = pickNewestNonVoidSession\(sessionsByRecency\)/);
     expect(PAGE).toMatch(/lastTreatment\.id !== newestSession\?\.id/);
     expect(PAGE).not.toMatch(/lastTreatment\??\.id [!=]== sessions\[0\]\?\.id/);
+  });
+
+  it("a newer void row never announces an uncharted visit, but a live empty draft does", () => {
+    const treated = session("treated", { at: OLDER });
+    const newer = session("newer", { at: NEWER });
+    const voided = { ...newer, record_status: "void" };
+    expect(pickNewestNonVoidSession([treated, voided])?.id).toBe("treated");
+    // Old raw-row comparison would show the banner for this same void fixture.
+    expect(orderByRecency([treated, voided])[0]?.id).toBe("newer");
+    expect(pickNewestNonVoidSession([treated, newer])?.id).toBe("newer");
+    expect(pickNewestNonVoidSession([voided])).toBeUndefined();
+    expect(pickNewestNonVoidSession([{ ...treated, record_status: "finalized" }])?.id).toBe("treated");
   });
 
   it("empty state says no charted treatments yet; 'No entries logged' is gone", () => {

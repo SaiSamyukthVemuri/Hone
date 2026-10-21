@@ -322,8 +322,8 @@
       "path": "app/(app)/clients/[id]/page.tsx",
       "source_blob": "20ea9fe0da25ae10411e8aa65b3d16c535e6897d",
       "sha256": "725a62f5785d648910054c373685187ecc892dc1304ddab8d41db91eb88bcd4f",
-      "candidate_current_sha256": "9c5b088b7214f27c0e5bb1877683be472231ce476e0b75f077bdc5a4a2398703",
-      "candidate_current_blob": "d256a3e3b9d87fb0600351df4dff72ea718f55d6"
+      "candidate_current_sha256": "52e91b3a806d21029110abae630d490bbe92bcf72a27c611aec260af85e00335",
+      "candidate_current_blob": "0e3bb12d07f53844fbe69171f6600bc809219288"
     },
     {
       "path": "lib/images/client-portrait.ts",
@@ -698,5 +698,22 @@
     "review": "Exactreceipt6303466243 no majorissues; aggregatesummarytrue/true/historythreads preserved,notrewritten",
     "reuse": "Evidenceatparentheadscope; field-onlydigestrepair doesnotalterUI/RPC/SQL/guards. Newcurrentreview/normalCI required onpublishedfinalhead."
   },
-  "production_runtime_base": "0dc7d5e457b4445191f47404aefd140a59f927b9"
+  "production_runtime_base": "0dc7d5e457b4445191f47404aefd140a59f927b9",
+  "candidate_banner_repair": {
+    "basis_head": "ebdbde8cd47763bf8c2e907661239cdcb552760d",
+    "source_head": "abcbfdd391a9fb2f6ed22bfc6eb359f614ca0dd5",
+    "isolated_patch_sha256": "a90ec134861ee993136ee3fd52019d610a4c2fdd1181cbbc78f8f69636aa786f",
+    "reason": "Exclude void rows from newest-visit banner comparison while retaining charted drafts. Three-file published owner unit; no portrait setter/read/authorization or SQL change.",
+    "profile_prior": {
+      "sha256": "9c5b088b7214f27c0e5bb1877683be472231ce476e0b75f077bdc5a4a2398703",
+      "blob": "d256a3e3b9d87fb0600351df4dff72ea718f55d6"
+    },
+    "profile_current": {
+      "sha256": "52e91b3a806d21029110abae630d490bbe92bcf72a27c611aec260af85e00335",
+      "blob": "0e3bb12d07f53844fbe69171f6600bc809219288"
+    },
+    "helper_blob": "bd65e7c899390579385c8d56035ad6e5158c4523",
+    "regression_blob": "ae1d2e18f662c1b46dd4a992ec415f7dcbebb1ba",
+    "historical_provenance": "Original portrait source pins and prior d380 digest-repair receipt remain unchanged."
+  }
 }

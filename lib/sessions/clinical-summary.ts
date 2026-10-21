@@ -196,6 +196,14 @@ export function buildLastSessionSummary(input: {
 // refuses every new transition into 'void', so this closes a parity gap rather
 // than a live one. `record_status` is REQUIRED on the type so a caller cannot
 // silently skip the filter by not selecting the column.
+// The newer-uncharted banner compares against a live record, never a void row.
+// Draft is a charting state, not evidence that no treatment occurred.
+export function pickNewestNonVoidSession<
+  T extends { id: string; started_at: string; record_status: string | null },
+>(sessions: ReadonlyArray<T>): T | undefined {
+  return orderByRecency(sessions).find((session) => session.record_status !== "void");
+}
+
 export type LastTreatmentCandidate = {
   id: string;
   // Required so this selector can establish its own order. Both callers already
