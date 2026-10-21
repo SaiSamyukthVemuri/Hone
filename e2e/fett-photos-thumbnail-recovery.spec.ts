@@ -363,9 +363,20 @@ test("delayed preview replies never cross image identity; close and signing fail
     const card = tile.locator("xpath=../..");
     await card.getByRole("button", { name: "Add note", exact: true }).click();
     await card.getByPlaceholder("Add a note for this photo…").fill(note);
+    const saved = page.waitForResponse((response) => {
+      const request = response.request();
+      return request.method() === "POST" && Boolean(request.headers()["next-action"])
+        && (request.postData() ?? "").includes(JSON.stringify(note));
+    });
     await card.getByRole("button", { name: "Save", exact: true }).click();
+    expect((await saved).ok()).toBe(true);
     await expect(card.getByText(note, { exact: true })).toBeVisible({ timeout: T });
   }
+  // Note text is optimistic. Settle the saves and read persisted metadata before
+  // installing a gate, otherwise a note action can block the queued signer.
+  await page.reload();
+  await expect(page.getByText("Synthetic preview A", { exact: true })).toBeVisible();
+  await expect(page.getByText("Synthetic preview B", { exact: true })).toBeVisible();
 
   let releaseA!: () => void;
   let releaseB!: () => void;
@@ -380,7 +391,14 @@ test("delayed preview replies never cross image identity; close and signing fail
   const handler = (route: Route) => {
     const request = route.request();
     const body = request.postData() ?? "";
-    const image = body.includes(a.id) ? "A" : body.includes(b.id) ? "B" : null;
+    // The signer receives exactly [{ imageId }]. A UUID also appears in note
+    // saves, which must never be held behind this preview-only response gate.
+    let args: unknown;
+    try { args = JSON.parse(body); } catch { return route.continue(); }
+    const input: unknown = Array.isArray(args) && args.length === 1 ? args[0] : null;
+    const imageId = input !== null && typeof input === "object"
+      && Object.keys(input).length === 1 && "imageId" in input ? input.imageId : null;
+    const image = imageId === a.id ? "A" : imageId === b.id ? "B" : null;
     if (request.method() !== "POST" || !request.headers()["next-action"] || !image) {
       return route.continue();
     }
