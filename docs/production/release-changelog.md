@@ -35,10 +35,10 @@ This section previously carried a "(through 2026-07-27)" heading while containin
 
 **Coverage gap, stated rather than hidden:** this table covers PRs **#357–#479**, **#601**,
 **#629**, **#630**, and — added by the 2026-08-26 reconciliation and kept current through each
-production refresh since — **every** first-parent merge in `b9e0003f..59ff87cd`, all
-**231** PR merges among them (**#632–#993**, plus **#631**, whose number sits below that floor but
-whose merge does not — see below). The sixty merges after the prior `440829c2` snapshot are #940,
-#903, #897, #895, #942, #944, #945, #941, #947, #948, #946, #949, #906, #950, #921, #951, #952, #954, #953, #956, #955, #958, #959, #957, #961, #962, #960, #964, #892, #965, #963, #966, #925, #967, #927, #968, #969, #970, #971, #973, #976, #972, #974, #975, #980, #978, #977, #983, #981, #986, #979, #982, #985, #987, #988, #989, #992, #990, #993 and #991; their dated receipts are listed at the end of this changelog. ⚠️ **EXTENDED
+production refresh since — **every** first-parent merge in `b9e0003f..e3f63b74`, all
+**233** PR merges among them (**#632–#998**, plus **#631**, whose number sits below that floor but
+whose merge does not — see below). The sixty-two merges after the prior `440829c2` snapshot are #940,
+#903, #897, #895, #942, #944, #945, #941, #947, #948, #946, #949, #906, #950, #921, #951, #952, #954, #953, #956, #955, #958, #959, #957, #961, #962, #960, #964, #892, #965, #963, #966, #925, #967, #927, #968, #969, #970, #971, #973, #976, #972, #974, #975, #980, #978, #977, #983, #981, #986, #979, #982, #985, #987, #988, #989, #992, #990, #993, #991, #996 and #998; their dated receipts are listed at the end of this changelog. ⚠️ **EXTENDED
 2026-10-12 by CANON-REFRESH-2026-10-12:**
 the range previously ended at `410e5039` (81 merges, the 2026-09-21 extension described next);
 **56** rows were backfilled from the first-parent graph and each merge's own diff, and the
@@ -438,3 +438,11 @@ deployment, route smoke and human acceptance.
 | **#991** | none | **Merged · deployed; human UAT UNRUN** | SCH004 honest active-practitioner hours projection | SCH004 honest active-practitioner hours projection. Source5add5950 exactreview/CI39560681464 passed21,536unit/245browser9skip; DB/payment/mobile/Google/docs skipped. Normal59ff87cd READYdpl_2AosQMUbaE4tHaZmfZugin8UM1v5, alias/tree/safeGET verified. Automatic39565859627 failed only A3/A5 stale dd6 pins:21,541unit passed/2failed; three targeted browsers/aggregate pass, other suites skip. Original failure retained. No live customer/provider action or human acceptance. |
 | **#992** | none | **Merged · deployed; human UAT UNRUN** | Canonical record only | Docs-only record refresh; source00faf5a0/CI39558439382/exact review/122 focused checks passed; mergefd53b97a READYdpl_EN1M5FhHTQCq657V8qLrVLidyQ1w. Automatic39559334570 changed/canonical/aggregate pass, other suites skip. No runtime or SQL change. |
 | **#993** | none | **Merged · deployed; human UAT UNRUN** | MSG005 refresh queued SMS current consent and recipient before existing gate | MSG005 refresh queued SMS current consent and recipient before existing gate. Source449d9612 exactreview/CI39561243850 passed21,529unit/94browser; DB/payment/mobile/Google/docs skipped. Normalc216f015 READYdpl_HpeExFhfTimou5jxjqpsXDsZHrLX, alias/tree/safeGET verified. Automatic39563611013 failed only A3/A5: 21,527unit passed/2failed; three targeted browsers/aggregate pass, other suites skip. Failure retained. No live customer/provider action or human acceptance. |
+
+
+## 2026-10-21 bounded refund-result release
+
+| PR | Migration | Status | What shipped | Evidence and limits |
+|---|---|---|---|---|
+| **#996** | none | **Documentation only · deployed** | Current-record correction through runtime59ff | Merge41998325, READYdpl_EkNaLfVBGRrjR7oazBmHN8wegxda. Exact23c review/sourceCI39569704757 and automatic39570550177 canonical-record plan passed; unit/DB/browser/payment/mobile/Google skipped. Earlier A3/A5 failures retained. |
+| **#998** | none | **Merged · deployed; human UAT UNRUN** | Exact refund callback-winner recognition and truthful unsaved-failure outcome | Source83845 exact review clear; CI39601081414 passed21,577unit/603browser13skip/58fake-payment; DB/mobile/Google/docs skipped. Root65focused/type/lint/prepush passed. Mergee3f63b74 READYdpl_4pXZj9vvycahYZxvwCwifa76ADgP, hone.care alias/tree/safe GET200200307307 verified. Automatic39603406676 unit failed only stale A3/A5:21,575pass/2fail; other selected jobs pending at this dated sync. No live money/SQL/activation/customer-data repair; full atomic/status guarantees and Chloe acceptance remain separate. |
