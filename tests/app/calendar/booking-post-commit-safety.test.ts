@@ -79,6 +79,41 @@ beforeEach(() => {
   booking.assigned = { id: "B", studio_id: "studio", active: true, display_name: "Assigned B", email: "b@example.test" };
 });
 
+describe("SCH-001 assigned notification context preserves booking actor", () => {
+  it("owner A books B: client context and practitioner recipient name B, but audit/authorization actor stays A", async () => {
+    expect(await bookFor()).toEqual({ ok: true, appointmentId: "appointment" });
+    expect(booking.rpc).toHaveBeenCalledWith("create_internal_appointment_v2", expect.objectContaining({ p_actor_practitioner_id: "A", p_target_practitioner_id: "B" }));
+    expect(booking.clientEmail).toHaveBeenCalledWith(expect.objectContaining({ practitionerDisplayName: "Assigned B" }));
+    expect(booking.practitionerEmail).toHaveBeenCalledWith(expect.objectContaining({ practitionerName: "Assigned B", practitionerEmail: "b@example.test" }));
+    expect(booking.event).toHaveBeenCalledWith(expect.objectContaining({ actor: { kind: "user", id: "A" } }));
+  });
+
+  it("uses the committed assignment rather than trusting a submitted target for notification", async () => {
+    await bookFor("submitted-target");
+    expect(booking.practitionerEmail).toHaveBeenCalledWith(expect.objectContaining({ practitionerEmail: "b@example.test" }));
+  });
+
+  it.each(["foreign", "inactive", "lookup error"])("never falls back to notifying the actor when assigned contact is %s", async (mode) => {
+    if (mode === "foreign") booking.assigned.studio_id = "other-studio";
+    if (mode === "inactive") booking.assigned.active = false;
+    if (mode === "lookup error") booking.lookupError = true;
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await bookFor()).toEqual({ ok: true, appointmentId: "appointment" });
+      expect(booking.clientEmail).not.toHaveBeenCalled();
+      expect(booking.practitionerEmail).not.toHaveBeenCalled();
+      expect(JSON.stringify(log.mock.calls)).not.toContain("synthetic private lookup detail");
+    } finally { log.mockRestore(); }
+  });
+
+  it("retains self-assigned owner notifications", async () => {
+    booking.assignedId = "A";
+    booking.assigned = { ...booking.assigned, id: "A", display_name: "Owner A", email: "a@example.test" };
+    await bookFor("A");
+    expect(booking.practitionerEmail).toHaveBeenCalledWith(expect.objectContaining({ practitionerEmail: "a@example.test" }));
+  });
+});
+
 describe("booking action — post-commit + safe-error hardening (Item 8)", () => {
   it("the post-commit notification dispatch is fail-open (a throw never fails a committed booking)", () => {
     // dispatchBookingEmails must be wrapped so a throwing helper cannot reject
