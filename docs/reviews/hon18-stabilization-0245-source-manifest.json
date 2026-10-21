@@ -1,8 +1,8 @@
 {
-  "at": "2026-10-21T09:18:39.987093+00:00",
+  "at": "2026-10-21T09:50:20.009275+00:00",
   "purpose": "Ordered source/checksum evidence only, not apply/release authority",
   "hosted_declaration": "0212 unchanged; originalapplyreceipts/history preserved; not re-read/applied here",
-  "source_SQL_tree": "a5cf2d1c5b29413894e5e30171a3734c005ab916",
+  "source_SQL_tree": "64f03ac0f0ef60e500d857c79cddf358550d5d40",
   "pending_versions": [
     "0213",
     "0214",
@@ -313,11 +313,11 @@
     {
       "version": "0243",
       "file": "supabase/migrations/0243_intake_revision_cas_and_profile_sync.sql",
-      "raw_sha256": "c3ac2585e52b1c6df0db081887cab50c8e4253d54543b7955d51a6b46006754a",
-      "git_blob": "e44128ddbf9eb943d8376802ebf00749f5128c07",
+      "raw_sha256": "e483bc412c90a1f210ebd90111db8ea8bac24f965fe2fca3baadc729bfa1d634",
+      "git_blob": "0ac734c810fa7a23020366397b37417558a7d67b",
       "owner": "Team",
-      "published_source": "eec0c7f9fa697088b367967334162895fae98b43",
-      "application_order": "UNAPPLIED0243 amended source: schema first under explicit per-change approval; all old direct/detached intake writers drained and rollback versions compatible before writes resume. Same service-only RPC, trusted-owner definer and invoker protected-write guard; no runtime role/grant expansion. Preserve0162/246. No apply authority from this manifest."
+      "published_source": "69672ea123120b6c85445a74447935cef45eeacc",
+      "application_order": "UNAPPLIED0243 amended source: schema first under explicit per-change approval; all old direct/detached intake writers drained and rollback versions compatible before writes resume. Same service-only RPC, trusted-owner definer and invoker protected-write guard; no runtime role/grant expansion. Preserve0162/246. No apply authority from this manifest. Exact reviewed0216 read projection AND transitive helper fingerprints/context are required; unknown/changed delegates still refuse."
     },
     {
       "version": "0244",
@@ -381,6 +381,21 @@
       "reason": "Actual cc04 stale direct writer overwrote CAS winner; protected runtime writes now require exact governed owner; original failures retained",
       "raw_sha256": "c3ac2585e52b1c6df0db081887cab50c8e4253d54543b7955d51a6b46006754a",
       "DB_proof": "UNRUN new SQL head; requires fresh existing CI. Old C5 proof applies only old source."
+    },
+    "0243-exact-read-delegate-compatibility": {
+      "version": "0243",
+      "old_source": {
+        "version": "0243",
+        "file": "supabase/migrations/0243_intake_revision_cas_and_profile_sync.sql",
+        "raw_sha256": "c3ac2585e52b1c6df0db081887cab50c8e4253d54543b7955d51a6b46006754a",
+        "git_blob": "e44128ddbf9eb943d8376802ebf00749f5128c07",
+        "owner": "Team",
+        "published_source": "eec0c7f9fa697088b367967334162895fae98b43",
+        "application_order": "UNAPPLIED0243 amended source: schema first under explicit per-change approval; all old direct/detached intake writers drained and rollback versions compatible before writes resume. Same service-only RPC, trusted-owner definer and invoker protected-write guard; no runtime role/grant expansion. Preserve0162/246. No apply authority from this manifest."
+      },
+      "published_source": "69672ea123120b6c85445a74447935cef45eeacc",
+      "reason": "Actual628 setup rejected known read-only0216 projection. Exact read getter+helper source/owner/STABLE/path/ACL checks preserve unknown-delegate refusal; no grants or frozen-source changes.",
+      "DB_proof": "UNRUN new SQL hash; fresh existing CI required.628 failure preserved."
     }
   }
 }
