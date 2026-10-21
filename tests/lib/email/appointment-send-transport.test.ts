@@ -14,7 +14,7 @@ const KNOWN_FAKE_MODES: FakeResendMode[] = [
   "failonce",
   "hold",
 ];
-import { sendCancellationEmail, sendEmailSafely } from "@/lib/email/send-appointment";
+import { claimEmailSend, logEmailFailure, recordEmailAttempt, recordEmailResult, sendCancellationEmail, sendEmailSafely } from "@/lib/email/send-appointment";
 
 // ===========================================================================
 // RESCHEDULE-E2E-01 — the appointment send path resolves a FAKEABLE transport.
@@ -34,6 +34,9 @@ import { sendCancellationEmail, sendEmailSafely } from "@/lib/email/send-appoint
 // stubbed is the server-only marker the fake itself reads. A mock of
 // `@/lib/email/client` could pass while the real path reached a different
 // transport, which is exactly how the bypass survived.
+
+const privacyAlerts = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: async (input: Record<string, unknown>) => { privacyAlerts.push(input); } }));
 
 const BASE = { subject: "s", html: "<p>h</p>", text: "t" };
 
@@ -209,5 +212,65 @@ describe("MSG-004 cancellation transport result is observable", () => {
   it.each([["client@harness.local", true], ["reject+cancel@harness.local", false], ["throw+cancel@harness.local", false]] as const)("returns the fake transport outcome for %s", async (to, ok) => {
     vi.stubEnv("HONE_E2E_FAKE_RESEND", "1");
     expect(await cancellation(to)).toMatchObject({ ok });
+  });
+});
+
+
+describe("MSG-007 email failure logs have a closed payload", () => {
+  const APPOINTMENT_ID = "11111111-1111-4111-8111-111111111111";
+  const PRIVATE = "PRIVATE patient@example.invalid +16045550199 https://example.invalid/intake/SECRET_TOKEN private clinical note";
+  it.each(["attempt", "claim", "result"] as const)("%s RPC failure preserves behavior without exporting IDs or error content", async (operation) => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const rpc = vi.fn(async () => ({ data: null, error: new Error(PRIVATE) }));
+    const admin = { rpc } as unknown as Parameters<typeof claimEmailSend>[0];
+    try {
+      if (operation === "claim") expect(await claimEmailSend(admin, APPOINTMENT_ID, "reminder_24h")).toBe(false);
+      else if (operation === "attempt") await recordEmailAttempt(admin, APPOINTMENT_ID, "reminder_24h", false);
+      else await recordEmailResult(admin, APPOINTMENT_ID, "reminder_24h", false);
+      expect(rpc).toHaveBeenCalledTimes(1);
+      expect(rpc).toHaveBeenCalledWith(
+        operation === "attempt" ? "record_email_attempt" : operation === "claim" ? "claim_email_send" : "record_email_result",
+        { p_appointment_id: APPOINTMENT_ID, p_email_type: "reminder_24h", ...(operation === "claim" ? {} : { p_success: false }) },
+      );
+      const output = JSON.stringify(log.mock.calls);
+      expect(output).toContain("reminder_24h");
+      expect(output).not.toContain(APPOINTMENT_ID);
+      for (const privatePart of ["PRIVATE", "patient@example.invalid", "+16045550199", "SECRET_TOKEN", "private clinical note"]) expect(output).not.toContain(privatePart);
+    } finally { log.mockRestore(); }
+  });
+  it("final failure keeps the operator event and attempt count without raw provider text", async () => {
+    privacyAlerts.length = 0;
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      logEmailFailure({ appointmentId: APPOINTMENT_ID, emailType: "reminder_24h", error: PRIVATE, retryable: true, attemptNumber: 3 });
+      await vi.waitFor(() => expect(privacyAlerts).toHaveLength(1));
+      const output = JSON.stringify(log.mock.calls);
+      expect(output).toContain("email_send_failed");
+      expect(output).not.toContain(APPOINTMENT_ID);
+      expect(output).not.toContain("PRIVATE");
+      expect(JSON.stringify(privacyAlerts)).not.toContain("PRIVATE");
+      expect(privacyAlerts[0]).toMatchObject({ event: "email_send_gave_up", appointmentId: APPOINTMENT_ID, safeDetails: { attempt_number: 3, email_type: "reminder_24h" } });
+    } finally { log.mockRestore(); }
+  });
+  it("a lower retryable attempt remains log-only", async () => {
+    privacyAlerts.length = 0;
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      logEmailFailure({ appointmentId: APPOINTMENT_ID, emailType: "reminder_2h", error: PRIVATE, retryable: true, attemptNumber: 2 });
+      await Promise.resolve();
+      expect(privacyAlerts).toEqual([]);
+      expect(JSON.stringify(log.mock.calls)).toContain("reminder_2h");
+      expect(JSON.stringify(log.mock.calls)).not.toContain("PRIVATE");
+    } finally { log.mockRestore(); }
+  });
+  it("unexpected runtime type/count inputs cannot smuggle private values into diagnostic fields", async () => {
+    privacyAlerts.length = 0;
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      logEmailFailure({ appointmentId: APPOINTMENT_ID, emailType: PRIVATE as "reminder_24h", error: PRIVATE, retryable: false, attemptNumber: 16045550199 });
+      await vi.waitFor(() => expect(privacyAlerts).toHaveLength(1));
+      expect(JSON.stringify([log.mock.calls, privacyAlerts[0]?.safeDetails, privacyAlerts[0]?.message])).not.toMatch(/PRIVATE|patient@example|16045550199|SECRET_TOKEN/);
+      expect(privacyAlerts[0]).toMatchObject({ safeDetails: { email_type: "unknown", attempt_number: null } });
+    } finally { log.mockRestore(); }
   });
 });
