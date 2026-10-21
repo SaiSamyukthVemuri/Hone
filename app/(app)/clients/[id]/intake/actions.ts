@@ -201,7 +201,6 @@ export async function markIntakeReviewedAction(formData: FormData): Promise<Revi
   if (error) {
     logIntakeActionFailure("intake_review_update_failed", {
       code: (error as { code?: string }).code,
-      message: error.message,
     });
     return { ok: false, error: REVIEW_DB_FAILURE };
   }
