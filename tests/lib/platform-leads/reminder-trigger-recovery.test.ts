@@ -1,6 +1,7 @@
 import { abortableRpc } from "./helpers/abortable-rpc";
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import ts from "typescript";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { IdempotentEmailTransport } from "@/lib/email/new-client-waitlist-send";
 
@@ -91,26 +92,71 @@ describe("recoverLeadAlertsOnReminderTrigger", () => {
   });
 });
 
+function reminderGetTry(source: string) {
+  const file = ts.createSourceFile("route.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const get = file.statements.filter(ts.isFunctionDeclaration).find((node) => node.name?.text === "GET");
+  expect(get?.body).toBeDefined();
+  const reminderTry = get!.body!.statements.find(ts.isTryStatement);
+  expect(reminderTry?.catchClause).toBeDefined();
+  return { file, get: get!, reminderTry: reminderTry! };
+}
+
+function assertReminderRecoveryWiring(source: string) {
+  const { file, get, reminderTry } = reminderGetTry(source);
+  const catchClause = reminderTry.catchClause!;
+  const catchAt = catchClause.getStart(file);
+  const catchEnd = catchClause.end;
+  const heartbeat = source.indexOf("await recordReminderRunSuccess(", reminderTry.tryBlock.getStart(file));
+  expect(heartbeat).toBeGreaterThan(reminderTry.tryBlock.getStart(file));
+  expect(heartbeat).toBeLessThan(catchAt);
+  const getAt = get.getStart(file);
+  const calls = [...source.slice(getAt, get.end).matchAll(/await runLeadAlertRecovery\(\)/g)].map((m) => getAt + m.index!);
+  expect(calls).toHaveLength(3);
+  const partialAt = source.indexOf('if (batch.kind !== "complete" || batch.coverageUnconfirmed)', reminderTry.tryBlock.getStart(file));
+  expect(partialAt).toBeGreaterThan(reminderTry.tryBlock.getStart(file));
+  expect(calls[0]).toBeGreaterThan(partialAt);
+  expect(calls[0]).toBeLessThan(heartbeat);
+  expect(source.slice(partialAt, calls[0])).not.toContain("recordReminderRunSuccess(");
+  expect(source.slice(calls[0], heartbeat)).toContain('return NextResponse.json({ ok: false, error: "cron_failed", lead_alerts }, { status: 500 });');
+  expect(calls[1]).toBeGreaterThan(heartbeat);
+  expect(calls[1]).toBeLessThan(catchAt);
+  const failureAlert = source.indexOf('event: "cron_route_failed"', catchAt);
+  expect(failureAlert).toBeGreaterThan(catchAt);
+  expect(failureAlert).toBeLessThan(catchEnd);
+  const diagnosticTry = catchClause.block.statements.find(ts.isTryStatement);
+  expect(diagnosticTry?.catchClause).toBeDefined();
+  expect(calls[2]).toBeGreaterThan(diagnosticTry!.end);
+  expect(calls[2]).toBeGreaterThan(failureAlert);
+  expect(calls[2]).toBeLessThan(catchEnd);
+  // Keep the failure envelope and existing single-worker authority checks.
+  expect(source.slice(calls[2], catchEnd)).toMatch(/\{ ok: false, error: "cron_failed", lead_alerts \},\s*\{ status: 500 \}/);
+  expect(source.match(/recoverLeadAlertsOnReminderTrigger\(/g)).toHaveLength(1);
+}
+
 describe("wiring in the reminders route (source guard)", () => {
   const SRC = readFileSync("app/api/cron/appointment-reminders/route.ts", "utf8");
 
   it("runs AFTER every reminder pass and the heartbeat on success, and AFTER cron_route_failed on failure (Codex P2 4254097611)", () => {
-    const heartbeat = SRC.indexOf("await recordReminderRunSuccess(");
-    const catchAt = SRC.indexOf("} catch (err) {", heartbeat);
-    const calls = [...SRC.matchAll(/await runLeadAlertRecovery\(\)/g)].map((m) => m.index!);
-    expect(calls).toHaveLength(3);
-    const partialAt = SRC.indexOf('if (batch.kind !== "complete" || batch.coverageUnconfirmed)');
-    expect(calls[0]).toBeGreaterThan(partialAt);
-    expect(calls[0]).toBeLessThan(heartbeat);
-    expect(SRC.slice(partialAt, calls[0])).not.toContain("recordReminderRunSuccess(");
-    expect(SRC.slice(calls[0], heartbeat)).toContain('return NextResponse.json({ ok: false, error: "cron_failed", lead_alerts }, { status: 500 });');
-    expect(calls[1]).toBeGreaterThan(heartbeat);
-    expect(calls[1]).toBeLessThan(catchAt);
-    const failureAlert = SRC.indexOf('event: "cron_route_failed"');
-    expect(calls[2]).toBeGreaterThan(failureAlert);
-    // The reminders' failure answer is unchanged: still a 500.
-    expect(SRC.slice(calls[2])).toMatch(/\{ ok: false, error: "cron_failed", lead_alerts \},\s*\{ status: 500 \}/);
-    expect(SRC.match(/recoverLeadAlertsOnReminderTrigger\(/g)).toHaveLength(1);
+    assertReminderRecoveryWiring(SRC);
+  });
+
+  it("accepts named and bindingless GET catches without confusing the nested diagnostic catch", () => {
+    const { file, reminderTry } = reminderGetTry(SRC);
+    const catchAt = reminderTry.catchClause!.getStart(file);
+    expect(SRC.slice(catchAt, catchAt + 5)).toBe("catch");
+    const named = SRC.slice(0, catchAt) + "catch (ignored)" + SRC.slice(catchAt + 5);
+    assertReminderRecoveryWiring(named);
+  });
+
+  it("rejects removal of recovery from the GET failure catch", () => {
+    const { file, reminderTry } = reminderGetTry(SRC);
+    const clause = reminderTry.catchClause!;
+    const start = clause.getStart(file);
+    const failure = SRC.slice(start, clause.end);
+    expect(failure.match(/await runLeadAlertRecovery\(\)/g)).toHaveLength(1);
+    const removed = failure.replace("await runLeadAlertRecovery()", '{ ran: false, reason: "negative_control" }');
+    const mutant = SRC.slice(0, start) + removed + SRC.slice(clause.end);
+    expect(() => assertReminderRecoveryWiring(mutant)).toThrow();
   });
 
   it("a lead-alert problem is an ops alert and a response field, never a failed reminders run", () => {
