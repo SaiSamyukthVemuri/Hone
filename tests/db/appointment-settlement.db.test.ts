@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { Pool } from "pg";
+import { Pool, type PoolClient, type QueryResult } from "pg";
+import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import {
   adminQuery,
@@ -1719,4 +1720,256 @@ describe("0239 — bound signed payment event command", () => {
     expect(await readCumulative(p)).toEqual(before);
   });
 
+});
+
+
+// 0249 SOURCE ONLY until the normal isolated/serial DB lane or an explicit
+// target+slot grant executes it. This temporarily replaces ONE global function:
+// never run it on a shared preservation target with an active app/other writer.
+// No SDK/provider call or migration-history write occurs in either topology.
+describe("0249 finite old-body barrier, after fence COMMIT", () => {
+  let targetClean = true;
+  const signature = "public.claim_session_payment_charge_attempt(uuid,uuid,text)";
+  const stateSql = `select pg_get_functiondef(oid) as definition, prosrc as body,
+    pg_get_userbyid(proowner) as owner, proacl::text as acl, proconfig, prosecdef,
+    provolatile from pg_proc where oid=$1::regprocedure`;
+  type ClaimResult = { ok: true; value: QueryResult } | { ok: false; error: unknown };
+  type FunctionState = { definition: string; body: string; owner: string; acl: string;
+    proconfig: string[]; prosecdef: boolean; provolatile: string };
+  const extractFunction = (sql: string) => {
+    const start = sql.indexOf("create or replace function public.claim_session_payment_charge_attempt(");
+    const end = sql.indexOf("$$;", sql.indexOf("as $$", start)) + 3;
+    if (start < 0 || end < start) throw new Error("Missing exact claim function source");
+    return sql.slice(start, end);
+  };
+  const oldDefinition = extractFunction(readFileSync("supabase/migrations/0187_appointment_settlement.sql", "utf8"));
+  const finalSource = extractFunction(readFileSync("supabase/migrations/0249_session_payment_claim_admission_fence.sql", "utf8"));
+  const finalBody = finalSource.slice(finalSource.indexOf("as $$") + 5, finalSource.lastIndexOf("$$;"));
+
+  for (const drainBeforeV2 of [false, true]) {
+    it(drainBeforeV2
+      ? "ends and accounts for the old transaction BEFORE disjoint fresh v2 admission"
+      : "COMMIT T alone leaves an old invocation able to read a later v2 row", async () => {
+      if (!targetClean) throw new Error("Prior cutover cleanup unverified: target remains held");
+      const pool = new Pool({ connectionString: resolveLocalDbUrl(), max: 2 });
+      let freshPool: Pool | undefined;
+      let holder: PoolClient | undefined;
+      let worker: PoolClient | undefined;
+      let fresh: PoolClient | undefined;
+      let initial: FunctionState | undefined;
+      let ownsSessionHold = false;
+      let holderPrepared = false;
+      let workerPrepared = false;
+      let holderDestroyed = false;
+      let workerDestroyed = false;
+      let freshDestroyed = false;
+      let workerDone = false;
+      let work: Promise<ClaimResult> | undefined;
+      let cleanupFailed = false;
+      const failures: unknown[] = [];
+      const observeFunction = async () => (await adminQuery(stateSql, [signature])).rows[0] as FunctionState;
+      const capture = async (operation: () => Promise<unknown>) => {
+        try { await operation(); } catch (error) { cleanupFailed = true; failures.push(error); }
+      };
+      let key: string | undefined;
+      let workerIdentity: { pid: number; backend_start: string } | undefined;
+      try {
+        initial = await observeFunction();
+        expect(initial.body).toBe(finalBody);
+        expect(initial).toMatchObject({ owner: "postgres", prosecdef: true,
+          proconfig: ["search_path=pg_catalog, pg_temp"], provolatile: "v" });
+        const main = await scenario({ attempt: "ready" });
+        const warm = await scenario({ attempt: "ready" });
+        const disjoint = await scenario({ attempt: "ready" });
+        const idFor = async (studioId: string) => {
+          const owned = await adminQuery("select id from public.payment_charge_attempts where studio_id=$1", [studioId]);
+          expect(owned.rows).toHaveLength(1);
+          return owned.rows[0].id as string;
+        };
+        const mainId = await idFor(main.studioId);
+        const warmId = await idFor(warm.studioId);
+        const disjointId = await idFor(disjoint.studioId);
+        await adminQuery("update public.payment_charge_attempts set status='blocked' where id=$1", [warmId]);
+        const fullMain = async () => (await adminQuery(
+          "select to_jsonb(a) as row from public.payment_charge_attempts a where id=$1", [mainId],
+        )).rows[0].row;
+        const readyBefore = await fullMain();
+        key = (await adminQuery("select public.appointment_settlement_lock_key($1)::text as key", [main.appointmentId])).rows[0].key as string;
+
+        // Install ONLY frozen0187's function definition, NOT its migration or
+        // ACLs/history. All current ACL/owner/path metadata must be restored.
+        await adminQuery(oldDefinition);
+        holder = await pool.connect();
+        worker = await pool.connect();
+        for (const c of [holder, worker]) {
+          await c.query("set statement_timeout='15s'");
+          await c.query("set lock_timeout='5s'");
+        }
+        const identitySql = "select pid,backend_start::text as backend_start from pg_stat_activity where pid=pg_backend_pid()";
+        const holderIdentity = (await holder.query(identitySql)).rows[0] as { pid: number; backend_start: string };
+        workerIdentity = (await worker.query(identitySql)).rows[0] as { pid: number; backend_start: string };
+        expect(workerIdentity.pid).not.toBe(holderIdentity.pid);
+        await holder.query("prepare claim_cutover_probe(uuid,uuid,text) as select *, updated_at::text as raw_claimed_at from public.claim_session_payment_charge_attempt($1,$2,$3)");
+        holderPrepared = true;
+        const execute = (id: string, actor: string, protocol: "v1" | "v2:create") =>
+          // All values are seeded UUIDs and closed literals, not user input.
+          `execute claim_cutover_probe('${id}','${actor}','hone:session_payment:${id}:${protocol}')`;
+        expect((await holder.query(execute(warmId, warm.practitionerId, "v1"))).rows[0].result).toBe("not_ready");
+        expect((await holder.query("select count(*)::int as n from pg_locks where pid=pg_backend_pid() and locktype='advisory'")).rows[0].n).toBe(0);
+        expect((await holder.query("select pg_try_advisory_lock($1::bigint) as locked", [key])).rows[0].locked).toBe(true);
+        ownsSessionHold = true;
+        await worker.query("begin isolation level read committed");
+        await worker.query("set local role service_role");
+        // Lock wait is intentionally longer than the bounded observer poll.
+        await worker.query("set local lock_timeout='12s'");
+        await worker.query("prepare claim_cutover_probe(uuid,uuid,text) as select *, updated_at::text as raw_claimed_at from public.claim_session_payment_charge_attempt($1,$2,$3)");
+        workerPrepared = true;
+        work = worker.query(execute(mainId, main.practitionerId, "v1")).then(
+          value => { workerDone = true; return { ok: true, value } as const; },
+          error => { workerDone = true; return { ok: false, error } as const; },
+        );
+        const waitingSql = `select exists (
+          select 1 from pg_locks held join pg_locks waiting
+            on waiting.locktype=held.locktype and waiting.database=held.database
+           and waiting.classid=held.classid and waiting.objid=held.objid
+           and waiting.objsubid=held.objsubid and waiting.mode=held.mode
+          where held.pid=$1 and held.locktype='advisory' and held.granted
+            and waiting.pid=$2 and not waiting.granted
+            and $1=any(pg_blocking_pids($2))
+        ) as waiting`;
+        const waitDeadline = Date.now() + 5_000;
+        let observedWait = false;
+        while (Date.now() < waitDeadline && !workerDone) {
+          observedWait = (await adminQuery(waitingSql, [holderIdentity.pid, workerIdentity.pid])).rows[0].waiting;
+          if (observedWait) break;
+          await new Promise(resolve => setTimeout(resolve, 25));
+        }
+        expect(observedWait, "exact worker advisory wait on THIS holder/session key").toBe(true);
+        expect(workerDone).toBe(false);
+
+        // SESSION lock survives this COMMIT. Do NOT claim v2 before its ACK T.
+        await holder.query("begin isolation level read committed");
+        await holder.query(initial.definition);
+        await holder.query("commit");
+        const t = (await holder.query("select clock_timestamp()::text as t")).rows[0].t as string;
+        expect(await observeFunction()).toEqual(initial);
+        expect((await adminQuery(waitingSql, [holderIdentity.pid, workerIdentity.pid])).rows[0].waiting).toBe(true);
+        await holder.query("begin isolation level read committed");
+        await holder.query("set local role service_role");
+        // An old body ALSO accepts freshv2, so v2 success ALONE would not prove
+        // invalidation. SAME warm prepared connection MUST refuse legacy first.
+        expect((await holder.query(execute(mainId, main.practitionerId, "v1"))).rows[0].result).toBe("not_ready");
+        await holder.query("commit");
+        expect(await fullMain()).toEqual(readyBefore);
+
+        let v2BeforeOld: Record<string, unknown> | undefined;
+        if (!drainBeforeV2) {
+          await holder.query("begin isolation level read committed");
+          await holder.query("set local role service_role");
+          const won = (await holder.query(execute(mainId, main.practitionerId, "v2:create"))).rows[0];
+          expect(won.result).toBe("claimed");
+          await holder.query("commit"); // U is AFTER acknowledged T.
+          v2BeforeOld = await fullMain();
+          expect(v2BeforeOld).toMatchObject({ status: "pending_stripe",
+            stripe_idempotency_key: `hone:session_payment:${mainId}:v2:create`, stripe_payment_intent_id: null });
+          expect((await adminQuery(waitingSql, [holderIdentity.pid, workerIdentity.pid])).rows[0].waiting).toBe(true);
+        }
+        expect(workerDone).toBe(false);
+        expect((await holder.query("select pg_advisory_unlock($1::bigint) as unlocked", [key])).rows[0].unlocked).toBe(true);
+        ownsSessionHold = false;
+        const old = await work;
+        if (!old.ok) throw old.error;
+        if (!drainBeforeV2) {
+          expect(old.value.rows[0]).toMatchObject({ result: "already_pending",
+            stripe_idempotency_key: `hone:session_payment:${mainId}:v2:create`, stripe_payment_intent_id: null });
+          expect(await fullMain()).toEqual(v2BeforeOld);
+        } else {
+          expect(old.value.rows[0]).toMatchObject({ result: "claimed",
+            stripe_idempotency_key: `hone:session_payment:${mainId}:v1` });
+        }
+        // Explicitly account/abort this raw SQL test caller BEFORE any later
+        // new grant. No HTTP reply/JS/SDK cohort is modeled or declared drained.
+        await worker.query("rollback");
+        if (drainBeforeV2) expect(await fullMain()).toEqual(readyBefore);
+        await worker.query("begin isolation level read committed");
+        await worker.query("set local role service_role");
+        const workerNow = (await worker.query(execute(mainId, main.practitionerId, "v1"))).rows[0];
+        expect(workerNow.result).toBe("not_ready");
+        await worker.query("rollback");
+
+        // A genuinely new backend is created AFTER T; do not relabel an old
+        // pooled backend as fresh. All fresh grants use a disjoint fixture.
+        freshPool = new Pool({ connectionString: resolveLocalDbUrl(), max: 1 });
+        fresh = await freshPool.connect();
+        await fresh.query("set statement_timeout='15s'");
+        const freshIdentity = (await fresh.query(`select pid,backend_start > $1::timestamptz as after_t
+          from pg_stat_activity where pid=pg_backend_pid()`, [t])).rows[0];
+        expect(freshIdentity.after_t).toBe(true);
+        expect([holderIdentity.pid, workerIdentity.pid]).not.toContain(freshIdentity.pid);
+        await fresh.query("begin isolation level read committed");
+        await fresh.query("set local role service_role");
+        const freshCall = "select * from public.claim_session_payment_charge_attempt($1,$2,$3)";
+        expect((await fresh.query(freshCall, [disjointId, disjoint.practitionerId, `hone:session_payment:${disjointId}:v1`])).rows[0].result).toBe("not_ready");
+        expect((await fresh.query(freshCall, [disjointId, disjoint.practitionerId, `hone:session_payment:${disjointId}:v2:create`])).rows[0].result).toBe("claimed");
+        await fresh.query("rollback");
+      } catch (error) { failures.push(error); }
+      finally {
+        // Never wait for the worker while retaining this run's session lock.
+        if (holder) {
+          await capture(() => holder!.query("rollback"));
+          if (ownsSessionHold && key) {
+            try {
+              const released = await holder.query("select pg_advisory_unlock($1::bigint) as unlocked", [key]);
+              if (released.rows[0].unlocked !== true) throw new Error("Owned session advisory hold release unverified");
+              ownsSessionHold = false;
+            } catch (error) {
+              cleanupFailed = true; failures.push(error);
+              holder.release(true); holderDestroyed = true;
+            }
+          }
+        }
+        if (work) await capture(async () => {
+          const outcome = await work!;
+          if (!outcome.ok) throw outcome.error;
+        });
+        if (worker && !workerDestroyed) {
+          try { await worker.query("rollback"); }
+          catch (error) { cleanupFailed = true; failures.push(error); worker.release(true); workerDestroyed = true; }
+        }
+        if (fresh) {
+          try { await fresh.query("rollback"); }
+          catch (error) { cleanupFailed = true; failures.push(error); fresh.release(true); freshDestroyed = true; }
+        }
+        if (workerIdentity) await capture(async () => {
+          const ended = await adminQuery(`select not exists (select 1 from pg_stat_activity
+            where pid=$1 and backend_start=$2::timestamptz and xact_start is not null) as ended`,
+          [workerIdentity!.pid, workerIdentity!.backend_start]);
+          expect(ended.rows[0].ended, "old transaction must end before restoration").toBe(true);
+        });
+        if (holder && !holderDestroyed) {
+          await capture(async () => {
+            expect((await holder!.query("select count(*)::int as n from pg_locks where pid=pg_backend_pid() and locktype='advisory'")).rows[0].n).toBe(0);
+          });
+          if (holderPrepared) await capture(() => holder!.query("deallocate claim_cutover_probe"));
+          // Any cleanup uncertainty destroys ONLY this borrowed connection.
+          holder.release(cleanupFailed); holderDestroyed = true;
+        }
+        if (worker && !workerDestroyed) {
+          if (workerPrepared) await capture(() => worker!.query("deallocate claim_cutover_probe"));
+          worker.release(cleanupFailed); workerDestroyed = true;
+        }
+        if (fresh && !freshDestroyed) { fresh.release(cleanupFailed); freshDestroyed = true; }
+        // Restore captured CURRENT249 body/owner/path/ACL, never historical0187
+        // or an invented SQL/history row. Every error remains an actual failure.
+        if (initial) await capture(async () => {
+          await adminQuery(initial!.definition);
+          expect(await observeFunction()).toEqual(initial);
+        });
+        await capture(() => pool.end());
+        if (freshPool) await capture(() => freshPool!.end());
+        targetClean = !cleanupFailed;
+      }
+      if (failures.length) throw new AggregateError(failures, "0249 cutover proof/cleanup failed; preserve all causes");
+    }, 60_000);
+  }
 });
