@@ -170,6 +170,38 @@ export async function markIntakeReviewedAction(formData: FormData): Promise<Revi
 
   const supabase = await createClient();
 
+  // 0246 requires every serving/rollback reader to decode known provenance
+  // or hold its writes. NULL is the explicit legacy case; absent/malformed
+  // non-NULL provenance must never become a reviewed clinical record here.
+  // This scoped read is NOT authorization for the later UPDATE. Its complete
+  // atomic tenant/client/submission/actor predicates remain below. The exact
+  // 0246 immutable-snapshot trigger prevents a runtime writer from changing
+  // this catalogue between this read and that UPDATE.
+  try {
+    const { data: intake, error: catalogueError } = await supabase
+      .from("client_intake_forms")
+      .select("id, questionnaire_snapshot")
+      .eq("id", intakeId)
+      .eq("studio_id", studio.id)
+      .eq("client_id", clientId)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (catalogueError) {
+      logIntakeActionFailure("intake_review_catalogue_read_failed", {
+        code: (catalogueError as { code?: string }).code,
+      });
+      return { ok: false, error: REVIEW_NOT_PERMITTED };
+    }
+    if (!intake || intake.id !== intakeId) return { ok: false, error: REVIEW_NOT_PERMITTED };
+    if (questionnaireForRow(intake.questionnaire_snapshot).kind === "invalid") {
+      logIntakeActionFailure("intake_review_catalogue_unavailable", { code: "catalogue_unavailable" });
+      return { ok: false, error: QUESTIONNAIRE_UNAVAILABLE };
+    }
+  } catch {
+    logIntakeActionFailure("intake_review_catalogue_read_failed", { code: "read_unavailable" });
+    return { ok: false, error: REVIEW_NOT_PERMITTED };
+  }
+
   // THE single authority. Every predicate is in the statement:
   //   id          : the intake being reviewed
   //   studio_id   , server-derived tenancy (RLS also applies)

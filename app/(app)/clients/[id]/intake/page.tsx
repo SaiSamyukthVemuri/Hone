@@ -470,6 +470,7 @@ export default async function ClientIntakePage({
         clientId={id}
         initialNotes={intake.practitioner_notes}
         status={intake.status}
+        reviewAvailable={catalogue.kind !== "invalid"}
         reviewedAtIso={intake.reviewed_at}
         reviewedByName={
           reviewer ? reviewer.display_name || reviewer.email : null
