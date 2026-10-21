@@ -204,3 +204,19 @@ describe("SEC-002 independently authorized privileged loaders", () => {
     expect(source).toMatch(/await requirePlatformAdmin\(\);\s*const admin = createAdminClient\(\);/);
   });
 });
+
+// A 200 empty Next prefetch tree does not establish that the page ran.
+// Preserve full-content positive canaries before the four denied identities.
+describe("SEC-002 browser request contract", () => {
+  it("uses full RSC requests and proves protected content before denial checks", () => {
+    const spec = readFileSync(path.join(ROOT, "e2e/lead-alert-operator.spec.ts"), "utf8");
+    const scope = spec.slice(spec.indexOf('test.describe("SEC-002'));
+    expect(scope).toContain('headers: rsc ? { RSC: "1" } : {}');
+    expect(scope).not.toContain('"Next-Router-Prefetch": "1"');
+    expect(scope).toContain('test.describe.configure({ mode: "serial" })');
+    expect(scope.indexOf('test("current platform operator proves full')).toBeLessThan(scope.indexOf('for (const role of identities)'));
+    expect(scope).toContain('for (const canary of expected) expect(body).toContain(canary)');
+    expect(scope).toContain('expect(body).not.toContain(studio.ownerEmail)');
+    expect(scope).toContain('expect(refused,');
+  });
+});
