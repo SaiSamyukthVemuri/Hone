@@ -21,6 +21,7 @@ function codeOnly(src: string): string {
     .join("\n");
 }
 const HELPER_CODE = codeOnly(HELPER);
+const BOUND_SQL = readFileSync(path.resolve(__dirname, "../../../supabase/migrations/0239_bound_payment_event_reconciliation.sql"), "utf8");
 
 const ROUTE_PATH = path.resolve(
   __dirname,
@@ -237,7 +238,7 @@ describe("resolved-row livemode guard — symmetric across ALL mutating handlers
       expect(body).toMatch(/livemodeRowMismatch:\s*true/);
       // The guard sits BEFORE the row-mutating UPDATE (no mutation on mismatch).
       const guard = body.indexOf("livemodeRowMismatch: true");
-      const update = body.indexOf(".update(");
+      const update = body.indexOf("reconcileBoundEvent(event, ctx, attempt)");
       expect(guard).toBeGreaterThan(-1);
       expect(update).toBeGreaterThan(-1);
       expect(guard).toBeLessThan(update);
@@ -248,7 +249,7 @@ describe("resolved-row livemode guard — symmetric across ALL mutating handlers
 describe("payment_intent.succeeded: status-conditional reconciliation", () => {
   it("idempotent on already-succeeded rows (no flip, may stamp missing charge id)", () => {
     expect(HELPER).toMatch(
-      /attempt\.status === "succeeded"[\s\S]{0,2000}alreadySucceeded:\s*true/,
+      /reconcileResult === "already_succeeded"[\s\S]{0,1000}alreadySucceeded:\s*true/,
     );
   });
 
@@ -269,10 +270,10 @@ describe("payment_intent.succeeded: status-conditional reconciliation", () => {
   // rather than being deleted: the shape is pinned in SQL, and the handler is
   // pinned to route through the command and to refuse on conflict.
   it("flips ready/pending_stripe to succeeded through the LOCKED command", () => {
-    expect(HELPER).toMatch(/rpc\(\s*\n?\s*"reconcile_card_payment_succeeded"/);
+    expect(HELPER).toMatch(/rpc\(\s*"reconcile_bound_payment_event"/);
     // And no longer writes the status itself.
     const succeededHandler = HELPER.slice(
-      HELPER.indexOf("reconcile_card_payment_succeeded"),
+      HELPER.indexOf("export async function handlePaymentIntentSucceeded"),
       HELPER.indexOf("payment_intent.payment_failed"),
     );
     expect(succeededHandler).not.toMatch(/\.update\(/);
@@ -325,14 +326,15 @@ describe("payment_intent.payment_failed: status-conditional reconciliation", () 
   });
 
   it("flips ready/pending_stripe to failed with sanitised code + message", () => {
-    expect(HELPER).toMatch(
-      /status:\s*"failed"[\s\S]{0,2000}failure_code:\s*code[\s\S]{0,2000}failure_message_safe:\s*safeMessage/,
-    );
+    expect(BOUND_SQL).toContain("set status='failed',failed_at=now()");
+    expect(BOUND_SQL).toContain("failure_code=left(p_object->>'failure_code',100)");
+    expect(BOUND_SQL).toContain("failure_message_safe=left(p_object->>'failure_message_safe',500)");
+    expect(HELPER).toContain("reconcileBoundEvent(event, ctx, attempt)");
   });
 
   it("sanitises the Stripe last_payment_error code + message", () => {
-    expect(HELPER).toMatch(/sanitizeFailureCode\(lastError\?\.code/);
-    expect(HELPER).toMatch(/sanitizeFailureMessage\(lastError\?\.message/);
+    expect(HELPER).toMatch(/sanitizeFailureCode\(pi\.last_payment_error\?\.code/);
+    expect(HELPER).toMatch(/sanitizeFailureMessage\(pi\.last_payment_error\?\.message/);
   });
 });
 
@@ -359,14 +361,14 @@ describe("charge.refunded: full vs partial discrimination", () => {
 describe("charge.refunded: full refund reconciliation paths", () => {
   it("idempotent on already-refunded rows (may stamp missing refund id)", () => {
     expect(HELPER).toMatch(
-      /attempt\.refund_status === "succeeded"[\s\S]{0,2000}alreadyRefunded:\s*true/,
+      /commandResult === "already_refunded"[\s\S]{0,300}alreadyRefunded:\s*true/,
     );
   });
 
   it("pending_stripe refund: flip to succeeded via conditional UPDATE", () => {
-    expect(HELPER).toMatch(
-      /refund_status === "pending_stripe"[\s\S]{0,2000}\.eq\("refund_status",\s*"pending_stripe"\)/,
-    );
+    expect(HELPER).toMatch(/refund_status === "pending_stripe"[\s\S]{0,1000}reconcileBoundEvent/);
+    expect(BOUND_SQL).toContain("elsif v_row.refund_status='succeeded' then v_result:='already_refunded'");
+    expect(BOUND_SQL).toContain("set refund_status='succeeded'");
   });
 
   it("out-of-band (null or failed) full refund: warning ops_alert charge_refunded_out_of_band_reconciled", () => {
@@ -376,9 +378,11 @@ describe("charge.refunded: full refund reconciliation paths", () => {
   });
 
   it("out-of-band UPDATE is scoped to null OR 'failed' refund_status (no concurrent race)", () => {
-    expect(HELPER).toMatch(
-      /\.or\("refund_status\.is\.null,refund_status\.eq\.failed"\)/,
-    );
+    // The bound command now holds the attempt lock across identity/state reads
+    // and writes; a discarded PostgREST filter cannot masquerade as authority.
+    expect(BOUND_SQL).toContain("where a.id=p_attempt_id for update");
+    expect(BOUND_SQL).toContain("v_row.stripe_refund_id<>v_refund");
+    expect(HELPER).not.toMatch(/\.update\(/);
   });
 });
 
