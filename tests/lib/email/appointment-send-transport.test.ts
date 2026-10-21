@@ -15,6 +15,8 @@ const KNOWN_FAKE_MODES: FakeResendMode[] = [
   "hold",
 ];
 import { claimEmailSend, logEmailFailure, recordEmailAttempt, recordEmailResult, sendCancellationEmail, sendEmailSafely } from "@/lib/email/send-appointment";
+import { createFakeResendTransport } from "@/lib/email/e2e-fake-resend";
+import { bindEmailOperationRequest, classifyEmailOperationObservation, retainEmailOperationObservation } from "@/lib/email/operation-state";
 
 // ===========================================================================
 // RESCHEDULE-E2E-01 — the appointment send path resolves a FAKEABLE transport.
@@ -272,5 +274,69 @@ describe("MSG-007 email failure logs have a closed payload", () => {
       expect(JSON.stringify([log.mock.calls, privacyAlerts[0]?.safeDetails, privacyAlerts[0]?.message])).not.toMatch(/PRIVATE|patient@example|16045550199|SECRET_TOKEN/);
       expect(privacyAlerts[0]).toMatchObject({ safeDetails: { email_type: "unknown", attempt_number: null } });
     } finally { log.mockRestore(); }
+  });
+});
+
+describe("0247 pure operation observations and request binding (not dispatch authority)", () => {
+  const payload = { from: "Hone <hello@hone.care>", to: "success+operation@harness.local", ...BASE };
+  const context = { providerAccount: "synthetic-account", providerKey: "opaque-synthetic-operation", purpose: "reminder_24h" as const };
+
+  it.each([null, {}, { data: { id: "id" } }, { error: false }])("holds malformed replies without acceptance: %j", (reply) => {
+    expect(classifyEmailOperationObservation({ kind: "reply", reply }).kind).toBe("unknown");
+  });
+  it.each([undefined, "", " ", "id\nPRIVATE", 3])("requires a valid provider id: %j", (id) => {
+    expect(classifyEmailOperationObservation({ kind: "reply", reply: { data: { id }, error: null } })).toEqual({ kind: "unknown", reason: "missing_id" });
+  });
+  it.each([
+    ["invalid_idempotent_request", 409, "payload_conflict"],
+    ["concurrent_idempotent_requests", 409, "inflight"],
+    ["invalid_idempotency_key", 400, "invalid_key"],
+    ["server_error", 503, "server_error"],
+  ])("holds %s separately and excludes raw private messages", (name, statusCode, reason) => {
+    const result = classifyEmailOperationObservation({ kind: "reply", reply: { data: null, error: { name, statusCode, message: "PRIVATE token patient@example.invalid" } } });
+    expect(result).toEqual({ kind: "unknown", reason });
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE|token|patient@/);
+  });
+  it("uses the existing fake for acceptance/refusal and observes an exception without retry", async () => {
+    vi.stubEnv("HONE_E2E_FAKE_RESEND", "1");
+    const fake = createFakeResendTransport();
+    const send = vi.spyOn(fake.emails, "send");
+    const accepted = classifyEmailOperationObservation({ kind: "reply", reply: await fake.emails.send(payload) });
+    expect(accepted).toEqual({ kind: "accepted", messageId: FAKE_MESSAGE_ID });
+    expect(classifyEmailOperationObservation({ kind: "reply", reply: await fake.emails.send({ ...payload, to: "reject+operation@harness.local" }) })).toEqual({ kind: "definite_refusal" });
+    let thrown: unknown;
+    try { await fake.emails.send({ ...payload, to: "throw+operation@harness.local" }); } catch (error) { thrown = error; }
+    expect(thrown).toBeInstanceOf(Error);
+    expect(classifyEmailOperationObservation({ kind: "transport" })).toEqual({ kind: "unknown", reason: "transport" });
+    expect(send).toHaveBeenCalledTimes(3); // one explicit call per scenario; no replay
+  });
+  it("freezes attachment bytes, omitted fields, tokenized content and provider context in memory only", () => {
+    const content = Buffer.from("PRIVATE original ICS");
+    const original = { ...payload, attachments: [{ filename: "appointment.ics", content }] };
+    const binding = bindEmailOperationRequest(original, context);
+    expect(binding.matches({ ...original }, { ...context })).toBe(true);
+    for (const changed of [
+      { ...original, html: "PRIVATE reminted-token" }, { ...original, text: "changed" },
+      { ...original, to: "other@harness.local" }, { ...original, from: "Other" },
+      { ...original, subject: "changed" }, { ...original, replyTo: "" },
+      { ...original, attachments: [] },
+    ]) expect(binding.matches(changed, context)).toBe(false);
+    expect(binding.matches(original, { ...context, providerKey: "rotated" })).toBe(false);
+    expect(binding.matches(original, { ...context, providerAccount: "different" })).toBe(false);
+    expect(binding.matches(original, { ...context, purpose: "reminder_2h" })).toBe(false);
+    content[0] = 0;
+    expect(binding.matches(original, context)).toBe(false);
+    expect(JSON.stringify(binding)).toBe("{}");
+  });
+  it("keeps unknown and positive original-operation observations monotonic", () => {
+    const unknown = classifyEmailOperationObservation({ kind: "timeout" });
+    const lateAccepted = { kind: "accepted" as const, messageId: FAKE_MESSAGE_ID };
+    const accepted = retainEmailOperationObservation(unknown, lateAccepted);
+    expect(accepted).toEqual(lateAccepted);
+    expect(retainEmailOperationObservation(accepted, { kind: "definite_refusal" })).toBe(accepted);
+    expect(retainEmailOperationObservation(unknown, { kind: "definite_refusal" })).toBe(unknown);
+    // This proves only the pure effect merge. Lease/projection isolation,
+    // immutable DB horizons and dispatch permission need the reviewed adapter
+    // and DB concurrency proof; this helper cannot settle or authorize them.
   });
 });
