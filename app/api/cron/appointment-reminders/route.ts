@@ -682,6 +682,7 @@ export async function GET(req: Request) {
   }
 
   const startedAt = Date.now();
+  let failureStage: "setup" | "scan" | "heartbeat" = "setup";
   try {
     const freshStats = (): EmailRunStats => ({ attempted: 0, succeeded: 0, failed: 0, skipped: 0, intakeCtaIncluded: 0 });
     const reminder_24h = freshStats();
@@ -692,6 +693,7 @@ export async function GET(req: Request) {
     const admin = createAdminClient();
     const appOrigin = getRequiredAppOrigin();
     const ledgerBudget = createLedgerBudget();
+    failureStage = "scan";
     const batch = await runReminderScanBatch({
       coordinator: createUpstashReminderScanCoordinator(),
       readPage: async (pass, page, signal) => {
@@ -749,6 +751,7 @@ export async function GET(req: Request) {
     // cadence is the spacing between invocations, so a slow or fast run can no
     // longer distort it. `previousInvokedAt` is filled in atomically by the
     // heartbeat merge from the value this write displaces.
+    failureStage = "heartbeat";
     await recordReminderRunSuccess({
       at: new Date().toISOString(),
       invokedAt: new Date(startedAt).toISOString(),
@@ -771,21 +774,23 @@ export async function GET(req: Request) {
       sms_reminder_2h,
       lead_alerts,
     });
-  } catch (err) {
-    // PR #153. Cron-route failure alert. The cron runs every few
-    // minutes; if it starts throwing, reminders silently stop. The
-    // 3-strike per-row attempt counter caps the blast radius once
-    // the scheduler resumes, but the operator needs to know now.
-    await recordOpsAlert({
-      severity: "critical",
-      event: "cron_route_failed",
-      message:
-        err instanceof Error ? err.message : String(err ?? "unknown error"),
-      route: "/api/cron/appointment-reminders",
-      safeDetails: {
-        duration_ms: Date.now() - startedAt,
-      },
-    });
+  } catch {
+    // Rejection values may contain private contents or hostile getters/proxies.
+    // Never inspect them. A failed diagnostic must not replace the route's 500.
+    try {
+      await recordOpsAlert({
+        severity: "critical",
+        event: "cron_route_failed",
+        message: "Reminder run failed. Check scheduler progress before retrying work.",
+        route: "/api/cron/appointment-reminders",
+        safeDetails: {
+          duration_ms: Date.now() - startedAt,
+          failure_stage: failureStage,
+          failure_category: failureStage === "setup" ? "setup_failed"
+            : failureStage === "heartbeat" ? "heartbeat_failed" : "scan_failed",
+        },
+      });
+    } catch { /* The original run remains failed if its diagnostic cannot be stored. */ }
     const lead_alerts = await runLeadAlertRecovery();
     return NextResponse.json(
       { ok: false, error: "cron_failed", lead_alerts },
