@@ -1,7 +1,9 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
+  useRef,
   useState,
   useTransition,
   type ChangeEvent,
@@ -17,6 +19,9 @@ import {
 } from "./actions";
 import { TREATMENT_NOTE_MAX_LENGTH } from "./note-constants";
 import { Button, buttonClasses } from "@/components/ui/button";
+import { createPhotoPreviewController, type PhotoPreviewState } from "@/lib/images/photo-preview-controller";
+import { useDialogKeyboard } from "@/components/use-dialog-keyboard";
+import { useReturnFocus } from "@/components/use-return-focus";
 import {
   validateTreatmentImageUpload,
 } from "@/lib/images/treatment-images";
@@ -231,18 +236,37 @@ export function TreatmentImagesManager({
 
   // In-app larger preview modal.
   const [modal, setModal] = useState<Row | null>(null);
-  const [modalUrl, setModalUrl] = useState<string | null>(null);
-  const [modalLoading, setModalLoading] = useState(false);
-  const [modalError, setModalError] = useState(false);
+  const [preview, setPreview] = useState<PhotoPreviewState | null>(null);
+  const previewOpener = useRef<HTMLElement | null>(null);
+  const { anchorRef: galleryFocusRef, arm: returnToGallery } = useReturnFocus<HTMLDivElement>(modal !== null);
+  const previewRequests = useRef<ReturnType<typeof createPhotoPreviewController> | null>(null);
+  if (!previewRequests.current) {
+    previewRequests.current = createPhotoPreviewController({
+      request: (imageId) => getTreatmentImageSignedUrlAction({ imageId }),
+      write: setPreview,
+    });
+  }
+  // Never render a URL/error/loading result under another image's metadata.
+  const currentPreview = preview?.imageId === modal?.id ? preview : null;
+  const modalUrl = currentPreview?.url ?? null;
+  const modalLoading = currentPreview?.status === "loading";
+  const modalError = currentPreview?.status === "error";
 
-  useEffect(() => {
-    if (!modal) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setModal(null);
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [modal]);
+  useEffect(() => () => previewRequests.current?.dispose(), []);
+
+  const closePreview = useCallback(() => {
+    // Label refresh can replace GridPhoto's opener. Use the existing settled-
+    // close handoff only then; ordinary close still restores the real opener.
+    if (previewOpener.current && !previewOpener.current.isConnected) returnToGallery();
+    previewRequests.current?.close();
+    setModal(null);
+  }, [returnToGallery]);
+
+  const { panelRef } = useDialogKeyboard<HTMLDivElement>({
+    open: modal !== null,
+    busy: false, // A read-only preview may always close, including during signing.
+    onClose: closePreview,
+  });
 
   function onPick(e: ChangeEvent<HTMLInputElement>) {
     setError(null);
@@ -339,18 +363,10 @@ export function TreatmentImagesManager({
   // Open the larger in-app preview. Lazily mints a FRESH signed URL via the
   // existing server action (which re-checks practitioner/studio ownership), so
   // the larger view works even if the grid's pre-signed URL has expired.
-  async function openPreview(img: Row) {
+  function openPreview(img: Row) {
+    previewOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setModal(img);
-    setModalUrl(null);
-    setModalError(false);
-    setModalLoading(true);
-    const res = await getTreatmentImageSignedUrlAction({ imageId: img.id });
-    setModalLoading(false);
-    if (!res.ok) {
-      setModalError(true);
-      return;
-    }
-    setModalUrl(res.url);
+    void previewRequests.current?.open(img.id);
   }
 
   async function onArchive(id: string) {
@@ -366,7 +382,7 @@ export function TreatmentImagesManager({
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div ref={galleryFocusRef} tabIndex={-1} role="region" aria-label="Treatment photos" className="flex flex-col gap-6">
       {/* Upload card: styled "Choose image" affordance over the native input. */}
       <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
@@ -657,10 +673,13 @@ export function TreatmentImagesManager({
           role="dialog"
           aria-modal="true"
           aria-label="Treatment photo preview"
-          onClick={() => setModal(null)}
+          onClick={closePreview}
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
         >
           <div
+            ref={panelRef}
+            data-testid="photo-preview-panel"
+            tabIndex={-1}
             onClick={(e) => e.stopPropagation()}
             className="flex max-h-full w-full max-w-2xl flex-col overflow-auto rounded-lg bg-white p-4 dark:bg-neutral-900"
           >
@@ -700,7 +719,7 @@ export function TreatmentImagesManager({
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => setModal(null)}
+                onClick={closePreview}
                 aria-label="Close preview"
                 className="shrink-0"
               >
@@ -713,9 +732,10 @@ export function TreatmentImagesManager({
               ) : modalUrl && !modalError ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
+                  key={`${modal.id}:${currentPreview?.generation}`}
                   src={modalUrl}
                   alt="Treatment photo"
-                  onError={() => setModalError(true)}
+                  onError={() => previewRequests.current?.onImageError(modal.id, currentPreview?.generation ?? -1)}
                   className="max-h-[70vh] w-auto rounded-md object-contain"
                 />
               ) : (
