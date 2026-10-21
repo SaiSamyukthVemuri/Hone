@@ -1,3 +1,4 @@
+import { safeLog } from "@/lib/logging/safe-log";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Client, Studio, SmsType } from "@/lib/types/database";
 import {
@@ -6,7 +7,6 @@ import {
   build2hReminderSms,
 } from "./templates";
 import {
-  maskedPhone,
   normalizePhoneForSms,
   outboundSmsFence,
   sendSmsSafely,
@@ -110,6 +110,29 @@ export type ReminderSmsResult =
 // Re-export for callers that import alongside the send helpers.
 export type { SmsType };
 
+// Closed diagnostic fields only: provider text, recipient details and provider
+// identifiers never enter the third-party console. RPC/result authority is unchanged.
+function smsTypeForLog(value: unknown): string {
+  return value === "confirmation" || value === "reminder_24h" || value === "reminder_2h" ? value : "unknown";
+}
+function smsAttemptForLog(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= 3 ? value : null;
+}
+const SMS_LOG_FAILURES = new Set([
+  "twilio_timeout", "twilio_network", "twilio_unreachable", "twilio_unreadable_success",
+  "twilio_not_configured", "twilio_missing_sender", "twilio_invalid_sender",
+  "sms_fenced_non_production", "sms_render_failed", "reminder_claim_unavailable",
+  "sms_send_unknown", "sms_send_exception",
+]);
+function smsFailureForLog(value: unknown): string {
+  if (typeof value !== "string") return "provider_or_transport";
+  if (value.startsWith("exception:")) return "sms_send_exception";
+  const ambiguous = value.endsWith(":outcome_unknown");
+  const tag = ambiguous ? value.slice(0, -":outcome_unknown".length) : value;
+  return SMS_LOG_FAILURES.has(tag) || /^twilio_http_[1-5][0-9]{2}$/.test(tag)
+    ? `${tag}${ambiguous ? ":outcome_unknown" : ""}` : "provider_or_transport";
+}
+
 // ---------------------------------------------------------------------------
 // Low-level claim/record wrappers
 // ---------------------------------------------------------------------------
@@ -124,12 +147,10 @@ export async function claimSmsSend(
     p_sms_type: smsType,
   });
   if (error) {
-    console.error(
+    safeLog.error(
       JSON.stringify({
         event: "claim_sms_send_failed",
-        appointmentId,
-        smsType,
-        error: String(error),
+        smsType: smsTypeForLog(smsType),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -156,13 +177,11 @@ export async function recordSmsResult(
     // and the next cron pass could attempt a duplicate. The 5-minute
     // claim window provides a partial backstop; this log is the
     // operator's signal that something is wrong with Postgres.
-    console.error(
+    safeLog.error(
       JSON.stringify({
         event: "record_sms_result_failed",
-        appointmentId,
-        smsType,
-        success,
-        error: String(error),
+        smsType: smsTypeForLog(smsType),
+        success: success === true,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -215,11 +234,13 @@ async function readUnsentReminderAttemptNumber(
       ? attempts
       : undefined;
   } catch {
-    console.error(JSON.stringify({
-      event: "sms_reminder_attempt_read_failed",
-      smsType,
-      timestamp: new Date().toISOString(),
-    }));
+    safeLog.error(
+      JSON.stringify({
+        event: "sms_reminder_attempt_read_failed",
+        smsType: smsTypeForLog(smsType),
+        timestamp: new Date().toISOString(),
+      }),
+    );
     return undefined;
   }
 }
@@ -235,14 +256,13 @@ export function logSmsFailure(opts: {
   // PR #153. Optional studio id surfaces on the ops alert.
   studioId?: string | null;
 }): void {
-  console.error(
+  safeLog.error(
     JSON.stringify({
       event: "sms_send_failed",
-      appointmentId: opts.appointmentId,
-      smsType: opts.smsType,
-      error: opts.error,
-      retryable: opts.retryable,
-      attemptNumber: opts.attemptNumber,
+      smsType: smsTypeForLog(opts.smsType),
+      error: smsFailureForLog(opts.error),
+      retryable: opts.retryable === true,
+      attemptNumber: smsAttemptForLog(opts.attemptNumber),
       timestamp: new Date().toISOString(),
     }),
   );
@@ -259,16 +279,16 @@ export function logSmsFailure(opts: {
         severity: "warning",
         event: "sms_send_failed",
         message: opts.resultRecordUnconfirmed
-          ? `SMS ${opts.smsType} failed; result recording was not confirmed. Check delivery accounting before taking action.`
-          : `SMS ${opts.smsType} gave up after ${opts.attemptNumber ?? "?"} attempts.`,
+          ? `SMS ${smsTypeForLog(opts.smsType)} failed; result recording was not confirmed. Check delivery accounting before taking action.`
+          : `SMS ${smsTypeForLog(opts.smsType)} gave up after ${smsAttemptForLog(opts.attemptNumber) ?? "?"} attempts.`,
         studioId: opts.studioId ?? null,
         appointmentId: opts.appointmentId,
         route: "lib/sms/send-appointment",
         safeDetails: {
-          sms_type: opts.smsType,
-          attempt_number: opts.attemptNumber ?? null,
-          retryable: opts.retryable,
-          provider_error: opts.error,
+          sms_type: smsTypeForLog(opts.smsType),
+          attempt_number: smsAttemptForLog(opts.attemptNumber),
+          retryable: opts.retryable === true,
+          provider_error: smsFailureForLog(opts.error),
         },
       });
     } catch {
@@ -709,13 +729,10 @@ async function sendReminder(
       }
     }
 
-    console.log(
+    safeLog.info(
       JSON.stringify({
         event: "sms_sent",
-        appointmentId: args.appointmentId,
-        smsType,
-        messageSid: result.messageSid,
-        toMasked: maskedPhone(gate.normalizedPhone),
+        smsType: smsTypeForLog(smsType),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -801,7 +818,7 @@ async function boundedLedgerStep<T>(
   budget?: LedgerBudget,
 ): Promise<T> {
   if (budget && budget.remainingMs <= 0) {
-    console.error(
+    safeLog.error(
       JSON.stringify({
         event: "sms_ledger_step_skipped",
         step,
@@ -818,7 +835,7 @@ async function boundedLedgerStep<T>(
   const expired = new Promise<T>((resolve) => {
     timer = setTimeout(() => {
       timedOut = true;
-      console.error(
+      safeLog.error(
         JSON.stringify({
           event: "sms_ledger_step_timed_out",
           step,
@@ -989,11 +1006,10 @@ async function sendTimeRouteFor(
     await new Promise((r) => setTimeout(r, ROUTE_READ_BACKOFF_MS[looks - 1] ?? 0));
   }
   if (!route.ok) {
-    console.error(
+    safeLog.error(
       JSON.stringify({
         event: "sms_route_refused",
-        appointmentId,
-        smsType,
+        smsType: smsTypeForLog(smsType),
         reason: route.reason,
         readiness: route.readiness ?? null,
         looks,
@@ -1145,9 +1161,8 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
         studioId: args.studio.id ?? null,
       });
     }
-  } catch (err) {
+  } catch {
     success = false;
-    const message = err instanceof Error ? err.message : String(err);
     outcome = {
       ok: false,
       error: "sms_send_exception",
@@ -1156,7 +1171,7 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
     logSmsFailure({
       appointmentId: args.appointmentId,
       smsType: args.smsType,
-      error: `exception:${message}`,
+      error: "sms_send_exception",
       retryable: true,
       // PR #155: stamp studio_id (see comment on the result-failure
       // branch above).
@@ -1173,16 +1188,12 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
   // Only after the authoritative record: the best-effort ledger settle.
   if (attempt) await settleLedgerRow(args.admin, attempt);
 
-  // Light, log-only side effect so the operator sees masked phone +
-  // outcome side by side in production logs. No PII.
+  // Log only the closed outcome/type, never provider or recipient identifiers.
   if (success && outcome.ok) {
-    console.log(
+    safeLog.info(
       JSON.stringify({
         event: "sms_sent",
-        appointmentId: args.appointmentId,
-        smsType: args.smsType,
-        messageSid: outcome.messageSid,
-        toMasked: maskedPhone(gate.normalizedPhone),
+        smsType: smsTypeForLog(args.smsType),
         timestamp: new Date().toISOString(),
       }),
     );
