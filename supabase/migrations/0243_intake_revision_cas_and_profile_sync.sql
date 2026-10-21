@@ -1,6 +1,9 @@
 -- CLN-001 / CLN-003. OPS allocation 2026-10-21: source only, not apply authority.
 -- Legacy revision 0 is a concurrency baseline, NOT a historical edit count.
 -- Existing 0015/0118/0162 triggers and terminal review rules remain intact.
+-- ADDITIVE ONLY: apply this schema before deploying CAS callers. Do NOT apply
+-- later0248 enforcement until callers/rollback artifacts and drain are verified.
+-- Old/direct writers still work here; no direct-write closure claim.
 begin;
 set local lock_timeout = '5s';
 
@@ -11,34 +14,14 @@ create function public.advance_intake_revision()
 returns trigger
 language plpgsql security invoker set search_path = ''
 as $$
-declare
-  v_writer_owner pg_catalog.oid;
 begin
-  if tg_op = 'UPDATE' and (
-    new.responses is distinct from old.responses
-    or new.current_step is distinct from old.current_step
-    or new.submitted_at is distinct from old.submitted_at
-    or (new.status is distinct from old.status
-      and (old.status = 'submitted' and new.status = 'reviewed') is not true)
-  ) then
-    -- Invoker context is load-bearing: only the existing trusted CAS owner
-    -- may perform protected writes. JWT claims, counters and caller settings
-    -- cannot turn an ordinary runtime UPDATE into the governed transaction.
-    select p.proowner into v_writer_owner
-      from pg_catalog.pg_proc p
-      where p.oid = pg_catalog.to_regprocedure(
-        'public.write_intake_revision(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.int8,pg_catalog.jsonb,pg_catalog.int4,pg_catalog.text,pg_catalog.jsonb)');
-    if v_writer_owner is null
-       or current_user is distinct from pg_catalog.pg_get_userbyid(v_writer_owner) then
-      raise exception 'Protected intake changes require the governed revision command.'
-        using errcode = 'insufficient_privilege';
-    end if;
-  end if;
   if tg_op = 'INSERT' then
     new.revision := 0;
   else
-    -- Ignore caller-supplied counters. This also invalidates stale editors on
-    -- notes/review/link writes without exempting any existing terminal guard.
+    -- Additive compatibility stage: legacy writes remain authorized by the
+    -- existing RLS/terminal guards and invalidate any earlier CAS revision.
+    -- This stage does NOT close blind direct-DML overwrites;0248 does that
+    -- only after serving/rollback CAS callers and old-writer drain are verified.
     new.revision := old.revision + 1;
   end if;
   return new;
@@ -214,7 +197,8 @@ begin
        select 1 from pg_catalog.pg_proc p,
          lateral pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) a
        where p.oid = v_writer and a.privilege_type = 'EXECUTE'
-         and a.grantee not in (v_owner, v_service)
+         and (a.grantee not in (v_owner, v_service)
+            or (a.grantee <> v_owner and a.is_grantable))
      ) then
     raise exception 'Unsafe intake revision command privileges.';
   end if;
@@ -258,8 +242,9 @@ begin
         and not pg_catalog.has_function_privilege('service_role', p.oid, 'EXECUTE')
         and not exists (
           select 1 from pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) a
-          where a.privilege_type = 'EXECUTE' and a.grantee not in
+          where a.privilege_type = 'EXECUTE' and (a.grantee not in
             (p.proowner, (select r.oid from pg_catalog.pg_roles r where r.rolname = 'authenticated'))
+            or (a.grantee <> p.proowner and a.is_grantable))
         )
       ) is not true
       and (pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE')

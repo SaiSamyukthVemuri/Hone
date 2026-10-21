@@ -19,23 +19,20 @@ describe("0243 scoped intake revision and atomic profile contract", () => {
     expect(code.trim()).toMatch(/commit;$/);
     expect(code).not.toMatch(/(?:replace|drop)\s+function\s+public\.(?:set_updated_at|enforce_intake_terminal_immutability)/i);
   });
-  it("separates the trusted command from ordinary protected DML without a caller-controlled bypass", () => {
-    const guard = code.slice(code.indexOf("create function public.advance_intake_revision"), code.indexOf("create trigger"));
+  it("stages additive callers before enforcing ordinary protected DML without a caller bypass", () => {
+    const additiveGuard = code.slice(code.indexOf("create function public.advance_intake_revision"), code.indexOf("create trigger"));
+    expect(additiveGuard).not.toMatch(/raise exception|current_user|v_writer_owner/);
+    expect(additiveGuard).toContain("new.revision := old.revision + 1");
     const writer = code.slice(code.indexOf("create function public.write_intake_revision"), code.indexOf("revoke execute on function public.write_intake_revision"));
-    expect(guard).toMatch(/security invoker set search_path = ''/);
+    expect(additiveGuard).toMatch(/security invoker set search_path = ''/);
     expect(writer).toMatch(/security definer set search_path = ''/);
-    expect(guard).toContain("current_user is distinct from pg_catalog.pg_get_userbyid(v_writer_owner)");
-    expect(guard).toContain("v_writer_owner pg_catalog.oid");
-    expect(guard).toContain("public.write_intake_revision(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.int8,pg_catalog.jsonb,pg_catalog.int4,pg_catalog.text,pg_catalog.jsonb)");
-    for (const field of ["responses", "current_step", "submitted_at", "status"]) expect(guard).toContain(`new.${field} is distinct from old.${field}`);
-    expect(guard).toContain("old.status = 'submitted' and new.status = 'reviewed'");
     expect(code).toContain("client_intake_forms_zz_advance_revision");
     expect(code).toContain("pg_catalog.pg_has_role(v_role.oid, v_owner, 'MEMBER')");
     expect(code).toContain("pg_catalog.pg_has_role(v_role.oid, v_owner, 'SET')");
     expect(code).toContain("p.oid = v_guard and not p.prosecdef and p.proowner = v_owner");
     expect(code).toContain("Unsafe intake revision command privileges.");
     expect(code).toContain("Unexpected callable intake definer requires review.");
-    expect(guard).not.toMatch(/current_setting|session_user|pg_trigger_depth|auth\.uid/);
+    expect(additiveGuard).not.toMatch(/current_setting|session_user|pg_trigger_depth|auth\.uid/);
   });
   it("permits only the exact reviewed read-only receptionist delegate, never a name-only exception", () => {
     const foundation = readFileSync("supabase/migrations/0216_receptionist_membership_foundation.sql", "utf8");
@@ -58,6 +55,8 @@ describe("0243 scoped intake revision and atomic profile contract", () => {
     expect(code).toContain("helper.proowner = p.proowner and helper.prosecdef");
     expect(code).toContain("helper.provolatile = 's' and helper.prokind = 'f'");
     expect(code).toContain("a.grantee <> helper.proowner");
+    expect(code).toContain("a.grantee <> p.proowner and a.is_grantable");
+    expect(code).toContain("a.grantee <> v_owner and a.is_grantable");
     expect(code).toContain("and not pg_catalog.has_function_privilege('authenticated', helper.oid, 'EXECUTE')");
     expect(helperBody).not.toMatch(/\b(?:insert|update|delete|execute|perform)\b/i);
     expect(helperBody).toContain("sr.user_id = auth.uid()");
