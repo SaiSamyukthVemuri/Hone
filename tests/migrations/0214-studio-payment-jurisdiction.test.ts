@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
+import { countVersion } from "./helpers/migration-state";
 
 // ===========================================================================
 // Migration 0214 — PAY-CCY-02 (#824): per-studio payment country and currency.
@@ -41,12 +41,8 @@ const TRIGGER_FNS = [
 ];
 
 describe("0214 sits correctly in the migration sequence", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    // Only the CURRENT maximum migration's own test may assert this (CLAUDE.md §2).
-    expect(isRepoMax(VERSION), "0214 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
-  });
-
+  // Current maximum coverage belongs to 0238's own contract and central
+  // migration-state checks; 0214 retains allocation/content/ACL guards.
   it("is allocated exactly once", () => {
     expect(countVersion(VERSION)).toBe(1);
   });
