@@ -56,7 +56,14 @@ const scenario = {
   service: FREE_CONSULT as ServiceShape,
   studioSlug: WAITLISTED_SLUG as string | null,
   cancelResult: "cancelled" as string,
+  ownerMissing: false,
+  ownerLookupThrows: false,
+  contextMissing: false,
+  contextThrows: false,
 };
+
+const ownerEmail = vi.fn(async (): Promise<{ ok: true } | { ok: false; error: string; retryable: boolean }> => ({ ok: true }));
+const recoveryAlert = vi.fn(async () => undefined);
 
 // --- the in-memory admin client -------------------------------------------
 
@@ -73,8 +80,10 @@ function studioRow() {
 }
 
 function makeQuery(table: string) {
+  let columns = "";
   const chain = {
-    select() {
+    select(value: string) {
+      columns = value;
       return chain;
     },
     eq() {
@@ -98,6 +107,10 @@ function makeQuery(table: string) {
     },
     async maybeSingle() {
       if (table === "appointments") {
+        if (columns.startsWith("studio_id, client_id, practitioner_id")) {
+          if (scenario.contextThrows) throw new Error("PRIVATE context token=" + TOKEN);
+          if (scenario.contextMissing) return { data: null, error: { message: "PRIVATE context" } };
+        }
         if (!scenario.tokenResolves) return { data: null, error: null };
         return {
           data: {
@@ -116,7 +129,10 @@ function makeQuery(table: string) {
           error: null,
         };
       }
-      if (table === "practitioners") return { data: null, error: null };
+      if (table === "practitioners") {
+        if (scenario.ownerLookupThrows) throw new Error("PRIVATE owner lookup");
+        return { data: scenario.ownerMissing ? null : { display_name: "Synthetic owner", email: "owner@example.invalid" }, error: null };
+      }
       return { data: null, error: null };
     },
     async single() {
@@ -151,8 +167,9 @@ vi.mock("@/lib/booking/tokens", () => ({
   verifyCancellationToken: () => ({ ok: false, error: "invalid" }),
 }));
 vi.mock("@/lib/email/send-appointment", () => ({
-  sendCancellationEmail: async () => ({ ok: true }),
+  sendCancellationEmail: ownerEmail,
 }));
+vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: recoveryAlert }));
 vi.mock("@/lib/notifications/practitioner-notifications", () => ({
   recordPractitionerNotification: () => undefined,
 }));
@@ -222,10 +239,10 @@ function renderNudge(
   );
 }
 
-function renderSuccess(waitlistBookingSlug: string | null): string {
+function renderSuccess(waitlistBookingSlug: string | null, notificationUnconfirmed = false): string {
   return decode(
     renderToStaticMarkup(
-      createElement(CancelledSuccess, { waitlistBookingSlug }),
+      createElement(CancelledSuccess, { waitlistBookingSlug, notificationUnconfirmed }),
     ),
   );
 }
@@ -237,6 +254,7 @@ function countCheckboxes(html: string): number {
 beforeEach(() => {
   rpcCalls.length = 0;
   writes.length = 0;
+  ownerEmail.mockReset().mockResolvedValue({ ok: true }); recoveryAlert.mockReset().mockResolvedValue(undefined);
   Object.assign(scenario, {
     tokenResolves: true,
     status: "confirmed",
@@ -244,6 +262,7 @@ beforeEach(() => {
     service: FREE_CONSULT,
     studioSlug: WAITLISTED_SLUG,
     cancelResult: "cancelled",
+    ownerMissing: false, ownerLookupThrows: false, contextMissing: false, contextThrows: false,
   });
   process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = WAITLISTED_SLUG;
 });
@@ -386,7 +405,7 @@ describe("M — after a successful free-consult cancellation, the waitlist is th
   it("the ordinary success surface is unchanged when the policy does not apply", () => {
     const html = renderSuccess(null);
     expect(html).toContain("Your appointment is cancelled.");
-    expect(html).toContain("The studio has been notified.");
+    expect(html).toContain("You do not need to cancel again.");
     expect(html).toContain('href="/portal"');
     expect(html).not.toContain("Join the waitlist");
   });
@@ -453,3 +472,70 @@ function cancelForm(overrides: Record<string, string> = {}): FormData {
   for (const [k, v] of Object.entries(overrides)) fd.set(k, v);
   return fd;
 }
+
+
+describe("MSG-004 public cancellation owner-notification recovery", () => {
+  it.each(["refused", "thrown", "owner absent", "owner lookup throws", "context absent", "context throws"] as const)("keeps a committed cancellation truthful when %s", async (failure) => {
+    if (failure === "refused") ownerEmail.mockResolvedValueOnce({ ok: false, error: "PRIVATE owner@example.invalid " + TOKEN, retryable: false });
+    if (failure === "thrown") ownerEmail.mockRejectedValueOnce(new Error("PRIVATE throw " + TOKEN));
+    if (failure === "owner absent") scenario.ownerMissing = true;
+    if (failure === "owner lookup throws") scenario.ownerLookupThrows = true;
+    if (failure === "context absent") scenario.contextMissing = true;
+    if (failure === "context throws") scenario.contextThrows = true;
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await publicCancelAppointmentAction(cancelForm());
+      expect(result).toEqual({ ok: true, notification: "unconfirmed" });
+      expect(recoveryAlert).toHaveBeenCalledWith(expect.objectContaining({
+        severity: "warning", event: "cancellation_email_unconfirmed",
+        appointmentId: "11111111-1111-4111-8111-111111111111",
+      }));
+      expect(JSON.stringify([result, recoveryAlert.mock.calls, log.mock.calls])).not.toMatch(/PRIVATE|raw-url-token|owner@example.invalid/);
+      expect(rpcCalls).toHaveLength(1);
+      expect(writes).toEqual([]);
+    } finally { log.mockRestore(); }
+  });
+  it("an accepted owner email returns ordinary cancellation success", async () => {
+    expect(await publicCancelAppointmentAction(cancelForm())).toEqual({ ok: true });
+    expect(ownerEmail).toHaveBeenCalledTimes(1);
+    expect(recoveryAlert).not.toHaveBeenCalled();
+  });
+  it.each(["already_cancelled", "invalid_token", "not_cancelable"])("%s keeps the public collapse rule and does not resend", async (result) => {
+    scenario.cancelResult = result;
+    expect((await publicCancelAppointmentAction(cancelForm())).ok).toBe(false);
+    expect(ownerEmail).not.toHaveBeenCalled();
+    expect(recoveryAlert).not.toHaveBeenCalled();
+  });
+  it("a recovery-alert rejection cannot reject committed cancellation", async () => {
+    ownerEmail.mockResolvedValueOnce({ ok: false, error: "PRIVATE", retryable: true });
+    recoveryAlert.mockRejectedValueOnce(new Error("PRIVATE"));
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try { expect(await publicCancelAppointmentAction(cancelForm())).toEqual({ ok: true, notification: "unconfirmed" }); }
+    finally { log.mockRestore(); }
+  });
+  it("renders unconfirmed notification copy without implying studio delivery or offering resend", () => {
+    const html = renderSuccess(null, true);
+    expect(html).toContain("Your appointment is cancelled.");
+    expect(html).toContain("could not confirm the studio's email notification");
+    expect(html).toContain('role="status"');
+    expect(html).not.toContain("The studio has been notified.");
+    expect(html).not.toContain("<form");
+    expect(html).not.toContain("Resend");
+  });
+  it("keeps committed cancellation successful when the recovery alert and console both throw", async () => {
+    ownerEmail.mockResolvedValueOnce({ ok: false, error: "PRIVATE owner@example.invalid " + TOKEN, retryable: true });
+    recoveryAlert.mockRejectedValueOnce(new Error("PRIVATE alert " + TOKEN));
+    const log = vi.spyOn(console, "error").mockImplementation(() => { throw new Error("PRIVATE console " + TOKEN); });
+    try {
+      const result = await publicCancelAppointmentAction(cancelForm());
+      expect(result).toEqual({ ok: true, notification: "unconfirmed" });
+      expect(ownerEmail).toHaveBeenCalledTimes(1);
+      expect(recoveryAlert).toHaveBeenCalledTimes(1);
+      expect(rpcCalls).toHaveLength(1);
+      expect(rpcCalls[0].fn).toBe("public_cancel_appointment_with_token");
+      expect(writes).toEqual([]);
+      expect(log).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify([result, recoveryAlert.mock.calls, log.mock.calls])).not.toMatch(/PRIVATE|raw-url-token|owner@example.invalid/);
+    } finally { log.mockRestore(); }
+  });
+});

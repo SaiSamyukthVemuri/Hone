@@ -637,8 +637,8 @@ export async function sendCancellationEmail(params: {
    * customer, not a client delivery.
    */
   ledger?: AppointmentLedgerRef | null;
-}) {
-  if (!params.to) return;
+}): Promise<EmailSendResult> {
+  if (!params.to) return { ok: false, error: "Missing cancellation recipient", retryable: false };
   const { subject, html, text } = buildCancellationEmail({
     recipientName: params.recipientName,
     clientName: params.clientName,
@@ -653,7 +653,7 @@ export async function sendCancellationEmail(params: {
     isClient: params.isClient,
     rebookUrl: params.rebookUrl,
   });
-  await sendLedgeredAppointmentEmail(
+  return sendLedgeredAppointmentEmail(
     params.isClient ? params.ledger : null,
     "appointment_cancellation",
     (ledgerMessageId) =>

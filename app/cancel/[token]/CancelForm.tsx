@@ -84,11 +84,12 @@ export function CancelForm({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<"cancelled" | null>(null);
+  const [notificationUnconfirmed, setNotificationUnconfirmed] = useState(false);
 
   const rescheduleHref = `/reschedule/${encodeURIComponent(token)}`;
 
   if (done === "cancelled") {
-    return <CancelledSuccess waitlistBookingSlug={waitlistBookingSlug} />;
+    return <CancelledSuccess waitlistBookingSlug={waitlistBookingSlug} notificationUnconfirmed={notificationUnconfirmed} />;
   }
 
   function submit(e: React.FormEvent) {
@@ -153,6 +154,7 @@ export function CancelForm({
         setError(r.error);
         return;
       }
+      setNotificationUnconfirmed(r.notification === "unconfirmed");
       setDone("cancelled");
     });
   }
@@ -442,8 +444,10 @@ export function CancellationNudge({
  */
 export function CancelledSuccess({
   waitlistBookingSlug,
+  notificationUnconfirmed = false,
 }: {
   waitlistBookingSlug: string | null;
+  notificationUnconfirmed?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -453,8 +457,10 @@ export function CancelledSuccess({
       >
         Your appointment is cancelled.
       </h2>
-      <p className="text-[16px] leading-relaxed text-[#0A0A0A]">
-        The studio has been notified.
+      <p role="status" className="text-[16px] leading-relaxed text-[#0A0A0A]">
+        {notificationUnconfirmed
+          ? "We could not confirm the studio's email notification. Your appointment is still cancelled. Contact the studio if you need assistance."
+          : "You do not need to cancel again."}
       </p>
       {waitlistBookingSlug ? (
         <>

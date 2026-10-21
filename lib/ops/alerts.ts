@@ -1,4 +1,5 @@
 import "server-only";
+import { safeLog } from "@/lib/logging/safe-log";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { notifyCriticalOpsAlert } from "@/lib/ops/alert-email";
 import {
@@ -17,9 +18,9 @@ import {
 //     bring down the business flow that called it. Every internal step
 //     is try/catch'd; a structured stderr log is the last-resort
 //     fallback.
-//   * Always emits a structured `console.error` JSON line tagged with
-//     the alert event name + safe identifiers. This is the floor:
-//     Vercel logs always carry the event even if the DB insert fails.
+//   * Attempts a structured external log with event/category metadata and
+//     record IDs removed by safeLog. Console failure never blocks the row or
+//     critical dispatcher; first-party payloads retain their exact lineage.
 //   * Inserts a durable row into `public.ops_alerts` via the service-
 //     role admin client. RLS lets studio members read alerts scoped
 //     to their studio (migration 0067).
@@ -89,11 +90,15 @@ function truncate(str: string, max: number): string {
 
 function structuredConsoleLog(payload: Record<string, unknown>): void {
   try {
-    console.error(JSON.stringify(payload));
+    safeLog.error(JSON.stringify(payload));
   } catch {
     // Last-resort fallback if JSON.stringify itself throws (cyclic
     // structure). We never let the alerting helper escalate.
-    console.error("ops_alert_serialize_failed", payload.event ?? "unknown");
+    try {
+      safeLog.error("ops_alert_serialize_failed");
+    } catch {
+      // A failed console must not prevent persistence or critical dispatch.
+    }
   }
 }
 
@@ -125,8 +130,8 @@ export async function recordOpsAlert(
     MAX_MESSAGE_LEN,
   );
 
-  // Structured stderr log first. Always emitted, even if DB insert
-  // fails. This is the floor for Vercel-log-only debugging.
+  // External log first: safeLog removes record IDs only from this copy.
+  // Durable row and critical dispatcher below retain first-party lineage.
   structuredConsoleLog({
     event: input.event,
     ops_alert: true,
@@ -164,16 +169,14 @@ export async function recordOpsAlert(
       structuredConsoleLog({
         event: "ops_alert_insert_failed",
         origin_event: input.event,
-        code: error.code,
-        err_message: error.message,
+        code: typeof error.code === "string" && /^(?:[A-Z0-9]{5}|PGRST[0-9]{3})$/.test(error.code) ? error.code : "unknown",
         timestamp: new Date().toISOString(),
       });
     }
-  } catch (err) {
+  } catch {
     structuredConsoleLog({
       event: "ops_alert_insert_threw",
       origin_event: input.event,
-      err_message: err instanceof Error ? err.message : String(err),
       timestamp: new Date().toISOString(),
     });
   }
@@ -199,11 +202,10 @@ export async function recordOpsAlert(
         stripePaymentIntentId: input.stripePaymentIntentId ?? null,
         route: input.route ?? null,
       });
-    } catch (err) {
+    } catch {
       structuredConsoleLog({
         event: "ops_alert_email_dispatch_threw",
         origin_event: input.event,
-        err_message: err instanceof Error ? err.message : String(err),
         timestamp: new Date().toISOString(),
       });
     }
