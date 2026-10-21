@@ -26,6 +26,7 @@ export function classifyEmailOperationObservation(input: ObservationInput): Emai
   const reply = record(input.reply);
   if (!reply || !("error" in reply)) return { kind: "unknown", reason: "malformed_reply" };
   if (reply.error !== null) {
+    if (reply.data != null) return { kind: "unknown", reason: "malformed_reply" };
     const error = record(reply.error);
     if (!error) return { kind: "unknown", reason: "malformed_reply" };
     if (error.name === "invalid_idempotent_request") return { kind: "unknown", reason: "payload_conflict" };
@@ -45,7 +46,25 @@ export function classifyEmailOperationObservation(input: ObservationInput): Emai
 type WirePayload = Parameters<MinimalEmailTransport["emails"]["send"]>[0];
 type RequestContext = Readonly<{ providerAccount: string; providerKey: string; purpose: "reminder_24h" | "reminder_2h" }>;
 
-function wireRepresentation(payload: WirePayload, context: RequestContext): string {
+export function isClosedEmailOperationPayload(value: unknown): value is WirePayload {
+  const payload = record(value);
+  if (!payload || Object.keys(payload).some((key) => !["from", "to", "subject", "html", "text", "replyTo", "attachments"].includes(key))) return false;
+  if (["from", "to", "subject", "html", "text"].some((key) => typeof payload[key] !== "string")) return false;
+  if (payload.replyTo !== undefined && typeof payload.replyTo !== "string") return false;
+  if (payload.attachments !== undefined) {
+    if (!Array.isArray(payload.attachments)) return false;
+    if (!payload.attachments.every((value) => {
+      const attachment = record(value);
+      return attachment !== null && Object.keys(attachment).every((key) => key === "filename" || key === "content") && typeof attachment.filename === "string" && Buffer.isBuffer(attachment.content);
+    })) return false;
+  }
+  return true;
+}
+
+function wireRepresentation(payload: WirePayload, context: RequestContext): string | null {
+  if (!isClosedEmailOperationPayload(payload)) return null;
+  const scope = record(context);
+  if (!scope || Object.keys(scope).some((key) => !["providerAccount", "providerKey", "purpose"].includes(key)) || typeof scope.providerAccount !== "string" || typeof scope.providerKey !== "string" || !["reminder_24h", "reminder_2h"].includes(String(scope.purpose))) return null;
   // Exact current transport fields; array order and attachment bytes matter.
   // Optional omission is distinct from an explicitly empty value. No hash is
   // mistaken for reconstructible content, and no content is persisted/logged.
@@ -64,7 +83,7 @@ export function bindEmailOperationRequest(payload: WirePayload, context: Request
   matches: (candidate: WirePayload, candidateContext: RequestContext) => boolean;
 } {
   const frozen = wireRepresentation(payload, context);
-  return Object.freeze({ matches: (candidate: WirePayload, candidateContext: RequestContext) => frozen === wireRepresentation(candidate, candidateContext) });
+  return Object.freeze({ matches: (candidate: WirePayload, candidateContext: RequestContext) => frozen !== null && frozen === wireRepresentation(candidate, candidateContext) });
 }
 
 /** Original operation effect only, separate from lease/current-generation
