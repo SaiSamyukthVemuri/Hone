@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { getSessionPaymentStripe } from "@/lib/stripe/session-payment-stripe";
 import { recordOpsAlert } from "@/lib/ops/alerts";
+import { isDefinitiveStripeRefusal } from "@/lib/billing/stripe-error-outcome";
 import {
   compareProviderMoney,
   providerMoneyMismatchDetails,
@@ -489,7 +490,7 @@ export async function refundPaymentChargeAttempt(args: {
     // can be classified; network errors leave the row pending so
     // a manual reconciliation can re-query Stripe with the
     // deterministic idempotency key.
-    if (err instanceof Stripe.errors.StripeError) {
+    if (err instanceof Stripe.errors.StripeError && isDefinitiveStripeRefusal(err)) {
       const code = sanitizeFailureCode(err.code ?? err.type);
       const safeMessage =
         sanitizeFailureMessage(err.message) ??
