@@ -4,6 +4,7 @@ import {
   createLocalAuthUser,
   insertBareStudio,
   insertPendingInvite,
+  insertMembershipInStudio,
   sql,
 } from "./helpers/seed";
 import { listMessageIds, waitForMagicLink } from "./helpers/mail";
@@ -209,5 +210,68 @@ test.describe("operator lead alerts — fake Resend", () => {
     await page.goto(leadPath(leadId));
     expect(new URL(page.url()).pathname.startsWith("/admin")).toBe(false);
     await expect(page.getByTestId("admin-lead-detail")).toHaveCount(0);
+  });
+});
+
+// SEC-002: actual Hone document and RSC requests, not a framework fixture.
+// No role grants or allowlist changes: a former-operator fixture is currently
+// outside ADMIN_EMAILS. Revocation between requests is covered by guard units.
+test.describe("SEC-002 admin document and RSC authorization", () => {
+  const run = randomUUID().slice(0, 8);
+  const identities = ["member-a", "member-b", "deactivated", "former-operator"] as const;
+  const emails = Object.fromEntries(identities.map((role) => [role, `sec002-${role}-${run}@harness.local`]));
+  const studios: Array<{ studioId: string; name: string }> = [];
+
+  test.beforeAll(async () => {
+    await ensureOperator();
+    studios.push(await insertBareStudio(`sec002-a-${run}`), await insertBareStudio(`sec002-b-${run}`));
+    for (const [index, role] of identities.entries()) {
+      const userId = await createLocalAuthUser(emails[role]);
+      await insertMembershipInStudio(studios[index % 2].studioId, userId, emails[role], role !== "deactivated");
+    }
+  });
+  test.afterAll(async () => {
+    // Only this suite's two exact synthetic studio IDs; auth identities remain
+    // available for failure investigation. Never reset a retained target.
+    for (const studio of studios) await sql("delete from public.studios where id = $1", [studio.studioId]);
+  });
+
+  const paths = () => ["/admin", ...studios.map((s) => `/admin/studios/${s.studioId}`),
+    "/admin/studios/new", "/admin/ops-alerts", "/admin/delivery"];
+
+  for (const role of identities) {
+    test(`${role} cannot read either studio through documents or RSC`, async ({ page }) => {
+      await signIn(page, emails[role]);
+      await page.waitForURL((url) => !url.pathname.startsWith("/auth/"));
+      for (const pathname of paths()) {
+        for (const rsc of [false, true]) {
+          const response = await page.request.get(`${E2E_APP_ORIGIN}${pathname}`, {
+            maxRedirects: 0,
+            headers: rsc ? { RSC: "1", "Next-Router-Prefetch": "1" } : {},
+          });
+          const body = await response.text();
+          const refused = [301, 302, 303, 307, 308, 401, 403, 404].includes(response.status())
+            || (rsc && response.status() === 200 && /NEXT_REDIRECT|NEXT_HTTP_ERROR_FALLBACK;404/.test(body));
+          expect(refused, `${role} ${pathname} ${rsc ? "RSC" : "document"} ${response.status()}`).toBe(true);
+          for (const studio of studios) expect(body).not.toContain(studio.name);
+          expect(body).not.toContain("admin-lead-detail");
+        }
+      }
+    });
+  }
+
+  test("current platform operator reads both studios without membership", async ({ page }) => {
+    await signIn(page, OPERATOR);
+    for (const studio of studios) {
+      const pathname = `/admin/studios/${studio.studioId}`;
+      for (const rsc of [false, true]) {
+        const response = await page.request.get(`${E2E_APP_ORIGIN}${pathname}`, {
+          maxRedirects: 0,
+          headers: rsc ? { RSC: "1", "Next-Router-Prefetch": "1" } : {},
+        });
+        expect(response.status()).toBe(200);
+        expect(await response.text()).toContain(studio.name);
+      }
+    }
   });
 });
