@@ -34,6 +34,7 @@ const COMMANDS = [
   "record_stripe_account_jurisdiction(uuid, text, boolean, text, text)",
 ];
 const TRIGGER_FNS = [
+  "studio_price_write_jurisdiction_lock",
   "payment_charge_attempts_jurisdiction_guard",
   "payment_charge_attempts_money_immutable",
   "appointment_settlements_currency_from_jurisdiction",
@@ -94,6 +95,15 @@ describe("0214 is one bounded transaction", () => {
     expect(jurisdiction).toBeGreaterThan(parentWeak);
     expect(parentStrong).toBeGreaterThan(jurisdiction);
     expect(prices).toBeGreaterThan(parentStrong);
+  });
+
+  it("locks price-only writes without requiring a known jurisdiction", () => {
+    const body = CODE.split("function public.studio_price_write_jurisdiction_lock()")[1].split("$$;")[0];
+    expect(body).toContain("new.studio_id for key share");
+    expect(body).not.toContain("studio_payment_jurisdictions");
+    expect(CODE).toContain("before insert or update of studio_id, price_cents on public.services");
+    expect(CODE).toContain("before insert or update of studio_id on public.client_pricing");
+    expect(CODE).toContain("before insert or update of studio_id, price_paid_cents on public.sessions");
   });
 
   it("does not touch the legacy and dormant CAD-only ledgers", () => {

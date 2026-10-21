@@ -319,6 +319,35 @@ begin
 end;
 $$;
 
+-- Price-only UPDATE does not repeat a foreign-key check. Take the same parent
+-- KEY SHARE explicitly for every relevant price write, including UNKNOWN studios.
+-- No jurisdiction/evidence is required to configure clinical prices. The setter
+-- upgrades its parent lock only after the jurisdiction lock, so these writers
+-- serialize with its price snapshot without reintroducing the payment FK cycle.
+create or replace function public.studio_price_write_jurisdiction_lock()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+begin
+  perform 1 from public.studios st where st.id = new.studio_id for key share;
+  return new;
+end;
+$$;
+
+create trigger services_price_jurisdiction_lock
+before insert or update of studio_id, price_cents on public.services
+for each row execute function public.studio_price_write_jurisdiction_lock();
+create trigger client_pricing_jurisdiction_lock
+before insert or update of studio_id on public.client_pricing
+for each row execute function public.studio_price_write_jurisdiction_lock();
+create trigger sessions_price_jurisdiction_lock
+before insert or update of studio_id, price_paid_cents on public.sessions
+for each row execute function public.studio_price_write_jurisdiction_lock();
+-- Studio fee UPDATE already locks this same parent row and conflicts with the
+-- setter's initial NO KEY UPDATE lock; it needs no additional trigger.
+
 -- ---------------------------------------------------------------------------
 -- 4. The ledgers follow the studio
 -- ---------------------------------------------------------------------------
@@ -708,6 +737,8 @@ revoke execute on function public.record_stripe_account_jurisdiction(uuid, text,
 revoke execute on function public.record_stripe_account_jurisdiction(uuid, text, boolean, text, text) from service_role;
 grant execute on function public.record_stripe_account_jurisdiction(uuid, text, boolean, text, text) to service_role;
 
+revoke all privileges on function public.studio_price_write_jurisdiction_lock()
+  from public, anon, authenticated, service_role;
 revoke all privileges on function public.payment_charge_attempts_jurisdiction_guard()
   from public, anon, authenticated, service_role;
 revoke all privileges on function public.payment_charge_attempts_money_immutable()

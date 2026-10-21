@@ -211,6 +211,17 @@ describe("J2 no browser role reaches the jurisdiction", () => {
     });
   }
 
+  it("no transport role can call the price-lock trigger directly", async () => {
+    const privileges = await adminQuery(`select role_name,
+      has_function_privilege(role_name, 'public.studio_price_write_jurisdiction_lock()', 'EXECUTE') allowed
+      from unnest(array['anon','authenticated','service_role']) role_name`);
+    expect(privileges.rows).toEqual([
+      { role_name: "anon", allowed: false },
+      { role_name: "authenticated", allowed: false },
+      { role_name: "service_role", allowed: false },
+    ]);
+  });
+
   it("a signed-in OWNER cannot change their own studio's jurisdiction", async () => {
     const s = await studio("j2");
     const msg = await rejection(
@@ -657,8 +668,25 @@ describe("J8 stale configuration fails closed under a concurrent change", () => 
     }
   }, 15_000);
 
-  it.each(["service", "client-price"] as const)("an in-flight %s insert must be visible before the unacknowledged change", async (kind) => {
-    const s = await studio(`j8-price-${kind}`);
+  it.each([
+    ...["service-insert", "service-update", "client-price", "client-price-move", "session-insert", "session-update", "studio-fee"].map((kind) => ({ kind, known: true })),
+    ...["service-insert", "service-update", "client-price", "client-price-move", "session-insert", "session-update", "studio-fee"].map((kind) => ({ kind, known: false })),
+  ])("an in-flight $kind write is observed before the price decision (known=$known)", async ({ kind, known }) => {
+    const s = await studio(`j8-price-${kind}-${known}`, known);
+    const priceId = randomUUID();
+    if (kind === "service-update") {
+      await adminQuery(`insert into public.services (id,studio_id,name,default_duration_minutes,price_cents,active,modality)
+        values ($1,$2,'Unpriced',30,0,true,'electrolysis')`, [priceId, s.studioId]);
+    }
+    if (kind === "client-price-move") {
+      const origin = await studio("j8-price-origin");
+      await adminQuery(`insert into public.client_pricing (id,studio_id,service_name,price_cents)
+        values ($1,$2,'Moved price',9000)`, [priceId, origin.studioId]);
+    }
+    if (kind === "session-update") {
+      await adminQuery(`insert into public.sessions (id,studio_id,client_id,practitioner_id,modality)
+        values ($1,$2,$3,$4,'electrolysis')`, [priceId, s.studioId, s.clientId, s.practitionerId]);
+    }
     const pool = new Pool({ connectionString: resolveLocalDbUrl(), max: 2 });
     const writer = await pool.connect();
     const setter = await pool.connect();
@@ -670,11 +698,22 @@ describe("J8 stale configuration fails closed under a concurrent change", () => 
       await setter.query("set local statement_timeout = '5s'");
       const writerPid = (await writer.query("select pg_backend_pid() pid")).rows[0].pid as number;
       const setterPid = (await setter.query("select pg_backend_pid() pid")).rows[0].pid as number;
-      if (kind === "service") {
+      if (kind === "service-insert") {
         await writer.query(
           `insert into public.services (studio_id,name,default_duration_minutes,price_cents,active,modality)
            values ($1,'Concurrent price',30,9000,true,'electrolysis')`, [s.studioId],
         );
+      } else if (kind === "service-update") {
+        await writer.query("update public.services set price_cents=9000 where id=$1", [priceId]);
+      } else if (kind === "client-price-move") {
+        await writer.query("update public.client_pricing set studio_id=$2 where id=$1", [priceId, s.studioId]);
+      } else if (kind === "studio-fee") {
+        await writer.query("update public.studios set no_show_fee_cents=9000 where id=$1", [s.studioId]);
+      } else if (kind === "session-insert") {
+        await writer.query(`insert into public.sessions (studio_id,client_id,practitioner_id,modality,price_paid_cents)
+          values ($1,$2,$3,'electrolysis',9000)`, [s.studioId, s.clientId, s.practitionerId]);
+      } else if (kind === "session-update") {
+        await writer.query("update public.sessions set price_paid_cents=9000 where id=$1", [priceId]);
       } else {
         await writer.query(
           `insert into public.client_pricing (studio_id,client_id,service_name,price_cents)
@@ -698,13 +737,13 @@ describe("J8 stale configuration fails closed under a concurrent change", () => 
       await writer.query("commit");
       expect(await pending).toEqual({ result: "refused_priced_configuration", error: null });
       await setter.query("commit");
-      expect((await jurisdiction(s.studioId))?.payment_currency).toBe("cad");
+      expect((await jurisdiction(s.studioId))?.payment_currency).toBe(known ? "cad" : undefined);
       const audit = await adminQuery(
         "select count(*)::int n from public.studio_payment_jurisdiction_changes where studio_id=$1 and reason='price race'", [s.studioId],
       );
       expect(audit.rows[0].n).toBe(0);
       // A legitimate explicit acknowledgement still works after serialization.
-      expect((await setJurisdiction(s.studioId, "US", "usd", true)).out_result).toBe("changed");
+      expect((await setJurisdiction(s.studioId, "US", "usd", true)).out_result).toBe(known ? "changed" : "initialized");
     } finally {
       await writer.query("rollback").catch(() => undefined);
       await setter.query("rollback").catch(() => undefined);
