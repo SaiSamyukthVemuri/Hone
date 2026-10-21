@@ -100,7 +100,11 @@ describe("0214 is one bounded transaction", () => {
   it("locks price-only writes without requiring a known jurisdiction", () => {
     const body = CODE.split("function public.studio_price_write_jurisdiction_lock()")[1].split("$$;")[0];
     expect(body).toContain("new.studio_id for key share");
-    expect(body).not.toContain("studio_payment_jurisdictions");
+    expect(body).toContain("where j.studio_id = new.studio_id for share");
+    expect(body).toContain("where st.id = new.studio_id for share");
+    expect(body.indexOf("studio_payment_jurisdictions")).toBeLessThan(body.indexOf("new.studio_id for key share"));
+    expect(body).not.toContain("raise exception");
+    expect(body).not.toContain("insert into");
     expect(CODE).toContain("before insert or update of studio_id, price_cents on public.services");
     expect(CODE).toContain("before insert or update of studio_id on public.client_pricing");
     expect(CODE).toContain("before insert or update of studio_id, price_paid_cents on public.sessions");

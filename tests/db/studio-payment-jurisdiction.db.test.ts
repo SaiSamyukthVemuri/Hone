@@ -617,7 +617,7 @@ describe("J7 recording what Stripe says about an account", () => {
 
 // ---------------------------------------------------------------------------
 describe("J8 stale configuration fails closed under a concurrent change", () => {
-  it("payment jurisdiction SHARE then parent FK KEY SHARE cannot deadlock the setter", async () => {
+  it.each([false, true])("payment SHARE then parent FK cannot deadlock the setter (prior price=%s)", async (priorPrice) => {
     const s = await studio("j8-parent-keyshare");
     const appt = await appointment(s);
     const pool = new Pool({ connectionString: resolveLocalDbUrl(), max: 2 });
@@ -631,7 +631,14 @@ describe("J8 stale configuration fails closed under a concurrent change", () => 
       await setter.query("set local statement_timeout = '5s'");
       const payerPid = (await payer.query("select pg_backend_pid() pid")).rows[0].pid as number;
       const setterPid = (await setter.query("select pg_backend_pid() pid")).rows[0].pid as number;
-      await payer.query("select 1 from public.studio_payment_jurisdictions where studio_id=$1 for share", [s.studioId]);
+      if (priorPrice) {
+        // The price trigger itself must retain jurisdiction SHARE before its
+        // parent FK lock, so a later payment in this same transaction is safe.
+        await payer.query(`insert into public.services (studio_id,name,default_duration_minutes,price_cents,active,modality)
+          values ($1,'Price before payment',30,9000,true,'electrolysis')`, [s.studioId]);
+      } else {
+        await payer.query("select 1 from public.studio_payment_jurisdictions where studio_id=$1 for share", [s.studioId]);
+      }
       pending = setter.query(
         "select * from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','race',false,'fixture:parent-keyshare')",
         [s.studioId],

@@ -320,7 +320,7 @@ end;
 $$;
 
 -- Price-only UPDATE does not repeat a foreign-key check. Take the same parent
--- KEY SHARE explicitly for every relevant price write, including UNKNOWN studios.
+-- lock explicitly for every relevant price write, including UNKNOWN studios.
 -- No jurisdiction/evidence is required to configure clinical prices. The setter
 -- upgrades its parent lock only after the jurisdiction lock, so these writers
 -- serialize with its price snapshot without reintroducing the payment FK cycle.
@@ -331,7 +331,18 @@ security definer
 set search_path = pg_catalog, pg_temp
 as $$
 begin
-  perform 1 from public.studios st where st.id = new.studio_id for key share;
+  -- Known prices take the same first lock as a subsequent payment in this
+  -- transaction. Otherwise a price FK followed by payment could invert the
+  -- setter's jurisdiction/parent-upgrade order.
+  perform 1 from public.studio_payment_jurisdictions j
+    where j.studio_id = new.studio_id for share;
+  if found then
+    perform 1 from public.studios st where st.id = new.studio_id for key share;
+  else
+    -- There is no jurisdiction row to lock yet. SHARE conflicts with the
+    -- initializer's initial NO KEY UPDATE, without inventing a default row.
+    perform 1 from public.studios st where st.id = new.studio_id for share;
+  end if;
   return new;
 end;
 $$;
