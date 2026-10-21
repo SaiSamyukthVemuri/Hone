@@ -412,6 +412,15 @@ describe("0243 public/assisted revision and atomic profile boundary", () => {
     for (const role of ['anon','authenticated','service_role']) {
       expect(rows.find((row) => row.rolname === role)?.can_execute).toBe(role === 'service_role');
     }
+    const { rows: delegates } = await adminQuery(`select p.oid::regprocedure::text as signature
+      from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+      where n.nspname='public' and p.prosecdef
+        and p.oid<>'public.write_intake_revision(uuid,uuid,uuid,bigint,jsonb,integer,text,jsonb)'::regprocedure
+        and p.prosrc ~* '(^|[^a-z0-9_])client_intake_forms([^a-z0-9_]|$)'
+        and (pg_catalog.has_function_privilege('anon',p.oid,'EXECUTE')
+          or pg_catalog.has_function_privilege('authenticated',p.oid,'EXECUTE')
+          or pg_catalog.has_function_privilege('service_role',p.oid,'EXECUTE'))`);
+    expect(delegates).toEqual([]);
   });
 
   it.each(["authenticated", "service_role"] as const)("%s cannot forge protected writes with a counter, claim or caller setting", async (role) => {
