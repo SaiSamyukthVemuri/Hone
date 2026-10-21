@@ -833,31 +833,7 @@ export async function handlePaymentIntentPaymentFailed(
   }
   const attempt = resolution.attempt;
 
-  if (!(await verifyPaymentEventIdentity({
-    attempt, event, ctx, metadata,
-    paymentIntentId: pi.id,
-    chargeId: typeof pi.latest_charge === "string" ? pi.latest_charge : pi.latest_charge?.id ?? null,
-    customerId: typeof pi.customer === "string" ? pi.customer : pi.customer?.id ?? null,
-    requireCharge: false,
-  }))) {
-    return { eventType: event.type, attemptId: attempt.id, identityMismatch: true };
-  }
-
-  if (
-    !(await verifyMetadataAgainstRow({
-      attempt,
-      metadata,
-      stripeEventId: event.id,
-      targetEvent: "payment_intent.payment_failed",
-    }))
-  ) {
-    return {
-      eventType: event.type,
-      attemptId: attempt.id,
-      metadataMismatch: true,
-    };
-  }
-
+  // Preserve the existing mode-specific refusal before general identity checks.
   // Resolved-row mode guard (mirrors payment_intent.succeeded + charge.refunded).
   // The event-mode guard above only checks event.livemode; the resolver + the
   // metadata guard historically did not check the row's mode. The bound identity
@@ -884,6 +860,31 @@ export async function handlePaymentIntentPaymentFailed(
       eventType: event.type,
       attemptId: attempt.id,
       livemodeRowMismatch: true,
+    };
+  }
+
+  if (!(await verifyPaymentEventIdentity({
+    attempt, event, ctx, metadata,
+    paymentIntentId: pi.id,
+    chargeId: typeof pi.latest_charge === "string" ? pi.latest_charge : pi.latest_charge?.id ?? null,
+    customerId: typeof pi.customer === "string" ? pi.customer : pi.customer?.id ?? null,
+    requireCharge: false,
+  }))) {
+    return { eventType: event.type, attemptId: attempt.id, identityMismatch: true };
+  }
+
+  if (
+    !(await verifyMetadataAgainstRow({
+      attempt,
+      metadata,
+      stripeEventId: event.id,
+      targetEvent: "payment_intent.payment_failed",
+    }))
+  ) {
+    return {
+      eventType: event.type,
+      attemptId: attempt.id,
+      metadataMismatch: true,
     };
   }
 

@@ -433,7 +433,8 @@ describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "cha
       expect(ADMIN.current!.updateCalls).toEqual([]);
       expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
       expect(RECORD_OPS_ALERT).toHaveBeenCalledWith(expect.objectContaining({
-        severity: "critical", event: "stripe_webhook_payment_identity_mismatch",
+        severity: "critical", event: type === "payment_intent.payment_failed" && _name === "another mode"
+          ? "payment_intent_failed_livemode_row_mismatch" : "stripe_webhook_payment_identity_mismatch",
       }));
     });
     it.each(["canonical", "legacy", "fallback"] as const)("matching %s resolution reaches the existing writer with all scope filters", async (resolution) => {
@@ -504,7 +505,10 @@ describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "cha
       expect(writes()).toEqual([]); expect(ADMIN.current!.updateCalls).toEqual([]);
       expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
       expect(names(ADMIN.current!.rpcCalls)).not.toContain("release_stripe_event_claim_with_error");
-      expect(RECORD_OPS_ALERT).toHaveBeenCalledWith(expect.objectContaining({ event: "stripe_webhook_payment_identity_mismatch" }));
+      expect(RECORD_OPS_ALERT).toHaveBeenCalledWith(expect.objectContaining({
+        event: type === "payment_intent.payment_failed" && "stripe_livemode" in contradiction && contradiction.stripe_livemode === true
+          ? "payment_intent_failed_livemode_row_mismatch" : "stripe_webhook_payment_identity_mismatch",
+      }));
     });
     it.each(["ready", "failed", "cancelled", "blocked", "succeeded"])("missing original on %s is not an in-flight binding claim", async (status) => {
       prepareBound({ row: { status, stripe_payment_intent_id: null } });

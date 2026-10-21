@@ -66,7 +66,9 @@ function attemptRow(over: Record<string, unknown> = {}) {
     charge_reason: "session_payment",
     status: "ready",
     stripe_livemode: true,
-    stripe_payment_intent_id: "pi_row",
+    stripe_account_id: "acct_1",
+    stripe_customer_id: "cus_1",
+    stripe_payment_intent_id: "pi_1",
     stripe_charge_id: null,
     amount_cents: 2500,
     currency: "cad",
@@ -86,10 +88,12 @@ function failedEvent(over: Record<string, unknown> = {}) {
   return {
     id: "evt_1",
     type: "payment_intent.payment_failed",
+    account: "acct_1",
     livemode: true,
     data: {
       object: {
         id: "pi_1",
+        customer: "cus_1",
         // A real PaymentIntent states its money (PAY-CCY-01).
         amount: 2500,
         currency: "cad",
@@ -124,8 +128,8 @@ describe("payment_intent.payment_failed — resolved-row livemode guard", () => 
     };
 
     const result = await handlePaymentIntentPaymentFailed(failedEvent(), {
-      livemode: true,
-    } as never);
+      studioId: "stud_1", stripeAccountId: "acct_1", livemode: true,
+    });
 
     // No row mutation.
     expect(h.state.updateCalls).toHaveLength(0);
@@ -149,8 +153,8 @@ describe("payment_intent.payment_failed — resolved-row livemode guard", () => 
     h.state.updateResult = { data: [{ id: "att_1" }], error: null };
 
     const result = await handlePaymentIntentPaymentFailed(failedEvent(), {
-      livemode: true,
-    } as never);
+      studioId: "stud_1", stripeAccountId: "acct_1", livemode: true,
+    });
 
     // Exactly one update, flipping to failed with failure fields.
     expect(h.state.updateCalls).toHaveLength(1);
@@ -174,7 +178,7 @@ describe("payment_intent.payment_failed — resolved-row livemode guard", () => 
       error: null,
     };
     h.state.updateResult = { data: [{ id: "att_1" }], error: null };
-    await handlePaymentIntentPaymentFailed(failedEvent(), { livemode: true } as never);
+    await handlePaymentIntentPaymentFailed(failedEvent(), { studioId: "stud_1", stripeAccountId: "acct_1", livemode: true });
     expect(h.state.updateCalls).toHaveLength(1);
     expect(h.state.updateCalls[0].status).toBe("failed");
   });
