@@ -9,6 +9,7 @@ import {
   getAppointmentPostcareState,
   getSessionAftercareStamp,
   getAppointmentAuditActions,
+  sql,
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
@@ -329,6 +330,78 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
         .click({ position: { x: 6, y: 6 } });
       await expect(page.getByTestId("finish-appointment")).toBeVisible();
       expect(await getSessionAftercareStamp(s.sessionId)).toBeNull();
+    });
+
+    test("aftercare warning keyboard stays contained and Escape restores opener without side effects", async ({ page }) => {
+      const seed = await seedE2eStudio();
+      const s = await seedE2eEndedAppointmentSession(seed, { charted: true });
+      await loginAsOwner(page, seed);
+      await openSession(page, s.clientId, s.sessionId);
+      // Snapshot the rows this fixture/these controls can affect. No clinical,
+      // completion, send or charge action is activated in this focus-only case.
+      const snapshot = async () => (await sql<{ state: Record<string, unknown> }>(
+        `select jsonb_build_object(
+          'session', (select to_jsonb(r) from public.sessions r where id = $1),
+          'appointment', (select to_jsonb(r) from public.appointments r where id = $2),
+          'blocks', (select coalesce(jsonb_agg(to_jsonb(r) order by r.id), '[]'::jsonb)
+            from public.session_blocks r where session_id = $1),
+          'areas', (select coalesce(jsonb_agg(to_jsonb(r) order by r.id), '[]'::jsonb)
+            from public.session_block_areas r where session_block_id in
+              (select id from public.session_blocks where session_id = $1)),
+          'payments', (select coalesce(jsonb_agg(to_jsonb(r) order by r.id), '[]'::jsonb)
+            from public.payment_charge_attempts r where session_id = $1),
+          'email', (select coalesce(jsonb_agg(to_jsonb(r) order by r.id), '[]'::jsonb)
+            from public.email_outbound_messages r where studio_id = $3),
+          'sms', (select coalesce(jsonb_agg(to_jsonb(r) order by r.id), '[]'::jsonb)
+            from public.sms_outbound_messages r where studio_id = $3)
+        ) as state`, [s.sessionId, s.appointmentId, seed.studioId],
+      ))[0].state;
+      const before = await snapshot();
+      expect(before.payments).toEqual([]);
+      // Auth/setup may already have delivery records. The equality below
+      // requires zero new effects from opening and dismissing this dialog.
+      expect(await getSessionAftercareStamp(s.sessionId)).toBeNull();
+      const postcareBefore = await getAppointmentPostcareState(s.appointmentId);
+      expect(postcareBefore.attempts).toBe(0);
+      const auditBefore = await getAppointmentAuditActions(s.appointmentId);
+      const urlBefore = page.url();
+      const mutationRequests: string[] = [];
+      const providerRequests: string[] = [];
+      page.on("request", (request) => {
+        if (request.method() === "POST" && request.headers()["next-action"]) {
+          mutationRequests.push(new URL(request.url()).pathname);
+        }
+        if (/\b(api\.stripe\.com|api\.resend\.com|api\.twilio\.com)\b/.test(request.url())) {
+          providerRequests.push(new URL(request.url()).hostname);
+        }
+      });
+      const opener = finish(page).getByRole("button", { name: /Done, back to client/ });
+      await opener.click();
+      const dialog = page.getByRole("dialog", { name: "Aftercare not marked", exact: true });
+      const panel = dialog.locator('div[tabindex="-1"]');
+      const first = panel.getByRole("button", { name: "Mark aftercare explained", exact: true });
+      const last = panel.getByRole("button", { name: "Continue without marking", exact: true });
+      await expect(panel).toBeFocused();
+      await expect(first).toBeEnabled();
+      await expect(last).toBeEnabled();
+      // Only Tab/Shift+Tab/Escape: never Enter/Space/click either clinical choice.
+      await page.keyboard.press("Shift+Tab");
+      await expect(last).toBeFocused();
+      await page.keyboard.press("Tab");
+      await expect(first).toBeFocused();
+      await page.keyboard.press("Shift+Tab");
+      await expect(last).toBeFocused();
+      expect(await panel.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+      await page.keyboard.press("Escape");
+      await expect(dialog).toHaveCount(0);
+      await expect(opener).toBeFocused();
+      expect(page.url()).toBe(urlBefore);
+      expect(await snapshot()).toEqual(before);
+      expect(await getSessionAftercareStamp(s.sessionId)).toBeNull();
+      expect(await getAppointmentPostcareState(s.appointmentId)).toEqual(postcareBefore);
+      expect(await getAppointmentAuditActions(s.appointmentId)).toEqual(auditBefore);
+      expect(mutationRequests).toEqual([]);
+      expect(providerRequests).toEqual([]);
     });
 
     test("one Finish section, one lifecycle control, one postcare surface", async ({
