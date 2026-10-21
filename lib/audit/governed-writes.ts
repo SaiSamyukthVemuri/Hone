@@ -7,6 +7,24 @@ import { expectedCsvFiles, exportedResources } from "@/lib/export/resource-regis
 type AuditResult = { error: null | { code: "audit_write_unavailable" } };
 const refused = (): AuditResult => ({ error: { code: "audit_write_unavailable" } });
 
+// The request resolver intentionally caches membership. Privileged emission
+// must independently verify the current session and exact active membership.
+async function freshAuditMembership(
+  client: Awaited<ReturnType<typeof createClient>>,
+  practitionerId: string,
+  studioId: string,
+): Promise<{ role: string } | null> {
+  const { data: { user }, error: authError } = await client.auth.getUser();
+  if (authError || !user) return null;
+  const { data: member, error } = await client.from("practitioners")
+    .select("id,user_id,studio_id,active,role")
+    .eq("id", practitionerId).eq("user_id", user.id)
+    .eq("studio_id", studioId).eq("active", true).maybeSingle();
+  if (error || !member || member.id !== practitionerId || member.user_id !== user.id
+    || member.studio_id !== studioId || member.active !== true || typeof member.role !== "string") return null;
+  return { role: member.role };
+}
+
 // These are internal server helpers, NOT exported Server Actions. There is no
 // helper transport accepting a raw actor/studio/action/entity-type/metadata object.
 export async function recordClientArchiveAudit(input: {
@@ -28,6 +46,7 @@ export async function recordClientArchiveAudit(input: {
     const { data, error } = await client.from("clients").select("id")
       .eq("id", input.clientId).eq("studio_id", studio.id).maybeSingle();
     if (error || !data || data.id !== input.clientId) return refused();
+    if (!await freshAuditMembership(client, practitioner.id, studio.id)) return refused();
 
     const admin = createAdminClient();
     const { error: writeError } = await admin.from("audit_logs").insert({
@@ -63,6 +82,9 @@ export async function recordStudioExportAudit(input: {
     const keys = Object.keys(input.rowCounts);
     if (keys.length !== resources.length || keys.some((key) => !resources.includes(key))
       || Object.values(input.rowCounts).some((count) => !Number.isSafeInteger(count) || count < 0)) return refused();
+    const client = await createClient();
+    const membership = await freshAuditMembership(client, practitioner.id, studio.id);
+    if (!membership || membership.role !== "owner") return refused();
     const admin = createAdminClient();
     const { error } = await admin.from("audit_logs").insert({
       studio_id: studio.id, actor_id: practitioner.id, action: "studio_export",

@@ -63,6 +63,9 @@ type StubResult = { data: unknown[] | null; error: unknown; count?: number | nul
 
 let auditInsert: Record<string, unknown> | null = null;
 let auditFailure: "error" | "throw" | null = null;
+let freshOwnerActive = true;
+let adminConstructed = 0;
+let completedExportReads = 0;
 /**
  * The column list the action ACTUALLY asks PostgREST for, per table. Recorded
  * from the real `.select()` call rather than read out of the source, so this is
@@ -85,11 +88,17 @@ function builder(
 ): unknown {
   const target = {
     url,
-    then: (resolve: (v: StubResult) => unknown) => Promise.resolve(result).then(resolve),
+    then: (resolve: (v: StubResult) => unknown) => {
+      completedExportReads++;
+      return Promise.resolve(result).then(resolve);
+    },
   };
   return new Proxy(target, {
     get(t, prop) {
       if (prop === "then") return t.then;
+      if (prop === "maybeSingle" && table === "practitioners") return async () => ({
+        data: { id: "prac-1", user_id: "user-1", studio_id: "studio-1", active: freshOwnerActive, role: "owner" }, error: null,
+      });
       // postgrest-js keeps the selection in the REQUEST URL, and a later
       // .select() on the same builder REPLACES it. The stub models that
       // exactly, because that replacement is the behaviour the export's
@@ -111,6 +120,7 @@ function builder(
 
 function makeClient() {
   return {
+    auth: { getUser: async () => ({ data: { user: { id: "user-1" } }, error: null }) },
     from(table: string) {
       if (table === "audit_logs") {
         return {
@@ -132,7 +142,7 @@ function makeClient() {
   };
 }
 
-vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => makeClient() }));
+vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => { adminConstructed++; return makeClient(); } }));
 
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => makeClient(),
@@ -618,5 +628,35 @@ describe("SEC-003 actual export withholds bytes on trusted audit failure", () =>
       expect(result).not.toHaveProperty("base64");
       expect(auditInsert).toBeNull();
     } finally { auditFailure = null; }
+  });
+});
+
+
+describe("SEC-003 cached owner revocation after export reads", () => {
+  it("withholds real archive bytes when the cached owner is revoked before the uncached audit check", async () => {
+    auditInsert = null; failingTables = new Set(); auditFailure = null;
+    freshOwnerActive = true; adminConstructed = 0; completedExportReads = 0;
+    const generate = JSZip.prototype.generateAsync;
+    let readsAtRevocation = 0;
+    const revoke = vi.spyOn(JSZip.prototype, "generateAsync").mockImplementation(function (this: JSZip, ...args) {
+      // The actual caller has completed all RLS reads and is now assembling
+      // real ZIP bytes. The cached resolver above STILL returns active owner.
+      readsAtRevocation = completedExportReads;
+      freshOwnerActive = false;
+      return generate.apply(this, args);
+    } as typeof generate);
+    try {
+      const { exportStudioDataAction } = await import("@/app/(app)/settings/data/actions");
+      const result = await exportStudioDataAction();
+      expect(readsAtRevocation).toBeGreaterThan(0);
+      expect(revoke).toHaveBeenCalledOnce();
+      const { getCurrentPractitionerWithStudio } = await import("@/lib/supabase/queries");
+      expect((await getCurrentPractitionerWithStudio()).practitioner).toMatchObject({ active: true, role: "owner" });
+      expect(freshOwnerActive).toBe(false);
+      expect(result).toEqual({ ok: false, error: "Could not record the export audit entry. Try again." });
+      expect(result).not.toHaveProperty("base64");
+      expect(adminConstructed).toBe(0);
+      expect(auditInsert).toBeNull();
+    } finally { revoke.mockRestore(); freshOwnerActive = true; }
   });
 });
