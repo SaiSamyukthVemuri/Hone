@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Stripe from "stripe";
+import { createFakeStripe, getFakeStripeCalls, resetFakeStripeState } from "@/lib/stripe/e2e-fake-stripe";
 
 // ===========================================================================
 // PAY-CCY-01 (#824) — EVERY LEDGER WRITER CHECKS THE PROVIDER'S MONEY FIRST
@@ -30,6 +31,7 @@ const h = vi.hoisted(() => ({
   claim: {} as Record<string, unknown>,
   pi: {} as Record<string, unknown>,
   createError: null as unknown,
+  useExistingAdapter: false,
   confirmError: null as unknown,
   beforeBind: null as null | (() => void),
   afterBind: null as null | (() => void),
@@ -104,7 +106,7 @@ vi.mock("@/lib/stripe/server", () => ({
   getStripe: () => fakeStripe,
 }));
 vi.mock("@/lib/stripe/session-payment-stripe", () => ({
-  getSessionPaymentStripe: () => fakeStripe,
+  getSessionPaymentStripe: () => h.useExistingAdapter ? createFakeStripe() : fakeStripe,
 }));
 vi.mock("@/lib/ops/alerts", () => ({
   recordOpsAlert: async (a: {
@@ -318,6 +320,7 @@ beforeEach(() => {
   h.claim = {};
   h.pi = {};
   h.createError = null;
+  h.useExistingAdapter = false;
   h.confirmError = null;
   h.beforeBind = null;
   h.afterBind = null;
@@ -991,6 +994,7 @@ describe("staged producer original binding", () => {
     setup(); h.createError = new Error("synthetic lost create ACK"); h.claimDynamic = true;
     expect(await charge()).toMatchObject({ outcome: "needs_manual_review" });
     h.createError = null;
+  h.useExistingAdapter = false;
     expect(await charge()).toMatchObject({ outcome: "needs_manual_review" });
     expect(h.stripeCalls).toEqual(["pi_create"]); expect(h.updates).toEqual([]);
   });
@@ -1118,4 +1122,33 @@ describe("staged producer original binding", () => {
     expect(JSON.stringify(h.alerts)).not.toContain("private fake");
   });
 
+});
+
+
+describe("existing E2E fake adapter through the real staged producer", () => {
+  const RUN = "run-producer-adapter-123";
+  it.each([false, true])("actual adapter preserves binding-before-money (lost ACK=%s)", async (lostAck) => {
+    const previous = process.env.HONE_E2E_RUN_ID;
+    process.env.HONE_E2E_RUN_ID = RUN; resetFakeStripeState(RUN);
+    try {
+      seedLineage("usd"); h.claim = claimFor("usd"); h.claimDynamic = true; h.useExistingAdapter = true;
+      if (lostAck) h.ackMode = "error";
+      const result = await charge();
+      if (!lostAck) {
+        expect(result).toMatchObject({ ok: true, outcome: "succeeded" });
+        expect(h.rows.payment_charge_attempts).toMatchObject({ status: "succeeded", amount_cents: AMOUNT, currency: "usd" });
+        expect(getFakeStripeCalls(RUN).map(c => c.method)).toEqual(["pi_create", "pi_confirm"]);
+      } else {
+        expect(result).toMatchObject({ outcome: "needs_manual_review" });
+        expect(h.rows.payment_charge_attempts).toMatchObject({ status: "pending_stripe", stripe_status: "requires_confirmation" });
+        expect(await charge()).toMatchObject({ outcome: "needs_manual_review" });
+        expect(getFakeStripeCalls(RUN).map(c => c.method)).toEqual(["pi_create", "pi_retrieve"]);
+        expect(getFakeStripeCalls(RUN).filter(c => c.method === "pi_confirm")).toEqual([]);
+        expect(succeededWrites()).toEqual([]);
+      }
+    } finally {
+      resetFakeStripeState(RUN);
+      if (previous === undefined) delete process.env.HONE_E2E_RUN_ID; else process.env.HONE_E2E_RUN_ID = previous;
+    }
+  });
 });

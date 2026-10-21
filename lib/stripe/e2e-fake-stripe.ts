@@ -1,5 +1,6 @@
 import "server-only";
 import type Stripe from "stripe";
+import { createHash } from "node:crypto";
 import {
   appendFakeCallToLedger,
   readFakeOutcome,
@@ -17,15 +18,15 @@ import {
 // secrets, or any PHI. Calls are isolated by HONE_E2E_RUN_ID so parallel CI
 // workers / distinct runs never read each other's state.
 //
-// Behaviour is FIXED to success in this pass; success/decline/ambiguous mode
-// selection (server-only, run-id-keyed) belongs to the later harness pass and is
-// never controllable by the browser or any request input.
+// Outcomes are selected only by the existing server-only run-keyed ledger,
+// never by browser/request input. Unconfirmed creation does not apply them.
 
 // Method labels use underscore forms (never the dotted SDK spelling) so this
 // test-only module never trips the Stripe money-movement grep gates that pin the
 // real SDK call sites to their allowlisted files.
 export type FakeStripeMethod =
   | "pi_create"
+  | "pi_confirm"
   | "pi_retrieve"
   | "pi_cancel"
   | "refund_create";
@@ -39,38 +40,46 @@ export type FakeStripeCall = {
   resultId: string;
   // INVOCATION vs EFFECT (PR #419 concurrency pass). Every adapter call is
   // recorded (an "invocation"); replay=false marks the calls that actually
-  // created a NEW synthetic processor result for a previously-unseen idempotency
-  // key (an "effect"). A replay (same key seen before) returns the same result
+  // produced a NEW synthetic processor outcome (including a refusal) for a previously-unseen idempotency
+  // key (an operation "effect", NOT proof of money moving). A replay (same key seen before) returns the same result
   // id and records replay=true, so a concurrency test can see TWO app-level
   // invocations even though only ONE processor effect occurred. The fake's
   // idempotency can therefore never HIDE a duplicate server call.
   replay: boolean;
 };
 
-// Per-process, run-id-isolated recorder. A new Map per run id; distinct runs and
-// parallel workers never collide.
+// Per-process state remains run-isolated. Only the seven test-safe call fields
+// above enter the cross-process ledger; provider identity stays in private state.
 const callsByRun = new Map<string, FakeStripeCall[]>();
-// Idempotency replay: within a run, a repeated idempotency key returns the SAME
-// synthetic result and records NO second call (proves retry never double-charges).
-const idempotentResultByRun = new Map<string, Map<string, string>>();
 const seqByRun = new Map<string, number>();
-// PAY-CCY-01. The money each synthetic PaymentIntent and Charge was created
-// with, so a later retrieve and a refund state it back exactly as real Stripe
-// does. Real Stripe always states `amount` and `currency` on these objects,
-// and the application now refuses to record any that do not equal the
-// prepared attempt, so a fake that omitted them would fail closed.
 type FakeMoney = { amount: number | null; currency: string | null };
+type FakeIntent = FakeMoney & {
+  id: string; status: "requires_confirmation" | "succeeded" | "requires_payment_method" | "processing" | "canceled";
+  customer: string | null; payment_method: string | null; livemode: false;
+  confirmation_method: "manual" | "automatic"; latest_charge: string | null;
+  amount_received: number; amount_capturable: number;
+  last_payment_error: { type: "card_error"; code: "card_declined"; message: string } | null;
+};
+type StoredIntent = { account: string | null; createKey: string | null; chargeId: string; value: FakeIntent };
+type FakeRefund = FakeMoney & { id: string; status: "succeeded" };
+type CachedReply = { fingerprint: string; resultId: string; value: FakeIntent | FakeRefund | null; error: string | null };
+const intentsByRun = new Map<string, Map<string, StoredIntent>>();
+const repliesByRun = new Map<string, Map<string, CachedReply>>();
 const moneyByIdByRun = new Map<string, Map<string, FakeMoney>>();
-function rememberMoney(run: string, id: string, money: FakeMoney): void {
+const accountsByIdByRun = new Map<string, Map<string, string | null>>();
+function rememberMoney(run: string, id: string, money: FakeMoney, account: string | null): void {
   const m = moneyByIdByRun.get(run) ?? new Map<string, FakeMoney>();
-  m.set(id, money);
-  moneyByIdByRun.set(run, m);
+  m.set(id, money); moneyByIdByRun.set(run, m);
+  const a = accountsByIdByRun.get(run) ?? new Map<string, string | null>();
+  a.set(id, account); accountsByIdByRun.set(run, a);
 }
 function recalledMoney(run: string, id: string | null | undefined): FakeMoney {
-  if (!id) return { amount: null, currency: null };
-  return moneyByIdByRun.get(run)?.get(id) ?? { amount: null, currency: null };
+  return (id ? moneyByIdByRun.get(run)?.get(id) : null) ?? { amount: null, currency: null };
 }
-
+function runTag(run: string): string {
+  // Valid run IDs can contain hyphens; Stripe-shaped object IDs cannot.
+  return createHash("sha256").update(run).digest("hex").slice(0, 16);
+}
 function runId(): string {
   return process.env.HONE_E2E_RUN_ID ?? "no-run";
 }
@@ -104,18 +113,40 @@ function outcomeFor(run: string, idempotencyKey: string | null): "success" | "de
     return "success";
   }
 }
-function idempotentResult(
-  run: string,
-  key: string | null | undefined,
-): string | null {
-  if (!key) return null;
-  return idempotentResultByRun.get(run)?.get(key) ?? null;
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") return Object.fromEntries(
+    Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => [k, canonical(v)]),
+  );
+  return value;
 }
-function rememberIdempotent(run: string, key: string | null | undefined, id: string): void {
-  if (!key) return;
-  const m = idempotentResultByRun.get(run) ?? new Map<string, string>();
-  m.set(key, id);
-  idempotentResultByRun.set(run, m);
+
+// A key is scoped by connected account AND API method/path, matching Stripe's
+// operation boundary. Cache the original response, not mutable resource state.
+function invoke<T extends FakeIntent | FakeRefund>(
+  run: string, method: FakeStripeMethod, path: string, params: unknown,
+  opts: RequestOpts, money: FakeMoney, execute: () => T,
+): T {
+  const key = opts?.idempotencyKey ?? null;
+  const scope = key ? JSON.stringify([opts?.stripeAccount ?? null, path, key]) : null;
+  const fingerprint = createHash("sha256").update(JSON.stringify(canonical(params))).digest("hex");
+  const replies = repliesByRun.get(run) ?? new Map<string, CachedReply>();
+  const previous = scope ? replies.get(scope) : undefined;
+  let reply = previous;
+  if (!reply) {
+    try {
+      const value = execute();
+      reply = { fingerprint, resultId: value.id, value: structuredClone(value), error: null };
+    } catch {
+      reply = { fingerprint, resultId: "pi_test_e2e_refused", value: null, error: "Synthetic processor request refused." };
+    }
+    if (scope) { replies.set(scope, reply); repliesByRun.set(run, replies); }
+  }
+  record(run, { method, idempotencyKey: key, stripeAccount: opts?.stripeAccount ?? null,
+    amountCents: money.amount, currency: money.currency, resultId: reply.resultId, replay: !!previous });
+  if (previous && previous.fingerprint !== fingerprint) throw new Error("Synthetic idempotency parameters differ.");
+  if (reply.error) throw new Error(reply.error);
+  return structuredClone(reply.value) as T;
 }
 
 // ---- Test-process inspection API (NOT a production/browser surface) ----------
@@ -124,157 +155,113 @@ export function getFakeStripeCalls(run: string = runId()): ReadonlyArray<FakeStr
 }
 export function resetFakeStripeState(run: string = runId()): void {
   callsByRun.delete(run);
-  idempotentResultByRun.delete(run);
+  repliesByRun.delete(run);
+  intentsByRun.delete(run);
+  accountsByIdByRun.delete(run);
   seqByRun.delete(run);
   moneyByIdByRun.delete(run);
 }
 
 // ---- The fake client -----------------------------------------------------------
 type CreatePiParams = {
-  amount?: number | null;
-  currency?: string | null;
+  amount?: number | null; currency?: string | null;
+  customer?: string; payment_method?: string; confirm?: boolean;
+  confirmation_method?: "manual" | "automatic";
 };
 type RequestOpts = { stripeAccount?: string; idempotencyKey?: string } | undefined;
-
-function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiParams) {
-  const key = opts?.idempotencyKey ?? null;
-  const existing = idempotentResult(run, key);
-  // A replay is a create whose idempotency key already produced an effect. It
-  // returns the SAME synthetic result (Stripe's 24h idempotency window) and
-  // creates NO new processor effect, but it IS still an app-level invocation.
-  const replay = existing !== null;
-  const seq = existing ? null : nextSeq(run);
-  const id = existing ?? `pi_test_e2e_${run}_${seq}`;
-  const chargeId = `ch_test_e2e_${run}_${(id.match(/_(\d+)$/)?.[1] ?? seq) ?? 1}`;
-  const outcome = outcomeFor(run, key);
-  if (!existing) {
-    // First-seen key → THIS call is the unique processor effect.
-    rememberIdempotent(run, key, id);
-  }
-  // Record EVERY invocation (replay flag distinguishes effect from replay) so a
-  // duplicate server call can never be concealed behind one synthetic result.
-  record(run, {
-    method: "pi_create",
-    idempotencyKey: key,
-    stripeAccount: opts?.stripeAccount ?? null,
-    amountCents: params?.amount ?? null,
-    currency: params?.currency ?? null,
-    resultId: id,
-    replay,
-  });
-  // Success → succeeded (+ latest_charge); decline → non-succeeded status the
-  // real executor persists as failed; processing → pending.
-  const status =
-    outcome === "decline"
-      ? "requires_payment_method"
-      : outcome === "processing"
-        ? "processing"
-        : "succeeded";
-  // A replay states the money of the ORIGINAL create, as Stripe's idempotent
-  // replay returns the original object rather than echoing the new request.
-  const money: FakeMoney = existing
-    ? recalledMoney(run, id)
-    : { amount: params?.amount ?? null, currency: params?.currency ?? null };
-  if (!existing) {
-    rememberMoney(run, id, money);
-    rememberMoney(run, chargeId, money);
-  }
-  return {
-    id,
-    status,
-    amount: money.amount,
-    currency: money.currency,
-    latest_charge: outcome === "success" ? chargeId : null,
-  };
+function applyOutcome(run: string, stored: StoredIntent): FakeIntent {
+  const outcome = outcomeFor(run, stored.createKey);
+  const pi = stored.value;
+  pi.status = outcome === "decline" ? "requires_payment_method" : outcome === "processing" ? "processing" : "succeeded";
+  pi.latest_charge = outcome === "success" ? stored.chargeId : null;
+  pi.amount_received = outcome === "success" ? pi.amount ?? 0 : 0;
+  pi.last_payment_error = outcome === "decline"
+    ? { type: "card_error", code: "card_declined", message: "Synthetic processor refusal." } : null;
+  if (pi.latest_charge) rememberMoney(run, pi.latest_charge, pi, stored.account);
+  return pi;
+}
+function ownedIntent(run: string, id: string, opts: RequestOpts): StoredIntent {
+  const stored = intentsByRun.get(run)?.get(id);
+  if (!stored || stored.account !== (opts?.stripeAccount ?? null)) throw new Error("Synthetic original unavailable.");
+  return stored;
 }
 
-// Returns a Stripe-shaped object implementing only the session-payment surface.
+// Returns only the existing session-payment surface; no real SDK/network use.
 export function createFakeStripe(): Stripe {
   const fake = {
     paymentIntents: {
-      create: async (params: CreatePiParams, opts?: RequestOpts) =>
-        synthPaymentIntent(runId(), opts, params),
-      retrieve: async (id: string, _p?: unknown, opts?: RequestOpts) => {
-        record(runId(), {
-          method: "pi_retrieve",
-          idempotencyKey: null,
-          stripeAccount: opts?.stripeAccount ?? null,
-          amountCents: null,
-          currency: null,
-          resultId: id,
-          replay: false, // a read, not a keyed effect
-        });
+      create: async (params: CreatePiParams, opts?: RequestOpts) => {
         const run = runId();
-        const chargeId = `ch_test_e2e_${run}_r`;
-        // States the money this PaymentIntent was created with. An id the fake
-        // never created states none, which the application treats as a
-        // mismatch, the same as real Stripe disagreeing with the row.
-        const money = recalledMoney(run, id);
-        rememberMoney(run, chargeId, money);
-        return {
-          id,
-          status: "succeeded",
-          amount: money.amount,
-          currency: money.currency,
-          latest_charge: chargeId,
-        };
+        return invoke(run, "pi_create", "POST:/payment_intents", params, opts,
+          { amount: params.amount ?? null, currency: params.currency ?? null }, () => {
+            const seq = nextSeq(run);
+            const id = `pi_test_e2e_${runTag(run)}_${seq}`;
+            const stored: StoredIntent = {
+              account: opts?.stripeAccount ?? null, createKey: opts?.idempotencyKey ?? null,
+              chargeId: `ch_test_e2e_${runTag(run)}_${seq}`,
+              value: { id, status: "requires_confirmation", amount: params.amount ?? null,
+                currency: params.currency ?? null, customer: params.customer ?? null,
+                payment_method: params.payment_method ?? null, livemode: false,
+                confirmation_method: params.confirmation_method ?? "automatic", latest_charge: null,
+                amount_received: 0, amount_capturable: 0, last_payment_error: null },
+            };
+            const intents = intentsByRun.get(run) ?? new Map<string, StoredIntent>();
+            intents.set(id, stored); intentsByRun.set(run, intents);
+            rememberMoney(run, id, stored.value, stored.account);
+            // Creating an unconfirmed object is NOT a money operation. Legacy
+            // explicit combined requests retain their existing final outcomes.
+            return params.confirm === true ? applyOutcome(run, stored) : stored.value;
+          });
+      },
+      confirm: async (id: string, params: { off_session?: boolean } = {}, opts?: RequestOpts) => {
+        const run = runId();
+        return invoke(run, "pi_confirm", `POST:/payment_intents/${id}/confirm`, params, opts,
+          recalledMoney(run, id), () => {
+            const stored = ownedIntent(run, id, opts);
+            if (stored.value.status !== "requires_confirmation") throw new Error("Synthetic confirmation not permitted.");
+            return applyOutcome(run, stored);
+          });
+      },
+      retrieve: async (id: string, _p?: unknown, opts?: RequestOpts) => {
+        const run = runId();
+        record(run, { method: "pi_retrieve", idempotencyKey: null, stripeAccount: opts?.stripeAccount ?? null,
+          amountCents: null, currency: null, resultId: id, replay: false });
+        const stored = intentsByRun.get(run)?.get(id);
+        if (stored) {
+          const owned = ownedIntent(run, id, opts);
+          // Only an explicit server-side outcome update may advance processing.
+          // A read NEVER confirms an unconfirmed or declined original.
+          if (owned.value.status === "processing" && outcomeFor(run, owned.createKey) === "success") applyOutcome(run, owned);
+          return structuredClone(owned.value);
+        }
+        // Unknown IDs retain the existing unreadable-money refusal control.
+        return { id, status: "succeeded", amount: null, currency: null, latest_charge: `ch_test_e2e_${runTag(run)}_r` };
       },
       cancel: async (id: string, _p?: unknown, opts?: RequestOpts) => {
-        record(runId(), {
-          method: "pi_cancel",
-          idempotencyKey: null,
-          stripeAccount: opts?.stripeAccount ?? null,
-          amountCents: null,
-          currency: null,
-          resultId: id,
-          replay: false,
-        });
-        return { id, status: "canceled" };
+        const run = runId();
+        record(run, { method: "pi_cancel", idempotencyKey: null, stripeAccount: opts?.stripeAccount ?? null,
+          amountCents: null, currency: null, resultId: id, replay: false });
+        const stored = intentsByRun.get(run)?.get(id);
+        if (!stored) return { id, status: "canceled" };
+        const owned = ownedIntent(run, id, opts);
+        if (owned.value.status === "succeeded") throw new Error("Synthetic completed payment cannot be canceled.");
+        owned.value.status = "canceled"; return structuredClone(owned.value);
       },
     },
     refunds: {
-      create: async (
-        params: {
-          charge?: string | null;
-          amount?: number | null;
-          currency?: string | null;
-        },
-        opts?: RequestOpts,
-      ) => {
+      create: async (params: { charge?: string | null; amount?: number | null; currency?: string | null }, opts?: RequestOpts) => {
         const run = runId();
-        const key = opts?.idempotencyKey ?? null;
-        const existing = idempotentResult(run, key);
-        const replay = existing !== null;
-        const id = existing ?? `re_test_e2e_${run}_${nextSeq(run)}`;
-        // Stripe takes a refund's currency from the CHARGE, never from the
-        // request. A replay states the original refund's amount.
-        const money: FakeMoney = existing
-          ? recalledMoney(run, id)
-          : {
-              amount: params?.amount ?? null,
-              currency: recalledMoney(run, params?.charge).currency,
-            };
-        if (!existing) {
-          rememberIdempotent(run, key, id);
-          rememberMoney(run, id, money);
-        }
-        // Record every refund invocation (replay flag), same invocation/effect
-        // model as create, so a duplicate refund request can't be concealed.
-        record(run, {
-          method: "refund_create",
-          idempotencyKey: key,
-          stripeAccount: opts?.stripeAccount ?? null,
-          amountCents: params?.amount ?? null,
-          currency: params?.currency ?? null,
-          resultId: id,
-          replay,
-        });
-        return {
-          id,
-          status: "succeeded",
-          amount: money.amount,
-          currency: money.currency,
-        };
+        return invoke(run, "refund_create", "POST:/refunds", params, opts,
+          { amount: params.amount ?? null, currency: params.currency ?? null }, () => {
+            const account = accountsByIdByRun.get(run);
+            if (params.charge && account?.has(params.charge) && account.get(params.charge) !== (opts?.stripeAccount ?? null)) {
+              throw new Error("Synthetic charge unavailable.");
+            }
+            const id = `re_test_e2e_${runTag(run)}_${nextSeq(run)}`;
+            const value: FakeRefund = { id, status: "succeeded", amount: params.amount ?? null,
+              currency: recalledMoney(run, params.charge).currency };
+            rememberMoney(run, id, value, opts?.stripeAccount ?? null); return value;
+          });
       },
     },
   };
