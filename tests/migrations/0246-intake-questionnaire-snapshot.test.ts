@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { countVersion, fileForVersion } from "./helpers/migration-state";
+import { countVersion, fileForVersion, isRepoMax } from "./helpers/migration-state";
 const sql = readFileSync("supabase/migrations/0246_intake_questionnaire_snapshot.sql", "utf8");
 const code = sql.replace(/^\s*--.*$/gm, "");
 
 describe("0246 prospective-only snapshot boundary", () => {
   it("has one allocated transaction and nullable column without default/adoption", () => {
+    // Current-own-MAX coverage; retire only when a published successor takes it.
+    expect(isRepoMax("0246")).toBe(true);
     expect(countVersion("0246")).toBe(1);
     expect(fileForVersion("0246")).toBe("0246_intake_questionnaire_snapshot.sql");
     expect(code.trim()).toMatch(/^begin;/);
