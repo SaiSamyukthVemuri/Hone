@@ -38,7 +38,7 @@ const h = vi.hoisted(() => {
     heartbeat: [] as Array<Record<string, unknown>>,
   };
   const appt = (id: string) => ({
-    id,
+    id: `00000000-0000-4000-8000-${String(Number(id.split("-")[1]) || 1).padStart(12, "0")}`,
     studio_id: "studio-1",
     client_id: "client-1",
     status: "confirmed",
@@ -75,10 +75,10 @@ const h = vi.hoisted(() => {
           : null;
       if (table !== "appointments" || !kind) return { data: [], error: null };
       const tag = kind === "24h" ? "a24" : "a2";
-      return { data: Array.from({ length: state.rows[kind] }, (_, i) => appt(`${tag}-${i + 1}`)), error: null };
+      return { data: Array.from({ length: state.rows[kind] }, (_, i) => ({ ...appt(`${tag}-${i + 1}`), starts_at: kind === "24h" ? START : "2026-10-08T19:00:00.000Z" })), error: null };
     };
     const b: Record<string, unknown> = {};
-    for (const m of ["select", "order", "limit"]) b[m] = () => b;
+    for (const m of ["select", "order", "limit", "abortSignal"]) b[m] = () => b;
     for (const op of ["eq", "is", "lt", "gte", "lte"]) {
       b[op] = (column: string, value: unknown) => {
         filters.push([op, column, value]);
@@ -102,7 +102,7 @@ const h = vi.hoisted(() => {
     rpc: (fn: string, args: Record<string, unknown>) => {
       state.rpcs.push({ fn, args });
       if (fn === "claim_reminder_sms_send") {
-        return Promise.resolve({ data: [{ result: "claimed", starts_at: START }], error: null });
+        return Promise.resolve({ data: [{ result: "claimed", starts_at: args.p_kind === "2h" ? "2026-10-08T19:00:00.000Z" : START }], error: null });
       }
       if (fn === "begin_appointment_sms_message") {
         const call = state.calls.begin++;
@@ -120,6 +120,14 @@ const h = vi.hoisted(() => {
   return { state, admin };
 });
 
+
+vi.mock("@/lib/cron/reminder-scan-coordinator", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/cron/reminder-scan-coordinator")>();
+  return { ...actual, createUpstashReminderScanCoordinator: () => ({
+    acquire: async () => "offline-fixture", rotation: async () => ({ version: 1 as const, next: "email24h" as const, known: [] }),
+    checkpoint: async () => null, renew: async () => true, save: async () => true, release: async () => undefined,
+  }) };
+});
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => h.admin }));
 vi.mock("@/lib/cron/auth", () => ({ isAuthorizedCronRequest: () => true }));
 vi.mock("@/lib/cron/reminder-heartbeat", () => ({
@@ -145,6 +153,8 @@ const saved: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>> = {}
 let fetchMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-10-08T17:00:00.000Z"));
   for (const k of ENV_KEYS) saved[k] = process.env[k];
   delete process.env.VERCEL_ENV;
   process.env.TWILIO_ACCOUNT_SID = `AC${"1".repeat(32)}`;
@@ -166,6 +176,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.useRealTimers();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   for (const k of ENV_KEYS) {
@@ -179,7 +190,7 @@ const statusCallbacks = () =>
   fetchMock.mock.calls.map(([, init]) => new URLSearchParams(String((init as { body?: unknown }).body)).has("StatusCallback"));
 
 /** Run the route on fake time; report the time it needed. */
-async function runTimed(capMs = 300_000) {
+async function runTimed(capMs = 300_000, expectedStatus = 200) {
   vi.useFakeTimers();
   let done = false;
   const pending = GET(new Request("https://hone.care/api/cron/appointment-reminders")).then((r) => {
@@ -193,7 +204,7 @@ async function runTimed(capMs = 300_000) {
   }
   expect(done, "the run never finished").toBe(true);
   const res = await pending;
-  expect(res.status).toBe(200);
+  expect(res.status).toBe(expectedStatus);
   const body = (await res.json()) as Record<string, Record<string, number>>;
   return { elapsedMs, body };
 }
@@ -297,7 +308,8 @@ describe("controls: a healthy ledger is untouched", () => {
     h.state.rows = { "24h": 50, "2h": 50 };
     h.state.beginDelay = () => 20;
     h.state.settleDelay = () => 20;
-    await runTimed();
+    await runTimed(300_000, 500);
+    expect(h.state.heartbeat).toHaveLength(0);
     expect(fetchMock).toHaveBeenCalledTimes(100);
     expect(fns("begin_appointment_sms_message")).toHaveLength(100);
     expect(fns("settle_sms_message")).toHaveLength(100);
@@ -307,6 +319,8 @@ describe("controls: a healthy ledger is untouched", () => {
     h.state.beginDelay = () => "hang";
     await runTimed();
     vi.useRealTimers();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-08T17:00:00.000Z"));
     h.state.beginDelay = () => 0;
     h.state.rpcs = [];
     fetchMock.mockClear();
