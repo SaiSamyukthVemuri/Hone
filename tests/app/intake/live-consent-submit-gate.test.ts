@@ -88,7 +88,21 @@ function makeBuilder(table: keyof typeof db) {
 
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 vi.mock("@/lib/supabase/admin-server", () => ({
-  createAdminClient: () => ({ from: (t: keyof typeof db) => makeBuilder(t) }),
+  createAdminClient: () => ({
+    from: (t: keyof typeof db) => makeBuilder(t),
+    // Unit facade for the one governed command. Real locking/profile rollback
+    // and ACLs are separately prepared in the existing DB suite, not proved here.
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      if (fn !== "write_intake_revision") throw new Error("unexpected writer");
+      const row = db.client_intake_forms.find((r) => r.id === args.p_intake_id && r.studio_id === args.p_studio_id && r.client_id === args.p_client_id && !r.deleted_at);
+      if (!row) return { data: [{ outcome: "not_available", new_revision: null }], error: null };
+      if (row.status !== "in_progress") return { data: [{ outcome: "terminal", new_revision: null }], error: null };
+      if (String(row.revision) !== args.p_expected_revision) return { data: [{ outcome: "conflict", new_revision: null }], error: null };
+      row.responses = args.p_responses; row.current_step = args.p_step; row.revision = Number(row.revision) + 1;
+      if (args.p_operation === "submit") { row.status = "submitted"; row.submitted_at = new Date().toISOString(); }
+      return { data: [{ outcome: args.p_operation === "submit" ? "submitted" : "saved", new_revision: String(row.revision) }], error: null };
+    },
+  }),
 }));
 vi.mock("@/lib/intake/tokens", () => ({
   verifyIntakeToken: (t: string) =>
@@ -187,7 +201,7 @@ function currentRow(): Row {
 
 async function submit(extra: Record<string, unknown> = {}) {
   return submitIntakeAction({
-    token: "good",
+    token: "good", expectedRevision: String(currentRow().revision),
     responses: { ...completeAnswers(), ...extra },
   });
 }
@@ -199,6 +213,7 @@ beforeEach(() => {
       studio_id: STUDIO_ID,
       client_id: CLIENT_ID,
       status: "in_progress",
+      revision: 0,
       current_step: 5,
       responses: {},
       submitted_at: null,
@@ -403,7 +418,8 @@ describe("the server accepts a complete submit", () => {
     currentRow().status = "submitted";
     db.consent_form_templates = [treatmentTemplate()];
     const res = await submit();
-    expect(res.ok).toBe(true);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.code).toBe("terminal");
     // Untouched: no rewrite, no consent record grafted on.
     expect(
       (currentRow().responses as Record<string, unknown>)[

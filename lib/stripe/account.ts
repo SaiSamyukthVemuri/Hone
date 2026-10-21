@@ -9,7 +9,7 @@
 
 import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin-server";
-import { recordOpsAlert } from "@/lib/ops/alerts";
+import { notifyCriticalOpsAlert } from "@/lib/ops/alert-email";
 import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
 import { getStripe, inferStripeLivemode } from "./server";
 
@@ -84,24 +84,46 @@ export async function recordStripeAccountObservation(args: {
   }
   const reason =
     row.out_result === "country_conflict" ? "country_conflict" : "country_mismatch";
-  await recordOpsAlert({
-    severity: "critical",
-    event: "stripe_account_country_mismatch",
-    message:
-      reason === "country_conflict"
-        ? "Stripe reported a different country for a connected account than the one Hone recorded. Nothing was overwritten; charging stays blocked until an operator resolves it."
-        : "A studio's Stripe connected account is in a different country than the studio's payment country. Onboarding and charging are blocked; the account is not replaced.",
-    studioId: args.studioId,
-    route: args.route,
-    safeDetails: {
-      stripe_account_id: args.stripeAccountId,
-      livemode: args.livemode,
-      reason,
-      stripe_reported_country: args.account.country ?? null,
-      recorded_account_country: row.out_account_country,
-      studio_payment_country: row.out_payment_country,
-    },
-  });
+  // 0238 owns the durable row and serializes open incidents. Never call
+  // recordOpsAlert here: that would insert another row and email every retry.
+  try {
+    const { data: claims, error: claimError } = await admin.rpc(
+      "claim_stripe_account_country_alert",
+      { p_studio_id: args.studioId, p_stripe_account_id: args.stripeAccountId,
+        p_stripe_livemode: args.livemode },
+    );
+    const claim = (Array.isArray(claims) ? claims[0] : claims) as {
+      out_result: string; out_alert_id: string | null; out_created_at: string | null;
+      out_reason: string | null; out_message: string | null;
+    } | null;
+    if (claimError || !claim || !["created", "existing", "not_mismatched"].includes(claim.out_result)) {
+      logInternalStripeError("stripe_account_country_alert_claim_failed", {
+        studioId: args.studioId, stripeAccountId: args.stripeAccountId,
+        livemode: args.livemode, reason, code: claimError?.code ?? null,
+        result: claim?.out_result ?? null,
+      });
+    } else if (claim.out_result === "created") {
+      if (!claim.out_alert_id || !claim.out_created_at || !claim.out_message ||
+          !["country_mismatch", "country_conflict"].includes(claim.out_reason ?? "")) {
+        logInternalStripeError("stripe_account_country_alert_claim_invalid", {
+          studioId: args.studioId, stripeAccountId: args.stripeAccountId,
+        });
+      } else {
+        await notifyCriticalOpsAlert({
+          event: "stripe_account_country_mismatch", message: claim.out_message,
+          createdAtIso: claim.out_created_at, studioId: args.studioId,
+          route: "lib/stripe/account:recordStripeAccountObservation",
+        });
+      }
+    }
+  } catch {
+    // Alert failures never turn a country refusal into success. The next
+    // observation can retry a rolled-back claim; email remains best effort.
+    logInternalStripeError("stripe_account_country_alert_claim_threw", {
+      studioId: args.studioId, stripeAccountId: args.stripeAccountId,
+      livemode: args.livemode, reason,
+    });
+  }
   return {
     kind: "mismatch",
     accountCountry: row.out_account_country,

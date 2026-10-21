@@ -646,3 +646,66 @@ async function seedResponses(
     [intakeId, JSON.stringify(responses)],
   );
 }
+
+
+// 0243 prepared stale-draft regression. Run only on a composed migration head
+// containing0243 with a fresh granted paired target; the retained861e stack
+// is not compatible and must never be reset implicitly by this spec.
+test.describe("0243 stale public and assisted drafts", () => {
+  test("two public editors retain the losing draft until explicit discard", async ({ page, context }) => {
+    const { clientId } = await seedE2eClient(seed);
+    const intakeId = await seedE2eIntake(seed.studioId, clientId, "in_progress", answeredQuestionnaire());
+    const url = `/intake/${await mintIntakeToken(intakeId)}`;
+    const stale = await context.newPage();
+    try {
+      await page.goto(url); await stale.goto(url);
+      await page.getByLabel("Preferred name", { exact: true }).fill("Committed winner");
+      await stale.getByLabel("Preferred name", { exact: true }).fill("Unsaved losing draft");
+      await page.getByRole("button", { name: "Continue", exact: true }).click();
+      await expect.poll(async () => (await getIntakeRow(intakeId))?.responses.preferred_name).toBe("Committed winner");
+      await stale.getByRole("button", { name: "Continue", exact: true }).click();
+      await expect(stale.getByText("This intake changed in another window.", { exact: false })).toBeVisible();
+      await expect(stale.getByLabel("Preferred name", { exact: true })).toHaveValue("Unsaved losing draft");
+      expect((await getIntakeRow(intakeId))?.responses.preferred_name).toBe("Committed winner");
+      await stale.getByRole("button", { name: "Discard my unsaved draft and reload saved answers", exact: true }).click();
+      await stale.getByRole("button", { name: "Back", exact: true }).click();
+      await expect(stale.getByLabel("Preferred name", { exact: true })).toHaveValue("Committed winner");
+    } finally { await stale.close(); }
+  });
+  test("an assisted winner cannot be overwritten by a stale public wizard", async ({ page, context }) => {
+    const { clientId } = await seedE2eClient(seed);
+    const intakeId = await seedE2eIntake(seed.studioId, clientId, "in_progress", answeredQuestionnaire());
+    await loginAsOwner(page, seed);
+    const publicPage = await context.newPage();
+    try {
+      await page.goto(`/clients/${clientId}/intake/assist?intake=${intakeId}`);
+      await publicPage.goto(`/intake/${await mintIntakeToken(intakeId)}`);
+      await page.getByLabel("Preferred name", { exact: true }).fill("Assisted winner");
+      await publicPage.getByLabel("Preferred name", { exact: true }).fill("Retained public draft");
+      await page.getByRole("button", { name: /Continue|Save and continue/ }).click();
+      await expect.poll(async () => (await getIntakeRow(intakeId))?.responses.preferred_name).toBe("Assisted winner");
+      await publicPage.getByRole("button", { name: "Continue", exact: true }).click();
+      await expect(publicPage.getByText("This intake changed in another window.", { exact: false })).toBeVisible();
+      await expect(publicPage.getByLabel("Preferred name", { exact: true })).toHaveValue("Retained public draft");
+      expect((await getIntakeRow(intakeId))?.responses.preferred_name).toBe("Assisted winner");
+    } finally { await publicPage.close(); }
+  });
+  test("a public winner cannot be overwritten by a stale assisted editor", async ({ page, context }) => {
+    const { clientId } = await seedE2eClient(seed);
+    const intakeId = await seedE2eIntake(seed.studioId, clientId, "in_progress", answeredQuestionnaire());
+    await loginAsOwner(page, seed);
+    const publicPage = await context.newPage();
+    try {
+      await page.goto(`/clients/${clientId}/intake/assist?intake=${intakeId}`);
+      await publicPage.goto(`/intake/${await mintIntakeToken(intakeId)}`);
+      await page.getByLabel("Preferred name", { exact: true }).fill("Retained assisted draft");
+      await publicPage.getByLabel("Preferred name", { exact: true }).fill("Public winner");
+      await publicPage.getByRole("button", { name: "Continue", exact: true }).click();
+      await expect.poll(async () => (await getIntakeRow(intakeId))?.responses.preferred_name).toBe("Public winner");
+      await page.getByRole("button", { name: /Continue|Save and continue/ }).click();
+      await expect(page.getByText("This intake changed in another window.", { exact: false })).toBeVisible();
+      await expect(page.getByLabel("Preferred name", { exact: true })).toHaveValue("Retained assisted draft");
+      expect((await getIntakeRow(intakeId))?.responses.preferred_name).toBe("Public winner");
+    } finally { await publicPage.close(); }
+  });
+});

@@ -1514,6 +1514,14 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Same 0159 retirement and the same unverified row-bearing question as clinical_record_snapshots.",
   },
+  treatment_reading_change_events: {
+    kind: "pending",
+    ticket: "HON-18 / CLN-007",
+    tier: 1,
+    fieldReviewRequired: true,
+    reason:
+      "0244 routine clinical reading correction diffs and actor snapshots. PENDING field review, NOT EXPORTED: old/new values are clinical data; this registry entry grants no new export authority or retention policy. Retired signed-record ledgers and native setup captures remain separate.",
+  },
   clinical_audit_events: {
     kind: "pending",
     ticket: "TRUTH-01B",

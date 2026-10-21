@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import {
   adminQuery,
-  purgeAppointmentAudit,
+  adminTx,
   asUser,
   closePool,
   seedSession,
@@ -19,7 +19,7 @@ import {
 //   #3  a non-probe sterile item (probe_key NULL) is legal
 // The link column ON DELETE SET NULL only nulls the pointer; the immutable
 // lot-number snapshot and the block itself survive. Studio deletion still
-// cascades both the block and the inventory row (studio-scoped isolation).
+// cascades history-free rows; 0244 RESTRICT protects attributable history.
 
 let a: SeededStudio;
 let b: SeededStudio;
@@ -186,10 +186,14 @@ describe("#16/#18 historical charting is immutable when inventory later changes"
       probe_inventory_item_id: item,
       probe_lot_number: "DEL-LOT",
     });
-    await adminQuery(
-      "delete from public.record_keeping_sterile_items where id=$1",
-      [item],
-    );
+    // Attributed privileged fixture maintenance: FK SET NULL is itself a
+    // clinical pointer correction. No history deletion or trigger bypass.
+    await adminTx(async q => {
+      await q("select set_config('request.jwt.claims',$1,true)", [JSON.stringify({ sub: a.userId, role: "authenticated" })]);
+      await q("delete from public.record_keeping_sterile_items where id=$1", [item]);
+    });
+    const history = await adminQuery("select changes,actor_practitioner_id from public.treatment_reading_change_events where source_id=$1", [blockId]);
+    expect(history.rows).toEqual(expect.arrayContaining([expect.objectContaining({ actor_practitioner_id: a.practitionerId, changes: expect.objectContaining({ probe_inventory_item_id: { old: { present: true, value: item }, new: { present: true, value: null } } }) })]));
     const r = await adminQuery(
       "select probe_inventory_item_id, probe_lot_number, studio_id from public.session_blocks where id=$1",
       [blockId],
@@ -232,8 +236,8 @@ describe("RLS: a linked inventory row is invisible across studios (#8)", () => {
   });
 });
 
-describe("studio-scoped cascade still removes both the block and its inventory", () => {
-  it("deleting the studio cascades away the linked block and the sterile item", async () => {
+describe("0244 clinical history restricts parent cleanup without a bypass", () => {
+  it("refuses studio deletion when attributable reading history exists", async () => {
     const c = await seedStudio("probeinv-c");
     const item = await seedProbeItem(c, { probeKey: F3, lot: "C-LOT" });
     const { sessionId } = await seedSession(c);
@@ -242,8 +246,11 @@ describe("studio-scoped cascade still removes both the block and its inventory",
       probe_inventory_item_id: item,
       probe_lot_number: "C-LOT",
     });
-    await purgeAppointmentAudit(c.studioId);
-    await adminQuery("delete from public.studios where id=$1", [c.studioId]);
+    await asUser(c.userId, q => q("update public.session_blocks set energy_level=1 where id=$1", [blockId]));
+    // Existing cascade guards can refuse first; the session-specific case in
+    // the entry suite separately requires exact FK23503. No denial is bypassed.
+    await expect(adminQuery("delete from public.studios where id=$1", [c.studioId])).rejects.toMatchObject({ code: expect.stringMatching(/^(23503|23514|55000)$/) });
+    expect((await adminQuery("select confdeltype from pg_constraint where conrelid='public.treatment_reading_change_events'::regclass and confrelid='public.studios'::regclass")).rows).toEqual([{ confdeltype: "r" }]);
     const blk = await adminQuery(
       "select id from public.session_blocks where id=$1",
       [blockId],
@@ -252,8 +259,9 @@ describe("studio-scoped cascade still removes both the block and its inventory",
       "select id from public.record_keeping_sterile_items where id=$1",
       [item],
     );
-    expect(blk.rowCount).toBe(0);
-    expect(inv.rowCount).toBe(0);
+    expect(blk.rowCount).toBe(1);
+    expect(inv.rowCount).toBe(1);
+    expect((await adminQuery("select id from public.treatment_reading_change_events where source_id=$1", [blockId])).rowCount).toBeGreaterThan(0);
   });
 });
 
@@ -313,4 +321,11 @@ describe("mixed-version: new 0155 RPCs accept OLD app payloads (no probe_invento
     expect(row.rows[0].probe_lot_number).toBe("MANUAL-UPD");
     expect(row.rows[0].probe_lot_confirmed).toBe(true);
   });
+});
+
+// Positive cleanup control: RESTRICT protects history, not every empty studio.
+it("0244 history-free synthetic studio cleanup remains possible", async () => {
+  const empty = await seedStudio("probeinv-nohistory");
+  await adminQuery("delete from public.studios where id=$1", [empty.studioId]);
+  expect((await adminQuery("select id from public.studios where id=$1", [empty.studioId])).rowCount).toBe(0);
 });

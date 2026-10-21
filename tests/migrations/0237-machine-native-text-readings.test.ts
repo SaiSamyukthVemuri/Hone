@@ -1,13 +1,12 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { countVersion, fileForVersion, isRepoMax } from "./helpers/migration-state";
+import { countVersion, fileForVersion } from "./helpers/migration-state";
 
 const sql = readFileSync("supabase/migrations/0237_machine_native_text_readings.sql", "utf8");
 describe("0237 additive native text contract (static, not DB proof)", () => {
-  it("owns only its allocated number, transaction and derived maximum", () => {
+  it("owns only its allocated number and transaction", () => {
     expect(countVersion("0237")).toBe(1);
     expect(fileForVersion("0237")).toBe("0237_machine_native_text_readings.sql");
-    expect(isRepoMax("0237")).toBe(true);
     expect(sql).toMatch(/begin;\s*set local lock_timeout = '5s';/);
     expect(sql.trim()).toMatch(/commit;$/);
     expect(sql).not.toMatch(/\b(drop table|disable row level security|disable trigger|truncate|cascade)\b/i);

@@ -291,6 +291,24 @@ export async function startSessionAction(formData: FormData): Promise<void> {
   // which is exactly what the old `existing` lookup told the analytics event.
   const reusedExisting = started.reused === true;
 
+  // CLN-002: an older command can coalesce appointment B onto A's chart.
+  // Read the committed lineage through RLS before completing/postcare for B
+  // or redirecting to that chart. Missing/unreadable lineage is not permission
+  // to proceed. This also contains reverse skew until the additive command
+  // repair is applied; it does not claim to repair the database's selection.
+  if (appointmentId) {
+    const { data: linkedSession, error: linkError } = await supabase
+      .from("sessions")
+      .select("appointment_id")
+      .eq("id", sessionId)
+      .eq("studio_id", studio.id)
+      .eq("client_id", clientId)
+      .maybeSingle();
+    if (linkError || !linkedSession || linkedSession.appointment_id !== appointmentId) {
+      throw new Error("The chart could not be linked to this appointment. Refresh the appointment and try again.");
+    }
+  }
+
   // PR #180. Auto-mark the linked appointment completed BEFORE
   // revalidate so the calendar / appointment detail page sees the
   // new terminal status when the practitioner navigates back. The

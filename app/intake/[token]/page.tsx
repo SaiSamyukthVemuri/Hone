@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { intakeRevision } from "@/lib/intake/revision";
 import { MarketingFooter } from "@/app/_components/MarketingFooter";
 import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
@@ -21,6 +22,7 @@ type LoadResult =
       studioName: string;
       initialStep: number;
       initialResponses: Record<string, unknown>;
+      initialRevision: string | null;
       alreadySubmitted: boolean;
       consentForms: RenderedConsentForm[];
     }
@@ -83,10 +85,13 @@ async function loadIntake(token: string): Promise<LoadResult> {
   // empty initialResponses payload; the client component branches on
   // alreadySubmitted=true and does not render the questionnaire.
   let initialResponses: Record<string, unknown> = {};
+  let initialRevision: string | null = null;
+  let initialStep = headerRow.current_step;
   if (!alreadySubmitted) {
     const { data: row, error: respErr } = await admin
       .from("client_intake_forms")
-      .select("responses")
+      .select("responses, revision, current_step")
+      .eq("status", "in_progress")
       .eq("id", v.intake_id)
       .is("deleted_at", null)
       .maybeSingle();
@@ -101,6 +106,9 @@ async function loadIntake(token: string): Promise<LoadResult> {
       );
       return { ok: false, error: "This intake link is no longer valid." };
     }
+    if (!row || intakeRevision(row.revision) === null) return { ok: false, error: "This intake could not be loaded. Please contact the studio." };
+    initialRevision = intakeRevision(row.revision);
+    initialStep = row.current_step;
     initialResponses = (row?.responses as Record<string, unknown> | null) ?? {};
   }
 
@@ -122,8 +130,9 @@ async function loadIntake(token: string): Promise<LoadResult> {
     ok: true,
     token,
     studioName: studio?.name ?? "your studio",
-    initialStep: headerRow.current_step,
+    initialStep,
     initialResponses,
+    initialRevision,
     alreadySubmitted,
     consentForms,
   };
@@ -179,6 +188,7 @@ export default async function IntakePage({
               studioName={result.studioName}
               initialStep={result.initialStep}
               initialResponses={result.initialResponses}
+                initialRevision={result.initialRevision}
               alreadySubmitted={result.alreadySubmitted}
               consentForms={result.consentForms}
             />

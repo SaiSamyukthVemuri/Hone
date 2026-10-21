@@ -47,6 +47,7 @@ type Props = {
   studioName: string;
   initialStep: number;
   initialResponses: Responses;
+  initialRevision: string | null;
   alreadySubmitted: boolean;
   // The studio's live treatment/photo consent forms, resolved server-side.
   // Empty when the studio has none live: the wizard then behaves exactly as
@@ -59,10 +60,13 @@ export function IntakeWizard({
   studioName,
   initialStep,
   initialResponses,
+  initialRevision,
   alreadySubmitted,
   consentForms,
 }: Props) {
   const router = useRouter();
+  const [revision, setRevision] = useState(initialRevision);
+  const [conflict, setConflict] = useState(false);
   const [step, setStep] = useState(
     Math.min(Math.max(initialStep, 1), TOTAL_STEPS),
   );
@@ -166,20 +170,23 @@ export function IntakeWizard({
     startTransition(async () => {
       const res = await saveIntakeStepAction({
         token,
+        expectedRevision: revision,
         // The consent phase is not a persisted step: leaving it saves against
         // the last real questionnaire step.
         step: Math.min(nextStep, TOTAL_STEPS),
         responses: outbound(),
       });
-      if (!res.ok) setSavingError(res.error);
+      if (!res.ok) { setSavingError(res.error); setConflict(res.code === "conflict" || res.code === "terminal"); }
+      else setRevision(res.revision);
     });
   }
 
   function submit() {
     startTransition(async () => {
-      const res = await submitIntakeAction({ token, responses: outbound() });
+      const res = await submitIntakeAction({ token, expectedRevision: revision, responses: outbound() });
       if (!res.ok) {
         setSavingError(res.error);
+        setConflict(res.code === "conflict" || res.code === "terminal");
         return;
       }
       router.push("/intake/thank-you");
@@ -220,6 +227,7 @@ export function IntakeWizard({
       startTransition(async () => {
         const res = await saveIntakeStepAction({
           token,
+        expectedRevision: revision,
           // Entering the consent phase still persists TOTAL_STEPS, the DB
           // step contract is unchanged by this feature.
           step: Math.min(nextStep, TOTAL_STEPS),
@@ -227,8 +235,10 @@ export function IntakeWizard({
         });
         if (!res.ok) {
           setSavingError(res.error);
+          setConflict(res.code === "conflict" || res.code === "terminal");
           return;
         }
+        setRevision(res.revision);
         setStep(nextStep);
       });
       return;
@@ -282,6 +292,11 @@ export function IntakeWizard({
         </div>
       )}
 
+      {conflict && (
+        <button type="button" className="text-sm underline" onClick={() => window.location.reload()}>
+          Discard my unsaved draft and reload saved answers
+        </button>
+      )}
       {savingError && (
         <p className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
           {savingError}
@@ -292,7 +307,7 @@ export function IntakeWizard({
         <button
           type="button"
           onClick={goBack}
-          disabled={step <= 1 || isPending}
+          disabled={step <= 1 || isPending || conflict}
           className="min-h-[44px] rounded-md border border-neutral-300 bg-white px-4 py-2 text-sm font-medium text-neutral-700 disabled:opacity-40"
         >
           Back
@@ -300,7 +315,7 @@ export function IntakeWizard({
         <button
           type="button"
           onClick={goNext}
-          disabled={isPending}
+          disabled={isPending || conflict}
           className="min-h-[44px] rounded-md bg-neutral-900 px-5 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-60"
         >
           {isPending

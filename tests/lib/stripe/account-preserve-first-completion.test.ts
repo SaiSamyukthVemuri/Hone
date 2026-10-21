@@ -50,6 +50,10 @@ const h = vi.hoisted(() => ({
   boundAccountId: null as string | null,
   recordedCountry: null as string | null,
   countryConflict: null as string | null,
+  alertClaimError: false,
+  alertClaimThrows: false,
+  alertResult: null as string | null,
+  alertRows: [] as Array<{ key: string; resolved: boolean }>,
   settings: { kind: "zero_row" } as SettingsOutcome,
   // Stripe side
   accountRetrieveThrows: false,
@@ -151,6 +155,18 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           out_payment_country: "CA", out_matches: h.observation === "match",
         }, error: h.observation === "rpc_failed" ? DB_ERROR : null };
       }
+      if (name === "claim_stripe_account_country_alert") {
+        if (h.alertClaimThrows) throw new Tripwire("claim unavailable");
+        if (h.alertClaimError) return { data: null, error: DB_ERROR };
+        const reason = h.observation === "country_conflict" ? "country_conflict" : "country_mismatch";
+        const key = JSON.stringify([args.p_studio_id, args.p_stripe_account_id, args.p_stripe_livemode, reason]);
+        const existing = h.alertRows.find((r) => r.key === key && !r.resolved);
+        const result = h.alertResult ?? (existing ? "existing" : "created");
+        if (result === "created") h.alertRows.push({ key, resolved: false });
+        return { data: { out_result: result, out_alert_id: "11111111-1111-4111-8111-111111111112",
+          out_created_at: "2026-10-20T00:00:00.000Z", out_reason: reason,
+          out_message: "Country incident from trusted persisted state." }, error: null };
+      }
       return { data: null, error: h.syncErr };
     },
   }),
@@ -160,6 +176,9 @@ vi.mock("@/lib/billing/payment-jurisdiction-server", () => ({
   getStudioPaymentJurisdiction: async () => ({ ok: true, jurisdiction: { country: "CA" } }),
 }));
 vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: vi.fn() }));
+vi.mock("@/lib/ops/alert-email", () => ({ notifyCriticalOpsAlert: vi.fn(async () => undefined) }));
+import { notifyCriticalOpsAlert } from "@/lib/ops/alert-email";
+import { recordOpsAlert } from "@/lib/ops/alerts";
 
 const {
   refreshAccountStatusFromStripe,
@@ -193,6 +212,12 @@ beforeEach(() => {
   h.boundAccountId = null;
   h.recordedCountry = null;
   h.countryConflict = null;
+  h.alertRows = [];
+  h.alertClaimError = false;
+  h.alertClaimThrows = false;
+  h.alertResult = null;
+  vi.mocked(notifyCriticalOpsAlert).mockReset().mockResolvedValue(undefined);
+  vi.mocked(recordOpsAlert).mockClear();
   h.settings = { kind: "zero_row" };
   h.accountRetrieveThrows = false;
   h.chargesEnabled = true;
@@ -396,5 +421,84 @@ describe("bound retries cannot bypass an unrecorded country", () => {
     expect(h.accountCreates).toBe(0);
     expect(h.accountLinks).toBe(0);
     expect(h.boundAccountId).toBe("acct_created");
+  });
+});
+
+
+describe("0238 country incident created-winner dispatch", () => {
+  it.each(["refreshed", "country_conflict"])("%s first/repeated/concurrent verdicts keep one incident and notification", async (outcome) => {
+    h.observation = outcome;
+    await expect(call()).rejects.toThrow(ACCOUNT_COUNTRY_MISMATCH_ERROR);
+    expect(h.alertRows).toHaveLength(1);
+    expect(notifyCriticalOpsAlert).toHaveBeenCalledTimes(1);
+    const repeats = await Promise.allSettled([call(), call()]);
+    expect(repeats.every((r) => r.status === "rejected")).toBe(true);
+    expect(h.alertRows).toHaveLength(1);
+    expect(notifyCriticalOpsAlert).toHaveBeenCalledTimes(1);
+    expect(recordOpsAlert).not.toHaveBeenCalled();
+    expect(h.rpcCalls.filter((c) => c.name === "claim_stripe_account_country_alert").map((c) => c.args))
+      .toEqual(Array.from({ length: 3 }, () => ({ p_studio_id: STUDIO,
+        p_stripe_account_id: ACCOUNT, p_stripe_livemode: true })));
+    expect(notifyCriticalOpsAlert).toHaveBeenCalledWith({ event: "stripe_account_country_mismatch",
+      message: "Country incident from trusted persisted state.", createdAtIso: "2026-10-20T00:00:00.000Z",
+      studioId: STUDIO, route: "lib/stripe/account:recordStripeAccountObservation" });
+  });
+
+  it("a new conflict is independent of a prior mismatch; operator resolution re-arms it", async () => {
+    h.observation = "refreshed";
+    await expect(call()).rejects.toThrow(ACCOUNT_COUNTRY_MISMATCH_ERROR);
+    h.observation = "country_conflict";
+    await expect(call()).rejects.toThrow(ACCOUNT_COUNTRY_MISMATCH_ERROR);
+    expect(h.alertRows).toHaveLength(2);
+    expect(notifyCriticalOpsAlert).toHaveBeenCalledTimes(2);
+    h.alertRows[1].resolved = true;
+    await expect(call()).rejects.toThrow(ACCOUNT_COUNTRY_MISMATCH_ERROR);
+    expect(h.alertRows).toHaveLength(3);
+    expect(notifyCriticalOpsAlert).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(["rpc", "throw", "unverified", "not_bound", "empty"])("claim %s failure emits no phantom email and never bypasses refusal", async (outcome) => {
+    h.observation = "country_conflict";
+    h.alertClaimError = outcome === "rpc";
+    h.alertClaimThrows = outcome === "throw";
+    if (!["rpc", "throw"].includes(outcome)) h.alertResult = outcome;
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await expect(call()).rejects.toThrow(ACCOUNT_COUNTRY_MISMATCH_ERROR);
+      expect(h.alertRows).toHaveLength(0);
+      expect(notifyCriticalOpsAlert).not.toHaveBeenCalled();
+      expect(recordOpsAlert).not.toHaveBeenCalled();
+      expect(log).toHaveBeenCalled();
+    } finally { log.mockRestore(); }
+  });
+
+  it("a rolled-back claim can retry and matching recovery emits no further incident", async () => {
+    h.observation = "country_conflict";
+    h.alertClaimError = true;
+    await expect(call()).rejects.toThrow(ACCOUNT_COUNTRY_MISMATCH_ERROR);
+    h.alertClaimError = false;
+    await expect(call()).rejects.toThrow(ACCOUNT_COUNTRY_MISMATCH_ERROR);
+    expect(notifyCriticalOpsAlert).toHaveBeenCalledTimes(1);
+    h.observation = "match"; // Only after legitimate persisted conflict resolution.
+    await call();
+    expect(h.alertRows).toHaveLength(1);
+    expect(notifyCriticalOpsAlert).toHaveBeenCalledTimes(1);
+  });
+
+  it("email failure preserves durable incident and country refusal without repeated mail", async () => {
+    h.observation = "country_conflict";
+    vi.mocked(notifyCriticalOpsAlert).mockRejectedValueOnce(new Tripwire("email unavailable"));
+    await expect(call()).rejects.toThrow(ACCOUNT_COUNTRY_MISMATCH_ERROR);
+    await expect(call()).rejects.toThrow(ACCOUNT_COUNTRY_MISMATCH_ERROR);
+    expect(h.alertRows).toHaveLength(1);
+    expect(notifyCriticalOpsAlert).toHaveBeenCalledTimes(1);
+    expect(recordOpsAlert).not.toHaveBeenCalled();
+  });
+
+  it.each(["match", "rpc_failed", "not_bound", "invalid_input"])("observation %s does not claim a mismatch incident", async (outcome) => {
+    h.observation = outcome;
+    await call().catch(() => undefined);
+    expect(h.rpcCalls.some((c) => c.name === "claim_stripe_account_country_alert")).toBe(false);
+    expect(notifyCriticalOpsAlert).not.toHaveBeenCalled();
   });
 });

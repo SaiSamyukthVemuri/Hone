@@ -62,6 +62,7 @@ const BASE_CSV_HEADERS: Readonly<Record<string, readonly string[]>> = {
 type StubResult = { data: unknown[] | null; error: unknown; count?: number | null };
 
 let auditInsert: Record<string, unknown> | null = null;
+let auditFailure: "error" | "throw" | null = null;
 /**
  * The column list the action ACTUALLY asks PostgREST for, per table. Recorded
  * from the real `.select()` call rather than read out of the source, so this is
@@ -114,6 +115,8 @@ function makeClient() {
       if (table === "audit_logs") {
         return {
           insert(row: Record<string, unknown>) {
+            if (auditFailure === "throw") throw new Error("PRIVATE AUDIT FAILURE");
+            if (auditFailure === "error") return Promise.resolve({ error: { code: "42501", message: "PRIVATE AUDIT FAILURE" } });
             auditInsert = row;
             return Promise.resolve({ error: null });
           },
@@ -128,6 +131,8 @@ function makeClient() {
     },
   };
 }
+
+vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => makeClient() }));
 
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => makeClient(),
@@ -598,5 +603,20 @@ describe("a failed session_block_areas read fails closed", () => {
     const zip = await buildArchive();
     expect(csvNames(zip)).toEqual([...expectedCsvFiles()].sort());
     expect(auditInsert).not.toBeNull();
+  });
+});
+
+
+describe("SEC-003 actual export withholds bytes on trusted audit failure", () => {
+  beforeEach(() => { auditInsert = null; failingTables = new Set(); auditFailure = null; });
+  it.each(["error", "throw"] as const)("%s never returns a downloadable archive", async (mode) => {
+    auditFailure = mode;
+    try {
+      const { exportStudioDataAction } = await import("@/app/(app)/settings/data/actions");
+      const result = await exportStudioDataAction();
+      expect(result).toEqual({ ok: false, error: "Could not record the export audit entry. Try again." });
+      expect(result).not.toHaveProperty("base64");
+      expect(auditInsert).toBeNull();
+    } finally { auditFailure = null; }
   });
 });
