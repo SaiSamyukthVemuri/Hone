@@ -1,6 +1,6 @@
 {
   "title": "#905 narrow production-based release candidate source manifest",
-  "production_base": "cae869ac1e07676c55b4ab31b282afd67eff22dc",
+  "production_base": "65ac524e816b6e9283362630f196e7943ffaabad",
   "portrait_source": "affcb86727324b2c2505f5185b3ba3db3e9f4545",
   "hosted_anchor": {
     "version": "0212",
@@ -28,17 +28,22 @@
     {
       "version": "0214",
       "owner_pr": 833,
-      "owner_head": "b59c4d021981a01c7627df7ee7f2cad485a06b06",
+      "owner_head": "5452f0ec697320bcae1b61ac2aec75eb41dd3460",
       "path": "supabase/migrations/0214_studio_payment_jurisdiction.sql",
-      "raw_sha256": "25da63b7bdacefa44e12c2357c85cb8b814cd7be4d25dfb8dbf8cf151e1ab65f",
-      "application_order_contract": "HOLD: candidate still contains rejected blanketCA/CAD source; replace onlypublishedreviewedownerpolicy after price-race repair. No blanketold-app compatibility: unknown financialprepare/provisionrefuses; futureUSactivation requires existingcountry-awareconsumers. Exactperstudioevidence/account-historyreconciliation andhostedapproval remain.",
-      "candidate_sha256": "25da63b7bdacefa44e12c2357c85cb8b814cd7be4d25dfb8dbf8cf151e1ab65f",
+      "raw_sha256": "8ff9350eb53070c970b9548e4e4093e2aa878116fd7ad9dc118bfb3d401a3289",
+      "application_order_contract": "After0213; reviewed verified-country/currency only, no default/backfill. Missing pair staysUNKNOWN. New7arg caller requiresDBfirst; oldfinancial/provision paths mayrefuseUNKNOWN. Sevenstudioverification and3boundaccount/history reconciliation plus exacthosted/app/rollbackapproval required beforeapply; no USactivation inferred.",
+      "candidate_sha256": "8ff9350eb53070c970b9548e4e4093e2aa878116fd7ad9dc118bfb3d401a3289",
       "transaction_contract": {
         "begin": "BEGIN",
         "lock_timeout": "SET LOCAL lock_timeout = 5s",
         "commit": "COMMIT"
       },
-      "historical_application_order_contract": "After0213; migration-first; US studio activation waits for currency UI."
+      "historical_application_order_contract": "After0213; migration-first; US studio activation waits for currency UI.",
+      "superseded_source": {
+        "owner_head": "b59c4d021981a01c7627df7ee7f2cad485a06b06",
+        "raw_sha256": "25da63b7bdacefa44e12c2357c85cb8b814cd7be4d25dfb8dbf8cf151e1ab65f",
+        "reason": "Sam rejected blanketCA/CAD backfill/futuredefault; historicalsourceprovenance retained, neverapplythese supersededbytes"
+      }
     },
     {
       "version": "0215",
@@ -301,8 +306,8 @@
       "path": "app/(app)/clients/[id]/images/TreatmentImagesManager.tsx",
       "source_blob": "1140fd15478a8f5db7b495771876e89e179c7f83",
       "sha256": "88e3306d82a772b97ddc535bec8ff5ae7f4257a41d352fb66635d0e900ee887f",
-      "candidate_current_sha256": "d88cb313f3de7803b18492fb1654bf93c5e114ac191ee886d87409b348bf1000",
-      "candidate_current_blob": "d7be10654bb23daea68884a0c0884963a98dc8b3"
+      "candidate_current_sha256": "4f1e2bf19e210096440d5951a10be22214603f164449a16703815d50505e086c",
+      "candidate_current_blob": "8ab5238b4ef6bfb4fbbf71b4c262bdf0d7a4bd15"
     },
     {
       "path": "app/(app)/clients/[id]/images/actions.ts",
@@ -707,7 +712,7 @@
     "review": "Exactreceipt6303466243 no majorissues; aggregatesummarytrue/true/historythreads preserved,notrewritten",
     "reuse": "Evidenceatparentheadscope; field-onlydigestrepair doesnotalterUI/RPC/SQL/guards. Newcurrentreview/normalCI required onpublishedfinalhead."
   },
-  "production_runtime_base": "10982f4a16bb113af335f1be3cdf5c2a5498aca9",
+  "production_runtime_base": "717d6da08bc16af93ebd9a05dc593cbd78ee2521",
   "candidate_banner_repair": {
     "basis_head": "ebdbde8cd47763bf8c2e907661239cdcb552760d",
     "source_head": "abcbfdd391a9fb2f6ed22bfc6eb359f614ca0dd5",
@@ -732,18 +737,23 @@
     }
   },
   "jurisdiction_policy_preparation": {
-    "authority": "Sam: verify each existing studio country AND currency before backfill; future verified onboarding pair; unknown unresolved.",
-    "verified_existing_pairs": 0,
-    "unknown_existing_studios": 7,
-    "bound_unknown_studios": 3,
-    "current_candidate_0214": "HISTORICAL OLD SOURCE25da still present pending reviewedrepair; NOT ELIGIBLE for hosted apply. Rawchecksum rows below describe actualtree, not newpolicyreadiness.",
-    "published_owner": "a1927456b2228e89797bb48119f5651dd3f4dc12",
-    "normal_review_findings": {
-      "4331996832": "OPEN concurrent pricedconfiguration INSERT/UPDATE serialization; existing833owner repair inprogress, no pendingunpublishedSQL copied",
-      "4331996823": "Existing836country-aware accountcreation dependency; old75ad inthisnarrowcandidate notcompatible for enabledUSonboarding",
-      "4331996829": "Existing836country-observation/refusal caller dependency; no whole836/238 import"
-    },
-    "release_requirements": "Publishedreviewedbounded214replacement+necessarytestfixturecompanions, freshcomposedDBrace/ACL/UNKNOWN/initproof/currentCIreview. Perstudioverifiedevidence andboundedaccount/historyreconciliation beforehostedprefixapply; retaincurrentstrictaccount/historyguards.",
-    "holds": "No hostedapply/productionrelease/provideractivation/real-clientdata/consentdecision oradditionalLOCALreset. Existingold214appliedhon47 target unchanged."
+    "status": "Reviewedpublished5452source8ff nowcomposed, noSQLexecuted",
+    "policy": "Verified country/currency only; UNKNOWN remainsunresolved, no blanketdefault/backfill",
+    "source": "5452f0ec697320bcae1b61ac2aec75eb41dd3460",
+    "owner_packet_sha256": "eb3207980847f1b8fb5090614e25cf63f2441a4dbee90585c53c8ab6f14e6420",
+    "remaining": "Sevenverifiedstudioinputs/threeboundreconciliation +hosted/app release approval; portraitconsent/retention separate",
+    "optional_unrelated_helpers_excluded": "No new unusedpayment-jurisdiction pure/servermodules or their standaloneunit; all existingtargettests retained"
+  },
+  "current_candidate_digest_refresh": {
+    "basis_head": "1712346a52047ee0d8fe4e83a9117c949b3fdaf8",
+    "reason": "Normalmerge currentproduction retains latest shipped history/photo/security repairs; currentpostimage digests only, historicalowner/sourcepins untouched",
+    "fixes": [
+      {
+        "path": "app/(app)/clients/[id]/images/TreatmentImagesManager.tsx",
+        "prior_sha256": "d88cb313f3de7803b18492fb1654bf93c5e114ac191ee886d87409b348bf1000",
+        "current_sha256": "4f1e2bf19e210096440d5951a10be22214603f164449a16703815d50505e086c",
+        "current_blob": "8ab5238b4ef6bfb4fbbf71b4c262bdf0d7a4bd15"
+      }
+    ]
   }
 }
