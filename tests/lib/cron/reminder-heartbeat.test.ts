@@ -1379,6 +1379,7 @@ describe("#995 unwired bounded scan/coordinator proposal", () => {
     const f = scanFixture(); f.values.set("reminder_scan:v1:rotation", value);
     const result = await f.run();
     expect(result.kind).toBe("unavailable");
+    expect(result).toMatchObject({ failure: { stage: "rotation", category: "checkpoint_invalid" } });
     expect(f.readPage).not.toHaveBeenCalled();
     expect(f.handle).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain("PRIVATE");
@@ -1464,4 +1465,30 @@ describe("#995 unwired bounded scan/coordinator proposal", () => {
     expect((await f.run()).kind).toBe("partial");
     expect(JSON.parse(f.values.get("reminder_scan:v1:checkpoint:email24h")!).after).toEqual({ startsAt: originalStart, id: f.rows.email24h[0].id });
   });
+  it("incident diagnostics classify coordination read timeout without exposing lease/key/raw errors", async () => {
+    vi.useFakeTimers();
+    try {
+      const f = scanFixture(); const previous = f.redis.eval;
+      f.redis.eval = (script, keys, args) => script.includes("return {0,''}")
+        ? new Promise(() => undefined) : previous(script, keys, args);
+      const pending = f.run();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await pending).toMatchObject({ kind: "unavailable", queries: 0, scanned: 0, attempted: 0,
+        failure: { stage: "rotation", category: "coordination_timeout" } });
+      expect(f.readPage).not.toHaveBeenCalled(); expect(f.handle).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("incident diagnostics tolerate a throwing SQLSTATE getter and retain a coarse handler category", async () => {
+    const f = scanFixture(); f.populate("email24h", 1, 0);
+    f.handle.mockRejectedValueOnce(Object.defineProperty(new Error("PRIVATE body/token"), "code", {
+      get() { throw new Error("PRIVATE getter"); },
+    }));
+    const result = await f.run();
+    expect(result).toMatchObject({ kind: "unavailable", queries: 1, scanned: 0, attempted: 0,
+      failure: { stage: "handler", category: "handler_error" } });
+    expect(result.failure).not.toHaveProperty("sqlState");
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE|body|token|00000000-/);
+  });
+
 });
