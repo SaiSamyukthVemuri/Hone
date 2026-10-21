@@ -890,9 +890,7 @@ async function writeFailedOutcome(args: {
         && args.stripeStatus === "canceled" && facts.stripeCustomerId) {
       const { data: row, error: readError } = await admin
         .from("payment_charge_attempts")
-        .select("id,studio_id,client_id,stripe_livemode,stripe_account_id,stripe_customer_id," +
-          "stripe_payment_intent_id,status,stripe_status,failure_code,failed_at,amount_cents,currency," +
-          "charge_reason,cancelled_at,charged_at,stripe_charge_id,refund_status")
+        .select("id,studio_id,client_id,stripe_livemode,stripe_account_id,stripe_customer_id,stripe_payment_intent_id,status,stripe_status,failure_code,failed_at,amount_cents,currency,charge_reason,cancelled_at,charged_at,stripe_charge_id,refund_status")
         .eq("id", args.attemptId).maybeSingle();
       if (!readError && row
           && row.id === args.attemptId && row.studio_id === args.studioId
