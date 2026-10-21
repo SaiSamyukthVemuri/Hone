@@ -1,8 +1,8 @@
 {
-  "at": "2026-10-21T12:09:58.020478+00:00",
+  "at": "2026-10-21T12:38:25.813768+00:00",
   "purpose": "Ordered source/checksum evidence only, not apply/release authority",
   "hosted_declaration": "0212 unchanged; originalapplyreceipts/history preserved; not re-read/applied here",
-  "source_SQL_tree": "0cd250c9a487a89123beb251be991cce410547b1",
+  "source_SQL_tree": "a334e5a75bbb8debff77aa5cf3f7a9f33326fa0a",
   "pending_versions": [
     "0213",
     "0214",
@@ -305,11 +305,11 @@
     {
       "version": "0242",
       "file": "supabase/migrations/0242_close_direct_generic_audit_inserts.sql",
-      "raw_sha256": "1d1f8e313966635017d20a432d7054b015ab064763361475d97547a004c97c5f",
-      "git_blob": "6a41b27b83fd2fc1bbba8b17e95a0f1a657818bb",
+      "raw_sha256": "98707acb9053dfa78fadb7eaff59fcc98db678a9aee19b2375ec6ffa011c2f40",
+      "git_blob": "92389b14e46a6da0a91e4d9e9682798c28268bcb",
       "owner": "Team",
-      "published_source": "8e33127543d4bd6c2b7d9a0d6d9fd8b3d0d11e0b",
-      "application_order": "COORDINATED WRITE HOLD / SCHEMA+APP: approved atomic commands and matching helpers before writes resume. Missing RPC withholds export; archive audit refusal preserves already-committed state/navigation. Old direct writers drained; no legacy INSERT fallback."
+      "published_source": "b9c421bbd287d38422168aff26626f93091e108a",
+      "application_order": "COORDINATED WRITE HOLD / SCHEMA+APP. Two fixed trusted-owner definer commands retain0178 runtime practitioners SELECT-only; exactowner/nonassumability/non-grantable serviceEXEC/context preflight. Current actor/member/owner rowlock and fixedaudit INSERT atomic. MissingRPC withholds export; archive warning preserves committedstate. No old directINSERT fallback."
     },
     {
       "version": "0243",
@@ -436,6 +436,21 @@
       "raw_sha256": "3e8c89a857b3c450ac3c87257208b206ea42dcb415fcf46720ee35256976d332",
       "reason": "Address current review findings without unsafe rolling order; grant-option denial and atomic membership audit source. Old failures/source history preserved.",
       "DB_proof": "UNRUN current new source; existing fresh remote CI required; no local/hosted apply"
+    },
+    "0242-trusted-owner-after64526": {
+      "old_source": {
+        "version": "0242",
+        "file": "supabase/migrations/0242_close_direct_generic_audit_inserts.sql",
+        "raw_sha256": "1d1f8e313966635017d20a432d7054b015ab064763361475d97547a004c97c5f",
+        "git_blob": "6a41b27b83fd2fc1bbba8b17e95a0f1a657818bb",
+        "owner": "Team",
+        "published_source": "8e33127543d4bd6c2b7d9a0d6d9fd8b3d0d11e0b",
+        "application_order": "COORDINATED WRITE HOLD / SCHEMA+APP: approved atomic commands and matching helpers before writes resume. Missing RPC withholds export; archive audit refusal preserves already-committed state/navigation. Old direct writers drained; no legacy INSERT fallback."
+      },
+      "published_source": "b9c421bbd287d38422168aff26626f93091e108a",
+      "raw_sha256": "98707acb9053dfa78fadb7eaff59fcc98db678a9aee19b2375ec6ffa011c2f40",
+      "reason": "Actual64526setupfailed because0178 freezesserviceidentitytableSELECT-only; no broadUPDATEgrant. Narrow trusted commands preserve frozen identity boundary.",
+      "proof": "Owner153focusedPASS/TSC/lint/prepush; Privacy+Machinessourceclear. NewDB/ACLmutants/rowlockconcurrencyUNRUNuntilcurrentCI."
     }
   },
   "known_source_gap": {
