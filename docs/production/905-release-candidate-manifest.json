@@ -300,8 +300,8 @@
       "path": "app/(app)/clients/[id]/images/TreatmentImagesManager.tsx",
       "source_blob": "1140fd15478a8f5db7b495771876e89e179c7f83",
       "sha256": "88e3306d82a772b97ddc535bec8ff5ae7f4257a41d352fb66635d0e900ee887f",
-      "candidate_current_sha256": "445bd5042211124b24a0b8963b69f970cd0ed524039f39bd2b3c6c13d52533b9",
-      "candidate_current_blob": "45e656a318d2a5957472115034747f853ba1ca01"
+      "candidate_current_sha256": "6e4d2d0795b6e650a2f9e567619c8a478c0fdddf2e6ac2ae8d3a7d901163a027",
+      "candidate_current_blob": "fc646e5ee8fe902bab4feb036a40ac494e02a06d"
     },
     {
       "path": "app/(app)/clients/[id]/images/actions.ts",
@@ -753,6 +753,18 @@
       "merged": "cae869ac1e07676c55b4ab31b282afd67eff22dc",
       "OPS_status": "READY; automaticpostdocs39525407805SUCCESS",
       "prior_record": "canonical_record_source retained as historical968 source; this new merge supersedes current-base relation."
+    },
+    "audit_stabilization_source": {
+      "dependency_decoder_commit": "ebdf533e0cf2960243727e161702629e75cd2929",
+      "preview_focus_commit": "ed6a9dcfc2f5e8ba72618398760def35d340316a",
+      "candidate_current_digest_refresh": [
+        {
+          "path": "app/(app)/clients/[id]/images/TreatmentImagesManager.tsx",
+          "prior_sha256": "445bd5042211124b24a0b8963b69f970cd0ed524039f39bd2b3c6c13d52533b9",
+          "current_sha256": "6e4d2d0795b6e650a2f9e567619c8a478c0fdddf2e6ac2ae8d3a7d901163a027"
+        }
+      ],
+      "scope": "Night audit repairs; no feature activation. Separable production-context owner patches exclude this source-stack manifest and all held SQL/portrait/country/BeforAfter policy. No release/acceptance claim."
     }
   },
   "canonical_record_history": [
