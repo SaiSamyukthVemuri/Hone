@@ -64,6 +64,7 @@ vi.mock("@/lib/email/send-appointment", () => ({
 vi.mock("@/lib/sms/send-appointment", () => ({ sendBookingConfirmationSmsToClient: vi.fn() }));
 
 import { bookAppointmentForClientAction } from "@/app/(app)/calendar/actions";
+import { fetchSlotsForClientBookingAction } from "@/app/(app)/clients/[id]/booking-actions";
 
 function bookFor(target = "B") {
   const form = new FormData();
@@ -193,5 +194,35 @@ describe("SCH-002 legacy internal submission retains the app availability bounda
     booking.capacityEnabled = false;
     expect(await bookFor("A")).toEqual({ ok: true, appointmentId: "appointment" });
     expect(booking.rpc).toHaveBeenCalledWith("create_internal_appointment_v2", expect.objectContaining({ p_actor_practitioner_id: "A", p_target_practitioner_id: "A", p_allow_outside_availability: false }));
+  });
+});
+
+
+describe("SCH-002 internal client discovery uses its typed retryable refusal", () => {
+  const discover = () => fetchSlotsForClientBookingAction({ serviceId: "service", date: "2099-01-01" });
+  it.each(["blockouts", "window", "reservations"])("returns only sanitized failure for unread %s, never available/empty slots", async (stage) => {
+    booking.slotError = new Error(`availability_read_failed:${stage}:PRIVATE_SENTINEL`);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await discover()).toEqual({ ok: false, error: "Could not load times. Please try again.", code: "could_not_load_times" });
+      expect(JSON.stringify(log.mock.calls)).not.toContain("PRIVATE_SENTINEL"); expect(booking.rpc).not.toHaveBeenCalled();
+    } finally { log.mockRestore(); }
+  });
+  it.each([new Error("unexpected discovery error"), "availability_read_failed:blockouts"])("does not absorb unrelated/non-Error discovery throws", async (failure) => {
+    booking.slotError = failure;
+    await expect(discover()).rejects.toBe(failure); expect(booking.rpc).not.toHaveBeenCalled();
+  });
+  it("retains genuinely empty discovery as successful empty", async () => {
+    booking.emptySlots = true;
+    expect(await discover()).toEqual({ ok: true, slots: [] }); expect(booking.rpc).not.toHaveBeenCalled();
+  });
+  it("retains invalid-target refusal before any failing slot read", async () => {
+    booking.slotError = new Error("availability_read_failed:window"); booking.onSlotsRead = vi.fn();
+    expect(await fetchSlotsForClientBookingAction({ serviceId: "service", date: "2099-01-01", practitionerId: "FOREIGN" })).toEqual({ ok: false, error: "That practitioner isn't available.", code: "invalid_practitioner" });
+    expect(booking.onSlotsRead).not.toHaveBeenCalled(); expect(booking.rpc).not.toHaveBeenCalled();
+  });
+  it("retains a successful slot read without any booking command", async () => {
+    expect(await discover()).toEqual({ ok: true, slots: [{ start: "2099-01-01T15:00:00.000Z", end: "2099-01-01T16:00:00.000Z" }] });
+    expect(booking.rpc).not.toHaveBeenCalled();
   });
 });

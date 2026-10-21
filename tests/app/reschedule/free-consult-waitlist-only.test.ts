@@ -27,6 +27,9 @@ import { NEW_CLIENT_WAITLIST_SLUGS_ENV } from "@/lib/booking/new-client-waitlist
 // The forged-submit control is the load-bearing one: the browser is not the
 // authority, so the proof has to be that the RPC was never called at all.
 
+const bulk = vi.hoisted(() => ({ load: vi.fn() }));
+vi.mock("@/lib/booking/public-slot-range", () => ({ loadPublicSlotsByDate: bulk.load }));
+
 const WAITLISTED_SLUG = "e2e-waitlist-p0";
 const OPEN_SLUG = "e2e-open-studio";
 
@@ -76,6 +79,9 @@ const scenario = {
   startsAt: ORIGINAL.starts_at,
   service: FREE_CONSULT as ServiceShape | null,
   studioSlug: WAITLISTED_SLUG as string | null,
+  capacity: false,
+  slotError: null as unknown,
+  emptySlots: false,
 };
 
 // --- the in-memory admin client -------------------------------------------
@@ -98,7 +104,7 @@ function appointmentRow() {
       no_show_policy_text: null,
       default_appointment_duration_minutes: 45,
       buffer_minutes: 0,
-      practitioner_capacity_enabled: false,
+      practitioner_capacity_enabled: scenario.capacity,
     },
   };
 }
@@ -253,6 +259,8 @@ vi.mock("@/lib/booking/slots", async () => {
       date: string,
     ) {
       slotEngineCalls.push({ date });
+      if (scenario.slotError !== null) throw scenario.slotError;
+      if (scenario.emptySlots) return [];
       const start = new Date(Date.now() + 172_800_000);
       return [
         {
@@ -324,10 +332,17 @@ async function renderPage(token = TOKEN): Promise<string> {
 }
 
 beforeEach(() => {
+  bulk.load.mockReset();
+  bulk.load.mockImplementation(async (_admin: unknown, _ctx: unknown, dates: string[]) => ({
+    ok: true, byDate: dates.length ? [{ date: dates[0], slots: [{ start: `${dates[0]}T10:00:00.000Z`, end: `${dates[0]}T10:45:00.000Z`, startLabel: "10:00 AM" }] }] : [], scanned: dates, skippedOutsideHorizon: [],
+  }));
   rpcCalls.length = 0;
   slotEngineCalls.length = 0;
   Object.assign(scenario, {
     tokenResolves: true,
+    slotError: null,
+    emptySlots: false,
+    capacity: false,
     status: "confirmed",
     startsAt: new Date(Date.now() + 86_400_000).toISOString(),
     service: FREE_CONSULT,
@@ -409,6 +424,7 @@ describe("C — fetchNextAvailableDateForRescheduleAction refuses", () => {
     // would be a next-available disclosure with an empty payload.
     expect("date" in r).toBe(false);
     expect(slotEngineCalls).toEqual([]);
+    expect(bulk.load).not.toHaveBeenCalled();
   });
 });
 
@@ -605,5 +621,33 @@ describe("a missing service row is not a free consultation", () => {
       date: new Date(Date.now() + 172_800_000).toISOString().slice(0, 10),
     });
     expect(r.ok).toBe(true);
+  });
+});
+
+
+describe("SCH-002 reschedule discovery returns classified read failures as refusals", () => {
+  const date = () => new Date(Date.now() + 172_800_000).toISOString().slice(0, 10);
+  beforeEach(() => { scenario.service = PAID_CONSULT; });
+  it.each(["blockouts", "window", "reservations"])("returns only sanitized failure for %s, with no invented free/empty offer", async (stage) => {
+    scenario.slotError = new Error(`availability_read_failed:${stage}:PRIVATE_SENTINEL`);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await fetchRescheduleSlotsAction({ token: TOKEN, date: date() })).toEqual({ ok: false, error: GENERIC });
+      expect(JSON.stringify(log.mock.calls)).not.toContain("PRIVATE_SENTINEL"); expect(JSON.stringify(log.mock.calls)).not.toContain(TOKEN);
+      expect(rpcCalls).toEqual([]);
+    } finally { log.mockRestore(); }
+  });
+  it.each([new Error("unexpected discovery error"), "availability_read_failed:blockouts"])("does not absorb unrelated/non-Error discovery throws", async (failure) => {
+    scenario.slotError = failure;
+    await expect(fetchRescheduleSlotsAction({ token: TOKEN, date: date() })).rejects.toBe(failure); expect(rpcCalls).toEqual([]);
+  });
+  it("keeps successful empty discovery distinct from read failure", async () => {
+    scenario.emptySlots = true;
+    expect(await fetchRescheduleSlotsAction({ token: TOKEN, date: date() })).toEqual({ ok: true, slots: [] }); expect(rpcCalls).toEqual([]);
+  });
+  it("keeps invalid-token refusal before the failing slot read", async () => {
+    scenario.tokenResolves = false; scenario.slotError = new Error("availability_read_failed:window");
+    expect(await fetchRescheduleSlotsAction({ token: TOKEN, date: date() })).toEqual({ ok: false, error: GENERIC });
+    expect(slotEngineCalls).toEqual([]); expect(rpcCalls).toEqual([]);
   });
 });

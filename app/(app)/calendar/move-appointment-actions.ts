@@ -170,19 +170,28 @@ export async function loadMoveSlotsAction(input: {
     }
   }
 
-  const slots = slotTarget
-    ? filterFutureSlots(
-        await getAvailableSlots(
-          admin,
-          studioRow(studio),
-          localDate,
-          appt.duration_minutes, // use the appointment's EXISTING duration
-          { sourceKind: "appointment", sourceId: appointmentId }, // exclude ONLY this appointment's own reservation
-          slotTarget, // Part 4/Item 7: the CURRENT practitioner (time-only) OR the proposed target
-          INTERNAL_SLOT_PACKING,
-        ),
-      ).map((s) => ({ start: s.start, end: s.end, label: s.startLabel }))
-    : [];
+  let slots: MoveSlot[];
+  try {
+    slots = slotTarget
+      ? filterFutureSlots(
+          await getAvailableSlots(
+            admin,
+            studioRow(studio),
+            localDate,
+            appt.duration_minutes, // use the appointment's EXISTING duration
+            { sourceKind: "appointment", sourceId: appointmentId }, // exclude ONLY this appointment's own reservation
+            slotTarget, // Part 4/Item 7: the CURRENT practitioner (time-only) OR the proposed target
+            INTERNAL_SLOT_PACKING,
+          ),
+        ).map((s) => ({ start: s.start, end: s.end, label: s.startLabel }))
+      : [];
+  } catch (err) {
+    if (!(err instanceof Error)) throw err;
+    const { message } = err;
+    if (!message.startsWith("availability_read_failed:")) throw err;
+    console.error("move_slots_availability_read_failed");
+    return { ok: false, error: "Could not load available times." };
+  }
 
   // Never propose a past instant; return a PHI-free list (no client/notes/token/provider data).
   return {
