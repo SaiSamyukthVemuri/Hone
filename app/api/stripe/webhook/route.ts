@@ -679,66 +679,11 @@ async function handleSetupIntentSucceeded(
     return await terminalCardRejection(event, ctx, si, "signature_lineage_mismatch");
   }
 
-  // 5. PR #135 hardening. Idempotency SELECT first: if a row already
-  //    exists for the same (studio, client, account, mode,
-  //    setup_intent_id), this is a duplicate Stripe re-delivery
-  //    after the first delivery already inserted. Return
-  //    idempotent success WITHOUT pre-flipping any active row.
-  //    Without this check, a re-delivery would UPDATE the active
-  //    row inserted by the FIRST delivery to status='removed' and
-  //    then hit the unique constraint on the INSERT, leaving the
-  //    (studio, client) with no active card.
-  //
-  //    The DB-side guarantee for this idempotency is the partial
-  //    unique index client_payment_methods_setup_intent_account_mode_uniq
-  //    added in migration 0059. The application check below short-
-  //    circuits the happy path; the 23505 catch on the INSERT
-  //    further down is a defensive backstop against any race we
-  //    do not anticipate (claim_stripe_event already serialises
-  //    deliveries of the same event id).
-  {
-    const { data: existing, error: existingErr } = await admin
-      .from("client_payment_methods")
-      .select("id")
-      .eq("studio_id", metaStudioId)
-      .eq("client_id", metaClientId)
-      .eq("stripe_account_id", ctx.stripeAccountId)
-      .eq("stripe_livemode", ctx.livemode)
-      .eq("stripe_setup_intent_id", si.id)
-      .maybeSingle();
-    if (existingErr) {
-      throw new Error(
-        `idempotency_lookup_failed:${existingErr.code}:${existingErr.message}`,
-      );
-    }
-    if (existing) {
-      // The card is already persisted (a prior delivery of THIS event
-      // inserted it). The notification may still be missing if that prior
-      // delivery failed after the card insert; ensure it now (deduped on the
-      // mode-scoped SetupIntent). This is awaited and throws on failure so the parent
-      // releases the claim and Stripe retries WITHOUT touching the card row.
-      const notif = await ensureCardChangeNotification(admin, {
-        studioId: metaStudioId,
-        clientId: metaClientId,
-        livemode: ctx.livemode,
-        setupIntentId: si.id,
-      });
-      return {
-        eventType: event.type,
-        setupIntentId: si.id,
-        idempotent: true,
-        existingClientPaymentMethodId: existing.id,
-        cardChangeNotification: notif.eventType,
-        cardChangeNotificationDeduped: notif.deduped,
-      };
-    }
-  }
-
   // PAY-006: order selection by the authenticated SUCCESS event, not intent
   // issuance, metadata or delivery time. The ordered command must adjudicate
   // current selection under the existing client/mode lock; no app-side guess.
   if (typeof event.id !== "string" || event.id.trim().length === 0
-      || !Number.isSafeInteger(event.created) || event.created <= 0) {
+      || !Number.isSafeInteger(event.created) || event.created < 0) {
     throw new Error("card_setup_success_event_order_missing");
   }
 
@@ -761,6 +706,11 @@ async function handleSetupIntentSucceeded(
     throw new Error(
       `payment_method_retrieve_failed:${err instanceof Error ? err.message : String(err)}`,
     );
+  }
+  if (si.status !== "succeeded" || si.livemode !== ctx.livemode
+      || pm.id !== si.payment_method || pm.livemode !== ctx.livemode
+      || (typeof pm.customer === "string" ? pm.customer : pm.customer?.id) !== si.customer) {
+    return terminalCardRejection(event, ctx, si, "payment_method_lineage_mismatch");
   }
   const card = pm.card;
   if (!card || !card.brand || !card.last4 || !card.exp_month || !card.exp_year) {
@@ -820,7 +770,7 @@ async function handleSetupIntentSucceeded(
     );
   }
   const saved = Array.isArray(saveRows) ? saveRows[0] : saveRows;
-  if (saved?.outcome === "unknown_active_event_order") {
+  if (saved?.outcome === "unknown_event_order") {
     // Legacy unknown ordering requires trusted evidence under the command's
     // CAS/lock contract, never a default timestamp or a silent replacement.
     throw new Error("card_setup_active_event_order_unverified");

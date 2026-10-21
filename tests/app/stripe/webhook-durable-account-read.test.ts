@@ -404,23 +404,23 @@ describe("PAY-005 capability retrieval stays retryable", () => {
 
 // PAY-006 app half only: the allocated SQL command must order under its lock.
 describe("PAY-006 signed setup success ordering orchestration", () => {
-  function prepareSetup(outcome = "inserted", eventOverride: Record<string, unknown> = {}, cardId: string | null = ["inserted", "idempotent"].includes(outcome) ? "card-1" : null) {
+  function prepareSetup(outcome = "inserted", eventOverride: Record<string, unknown> = {}, cardId: string | null = ["inserted", "idempotent"].includes(outcome) ? "card-1" : null, existingCard: Record<string, unknown> | null = null) {
     const setupEvent = { id: "evt_setup_success", created: 1770000200,
       type: "setup_intent.succeeded", account: "acct_test_1", livemode: false,
-      data: { object: { id: "seti_old_created_late_completed", created: 1600000000,
+      data: { object: { id: "seti_old_created_late_completed", status: "succeeded", livemode: false, created: 1600000000,
         customer: "cus_1", payment_method: "pm_1",
         metadata: { hone_studio_id: "studio-1", hone_client_id: "client-1",
           hone_card_authorization_signature_id: "signature-1", success_event_created: "9999999999" } } },
       ...eventOverride,
     };
     CONSTRUCT_EVENT.mockReturnValue(setupEvent);
-    PAYMENT_METHOD_RETRIEVE.mockResolvedValue({ id: "pm_1", type: "card", customer: "cus_1",
+    PAYMENT_METHOD_RETRIEVE.mockResolvedValue({ id: "pm_1", livemode: false, type: "card", customer: "cus_1",
       card: { brand: "visa", last4: "4242", exp_month: 12, exp_year: 2030 } });
     ADMIN.current = makeAdmin({
       studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
       client_stripe_customers: [{ data: { client_id: "client-1", studio_id: "studio-1", stripe_account_id: "acct_test_1", stripe_livemode: false }, error: null }],
       client_consent_signatures: [{ data: { id: "signature-1" }, error: null }],
-      client_payment_methods: [{ data: null, error: null }],
+      client_payment_methods: [{ data: existingCard, error: null }],
     }, { claim_stripe_event: CLAIM_OK,
       save_client_card_on_file: { data: [{ outcome: "inserted", card_id: "would-overwrite-newer-card", previous_card_id: "newer-card" }], error: null },
       save_client_card_on_file_ordered: { data: [{ outcome, card_id: cardId, previous_card_id: null }], error: null },
@@ -446,19 +446,65 @@ describe("PAY-006 signed setup success ordering orchestration", () => {
     expect(processed?.args).toMatchObject({ p_payload_summary: { terminalRejection: true, rejected: outcome } });
   });
   it("legacy unknown active chronology stays retryable without guessing or notifying", async () => {
-    prepareSetup("unknown_active_event_order");
+    prepareSetup("unknown_event_order");
     expect((await callRoute()).status).toBe(500);
     expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
     expect(names(ADMIN.current!.rpcCalls)).not.toContain("mark_stripe_event_processed");
     expect(ENSURE_CARD_NOTIFICATION).not.toHaveBeenCalled();
     expect(CAPTURE_EVENT).not.toHaveBeenCalled();
   });
-  it.each([undefined, null, 0, -1, 1770000200.5, Number.MAX_SAFE_INTEGER + 1])("invalid signed success time %s cannot fall back to issuance/arrival", async (created) => {
+  it.each([undefined, null, -1, 1770000200.5, Number.MAX_SAFE_INTEGER + 1])("invalid signed success time %s cannot fall back to issuance/arrival", async (created) => {
     prepareSetup("inserted", { created });
     expect((await callRoute()).status).toBe(500);
     expect(PAYMENT_METHOD_RETRIEVE).not.toHaveBeenCalled();
     expect(names(ADMIN.current!.rpcCalls)).not.toContain("save_client_card_on_file_ordered");
     expect(names(ADMIN.current!.rpcCalls)).not.toContain("save_client_card_on_file");
+    expect(ENSURE_CARD_NOTIFICATION).not.toHaveBeenCalled();
+  });
+  it("a processed claim is only a transport acknowledgement, never a saved-card claim or evidence adoption", async () => {
+    prepareSetup();
+    const rpc = ADMIN.current!.admin.rpc;
+    ADMIN.current!.admin.rpc = async (name, args) => name === "claim_stripe_event"
+      ? { data: [{ already_processed: true }], error: null } : rpc(name, args);
+    const response = await callRoute();
+    expect(await response.json()).toEqual({ ok: true, alreadyProcessed: true });
+    expect(PAYMENT_METHOD_RETRIEVE).not.toHaveBeenCalled();
+    expect(ENSURE_CARD_NOTIFICATION).not.toHaveBeenCalled();
+    expect(CAPTURE_EVENT).not.toHaveBeenCalled();
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("save_client_card_on_file_ordered");
+  });
+  it("new app with old DB refuses and releases claim without unordered fallback", async () => {
+    prepareSetup();
+    const rpc = ADMIN.current!.admin.rpc;
+    ADMIN.current!.admin.rpc = async (name, args) => name === "save_client_card_on_file_ordered"
+      ? { data: null, error: { code: "PGRST202", message: "missing ordered command" } } : rpc(name, args);
+    expect((await callRoute()).status).toBe(500);
+    expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("save_client_card_on_file");
+    expect(ENSURE_CARD_NOTIFICATION).not.toHaveBeenCalled();
+    expect(CAPTURE_EVENT).not.toHaveBeenCalled();
+  });
+  it("explicit signed epoch zero is valid, never a missing-time default", async () => {
+    prepareSetup("inserted", { created: 0 });
+    expect((await callRoute()).status).toBe(200);
+    expect(ADMIN.current!.rpcCalls.find((c) => c.name === "save_client_card_on_file_ordered")?.args.p_success_event_created).toBe(0);
+  });
+  it.each([
+    { customer: "cus_other" }, { livemode: true }, { id: "pm_other" },
+  ])("refuses retrieved PM lineage mismatch %j before persistence or notification", async (over) => {
+    prepareSetup();
+    PAYMENT_METHOD_RETRIEVE.mockResolvedValue({ id: "pm_1", livemode: false, customer: "cus_1", ...over,
+      card: { brand: "visa", last4: "4242", exp_month: 12, exp_year: 2030 } });
+    expect((await callRoute()).status).toBe(200);
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("save_client_card_on_file_ordered");
+    expect(ENSURE_CARD_NOTIFICATION).not.toHaveBeenCalled();
+    expect(CAPTURE_EVENT).not.toHaveBeenCalled();
+  });
+  it("an existing removed card cannot bypass ordered stale adjudication to notify", async () => {
+    prepareSetup("stale_event", {}, null, { id: "removed-a", status: "removed" });
+    // The legacy read would see this row and notify; the new route never reads it.
+    expect((await callRoute()).status).toBe(200);
+    expect(names(ADMIN.current!.rpcCalls)).toContain("save_client_card_on_file_ordered");
     expect(ENSURE_CARD_NOTIFICATION).not.toHaveBeenCalled();
   });
   it("missing signed event identity cannot admit a new selection", async () => {

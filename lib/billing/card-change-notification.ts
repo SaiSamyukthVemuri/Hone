@@ -7,9 +7,8 @@ import { ensurePractitionerNotification } from "@/lib/notifications/practitioner
 // facing notification in the existing in-app notification center.
 //
 // This is invoked from the setup_intent.succeeded webhook arm AFTER the
-// card row is persisted: from every success branch (fresh insert, the
-// idempotency early-return where the card was already saved, and the 23505
-// backstop). It is awaited; a failure throws so the webhook releases its
+// ordered command admits the current active card (fresh or duplicate).
+// Removed/superseded cards are never notification evidence. It is awaited; a failure throws so the webhook releases its
 // Stripe event claim and Stripe retries.
 //
 // The dedupe key is the SUCCESSFUL SETUPINTENT, mode-scoped
@@ -93,6 +92,7 @@ export async function ensureCardChangeNotification(
     .eq("client_id", clientId)
     .eq("stripe_livemode", livemode)
     .eq("stripe_setup_intent_id", setupIntentId)
+    .eq("status", "active")
     .maybeSingle();
   if (cardErr) {
     throw new Error(

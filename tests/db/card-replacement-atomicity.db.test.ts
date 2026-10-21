@@ -514,7 +514,7 @@ describe("B/D — terminal rejection is CLIENT-BOUND and fail-closed", () => {
 });
 
 describe("0180 — command authority", () => {
-  it("is service_role-only; PUBLIC, anon and authenticated cannot execute it", async () => {
+  it("is definer-private after 0245; all API roles cannot execute it", async () => {
     const r = await adminQuery(`
       select has_function_privilege('anon',          p.oid, 'EXECUTE') as anon,
              has_function_privilege('authenticated', p.oid, 'EXECUTE') as authenticated,
@@ -527,7 +527,7 @@ describe("0180 — command authority", () => {
     expect(r.rows[0].anon).toBe(false);
     expect(r.rows[0].authenticated).toBe(false);
     expect(r.rows[0].pub).toBe(false);
-    expect(r.rows[0].service_role).toBe(true);
+    expect(r.rows[0].service_role).toBe(false);
   });
 
   it("leaves the one-active-card-per-mode invariant in place", async () => {
@@ -537,5 +537,88 @@ describe("0180 — command authority", () => {
     expect(r.rowCount).toBe(1);
     expect(r.rows[0].indexdef).toContain("studio_id, client_id, stripe_livemode");
     expect(r.rows[0].indexdef).toContain("status = 'active'");
+  });
+});
+
+
+// 0245 SOURCE-ONLY until an aligned target/slot is explicitly granted.
+describe("0245 — signed success chronology across card history", () => {
+  async function ordered(f: Awaited<ReturnType<typeof seedCardStudio>>, si: string, clock: number, pm = `pm_${si}`, event = `evt_${si}`) {
+    const r = await adminQuery(`select * from public.save_client_card_on_file_ordered(
+      $1,$2,$3,false,$4,$5,$6,'visa','4242',12,2030,null,$7,$8)`,
+      [f.studioId, f.clientId, f.acct, f.cust, pm, si, event, clock]);
+    return r.rows[0];
+  }
+  it("late A cannot replace newer B, even after B is removed", async () => {
+    const f = await seedCardStudio("ordered-removed");
+    const b = await ordered(f, "seti_b", 200);
+    await adminQuery(`update public.client_payment_methods set status='removed', removed_at=now() where id=$1`, [b.card_id]);
+    expect((await ordered(f, "seti_a", 100)).outcome).toBe("stale_event");
+    expect((await ordered(f, "seti_b", 200)).outcome).toBe("stale_event");
+    expect(await activeCards(f)).toHaveLength(0);
+  });
+  it("duplicate current intent is idempotent; same-second distinct intent is ambiguous", async () => {
+    const f = await seedCardStudio("ordered-tie");
+    const b = await ordered(f, "seti_b", 200);
+    expect(await ordered(f, "seti_b", 200)).toMatchObject({ outcome: "idempotent", card_id: b.card_id });
+    expect((await ordered(f, "seti_a", 200)).outcome).toBe("ambiguous_event_order");
+    expect((await activeCards(f))[0].id).toBe(b.card_id);
+  });
+  it("same intent contradictory time or PM refuses without replacing the active card", async () => {
+    const f = await seedCardStudio("ordered-conflict");
+    const b = await ordered(f, "seti_b", 200);
+    expect(await codeOf(() => ordered(f, "seti_b", 201))).toBe("22023");
+    expect(await codeOf(() => ordered(f, "seti_b", 200, "pm_other"))).toBe("22023");
+    expect((await activeCards(f))[0].id).toBe(b.card_id);
+  });
+  it("legacy history remains unknown with no evidence backfill", async () => {
+    const f = await seedCardStudio("ordered-unknown");
+    const old = await saveCard(f);
+    expect((await ordered(f, "seti_new", 200)).outcome).toBe("unknown_event_order");
+    expect((await activeCards(f))[0].id).toBe(old.card_id);
+    const rows = await adminQuery(`select stripe_setup_success_event_created from public.client_payment_methods where id=$1`, [old.card_id]);
+    expect(rows.rows[0].stripe_setup_success_event_created).toBeNull();
+  });
+  it("different-method concurrent replacements leave the greatest signed success active", async () => {
+    const f = await seedCardStudio("ordered-concurrent");
+    await Promise.all([ordered(f, "seti_a", 100), ordered(f, "seti_b", 200)]);
+    expect(await activeCards(f)).toMatchObject([{ stripe_setup_intent_id: "seti_b" }]);
+  });
+  it("failure after retire rolls back old-card status and evidence together", async () => {
+    const f = await seedCardStudio("ordered-rollback");
+    const first = await ordered(f, "seti_first", 100);
+    const code = await codeOf(() => adminQuery(`select * from public.save_client_card_on_file_ordered(
+      $1,$2,$3,false,$4,'pm_bad','seti_bad','visa','THIS_IS_NOT_LAST4',12,2030,null,'evt_bad',200)`,
+      [f.studioId, f.clientId, f.acct, f.cust]));
+    expect(code).not.toBe("NO_ERROR");
+    expect((await activeCards(f))[0].id).toBe(first.card_id);
+    const r = await adminQuery(`select stripe_setup_success_event_created from public.client_payment_methods where id=$1`, [first.card_id]);
+    expect(String(r.rows[0].stripe_setup_success_event_created)).toBe("100");
+  });
+  it("customer or mode mismatch cannot use same-intent idempotency as an authority bypass", async () => {
+    const f = await seedCardStudio("ordered-lineage");
+    const first = await ordered(f, "seti_first", 100);
+    for (const [customer, mode] of [["cus_other", false], [f.cust, true]]) {
+      expect(await codeOf(() => adminQuery(`select * from public.save_client_card_on_file_ordered(
+        $1,$2,$3,$4,$5,'pm_seti_first','seti_first','visa','4242',12,2030,null,'evt_seti_first',100)`,
+        [f.studioId, f.clientId, f.acct, mode, customer]))).toBe("22023");
+    }
+    expect((await activeCards(f))[0].id).toBe(first.card_id);
+  });
+  it("another studio history cannot supply or block this studio's watermark", async () => {
+    const f = await seedCardStudio("ordered-tenant-a");
+    const g = await seedCardStudio("ordered-tenant-b");
+    await ordered(f, "seti_a", 1000);
+    expect((await ordered(g, "seti_b", 1)).outcome).toBe("inserted");
+    expect(await activeCards(f)).toHaveLength(1);
+    expect(await activeCards(g)).toHaveLength(1);
+  });
+  it("closes unordered service API and grants only the ordered service command", async () => {
+    const r = await adminQuery(`select
+      has_function_privilege('service_role','public.save_client_card_on_file(uuid,uuid,text,boolean,text,text,text,text,text,integer,integer,uuid)','EXECUTE') as old_service,
+      has_function_privilege('service_role','public.save_client_card_on_file_ordered(uuid,uuid,text,boolean,text,text,text,text,text,integer,integer,uuid,text,bigint)','EXECUTE') as new_service,
+      has_function_privilege('authenticated','public.save_client_card_on_file_ordered(uuid,uuid,text,boolean,text,text,text,text,text,integer,integer,uuid,text,bigint)','EXECUTE') as authenticated,
+      has_function_privilege('anon','public.save_client_card_on_file_ordered(uuid,uuid,text,boolean,text,text,text,text,text,integer,integer,uuid,text,bigint)','EXECUTE') as anon`);
+    expect(r.rows[0]).toEqual({ old_service: false, new_service: true, authenticated: false, anon: false });
   });
 });
