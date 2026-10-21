@@ -28,7 +28,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | **Repo migration max** | **0245** (`0245_ordered_card_setup_success.sql`), source-only and pending. |
 | **Remote-only migrations** | **None recorded** by canonical hosted migration state. |
 | **Pending migrations** | PENDING, NOT APPLIED: **0213–0245** (`0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`, `0229`, `0230`, `0231`, `0232`, `0233`, `0234`, `0235`, `0236`, `0237`, `0238`, `0239`, `0240`, `0241`, `0242`, `0243`, `0244`, `0245`), contiguous in this evidence candidate. |
-| **Next free number** | Next free number is **0246** by this checkout's derived filenames only; it is **not claimed by this calculation**. OPS has separately RESERVED0246 to Team CLN008, so it is unavailable for a new allocation; check the live owner census. |
+| **Next free number** | Next free number is **0246** by this checkout's derived filenames only; it is **not claimed by this calculation**. OPS has separately RESERVED0246 to Team CLN008 and0247 to Willow MSG002/003; neither is included here or available for a new allocation. Check the live owner census. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` (Hone production project; no connection or apply performed here). |
 
 ### Published owner source additions after0237

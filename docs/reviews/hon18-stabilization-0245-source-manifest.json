@@ -343,7 +343,7 @@
     "926NEVERMERGE/863frozen/223unchanged/held920alternativeexcluded",
     "No hosted/provider/model/consent/customerdata actions",
     "All newDB/runtime/concurrency/ACL/cleanup proofUNRUN untilfreshCI",
-    "246reservedTeam notincluded/247+unallocated"
+    "246reservedTeam and247allocatedWillow notincluded;248+unallocated"
   ],
   "source_corrections": {
     "0240": {
