@@ -59,14 +59,9 @@ const fakeStripe = {
   paymentIntents: {
     create: async () => {
       h.stripeCalls.push("paymentIntents.create");
-      return {
-        id: PI_ID,
-        status: "succeeded",
-        amount: AMOUNT,
-        currency: "cad",
-        livemode: false,
-        latest_charge: CHARGE_ID,
-      };
+      return { id: PI_ID, status: "requires_confirmation", amount: AMOUNT, currency: "cad",
+        customer: "cus_test", payment_method: "pm_test", livemode: false,
+        confirmation_method: "manual", latest_charge: null, amount_received: 0, amount_capturable: 0 };
     },
     retrieve: async () => {
       h.stripeCalls.push("paymentIntents.retrieve");
@@ -78,7 +73,8 @@ const fakeStripe = {
     },
     confirm: async () => {
       h.stripeCalls.push("paymentIntents.confirm");
-      throw new Tripwire("confirm must not be reached");
+      return { id: PI_ID, status: "succeeded", amount: AMOUNT, currency: "cad", livemode: false,
+        customer: "cus_test", payment_method: "pm_test", latest_charge: CHARGE_ID };
     },
   },
   refunds: {
@@ -136,6 +132,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ({
     from(table: string) {
       const q: Record<string, unknown> = {};
+      const filters: Array<{ column: string; value: unknown }> = [];
       let isUpdate = false;
       let updatePayload: Record<string, unknown> | null = null;
       /** Set once the query has been narrowed to a single attempt id. */
@@ -157,13 +154,19 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       q.select = (cols?: string) => {
         if (typeof cols === "string") selectedColumns = cols;
         if (isUpdate) {
+          if (updatePayload?.stripe_status === "requires_confirmation") {
+            const row = h.rows[table] as Record<string, unknown>;
+            const matches = filters.every(f => row[f.column] === f.value);
+            if (matches) { Object.assign(row, updatePayload); h.updates.push(updatePayload); }
+            return Promise.resolve({ data: matches ? [{ id: row.id }] : [], error: null });
+          }
           h.updates.push(updatePayload ?? {});
           return Promise.resolve({ data: h.succeededUpdateRows, error: null });
         }
         return q;
       };
-      q.eq = () => q;
-      q.is = () => q;
+      q.eq = (column: string, value: unknown) => { filters.push({ column, value }); return q; };
+      q.is = q.eq;
       q.in = () => q;
       q.order = () => q;
       q.limit = () => q;
@@ -183,10 +186,13 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       };
       return q;
     },
-    rpc: async (name: string) => {
+    rpc: async (name: string, args: Record<string, unknown> = {}) => {
       if (name !== "claim_session_payment_charge_attempt") {
         return { data: null, error: null };
       }
+      const claimedAt = new Date().toISOString();
+      Object.assign(h.rows.payment_charge_attempts as Record<string, unknown>, {
+        status: "pending_stripe", updated_at: claimedAt, stripe_idempotency_key: args.p_idempotency_key });
       return {
         data: [
           {
@@ -205,7 +211,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
             stripe_customer_id: "cus_test",
             stripe_payment_method_id: "pm_test",
             stripe_payment_intent_id: null,
-            stripe_idempotency_key: "idem-1",
+            stripe_idempotency_key: args.p_idempotency_key,
             status_before_claim: "ready",
             // RECENT, DELIBERATELY. With a stale timestamp an `already_pending`
             // claim carrying no PaymentIntent id is refused by the
@@ -213,7 +219,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
             // correct behaviour, and would have made the duplicate-creator tests
             // below pass for the wrong reason by never reaching
             // paymentIntents.create at all.
-            updated_at: new Date().toISOString(),
+            updated_at: claimedAt,
           },
         ],
         error: null,
@@ -283,7 +289,9 @@ const run = () =>
 const critical = () => h.alerts.filter((a) => a.severity === "critical");
 const warnings = () => h.alerts.filter((a) => a.severity === "warning");
 
+const originalConfirm = fakeStripe.paymentIntents.confirm;
 beforeEach(() => {
+  fakeStripe.paymentIntents.confirm = originalConfirm;
   h.succeededUpdateRows = []; // the race, by default
   h.recheckRow = { ...WEBHOOK_STAMPED_ROW };
   h.recheckError = null;
@@ -292,7 +300,7 @@ beforeEach(() => {
   h.stripeCalls = [];
   h.updates = [];
   h.rows = {
-    payment_charge_attempts: HEALTHY_ATTEMPT,
+    payment_charge_attempts: { ...HEALTHY_ATTEMPT, stripe_charge_id: null, charged_at: null },
     client_payment_methods: {
       id: HEALTHY_ATTEMPT.client_payment_method_id,
       studio_id: STUDIO,
@@ -351,7 +359,7 @@ describe("the concurrent writer wins: proven benign, no false critical", () => {
     expect(
       h.stripeCalls.filter((c) => c === "paymentIntents.create"),
     ).toHaveLength(1);
-    expect(h.stripeCalls).toEqual(["paymentIntents.create"]);
+    expect(h.stripeCalls).toEqual(["paymentIntents.create", "paymentIntents.confirm"]);
   });
 
   it("attempts no second succeeded write after losing the race", async () => {
@@ -679,8 +687,8 @@ describe("charge-lineage asymmetry", () => {
   // this charge. A missing ROW charge id proves nothing either way and is allowed
   // only because every other identity and money fact must still match.
   const withProviderCharge = (latest: string | null) => {
-    fakeStripe.paymentIntents.create = async () => {
-      h.stripeCalls.push("paymentIntents.create");
+    fakeStripe.paymentIntents.confirm = async () => {
+      h.stripeCalls.push("paymentIntents.confirm");
       return {
         id: PI_ID,
         status: "succeeded",
@@ -688,6 +696,7 @@ describe("charge-lineage asymmetry", () => {
         currency: "cad",
         livemode: false,
         latest_charge: latest,
+        customer: "cus_test", payment_method: "pm_test",
       } as never;
     };
   };

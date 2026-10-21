@@ -427,8 +427,8 @@ describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "cha
       const object = type === "charge.refunded"
         ? { id: "ch_1", payment_intent: "pi_1", customer: "cus_1", amount: 5000, currency: "cad",
           refunded: true, amount_refunded: 5000, refunds: { data: [{ id: "re_1" }] }, metadata, ...options.object }
-        : { id: "pi_1", customer: "cus_1", amount: 5000, currency: "cad", latest_charge: "ch_1",
-          ...(type === "payment_intent.payment_failed" ? { status: "requires_payment_method", last_payment_error: { type: "card_error", code: "card_declined" } } : {}),
+        : { id: "pi_1", status: type === "payment_intent.payment_failed" ? "requires_payment_method" : "succeeded",
+          ...(type === "payment_intent.payment_failed" ? { last_payment_error: { type: "card_error", code: "card_declined" } } : {}), customer: "cus_1", amount: 5000, currency: "cad", latest_charge: "ch_1",
           metadata, ...options.object };
       CONSTRUCT_EVENT.mockReturnValue({ id: "evt_payment_bound", type, account, livemode: false, data: { object } });
       ADMIN.current = makeAdmin({
@@ -438,6 +438,26 @@ describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "cha
         reconcile_card_payment_succeeded: options.rpcFailure ?? { data: [{ result: "reconciled", status_before: "pending_stripe" }], error: null } });
     }
     const writes = () => ADMIN.current!.rpcCalls.filter(({ name }) => name === "reconcile_card_payment_succeeded");
+    if (type === "payment_intent.payment_failed") {
+      it("ordinary verified decline records failed without false critical/manual evidence", async () => {
+        prepareBound();
+        expect((await callRoute()).status).toBe(200);
+        expect(ADMIN.current!.updateCalls).toEqual([expect.objectContaining({ table: "payment_charge_attempts", payload: expect.objectContaining({ status: "failed" }) })]);
+        expect(ADMIN.current!.opsRows).toEqual([]);
+        expect(NOTIFY_CRITICAL_OPS_ALERT).not.toHaveBeenCalled();
+        expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+      });
+      it.each(["requires_action", undefined])("unresolved failed event (%s) records manual evidence without retiring its bound intent", async (status) => {
+        prepareBound({ object: { status } });
+        expect((await callRoute()).status).toBe(200);
+        expect(ADMIN.current!.updateCalls).toEqual([]);
+        expect(writes()).toEqual([]);
+        expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+        expect(names(ADMIN.current!.rpcCalls)).not.toContain("release_stripe_event_claim_with_error");
+        expect(ADMIN.current!.opsRows).toEqual([expect.objectContaining({ severity: "critical", event: "session_payment_needs_manual_review" })]);
+        expect(NOTIFY_CRITICAL_OPS_ALERT).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ event: "session_payment_needs_manual_review" }));
+      });
+    }
     it.each([
       ["another connected account", { stripe_account_id: "acct_test_2" }],
       ["another studio", { studio_id: "studio-2" }],
@@ -630,58 +650,6 @@ describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "cha
   },
 );
 
-
-describe("production failed-attempt status boundary", () => {
-  function prepare(status: unknown, error: unknown = { type: "card_error", code: "card_declined" }, original: string | null = "pi_1") {
-    CONSTRUCT_EVENT.mockReturnValue({ id: "evt_failed_status", type: "payment_intent.payment_failed", account: "acct_test_1", livemode: false,
-      data: { object: { id: "pi_1", status, amount: 5000, currency: "cad", customer: "cus_1", last_payment_error: error,
-        metadata: { hone_payment_charge_attempt_id: "attempt-1", hone_studio_id: "studio-1", hone_client_id: "client-1", hone_charge_reason: "session_payment" } } } });
-    ADMIN.current = makeAdmin({ studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
-      payment_charge_attempts: [{ data: { id: "attempt-1", studio_id: "studio-1", client_id: "client-1", charge_reason: "session_payment",
-        status: "pending_stripe", stripe_livemode: false, stripe_account_id: "acct_test_1", stripe_customer_id: "cus_1", stripe_payment_intent_id: original, stripe_charge_id: null, amount_cents: 5000, currency: "cad" }, error: null }] },
-      { claim_stripe_event: CLAIM_OK });
-  }
-  it("ordinary verified card decline remains failed without a false critical/manual alert", async () => {
-    prepare("requires_payment_method");
-    expect((await callRoute()).status).toBe(200);
-    expect(ADMIN.current!.updateCalls).toEqual([expect.objectContaining({ table: "payment_charge_attempts", payload: expect.objectContaining({ status: "failed" }) })]);
-    expect(RECORD_OPS_ALERT).not.toHaveBeenCalled();
-    expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
-  });
-  it.each(["requires_action", "processing", undefined])("active/unknown original (%s) stays unresolved", async (status) => {
-    prepare(status);
-    expect((await callRoute()).status).toBe(200);
-    expect(ADMIN.current!.updateCalls).toEqual([]);
-    expect(RECORD_OPS_ALERT).toHaveBeenCalledWith(expect.objectContaining({ event: "session_payment_needs_manual_review", severity: "critical" }));
-    expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
-  });
-  it.each([null, "pi_other"])("unbound/wrong original (%s) cannot be retired by a matching decline", async (original) => {
-    prepare("requires_payment_method", { type: "card_error", code: "card_declined" }, original);
-    expect((await callRoute()).status).toBe(original === null ? 500 : 200);
-    expect(ADMIN.current!.updateCalls).toEqual([]);
-    if (original === null) {
-      expect(RECORD_OPS_ALERT).not.toHaveBeenCalled();
-      expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
-      expect(names(ADMIN.current!.rpcCalls)).not.toContain("mark_stripe_event_processed");
-    } else {
-      expect(RECORD_OPS_ALERT).toHaveBeenCalledWith(expect.objectContaining({ event: "stripe_webhook_payment_identity_mismatch" }));
-      expect(names(ADMIN.current!.rpcCalls)).not.toContain("release_stripe_event_claim_with_error");
-    }
-  });
-  it("requires_payment_method without observed card failure stays manual", async () => {
-    prepare("requires_payment_method", null);
-    expect((await callRoute()).status).toBe(200);
-    expect(ADMIN.current!.updateCalls).toEqual([]);
-    expect(RECORD_OPS_ALERT).toHaveBeenCalledWith(expect.objectContaining({ event: "session_payment_needs_manual_review" }));
-  });
-  it("verified canceled original remains a terminal control", async () => {
-    prepare("canceled", null);
-    expect((await callRoute()).status).toBe(200);
-    expect(ADMIN.current!.updateCalls).toHaveLength(1);
-    expect(RECORD_OPS_ALERT).not.toHaveBeenCalled();
-  });
-});
-
 // Existing metadata refusals must precede classification as an expected binding race.
 describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "charge.refunded"] as const)(
   "pending binding metadata order: %s", (type) => {
@@ -813,5 +781,57 @@ describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "cha
     noMoneyWrite();
     expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
     expect(names(ADMIN.current!.rpcCalls)).not.toContain("release_stripe_event_claim_with_error");
+  });
+});
+
+
+describe("production failed-attempt status boundary", () => {
+  function prepare(status: unknown, error: unknown = { type: "card_error", code: "card_declined" }, original: string | null = "pi_1") {
+    CONSTRUCT_EVENT.mockReturnValue({ id: "evt_failed_status", type: "payment_intent.payment_failed", account: "acct_test_1", livemode: false,
+      data: { object: { id: "pi_1", status, amount: 5000, currency: "cad", customer: "cus_1", last_payment_error: error,
+        metadata: { hone_payment_charge_attempt_id: "attempt-1", hone_studio_id: "studio-1", hone_client_id: "client-1", hone_charge_reason: "session_payment" } } } });
+    ADMIN.current = makeAdmin({ studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
+      payment_charge_attempts: [{ data: { id: "attempt-1", studio_id: "studio-1", client_id: "client-1", charge_reason: "session_payment",
+        status: "pending_stripe", stripe_livemode: false, stripe_account_id: "acct_test_1", stripe_customer_id: "cus_1", stripe_payment_intent_id: original, stripe_charge_id: null, amount_cents: 5000, currency: "cad" }, error: null }] },
+      { claim_stripe_event: CLAIM_OK });
+  }
+  it("ordinary verified card decline remains failed without a false critical/manual alert", async () => {
+    prepare("requires_payment_method");
+    expect((await callRoute()).status).toBe(200);
+    expect(ADMIN.current!.updateCalls).toEqual([expect.objectContaining({ table: "payment_charge_attempts", payload: expect.objectContaining({ status: "failed" }) })]);
+    expect(RECORD_OPS_ALERT).not.toHaveBeenCalled();
+    expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+  });
+  it.each(["requires_action", "processing", undefined])("active/unknown original (%s) stays unresolved", async (status) => {
+    prepare(status);
+    expect((await callRoute()).status).toBe(200);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+    expect(RECORD_OPS_ALERT).toHaveBeenCalledWith(expect.objectContaining({ event: "session_payment_needs_manual_review", severity: "critical" }));
+    expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+  });
+  it.each([null, "pi_other"])("unbound/wrong original (%s) cannot be retired by a matching decline", async (original) => {
+    prepare("requires_payment_method", { type: "card_error", code: "card_declined" }, original);
+    expect((await callRoute()).status).toBe(original === null ? 500 : 200);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+    if (original === null) {
+      expect(RECORD_OPS_ALERT).not.toHaveBeenCalled();
+      expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
+      expect(names(ADMIN.current!.rpcCalls)).not.toContain("mark_stripe_event_processed");
+    } else {
+      expect(RECORD_OPS_ALERT).toHaveBeenCalledWith(expect.objectContaining({ event: "stripe_webhook_payment_identity_mismatch" }));
+      expect(names(ADMIN.current!.rpcCalls)).not.toContain("release_stripe_event_claim_with_error");
+    }
+  });
+  it("requires_payment_method without observed card failure stays manual", async () => {
+    prepare("requires_payment_method", null);
+    expect((await callRoute()).status).toBe(200);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+    expect(RECORD_OPS_ALERT).toHaveBeenCalledWith(expect.objectContaining({ event: "session_payment_needs_manual_review" }));
+  });
+  it("verified canceled original remains a terminal control", async () => {
+    prepare("canceled", null);
+    expect((await callRoute()).status).toBe(200);
+    expect(ADMIN.current!.updateCalls).toHaveLength(1);
+    expect(RECORD_OPS_ALERT).not.toHaveBeenCalled();
   });
 });

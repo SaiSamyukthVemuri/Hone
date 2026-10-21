@@ -93,8 +93,8 @@ function failedEvent(over: Record<string, unknown> = {}) {
     data: {
       object: {
         id: "pi_1",
+        status: "requires_payment_method", // A verified card decline finishes this attempt.
         customer: "cus_1",
-        status: "requires_payment_method",
         // A real PaymentIntent states its money (PAY-CCY-01).
         amount: 2500,
         currency: "cad",

@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { setFakeStripeBehavior, cleanupFakeStripeFiles, readFakeStripeCalls } from "@/lib/stripe/e2e-fake-ledger";
 import {
   assertE2eFakeStripeAllowed,
   assertFakeStripeNotRequestedInDeployment,
@@ -208,7 +209,7 @@ describe("fake-call recorder — invocation vs effect, run-isolated, test-safe",
       p: unknown,
       o: unknown,
     ) => Promise<{ id: string; status: string }>)(
-      { amount: 22500, currency: "cad" },
+      { amount: 22500, currency: "cad", confirm: true },
       { stripeAccount: "acct_test_123", idempotencyKey: "hone:session_payment:att1:v1" },
     );
     expect(pi.id).toMatch(/^pi_test_e2e_/);
@@ -298,5 +299,143 @@ describe("fake-call recorder — invocation vs effect, run-isolated, test-safe",
       expect(typeBlock.toLowerCase()).not.toContain(forbidden);
     }
     expect(keys.length).toBe(7);
+  });
+});
+
+
+describe("staged fake original create / confirmation contract", () => {
+  const RUN = "run-staged-hyphen-123";
+  const OTHER = "run-staged-other-123";
+  const savedEnv = { ...process.env };
+  const account = "acct_test_staged";
+  const createKey = "hone:session_payment:attempt-unit:v2:create";
+  const opts = { stripeAccount: account, idempotencyKey: createKey };
+  const params = { amount: 15000, currency: "usd", customer: "cus_private_fixture",
+    payment_method: "pm_private_fixture", confirm: false, confirmation_method: "manual" as const };
+  const confirmOpts = (id: string) => ({ stripeAccount: account,
+    idempotencyKey: `hone:session_payment:attempt-unit:v2:confirm:${id}` });
+  beforeEach(() => {
+    process.env = { ...savedEnv, HONE_E2E_FAKE_STRIPE: "1", HONE_E2E_RUN_ID: RUN };
+    for (const key of ["VERCEL", "VERCEL_ENV", "AWS_REGION", "AWS_EXECUTION_ENV", "KUBERNETES_SERVICE_HOST"]) delete process.env[key];
+    resetFakeStripeState(RUN); resetFakeStripeState(OTHER);
+    cleanupFakeStripeFiles(RUN); cleanupFakeStripeFiles(OTHER);
+  });
+  afterEach(() => {
+    cleanupFakeStripeFiles(RUN); cleanupFakeStripeFiles(OTHER);
+    resetFakeStripeState(RUN); resetFakeStripeState(OTHER);
+    process.env = { ...savedEnv };
+  });
+  it("creates a complete unconfirmed original, not a successful money charge", async () => {
+    const stripe = createFakeStripe(); const pi = await stripe.paymentIntents.create(params, opts);
+    expect(pi).toMatchObject({ status: "requires_confirmation", confirmation_method: "manual",
+      customer: params.customer, payment_method: params.payment_method, livemode: false,
+      amount: 15000, currency: "usd", latest_charge: null, amount_received: 0, amount_capturable: 0 });
+    expect(pi.id).toMatch(/^pi_[A-Za-z0-9_]+$/); // hyphenated run IDs remain valid synthetic PI IDs
+    expect(getFakeStripeCalls()).toMatchObject([{ method: "pi_create", replay: false }]);
+    expect(getFakeStripeCalls().filter(c => c.method === "pi_confirm")).toEqual([]);
+    expect(await stripe.paymentIntents.retrieve(pi.id, {}, { stripeAccount: account })).toMatchObject({ status: "requires_confirmation", latest_charge: null });
+  });
+  it("only confirmation produces the succeeded original and charge facts", async () => {
+    const stripe = createFakeStripe(); const pi = await stripe.paymentIntents.create(params, opts);
+    const paid = await stripe.paymentIntents.confirm(pi.id, { off_session: true }, confirmOpts(pi.id));
+    expect(paid).toMatchObject({ id: pi.id, status: "succeeded", amount: 15000, currency: "usd",
+      customer: params.customer, payment_method: params.payment_method, livemode: false, amount_received: 15000 });
+    expect(paid.latest_charge).toMatch(/^ch_test_e2e_/);
+    expect(await stripe.paymentIntents.retrieve(pi.id, {}, { stripeAccount: account })).toMatchObject({ id: pi.id, status: "succeeded", latest_charge: paid.latest_charge });
+    expect(getFakeStripeCalls().filter(c => c.method === "pi_confirm")).toHaveLength(1);
+  });
+  it("records both confirmation invocations while idempotency preserves one outcome", async () => {
+    const stripe = createFakeStripe(); const pi = await stripe.paymentIntents.create(params, opts);
+    const [a, b] = await Promise.all([stripe.paymentIntents.confirm(pi.id, { off_session: true }, confirmOpts(pi.id)),
+      stripe.paymentIntents.confirm(pi.id, { off_session: true }, confirmOpts(pi.id))]);
+    expect(a).toEqual(b);
+    expect(getFakeStripeCalls().filter(c => c.method === "pi_confirm").map(c => c.replay)).toEqual([false, true]);
+    await expect(stripe.paymentIntents.confirm(pi.id, { off_session: true }, { stripeAccount: account, idempotencyKey: "different-key" })).rejects.toThrow();
+    expect((await stripe.paymentIntents.retrieve(pi.id, {}, { stripeAccount: account })).latest_charge).toBe(a.latest_charge);
+  });
+  it("create replay retains the original unconfirmed response while retrieval sees current state", async () => {
+    const stripe = createFakeStripe(); const pi = await stripe.paymentIntents.create(params, opts);
+    await stripe.paymentIntents.confirm(pi.id, {}, confirmOpts(pi.id));
+    expect(await stripe.paymentIntents.create(params, opts)).toMatchObject({ id: pi.id, status: "requires_confirmation", latest_charge: null });
+    expect(await stripe.paymentIntents.retrieve(pi.id, {}, { stripeAccount: account })).toMatchObject({ status: "succeeded" });
+    expect(getFakeStripeCalls().filter(c => c.method === "pi_create").map(c => c.replay)).toEqual([false, true]);
+  });
+  it("scopes identical keys independently by account, method and original path", async () => {
+    const stripe = createFakeStripe(); const same = { stripeAccount: account, idempotencyKey: "same" };
+    const a = await stripe.paymentIntents.create(params, same);
+    const b = await stripe.paymentIntents.create(params, { ...same, stripeAccount: "acct_other" });
+    expect(a.id).not.toBe(b.id);
+    const paid = await stripe.paymentIntents.confirm(a.id, {}, same);
+    const other = await stripe.paymentIntents.create(params, { ...same, idempotencyKey: "other-original" });
+    const paidOther = await stripe.paymentIntents.confirm(other.id, {}, same);
+    expect(paid.latest_charge).not.toBe(paidOther.latest_charge);
+    if (typeof paid.latest_charge !== "string") throw new Error("Expected synthetic charge");
+    const refunded = await stripe.refunds.create({ charge: paid.latest_charge, amount: 15000 }, same);
+    expect(refunded.id).toMatch(/^re_test_e2e_/); expect(refunded.currency).toBe("usd");
+  });
+  it("refuses wrong-account and cross-run confirmation without changing the original", async () => {
+    const stripe = createFakeStripe(); const pi = await stripe.paymentIntents.create(params, opts);
+    await expect(stripe.paymentIntents.confirm(pi.id, {}, { stripeAccount: "acct_other", idempotencyKey: "bad" })).rejects.toThrow();
+    expect(await stripe.paymentIntents.retrieve(pi.id, {}, { stripeAccount: account })).toMatchObject({ status: "requires_confirmation", latest_charge: null });
+    process.env.HONE_E2E_RUN_ID = OTHER;
+    await expect(stripe.paymentIntents.confirm(pi.id, {}, confirmOpts(pi.id))).rejects.toThrow();
+    expect(getFakeStripeCalls(OTHER)).toMatchObject([{ method: "pi_confirm", replay: false }]);
+  });
+  it("refuses changed parameters under an existing operation key", async () => {
+    const stripe = createFakeStripe(); const pi = await stripe.paymentIntents.create(params, opts);
+    await expect(stripe.paymentIntents.create({ ...params, amount: 15001 }, opts)).rejects.toThrow(/parameters differ/);
+    const paid = await stripe.paymentIntents.confirm(pi.id, { off_session: true }, confirmOpts(pi.id));
+    await expect(stripe.paymentIntents.confirm(pi.id, { off_session: false }, confirmOpts(pi.id))).rejects.toThrow(/parameters differ/);
+    expect((await stripe.paymentIntents.retrieve(pi.id, {}, { stripeAccount: account })).latest_charge).toBe(paid.latest_charge);
+    expect(getFakeStripeCalls().filter(c => c.method === "pi_confirm").map(c => c.replay)).toEqual([false, true]);
+  });
+  it("keeps server-configured decline at confirmation and never fabricates a successful retrieval", async () => {
+    setFakeStripeBehavior(RUN, createKey, "decline");
+    const stripe = createFakeStripe(); const pi = await stripe.paymentIntents.create(params, opts);
+    expect(pi.status).toBe("requires_confirmation");
+    const result = await stripe.paymentIntents.confirm(pi.id, {}, confirmOpts(pi.id));
+    expect(result).toMatchObject({ status: "requires_payment_method", latest_charge: null, amount_received: 0,
+      last_payment_error: { type: "card_error", code: "card_declined" } });
+    expect(await stripe.paymentIntents.retrieve(pi.id, {}, { stripeAccount: account })).toMatchObject({ status: "requires_payment_method", latest_charge: null });
+  });
+  it("processing stays unresolved until an explicit server-side success observation", async () => {
+    setFakeStripeBehavior(RUN, createKey, "processing");
+    const stripe = createFakeStripe(); const pi = await stripe.paymentIntents.create(params, opts);
+    expect(await stripe.paymentIntents.confirm(pi.id, {}, confirmOpts(pi.id))).toMatchObject({ status: "processing", latest_charge: null });
+    expect(await stripe.paymentIntents.retrieve(pi.id, {}, { stripeAccount: account })).toMatchObject({ status: "processing", latest_charge: null });
+    setFakeStripeBehavior(RUN, createKey, "success");
+    expect(await stripe.paymentIntents.retrieve(pi.id, {}, { stripeAccount: account })).toMatchObject({ status: "succeeded", amount: 15000, currency: "usd" });
+    expect(getFakeStripeCalls().filter(c => c.method === "pi_confirm")).toHaveLength(1);
+  });
+  it("refunds retain charge currency and exact idempotent amount with account refusal", async () => {
+    const stripe = createFakeStripe(); const pi = await stripe.paymentIntents.create(params, opts);
+    const paid = await stripe.paymentIntents.confirm(pi.id, {}, confirmOpts(pi.id));
+    if (typeof paid.latest_charge !== "string") throw new Error("Expected synthetic charge");
+    const request = { charge: paid.latest_charge, amount: 500, currency: "cad" };
+    const refundOptions = { stripeAccount: account, idempotencyKey: "refund" };
+    const a = await stripe.refunds.create(request, refundOptions); const b = await stripe.refunds.create(request, refundOptions);
+    expect(a).toMatchObject({ amount: 500, currency: "usd" }); expect(b).toEqual(a);
+    expect(getFakeStripeCalls().filter(c => c.method === "refund_create").map(c => c.replay)).toEqual([false, true]);
+    await expect(stripe.refunds.create(request, { ...refundOptions, stripeAccount: "acct_other" })).rejects.toThrow();
+  });
+  it("cancellation retains the known original and prevents later confirmation", async () => {
+    const stripe = createFakeStripe(); const pi = await stripe.paymentIntents.create(params, opts);
+    expect(await stripe.paymentIntents.cancel(pi.id, {}, { stripeAccount: account })).toMatchObject({ id: pi.id, status: "canceled", amount: 15000, currency: "usd" });
+    await expect(stripe.paymentIntents.confirm(pi.id, {}, confirmOpts(pi.id))).rejects.toThrow();
+    expect(await stripe.paymentIntents.retrieve(pi.id, {}, { stripeAccount: account })).toMatchObject({ status: "canceled", latest_charge: null });
+  });
+  it("never persists customer, payment method, signature or description in call records", async () => {
+    const stripe = createFakeStripe(); const pi = await stripe.paymentIntents.create({ ...params,
+      description: "synthetic-private-description", metadata: { signature: "synthetic-private-signature" } }, opts);
+    await stripe.paymentIntents.confirm(pi.id, {}, confirmOpts(pi.id));
+    const text = JSON.stringify([getFakeStripeCalls(), readFakeStripeCalls(RUN)]);
+    for (const value of [params.customer, params.payment_method, "synthetic-private-description", "synthetic-private-signature"]) expect(text).not.toContain(value);
+    expect(Object.keys(getFakeStripeCalls()[0]).sort()).toEqual(["method", "idempotencyKey", "stripeAccount", "amountCents", "currency", "resultId", "replay"].sort());
+  });
+  it("existing browser counters and selector measure confirmation instead of unconfirmed object creation", () => {
+    const helper = readFileSync(join(process.cwd(), "e2e-payment/helpers/fake-stripe-ledger-e2e.ts"), "utf8");
+    const counters = helper.slice(helper.indexOf("export function readFakeStripeInvocations"), helper.indexOf("export function countFakeStripeInvocations"));
+    expect(counters).toContain('c.method === "pi_confirm"'); expect(counters).not.toContain('c.method === "pi_create"');
+    expect(readFileSync(join(process.cwd(), "e2e-payment/helpers/payment-fixture.ts"), "utf8")).toContain('`hone:session_payment:${attemptId}:v2:create`');
   });
 });
