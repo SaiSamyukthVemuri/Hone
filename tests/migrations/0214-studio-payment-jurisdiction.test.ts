@@ -14,7 +14,7 @@ import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-stat
 // cannot see: the frozen migrations it sits on are byte-identical, the file
 // wraps itself, every new function is revoked by name and granted to
 // service_role only, no browser role is granted anything, the only top-level
-// DML is the CA/cad backfill, and the dormant / legacy CAD-only ledgers are
+// DML is absent and unverified studios remain unknown, and the dormant / legacy CAD-only ledgers are
 // untouched.
 // ===========================================================================
 
@@ -30,11 +30,10 @@ const TOP_LEVEL = CODE.replace(/\$\$[\s\S]*?\$\$/g, " ");
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
 const COMMANDS = [
-  "set_studio_payment_jurisdiction(uuid, text, text, text, text, boolean)",
+  "set_studio_payment_jurisdiction(uuid, text, text, text, text, boolean, text)",
   "record_stripe_account_jurisdiction(uuid, text, boolean, text, text)",
 ];
 const TRIGGER_FNS = [
-  "studios_payment_jurisdiction_default",
   "payment_charge_attempts_jurisdiction_guard",
   "payment_charge_attempts_money_immutable",
   "appointment_settlements_currency_from_jurisdiction",
@@ -70,11 +69,20 @@ describe("0214 is one bounded transaction", () => {
     expect(CODE.trim().endsWith("commit;")).toBe(true);
   });
 
-  it("its only top-level DML is the CA/cad backfill", () => {
-    const dml = TOP_LEVEL.match(/^\s*(insert|update|delete|truncate)\b[^;]*;/gim) ?? [];
-    expect(dml).toHaveLength(1);
-    expect(dml[0]).toMatch(/insert into public\.studio_payment_jurisdictions/);
-    expect(dml[0]).toMatch(/'CA', 'cad', 'legacy_backfill'/);
+  it("does not backfill or create a default jurisdiction", () => {
+    expect(TOP_LEVEL).not.toMatch(/^\s*(insert|update|delete|truncate)\b/gim);
+    expect(CODE).not.toContain("studios_payment_jurisdiction_default");
+    expect(CODE).not.toMatch(/legacy_backfill|studio_created/);
+  });
+
+  it("requires explicit verified evidence and serializes first initialization", () => {
+    expect(CODE).toContain("p_verification_reference text default null");
+    expect(CODE).toContain("'verification_required'::text");
+    expect(CODE).toContain("where st.id = p_studio_id for update");
+    expect(CODE).toContain("v_initial := not found");
+    expect(CODE).toContain("verification_reference = v_reference");
+    expect(CODE).toContain("case when v_initial then 'initialized' else 'changed' end");
+    expect(CODE).toContain("v_actor, v_reason, v_ack, v_reference");
   });
 
   it("does not touch the legacy and dormant CAD-only ledgers", () => {
