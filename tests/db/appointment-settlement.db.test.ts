@@ -1403,7 +1403,13 @@ describe("0187 — THE WEBHOOK IS THE THIRD PARTY TO THE LOCK", () => {
         `select has_function_privilege('reconcile_card_payment_succeeded(uuid,text,text)','execute') x`,
       ),
     );
-    expect(svc.rows[0].x).toBe(true);
+    // 0239 closes the historical unbound service API; postgres-only historical
+    // mutex tests above intentionally still exercise its private implementation.
+    expect(svc.rows[0].x).toBe(false);
+    const bound = await asRole("service_role", (q) => q(
+      "select has_function_privilege('reconcile_bound_payment_event(uuid,text,text,uuid,text,boolean,jsonb)','execute') x",
+    ));
+    expect(bound.rows[0].x).toBe(true);
   });
 
   it("CENSUS — every writer that can create card money holds the shared key", async () => {
@@ -1464,5 +1470,75 @@ describe("0187 — privileges", () => {
       q(`select count(*)::int n from public.appointment_settlements`),
     );
     expect(seen.rows[0].n).toBe(0);
+  });
+});
+
+// PAY-001 / 0239: new service entry point binds event facts under the same mutex.
+// The historical postgres-only 0187 races above continue to prove that mutex.
+describe("0239 — bound signed payment event command", () => {
+  async function prepared() {
+    const s = await scenario({ attempt: "ready" });
+    const pi = `pi_bound_${randomUUID()}`;
+    await adminQuery(`update public.payment_charge_attempts a
+      set stripe_account_id=m.stripe_account_id,stripe_customer_id=m.stripe_customer_id,
+          stripe_payment_intent_id=$2
+      from public.client_payment_methods m
+      where a.studio_id=$1 and m.id=a.client_payment_method_id`, [s.studioId, pi]);
+    const row = (await adminQuery(`select * from public.payment_charge_attempts where studio_id=$1`, [s.studioId])).rows[0];
+    expect(row.stripe_account_id).toBeTruthy();
+    expect(row.stripe_customer_id).toBeTruthy();
+    const object = {
+      customer_id: row.stripe_customer_id, payment_intent_id: pi,
+      charge_id: `ch_bound_${randomUUID()}`, amount_cents: row.amount_cents, currency: row.currency,
+    };
+    return { s, row, object };
+  }
+  async function bound(p: Awaited<ReturnType<typeof prepared>>, overrides: Record<string, unknown> = {}, type = "payment_intent.succeeded", scope: { studio?: string; account?: string; mode?: boolean } = {}) {
+    return adminQuery(`select * from public.reconcile_bound_payment_event($1,$2,$3,$4,$5,$6,$7::jsonb)`, [
+      p.row.id, `evt_bound_${randomUUID()}`, type, scope.studio ?? p.row.studio_id,
+      scope.account ?? p.row.stripe_account_id, scope.mode ?? p.row.stripe_livemode,
+      JSON.stringify({ ...p.object, ...overrides }),
+    ]);
+  }
+  it.each(["studio", "account", "mode", "customer", "intent", "amount", "currency"])("refuses mismatching %s without creating card money", async (key) => {
+    const p = await prepared();
+    const scope = key === "studio" ? { studio: randomUUID() } : key === "account" ? { account: "acct_other" } : key === "mode" ? { mode: true } : {};
+    const payload = key === "customer" ? { customer_id: "cus_other" } : key === "intent" ? { payment_intent_id: "pi_other" } : key === "amount" ? { amount_cents: p.row.amount_cents + 1 } : key === "currency" ? { currency: "usd" } : {};
+    expect((await bound(p, payload, "payment_intent.succeeded", scope)).rows[0].result).toBe("identity_mismatch");
+    const after = (await adminQuery("select status,charged_at,stripe_charge_id from public.payment_charge_attempts where id=$1", [p.row.id])).rows[0];
+    expect(after).toEqual({ status: "ready", charged_at: null, stripe_charge_id: null });
+  });
+  it("does not invent missing original provider identity from metadata", async () => {
+    const p = await prepared();
+    await adminQuery("update public.payment_charge_attempts set stripe_payment_intent_id=null where id=$1", [p.row.id]);
+    expect((await bound(p)).rows[0].result).toBe("identity_mismatch");
+  });
+  it("matches, deduplicates, and refuses a substituted charge", async () => {
+    const p = await prepared();
+    expect((await bound(p)).rows[0].result).toBe("reconciled");
+    expect((await bound(p)).rows[0].result).toBe("already_succeeded");
+    expect((await bound(p, { charge_id: "ch_other" })).rows[0].result).toBe("identity_mismatch");
+    expect((await bound(p, {}, "payment_intent.payment_failed")).rows[0].result).toBe("local_succeeded_mismatch");
+    expect((await adminQuery("select status,stripe_charge_id from public.payment_charge_attempts where id=$1", [p.row.id])).rows[0])
+      .toEqual({ status: "succeeded", stripe_charge_id: p.object.charge_id });
+  });
+  it("does not resurrect a terminal failed attempt with an older success", async () => {
+    const p = await prepared();
+    expect((await bound(p, { failure_code: "card_declined" }, "payment_intent.payment_failed")).rows[0].result).toBe("reconciled");
+    expect((await bound(p)).rows[0].result).toBe("terminal_mismatch");
+  });
+  it("requires the actual refund's identity, amount, currency and succeeded status", async () => {
+    const p = await prepared();
+    await bound(p);
+    const refund = { refund_id: `re_bound_${randomUUID()}`, refund_amount_cents: p.row.amount_cents,
+      refund_currency: p.row.currency, refund_charge_id: p.object.charge_id, refund_status: "succeeded" };
+    for (const patch of [{ refund_status: "pending" }, { refund_status: "requires_action" }, { refund_charge_id: "ch_other" }, { refund_amount_cents: 1 }, { refund_currency: "usd" }]) {
+      expect((await bound(p, { ...refund, ...patch }, "charge.refunded")).rows[0].result).toBe("refund_evidence_refused");
+    }
+    expect((await bound(p, refund, "charge.refunded")).rows[0].result).toBe("reconciled");
+    expect((await bound(p, refund, "charge.refunded")).rows[0].result).toBe("already_refunded");
+    expect((await bound(p, { ...refund, refund_status: "pending" }, "charge.refunded")).rows[0].result).toBe("refund_evidence_refused");
+    expect((await adminQuery("select refund_status,stripe_refund_id from public.payment_charge_attempts where id=$1", [p.row.id])).rows[0])
+      .toEqual({ refund_status: "succeeded", stripe_refund_id: refund.refund_id });
   });
 });

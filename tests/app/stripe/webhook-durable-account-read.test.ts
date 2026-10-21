@@ -276,7 +276,7 @@ describe("PAY-001 durable payment event identity", () => {
     amount_cents: 5000, currency: "cad", charged_at: null,
     refund_status: null, refund_amount_cents: null, refunded_at: null, stripe_refund_id: null,
   };
-  function prepare(overrides: Record<string, unknown> = {}) {
+  function prepare(overrides: Record<string, unknown> = {}, commandResult = "zero_rows") {
     CONSTRUCT_EVENT.mockReturnValue({
       id: "evt_payment_1", type: "payment_intent.succeeded", account: "acct_test_1", livemode: false,
       data: { object: { id: "pi_1", customer: "cus_1", amount: 5000, currency: "cad", latest_charge: "ch_1",
@@ -285,7 +285,7 @@ describe("PAY-001 durable payment event identity", () => {
     ADMIN.current = makeAdmin({
       studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
       payment_charge_attempts: [{ data: { ...attempt, ...overrides }, error: null }],
-    }, { claim_stripe_event: CLAIM_OK, reconcile_card_payment_succeeded: { data: [{ result: "zero_rows" }], error: null } });
+    }, { claim_stripe_event: CLAIM_OK, reconcile_bound_payment_event: { data: [{ result: commandResult }], error: null } });
   }
   it.each([
     ["account", { stripe_account_id: "acct_other" }],
@@ -299,15 +299,22 @@ describe("PAY-001 durable payment event identity", () => {
     prepare(overrides);
     const response = await callRoute();
     expect(response.status).toBe(200);
-    expect(names(ADMIN.current!.rpcCalls)).not.toContain("reconcile_card_payment_succeeded");
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("reconcile_bound_payment_event");
     expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
     expect(RECORD_OPS_ALERT).toHaveBeenCalledWith(expect.objectContaining({ event: "stripe_webhook_payment_identity_mismatch" }));
+  });
+  it("a locked-command identity refusal after the application read remains processed without a receipt", async () => {
+    prepare({}, "identity_mismatch");
+    const response = await callRoute();
+    expect(response.status).toBe(200);
+    expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+    expect(RECORD_OPS_ALERT).toHaveBeenCalledWith(expect.objectContaining({ event: "stripe_webhook_bound_command_refused" }));
   });
   it("allows a genuinely matching event to reach the existing locked command", async () => {
     prepare();
     const response = await callRoute();
     expect(response.status).toBe(200);
-    expect(names(ADMIN.current!.rpcCalls)).toContain("reconcile_card_payment_succeeded");
+    expect(names(ADMIN.current!.rpcCalls)).toContain("reconcile_bound_payment_event");
     expect(ADMIN.current!.eqCalls).toEqual(expect.arrayContaining([
       { table: "payment_charge_attempts", column: "studio_id", value: "studio-1" },
       { table: "payment_charge_attempts", column: "stripe_account_id", value: "acct_test_1" },
