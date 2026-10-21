@@ -1,4 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import {
+  createReminderScanCoordinator,
+  runReminderScanBatch,
+  REMINDER_SCAN_PASSES,
+  REMINDER_SCAN_TTL_SECONDS,
+  type ReminderScanCursor,
+  type ReminderScanPass,
+  type ReminderScanRedis,
+} from "@/lib/cron/reminder-scan-coordinator";
 import {
   computeReminderSchedulerStatus,
   decideReminderSchedulerAlert,
@@ -1111,5 +1120,319 @@ describe("P2: implausibly future heartbeats cannot mask an outage", () => {
   it("health recovers on the next successful run instead of staying wrong", () => {
     const healed = mergeReminderHeartbeat({ at: "2099-01-01T00:00:00.000Z" }, good, NOW);
     expect(computeReminderSchedulerStatus(healed, NOW).status).not.toBe("missing");
+  });
+});
+
+// #995 SOURCE PROPOSAL. Existing Vitest + the established injected Redis seam;
+// no real Redis, route wiring, credentials, DB or provider calls. The in-memory
+// command model exercises ownership/expiry scenarios, not actual Lua execution.
+type ScanRow = { id: string; starts_at: string; eligible: boolean };
+type ScanOutcome = { kind: "processed" | "skipped" | "claim_unavailable"; attempted: boolean };
+function scanFixture() {
+  let clock = NOW;
+  let tokens = 0;
+  const values = new Map<string, string>([["reminder_scan:v1:rotation", JSON.stringify({version:1,next:"email24h",known:[]})]]);
+  const expires = new Map<string, number>();
+  const scripts: string[] = [];
+  const get = (key: string) => {
+    if ((expires.get(key) ?? Infinity) <= clock) { values.delete(key); expires.delete(key); }
+    return values.get(key);
+  };
+  let failSave = false;
+  let delaySave = 0;
+  const redis: ReminderScanRedis = {
+    async set(key, value, options) {
+      if (get(key) !== undefined) return null;
+      values.set(key, value); expires.set(key, clock + options.ex * 1000); return "OK";
+    },
+    async eval(script, keys, args) {
+      scripts.push(script);
+      const owned = get(keys[0]) === args[0];
+      if (script.includes("return {0,''}")) return owned ? [1, get(keys[1]) ?? ""] : [0, ""];
+      if (!owned) return 0;
+      if (keys.length === 3) {
+        if (failSave) throw new Error("PRIVATE Redis unavailable");
+        clock += delaySave;
+        values.set(keys[1], String(args[1])); expires.set(keys[1], Number(args[2]));
+        if (!get(keys[1])) return 0;
+        values.set(keys[2], String(args[3])); expires.set(keys[2], clock + Number(args[4]) * 1000);
+        expires.set(keys[0], clock + Number(args[5]) * 1000); return 1;
+      }
+      if (script.includes("'del'")) { values.delete(keys[0]); expires.delete(keys[0]); return 1; }
+      expires.set(keys[0], clock + Number(args[1]) * 1000); return 1;
+    },
+  };
+  const coordinator = createReminderScanCoordinator(redis, () => `owner-${++tokens}`);
+  const rows: Record<ReminderScanPass, ScanRow[]> = { email24h: [], email2h: [], sms24h: [], sms2h: [] };
+  const sent = new Set<string>();
+  const readPage = vi.fn(async (pass: ReminderScanPass, q: { startIso: string; endIso: string; after: ReminderScanCursor | null; limit: number }) => rows[pass]
+    .filter((row) => !sent.has(`${pass}:${row.id}`) && Date.parse(row.starts_at) >= Date.parse(q.startIso) && Date.parse(row.starts_at) <= Date.parse(q.endIso) &&
+      (!q.after || Date.parse(row.starts_at) > Date.parse(q.after.startsAt) || (row.starts_at === q.after.startsAt && row.id > q.after.id)))
+    .slice(0, q.limit));
+  const handle = vi.fn(async (pass: ReminderScanPass, row: ScanRow): Promise<ScanOutcome> => {
+    if (!row.eligible) return { kind: "skipped", attempted: false };
+    sent.add(`${pass}:${row.id}`); return { kind: "processed", attempted: true };
+  });
+  const run = () => runReminderScanBatch({ coordinator, readPage, handle, now: () => clock });
+  const populate = (pass: ReminderScanPass, count: number, eligibleIndex = -1) => {
+    rows[pass] = Array.from({ length: count }, (_, i) => ({
+      id: `00000000-0000-4000-8000-${String(i + 1).padStart(12, "0")}`,
+      starts_at: new Date(clock + (pass.endsWith("24h") ? 24 : 2) * 60 * 60_000).toISOString(),
+      eligible: i === eligibleIndex,
+    }));
+  };
+  return { coordinator, redis, rows, sent, readPage, handle, run, populate, values, expires, scripts, now: () => clock, advance: (ms: number) => { clock += ms; }, failSave: () => { failSave = true; }, delaySave: (ms: number) => { delaySave = ms; } };
+}
+
+describe("#995 unwired bounded scan/coordinator proposal", () => {
+  it("bounds every batch and reaches the eligible tail across invocations without restarting its 1000-row skipped prefix", async () => {
+    const f = scanFixture(); f.populate("email24h", 1001, 1000);
+    let sentTail = false;
+    for (let i = 0; i < 6; i++) {
+      const result = await f.run();
+      expect(result.scanned).toBeLessThanOrEqual(200);
+      expect(result.queries).toBeLessThanOrEqual(8);
+      expect(JSON.stringify(result)).not.toContain("00000000-");
+      if (f.sent.size) sentTail = true;
+    }
+    expect(sentTail).toBe(true);
+    expect(f.sent.size).toBe(1);
+    expect(f.handle.mock.calls.slice(0, 1001).map((call) => call[1].id)).toEqual(f.rows.email24h.map((row) => row.id));
+  });
+  it("gives all four passes a turn within the global 200-row budget", async () => {
+    const f = scanFixture();
+    for (const pass of REMINDER_SCAN_PASSES) f.populate(pass, 1001);
+    const result = await f.run();
+    expect(result).toMatchObject({ kind: "partial", scanned: 200, queries: 4 });
+    expect(f.readPage.mock.calls.map((call) => call[0])).toEqual([...REMINDER_SCAN_PASSES]);
+    expect([...new Set(f.handle.mock.calls.map((call) => call[0]))]).toEqual([...REMINDER_SCAN_PASSES]);
+    expect([...f.values.keys()].filter((key) => key.includes("checkpoint:"))).toHaveLength(4);
+    expect([...f.values.keys()].some((key) => key.includes("last_success"))).toBe(false);
+    expect([...f.values.values()].reduce((bytes, value) => bytes + Buffer.byteLength(value), 0)).toBeLessThanOrEqual(2048);
+  });
+  it("revisits a temporarily skipped row after completing the finite sweep", async () => {
+    const f = scanFixture(); f.populate("email24h", 2, 1);
+    expect((await f.run()).kind).toBe("complete");
+    f.rows.email24h[0].eligible = true;
+    expect((await f.run()).kind).toBe("complete");
+    expect(f.sent.size).toBe(2);
+    expect(f.handle.mock.calls.filter((call) => call[1].id === f.rows.email24h[0].id)).toHaveLength(2);
+  });
+  it("checkpoints only the processed prefix when a deadline stops halfway through a fetched page", async () => {
+    const f = scanFixture(); f.populate("email24h", 50);
+    f.handle.mockImplementationOnce(async () => { f.advance(26_000); return { kind: "skipped", attempted: false }; });
+    expect(await f.run()).toMatchObject({ kind: "partial", reason: "deadline", scanned: 1 });
+    const key = "reminder_scan:v1:checkpoint:email24h";
+    expect(JSON.parse(f.values.get(key)!).after.id).toBe(f.rows.email24h[0].id);
+    await f.run();
+    expect(f.handle.mock.calls.map((call) => call[1].id)).toEqual(f.rows.email24h.map((row) => row.id));
+  });
+  it("stops on explicit claim outage, persists scheduling progress, and rotates past the failed pass next invocation", async () => {
+    const f = scanFixture();
+    for (const pass of REMINDER_SCAN_PASSES) f.populate(pass, 1001);
+    f.handle.mockImplementationOnce(async () => ({ kind: "claim_unavailable", attempted: false }));
+    expect(await f.run()).toMatchObject({ kind: "unavailable", reason: "claim_unavailable", scanned: 1, queries: 1 });
+    expect(f.handle).toHaveBeenCalledTimes(1);
+    f.readPage.mockClear();
+    await f.run();
+    expect(f.readPage.mock.calls[0][0]).toBe("email2h");
+    const email24Read = f.readPage.mock.calls.find((call) => call[0] === "email24h");
+    expect(email24Read?.[1].after?.id).toBe(f.rows.email24h[0].id);
+  });
+  it("does not send a row that leaves the CURRENT window while its page is read", async () => {
+    const f = scanFixture(); f.populate("email24h", 1, 0);
+    const row = f.rows.email24h[0];
+    row.starts_at = new Date(f.now() + 23 * 60 * 60_000 + 500).toISOString();
+    f.readPage.mockImplementationOnce(async () => { f.advance(1000); return [row]; });
+    const result = await f.run();
+    expect(f.handle).not.toHaveBeenCalled();
+    expect(f.sent.size).toBe(0);
+    expect(result).toMatchObject({ kind: "partial", coverageUnconfirmed: true });
+  });
+  it("preserves sub-millisecond tuple ordering instead of treating timestamps as equal JS milliseconds", async () => {
+    const f = scanFixture(); f.populate("email24h", 2);
+    const stem = new Date(f.now() + 24 * 60 * 60_000).toISOString().replace(".000Z", "");
+    const a = { ...f.rows.email24h[1], starts_at: `${stem}.000001Z` };
+    const b = { ...f.rows.email24h[0], starts_at: `${stem}.000002Z` };
+    f.readPage.mockImplementationOnce(async () => [a, b]);
+    expect((await f.run()).kind).toBe("complete");
+    expect(f.handle.mock.calls.map((call) => call[1].id)).toEqual([a.id, b.id]);
+  });
+  it("keeps the original absolute per-pass TTL when other passes start fresh cycles", async () => {
+    const f = scanFixture(); f.populate("email24h", 1001);
+    await f.run();
+    const key = "reminder_scan:v1:checkpoint:email24h";
+    const expiry = f.expires.get(key);
+    f.advance(60_000);
+    await f.run();
+    expect(f.expires.get(key)).toBe(expiry);
+    expect(JSON.parse(f.values.get(key)!).expiresAt).toBe(NOW + REMINDER_SCAN_TTL_SECONDS * 1000);
+    expect(JSON.parse(f.values.get(key)!).upper).toBe(new Date(NOW + 25 * 60 * 60_000).toISOString());
+    expect(f.expires.get("reminder_scan:v1:checkpoint:email2h")).toBeGreaterThan(expiry!);
+  });
+  it("reports expired/lost known checkpoint coverage explicitly and never sends an old-window row", async () => {
+    const f = scanFixture(); f.populate("email24h", 1001);
+    await f.run(); f.advance(60_000); await f.run();
+    f.advance(REMINDER_SCAN_TTL_SECONDS * 1000 - 60_000 + 1);
+    f.handle.mockClear();
+    expect(await f.run()).toMatchObject({ kind: "partial", reason: "checkpoint_reset" });
+    expect(f.handle).not.toHaveBeenCalled();
+  });
+  it("lets only one overlapping invocation enumerate candidates", async () => {
+    const f = scanFixture(); let release!: () => void, started!: () => void;
+    const entered = new Promise<void>((resolve) => { started = resolve; });
+    f.readPage.mockImplementationOnce(async () => { started(); await new Promise<void>((resolve) => { release = resolve; }); return []; });
+    const a = f.run(); await entered;
+    expect(await f.run()).toMatchObject({ kind: "unavailable", reason: "coordination", queries: 0 });
+    release(); expect((await a).kind).toBe("complete");
+    expect(f.readPage).toHaveBeenCalledTimes(4);
+  });
+  it("does not let a late expired owner overwrite checkpoint or delete the successor lease", async () => {
+    const f = scanFixture(); f.populate("email24h", 1);
+    let releaseA!: () => void, enteredA!: () => void, releaseB!: () => void, enteredB!: () => void;
+    const aStarted = new Promise<void>((resolve) => { enteredA = resolve; });
+    f.handle.mockImplementationOnce(async () => { enteredA(); await new Promise<void>((resolve) => { releaseA = resolve; }); return { kind: "skipped", attempted: false }; });
+    const a = f.run(); await aStarted; f.advance(121_000);
+    const bStarted = new Promise<void>((resolve) => { enteredB = resolve; });
+    f.readPage.mockImplementationOnce(async () => { enteredB(); await new Promise<void>((resolve) => { releaseB = resolve; }); return []; });
+    const b = f.run(); await bStarted;
+    releaseA(); expect((await a).kind).toBe("unavailable");
+    expect(f.values.get("reminder_scan:v1:lock")).toBe("owner-2");
+    expect(f.values.has("reminder_scan:v1:checkpoint:email24h")).toBe(false);
+    releaseB(); await b;
+    expect(f.scripts.filter((script) => script.includes("redis.call('set'")).every((script) => script.startsWith("if redis.call('get', KEYS[1]) ~= ARGV[1] then return 0 end"))).toBe(true);
+  });
+  it("makes checkpoint write failure incomplete without falling back to memory-only progress", async () => {
+    const f = scanFixture(); f.populate("email24h", 2); f.failSave();
+    const result = await f.run();
+    expect(result).toMatchObject({ kind: "unavailable", reason: "coordination", queries: 1 });
+    expect(f.values.has("reminder_scan:v1:checkpoint:email24h")).toBe(false);
+    expect(JSON.stringify(result)).not.toContain("PRIVATE");
+  });
+  it("fails closed on an unconfigured or stalled coordinator with zero candidate work", async () => {
+    const f = scanFixture();
+    expect(await runReminderScanBatch({ coordinator: createReminderScanCoordinator(null), readPage: f.readPage, handle: f.handle, now: f.now })).toMatchObject({ kind: "unavailable", queries: 0 });
+    vi.useFakeTimers();
+    try {
+      const stalled: ReminderScanRedis = { set: () => new Promise(() => {}), eval: async () => 0 };
+      const pending = runReminderScanBatch({ coordinator: createReminderScanCoordinator(stalled), readPage: f.readPage, handle: f.handle, now: f.now });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await pending).toMatchObject({ kind: "unavailable", queries: 0 });
+      expect(f.readPage).not.toHaveBeenCalled();
+      expect(f.handle).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+  it("retains the existing 50-attempt cap per pass without an extra candidate page", async () => {
+    const f = scanFixture();
+    for (const pass of REMINDER_SCAN_PASSES) f.populate(pass, 1001);
+    f.handle.mockImplementation(async () => ({ kind: "processed", attempted: true }));
+    expect(await f.run()).toMatchObject({ kind: "partial", scanned: 200, attempted: 200, queries: 4 });
+    for (const pass of REMINDER_SCAN_PASSES) expect(f.handle.mock.calls.filter((call) => call[0] === pass)).toHaveLength(50);
+  });
+  it("uses one creation clock reading so a ticking clock cannot manufacture an invalid TTL", async () => {
+    const f = scanFixture();
+    const result = await runReminderScanBatch({ coordinator: f.coordinator, readPage: f.readPage, handle: f.handle, now: () => { f.advance(1); return f.now(); } });
+    expect(result.kind).toBe("complete");
+  });
+  it("uses absolute Redis expiry so delayed writes cannot extend the original cycle retention", async () => {
+    const f = scanFixture(); f.populate("email24h", 1001); f.delaySave(1500);
+    await f.run();
+    const key = "reminder_scan:v1:checkpoint:email24h";
+    expect(f.expires.get(key)).toBe(NOW + REMINDER_SCAN_TTL_SECONDS * 1000);
+    expect(f.scripts.filter((script) => script.includes("redis.call('set'")).every((script) => script.includes("redis.call('pexpireat',KEYS[2],ARGV[3])"))).toBe(true);
+  });
+  it.each([
+    "PRIVATE malformed JSON",
+    JSON.stringify({ version: 1, private: "PRIVATE body" }),
+    JSON.stringify({ version: 1, next: "PRIVATE", known: [] }),
+    JSON.stringify({ version: 1, next: "email24h", known: ["email24h"], raw: "PRIVATE" }),
+  ])("rejects corrupt or expanded coordination data without exporting it: %s", async (value) => {
+    const f = scanFixture(); f.values.set("reminder_scan:v1:rotation", value);
+    const result = await f.run();
+    expect(result.kind).toBe("unavailable");
+    expect(f.readPage).not.toHaveBeenCalled();
+    expect(f.handle).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain("PRIVATE");
+  });
+  it.each(["extra", "oversize", "clock", "expiry", "complete"])("rejects %s checkpoint metadata before candidate/provider work", async (change) => {
+    const f = scanFixture();
+    const state: Record<string, unknown> = { version: 1, pass: "email24h", createdAt: NOW, expiresAt: NOW + REMINDER_SCAN_TTL_SECONDS * 1000, lower: new Date(NOW + 23 * 60 * 60_000).toISOString(), upper: new Date(NOW + 25 * 60 * 60_000).toISOString(), after: null, complete: false };
+    if (change === "extra") state.recipient = "PRIVATE@example.invalid";
+    if (change === "oversize") state.after = { startsAt: new Date(NOW).toISOString(), id: "PRIVATE".repeat(500) };
+    if (change === "clock") { state.createdAt = NOW + 1000; state.expiresAt = Number(state.expiresAt) + 1000; }
+    if (change === "expiry") state.expiresAt = Number(state.expiresAt) + 1;
+    if (change === "complete") { state.complete = true; state.after = { startsAt: new Date(NOW).toISOString(), id: "00000000-0000-4000-8000-000000000001" }; }
+    f.values.set("reminder_scan:v1:rotation", JSON.stringify({ version: 1, next: "email24h", known: ["email24h"] }));
+    f.values.set("reminder_scan:v1:checkpoint:email24h", JSON.stringify(state));
+    const result = await f.run();
+    expect(result.kind).toBe("unavailable");
+    expect(f.handle).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE|00000000-/);
+  });
+  it("refuses a page outside its finite fence without dispatching it", async () => {
+    const f = scanFixture(); f.populate("email24h", 1);
+    f.rows.email24h[0].starts_at = new Date(NOW + 26 * 60 * 60_000).toISOString();
+    f.readPage.mockImplementationOnce(async () => f.rows.email24h);
+    expect(await f.run()).toMatchObject({ kind: "unavailable", reason: "read_or_handler" });
+    expect(f.handle).not.toHaveBeenCalled();
+  });
+  it("rejects duplicate/out-of-order tuples before a second dispatch", async () => {
+    const f = scanFixture(); f.populate("email24h", 1);
+    f.readPage.mockImplementationOnce(async () => [f.rows.email24h[0], f.rows.email24h[0]]);
+    expect((await f.run()).kind).toBe("unavailable");
+    expect(f.handle).toHaveBeenCalledTimes(1);
+  });
+  it("never treats a failed candidate read as an empty completed sweep", async () => {
+    const f = scanFixture(); f.populate("email24h", 1, 0);
+    f.readPage.mockRejectedValueOnce(new Error("PRIVATE candidate read failure"));
+    const result = await f.run();
+    expect(result).toMatchObject({ kind: "unavailable", reason: "read_or_handler", queries: 1 });
+    expect(f.handle).not.toHaveBeenCalled();
+    expect(f.values.has("reminder_scan:v1:checkpoint:email24h")).toBe(false);
+    expect(JSON.stringify(result)).not.toContain("PRIVATE");
+  });
+  it("reports unvisited coverage aging out of the 2h window even while checkpoint TTL is valid", async () => {
+    const f = scanFixture(); f.populate("sms2h", 1001);
+    expect((await f.run()).kind).toBe("partial");
+    f.advance(31 * 60_000); f.handle.mockClear();
+    expect(await f.run()).toMatchObject({ kind: "partial", coverageUnconfirmed: true });
+    expect(f.handle).not.toHaveBeenCalled();
+    expect(f.sent.size).toBe(0);
+  });
+  it("can close an expired finite fence after a full fetched page ages out without sending or retaining its tuple", async () => {
+    const f = scanFixture(); f.populate("email24h", 1001);
+    await f.run();
+    f.advance(2 * 60 * 60_000 - 500); f.handle.mockClear();
+    const oldUpper = NOW + 25 * 60 * 60_000;
+    const page = f.rows.email24h.slice(200, 250).map((row) => ({ ...row, starts_at: new Date(oldUpper - 250).toISOString() }));
+    const read = f.readPage.getMockImplementation()!;
+    f.readPage.mockImplementation(async (pass, q) => {
+      if (pass === "email24h") { f.advance(1000); return page; }
+      return read(pass, q);
+    });
+    expect(await f.run()).toMatchObject({ kind: "partial", reason: "coverage_unconfirmed" });
+    expect(f.handle).not.toHaveBeenCalled();
+    expect(JSON.parse(f.values.get("reminder_scan:v1:checkpoint:email24h")!)).toMatchObject({ complete: true, after: null });
+  });
+  it("binds checkpoint writes to a fixed valid pass rather than accepting a cast or another pass's value", async () => {
+    const f = scanFixture(); f.populate("email24h", 1001); await f.run();
+    const token = (await f.coordinator.acquire())!;
+    const rotation = await f.coordinator.rotation(token);
+    const checkpoint = (await f.coordinator.checkpoint(token, "email24h"))!;
+    const prior = JSON.stringify([...f.values.entries()]);
+    expect(await f.coordinator.save(token, "outside" as ReminderScanPass, checkpoint, rotation, f.now())).toBe(false);
+    expect(await f.coordinator.save(token, "sms24h", checkpoint, rotation, f.now())).toBe(false);
+    expect(JSON.stringify([...f.values.entries()])).toBe(prior);
+    await f.coordinator.release(token);
+  });
+  it("keeps its cursor on the original candidate tuple when handler refresh work changes the row object", async () => {
+    const f = scanFixture(); f.populate("email24h", 1001);
+    const originalStart = f.rows.email24h[0].starts_at;
+    f.handle.mockImplementationOnce(async (_pass, row) => {
+      row.starts_at = new Date(NOW + 26 * 60 * 60_000).toISOString(); f.advance(26_000);
+      return { kind: "skipped", attempted: false };
+    });
+    expect((await f.run()).kind).toBe("partial");
+    expect(JSON.parse(f.values.get("reminder_scan:v1:checkpoint:email24h")!).after).toEqual({ startsAt: originalStart, id: f.rows.email24h[0].id });
   });
 });
