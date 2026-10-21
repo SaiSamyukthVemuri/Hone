@@ -594,6 +594,33 @@ async function sendSmsReminderPass(opts: {
       return manageToken ? `${smsAppOrigin}/manage/${manageToken}` : null;
     };
 
+    // Candidate eligibility is only a snapshot. Refresh after intake work,
+    // immediately before dispatch, so STOP/consent/phone/switch changes made
+    // while the row was queued reach the real sender's consent gate.
+    const { data: recipient, error: recipientError } = await admin
+      .from("appointments")
+      .select("status, client_id, client:clients(phone, sms_consent_at, sms_opted_out_at), studio:studios(send_24h_sms_reminders, send_2h_sms_reminders)")
+      .eq("id", appt.id)
+      .eq("studio_id", appt.studio.id)
+      .maybeSingle();
+    const current = recipient as unknown as {
+      status: string;
+      client_id: string;
+      client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at"> | Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at">[] | null;
+      studio: Pick<Studio, "send_24h_sms_reminders" | "send_2h_sms_reminders"> | Pick<Studio, "send_24h_sms_reminders" | "send_2h_sms_reminders">[] | null;
+    } | null;
+    const currentClient = pickRel(current?.client ?? null);
+    const currentStudio = pickRel(current?.studio ?? null);
+    if (
+      recipientError || !currentClient || !currentStudio ||
+      current?.status !== "confirmed" || current.client_id !== appt.client_id
+    ) {
+      // Do not attach the queued client's intake link to a reassigned client.
+      // A later run can select that appointment with its new context.
+      stats.skipped += 1;
+      continue;
+    }
+
     const sendFn =
       opts.kind === "24h"
         ? send24hReminderSmsToClient
@@ -603,12 +630,8 @@ async function sendSmsReminderPass(opts: {
       appointmentId: appt.id,
       window: { startIso: opts.windowStartIso, endIso: opts.windowEndIso },
       timezone: appt.studio.timezone,
-      studio: appt.studio,
-      client: {
-        phone: appt.client.phone,
-        sms_consent_at: appt.client.sms_consent_at,
-        sms_opted_out_at: appt.client.sms_opted_out_at,
-      },
+      studio: { ...appt.studio, ...currentStudio },
+      client: currentClient,
       manageUrlFor,
       intakeUrl: smsIntakeUrl,
       ledgerBudget: opts.ledgerBudget,

@@ -228,7 +228,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           return b;
         },
         maybeSingle: async () => ({
-          data: race.readError ? null : { status: "confirmed", starts_at: race.freshStart },
+          data: race.readError ? null : { ...row("synthetic-appointment"), starts_at: race.freshStart },
           error: race.readError ? { message: "synthetic read failure" } : null,
         }),
         then: (resolve: (value: unknown) => unknown) => Promise.resolve(answer()).then(resolve),
