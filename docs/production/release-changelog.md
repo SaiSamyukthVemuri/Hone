@@ -37,8 +37,8 @@ This section previously carried a "(through 2026-07-27)" heading while containin
 **#629**, **#630**, and — added by the 2026-08-26 reconciliation and kept current through each
 production refresh since — **every** first-parent merge in `b9e0003f..7c724bd4`, all
 **218** PR merges among them (**#632–#980**, plus **#631**, whose number sits below that floor but
-whose merge does not — see below). The forty-four merges after the prior `440829c2` snapshot are #940,
-#903, #897, #895, #942, #944, #945, #941, #947, #948, #946, #949, #906, #950, #921, #951, #952, #954, #953, #956, #955, #958, #959, #957, #961, #962, #960, #964, #892, #965, #963, #966, #925, #967, #927, #968, #969, #970, #971, #973, #976, #972, #974 and #975; their dated receipts are listed at the end of this changelog. ⚠️ **EXTENDED
+whose merge does not — see below). The forty-seven merges after the prior `440829c2` snapshot are #940,
+#903, #897, #895, #942, #944, #945, #941, #947, #948, #946, #949, #906, #950, #921, #951, #952, #954, #953, #956, #955, #958, #959, #957, #961, #962, #960, #964, #892, #965, #963, #966, #925, #967, #927, #968, #969, #970, #971, #973, #976, #972, #974, #975, #980, #978 and #977; their dated receipts are listed at the end of this changelog. ⚠️ **EXTENDED
 2026-10-12 by CANON-REFRESH-2026-10-12:**
 the range previously ended at `410e5039` (81 merges, the 2026-09-21 extension described next);
 **56** rows were backfilled from the first-parent graph and each merge's own diff, and the
