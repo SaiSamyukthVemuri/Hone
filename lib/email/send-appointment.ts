@@ -518,8 +518,8 @@ export async function sendCancellationEmail(params: {
   reason: string | null;
   isClient: boolean;
   rebookUrl?: string;
-}) {
-  if (!params.to) return;
+}): Promise<EmailSendResult> {
+  if (!params.to) return { ok: false, error: "Missing cancellation recipient", retryable: false };
   const { subject, html, text } = buildCancellationEmail({
     recipientName: params.recipientName,
     clientName: params.clientName,
@@ -534,7 +534,7 @@ export async function sendCancellationEmail(params: {
     isClient: params.isClient,
     rebookUrl: params.rebookUrl,
   });
-  await sendEmailSafely({
+  return sendEmailSafely({
     // ONE helper, TWO recipients. `isClient` decides who is reading:
     //   true  -> the CLIENT: brand as the studio, reply to the studio.
     //   false -> the STUDIO OWNER: stay Hone. Branding this would make the
