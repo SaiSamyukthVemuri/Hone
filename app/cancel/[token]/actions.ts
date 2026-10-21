@@ -1,9 +1,11 @@
 "use server";
 
+import { safeLog } from "@/lib/logging/safe-log";
 import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { verifyCancellationToken } from "@/lib/booking/tokens";
 import { hashAppointmentToken } from "@/lib/booking/appointment-token";
+import { recordOpsAlert } from "@/lib/ops/alerts";
 import { sendCancellationEmail } from "@/lib/email/send-appointment";
 import { recordPractitionerNotification } from "@/lib/notifications/practitioner-notifications";
 import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
@@ -98,7 +100,7 @@ async function resolveAppointmentIdFromToken(
 // surface cannot distinguish "valid token, already cancelled" from
 // "unknown token".
 export type PublicCancelResult =
-  | { ok: true }
+  | { ok: true; notification?: "unconfirmed" }
   // B7 / 0176. `code` is a STABLE machine value for the one outcome the UI must
   // treat specially: the studio's policy changed while the client was reading
   // it. Everything else keeps the public collapse rule, so `code` is absent and
@@ -304,108 +306,113 @@ export async function publicCancelAppointmentAction(
     return { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };
   }
 
-  // Notify studio owner. Read the joined view for the email body
-  // separately to avoid coupling the mutation surface to the
-  // notification surface. Supabase types joined relations as arrays,
-  // so we normalize below.
-  //
-  // PR #132. client_id is added to the select so the policy
-  // acknowledgement row below can be scoped to the server-resolved
-  // client without trusting any client-supplied id.
-  const { data: apptRaw } = await admin
-    .from("appointments")
-    .select(
-      "studio_id, client_id, practitioner_id, starts_at, duration_minutes, service:services(name), studio:studios(*), client:clients(name)",
-    )
-    .eq("id", resolved.appointment_id)
-    .maybeSingle();
-  type CancelAppt = {
-    studio_id: string;
-    client_id: string;
-    // PR #164. practitioner_id + client name added so the
-    // practitioner notification helper can stamp the assigned
-    // practitioner + render a body like "<Client name> cancelled
-    // their appointment." Studio_id is the load-bearing scope; the
-    // helper requires it.
-    practitioner_id: string | null;
-    starts_at: string;
-    duration_minutes: number;
-    service: { name: string } | { name: string }[] | null;
-    studio: import("@/lib/types/database").Studio | import("@/lib/types/database").Studio[] | null;
-    client: { name: string } | { name: string }[] | null;
-  };
-  const apptRow = apptRaw as CancelAppt | null;
-  if (apptRow) {
-    const pickOne = <T,>(v: T | T[] | null): T | null =>
-      Array.isArray(v) ? (v[0] ?? null) : v;
-    const apptStudio = pickOne(apptRow.studio);
-    const apptService = pickOne(apptRow.service);
-    const apptClient = pickOne(apptRow.client);
-
-    // PR #164. Fire-and-forget practitioner notification. The
-    // RPC already committed the cancellation; this helper never
-    // throws to the caller. Body composes the client name + the
-    // optional reason label that was already validated above and
-    // is studio-member-safe to display. href links to the
-    // appointment detail page where the full cancellation
-    // insight + audit row live.
-    recordPractitionerNotification({
-      studioId: apptRow.studio_id,
-      practitionerId: apptRow.practitioner_id,
-      eventType: "appointment_cancelled",
-      title: "Appointment cancelled",
-      body: reasonLabel
-        ? `${apptClient?.name ?? "A client"} cancelled their appointment. Reason: ${reasonLabel}.`
-        : `${apptClient?.name ?? "A client"} cancelled their appointment.`,
-      appointmentId: resolved.appointment_id,
-      clientId: apptRow.client_id,
-      href: `/calendar/${resolved.appointment_id}`,
-    });
-
-    // PR #132. Write the policy acknowledgement row. studio_id,
-    // client_id, and appointment_id are all server-resolved from the
-    // token via apptRow; the snapshot text is read from the joined
-    // studio row, which is the canonical source the cancel page
-    // rendered to the client. policy_snapshot_hash is built by the
-    // shared buildPolicySnapshot helper so the reschedule action
-    // produces an identical hash format for the same inputs.
+  // The command committed. Notification failure must neither undo that
+  // outcome nor invite an unsafe replay of cancellation/provider delivery.
+  let notificationUnconfirmed = true;
+  let notificationStudioId: string | null = outcome.studio_id ?? null;
+  try {
+    // Notify studio owner. Read the joined view for the email body
+    // separately to avoid coupling the mutation surface to the
+    // notification surface. Supabase types joined relations as arrays,
+    // so we normalize below.
     //
-    // Failure to write this row does NOT roll back the cancel: the
-    // appointment is already cancelled atomically inside the RPC.
-    // We log the failure server-side; the practitioner-side audit
-    // continues to live in appointments.cancellation_reason + the
-    // audit_logs row the RPC stamped. Re-running the action with
-    // the same token is a no-op (the RPC rejects non-confirmed
-    // source state), so we cannot retry the ack here.
-    //
-    // PR #133. Acknowledgement is only written when the studio has
-    // policy text on file. A studio with no policy never produced
-    // an acknowledgement on the UI side either; we mirror that
-    // here so the table only carries meaningful rows.
-    // B7 / 0176, THE ACKNOWLEDGEMENT WRITE USED TO LIVE HERE.
-    //
-    // It ran AFTER the RPC had already committed the cancellation, and its
-    // error was logged and swallowed, so a cancelled appointment could exist
-    // with no acknowledgement row, precisely the evidence a late-cancellation
-    // fee dispute turns on. It also re-read the CURRENT policy, so a studio
-    // edit between render and submit produced signed evidence for text the
-    // client never saw.
-    //
-    // Both are now impossible: the acknowledgement is inserted inside
-    // public_cancel_appointment_with_token, in the same transaction as the
-    // status flip and the audit row, from the policy the command locked and
-    // proved equal to what was displayed. Nothing is written here.
-
-    const { data: owner } = await admin
-      .from("practitioners")
-      .select("display_name, email")
-      .eq("studio_id", apptRow.studio_id)
-      .eq("active", true)
-      .eq("role", "owner")
+    // PR #132. client_id is added to the select so the policy
+    // acknowledgement row below can be scoped to the server-resolved
+    // client without trusting any client-supplied id.
+    const { data: apptRaw } = await admin
+      .from("appointments")
+      .select(
+        "studio_id, client_id, practitioner_id, starts_at, duration_minutes, service:services(name), studio:studios(*), client:clients(name)",
+      )
+      .eq("id", resolved.appointment_id)
       .maybeSingle();
-    if (owner?.email && apptStudio) {
-      try {
-        await sendCancellationEmail({
+    type CancelAppt = {
+      studio_id: string;
+      client_id: string;
+      // PR #164. practitioner_id + client name added so the
+      // practitioner notification helper can stamp the assigned
+      // practitioner + render a body like "<Client name> cancelled
+      // their appointment." Studio_id is the load-bearing scope; the
+      // helper requires it.
+      practitioner_id: string | null;
+      starts_at: string;
+      duration_minutes: number;
+      service: { name: string } | { name: string }[] | null;
+      studio: import("@/lib/types/database").Studio | import("@/lib/types/database").Studio[] | null;
+      client: { name: string } | { name: string }[] | null;
+    };
+    const apptRow = apptRaw as CancelAppt | null;
+    if (apptRow) {
+      notificationStudioId = apptRow.studio_id;
+      const pickOne = <T,>(v: T | T[] | null): T | null =>
+        Array.isArray(v) ? (v[0] ?? null) : v;
+      const apptStudio = pickOne(apptRow.studio);
+      const apptService = pickOne(apptRow.service);
+      const apptClient = pickOne(apptRow.client);
+
+      // PR #164. Fire-and-forget practitioner notification. The
+      // RPC already committed the cancellation; this helper never
+      // throws to the caller. Body composes the client name + the
+      // optional reason label that was already validated above and
+      // is studio-member-safe to display. href links to the
+      // appointment detail page where the full cancellation
+      // insight + audit row live.
+      recordPractitionerNotification({
+        studioId: apptRow.studio_id,
+        practitionerId: apptRow.practitioner_id,
+        eventType: "appointment_cancelled",
+        title: "Appointment cancelled",
+        body: reasonLabel
+          ? `${apptClient?.name ?? "A client"} cancelled their appointment. Reason: ${reasonLabel}.`
+          : `${apptClient?.name ?? "A client"} cancelled their appointment.`,
+        appointmentId: resolved.appointment_id,
+        clientId: apptRow.client_id,
+        href: `/calendar/${resolved.appointment_id}`,
+      });
+
+      // PR #132. Write the policy acknowledgement row. studio_id,
+      // client_id, and appointment_id are all server-resolved from the
+      // token via apptRow; the snapshot text is read from the joined
+      // studio row, which is the canonical source the cancel page
+      // rendered to the client. policy_snapshot_hash is built by the
+      // shared buildPolicySnapshot helper so the reschedule action
+      // produces an identical hash format for the same inputs.
+      //
+      // Failure to write this row does NOT roll back the cancel: the
+      // appointment is already cancelled atomically inside the RPC.
+      // We log the failure server-side; the practitioner-side audit
+      // continues to live in appointments.cancellation_reason + the
+      // audit_logs row the RPC stamped. Re-running the action with
+      // the same token is a no-op (the RPC rejects non-confirmed
+      // source state), so we cannot retry the ack here.
+      //
+      // PR #133. Acknowledgement is only written when the studio has
+      // policy text on file. A studio with no policy never produced
+      // an acknowledgement on the UI side either; we mirror that
+      // here so the table only carries meaningful rows.
+      // B7 / 0176, THE ACKNOWLEDGEMENT WRITE USED TO LIVE HERE.
+      //
+      // It ran AFTER the RPC had already committed the cancellation, and its
+      // error was logged and swallowed, so a cancelled appointment could exist
+      // with no acknowledgement row, precisely the evidence a late-cancellation
+      // fee dispute turns on. It also re-read the CURRENT policy, so a studio
+      // edit between render and submit produced signed evidence for text the
+      // client never saw.
+      //
+      // Both are now impossible: the acknowledgement is inserted inside
+      // public_cancel_appointment_with_token, in the same transaction as the
+      // status flip and the audit row, from the policy the command locked and
+      // proved equal to what was displayed. Nothing is written here.
+
+      const { data: owner } = await admin
+        .from("practitioners")
+        .select("display_name, email")
+        .eq("studio_id", apptRow.studio_id)
+        .eq("active", true)
+        .eq("role", "owner")
+        .maybeSingle();
+      if (owner?.email && apptStudio) {
+        const sent = await sendCancellationEmail({
           to: owner.email,
           recipientName: owner.display_name?.trim() || owner.email,
           // Actor + client are one and the same here: a public token
@@ -429,13 +436,30 @@ export async function publicCancelAppointmentAction(
           reason: reasonLabel,
           isClient: false,
         });
-      } catch (emailErr) {
-        logInternal("public_cancel_owner_email_failed", { emailErr });
+        notificationUnconfirmed = !sent.ok;
       }
+    }
+  } catch {
+    notificationUnconfirmed = true;
+  }
+  if (notificationUnconfirmed) {
+    try {
+      await recordOpsAlert({
+        severity: "warning",
+        event: "cancellation_email_unconfirmed",
+        message: "Appointment cancelled; studio owner email notification was not confirmed. Review notification status before contacting the studio.",
+        studioId: notificationStudioId,
+        appointmentId: resolved.appointment_id,
+        route: "/cancel/[token]",
+        safeDetails: { notification_type: "cancellation", recipient_role: "owner", outcome: "unconfirmed" },
+      });
+    } catch {
+      // Fixed metadata only: never the token, reason, address or provider body.
+      safeLog.error(JSON.stringify({ event: "cancellation_notification_alert_unavailable", timestamp: new Date().toISOString() }));
     }
   }
 
-  return { ok: true };
+  return notificationUnconfirmed ? { ok: true, notification: "unconfirmed" } : { ok: true };
 }
 
 // P0 (cancel-flow collapse): the fetch surface now exposes appointment
