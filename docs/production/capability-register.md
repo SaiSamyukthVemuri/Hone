@@ -329,15 +329,15 @@ carry a capability that belongs in this register. The 206 later production merge
 [release-changelog.md](./release-changelog.md) and are **not** enumerated for capability here.
 
 **THOSE TWO NUMBERS ARE DERIVED OVER DIFFERENT SPANS, AND SAYING SO IS THE POINT.** The
-**233** is the merge ancestry through the *current* branch head, `e3f63b74`. The **ten**
+**235** is the merge ancestry through the *current* branch head, `df0d42a2`. The **ten**
 is **not** derived over it: it is the **2026-08-30** derivation over the twenty-nine merges
 through `bf6f09c4`, and it has not been re-run since.
 
 **This section is scoped to that dated derivation and must not be read as a current capability
-count.** The 204 merges between `bf6f09c4` and `e3f63b74` are recorded row by row in
+count.** The 206 merges between `bf6f09c4` and `df0d42a2` are recorded row by row in
 [release-changelog.md](./release-changelog.md), and several of them plainly ship capability —
 `#702`'s automatic card receipts and `#745`'s next-setup-step checklist among them. This register
-has **not** re-enumerated them. Re-running the capability derivation across all 233 merges
+has **not** re-enumerated them. Re-running the capability derivation across all 235 merges
 is its own lane with its own evidence; raising the number here without doing that work would
 manufacture a figure nobody derived, which is the precise failure this document exists to
 prevent.
@@ -446,4 +446,4 @@ overwritten, because a register that silently changes its mind teaches readers n
 
 ### 2026-10-21 bounded reminder scan release
 
-#995 now bounds scans separately from provider attempts and retains fair continuation and the prior cursor on an unavailable claim. Sourcecd788 exact review/CI39608140091 passed21,627unit/603browser13skip, other heavy suites skipped. Normaldf0d42a2 READYdpl_5RqZ3WWoBRdU38RnDbzA8dDyCkqq, alias/tree/read-only smoke verified. Actual Redis/Lua/network proof and Chloe UAT remain UNRUN; no manual cron/send, hosted apply or provider activation. Automatic39611091351 is in progress at this sync. Held generation/idempotency work is separate; no MSG002/003 closure is inferred. Earlier measurements and failures remain dated evidence.
+#995 now bounds scans separately from provider attempts and retains fair continuation and the prior cursor on an unavailable claim. Sourcecd788 exact review/CI39608140091 passed21,627unit/603browser13skip, other heavy suites skipped. Normaldf0d42a2 READYdpl_5RqZ3WWoBRdU38RnDbzA8dDyCkqq, alias/tree/read-only smoke verified. Actual Redis/Lua/network proof and Chloe UAT remain UNRUN; no manual cron/send, hosted apply or provider activation. Automatic39611091351 unit failed exactly stale canonical A3/A5:21,625passed/2failed. Browser jobs remain in progress at this dated sync; DB/payment/mobile/Google/canonical-docs skipped. Failure evidence is retained, not relabeled passed. Held generation/idempotency work is separate; no MSG002/003 closure is inferred. Earlier measurements and failures remain dated evidence.
