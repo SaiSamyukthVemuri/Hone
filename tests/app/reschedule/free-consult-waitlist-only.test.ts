@@ -625,6 +625,48 @@ describe("a missing service row is not a free consultation", () => {
 });
 
 
+describe("SCH-003 next reschedule date reuses one bounded range load", () => {
+  beforeEach(() => { scenario.service = PAID_CONSULT; });
+
+  it("passes original duration, practitioner and own-reservation exclusion without daily slot reads", async () => {
+    scenario.capacity = true;
+    // Deliberately different from the appointment's 45 minutes.
+    scenario.service = { ...PAID_CONSULT, default_duration_minutes: 90 };
+    const fromDate = new Date(Date.now() + 172_800_000).toISOString().slice(0, 10);
+    const out = await fetchNextAvailableDateForRescheduleAction({ token: TOKEN, fromDate });
+    expect(out).toEqual({ ok: true, date: fromDate });
+    expect(bulk.load).toHaveBeenCalledTimes(1);
+    const [client, ctx, dates, now, opts] = bulk.load.mock.calls[0];
+    expect(client).toBe(admin);
+    expect(ctx).toEqual({ studioId: ORIGINAL.studio_id, timezone: "UTC", publicBookingHorizonMonths: 3, bufferMinutes: 0, serviceDurationMinutes: 45, practitionerCapacityEnabled: true, practitionerId: ORIGINAL.practitioner_id, excludeReservation: { sourceKind: "appointment", sourceId: ORIGINAL.id } });
+    expect(dates[0]).toBe(fromDate);
+    expect(dates.length).toBeGreaterThan(1);
+    expect(dates.length).toBeLessThanOrEqual(386);
+    expect(dates).toEqual([...dates].sort());
+    expect(now).toBeInstanceOf(Date);
+    expect(opts).toEqual({ stopAfterFirstMatch: true });
+    expect(slotEngineCalls).toEqual([]);
+    expect(rpcCalls).toEqual([]);
+  });
+
+  it("returns a retryable refusal on range-read failure, not a false empty date", async () => {
+    bulk.load.mockResolvedValue({ ok: false, error: "PRIVATE_SENTINEL" });
+    const r = await fetchNextAvailableDateForRescheduleAction({ token: TOKEN, fromDate: new Date(Date.now() + 172_800_000).toISOString().slice(0, 10) });
+    expect(r).toEqual({ ok: false, error: "This reschedule link can't be used right now." });
+    expect(bulk.load).toHaveBeenCalledTimes(1);
+    expect(slotEngineCalls).toEqual([]);
+    expect(rpcCalls).toEqual([]);
+  });
+
+  it("keeps a genuinely empty successful range distinct from refusal", async () => {
+    bulk.load.mockResolvedValue({ ok: true, byDate: [], scanned: [], skippedOutsideHorizon: [] });
+    const r = await fetchNextAvailableDateForRescheduleAction({ token: TOKEN, fromDate: new Date(Date.now() + 172_800_000).toISOString().slice(0, 10) });
+    expect(r).toEqual({ ok: true, date: null });
+    expect(bulk.load).toHaveBeenCalledTimes(1);
+  });
+});
+
+
 describe("SCH-002 reschedule discovery returns classified read failures as refusals", () => {
   const date = () => new Date(Date.now() + 172_800_000).toISOString().slice(0, 10);
   beforeEach(() => { scenario.service = PAID_CONSULT; });

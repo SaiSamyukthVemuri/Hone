@@ -2,6 +2,7 @@
 
 import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { loadPublicSlotsByDate } from "@/lib/booking/public-slot-range";
 import {
   generateAppointmentToken,
   hashAppointmentToken,
@@ -604,19 +605,10 @@ export async function fetchRescheduleSlotsAction(params: {
 // ---------------------------------------------------------------------------
 // fetchNextAvailableDateForRescheduleAction
 // ---------------------------------------------------------------------------
-// "Next available" lookup for the reschedule page. Mirrors the public-
-// booking action in app/book/[slug]/actions.ts: one server roundtrip,
-// bounded linear scan from `fromDate` (clamped to today) through the
-// studio's public booking horizon, returns the first date with a
-// non-empty future-slot list for the appointment's service. Same past-
-// time filter, same MAX_NEXT_AVAILABLE_SCAN_DAYS cap, same rate-limit
-// class as the existing reschedule slot fetch. No booking engine or
-// conflict logic changes; just reuses getAvailableSlots.
-//
-// Worst case: O(N) getAvailableSlots calls where N = horizon days
-// (~92 for 3-month, ~123 for 4-month, ~184 for 6-month), hard-capped
-// at MAX_NEXT_AVAILABLE_SCAN_DAYS = 200. The original token is never
-// consumed; reschedule only consumes a token on confirm.
+// "Next available" lookup for the reschedule page. One bounded bulk read,
+// using the same original duration, practitioner, own-reservation exclusion,
+// horizon and future-time guard as the single-date surface. Slot generation
+// remains in the shared engine. The token is consumed only on confirm.
 // ---------------------------------------------------------------------------
 
 // Matches the public booking scan cap: derived from the largest configurable
@@ -660,31 +652,32 @@ export async function fetchNextAvailableDateForRescheduleAction(params: {
     return { ok: true, date: null };
   }
 
-  // PR #149: single clock reading shared across every scan iteration
-  // so filterFutureSlots sees a consistent "now" through the loop.
+  // Build date strings only; never await a database read inside the scan.
   const nowRef = new Date();
+  const dates: string[] = [];
   let cursor = startDate;
-  let scans = 0;
-  while (cursor <= horizon.maxDateStr && scans < MAX_NEXT_AVAILABLE_SCAN_DAYS) {
-    scans += 1;
-    // 0171: same original duration, same exclusion, same practitioner as
-    // fetchRescheduleSlotsAction. A scan that used different arguments would
-    // land the visitor on a date whose slot list then came back empty.
-    const slots = await getAvailableSlots(
-      admin,
-      ctx.studio,
-      cursor,
-      ctx.durationMinutes,
-      ctx.excludeReservation,
-      ctx.practitionerId,
-    );
-    const futureSlots = filterFutureSlots(slots, nowRef);
-    if (futureSlots.length > 0) {
-      return { ok: true, date: cursor };
-    }
+  while (cursor <= horizon.maxDateStr && dates.length < MAX_NEXT_AVAILABLE_SCAN_DAYS) {
+    dates.push(cursor);
     cursor = addDays(cursor, 1);
   }
-  return { ok: true, date: null };
+  const grouped = await loadPublicSlotsByDate(
+    admin,
+    {
+      studioId: ctx.studio.id,
+      timezone: ctx.studio.timezone,
+      publicBookingHorizonMonths: ctx.studio.public_booking_horizon_months,
+      bufferMinutes: ctx.studio.buffer_minutes,
+      serviceDurationMinutes: ctx.durationMinutes,
+      practitionerCapacityEnabled: ctx.studio.practitioner_capacity_enabled,
+      practitionerId: ctx.practitionerId,
+      excludeReservation: ctx.excludeReservation,
+    },
+    dates,
+    nowRef,
+    { stopAfterFirstMatch: true },
+  );
+  if (!grouped.ok) return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+  return { ok: true, date: grouped.byDate[0]?.date ?? null };
 }
 
 // 0171 amendment. THE SUCCESSFUL RESULT CARRIES A USABLE MANAGEMENT PATH.
