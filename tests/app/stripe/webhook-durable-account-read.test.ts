@@ -353,7 +353,7 @@ describe("PAY-001 durable payment event identity", () => {
     ["customer", { stripe_customer_id: "cus_other" }],
     ["payment intent", { stripe_payment_intent_id: "pi_other" }],
     ["charge", { stripe_charge_id: "ch_other" }],
-    ["missing original intent", { stripe_payment_intent_id: null }],
+    ["missing original intent on a terminal row", { stripe_payment_intent_id: null, status: "failed" }],
     ["missing original customer", { stripe_customer_id: null }],
   ] as const)("refuses a signed event resolving to a different %s", async (_label, overrides) => {
     prepare(overrides);
@@ -423,7 +423,7 @@ describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "cha
       ["another mode", { stripe_livemode: true }],
       ["another original intent", { stripe_payment_intent_id: "pi_other" }],
       ["another original charge", { stripe_charge_id: "ch_other" }],
-      ["missing original intent", { stripe_payment_intent_id: null }],
+      ["missing original intent on a terminal row", { stripe_payment_intent_id: null, status: "failed" }],
       ["missing original customer", { stripe_customer_id: null }],
       ["missing bound account", { stripe_account_id: null }],
     ] as const)("refuses %s despite a scripted row result", async (_name, row) => {
@@ -454,6 +454,86 @@ describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "cha
           value: resolution === "fallback" ? type === "charge.refunded" ? "ch_1" : "pi_1" : "attempt-1" },
       ]));
     });
+    it("early event waits for original PI persistence, then the SAME event reconciles on redelivery", async () => {
+      // The existing create(confirm:true) request has claimed the attempt but
+      // has not yet persisted the returned provider identity. Do not spend the
+      // event while that original identity is still unavailable.
+      prepareBound({ row: { status: "pending_stripe", stripe_payment_intent_id: null } });
+      const first = ADMIN.current!;
+      const response = await callRoute();
+      const originalEnvelope = CONSTRUCT_EVENT.mock.results.at(-1)!.value;
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ ok: false });
+      expect(first.updateCalls).toEqual([]);
+      expect(writes()).toEqual([]);
+      expect(names(first.rpcCalls)).not.toContain("mark_stripe_event_processed");
+      expect(first.rpcCalls.filter(({ name }) => name === "release_stripe_event_claim_with_error")).toEqual([
+        { name: "release_stripe_event_claim_with_error", args: {
+          p_event_id: "evt_payment_bound", p_claim_token: "claim-token-1",
+          p_error: "stripe_webhook_payment_original_binding_pending",
+        } },
+      ]);
+      expect(ACCOUNTS_RETRIEVE).not.toHaveBeenCalled();
+
+      // A separate request writes the original binding; this retry only reads
+      // it and processes the very same signed event. It creates no PI/refund.
+      prepareBound();
+      expect((await callRoute()).status).toBe(200);
+      expect(CONSTRUCT_EVENT.mock.results.at(-1)!.value).toEqual(originalEnvelope);
+      expect(writes().length + ADMIN.current!.updateCalls.length).toBe(1);
+      expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+      expect(names(ADMIN.current!.rpcCalls)).not.toContain("release_stripe_event_claim_with_error");
+      expect(ACCOUNTS_RETRIEVE).not.toHaveBeenCalled();
+    });
+    it("repeated early delivery remains retryable without a binding or money write", async () => {
+      for (let delivery = 0; delivery < 2; delivery++) {
+        prepareBound({ row: { status: "pending_stripe", stripe_payment_intent_id: null } });
+        expect((await callRoute()).status).toBe(500);
+        expect(writes()).toEqual([]); expect(ADMIN.current!.updateCalls).toEqual([]);
+        expect(names(ADMIN.current!.rpcCalls)).not.toContain("mark_stripe_event_processed");
+        expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
+      }
+      expect(ACCOUNTS_RETRIEVE).not.toHaveBeenCalled();
+    });
+    it.each([
+      { stripe_account_id: "acct_other" }, { stripe_customer_id: "cus_other" },
+      { stripe_livemode: true }, { stripe_charge_id: "ch_other" },
+    ])("a known contradiction does not become retryable just because the PI is missing: %j", async (contradiction) => {
+      prepareBound({ row: { status: "pending_stripe", stripe_payment_intent_id: null, ...contradiction } });
+      expect((await callRoute()).status).toBe(200);
+      expect(writes()).toEqual([]); expect(ADMIN.current!.updateCalls).toEqual([]);
+      expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+      expect(names(ADMIN.current!.rpcCalls)).not.toContain("release_stripe_event_claim_with_error");
+      expect(RECORD_OPS_ALERT).toHaveBeenCalledWith(expect.objectContaining({ event: "stripe_webhook_payment_identity_mismatch" }));
+    });
+    it.each(["ready", "failed", "cancelled", "blocked", "succeeded"])("missing original on %s is not an in-flight binding claim", async (status) => {
+      prepareBound({ row: { status, stripe_payment_intent_id: null } });
+      expect((await callRoute()).status).toBe(200);
+      expect(writes()).toEqual([]); expect(ADMIN.current!.updateCalls).toEqual([]);
+      expect(names(ADMIN.current!.rpcCalls)).not.toContain("release_stripe_event_claim_with_error");
+      expect(RECORD_OPS_ALERT).toHaveBeenCalledWith(expect.objectContaining({ event: "stripe_webhook_payment_identity_mismatch" }));
+    });
+    it("contradictory metadata cannot turn a missing PI into an in-flight binding claim", async () => {
+      prepareBound({ row: { status: "pending_stripe", stripe_payment_intent_id: null },
+        metadata: { hone_payment_charge_attempt_id: "attempt-1", hone_session_payment_charge_attempt_id: "attempt-other" } });
+      expect((await callRoute()).status).toBe(200);
+      expect(writes()).toEqual([]); expect(ADMIN.current!.updateCalls).toEqual([]);
+      expect(names(ADMIN.current!.rpcCalls)).not.toContain("release_stripe_event_claim_with_error");
+      expect(RECORD_OPS_ALERT).toHaveBeenCalledWith(expect.objectContaining({ event: "stripe_webhook_payment_identity_mismatch" }));
+    });
+    if (type === "charge.refunded") {
+      it("pending required charge waits for its original binding without adopting the event ID", async () => {
+        prepareBound({ row: { status: "pending_stripe", stripe_charge_id: null } });
+        expect((await callRoute()).status).toBe(500);
+        expect(writes()).toEqual([]); expect(ADMIN.current!.updateCalls).toEqual([]);
+        expect(names(ADMIN.current!.rpcCalls)).not.toContain("mark_stripe_event_processed");
+        expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
+        prepareBound();
+        expect((await callRoute()).status).toBe(200);
+        expect(ADMIN.current!.updateCalls).toHaveLength(1);
+        expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+      });
+    }
     it("allows a separately bound second studio/account without borrowing the first", async () => {
       prepareBound({ account: "acct_test_2", studio: "studio-2" });
       expect((await callRoute()).status).toBe(200);

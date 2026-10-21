@@ -423,6 +423,22 @@ async function verifyPaymentEventIdentity(args: {
     if (id && id !== attempt.id) mismatches.push(key);
   }
   if (mismatches.length === 0) return true;
+
+  // create(confirm:true) can deliver this event before the charge request has
+  // persisted its returned PI/charge. Missing pending originals are not a
+  // contradictory identity: preserve delivery through the route's existing
+  // release-claim/500 path. Never bind IDs from the event or invoke Stripe here.
+  // Any known contradictory account/customer/mode/object/metadata still refuses.
+  const awaitingOriginalBinding = attempt.status === "pending_stripe"
+    && !!args.paymentIntentId
+    && mismatches.every((mismatch) =>
+      (mismatch === "payment_intent" && !attempt.stripe_payment_intent_id)
+      || (mismatch === "charge" && args.requireCharge
+        && !attempt.stripe_charge_id && !!args.chargeId));
+  if (awaitingOriginalBinding) {
+    throw new Error("stripe_webhook_payment_original_binding_pending");
+  }
+
   await recordOpsAlert({
     severity: "critical",
     event: "stripe_webhook_payment_identity_mismatch",
