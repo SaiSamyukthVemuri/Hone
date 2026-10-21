@@ -322,13 +322,14 @@ export async function moveAppointmentAction(input: {
   }
 
   // §8: recheck available-slot membership with the same studio/duration/own-
-  // exclusion as discovery. Successful reads must offer the requested instant;
-  // classified read failures defer to the locked command's availability check.
-  // Custom mode intentionally skips this advisory check so the owner can pick
-  // a studio-local time outside published operating hours.
+  // exclusion as discovery. Successful reads must offer the requested instant.
+  // A failed read cannot authorize a move: the SQL validator skips working
+  // hours in capacity-OFF mode, and an ON pre-read is not a locked guarantee.
+  // Custom mode intentionally skips this check so the owner can pick a
+  // studio-local time outside published operating hours.
   if (mode === "available_slot") {
-    // Discovery fails closed, but a classified advisory read failure must not
-    // prevent the locked command from checking hours, capacity and authority.
+    // Refuse classified read failures before any mutation or notification;
+    // do not infer permission from a successful RPC mock or a capacity flag.
     // Successful empty reads still refuse; unrelated exceptions propagate.
     try {
       const offered = filterFutureSlots(
@@ -360,6 +361,7 @@ export async function moveAppointmentAction(input: {
       const { message } = err;
       if (!message.startsWith("availability_read_failed:")) throw err;
       console.error("move_appointment_advisory_read_failed");
+      return { ok: false, error: "We couldn't move the appointment. Please try again." };
     }
   }
 
@@ -385,7 +387,7 @@ export async function moveAppointmentAction(input: {
     // outside-availability move (owner re-checked above AND re-authorized in the
     // command). It bypasses ONLY the working-hours window; the command still
     // enforces blockouts, collisions, buffers, breaks, pause and eligibility.
-    // available_slot always requires the command's own hours validation (false).
+    // available_slot must pass the generated-slot check and never requests an override (false).
     p_allow_outside_availability: mode === "custom_time",
   });
 

@@ -22,6 +22,7 @@ type St = {
     timezone: string;
     default_appointment_duration_minutes: number;
     buffer_minutes: number;
+    practitioner_capacity_enabled?: boolean | null;
   };
   appt: Record<string, unknown> | null;
   slots: Array<{ start: string; end: string; startLabel: string }>;
@@ -92,6 +93,7 @@ function baseMove(over: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  state.studio.practitioner_capacity_enabled = undefined;
   state.practitioner = { id: "prac-1", role: "owner" };
   state.appt = { id: APPT_ID, status: "confirmed", starts_at: EXPECT_START, client_id: "client-1", duration_minutes: 60, practitioner_id: "pr-1" };
   state.slots = [
@@ -198,31 +200,30 @@ describe("available_slot — server-side membership verification", () => {
     expect(state.rpcCalls).toHaveLength(0);
   });
 
-  it("classified advisory read failure defers to the locked command without an availability override", async () => {
-    h.getAvailableSlots.mockRejectedValueOnce(new Error("availability_read_failed:defaults:42501"));
-    const res = await moveAppointmentAction(avail({ localTime: "10:00" }));
-    expect(res.ok).toBe(true);
-    expect(state.rpcCalls).toHaveLength(1);
-    expect(state.rpcCalls[0].name).toBe("move_or_reassign_appointment");
-    expect(state.rpcCalls[0].args).toMatchObject({
-      p_appointment_id: APPT_ID,
-      p_studio_id: "studio-1",
-      p_actor_practitioner_id: "prac-1",
-      p_expected_starts_at: EXPECT_START,
-      p_expected_ends_at: EXPECT_END,
-      p_new_starts_at: localISO("10:00"),
-      p_target_practitioner_id: null,
-      p_allow_outside_availability: false,
-    });
-  });
+  it.each([false, undefined, null, true])(
+    "classified advisory read failure refuses a member's move before RPC with capacity=%s", async (capacity) => {
+      state.studio.practitioner_capacity_enabled = capacity;
+      state.practitioner = { id: "pr-1", role: "practitioner" };
+      h.getAvailableSlots.mockRejectedValueOnce(new Error("availability_read_failed:defaults:42501"));
+      // The RPC mock would report success. OFF SQL does not enforce the studio
+      // hours, and even an ON pre-read is not locked authority for a fallback.
+      const res = await moveAppointmentAction(avail({ localTime: "03:00" }));
+      expect(res).toEqual({ ok: false, error: "We couldn't move the appointment. Please try again." });
+      expect(state.rpcCalls).toHaveLength(0);
+      expect(h.notify).not.toHaveBeenCalled();
+    },
+  );
 
-  it("classified advisory read failure still returns the locked command's conflict", async () => {
-    h.getAvailableSlots.mockRejectedValueOnce(new Error("availability_read_failed:reservations:42501"));
-    state.rpcError = { code: "HB001" };
-    const res = await moveAppointmentAction(avail({ localTime: "10:00" }));
-    expect(res).toEqual({ ok: false, code: "conflict", error: "That time is no longer available. Choose another time." });
-    expect(state.rpcCalls).toHaveLength(1);
-    expect(state.rpcCalls[0].args.p_allow_outside_availability).toBe(false);
+  it("a capacity-ON pre-read cannot authorize fallback after capacity changes during the failed read", async () => {
+    state.studio.practitioner_capacity_enabled = true;
+    state.practitioner = { id: "pr-1", role: "practitioner" };
+    h.getAvailableSlots.mockImplementationOnce(async () => {
+      state.studio.practitioner_capacity_enabled = false;
+      throw new Error("availability_read_failed:defaults:42501");
+    });
+    const res = await moveAppointmentAction(avail({ localTime: "03:00" }));
+    expect(res).toEqual({ ok: false, error: "We couldn't move the appointment. Please try again." });
+    expect(state.rpcCalls).toHaveLength(0);
     expect(h.notify).not.toHaveBeenCalled();
   });
 
