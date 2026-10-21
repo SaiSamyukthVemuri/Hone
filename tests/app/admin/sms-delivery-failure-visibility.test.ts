@@ -16,6 +16,19 @@ const h = vi.hoisted(() => ({
   fetch: vi.fn(),
 }));
 
+// The page's loader authorizes independently of the admin layout. Supply a
+// current authenticated operator; keep requirePlatformAdmin/isAdmin real.
+vi.mock("@/lib/supabase/server", () => ({
+  createClient: async () => ({
+    auth: {
+      getUser: async () => ({
+        data: { user: { id: "synthetic-operator", email: "operator@example.invalid" } },
+        error: null,
+      }),
+    },
+  }),
+}));
+
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ({
     rpc: h.rpc,
@@ -87,6 +100,7 @@ function callback(status: "undelivered" | "failed", signingToken = TOKEN, errorC
 }
 
 beforeEach(() => {
+  vi.stubEnv("ADMIN_EMAILS", "operator@example.invalid");
   h.rows = [];
   h.result = "updated";
   h.resolvedReadError = false;
