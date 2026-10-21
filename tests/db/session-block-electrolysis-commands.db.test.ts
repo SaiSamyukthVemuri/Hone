@@ -1,9 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
 import {
   adminQuery,
+  adminTx,
   asRole,
   closePool,
   seedSession,
+  seedMember,
   seedStudio,
   userQuery,
   type SeededStudio,
@@ -886,5 +889,49 @@ describe("0244 — attributable routine reading correction history", () => {
       expect((await q("select id from public.treatment_reading_change_events where source_id=$1", [f.blockId])).rowCount).toBe(0);
     });
     expect(await events(f.blockId)).toEqual([event]);
+  });
+  it("same-studio receptionist-only membership cannot read clinical history, active clinical member can", async context => {
+    // The integrated train already owns this membership foundation. Never
+    // fabricate its schema or label a missing-role fixture as a passed check.
+    const membership = (await adminQuery("select to_regclass('public.studio_receptionists') as relation")).rows[0].relation;
+    if (!membership) context.skip("UNRUN receptionist history proof: aligned candidate must include existing Team receptionist foundation; no schema imported here.");
+    const f = await fixture();
+    await userQuery(A.userId, "update public.session_blocks set energy_level=4 where id=$1", [f.blockId]);
+    const receptionist = randomUUID();
+    await adminQuery("insert into auth.users(id,email) values ($1,$2)", [receptionist, `history-desk-${receptionist}@harness.local`]);
+    await adminQuery("insert into public.studio_receptionists(studio_id,user_id,display_name,active) values ($1,$2,'Synthetic History Desk',true)", [A.studioId, receptionist]);
+    expect((await adminQuery("select count(*)::int n from public.practitioners where studio_id=$1 and user_id=$2 and active", [A.studioId, receptionist])).rows[0].n).toBe(0);
+    expect((await userQuery(receptionist, "select id from public.studio_receptionists where studio_id=$1 and user_id=$2 and active", [A.studioId, receptionist])).rowCount).toBe(1);
+    expect((await userQuery(receptionist, "select id from public.treatment_reading_change_events where source_id=$1", [f.blockId])).rowCount).toBe(0);
+    const clinician = await seedMember(A, "history-clinical-member");
+    expect((await userQuery(clinician.userId, "select id from public.treatment_reading_change_events where source_id=$1", [f.blockId])).rowCount).toBe(1);
+  });
+  it.each(["clients", "sessions"] as const)("history honors effective %s RLS, not just studio membership", async parent => {
+    const hidden = await fixture();
+    const otherClient = randomUUID();
+    await adminQuery("insert into public.clients(id,studio_id,name) values ($1,$2,'Synthetic Visible History Client')", [otherClient, A.studioId]);
+    const visible = await seedSession({ ...A, clientId: otherClient });
+    for (const f of [hidden, visible]) await userQuery(A.userId, "update public.session_blocks set energy_level=3 where id=$1", [f.blockId]);
+    const sourceIds = [hidden.blockId, visible.blockId];
+    const historyQuery = "select source_id from public.treatment_reading_change_events where source_id=any($1::uuid[]) order by source_id";
+    expect((await userQuery(A.userId, historyQuery, [sourceIds])).rowCount).toBe(2);
+    const hiddenParent = parent === "clients" ? A.clientId : hidden.sessionId;
+    const visibleParent = parent === "clients" ? otherClient : visible.sessionId;
+    const policy = `cln007_test_${parent}_${hidden.sessionId.replaceAll("-", "")}`;
+    const rollback = new Error("rollback restrictive parent visibility fixture");
+    // Existing transaction helper, owner-created RESTRICTIVE policy only.
+    // Deliberate throw guarantees all policy DDL/role settings roll back even
+    // on success; no production policy/trigger is weakened or disabled.
+    await expect(adminTx(async q => {
+      await q(`create policy ${policy} on public.${parent} as restrictive for select to authenticated using (id <> '${hiddenParent}'::uuid)`);
+      await q("set local role authenticated");
+      await q("select set_config('request.jwt.claims',$1,true)", [JSON.stringify({ sub: A.userId, role: "authenticated" })]);
+      expect((await q(`select id from public.${parent} where id=$1`, [hiddenParent])).rowCount).toBe(0);
+      expect((await q(`select id from public.${parent} where id=$1`, [visibleParent])).rowCount).toBe(1);
+      expect((await q(historyQuery, [sourceIds])).rows).toEqual([{ source_id: visible.blockId }]);
+      throw rollback;
+    })).rejects.toBe(rollback);
+    expect((await adminQuery("select count(*)::int n from pg_policies where schemaname='public' and tablename=$1 and policyname=$2", [parent, policy])).rows[0].n).toBe(0);
+    expect((await userQuery(A.userId, historyQuery, [sourceIds])).rowCount).toBe(2);
   });
 });
