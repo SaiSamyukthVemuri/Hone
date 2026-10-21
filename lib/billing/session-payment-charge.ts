@@ -785,6 +785,10 @@ async function writeSucceededOutcome(args: {
 
 async function writeFailedOutcome(args: {
   expectedPaymentIntentId: string | null;
+  concurrentFailureFacts?: {
+    stripeAccountId: string; stripeCustomerId: string | null;
+    amountCents: number | null; currency: string | null; chargeReason: string | null;
+  };
   attemptId: string;
   studioId: string;
   clientId: string;
@@ -850,6 +854,31 @@ async function writeFailedOutcome(args: {
   // the caller reports 'failed'. Surface for manual review rather than
   // silently diverging the stored row from the reported outcome.
   if (!updatedRows || updatedRows.length === 0) {
+    // An identical canceled reconciliation can already be durable. Prove the
+    // complete original lineage/money and terminal facts before suppressing the
+    // critical alert; a zero-row update alone is never persistence evidence.
+    const facts = args.concurrentFailureFacts;
+    if (facts && args.paymentIntentId && args.expectedPaymentIntentId === args.paymentIntentId
+        && args.stripeStatus === "canceled" && facts.stripeCustomerId) {
+      const { data: row, error: readError } = await admin
+        .from("payment_charge_attempts")
+        .select("id,studio_id,client_id,stripe_livemode,stripe_account_id,stripe_customer_id,stripe_payment_intent_id,status,stripe_status,failure_code,failed_at,amount_cents,currency,charge_reason,cancelled_at,charged_at,stripe_charge_id,refund_status")
+        .eq("id", args.attemptId).maybeSingle();
+      if (!readError && row
+          && row.id === args.attemptId && row.studio_id === args.studioId
+          && row.client_id === args.clientId && row.stripe_livemode === inferStripeLivemode()
+          && row.stripe_account_id === facts.stripeAccountId
+          && row.stripe_customer_id === facts.stripeCustomerId
+          && row.stripe_payment_intent_id === args.paymentIntentId
+          && row.status === "failed" && row.stripe_status === "canceled"
+          && row.failure_code === sanitizeFailureCode(args.failureCode)
+          && typeof row.failed_at === "string" && Number.isFinite(Date.parse(row.failed_at))
+          && row.amount_cents === facts.amountCents && row.currency === facts.currency
+          && row.charge_reason === facts.chargeReason && row.cancelled_at === null
+          && row.charged_at === null && row.stripe_charge_id === null && row.refund_status === null) {
+        return true;
+      }
+    }
     // PR #310: promoted from warning to CRITICAL so it surfaces in the
     // critical-only manual-review queue (via the existing 'session_payment_'
     // prefix), symmetric with the succeeded-outcome zero-row alert.
@@ -1089,6 +1118,7 @@ async function reconcileExistingPaymentIntent(args: {
   sessionId: string;
   appointmentId: string | null;
   stripeAccountId: string;
+  expectedStripeCustomerId: string | null;
   paymentIntentId: string;
   /** Compared against the row on a zero-row recheck. */
   expectedChargeReason: string | null;
@@ -1223,6 +1253,11 @@ async function reconcileExistingPaymentIntent(args: {
     failureMessage:
       pi.last_payment_error?.message ?? `PaymentIntent status: ${pi.status}`,
     expectedPaymentIntentId: args.paymentIntentId,
+    concurrentFailureFacts: {
+      stripeAccountId: args.stripeAccountId, stripeCustomerId: args.expectedStripeCustomerId,
+      amountCents: args.expectedAmountCents, currency: args.expectedCurrency,
+      chargeReason: args.expectedChargeReason,
+    },
   });
   if (!failedPersisted) return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE };
   await recordOpsAlert({
@@ -1546,6 +1581,7 @@ export async function runSessionPaymentCharge(args: {
         appointmentId: attemptRow.appointment_id,
         stripeAccountId: card.stripe_account_id,
         paymentIntentId: claim.stripe_payment_intent_id,
+        expectedStripeCustomerId: attemptRow.stripe_customer_id,
         expectedChargeReason: attemptRow.charge_reason ?? null,
         expectedAmountCents: attemptRow.amount_cents,
         expectedCurrency: attemptRow.currency,

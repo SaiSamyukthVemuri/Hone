@@ -25,6 +25,7 @@ const h = vi.hoisted(() => ({
   rpcCalls: [] as string[],
   updateAttempts: [] as Array<{ payload: Record<string, unknown>; filters: Array<{ column: string; value: unknown }>; matched: boolean }>,
   afterRetrieve: null as null | (() => void),
+  recheckReadError: false,
   alerts: [] as Array<{ severity: string; event: string; details: Record<string, unknown> }>,
   claim: {} as Record<string, unknown>,
   pi: {} as Record<string, unknown>,
@@ -101,7 +102,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       const q: Record<string, unknown> = {};
       let updatePayload: Record<string, unknown> | null = null;
       const filters: Array<{ column: string; value: unknown }> = [];
-      const read = () => ({ data: h.rows[table] && typeof h.rows[table] === "object" ? { ...(h.rows[table] as Record<string, unknown>) } : h.rows[table] ?? null, error: null });
+      const read = () => ({ data: h.rows[table] && typeof h.rows[table] === "object" ? { ...(h.rows[table] as Record<string, unknown>) } : h.rows[table] ?? null, error: h.recheckReadError ? { code: "XX000" } : null });
       q.select = () => {
         if (updatePayload) {
           const row = h.rows[table] as Record<string, unknown> | undefined;
@@ -258,6 +259,7 @@ beforeEach(() => {
   h.rpcCalls = [];
   h.updateAttempts = [];
   h.afterRetrieve = null;
+  h.recheckReadError = false;
   h.alerts = [];
   h.stripeCalls = [];
   h.claim = {};
@@ -808,6 +810,50 @@ describe("charge.refunded webhook", () => {
     const out = await handleChargeRefunded(refundedCharge({ amount: 999, currency: "cad" }), CTX);
     expect(out.moneyMismatch).toBe(true);
     expect(out.partialRefundIgnored).toBeUndefined();
+    expect(h.updates).toEqual([]);
+  });
+});
+
+
+describe("PAY004 identical concurrent canceled failure", () => {
+  function prepareRace(over: Record<string, unknown> = {}, readError = false) {
+    seedLineage("cad");
+    h.claim = claimFor("cad", { result: "already_pending", stripe_payment_intent_id: PI_ID });
+    h.pi = { id: PI_ID, status: "canceled", amount: AMOUNT, currency: "cad" };
+    h.afterRetrieve = () => {
+      Object.assign(h.rows.payment_charge_attempts as Record<string, unknown>, {
+        status: "failed", stripe_status: "canceled", stripe_payment_intent_id: PI_ID,
+        cancelled_at: null, failure_code: "canceled", failed_at: "2026-10-21T04:00:00.000Z", ...over,
+      });
+      h.recheckReadError = readError;
+    };
+  }
+  it("identical already-persisted terminal row returns failed without critical/manual-review noise", async () => {
+    prepareRace();
+    expect(await charge()).toMatchObject({ ok: false, outcome: "failed", failureCode: "canceled" });
+    expect(h.updates).toEqual([]);
+    expect(h.stripeCalls).toEqual(["pi_retrieve"]);
+    expect(critical("session_payment_failed_write_zero_rows")).toEqual([]);
+  });
+  it.each([
+    { id: "different-attempt" }, { studio_id: "different-studio" }, { client_id: "different-client" },
+    { stripe_livemode: true }, { stripe_payment_intent_id: "pi_different" },
+    { stripe_account_id: "acct_different" }, { stripe_customer_id: "cus_different" },
+    { amount_cents: AMOUNT + 1 }, { currency: "usd" }, { charge_reason: "no_show_fee" },
+    { status: "succeeded" }, { stripe_status: "processing" }, { failure_code: "different" },
+    { failed_at: null }, { cancelled_at: "2026-10-21T03:00:00Z" },
+    { refund_status: "pending_stripe" }, { charged_at: "2026-10-21T03:00:00Z" }, { stripe_charge_id: CHARGE_ID },
+  ])("conflicting concurrent terminal evidence stays manual review: %j", async (over) => {
+    prepareRace(over);
+    expect(await charge()).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+    expect(critical("session_payment_failed_write_zero_rows")).toHaveLength(1);
+    expect(h.updates).toEqual([]);
+    expect(h.stripeCalls).toEqual(["pi_retrieve"]);
+  });
+  it("an unreadable terminal row stays manual review", async () => {
+    prepareRace({}, true);
+    expect(await charge()).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+    expect(critical("session_payment_failed_write_zero_rows")).toHaveLength(1);
     expect(h.updates).toEqual([]);
   });
 });
