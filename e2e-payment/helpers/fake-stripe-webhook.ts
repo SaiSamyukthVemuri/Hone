@@ -69,6 +69,7 @@ type AttemptFacts = {
   charge_reason: string;
   card_authorization_signature_id: string | null;
   stripe_account_id: string;
+  stripe_customer_id: string;
   stripe_payment_intent_id: string;
   stripe_charge_id: string | null;
   stripe_idempotency_key: string | null;
@@ -77,7 +78,7 @@ type AttemptFacts = {
 async function attemptFacts(attemptId: string): Promise<AttemptFacts> {
   const r = await adminQuery(
     `select id, studio_id, client_id, session_id, appointment_id, charge_reason,
-            card_authorization_signature_id, stripe_account_id,
+            card_authorization_signature_id, stripe_account_id, stripe_customer_id,
             stripe_payment_intent_id, stripe_charge_id, stripe_idempotency_key
        from public.payment_charge_attempts where id = $1`,
     [attemptId],
@@ -131,8 +132,21 @@ function processorCreate(a: AttemptFacts, runId: string) {
     currency: create.currency,
     chargeId: create.chargeId ?? null,
     metadataDigest: create.metadataDigest ?? null,
+    payerDigest: create.payerDigest ?? null,
     stripeAccount: create.stripeAccount ?? null,
   };
+}
+
+/** Bind the event customer only AFTER proving the processor received this
+ * exact payer. Old ledgers without evidence refuse; the row is never a default. */
+function verifiedProviderCustomer(a: AttemptFacts, created: { payerDigest: string | null }): string {
+  assertLineage(
+    typeof a.stripe_customer_id === "string" && a.stripe_customer_id.length > 0
+      && created.payerDigest !== null
+      && metadataDigest({ payer: a.stripe_customer_id }) === created.payerDigest,
+    "the processor's recorded payer binding is missing or conflicts with the attempt",
+  );
+  return a.stripe_customer_id;
 }
 
 /** The connected account an event is delivered under is the one the processor
@@ -254,6 +268,7 @@ export async function paymentIntentSucceededEvent(
       amount_received: amount,
       currency: over.currency ?? created.currency,
       latest_charge: created.chargeId,
+      customer: verifiedProviderCustomer(a, created),
       metadata: eventMetadata(a, created),
       livemode: false,
     },
@@ -295,6 +310,7 @@ export async function chargeRefundedEvent(
       id: chargeId,
       object: "charge",
       payment_intent: a.stripe_payment_intent_id,
+      customer: verifiedProviderCustomer(a, created),
       amount,
       amount_captured: amount,
       amount_refunded: refunded,
