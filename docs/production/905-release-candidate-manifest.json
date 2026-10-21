@@ -1,6 +1,6 @@
 {
   "title": "#905 narrow production-based release candidate source manifest",
-  "production_base": "73a6f5770a6c09d67e74e7bed89494f7179d1a92",
+  "production_base": "cae869ac1e07676c55b4ab31b282afd67eff22dc",
   "portrait_source": "affcb86727324b2c2505f5185b3ba3db3e9f4545",
   "hosted_anchor": {
     "version": "0212",
@@ -31,13 +31,14 @@
       "owner_head": "b59c4d021981a01c7627df7ee7f2cad485a06b06",
       "path": "supabase/migrations/0214_studio_payment_jurisdiction.sql",
       "raw_sha256": "25da63b7bdacefa44e12c2357c85cb8b814cd7be4d25dfb8dbf8cf151e1ab65f",
-      "application_order_contract": "After0213; migration-first; US studio activation waits for currency UI.",
+      "application_order_contract": "HOLD: candidate still contains rejected blanketCA/CAD source; replace onlypublishedreviewedownerpolicy after price-race repair. No blanketold-app compatibility: unknown financialprepare/provisionrefuses; futureUSactivation requires existingcountry-awareconsumers. Exactperstudioevidence/account-historyreconciliation andhostedapproval remain.",
       "candidate_sha256": "25da63b7bdacefa44e12c2357c85cb8b814cd7be4d25dfb8dbf8cf151e1ab65f",
       "transaction_contract": {
         "begin": "BEGIN",
         "lock_timeout": "SET LOCAL lock_timeout = 5s",
         "commit": "COMMIT"
-      }
+      },
+      "historical_application_order_contract": "After0213; migration-first; US studio activation waits for currency UI."
     },
     {
       "version": "0215",
@@ -402,10 +403,13 @@
       "0231"
     ],
     "excluded": [
-      "0232 (separately allocated to #908)",
-      "0233",
-      "0234 (held Machines #920 / Team allocation)",
-      "0235"
+      "0232 (separate Before/After release, not necessary for portrait)",
+      "0233 (separate clinical-print release)",
+      "0234 (outside narrow prefix; Team HON47 allocation legitimate; held Machines #920 alternative excluded)",
+      "0235",
+      "0236",
+      "0237",
+      "0238 (source-only dedup allocation; not necessary for portrait)"
     ],
     "frozen_0223_sha256": "12038b1eab95d84f0ed84b235f0bf00641f6e06007e6ba5008066fc0d852b948",
     "production_907_session_photo_files_preserved": true
@@ -595,8 +599,8 @@
       "reason": "expected-current-image compare-and-clear under client row lock; stale removal fails closed and preserves newer portrait; exact seven-file owner delta composed without merging owner branch ancestry"
     }
   ],
-  "review_state": "D380PRCI+nightlySUCCESS retainedforscopedunchangedsubjects. Currentproduction927+reviewedrecord968normallycomposed; currentprofiledigestcorrected; ALLcurrentcandidatefiledigestsverified. Newexactreview/normalfullmatrixCIneededafterpublication; no manualnightlyrerunforonlymanifestchange, changedclinicalhelpersreceiveexistingCIcoverage. Hosted/consentholds remain.",
-  "previous_candidate_base": "aa90510354d7aa0ceeeeb70e631a85d8a9aa0b33",
+  "review_state": "LOCALcurrentproduction969/970 normallycomposed;19actualSQL+12portraitdigestsverified;122canonical/prepushPASS after3-docmerge. NOnew214policycomposed; exacta192price-racefindingOPEN. CurrentheadNOTpublished andNOTnewpolicyDBverified. Prior ebdb/D380 proof remains scopedhistorical; freshchangedSQLrequirescomposedDB+normalCI/review anddeliberateRCnightly.",
+  "previous_candidate_base": "73a6f5770a6c09d67e74e7bed89494f7179d1a92",
   "candidate_base_history": [
     "102faf94fc573c724d73419bc9e8a6262ac1a247",
     "cda67e7c9f779838dfad2360a628ab81221cb43e",
@@ -612,14 +616,19 @@
       "base": "aa90510354d7aa0ceeeeb70e631a85d8a9aa0b33",
       "superseded_by": "73a6f5770a6c09d67e74e7bed89494f7179d1a92",
       "reason": "Normalmerge current reviewed/deployed927 and record968; portraitimagecode and19SQLunchanged"
+    },
+    {
+      "base": "73a6f5770a6c09d67e74e7bed89494f7179d1a92",
+      "superseded_by": "cae869ac1e07676c55b4ab31b282afd67eff22dc",
+      "reason": "Normal merge reviewed deployed969 banner/current970 record; actual merge78058b7 changedonly3canonicaldocs, no portrait orSQLchanges. Priorf6 banner source already matched969."
     }
   ],
   "canonical_record_source": {
-    "pr": 968,
-    "head": "442d041031316540a6b66f148fab0523efdb028b",
-    "merged": "73a6f5770a6c09d67e74e7bed89494f7179d1a92",
-    "status": "ExactreviewCLEANfalsefalse+normalCI39514570204SUCCESS; mergednormally; deployment/postdocs verification pending (notinferred)",
-    "scope": "206/177productionancestryat9270dc, settled39511500257unit21295PASS2canonicalFAIL/allbrowserPASS/skippedDBpaymentmobileGoogledocs preserved; no SQL/historychange"
+    "pr": 970,
+    "head": "9e04b9d98830dca40c7db439b5ffa8214aaaa0fc",
+    "merged": "cae869ac1e07676c55b4ab31b282afd67eff22dc",
+    "status": "ExactreviewCLEANfalsefalse/CI39524936560SUCCESS; mergednormally/READYdpl_Gi7czB765naZ89KXUe7DHpaPmwCi/automaticdocs39525407805SUCCESS; appDBbrowserpaymentmobileGoogleSKIPdocsplan",
+    "scope": "208/179datedproductionancestryat96910982; settled969push39523272195unit21296PASS2canonicalA3A5FAIL and603browser11SKIP/aggregatePASS retained. NoSQL/historychange."
   },
   "integration_compatibility_repairs": {
     "source": "95a840518b270021d792eae2a52eb00096759566",
@@ -698,7 +707,7 @@
     "review": "Exactreceipt6303466243 no majorissues; aggregatesummarytrue/true/historythreads preserved,notrewritten",
     "reuse": "Evidenceatparentheadscope; field-onlydigestrepair doesnotalterUI/RPC/SQL/guards. Newcurrentreview/normalCI required onpublishedfinalhead."
   },
-  "production_runtime_base": "0dc7d5e457b4445191f47404aefd140a59f927b9",
+  "production_runtime_base": "10982f4a16bb113af335f1be3cdf5c2a5498aca9",
   "candidate_banner_repair": {
     "basis_head": "ebdbde8cd47763bf8c2e907661239cdcb552760d",
     "source_head": "abcbfdd391a9fb2f6ed22bfc6eb359f614ca0dd5",
@@ -714,6 +723,27 @@
     },
     "helper_blob": "bd65e7c899390579385c8d56035ad6e5158c4523",
     "regression_blob": "ae1d2e18f662c1b46dd4a992ec415f7dcbebb1ba",
-    "historical_provenance": "Original portrait source pins and prior d380 digest-repair receipt remain unchanged."
+    "historical_provenance": "Original portrait source pins and prior d380 digest-repair receipt remain unchanged.",
+    "production_release": {
+      "pr": 969,
+      "source": "a6b9e9370b8c3392f72691835bb5bb1cf8c2b496",
+      "merge": "10982f4a16bb113af335f1be3cdf5c2a5498aca9",
+      "state": "READY/exactreviewandCI39520213382SUCCESS; source21298unit603browser11SKIP, safeGET200200307307;ChloeUNRUN"
+    }
+  },
+  "jurisdiction_policy_preparation": {
+    "authority": "Sam: verify each existing studio country AND currency before backfill; future verified onboarding pair; unknown unresolved.",
+    "verified_existing_pairs": 0,
+    "unknown_existing_studios": 7,
+    "bound_unknown_studios": 3,
+    "current_candidate_0214": "HISTORICAL OLD SOURCE25da still present pending reviewedrepair; NOT ELIGIBLE for hosted apply. Rawchecksum rows below describe actualtree, not newpolicyreadiness.",
+    "published_owner": "a1927456b2228e89797bb48119f5651dd3f4dc12",
+    "normal_review_findings": {
+      "4331996832": "OPEN concurrent pricedconfiguration INSERT/UPDATE serialization; existing833owner repair inprogress, no pendingunpublishedSQL copied",
+      "4331996823": "Existing836country-aware accountcreation dependency; old75ad inthisnarrowcandidate notcompatible for enabledUSonboarding",
+      "4331996829": "Existing836country-observation/refusal caller dependency; no whole836/238 import"
+    },
+    "release_requirements": "Publishedreviewedbounded214replacement+necessarytestfixturecompanions, freshcomposedDBrace/ACL/UNKNOWN/initproof/currentCIreview. Perstudioverifiedevidence andboundedaccount/historyreconciliation beforehostedprefixapply; retaincurrentstrictaccount/historyguards.",
+    "holds": "No hostedapply/productionrelease/provideractivation/real-clientdata/consentdecision oradditionalLOCALreset. Existingold214appliedhon47 target unchanged."
   }
 }
