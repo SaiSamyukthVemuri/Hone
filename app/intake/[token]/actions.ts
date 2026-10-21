@@ -9,7 +9,7 @@ import {
   findInvalidChoiceAnswers,
   getQuestionByKey,
   findMissingRequiredAnswers,
-  TOTAL_STEPS, type Step,
+  type Step,
 } from "@/lib/intake/questions";
 import { questionnaireForRow, QUESTIONNAIRE_UNAVAILABLE } from "@/lib/intake/questionnaire";
 import { sanitizeQuestionResponses } from "@/lib/intake/responses";
@@ -108,7 +108,7 @@ export async function saveIntakeStepAction(payload: {
   if (!v.ok) return { ok: false, error: INTAKE_TOKEN_INVALID };
 
   const step = Math.floor(Number(payload.step));
-  if (!Number.isFinite(step) || step < 1 || step > TOTAL_STEPS) {
+  if (!Number.isFinite(step) || step < 1) {
     return { ok: false, error: "Invalid step." };
   }
   const expectedRevision = intakeRevision(payload.expectedRevision);
@@ -139,6 +139,7 @@ export async function saveIntakeStepAction(payload: {
   // step 1 answers if the client only sent the latest step's fields.
   const catalogue = questionnaireForRow(existing.questionnaire_snapshot);
   if (catalogue.kind === "invalid") return { ok: false, error: QUESTIONNAIRE_UNAVAILABLE };
+  if (!catalogue.steps.some(s => s.id === step)) return { ok: false, error: "Invalid step." };
   const responses = sanitizeResponses(payload.responses, catalogue.steps);
 
   if (intakeRevision(existing.revision) !== expectedRevision) {
@@ -340,7 +341,7 @@ export async function submitIntakeAction(payload: {
 
   const written = await writeIntakeRevision(admin, {
     intakeId: v.intake_id, studioId: existing.studio_id, clientId: existing.client_id,
-    expectedRevision, responses: merged, step: TOTAL_STEPS, operation: "submit",
+    expectedRevision, responses: merged, step: catalogue.steps[catalogue.steps.length - 1].id, operation: "submit",
     profile: intakeProfileContributions(merged),
   });
   if (!written.ok) return written;

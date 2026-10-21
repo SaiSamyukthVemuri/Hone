@@ -23,6 +23,14 @@ describe("0246 prospective-only snapshot boundary", () => {
     expect(code).toContain("from public, anon, authenticated, service_role");
     expect(code).not.toMatch(/auth\.role|session_user|current_user|disable\s+trigger|write_intake_revision/);
   });
+  it("uses row-catalogue step limits on save, submit and assisted handoff", () => {
+    const client = readFileSync("app/intake/[token]/actions.ts", "utf8");
+    const assisted = readFileSync("app/(app)/clients/[id]/intake/actions.ts", "utf8");
+    expect(client).toContain("catalogue.steps.some(s => s.id === step)");
+    expect(client).toContain('step: catalogue.steps[catalogue.steps.length - 1].id, operation: "submit"');
+    expect(assisted).toContain("const lastStep = loaded.catalogue.steps[loaded.catalogue.steps.length - 1].id");
+    expect(assisted).toContain('step: lastStep, operation: "handoff"');
+  });
   it("only existing trusted creation inserts name the issued catalogue; export remains pending", () => {
     const creators = readFileSync("lib/intake/queries.ts", "utf8");
     expect(creators.match(/questionnaire_snapshot: ISSUED_QUESTIONNAIRE/g)).toHaveLength(2);

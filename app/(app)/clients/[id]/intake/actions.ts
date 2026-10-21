@@ -20,7 +20,6 @@ import { sendIntakeUpdateRequestToClient } from "@/lib/email/send-appointment";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import {
   findInvalidChoiceAnswers,
-  TOTAL_STEPS,
 } from "@/lib/intake/questions";
 import {
   assistedKeysChanged,
@@ -868,7 +867,8 @@ export async function handOffAssistedIntakeAction(
   if (!loaded.ok) return { ok: false, error: loaded.error };
   if (loaded.revision !== expectedRevision) return { ok: false, error: INTAKE_CONFLICT };
 
-  const patch: Record<string, unknown> = { current_step: TOTAL_STEPS };
+  const lastStep = loaded.catalogue.steps[loaded.catalogue.steps.length - 1].id;
+  const patch: Record<string, unknown> = { current_step: lastStep };
 
   // Only stamp a handover onto an intake that actually carries assisted
   // provenance. A practitioner who opened the editor and recorded nothing has
@@ -889,7 +889,7 @@ export async function handOffAssistedIntakeAction(
   const written = await writeIntakeRevision(createAdminClient(), {
     intakeId, studioId: loaded.studioId, clientId, expectedRevision,
     responses: (patch.responses ?? loaded.responses) as Record<string, unknown>,
-    step: TOTAL_STEPS, operation: "handoff",
+    step: lastStep, operation: "handoff",
   });
   if (!written.ok) return written;
 
