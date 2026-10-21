@@ -6,7 +6,7 @@ import path from "node:path";
 //
 // Every payment-OUTCOME write (charge succeeded/failed, refund
 // succeeded/failed, and the four Stripe-webhook reconciliations) is a
-// status-conditional `.update().eq(...)` that, before this PR, only
+// conditional direct write or a bound command. The original direct writes only
 // checked the DB `error`. A conditional UPDATE matching ZERO rows
 // returns no error and persisted nothing, so a real Stripe outcome
 // could be silently treated as recorded. These source-grep pins lock in
@@ -66,13 +66,17 @@ describe("charge outcome writes detect zero rows (session-payment-charge.ts)", (
 // ---------------------------------------------------------------------------
 describe("refund outcome writes detect zero rows (payment-refund.ts)", () => {
   it("success + failure writes both add .select(\"id\") (claim already had one)", () => {
-    // claim (pre-existing) + 2 outcome writes = >= 3.
-    expect(count(REFUND, /\.select\("id"\)/g)).toBeGreaterThanOrEqual(3);
+    // Claim and terminal provider-error write remain conditional direct writes.
+    // Returned-object success now requires the bound command + committed read.
+    expect(count(REFUND, /\.select\("id"\)/g)).toBeGreaterThanOrEqual(2);
+    expect(REFUND).toContain('rpc("reconcile_bound_payment_event"');
+    expect(REFUND).toContain('.select("refund_status,stripe_refund_id,refunded_at")');
   });
 
   it("success write treats zero rows as needs_manual_review (never reports success unproven)", () => {
-    expect(REFUND).toMatch(/const okWriteZeroRows =\s*!writeOkErr && \(!okRows \|\| okRows\.length === 0\)/);
-    expect(REFUND).toMatch(/if \(writeOkErr \|\| okWriteZeroRows\)/);
+    expect(REFUND).toContain('if (observationError || !["reconciled", "already_refunded", "refund_pending", "refund_failed"].includes(observation?.result ?? ""))');
+    expect(REFUND).toContain('savedError || saved?.refund_status !== "succeeded"');
+    expect(REFUND).toContain('saved.stripe_refund_id !== refund.id || !saved.refunded_at');
   });
 
   it("terminal-failure write folds zero rows into the critical alert path", () => {
@@ -86,12 +90,11 @@ describe("refund outcome writes detect zero rows (payment-refund.ts)", () => {
 // ---------------------------------------------------------------------------
 describe("webhook reconcile outcome writes detect zero rows (payment-webhook-reconciliation.ts)", () => {
   it("every DIRECT reconcile UPDATE proves a row was affected via .select(\"id\")", () => {
-    // PAY-SETTLE / 0187 moved ONE of the four — payment_intent.succeeded —
-    // into a database command, because it was the only writer that could turn
-    // a retirable `ready` row into money without holding the shared appointment
-    // advisory key. The remaining three are still direct UPDATEs and still
-    // carry their own zero-row detection.
-    expect(count(RECON, /\.select\("id"\)/g)).toBeGreaterThanOrEqual(3);
+    // 0239 moved all event writes under bound identity + row locks. No
+    // discarded direct UPDATE filter can now masquerade as a proven outcome.
+    expect(RECON).not.toMatch(/\.update\(/);
+    expect(count(RECON, /await reconcileBoundEvent\(event, ctx, attempt\)/g)).toBeGreaterThanOrEqual(4);
+    expect(count(RECON, /commandResult === "reconciled" \? \[\{ id: attempt.id \}\] : \[\]/g)).toBe(3);
   });
 
   it("the succeeded reconcile proves the same thing through the command's result", () => {
@@ -99,7 +102,7 @@ describe("webhook reconcile outcome writes detect zero rows (payment-webhook-rec
     // happen — only its mechanism moved. The command returns `zero_rows` when
     // its status-conditional UPDATE matches nothing, and the caller treats that
     // exactly as it treated an empty .select("id").
-    expect(RECON).toMatch(/rpc\(\s*\n?\s*"reconcile_card_payment_succeeded"/);
+    expect(RECON).toMatch(/rpc\(\s*"reconcile_bound_payment_event"/);
     expect(RECON).toMatch(/reconcileResult === "zero_rows"/);
   });
 
