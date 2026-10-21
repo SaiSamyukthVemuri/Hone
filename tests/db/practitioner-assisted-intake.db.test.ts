@@ -13,25 +13,11 @@ import {
 // Practitioner-assisted intake — the DATABASE half, on the REAL migrated
 // local database.
 //
-// The application design rests on four claims about what the database allows
-// an authenticated studio member to do. Source review is not proof of any of
-// them, so each is exercised here as the `authenticated` role with a real JWT
-// claim:
-//
-//   1. a member CAN write `responses` (including the reserved provenance key)
-//      on an in_progress intake        -> the assisted editor is possible at all
-//   2. a member CANNOT transition in_progress -> submitted
-//                                      -> the client-owned submission boundary
-//                                         is enforced by the DB, not by our UI
-//   3. a member CANNOT rewrite `responses` once the intake is terminal
-//                                      -> assisted answers and provenance are
-//                                         frozen with the rest of the record
-//   4. a member of ANOTHER studio can do none of it
-//
-// Claim 2 is the one that makes createClient() (not createAdminClient())
-// load-bearing in app/(app)/clients/[id]/intake/actions.ts: the service role
-// is exempt from this trigger, so an assisted action written with the admin
-// client would silently regain the ability to submit for the client.
+// 0243 retires blind authenticated/service-role protected writes. Authorized
+// assisted/public answers use the existing service-only CAS command; current
+// server actions still resolve the caller/tenant and client-owned boundaries.
+// Direct notes/review/link metadata remains governed by the existing RLS and
+// terminal rules. The protected-write trigger runs after those frozen guards.
 //
 // Only non-clinical placeholder answers are used.
 
@@ -102,7 +88,7 @@ afterAll(async () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("1. assisted entry is possible: a member may write a draft's responses", () => {
+describe("1. authorized assisted entry uses the governed draft command", () => {
   it("writes questionnaire answers AND the reserved provenance key", async () => {
     const id = await seedIntake(A, "in_progress");
     const merged = {
@@ -110,15 +96,12 @@ describe("1. assisted entry is possible: a member may write a draft's responses"
       legal_name: "Dana Reyes",
       [PROV_KEY]: provenance(A.practitionerId, "Chloe Baca"),
     };
-    const res = await userQuery(
-      A.userId,
-      `update public.client_intake_forms
-          set responses = $2::jsonb, current_step = 2
-        where id = $1 and status = 'in_progress' and deleted_at is null
-        returning id`,
-      [id, JSON.stringify(merged)],
-    );
-    expect(res.rowCount).toBe(1);
+    const res = await adminTx(async (q) => {
+      await q("set local role service_role");
+      return q("select * from public.write_intake_revision($1,$2,$3,0,$4::jsonb,2,'save','{}'::jsonb)",
+        [id, A.studioId, A.clientId, JSON.stringify(merged)]);
+    });
+    expect(res.rows).toEqual([{ outcome: "saved", new_revision: "1" }]);
 
     const stored = await storedResponses(id);
     expect(stored.legal_name).toBe("Dana Reyes");
@@ -138,7 +121,7 @@ describe("1. assisted entry is possible: a member may write a draft's responses"
     );
     await userQuery(
       A.userId,
-      `update public.client_intake_forms set responses = '{"x":1}'::jsonb where id = $1`,
+      `update public.client_intake_forms set practitioner_notes = 'Allowed note' where id = $1`,
       [id],
     );
     const after = await adminQuery(
@@ -160,22 +143,22 @@ describe("1. assisted entry is possible: a member may write a draft's responses"
     // Someone else writes.
     await userQuery(
       A.userId,
-      `update public.client_intake_forms set responses = '{"other":"write"}'::jsonb where id = $1`,
+      `update public.client_intake_forms set practitioner_notes = 'Other note' where id = $1`,
       [id],
     );
     // Our write, carrying the token we last saw, must now match nothing.
     const res = await userQuery(
       A.userId,
       `update public.client_intake_forms
-          set responses = '{"ours":"clobber"}'::jsonb
+          set practitioner_notes = 'Stale note'
         where id = $1 and updated_at = $2
         returning id`,
       [id, staleToken],
     );
     expect(res.rowCount).toBe(0);
-    const stored = await storedResponses(id);
-    expect(stored.other).toBe("write");
-    expect(stored).not.toHaveProperty("ours");
+    const { rows: [stored] } = await adminQuery("select practitioner_notes, responses from public.client_intake_forms where id=$1", [id]);
+    expect(stored.practitioner_notes).toBe("Other note");
+    expect(stored.responses).toEqual({ q: "draft" });
   });
 });
 
@@ -308,14 +291,10 @@ describe("4. cross-studio isolation", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("5. the documented limitation is real, and stated honestly", () => {
-  it("a member CAN still write provenance naming a colleague by direct SQL", async () => {
-    // This is NOT a bug introduced by this feature — it is the pre-existing
-    // shape of client_intake_forms_member_update, whose WITH CHECK is
-    // `is_studio_member(studio_id)` with no column and no actor predicate.
-    // The application derives provenance from the session, but the DATABASE
-    // does not enforce that. The PR states this rather than implying the
-    // record is unforgeable. Closing it needs a future command/RLS boundary.
+describe("5. direct runtime provenance forgery is refused", () => {
+  it("a member cannot directly write provenance naming a colleague", async () => {
+    // The approved amendment explicitly retires this old direct-write path.
+    // Legitimate server-derived provenance is exercised through CAS above.
     const id = await seedIntake(A, "in_progress");
     const colleague = await adminQuery(
       `select id, display_name from public.practitioners
@@ -325,13 +304,11 @@ describe("5. the documented limitation is real, and stated honestly", () => {
     const forged = {
       [PROV_KEY]: provenance(colleague.rows[0].id, "Not Actually Them"),
     };
-    const res = await userQuery(
-      A.userId,
+    await expect(userQuery(A.userId,
       `update public.client_intake_forms set responses = $2::jsonb where id = $1 returning id`,
       [id, JSON.stringify(forged)],
-    );
-    // It succeeds. That is the limitation, proven rather than assumed.
-    expect(res.rowCount).toBe(1);
+    )).rejects.toMatchObject({ code: "42501" });
+    expect(await storedResponses(id)).toEqual({ q: "draft" });
   });
 });
 
@@ -366,7 +343,7 @@ describe("0243 public/assisted revision and atomic profile boundary", () => {
   );
   it("a prior assisted write invalidates the public snapshot, and a stale assisted write cannot overwrite it", async () => {
     const id = await seedIntake(A, "in_progress");
-    await userQuery(A.userId, "update public.client_intake_forms set responses=$2::jsonb where id=$1", [id, JSON.stringify({ legal_name: "Assisted" })]);
+    expect((await write(parameters(id, "0", "save", { legal_name: "Assisted" }))).outcome).toBe("saved");
     expect((await write(parameters(id, "0", "save", { legal_name: "Stale public" }))).outcome).toBe("conflict");
     expect((await write(parameters(id, "1", "save", { legal_name: "Current public" }))).outcome).toBe("saved");
     expect((await write(parameters(id, "1", "save", { legal_name: "Stale assisted" }))).outcome).toBe("conflict");
@@ -406,6 +383,95 @@ describe("0243 public/assisted revision and atomic profile boundary", () => {
       responses: governedAnswers,
       revision: winner.new_revision,
     });
+  });
+
+  it("pins the actual definer/invoker owner, role graph and effective command ACL", async () => {
+    const { rows: [context] } = await adminQuery(`
+      select w.proowner::text as writer_owner, g.proowner::text as guard_owner,
+        w.prosecdef as writer_definer, g.prosecdef as guard_definer,
+        w.proconfig as writer_config, g.proconfig as guard_config
+      from pg_catalog.pg_proc w, pg_catalog.pg_proc g
+      where w.oid='public.write_intake_revision(uuid,uuid,uuid,bigint,jsonb,integer,text,jsonb)'::regprocedure
+        and g.oid='public.advance_intake_revision()'::regprocedure`);
+    expect(context.writer_owner).toBe(context.guard_owner);
+    expect(context.writer_definer).toBe(true); expect(context.guard_definer).toBe(false);
+    expect(context.writer_config).toEqual(['search_path=""']);
+    expect(context.guard_config).toEqual(['search_path=""']);
+    // Role metadata is authoritative here. SET ROLE in this harness would
+    // still have a postgres session_user and could falsely appear permitted.
+    const { rows } = await adminQuery(`select r.rolname,
+      pg_catalog.pg_has_role(r.oid,w.proowner,'MEMBER') as is_owner_member,
+      pg_catalog.pg_has_role(r.oid,w.proowner,'SET') as can_assume_owner,
+      pg_catalog.has_function_privilege(r.oid,w.oid,'EXECUTE') as can_execute
+      from pg_catalog.pg_roles r, pg_catalog.pg_proc w
+      where r.rolname in ('anon','authenticated','service_role','authenticator')
+        and w.oid='public.write_intake_revision(uuid,uuid,uuid,bigint,jsonb,integer,text,jsonb)'::regprocedure`);
+    expect(rows).toHaveLength(4);
+    expect(rows.every((row) => row.can_assume_owner === false)).toBe(true);
+    expect(rows.every((row) => row.is_owner_member === false)).toBe(true);
+    for (const role of ['anon','authenticated','service_role']) {
+      expect(rows.find((row) => row.rolname === role)?.can_execute).toBe(role === 'service_role');
+    }
+    const { rows: delegates } = await adminQuery(`select p.oid::regprocedure::text as signature
+      from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+      where n.nspname='public' and p.prosecdef
+        and p.oid<>'public.write_intake_revision(uuid,uuid,uuid,bigint,jsonb,integer,text,jsonb)'::regprocedure
+        and p.prosrc ~* '(^|[^a-z0-9_])client_intake_forms([^a-z0-9_]|$)'
+        and (pg_catalog.has_function_privilege('anon',p.oid,'EXECUTE')
+          or pg_catalog.has_function_privilege('authenticated',p.oid,'EXECUTE')
+          or pg_catalog.has_function_privilege('service_role',p.oid,'EXECUTE'))`);
+    expect(delegates).toEqual([]);
+  });
+
+  it.each(["authenticated", "service_role"] as const)("%s cannot forge protected writes with a counter, claim or caller setting", async (role) => {
+    const id = await seedIntake(A, "in_progress");
+    await expect(asRole(role, async (q) => {
+      await q("select set_config('request.jwt.claims',$1,true)", [JSON.stringify({ sub: A.userId, role: "postgres" })]);
+      await q("select set_config('hone.intake_revision_writer','true',true)");
+      return q("update public.client_intake_forms set responses=$2::jsonb,revision=999 where id=$1", [id, JSON.stringify({ legal_name: "Forged direct" })]);
+    })).rejects.toMatchObject({ code: "42501" });
+    const { rows: [row] } = await adminQuery("select revision::text,responses from public.client_intake_forms where id=$1", [id]);
+    expect(row).toEqual({ revision: "0", responses: { q: "draft" } });
+  });
+
+  it.each(["authenticated", "service_role"] as const)("%s cannot directly change protected draft fields", async (role) => {
+    const patches = ["responses='{\"legal_name\":\"Direct\"}'::jsonb", "current_step=2", "submitted_at=now()"];
+    for (const patch of patches) {
+      const id = await seedIntake(A, "in_progress");
+      await expect(asRole(role, async (q) => {
+        await q("select set_config('request.jwt.claims',$1,true)", [JSON.stringify({ sub: A.userId, role })]);
+        return q(`update public.client_intake_forms set ${patch} where id=$1`, [id]);
+      })).rejects.toMatchObject({ code: "42501" });
+    }
+  });
+
+  it.each([
+    ["submitted", "in_progress", "42501"], ["reviewed", "in_progress", "42501"],
+    ["reviewed", "submitted", "42501"], ["in_progress", "reviewed", "23514"],
+  ] as const)("service role cannot reset %s -> %s and re-enter CAS", async (before, after, expectedCode) => {
+    const id = await seedIntake(A, before);
+    await expect(asRole("service_role", (q) => q(
+      "update public.client_intake_forms set status=$2 where id=$1", [id, after],
+    ))).rejects.toMatchObject({
+      code: expectedCode,
+      message: expectedCode === "23514"
+        ? "An intake can only be marked reviewed after the client submits it."
+        : "Protected intake changes require the governed revision command.",
+    });
+    const { rows: [row] } = await adminQuery("select status,revision::text,responses from public.client_intake_forms where id=$1", [id]);
+    expect(row).toEqual({ status: before, revision: "0", responses: { q: "draft" } });
+    if (before !== "in_progress") expect((await write(parameters(id, "0", "save", { q: "Must not reopen" }))).outcome).toBe("terminal");
+  });
+
+  it.each(["authenticated", "service_role"] as const)("%s keeps notes/link/no-op status writes and revision invalidation", async (role) => {
+    for (const status of ["in_progress", "submitted", "reviewed"] as const) {
+      const id = await seedIntake(A, status);
+      await asRole(role, async (q) => {
+        await q("select set_config('request.jwt.claims',$1,true)", [JSON.stringify({ sub: A.userId, role })]);
+        const { rows: [row] } = await q("update public.client_intake_forms set practitioner_notes='Allowed note',intake_link_send_count=1,status=$2,revision=999 where id=$1 returning revision::text,responses,status", [id, status]);
+        expect(row).toEqual({ revision: "1", responses: { q: "draft" }, status });
+      });
+    }
   });
 
   it("wrong studio/client refuses without a revision or a write", async () => {
