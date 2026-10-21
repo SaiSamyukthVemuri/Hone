@@ -35,7 +35,7 @@ This section previously carried a "(through 2026-07-27)" heading while containin
 
 **Coverage gap, stated rather than hidden:** this table covers PRs **#357–#479**, **#601**,
 **#629**, **#630**, and — added by the 2026-08-26 reconciliation and kept current through each
-production refresh since — **every** first-parent merge in `b9e0003f..f7ec655c`, all
+production refresh since — **every** first-parent merge in `b9e0003f..478d3a7f`, all
 **239** PR merges among them (**#632–#1002**, plus **#631**, whose number sits below that floor but
 whose merge does not — see below). The sixty-eight merges after the prior `440829c2` snapshot are #940,
 #903, #897, #895, #942, #944, #945, #941, #947, #948, #946, #949, #906, #950, #921, #951, #952, #954, #953, #956, #955, #958, #959, #957, #961, #962, #960, #964, #892, #965, #963, #966, #925, #967, #927, #968, #969, #970, #971, #973, #976, #972, #974, #975, #980, #978, #977, #983, #981, #986, #979, #982, #985, #987, #988, #989, #992, #990, #993, #991, #996, #998, #999, #995, #1001, #984, #1002 and #1000; their dated receipts are listed at the end of this changelog. ⚠️ **EXTENDED
