@@ -98,7 +98,7 @@ const h = vi.hoisted(() => {
         return b;
       };
     }
-    b.maybeSingle = () => Promise.resolve({ data: { status: "confirmed" }, error: null });
+    b.maybeSingle = () => Promise.resolve({ data: appt("live-appointment"), error: null });
     b.then = (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) =>
       Promise.resolve(answer()).then(resolve, reject);
     return b;

@@ -908,6 +908,7 @@ describe("display-vs-acceptance parity: public routes must NOT edge-pack", () =>
     readFileSync(path.resolve(__dirname, "../../../", p), "utf8");
   const PUBLIC_BOOK = read("app/book/[slug]/actions.ts");
   const PUBLIC_RESCHEDULE = read("app/reschedule/[token]/actions.ts");
+  const PUBLIC_RANGE = read("lib/booking/public-slot-range.ts");
   const SLOTS = read("lib/booking/slots.ts");
 
   it("the public booking route never enables closing-edge packing", () => {
@@ -957,12 +958,16 @@ describe("display-vs-acceptance parity: public routes must NOT edge-pack", () =>
   });
 
   it("the public next-available scanners are also unpacked", () => {
-    // Both public files call getAvailableSlots more than once (display, the
-    // submit re-verify, and the multi-day next-available scan). NONE may pack.
+    // Each route has a single-date loader and a bulk next-date loader. Guard
+    // both paths, including the shared bulk implementation, rather than pinning
+    // the obsolete count of per-day calls in a serial next-date scan.
     for (const src of [PUBLIC_BOOK, PUBLIC_RESCHEDULE]) {
-      expect((src.match(/getAvailableSlots\(/g) ?? []).length).toBeGreaterThan(1);
+      expect(src).toMatch(/await getAvailableSlots\(/);
+      expect(src).toMatch(/await loadPublicSlotsByDate\(/);
       expect(src).not.toMatch(/packAgainstClosingEdge/);
     }
+    expect(PUBLIC_RANGE).toMatch(/buildDaySlots\(/);
+    expect(PUBLIC_RANGE).not.toMatch(/packAgainstClosingEdge|INTERNAL_SLOT_PACKING/);
   });
 });
 

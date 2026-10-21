@@ -74,7 +74,7 @@ const h = vi.hoisted(() => {
       };
     }
     // The pass's cheap "still confirmed?" pre-filter.
-    b.maybeSingle = () => Promise.resolve({ data: { status: "confirmed" }, error: null });
+    b.maybeSingle = () => Promise.resolve({ data: APPT, error: null });
     b.then = (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) =>
       Promise.resolve(answer()).then(resolve, reject);
     return b;
