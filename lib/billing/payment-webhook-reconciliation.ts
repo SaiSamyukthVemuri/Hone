@@ -58,7 +58,6 @@ import {
 //   * No manual_fee_charge_attempts touch.
 //   * No live-mode CHECK relaxation.
 
-const FAILURE_MESSAGE_MAX = 1000;
 const FAILURE_CODE_MAX = 100;
 const ROUTE = "app/api/stripe/webhook";
 
@@ -99,13 +98,6 @@ const ATTEMPT_COLUMNS =
 function sanitizeFailureCode(raw: string | null | undefined): string | null {
   if (!raw) return null;
   return raw.slice(0, FAILURE_CODE_MAX);
-}
-
-function sanitizeFailureMessage(
-  raw: string | null | undefined,
-): string | null {
-  if (!raw) return null;
-  return raw.replace(/\s+/g, " ").trim().slice(0, FAILURE_MESSAGE_MAX);
 }
 
 // ---------------------------------------------------------------------------
@@ -1028,9 +1020,7 @@ export async function handlePaymentIntentPaymentFailed(
   // ready / pending_stripe: reconcile to failed.
   const lastError = pi.last_payment_error;
   const code = sanitizeFailureCode(lastError?.code ?? lastError?.type ?? null);
-  const safeMessage =
-    sanitizeFailureMessage(lastError?.message ?? null) ??
-    "Stripe payment_intent.payment_failed (no message)";
+  const safeMessage = "Stripe could not charge the saved card.";
   const admin = createAdminClient();
   const updates: Record<string, unknown> = {
     status: "failed",
