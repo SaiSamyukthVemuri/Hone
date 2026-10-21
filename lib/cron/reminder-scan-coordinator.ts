@@ -59,8 +59,37 @@ function cursorIsValid(v: unknown): v is ReminderScanCursor {
   const r = v as Record<string, unknown>;
   return Object.keys(r).length === 2 && validTime(r.startsAt) && typeof r.id === "string" && UUID.test(r.id);
 }
+// Fixed diagnostics only: never serialize a caught error, row, cursor or key.
+const DIAGNOSTIC_SQLSTATES = new Set([
+  "08000", "08001", "08003", "08004", "08006", "08007", "08P01",
+  "22000", "22007", "22008", "23502", "23503", "23505", "23514",
+  "25001", "25P02", "28000", "28P01", "40001", "40P01", "42501",
+  "42601", "42703", "42P01", "53300", "53400", "55P03", "57014",
+  "57P01", "57P02", "57P03", "58000", "XX000",
+]);
+function diagnosticSqlState(value: unknown): string | undefined {
+  return typeof value === "string" && DIAGNOSTIC_SQLSTATES.has(value) ? value : undefined;
+}
+class ScanTimeout extends Error { constructor() { super("Reminder scan step timed out"); } }
+class InvalidCheckpoint extends Error { constructor() { super("Reminder scan checkpoint invalid"); } }
+/** Loader preserves a validated code and its own abort state, never DB text. */
+export class ReminderScanReadFailure extends Error {
+  readonly sqlState: string | undefined;
+  constructor(code: unknown, readonly timedOut: boolean) {
+    super("Reminder candidate read failed");
+    this.sqlState = diagnosticSqlState(code);
+  }
+}
+function caughtSqlState(error: unknown): string | undefined {
+  try {
+    if (error instanceof ReminderScanReadFailure) return diagnosticSqlState(error.sqlState);
+    return error !== null && typeof error === "object"
+      ? diagnosticSqlState((error as { code?: unknown }).code) : undefined;
+  } catch { return undefined; }
+}
 function decode(v: unknown): unknown {
-  return typeof v === "string" ? JSON.parse(v) : v;
+  try { return typeof v === "string" ? JSON.parse(v) : v; }
+  catch { throw new InvalidCheckpoint(); }
 }
 function checkpointIsValid(v: unknown): v is Checkpoint {
   if (!v || typeof v !== "object" || Array.isArray(v)) return false;
@@ -84,7 +113,7 @@ function rotationIsValid(v: unknown): v is Rotation {
 // committed; token fencing and the unchanged DB claims remain authoritative.
 async function bounded<T>(work: Promise<T>): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("scan coordination unavailable")), 1000); });
+  const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new ScanTimeout()), 1000); });
   try { return await Promise.race([work, timeout]); } finally { clearTimeout(timer); }
 }
 
@@ -104,14 +133,14 @@ export function createReminderScanCoordinator(redis: ReminderScanRedis | null, n
     async rotation(token: string): Promise<Rotation & { missing?: true }> {
       const raw = await read(token, ROTATION);
       if (raw === null) return { version: 1, next: "email24h", known: [], missing: true };
-      if (!rotationIsValid(raw)) throw new Error("scan checkpoint invalid");
+      if (!rotationIsValid(raw)) throw new InvalidCheckpoint();
       return raw;
     },
     async checkpoint(token: string, pass: ReminderScanPass): Promise<Checkpoint | null> {
-      if (!passIsValid(pass)) throw new Error("scan checkpoint invalid");
+      if (!passIsValid(pass)) throw new InvalidCheckpoint();
       const raw = await read(token, checkpointKey(pass));
       if (raw === null) return null;
-      if (!checkpointIsValid(raw) || raw.pass !== pass) throw new Error("scan checkpoint invalid");
+      if (!checkpointIsValid(raw) || raw.pass !== pass) throw new InvalidCheckpoint();
       return raw;
     },
     async renew(token: string): Promise<boolean> {
@@ -138,6 +167,8 @@ type Coordinator = ReturnType<typeof createReminderScanCoordinator>;
 type Candidate = { id: string; starts_at: string };
 type Window = { startIso: string; endIso: string };
 type Handling = { kind: "processed" | "skipped" | "claim_unavailable"; attempted: boolean };
+type ScanFailureStage = "acquire" | "rotation" | "checkpoint" | "renew" | "save" | "read" | "validate" | "handler";
+type ScanFailureCategory = "read_timeout" | "rejected_query" | "invalid_row" | "handler_error" | "invalid_handler_result" | "claim_unavailable" | "coordination_unavailable" | "coordination_error" | "coordination_timeout" | "checkpoint_invalid";
 type BatchResult = {
   kind: "complete" | "partial" | "unavailable";
   reason: "complete" | "work_budget" | "deadline" | "checkpoint_reset" | "coverage_unconfirmed" | "coordination" | "read_or_handler" | "claim_unavailable";
@@ -145,6 +176,7 @@ type BatchResult = {
   attempted: number;
   queries: number;
   coverageUnconfirmed: boolean;
+  failure?: { stage: ScanFailureStage; category: ScanFailureCategory; sqlState?: string };
 };
 function currentWindow(pass: ReminderScanPass, now: number): Window {
   return reminderWindowIso(pass.endsWith("24h") ? "24h" : "2h", now);
@@ -169,13 +201,24 @@ export async function runReminderScanBatch<T extends Candidate>(ports: {
   const now = ports.now ?? Date.now;
   const deadline = now() + 45_000;
   const result: BatchResult = { kind: "partial", reason: "work_budget", scanned: 0, attempted: 0, queries: 0, coverageUnconfirmed: false };
+  let stage: ScanFailureStage = "acquire";
+  const unavailable = (reason: BatchResult["reason"], category: ScanFailureCategory, error?: unknown): BatchResult => {
+    const sqlState = caughtSqlState(error);
+    return { ...result, kind: "unavailable", reason,
+      failure: { stage, category, ...(sqlState ? { sqlState } : {}) } };
+  };
   const token = await ports.coordinator.acquire();
-  if (!token) return { ...result, kind: "unavailable", reason: "coordination" };
+  if (!token) return unavailable("coordination", "coordination_unavailable");
   const finish = (kind: BatchResult["kind"], reason: BatchResult["reason"]) => ({ ...result, kind, reason });
+  const save = (pass: ReminderScanPass, state: Checkpoint, rotation: Rotation) => {
+    stage = "save";
+    return ports.coordinator.save(token, pass, state, rotation, now());
+  };
   const states = new Map<ReminderScanPass, Checkpoint>();
   const done = new Set<ReminderScanPass>();
   const attempts = new Map<ReminderScanPass, number>();
   try {
+    stage = "rotation";
     const { missing, ...rotation } = await ports.coordinator.rotation(token);
     // No durable history also means no proof that an earlier finite cycle
     // finished. Bootstrap/total TTL loss must not report healthy coverage.
@@ -186,13 +229,15 @@ export async function runReminderScanBatch<T extends Candidate>(ports: {
       const pass = REMINDER_SCAN_PASSES[index];
       index = (index + 1) % 4;
       if (done.has(pass)) continue;
-      if (!await ports.coordinator.renew(token)) return finish("unavailable", "coordination");
+      stage = "renew";
+      if (!await ports.coordinator.renew(token)) return unavailable("coordination", "coordination_unavailable");
       let pageNow = now();
       let state = states.get(pass);
       if (!state) {
+        stage = "checkpoint";
         const saved = await ports.coordinator.checkpoint(token, pass);
-        if (saved && !rotation.known.includes(pass)) return finish("unavailable", "coordination");
-        if (saved && saved.createdAt > now()) return finish("unavailable", "coordination");
+        if (saved && !rotation.known.includes(pass)) return unavailable("coordination", "checkpoint_invalid");
+        if (saved && saved.createdAt > now()) return unavailable("coordination", "checkpoint_invalid");
         const reset = !saved || saved.expiresAt <= now();
         const createdAt = pageNow = now();
         const initialWindow = currentWindow(pass, createdAt);
@@ -205,7 +250,7 @@ export async function runReminderScanBatch<T extends Candidate>(ports: {
           // Loss/expiry is visible, not silently interpreted as prior coverage.
           result.coverageUnconfirmed = true;
           rotation.next = REMINDER_SCAN_PASSES[index];
-          if (!await ports.coordinator.save(token, pass, state, rotation, now())) return finish("unavailable", "coordination");
+          if (!await save(pass, state, rotation)) return unavailable("coordination", "coordination_unavailable");
           return finish("partial", "checkpoint_reset");
         }
       }
@@ -223,19 +268,23 @@ export async function runReminderScanBatch<T extends Candidate>(ports: {
       const limit = Math.min(PAGE_SIZE, REMINDER_SCAN_MAX_CANDIDATES - result.scanned);
       const query = { startIso: window.startIso, endIso, after: state.after, limit };
       result.queries++;
+      stage = "read";
       const rows = Date.parse(endIso) < Date.parse(window.startIso) ? [] : await bounded(ports.readPage(pass, query, AbortSignal.timeout(1000)));
-      if (!Array.isArray(rows) || rows.length > limit) return finish("unavailable", "read_or_handler");
+      stage = "validate";
+      if (!Array.isArray(rows) || rows.length > limit) return unavailable("read_or_handler", "invalid_row");
       let exhausted = rows.length < limit;
       for (const candidate of rows) {
+        stage = "validate";
         if (now() + 20_000 >= deadline) { exhausted = false; break; }
         const cursor = { startsAt: candidate.starts_at, id: candidate.id };
-        if (!cursorIsValid(cursor) || (state.after && compare(cursor, state.after) <= 0)) return finish("unavailable", "read_or_handler");
-        if (micros(cursor.startsAt) < micros(query.startIso) || micros(cursor.startsAt) > micros(query.endIso)) return finish("unavailable", "read_or_handler");
+        if (!cursorIsValid(cursor) || (state.after && compare(cursor, state.after) <= 0)) return unavailable("read_or_handler", "invalid_row");
+        if (micros(cursor.startsAt) < micros(query.startIso) || micros(cursor.startsAt) > micros(query.endIso)) return unavailable("read_or_handler", "invalid_row");
         const freshWindow = currentWindow(pass, now());
         const inWindow = micros(candidate.starts_at) >= micros(freshWindow.startIso) && micros(candidate.starts_at) <= micros(freshWindow.endIso);
         if (!inWindow) { result.coverageUnconfirmed = true; state.lower = freshWindow.startIso; }
+        stage = "handler";
         const outcome = inWindow ? await ports.handle(pass, candidate, freshWindow, deadline) : { kind: "skipped" as const, attempted: false };
-        if (!outcome || !["processed", "skipped", "claim_unavailable"].includes(outcome.kind) || typeof outcome.attempted !== "boolean" || (outcome.kind === "claim_unavailable" && outcome.attempted)) return finish("unavailable", "read_or_handler");
+        if (!outcome || !["processed", "skipped", "claim_unavailable"].includes(outcome.kind) || typeof outcome.attempted !== "boolean" || (outcome.kind === "claim_unavailable" && outcome.attempted)) return unavailable("read_or_handler", "invalid_handler_result");
         result.scanned++;
         if (outcome.attempted) {
           result.attempted++;
@@ -244,8 +293,9 @@ export async function runReminderScanBatch<T extends Candidate>(ports: {
         if (outcome.kind === "claim_unavailable") {
           // No authoritative handling occurred: retain the handled prefix so
           // the next fire can retry this row while its CURRENT window permits.
-          if (!await ports.coordinator.save(token, pass, state, rotation, now())) return finish("unavailable", "coordination");
-          return finish("unavailable", "claim_unavailable");
+          if (!await save(pass, state, rotation)) return unavailable("coordination", "coordination_unavailable");
+          stage = "handler";
+          return unavailable("claim_unavailable", "claim_unavailable");
         }
         // Last ACTUALLY handled candidate, not page end or refreshed timestamp.
         state.after = cursor;
@@ -257,12 +307,26 @@ export async function runReminderScanBatch<T extends Candidate>(ports: {
       }
       if (micros(state.lower) > micros(state.upper)) exhausted = true;
       if (exhausted) { state.complete = true; state.after = null; done.add(pass); }
-      if (!await ports.coordinator.save(token, pass, state, rotation, now())) return finish("unavailable", "coordination");
+      if (!await save(pass, state, rotation)) return unavailable("coordination", "coordination_unavailable");
     }
     if (result.coverageUnconfirmed) return finish("partial", "coverage_unconfirmed");
     return [...states.values()].every((s) => s.complete) && done.size === 4 ? finish("complete", "complete") : result;
-  } catch {
-    return finish("unavailable", "read_or_handler");
+  } catch (error) {
+    // Rejection values can be hostile proxies or instances with throwing
+    // getters. Even instanceof can invoke getPrototypeOf: guard the ENTIRE
+    // refinement so diagnostics never escape into the outer raw-message path.
+    let category: ScanFailureCategory = stage === "read" ? "rejected_query"
+      : stage === "handler" ? "handler_error"
+      : stage === "validate" ? "invalid_row" : "coordination_error";
+    try {
+      category = stage === "read"
+        ? error instanceof ScanTimeout || (error instanceof ReminderScanReadFailure && error.timedOut) ? "read_timeout" : "rejected_query"
+        : stage === "handler" ? "handler_error"
+        : stage === "validate" ? "invalid_row"
+        : error instanceof InvalidCheckpoint ? "checkpoint_invalid"
+        : error instanceof ScanTimeout ? "coordination_timeout" : "coordination_error";
+    } catch { /* Keep the fixed stage-derived fallback; never inspect/log again here. */ }
+    return unavailable("read_or_handler", category, error);
   } finally {
     await ports.coordinator.release(token);
   }

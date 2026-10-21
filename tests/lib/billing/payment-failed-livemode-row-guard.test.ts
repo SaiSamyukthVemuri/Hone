@@ -113,6 +113,7 @@ function failedEvent(over: Record<string, unknown> = {}) {
       object: {
         id: "pi_row",
         customer: "cus_row",
+        status: "requires_payment_method",
         // A real PaymentIntent states its money (PAY-CCY-01).
         amount: 2500,
         currency: "cad",
@@ -122,7 +123,7 @@ function failedEvent(over: Record<string, unknown> = {}) {
           hone_client_id: "cli_1",
           hone_charge_reason: "session_payment",
         },
-        last_payment_error: { code: "card_declined", message: "declined" },
+        last_payment_error: { type: "card_error", code: "card_declined", message: "declined" },
       },
     },
     ...over,

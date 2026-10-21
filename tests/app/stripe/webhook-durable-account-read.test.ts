@@ -55,25 +55,51 @@ type ReadResult = { data: unknown; error: unknown };
 function makeAdmin(reads: Record<string, ReadResult[]>, rpcs: Record<string, ReadResult> = {}) {
   const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const eqCalls: Array<{ table: string; column: string; value: unknown }> = [];
+  const updateCalls: Array<{ table: string; payload: Record<string, unknown> }> = [];
+  let observedAttempt: Record<string, unknown> | undefined;
   const admin = {
     from(table: string) {
       const q = {
         select: () => q,
+        update: (payload: Record<string, unknown>) => { updateCalls.push({ table, payload }); return q; },
+        in: () => q,
+        then: (resolve: (value: ReadResult) => unknown) => resolve({ data: [{ id: "attempt-1" }], error: null }),
         eq: (column: string, value: unknown) => {
           eqCalls.push({ table, column, value });
           return q;
         },
-        maybeSingle: async (): Promise<ReadResult> =>
-          reads[table]?.shift() ?? { data: null, error: null },
+        maybeSingle: async (): Promise<ReadResult> => {
+          const result = reads[table]?.shift() ?? { data: null, error: null };
+          if (table === "payment_charge_attempts" && result.data && typeof result.data === "object") observedAttempt = result.data as Record<string, unknown>;
+          return result;
+        },
       };
       return q;
     },
     async rpc(name: string, args: Record<string, unknown>): Promise<ReadResult> {
       rpcCalls.push({ name, args });
-      return rpcs[name] ?? { data: null, error: null };
+      if (rpcs[name]) return rpcs[name];
+      if (name === "reconcile_bound_payment_event") {
+        const row = observedAttempt;
+        const object = args.p_object as Record<string, unknown>;
+        const matches = row && args.p_attempt_id === row.id && args.p_studio_id === row.studio_id
+          && args.p_stripe_account_id === row.stripe_account_id && args.p_livemode === row.stripe_livemode
+          && object.customer_id === row.stripe_customer_id && object.payment_intent_id === row.stripe_payment_intent_id
+          && object.amount_cents === row.amount_cents && object.currency === row.currency
+          && (!row.stripe_charge_id || object.charge_id === row.stripe_charge_id);
+        if (!matches) return { data: [{ result: "identity_mismatch" }], error: null };
+        if (args.p_event_type !== "payment_intent.payment_failed") throw new Error("unexpected bound event in failed-event fixture");
+        if (!["ready", "pending_stripe"].includes(String(row.status))) return { data: [{ result: "zero_rows" }], error: null };
+        const payload = { status: "failed", failed_at: "2026-10-21T04:00:00Z",
+          failure_code: object.failure_code, failure_message_safe: object.failure_message_safe };
+        updateCalls.push({ table: "payment_charge_attempts", payload });
+        Object.assign(row, payload);
+        return { data: [{ result: "reconciled", status_before: "pending_stripe" }], error: null };
+      }
+      return { data: null, error: null };
     },
   };
-  return { admin, rpcCalls, eqCalls };
+  return { admin, rpcCalls, eqCalls, updateCalls };
 }
 
 const CLAIM_OK = {
@@ -570,5 +596,52 @@ describe("PAY-005 capability retrieval stays retryable", () => {
     expect((await callRoute()).status).toBe(200);
     expect(names(ADMIN.current!.rpcCalls)).toContain("sync_studio_account_status");
     expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+  });
+});
+
+
+describe("production failed-attempt status boundary", () => {
+  function prepare(status: unknown, error: unknown = { type: "card_error", code: "card_declined" }, original: string | null = "pi_1") {
+    CONSTRUCT_EVENT.mockReturnValue({ id: "evt_failed_status", created: 1770000000, type: "payment_intent.payment_failed", account: "acct_test_1", livemode: false,
+      data: { object: { id: "pi_1", status, amount: 5000, currency: "cad", customer: "cus_1", last_payment_error: error,
+        metadata: { hone_payment_charge_attempt_id: "attempt-1", hone_studio_id: "studio-1", hone_client_id: "client-1", hone_charge_reason: "session_payment" } } } });
+    ADMIN.current = makeAdmin({ studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
+      payment_charge_attempts: [{ data: { id: "attempt-1", studio_id: "studio-1", client_id: "client-1", charge_reason: "session_payment",
+        status: "pending_stripe", stripe_livemode: false, stripe_account_id: "acct_test_1", stripe_customer_id: "cus_1", stripe_payment_intent_id: original, stripe_charge_id: null, amount_cents: 5000, currency: "cad" }, error: null }] },
+      { claim_stripe_event: CLAIM_OK });
+  }
+  it("ordinary verified card decline remains failed without a false critical/manual alert", async () => {
+    prepare("requires_payment_method");
+    expect((await callRoute()).status).toBe(200);
+    expect(ADMIN.current!.updateCalls).toEqual([expect.objectContaining({ table: "payment_charge_attempts", payload: expect.objectContaining({ status: "failed" }) })]);
+    expect(RECORD_OPS_ALERT).not.toHaveBeenCalled();
+    expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+  });
+  it.each(["requires_action", "processing", undefined])("active/unknown original (%s) stays unresolved", async (status) => {
+    prepare(status);
+    expect((await callRoute()).status).toBe(200);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+    expect(RECORD_OPS_ALERT).toHaveBeenCalledWith(expect.objectContaining({ event: "session_payment_needs_manual_review", severity: "critical" }));
+    expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+  });
+  it.each([null, "pi_other"])("unbound/wrong original (%s) cannot be retired by a matching decline", async (original) => {
+    prepare("requires_payment_method", { type: "card_error", code: "card_declined" }, original);
+    expect((await callRoute()).status).toBe(200);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+    expect(RECORD_OPS_ALERT).toHaveBeenCalledWith(expect.objectContaining({ event: "stripe_webhook_payment_identity_mismatch" }));
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("reconcile_bound_payment_event");
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("release_stripe_event_claim_with_error");
+  });
+  it("requires_payment_method without observed card failure stays manual", async () => {
+    prepare("requires_payment_method", null);
+    expect((await callRoute()).status).toBe(200);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+    expect(RECORD_OPS_ALERT).toHaveBeenCalledWith(expect.objectContaining({ event: "session_payment_needs_manual_review" }));
+  });
+  it("verified canceled original remains a terminal control", async () => {
+    prepare("canceled", null);
+    expect((await callRoute()).status).toBe(200);
+    expect(ADMIN.current!.updateCalls).toHaveLength(1);
+    expect(RECORD_OPS_ALERT).not.toHaveBeenCalled();
   });
 });

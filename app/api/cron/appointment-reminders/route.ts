@@ -36,7 +36,7 @@ import type { Appointment, Client, Service, Studio } from "@/lib/types/database"
 import { generateCancellationToken } from "@/lib/booking/tokens";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { recordOpsAlert } from "@/lib/ops/alerts";
-import { createUpstashReminderScanCoordinator, runReminderScanBatch, type ReminderScanPass, type ReminderScanCursor } from "@/lib/cron/reminder-scan-coordinator";
+import { createUpstashReminderScanCoordinator, runReminderScanBatch, ReminderScanReadFailure, type ReminderScanPass, type ReminderScanCursor } from "@/lib/cron/reminder-scan-coordinator";
 import { recordReminderRunSuccess } from "@/lib/cron/reminder-heartbeat";
 
 const PER_RUN_LIMIT = 50;
@@ -104,7 +104,7 @@ async function loadAppointmentsForWindow(opts: {
     query = query.or(`starts_at.gt.${time},and(starts_at.eq.${time},id.gt.${id})`);
   }
   const { data, error } = await query;
-  if (error) throw new Error(error.message);
+  if (error) throw new ReminderScanReadFailure(error.code, opts.signal.aborted);
 
   return ((data ?? []) as unknown as Array<
     Appointment & {
@@ -724,7 +724,14 @@ export async function GET(req: Request) {
           event: batch.kind === "unavailable" ? "cron_route_failed" : "reminder_scan_incomplete",
           message: "Reminder scan incomplete. Check scheduler progress before retrying work.",
           route: "/api/cron/appointment-reminders",
-          safeDetails: { reason: batch.reason, candidates_scanned: batch.scanned, candidate_queries: batch.queries, attempted: batch.attempted, coverage_unconfirmed: batch.coverageUnconfirmed },
+          safeDetails: {
+            reason: batch.reason, candidates_scanned: batch.scanned, candidate_queries: batch.queries,
+            attempted: batch.attempted, coverage_unconfirmed: batch.coverageUnconfirmed,
+            ...(batch.failure ? {
+              failure_stage: batch.failure.stage, failure_category: batch.failure.category,
+              ...(batch.failure.sqlState ? { sql_state: batch.failure.sqlState } : {}),
+            } : {}),
+          },
         });
       } catch { /* An incomplete run remains incomplete if its diagnostic fails. */ }
       const lead_alerts = await runLeadAlertRecovery();
