@@ -208,6 +208,29 @@ describe("SEC-002 independently authorized privileged loaders", () => {
 // A 200 empty Next prefetch tree does not establish that the page ran.
 // Preserve full-content positive canaries before the four denied identities.
 describe("SEC-002 browser request contract", () => {
+  it("constructs the real SSR auth probe without native WebSocket and refuses Realtime", async () => {
+    const { createServerClient } = await import("@supabase/ssr");
+    const spec = readFileSync(path.join(ROOT, "e2e/lead-alert-operator.spec.ts"), "utf8");
+    const body = spec.match(/function rejectIdentityProbeRealtime\(\): never \{([\s\S]*?)\n  \}/)?.[1];
+    expect(body).toBeDefined();
+    const rejectRealtime = new Function(body!) as typeof WebSocket;
+    const nativeWebSocket = globalThis.WebSocket;
+    vi.stubGlobal("WebSocket", undefined);
+    try {
+      const client = createServerClient("http://127.0.0.1:60021", "synthetic-anon-key", {
+        realtime: { transport: rejectRealtime },
+        cookies: { getAll: () => [], setAll: () => { throw new Error("unexpected cookie write"); } },
+      });
+      const { data: { user }, error } = await client.auth.getUser();
+      expect(user).toBeNull();
+      expect(error?.name).toBe("AuthSessionMissingError");
+      expect(() => client.realtime.connect()).toThrow("SEC002 identity probe forbids Realtime connections");
+      expect(spec).toContain("realtime: { transport: rejectIdentityProbeRealtime as unknown as typeof WebSocket }");
+    } finally {
+      vi.stubGlobal("WebSocket", nativeWebSocket);
+    }
+  });
+
   it("independently verifies actual GoTrue identity and membership before each negative request matrix", () => {
     const spec = readFileSync(path.join(ROOT, "e2e/lead-alert-operator.spec.ts"), "utf8");
     const scope = spec.slice(spec.indexOf('test.describe("SEC-002'));
