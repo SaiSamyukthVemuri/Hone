@@ -66,7 +66,7 @@ function attemptRow(over: Record<string, unknown> = {}) {
     charge_reason: "session_payment",
     status: "ready",
     stripe_livemode: true,
-    stripe_payment_intent_id: "pi_row",
+    stripe_payment_intent_id: "pi_1",
     stripe_charge_id: null,
     amount_cents: 2500,
     currency: "cad",
@@ -90,6 +90,7 @@ function failedEvent(over: Record<string, unknown> = {}) {
     data: {
       object: {
         id: "pi_1",
+        status: "requires_payment_method",
         // A real PaymentIntent states its money (PAY-CCY-01).
         amount: 2500,
         currency: "cad",
@@ -99,7 +100,7 @@ function failedEvent(over: Record<string, unknown> = {}) {
           hone_client_id: "cli_1",
           hone_charge_reason: "session_payment",
         },
-        last_payment_error: { code: "card_declined", message: "declined" },
+        last_payment_error: { type: "card_error", code: "card_declined", message: "declined" },
       },
     },
     ...over,
