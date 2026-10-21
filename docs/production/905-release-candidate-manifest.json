@@ -1,6 +1,6 @@
 {
   "title": "#905 narrow source provenance carried in #908 Before/After composition",
-  "production_base": "73a6f5770a6c09d67e74e7bed89494f7179d1a92",
+  "production_base": "cae869ac1e07676c55b4ab31b282afd67eff22dc",
   "portrait_source": "affcb86727324b2c2505f5185b3ba3db3e9f4545",
   "hosted_anchor": {
     "version": "0212",
@@ -322,8 +322,8 @@
       "path": "app/(app)/clients/[id]/page.tsx",
       "source_blob": "20ea9fe0da25ae10411e8aa65b3d16c535e6897d",
       "sha256": "725a62f5785d648910054c373685187ecc892dc1304ddab8d41db91eb88bcd4f",
-      "candidate_current_sha256": "9c5b088b7214f27c0e5bb1877683be472231ce476e0b75f077bdc5a4a2398703",
-      "candidate_current_blob": "d256a3e3b9d87fb0600351df4dff72ea718f55d6"
+      "candidate_current_sha256": "52e91b3a806d21029110abae630d490bbe92bcf72a27c611aec260af85e00335",
+      "candidate_current_blob": "0e3bb12d07f53844fbe69171f6600bc809219288"
     },
     {
       "path": "lib/images/client-portrait.ts",
@@ -612,14 +612,19 @@
       "base": "aa90510354d7aa0ceeeeb70e631a85d8a9aa0b33",
       "superseded_by": "73a6f5770a6c09d67e74e7bed89494f7179d1a92",
       "reason": "Normalmerge current reviewed/deployed927 and record968; portraitimagecode and19SQLunchanged"
+    },
+    {
+      "base": "73a6f5770a6c09d67e74e7bed89494f7179d1a92",
+      "superseded_by": "cae869ac1e07676c55b4ab31b282afd67eff22dc",
+      "reason": "Normal production969 banner +970 canonical-record merge into existing Photos branch; noSQL/photo runtime change."
     }
   ],
   "canonical_record_source": {
-    "pr": 968,
-    "head": "442d041031316540a6b66f148fab0523efdb028b",
-    "merged": "73a6f5770a6c09d67e74e7bed89494f7179d1a92",
-    "status": "ExactreviewCLEANfalsefalse+normalCI39514570204SUCCESS; mergednormally; deployment/postdocs verification pending (notinferred)",
-    "scope": "206/177productionancestryat9270dc, settled39511500257unit21295PASS2canonicalFAIL/allbrowserPASS/skippedDBpaymentmobileGoogledocs preserved; no SQL/historychange"
+    "pr": 970,
+    "merged": "cae869ac1e07676c55b4ab31b282afd67eff22dc",
+    "head": "9e04b9d98830dca40c7db439b5ffa8214aaaa0fc",
+    "status": "OPS reports READY and automaticpostdocs39525407805SUCCESS; consumed by normal local merge, no independent deployment action",
+    "scope": "Record for deployed969 banner runtime; source/apply/release holds unchanged."
   },
   "integration_compatibility_repairs": {
     "source": "95a840518b270021d792eae2a52eb00096759566",
@@ -698,7 +703,7 @@
     "review": "Exactreceipt6303466243 no majorissues; aggregatesummarytrue/true/historythreads preserved,notrewritten",
     "reuse": "Evidenceatparentheadscope; field-onlydigestrepair doesnotalterUI/RPC/SQL/guards. Newcurrentreview/normalCI required onpublishedfinalhead."
   },
-  "production_runtime_base": "0dc7d5e457b4445191f47404aefd140a59f927b9",
+  "production_runtime_base": "10982f4a16bb113af335f1be3cdf5c2a5498aca9",
   "capture_stage_owner_composition": {
     "branch": "feat/fett-capture-stage",
     "parents": [
@@ -735,6 +740,28 @@
       }
     ],
     "current_review_CI": "PENDING exact composed head; parent review/CI is scoped parent evidence, not composed-head approval.",
-    "proof": "Accepted2ffd two-case storage/phone proof retained only for unchanged photo boundaries; source-equivalence map in handoff; no new browser/DB execution."
-  }
+    "proof": "Accepted2ffd two-case storage/phone proof retained only for unchanged photo boundaries; source-equivalence map in handoff; no new browser/DB execution.",
+    "current_production_merge": "cae869ac1e07676c55b4ab31b282afd67eff22dc",
+    "production_970_digest_refresh": [
+      {
+        "path": "app/(app)/clients/[id]/page.tsx",
+        "prior_sha256": "9c5b088b7214f27c0e5bb1877683be472231ce476e0b75f077bdc5a4a2398703",
+        "current_sha256": "52e91b3a806d21029110abae630d490bbe92bcf72a27c611aec260af85e00335"
+      }
+    ],
+    "production_970_record": {
+      "merged": "cae869ac1e07676c55b4ab31b282afd67eff22dc",
+      "OPS_status": "READY; automaticpostdocs39525407805SUCCESS",
+      "prior_record": "canonical_record_source retained as historical968 source; this new merge supersedes current-base relation."
+    }
+  },
+  "canonical_record_history": [
+    {
+      "pr": 968,
+      "head": "442d041031316540a6b66f148fab0523efdb028b",
+      "merged": "73a6f5770a6c09d67e74e7bed89494f7179d1a92",
+      "status": "ExactreviewCLEANfalsefalse+normalCI39514570204SUCCESS; mergednormally; deployment/postdocs verification pending (notinferred)",
+      "scope": "206/177productionancestryat9270dc, settled39511500257unit21295PASS2canonicalFAIL/allbrowserPASS/skippedDBpaymentmobileGoogledocs preserved; no SQL/historychange"
+    }
+  ]
 }
