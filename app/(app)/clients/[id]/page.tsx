@@ -11,6 +11,7 @@ import { createClient } from "@/lib/supabase/server";
 import {
   buildLastSessionSummary,
   pickLastTreatment,
+  pickNewestNonVoidSession,
   pickPreClientWatchPlanSource,
   type ClinicalSummaryBlock,
   type LastSessionSummary,
@@ -239,7 +240,7 @@ export default async function ClientCheatSheetPage({
 
   const { client, pricing, sessions, practitioners } = data;
   const sessionsByRecency = orderByRecency(sessions);
-  const newestSession = sessionsByRecency[0];
+  const newestSession = pickNewestNonVoidSession(sessionsByRecency);
   // PR Willow launch fixes: surface past appointments that the
   // practitioner has not charted yet under the Sessions tab. The
   // helper filters out appointments that already have a session
