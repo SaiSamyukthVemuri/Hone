@@ -38,6 +38,8 @@ describe("the review grid asks the projection, not the raw response map", () => 
     expect(PAGE_CODE).toContain('catalogue.kind === "legacy"');
     expect(PAGE_CODE).toContain('catalogue.kind === "known"');
     expect(PAGE_CODE).toContain("QUESTIONNAIRE_HISTORY_UNAVAILABLE");
+    expect(PAGE_CODE).toContain("<IntakeReviewFlags responses={responses} steps={INTAKE_STEPS}");
+    expect(PAGE_CODE).toContain("deriveIntakeReviewFlags(responses, steps)");
   });
 
   it("labels current questionnaire wording and the missing historical snapshot before the answer grid (CLN-008)", () => {

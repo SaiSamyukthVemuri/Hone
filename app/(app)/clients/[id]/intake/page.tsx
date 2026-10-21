@@ -353,7 +353,7 @@ export default async function ClientIntakePage({
 
       <AllergiesSummary responses={responses} />
 
-      <IntakeReviewFlags responses={responses} />
+      <IntakeReviewFlags responses={responses} steps={INTAKE_STEPS} />
 
       {catalogue.kind !== "invalid" ? <FitzpatrickSummary responses={responses} steps={INTAKE_STEPS} /> : null}
 
@@ -515,11 +515,12 @@ function flagTone(level: IntakeReviewFlag["level"]): string {
 }
 
 function IntakeReviewFlags({
-  responses,
+  responses, steps,
 }: {
   responses: Record<string, unknown>;
+  steps: ReadonlyArray<Step>;
 }) {
-  const flags = deriveIntakeReviewFlags(responses);
+  const flags = deriveIntakeReviewFlags(responses, steps);
   if (flags.length === 0) return null;
 
   return (
@@ -529,7 +530,8 @@ function IntakeReviewFlags({
       </h2>
       <p className="mt-1 text-xs text-neutral-500">
         Based on the latest recorded intake. Hone surfaces intake answers for
-        review only and does not make treatment decisions.
+        review only and does not make treatment decisions. Review guidance uses
+        current rules; evidence labels use the saved questionnaire when available.
       </p>
       <ul className="mt-3 flex flex-col gap-2">
         {flags.map((flag) => (

@@ -811,12 +811,12 @@ export function getQuestionByKey(key: string, steps: ReadonlyArray<Step> = INTAK
   return undefined;
 }
 
-export function getQuestionLabel(key: string): string {
-  return getQuestionByKey(key)?.label ?? key;
+export function getQuestionLabel(key: string, steps: ReadonlyArray<Step> = INTAKE_STEPS): string {
+  return getQuestionByKey(key, steps)?.label ?? key;
 }
 
-export function getOptionLabel(key: string, value: string): string {
-  const opt = getQuestionByKey(key)?.options?.find((o) => o.value === value);
+export function getOptionLabel(key: string, value: string, steps: ReadonlyArray<Step> = INTAKE_STEPS): string {
+  const opt = getQuestionByKey(key, steps)?.options?.find((o) => o.value === value);
   return opt?.label ?? value;
 }
 
