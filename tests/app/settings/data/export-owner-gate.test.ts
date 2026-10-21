@@ -282,6 +282,11 @@ const auditState = vi.hoisted(() => ({
   actor: { id: "actor-A", active: true, role: "owner" },
   studio: { id: "studio-A", name: "Studio A" },
   throwAuth: false, throwWrite: false,
+  authUserId: "user-A" as string | null,
+  authError: null as { message: string } | null,
+  freshMember: { id: "actor-A", user_id: "user-A", studio_id: "studio-A", active: true, role: "owner" } as { id: string; user_id: string; studio_id: string; active: boolean; role: string } | null,
+  membershipError: null as { message: string } | null,
+  membershipReads: [] as Array<Record<string, unknown>>,
   writeError: null as { message: string } | null,
   readError: null as { message: string } | null,
   adminConstructed: 0,
@@ -299,7 +304,9 @@ vi.mock("@/lib/supabase/queries", () => ({
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/logging/safe-log", () => ({ safeLog: { error: (value: string) => auditState.auditLogs.push(value) } }));
 vi.mock("@/lib/supabase/server", () => ({
-  createClient: async () => ({ from: (table: string) => ({
+  createClient: async () => ({
+    auth: { getUser: async () => ({ data: { user: auditState.authUserId ? { id: auditState.authUserId } : null }, error: auditState.authError }) },
+    from: (table: string) => ({
     update: (patch: Record<string, unknown>) => {
       const filters: Record<string, unknown> = {};
       const chain = {
@@ -318,6 +325,10 @@ vi.mock("@/lib/supabase/server", () => ({
     const chain = {
       eq: (key: string, value: unknown) => { filters[key] = value; return chain; },
       maybeSingle: async () => {
+        if (table === "practitioners") {
+          auditState.membershipReads.push(filters);
+          return { data: auditState.freshMember, error: auditState.membershipError };
+        }
         auditState.reads.push(filters);
         return { data: filters.id === "client-A" && filters.studio_id === "studio-A" ? { id: "client-A" } : null, error: auditState.readError };
       },
@@ -351,6 +362,9 @@ describe("SEC-003 governed archive/export writer", () => {
     auditState.actor = { id: "actor-A", active: true, role: "owner" };
     auditState.studio = { id: "studio-A", name: "Studio A" };
     auditState.throwAuth = false; auditState.throwWrite = false;
+    auditState.authUserId = "user-A"; auditState.authError = null;
+    auditState.freshMember = { id: "actor-A", user_id: "user-A", studio_id: "studio-A", active: true, role: "owner" };
+    auditState.membershipError = null; auditState.membershipReads = [];
     auditState.writeError = null; auditState.readError = null;
     auditState.adminConstructed = 0; auditState.inserted = []; auditState.reads = [];
     auditState.archivedAt = null; auditState.auditLogs = [];
@@ -360,6 +374,13 @@ describe("SEC-003 governed archive/export writer", () => {
     expect((await recordClientArchiveAudit(input)).error).toBeNull();
     expect(auditState.reads).toEqual([{ table: "clients", columns: "id", id: "client-A", studio_id: "studio-A" }]);
     expect(auditState.inserted).toEqual([{ studio_id: "studio-A", actor_id: "actor-A", action: "client_archived", entity_type: "client", entity_id: "client-A", metadata: { archived_at: input.archivedAt } }]);
+  });
+  it.each(["archive", "unarchive"] as const)("cached membership cannot authorize %s audit after uncached revocation", async (change) => {
+    auditState.freshMember!.active = false;
+    expect(auditState.actor.active).toBe(true);
+    expect((await recordClientArchiveAudit({ expectedStudioId: "studio-A", clientId: "client-A", change, archivedAt: "2026-10-21T01:00:00.000Z" })).error).not.toBeNull();
+    expect(auditState.adminConstructed).toBe(0);
+    expect(auditState.inserted).toEqual([]);
   });
   it("unarchive emits only the empty metadata object", async () => {
     auditState.actor.role = "practitioner";
@@ -391,8 +412,35 @@ describe("SEC-003 governed archive/export writer", () => {
   it("exports only for the active owner, with exact bounded registry metadata", async () => {
     const input = exportAuditInput();
     expect((await recordStudioExportAudit(input)).error).toBeNull();
+    expect(auditState.membershipReads).toEqual([{
+      table: "practitioners", columns: "id,user_id,studio_id,active,role",
+      id: "actor-A", user_id: "user-A", studio_id: "studio-A", active: true,
+    }]);
     expect(auditState.inserted[0]).toEqual({ studio_id: "studio-A", actor_id: "actor-A", action: "studio_export", entity_type: "studio", entity_id: "studio-A", metadata: { filename: input.filename, files: input.files, row_counts: input.rowCounts } });
   });
+  it.each([
+    ["revoked", { active: false }], ["demoted", { role: "practitioner" }],
+    ["wrong actor", { id: "actor-B" }], ["wrong studio", { studio_id: "studio-B" }],
+    ["wrong user", { user_id: "user-B" }],
+  ])("cached owner cannot authorize export when fresh membership is %s", async (_label, mutation) => {
+    Object.assign(auditState.freshMember!, mutation);
+    expect(auditState.actor).toMatchObject({ active: true, role: "owner" });
+    expect((await recordStudioExportAudit(exportAuditInput())).error).not.toBeNull();
+    expect(auditState.adminConstructed).toBe(0);
+    expect(auditState.inserted).toEqual([]);
+  });
+  it.each(["missing member", "membership error", "missing user", "auth error"])(
+    "cached owner cannot authorize export after an uncached %s", async (failure) => {
+      if (failure === "missing member") auditState.freshMember = null;
+      if (failure === "membership error") auditState.membershipError = { message: "PRIVATE MEMBERSHIP DETAIL" };
+      if (failure === "missing user") auditState.authUserId = null;
+      if (failure === "auth error") auditState.authError = { message: "PRIVATE AUTH DETAIL" };
+      expect(auditState.actor).toMatchObject({ active: true, role: "owner" });
+      expect(await recordStudioExportAudit(exportAuditInput())).toEqual({ error: { code: "audit_write_unavailable" } });
+      expect(auditState.adminConstructed).toBe(0);
+      expect(auditState.inserted).toEqual([]);
+    },
+  );
   it("rejects nonowner, inactive and changed-studio export contexts", async () => {
     auditState.actor.role = "practitioner";
     expect((await recordStudioExportAudit(exportAuditInput())).error).not.toBeNull();

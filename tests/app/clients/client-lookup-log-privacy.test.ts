@@ -1,12 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
+  getUser: vi.fn(), member: vi.fn(), memberFilters: [] as Array<[string, unknown]>,
   admin: vi.fn(), identity: vi.fn(), lookup: vi.fn(), duplicate: vi.fn(), audit: vi.fn(), redirect: vi.fn(), revalidate: vi.fn(), filters: [] as Array<[string, unknown]>, writes: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({ redirect: h.redirect }));
 vi.mock("next/cache", () => ({ revalidatePath: h.revalidate }));
 vi.mock("@/lib/supabase/queries", () => ({ getCurrentPractitionerWithStudio: h.identity }));
-vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from: (table: string) => {
+vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ auth: { getUser: h.getUser }, from: (table: string) => {
+  if (table === "practitioners") {
+    const member = { select: () => member, eq: (key: string, value: unknown) => { h.memberFilters.push([key, value]); return member; }, maybeSingle: h.member };
+    return member;
+  }
   if (table === "audit_logs") throw new Error("Direct user-scoped audit insert is forbidden");
   const query = {
     select: () => query,
@@ -35,7 +40,9 @@ function form() {
   return data;
 }
 beforeEach(() => {
-  vi.clearAllMocks(); h.filters = [];
+  vi.clearAllMocks(); h.filters = []; h.memberFilters = [];
+  h.getUser.mockResolvedValue({ data: { user: { id: "user-A" } }, error: null });
+  h.member.mockResolvedValue({ data: { id: ACTOR, user_id: "user-A", studio_id: STUDIO, active: true, role: "practitioner" }, error: null });
   h.audit.mockReset(); h.redirect.mockReset(); h.revalidate.mockReset();
   h.identity.mockResolvedValue({ studio: { id: STUDIO } });
 });
@@ -173,6 +180,8 @@ describe.each([
     // The governed helper independently reauthorizes and checks the client again.
     expect(h.identity).toHaveBeenCalledTimes(2); expect(h.lookup).toHaveBeenCalledTimes(2);
     expect(h.admin).toHaveBeenCalledOnce();
+    expect(h.getUser).toHaveBeenCalledOnce(); expect(h.member).toHaveBeenCalledOnce();
+    expect(h.memberFilters).toEqual([["id", ACTOR], ["user_id", "user-A"], ["studio_id", STUDIO], ["active", true]]);
     expect(h.filters).toEqual([["id", CLIENT], ["studio_id", STUDIO], ["id", CLIENT], ["studio_id", STUDIO]]);
     expect(h.writes).toHaveBeenCalledOnce();
     expect(update.eq.mock.calls).toEqual([["id", CLIENT], ["studio_id", STUDIO]]);
