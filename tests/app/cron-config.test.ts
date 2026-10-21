@@ -100,7 +100,8 @@ describe("the required reminder cadence covers the 2h window", () => {
 
 describe("reminder route preserves claim-before-send, idempotency, and auth", () => {
   it("uses the shared reminder window (no inline 105/135 magic numbers)", () => {
-    expect(ROUTE_CODE).toMatch(/reminderWindowIso\(/);
+    expect(ROUTE_CODE).toContain("runReminderScanBatch({");
+    expect(read("lib/cron/reminder-scan-coordinator.ts")).toContain('return reminderWindowIso(pass.endsWith("24h") ? "24h" : "2h", now);');
     expect(ROUTE_CODE).not.toMatch(/105 \* 60|135 \* 60/);
   });
 
@@ -156,7 +157,7 @@ describe("reminder route stays bounded per run (PR OPS-01)", () => {
   });
 
   it("actually applies the cap to the window query (not just declares it)", () => {
-    expect(ROUTE_CODE).toMatch(/\.limit\(PER_RUN_LIMIT\)/);
+    expect(ROUTE_CODE).toMatch(/\.limit\(Math\.min\(PER_RUN_LIMIT, opts\.limit\)\)/);
   });
 
   it("the only numeric-literal limits are single-row lookups, never the window cap", () => {
