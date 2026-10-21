@@ -1,14 +1,13 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { countVersion, fileForVersion, isRepoMax } from "./helpers/migration-state";
+import { countVersion, fileForVersion } from "./helpers/migration-state";
 import { EXPORT_RESOURCE_REGISTRY, exportedResources } from "../../lib/export/resource-registry";
 const sql = readFileSync("supabase/migrations/0244_treatment_reading_change_history.sql", "utf8");
 const executable = sql.replace(/--[^\n]*/g, "");
 describe("0244 routine history source contract, not DB proof", () => {
-  it("owns allocated max and bounded atomic additive source", () => {
+  it("owns its allocated file and bounded atomic additive source", () => {
     expect(countVersion("0244")).toBe(1);
     expect(fileForVersion("0244")).toBe("0244_treatment_reading_change_history.sql");
-    expect(isRepoMax("0244")).toBe(true);
     expect(sql).toMatch(/begin;\s*set local lock_timeout = '5s';/);
     expect(sql.trim()).toMatch(/commit;$/);
     expect(executable).not.toMatch(/cascade|set null|disable trigger|clinical_record_snapshots|clinical_audit_events|clinical_corrections_enabled/i);
