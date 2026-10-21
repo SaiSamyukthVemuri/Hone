@@ -1,8 +1,8 @@
 {
-  "at": "2026-10-21T03:56:36.952667+00:00",
+  "at": "2026-10-21T05:05:43.315592+00:00",
   "purpose": "Ordered source/checksum evidence only, not apply/release authority",
   "hosted_declaration": "0212 unchanged; originalapplyreceipts/history preserved; not re-read/applied here",
-  "source_SQL_tree": "8f367f09bbeccf3bcc0cbeb9193931deeba423db",
+  "source_SQL_tree": "6fb4c7d8f46e055076c74ca82739e86f6bcfceb2",
   "pending_versions": [
     "0213",
     "0214",
@@ -285,11 +285,11 @@
     {
       "version": "0240",
       "file": "supabase/migrations/0240_provider_refund_status.sql",
-      "raw_sha256": "018538e3b1ae73a1f203b2b4404d2bca068300110a0e3f4d77ae80be3d547b72",
-      "git_blob": "a505b8e6d129ca1a923754a481882c025623e735",
+      "raw_sha256": "129f5e77b41de437e03a198c8947f8e86398b397f61e63e1c2db34d5acfbb89f",
+      "git_blob": "fb2eb8afddfe17398d199f7f9a0470d1cd17ffdd",
       "owner": "General",
-      "published_source": "c3dda9d53f40d15654652b4a6b4e6c000d673985",
-      "application_order": "0239 BEFORE0240; compatible schema/evidence required before dependent actual-refund-status callers. Coordinated write hold and drainage of old unbound/direct writers remains. New runtime on old239 shape refuses rather than inventing refund success."
+      "published_source": "e858d1c9ade2acff3d22aa9069303652bae4ed39",
+      "application_order": "0239 BEFORE0240; compatible schema/evidence required before actual-refund callers, including the two nullable charge-aggregate provenance columns. Signed full captured charge plus complete distinct bound Refund set; actual succeeded amounts must sum to the original total. Actual individual Refund fields stay truthful and separate. Money-write hold/old-writer drain; no new caller against old240 shape."
     },
     {
       "version": "0241",
@@ -344,5 +344,16 @@
     "No hosted/provider/model/consent/customerdata actions",
     "All newDB/runtime/concurrency/ACL/cleanup proofUNRUN untilfreshCI",
     "246reservedTeam notincluded/247+unallocated"
-  ]
+  ],
+  "source_corrections": {
+    "0240": {
+      "prior_unapplied_raw": "018538e3b1ae73a1f203b2b4404d2bca068300110a0e3f4d77ae80be3d547b72",
+      "new_unapplied_raw": "129f5e77b41de437e03a198c8947f8e86398b397f61e63e1c2db34d5acfbb89f",
+      "published_source": "e858d1c9ade2acff3d22aa9069303652bae4ed39",
+      "reason": "926 exact829 P24333035670 cumulative partial refunds reaching full total",
+      "prior_CI": 39543875313,
+      "prior_CI_state": "FAIL28unit/32DB/2payment; freshchainapplypassed for OLD240 source only",
+      "new_proof": "9newaggregateDBcasesUNRUN untilnewexactCI; no heldapply/oldDBprooftransfer"
+    }
+  }
 }
