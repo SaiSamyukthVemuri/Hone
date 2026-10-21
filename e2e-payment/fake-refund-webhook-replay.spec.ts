@@ -529,9 +529,31 @@ test("E · two synthetic studios keep one booking/intake/chart/money lineage and
       const sessions = await getSessionsForClient(b.clientId); expect(sessions).toHaveLength(1);
       b.sessionId = sessions[0].id; expect(sessions[0].studio_id).toBe(seed.studioId);
       const complete = page.getByTestId("mark-appointment-complete");
-      if (await complete.isVisible()) {
-        await complete.click(); await page.getByTestId("confirm-dialog-confirm").click();
-      }
+      // Public booking deliberately selected a future slot. First prove the
+      // real completion time gate, then align ONLY that synthetic appointment
+      // to the past; keep its identity, duration, status and entire chart chain.
+      await expect(complete).toBeDisabled();
+      const beforeTime = (await adminQuery(`select id,studio_id,client_id,status,
+        starts_at > now() as future,extract(epoch from (ends_at-starts_at))::int as duration_seconds
+        from public.appointments where id=$1 and studio_id=$2 and client_id=$3`,
+      [appointmentId, seed.studioId, b.clientId])).rows;
+      expect(beforeTime).toHaveLength(1);
+      expect(beforeTime[0]).toMatchObject({ id: appointmentId, studio_id: seed.studioId,
+        client_id: b.clientId, status: "confirmed", future: true });
+      expect(beforeTime[0].duration_seconds).toBeGreaterThan(0);
+      const alignedTime = (await adminQuery(`update public.appointments
+        set ends_at=now()-interval '90 minutes'+(ends_at-starts_at),
+            starts_at=now()-interval '90 minutes'
+        where id=$1 and studio_id=$2 and client_id=$3 and status='confirmed' and starts_at>now()
+        returning id,studio_id,client_id,status,starts_at<=now() as started,
+          extract(epoch from (ends_at-starts_at))::int as duration_seconds`,
+      [appointmentId, seed.studioId, b.clientId])).rows;
+      expect(alignedTime).toEqual([{ id: appointmentId, studio_id: seed.studioId,
+        client_id: b.clientId, status: "confirmed", started: true,
+        duration_seconds: beforeTime[0].duration_seconds }]);
+      await page.reload();
+      await expect(complete).toBeEnabled();
+      await complete.click(); await page.getByTestId("confirm-dialog-confirm").click();
       await expect(page.getByTestId("finish-completion-status")).toHaveText("Completed", { timeout: 20_000 });
       const linked = (await adminQuery(`select s.studio_id,s.client_id,s.appointment_id,a.status
         from public.sessions s join public.appointments a on a.id=s.appointment_id and a.studio_id=s.studio_id
