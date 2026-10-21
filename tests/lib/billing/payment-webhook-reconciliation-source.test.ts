@@ -464,9 +464,9 @@ describe("payment-webhook-reconciliation: reason-agnostic by construction", () =
 });
 
 describe("Webhook route wiring (PR #179)", () => {
-  it("imports all four reconciliation handlers (+ the shared live-mode guard, PR #319)", () => {
+  it("imports all five reconciliation handlers (+ the shared live-mode guard, PR #319)", () => {
     expect(ROUTE).toMatch(
-      /import \{\s*\n?\s*handlePaymentIntentSucceeded,\s*\n?\s*handlePaymentIntentPaymentFailed,\s*\n?\s*handleChargeRefunded,\s*\n?\s*handleChargeDisputeCreated,\s*\n?\s*shouldIgnoreLiveModeEvent,\s*\n?\s*\} from "@\/lib\/billing\/payment-webhook-reconciliation"/,
+      /import \{\s*\n?\s*handlePaymentIntentSucceeded,\s*\n?\s*handlePaymentIntentPaymentFailed,\s*\n?\s*handleChargeRefunded,\s*\n?\s*handleRefundStatusEvent,\s*\n?\s*handleChargeDisputeCreated,\s*\n?\s*shouldIgnoreLiveModeEvent,\s*\n?\s*\} from "@\/lib\/billing\/payment-webhook-reconciliation"/,
     );
   });
 

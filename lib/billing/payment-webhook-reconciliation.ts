@@ -438,9 +438,10 @@ async function verifyPaymentEventIdentity(args: {
 
 async function reconcileBoundEvent(event: Stripe.Event, ctx: WebhookCtx, attempt: AttemptRow) {
   const isRefund = event.type === "charge.refunded";
+  const isStandaloneRefund = event.type.startsWith("refund.");
   const pi = event.data.object as Stripe.PaymentIntent;
   const charge = event.data.object as Stripe.Charge;
-  const refund = isRefund ? charge.refunds?.data?.[0] : undefined;
+  const refund = isStandaloneRefund ? event.data.object as Stripe.Refund : isRefund ? charge.refunds?.data?.[0] : undefined;
   const objectId = (value: string | { id: string } | null | undefined) => typeof value === "string" ? value : value?.id ?? null;
   const { data, error } = await createAdminClient().rpc("reconcile_bound_payment_event", {
     p_attempt_id: attempt.id,
@@ -450,11 +451,14 @@ async function reconcileBoundEvent(event: Stripe.Event, ctx: WebhookCtx, attempt
     p_stripe_account_id: ctx.stripeAccountId,
     p_livemode: ctx.livemode,
     p_object: {
-      customer_id: objectId(isRefund ? charge.customer : pi.customer),
-      payment_intent_id: isRefund ? objectId(charge.payment_intent) : pi.id,
-      charge_id: isRefund ? charge.id : objectId(pi.latest_charge),
-      amount_cents: isRefund ? charge.amount : pi.amount,
-      currency: isRefund ? charge.currency : pi.currency,
+      // Refund events carry original PI/charge IDs, not a customer in this
+      // pinned API. Their customer remains the immutable original attempt fact;
+      // the signed PI/charge pair must independently match before this command.
+      customer_id: isStandaloneRefund ? attempt.stripe_customer_id : objectId(isRefund ? charge.customer : pi.customer),
+      payment_intent_id: isStandaloneRefund ? objectId(refund?.payment_intent) : isRefund ? objectId(charge.payment_intent) : pi.id,
+      charge_id: isStandaloneRefund ? objectId(refund?.charge) : isRefund ? charge.id : objectId(pi.latest_charge),
+      amount_cents: isStandaloneRefund ? attempt.amount_cents : isRefund ? charge.amount : pi.amount,
+      currency: isStandaloneRefund ? attempt.currency : isRefund ? charge.currency : pi.currency,
       refund_id: refund?.id ?? null,
       refund_amount_cents: refund?.amount ?? null,
       refund_currency: refund?.currency ?? null,
@@ -463,10 +467,11 @@ async function reconcileBoundEvent(event: Stripe.Event, ctx: WebhookCtx, attempt
       failure_code: sanitizeFailureCode(pi.last_payment_error?.code ?? pi.last_payment_error?.type),
       failure_message_safe: sanitizeFailureMessage(pi.last_payment_error?.message),
       event_created: event.created,
+      evidence_kind: "signed_event",
     },
   });
   const outcome = (Array.isArray(data) ? data[0] : data) as { result?: string } | null;
-  if (!error && ["identity_mismatch", "refund_evidence_refused", "invalid_input"].includes(outcome?.result ?? "")) {
+  if (!error && ["identity_mismatch", "refund_evidence_refused", "invalid_input", "terminal_refund_mismatch"].includes(outcome?.result ?? "")) {
     await recordOpsAlert({
       severity: "critical", event: "stripe_webhook_bound_command_refused",
       message: "The locked payment command refused the signed event evidence. No payment row was mutated.",
@@ -1279,6 +1284,45 @@ export async function handleChargeRefunded(
     outOfBandReconciled: true,
     previousRefundStatus: attempt.refund_status,
   };
+}
+
+// Standalone Refund status events are authoritative only through their signed
+// account/mode AND original charge/PI pair. No extra provider read is necessary.
+export async function handleRefundStatusEvent(event: Stripe.Event, ctx: WebhookCtx): Promise<Record<string, unknown>> {
+  if (await shouldIgnoreLiveModeEvent(event, ctx, event.type)) return { eventType: event.type, livemodeEventIgnored: true };
+  const refund = event.data.object as Stripe.Refund;
+  const id = (value: string | { id: string } | null | undefined) => typeof value === "string" ? value : value?.id ?? null;
+  const metadata = refund.metadata ?? {};
+  const resolution = await resolveAttemptByMetadataOrId({ ctx, metadata,
+    fallbackByPaymentIntentId: id(refund.payment_intent), fallbackByChargeId: id(refund.charge) });
+  if (!resolution.ok) {
+    if (resolution.reason === "database_error") throw new Error("refund_status_lookup_failed");
+    return { eventType: event.type, noMatch: true };
+  }
+  const attempt = resolution.attempt;
+  // Some provider API versions include customer on Refund. If present it must
+  // agree too; otherwise the signed original PI/charge pair binds the stored
+  // customer without inventing a new observation or doing a provider lookup.
+  const refundCustomer = "customer" in refund ? refund.customer : undefined;
+  const observedCustomer = refundCustomer === undefined ? attempt.stripe_customer_id
+    : typeof refundCustomer === "string" ? refundCustomer
+      : refundCustomer && typeof refundCustomer === "object" && "id" in refundCustomer && typeof refundCustomer.id === "string" ? refundCustomer.id : null;
+  if (!(await verifyPaymentEventIdentity({ attempt, event, ctx, metadata,
+    paymentIntentId: id(refund.payment_intent), chargeId: id(refund.charge),
+    customerId: observedCustomer, requireCharge: true }))) {
+    return { eventType: event.type, attemptId: attempt.id, identityMismatch: true };
+  }
+  if (!(await verifyMetadataAgainstRow({ attempt, metadata, stripeEventId: event.id, targetEvent: event.type }))) {
+    return { eventType: event.type, attemptId: attempt.id, metadataMismatch: true };
+  }
+  if (!(await verifyProviderMoneyAgainstRow({ attempt, provider: { amount: refund.amount, currency: refund.currency },
+    stripeEventId: event.id, targetEvent: event.type }))) {
+    return { eventType: event.type, attemptId: attempt.id, moneyMismatch: true };
+  }
+  const { data, error } = await reconcileBoundEvent(event, ctx, attempt);
+  if (error) throw new Error("refund_status_update_failed");
+  const result = (Array.isArray(data) ? data[0] : data)?.result;
+  return { eventType: event.type, attemptId: attempt.id, refundObservationResult: result ?? "unknown" };
 }
 
 // ---------------------------------------------------------------------------

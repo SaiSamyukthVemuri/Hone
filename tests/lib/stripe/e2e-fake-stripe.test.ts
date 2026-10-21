@@ -442,10 +442,11 @@ describe("fake refunds: selectable outcomes match production's failure classes",
   // Codex P2 4264919593: lineage is recorded by the processor itself.
   it("lineage: the create records the charge it produced; the refund records the charge it targeted", async () => {
     const { refund, refundCalls, chargeId } = await setup("success");
-    await refund();
+    const returned = await refund();
     const [create] = getFakeStripeCalls(RUN).filter((c) => c.method === "pi_create" && !c.replay);
     expect(create.chargeId).toBe(chargeId);
     expect(refundCalls()[0].chargeId).toBe(chargeId);
+    expect(returned).toMatchObject({ charge: chargeId, payment_intent: create.resultId });
     // Codex P2 4265803389: both record the connected account they ran on, so an
     // event is delivered under the processor's account, not the row's.
     expect(create.stripeAccount).toBe("acct_test_r");

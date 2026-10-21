@@ -1,5 +1,5 @@
 // Stripe webhook endpoint (Phase 1 + card-on-file Phase 1 + PR #179
-// payment_charge_attempts reconciliation, test mode only).
+// mode-bound payment_charge_attempts reconciliation).
 //
 // Allowed mutations:
 //   - account.updated, capability.updated -> sync_studio_account_status,
@@ -8,7 +8,7 @@
 //     blocks charging, never replaces the account)
 //   - setup_intent.succeeded               -> client_payment_methods INSERT
 //     (PR #135; portal card-on-file)
-//   - PR #179 (test mode only):
+//   - Mode-bound payment reconciliation:
 //       payment_intent.succeeded         -> reconcile to status='succeeded'
 //                                            with PI id + Charge id + charged_at,
 //                                            from {ready, pending_stripe} only.
@@ -23,6 +23,7 @@
 //                                            refunds: critical ops_alert + no
 //                                            mutation. Out-of-band full
 //                                            refunds: warning ops_alert.
+//       refund.created/updated/failed    -> bound actual-status observation
 //       charge.dispute.created           -> critical ops_alert ONLY (no
 //                                            mutation; no automated dispute
 //                                            response).
@@ -36,7 +37,7 @@
 // idempotency and marked processed with a payload_summary, but they
 // do NOT trigger any business-logic state change):
 //   - charge.* OTHER THAN refunded / dispute.created
-//   - refund.* (the refund row state mirrors charge.refunded)
+//   - refund.* OTHER THAN created / updated / failed (bound status events)
 //   - charge.dispute.* OTHER THAN created
 //   - customer.*
 //   - setup_intent.* OTHER THAN succeeded / setup_failed
@@ -86,6 +87,7 @@ import {
   handlePaymentIntentSucceeded,
   handlePaymentIntentPaymentFailed,
   handleChargeRefunded,
+  handleRefundStatusEvent,
   handleChargeDisputeCreated,
   shouldIgnoreLiveModeEvent,
 } from "@/lib/billing/payment-webhook-reconciliation";
@@ -473,6 +475,11 @@ async function handleStripeEvent(
     }
     case "payment_intent.payment_failed": {
       return await handlePaymentIntentPaymentFailed(event, ctx);
+    }
+    case "refund.created":
+    case "refund.updated":
+    case "refund.failed": {
+      return await handleRefundStatusEvent(event, ctx);
     }
     case "charge.refunded": {
       return await handleChargeRefunded(event, ctx);

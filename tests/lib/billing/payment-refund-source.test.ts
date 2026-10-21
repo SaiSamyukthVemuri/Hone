@@ -307,15 +307,17 @@ describe("refundPaymentChargeAttempt: Stripe refund call shape", () => {
 
 describe("refundPaymentChargeAttempt: outcome writes", () => {
   it("success writes refund_status='succeeded', stripe_refund_id, refunded_at", () => {
-    expect(HELPER).toMatch(
-      /\.update\(\{\s*\n\s*refund_status:\s*"succeeded"[\s\S]{0,400}stripe_refund_id:\s*refund\.id[\s\S]{0,400}refunded_at:\s*refundedAtIso/,
-    );
+    expect(HELPER).toContain('rpc("reconcile_bound_payment_event"');
+    expect(HELPER).toContain('p_event_type: "refund.observed"');
+    expect(HELPER).toContain('saved?.refund_status !== "succeeded"');
+    expect(HELPER).toContain("const refundedAtIso = saved.refunded_at");
   });
 
   it("success write matches refund_status='pending_stripe' (no overwrite of a reconciled row)", () => {
-    expect(HELPER).toMatch(
-      /\.update\(\{\s*\n\s*refund_status:\s*"succeeded"[\s\S]{0,800}\.eq\("refund_status", "pending_stripe"\)/,
-    );
+    const SQL = readFileSync(path.resolve(__dirname, "../../../supabase/migrations/0240_provider_refund_status.sql"), "utf8");
+    expect(SQL).toContain("where a.id=p_attempt_id for update");
+    expect(SQL).toContain("v_row.refund_status='succeeded' and v_status is distinct from 'succeeded'");
+    expect(SQL).toContain("v_row.stripe_refund_id<>v_refund");
   });
 
   it("Stripe terminal error writes refund_status='failed' with sanitised code + message", () => {
@@ -335,12 +337,8 @@ describe("refundPaymentChargeAttempt: outcome writes", () => {
     // The ops_alert call lists severity before event in this code;
     // pin both literals + the stripe_refund_id payload separately so
     // a refactor that reorders the keys still passes.
-    expect(HELPER).toMatch(/event:\s*"payment_refund_succeeded_write_failed"/);
-    const alertBlock =
-      HELPER.match(
-        /payment_refund_succeeded_write_failed[\s\S]{0,2000}stripe_refund_id:\s*refund\.id/,
-      )?.[0] ?? "";
-    expect(alertBlock).toMatch(/severity:\s*"critical"/);
+    expect(HELPER).toMatch(/severity:\s*"critical"[\s\S]{0,100}event:\s*"payment_refund_outcome_write_refused"/);
+    expect(HELPER).toMatch(/payment_refund_outcome_write_refused[\s\S]{0,600}stripe_refund_id:\s*refund\.id/);
   });
 });
 
