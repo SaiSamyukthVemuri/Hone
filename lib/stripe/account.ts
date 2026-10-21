@@ -9,11 +9,128 @@
 
 import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { notifyCriticalOpsAlert } from "@/lib/ops/alert-email";
+import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
+import { getStripe, inferStripeLivemode } from "./server";
+
 import {
-  STRIPE_CONNECT_COUNTRY,
-  getStripe,
-  inferStripeLivemode,
-} from "./server";
+  ACCOUNT_COUNTRY_MISMATCH_ERROR,
+  PAYMENT_COUNTRY_UNVERIFIED_ERROR,
+} from "./account-messages";
+
+export { ACCOUNT_COUNTRY_MISMATCH_ERROR, PAYMENT_COUNTRY_UNVERIFIED_ERROR };
+
+// ---------------------------------------------------------------------------
+// recordStripeAccountObservation (PAY-CCY-03)
+// ---------------------------------------------------------------------------
+//
+// Stripe is the authority on a connected account's country; the studio's
+// jurisdiction (0214) is the authority on the country it SHOULD be in. This
+// records what Stripe said (record_stripe_account_jurisdiction: country
+// write-once, default currency refreshed) and reports whether the two agree.
+// A disagreement raises a critical alert and is returned, never repaired: no
+// path in Hone replaces a connected account. Charging fails closed on it in
+// the eligibility helper, the charge-time lineage check and the 0214 insert
+// guard.
+export type AccountObservation =
+  | { kind: "match"; accountCountry: string }
+  | {
+      kind: "mismatch";
+      accountCountry: string | null;
+      paymentCountry: string | null;
+      reason: "country_mismatch" | "country_conflict";
+    }
+  | { kind: "not_recorded"; reason: "not_bound" | "invalid_input" | "rpc_failed" };
+
+export async function recordStripeAccountObservation(args: {
+  studioId: string;
+  stripeAccountId: string;
+  livemode: boolean;
+  account: Pick<Stripe.Account, "country" | "default_currency">;
+  route: string;
+}): Promise<AccountObservation> {
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("record_stripe_account_jurisdiction", {
+    p_studio_id: args.studioId,
+    p_stripe_account_id: args.stripeAccountId,
+    p_stripe_livemode: args.livemode,
+    p_country: args.account.country ?? null,
+    p_default_currency: args.account.default_currency ?? null,
+  });
+  if (error) {
+    logInternalStripeError("record_stripe_account_jurisdiction_failed", {
+      code: error.code,
+      message: error.message,
+      studioId: args.studioId,
+    });
+    return { kind: "not_recorded", reason: "rpc_failed" };
+  }
+  const row = (Array.isArray(data) ? data[0] : data) as
+    | {
+        out_result: string;
+        out_account_country: string | null;
+        out_payment_country: string | null;
+        out_matches: boolean | null;
+      }
+    | null;
+  if (!row || row.out_result === "not_bound" || row.out_result === "invalid_input") {
+    return {
+      kind: "not_recorded",
+      reason: row?.out_result === "invalid_input" ? "invalid_input" : "not_bound",
+    };
+  }
+  if (row.out_result !== "country_conflict" && row.out_matches === true) {
+    return { kind: "match", accountCountry: row.out_account_country ?? "" };
+  }
+  const reason =
+    row.out_result === "country_conflict" ? "country_conflict" : "country_mismatch";
+  // 0238 owns the durable row and serializes open incidents. Never call
+  // recordOpsAlert here: that would insert another row and email every retry.
+  try {
+    const { data: claims, error: claimError } = await admin.rpc(
+      "claim_stripe_account_country_alert",
+      { p_studio_id: args.studioId, p_stripe_account_id: args.stripeAccountId,
+        p_stripe_livemode: args.livemode },
+    );
+    const claim = (Array.isArray(claims) ? claims[0] : claims) as {
+      out_result: string; out_alert_id: string | null; out_created_at: string | null;
+      out_reason: string | null; out_message: string | null;
+    } | null;
+    if (claimError || !claim || !["created", "existing", "not_mismatched"].includes(claim.out_result)) {
+      logInternalStripeError("stripe_account_country_alert_claim_failed", {
+        studioId: args.studioId, stripeAccountId: args.stripeAccountId,
+        livemode: args.livemode, reason, code: claimError?.code ?? null,
+        result: claim?.out_result ?? null,
+      });
+    } else if (claim.out_result === "created") {
+      if (!claim.out_alert_id || !claim.out_created_at || !claim.out_message ||
+          !["country_mismatch", "country_conflict"].includes(claim.out_reason ?? "")) {
+        logInternalStripeError("stripe_account_country_alert_claim_invalid", {
+          studioId: args.studioId, stripeAccountId: args.stripeAccountId,
+        });
+      } else {
+        await notifyCriticalOpsAlert({
+          event: "stripe_account_country_mismatch", message: claim.out_message,
+          createdAtIso: claim.out_created_at, studioId: args.studioId,
+          route: "lib/stripe/account:recordStripeAccountObservation",
+        });
+      }
+    }
+  } catch {
+    // Alert failures never turn a country refusal into success. The next
+    // observation can retry a rolled-back claim; email remains best effort.
+    logInternalStripeError("stripe_account_country_alert_claim_threw", {
+      studioId: args.studioId, stripeAccountId: args.stripeAccountId,
+      livemode: args.livemode, reason,
+    });
+  }
+  return {
+    kind: "mismatch",
+    accountCountry: row.out_account_country,
+    paymentCountry: row.out_payment_country,
+    reason,
+  };
+}
 
 function logInternalStripeError(event: string, detail: unknown) {
   try {
@@ -50,6 +167,20 @@ export async function createOrLoadConnectedAccountForStudio(
   const stripe = getStripe();
   const livemode = inferStripeLivemode();
 
+  // PAY-CCY-03. The account is created in the studio's VERIFIED payment
+  // country (studio_payment_jurisdictions, 0214), never in a deployment-wide
+  // default and never inferred from the timezone. An unread jurisdiction stops
+  // here, before any provisioning claim exists.
+  const jurisdictionRead = await getStudioPaymentJurisdiction(studioId);
+  if (!jurisdictionRead.ok) {
+    logInternalStripeError("payment_jurisdiction_unread_at_onboarding", {
+      studioId,
+      reason: jurisdictionRead.reason,
+    });
+    throw new Error(PAYMENT_COUNTRY_UNVERIFIED_ERROR);
+  }
+  const paymentCountry = jurisdictionRead.jurisdiction.country;
+
   const { data: claimRows, error: claimErr } = await admin.rpc(
     "create_or_claim_stripe_account_provisioning",
     { p_studio_id: studioId, p_stripe_livemode: livemode },
@@ -71,6 +202,43 @@ export async function createOrLoadConnectedAccountForStudio(
   // Already-provisioned short-circuit. The studio's settings row holds
   // a stripe_account_id; reuse it.
   if (claim.already_provisioned && claim.out_stripe_account_id) {
+    // PAY-CCY-03. An EXISTING account whose recorded country is not the
+    // studio's, or that Stripe has reported in two countries (0214's
+    // persisted conflict), fails closed: no onboarding link is minted for it,
+    // and it is never swapped for a new one. An unobserved bound account also
+    // stays blocked until refresh or account.updated records its country.
+    // Binding succeeds before observation, so a retry must not bypass the
+    // new-account observation refusal below.
+    const { data: bound, error: boundErr } = await admin
+      .from("studio_payment_settings")
+      .select("stripe_account_country, stripe_account_country_conflict")
+      .eq("studio_id", studioId)
+      // The claim RPC is mode-scoped (0103) and was called with this mode.
+      .eq("stripe_livemode", livemode)
+      .eq("stripe_account_id", claim.out_stripe_account_id)
+      .maybeSingle();
+    if (boundErr) {
+      logInternalStripeError("bound_account_country_read_failed", {
+        code: boundErr.code,
+        studioId,
+      });
+      throw new Error(PAYMENT_COUNTRY_UNVERIFIED_ERROR);
+    }
+    const recorded = (bound?.stripe_account_country as string | null) ?? null;
+    const conflict =
+      (bound?.stripe_account_country_conflict as string | null) ?? null;
+    if ((recorded && recorded !== paymentCountry) || conflict) {
+      logInternalStripeError("onboarding_refused_account_country_mismatch", {
+        studioId,
+        recordedAccountCountry: recorded,
+        conflictingAccountCountry: conflict,
+        paymentCountry,
+      });
+      throw new Error(ACCOUNT_COUNTRY_MISMATCH_ERROR);
+    }
+    if (!recorded) {
+      throw new Error(PAYMENT_COUNTRY_UNVERIFIED_ERROR);
+    }
     return {
       stripeAccountId: claim.out_stripe_account_id,
       livemode: claim.out_stripe_livemode ?? livemode,
@@ -100,6 +268,36 @@ export async function createOrLoadConnectedAccountForStudio(
     );
   }
 
+  // PAY-CCY-03 (Codex P1 4244982189). The country the account is created in
+  // is the one STAMPED ON THIS CLAIM (0214 §4f), not the read above: that
+  // read happened before the claim, and an operator change committed in
+  // between would otherwise create the account for the stale country. The
+  // stamp is taken under a share lock that serializes with the change
+  // command, and an existing claim refuses every later change, so it cannot
+  // go stale.
+  const { data: claimRow, error: claimRowErr } = await admin
+    .from("stripe_account_provisioning_attempts")
+    .select("payment_country")
+    .eq("id", claim.attempt_id)
+    .eq("studio_id", studioId)
+    .maybeSingle();
+  const claimCountry = (claimRow?.payment_country as string | null) ?? null;
+  if (claimRowErr || (claimCountry !== "CA" && claimCountry !== "US")) {
+    logInternalStripeError("provisioning_claim_country_unverified", {
+      studioId,
+      code: claimRowErr?.code ?? null,
+      claimCountry,
+    });
+    throw new Error(PAYMENT_COUNTRY_UNVERIFIED_ERROR);
+  }
+  if (claimCountry !== paymentCountry) {
+    logInternalStripeError("provisioning_claim_country_changed_since_read", {
+      studioId,
+      readCountry: paymentCountry,
+      claimCountry,
+    });
+  }
+
   // We own the claim. Call Stripe.accounts.create with the RPC-supplied
   // idempotency key so retries collapse on Stripe's side.
   let account: Stripe.Account;
@@ -107,7 +305,7 @@ export async function createOrLoadConnectedAccountForStudio(
     account = await stripe.accounts.create(
       {
         type: "express",
-        country: STRIPE_CONNECT_COUNTRY,
+        country: claimCountry,
         capabilities: {
           card_payments: { requested: true },
           transfers: { requested: true },
@@ -166,6 +364,27 @@ export async function createOrLoadConnectedAccountForStudio(
       "Connected account created on Stripe but local binding failed. " +
         "Refresh status from Stripe to reconcile.",
     );
+  }
+
+  // PAY-CCY-03. A newly created account must have its country recorded before
+  // provisioning succeeds. Keep the binding for reconciliation on failure;
+  // do not report onboarding success with an unobserved new account.
+  const observation = await recordStripeAccountObservation({
+    studioId,
+    stripeAccountId: account.id,
+    livemode,
+    account,
+    route: "lib/stripe/account:createOrLoadConnectedAccountForStudio",
+  });
+  if (observation.kind === "mismatch") {
+    // Stripe created the account in a country other than the one requested.
+    // It stays bound (it exists on Stripe and must remain traceable) and is
+    // NOT replaced; onboarding stops here.
+    throw new Error(ACCOUNT_COUNTRY_MISMATCH_ERROR);
+  }
+
+  if (observation.kind === "not_recorded") {
+    throw new Error(PAYMENT_COUNTRY_UNVERIFIED_ERROR);
   }
 
   return {
@@ -342,6 +561,23 @@ export async function refreshAccountStatusFromStripe(params: {
       message: syncErr.message,
       studioId: params.studioId,
     });
+    throw new Error("Stripe status refresh succeeded but local sync failed.");
+  }
+
+  // PAY-CCY-03. Every refresh records the account's country. Status is synced
+  // first, so the owner's view of Stripe stays accurate either way; a mismatch
+  // is then reported to them rather than shown as a healthy account.
+  const observation = await recordStripeAccountObservation({
+    studioId: params.studioId,
+    stripeAccountId: params.stripeAccountId,
+    livemode,
+    account,
+    route: "lib/stripe/account:refreshAccountStatusFromStripe",
+  });
+  if (observation.kind === "mismatch") {
+    throw new Error(ACCOUNT_COUNTRY_MISMATCH_ERROR);
+  }
+  if (observation.kind === "not_recorded" && observation.reason === "rpc_failed") {
     throw new Error("Stripe status refresh succeeded but local sync failed.");
   }
 
