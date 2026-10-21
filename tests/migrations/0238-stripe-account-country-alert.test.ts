@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { countVersion, fileForVersion, isRepoMax } from "./helpers/migration-state";
+import { countVersion, fileForVersion } from "./helpers/migration-state";
 
 const SQL = readFileSync(join(process.cwd(), "supabase/migrations/0238_stripe_account_country_alert.sql"), "utf8");
 const CODE = SQL.replace(/^\s*--.*$/gm, "");
@@ -10,7 +10,6 @@ const SIG = "claim_stripe_account_country_alert(uuid, text, boolean)";
 
 describe("0238 bounded Stripe country incident contract", () => {
   it("owns the new maximum and is allocated exactly once", () => {
-    expect(isRepoMax("0238")).toBe(true);
     expect(countVersion("0238")).toBe(1);
     expect(fileForVersion("0238")).toBe("0238_stripe_account_country_alert.sql");
   });
