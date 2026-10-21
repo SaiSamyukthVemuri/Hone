@@ -668,7 +668,11 @@ test.describe("0243 stale public and assisted drafts", () => {
       await expect(stale.getByLabel("Preferred name", { exact: true })).toHaveValue("Unsaved losing draft");
       expect((await getIntakeRow(intakeId))?.responses.preferred_name).toBe("Committed winner");
       await stale.getByRole("button", { name: "Discard my unsaved draft and reload saved answers", exact: true }).click();
-      await stale.getByRole("button", { name: "Back", exact: true }).click();
+      // Step2 also has a legitimate body-area choice named Back. Scope the
+      // navigation action to the active questionnaire's Continue/Back footer.
+      const questionnaireActions = stale.getByRole("button", { name: "Continue", exact: true }).locator("..");
+      await expect(questionnaireActions.getByRole("button", { name: "Back", exact: true })).toBeEnabled();
+      await questionnaireActions.getByRole("button", { name: "Back", exact: true }).click();
       await expect(stale.getByLabel("Preferred name", { exact: true })).toHaveValue("Committed winner");
     } finally { await stale.close(); }
   });

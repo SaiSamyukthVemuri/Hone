@@ -20,6 +20,13 @@ export type ServiceRoleAllowlistEntry = {
 
 export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
+    path: "lib/audit/governed-writes.ts",
+    purpose: "SEC-003: only the existing archive/unarchive and owner-export audit emissions after direct member INSERT closure.",
+    why: "This is an internal server-only module, not a Server Action or arbitrary audit transport. Both writers independently resolve the current active practitioner and selected studio and compare studio.id against the calling server's expectedStudioId before constructing the privileged client. Archive/unarchive also re-read the exact client through the session/RLS client by id AND studio_id; the server derives actor_id/studio_id and hard-codes action/entity/metadata, with only a validated archive timestamp. Export independently requires owner role and validates the emitted filename, registry file set and exact nonnegative safe-integer resource counts; a failed audit withholds export bytes. No raw actor, action, clinical command or metadata object is admitted. Returned failures are curated; rejected archive audit promises still reject with a fixed no-PHI error and no redirect. This entry does not authorize any other service-role table read/write or bypass the authority checks.",
+    scopeGuard: "studio.id !== input.expectedStudioId",
+  },
+
+  {
     path: "lib/email/send-appointment.ts",
     purpose: "DELIVERY-VISIBILITY-03: the booking confirmation joins the email delivery ledger.",
     why: "Bookkeeping only, after the send decision its caller already made. sendBookingConfirmationToClient builds the admin client ONLY to call the service-role-only begin_appointment_email_message (which re-checks that the appointment belongs to the studio it names) and settle_email_message on the row it just created. It reads no other table and accepts no caller-chosen row id. Fail-soft: without it the same email is sent, untagged.",
