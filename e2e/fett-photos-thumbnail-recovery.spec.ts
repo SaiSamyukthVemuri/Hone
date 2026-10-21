@@ -462,3 +462,79 @@ test("delayed preview replies never cross image identity; close and signing fail
     await page.unroute(pattern, handler);
   }
 });
+
+// CLN-006: close before a note refresh commits, then retain the SAME grid
+// opener after fresh signed URLs arrive. Real responses/storage, no fake Flight.
+test("grid preview opener keeps focus when note refresh commits after close", async ({ page }) => {
+  test.setTimeout(180_000);
+  const seed = await seedE2eStudio();
+  const { clientId } = await seedE2eClient(seed);
+  await loginAsOwner(page, seed);
+  await uploadPhotos(page, clientId, 1);
+  const [row] = await sql<{ id: string }>(
+    "select id from public.treatment_images where client_id = $1 and deleted_at is null", [clientId],
+  );
+  const opener = page.getByRole("button", { name: "View larger treatment photo", exact: true });
+  await expect(opener.locator("img")).toBeVisible();
+  const oldSrc = await opener.locator("img").getAttribute("src");
+  const originalButton = await opener.elementHandle();
+  expect(originalButton).not.toBeNull();
+  await opener.click();
+  const dialog = page.getByRole("dialog", { name: "Treatment photo preview" });
+  await expect(dialog.getByRole("img", { name: "Treatment photo", exact: true })).toBeVisible();
+  // Storage tokens include second-resolution issuance. Ensure the refresh
+  // actually changes the URLs, otherwise a URL-keyed remount is not exercised.
+  const signingSecond = Math.floor(Date.now() / 1000);
+  await expect.poll(() => Math.floor(Date.now() / 1000)).toBeGreaterThan(signingSecond);
+
+  const note = "Synthetic note saved before preview close";
+  let releaseNote!: () => void;
+  let releaseRefresh!: () => void;
+  const noteGate = new Promise<void>((resolve) => { releaseNote = resolve; });
+  const refreshGate = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+  let heldNote = false;
+  let heldRefresh = false;
+  const pending: Promise<void>[] = [];
+  const pattern = `${E2E_APP_ORIGIN}/clients/${clientId}/images*`;
+  const handler = (route: Route) => {
+    const request = route.request();
+    const body = request.postData() ?? "";
+    const savingNote = request.method() === "POST" && Boolean(request.headers()["next-action"])
+      && body.includes(row.id) && body.includes(JSON.stringify(note));
+    const refreshing = request.method() === "GET" && request.headers().rsc === "1";
+    if (!savingNote && !refreshing) return route.continue();
+    const task = (async () => {
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      if (savingNote) { heldNote = true; await noteGate; }
+      else { heldRefresh = true; await refreshGate; }
+      await route.fulfill({ response });
+    })();
+    pending.push(task);
+    return task;
+  };
+  await page.route(pattern, handler);
+  try {
+    await dialog.getByRole("button", { name: "Add note", exact: true }).click();
+    await dialog.getByPlaceholder("Add a note for this photo…").fill(note);
+    await dialog.getByRole("button", { name: "Save", exact: true }).click();
+    await expect.poll(() => heldNote, { timeout: T }).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    // The review's race: close sees a CONNECTED opener, before refresh commit.
+    await expect.poll(() => originalButton!.evaluate((el) => el.isConnected && el === document.activeElement)).toBe(true);
+    releaseNote();
+    await expect.poll(() => heldRefresh, { timeout: T }).toBe(true);
+    releaseRefresh();
+    await Promise.all(pending);
+    await expect(page.getByText(note, { exact: true })).toBeVisible();
+    await expect.poll(() => opener.locator("img").getAttribute("src")).not.toBe(oldSrc);
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await expect.poll(() => originalButton!.evaluate((el) => el.isConnected && el === document.activeElement)).toBe(true);
+  } finally {
+    releaseNote();
+    releaseRefresh();
+    await Promise.allSettled(pending);
+    await page.unroute(pattern, handler);
+  }
+});
