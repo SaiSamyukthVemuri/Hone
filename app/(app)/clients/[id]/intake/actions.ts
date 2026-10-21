@@ -277,7 +277,6 @@ export async function saveIntakeNotesAction(formData: FormData): Promise<ReviewR
   if (error) {
     logIntakeActionFailure("intake_notes_update_failed", {
       code: (error as { code?: string }).code,
-      message: error.message,
     });
     return { ok: false, error: NOTES_DB_FAILURE };
   }
