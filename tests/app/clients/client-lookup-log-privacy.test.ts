@@ -252,6 +252,38 @@ describe.each([
     for (const text of ["synthetic-patient", "private-clinical", "synthetic-token", CLIENT])
       expect(JSON.stringify(log.mock.calls)).not.toContain(text);
   });
+  it("preserves normal governed committed success without inventing an audit warning", async () => {
+    const update = setup();
+    let committedState: Record<string, unknown> | null = null;
+    const commit = async () => {
+      committedState = { ...h.writes.mock.calls[0]![0] };
+      return { error: null };
+    };
+    update.is.mockImplementation(commit); update.not.mockImplementation(commit);
+    h.audit.mockImplementation(async () => {
+      expect(committedState).toEqual(name === "archive"
+        ? { archived_at: expect.any(String), archived_by: ACTOR } : { archived_at: null, archived_by: null });
+      return { error: null };
+    });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(action(form())).rejects.toBe(NAV);
+    expect(committedState).toEqual(name === "archive"
+      ? { archived_at: expect.any(String), archived_by: ACTOR } : { archived_at: null, archived_by: null });
+    expect(h.writes).toHaveBeenCalledOnce();
+    expect(update.eq.mock.calls).toEqual([["id", CLIENT], ["studio_id", STUDIO]]);
+    expect(update.is.mock.calls).toEqual(name === "archive" ? [["archived_at", null]] : []);
+    expect(update.not.mock.calls).toEqual(name === "unarchive" ? [["archived_at", "is", null]] : []);
+    expect(h.getUser).toHaveBeenCalledOnce(); expect(h.member).toHaveBeenCalledOnce();
+    expect(h.memberFilters).toEqual([["id", ACTOR], ["user_id", "user-A"], ["studio_id", STUDIO], ["active", true]]);
+    expect(h.admin).toHaveBeenCalledOnce();
+    expect(h.audit).toHaveBeenCalledExactlyOnceWith({
+      studio_id: STUDIO, actor_id: ACTOR, action: auditAction, entity_type: "client", entity_id: CLIENT,
+      metadata: name === "archive" ? { archived_at: committedState!.archived_at } : {},
+    });
+    expect(h.revalidate.mock.calls).toEqual([[`/clients/${CLIENT}`], ["/clients"]]);
+    expect(h.redirect).toHaveBeenCalledExactlyOnceWith(destination);
+    expect(log).not.toHaveBeenCalled();
+  });
   it("preserves UPDATE failure before audit and redirect", async () => {
     const update = setup();
     update.is.mockResolvedValue({ error: { message: "synthetic update refusal" } });
