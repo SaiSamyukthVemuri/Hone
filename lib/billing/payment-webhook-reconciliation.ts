@@ -445,6 +445,15 @@ async function verifyPaymentEventIdentity(args: {
       || (mismatch === "charge" && args.requireCharge
         && !attempt.stripe_charge_id && !!args.chargeId));
   if (awaitingOriginalBinding) {
+    // A missing original is expected only when the existing optional metadata
+    // contract also agrees. Preserve its critical refusal before suppressing
+    // handler-failure alerts for a normal binding race.
+    if (!(await verifyMetadataAgainstRow({
+      attempt,
+      metadata: args.metadata,
+      stripeEventId: event.id,
+      targetEvent: event.type,
+    }))) return false;
     throw new PaymentOriginalBindingPendingError();
   }
 

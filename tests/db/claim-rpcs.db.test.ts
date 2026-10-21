@@ -26,15 +26,18 @@ afterAll(async () => {
   await closePool();
 });
 
+let appointmentSequence = 0;
 async function seedAppointment(): Promise<string> {
   const id = randomUUID();
+  // Each fixture keeps real capacity-OFF exclusion rules and gets its own slot.
+  const startsAt = new Date(Date.UTC(2030, 2, 1, 10) + appointmentSequence++ * 2 * 60 * 60 * 1000);
+  const endsAt = new Date(startsAt.getTime() + 60 * 60 * 1000);
   await adminQuery(
     `insert into public.appointments
        (id, studio_id, client_id, starts_at, ends_at, duration_minutes,
         buffer_minutes_snapshot, blocked_ends_at)
-     values ($1, $2, $3, '2030-03-01T10:00:00Z', '2030-03-01T11:00:00Z', 60, 0,
-             '2030-03-01T11:00:00Z')`,
-    [id, s.studioId, s.clientId],
+     values ($1, $2, $3, $4, $5, 60, 0, $5)`,
+    [id, s.studioId, s.clientId, startsAt.toISOString(), endsAt.toISOString()],
   );
   return id;
 }

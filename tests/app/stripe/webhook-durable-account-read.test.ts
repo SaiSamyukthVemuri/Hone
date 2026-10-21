@@ -734,3 +734,68 @@ describe("production failed-attempt status boundary", () => {
   });
 
 });
+
+// Existing metadata refusals must precede classification as an expected binding race.
+describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "charge.refunded"] as const)(
+  "pending binding metadata order: %s", (type) => {
+    function prepareMetadata(metadata: Record<string, string>, original: string | null = null) {
+      const row = { id: "attempt-1", studio_id: "studio-1", client_id: "client-1", charge_reason: "session_payment",
+        status: "pending_stripe", stripe_livemode: false, stripe_account_id: "acct_test_1", stripe_customer_id: "cus_1",
+        stripe_payment_intent_id: original, stripe_charge_id: "ch_1", amount_cents: 5000, currency: "cad" };
+      const identity = { customer: "cus_1", amount: 5000, currency: "cad", metadata: { hone_payment_charge_attempt_id: "attempt-1", ...metadata } };
+      const object = type === "charge.refunded"
+        ? { ...identity, id: "ch_1", payment_intent: "pi_1", refunded: true, amount_refunded: 5000, refunds: { data: [{ id: "re_1" }] } }
+        : { ...identity, id: "pi_1", latest_charge: "ch_1", status: "requires_payment_method", last_payment_error: { type: "card_error", code: "card_declined" } };
+      CONSTRUCT_EVENT.mockReturnValue({ id: "evt_metadata_order", created: 1770000000, type, account: "acct_test_1", livemode: false, data: { object } });
+      ADMIN.current = makeAdmin({ studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
+        payment_charge_attempts: [{ data: row, error: null }] }, { claim_stripe_event: CLAIM_OK });
+    }
+    const contradictions = [
+      ["hone_studio_id", "studio-other", "studio_id"],
+      ["hone_client_id", "client-other", "client_id"],
+      ["hone_charge_reason", "no_show_fee", "charge_reason"],
+    ] as const;
+    it.each(contradictions)("missing original does not suppress existing %s refusal", async (key, value, mismatch) => {
+      prepareMetadata({ [key]: value });
+      expect((await callRoute()).status).toBe(200);
+      expect(RECORD_OPS_ALERT).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        severity: "critical", event: "stripe_webhook_metadata_mismatch", safeDetails: expect.objectContaining({ mismatch }),
+      }));
+      expect(ADMIN.current!.updateCalls).toEqual([]);
+      expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+      expect(names(ADMIN.current!.rpcCalls)).not.toContain("release_stripe_event_claim_with_error");
+      expect(names(ADMIN.current!.rpcCalls)).not.toContain("reconcile_bound_payment_event");
+      expect(names(ADMIN.current!.rpcCalls)).not.toContain("reconcile_card_payment_succeeded");
+      expect(ACCOUNTS_RETRIEVE).not.toHaveBeenCalled();
+    });
+    it.each(contradictions)("already-bound %s retains its existing critical refusal", async (key, value, mismatch) => {
+      prepareMetadata({ [key]: value }, "pi_1");
+      expect((await callRoute()).status).toBe(200);
+      expect(RECORD_OPS_ALERT).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        severity: "critical", event: "stripe_webhook_metadata_mismatch", safeDetails: expect.objectContaining({ mismatch }),
+      }));
+      expect(ADMIN.current!.updateCalls).toEqual([]);
+      expect(names(ADMIN.current!.rpcCalls)).not.toContain("release_stripe_event_claim_with_error");
+      expect(names(ADMIN.current!.rpcCalls)).not.toContain("reconcile_bound_payment_event");
+      expect(names(ADMIN.current!.rpcCalls)).not.toContain("reconcile_card_payment_succeeded");
+    });
+    it.each([
+      ["omitted", {}],
+      ["empty", { hone_studio_id: "", hone_client_id: "", hone_charge_reason: "" }],
+      ["matching", { hone_studio_id: "studio-1", hone_client_id: "client-1", hone_charge_reason: "session_payment" }],
+    ] as const)("%s optional metadata still permits typed retry without adoption", async (_kind, metadata) => {
+      prepareMetadata(metadata);
+      expect((await callRoute()).status).toBe(500);
+      expect(RECORD_OPS_ALERT).not.toHaveBeenCalled();
+      expect(ADMIN.current!.updateCalls).toEqual([]);
+      expect(names(ADMIN.current!.rpcCalls)).not.toContain("mark_stripe_event_processed");
+      expect(ADMIN.current!.rpcCalls.filter(({ name }) => name === "release_stripe_event_claim_with_error")).toEqual([
+        { name: "release_stripe_event_claim_with_error", args: { p_event_id: "evt_metadata_order", p_claim_token: "claim-token-1",
+          p_error: "stripe_webhook_payment_original_binding_pending" } },
+      ]);
+      expect(names(ADMIN.current!.rpcCalls)).not.toContain("reconcile_bound_payment_event");
+      expect(names(ADMIN.current!.rpcCalls)).not.toContain("reconcile_card_payment_succeeded");
+      expect(ACCOUNTS_RETRIEVE).not.toHaveBeenCalled();
+    });
+  },
+);
